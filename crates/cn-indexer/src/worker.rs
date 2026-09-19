@@ -182,6 +182,17 @@ impl IndexerWorker {
                                 }
                             }
                         }
+                        // heartbeat registration can change between full passes. Refresh once for
+                        // the whole debounce batch so docs and blob fetches can reach the authoring
+                        // peer before any changed object is ingested.
+                        if let Err(error) = self.participant.refresh_seed_peers().await {
+                            warn!(
+                                error = %format!("{error:#}"),
+                                "failed to refresh seed peers before event ingest; will retry"
+                            );
+                            self.state.record_error(None, &format!("{error:#}"));
+                            continue;
+                        }
                         for (replica_id, keys) in pending {
                             if let Some(scope) = active.get(&replica_id).cloned() {
                                 let mut keys: Vec<String> = keys.into_iter().collect();

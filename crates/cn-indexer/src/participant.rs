@@ -112,7 +112,7 @@ impl IndexerParticipant {
 
     /// desktop heartbeat が Postgres に保持する active peer を docs sync と media fetch へ反映する。
     /// operator 指定 seed は残し、同じ endpoint の fresh addr_hint は heartbeat 側で更新する。
-    async fn refresh_seed_peers(&self) -> Result<()> {
+    pub(crate) async fn refresh_seed_peers(&self) -> Result<()> {
         let Some(configured) = self.configured_seed_peers.as_deref() else {
             return Ok(());
         };

@@ -516,6 +516,11 @@ sudo docker exec "$PG_CONTAINER" sh -lc \
    増えず、indexerのDEBUG logに `changed keys are not object-scoped` が出ないことを確認する。
    増えた場合は `last_whole_scope_fallback_reason` の種別prefixを記録する（添付付き投稿の
    `manifests/media` は仕様どおりscope全体へ倒れる）。
+7. #1154以降のrevisionでは、全件見直し後に起動・heartbeat登録したclientからblob本文または
+   media付き投稿を行い、次の全件見直しを待たずに索引されることを確認する。変更通知のdebounce
+   batchごとに `refreshed docs sync and media fetch seed peers from active bootstrap registrations` が1回
+   記録され、そのlogの `active` / `applied` に投稿元peer（およびoperator指定seed）が含まれることを
+   確認する。peer更新が失敗した場合はそのbatchを索引せず、次の通知または全件見直しで再試行する。
 
 `hold`（scan failure / provider unavailable / media取得不能）は再利用されず毎pass再試行される。
 `scans_fresh` が既存投稿数ぶん増え続ける場合は、対象verdictがholdのままか、policy / provider
