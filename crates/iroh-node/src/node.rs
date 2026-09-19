@@ -245,7 +245,7 @@ impl IrohDocsNode {
         let store = iroh_blobs::store::fs::FsStore::load_with_opts(root.join("blobs.db"), options)
             .await
             .with_context(|| format!("failed to load blob store at {}", root.display()))?;
-        Self::spawn(
+        let result = Self::spawn(
             (*store).clone(),
             Some(root.to_path_buf()),
             network_config,
@@ -253,7 +253,15 @@ impl IrohDocsNode {
             relay_config,
             recover_corrupt_docs,
         )
-        .await
+        .await;
+        if result.is_err() {
+            // Early failures (e.g. relay parsing or bind) happen before a node
+            // owns this store. Wait for its actor/DB to close before a caller
+            // can reopen it; merely dropping the API races cleanup on Linux.
+            // Docs startup may already have closed it; retain the original error.
+            let _ = store.shutdown().await;
+        }
+        result
     }
 
     async fn spawn(

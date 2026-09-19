@@ -69,3 +69,17 @@ INV-6/TR-9（blob取得）は#1207へ移管。shared HTTP clientのcallerは `re
 ## 未確認の範囲
 
 原本ログの報告版・最初の障害原因は特定できていない。Windowsで実runtime/実peerを使った上記自動検証は完了したが、GUIを長時間トレイへ格納する観測、画面ロック、OS suspend/resume、Linux実機観測は未実施。これらを成功扱いせず、**今回の修正PRをマージしてもIssue #1176はCloseしない**。残りは既知のpeerを使った非表示・復帰時のCN期限とpost/reply/blob到達の確認、および報告ログとの照合に限定する。
+
+## Linux CIで見つかった終了処理の不足と追加修正
+
+初回head `5cf10b8e` のPR #1208では12チェックが成功したが、Linux Rustの1072件中1071件完了後、`failed_stack_rebuild_can_retry_without_losing_local_docs`だけが1380秒以上停止した。認証済みブラウザで実行中ログを確認し、run `35462151565`を中断した。旧headの独立監査PASSは当時の判定として保存し、この新しい証拠を含むマージ判断には使わない。
+
+WSL Ubuntu 22.04 / Rust 1.92で同じtestを30秒の外側watchdog付きで再現した。一時的な段階ログにより、最初のinvalid relayによるrebuildはErrを返し、2回目も旧stackのshutdownは戻るが、次stackのopenが戻らないことを確認した。段階ログは診断後に除去した。
+
+`load_persistent`はFsStoreを開いた後でnodeを組み立てる。relay parse/bind等の早期Errでは、nodeがまだ生成されていないためnode自身のDrop cleanupを使えず、FsStoreの非同期終了完了前に次のopenへ進めていた。Err時に`store.shutdown().await`を完了させてから元のstartup errorを返すように修正した。既にdocs失敗側がshutdownした場合のclosed errorは元エラーを上書きしない。依存ライブラリ内部のどのlockで停止したかまで実証したとは扱わず、この失敗cleanupと再openの境界を修正対象とする。
+
+- 同一Linux再現: 修正後0.13秒で次stack open、保存docs読込み、shutdownまで成功。
+- Windows delta: `cargo xtask rust-check`成功、iroh-node全件＋idle recovery群の15件成功（0.518秒）。
+- WSL Linux: `cargo xtask rust-check`成功、`cargo xtask rust-test`で1072件成功・既存4件skip（169.550秒）、doctest成功。停止していたtestは全体実行でも0.173秒で成功した。
+- `.config/nextest.toml`で、このidle recovery群だけにprocess-levelの`30s × 2`上限を設定した。既存4並列groupを維持し、通常成功にsleepを加えず、非協調的な停止をCI job全体の上限まで待たせない。
+- Linux全体の最終結果とdeltaの独立監査は、追加commitのheadに対応するPRコメントへ記録する。CIの再実行を調査手段にはせず、ローカルLinuxで原因・修正を確認してからpushする。

@@ -10,5 +10,13 @@ filter = "package(kukuri-harness)"
 test-group = "harness-serial"
 
 [[profile.default.overrides]]
+filter = "package(kukuri-desktop-runtime) & test(tests::community_node::idle_connectivity::)"
+test-group = "iroh-integration-serial"
+# #1176: These failure/repair cases normally finish below a second. Bound a
+# non-cooperative actor/DB shutdown regression at the process level, without
+# adding a sleep or waiting for the entire CI job's timeout.
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[[profile.default.overrides]]
 filter = "package(kukuri-app-api) | package(kukuri-desktop-runtime) | package(kukuri-cli)"
 test-group = "iroh-integration-serial"

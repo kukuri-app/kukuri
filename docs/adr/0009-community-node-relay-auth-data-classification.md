@@ -40,4 +40,5 @@ Accepted
 - CNの通常HTTP clientは接続5秒・応答本文を含む全体10秒を上限とする。セッション更新の排他はnode別、relay/seedの全体反映は専用の排他区間で最新の検証済み状態から行う。未同意nodeを別nodeの成功で有効化しない。
 - remote peer不在だけで正常なlocal docs actorを停止しない。通常のself-healはdiscovery/購読の再適用とする。local docsの読み取りprobeが失敗した場合はstackを再構築するが、probeのtimeoutだけでは破損と判定せず再試行へ戻す。
 - 再構築が失敗しても前回stackの参照・peer stateを保持し、次回の再試行を可能にする。再構築のcommit後はseed値が同じでも旧streamを再利用せず、購読・private capabilityを新しいstackへ復元する。identityやdocs/blobsの初期化は復旧手段にしない。
+- node生成前の失敗でも、開いたFsStoreのshutdown完了を待ってからエラーを返す。失敗したstoreの非同期Dropだけに次回openの安全性を依存させない。
 - relay受信容量とblob取得失敗のUI/キャッシュはそれぞれ#1206・#1207の責務であり、本変更で通信優先度や取得gateを変更しない。
