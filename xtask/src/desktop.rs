@@ -61,9 +61,18 @@ pub(crate) fn desktop_package() -> Result<()> {
             "[xtask] TAURI_SIGNING_PRIVATE_KEY is not set; building installer without updater artifacts"
         );
     }
-    run_pnpm(args, &desktop_dir())?;
     if cfg!(target_os = "linux") {
+        // Tauri bundlerには同梱除外の設定がないため、linuxdeployの手前で除外する（#1222）。
+        crate::linuxdeploy::install_wrapper()?;
+        let host_libraries = crate::linuxdeploy::host_libraries_env_value();
+        run_pnpm_with_env(
+            args,
+            &desktop_dir(),
+            &[(crate::linuxdeploy::HOST_LIBRARIES_ENV, &host_libraries)],
+        )?;
         crate::appimage::verify_package()?;
+    } else {
+        run_pnpm(args, &desktop_dir())?;
     }
     Ok(())
 }

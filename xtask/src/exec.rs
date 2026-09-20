@@ -209,11 +209,19 @@ pub(crate) fn run_pnpm(
     args: impl IntoIterator<Item = impl Into<String>>,
     cwd: &Path,
 ) -> Result<()> {
+    run_pnpm_with_env(args, cwd, &[])
+}
+
+pub(crate) fn run_pnpm_with_env(
+    args: impl IntoIterator<Item = impl Into<String>>,
+    cwd: &Path,
+    envs: &[(&str, &str)],
+) -> Result<()> {
     let platform = host_platform();
     let available = *PNPM_AVAILABLE.get_or_init(|| {
         run_capture_spec(&node_command_spec(platform, "pnpm", ["--version"]), cwd).is_ok()
     });
-    run_spec_with_env(&pnpm_command_spec(platform, available, args), cwd, &[])
+    run_spec_with_env(&pnpm_command_spec(platform, available, args), cwd, envs)
 }
 
 pub(crate) fn run_timed_step<T>(

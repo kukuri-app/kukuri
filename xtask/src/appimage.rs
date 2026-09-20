@@ -49,6 +49,13 @@ pub(crate) fn verify_package() -> Result<()> {
         } else {
             inspect_signed_bundle(&bundle_dir, name, version, pubkey, "deb", b"!<arch>\n")?
         };
+        if format == "appimage" {
+            crate::linuxdeploy::ensure_no_host_libraries(
+                &bundle_dir.join(format!("{name}.AppDir")),
+                "AppDir",
+            )?;
+            ensure_appimage_has_no_host_libraries(&bundle_dir, &artifacts.file)?;
+        }
         if format == "deb" {
             let status = std::process::Command::new("python3")
                 .arg(crate::root_dir().join("scripts/release/deb_package.py"))
@@ -68,6 +75,27 @@ pub(crate) fn verify_package() -> Result<()> {
             artifacts.file
         );
     }
+    Ok(())
+}
+
+/// AppDirではなく、配布するAppImage自体の中身を確認する。FUSEは使わない。
+fn ensure_appimage_has_no_host_libraries(bundle_dir: &Path, file: &str) -> Result<()> {
+    let extract_dir = bundle_dir.join("host-library-check");
+    if extract_dir.exists() {
+        std::fs::remove_dir_all(&extract_dir)?;
+    }
+    std::fs::create_dir_all(&extract_dir)?;
+    crate::run(
+        &bundle_dir.join(file).to_string_lossy(),
+        ["--appimage-extract", "usr/lib/*"],
+        &extract_dir,
+    )?;
+    let lib_dir = extract_dir.join("squashfs-root/usr/lib");
+    if !lib_dir.is_dir() {
+        bail!("AppImage から usr/lib を展開できません");
+    }
+    crate::linuxdeploy::ensure_no_host_libraries(&lib_dir, "AppImage")?;
+    std::fs::remove_dir_all(&extract_dir)?;
     Ok(())
 }
 

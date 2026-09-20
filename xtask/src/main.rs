@@ -7,6 +7,7 @@ mod cn;
 mod desktop;
 mod exec;
 mod ipc;
+mod linuxdeploy;
 mod operator_neutrality;
 mod oversized;
 mod packages;
