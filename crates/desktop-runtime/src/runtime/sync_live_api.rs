@@ -20,10 +20,33 @@ impl DesktopRuntime {
             .docs_sync
             .clone();
         drop(current);
+        // #1239: 索引を全件読まない。投稿の header から sort key を作り、索引の key を 1 つだけ確認する。
+        let Some(state) = docs_sync
+            .query_replica(
+                &replica,
+                DocQuery::Exact(kukuri_docs_sync::stable_key(
+                    "objects",
+                    &format!("{object_id}/state"),
+                )),
+            )
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+        let header: kukuri_core::CanonicalPostHeader = serde_json::from_slice(&state.value)?;
+        let sort_key = kukuri_core::timeline_sort_key(header.created_at, &header.object_id);
         let rows = docs_sync
-            .query_replica(&replica, DocQuery::Prefix("indexes/timeline/".into()))
+            .query_replica(
+                &replica,
+                DocQuery::Exact(kukuri_docs_sync::stable_key(
+                    "indexes/timeline",
+                    &format!("{sort_key}/{object_id}"),
+                )),
+            )
             .await?;
-        Ok(rows.iter().any(|row| row.key.ends_with(object_id)))
+        Ok(!rows.is_empty())
     }
 
     pub async fn get_discovery_config(&self) -> Result<DiscoveryConfig> {

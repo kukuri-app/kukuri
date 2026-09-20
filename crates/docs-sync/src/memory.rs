@@ -11,7 +11,8 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::access::{ensure_private_replica_access, parse_namespace_secret_hex};
 use crate::replicas::value_hash;
 use crate::types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
+    DocQuery, DocRecord, DocsSync,
 };
 
 type ReplicaRecords = HashMap<String, Vec<u8>>;
@@ -114,6 +115,32 @@ impl DocsSync for MemoryDocsSync {
             })
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(rows)
+    }
+
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: DocKeyQuery,
+    ) -> Result<Vec<DocKeyEntry>> {
+        self.open_replica(replica_id).await?;
+        let records = self.records.lock().await;
+        let mut rows = records
+            .get(replica_id.as_str())
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.starts_with(query.prefix.as_str()))
+            .map(|(key, value)| DocKeyEntry {
+                key: key.clone(),
+                content_hash: value_hash(value),
+                content_len: value.len() as u64,
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| match query.order {
+            DocKeyOrder::Ascending => left.key.cmp(&right.key),
+            DocKeyOrder::Descending => right.key.cmp(&left.key),
+        });
+        rows.truncate(query.limit);
         Ok(rows)
     }
 

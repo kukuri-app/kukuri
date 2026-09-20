@@ -31,6 +31,30 @@ pub enum DocQuery {
     All,
 }
 
+/// key だけを返す上限つきの読み出し(#1239)。entry の本体は読まない。
+///
+/// replica の総 entry 数に依存しない読み出しの基本形。全件を読む `DocQuery::Prefix` の代わりに使う。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocKeyQuery {
+    pub prefix: String,
+    pub order: DocKeyOrder,
+    /// 返す entry の上限。0 なら何も返さない。
+    pub limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocKeyOrder {
+    Ascending,
+    Descending,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocKeyEntry {
+    pub key: String,
+    pub content_hash: String,
+    pub content_len: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocFetchPolicy {
     LocalOnly,
@@ -80,6 +104,17 @@ pub trait DocsSync: Send + Sync {
     ) -> Result<Vec<DocRecord>> {
         self.query_replica_with_policy(replica_id, query, DocFetchPolicy::LocalThenRemote)
             .await
+    }
+    /// key の索引だけを使う上限つきの読み出し。
+    ///
+    /// 既定実装はエラーを返す。全件読みへ黙って落ちると、replica の大きさに比例する経路が戻るため、
+    /// 本番の実装と、この読み出しを通る test double は必ず実装する。
+    async fn query_replica_keys(
+        &self,
+        _replica_id: &ReplicaId,
+        _query: DocKeyQuery,
+    ) -> Result<Vec<DocKeyEntry>> {
+        anyhow::bail!("this DocsSync implementation does not support bounded key queries")
     }
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream>;
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()>;

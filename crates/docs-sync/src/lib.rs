@@ -6,6 +6,7 @@ mod memory;
 mod replicas;
 #[cfg(test)]
 mod tests;
+mod time_index;
 mod types;
 
 pub use iroh_sync::IrohDocsSync;
@@ -17,4 +18,8 @@ pub use replicas::{
     private_channel_hint_topic, private_channel_replica_id, stable_key, topic_replica_id,
     value_hash,
 };
-pub use types::{DocEvent, DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync};
+pub use time_index::{TimeIndexCursor, TimeIndexEntry, query_time_index_desc};
+pub use types::{
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
+    DocQuery, DocRecord, DocsSync,
+};

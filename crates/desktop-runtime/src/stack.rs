@@ -8,7 +8,8 @@ use futures_util::TryStreamExt;
 use kukuri_blob_service::{BlobService, BlobStatus, IrohBlobService, StoredBlob};
 use kukuri_core::{BlobHash, GossipHint, ReplicaId, TopicId};
 use kukuri_docs_sync::{
-    DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, IrohDocsSync,
+    DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyQuery, DocOp, DocQuery, DocRecord, DocsSync,
+    IrohDocsSync,
 };
 use kukuri_iroh_node::IrohDocsNode;
 use kukuri_transport::{
@@ -128,6 +129,11 @@ reloadable_service! {
             query: DocQuery,
             policy: DocFetchPolicy,
         ) -> Result<Vec<DocRecord>>;
+        // #1239: 宣言が無いと trait の既定実装(エラー)に落ちる。上限つきの読み出しは必ず内側へ転送する。
+        async fn query_replica_keys(
+            replica_id: &ReplicaId,
+            query: DocKeyQuery,
+        ) -> Result<Vec<DocKeyEntry>>;
         async fn subscribe_replica(replica_id: &ReplicaId) -> Result<DocEventStream>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
@@ -490,6 +496,53 @@ mod tests {
     use kukuri_transport::Transport;
     use tempfile::tempdir;
     use tokio::time::{Duration, timeout};
+
+    // #1239: desktop が実際に使う `ReloadableDocsSync` 越しでも、上限つきの key の読み出しが内側へ
+    // 転送される。宣言が抜けると trait の既定実装(エラー)に落ち、窓の追いつきと遡りが動かなくなる。
+    #[tokio::test]
+    async fn reloadable_docs_sync_forwards_bounded_key_queries() {
+        let node = IrohDocsNode::memory().await.expect("docs node");
+        let docs = ReloadableDocsSync::new(Arc::new(IrohDocsSync::new(node.clone())));
+        let replica = kukuri_docs_sync::topic_replica_id("kukuri:topic:reloadable-key-query");
+        docs.open_replica(&replica).await.expect("open replica");
+        for key in [
+            "indexes/timeline/a",
+            "indexes/timeline/b",
+            "objects/a/state",
+        ] {
+            docs.apply_doc_op(
+                &replica,
+                kukuri_docs_sync::DocOp::SetJson {
+                    key: key.into(),
+                    value: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("write entry");
+        }
+
+        let entries = docs
+            .query_replica_keys(
+                &replica,
+                kukuri_docs_sync::DocKeyQuery {
+                    prefix: "indexes/timeline/".into(),
+                    order: kukuri_docs_sync::DocKeyOrder::Descending,
+                    limit: 1,
+                },
+            )
+            .await
+            .expect("bounded key query must be forwarded to the inner docs sync");
+
+        assert_eq!(
+            entries
+                .into_iter()
+                .map(|entry| entry.key)
+                .collect::<Vec<_>>(),
+            vec!["indexes/timeline/b"]
+        );
+        docs.current().await.shutdown().await;
+        node.shutdown().await.expect("shutdown node");
+    }
 
     // #1152 / ADR 0046 §6.2: desktop が実際に使う `ReloadableBlobService` 越しでも、
     // ephemeral 取得は remote の bytes をローカルへ保存せず、状態確認は remote から取得しない。

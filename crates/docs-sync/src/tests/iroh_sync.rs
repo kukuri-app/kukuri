@@ -77,3 +77,42 @@ async fn private_cursor_not_in_public_replica() -> Result<()> {
     node.shutdown().await?;
     Ok(())
 }
+
+// #1239 の計測用。`cargo test -p kukuri-docs-sync --lib measure_exact_query_cost -- --ignored --nocapture` で実行する。
+// 1 つの replica の entry 数を増やし、key を 1 つ指定した読み出しの所要時間が総数に依存するかを出す。
+#[tokio::test]
+#[ignore = "measurement only"]
+async fn measure_exact_query_cost() -> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    for count in [1_000usize, 10_000] {
+        let replica = topic_replica_id(format!("kukuri:topic:exact-cost-{count}").as_str());
+        docs.open_replica(&replica).await?;
+        for index in 0..count {
+            docs.apply_doc_op(
+                &replica,
+                DocOp::SetJson {
+                    key: crate::stable_key("objects", &format!("{index:08}/state")),
+                    value: serde_json::json!({ "index": index }),
+                },
+            )
+            .await?;
+        }
+        let target = crate::stable_key("objects", &format!("{:08}/state", count / 2));
+        let started = std::time::Instant::now();
+        let rounds = 50;
+        for _ in 0..rounds {
+            let rows = docs
+                .query_replica(&replica, DocQuery::Exact(target.clone()))
+                .await?;
+            assert_eq!(rows.len(), 1);
+        }
+        println!(
+            "[exact-cost] entries={count} exact query avg={:?}",
+            started.elapsed() / rounds
+        );
+    }
+    docs.shutdown().await;
+    node.shutdown().await?;
+    Ok(())
+}

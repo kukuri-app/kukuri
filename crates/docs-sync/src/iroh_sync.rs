@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use iroh::EndpointAddr;
 use iroh_docs::api::Doc;
-use iroh_docs::store::Query;
+use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::{Capability, DocTicket, NamespaceSecret};
 use kukuri_core::ReplicaId;
 use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket};
@@ -19,7 +19,8 @@ use tracing::info;
 use crate::access::parse_namespace_secret_hex;
 use crate::replicas::public_replica_secret;
 use crate::types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
+    DocQuery, DocRecord, DocsSync,
 };
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
@@ -247,6 +248,21 @@ impl IrohDocsSync {
     }
 }
 
+/// #1239: 必ず key の索引(`SortBy::KeyAuthor`)で読む query を組む。
+///
+/// iroh-docs は、著者の指定が無い既定の並び(`AuthorKey`)の query を namespace 全体の table scan として
+/// 実行する。key を 1 つ指定した読み出しでも replica の総 entry 数に比例してしまうため、既定の並びを使わない。
+pub(crate) fn indexed_query(query: DocQuery) -> Query {
+    let builder = match query {
+        DocQuery::Exact(key) => Query::key_exact(key),
+        DocQuery::Prefix(prefix) => Query::key_prefix(prefix),
+        DocQuery::All => Query::all(),
+    };
+    builder
+        .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+        .build()
+}
+
 #[async_trait]
 impl DocsSync for IrohDocsSync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
@@ -321,11 +337,7 @@ impl DocsSync for IrohDocsSync {
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
         let doc = self.ensure_replica(replica_id).await?;
-        let query = match query {
-            DocQuery::Exact(key) => Query::key_exact(key).build(),
-            DocQuery::Prefix(prefix) => Query::key_prefix(prefix).build(),
-            DocQuery::All => Query::all().build(),
-        };
+        let query = indexed_query(query);
         let stream = doc.get_many(query).await?;
         tokio::pin!(stream);
         let mut records = Vec::new();
@@ -347,6 +359,40 @@ impl DocsSync for IrohDocsSync {
             });
         }
         Ok(records)
+    }
+
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: DocKeyQuery,
+    ) -> Result<Vec<DocKeyEntry>> {
+        if query.limit == 0 {
+            return Ok(Vec::new());
+        }
+        let doc = self.ensure_replica(replica_id).await?;
+        let direction = match query.order {
+            DocKeyOrder::Ascending => SortDirection::Asc,
+            DocKeyOrder::Descending => SortDirection::Desc,
+        };
+        let stream = doc
+            .get_many(
+                Query::key_prefix(query.prefix)
+                    .sort_by(SortBy::KeyAuthor, direction)
+                    .limit(query.limit as u64)
+                    .build(),
+            )
+            .await?;
+        tokio::pin!(stream);
+        let mut entries = Vec::new();
+        while let Some(entry) = stream.next().await {
+            let entry = entry?;
+            entries.push(DocKeyEntry {
+                key: String::from_utf8(entry.key().to_vec()).context("docs key is not utf8")?,
+                content_hash: entry.content_hash().to_string(),
+                content_len: entry.content_len(),
+            });
+        }
+        Ok(entries)
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {
