@@ -614,13 +614,19 @@ async fn seeded_dht_backfills_docs_and_blobs_with_id_only_seed() {
     .expect("seeded dht image backfill timeout");
 
     assert_eq!(received.attachments.len(), 1);
-    assert_eq!(received.attachments[0].status, BlobViewStatus::Available);
+    // view の状態は remote から取得しない（#1152）。表示要求が取得して local へ保存する。
+    assert_eq!(received.attachments[0].status, BlobViewStatus::Missing);
+    let hash = received.attachments[0].hash.as_str();
     assert!(
         app_b
-            .blob_preview_data_url(received.attachments[0].hash.as_str(), "image/png")
+            .blob_preview_data_url(hash, "image/png")
             .await
             .expect("preview")
             .is_some()
+    );
+    assert_eq!(
+        timeline_attachment_status(&app_b, topic, &object_id, hash).await,
+        BlobViewStatus::Available
     );
 }
 

@@ -297,8 +297,8 @@ PR共通欄は `.github/PULL_REQUEST_TEMPLATE.md` を使い、本書の「記録
 | `crates/store/**` | `cargo xtask rust-test` + 永続化の振る舞いが変わる場合は関連 scenario |
 | `crates/transport/**` | `cargo xtask rust-test` + peer の振る舞いが変わる場合は関連 connectivity scenario |
 | `crates/docs-sync/**` | `cargo xtask rust-test`（実 relay replication テスト `src/tests/relay.rs` を含む）+ replication / relay 経路の振る舞いが変わる場合は `cargo xtask scenario community_node_public_connectivity` |
-| `crates/blob-service/**` | `cargo xtask rust-test` + media/blob に影響する場合は関連 scenario |
-| `crates/app-api/**` | `cargo xtask rust-test` + payload 形状が変わる場合は frontend test |
+| `crates/blob-service/**` | `cargo xtask rust-test` + media/blob に影響する場合は関連 scenario + blob の取得・状態、peer 間の同期・復旧の振る舞いが変わる場合は `cargo xtask app-api-slow-test`（実 Iroh の結合 test。PR の CI では実行されず nightly だけが実行する） |
+| `crates/app-api/**` | `cargo xtask rust-test` + payload 形状が変わる場合は frontend test + blob の取得・状態、peer 間の同期・復旧の振る舞いが変わる場合は `cargo xtask app-api-slow-test`（実 Iroh の結合 test。PR の CI では実行されず nightly だけが実行する） |
 | `crates/desktop-runtime/**` | `cargo xtask rust-test`（community_node / identity_restart / seeded_dht / media_blob_restore 等の実挙動テストを含む）+ 起動 / 永続往復が変わる場合は `cargo xtask e2e-smoke`、peer 間 connectivity・CN セッションが変わる場合は `cargo xtask scenario community_node_public_connectivity` |
 | `crates/cn-*` | `cargo xtask cn-check` + `cargo xtask cn-test` |
 | `harness/scenarios/**` | `cargo xtask scenario <changed-scenario>` |
