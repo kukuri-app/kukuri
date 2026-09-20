@@ -638,20 +638,13 @@
   gap: var(--space-sm);
 }
 
+/* #1189 の更新導線も同じ寸法で並べる。primary 塗りは `border: 0` なので border-color は効かない。 */
 .shell-phase1 .shell-control-center-trigger,
-.shell-phase1 .shell-tester-feedback-trigger {
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  border-color: var(--border-accent);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-panel);
-}
-
-/* #1189: 更新がある間だけ cluster に出す導線。寸法は他の cluster ボタンへ揃え、
-   強調は primary 塗りで示すので境界色は上書きしない。 */
+.shell-phase1 .shell-tester-feedback-trigger,
 .shell-phase1 .shell-update-available-trigger {
   min-width: 2.75rem;
   min-height: 2.75rem;
+  border-color: var(--border-accent);
   border-radius: var(--radius-pill);
   box-shadow: var(--shadow-panel);
 }
