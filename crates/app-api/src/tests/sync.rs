@@ -350,6 +350,8 @@ mod gossip_toggle;
 mod hint_rehydration;
 mod hydration_integrity;
 mod hydration_integrity_contract;
+mod hydration_integrity_sessions;
+mod hydration_integrity_sessions_contract;
 mod hydration_limits;
 mod scale_independence;
 mod subscription_restarts;

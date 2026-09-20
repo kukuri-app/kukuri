@@ -11,7 +11,7 @@ use super::*;
 /// 同じ key に複数の record を返す docs(iroh-docs は、同じ key の entry を docs author ごとに持つ)。
 /// `shadows` に入れた値を、その key の正しい record より先に返す。
 #[derive(Clone, Default)]
-struct ShadowingDocsSync {
+pub(super) struct ShadowingDocsSync {
     inner: MemoryDocsSync,
     shadows: Arc<TokioMutex<HashMap<String, Vec<Vec<u8>>>>>,
     /// この key の読み出しを失敗させる(I/O の失敗)。
@@ -19,7 +19,7 @@ struct ShadowingDocsSync {
 }
 
 impl ShadowingDocsSync {
-    async fn shadow(&self, key: &str, value: serde_json::Value) {
+    pub(super) async fn shadow(&self, key: &str, value: serde_json::Value) {
         self.shadows
             .lock()
             .await

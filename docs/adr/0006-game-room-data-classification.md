@@ -26,6 +26,9 @@ Accepted
 - game room manifest 本体は JSON blob として `iroh-blobs` に保存し、score/status 更新のたびに新しい blob hash を払い出す。
 - participant は create 時に固定し、v1 では add/remove や owner handoff を許可しない。
 - room 更新は owner のみ許可し、`Finished` 遷移後は immutable にする。
+- 「owner のみ」は読む側でも確かめる。ScoreGame は、owner が manifest 全体に署名した `game-session` の envelope（`envelopes/<envelope id>`。
+  `state.last_envelope_id` が指す）で裏づけられた state だけを反映し、操作にも使う。metaverse room は訪問者も manifest を書くので owner の署名を要求せず、
+  id と Spatial Context・owner の結び付けと、一覧の時点の署名つき Dome Instance で確かめる（Issue #1252。規則の正本は ADR 0052 §2）。
 - ScoreGame の local update と hydration の projection commit は room 単位で直列化する。hydration は blob 取得後に現在の local docs state を再確認し、取得中に pointer が変わった候補を cache へ書かない。新旧の判断に timestamp の大小や hash の辞書順を使わず、同 timestamp の正当な pointer 更新も反映する。
 - 同じ canonical state から同じ ScoreGame projection を再取得した場合は、`derived_at` だけを更新する書込みも行わない。Metaverse の専用 lifecycle／authority はこの ScoreGame の制御で変更しない。
 

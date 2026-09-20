@@ -145,6 +145,24 @@ pub(crate) async fn persist_media_manifest(
     Ok(())
 }
 
+/// live session・game room の署名つき envelope を、state と同じ replica の `envelopes/<envelope id>` へ置く(#1252)。
+pub(crate) async fn persist_session_envelope(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    envelope: &KukuriEnvelope,
+) -> Result<()> {
+    docs_sync.open_replica(replica).await?;
+    docs_sync
+        .apply_doc_op(
+            replica,
+            DocOp::SetJson {
+                key: stable_key("envelopes", envelope.id.as_str()),
+                value: serde_json::to_value(envelope)?,
+            },
+        )
+        .await
+}
+
 pub(crate) async fn persist_live_session_state(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
@@ -559,49 +577,13 @@ pub(crate) async fn best_effort_blob_view_status(
     }
 }
 
-pub(crate) async fn fetch_live_session_state_from_replica(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    session_id: &str,
-) -> Result<Option<LiveSessionStateDocV1>> {
-    let records = docs_sync
-        .query_replica(
-            replica,
-            DocQuery::Exact(stable_key("sessions/live", &format!("{session_id}/state"))),
-        )
-        .await?;
-    let Some(record) = records.into_iter().next() else {
-        return Ok(None);
-    };
-    Ok(Some(serde_json::from_slice(&record.value)?))
-}
-
-pub(crate) async fn fetch_game_room_state_from_replica(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    room_id: &str,
-) -> Result<Option<GameRoomStateDocV1>> {
-    let records = docs_sync
-        .query_replica(
-            replica,
-            DocQuery::Exact(stable_key("sessions/game", &format!("{room_id}/state"))),
-        )
-        .await?;
-    let Some(record) = records.into_iter().next() else {
-        return Ok(None);
-    };
-    Ok(Some(serde_json::from_slice(&record.value)?))
-}
-
-pub(crate) fn live_projection_row_from_state(
-    state: &LiveSessionStateDocV1,
-    manifest: &LiveSessionManifestBlobV1,
-    topic_id: &str,
-    source_replica_id: &ReplicaId,
-) -> LiveSessionProjectionRow {
+/// 行は検証済みの live session からしか作れない(#1252)。
+pub(crate) fn live_projection_row(verified: &VerifiedLiveSession) -> LiveSessionProjectionRow {
+    let state = verified.state();
+    let manifest = verified.manifest();
     LiveSessionProjectionRow {
         session_id: state.session_id.clone(),
-        topic_id: topic_id.to_string(),
+        topic_id: verified.topic_id().to_string(),
         channel_id: channel_storage_id(state.channel_id.as_ref()),
         host_pubkey: state.owner_pubkey.as_str().to_string(),
         title: manifest.title.clone(),
@@ -610,24 +592,22 @@ pub(crate) fn live_projection_row_from_state(
         started_at: manifest.started_at,
         ended_at: manifest.ended_at,
         updated_at: state.updated_at,
-        source_replica_id: source_replica_id.clone(),
+        source_replica_id: verified.replica().clone(),
         source_key: stable_key("sessions/live", &format!("{}/state", state.session_id)),
         manifest_blob_hash: state.current_manifest.hash.clone(),
         derived_at: Utc::now().timestamp_millis(),
-        projection_version: 1,
+        projection_version: kukuri_store::VERIFIED_SESSION_PROJECTION_VERSION,
         viewer_count: 0,
     }
 }
 
-pub(crate) fn game_projection_row_from_state(
-    state: &GameRoomStateDocV1,
-    manifest: &GameRoomManifestBlobV1,
-    topic_id: &str,
-    source_replica_id: &ReplicaId,
-) -> GameRoomProjectionRow {
+/// 行は検証済みの game room からしか作れない(#1252)。
+pub(crate) fn game_projection_row(verified: &VerifiedGameRoom) -> GameRoomProjectionRow {
+    let state = verified.state();
+    let manifest = verified.manifest();
     GameRoomProjectionRow {
         room_id: state.room_id.clone(),
-        topic_id: topic_id.to_string(),
+        topic_id: verified.topic_id().to_string(),
         channel_id: channel_storage_id(state.channel_id.as_ref()),
         host_pubkey: state.owner_pubkey.as_str().to_string(),
         title: manifest.title.clone(),
@@ -638,11 +618,11 @@ pub(crate) fn game_projection_row_from_state(
         room_kind: manifest.room_kind.clone(),
         metaverse: manifest.metaverse.clone(),
         updated_at: state.updated_at,
-        source_replica_id: source_replica_id.clone(),
+        source_replica_id: verified.replica().clone(),
         source_key: stable_key("sessions/game", &format!("{}/state", state.room_id)),
         manifest_blob_hash: state.current_manifest.hash.clone(),
         derived_at: Utc::now().timestamp_millis(),
-        projection_version: 1,
+        projection_version: kukuri_store::VERIFIED_SESSION_PROJECTION_VERSION,
     }
 }
 
@@ -681,10 +661,10 @@ pub(crate) fn projection_row_from_post(
     }
 }
 
-pub(crate) fn reaction_projection_row_from_doc(
-    reaction: &ReactionDocV1,
-    source_replica_id: &ReplicaId,
-) -> ReactionProjectionRow {
+/// 行は検証済みの reaction からしか作れない(#1252)。
+pub(crate) fn reaction_projection_row(verified: &VerifiedReaction) -> ReactionProjectionRow {
+    let reaction = verified.doc();
+    let source_replica_id = verified.replica();
     ReactionProjectionRow {
         source_replica_id: source_replica_id.clone(),
         target_object_id: reaction.target_object_id.clone(),
@@ -708,7 +688,7 @@ pub(crate) fn reaction_projection_row_from_doc(
         ),
         source_envelope_id: reaction.envelope_id.clone(),
         derived_at: Utc::now().timestamp_millis(),
-        projection_version: 1,
+        projection_version: kukuri_store::VERIFIED_REACTION_PROJECTION_VERSION,
     }
 }
 

@@ -195,6 +195,9 @@ validation:
 
 doc key family は target replica 配下の `reactions/<target_object_id>/<reaction_id>/...` に固定し、timeline/thread aggregate は active reaction だけを数える。
 
+projection の行は `.../envelope` の signed `reaction` object だけから作る。`.../state` は署名を持たないので、反映には使わない
+（Issue #1252。検証の規則の正本は ADR 0052 §2）。
+
 ### 3.2 Custom reaction asset object
 
 signed envelope kind は `custom-reaction-asset` とする。

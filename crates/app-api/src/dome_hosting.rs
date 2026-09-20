@@ -950,14 +950,14 @@ impl AppService {
         let mut heartbeat_at = local_heartbeat;
         if heartbeat_at.is_none() {
             let preliminary = resolve_dome_hosting_state(instance, records, now, Some(now))?;
+            // lock は `if let` の前で手放す(条件式の中で取ると、下の else の取り直しが自分を待って止まる。#1252)。
+            let heartbeats = self.dome_host_heartbeats.lock().await;
+            let received_heartbeat = heartbeats.get(&instance.instance_id).cloned();
+            drop(heartbeats);
             if let (Some(lease), Some(session_id), Some(signed)) = (
                 current_unique_lease(records)?,
                 preliminary.session_id.as_deref(),
-                self.dome_host_heartbeats
-                    .lock()
-                    .await
-                    .get(&instance.instance_id)
-                    .cloned(),
+                received_heartbeat,
             ) {
                 if signed.heartbeat.sent_at <= now.saturating_add(5_000)
                     && verify_signed_dome_host_heartbeat(&signed, &lease.lease, session_id).is_ok()

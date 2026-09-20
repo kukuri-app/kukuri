@@ -144,6 +144,10 @@ mod post_integrity;
 mod private_channels_support;
 mod profile_docs_support;
 mod projection_support;
+mod reaction_hydration;
+pub(crate) use reaction_hydration::hydrate_reaction_cache_from_key;
+mod reaction_integrity;
+mod session_integrity;
 mod social_helpers;
 mod social_runtime_support;
 mod spatial_access_support;
@@ -170,9 +174,8 @@ pub(crate) use attachment_support::{
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
     hint_refers_to_replica_content, hint_targets_topic, hydrate_object_in_topic,
-    hydrate_post_withdrawal_from_record, hydrate_reaction_cache_from_key,
-    hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
-    hydrate_topic_state, profile_timeline_page,
+    hydrate_post_withdrawal_from_record, hydrate_subscription_event, hydrate_subscription_hint,
+    hydrate_subscription_state, hydrate_topic_state, profile_timeline_page,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
@@ -187,18 +190,17 @@ pub(crate) use notifications_support::{
 pub(crate) use object_persistence_support::{
     best_effort_blob_cache_status, best_effort_blob_view_status,
     bookmarked_custom_reaction_view_from_row, custom_reaction_asset_view_from_doc,
-    fetch_game_room_state_from_replica, fetch_live_session_state_from_replica, fetch_manifest_blob,
-    fetch_private_channel_epoch_handoff_grant_from_replica,
+    fetch_manifest_blob, fetch_private_channel_epoch_handoff_grant_from_replica,
     fetch_private_channel_participants_from_replica, fetch_private_channel_policy_from_replica,
-    fetch_projection_blob_text, game_projection_row_from_state, live_projection_row_from_state,
-    persist_game_room_state, persist_live_session_state, persist_media_manifest,
-    persist_post_object, persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
+    fetch_projection_blob_text, game_projection_row, live_projection_row, persist_game_room_state,
+    persist_live_session_state, persist_media_manifest, persist_post_object,
+    persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
     persist_private_channel_metadata, persist_private_channel_participant,
-    persist_private_channel_policy, post_withdrawal_row, private_channel_rotation_is_pending,
-    projection_row_from_post, reaction_cache_key, reaction_projection_row_from_doc,
-    reaction_state_view_from_rows, recent_reaction_view_from_projection, search_key_or_asset_id,
-    session_projection_retry_attempts, session_projection_retry_delay, store_manifest_blob,
-    wait_for_private_channel_epoch_snapshot,
+    persist_private_channel_policy, persist_session_envelope, post_withdrawal_row,
+    private_channel_rotation_is_pending, projection_row_from_post, reaction_cache_key,
+    reaction_projection_row, reaction_state_view_from_rows, recent_reaction_view_from_projection,
+    search_key_or_asset_id, session_projection_retry_attempts, session_projection_retry_delay,
+    store_manifest_blob, wait_for_private_channel_epoch_snapshot,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, ReplicaPostScope, VerifiedPost, WithdrawalTargetCheck,
@@ -221,6 +223,14 @@ pub(crate) use projection_support::{
     next_private_channel_epoch_id, private_channel_epoch_capabilities,
     private_channel_is_epoch_aware, private_channel_replica_for_epoch,
     profile_timeline_item_is_hidden,
+};
+pub(crate) use reaction_integrity::{
+    ReactionKey, VerifiedReaction, load_verified_reaction, select_verified_reaction,
+    warn_rejected_reaction,
+};
+pub(crate) use session_integrity::{
+    VerifiedGameRoom, VerifiedLiveSession, load_verified_game_room, load_verified_live_session,
+    owner_bound_id_suffix, verify_game_room_record, verify_live_session_record,
 };
 pub(crate) use social_helpers::{
     current_mutual_direct_message_peers, rebuild_author_relationships,
@@ -274,14 +284,6 @@ pub(crate) async fn query_replica_with_fetch_policy(
     docs_sync
         .query_replica_with_policy(replica, query, policy)
         .await
-}
-
-pub(crate) async fn query_replica_local_only(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    query: DocQuery,
-) -> Result<Vec<DocRecord>> {
-    query_replica_with_fetch_policy(docs_sync, replica, query, DocFetchPolicy::LocalOnly).await
 }
 
 pub(crate) async fn record_public_topic_docs_activity_if_current(

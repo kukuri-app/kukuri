@@ -71,6 +71,29 @@ Accepted
   正しい投稿を隠せないようにする。上限を超える数の不正な entry を 1 つの key へ積まれた投稿は反映できない（best effort の範囲）。
 - 検証に通らない record と読めない record は、その object だけを飛ばす（warn）。同じ replica の他の投稿の反映と、タイムライン・thread の取得を失敗させない。
 - projection の投稿の行は、`projection_version` 3 から検証済みの投稿だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
+- reaction の反映も、`reactions/<target>/<reaction id>/state` の値を使わない（Issue #1252）。行は同じ reaction の署名つき envelope
+  （`reactions/<target>/<reaction id>/envelope`）から作る。envelope は `verify()` と `parse_reaction` に通り、対象と reaction id が key と一致し、
+  reaction id が「読んだ replica・対象・署名者・reaction の key」から決まる値（`deterministic_reaction_id`）と一致し、topic / channel が読んだ replica の
+  受け入れる範囲（投稿と同じ規則）と一致しなければならない。`state` と `envelope` のどちらの event でも個別反映を試す。
+  同じ key の record は上限つき（8 件）で読み、検証に通るもののうち署名時刻が最も新しい 1 件を使う。反映済みの行より古い envelope では行を戻さない
+  （古い署名つき envelope を置き直して、取り消した reaction を復活させられないようにする）。
+- live session と game room の反映は、署名された manifest で確かめる（Issue #1252）。書く側は、manifest 全体を content にした envelope（kind は
+  `live-session` / `game-session`）に署名して、state と同じ replica の `envelopes/<envelope id>` へ state より先に置き、`state.last_envelope_id` がそれを指す
+  （Dome の Instance / Preset と同じ形）。読む側は `state` の key と `envelopes/<envelope id>` の key を、それぞれ上限つき（8 件）で読む。
+  - live session と ScoreGame: 署名者が manifest の `owner_pubkey` と一致し、id の末尾（最後の `-` より後）が owner の pubkey の先頭（8 桁以上の 16 進）と
+    一致し、state の id・topic・channel・owner・status と manifest blob の内容が署名された manifest と一致し、topic / channel が読んだ replica の受け入れる範囲と
+    一致しなければならない。docs は同じ key を別の鍵でも書けるので、id と owner を結び付けて、別の鍵で署名した state による上書きを防ぐ。
+    新しく作る id の末尾は 16 桁（64 bit）とする。それより前の id は 8 桁（32 bit）で、結び付けの強さはその桁数ぶんに留まる。
+  - metaverse room: 訪問者も chat で room の manifest を書く設計なので、owner の署名は要求しない。topic / channel と Spatial Context が読んだ replica と一致し、
+    id が Spatial Context と owner から決まる値（`dome-<hash>` の 24 桁）と一致することを確かめる。owner であることは、これまでどおり一覧の時点で
+    署名つきの Dome Instance で確かめる（ADR 0036）。title などの表示内容は、その topic に書ける者が変えられる（Dome の authority の対象外）。
+  - 署名された manifest を確かめる前に、未検証の state が指す manifest blob を取りに行かない。例外は、署名つきの envelope を持たない `dome-` の id の state
+    （修正前の client が書いた Dome）で、manifest blob から上の metaverse room の規則で確かめる。
+  - 利用者の操作（終了・参加・更新・Dome の移動と削除）が読む state と manifest も、同じ検証を通す。
+  - 互換: 修正前の client が書いた live session と ScoreGame は署名つきの envelope を持たないので、修正後の client には表示されない（owner が修正後の client で
+    更新すると表示される）。state doc の形は変えていないので、修正前の client は修正後の record を読める。
+- reaction・live session・game room でも、検証に通らない record と読めない record は、その object だけを飛ばす（warn）。全件走査・event・hint・利用者の操作を失敗させない。
+- reaction の行と、live session・game room の行は、`projection_version` 2 から検証済みの record だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
 
 ### 3. docs の読み出しの規則
 
@@ -129,7 +152,7 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
 
 ## References
 
-- Issue #1221（統括）、#1239（本 ADR の実装）、#1243（replica の時間分割）、#1224（接続と取得の統合設計）、#1225（全件走査の頻度の抑制）、#1207（blob の再取得）
+- Issue #1221（統括）、#1239（本 ADR の実装）、#1248・#1252（反映の検証）、#1243（replica の時間分割）、#1224（接続と取得の統合設計）、#1225（全件走査の頻度の抑制）、#1207（blob の再取得）
 - `AGENTS.md` の「設計原則: 件数に依存しない処理」
 - `docs/architecture/replica-read-inventory.md`
 - iroh-docs 0.101.0: `src/store/util.rs`（`IndexKind::from`）、`src/store/fs/query.rs`、`src/store/fs/bounds.rs`、`src/store/fs.rs`（`get_fingerprint`）

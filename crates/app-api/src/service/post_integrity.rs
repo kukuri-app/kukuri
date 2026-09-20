@@ -37,6 +37,16 @@ impl ReplicaPostScope {
             }),
         }
     }
+
+    /// 申告された topic と channel が、この replica の受け入れる範囲と一致するか。
+    pub(crate) fn accepts(&self, topic_id: &TopicId, channel_id: Option<&ChannelId>) -> bool {
+        topic_id.as_str() == self.topic_id
+            && channel_id.map(ChannelId::as_str) == self.channel_id.as_deref()
+    }
+
+    pub(crate) fn is_private_channel(&self) -> bool {
+        self.channel_id.is_some()
+    }
 }
 
 /// 検証に通らなかった理由。I/O の失敗は含まない(呼び出し側へ `Err` で返す)。
@@ -95,11 +105,9 @@ impl VerifiedPost {
         let Ok(Some(header)) = envelope.to_post_object() else {
             return Err(PostRejection::NotAPost);
         };
-        let channel_matches =
-            header.channel_id.as_ref().map(ChannelId::as_str) == scope.channel_id.as_deref();
         let visibility_matches =
-            scope.channel_id.is_some() || header.visibility == ObjectVisibility::Public;
-        if header.topic_id.as_str() != scope.topic_id || !channel_matches || !visibility_matches {
+            scope.is_private_channel() || header.visibility == ObjectVisibility::Public;
+        if !scope.accepts(&header.topic_id, header.channel_id.as_ref()) || !visibility_matches {
             return Err(PostRejection::ScopeMismatch);
         }
         Ok(Self {

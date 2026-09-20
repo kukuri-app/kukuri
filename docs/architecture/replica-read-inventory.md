@@ -51,6 +51,12 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（3 か所。変更通知で対象を特定できないときの fallback と初回） | `objects/`・`withdrawals/` など | scope の投稿総数 | Non-goal（CN 側。`ingest_changed_keys` が通常経路。T2 の索引化は効く。全件走査の廃止は CN 側の Issue で扱う） |
 | P-15 | `desktop-runtime/src/runtime/sync_live_api.rs` `has_topic_timeline_doc_index_entry`（test と harness 用） | `indexes/timeline/` | topic の投稿総数 | 対象。T2 で key 指定の読み出し 2 回へ置き換えた |
 
+## 反映の検証が足す読み出し（Issue #1252）
+
+reaction・live session・game room の検証は、prefix の読み出しを足さない。reaction は、P-3・P-4 の同じ prefix の読み出しに含まれる `envelope` の record から行を作る。
+live session と game room は、state 1 件につき `envelopes/<envelope id>` を key 指定・上限つき（8 件）で 1 回読む。key 指定の個別反映は、`state` の key も上限つきで読む。
+どれも object 1 件あたり定数で、replica の総 entry 数に依存しない。P-5・P-6 の全件走査では、session の総数ぶんの key 指定の読み出しが足される（T5・T7 で走査ごと無くなる）。
+
 ## view の生成に残る docs の読み出し（key 指定）
 
 T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る。どちらも key を 1 つ指定した `LocalOnly` の読み出しで、replica の総 entry 数には依存しない
