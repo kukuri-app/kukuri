@@ -526,6 +526,7 @@ impl AppService {
                 )
                 .await?;
             let entries = keys
+                .entries
                 .into_iter()
                 .filter_map(|entry| thread_index_entry(index_prefix.as_str(), entry.key))
                 .collect::<Vec<_>>();

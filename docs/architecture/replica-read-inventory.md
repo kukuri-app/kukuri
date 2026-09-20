@@ -87,7 +87,5 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 - private channel の取り下げは、現在の epoch の replica に書かれる。対象の投稿が過去の epoch の replica にあると、取り下げを反映する側は同じ replica で対象の envelope を見つけられず、
   取り下げを検証できない（T3 より前から同じ。key 単位の反映でも全件走査でも変わらない）。epoch をまたぐ取り下げの扱いは別 Issue で決める。
 - iroh-docs の同期と保存は replica の総 entry 数に比例する（ADR 0052 §7）。replica の時間分割は #1243 が所有する。
-- `IrohDocsSync` の prefix の読み出しと key の一覧（`query_replica_keys`）は、UTF-8 でない key が 1 件あると、その読み出し全体を失敗にする。key 指定の読み出しには影響しない（key が query と一致する）。
-  ページの範囲の照合（T5a）は `query_replica_keys` を通るので、索引の prefix の下にそのような key を置かれると、行のあるページの取得も失敗する。docs-sync の読み出しの層の問題として #1253 が所有する。
-  #1253 が UTF-8 でない key の entry を「飛ばす」形で直す場合、`query_time_index_desc` と `query_time_index_window` は「返った件数が要求した件数に満たない」ことを「その prefix が尽きた」と
-  判定している点に注意する（飛ばした件数ぶん、尽きたと誤判定しうる）。
+- UTF-8 でない key の entry は、`IrohDocsSync` の prefix の読み出しと key の一覧（`query_replica_keys`）が飛ばす（#1253）。飛ばした entry は返る件数に入らないので、
+  `query_replica_keys` は「`limit` 件を読んで打ち切られたか」を別に返し、時系列の索引の読み出し（`query_time_index_window`・`query_time_index_desc`）はそれで「尽きたか」を判定する（#1257。T5a の PR で対応）。

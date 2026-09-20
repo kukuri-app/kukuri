@@ -44,7 +44,7 @@ impl DocsSync for ConnectionIoProbe {
         &self,
         replica: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
         self.io.fetch_add(1, Ordering::SeqCst);
         self.inner.query_replica_keys(replica, query).await
     }

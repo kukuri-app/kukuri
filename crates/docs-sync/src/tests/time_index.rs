@@ -7,7 +7,7 @@ use kukuri_core::ReplicaId;
 use kukuri_iroh_node::IrohDocsNode;
 
 use crate::{
-    DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp, DocQuery,
+    DocEventStream, DocFetchPolicy, DocKeyOrder, DocKeyPage, DocKeyQuery, DocOp, DocQuery,
     DocRecord, DocsSync, IrohDocsSync, MemoryDocsSync, TimeIndexCursor, query_time_index_desc,
     query_time_index_window, stable_key, topic_replica_id,
 };
@@ -220,8 +220,8 @@ async fn key_query_respects_prefix_order_and_limit_on_both_implementations() -> 
             )
             .await?;
         }
-        let keys = |entries: Vec<DocKeyEntry>| {
-            entries
+        let keys = |page: DocKeyPage| {
+            page.entries
                 .into_iter()
                 .map(|entry| entry.key)
                 .collect::<Vec<_>>()
@@ -231,31 +231,40 @@ async fn key_query_respects_prefix_order_and_limit_on_both_implementations() -> 
             order,
             limit,
         };
-        assert_eq!(
-            keys(
-                docs.query_replica_keys(&replica, query(DocKeyOrder::Ascending, 10))
-                    .await?
-            ),
-            vec!["a/1", "a/2", "a/3"],
-            "{name}: ascending"
+        // #1257: 打ち切りの情報は、どちらの実装も同じ意味で返す(`limit` 件を読んだら「打ち切られた」)。
+        let all = docs
+            .query_replica_keys(&replica, query(DocKeyOrder::Ascending, 10))
+            .await?;
+        assert!(
+            !all.reached_limit,
+            "{name}: three entries under a limit of ten"
         );
+        assert_eq!(keys(all), vec!["a/1", "a/2", "a/3"], "{name}: ascending");
+        let newest = docs
+            .query_replica_keys(&replica, query(DocKeyOrder::Descending, 2))
+            .await?;
+        assert!(newest.reached_limit, "{name}: the limit cut the listing");
         assert_eq!(
-            keys(
-                docs.query_replica_keys(&replica, query(DocKeyOrder::Descending, 2))
-                    .await?
-            ),
+            keys(newest),
             vec!["a/3", "a/2"],
             "{name}: descending with limit"
         );
+        let exact = docs
+            .query_replica_keys(&replica, query(DocKeyOrder::Ascending, 3))
+            .await?;
         assert!(
-            docs.query_replica_keys(&replica, query(DocKeyOrder::Ascending, 0))
-                .await?
-                .is_empty(),
-            "{name}: zero limit"
+            exact.reached_limit,
+            "{name}: reading exactly the limit cannot tell that the prefix is exhausted"
         );
+        let none = docs
+            .query_replica_keys(&replica, query(DocKeyOrder::Ascending, 0))
+            .await?;
+        assert!(none.entries.is_empty(), "{name}: zero limit");
+        assert!(!none.reached_limit, "{name}: zero limit reads nothing");
         let entry = docs
             .query_replica_keys(&replica, query(DocKeyOrder::Ascending, 1))
             .await?
+            .entries
             .remove(0);
         assert!(entry.content_len > 0, "{name}: content length");
         assert!(!entry.content_hash.is_empty(), "{name}: content hash");
@@ -313,12 +322,12 @@ impl DocsSync for CountingKeys {
         &self,
         replica_id: &ReplicaId,
         query: DocKeyQuery,
-    ) -> Result<Vec<DocKeyEntry>> {
+    ) -> Result<DocKeyPage> {
         self.queries.fetch_add(1, Ordering::SeqCst);
-        let entries = self.inner.query_replica_keys(replica_id, query).await?;
+        let page = self.inner.query_replica_keys(replica_id, query).await?;
         self.largest_result
-            .fetch_max(entries.len(), Ordering::SeqCst);
-        Ok(entries)
+            .fetch_max(page.entries.len(), Ordering::SeqCst);
+        Ok(page)
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {
@@ -539,12 +548,18 @@ async fn zero_limit_key_query_opens_the_replica_on_both_implementations() -> Res
         memory
             .query_replica_keys(&replica, query())
             .await?
+            .entries
             .is_empty()
     );
 
     let node = IrohDocsNode::memory().await?;
     let iroh = IrohDocsSync::new(node.clone());
-    assert!(iroh.query_replica_keys(&replica, query()).await?.is_empty());
+    assert!(
+        iroh.query_replica_keys(&replica, query())
+            .await?
+            .entries
+            .is_empty()
+    );
     // 権限の無い private replica は、`limit` が 0 でも失敗する(開けないものを開けたことにしない)。
     let private = crate::private_channel_epoch_replica_id("channel", "epoch");
     assert!(iroh.query_replica_keys(&private, query()).await.is_err());
@@ -660,5 +675,104 @@ async fn walk_stops_at_the_query_cap_and_returns_a_contiguous_head() -> Result<(
     let reference = expected(&rows, Some(&cursor), 5);
     assert!(!page.is_empty());
     assert_eq!(ids(&page), reference[..page.len()].to_vec());
+    Ok(())
+}
+
+/// `indexes/timeline/` の下に、UTF-8 でない key の entry を `count` 件置く。public topic の replica は、
+/// topic id を知る誰もが書ける(namespace の secret は replica id から決まる)。
+async fn put_non_utf8_index_keys(
+    node: &IrohDocsNode,
+    replica: &ReplicaId,
+    time_prefix: &str,
+    count: usize,
+) -> Result<()> {
+    let secret = crate::replicas::public_replica_secret(replica).expect("public replica secret");
+    let doc = node
+        .docs()
+        .import_namespace(iroh_docs::Capability::Write(secret))
+        .await?;
+    let author = node.docs().author_default().await?;
+    for index in 0..count {
+        let mut key = format!("{INDEX_PREFIX}{time_prefix}").into_bytes();
+        key.extend_from_slice(&[0xff, 0xfe]);
+        key.extend_from_slice(format!("{index:04}").as_bytes());
+        doc.set_bytes(author, key, b"x".to_vec()).await?;
+    }
+    Ok(())
+}
+
+// #1257 AC-1 / TR-2・TR-3: UTF-8 でない key が、余裕を超えて索引の新しい側を埋めていても、窓の読み出しは
+// 有効な entry を返す。UTF-8 でない key は読み出しの中で飛ばされて件数に入らないので、「打ち切られたか」を
+// 返った件数で判定すると、索引が尽きたと誤判定して 0 件を返していた。
+#[tokio::test]
+async fn non_utf8_keys_filling_the_newest_side_do_not_hide_valid_entries_from_the_window()
+-> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    let replica = topic_replica_id("kukuri:topic:time-index-non-utf8-window");
+    docs.open_replica(&replica).await?;
+    let mut rows = Vec::new();
+    for index in 0..5usize {
+        let row = (1_000 + index as i64, object_id(index + 1));
+        put_key(&docs, &replica, index_key(row.0, &row.1)).await?;
+        rows.push(row);
+    }
+    // 未来の時刻の有効な entry も混ぜる(窓は読み飛ばす)。
+    put_key(&docs, &replica, index_key(9_000, &object_id(900))).await?;
+    // `0xff` は数字より後ろに並ぶので、降順の読み出しでは必ず先頭に来る。
+    put_non_utf8_index_keys(&node, &replica, "", 80).await?;
+
+    let window = query_time_index_window(&docs, &replica, INDEX_PREFIX, 2_000, 5).await;
+    docs.shutdown().await;
+    node.shutdown().await?;
+    assert_eq!(
+        ids(&window?),
+        expected(&rows, None, 5),
+        "valid entries must stay visible"
+    );
+    Ok(())
+}
+
+// #1257 AC-2・AC-3 / TR-4・TR-5: cursor つきの遡りは、UTF-8 でない key で埋まった prefix を細かく分けて
+// 読み直し、有効な entry を飛ばさない。query 数は上限(同じ秒の読み出し 1 回 + 256 回)以下。
+#[tokio::test]
+async fn non_utf8_keys_do_not_make_the_walk_skip_valid_entries() -> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let inner = IrohDocsSync::new(node.clone());
+    let replica = topic_replica_id("kukuri:topic:time-index-non-utf8-walk");
+    inner.open_replica(&replica).await?;
+    let mut rows = Vec::new();
+    for index in 0..6usize {
+        let row = (1_758_000_001 + index as i64, object_id(index + 1));
+        put_key(&inner, &replica, index_key(row.0, &row.1)).await?;
+        rows.push(row);
+    }
+    let older = (1_757_000_000_i64, object_id(99));
+    put_key(&inner, &replica, index_key(older.0, &older.1)).await?;
+    rows.push(older);
+    // 有効な entry と同じ 10 秒の prefix(175800000x)の、より新しい秒に、余裕(32 件)を超える数を置く。
+    put_non_utf8_index_keys(&node, &replica, &format!("{:020}-", 1_758_000_009_i64), 64).await?;
+
+    let cursor = TimeIndexCursor {
+        created_at: 1_758_000_050,
+        object_id: "f".repeat(64),
+    };
+    let page = query_time_index_desc(&inner, &replica, INDEX_PREFIX, Some(&cursor), 4).await;
+    let mut walked = Vec::new();
+    let mut next = Some(cursor.clone());
+    while let Some(current) = next.take() {
+        let page = query_time_index_desc(&inner, &replica, INDEX_PREFIX, Some(&current), 3).await?;
+        if let Some(last) = page.last() {
+            next = Some(TimeIndexCursor {
+                created_at: last.created_at,
+                object_id: last.object_id.clone(),
+            });
+        }
+        walked.extend(ids(&page));
+    }
+    inner.shutdown().await;
+    node.shutdown().await?;
+    assert_eq!(ids(&page?), expected(&rows, Some(&cursor), 4));
+    assert_eq!(walked, expected(&rows, None, usize::MAX));
     Ok(())
 }

@@ -11,8 +11,8 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::access::{ensure_private_replica_access, parse_namespace_secret_hex};
 use crate::replicas::value_hash;
 use crate::types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
-    DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
+    DocOp, DocQuery, DocRecord, DocsSync,
 };
 
 type ReplicaRecords = HashMap<String, Vec<u8>>;
@@ -122,7 +122,7 @@ impl DocsSync for MemoryDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: DocKeyQuery,
-    ) -> Result<Vec<DocKeyEntry>> {
+    ) -> Result<DocKeyPage> {
         self.open_replica(replica_id).await?;
         let records = self.records.lock().await;
         let mut rows = records
@@ -140,8 +140,13 @@ impl DocsSync for MemoryDocsSync {
             DocKeyOrder::Ascending => left.key.cmp(&right.key),
             DocKeyOrder::Descending => right.key.cmp(&left.key),
         });
+        // 本番の実装と同じ意味にする: query が `limit` 件を読んだら「打ち切られた」。
+        let reached_limit = query.limit > 0 && rows.len() >= query.limit;
         rows.truncate(query.limit);
-        Ok(rows)
+        Ok(DocKeyPage {
+            entries: rows,
+            reached_limit,
+        })
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {

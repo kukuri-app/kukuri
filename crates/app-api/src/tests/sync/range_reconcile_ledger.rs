@@ -258,7 +258,7 @@ impl DocsSync for FailingExactReadsDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
         self.inner.query_replica_keys(replica_id, query).await
     }
 

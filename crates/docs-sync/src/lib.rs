@@ -22,6 +22,6 @@ pub use time_index::{
     TimeIndexCursor, TimeIndexEntry, query_time_index_desc, query_time_index_window,
 };
 pub use types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
-    DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
+    DocOp, DocQuery, DocRecord, DocsSync,
 };

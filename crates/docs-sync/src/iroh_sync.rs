@@ -14,13 +14,13 @@ use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endp
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::access::parse_namespace_secret_hex;
 use crate::replicas::public_replica_secret;
 use crate::types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
-    DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
+    DocOp, DocQuery, DocRecord, DocsSync,
 };
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
@@ -258,9 +258,14 @@ impl IrohDocsSync {
         let stream = doc.get_many(query).await?;
         tokio::pin!(stream);
         let mut records = Vec::new();
+        let mut skipped_keys = 0usize;
         while let Some(entry) = stream.next().await {
             let entry = entry?;
-            let key = String::from_utf8(entry.key().to_vec()).context("docs key is not utf8")?;
+            // 本体の取得より前に key を確かめる。飛ばす entry の本体は取得しない。
+            let Some(key) = utf8_key(entry.key()) else {
+                skipped_keys += 1;
+                continue;
+            };
             let content_hash = entry.content_hash().to_string();
             let Some(value) = self
                 .fetch_entry_bytes(content_hash.as_str(), policy)
@@ -275,7 +280,25 @@ impl IrohDocsSync {
                 content_len: entry.content_len(),
             });
         }
+        warn_skipped_keys(replica_id, skipped_keys);
         Ok(records)
+    }
+}
+
+/// #1253: iroh-docs の key は任意の byte 列で、public topic の replica は topic id を知る誰もが書ける。
+/// UTF-8 でない key は kukuri の key ではないので、その entry だけを飛ばす(読み出し全体を失敗させない)。
+fn utf8_key(key: &[u8]) -> Option<String> {
+    std::str::from_utf8(key).ok().map(str::to_string)
+}
+
+/// 飛ばした entry の記録は、読み出し 1 回につき 1 回だけ出す。key の byte 列は出さない。
+fn warn_skipped_keys(replica_id: &ReplicaId, skipped_keys: usize) {
+    if skipped_keys > 0 {
+        warn!(
+            replica = %replica_id.as_str(),
+            skipped = skipped_keys,
+            "docs read skipped entries whose key is not utf8"
+        );
     }
 }
 
@@ -399,16 +422,17 @@ impl DocsSync for IrohDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: DocKeyQuery,
-    ) -> Result<Vec<DocKeyEntry>> {
+    ) -> Result<DocKeyPage> {
         // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
         let doc = self.ensure_replica(replica_id).await?;
         if query.limit == 0 {
-            return Ok(Vec::new());
+            return Ok(DocKeyPage::default());
         }
         let direction = match query.order {
             DocKeyOrder::Ascending => SortDirection::Asc,
             DocKeyOrder::Descending => SortDirection::Desc,
         };
+        let query_limit = query.limit;
         let stream = doc
             .get_many(
                 Query::key_prefix(query.prefix)
@@ -419,15 +443,28 @@ impl DocsSync for IrohDocsSync {
             .await?;
         tokio::pin!(stream);
         let mut entries = Vec::new();
+        let mut skipped_keys = 0usize;
+        let mut scanned = 0usize;
         while let Some(entry) = stream.next().await {
             let entry = entry?;
+            scanned += 1;
+            // 飛ばした分を読み足さない(追加の query を発行しない)。返す件数が `limit` より減るだけである。
+            // 飛ばした entry も `scanned` に数え、打ち切られたかどうかを呼び出し側へ伝える(#1257)。
+            let Some(key) = utf8_key(entry.key()) else {
+                skipped_keys += 1;
+                continue;
+            };
             entries.push(DocKeyEntry {
-                key: String::from_utf8(entry.key().to_vec()).context("docs key is not utf8")?,
+                key,
                 content_hash: entry.content_hash().to_string(),
                 content_len: entry.content_len(),
             });
         }
-        Ok(entries)
+        warn_skipped_keys(replica_id, skipped_keys);
+        Ok(DocKeyPage {
+            entries,
+            reached_limit: scanned >= query_limit,
+        })
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {
@@ -621,6 +658,120 @@ mod tests {
                 .expect("zero limit")
                 .is_empty()
         );
+
+        docs.shutdown().await;
+        node.shutdown().await.expect("shutdown node");
+    }
+
+    // public topic の replica は topic id を知る誰もが書け、iroh-docs の key は任意の byte 列である。
+    // UTF-8 でない key の entry が 1 件あっても、prefix の読み出しと key の一覧は失敗せず、
+    // 読める entry を返す(ADR 0052 §2)。
+    #[tokio::test]
+    async fn non_utf8_key_does_not_fail_prefix_reads() {
+        let node = IrohDocsNode::memory().await.expect("docs node");
+        let docs = IrohDocsSync::new(node.clone());
+        let replica = crate::topic_replica_id("kukuri:topic:non-utf8-key");
+        let doc = docs.ensure_replica(&replica).await.expect("open replica");
+        let author = node.docs().author_default().await.expect("default author");
+        let valid_key = "objects/valid/envelope";
+        doc.set_bytes(author, valid_key.as_bytes().to_vec(), b"valid".to_vec())
+            .await
+            .expect("write a valid key");
+        doc.set_bytes(author, b"objects/\xff\xfe/envelope".to_vec(), b"x".to_vec())
+            .await
+            .expect("write a key that is not utf8");
+
+        let records = docs
+            .query_replica_with_policy(
+                &replica,
+                DocQuery::Prefix("objects/".into()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await;
+        let keys = docs
+            .query_replica_keys(
+                &replica,
+                DocKeyQuery {
+                    prefix: "objects/".into(),
+                    order: DocKeyOrder::Ascending,
+                    limit: 8,
+                },
+            )
+            .await;
+        let errors = [records.as_ref().err(), keys.as_ref().err()]
+            .into_iter()
+            .flatten()
+            .map(|error| format!("{error:#}"))
+            .collect::<Vec<_>>();
+        assert!(
+            errors.is_empty(),
+            "reads must not fail because of one non-utf8 key: {errors:?}"
+        );
+        let records = records.expect("prefix query must not fail because of one non-utf8 key");
+        let keys = keys.expect("key listing must not fail because of one non-utf8 key");
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.key.as_str())
+                .collect::<Vec<_>>(),
+            vec![valid_key]
+        );
+        assert_eq!(
+            keys.entries
+                .iter()
+                .map(|entry| entry.key.as_str())
+                .collect::<Vec<_>>(),
+            vec![valid_key]
+        );
+        assert!(
+            !keys.reached_limit,
+            "two entries were read under a limit of eight: the prefix is exhausted"
+        );
+
+        let exact = docs
+            .query_replica_exact_bounded(&replica, valid_key, 2, DocFetchPolicy::LocalOnly)
+            .await
+            .expect("bounded exact query");
+        assert_eq!(exact.len(), 1);
+
+        let all = docs
+            .query_replica_with_policy(&replica, DocQuery::All, DocFetchPolicy::LocalOnly)
+            .await
+            .expect("full query must not fail because of one non-utf8 key");
+        assert_eq!(all.len(), 1);
+
+        // UTF-8 でない key だけの prefix は空で返る。上限は読む entry 数にかかり、読み足さない。
+        doc.set_bytes(author, b"indexes/\xff".to_vec(), b"x".to_vec())
+            .await
+            .expect("write a key that is not utf8");
+        assert!(
+            docs.query_replica_with_policy(
+                &replica,
+                DocQuery::Prefix("indexes/".into()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            .expect("prefix with only non-utf8 keys")
+            .is_empty()
+        );
+        let head = docs
+            .query_replica_keys(
+                &replica,
+                DocKeyQuery {
+                    prefix: "objects/".into(),
+                    order: DocKeyOrder::Descending,
+                    limit: 1,
+                },
+            )
+            .await
+            .expect("bounded key listing");
+        assert!(
+            head.entries.is_empty(),
+            "the non-utf8 key sorts first and the listing does not read past the limit"
+        );
+        // #1257: 飛ばした entry も「読んだ件数」に数える。呼び出し側は、返った件数が 0 でも、
+        // この prefix が尽きていないことが分かる。
+        assert!(head.reached_limit);
 
         docs.shutdown().await;
         node.shutdown().await.expect("shutdown node");

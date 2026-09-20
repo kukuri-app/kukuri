@@ -61,8 +61,8 @@ impl DocsSync for AssistedDocsSync {
         &self,
         _replica_id: &ReplicaId,
         _query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
-        Ok(Vec::new())
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        Ok(kukuri_docs_sync::DocKeyPage::default())
     }
 
     async fn subscribe_replica(
@@ -113,8 +113,8 @@ impl DocsSync for TrackingDocsSync {
         &self,
         _replica_id: &ReplicaId,
         _query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
-        Ok(Vec::new())
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        Ok(kukuri_docs_sync::DocKeyPage::default())
     }
 
     async fn subscribe_replica(

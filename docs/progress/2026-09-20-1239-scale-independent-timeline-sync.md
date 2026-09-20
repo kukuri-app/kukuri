@@ -231,12 +231,10 @@ T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 
 
 | 指摘 | 原因 | 修正 |
 | --- | --- | --- |
-| 索引の prefix の下に UTF-8 でない key が 1 件あるだけで、行のあるページの取得が失敗を返す（public topic の namespace の secret は replica id から決まるので、誰でも書ける） | `IrohDocsSync::query_replica_keys` が、UTF-8 でない key を読み出し全体の失敗にしている | この PR では直さない。docs-sync の読み出しの層の問題として #1253 が所有し、並行して修正が進んでいる（利用者の指示、2026-09-21）。#1253 の In scope に `query_replica_keys` と、この PR の範囲の照合が明記されている |
+| 索引の prefix の下に UTF-8 でない key が 1 件あるだけで、行のあるページの取得が失敗を返す（public topic の namespace の secret は replica id から決まるので、誰でも書ける） | `IrohDocsSync::query_replica_keys` が、UTF-8 でない key を読み出し全体の失敗にしていた | docs-sync の読み出しの層の問題として #1253（PR #1255）が直した（UTF-8 でない key の entry を飛ばす）。この PR は main を取り込んでそれを含む。飛ばした entry が「尽きたか」の判定を狂わせる点は、#1257 としてこの PR で直した（下の節） |
 | 署名の正しい取り下げで `generation` が符号つき 64 bit に収まらないと、projection への書き込みが失敗し、その object を含む範囲の取得が失敗を返す | 検証は `generation` が 0 でないことしか見ておらず、保存のときの変換の失敗が取得まで伝わっていた | 保存できない `generation` の取り下げは `PostWithdrawalHydration::Invalid` とする。回帰 test `withdrawal_with_an_oversized_generation_does_not_fail_a_non_empty_head_page` |
 
 監査は、照合の call tree の失敗源を iroh と sqlite の実装で全件たどり、投稿者の data が到達する失敗源はこの 2 つだけだと確認している。
-このうち UTF-8 でない key は #1253 の修正で解消する。#1253 が入るまでは、その replica に書ける誰かが索引の prefix の下にそのような key を置くと、行のあるページの取得が失敗しうる
-（基準 commit でも、反映が空の利用者の取得と購読タスクの全件走査は同じ入力で失敗する）。
 
 同じ監査の non-blocker のうち、この段階で直したもの。
 
@@ -273,6 +271,32 @@ T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 
 - 購読タスクが同じ範囲を先に反映すると、照合の反映件数が 0 になり、最初に読んだ古い（空の）ページをそのまま返していた。照合の結果に「索引の範囲のうち projection に在る件数」を持たせ、
   それが最初のページの行数より多いときだけページを読み直す。照合のたびに必ず読み直す形は採らない（ページの読み出しに Q-1・Q-2 の問題が残っているため）。
   test `the_page_is_read_again_only_when_the_projection_holds_more_than_the_page_showed`。
+
+### #1253 の取り込みと、#1257 の対応（この PR で合わせて扱う）
+
+main の `150ca5f7`（#1253 / PR #1255）を取り込んだ。`IrohDocsSync` の読み出しは、UTF-8 でない key の entry を飛ばすようになった（飛ばした分は読み足さない）。
+
+#1257（利用者の指示で、この PR で合わせて対応）: 飛ばした entry は返る件数に入らないので、この PR の `time_index.rs` が「返った件数が要求した件数に達したか」で行っていた
+「打ち切られたか」の判定が働かなくなる。UTF-8 でない byte は数字より後ろに並び、降順の読み出しでは必ず先頭に来るので、UTF-8 でない key が余裕を超えて新しい側を埋めるだけで、
+窓の読み出しは 0 件を返し、遡りは埋まった prefix の有効な entry を飛ばしていた。
+
+- `DocsSync::query_replica_keys` の戻り値を `DocKeyPage { entries, reached_limit }` にした。`reached_limit` は「query が `limit` 件の entry を読んで打ち切られたか」で、飛ばした entry も数える。
+  `IrohDocsSync`・`MemoryDocsSync`・`ReloadableDocsSync`（転送）・test の double の全実装が、同じ意味で返す。trait の既定実装は従来どおりエラーを返す（黙って「打ち切られていない」を返さない）。
+- `query_time_index_window` と `query_time_index_desc` は、`reached_limit` で判定する。UTF-8 でない key の entry は、形の違う key と同じ余裕・読み直しの対象になる。query 数の上限（256）は変えていない。
+- 再現: `non_utf8_keys_filling_the_newest_side_do_not_hide_valid_entries_from_the_window`（有効な entry 5 件 + UTF-8 でない key 80 件で、窓が 5 件を返す）と
+  `non_utf8_keys_do_not_make_the_walk_skip_valid_entries`。判定を「返った件数」へ戻すと、前者は `[]` を返し、後者は古い側の entry だけを返して失敗することを確認した。
+  実 iroh-docs を通す結合 test `non_utf8_keys_on_the_newest_side_of_the_time_index_do_not_hide_the_timeline`（feature `iroh-integration-tests`）も足した。
+- `query_replica_keys` の caller を再列挙した（`rg "query_replica_keys\(" crates`）: `time_index.rs`（4 か所）、`replica_window.rs` の thread の照合（1 か所）、`ReloadableDocsSync` の転送。
+  thread の照合は、返った件数を「尽きたか」の判定に使っていない（古い側から最大 512 件を読むだけ）。
+
+| #1257 の条件 | 証跡 |
+| --- | --- |
+| AC-1、TR-2、TR-3 | `non_utf8_keys_filling_the_newest_side_do_not_hide_valid_entries_from_the_window`（未来の時刻の有効な entry も混在） |
+| AC-2、AC-3、TR-4、TR-5 | `non_utf8_keys_do_not_make_the_walk_skip_valid_entries`、`walk_stops_at_the_query_cap_and_returns_a_contiguous_head`（query 数の上限） |
+| AC-4 | `key_query_respects_prefix_order_and_limit_on_both_implementations`（memory と iroh が同じ意味で `reached_limit` を返す）、`non_utf8_key_does_not_fail_prefix_reads`（飛ばした entry も数える）、`reloadable_docs_sync_forwards_bounded_key_queries` |
+| INVAR-1 | `crates/docs-sync/src/tests/time_index.rs` の既存 test（無変更の期待で成功） |
+| INVAR-2 | `non_utf8_key_does_not_fail_prefix_reads`（#1253 の test。期待は無変更）、`non_utf8_key_does_not_stop_the_timeline` |
+| INVAR-3 | `key_query_respects_prefix_order_and_limit_on_both_implementations`（返る件数は `limit` 以下） |
 
 ### 検証
 

@@ -97,11 +97,11 @@ impl DocsSync for CountingDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
-        let entries = self.inner.query_replica_keys(replica_id, query).await?;
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        let page = self.inner.query_replica_keys(replica_id, query).await?;
         self.records_returned
-            .fetch_add(entries.len(), std::sync::atomic::Ordering::SeqCst);
-        Ok(entries)
+            .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(page)
     }
 
     async fn subscribe_replica(
@@ -174,7 +174,7 @@ impl DocsSync for HangingRemoteOnMissDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
         self.inner.query_replica_keys(replica_id, query).await
     }
 
@@ -359,6 +359,8 @@ mod hint_rehydration;
 mod hydration_integrity;
 mod hydration_integrity_contract;
 mod hydration_limits;
+#[cfg(feature = "iroh-integration-tests")]
+mod non_utf8_key;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;

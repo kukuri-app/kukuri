@@ -71,7 +71,7 @@ pub async fn query_time_index_window(
     let requested = limit
         .saturating_add(FUTURE_ENTRY_ALLOWANCE)
         .saturating_add(MALFORMED_KEY_ALLOWANCE);
-    let keys = docs_sync
+    let page = docs_sync
         .query_replica_keys(
             replica_id,
             DocKeyQuery {
@@ -81,8 +81,9 @@ pub async fn query_time_index_window(
             },
         )
         .await?;
-    let truncated = keys.len() >= requested;
-    let mut entries = parse_entries(index_prefix, keys)
+    // 返った件数では判定しない。UTF-8 でない key の entry は読み出しの中で飛ばされ、件数に入らない(#1257)。
+    let truncated = page.reached_limit;
+    let mut entries = parse_entries(index_prefix, page.entries)
         .into_iter()
         .filter(|entry| entry.created_at <= not_after)
         .collect::<Vec<_>>();
@@ -123,7 +124,7 @@ pub async fn query_time_index_desc(
                 },
             )
             .await?;
-        return Ok(parse_entries(index_prefix, keys));
+        return Ok(parse_entries(index_prefix, keys.entries));
     };
     if before.created_at < 0 {
         return Ok(Vec::new());
@@ -146,7 +147,7 @@ pub async fn query_time_index_desc(
         )
         .await?;
     entries.extend(
-        parse_entries(index_prefix, same_second)
+        parse_entries(index_prefix, same_second.entries)
             .into_iter()
             .filter(|entry| entry.object_id.as_str() < before.object_id.as_str())
             .take(limit),
@@ -169,7 +170,7 @@ pub async fn query_time_index_desc(
         }
         let needed = limit - entries.len();
         let requested = needed.saturating_add(MALFORMED_KEY_ALLOWANCE);
-        let keys = docs_sync
+        let page = docs_sync
             .query_replica_keys(
                 replica_id,
                 DocKeyQuery {
@@ -180,8 +181,8 @@ pub async fn query_time_index_desc(
             )
             .await?;
         queries += 1;
-        let truncated = keys.len() >= requested;
-        let valid = parse_entries(index_prefix, keys);
+        let truncated = page.reached_limit;
+        let valid = parse_entries(index_prefix, page.entries);
         if !truncated || valid.len() >= needed || time_prefix.len() >= TIME_DIGITS {
             entries.extend(valid);
             continue;
