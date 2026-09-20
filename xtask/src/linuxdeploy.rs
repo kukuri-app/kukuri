@@ -235,6 +235,7 @@ mod tests {
         assert!(lines[2].ends_with("--output appimage"));
 
         // 環境変数がなければ他のTauri projectと同じ1回の呼出しのまま。
+        std::fs::write(lib.join("libwayland-client.so.0"), b"").unwrap();
         let log = run(None);
         let lines: Vec<&str> = log.lines().collect();
         assert_eq!(lines.len(), 2, "{log}");
