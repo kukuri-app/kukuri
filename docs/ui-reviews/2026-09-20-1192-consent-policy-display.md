@@ -3,7 +3,7 @@
 - Status: current
 - Supersedes: None
 - Superseded by: None
-- PR: [#1233](https://github.com/kukuri-app/kukuri/pull/1233)
+- PR: [#1238](https://github.com/kukuri-app/kukuri/pull/1238)
 - Issue / Scope revision: [#1192](https://github.com/kukuri-app/kukuri/issues/1192)、2026-09-20
 - Preview: 下表の before / after 画像（`assets/1192/`）
 - 対象 surface / 利用者 / 目的: コミュニティノードの規約 Dialog（初回起動の案内・設定・見つける・コントロールセンターから開く共通 Dialog）、権利侵害申請モーダル、コントロールセンターのシステム欄、「見つける」カラム。ノードへ初めて同意する人、規約を読み直したい人、権利侵害を申し出る人が対象。文書をその文書が必要になる場所で提示する。
