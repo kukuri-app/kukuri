@@ -66,6 +66,7 @@ impl DocsSync for ShadowingDocsSync {
                     content_hash: kukuri_docs_sync::value_hash(value),
                     content_len: value.len() as u64,
                     value: value.clone(),
+                    docs_author: None,
                 });
             }
             merged.push(record);

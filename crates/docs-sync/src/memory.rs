@@ -23,6 +23,18 @@ pub struct MemoryDocsSync {
     records: Arc<Mutex<MemoryReplicaMap>>,
     events: Arc<Mutex<HashMap<String, broadcast::Sender<DocEvent>>>>,
     private_replica_secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
+    /// この docs が書き込みに使う docs author の id(ADR 0053)。既定は `None`(docs author を持たない docs)。
+    docs_author: Option<String>,
+}
+
+impl MemoryDocsSync {
+    /// 1 つの docs author の名義で書く docs。record・key の entry・event に、その id が付く。
+    pub fn with_docs_author(docs_author: impl Into<String>) -> Self {
+        Self {
+            docs_author: Some(docs_author.into()),
+            ..Self::default()
+        }
+    }
 }
 
 #[async_trait]
@@ -62,6 +74,7 @@ impl DocsSync for MemoryDocsSync {
                         key,
                         content_hash: value_hash(bytes),
                         source_peer: None,
+                        docs_author: self.docs_author.clone(),
                     });
             }
             DocOp::SetBytes { key, value } => {
@@ -79,6 +92,7 @@ impl DocsSync for MemoryDocsSync {
                         key,
                         content_hash: hash,
                         source_peer: None,
+                        docs_author: self.docs_author.clone(),
                     });
             }
             DocOp::DeletePrefix { prefix } => {
@@ -112,6 +126,7 @@ impl DocsSync for MemoryDocsSync {
                 content_len: value.len() as u64,
                 key,
                 value,
+                docs_author: self.docs_author.clone(),
             })
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| left.key.cmp(&right.key));
@@ -134,6 +149,7 @@ impl DocsSync for MemoryDocsSync {
                 key: key.clone(),
                 content_hash: value_hash(value),
                 content_len: value.len() as u64,
+                docs_author: self.docs_author.clone(),
             })
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| match query.order {
@@ -142,6 +158,28 @@ impl DocsSync for MemoryDocsSync {
         });
         rows.truncate(query.limit);
         Ok(rows)
+    }
+
+    async fn local_docs_author(&self) -> Result<Option<String>> {
+        Ok(self.docs_author.clone())
+    }
+
+    async fn query_replica_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        key: &str,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<DocRecord>> {
+        // この docs の record は、すべて `self.docs_author` の名義。他の docs author の record は無い。
+        if self.docs_author.as_deref() != Some(docs_author) {
+            return Ok(None);
+        }
+        Ok(self
+            .query_replica_with_policy(replica_id, DocQuery::Exact(key.to_string()), policy)
+            .await?
+            .into_iter()
+            .next())
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {

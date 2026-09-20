@@ -455,6 +455,7 @@ mod tests {
             value: value.to_vec(),
             content_hash: hash.into(),
             content_len: value.len() as u64,
+            docs_author: None,
         };
         let base = vec![record("objects/a/state", "h1", b"x")];
         assert_eq!(scan_fingerprint(&base), scan_fingerprint(&base.clone()));

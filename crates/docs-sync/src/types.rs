@@ -53,6 +53,8 @@ pub struct DocKeyEntry {
     pub key: String,
     pub content_hash: String,
     pub content_len: u64,
+    /// その entry を書いた docs author の id(ADR 0053)。docs author を持たない実装は `None`。
+    pub docs_author: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +69,9 @@ pub struct DocRecord {
     pub value: Vec<u8>,
     pub content_hash: String,
     pub content_len: u64,
+    /// その entry を書いた docs author の id(ADR 0053)。docs author を持たない実装は `None`。
+    #[serde(default)]
+    pub docs_author: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +80,9 @@ pub struct DocEvent {
     pub key: String,
     pub content_hash: String,
     pub source_peer: Option<String>,
+    /// その entry を書いた docs author の id(ADR 0053)。docs author を持たない実装は `None`。
+    #[serde(default)]
+    pub docs_author: Option<String>,
 }
 
 #[async_trait]
@@ -133,6 +141,28 @@ pub trait DocsSync: Send + Sync {
         _query: DocKeyQuery,
     ) -> Result<Vec<DocKeyEntry>> {
         anyhow::bail!("this DocsSync implementation does not support bounded key queries")
+    }
+    /// この実装が書き込みに使う、アカウントの署名鍵から導出した docs author の id(ADR 0053)。
+    ///
+    /// 導出した docs author を設定していない実装と、docs author を持たない実装は `None` を返す。`None` のとき、
+    /// 呼び出し側は投稿の envelope の `docs_author` の tag と hint の手がかりを付けない。
+    async fn local_docs_author(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+    /// docs author と key の組を指定して 1 件読む(ADR 0053 §3)。
+    ///
+    /// 同じ key に他の docs author の entry が何件あっても、読む entry は最大 1 件。`docs_author` が docs author の id として
+    /// 読めない値のとき(手がかりは信用しない入力)は `Ok(None)` を返す。
+    /// 既定実装はエラーを返す。key だけの読み出しへ黙って落ちると、積まれた record 数に影響される経路が戻るため、
+    /// 本番の実装と、この読み出しを通る test double は必ず実装する。
+    async fn query_replica_by_author(
+        &self,
+        _replica_id: &ReplicaId,
+        _docs_author: &str,
+        _key: &str,
+        _policy: DocFetchPolicy,
+    ) -> Result<Option<DocRecord>> {
+        anyhow::bail!("this DocsSync implementation does not support reads by docs author")
     }
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream>;
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()>;

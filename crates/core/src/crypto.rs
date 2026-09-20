@@ -55,6 +55,37 @@ impl KukuriKeys {
         let keypair = Keypair::from_secret_key(SECP256K1, &self.secret_key);
         SECP256K1.sign_schnorr(message, &keypair)
     }
+
+    /// docs(iroh-docs)の書き込みに使う docs author の秘密鍵の種を、アカウントの署名鍵から導出する(ADR 0053)。
+    ///
+    /// 同じアカウント鍵からは、どの端末でも同じ値になる。導出は一方向で、この値からアカウントの秘密鍵は求められない。
+    /// context を変えると全アカウントの docs author の id が変わり、それまでの投稿の `docs_author` の tag と合わなくなる。
+    pub fn derive_docs_author_seed(&self) -> DocsAuthorSeed {
+        DocsAuthorSeed(blake3::derive_key(
+            DOCS_AUTHOR_DERIVATION_CONTEXT,
+            &self.secret_key.secret_bytes(),
+        ))
+    }
+}
+
+/// docs author の導出の context(ADR 0053 §1)。変更してはならない。
+const DOCS_AUTHOR_DERIVATION_CONTEXT: &str = "kukuri.app 2026-09-21 docs author v1";
+
+/// docs author の秘密鍵の種(ed25519 の 32 byte)。秘密値なので、`Debug` と log へ中身を出さない。
+#[derive(Clone)]
+pub struct DocsAuthorSeed([u8; 32]);
+
+impl DocsAuthorSeed {
+    /// iroh-docs の `Author::from_bytes` へ渡すための秘密値。保存・送信・log 出力をしてはならない。
+    pub fn expose_secret_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for DocsAuthorSeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocsAuthorSeed").finish_non_exhaustive()
+    }
 }
 
 fn parse_secret_key(secret: &str) -> Result<SecretKey> {

@@ -42,3 +42,30 @@ fn author_profile_topic_id_matches_golden() {
         "kukuri:topic:profile:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     );
 }
+
+// ADR 0053 §1: docs author の秘密鍵の種。context か手順が変わると、全アカウントの docs author の id が変わり、
+// それまでの投稿の `docs_author` の tag と合わなくなる。
+#[test]
+fn docs_author_seed_matches_golden() {
+    let keys = crate::KukuriKeys::parse(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    )
+    .expect("test key");
+    assert_eq!(
+        hex::encode(keys.derive_docs_author_seed().expose_secret_bytes()),
+        "cc17b04dc636c67c8d9a3e6145b5b86191dfb080d29a30c14253ab6adf50f49d"
+    );
+    // 別のアカウント鍵からは別の値になり、Debug は中身を出さない。
+    let other = crate::KukuriKeys::parse(
+        "101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f",
+    )
+    .expect("test key");
+    assert_ne!(
+        other.derive_docs_author_seed().expose_secret_bytes(),
+        keys.derive_docs_author_seed().expose_secret_bytes()
+    );
+    assert_eq!(
+        format!("{:?}", keys.derive_docs_author_seed()),
+        "DocsAuthorSeed { .. }"
+    );
+}

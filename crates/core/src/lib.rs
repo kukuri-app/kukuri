@@ -27,7 +27,8 @@ pub mod wire;
 mod tests;
 
 pub use crypto::{
-    KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys, is_placeholder_secret,
+    DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,
+    is_placeholder_secret,
 };
 pub use device_backup::{
     DEVICE_BACKUP_CHUNK_BYTES, DEVICE_BACKUP_COMPONENT_VERSION, DEVICE_BACKUP_FORMAT_VERSION,
