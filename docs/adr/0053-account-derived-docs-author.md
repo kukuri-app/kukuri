@@ -37,16 +37,20 @@ kukuri は、record の正しさを docs の層ではなく署名つき envelope
 - 既定の docs author を切り替えた後に同じ key を書き直すと、その key に新旧 2 つの名義の entry が並ぶ。key だけを指定して先頭を読む読み手（profile、session の state など、
   投稿と取り下げ以外の key）が旧い値を読まないよう、書き込みのたびに、旧い名義が同じ key に持つ entry を消す（旧い名義ごとに key を 1 つ調べるだけで、件数に依存しない）。
   prefix の削除は、旧い名義でも行う（旧い名義で書いた entry は、その名義でしか消せない）。
-- 導出した秘密鍵は、iroh-docs の保存場所（端末内）以外に保存しない。docs・gossip・log・エラー文言へ出さない。バックアップはアカウントの鍵を運べば足りる（復元先で導出し直す）。
+- 導出した秘密鍵は、iroh-docs の保存場所（端末内）以外に保存しない。docs・gossip・log・エラー文言へ出さない。
+  端末バックアップ（ADR 0048）は iroh-docs の保存場所ごと暗号化して運ぶので、導出した鍵も暗号化された backup に含まれる（同じ backup がアカウントの秘密鍵も含む。平文では出ない）。
+  復元先は、アカウントの鍵から導出し直して設定するので、backup の中の鍵に依存しない。
 
 ### 2. 著者が自分の docs author を示す方法
 
 - 投稿（post・comment・repost）の envelope に、tag `["docs_author", <docs author の id。64 桁の hex>]` を入れる。tag は署名の対象であり、
   「この `pubkey` の著者は、この docs author で書く」という著者自身の申告になる。
-- gossip の hint の `HintObjectRef` に、任意の field `docs_author` を入れる（署名なしの手がかり）。
+- gossip の hint の `HintObjectRef` に、任意の field `docs_author` を入れる（署名なしの手がかり）。public topic の hint だけに入れる。
+  private channel の hint の topic は epoch の秘密に依存せず、現在の epoch を同期できない者にも届きうるので、docs author の id を載せない。
+  channel の参加者は、docs の event と索引の entry から同じ手がかりを得る。
 - docs の層の情報として、`DocRecord`・`DocKeyEntry`・`DocEvent` に、その entry を書いた docs author の id を持たせる（値を持たない実装のために任意）。
   索引の entry（`indexes/timeline/…`・`indexes/thread/…`）は、書いた docs author 自身が手がかりになるので、値は変えない。
-- docs author の id は、`pubkey` と同じ範囲へ公開される識別子である（その replica を同期できる者、hint を受け取る topic の参加者）。新しい送信先は増えない。
+- docs author の id は、`pubkey` と同じ範囲へ公開される識別子である（その replica を同期できる者と、public topic の hint を受け取る者）。新しい送信先は増えない。
 
 ### 3. 読む順序
 
@@ -103,7 +107,7 @@ docs author が合うことは、検証の代わりにしない。他人の docs
 ## Data classification
 
 - 新しく docs と gossip へ置く情報: docs author の id（公開の識別子）。Canonical Source は投稿の envelope の tag。公開範囲は `pubkey` と同じ。
-- 端末内だけに置く情報: 導出した docs author の秘密鍵（iroh-docs の保存場所）。アカウントの秘密鍵から導出し直せるので、バックアップの対象にしない。
+- 端末内だけに置く情報: 導出した docs author の秘密鍵（iroh-docs の保存場所）。暗号化された端末バックアップには保存場所ごと含まれるが、復元先はアカウントの秘密鍵から導出し直す。
 - 外部送信の一覧（`docs/legal/app-data-flow-inventory.md`）の「公開鍵・endpoint ID・接続情報」の行に、docs author の id を加える。
 
 ## References

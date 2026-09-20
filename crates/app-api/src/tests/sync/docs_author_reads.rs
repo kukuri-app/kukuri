@@ -685,3 +685,97 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
         Some(WORDS)
     );
 }
+
+// INVAR-6: private channel の hint の topic は epoch の秘密に依存しないので、docs author の id を載せない。
+// envelope の tag(その channel の replica の中)と、行の列には入る。
+#[tokio::test]
+async fn private_channel_hint_does_not_carry_the_docs_author() {
+    let store = Arc::new(MemoryStore::default());
+    let docs_sync = Arc::new(MemoryDocsSync::with_docs_author(author_docs_author()));
+    let hints = Arc::new(TrackingHintTransport::default());
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        hints.clone(),
+        docs_sync,
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let topic = "kukuri:topic:docs-author-private-hint";
+    let channel = app
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "private".into(),
+            audience_kind: ChannelAudienceKind::FriendOnly,
+        })
+        .await
+        .expect("create private channel");
+    let channel_id = ChannelId::new(channel.channel_id.clone());
+    let hint_topic = channel_hint_topic_for(topic, Some(&channel_id));
+    let mut published = hints.hint_sender(&hint_topic).await.subscribe();
+    let object_id = app
+        .create_post_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: channel_id.clone(),
+            },
+            "private words",
+            None,
+        )
+        .await
+        .expect("private post");
+
+    let row = ObjectProjectionStore::get_object_projection(
+        store.as_ref(),
+        &EnvelopeId::from(object_id.as_str()),
+    )
+    .await
+    .expect("projection")
+    .expect("row");
+    assert_eq!(row.source_docs_author, Some(author_docs_author()));
+
+    let docs_author_in_hints = timeout(Duration::from_secs(5), async {
+        loop {
+            let hint = published.recv().await.expect("hint");
+            if let GossipHint::TopicObjectsChanged { objects, .. } = hint.hint
+                && let Some(object) = objects.iter().find(|object| object.object_id == object_id)
+            {
+                return object.docs_author.clone();
+            }
+        }
+    })
+    .await
+    .expect("hint timeout");
+    assert_eq!(
+        docs_author_in_hints, None,
+        "a private channel hint must not carry the docs author id"
+    );
+
+    // 取り下げの hint も同じ。
+    app.withdraw_post(
+        topic,
+        object_id.as_str(),
+        ChannelRef::PrivateChannel { channel_id },
+        None,
+        WithdrawalReasonVisibility::Private,
+        None,
+    )
+    .await
+    .expect("withdraw");
+    let withdrawal_hint = timeout(Duration::from_secs(5), async {
+        loop {
+            let hint = published.recv().await.expect("hint");
+            if let GossipHint::TopicObjectsChanged { objects, .. } = hint.hint
+                && let Some(object) = objects
+                    .iter()
+                    .find(|object| object.object_kind == "post_withdrawal")
+            {
+                return object.docs_author.clone();
+            }
+        }
+    })
+    .await
+    .expect("withdrawal hint timeout");
+    assert_eq!(withdrawal_hint, None);
+}

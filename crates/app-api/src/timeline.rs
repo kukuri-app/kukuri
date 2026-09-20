@@ -433,8 +433,11 @@ impl AppService {
                     objects: vec![HintObjectRef {
                         object_id: target_object_id.0.clone(),
                         object_kind: "post_withdrawal".to_string(),
-                        // 取り下げを書いた docs author(ADR 0053 §2)。
-                        docs_author: self.services.docs_sync.local_docs_author().await?,
+                        // 取り下げを書いた docs author(ADR 0053 §2)。private channel の hint には載せない。
+                        docs_author: match target_content.channel_id {
+                            Some(_) => None,
+                            None => self.services.docs_sync.local_docs_author().await?,
+                        },
                     }],
                 },
             )
@@ -661,7 +664,11 @@ impl AppService {
             objects: vec![HintObjectRef {
                 object_id: envelope.id.0.clone(),
                 object_kind: envelope.kind.clone(),
-                docs_author: docs_author.clone(),
+                // private channel の hint の topic は epoch の秘密に依存しないので、docs author を載せない
+                // (ADR 0053 §2)。channel の参加者は、docs の event と索引の entry から同じ手がかりを得る。
+                docs_author: docs_author
+                    .clone()
+                    .filter(|_| effective_channel_id.is_none()),
             }],
         };
         let mut hint_error = None;

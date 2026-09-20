@@ -54,13 +54,21 @@
 | INVAR-1・2 | TR-4 | `withdrawal_written_by_another_docs_author_does_not_hide_the_post` |
 | INVAR-3 | TR-6 | `false_docs_author_hint_never_projects_an_unverified_value` |
 | INVAR-4 | TR-11 | `read_failure_by_docs_author_is_an_error` |
-| INVAR-6 | TR-6（Issue） | docs author の id を置く場所は、投稿の envelope・docs の entry・hint で、いずれも `pubkey` と同じ範囲。新しい送信先は無い（ADR 0053 の Data classification） |
+| INVAR-6 | TR-6（Issue） | `private_channel_hint_does_not_carry_the_docs_author`。docs author の id を置く場所は、投稿の envelope・docs の entry（その replica の中）と、public topic の hint だけ |
 
 ## inventory
 
 Issue #1258 の INV-1〜INV-10。INV-8（`DocsSync` の implementor）は、`rg "impl DocsSync for"` で 18。新しい読み出しを実装または転送するのは `IrohDocsSync`・`MemoryDocsSync`・`ReloadableDocsSync`・`ShadowingDocsSync`。
 それ以外の test double は docs author を持たない `MemoryDocsSync` を包んでおり、`local_docs_author` が `None` なので tag も手がかりも生まれず、新しい読み出しは呼ばれない。
 INV-10（CN indexer）は実装を変えていない。`ReferenceGuard` は `verify()` と `to_post_object()` の値を使い、tag の集合は照合しない。
+
+## 独立監査の指摘への対応
+
+- N-1（INVAR-6）: private channel の hint の topic（`hint/private/<channel id>`）は epoch の秘密に依存せず、現在の epoch を同期できない者にも届きうる。投稿と取り下げの hint の `docs_author` は、
+  public topic のときだけ入れる形にした（`crates/app-api/src/timeline.rs`）。channel の参加者は、docs の event と索引の entry から同じ手がかりを得る。
+  test は `private_channel_hint_does_not_carry_the_docs_author`（filter を外すと失敗する）。ADR 0053 §2 も同じ内容にした。
+- N-2: ADR 0053 の「バックアップの対象にしない」は誤りだった。端末バックアップは iroh-docs の保存場所ごと暗号化して運ぶので、導出した鍵も暗号化された backup に含まれる。ADR の記述を直した。
+- N-3〜N-8 は non-blocker のまま（監査記録を参照）。
 
 ## 残る限界
 
