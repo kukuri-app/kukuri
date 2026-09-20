@@ -258,7 +258,7 @@ async fn unverified_object_projections_are_dropped_and_other_tables_are_kept() {
 }
 
 // #1252: 署名と replica を確かめる前に保存された reaction・live session・game room の行は、migration で消える。
-// 検証済みの版の行と、他の表は残る。
+// 検証済みの版の行は残る。
 #[tokio::test]
 async fn unverified_reaction_and_session_projections_are_dropped() {
     let tempdir = tempdir().expect("tempdir");

@@ -96,8 +96,9 @@ Accepted
   - 署名された manifest を確かめる前に、未検証の state が指す manifest blob を取りに行かない。例外は、署名つきの envelope を持たない `dome-` の id の state
     （修正前の client が書いた Dome）で、manifest blob から上の metaverse room の規則で確かめる。
   - 利用者の操作（終了・参加・更新・Dome の移動と削除）が読む state と manifest も、同じ検証を通す。
-  - 互換: 修正前の client が書いた live session と ScoreGame は署名つきの envelope を持たないので、修正後の client には表示されない（owner が修正後の client で
-    更新すると表示される）。state doc の形は変えていないので、修正前の client は修正後の record を読める。
+  - 互換: 修正前の client が書いた live session と ScoreGame は署名つきの envelope を持たないので、修正後の client には表示されず、操作（終了・参加・更新）も
+    できない（owner 自身の client でも同じ）。未検証の state へ owner が署名を付け直す経路は作らない（第三者が置いた内容へ署名させる入口になるため）。
+    修正前の client には、その session がそれまでの状態のまま見え続ける。state doc の形は変えていないので、修正前の client は修正後の record を読める。
 - reaction・live session・game room でも、検証に通らない record と読めない record は、その object だけを飛ばす（warn）。全件走査・event・hint・利用者の操作を失敗させない。
 - reaction の行と、live session・game room の行は、`projection_version` 2 から検証済みの record だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
 

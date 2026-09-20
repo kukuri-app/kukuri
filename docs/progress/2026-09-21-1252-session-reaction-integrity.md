@@ -57,8 +57,9 @@
 
 ## 互換と利用者への影響
 
-- 修正前の client が書いた live session と ScoreGame は、署名つきの envelope を持たないので、修正後の client には表示されない。owner が修正後の client で更新（終了・score の更新）すると表示される。
-  Dome（metaverse room）は、修正前の client が書いたものも読める。
+- 修正前の client が書いた live session と ScoreGame は、署名つきの envelope を持たないので、修正後の client には表示されず、操作（終了・参加・更新）もできない
+  （owner 自身の client でも同じ。`fetch_*_state_and_manifest` が検証に通る state を返さない）。更新の時点で進行中だった session は、修正前の client には `Live` のまま見え続ける。
+  未検証の state へ owner が署名を付け直す経路は、第三者が置いた内容へ署名させる入口になるので作らない。Dome（metaverse room）は、修正前の client が書いたものも読める。
 - state doc の形は変えていない。修正前の client は、修正後の client が書いた record をこれまでどおり読める。
 
 ## inventory の逆引き（修正後）
@@ -77,8 +78,8 @@
 - `cargo nextest run -p kukuri-app-api --lib`: 278 件成功（修正前の再現 11 件 + 契約 9 件を含む）。`-p kukuri-store --lib`: migration の round trip と、旧い行を消す test を含めて成功。
 - `cargo xtask check`: `cargo fmt --check` と workspace の `cargo clippy --all-targets -- -D warnings` は成功。続く `apps/desktop/src-tauri` の `cargo check` は、
   git worktree で実行したため workspace の解決で失敗した（差分と無関係。CI で確認する）。
-- `cargo xtask oversized-files`: 成功（`game.rs` が上限を下回ったという note だけ）。
-- 未実行: `cargo xtask app-api-slow-test`（実際の iroh-docs を通す統合 test）と `cargo xtask e2e-smoke`。CI の結果で確認する。
+- `cargo xtask oversized-files`: 成功（`game.rs` が上限を下回ったという note だけ）。`cargo xtask e2e-smoke`: 成功。
+- 未実行: `cargo xtask app-api-slow-test`（実際の iroh-docs を通す統合 test）。
 
 ## 残る事項（本 Issue の対象外）
 
