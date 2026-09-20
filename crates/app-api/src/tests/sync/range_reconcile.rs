@@ -394,7 +394,7 @@ async fn thread_reconcile_fills_missing_replies_without_scanning() {
     docs_sync.clear_queries().await;
 
     let hydrated = app
-        .reconcile_thread(topic.as_str(), &root.id)
+        .reconcile_thread(topic.as_str(), &root.id, None, 20)
         .await
         .expect("reconcile thread");
     assert_eq!(hydrated, 3);

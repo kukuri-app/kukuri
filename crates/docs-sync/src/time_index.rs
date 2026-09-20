@@ -2,13 +2,13 @@
 //!
 //! 索引の key は `<index prefix><created_at を 20 桁で 0 埋め>-<object id>/<object id>`。20 桁の 0 埋めなので、
 //! 10 進の桁の prefix がそのまま時間の範囲になる。iroh-docs の query は prefix・key 順・`limit` しか
-//! 持たず、「この key より古い側」という範囲指定が無い。そこで、cursor の時刻の桁を下の桁から順に
-//! 1 つずつ減らした prefix を新しい側からたどり、cursor より古い entry を新しい順に集める。
-//! 1 回の呼び出しの query 数は「時刻の各桁の数字の和 + 1」以下の定数で、replica の総 entry 数に依存しない。
+//! 持たず、「この key より古い側」「この key より新しい側」という範囲指定が無い。そこで、cursor の時刻の桁を
+//! 下の桁から順に 1 つずつ減らした(新しい側へ読むときは増やした)prefix を cursor に近い側からたどり、
+//! cursor より先の entry を順に集める。1 回の呼び出しの query 数は定数以下で、replica の総 entry 数に依存しない。
 //!
 //! 索引の key は、その replica に書ける誰もが置ける。形の違う key と、未来の時刻の key への耐性は
 //! best effort とする(読み出しごとに固定の余裕を持ち、余裕を超えたら prefix を細かく分けて読み直す。
-//! query 数には上限を置く)。
+//! query 数には上限を置き、達したら続きの起点を返す)。
 //! 有効な形の key を大量に置く書き込みは、この層では防げない。
 
 use anyhow::Result;
@@ -18,15 +18,15 @@ use crate::types::{DocKeyEntry, DocKeyOrder, DocKeyQuery, DocsSync};
 
 /// 索引の時刻部分の桁数(`kukuri_core::timeline_sort_key` の 0 埋めと同じ)。
 const TIME_DIGITS: usize = 20;
-/// 同じ秒の中で cursor より古い entry を探すときの読み出しの上限。
-/// 1 秒に同じ索引へこの件数を超える投稿があると、超えた分は遡りで取りこぼしうる(best effort)。
+/// 同じ秒の中で cursor より先の entry を探すときの読み出しの上限。
+/// 1 秒に同じ索引へこの件数を超える投稿があると、超えた分は取りこぼしうる(best effort)。
 const SAME_SECOND_SCAN_LIMIT: usize = 512;
 /// 1 回の読み出しで、形の違う key が占めてよい枠。`limit` に足して読む。
 const MALFORMED_KEY_ALLOWANCE: usize = 32;
 /// 窓の読み出しで、未来の時刻の entry が占めてよい枠。超えたら cursor つきの読み出しへ落ちる。
 const FUTURE_ENTRY_ALLOWANCE: usize = 32;
-/// 1 回の遡りで発行する query 数の上限。通常は「時刻の各桁の数字の和」以下で、形の違う key を避けるために
-/// prefix を細かく分けたときだけ増える。上限に達したら、そこまでに読めた分を返す。
+/// 1 回の読み出しで発行する query 数の上限。通常は時刻の桁から決まる数十回以下で、形の違う key を避けるために
+/// prefix を細かく分けたときだけ増える。上限に達したら、そこまでに読めた分と、続きの起点を返す。
 const MAX_WALK_QUERIES: usize = 256;
 
 /// 時系列の索引の 1 件。
@@ -37,7 +37,8 @@ pub struct TimeIndexEntry {
     pub key: String,
 }
 
-/// 遡りの起点。この位置より古い entry だけを返す。
+/// 読み出しの起点。古い側へ読むときはこの位置より古い entry だけを、新しい側へ読むときはこの位置より新しい
+/// entry だけを返す。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimeIndexCursor {
     pub created_at: i64,
@@ -45,13 +46,38 @@ pub struct TimeIndexCursor {
 }
 
 impl TimeIndexCursor {
-    /// `created_at` 以前の entry をすべて含む起点(`created_at` の秒の entry も含む)。
+    /// 古い側へ読むときの起点。`created_at` 以前の entry をすべて含む(`created_at` の秒の entry も含む)。
     pub fn not_after(created_at: i64) -> Self {
         Self {
             created_at: created_at.saturating_add(1),
             object_id: String::new(),
         }
     }
+
+    /// 新しい側へ読むときの起点。`created_at` 以後の entry をすべて含む(object id は空にならないので、
+    /// `created_at` の秒の entry も含む)。
+    pub fn not_before(created_at: i64) -> Self {
+        Self {
+            created_at,
+            object_id: String::new(),
+        }
+    }
+}
+
+/// 読み出し 1 回の結果。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TimeIndexPage {
+    /// 読んだ向きに並んだ entry。件数は `limit` 以下。
+    pub entries: Vec<TimeIndexEntry>,
+    /// query 数の上限に達して、`limit` 件に届く前に打ち切ったときの、続きの起点。同じ向きの読み出しへ渡すと、
+    /// 打ち切った位置から続ける。
+    ///
+    /// `None` で `entries` が `limit` 件に満たなければ、その向きの entry は尽きている。`entries` の件数だけで
+    /// 「尽きた」と判定してはならない(形の違う key が並んだ範囲では、1 件も読めないまま上限に達する)。
+    pub resume: Option<TimeIndexCursor>,
+    /// この読み出しが発行した key の一覧の query の数。呼び出し側が、読み出しの重さに応じて次の読み出しまでの
+    /// 間隔を決めるために使う。
+    pub queries: usize,
 }
 
 /// 索引の新しい側から最大 `limit` 件を返す(窓の読み出し)。`not_after`(秒)より未来の時刻の entry は読み飛ばす。
@@ -64,9 +90,9 @@ pub async fn query_time_index_window(
     index_prefix: &str,
     not_after: i64,
     limit: usize,
-) -> Result<Vec<TimeIndexEntry>> {
+) -> Result<TimeIndexPage> {
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(TimeIndexPage::default());
     }
     let requested = limit
         .saturating_add(FUTURE_ENTRY_ALLOWANCE)
@@ -89,16 +115,23 @@ pub async fn query_time_index_window(
         .collect::<Vec<_>>();
     if entries.len() >= limit || !truncated {
         entries.truncate(limit);
-        return Ok(entries);
+        return Ok(TimeIndexPage {
+            entries,
+            resume: None,
+            queries: 1,
+        });
     }
-    query_time_index_desc(
+    let mut page = walk_time_index(
         docs_sync,
         replica_id,
         index_prefix,
+        DocKeyOrder::Descending,
         Some(&TimeIndexCursor::not_after(not_after)),
         limit,
     )
-    .await
+    .await?;
+    page.queries += 1;
+    Ok(page)
 }
 
 /// `index_prefix`(末尾が `/`)の索引から、新しい順に最大 `limit` 件を返す。
@@ -109,63 +142,150 @@ pub async fn query_time_index_desc(
     index_prefix: &str,
     before: Option<&TimeIndexCursor>,
     limit: usize,
-) -> Result<Vec<TimeIndexEntry>> {
+) -> Result<TimeIndexPage> {
+    walk_time_index(
+        docs_sync,
+        replica_id,
+        index_prefix,
+        DocKeyOrder::Descending,
+        before,
+        limit,
+    )
+    .await
+}
+
+/// `index_prefix`(末尾が `/`)の索引から、古い順に最大 `limit` 件を返す。
+/// `after` があれば、その位置より新しい entry だけを返す。
+pub async fn query_time_index_asc(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    index_prefix: &str,
+    after: Option<&TimeIndexCursor>,
+    limit: usize,
+) -> Result<TimeIndexPage> {
+    walk_time_index(
+        docs_sync,
+        replica_id,
+        index_prefix,
+        DocKeyOrder::Ascending,
+        after,
+        limit,
+    )
+    .await
+}
+
+/// 索引の、読む向きの端。端より先の prefix は読まない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IndexEdge {
+    /// まだ調べていない、または形の違う key に埋まっていて分からない。
+    Unknown,
+    /// その向きで最後の有効な entry の時刻。
+    At(u64),
+    /// 索引に有効な entry が 1 件も無い。
+    Empty,
+}
+
+async fn walk_time_index(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    index_prefix: &str,
+    order: DocKeyOrder,
+    cursor: Option<&TimeIndexCursor>,
+    limit: usize,
+) -> Result<TimeIndexPage> {
     if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let Some(before) = before else {
-        let keys = docs_sync
-            .query_replica_keys(
-                replica_id,
-                DocKeyQuery {
-                    prefix: index_prefix.to_string(),
-                    order: DocKeyOrder::Descending,
-                    limit,
-                },
-            )
-            .await?;
-        return Ok(parse_entries(index_prefix, keys.entries));
-    };
-    if before.created_at < 0 {
-        return Ok(Vec::new());
-    }
-    let digits = format!("{:0width$}", before.created_at, width = TIME_DIGITS);
-    if digits.len() != TIME_DIGITS {
-        return Ok(Vec::new());
+        return Ok(TimeIndexPage::default());
     }
     let mut entries = Vec::new();
-
-    // 同じ秒の中で、cursor より小さい object id を持つ entry。
-    let same_second = docs_sync
-        .query_replica_keys(
-            replica_id,
-            DocKeyQuery {
-                prefix: format!("{index_prefix}{digits}-"),
-                order: DocKeyOrder::Descending,
-                limit: SAME_SECOND_SCAN_LIMIT,
-            },
-        )
-        .await?;
-    entries.extend(
-        parse_entries(index_prefix, same_second.entries)
-            .into_iter()
-            .filter(|entry| entry.object_id.as_str() < before.object_id.as_str())
-            .take(limit),
-    );
-
-    // 下の桁から順に、その桁を 1 つずつ減らした prefix を、新しい側から順に読む。
-    // `pending` は後ろから取り出すので、古い側の prefix から積む。
-    let digit_bytes = digits.as_bytes();
-    let mut pending = Vec::new();
-    for position in 0..TIME_DIGITS {
-        let digit = digit_bytes[position] - b'0';
-        for smaller in 0..digit {
-            pending.push(format!("{}{smaller}", &digits[..position]));
+    // 同じ秒の読み出しと、索引の端の読み出しも数える。`MAX_WALK_QUERIES` は prefix の読み出しと端の読み出しに掛かる。
+    let mut same_second_queries = 0usize;
+    // 時刻の prefix の stack。後ろから取り出すので、読む順の逆に積む。空の prefix は索引の全体。
+    let mut pending: Vec<String> = Vec::new();
+    match cursor {
+        // 索引の時刻は 0 以上。負の位置より古い entry は無く、負の位置より新しい entry は索引の全体。
+        Some(cursor) if cursor.created_at < 0 => match order {
+            DocKeyOrder::Descending => return Ok(TimeIndexPage::default()),
+            DocKeyOrder::Ascending => pending.push(String::new()),
+        },
+        Some(cursor) => {
+            let digits = format!("{:0width$}", cursor.created_at, width = TIME_DIGITS);
+            if digits.len() != TIME_DIGITS {
+                return Ok(TimeIndexPage::default());
+            }
+            // 同じ秒の中で、cursor より先の object id を持つ entry。
+            same_second_queries += 1;
+            let same_second = docs_sync
+                .query_replica_keys(
+                    replica_id,
+                    DocKeyQuery {
+                        prefix: format!("{index_prefix}{digits}-"),
+                        order,
+                        limit: SAME_SECOND_SCAN_LIMIT,
+                    },
+                )
+                .await?;
+            entries.extend(
+                parse_entries(index_prefix, same_second.entries)
+                    .into_iter()
+                    .filter(|entry| match order {
+                        DocKeyOrder::Descending => {
+                            entry.object_id.as_str() < cursor.object_id.as_str()
+                        }
+                        DocKeyOrder::Ascending => {
+                            entry.object_id.as_str() > cursor.object_id.as_str()
+                        }
+                    })
+                    .take(limit),
+            );
+            // 下の桁から順に、その桁を 1 つずつ動かした prefix を、cursor に近い側から順に読む。
+            let digit_bytes = digits.as_bytes();
+            for position in 0..TIME_DIGITS {
+                let digit = digit_bytes[position] - b'0';
+                match order {
+                    DocKeyOrder::Descending => {
+                        for smaller in 0..digit {
+                            pending.push(format!("{}{smaller}", &digits[..position]));
+                        }
+                    }
+                    DocKeyOrder::Ascending => {
+                        // 先頭の桁が 0 でない 20 桁の時刻は、索引の時刻(符号つき 64 bit)に収まらない。
+                        if position == 0 {
+                            continue;
+                        }
+                        for larger in ((digit + 1)..=9).rev() {
+                            pending.push(format!("{}{larger}", &digits[..position]));
+                        }
+                    }
+                }
+            }
         }
+        None => pending.push(String::new()),
     }
+
     let mut queries = 0usize;
+    let mut resume = None;
+    let mut edge = IndexEdge::Unknown;
+    let mut edge_checked = false;
     while let Some(time_prefix) = pending.pop() {
-        if entries.len() >= limit || queries >= MAX_WALK_QUERIES {
+        if entries.len() >= limit {
+            break;
+        }
+        let (prefix_min, prefix_max) = time_prefix_bounds(time_prefix.as_str());
+        if let IndexEdge::At(edge) = edge {
+            let past_the_edge = match order {
+                DocKeyOrder::Descending => prefix_max < edge,
+                DocKeyOrder::Ascending => prefix_min > edge,
+            };
+            if past_the_edge {
+                // 残りの prefix は、すべて索引の端より先にある。
+                break;
+            }
+        }
+        if queries >= MAX_WALK_QUERIES {
+            resume = Some(match order {
+                DocKeyOrder::Descending => TimeIndexCursor::not_after(clamp_time(prefix_max)),
+                DocKeyOrder::Ascending => TimeIndexCursor::not_before(clamp_time(prefix_min)),
+            });
             break;
         }
         let needed = limit - entries.len();
@@ -175,7 +295,7 @@ pub async fn query_time_index_desc(
                 replica_id,
                 DocKeyQuery {
                     prefix: format!("{index_prefix}{time_prefix}"),
-                    order: DocKeyOrder::Descending,
+                    order,
                     limit: requested,
                 },
             )
@@ -183,19 +303,98 @@ pub async fn query_time_index_desc(
         queries += 1;
         let truncated = page.reached_limit;
         let valid = parse_entries(index_prefix, page.entries);
-        if !truncated || valid.len() >= needed || time_prefix.len() >= TIME_DIGITS {
-            entries.extend(valid);
+        if truncated && valid.len() < needed && time_prefix.len() < TIME_DIGITS {
+            // 形の違う key が余裕を超えて枠を埋めた。この prefix には、読めていない有効な entry が残りうる。
+            // 先の prefix へ進むと、その entry を飛ばしたページを返してしまうので、1 桁細かい prefix に
+            // 分けて読み直す。1 秒まで分けても埋まっている場合は、その秒だけを諦める。
+            if time_prefix.is_empty() {
+                // 先頭の桁が 0 でない 20 桁の時刻は、索引の時刻(符号つき 64 bit)に収まらない。
+                pending.push("0".to_string());
+                continue;
+            }
+            match order {
+                DocKeyOrder::Descending => {
+                    for digit in 0..=9 {
+                        pending.push(format!("{time_prefix}{digit}"));
+                    }
+                }
+                DocKeyOrder::Ascending => {
+                    for digit in (0..=9).rev() {
+                        pending.push(format!("{time_prefix}{digit}"));
+                    }
+                }
+            }
             continue;
         }
-        // 形の違う key が余裕を超えて枠を埋めた。この prefix には、読めていない有効な entry が残りうる。
-        // 古い側の prefix へ進むと、その entry を飛ばしたページを返してしまうので、1 桁細かい prefix に
-        // 分けて新しい側から読み直す。1 秒まで分けても埋まっている場合は、その秒だけを諦める。
-        for digit in 0..=9 {
-            pending.push(format!("{time_prefix}{digit}"));
+        if valid.is_empty() && !truncated && !edge_checked {
+            // entry の無い範囲へ出た。索引の端を 1 回だけ調べ、端より先の prefix を読まない。
+            // 調べないと、entry が尽きた後も、残りの桁の prefix を空振りで読み続ける。
+            edge_checked = true;
+            queries += 1;
+            edge = index_edge(docs_sync, replica_id, index_prefix, order).await?;
+            if edge == IndexEdge::Empty {
+                break;
+            }
         }
+        entries.extend(valid);
     }
     entries.truncate(limit);
-    Ok(entries)
+    Ok(TimeIndexPage {
+        entries,
+        resume,
+        queries: queries + same_second_queries,
+    })
+}
+
+/// 索引の、読む向きの端(その向きで最後の有効な entry の時刻)を、逆向きの読み出し 1 回で調べる。
+///
+/// 逆向きに読んだ最初の有効な entry より先には、有効な entry は無い。形の違う key が余裕を超えて端を
+/// 埋めているときは分からないので、`Unknown` を返す(呼び出し側は端を使わずに読み続ける)。
+/// 読み出しが打ち切られずに有効な entry が 1 件も無ければ、索引は空(`Empty`)。
+async fn index_edge(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    index_prefix: &str,
+    order: DocKeyOrder,
+) -> Result<IndexEdge> {
+    let opposite = match order {
+        DocKeyOrder::Descending => DocKeyOrder::Ascending,
+        DocKeyOrder::Ascending => DocKeyOrder::Descending,
+    };
+    let page = docs_sync
+        .query_replica_keys(
+            replica_id,
+            DocKeyQuery {
+                prefix: index_prefix.to_string(),
+                order: opposite,
+                limit: MALFORMED_KEY_ALLOWANCE.saturating_add(1),
+            },
+        )
+        .await?;
+    let truncated = page.reached_limit;
+    let edge = parse_entries(index_prefix, page.entries)
+        .first()
+        .and_then(|entry| u64::try_from(entry.created_at).ok());
+    Ok(match edge {
+        Some(created_at) => IndexEdge::At(created_at),
+        None if truncated => IndexEdge::Unknown,
+        None => IndexEdge::Empty,
+    })
+}
+
+/// 時刻の prefix が表す範囲の両端(20 桁まで 0 と 9 を詰めた値)。
+fn time_prefix_bounds(time_prefix: &str) -> (u64, u64) {
+    let pad = TIME_DIGITS.saturating_sub(time_prefix.len());
+    let min = format!("{time_prefix}{}", "0".repeat(pad));
+    let max = format!("{time_prefix}{}", "9".repeat(pad));
+    (
+        min.parse::<u64>().unwrap_or(0),
+        max.parse::<u64>().unwrap_or(u64::MAX),
+    )
+}
+
+fn clamp_time(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn parse_entries(index_prefix: &str, keys: Vec<DocKeyEntry>) -> Vec<TimeIndexEntry> {
@@ -209,7 +408,12 @@ fn parse_entry(index_prefix: &str, key: String) -> Option<TimeIndexEntry> {
     let rest = key.strip_prefix(index_prefix)?;
     let (sort_key, object_id) = rest.rsplit_once('/')?;
     let (time, sort_object_id) = sort_key.split_once('-')?;
-    if time.len() != TIME_DIGITS || sort_object_id != object_id || object_id.is_empty() {
+    // 時刻は 20 桁の数字だけ。符号つきの表記(`+…`・`-…`)は、整数としては読めても索引の形ではない。
+    if time.len() != TIME_DIGITS
+        || !time.bytes().all(|byte| byte.is_ascii_digit())
+        || sort_object_id != object_id
+        || object_id.is_empty()
+    {
         return None;
     }
     let created_at = time.parse::<i64>().ok()?;

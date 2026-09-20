@@ -346,7 +346,7 @@ async fn reconcile_does_not_wait_for_remote_docs() {
     assert_eq!(head, 3);
     let thread = timeout(
         Duration::from_secs(5),
-        app.reconcile_thread(topic.as_str(), &posts[5].object_id),
+        app.reconcile_thread(topic.as_str(), &posts[5].object_id, None, 20),
     )
     .await
     .expect("the thread reconcile must not wait for a remote fetch")
@@ -608,65 +608,77 @@ async fn reconcile_caps_the_entries_read_per_call() {
     assert_eq!(hydrated, 200);
 }
 
-// thread の照合は、古い側の 512 件までを読む。
+// thread の照合も、1 回に索引から受け取る entry は上限(200 件)まで。読む量は thread の大きさに依存しない。
 #[tokio::test]
-async fn thread_reconcile_caps_the_entries_read_per_call() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let docs_sync = Arc::new(CountingDocsSync::default());
-    let topic = TopicId::new("kukuri:topic:range-thread-cap");
-    let replica = topic_replica_id(topic.as_str());
-    let root = persist_test_post(
-        docs_sync.as_ref(),
-        Some(store.as_ref()),
-        &generate_keys(),
-        &topic,
-        PayloadRef::InlineText {
-            text: "root".into(),
-        },
-        Vec::new(),
-        None,
-    )
-    .await;
-    // 返信の state は書かず、thread の索引だけを 600 件置く(照合が読む key の件数だけを見る)。
-    for index in 0..600usize {
-        let id = format!("{index:064x}");
-        docs_sync
-            .apply_doc_op(
-                &replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        "indexes/thread",
-                        &format!(
-                            "{}/{:020}-{id}/{id}",
-                            root.id.as_str(),
-                            1_900_000_000 + index as i64
+async fn thread_reconcile_reads_a_bounded_range_regardless_of_the_thread_size() {
+    let mut counts = Vec::new();
+    for size in [600usize, 3_000] {
+        let store = Arc::new(MemoryStore::default());
+        let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+        let docs_sync = Arc::new(CountingDocsSync::default());
+        let topic = TopicId::new(format!("kukuri:topic:range-thread-cap-{size}"));
+        let replica = topic_replica_id(topic.as_str());
+        let root = persist_test_post(
+            docs_sync.as_ref(),
+            Some(store.as_ref()),
+            &generate_keys(),
+            &topic,
+            PayloadRef::InlineText {
+                text: "root".into(),
+            },
+            Vec::new(),
+            None,
+        )
+        .await;
+        // 返信の本体は書かず、thread の索引だけを置く(照合が読む key の件数だけを見る)。
+        for index in 0..size {
+            let id = format!("{index:064x}");
+            docs_sync
+                .apply_doc_op(
+                    &replica,
+                    DocOp::SetJson {
+                        key: stable_key(
+                            "indexes/thread",
+                            &format!(
+                                "{}/{:020}-{id}/{id}",
+                                root.id.as_str(),
+                                1_900_000_000 + index as i64
+                            ),
                         ),
-                    ),
-                    value: serde_json::json!({}),
-                },
-            )
+                        value: serde_json::json!({}),
+                    },
+                )
+                .await
+                .expect("write thread index");
+        }
+        let app = app_service_from_dependencies(
+            store.clone(),
+            store.clone(),
+            transport.clone(),
+            transport,
+            docs_sync.clone(),
+            Arc::new(MemoryBlobService::default()),
+            generate_keys(),
+        );
+        docs_sync.reset_records_returned();
+        let hydrated = app
+            .reconcile_thread(topic.as_str(), &root.id, None, 20)
             .await
-            .expect("write thread index");
+            .expect("reconcile thread");
+        app.shutdown().await;
+        assert_eq!(hydrated, 0);
+        counts.push(docs_sync.records_returned());
     }
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store.clone(),
-        transport.clone(),
-        transport,
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
+    // 本体の無い object の key 指定の読み出しは 0 件を返すので、数えているのは索引の key。
+    // 反映できない entry を読み飛ばして 200 件まで進む(20 件、80 件、100 件と読む件数を増やす)。
+    assert_eq!(
+        counts[0], counts[1],
+        "the amount read must not grow with the thread: {counts:?}"
     );
-    docs_sync.reset_records_returned();
-    let hydrated = app
-        .reconcile_thread(topic.as_str(), &root.id)
-        .await
-        .expect("reconcile thread");
-    app.shutdown().await;
-    assert_eq!(hydrated, 0);
-    // 索引の key を 512 件まで読む。state の無い object の key 指定の読み出しは 0 件を返す。
-    assert_eq!(docs_sync.records_returned(), 512);
+    assert!(
+        counts[0] <= 2 * crate::service::replica_window::RANGE_CHECK_ENTRY_LIMIT,
+        "{counts:?}"
+    );
 }
 
 // 遡ったページ(cursor つき)は、projection が尽きていなくても途中の欠けが埋まる。

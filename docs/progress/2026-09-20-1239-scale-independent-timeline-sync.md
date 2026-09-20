@@ -338,7 +338,7 @@ main の `d40c1ea6`（reaction・live session・game room の反映で署名と 
   最初のページでは覆われていなかった）。
 - 修正: 照合が新しく反映した投稿について、その投稿の reaction を上限つきで反映する（`hydrate_reaction_cache_for_target_bounded`、1 投稿あたり `RANGE_CHECK_REACTIONS_PER_OBJECT` = 32 件）。
   読むのは `reactions/<target>/` の key だけの上限つきの一覧 1 回（64 key）と、見つかった reaction ごとの envelope の key（#1252 の検証。上限つき 8 record）で、対象の reaction の総数にも replica の総件数にも依存しない。
-  検証に通らない reaction は飛ばす（warn）。docs の読み出しの失敗だけをエラーとして返す。投稿 1 件につき 1 回（projection に入るとき）だけ走る。
+  検証に通らない reaction は飛ばす（warn）。docs と projection の読み書きの失敗は、エラーとして返す。投稿 1 件につき 1 回（projection に入るとき）だけ走る。
 - 回帰 test `newly_reconciled_post_brings_a_bounded_number_of_its_reactions`: reaction が 40 件の投稿でも 128 件の投稿でも、照合が反映する reaction は 32 件で、
   照合が発行する docs の読み出しの回数が同じ。上限を外す mutation で失敗することを確認した（40 件が反映される）。
 - 残る範囲（T4 へ申し送り）: 上限を超える reaction と、projection に既にある投稿の reaction は、照合では反映しない。#1252 の migration は reaction の行を消して手元の docs から反映し直す前提で、
@@ -348,3 +348,44 @@ main の `d40c1ea6`（reaction・live session・game room の反映で署名と 
 
 `cargo xtask rust-test`（nextest と doc test: 成功。件数は PR の本文に記録）、`cargo test -p kukuri-app-api --lib`（成功。件数は PR の本文に記録）、`cargo test -p kukuri-docs-sync --lib`（成功）、
 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。
+
+## T4a: 購読タスクの全件走査を外す前に直す事項（基準 commit `14c8c596`）
+
+T5a は PR #1247（merge commit `14c8c596`）で完了した。独立監査は 4 回（FAIL、FAIL、PASS、delta PASS）、必須 CI は全 job 成功。#1257 も同じ PR で完了した。
+
+T4（購読タスクの全件走査の置き換え）は 2 つに分ける。T4a は、T5a の独立監査が「全件走査を外す前に直す」とした事項で、取得側の照合だけを変える。
+T4b で、購読タスクの全件走査（S-1〜S-5）を窓の追いつきへ置き換える。いまは全件走査が projection を埋めるので、T4a の事項は利用者には現れない。全件走査が無くなると、
+照合で届かない投稿へは二度と届かなくなる。
+
+### 修正前の再現
+
+| 事項（監査の non-blocker） | 再現 test | 修正前の結果 |
+| --- | --- | --- |
+| 遡りが query 数の上限に達すると、照合が「索引は尽きた」と誤判定する | `a_walk_stopped_at_the_query_cap_is_continued_by_the_next_reconcile`（2 件の投稿のあいだに、形の違う key で埋めた秒を 40 個置く） | 続きの起点を無視する mutation で、12 回照合しても古い投稿へ届かない |
+| thread の索引の読み出しに、形の違う key への余裕と読み直しが無い | `malformed_keys_at_the_head_of_a_thread_index_do_not_hide_the_replies`（数字より前に並ぶ key を 600 件） | 索引の全体を細かい prefix へ分けない mutation で、反映が 0 件 |
+| 先頭の範囲が形の違う key で埋まっていると、間隔を空けずに取得のたびに読み直す | `a_head_range_buried_under_malformed_keys_is_not_read_on_every_listing` | 以前の条件へ戻す mutation で、2 回目の取得も同じ回数の読み出しを発行する |
+| reaction の読み出しの主張が test で固定されていない（4 回目の監査の 2・3・4） | `reactions_are_read_only_when_the_post_enters_the_projection`、`reconcile_does_not_wait_for_a_remote_reaction_envelope`、`reaction_key_listing_returns_a_bounded_number_of_keys`（監査の再現 test を取り込んだ） | それぞれ、毎回読む・remote へ出す・一覧の上限を外す mutation で失敗する |
+
+### 変更の要約
+
+- `crates/docs-sync/src/time_index.rs`: 索引の読み出しを、向きを受け取る 1 つの実装（`walk_time_index`）にまとめた。
+  - 古い順の読み出し `query_time_index_asc` を足した。
+  - 戻り値を `TimeIndexPage { entries, resume, queries }` にした。`resume` は、query 数の上限に達して `limit` 件に届く前に打ち切ったときの「続きの起点」。
+    `queries` は、その読み出しが発行した query の数。
+  - entry の無い範囲へ出たら、索引の端を逆向きの読み出し 1 回で調べ、端より先の prefix を読まない。索引に有効な entry が 1 件も無ければ、そこで止める。
+    以前は、entry が尽きた後も残りの桁の prefix を空振りで読んでいた（新しい順で数十回。古い順は 100 回を超える）。
+  - 索引の時刻は 20 桁の数字だけとした。符号つきの表記（`+…`）は、以前は entry として読めていた。
+  - 起点の無い新しい順の読み出し（`query_time_index_desc` に `None`）も、形の違う key への余裕と読み直しを持つようになった。
+- `crates/app-api/src/service/replica_window.rs`: タイムラインと thread の照合を、1 つの実装（`reconcile_replica_index_range`）にまとめた。
+  - 索引の読み出しが `resume` を返したら、件数が足りなくても「尽きた」とみなさず、その位置を台帳に残して次の照合が続ける。
+  - thread は、取得するページの範囲（cursor より新しい側を `limit` 件）だけを照合する。以前は、どのページの取得でも、古い側の 512 件を読んでいた
+    （512 件を超える thread の先は照合されず、1 ページを超える thread は「projection に在る件数がページの行数より多い」ので、照合のたびにページを読み直していた）。
+  - 間隔を空けずに次も読むのは、索引から 1 件も読めず、読み出しが query 1 回で済んだ先頭の範囲だけにした。
+- `crates/app-api/src/timeline.rs`: `list_thread` が、ページの cursor と件数を照合へ渡す。
+
+### 残した事項（T4b・T5b で扱う）
+
+- `reactions/<target>/` の下に、正しい reaction より先に並ぶ key を 64 個置かれると、照合はその投稿の正しい reaction を反映できない（4 回目の監査の 1）。
+  reaction の反映の全体（購読タスクの全件走査が担っている分、`Lagged` の後の読み直し、表示の経路での読む量の上限）と合わせて、T4b で設計する。
+- 読み進めた位置が残っている間の照合は、間隔を伸ばさない（5 秒）。読み進めるたびに位置が先へ進むので、同じ仕事の繰り返しにはならない。
+- 非表示の著者の行を「projection に在る」と数える点は、T5b の Q-2 と合わせて扱う。

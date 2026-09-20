@@ -830,10 +830,11 @@ impl AppService {
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        // #1239: replica を走査しない。thread の索引と照合して、欠けている object だけを key 指定で反映する
-        // (範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても照合する。
+        // #1239: replica を走査しない。このページの範囲を thread の索引と照合して、欠けている object だけを
+        // key 指定で反映する(範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても
+        // 照合する。
         let reconcile = self
-            .reconcile_thread_checked(topic_id, &thread_root)
+            .reconcile_thread_checked(topic_id, &thread_root, cursor.as_ref(), limit)
             .await?;
         let page_is_stale = reconcile.page_is_stale(page.items.len());
         if page_is_stale || page.items.is_empty() {

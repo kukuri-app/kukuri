@@ -7,9 +7,9 @@ use super::*;
 
 /// replica ごとの読み出しを記録する docs。`silent_events` のときは docs の event を配らない。
 #[derive(Clone, Default)]
-struct RecordingDocsSync {
+pub(super) struct RecordingDocsSync {
     inner: MemoryDocsSync,
-    reads: Arc<TokioMutex<Vec<String>>>,
+    pub(super) reads: Arc<TokioMutex<Vec<String>>>,
     silent_events: bool,
 }
 
@@ -83,7 +83,7 @@ fn recording_app(docs_sync: Arc<RecordingDocsSync>) -> AppService {
     recording_app_with_blobs(docs_sync, Arc::new(MemoryBlobService::default())).0
 }
 
-fn recording_app_with_blobs(
+pub(super) fn recording_app_with_blobs(
     docs_sync: Arc<RecordingDocsSync>,
     blob_service: Arc<MemoryBlobService>,
 ) -> (AppService, Arc<MemoryStore>) {
@@ -197,76 +197,4 @@ async fn an_empty_head_range_is_checked_again_on_the_next_listing() {
         .expect("second listing");
     app.shutdown().await;
     assert_eq!(second.items.len(), 3);
-}
-
-// 照合が新しく反映した投稿は、reaction も上限つきで一緒に反映する。docs の event が届かない古い reaction は、
-// ここでしか入らない(以前は、空ページの全件走査が reaction も反映していた)。読む量は reaction の総数に依存しない。
-#[tokio::test]
-async fn newly_reconciled_post_brings_a_bounded_number_of_its_reactions() {
-    use crate::service::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
-
-    let (few_rows, few_reads) = reconcile_a_post_with_reactions(
-        "kukuri:topic:range-reactions-few",
-        RANGE_CHECK_REACTIONS_PER_OBJECT + 8,
-    )
-    .await;
-    let (many_rows, many_reads) = reconcile_a_post_with_reactions(
-        "kukuri:topic:range-reactions-many",
-        RANGE_CHECK_REACTIONS_PER_OBJECT * 4,
-    )
-    .await;
-    assert_eq!(
-        few_rows, RANGE_CHECK_REACTIONS_PER_OBJECT,
-        "the reconcile reflects reactions up to the per-object limit"
-    );
-    assert_eq!(many_rows, RANGE_CHECK_REACTIONS_PER_OBJECT);
-    assert_eq!(
-        few_reads, many_reads,
-        "the number of docs reads does not grow with the number of reactions"
-    );
-}
-
-/// 投稿 1 件に `reactions` 個の reaction を付け、反映が空の利用者が照合する。
-/// 戻り値は、反映された reaction の行数と、照合が発行した docs の読み出しの回数。
-async fn reconcile_a_post_with_reactions(topic: &str, reactions: usize) -> (usize, usize) {
-    let docs_sync = Arc::new(RecordingDocsSync::default());
-    let blob_service = Arc::new(MemoryBlobService::default());
-    let (author, _author_store) = recording_app_with_blobs(docs_sync.clone(), blob_service.clone());
-    let replica = topic_replica_id(topic);
-    let target = author
-        .create_post(topic, "a post with many reactions", None)
-        .await
-        .expect("create post");
-    // 同じ著者でも、key が違えば別の reaction になる。
-    for index in 0..reactions {
-        author
-            .toggle_reaction(
-                topic,
-                target.as_str(),
-                ReactionKeyV1::Emoji {
-                    emoji: format!("key-{index:03}"),
-                },
-                Some(ChannelRef::Public),
-            )
-            .await
-            .expect("toggle reaction");
-    }
-    author.shutdown().await;
-
-    // 反映が空の利用者。購読タスクを起動せず、照合だけを呼ぶ。
-    let (viewer, viewer_store) = recording_app_with_blobs(docs_sync.clone(), blob_service);
-    docs_sync.reads.lock().await.clear();
-    let hydrated = viewer
-        .reconcile_timeline_range(topic, &TimelineScope::Public, None, 20)
-        .await
-        .expect("reconcile");
-    let reads = docs_sync.reads.lock().await.len();
-    assert_eq!(hydrated, 1);
-    let projection_store: &dyn ProjectionStore = viewer_store.as_ref();
-    let rows = projection_store
-        .list_reaction_cache_for_target(&replica, &EnvelopeId::from(target.as_str()))
-        .await
-        .expect("reaction rows");
-    viewer.shutdown().await;
-    (rows.len(), reads)
 }

@@ -5,16 +5,14 @@
 
 use super::*;
 use kukuri_docs_sync::{
-    DocKeyOrder, DocKeyQuery, TimeIndexCursor, TimeIndexEntry, query_time_index_desc,
+    DocKeyOrder, TimeIndexCursor, TimeIndexEntry, query_time_index_asc, query_time_index_desc,
     query_time_index_window,
 };
 
 /// 1 回の照合で、replica 1 つから読む時系列の索引の entry 数の上限。呼び出し側の `limit` もこの値で抑える。
 /// 反映できない entry が続く範囲は、この件数まで読み進めて止まり、続きは次の照合が読む。
+/// タイムラインと thread で同じ値を使う。
 pub(crate) const RANGE_CHECK_ENTRY_LIMIT: usize = 200;
-/// 1 回の照合で読む thread の索引の entry 数の上限。これを超える thread は、古い側のこの件数だけを照合する
-/// (新しい側は docs の event と窓の追いつきで反映される)。
-pub(crate) const THREAD_CHECK_ENTRY_LIMIT: usize = 512;
 /// `created_at` は投稿者の申告値。現在時刻よりこの秒数を超えて未来の entry は、新しい側の読み出しで読み飛ばす。
 pub(crate) const TIME_INDEX_FUTURE_ALLOWANCE_SECS: i64 = 600;
 /// 欠けが無かった範囲を、次に照合するまでの間隔。
@@ -31,8 +29,9 @@ pub(crate) const RANGE_CHECK_REACTIONS_PER_OBJECT: usize = 32;
 #[derive(Clone, Debug, Default)]
 struct RangeCheckState {
     next_check_at_ms: i64,
-    /// 反映できない entry が続いて、上限まで読んでも 1 ページぶんに届かなかった範囲の、続きの起点。
-    resume_before: Option<TimeIndexCursor>,
+    /// 上限まで読んでも 1 ページぶんに届かなかった範囲の、続きの起点(反映できない entry が続いた、または
+    /// 索引の読み出しが query 数の上限に達した)。
+    resume_from: Option<TimeIndexCursor>,
     /// 反映できない entry が残ったまま、何も反映できなかった照合が続いた回数。
     stalled_checks: u32,
 }
@@ -71,7 +70,7 @@ impl RangeCheckLedger {
                 return None;
             }
             state.next_check_at_ms = now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS);
-            return Some(state.resume_before.clone());
+            return Some(state.resume_from.clone());
         }
         if entries.len() >= RANGE_CHECK_LEDGER_LIMIT {
             entries.retain(|_, state| state.next_check_at_ms > now_ms);
@@ -84,7 +83,7 @@ impl RangeCheckLedger {
             range_key.to_string(),
             RangeCheckState {
                 next_check_at_ms: now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
-                resume_before: None,
+                resume_from: None,
                 stalled_checks: 0,
             },
         );
@@ -102,7 +101,7 @@ impl RangeCheckLedger {
         result: RangeCheckResult,
     ) {
         if let Some(state) = self.entries.lock().await.get_mut(range_key) {
-            state.resume_before = None;
+            state.resume_from = None;
             let interval = match result {
                 RangeCheckResult::Complete => {
                     state.stalled_checks = 0;
@@ -125,9 +124,9 @@ impl RangeCheckLedger {
     }
 
     /// 上限まで読んでも 1 ページぶんに届かなかった範囲。次の照合は、読み進めた位置から続ける。
-    pub(crate) async fn record_resume(&self, range_key: &str, resume_before: TimeIndexCursor) {
+    pub(crate) async fn record_resume(&self, range_key: &str, resume_from: TimeIndexCursor) {
         if let Some(state) = self.entries.lock().await.get_mut(range_key) {
-            state.resume_before = Some(resume_before);
+            state.resume_from = Some(resume_from);
         }
     }
 
@@ -306,6 +305,18 @@ fn time_index_cursor(cursor: &TimelineCursor) -> TimeIndexCursor {
     }
 }
 
+/// 照合する索引の範囲(1 ページぶん)。
+struct IndexRange<'a> {
+    /// 索引の prefix(末尾が `/`)。
+    index_prefix: &'a str,
+    /// ページの並び。タイムラインは新しい順、thread は古い順。
+    order: DocKeyOrder,
+    /// ページの cursor。無ければ、その並びの先頭から。
+    start: Option<&'a TimeIndexCursor>,
+    /// ページの件数。
+    limit: usize,
+}
+
 impl AppService {
     /// タイムラインの 1 ページぶんの範囲(`before` より古い側、`before` が無ければ新しい側)を、scope の各
     /// replica の時系列の索引と照合して、欠けている object を反映する。戻り値は反映した件数。
@@ -333,15 +344,31 @@ impl AppService {
         before: Option<&TimelineCursor>,
         limit: usize,
     ) -> Result<RangeReconcile> {
-        let limit = limit.min(RANGE_CHECK_ENTRY_LIMIT);
-        let mut reconcile = RangeReconcile::default();
         if limit == 0 {
-            return Ok(reconcile);
+            return Ok(RangeReconcile::default());
         }
         let before = before.map(time_index_cursor);
-        for replica in self.scope_replicas(topic_id, scope).await? {
+        let range = IndexRange {
+            index_prefix: "indexes/timeline/",
+            order: DocKeyOrder::Descending,
+            start: before.as_ref(),
+            limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
+        };
+        let replicas = self.scope_replicas(topic_id, scope).await?;
+        self.reconcile_index_range(topic_id, &replicas, &range)
+            .await
+    }
+
+    async fn reconcile_index_range(
+        &self,
+        topic_id: &str,
+        replicas: &[ReplicaId],
+        range: &IndexRange<'_>,
+    ) -> Result<RangeReconcile> {
+        let mut reconcile = RangeReconcile::default();
+        for replica in replicas {
             if let Some(outcome) = self
-                .reconcile_replica_timeline_range(topic_id, &replica, before.as_ref(), limit)
+                .reconcile_replica_index_range(topic_id, replica, range)
                 .await?
             {
                 reconcile.hydrated += outcome.hydrated;
@@ -351,29 +378,31 @@ impl AppService {
         Ok(reconcile)
     }
 
-    /// replica 1 つの時系列の索引を、`before` より古い側(無ければ新しい側)へ読み、projection に在る object が
-    /// `limit` 件に届くまで反映する。反映できない entry(本体が未着、投稿として読めない)は読み飛ばして先へ進む。
-    /// そうしないと、反映できない entry が `limit` 件続いただけで、その先の投稿へ遡れなくなる。
+    /// replica 1 つの時系列の索引を、ページの並びの向きへ読み、projection に在る object が `limit` 件に届くまで
+    /// 反映する。反映できない entry(本体が未着、投稿として読めない)は読み飛ばして先へ進む。
+    /// そうしないと、反映できない entry が `limit` 件続いただけで、その先の投稿へ進めなくなる。
     ///
-    /// 1 回に読む索引の entry 数は `RANGE_CHECK_ENTRY_LIMIT` まで。届かなかったときは、読み進めた位置を
-    /// 台帳に残し、次の照合がそこから続ける。台帳の間隔の内で照合しなかったときは `None`。
-    async fn reconcile_replica_timeline_range(
+    /// 1 回に読む索引の entry 数は `RANGE_CHECK_ENTRY_LIMIT` まで。届かなかったときと、索引の読み出しが
+    /// query 数の上限に達したときは、読み進めた位置を台帳に残し、次の照合がそこから続ける。
+    /// 台帳の間隔の内で照合しなかったときは `None`。
+    async fn reconcile_replica_index_range(
         &self,
         topic_id: &str,
         replica: &ReplicaId,
-        before: Option<&TimeIndexCursor>,
-        limit: usize,
+        range: &IndexRange<'_>,
     ) -> Result<Option<RangeCheckOutcome>> {
-        const INDEX_PREFIX: &str = "indexes/timeline/";
+        let limit = range.limit;
         let range_key = format!(
-            "{}\n{INDEX_PREFIX}\n{}\n{limit}",
+            "{}\n{}\n{}\n{limit}",
             replica.as_str(),
-            before
+            range.index_prefix,
+            range
+                .start
                 .map(|cursor| format!("{:020}-{}", cursor.created_at, cursor.object_id))
                 .unwrap_or_default(),
         );
         let now = Utc::now();
-        let Some(resume_before) = self
+        let Some(resume_from) = self
             .services
             .range_checks
             .try_begin(range_key.as_str(), now.timestamp_millis())
@@ -382,9 +411,10 @@ impl AppService {
             return Ok(None);
         };
         let docs_sync = self.services.docs_sync.as_ref();
-        let mut position = resume_before.or_else(|| before.cloned());
+        let mut position = resume_from.or_else(|| range.start.cloned());
         let mut total = RangeCheckOutcome::default();
         let mut entries_read = 0usize;
+        let mut index_queries = 0usize;
         let mut index_exhausted = false;
         // 1 回目は、ページに要る件数だけを読む(欠けが無ければこれで終わる)。反映できない entry があって
         // 届かなかったときは、読む件数を 4 倍ずつ増やす。同じ位置からの読み直しの回数を抑えるため。
@@ -401,54 +431,64 @@ impl AppService {
                 break;
             }
             batch = batch.saturating_mul(4);
-            let entries = match position.as_ref() {
-                Some(cursor) => {
-                    query_time_index_desc(docs_sync, replica, INDEX_PREFIX, Some(cursor), wanted)
-                        .await?
-                }
-                None => {
+            let page = match (range.order, position.as_ref()) {
+                (DocKeyOrder::Descending, None) => {
                     query_time_index_window(
                         docs_sync,
                         replica,
-                        INDEX_PREFIX,
+                        range.index_prefix,
                         now.timestamp()
                             .saturating_add(TIME_INDEX_FUTURE_ALLOWANCE_SECS),
                         wanted,
                     )
                     .await?
                 }
+                (DocKeyOrder::Descending, cursor) => {
+                    query_time_index_desc(docs_sync, replica, range.index_prefix, cursor, wanted)
+                        .await?
+                }
+                (DocKeyOrder::Ascending, cursor) => {
+                    query_time_index_asc(docs_sync, replica, range.index_prefix, cursor, wanted)
+                        .await?
+                }
             };
-            let Some(last) = entries.last() else {
-                index_exhausted = true;
-                break;
-            };
-            position = Some(TimeIndexCursor {
-                created_at: last.created_at,
-                object_id: last.object_id.clone(),
-            });
-            entries_read += entries.len();
-            if entries.len() < wanted {
-                index_exhausted = true;
+            entries_read += page.entries.len();
+            index_queries += page.queries;
+            if let Some(last) = page.entries.last() {
+                position = Some(TimeIndexCursor {
+                    created_at: last.created_at,
+                    object_id: last.object_id.clone(),
+                });
             }
-            total.merge(
-                ensure_index_entries_projected(
-                    &self.services,
-                    topic_id,
-                    replica,
-                    &entries,
-                    DocFetchPolicy::LocalOnly,
-                )
-                .await?,
-            );
-            if index_exhausted {
+            if !page.entries.is_empty() {
+                total.merge(
+                    ensure_index_entries_projected(
+                        &self.services,
+                        topic_id,
+                        replica,
+                        &page.entries,
+                        DocFetchPolicy::LocalOnly,
+                    )
+                    .await?,
+                );
+            }
+            if let Some(resume) = page.resume {
+                // 索引の読み出しが query 数の上限に達した(形の違う key が並んだ範囲)。件数が足りなくても
+                // 「索引は尽きた」とはみなさない。この照合ではこれ以上読まず、続きは次の照合が読む。
+                position = Some(resume);
+                break;
+            }
+            if page.entries.len() < wanted {
+                index_exhausted = true;
                 break;
             }
         }
 
         let ledger = self.services.range_checks.as_ref();
-        if entries_read == 0 && before.is_none() {
+        if entries_read == 0 && range.start.is_none() && index_queries <= 1 {
             // 索引がまだ空の replica(参加した直後など)は、間隔を空けずに次の取得でも読む。
             // 読むのは key だけの読み出し 1 回で、投稿が同期された直後のページをすぐに組み立てられる。
+            // 形の違う key が先頭を埋めていて読み出しが何回にもなったときは、間隔を空ける。
             ledger.forget(range_key.as_str()).await;
             return Ok(Some(total));
         }
@@ -466,7 +506,8 @@ impl AppService {
         Ok(Some(total))
     }
 
-    /// thread の索引(`indexes/thread/<root>/`)と projection を照合して、欠けている object を反映する。
+    /// thread の 1 ページぶんの範囲(`after` より新しい側、`after` が無ければ古い側)を、thread の索引
+    /// (`indexes/thread/<root>/`)と照合して、欠けている object を反映する。戻り値は反映した件数。
     ///
     /// root が projection にあれば、その channel の replica だけを読む。無ければ、参加中の scope の replica を読む。
     #[cfg(test)]
@@ -474,19 +515,29 @@ impl AppService {
         &self,
         topic_id: &str,
         thread_root: &EnvelopeId,
+        after: Option<&TimelineCursor>,
+        limit: usize,
     ) -> Result<usize> {
         Ok(self
-            .reconcile_thread_checked(topic_id, thread_root)
+            .reconcile_thread_checked(topic_id, thread_root, after, limit)
             .await?
             .hydrated)
     }
 
     /// `reconcile_thread` の本体。取得側は、照合したかどうかでページの読み直しを決める。
+    ///
+    /// thread のページは古い順に並ぶので、索引も古い順に読む。タイムラインと同じく、そのページの範囲だけを
+    /// 照合する(読む量は thread の返信の総数に依存しない。先のページは、利用者がそこへ進んだときに照合する)。
     pub(crate) async fn reconcile_thread_checked(
         &self,
         topic_id: &str,
         thread_root: &EnvelopeId,
+        after: Option<&TimelineCursor>,
+        limit: usize,
     ) -> Result<RangeReconcile> {
+        if limit == 0 {
+            return Ok(RangeReconcile::default());
+        }
         let root_channel = self
             .services
             .projection_store
@@ -500,75 +551,22 @@ impl AppService {
             },
             None => TimelineScope::AllJoined,
         };
-        let index_prefix = stable_key("indexes/thread", &format!("{}/", thread_root.as_str()));
         // 参加していない private channel の thread は照合しない(replica を読まない)。表示は従来どおり
         // projection の行だけで組み立てる。
         let Ok(replicas) = self.scope_replicas(topic_id, &scope).await else {
             return Ok(RangeReconcile::default());
         };
-        let mut reconcile = RangeReconcile::default();
-        for replica in replicas {
-            let range_key = format!("{}\n{index_prefix}", replica.as_str());
-            let now_ms = Utc::now().timestamp_millis();
-            if self
-                .services
-                .range_checks
-                .try_begin(range_key.as_str(), now_ms)
-                .await
-                .is_none()
-            {
-                continue;
-            }
-            let keys = self
-                .services
-                .docs_sync
-                .query_replica_keys(
-                    &replica,
-                    DocKeyQuery {
-                        prefix: index_prefix.clone(),
-                        order: DocKeyOrder::Ascending,
-                        limit: THREAD_CHECK_ENTRY_LIMIT,
-                    },
-                )
-                .await?;
-            let entries = keys
-                .entries
-                .into_iter()
-                .filter_map(|entry| thread_index_entry(index_prefix.as_str(), entry.key))
-                .collect::<Vec<_>>();
-            let outcome = ensure_index_entries_projected(
-                &self.services,
-                topic_id,
-                &replica,
-                &entries,
-                DocFetchPolicy::LocalOnly,
-            )
-            .await?;
-            self.services
-                .range_checks
-                .record_finished(range_key.as_str(), now_ms, outcome.result())
-                .await;
-            reconcile.hydrated += outcome.hydrated;
-            reconcile.projected += outcome.hydrated + outcome.present;
-        }
-        Ok(reconcile)
+        let index_prefix = stable_key("indexes/thread", &format!("{}/", thread_root.as_str()));
+        let after = after.map(time_index_cursor);
+        let range = IndexRange {
+            index_prefix: index_prefix.as_str(),
+            order: DocKeyOrder::Ascending,
+            start: after.as_ref(),
+            limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
+        };
+        self.reconcile_index_range(topic_id, &replicas, &range)
+            .await
     }
-}
-
-/// `indexes/thread/<root>/<sort key>/<object id>` から object id を取り出す。形の違う key は捨てる。
-fn thread_index_entry(index_prefix: &str, key: String) -> Option<TimeIndexEntry> {
-    let rest = key.strip_prefix(index_prefix)?;
-    let (sort_key, object_id) = rest.rsplit_once('/')?;
-    let (time, sort_object_id) = sort_key.split_once('-')?;
-    if sort_object_id != object_id || object_id.is_empty() {
-        return None;
-    }
-    let created_at = time.parse::<i64>().ok()?;
-    Some(TimeIndexEntry {
-        created_at,
-        object_id: object_id.to_string(),
-        key,
-    })
 }
 
 #[cfg(test)]
@@ -731,20 +729,5 @@ mod tests {
             projected: 20,
         };
         assert!(hydrated_by_someone_else.page_is_stale(0));
-    }
-
-    #[test]
-    fn thread_index_keys_are_parsed_and_malformed_keys_are_dropped() {
-        let prefix = "indexes/thread/root/";
-        let id = "a".repeat(64);
-        let entry = thread_index_entry(prefix, format!("{prefix}{:020}-{id}/{id}", 1_758_000_000))
-            .expect("valid key");
-        assert_eq!(entry.created_at, 1_758_000_000);
-        assert_eq!(entry.object_id, id);
-        assert!(thread_index_entry(prefix, format!("{prefix}junk")).is_none());
-        assert!(
-            thread_index_entry(prefix, format!("{prefix}{:020}-{id}/other", 1)).is_none(),
-            "the sort key and the object id must agree"
-        );
     }
 }

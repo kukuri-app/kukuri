@@ -12,21 +12,21 @@ use crate::{
     query_time_index_window, stable_key, topic_replica_id,
 };
 
-const INDEX_PREFIX: &str = "indexes/timeline/";
+pub(super) const INDEX_PREFIX: &str = "indexes/timeline/";
 
-fn index_key(created_at: i64, object_id: &str) -> String {
+pub(super) fn index_key(created_at: i64, object_id: &str) -> String {
     stable_key(
         "indexes/timeline",
         &format!("{created_at:020}-{object_id}/{object_id}"),
     )
 }
 
-fn object_id(seed: usize) -> String {
+pub(super) fn object_id(seed: usize) -> String {
     format!("{seed:064x}")
 }
 
 /// (created_at, object id)。秒の重なり、桁の繰り下がり、離れた時刻を含む。
-fn fixture() -> Vec<(i64, String)> {
+pub(super) fn fixture() -> Vec<(i64, String)> {
     let mut rows = Vec::new();
     let mut seed = 0usize;
     for created_at in [
@@ -56,7 +56,11 @@ fn fixture() -> Vec<(i64, String)> {
     rows
 }
 
-async fn seed(docs: &dyn DocsSync, replica: &ReplicaId, rows: &[(i64, String)]) -> Result<()> {
+pub(super) async fn seed(
+    docs: &dyn DocsSync,
+    replica: &ReplicaId,
+    rows: &[(i64, String)],
+) -> Result<()> {
     docs.open_replica(replica).await?;
     for (created_at, object_id) in rows {
         docs.apply_doc_op(
@@ -122,6 +126,7 @@ async fn assert_matches_reference(docs: &dyn DocsSync, replica: &ReplicaId) -> R
         let newest = query_time_index_desc(docs, replica, INDEX_PREFIX, None, limit).await?;
         assert_eq!(
             newest
+                .entries
                 .iter()
                 .map(|entry| (entry.created_at, entry.object_id.clone()))
                 .collect::<Vec<_>>(),
@@ -154,6 +159,7 @@ async fn assert_matches_reference(docs: &dyn DocsSync, replica: &ReplicaId) -> R
                 query_time_index_desc(docs, replica, INDEX_PREFIX, Some(cursor), limit).await?;
             assert_eq!(
                 older
+                    .entries
                     .iter()
                     .map(|entry| (entry.created_at, entry.object_id.clone()))
                     .collect::<Vec<_>>(),
@@ -167,7 +173,9 @@ async fn assert_matches_reference(docs: &dyn DocsSync, replica: &ReplicaId) -> R
     let mut walked = Vec::new();
     let mut cursor: Option<TimeIndexCursor> = None;
     loop {
-        let page = query_time_index_desc(docs, replica, INDEX_PREFIX, cursor.as_ref(), 7).await?;
+        let page = query_time_index_desc(docs, replica, INDEX_PREFIX, cursor.as_ref(), 7)
+            .await?
+            .entries;
         let Some(last) = page.last() else {
             break;
         };
@@ -293,10 +301,10 @@ async fn key_query_respects_prefix_order_and_limit_on_both_implementations() -> 
 
 /// query の回数と、1 回の query が返した entry 数を数える。
 #[derive(Default)]
-struct CountingKeys {
+pub(super) struct CountingKeys {
     inner: MemoryDocsSync,
-    queries: AtomicUsize,
-    largest_result: AtomicUsize,
+    pub(super) queries: AtomicUsize,
+    pub(super) largest_result: AtomicUsize,
 }
 
 #[async_trait]
@@ -364,7 +372,7 @@ async fn walking_older_entries_uses_a_bounded_number_of_bounded_queries() -> Res
         docs.queries.store(0, Ordering::SeqCst);
         let page =
             query_time_index_desc(docs.as_ref(), &replica, INDEX_PREFIX, Some(&cursor), 20).await?;
-        assert_eq!(page.len(), 20);
+        assert_eq!(page.entries.len(), 20);
         let queries = docs.queries.load(Ordering::SeqCst);
         // 時刻 10 桁の数字の和は最大 90。同じ秒の読み出しが 1 回。
         assert!(queries <= 91, "size={size}: {queries} queries");
@@ -378,7 +386,7 @@ async fn walking_older_entries_uses_a_bounded_number_of_bounded_queries() -> Res
         };
         let nothing =
             query_time_index_desc(docs.as_ref(), &replica, INDEX_PREFIX, Some(&end), 20).await?;
-        assert!(nothing.is_empty());
+        assert!(nothing.entries.is_empty());
         assert!(docs.queries.load(Ordering::SeqCst) <= 91);
         // 1 回の query が返す entry 数にも上限がある(同じ秒の読み出しの 512 件が最大)。
         let largest = docs.largest_result.load(Ordering::SeqCst);
@@ -394,7 +402,7 @@ async fn walking_older_entries_uses_a_bounded_number_of_bounded_queries() -> Res
     Ok(())
 }
 
-async fn put_key(docs: &dyn DocsSync, replica: &ReplicaId, key: String) -> Result<()> {
+pub(super) async fn put_key(docs: &dyn DocsSync, replica: &ReplicaId, key: String) -> Result<()> {
     docs.apply_doc_op(
         replica,
         DocOp::SetJson {
@@ -405,8 +413,8 @@ async fn put_key(docs: &dyn DocsSync, replica: &ReplicaId, key: String) -> Resul
     .await
 }
 
-fn ids(entries: &[crate::TimeIndexEntry]) -> Vec<(i64, String)> {
-    entries
+pub(super) fn ids(page: &crate::TimeIndexPage) -> Vec<(i64, String)> {
+    page.entries
         .iter()
         .map(|entry| (entry.created_at, entry.object_id.clone()))
         .collect()
@@ -445,6 +453,7 @@ async fn window_skips_future_entries_with_a_bounded_number_of_queries() -> Resul
             "future_entries={future_entries}"
         );
         let queries = docs.queries.load(Ordering::SeqCst);
+        assert_eq!(window.queries, queries, "the page reports its cost");
         if future_entries == 3 {
             assert_eq!(
                 queries, 1,
@@ -522,7 +531,7 @@ async fn malformed_index_keys_do_not_make_the_walk_skip_valid_entries() -> Resul
     let mut next = Some(cursor);
     while let Some(current) = next.take() {
         let page = query_time_index_desc(&docs, &replica, INDEX_PREFIX, Some(&current), 3).await?;
-        if let Some(last) = page.last() {
+        if let Some(last) = page.entries.last() {
             next = Some(TimeIndexCursor {
                 created_at: last.created_at,
                 object_id: last.object_id.clone(),
@@ -673,8 +682,8 @@ async fn walk_stops_at_the_query_cap_and_returns_a_contiguous_head() -> Result<(
     assert!(queries <= 257, "the walk is capped: {queries} queries");
     // 返した分は、基準実装の先頭と一致する(途中を飛ばさない)。
     let reference = expected(&rows, Some(&cursor), 5);
-    assert!(!page.is_empty());
-    assert_eq!(ids(&page), reference[..page.len()].to_vec());
+    assert!(!page.entries.is_empty());
+    assert_eq!(ids(&page), reference[..page.entries.len()].to_vec());
     Ok(())
 }
 
@@ -762,7 +771,7 @@ async fn non_utf8_keys_do_not_make_the_walk_skip_valid_entries() -> Result<()> {
     let mut next = Some(cursor.clone());
     while let Some(current) = next.take() {
         let page = query_time_index_desc(&inner, &replica, INDEX_PREFIX, Some(&current), 3).await?;
-        if let Some(last) = page.last() {
+        if let Some(last) = page.entries.last() {
             next = Some(TimeIndexCursor {
                 created_at: last.created_at,
                 object_id: last.object_id.clone(),
