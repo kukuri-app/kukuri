@@ -196,12 +196,36 @@ T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 
 ### 未確認・残課題
 
 - TR-6（遡った範囲の提供 peer が不在のとき、取得できない旨を示す）の画面側は T5b で扱う。この段階では、本体が手元に無い entry は飛ばし、5 秒以上の間隔で照合し直す。
+- 索引の key は、その replica に書ける誰もが置ける。有効な形の偽の key や、形の違う key を大量に置かれると、その古い側へ遡るのに照合を何度も重ねる必要がある（1 回の照合と 1 回の遡りの読み出しには上限がある。best effort）。
 - 512 件を超える thread は、超えた分を照合しない。
 - 先頭ページの途中の欠け（projection が尽きていないページ）は、この段階では購読タスクの全件走査が埋める。T4 で窓の追いつきに置き換える。
 - `list_thread` は、最初に channel を絞らずに projection を読む（以前から同じ）。退出した private channel の thread の行が projection に残っていると、その行を表示しうる。
   照合は参加状態の確認を通らない channel の replica を読まない。表示側の扱いは別 Issue の候補。
 
+### 独立監査の 1 回目（対象 `01a3faba`、FAIL）と修正
+
+1 回目の独立監査は、blocker 1 件で FAIL だった。監査が失敗する test で再現し、その test を恒久の回帰 test として取り込んだ。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 投稿として読めない `objects/<id>/state` と、それを指す索引の entry が 1 件ずつあるだけで、行のあるページの `list_timeline` / `list_thread` が失敗を返す（基準 commit では成功。台帳の再試行の間隔で失敗が繰り返す） | 照合が、1 件の反映の失敗（header の parse の失敗）をページ全体の失敗として返していた | 投稿の header として読めない state は `ObjectHydration::Invalid` として warn を出して読み飛ばす。docs と projection の読み書きの失敗はエラーのまま返す（ADR 0052 §2）。回帰 test `unreadable_state_record_does_not_fail_a_non_empty_head_page`・`…_cursor_page`・`…_thread` |
+
+同じ監査の non-blocker と、監査の再現から分かった弱点のうち、この段階で直したもの。
+
+- 反映できない entry（本体が届いていない、投稿として読めない）が 1 ページぶん続くと、その先の投稿へ遡れなかった（cursor は projection の行でしか進まないため。以前の全件走査は、反映できる object をすべて反映していた）。
+  照合は、反映できない entry を読み飛ばして先へ進み、projection に在る object が 1 ページぶんに届くまで読む。1 回に受け取る索引の entry 数は上限（200 件）のままで、届かなかったときは読み進めた位置を台帳に残し、次の照合が続ける。
+  回帰 test `a_run_of_unresolvable_entries_does_not_block_older_history`、`a_long_run_of_unresolvable_entries_is_passed_over_several_bounded_checks`（読み飛ばしを無効にする mutation で失敗することを確認した）。
+- 本文の取り方を、docs の読み出しの policy から分けた（`BodyFetch`）。1 回に多数の object を反映する照合は手元の本文だけを読み、object を 1 件ずつ反映する経路（docs の event・hint、利用者の操作の対象、community index の解決）は、
+  台帳の内で remote を試す。1 回目の実装は `LocalOnly` の key 指定の反映がすべて本文を取りに行かなくなり、community index の解決と bookmark の内容が本文の無いままになりえた（監査の指摘）。
+  回帰 test `community_index_resolution_shows_the_body_of_an_unprojected_post`、`reconcile_does_not_fetch_a_body_blob_that_is_not_local`、`event_hydration_and_the_following_listing_share_the_missing_body_schedule`。
+- 空の索引を 1 回見た先頭の範囲が 30 秒の間隔に入り、投稿が同期された直後のページの復旧が遅れた。索引が空の先頭の範囲は、間隔を空けない。回帰 test `an_empty_head_range_is_checked_again_on_the_next_listing`。
+- 取り下げの対象の envelope がまだ手元に無い行は、「まだ反映できない」として短い間隔で照合し直す。
+- test で固定されていなかった主張に test を足した: 遡ったページは projection が尽きていなくても欠けを埋める、先頭のページは projection が尽きていれば行があっても照合する、thread はページが空でなくても照合する、
+  1 回の照合の上限（200 件、thread は 512 件）、照合は remote を待たない、退出した private channel の replica を読まない、窓の読み出しの境界（`not_after` ちょうどの秒）、遡りの query 数の上限。
+- `hydration_limits.rs` の陳腐化した comment、inventory の段階の表記（T5 → T5b）、ADR 0052 §2 の契機（private channel の現在 epoch）と上限の記述を直した。
+- file の行数の上限（1,000 行）を守るため、object を 1 件 key 指定で反映する関数群を `service/object_hydration.rs` へ分けた。
+
 ### 検証
 
-`cargo xtask rust-test`(nextest 1,121 件と doc test: 成功)、`cargo test -p kukuri-app-api --lib`(248 件: 成功)、`cargo test -p kukuri-docs-sync --lib`(22 件: 成功)、
-`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`(いずれも成功)。
+`cargo xtask rust-test`（nextest 1,141 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（265 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（24 件: 成功）、
+`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。

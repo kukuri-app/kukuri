@@ -1,7 +1,7 @@
 //! 時系列の索引と projection を照合し、欠けている object を key 指定で反映する(#1239、ADR 0052 §2)。
 //!
-//! replica は走査しない。1 回の照合が読む索引の entry 数は呼び出し側の `limit`(上限つき)で決まり、
-//! replica の総 entry 数に依存しない。読み出しは `LocalOnly` で、表示を remote 取得で待たせない。
+//! replica は走査しない。1 回の照合が読む索引の entry 数には上限があり、replica の総 entry 数に依存しない。
+//! 読み出しは `LocalOnly` で、表示を remote 取得で待たせない。
 
 use super::*;
 use kukuri_docs_sync::{
@@ -9,7 +9,8 @@ use kukuri_docs_sync::{
     query_time_index_window,
 };
 
-/// 1 回の照合で読む時系列の索引の entry 数の上限。呼び出し側の `limit` をこの値で抑える。
+/// 1 回の照合で、replica 1 つから読む時系列の索引の entry 数の上限。呼び出し側の `limit` もこの値で抑える。
+/// 反映できない entry が続く範囲は、この件数まで読み進めて止まり、続きは次の照合が読む。
 pub(crate) const RANGE_CHECK_ENTRY_LIMIT: usize = 200;
 /// 1 回の照合で読む thread の索引の entry 数の上限。これを超える thread は、古い側のこの件数だけを照合する
 /// (新しい側は docs の event と窓の追いつきで反映される)。
@@ -18,10 +19,17 @@ pub(crate) const THREAD_CHECK_ENTRY_LIMIT: usize = 512;
 pub(crate) const TIME_INDEX_FUTURE_ALLOWANCE_SECS: i64 = 600;
 /// 欠けが無かった範囲を、次に照合するまでの間隔。
 pub(crate) const RANGE_CHECK_INTERVAL_MS: i64 = 30_000;
-/// 反映できない entry(本体が手元に無い)が残った範囲を、次に照合するまでの間隔。
+/// まだ反映できない entry が残った範囲と、読み進めている途中の範囲を、次に照合するまでの間隔。
 pub(crate) const RANGE_CHECK_RETRY_INTERVAL_MS: i64 = 5_000;
 /// 照合の台帳の上限。超えたら期限の切れた項目を捨て、それでも超えるなら記録せずに照合する。
 pub(crate) const RANGE_CHECK_LEDGER_LIMIT: usize = 4_096;
+
+#[derive(Clone, Debug, Default)]
+struct RangeCheckState {
+    next_check_at_ms: i64,
+    /// 反映できない entry が続いて、上限まで読んでも 1 ページぶんに届かなかった範囲の、続きの起点。
+    resume_before: Option<TimeIndexCursor>,
+}
 
 /// 同じ範囲の照合を、表示の更新のたびに繰り返さないための台帳。
 ///
@@ -29,43 +37,75 @@ pub(crate) const RANGE_CHECK_LEDGER_LIMIT: usize = 4_096;
 /// 次の照合の時刻を持ち、それまでは projection だけで応える。
 #[derive(Default)]
 pub(crate) struct RangeCheckLedger {
-    next_check_at_ms: Mutex<HashMap<String, i64>>,
+    entries: Mutex<HashMap<String, RangeCheckState>>,
 }
 
 impl RangeCheckLedger {
-    /// この範囲を今照合してよいか。`true` を返したときは、再試行の間隔ぶん次の照合を先へ進める。
-    pub(crate) async fn try_begin(&self, range_key: &str, now_ms: i64) -> bool {
-        let mut entries = self.next_check_at_ms.lock().await;
-        if entries
-            .get(range_key)
-            .is_some_and(|next_check_at| *next_check_at > now_ms)
-        {
-            return false;
+    /// この範囲を今照合してよいか。照合してよいときは、再試行の間隔ぶん次の照合を先へ進め、
+    /// 前回の照合が読み進めた位置(あれば)を返す。
+    pub(crate) async fn try_begin(
+        &self,
+        range_key: &str,
+        now_ms: i64,
+    ) -> Option<Option<TimeIndexCursor>> {
+        let mut entries = self.entries.lock().await;
+        if let Some(state) = entries.get_mut(range_key) {
+            if state.next_check_at_ms > now_ms {
+                return None;
+            }
+            state.next_check_at_ms = now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS);
+            return Some(state.resume_before.clone());
         }
-        if !entries.contains_key(range_key) && entries.len() >= RANGE_CHECK_LEDGER_LIMIT {
-            entries.retain(|_, next_check_at| *next_check_at > now_ms);
+        if entries.len() >= RANGE_CHECK_LEDGER_LIMIT {
+            entries.retain(|_, state| state.next_check_at_ms > now_ms);
             if entries.len() >= RANGE_CHECK_LEDGER_LIMIT {
                 // 記録できない範囲は、間隔を空けずに照合する(照合そのものは上限つき)。
-                return true;
+                return Some(None);
             }
         }
         entries.insert(
             range_key.to_string(),
-            now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
+            RangeCheckState {
+                next_check_at_ms: now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
+                resume_before: None,
+            },
         );
-        true
+        Some(None)
     }
 
-    /// 欠けの無かった範囲の、次の照合を先へ延ばす。
-    pub(crate) async fn record_complete(&self, range_key: &str, now_ms: i64) {
-        if let Some(next_check_at) = self.next_check_at_ms.lock().await.get_mut(range_key) {
-            *next_check_at = now_ms.saturating_add(RANGE_CHECK_INTERVAL_MS);
+    /// 1 ページぶんを確かめ終えた範囲。欠けが無ければ、次の照合を先へ延ばす。
+    pub(crate) async fn record_finished(&self, range_key: &str, now_ms: i64, complete: bool) {
+        if let Some(state) = self.entries.lock().await.get_mut(range_key) {
+            state.resume_before = None;
+            if complete {
+                state.next_check_at_ms = now_ms.saturating_add(RANGE_CHECK_INTERVAL_MS);
+            }
         }
+    }
+
+    /// 上限まで読んでも 1 ページぶんに届かなかった範囲。次の照合は、読み進めた位置から続ける。
+    pub(crate) async fn record_resume(&self, range_key: &str, resume_before: TimeIndexCursor) {
+        if let Some(state) = self.entries.lock().await.get_mut(range_key) {
+            state.resume_before = Some(resume_before);
+        }
+    }
+
+    /// 間隔を空けずに次も照合する範囲を、台帳から外す。
+    pub(crate) async fn forget(&self, range_key: &str) {
+        self.entries.lock().await.remove(range_key);
     }
 
     #[cfg(test)]
     pub(crate) async fn len(&self) -> usize {
-        self.next_check_at_ms.lock().await.len()
+        self.entries.lock().await.len()
+    }
+
+    /// test 用: 間隔が過ぎた状態にする(読み進めた位置は保つ)。
+    #[cfg(test)]
+    pub(crate) async fn expire_all_for_test(&self) {
+        for state in self.entries.lock().await.values_mut() {
+            state.next_check_at_ms = 0;
+        }
     }
 }
 
@@ -74,14 +114,21 @@ impl RangeCheckLedger {
 pub(crate) struct RangeCheckOutcome {
     /// 今回 projection へ反映した件数(投稿と取り下げ)。
     pub(crate) hydrated: usize,
-    /// 索引にあるが反映できなかった件数(entry の本体が手元に無い、など)。
+    /// projection に既にあった object の件数。
+    pub(crate) present: usize,
+    /// 索引にあるが、まだ反映できない件数(entry の本体や、取り下げの対象の envelope が手元に無い)。
+    /// 後の照合で拾えるので、この範囲は短い間隔で照合し直す。
     pub(crate) unresolved: usize,
+    /// 索引にあるが、投稿として読めない件数。照合し直しても変わらないので、反映の対象から外す。
+    pub(crate) invalid: usize,
 }
 
 impl RangeCheckOutcome {
     fn merge(&mut self, other: Self) {
         self.hydrated += other.hydrated;
+        self.present += other.present;
         self.unresolved += other.unresolved;
+        self.invalid += other.invalid;
     }
 }
 
@@ -89,6 +136,10 @@ impl RangeCheckOutcome {
 ///
 /// projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で
 /// 確認する(取り下げの event を取りこぼした行の本文を出し続けない)。
+///
+/// 1 件の entry が読めなくても、残りの entry の反映を続ける。索引と `objects/` は、その replica に書ける誰もが
+/// 置けるので、読めない record を 1 件置くだけでページの取得を失敗させられないようにする(ADR 0052 §2)。
+/// docs と projection の読み書きの失敗は、エラーとして返す。
 pub(crate) async fn ensure_index_entries_projected(
     services: &ServiceHandles,
     replica: &ReplicaId,
@@ -105,13 +156,23 @@ pub(crate) async fn ensure_index_entries_projected(
             .await?
             .is_none()
         {
-            if hydrate_object_by_id(services, replica, &object_id, policy).await? {
-                outcome.hydrated += 1;
-            } else {
-                outcome.unresolved += 1;
+            // 1 回に多数の object を反映するので、本文は手元にあるものだけを読む(表示を remote 取得で待たせない)。
+            match hydrate_object_by_id_with(
+                services,
+                replica,
+                &object_id,
+                policy,
+                BodyFetch::LocalOnly,
+            )
+            .await?
+            {
+                ObjectHydration::Hydrated => outcome.hydrated += 1,
+                ObjectHydration::Missing => outcome.unresolved += 1,
+                ObjectHydration::Invalid => outcome.invalid += 1,
             }
             continue;
         }
+        outcome.present += 1;
         if projection_store
             .get_post_withdrawal(&object_id)
             .await?
@@ -129,7 +190,8 @@ pub(crate) async fn ensure_index_entries_projected(
         .await?
         .into_iter()
         .next()
-            && hydrate_post_withdrawal_from_record(
+        {
+            match hydrate_post_withdrawal_from_record(
                 docs_sync,
                 projection_store,
                 replica,
@@ -137,9 +199,11 @@ pub(crate) async fn ensure_index_entries_projected(
                 policy,
             )
             .await?
-            .applied()
-        {
-            outcome.hydrated += 1;
+            {
+                PostWithdrawalHydration::Applied => outcome.hydrated += 1,
+                PostWithdrawalHydration::TargetMissing => outcome.unresolved += 1,
+                PostWithdrawalHydration::Invalid => {}
+            }
         }
     }
     Ok(outcome)
@@ -168,61 +232,132 @@ impl AppService {
         if limit == 0 {
             return Ok(0);
         }
-        const INDEX_PREFIX: &str = "indexes/timeline/";
         let before = before.map(time_index_cursor);
-        let mut total = RangeCheckOutcome::default();
+        let mut hydrated = 0usize;
         for replica in self.scope_replicas(topic_id, scope).await? {
-            let range_key = format!(
-                "{}\n{INDEX_PREFIX}\n{}\n{limit}",
-                replica.as_str(),
-                before
-                    .as_ref()
-                    .map(|cursor| format!("{:020}-{}", cursor.created_at, cursor.object_id))
-                    .unwrap_or_default(),
-            );
-            let now = Utc::now();
-            if !self
-                .services
-                .range_checks
-                .try_begin(range_key.as_str(), now.timestamp_millis())
-                .await
-            {
-                continue;
+            hydrated += self
+                .reconcile_replica_timeline_range(&replica, before.as_ref(), limit)
+                .await?
+                .hydrated;
+        }
+        Ok(hydrated)
+    }
+
+    /// replica 1 つの時系列の索引を、`before` より古い側(無ければ新しい側)へ読み、projection に在る object が
+    /// `limit` 件に届くまで反映する。反映できない entry(本体が未着、投稿として読めない)は読み飛ばして先へ進む。
+    /// そうしないと、反映できない entry が `limit` 件続いただけで、その先の投稿へ遡れなくなる。
+    ///
+    /// 1 回に読む索引の entry 数は `RANGE_CHECK_ENTRY_LIMIT` まで。届かなかったときは、読み進めた位置を
+    /// 台帳に残し、次の照合がそこから続ける。
+    async fn reconcile_replica_timeline_range(
+        &self,
+        replica: &ReplicaId,
+        before: Option<&TimeIndexCursor>,
+        limit: usize,
+    ) -> Result<RangeCheckOutcome> {
+        const INDEX_PREFIX: &str = "indexes/timeline/";
+        let range_key = format!(
+            "{}\n{INDEX_PREFIX}\n{}\n{limit}",
+            replica.as_str(),
+            before
+                .map(|cursor| format!("{:020}-{}", cursor.created_at, cursor.object_id))
+                .unwrap_or_default(),
+        );
+        let now = Utc::now();
+        let Some(resume_before) = self
+            .services
+            .range_checks
+            .try_begin(range_key.as_str(), now.timestamp_millis())
+            .await
+        else {
+            return Ok(RangeCheckOutcome::default());
+        };
+        let docs_sync = self.services.docs_sync.as_ref();
+        let mut position = resume_before.or_else(|| before.cloned());
+        let mut total = RangeCheckOutcome::default();
+        let mut entries_read = 0usize;
+        let mut index_exhausted = false;
+        // 1 回目は、ページに要る件数だけを読む(欠けが無ければこれで終わる)。反映できない entry があって
+        // 届かなかったときは、読む件数を 4 倍ずつ増やす。同じ位置からの読み直しの回数を抑えるため。
+        let mut batch = limit;
+        loop {
+            let resolved = total.hydrated + total.present;
+            if resolved >= limit {
+                break;
             }
-            let docs_sync = self.services.docs_sync.as_ref();
-            let entries = match before.as_ref() {
+            let wanted = batch
+                .max(limit - resolved)
+                .min(RANGE_CHECK_ENTRY_LIMIT - entries_read);
+            if wanted == 0 {
+                break;
+            }
+            batch = batch.saturating_mul(4);
+            let entries = match position.as_ref() {
                 Some(cursor) => {
-                    query_time_index_desc(docs_sync, &replica, INDEX_PREFIX, Some(cursor), limit)
+                    query_time_index_desc(docs_sync, replica, INDEX_PREFIX, Some(cursor), wanted)
                         .await?
                 }
                 None => {
                     query_time_index_window(
                         docs_sync,
-                        &replica,
+                        replica,
                         INDEX_PREFIX,
                         now.timestamp()
                             .saturating_add(TIME_INDEX_FUTURE_ALLOWANCE_SECS),
-                        limit,
+                        wanted,
                     )
                     .await?
                 }
             };
-            let outcome = ensure_index_entries_projected(
-                &self.services,
-                &replica,
-                &entries,
-                DocFetchPolicy::LocalOnly,
-            )
-            .await?;
-            if outcome.unresolved == 0 {
-                self.services
-                    .range_checks
-                    .record_complete(range_key.as_str(), now.timestamp_millis())
+            let Some(last) = entries.last() else {
+                index_exhausted = true;
+                break;
+            };
+            position = Some(TimeIndexCursor {
+                created_at: last.created_at,
+                object_id: last.object_id.clone(),
+            });
+            entries_read += entries.len();
+            if entries.len() < wanted {
+                index_exhausted = true;
+            }
+            total.merge(
+                ensure_index_entries_projected(
+                    &self.services,
+                    replica,
+                    &entries,
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await?,
+            );
+            if index_exhausted {
+                break;
+            }
+        }
+
+        let ledger = self.services.range_checks.as_ref();
+        if entries_read == 0 && before.is_none() {
+            // 索引がまだ空の replica(参加した直後など)は、間隔を空けずに次の取得でも読む。
+            // 読むのは key だけの読み出し 1 回で、投稿が同期された直後のページをすぐに組み立てられる。
+            ledger.forget(range_key.as_str()).await;
+            return Ok(total);
+        }
+        let page_resolved = total.hydrated + total.present >= limit;
+        match position {
+            Some(resume) if !page_resolved && !index_exhausted => {
+                ledger.record_resume(range_key.as_str(), resume).await;
+            }
+            _ => {
+                ledger
+                    .record_finished(
+                        range_key.as_str(),
+                        now.timestamp_millis(),
+                        total.unresolved == 0,
+                    )
                     .await;
             }
-            total.merge(outcome);
         }
-        Ok(total.hydrated)
+        Ok(total)
     }
 
     /// thread の索引(`indexes/thread/<root>/`)と projection を照合して、欠けている object を反映する。
@@ -256,11 +391,12 @@ impl AppService {
         for replica in replicas {
             let range_key = format!("{}\n{index_prefix}", replica.as_str());
             let now_ms = Utc::now().timestamp_millis();
-            if !self
+            if self
                 .services
                 .range_checks
                 .try_begin(range_key.as_str(), now_ms)
                 .await
+                .is_none()
             {
                 continue;
             }
@@ -287,12 +423,10 @@ impl AppService {
                 DocFetchPolicy::LocalOnly,
             )
             .await?;
-            if outcome.unresolved == 0 {
-                self.services
-                    .range_checks
-                    .record_complete(range_key.as_str(), now_ms)
-                    .await;
-            }
+            self.services
+                .range_checks
+                .record_finished(range_key.as_str(), now_ms, outcome.unresolved == 0)
+                .await;
             total.merge(outcome);
         }
         Ok(total.hydrated)
@@ -322,47 +456,83 @@ mod tests {
     #[tokio::test]
     async fn range_checks_are_spaced_per_range_and_bounded() {
         let ledger = RangeCheckLedger::default();
-        assert!(ledger.try_begin("range-a", 0).await);
+        assert!(ledger.try_begin("range-a", 0).await.is_some());
         assert!(
-            !ledger
+            ledger
                 .try_begin("range-a", RANGE_CHECK_RETRY_INTERVAL_MS - 1)
-                .await,
-            "an incomplete range waits for the retry interval"
+                .await
+                .is_none(),
+            "an unfinished range waits for the retry interval"
         );
         assert!(
-            ledger.try_begin("range-b", 0).await,
+            ledger.try_begin("range-b", 0).await.is_some(),
             "ranges are independent"
         );
         assert!(
             ledger
                 .try_begin("range-a", RANGE_CHECK_RETRY_INTERVAL_MS)
                 .await
+                .is_some()
         );
         ledger
-            .record_complete("range-a", RANGE_CHECK_RETRY_INTERVAL_MS)
+            .record_finished("range-a", RANGE_CHECK_RETRY_INTERVAL_MS, true)
             .await;
         assert!(
-            !ledger
+            ledger
                 .try_begin(
                     "range-a",
                     RANGE_CHECK_RETRY_INTERVAL_MS + RANGE_CHECK_INTERVAL_MS - 1
                 )
-                .await,
+                .await
+                .is_none(),
             "a complete range waits for the full interval"
         );
 
         let ledger = RangeCheckLedger::default();
         for index in 0..RANGE_CHECK_LEDGER_LIMIT {
-            assert!(ledger.try_begin(&format!("range-{index}"), 0).await);
+            assert!(
+                ledger
+                    .try_begin(&format!("range-{index}"), 0)
+                    .await
+                    .is_some()
+            );
         }
         assert!(
-            ledger.try_begin("one-too-many", 0).await,
+            ledger.try_begin("one-too-many", 0).await.is_some(),
             "a full ledger still allows the bounded check"
         );
         assert_eq!(
             ledger.len().await,
             RANGE_CHECK_LEDGER_LIMIT,
             "but it does not grow"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stuck_range_resumes_from_where_the_last_check_stopped() {
+        let ledger = RangeCheckLedger::default();
+        assert_eq!(ledger.try_begin("range", 0).await, Some(None));
+        let resume = TimeIndexCursor {
+            created_at: 1_758_000_000,
+            object_id: "a".repeat(64),
+        };
+        ledger.record_resume("range", resume.clone()).await;
+        assert_eq!(
+            ledger
+                .try_begin("range", RANGE_CHECK_RETRY_INTERVAL_MS)
+                .await,
+            Some(Some(resume)),
+            "the next check continues from the recorded position"
+        );
+        ledger
+            .record_finished("range", RANGE_CHECK_RETRY_INTERVAL_MS, false)
+            .await;
+        assert_eq!(
+            ledger
+                .try_begin("range", RANGE_CHECK_RETRY_INTERVAL_MS * 2)
+                .await,
+            Some(None),
+            "a finished range starts over from its original position"
         );
     }
 

@@ -139,6 +139,7 @@ mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
 mod notifications_support;
+mod object_hydration;
 mod object_persistence_support;
 mod private_channels_support;
 mod profile_docs_support;
@@ -169,7 +170,7 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_object_by_id,
+    PostWithdrawalHydration, hint_refers_to_replica_content, hint_targets_topic,
     hydrate_post_withdrawal_from_record, hydrate_reaction_cache_from_key,
     hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
     hydrate_topic_state, profile_timeline_page,
@@ -183,6 +184,9 @@ pub(crate) use notifications_support::{
     document_notification_id, normalize_author_pubkey, notification_candidate_from_follow_event,
     notification_candidate_from_object_event, notification_doc_event_fingerprint,
     notification_doc_event_fingerprint_parts, notification_preview_text,
+};
+pub(crate) use object_hydration::{
+    BodyFetch, ObjectHydration, hydrate_object_by_id, hydrate_object_by_id_with,
 };
 pub(crate) use object_persistence_support::{
     best_effort_blob_cache_status, best_effort_blob_view_status,

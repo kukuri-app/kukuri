@@ -3,20 +3,20 @@
 
 use super::*;
 
-const BASE_TIME: i64 = 1_700_000_000;
+pub(super) const BASE_TIME: i64 = 1_700_000_000;
 
-struct RangeFixture {
-    app: AppService,
-    store: Arc<MemoryStore>,
-    docs_sync: Arc<CountingDocsSync>,
-    topic: TopicId,
+pub(super) struct RangeFixture {
+    pub(super) app: AppService,
+    pub(super) store: Arc<MemoryStore>,
+    pub(super) docs_sync: Arc<CountingDocsSync>,
+    pub(super) topic: TopicId,
     /// 古い順。`created_at` は `BASE_TIME + index`。
-    posts: Vec<CanonicalPostHeader>,
+    pub(super) posts: Vec<CanonicalPostHeader>,
 }
 
 /// 1 秒に 1 件ずつの投稿を docs に置く。`projected` が真の位置だけ projection にも入れる。
 /// 購読タスクを起動しないので、反映するのは照合だけになる。
-async fn range_fixture(
+pub(super) async fn range_fixture(
     name: &str,
     posts: usize,
     projected: impl Fn(usize) -> bool,
@@ -65,7 +65,7 @@ async fn range_fixture(
 }
 
 /// `created_at` を指定して投稿を docs に書く(索引の key も同じ時刻になる)。
-async fn put_post_at(
+pub(super) async fn put_post_at(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     keys: &KukuriKeys,
@@ -97,7 +97,11 @@ async fn put_post_at(
     object
 }
 
-async fn project(store: &MemoryStore, object: &CanonicalPostHeader, replica: &ReplicaId) {
+pub(super) async fn project(
+    store: &MemoryStore,
+    object: &CanonicalPostHeader,
+    replica: &ReplicaId,
+) {
     let content = match &object.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { .. } => None,
@@ -110,14 +114,14 @@ async fn project(store: &MemoryStore, object: &CanonicalPostHeader, replica: &Re
     .expect("put projection");
 }
 
-async fn is_projected(store: &MemoryStore, object: &CanonicalPostHeader) -> bool {
+pub(super) async fn is_projected(store: &MemoryStore, object: &CanonicalPostHeader) -> bool {
     ObjectProjectionStore::get_object_projection(store, &object.object_id)
         .await
         .expect("projection")
         .is_some()
 }
 
-fn cursor_at(object: &CanonicalPostHeader) -> TimelineCursor {
+pub(super) fn cursor_at(object: &CanonicalPostHeader) -> TimelineCursor {
     TimelineCursor {
         created_at: object.created_at,
         object_id: object.object_id.clone(),
@@ -396,7 +400,7 @@ async fn thread_reconcile_fills_missing_replies_without_scanning() {
 /// `objects/` などの prefix の読み出し(全件走査)を失敗させる docs。key 指定と、key だけの上限つきの
 /// 読み出しは通す。取得が走査に頼っていないことを示す。
 #[derive(Clone, Default)]
-struct NoScanDocsSync {
+pub(super) struct NoScanDocsSync {
     inner: MemoryDocsSync,
 }
 

@@ -1,11 +1,10 @@
 use super::game_projection_support::hydrate_game_room_from_record;
 use super::hydration_limits::{
-    MissingBodyLedger, ReplicaScanCache, fetch_local_projection_blob_text,
-    fetch_projection_blob_text_bounded, scan_fingerprint,
+    MissingBodyLedger, ReplicaScanCache, fetch_projection_blob_text_bounded, scan_fingerprint,
 };
 use super::*;
 
-fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeader {
+pub(crate) fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeader {
     header.payload_ref = PayloadRef::InlineText {
         text: String::new(),
     };
@@ -246,117 +245,6 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     // 本文が欠けた行は行単位の取り直し(`MissingBodyLedger`)が担うので、走査としては完了とみなす。
     scan_cache.record(replica.as_str(), PREFIX, fingerprint);
     Ok(hydrated)
-}
-
-/// `objects/<object id>/state` の record を 1 件、projection へ反映する。
-///
-/// 本文が blob のとき、`LocalOnly` は手元の本文だけを読む(表示と操作を remote 取得で待たせない。欠けた本文は
-/// `recover_missing_bodies` が背景で取りに行く)。`LocalThenRemote` は、台帳(`MissingBodyLedger`)の間隔と
-/// 回数の内でだけ remote を試す。
-pub(crate) async fn hydrate_object_projection_from_record(
-    blob_service: &dyn BlobService,
-    projection_store: &dyn ProjectionStore,
-    missing_bodies: &MissingBodyLedger,
-    replica: &ReplicaId,
-    record: DocRecord,
-    policy: DocFetchPolicy,
-) -> Result<bool> {
-    let mut header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
-    if projection_store
-        .get_post_withdrawal(&header.object_id)
-        .await?
-        .is_some()
-    {
-        header = scrub_withdrawn_header(header);
-        projection_store
-            .put_object_projection(projection_row_from_header(
-                &header,
-                Some(String::new()),
-                replica,
-            ))
-            .await?;
-        return Ok(true);
-    }
-    let content = match &header.payload_ref {
-        PayloadRef::InlineText { text } => Some(text.clone()),
-        PayloadRef::BlobText { hash, .. } => {
-            let payload = match policy {
-                DocFetchPolicy::LocalOnly => {
-                    fetch_local_projection_blob_text(blob_service, hash).await
-                }
-                DocFetchPolicy::LocalThenRemote => {
-                    fetch_projection_blob_text_bounded(blob_service, missing_bodies, hash).await
-                }
-            };
-            projection_store
-                .mark_blob_status(
-                    hash,
-                    match payload {
-                        Some(_) => BlobCacheStatus::Available,
-                        None => BlobCacheStatus::Missing,
-                    },
-                )
-                .await?;
-            payload
-        }
-    };
-    for attachment in &header.attachments {
-        let status = best_effort_blob_cache_status(blob_service, &attachment.hash).await;
-        projection_store
-            .mark_blob_status(&attachment.hash, status)
-            .await?;
-    }
-    projection_store
-        .put_object_projection(projection_row_from_header(&header, content, replica))
-        .await?;
-    Ok(true)
-}
-
-/// object id を 1 つ指定して、その投稿を projection へ反映する(#1239)。replica は走査しない。
-///
-/// 取り下げを先に反映する。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
-/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。取り下げの event が対象の
-/// envelope より先に届いて反映できなかった場合も、投稿を反映するときにここで取り直す。
-///
-/// `policy` は 2 つの key の読み出しに使う。利用者の操作は `LocalOnly`(操作を remote 取得で待たせない)、
-/// event・hint・repost 元の解決は `LocalThenRemote`。
-pub(crate) async fn hydrate_object_by_id(
-    services: &ServiceHandles,
-    replica: &ReplicaId,
-    object_id: &EnvelopeId,
-    policy: DocFetchPolicy,
-) -> Result<bool> {
-    let docs_sync = services.docs_sync.as_ref();
-    let projection_store = services.projection_store.as_ref();
-    let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-    if let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(withdrawal_key), policy)
-            .await?
-            .into_iter()
-            .next()
-    {
-        // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
-        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
-            .await?;
-    }
-    let state_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
-    let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(state_key), policy)
-            .await?
-            .into_iter()
-            .next()
-    else {
-        return Ok(false);
-    };
-    hydrate_object_projection_from_record(
-        services.blob_service.as_ref(),
-        projection_store,
-        services.missing_body_ledger.as_ref(),
-        replica,
-        record,
-        policy,
-    )
-    .await
 }
 
 /// `objects/<object id>/state` の key から object id を取り出す。

@@ -570,3 +570,95 @@ fn every_docs_query_is_built_on_the_key_index() {
         assert!(!built.contains("AuthorKey"), "{query:?}: {built}");
     }
 }
+
+// 窓の読み出しが遡りへ落ちたとき、`not_after` ちょうどの秒の entry を含み、その 1 秒先は含まない
+// (独立監査の確認 test を恒久化)。
+#[tokio::test]
+async fn window_fallback_keeps_the_not_after_second() -> Result<()> {
+    let docs = Arc::new(CountingKeys::default());
+    let replica = topic_replica_id("kukuri:topic:time-index-window-boundary");
+    docs.open_replica(&replica).await?;
+    let not_after = 1_758_000_600_i64;
+    let mut rows = Vec::new();
+    // `not_after` ちょうどの秒に 2 件、それより古い側に 3 件。
+    for (index, created_at) in [not_after, not_after, not_after - 1, not_after - 50, 1_000]
+        .into_iter()
+        .enumerate()
+    {
+        let row = (created_at, object_id(index + 1));
+        put_key(docs.as_ref(), &replica, index_key(row.0, &row.1)).await?;
+        rows.push(row);
+    }
+    // 1 秒だけ未来の entry と、遠い未来の entry を、余裕を超えて置く。
+    put_key(
+        docs.as_ref(),
+        &replica,
+        index_key(not_after + 1, &object_id(500)),
+    )
+    .await?;
+    for index in 0..120usize {
+        put_key(
+            docs.as_ref(),
+            &replica,
+            index_key(not_after + 86_400 + index as i64, &object_id(1_000 + index)),
+        )
+        .await?;
+    }
+    for limit in [1usize, 2, 3, 5, 20] {
+        docs.queries.store(0, Ordering::SeqCst);
+        let window =
+            query_time_index_window(docs.as_ref(), &replica, INDEX_PREFIX, not_after, limit)
+                .await?;
+        assert_eq!(ids(&window), expected(&rows, None, limit), "limit={limit}");
+        assert!(docs.queries.load(Ordering::SeqCst) > 1, "the fallback ran");
+    }
+    Ok(())
+}
+
+// 形の違う key を多くの秒へ置かれても、遡りは query 数の上限で止まり、読めた分(新しい側から連続)を返す
+// (独立監査の確認 test を恒久化)。
+#[tokio::test]
+async fn walk_stops_at_the_query_cap_and_returns_a_contiguous_head() -> Result<()> {
+    let docs = Arc::new(CountingKeys::default());
+    let replica = topic_replica_id("kukuri:topic:time-index-query-cap");
+    docs.open_replica(&replica).await?;
+    let top = 1_758_000_000_i64;
+    let mut rows = vec![(top - 1, object_id(1)), (top - 2, object_id(2))];
+    for (created_at, id) in &rows {
+        put_key(docs.as_ref(), &replica, index_key(*created_at, id)).await?;
+    }
+    // その古い側の 40 個の「10 秒の範囲」それぞれの 1 秒に、形の違う key を余裕を超えて置く。
+    for window in 1..=40_i64 {
+        let second = top - window * 10 - 3;
+        for index in 0..40usize {
+            put_key(
+                docs.as_ref(),
+                &replica,
+                stable_key(
+                    "indexes/timeline",
+                    &format!("{second:020}-~junk-{index:03}"),
+                ),
+            )
+            .await?;
+        }
+    }
+    let old = (top - 1_000, object_id(3));
+    put_key(docs.as_ref(), &replica, index_key(old.0, &old.1)).await?;
+    rows.push(old);
+
+    let cursor = TimeIndexCursor {
+        created_at: top,
+        object_id: "f".repeat(64),
+    };
+    docs.queries.store(0, Ordering::SeqCst);
+    let page =
+        query_time_index_desc(docs.as_ref(), &replica, INDEX_PREFIX, Some(&cursor), 5).await?;
+    let queries = docs.queries.load(Ordering::SeqCst);
+    // 同じ秒の読み出し 1 回と、遡りの上限 256 回。
+    assert!(queries <= 257, "the walk is capped: {queries} queries");
+    // 返した分は、基準実装の先頭と一致する(途中を飛ばさない)。
+    let reference = expected(&rows, Some(&cursor), 5);
+    assert!(!page.is_empty());
+    assert_eq!(ids(&page), reference[..page.len()].to_vec());
+    Ok(())
+}

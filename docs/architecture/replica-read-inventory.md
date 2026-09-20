@@ -28,7 +28,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | S-6 | `list_timeline_scoped`（空ページ、private channel の現在 epoch が未反映）・`list_thread`（空ページ）。private channel の現在 epoch に投稿が無い間は、取得のたびに走査していた | scope の全 replica の 5 prefix | 同 S-1 × scope の replica 数 | T5a（解消済み。`reconcile_timeline_range`・`reconcile_thread` が、ページの範囲を時系列の索引と照合する） |
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
-| S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5 |
+| S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5b |
 | S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6 |
 
 ## prefix の全件読み（caller ごと）
@@ -39,7 +39,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-2 | `hydration_support.rs` `hydrate_object_projection_from_replica` | `objects/`（1 投稿につき `state` と `envelope` の 2 entry） | topic の投稿総数 | 対象。T7 で削除 |
 | P-3 | `hydration_support.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | 対象。T7 で削除 |
 | P-4 | `hydration_support.rs` `hydrate_reaction_cache_for_target` | `reactions/<target object id>/` | 1 投稿のリアクション数 | 対象。T4 で上限つきの読み出しにする（集計は best effort）。T3 では、自分の reaction の確認を key 指定の読み出しにした |
-| P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | 対象。T5 で上限つき、T7 で全件走査から外す |
+| P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | 対象。T5b で上限つき、T7 で全件走査から外す |
 | P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | 同上 |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
 | P-8 | `profile_docs_support.rs` `hydrate_author_state` | `graph/follows/`、`graph/blocks/` | author の follow・block の総数 | 対象。T6（event 駆動と上限つきの読み出し） |
@@ -61,19 +61,19 @@ cursor の条件、V-1・V-2）は T5b とする。
 ## view の生成に残る docs の読み出し（key 指定）
 
 T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る。どちらも key を 1 つ指定した `LocalOnly` の読み出しで、replica の総 entry 数には依存しない
-（T2 の索引化の後）。ただし ADR 0052 §2 の「view の生成中に docs を読まない」に反するので、T5 で外す。
+（T2 の索引化の後）。ただし ADR 0052 §2 の「view の生成中に docs を読まない」に反するので、T5b で外す。
 
 | ID | 箇所 | 読む範囲・契機 | 比例する総数 | 分類 |
 | --- | --- | --- | --- | --- |
-| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`fetch_post_object_for_projection`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/state` を 1 回（`LocalOnly`）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 対象。T5 で、返信先の反映を取得側（窓の追いつき・遡りの取得）と背景へ移す |
-| V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | `projection_version < 2` で添付の列が空の行だけ、`objects/<id>/state` を 1 回（`LocalOnly`）。現行の反映が書く行は対象外 | 依存しない（旧い行ごとに 1 key） | 対象。T5 で、旧い行は反映し直すときに列を埋める形にして fallback を削除する |
+| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`fetch_post_object_for_projection`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/state` を 1 回（`LocalOnly`）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 対象。T5b で、返信先の反映を取得側（窓の追いつき・ページの範囲の照合）と背景へ移す |
+| V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | `projection_version < 2` で添付の列が空の行だけ、`objects/<id>/state` を 1 回（`LocalOnly`）。現行の反映が書く行は対象外 | 依存しない（旧い行ごとに 1 key） | 対象。T5b で、旧い行は反映し直すときに列を埋める形にして fallback を削除する |
 
 ## projection 側
 
 | ID | 箇所 | 問題 | 解消する段階 |
 | --- | --- | --- | --- |
-| Q-1 | `crates/store/src/sqlite/projections.rs` のタイムライン・thread の cursor 条件（`created_at < ? OR (created_at = ? AND object_id < ?)`） | OR 形のため、深いページほど索引の読み飛ばしが増える（遡った深さに比例） | T5（range seek になる形へ） |
-| Q-2 | `projection_support.rs` `filtered_timeline_page` / `filtered_thread_page` | 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続ける | T5（読むページ数に上限） |
+| Q-1 | `crates/store/src/sqlite/projections.rs` のタイムライン・thread の cursor 条件（`created_at < ? OR (created_at = ? AND object_id < ?)`） | OR 形のため、深いページほど索引の読み飛ばしが増える（遡った深さに比例） | T5b（range seek になる形へ） |
+| Q-2 | `projection_support.rs` `filtered_timeline_page` / `filtered_thread_page` | 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続ける。`limit` が 20 未満のときと非表示の著者があるときは、返す `next_cursor` が行を飛ばす | T5b（読むページ数に上限、`next_cursor` の位置） |
 | Q-3 | `timeline.rs` `list_profile_timeline` | author の全投稿・全 repost をロードしてソートしてからページを切る | T6 |
 
 ## 観察（本 Issue では変えない）

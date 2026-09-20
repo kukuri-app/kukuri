@@ -16,8 +16,8 @@ use super::*;
 
 /// n 回目の失敗から次の試行までの待ち時間。最後の値を以後の間隔として使う。
 pub(crate) const MISSING_BODY_RETRY_DELAYS_MS: [i64; 4] = [5_000, 30_000, 120_000, 600_000];
-/// 本文 blob 1 つあたりの最大試行数。超えた後は、同じ行を指す docs event / hint の個別反映(その場で 1 回試す)と
-/// 再起動でだけ取り直す。
+/// 本文 blob 1 つあたりの最大試行数。docs の event・hint の個別反映、利用者の操作の対象の反映、表示した行の
+/// 取り直しは、どれもこの台帳を通る。超えた後は、再起動(台帳は memory 上にある)まで取り直さない。
 pub(crate) const MISSING_BODY_MAX_ATTEMPTS: u32 = 8;
 /// 背景で同時に取り直す本文 blob の上限。
 pub(crate) const MISSING_BODY_MAX_CONCURRENT_FETCHES: usize = 4;
