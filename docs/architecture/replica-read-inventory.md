@@ -75,6 +75,8 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 
 - 同じ key に複数の docs 著者の entry があるとき、caller は `Exact` の結果の先頭（docs 著者 id の昇順で最初）を使う。最新の entry ではない。
   T2 で並びを key の索引に変えても、`Exact` の結果の順序（docs 著者 id の昇順）と、prefix 読みで同じ key の最後に反映される entry は変わらない。
+  ただし、投稿の envelope（`objects/<object id>/envelope`、#1248）と取り下げ（`withdrawals/<object id>/state`、#1250）の key 指定の読み出しは、先頭の 1 件を使わず、
+  上限つき（key ごとに最大 8 record）で検証に通る最初の record を選ぶ（ADR 0052 §2）。
 - repost 元、profile の投稿、profile の投稿の返信先の取り下げの確認は、購読していない topic の replica を開いて同期する（T3 より前から、view の生成のたびに起きていた副作用）。T3 で確認は背景の key 指定になったが、replica を開くこと自体は残る。
   開く replica の上限と、取り下げの置き場所は #1224・#1243 で扱う。
 - private channel の取り下げは、現在の epoch の replica に書かれる。対象の投稿が過去の epoch の replica にあると、取り下げを反映する側は同じ replica で対象の envelope を見つけられず、

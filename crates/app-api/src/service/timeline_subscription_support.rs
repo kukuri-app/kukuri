@@ -479,22 +479,14 @@ impl AppService {
                     return Ok::<_, anyhow::Error>(());
                 }
                 let docs_sync = services.docs_sync.as_ref();
-                let key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-                if let Some(record) = docs_sync
-                    .query_replica(&replica, DocQuery::Exact(key))
-                    .await?
-                    .into_iter()
-                    .next()
-                {
-                    hydrate_post_withdrawal_from_record(
-                        docs_sync,
-                        projection_store,
-                        &replica,
-                        record,
-                        DocFetchPolicy::LocalThenRemote,
-                    )
-                    .await?;
-                }
+                hydrate_post_withdrawal_for_object(
+                    docs_sync,
+                    projection_store,
+                    &replica,
+                    &object_id,
+                    DocFetchPolicy::LocalThenRemote,
+                )
+                .await?;
                 Ok(())
             }
             .await;
