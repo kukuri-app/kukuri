@@ -202,10 +202,10 @@ jobs:
           sudo apt-get update
           python3 scripts/release/native_compliance.py --package "$RUNNER_TEMP/kukuri-linux-package" \
             --appdir apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/kukuri.AppDir
+      # src-tauri の lib 単体 test を CI で実行するのはここだけ（#1234）。package の release build を
+      # 再利用するので、Fast には同じ test を置かない。
       - name: Linux desktop contracts (isolated notification bus)
-        run: >-
-          cargo test --locked --release --target x86_64-unknown-linux-gnu
-          --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+        run: cargo xtask-lite tauri-test --package-build
       - name: Real updater replacement failure and explicit retry
         shell: bash
         run: |
