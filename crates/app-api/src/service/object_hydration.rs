@@ -1,11 +1,11 @@
 //! object を 1 件、key 指定で projection へ反映する(#1239、ADR 0052 §2)。replica は走査しない。
 //!
 //! docs の event・hint の個別反映、利用者の操作の対象の反映、ページの範囲の照合が、この経路を通る。
+//! 行は署名つき envelope から作る(#1248)。
 
 use super::hydration_limits::{
     MissingBodyLedger, fetch_local_projection_blob_text, fetch_projection_blob_text_bounded,
 };
-use super::hydration_support::scrub_withdrawn_header;
 use super::*;
 
 /// object を 1 件、key 指定で反映した結果(#1239)。
@@ -13,9 +13,9 @@ use super::*;
 pub(crate) enum ObjectHydration {
     /// projection へ反映した。
     Hydrated,
-    /// `objects/<object id>/state` が手元に無い(entry が無い、または本体が未着)。後の反映で拾える。
+    /// `objects/<object id>/envelope` が手元に無い(entry が無い、または本体が未着)。後の反映で拾える。
     Missing,
-    /// state が投稿の header として読めない。反映し直しても変わらないので、投稿として扱わない。
+    /// envelope の record はあるが、検証に通るものが無い。反映し直しても変わらないので、投稿として扱わない。
     Invalid,
 }
 
@@ -30,46 +30,28 @@ pub(crate) enum BodyFetch {
     Bounded,
 }
 
-/// `objects/<object id>/state` の record を 1 件、projection へ反映する。
-///
-/// 投稿の header として読めない record は `Invalid` を返し、エラーにしない。public topic の replica は誰でも
-/// 書けるので、読めない record を 1 件置くだけで、ページの取得や topic 全体の操作を止められないようにする
-/// (ADR 0052 §2)。projection の読み書きの失敗はエラーとして返す。
-pub(crate) async fn hydrate_object_projection_from_record(
+/// 検証済みの投稿を 1 件、projection へ反映する。
+pub(crate) async fn hydrate_object_projection_from_post(
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
     missing_bodies: &MissingBodyLedger,
-    replica: &ReplicaId,
-    record: DocRecord,
+    post: VerifiedPost,
     body_fetch: BodyFetch,
-) -> Result<ObjectHydration> {
-    let mut header: CanonicalPostHeader = match serde_json::from_slice(&record.value) {
-        Ok(header) => header,
-        Err(error) => {
-            warn!(
-                replica = %replica.as_str(),
-                key = %record.key,
-                error = %error,
-                "ignored an object state record that is not a post header"
-            );
-            return Ok(ObjectHydration::Invalid);
-        }
-    };
+) -> Result<()> {
     if projection_store
-        .get_post_withdrawal(&header.object_id)
+        .get_post_withdrawal(&post.header().object_id)
         .await?
         .is_some()
     {
-        header = scrub_withdrawn_header(header);
         projection_store
-            .put_object_projection(projection_row_from_header(
-                &header,
+            .put_object_projection(projection_row_from_post(
+                &post.withdrawn(),
                 Some(String::new()),
-                replica,
             ))
             .await?;
-        return Ok(ObjectHydration::Hydrated);
+        return Ok(());
     }
+    let header = post.header();
     let content = match &header.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { hash, .. } => {
@@ -98,9 +80,9 @@ pub(crate) async fn hydrate_object_projection_from_record(
             .await?;
     }
     projection_store
-        .put_object_projection(projection_row_from_header(&header, content, replica))
+        .put_object_projection(projection_row_from_post(&post, content))
         .await?;
-    Ok(ObjectHydration::Hydrated)
+    Ok(())
 }
 
 /// object id を 1 つ指定して、その投稿を projection へ反映する(#1239)。replica は走査しない。
@@ -108,25 +90,37 @@ pub(crate) async fn hydrate_object_projection_from_record(
 ///
 /// `policy` は docs の key の読み出しに使う。利用者の操作は `LocalOnly`(操作を docs の remote 取得で
 /// 待たせない)、event・hint・repost 元の解決は `LocalThenRemote`。
-pub(crate) async fn hydrate_object_by_id(
+pub(crate) async fn hydrate_object_in_topic(
     services: &ServiceHandles,
+    topic_id: &str,
     replica: &ReplicaId,
     object_id: &EnvelopeId,
     policy: DocFetchPolicy,
 ) -> Result<bool> {
-    Ok(
-        hydrate_object_by_id_with(services, replica, object_id, policy, BodyFetch::Bounded).await?
-            == ObjectHydration::Hydrated,
+    Ok(hydrate_object_in_topic_with(
+        services,
+        topic_id,
+        replica,
+        object_id,
+        policy,
+        BodyFetch::Bounded,
     )
+    .await?
+        == ObjectHydration::Hydrated)
 }
 
-/// `hydrate_object_by_id` の本体。反映の結果の内訳と、本文の取り方を指定できる。
+/// `hydrate_object_in_topic` の本体。反映の結果の内訳と、本文の取り方を指定できる。
 ///
 /// 取り下げを先に反映する。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
 /// この順にすると、取り下げより後に反映した投稿でも本文が残らない。取り下げの event が対象の
 /// envelope より先に届いて反映できなかった場合も、投稿を反映するときにここで取り直す。
-pub(crate) async fn hydrate_object_by_id_with(
+///
+/// 行は署名つき envelope から作る(#1248)。`topic_id` は、その replica を読む文脈の topic(private channel の
+/// replica id は topic を含まない)。検証に通る envelope が無ければ反映しない。envelope が後から届いた場合は、
+/// その event でもう一度呼ばれる。読む docs の record は、取り下げの key と envelope の key だけ。
+pub(crate) async fn hydrate_object_in_topic_with(
     services: &ServiceHandles,
+    topic_id: &str,
     replica: &ReplicaId,
     object_id: &EnvelopeId,
     policy: DocFetchPolicy,
@@ -145,22 +139,18 @@ pub(crate) async fn hydrate_object_by_id_with(
         hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
             .await?;
     }
-    let state_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
-    let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(state_key), policy)
-            .await?
-            .into_iter()
-            .next()
-    else {
-        return Ok(ObjectHydration::Missing);
+    let post = match load_post(docs_sync, replica, topic_id, object_id, policy).await? {
+        PostLoad::Verified(post) => *post,
+        PostLoad::Missing => return Ok(ObjectHydration::Missing),
+        PostLoad::Rejected => return Ok(ObjectHydration::Invalid),
     };
-    hydrate_object_projection_from_record(
+    hydrate_object_projection_from_post(
         services.blob_service.as_ref(),
         projection_store,
         services.missing_body_ledger.as_ref(),
-        replica,
-        record,
+        post,
         body_fetch,
     )
-    .await
+    .await?;
+    Ok(ObjectHydration::Hydrated)
 }

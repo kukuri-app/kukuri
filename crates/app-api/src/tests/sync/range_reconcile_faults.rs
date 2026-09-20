@@ -9,7 +9,7 @@ use super::range_reconcile::{
 };
 use super::*;
 
-/// 投稿として読めない `objects/<id>/state` と、それを指す時系列の索引の entry を置く。
+/// 投稿として読めない `objects/<id>/envelope`(と `state`)と、それを指す時系列の索引の entry を置く。
 async fn put_unreadable_post(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
@@ -17,6 +17,10 @@ async fn put_unreadable_post(
     object_id: &str,
 ) {
     for (key, value) in [
+        (
+            stable_key("objects", &format!("{object_id}/envelope")),
+            serde_json::json!({ "not": "an envelope" }),
+        ),
         (
             stable_key("objects", &format!("{object_id}/state")),
             serde_json::json!({ "not": "a canonical post header" }),
@@ -148,8 +152,8 @@ async fn unreadable_state_record_does_not_fail_a_non_empty_thread() {
     let bad = "e".repeat(64);
     for (key, value) in [
         (
-            stable_key("objects", &format!("{bad}/state")),
-            serde_json::json!({ "not": "a header" }),
+            stable_key("objects", &format!("{bad}/envelope")),
+            serde_json::json!({ "not": "an envelope" }),
         ),
         (
             stable_key(

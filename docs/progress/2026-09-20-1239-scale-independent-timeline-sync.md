@@ -253,7 +253,28 @@ T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 
 - 同じ `objects/<id>/state` に、docs 著者 id の小さい読めない record を置かれると、key 指定の経路は先頭の 1 件しか見ないので、正しい投稿が反映されない（基準 commit でも、event の経路はエラーになり、全件走査は全体が失敗していた）。
   T4 で、parse できる最初の entry を使う形を検討する。
 
+### main（#1248 / PR #1249）の取り込み
+
+`bed95a98`（投稿の反映で署名つき envelope と replica を確かめる。この段階の作業中に切り出した task が #1248 になったもの）を取り込んだ。
+
+- 投稿の反映は `objects/<id>/state` を読まず、署名つき envelope から行を作る形になった。object を 1 件 key 指定で反映する関数は `hydrate_object_in_topic`（topic を受け取る）になり、
+  この PR の `object_hydration.rs` は、その上に `BodyFetch`（本文の取り方）と `ObjectHydration`（反映の結果の内訳）を載せる形に作り直した。
+  envelope が未着の object（`Missing`）と、record はあるが検証に通らない object（`Invalid`）を区別するため、`post_integrity.rs` に `load_post` / `PostLoad` を足した（`load_verified_post` はその wrapper）。
+- 同じ key に複数の docs 著者の record があるとき先頭だけを見る問題（T3 の監査の申し送り）は、#1248 の `query_replica_exact_bounded` で解消済み。
+- test: 行は envelope から作られるので、時系列の並びを固定する test は、作成時刻を指定して署名した envelope を使う（`kukuri_core::sign_envelope_json_at` を公開した）。
+  「読めない record」の test は、読めない record を `envelope` の key に置く形に直した。#1248 の test のうち、`list_timeline` が空の projection から全件走査することに頼っていた 1 本は、
+  購読タスクが使う全件走査（`hydrate_subscription_state`）を直接呼ぶ形に直し、その test double に `query_replica_keys` の転送を足した。
+
+### 取り込みの後に直したもの
+
+- `late_joiner_backfills_timeline_from_docs`（desktop-runtime）が失敗した。ページの範囲の照合は本文の blob を remote から取らないので、後から参加した利用者のタイムラインに、
+  投稿が本文の無いまま先に現れる（以前の全件走査は、本文を 1 件ずつ待ってから返していた）。`recover_missing_bodies` が、取りに行き始めた本文を 300 ms だけ待ってから view を作る形にした
+  （件数に依存しない上限。過ぎた取得は背景で続く）。test は、本文が入るまで待つ形に直した。
+- 購読タスクが同じ範囲を先に反映すると、照合の反映件数が 0 になり、最初に読んだ古い（空の）ページをそのまま返していた。照合の結果に「索引の範囲のうち projection に在る件数」を持たせ、
+  それが最初のページの行数より多いときだけページを読み直す。照合のたびに必ず読み直す形は採らない（ページの読み出しに Q-1・Q-2 の問題が残っているため）。
+  test `the_page_is_read_again_only_when_the_projection_holds_more_than_the_page_showed`。
+
 ### 検証
 
-`cargo xtask rust-test`（nextest 1,148 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（271 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（25 件: 成功）、
+`cargo xtask rust-test`（nextest と doc test: 成功。件数は PR の本文に記録）、`cargo test -p kukuri-app-api --lib`（293 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（成功）、
 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。

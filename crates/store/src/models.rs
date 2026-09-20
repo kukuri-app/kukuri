@@ -28,6 +28,13 @@ pub enum BlobCacheStatus {
     Pinned,
 }
 
+/// 検証済みの投稿の行の `projection_version`(#1248)。
+///
+/// この版から、投稿の行は署名つき envelope と、読んだ replica の topic / channel を確かめた投稿だけから作る。
+/// これより小さい版の行は docs の `state` の申告値を写した行で、migration
+/// `20260921000000_drop_unverified_object_projections` が削除する(SQL の値と一致させること)。
+pub const VERIFIED_OBJECT_PROJECTION_VERSION: i64 = 3;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectProjectionRow {
     pub object_id: EnvelopeId,

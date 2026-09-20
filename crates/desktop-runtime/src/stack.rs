@@ -129,6 +129,13 @@ reloadable_service! {
             query: DocQuery,
             policy: DocFetchPolicy,
         ) -> Result<Vec<DocRecord>>;
+        // #1248: 宣言が無いと trait の既定実装(読んでから切り詰める)に落ち、query の上限が効かない。
+        async fn query_replica_exact_bounded(
+            replica_id: &ReplicaId,
+            key: &str,
+            limit: usize,
+            policy: DocFetchPolicy,
+        ) -> Result<Vec<DocRecord>>;
         // #1239: 宣言が無いと trait の既定実装(エラー)に落ちる。上限つきの読み出しは必ず内側へ転送する。
         async fn query_replica_keys(
             replica_id: &ReplicaId,

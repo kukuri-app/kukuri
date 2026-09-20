@@ -136,7 +136,7 @@ async fn a_withdrawal_whose_target_envelope_is_missing_keeps_the_range_on_the_re
     .await;
     ObjectProjectionStore::put_object_projection(
         store.as_ref(),
-        projection_row_from_header(&object, Some("withdrawn".into()), &replica),
+        verified_projection_row(&envelope, &replica, Some("withdrawn".into())),
     )
     .await
     .expect("put projection");
@@ -191,8 +191,8 @@ async fn a_run_of_unreadable_entries_is_not_counted_as_a_resolved_page() {
         put_json(
             fixture.docs_sync.as_ref(),
             &replica,
-            stable_key("objects", &format!("{id}/state")),
-            serde_json::json!({ "not": "a canonical post header" }),
+            stable_key("objects", &format!("{id}/envelope")),
+            serde_json::json!({ "not": "an envelope" }),
         )
         .await;
         put_json(

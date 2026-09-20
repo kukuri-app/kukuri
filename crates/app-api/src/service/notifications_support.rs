@@ -1,27 +1,37 @@
 use super::*;
 
+/// remote の投稿の event から通知の候補を作る。
+///
+/// actor・本文・channel は、署名つき envelope と replica の scope を確かめた投稿からだけ作る(#1248)。
+/// `topic_id` は、その replica を購読している topic。`state` と `envelope` のどちらの event でも試す
+/// (`state` が先に届いた投稿は、`envelope` の event で通知になる)。通知の id は envelope id から決まるので、
+/// 2 回試しても重複しない。
 pub(crate) async fn notification_candidate_from_object_event(
     projection_store: &dyn ProjectionStore,
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     local_author_pubkey: &str,
+    topic_id: &str,
     event: &DocEvent,
 ) -> Result<Option<NotificationCandidate>> {
-    if event.source_peer.is_none()
-        || !event.key.starts_with("objects/")
-        || !event.key.ends_with("/state")
-    {
+    if event.source_peer.is_none() {
         return Ok(None);
     }
-    let Some(record) = docs_sync
-        .query_replica(&event.replica_id, DocQuery::Exact(event.key.clone()))
-        .await?
-        .into_iter()
-        .next()
+    let Some(object_id) = object_id_from_post_key(event.key.as_str()) else {
+        return Ok(None);
+    };
+    let Some(post) = load_verified_post(
+        docs_sync,
+        &event.replica_id,
+        topic_id,
+        &object_id,
+        DocFetchPolicy::LocalThenRemote,
+    )
+    .await?
     else {
         return Ok(None);
     };
-    let header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
+    let header = post.header();
     if header.author.as_str() == local_author_pubkey {
         return Ok(None);
     }

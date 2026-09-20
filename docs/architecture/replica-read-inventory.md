@@ -62,11 +62,13 @@ cursor の条件、V-1・V-2）は T5b とする。
 
 T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る。どちらも key を 1 つ指定した `LocalOnly` の読み出しで、replica の総 entry 数には依存しない
 （T2 の索引化の後）。ただし ADR 0052 §2 の「view の生成中に docs を読まない」に反するので、T5b で外す。
+このうち V-2 は Issue #1248 で削除した（残りは V-1 の 1 か所）。repost 元の解決（`resolve_repost_source`）と bookmark（`bookmark_post_in_channel`）が
+`objects/<id>/state` を読み直していた箇所も、#1248 で検証済みの projection の行を使う形にして、docs の読み出しを無くした。
 
 | ID | 箇所 | 読む範囲・契機 | 比例する総数 | 分類 |
 | --- | --- | --- | --- | --- |
-| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`fetch_post_object_for_projection`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/state` を 1 回（`LocalOnly`）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 対象。T5b で、返信先の反映を取得側（窓の追いつき・ページの範囲の照合）と背景へ移す |
-| V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | `projection_version < 2` で添付の列が空の行だけ、`objects/<id>/state` を 1 回（`LocalOnly`）。現行の反映が書く行は対象外 | 依存しない（旧い行ごとに 1 key） | 対象。T5b で、旧い行は反映し直すときに列を埋める形にして fallback を削除する |
+| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`load_verified_post`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/envelope` を 1 回（`LocalOnly`、最大 8 record）。署名つき envelope と replica の scope を確かめてから反映する（#1248）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 対象。T5b で、返信先の反映を取得側（窓の追いつき・ページの範囲の照合）と背景へ移す |
+| V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | 削除済み（#1248）。署名の無い `state` の添付を表示する経路だった。旧い行（`projection_version < 3`）は migration が消し、docs から反映し直す | — | 解消済み |
 
 ## projection 側
 

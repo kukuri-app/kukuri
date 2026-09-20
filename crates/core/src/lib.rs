@@ -99,6 +99,7 @@ pub use dome_transition::{
 pub(crate) use envelope::sign_envelope_at;
 pub use envelope::{
     GossipHint, HintObjectRef, KukuriAuthEnvelopeContentV1, KukuriEnvelope, sign_envelope_json,
+    sign_envelope_json_at,
 };
 pub use game::{
     DomeCustomizationV1, DomeDirection, DomeEnvironmentV1, DomeInstanceManifestV1,

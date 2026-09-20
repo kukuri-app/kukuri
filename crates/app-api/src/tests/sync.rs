@@ -356,6 +356,8 @@ fn app_with_hanging_remote_docs(
 mod diagnostics;
 mod gossip_toggle;
 mod hint_rehydration;
+mod hydration_integrity;
+mod hydration_integrity_contract;
 mod hydration_limits;
 mod range_reconcile;
 mod range_reconcile_access;

@@ -646,11 +646,14 @@ pub(crate) fn game_projection_row_from_state(
     }
 }
 
-pub(crate) fn projection_row_from_header(
-    header: &CanonicalPostHeader,
+/// 投稿の行は、検証済みの投稿(`VerifiedPost`)からしか作れない(#1248)。docs の `state` の値から行を作る経路を
+/// 型で塞ぐ。
+pub(crate) fn projection_row_from_post(
+    post: &VerifiedPost,
     content: Option<String>,
-    source_replica_id: &ReplicaId,
 ) -> ObjectProjectionRow {
+    let header = post.header();
+    let source_replica_id = post.replica();
     let source_blob_hash = match &header.payload_ref {
         PayloadRef::BlobText { hash, .. } => Some(hash.clone()),
         PayloadRef::InlineText { .. } => None,
@@ -674,7 +677,7 @@ pub(crate) fn projection_row_from_header(
         source_envelope_id: header.envelope_id.clone(),
         source_blob_hash,
         derived_at: Utc::now().timestamp_millis(),
-        projection_version: 2,
+        projection_version: kukuri_store::VERIFIED_OBJECT_PROJECTION_VERSION,
     }
 }
 

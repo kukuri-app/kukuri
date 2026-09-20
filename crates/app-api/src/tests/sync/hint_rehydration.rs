@@ -96,13 +96,14 @@ async fn topic_doc_events_do_not_rehydrate_whole_replica() {
     .await
     .expect("doc event projection timeout");
 
+    // #1248: 行は署名つき envelope から作るので、key 指定で読むのは `envelope` の key。
     let queries = docs_sync.queries().await;
     assert!(
         queries.iter().any(|(_, query)| {
             *query
                 == DocQuery::Exact(stable_key(
                     "objects",
-                    &format!("{}/state", envelope.id.as_str()),
+                    &format!("{}/envelope", envelope.id.as_str()),
                 ))
         }),
         "expected exact object query after doc event, got {queries:?}"
@@ -186,13 +187,14 @@ async fn topic_object_hints_do_not_rehydrate_whole_replica() {
     .await
     .expect("hint handling timeout");
 
+    // #1248: 行は署名つき envelope から作るので、key 指定で読むのは `envelope` の key。
     let queries = docs_sync.queries().await;
     assert!(
         queries.iter().any(|(_, query)| {
             *query
                 == DocQuery::Exact(stable_key(
                     "objects",
-                    &format!("{}/state", envelope.id.as_str()),
+                    &format!("{}/envelope", envelope.id.as_str()),
                 ))
         }),
         "expected exact object query after hint, got {queries:?}"

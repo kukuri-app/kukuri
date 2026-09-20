@@ -245,17 +245,11 @@ impl AppService {
         ) {
             anyhow::bail!("bookmark target must be a timeline post");
         }
+        // 添付は検証済みの行から写す(#1248)。docs の `state` は読まない。
         let attachments = if projection.object_kind == "repost" {
             Vec::new()
         } else {
-            fetch_post_object_for_projection(
-                self.services.docs_sync.as_ref(),
-                &projection.source_replica_id,
-                projection.source_key.as_str(),
-            )
-            .await?
-            .map(|post_object| post_object.attachments)
-            .unwrap_or_default()
+            projection.attachments.clone()
         };
         let row = BookmarkedPostRow {
             source_object_id: projection.object_id.clone(),
@@ -764,12 +758,15 @@ impl AppService {
         // 反映する。先頭の範囲の追いつきは購読タスクが行う。
         let projection_exhausted = page.next_cursor.is_none();
         if cursor.is_some() || projection_exhausted || needs_epoch_hydration {
-            if self
-                .reconcile_timeline_range(topic_id, &scope, cursor.as_ref(), limit)
-                .await?
-                > 0
-            {
+            let reconcile = self
+                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
+                .await?;
+            if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+            }
+            // 照合した範囲に、最初のページより多くの object が projection に在ると分かったときだけ、ページを
+            // 読み直す(今回反映した、または購読タスクが同じ範囲を先に反映していた)。それ以外は読み直さない。
+            if reconcile.page_is_stale(page.items.len()) {
                 page = filtered_timeline_page(
                     self.services.projection_store.as_ref(),
                     topic_id,
@@ -835,10 +832,17 @@ impl AppService {
                 .await;
         // #1239: replica を走査しない。thread の索引と照合して、欠けている object だけを key 指定で反映する
         // (範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても照合する。
-        let reconciled = self.reconcile_thread(topic_id, &thread_root).await?;
-        if reconciled > 0 || page.items.is_empty() {
-            if reconciled > 0 {
+        let reconcile = self
+            .reconcile_thread_checked(topic_id, &thread_root)
+            .await?;
+        let page_is_stale = reconcile.page_is_stale(page.items.len());
+        if page_is_stale || page.items.is_empty() {
+            if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+            }
+            // 照合した範囲に、最初のページより多くの object が在ると分かったときだけ読み直す
+            // (`list_timeline_scoped` と同じ)。
+            if page_is_stale {
                 let root_channel = self
                     .services
                     .projection_store

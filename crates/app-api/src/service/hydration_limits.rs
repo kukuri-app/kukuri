@@ -19,6 +19,8 @@ pub(crate) const MISSING_BODY_RETRY_DELAYS_MS: [i64; 4] = [5_000, 30_000, 120_00
 /// 本文 blob 1 つあたりの最大試行数。docs の event・hint の個別反映、利用者の操作の対象の反映、表示した行の
 /// 取り直しは、どれもこの台帳を通る。超えた後は、再起動(台帳は memory 上にある)まで取り直さない。
 pub(crate) const MISSING_BODY_MAX_ATTEMPTS: u32 = 8;
+/// 表示のときに取りに行き始めた本文を待つ時間の上限。件数に依存しない。過ぎた取得は背景で続く。
+pub(crate) const MISSING_BODY_DISPLAY_GRACE_MS: u64 = 300;
 /// 背景で同時に取り直す本文 blob の上限。
 pub(crate) const MISSING_BODY_MAX_CONCURRENT_FETCHES: usize = 4;
 /// 台帳の上限。超えた分は、取得中でない項目から捨てる。

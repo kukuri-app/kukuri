@@ -131,27 +131,6 @@ pub(crate) fn profile_timeline_item_is_hidden(
     }
 }
 
-pub(crate) async fn fetch_post_object_for_projection(
-    docs_sync: &dyn DocsSync,
-    replica_id: &ReplicaId,
-    source_key: &str,
-) -> Result<Option<CanonicalPostHeader>> {
-    let Ok(records) = query_replica_local_only(
-        docs_sync,
-        replica_id,
-        DocQuery::Exact(source_key.to_string()),
-    )
-    .await
-    else {
-        return Ok(None);
-    };
-    let Some(record) = records.into_iter().next() else {
-        return Ok(None);
-    };
-    let header = serde_json::from_slice(&record.value)?;
-    Ok(Some(header))
-}
-
 // 互換パス(REFACTORING.md「互換パスと sunset 条件」参照)。
 // epoch 導入前に保存されたプライベートチャンネル capability(epoch_id が空)を "legacy"
 // epoch として扱い、epoch なし時代のレプリカ ID で読む(private_channel_replica_for_epoch /

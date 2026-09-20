@@ -83,21 +83,13 @@ impl AppService {
         _stored_blob: Option<StoredBlob>,
         attachments: Vec<(AssetRole, StoredBlob)>,
     ) -> Result<()> {
+        // 自分の投稿も、他人の投稿と同じ検証(署名、書き込む replica と topic / channel の整合)を通す(#1248)。
+        // docs は読まない。header と行は envelope から作るので、remote の反映が作る行と同じ値になる。
+        let post = VerifiedPost::verify_local(envelope.clone(), replica).map_err(|reason| {
+            anyhow::anyhow!("local post cannot be verified: {}", reason.as_str())
+        })?;
         self.services.store.put_envelope(envelope.clone()).await?;
-        let mut object = envelope
-            .to_post_object()?
-            .ok_or_else(|| anyhow::anyhow!("expected timeline envelope"))?;
-        if object.object_kind != "repost" {
-            object.attachments = attachments
-                .iter()
-                .map(|(role, stored)| kukuri_core::AssetRef {
-                    hash: stored.hash.clone(),
-                    mime: stored.mime.clone(),
-                    bytes: stored.bytes,
-                    role: role.clone(),
-                })
-                .collect();
-        }
+        let object = post.header().clone();
         let content = match &object.payload_ref {
             PayloadRef::InlineText { text } => Some(text.clone()),
             PayloadRef::BlobText { hash, .. } => self
@@ -123,7 +115,7 @@ impl AppService {
         }
         ObjectProjectionStore::put_object_projection(
             self.services.projection_store.as_ref(),
-            projection_row_from_header(&object, content, replica),
+            projection_row_from_post(&post, content),
         )
         .await?;
         if let PayloadRef::BlobText { hash, .. } = &object.payload_ref {
@@ -313,7 +305,9 @@ impl AppService {
     /// 対象は呼び出し側が権限で絞り込んだ後のページの行だけで、replica の走査は行わない。
     pub(crate) async fn recover_missing_bodies(&self, rows: &mut [ObjectProjectionRow]) {
         let now = Utc::now().timestamp_millis();
-        for row in rows {
+        // 今回の呼び出しで取りに行き始めた本文(行の位置と task)。
+        let mut started = Vec::new();
+        for (index, row) in rows.iter_mut().enumerate() {
             if row.content.is_some() {
                 continue;
             }
@@ -357,7 +351,7 @@ impl AppService {
             let services = self.services.clone();
             let object_id = row.object_id.clone();
             let hash = hash.clone();
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let permits = services.missing_body_ledger.fetch_permits();
                 let Ok(_permit) = permits.acquire().await else {
                     attempt.fail();
@@ -410,6 +404,31 @@ impl AppService {
                     }
                 }
             });
+            started.push((index, task));
+        }
+        if started.is_empty() {
+            return;
+        }
+        // 取りに行き始めた本文を、決まった短い時間だけ待つ。接続済みの peer からの本文は数十 ms で届くので、
+        // 多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く
+        // (台帳があるので、次の表示が同じ本文を重ねて取りに行くことはない)。
+        let (indexes, tasks): (Vec<_>, Vec<_>) = started.into_iter().unzip();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(hydration_limits::MISSING_BODY_DISPLAY_GRACE_MS),
+            futures_util::future::join_all(tasks),
+        )
+        .await;
+        for index in indexes {
+            let row = &mut rows[index];
+            if let Ok(Some(current)) = self
+                .services
+                .projection_store
+                .get_object_projection(&row.object_id)
+                .await
+                && current.content.is_some()
+            {
+                row.content = current.content;
+            }
         }
     }
 
@@ -444,7 +463,9 @@ impl AppService {
             return Ok(true);
         }
         for replica in self.scope_replicas(topic_id, scope).await? {
-            if hydrate_object_by_id(&self.services, &replica, object_id, policy).await? {
+            if hydrate_object_in_topic(&self.services, topic_id, &replica, object_id, policy)
+                .await?
+            {
                 return Ok(true);
             }
         }

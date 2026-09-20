@@ -59,24 +59,6 @@ pub(crate) async fn blob_view_status_for_payload(
     }
 }
 
-pub(crate) async fn attachment_views(
-    blob_service: &dyn BlobService,
-    header: &CanonicalPostHeader,
-) -> Result<Vec<AttachmentView>> {
-    let mut attachments = Vec::with_capacity(header.attachments.len());
-    for attachment in &header.attachments {
-        attachments.push(AttachmentView {
-            hash: attachment.hash.as_str().to_string(),
-            mime: attachment.mime.clone(),
-            bytes: attachment.bytes,
-            role: attachment_role_name(&attachment.role).to_string(),
-            status: best_effort_blob_view_status(blob_service, &attachment.hash).await,
-            provenance: None,
-        });
-    }
-    Ok(attachments)
-}
-
 pub(crate) async fn attachment_views_from_refs(
     blob_service: &dyn BlobService,
     refs: &[kukuri_core::AssetRef],

@@ -5,13 +5,27 @@ use super::*;
 
 pub(super) const BASE_TIME: i64 = 1_700_000_000;
 
+/// test の投稿。行と cursor は、署名つき envelope から作った header と同じ値になる。
+pub(super) struct TestPost {
+    header: CanonicalPostHeader,
+    pub(super) envelope: KukuriEnvelope,
+}
+
+impl std::ops::Deref for TestPost {
+    type Target = CanonicalPostHeader;
+
+    fn deref(&self) -> &CanonicalPostHeader {
+        &self.header
+    }
+}
+
 pub(super) struct RangeFixture {
     pub(super) app: AppService,
     pub(super) store: Arc<MemoryStore>,
     pub(super) docs_sync: Arc<CountingDocsSync>,
     pub(super) topic: TopicId,
     /// 古い順。`created_at` は `BASE_TIME + index`。
-    pub(super) posts: Vec<CanonicalPostHeader>,
+    pub(super) posts: Vec<TestPost>,
 }
 
 /// 1 秒に 1 件ずつの投稿を docs に置く。`projected` が真の位置だけ projection にも入れる。
@@ -64,7 +78,8 @@ pub(super) async fn range_fixture(
     }
 }
 
-/// `created_at` を指定して投稿を docs に書く(索引の key も同じ時刻になる)。
+/// `created_at` を指定して署名した投稿を docs に書く(索引の key も同じ時刻になる)。
+/// 反映は署名つき envelope から行を作るので(#1248)、時刻は envelope に入れて署名する。
 pub(super) async fn put_post_at(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
@@ -73,8 +88,8 @@ pub(super) async fn put_post_at(
     created_at: i64,
     text: &str,
     reply_to: Option<&KukuriEnvelope>,
-) -> CanonicalPostHeader {
-    let envelope = build_post_envelope_with_payload_in_channel(
+) -> TestPost {
+    let template = build_post_envelope_with_payload_in_channel(
         keys,
         topic,
         PayloadRef::InlineText { text: text.into() },
@@ -86,29 +101,35 @@ pub(super) async fn put_post_at(
         Vec::new(),
     )
     .expect("post envelope");
-    let mut object = envelope
+    let content: serde_json::Value =
+        serde_json::from_str(template.content.as_str()).expect("envelope content");
+    let envelope = kukuri_core::sign_envelope_json_at(
+        keys,
+        template.kind.clone(),
+        template.tags.clone(),
+        &content,
+        created_at,
+    )
+    .expect("sign at the given time");
+    let header = envelope
         .to_post_object()
         .expect("post object")
         .expect("post object");
-    object.created_at = created_at;
-    persist_post_object(docs_sync, replica, object.clone(), envelope)
+    assert_eq!(header.created_at, created_at);
+    persist_post_object(docs_sync, replica, header.clone(), envelope.clone())
         .await
         .expect("persist post");
-    object
+    TestPost { header, envelope }
 }
 
-pub(super) async fn project(
-    store: &MemoryStore,
-    object: &CanonicalPostHeader,
-    replica: &ReplicaId,
-) {
-    let content = match &object.payload_ref {
+pub(super) async fn project(store: &MemoryStore, post: &TestPost, replica: &ReplicaId) {
+    let content = match &post.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { .. } => None,
     };
     ObjectProjectionStore::put_object_projection(
         store,
-        projection_row_from_header(object, content, replica),
+        verified_projection_row(&post.envelope, replica, content),
     )
     .await
     .expect("put projection");

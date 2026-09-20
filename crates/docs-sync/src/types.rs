@@ -105,6 +105,24 @@ pub trait DocsSync: Send + Sync {
         self.query_replica_with_policy(replica_id, query, DocFetchPolicy::LocalThenRemote)
             .await
     }
+    /// key を 1 つ指定し、返す record 数に上限を置く読み出し(#1248)。
+    ///
+    /// 同じ key には docs author ごとの entry がありうる(key・docs author の昇順で返る)。その replica に書ける
+    /// 誰もが同じ key へ entry を足せるので、先頭の 1 件だけを信用せず、上限つきで複数を調べる読み手が使う。
+    /// 既定実装は読んでから切り詰める。1 つの key の entry 数が増えうる本番の実装は、query に上限を渡すこと。
+    async fn query_replica_exact_bounded(
+        &self,
+        replica_id: &ReplicaId,
+        key: &str,
+        limit: usize,
+        policy: DocFetchPolicy,
+    ) -> Result<Vec<DocRecord>> {
+        let mut records = self
+            .query_replica_with_policy(replica_id, DocQuery::Exact(key.to_string()), policy)
+            .await?;
+        records.truncate(limit);
+        Ok(records)
+    }
     /// key の索引だけを使う上限つきの読み出し。
     ///
     /// 既定実装はエラーを返す。全件読みへ黙って落ちると、replica の大きさに比例する経路が戻るため、

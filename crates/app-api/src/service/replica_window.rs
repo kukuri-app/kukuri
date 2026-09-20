@@ -202,6 +202,7 @@ impl RangeCheckOutcome {
 /// docs と projection の読み書きの失敗は、エラーとして返す。
 pub(crate) async fn ensure_index_entries_projected(
     services: &ServiceHandles,
+    topic_id: &str,
     replica: &ReplicaId,
     entries: &[TimeIndexEntry],
     policy: DocFetchPolicy,
@@ -217,8 +218,9 @@ pub(crate) async fn ensure_index_entries_projected(
             .is_none()
         {
             // 1 回に多数の object を反映するので、本文は手元にあるものだけを読む(表示を remote 取得で待たせない)。
-            match hydrate_object_by_id_with(
+            match hydrate_object_in_topic_with(
                 services,
+                topic_id,
                 replica,
                 &object_id,
                 policy,
@@ -269,6 +271,28 @@ pub(crate) async fn ensure_index_entries_projected(
     Ok(outcome)
 }
 
+/// 取得側へ返す照合の結果。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RangeReconcile {
+    /// 今回 projection へ反映した件数。
+    pub(crate) hydrated: usize,
+    /// 照合した索引の範囲のうち、projection に在る object の件数(今回反映したものと、既にあったもの)。
+    /// 台帳の間隔の内で照合しなかった replica のぶんは含まない。
+    pub(crate) projected: usize,
+}
+
+impl RangeReconcile {
+    /// 取得側が最初に読んだページ(`page_rows` 行)を読み直すべきか。
+    ///
+    /// 読み直すのは、照合した範囲に、最初のページの行数より多くの object が projection に在ると分かったときだけ。
+    /// 今回反映したときのほか、最初にページを読んでから照合するまでのあいだに、購読タスクが同じ範囲を
+    /// 反映していたときも当てはまる(照合は「既にある」と数えるだけになる)。欠けの無い定常状態では読み直さない。
+    /// ページの読み出しを、必要の無いときに重ねないため。
+    pub(crate) fn page_is_stale(&self, page_rows: usize) -> bool {
+        self.hydrated > 0 || self.projected > page_rows
+    }
+}
+
 fn time_index_cursor(cursor: &TimelineCursor) -> TimeIndexCursor {
     TimeIndexCursor {
         created_at: cursor.created_at,
@@ -281,6 +305,7 @@ impl AppService {
     /// replica の時系列の索引と照合して、欠けている object を反映する。戻り値は反映した件数。
     ///
     /// private channel の scope は、参加状態の確認(`scope_replicas`)を通った epoch の replica だけを読む。
+    #[cfg(test)]
     pub(crate) async fn reconcile_timeline_range(
         &self,
         topic_id: &str,
@@ -288,19 +313,36 @@ impl AppService {
         before: Option<&TimelineCursor>,
         limit: usize,
     ) -> Result<usize> {
+        Ok(self
+            .reconcile_timeline_range_checked(topic_id, scope, before, limit)
+            .await?
+            .hydrated)
+    }
+
+    /// `reconcile_timeline_range` の本体。取得側は、照合したかどうかでページの読み直しを決める。
+    pub(crate) async fn reconcile_timeline_range_checked(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        before: Option<&TimelineCursor>,
+        limit: usize,
+    ) -> Result<RangeReconcile> {
         let limit = limit.min(RANGE_CHECK_ENTRY_LIMIT);
+        let mut reconcile = RangeReconcile::default();
         if limit == 0 {
-            return Ok(0);
+            return Ok(reconcile);
         }
         let before = before.map(time_index_cursor);
-        let mut hydrated = 0usize;
         for replica in self.scope_replicas(topic_id, scope).await? {
-            hydrated += self
-                .reconcile_replica_timeline_range(&replica, before.as_ref(), limit)
+            if let Some(outcome) = self
+                .reconcile_replica_timeline_range(topic_id, &replica, before.as_ref(), limit)
                 .await?
-                .hydrated;
+            {
+                reconcile.hydrated += outcome.hydrated;
+                reconcile.projected += outcome.hydrated + outcome.present;
+            }
         }
-        Ok(hydrated)
+        Ok(reconcile)
     }
 
     /// replica 1 つの時系列の索引を、`before` より古い側(無ければ新しい側)へ読み、projection に在る object が
@@ -308,13 +350,14 @@ impl AppService {
     /// そうしないと、反映できない entry が `limit` 件続いただけで、その先の投稿へ遡れなくなる。
     ///
     /// 1 回に読む索引の entry 数は `RANGE_CHECK_ENTRY_LIMIT` まで。届かなかったときは、読み進めた位置を
-    /// 台帳に残し、次の照合がそこから続ける。
+    /// 台帳に残し、次の照合がそこから続ける。台帳の間隔の内で照合しなかったときは `None`。
     async fn reconcile_replica_timeline_range(
         &self,
+        topic_id: &str,
         replica: &ReplicaId,
         before: Option<&TimeIndexCursor>,
         limit: usize,
-    ) -> Result<RangeCheckOutcome> {
+    ) -> Result<Option<RangeCheckOutcome>> {
         const INDEX_PREFIX: &str = "indexes/timeline/";
         let range_key = format!(
             "{}\n{INDEX_PREFIX}\n{}\n{limit}",
@@ -330,7 +373,7 @@ impl AppService {
             .try_begin(range_key.as_str(), now.timestamp_millis())
             .await
         else {
-            return Ok(RangeCheckOutcome::default());
+            return Ok(None);
         };
         let docs_sync = self.services.docs_sync.as_ref();
         let mut position = resume_before.or_else(|| before.cloned());
@@ -384,6 +427,7 @@ impl AppService {
             total.merge(
                 ensure_index_entries_projected(
                     &self.services,
+                    topic_id,
                     replica,
                     &entries,
                     DocFetchPolicy::LocalOnly,
@@ -400,7 +444,7 @@ impl AppService {
             // 索引がまだ空の replica(参加した直後など)は、間隔を空けずに次の取得でも読む。
             // 読むのは key だけの読み出し 1 回で、投稿が同期された直後のページをすぐに組み立てられる。
             ledger.forget(range_key.as_str()).await;
-            return Ok(total);
+            return Ok(Some(total));
         }
         let page_resolved = total.hydrated + total.present >= limit;
         match position {
@@ -413,17 +457,30 @@ impl AppService {
                     .await;
             }
         }
-        Ok(total)
+        Ok(Some(total))
     }
 
     /// thread の索引(`indexes/thread/<root>/`)と projection を照合して、欠けている object を反映する。
     ///
     /// root が projection にあれば、その channel の replica だけを読む。無ければ、参加中の scope の replica を読む。
+    #[cfg(test)]
     pub(crate) async fn reconcile_thread(
         &self,
         topic_id: &str,
         thread_root: &EnvelopeId,
     ) -> Result<usize> {
+        Ok(self
+            .reconcile_thread_checked(topic_id, thread_root)
+            .await?
+            .hydrated)
+    }
+
+    /// `reconcile_thread` の本体。取得側は、照合したかどうかでページの読み直しを決める。
+    pub(crate) async fn reconcile_thread_checked(
+        &self,
+        topic_id: &str,
+        thread_root: &EnvelopeId,
+    ) -> Result<RangeReconcile> {
         let root_channel = self
             .services
             .projection_store
@@ -441,9 +498,9 @@ impl AppService {
         // 参加していない private channel の thread は照合しない(replica を読まない)。表示は従来どおり
         // projection の行だけで組み立てる。
         let Ok(replicas) = self.scope_replicas(topic_id, &scope).await else {
-            return Ok(0);
+            return Ok(RangeReconcile::default());
         };
-        let mut total = RangeCheckOutcome::default();
+        let mut reconcile = RangeReconcile::default();
         for replica in replicas {
             let range_key = format!("{}\n{index_prefix}", replica.as_str());
             let now_ms = Utc::now().timestamp_millis();
@@ -474,6 +531,7 @@ impl AppService {
                 .collect::<Vec<_>>();
             let outcome = ensure_index_entries_projected(
                 &self.services,
+                topic_id,
                 &replica,
                 &entries,
                 DocFetchPolicy::LocalOnly,
@@ -483,9 +541,10 @@ impl AppService {
                 .range_checks
                 .record_finished(range_key.as_str(), now_ms, outcome.result())
                 .await;
-            total.merge(outcome);
+            reconcile.hydrated += outcome.hydrated;
+            reconcile.projected += outcome.hydrated + outcome.present;
         }
-        Ok(total.hydrated)
+        Ok(reconcile)
     }
 }
 
@@ -639,6 +698,32 @@ mod tests {
                 .await
                 .is_some()
         );
+    }
+
+    // 取得側は、照合で「最初のページより多くの object が projection に在る」と分かったときだけページを読み直す。
+    // 欠けの無い定常状態では読み直さない(ページの読み出しを、必要の無いときに重ねない)。
+    #[test]
+    fn the_page_is_read_again_only_when_the_projection_holds_more_than_the_page_showed() {
+        let steady = RangeReconcile {
+            hydrated: 0,
+            projected: 20,
+        };
+        assert!(!steady.page_is_stale(20), "nothing changed");
+        assert!(
+            !RangeReconcile::default().page_is_stale(0),
+            "no check ran, or the index is empty"
+        );
+        let hydrated_now = RangeReconcile {
+            hydrated: 3,
+            projected: 20,
+        };
+        assert!(hydrated_now.page_is_stale(17));
+        // 最初にページを読んでから照合するまでのあいだに、購読タスクが同じ範囲を反映していた。
+        let hydrated_by_someone_else = RangeReconcile {
+            hydrated: 0,
+            projected: 20,
+        };
+        assert!(hydrated_by_someone_else.page_is_stale(0));
     }
 
     #[test]

@@ -187,6 +187,76 @@ async fn notification_content_labels_migration_backfills_known_objects_and_leave
     assert_eq!(unknown, None);
 }
 
+// #1248: 署名つき envelope と replica を確かめる前に保存された投稿の行(`projection_version` が検証済みの版より小さい行)は、
+// migration で消える。bookmark・通知・reaction の表と、検証済みの版の行は残る。
+#[tokio::test]
+async fn unverified_object_projections_are_dropped_and_other_tables_are_kept() {
+    let tempdir = tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("pre-verified-projection.db");
+    materialize_sqlite_fixture(&db_path, 20260920000000)
+        .await
+        .expect("materialize the schema before the verified projection version");
+
+    let database_url = format!("sqlite://{}", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&database_url)
+        .await
+        .expect("open the database before the migration");
+    let verified = crate::VERIFIED_OBJECT_PROJECTION_VERSION;
+    for (object_id, version) in [
+        ("legacy-v1", 1),
+        ("unverified-v2", verified - 1),
+        ("verified", verified),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO object_index_cache (
+              object_id, topic_id, author_pubkey, created_at, payload_ref_json,
+              source_replica_id, source_key, source_envelope_id, derived_at,
+              projection_version
+            ) VALUES (
+              ?1, 'kukuri:topic:migration', 'author', 1, '{}',
+              'topic::kukuri:topic:migration', 'objects/x/state', ?1, 1, ?2
+            )
+            "#,
+        )
+        .bind(object_id)
+        .bind(version)
+        .execute(&pool)
+        .await
+        .expect("insert a projection row");
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO notifications (
+          notification_id, recipient_pubkey, kind, actor_pubkey, object_id,
+          preview_text, created_at, received_at
+        ) VALUES ('kept-notification', 'recipient', 'mention', 'actor', 'unverified-v2', 'preview', 1, 1)
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert a notification");
+    pool.close().await;
+
+    let migrated = SqliteStore::connect_file(&db_path)
+        .await
+        .expect("apply the migration");
+    let remaining = sqlx::query_scalar::<_, String>(
+        "SELECT object_id FROM object_index_cache ORDER BY object_id",
+    )
+    .fetch_all(migrated.pool())
+    .await
+    .expect("list projection rows");
+    assert_eq!(remaining, vec!["verified".to_string()]);
+    let notifications = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM notifications")
+        .fetch_one(migrated.pool())
+        .await
+        .expect("count notifications");
+    assert_eq!(notifications, 1, "other tables must be kept");
+}
+
 #[tokio::test]
 async fn connect_file_open_failure_is_typed_as_open_error() {
     // 存在しない親ディレクトリ配下のパスは create_if_missing でも作成できず接続失敗する。
@@ -367,8 +437,8 @@ async fn all_generations_have_paired_down() {
 
     assert_eq!(
         generations.len(),
-        24,
-        "store migrations must cover exactly 24 generations, found versions: {:?}",
+        25,
+        "store migrations must cover exactly 25 generations, found versions: {:?}",
         generations.keys().collect::<Vec<_>>()
     );
 
@@ -460,8 +530,8 @@ async fn full_migration_round_trip() {
     expected_versions.dedup();
     assert_eq!(
         applied_versions.len(),
-        24,
-        "round trip must restore all 24 migration generations"
+        25,
+        "round trip must restore all 25 migration generations"
     );
     assert_eq!(applied_versions, expected_versions);
 }

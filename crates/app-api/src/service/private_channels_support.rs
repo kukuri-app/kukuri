@@ -703,8 +703,7 @@ impl AppService {
                         if let Ok(event) = event {
                             let now = Utc::now().timestamp_millis();
                             let had_source_peer = event.source_peer.is_some();
-                            if let Some(source_peer) = event.source_peer.as_deref()
-                            {
+                            if let Some(source_peer) = event.source_peer.as_deref() {
                                 if let Err(error) = docs_sync.learn_peer(source_peer).await {
                                     warn!(
                                         topic = %topic,
@@ -727,6 +726,7 @@ impl AppService {
                                 docs_sync.as_ref(),
                                 blob_service.as_ref(),
                                 local_author_pubkey.as_str(),
+                                topic.as_str(),
                                 &notification_baseline,
                                 &event,
                             ).await {

@@ -387,12 +387,17 @@ async fn user_operation_does_not_wait_for_a_remote_fetch_inside_the_withdrawal_c
             .expect("write entry");
     }
 
-    timeout(
+    // 対象の envelope が無いので、#1248 の後は投稿が反映されず、操作は「対象が無い」で失敗する。
+    // ここで固定するのは、取り下げの中の読み出しが remote を待たずに、操作がすぐ返ること。
+    let outcome = timeout(
         Duration::from_secs(3),
         app.bookmark_post(topic.as_str(), post.id.as_str()),
     )
     .await
-    .expect("the operation must not wait for a remote fetch inside the withdrawal check")
-    .expect("bookmark");
+    .expect("the operation must not wait for a remote fetch inside the withdrawal check");
+    assert!(
+        outcome.is_err(),
+        "a post without a signed envelope is not projected"
+    );
     app.shutdown().await;
 }
