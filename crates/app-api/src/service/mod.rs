@@ -130,10 +130,9 @@ mod gossip_subscription_support;
 mod hydration_limits;
 mod hydration_support;
 use game_projection_support::GameRoomProjectionLocks;
+pub(crate) use hydration_limits::{HintRecoveryGate, recovery_probe_peer_state};
 #[cfg(test)]
-pub(crate) use hydration_support::hydrate_game_room_from_key;
-#[cfg(test)]
-pub(crate) use hydration_support::hydrate_game_rooms_from_replica;
+pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_game_rooms_from_replica};
 mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
@@ -432,6 +431,13 @@ impl SubscriptionRecoveryBackoff {
     pub(crate) fn reset(&mut self) {
         self.next_retry_at_ms = 0;
         self.step = 0;
+    }
+
+    /// 変化が無い間の次の全件走査の時刻。再 sync の backoff に合わせて伸ばす(#1225)。
+    pub(crate) fn next_probe_at(&self, now_ms: i64) -> i64 {
+        now_ms
+            .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS)
+            .max(self.next_retry_at_ms)
     }
 
     pub(crate) fn ready(&self, now_ms: i64) -> bool {

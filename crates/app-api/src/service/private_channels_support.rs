@@ -696,8 +696,7 @@ impl AppService {
             let mut recovery_probe_due_at = Utc::now()
                 .timestamp_millis()
                 .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-            // #1225: hint を契機にした全件走査の最小間隔。最初の 1 回はすぐ走査し、以後は間隔を空ける。
-            let mut hint_recovery_scan_due_at = 0_i64;
+            let mut hint_recovery_gate = HintRecoveryGate::default();
             loop {
                 tokio::select! {
                     Some(event) = doc_stream.next() => {
@@ -907,20 +906,11 @@ impl AppService {
                                         }
                                     };
                                     let now = Utc::now().timestamp_millis();
-                                    // #1225: 個別反映が 0 件でも、hint ごとに全件走査しない。replica の内容を
-                                    // 指さない hint は契機にせず、走査は最小間隔を空ける(取りこぼしは docs event
-                                    // と recovery tick が拾う)。
-                                    if hydrated == 0
-                                        && !hint_refers_to_replica_content(&event.hint)
-                                    {
-                                        continue;
-                                    }
-                                    if hydrated == 0 && hint_recovery_scan_due_at > now {
+                                    // #1225: 個別反映が 0 件でも、hint ごとに全件走査しない。
+                                    if hydrated == 0 && !hint_recovery_gate.allow(&event.hint, now) {
                                         continue;
                                     }
                                     if hydrated == 0 {
-                                        hint_recovery_scan_due_at =
-                                            now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
                                         hydrated = match hydrate_subscription_state(
                                             &services,
                                             topic.as_str(),
@@ -974,43 +964,13 @@ impl AppService {
                         if recovery_probe_due_at > now {
                             continue;
                         }
-                        let (has_live_topic_peer, has_configured_topic_peer) =
-                            match transport.peers().await {
-                            Ok(snapshot) => snapshot
-                                .topic_diagnostics
-                                .iter()
-                                .find(|diagnostic| {
-                                    normalize_topic_name(diagnostic.topic.clone()).as_deref()
-                                        == Some(topic.as_str())
-                                })
-                                .map(|diagnostic| {
-                                    (
-                                        diagnostic.joined
-                                            && !diagnostic.connected_peers.is_empty(),
-                                        !diagnostic.configured_peer_ids.is_empty(),
-                                    )
-                                })
-                                .unwrap_or((false, false)),
-                            Err(error) => {
-                                warn!(
-                                    topic = %topic,
-                                    error = %error,
-                                    "failed to inspect live topic peer state during recovery tick"
-                                );
-                                (false, false)
-                            }
-                        };
-                        let docs_assist_peer_count = match docs_sync.assist_peer_ids().await {
-                            Ok(peer_ids) => peer_ids.len(),
-                            Err(error) => {
-                                warn!(
-                                    topic = %topic,
-                                    error = %error,
-                                    "failed to inspect docs-assisted peers during recovery tick"
-                                );
-                                0
-                            }
-                        };
+                        let (has_live_topic_peer, has_configured_topic_peer, docs_assist_peer_count) =
+                            recovery_probe_peer_state(
+                                transport.as_ref(),
+                                docs_sync.as_ref(),
+                                topic.as_str(),
+                            )
+                            .await;
                         // #1225: 走査しない場合も次の期限を置く。置かないと毎秒 peer を照会し続ける。
                         if docs_assist_peer_count == 0
                             && (has_live_topic_peer || !has_configured_topic_peer)
@@ -1059,9 +1019,7 @@ impl AppService {
                             )
                             .await;
                             // #1225: 変化が無い間は、全件走査の間隔も再 sync の backoff に合わせて伸ばす。
-                            recovery_probe_due_at = now
-                                .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS)
-                                .max(recovery_backoff.next_retry_at_ms);
+                            recovery_probe_due_at = recovery_backoff.next_probe_at(now);
                         }
                     }
                     else => {

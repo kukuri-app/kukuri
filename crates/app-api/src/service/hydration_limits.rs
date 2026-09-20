@@ -12,6 +12,8 @@ use kukuri_core::BlobHash;
 use kukuri_docs_sync::DocRecord;
 use tokio::sync::Semaphore;
 
+use super::*;
+
 /// n 回目の失敗から次の試行までの待ち時間。最後の値を以後の間隔として使う。
 pub(crate) const MISSING_BODY_RETRY_DELAYS_MS: [i64; 4] = [5_000, 30_000, 120_000, 600_000];
 /// 本文 blob 1 つあたりの最大試行数。超えた後は、同じ行を指す docs event / hint の個別反映(その場で 1 回試す)と
@@ -221,6 +223,73 @@ impl MissingBodyLedger {
     pub(crate) fn len(&self) -> usize {
         self.entries.lock().expect("missing body ledger lock").len()
     }
+}
+
+/// hint を契機にした全件走査の門(#1225)。
+///
+/// replica の内容を指さない hint は契機にしない。内容を指す hint でも、最初の 1 回はすぐ走査し、
+/// 以後は最小間隔を空ける(取りこぼしは docs event と recovery tick が拾う)。
+#[derive(Default)]
+pub(crate) struct HintRecoveryGate {
+    next_scan_at_ms: i64,
+}
+
+impl HintRecoveryGate {
+    pub(crate) fn allow(&mut self, hint: &GossipHint, now_ms: i64) -> bool {
+        if !hint_refers_to_replica_content(hint) || self.next_scan_at_ms > now_ms {
+            return false;
+        }
+        self.next_scan_at_ms = now_ms.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
+        true
+    }
+}
+
+/// recovery tick が走査の要否を決めるための peer の状態。
+/// 戻り値は (topic に live な peer がいる, topic に設定済みの peer がいる, docs の支援 peer 数)。
+pub(crate) async fn recovery_probe_peer_state(
+    transport: &dyn Transport,
+    docs_sync: &dyn DocsSync,
+    topic: &str,
+) -> (bool, bool, usize) {
+    let (has_live_topic_peer, has_configured_topic_peer) = match transport.peers().await {
+        Ok(snapshot) => snapshot
+            .topic_diagnostics
+            .iter()
+            .find(|diagnostic| {
+                normalize_topic_name(diagnostic.topic.clone()).as_deref() == Some(topic)
+            })
+            .map(|diagnostic| {
+                (
+                    diagnostic.joined && !diagnostic.connected_peers.is_empty(),
+                    !diagnostic.configured_peer_ids.is_empty(),
+                )
+            })
+            .unwrap_or((false, false)),
+        Err(error) => {
+            warn!(
+                topic = %topic,
+                error = %error,
+                "failed to inspect live topic peer state during recovery tick"
+            );
+            (false, false)
+        }
+    };
+    let docs_assist_peer_count = match docs_sync.assist_peer_ids().await {
+        Ok(peer_ids) => peer_ids.len(),
+        Err(error) => {
+            warn!(
+                topic = %topic,
+                error = %error,
+                "failed to inspect docs-assisted peers during recovery tick"
+            );
+            0
+        }
+    };
+    (
+        has_live_topic_peer,
+        has_configured_topic_peer,
+        docs_assist_peer_count,
+    )
 }
 
 #[cfg(test)]
