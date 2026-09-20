@@ -150,3 +150,95 @@ for (const locale of ['en', 'ja', 'zh-CN'] as const) {
     }
   }
 }
+
+// #1189: 更新があることは Control Center を開かないと分からなかった。更新がある間だけ、
+// 「フィードバックを送る」の右に強調表示の導線を出し、そこから設定の「リリースと更新」へ行く。
+const updateTriggerLabel = {
+  en: 'Update available',
+  ja: 'アップデートがあります',
+  'zh-CN': '有可用更新',
+} satisfies Record<keyof typeof copy, string>;
+
+async function reachUpdateAvailable(page: Page, locale: keyof typeof copy) {
+  const text = copy[locale];
+  await page.goto('/#/timeline');
+  // 更新前は cluster に導線が無い（AC-3）。
+  await expect(page.getByTestId('tester-feedback-trigger')).toBeVisible();
+  await expect(page.getByTestId('update-available-trigger')).toHaveCount(0);
+
+  await page.getByTestId('control-center-trigger').click();
+  await page
+    .locator('.shell-control-center')
+    .getByRole('button', { name: text.release, exact: true })
+    .click();
+  const dialog = page.getByRole('dialog');
+  // 起動時の確認が終わってから手動確認を armed にする。
+  await expect(dialog.getByRole('status')).toContainText(text.latest);
+  await page.evaluate(() => {
+    (window as unknown as { __updateFeedback: UpdateFixture }).__updateFeedback.armed = true;
+  });
+  await dialog.getByRole('button', { name: text.check, exact: true }).click();
+  await settleCheck(page, 'available');
+  await expect(dialog.getByRole('status')).toContainText('0.2.2-preview.1');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+}
+
+for (const locale of ['en', 'ja', 'zh-CN'] as const) {
+  test(`update trigger reaches release settings from the control cluster ${locale}`, async ({ page }) => {
+    await seedUpdateCheck(page, locale, 'dark');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await reachUpdateAvailable(page, locale);
+
+    const update = page.getByTestId('update-available-trigger');
+    await expect(update).toBeVisible();
+    // 幅狭ではアイコンのみになるが、読み上げ名は保つ（AC-4）。
+    await expect(update).toHaveAccessibleName(updateTriggerLabel[locale]);
+    await expect(update.locator('span')).toBeHidden();
+
+    // 投稿ボタン・他の cluster ボタンと高さと下辺が揃い、重ならない（AC-5）。
+    const geometry = await page.locator('.shell-column-primary-action').first().evaluate((postButton) => {
+      const rect = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const post = postButton.getBoundingClientRect();
+      return {
+        post: { left: post.left, bottom: post.bottom, height: post.height },
+        cluster: rect('.shell-control-cluster'),
+        update: rect('[data-testid="update-available-trigger"]'),
+      };
+    });
+    expect(Math.abs(geometry.update.height - geometry.post.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.update.bottom - geometry.post.bottom)).toBeLessThanOrEqual(1);
+    expect(geometry.cluster.right).toBeLessThanOrEqual(geometry.post.left);
+    expect(geometry.cluster.left).toBeGreaterThanOrEqual(0);
+
+    // 押すと設定の「リリースと更新」が開く（AC-2）。更新の実行は発火しない（INVAR-2）。
+    await update.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('status')).toContainText('0.2.2-preview.1');
+    await expect(page.getByTestId('settings-section-release')).toHaveAttribute('aria-current', 'location');
+    expect(await page.evaluate(() =>
+      (window as unknown as { __updateFeedback: UpdateFixture }).__updateFeedback.forbidden
+    )).toEqual([]);
+  });
+}
+
+test('update trigger shows its label on desktop and hides with the cluster while composing', async ({ page }) => {
+  await seedUpdateCheck(page, 'en', 'dark');
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await reachUpdateAvailable(page, 'en');
+
+  const update = page.getByTestId('update-available-trigger');
+  await expect(update.locator('span')).toHaveText(updateTriggerLabel.en);
+  // Control Center を開くと cluster ごと隠れる（INVAR-3）。
+  await page.getByTestId('control-center-trigger').click();
+  await expect(update).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(update).toBeVisible();
+
+  // 幅狭で Composer に入力している間は、他の cluster ボタンと同じく隠れる（TR-6）。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.shell-column-primary-action').first().click();
+  await page.getByPlaceholder('Write a post').focus();
+  await expect(update).toBeHidden();
+  await expect(page.getByTestId('tester-feedback-trigger')).toBeHidden();
+});

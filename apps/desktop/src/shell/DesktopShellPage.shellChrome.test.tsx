@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { DESKTOP_THEME_STORAGE_KEY } from '@/lib/theme';
 import { App } from '@/App';
+import { appUpdateStore, INITIAL_UPDATE_STATE } from '@/shell/useAppUpdateStore';
 import {
   closestSection,
   openChannelManager,
@@ -23,6 +24,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  // module 単位の store なので、更新状態を test 間へ持ち越さない。
+  appUpdateStore.setState({ updateState: INITIAL_UPDATE_STATE, pendingUpdate: null });
 });
 
 test('Control Center is the global navigation entry on desktop and narrow viewports', async () => {
@@ -51,6 +54,56 @@ test('tester feedback trigger sits next to the Control Center trigger and opens 
 
   fireEvent.click(trigger);
   expect(await screen.findByRole('dialog', { name: 'Send feedback' })).toBeInTheDocument();
+});
+
+// #1189: 更新があることは Control Center を開かないと分からなかった。更新がある間だけ、
+// フィードバックの右から設定の「リリースと更新」へ直接行ける導線を出す。
+test('update trigger appears next to the feedback trigger only while an update is available', async () => {
+  const user = userEvent.setup();
+  render(<App api={createDesktopMockApi()} />);
+
+  const feedback = await screen.findByTestId('tester-feedback-trigger');
+  expect(screen.queryByTestId('update-available-trigger')).not.toBeInTheDocument();
+
+  act(() => {
+    appUpdateStore.setState({
+      updateState: {
+        ...INITIAL_UPDATE_STATE,
+        status: 'available',
+        availableVersion: '0.2.7-preview.1',
+      },
+    });
+  });
+
+  const update = await screen.findByTestId('update-available-trigger');
+  expect(update).toBeVisible();
+  expect(update).toHaveAccessibleName('Update available');
+  expect(update.parentElement).toBe(feedback.parentElement);
+  // 「フィードバックを送る」の右、つまり DOM 上で後ろに置く。
+  expect(feedback.compareDocumentPosition(update) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  // Control Center 展開中は cluster ごと隠れる。既存ボタンと同じ扱いにする。
+  const controlCenter = await openControlCenter(user);
+  expect(screen.queryByTestId('update-available-trigger')).not.toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  await waitFor(() => {
+    expect(controlCenter).not.toBeInTheDocument();
+  });
+
+  await user.click(await screen.findByTestId('update-available-trigger'));
+  const settings = await screen.findByRole('dialog', { name: 'Settings' });
+  expect(within(settings).getByTestId('settings-section-release')).toHaveAttribute(
+    'aria-current',
+    'location'
+  );
+  expect(window.location.hash).toContain('settings=release');
+
+  act(() => {
+    appUpdateStore.setState({ updateState: INITIAL_UPDATE_STATE });
+  });
+  await waitFor(() => {
+    expect(screen.queryByTestId('update-available-trigger')).not.toBeInTheDocument();
+  });
 });
 
 test('Control Center exposes Columns, Places, Activity, and System and restores trigger focus', async () => {

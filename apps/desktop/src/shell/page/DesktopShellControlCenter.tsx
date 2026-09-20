@@ -275,17 +275,33 @@ export function DesktopShellControlCenter({
           ) : null}
         </Button>
         {workspaceState.controlCenterOpen ? null : (
-          <Button
-            className='shell-tester-feedback-trigger'
-            variant='secondary'
-            type='button'
-            aria-label={t('shell:testerFeedback.openButton')}
-            data-testid='tester-feedback-trigger'
-            onClick={onOpenTesterFeedback}
-          >
-            <MessageSquarePlus className='size-5' aria-hidden='true' />
-            <span>{t('shell:testerFeedback.openButton')}</span>
-          </Button>
+          <>
+            <Button
+              className='shell-tester-feedback-trigger'
+              variant='secondary'
+              type='button'
+              aria-label={t('shell:testerFeedback.openButton')}
+              data-testid='tester-feedback-trigger'
+              onClick={onOpenTesterFeedback}
+            >
+              <MessageSquarePlus className='size-5' aria-hidden='true' />
+              <span>{t('shell:testerFeedback.openButton')}</span>
+            </Button>
+            {/* #1189: 更新がある間だけ、Control Center を開かずに「リリースと更新」へ行ける。 */}
+            {updateAvailable ? (
+              <Button
+                className='shell-update-available-trigger'
+                variant='primary'
+                type='button'
+                aria-label={t('shell:navigation.updateAvailable')}
+                data-testid='update-available-trigger'
+                onClick={() => openSettings('release')}
+              >
+                <Download className='size-5' aria-hidden='true' />
+                <span>{t('shell:navigation.updateAvailable')}</span>
+              </Button>
+            ) : null}
+          </>
         )}
       </div>
 

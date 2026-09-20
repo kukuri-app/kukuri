@@ -647,6 +647,15 @@
   box-shadow: var(--shadow-panel);
 }
 
+/* #1189: 更新がある間だけ cluster に出す導線。寸法は他の cluster ボタンへ揃え、
+   強調は primary 塗りで示すので境界色は上書きしない。 */
+.shell-phase1 .shell-update-available-trigger {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-panel);
+}
+
 .shell-phase1 .shell-control-center-trigger[data-status='connectionAttention'],
 .shell-phase1 .shell-control-center-trigger[data-status='communityNodeAttention'] {
   border-color: var(--warning);
@@ -951,7 +960,8 @@
 @media (max-width: 759px) {
   /* 幅狭の control cluster 位置とアバターボタン寸法は mobile-column-workspace.css が持つ。 */
   .shell-phase1 .shell-control-center-trigger > span:not(.shell-control-center-status-dot),
-  .shell-phase1 .shell-tester-feedback-trigger > span {
+  .shell-phase1 .shell-tester-feedback-trigger > span,
+  .shell-phase1 .shell-update-available-trigger > span {
     display: none;
   }
 

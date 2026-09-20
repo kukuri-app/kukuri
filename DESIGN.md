@@ -216,7 +216,7 @@ WCAG 2.2 AAを基準とする。自動検査の満点だけを適合の証明に
 - 表示中の選択Columnのspan変更では、header操作部へ到達できる最小のCanvas水平補正を行う。手動で選択Columnから離れた場合は引き戻さない。補正だけでfocus、本文縦scroll、入室・network session、Dome設定を変更しない。
 - 直前まで全幅を表示していた選択Columnは、Canvas幅やWebViewの拡大率が変わっても表示範囲へ追従させる。その補正scrollをMobileのpage移動と誤認しない。利用者が手動scrollで選択Columnから離れている場合は、閲覧位置を引き戻さない。
 - overlay、Control Center、Composer、fullscreen controlはsafe areaと互いのhit areaを塞がない。
-- Mobileの下部操作は、Column footerの投稿ボタン（primary action）を右寄せ、アバター・Control Center・フィードバックのclusterを左下に固定し、4つのボタンの高さ（44px）と下辺を揃える。Composer入力中はclusterの各ボタンを隠す。
+- Mobileの下部操作は、Column footerの投稿ボタン（primary action）を右寄せ、アバター・Control Center・フィードバックのclusterを左下に固定し、各ボタンの高さ（44px）と下辺を投稿ボタンへ揃える。更新が利用可能な間だけ、フィードバックの右へ「リリースと更新」を開くprimary塗りのボタンをclusterの最後に加える。幅狭ではclusterの各ボタンをアイコンのみにし、読み上げ名は保つ。Composer入力中はclusterの各ボタンを隠す。
 - Tauri／WebView依存surfaceはbrowserだけで完了とせず、影響するOS／WebViewでinput ownership、fullscreen、resource縮退を確認する。
 - 入室済みMetaverseの全画面ではheaderと補助面の開閉操作を除いた高さを3Dへ割り当てる。Domeの管理・接続・hostingは開閉式の補助面にまとめ、閉じた内容へfocusを入れない。同じscene、camera、chat draft、フォーム入力を保持し、退出後は元のColumnと本文scroll、focusへ戻る。未入室時はdiscoveryと入室導線を維持する。
 
