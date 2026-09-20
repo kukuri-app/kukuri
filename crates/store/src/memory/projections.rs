@@ -42,6 +42,33 @@ impl ObjectProjectionStore for MemoryStore {
             .cloned())
     }
 
+    async fn find_author_reposts_of(
+        &self,
+        topic_id: &str,
+        author_pubkey: &str,
+        source_object_id: &EnvelopeId,
+        limit: usize,
+    ) -> Result<Vec<ObjectProjectionRow>> {
+        let mut rows =
+            self.object_projection_rows
+                .read()
+                .await
+                .values()
+                .filter(|row| {
+                    row.object_kind == "repost"
+                        && row.topic_id == topic_id
+                        && row.author_pubkey == author_pubkey
+                        && row.repost_of.as_ref().is_some_and(|repost_of| {
+                            &repost_of.source_object_id == source_object_id
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+        rows.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        rows.truncate(limit);
+        Ok(rows)
+    }
+
     async fn list_topic_timeline(
         &self,
         topic_id: &str,

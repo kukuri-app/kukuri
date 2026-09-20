@@ -413,39 +413,119 @@ impl AppService {
         }
     }
 
-    /// 利用者の操作(repost・reaction・reply・bookmark など)の対象が projection に無いときに備えた走査。
+    /// 利用者の操作(repost・reaction・reply・bookmark・取り下げ・community index の解決)の対象を
+    /// projection に用意する(#1239)。
     ///
-    /// 対象の行が projection に無い場合は、指紋による省略を無効にして必ず反映し直す(#1225)。
-    pub(crate) async fn hydrate_scope_projection_for_target(
+    /// projection にあれば何も読まない。無ければ、scope の replica から対象の key だけを読んで反映する。
+    /// replica は走査しない。読む docs の record 数は、replica の大きさに依存しない。
+    /// 戻り値は、対象が projection に用意できたか。
+    pub(crate) async fn ensure_object_projection(
         &self,
         topic_id: &str,
         scope: &TimelineScope,
-        target_object_id: &EnvelopeId,
-    ) -> Result<usize> {
-        let target_known = self
+        object_id: &EnvelopeId,
+    ) -> Result<bool> {
+        if self
             .services
             .projection_store
-            .get_object_projection(target_object_id)
+            .get_object_projection(object_id)
             .await?
-            .is_some();
-        if !target_known {
-            self.forget_scope_scan_cache(topic_id, scope).await;
+            .is_some()
+        {
+            return Ok(true);
         }
-        Box::pin(self.hydrate_scope_projection(topic_id, scope)).await
+        for replica in self.scope_replicas(topic_id, scope).await? {
+            if hydrate_object_by_id(&self.services, &replica, object_id).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
-    pub(crate) async fn forget_scope_scan_cache(&self, topic_id: &str, scope: &TimelineScope) {
-        let mut replicas = vec![topic_replica_id(topic_id)];
+    /// 表示した投稿の取り下げを、背景で確認する(#1239)。呼び出し側は待たない。
+    ///
+    /// 対象は、購読していない topic の投稿でありうる repost 元と profile の投稿。projection に取り下げが
+    /// 既にあれば何もしない。確認は object ごとに間隔を空け、`withdrawals/<object id>/state` を key 指定で
+    /// 読むだけで、replica は走査しない。
+    pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
+        if !self
+            .services
+            .withdrawal_checks
+            .try_begin(object_id.as_str(), Utc::now().timestamp_millis())
+        {
+            return;
+        }
+        let services = self.services.clone();
+        let replica = topic_replica_id(topic_id);
+        let object_id = object_id.clone();
+        tokio::spawn(async move {
+            let permits = services.withdrawal_checks.permits();
+            let Ok(_permit) = permits.acquire().await else {
+                return;
+            };
+            let checked = async {
+                let projection_store = services.projection_store.as_ref();
+                if projection_store
+                    .get_post_withdrawal(&object_id)
+                    .await?
+                    .is_some()
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                let docs_sync = services.docs_sync.as_ref();
+                let key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
+                if let Some(record) = docs_sync
+                    .query_replica(&replica, DocQuery::Exact(key))
+                    .await?
+                    .into_iter()
+                    .next()
+                {
+                    hydrate_post_withdrawal_from_record(
+                        docs_sync,
+                        projection_store,
+                        &replica,
+                        record,
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = checked {
+                warn!(
+                    object_id = %object_id.as_str(),
+                    error = %error,
+                    "failed to check a post withdrawal in the background"
+                );
+            }
+        });
+    }
+
+    /// scope が読む replica。件数は「参加中の private channel × epoch」で決まり、投稿数に依存しない。
+    /// private channel は、参加状態の確認(`ensure_private_channel_access`)を通ったものだけを返す。
+    pub(crate) async fn scope_replicas(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+    ) -> Result<Vec<ReplicaId>> {
+        let mut replicas = Vec::new();
         let states = match scope {
-            TimelineScope::Public => Vec::new(),
+            TimelineScope::Public => {
+                replicas.push(topic_replica_id(topic_id));
+                Vec::new()
+            }
             TimelineScope::AllJoined => {
+                replicas.push(topic_replica_id(topic_id));
                 self.joined_private_channel_states_for_topic(topic_id).await
             }
-            TimelineScope::Channel { channel_id } => self
-                .joined_private_channel_state(topic_id, channel_id.as_str())
-                .await
-                .into_iter()
-                .collect(),
+            TimelineScope::Channel { channel_id } => {
+                self.ensure_private_channel_access(topic_id, channel_id)
+                    .await?;
+                self.joined_private_channel_state(topic_id, channel_id.as_str())
+                    .await
+                    .into_iter()
+                    .collect()
+            }
         };
         for state in states {
             for epoch in private_channel_epoch_capabilities(&state) {
@@ -455,11 +535,7 @@ impl AppService {
                 ));
             }
         }
-        for replica in replicas {
-            self.services
-                .replica_scan_cache
-                .forget_replica(replica.as_str());
-        }
+        Ok(replicas)
     }
 
     pub(crate) async fn hydrate_scope_projection(

@@ -54,3 +54,53 @@ caller の並びへの依存は無いことを確認した。prefix 読みの結
 
 - 実 peer を相手にした同期中の読み出しの計測は未実施。
 - この段階では prefix の全件読みそのものは残っている（T3 以降で無くす）。全件読みも key の索引を使うようになったため、`objects/` を読む走査は `indexes/*` などほかの prefix の entry を読み飛ばさなくなった。
+
+## T3: 利用者の操作と view の生成（基準 commit `783a813e`）
+
+T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PASS、必須 CI は全 job 成功。
+
+### 修正前の再現
+
+`crates/app-api/src/tests/sync/scale_independence.rs` の 8 本を基準 commit の実装で実行し、すべて失敗することを確認した。
+判定は所要時間ではなく、docs の query が返した record 数で行う。topic の投稿数を 20 件と 400 件にして比べた。
+
+| 操作 | 修正前（20 件 → 400 件） | 修正後 |
+| --- | --- | --- |
+| reaction（対象が projection にある） | 40 → 800 record | 件数に依存しない |
+| reaction（対象が projection に無い） | 40 → 800 | 同上 |
+| bookmark | 41 → 801 | 同上 |
+| reply | 43 → 803 | 同上 |
+| repost（同じ投稿を 2 回） | 83 → 1,603 | 同上 |
+| 取り下げ | 42 → 803 | 同上 |
+| community index の解決 | 40 → 800 | 同上 |
+| repost を含むページの view の生成 | `withdrawals/` の全件読みが走る | topic の replica への読み出しは、repost 元の取り下げの key 指定の確認 1 回以下 |
+
+### 変更の要約
+
+- `ensure_object_projection`（`service/timeline_subscription_support.rs`）: 対象が projection にあれば何も読まない。無ければ、scope の replica から `withdrawals/<id>/state` と
+  `objects/<id>/state` を key 指定で読んで反映する（取り下げを先に反映するので、取り下げより後に反映した投稿でも本文が残らない）。replica は走査しない。
+  private channel の scope は、参加状態の確認（`ensure_private_channel_access`）を通った epoch の replica だけを読む。#1225 の `hydrate_scope_projection_for_target` と `forget_scope_scan_cache` は削除した。
+- caller: repost 元の bookmark・取り下げ・reply（`timeline.rs`）、reaction（`reactions.rs`）、community index の解決（`community_index.rs`）、repost 元の解決（`service/mod.rs`）。
+- reaction: 自分の既存の reaction が projection に無ければ、`reactions/<target>/<reaction id>/state` を key 指定で反映してから toggle を決める（reaction id は対象・著者・key から決まる）。
+- `find_existing_simple_repost`: topic の全 `objects/` を読んで deserialize する代わりに、projection の索引で引く。`crates/store` に `find_author_reposts_of` と、
+  repost の行だけを対象にした式の索引（migration `20260920000000_repost_source_index`）を追加した。取り下げ済みの repost は既存の repost として扱わない
+  （以前は docs の state が残るため、取り下げた repost の id を返し続け、同じ投稿を repost し直せなかった）。
+- view の生成（`timeline_view_support.rs` の 3 か所）: 行ごとの `withdrawals/` の全件読みをやめ、projection の取り下げ表だけで判定する。購読していない topic の投稿でありうる
+  repost 元と profile の投稿は、背景で `withdrawals/<id>/state` を key 指定で確認する（`WithdrawalCheckLedger`: object ごとに 60 秒の間隔、同時 4 本、台帳 4,096 件）。
+- docs の event の個別反映に `withdrawals/` の key を足した（以前は public topic では hint か全件走査まで反映されなかった）。
+
+### AC / INVAR と証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| AC-3、TR-7 | `reaction_reads_a_constant_number_of_docs_records`、`reaction_on_an_unprojected_target_reads_only_the_target_keys`、`bookmark_…`、`reply_…`、`repost_…`、`withdrawal_…`、`community_index_resolution_…`、`missing_target_fails_without_scanning` |
+| AC-6、TR-9 | `timeline_view_generation_does_not_scan_docs` |
+| INVAR-1 | `withdrawn_repost_source_in_an_unsubscribed_topic_is_masked_after_the_background_check`、`withdrawal_doc_event_is_reflected_by_key_without_scanning`、既存の取り下げ・repost・bookmark・reaction の test（無変更で成功） |
+| INVAR-2 | `private_channel_target_is_not_read_without_membership`、既存の private channel の test |
+| INVAR-4 | store の migration の round trip と schema の golden（索引 1 件の追加）、`author_reposts_lookup_matches_between_backends`、`author_reposts_lookup_uses_the_repost_source_index` |
+
+### 未確認・残課題
+
+- repost 元の取り下げが表示へ反映されるまで、最大 60 秒遅れうる（購読していない topic の場合。以前は表示のたびに確認していた）。
+- repost 元と profile の投稿の取り下げの確認は、購読していない topic の replica を開いて同期する。以前からの副作用で、開く replica の上限は #1224・#1243 で扱う。
+- `cargo xtask rust-test` の 1 回目で `kukuri-transport` の `transport_custom_relay_bootstrap_seed_reports_relay_supported_p2p` が失敗した（差分外。単独実行と再実行では成功）。

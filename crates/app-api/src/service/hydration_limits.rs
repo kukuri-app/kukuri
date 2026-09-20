@@ -72,14 +72,6 @@ impl ReplicaScanCache {
             != Some(fingerprint)
     }
 
-    /// この replica の全 prefix を次回は必ず反映し直す。
-    pub(crate) fn forget_replica(&self, replica: &str) {
-        self.fingerprints
-            .lock()
-            .expect("replica scan cache lock")
-            .retain(|(known, _), _| known != replica);
-    }
-
     pub(crate) fn forget(&self, replica: &str, prefix: &'static str) {
         self.fingerprints
             .lock()
@@ -225,6 +217,70 @@ impl MissingBodyLedger {
     }
 }
 
+/// 購読していない topic の投稿(repost 元、profile の投稿)の取り下げを確認する間隔(#1239)。
+pub(crate) const WITHDRAWAL_CHECK_INTERVAL_MS: i64 = 60_000;
+/// 取り下げの確認の台帳の上限。超えたら、期限の切れた項目を捨て、それでも超えるなら確認を見送る。
+pub(crate) const WITHDRAWAL_CHECK_LEDGER_LIMIT: usize = 4_096;
+/// 背景で同時に行う取り下げの確認の上限。
+pub(crate) const WITHDRAWAL_CHECK_MAX_CONCURRENT: usize = 4;
+
+/// 表示した投稿の取り下げを、object id ごとに間隔を空けて確認するための台帳(#1239)。
+///
+/// view の生成中に docs を読まないため、取り下げの確認は背景へ出す。同じ object を表示し続けても、
+/// 確認は間隔ごとに 1 回で、key を指定した読み出しだけを行う(replica は走査しない)。
+pub(crate) struct WithdrawalCheckLedger {
+    next_check_at_ms: Mutex<HashMap<String, i64>>,
+    permits: Arc<Semaphore>,
+}
+
+impl Default for WithdrawalCheckLedger {
+    fn default() -> Self {
+        Self {
+            next_check_at_ms: Mutex::new(HashMap::new()),
+            permits: Arc::new(Semaphore::new(WITHDRAWAL_CHECK_MAX_CONCURRENT)),
+        }
+    }
+}
+
+impl WithdrawalCheckLedger {
+    /// この object の取り下げを今確認してよいか。`true` を返したときは、次の確認の時刻を先へ進める。
+    pub(crate) fn try_begin(&self, object_id: &str, now_ms: i64) -> bool {
+        let mut entries = self
+            .next_check_at_ms
+            .lock()
+            .expect("withdrawal check ledger lock");
+        if entries
+            .get(object_id)
+            .is_some_and(|next_check_at| *next_check_at > now_ms)
+        {
+            return false;
+        }
+        if !entries.contains_key(object_id) && entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
+            entries.retain(|_, next_check_at| *next_check_at > now_ms);
+            if entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
+                return false;
+            }
+        }
+        entries.insert(
+            object_id.to_string(),
+            now_ms.saturating_add(WITHDRAWAL_CHECK_INTERVAL_MS),
+        );
+        true
+    }
+
+    pub(crate) fn permits(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.permits)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.next_check_at_ms
+            .lock()
+            .expect("withdrawal check ledger lock")
+            .len()
+    }
+}
+
 /// hint を契機にした全件走査の門(#1225)。
 ///
 /// replica の内容を指さない hint は契機にしない。内容を指す hint でも、最初の 1 回はすぐ走査し、
@@ -360,6 +416,33 @@ mod tests {
             "an abandoned attempt must not block later attempts"
         );
         assert_eq!(ledger.attempts(&target), 2);
+    }
+
+    #[test]
+    fn withdrawal_checks_are_spaced_per_object_and_bounded() {
+        let ledger = WithdrawalCheckLedger::default();
+        assert!(ledger.try_begin("object-a", 0));
+        assert!(!ledger.try_begin("object-a", WITHDRAWAL_CHECK_INTERVAL_MS - 1));
+        assert!(
+            ledger.try_begin("object-b", 0),
+            "another object is independent"
+        );
+        assert!(ledger.try_begin("object-a", WITHDRAWAL_CHECK_INTERVAL_MS));
+
+        let ledger = WithdrawalCheckLedger::default();
+        for index in 0..WITHDRAWAL_CHECK_LEDGER_LIMIT {
+            assert!(ledger.try_begin(&format!("object-{index}"), 0));
+        }
+        assert!(
+            !ledger.try_begin("one-too-many", 0),
+            "a full ledger defers new checks instead of growing"
+        );
+        assert_eq!(ledger.len(), WITHDRAWAL_CHECK_LEDGER_LIMIT);
+        assert!(
+            ledger.try_begin("one-too-many", WITHDRAWAL_CHECK_INTERVAL_MS),
+            "expired entries make room"
+        );
+        assert!(ledger.len() <= WITHDRAWAL_CHECK_LEDGER_LIMIT);
     }
 
     #[test]

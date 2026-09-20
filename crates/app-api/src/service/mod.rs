@@ -89,6 +89,8 @@ pub(crate) use tracing::{info, warn};
 pub(crate) const REPLICA_SYNC_RESTART_RETRY_SECONDS: i64 = 5;
 pub(crate) const DIRECT_MESSAGE_SUBSCRIPTION_RESTART_RETRY_SECONDS: i64 = 5;
 pub(crate) const PUBLIC_TOPIC_RECOVERY_GRACE_MS: i64 = 3_000;
+/// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。
+pub(crate) const EXISTING_REPOST_LOOKUP_LIMIT: usize = 64;
 pub(crate) const PUBLIC_TOPIC_RECOVERY_BACKOFF_MS: [i64; 3] = [3_000, 10_000, 30_000];
 pub(crate) const PUBLIC_CHANNEL_ID: &str = "public";
 pub(crate) const DIRECT_MESSAGE_FRAME_MIME: &str =
@@ -166,7 +168,8 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_post_withdrawals_from_replica,
+    hint_refers_to_replica_content, hint_targets_topic, hydrate_object_by_id,
+    hydrate_post_withdrawal_from_record, hydrate_reaction_cache_from_key,
     hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
     hydrate_topic_state, profile_timeline_page,
 };
@@ -357,6 +360,8 @@ pub struct ServiceHandles {
     /// #1225: replica 全件走査の指紋と、欠損した本文 blob の試行台帳。
     pub(crate) replica_scan_cache: Arc<hydration_limits::ReplicaScanCache>,
     pub(crate) missing_body_ledger: Arc<hydration_limits::MissingBodyLedger>,
+    /// #1239: 表示した投稿の取り下げの、背景での確認の台帳。
+    pub(crate) withdrawal_checks: Arc<hydration_limits::WithdrawalCheckLedger>,
 }
 
 impl ServiceHandles {
@@ -381,6 +386,7 @@ impl ServiceHandles {
             dome_mutations: Arc::default(),
             replica_scan_cache: Arc::default(),
             missing_body_ledger: Arc::default(),
+            withdrawal_checks: Arc::default(),
         }
     }
 }
@@ -615,20 +621,9 @@ impl AppService {
         source_object_id: &str,
     ) -> Result<ResolvedRepostSource> {
         let source_object_id = EnvelopeId::from(source_object_id);
-        if ObjectProjectionStore::get_object_projection(
-            self.services.projection_store.as_ref(),
-            &source_object_id,
-        )
-        .await?
-        .is_none()
-        {
-            let _ = hydrate_topic_state(
-                &self.services,
-                source_topic_id,
-                DocFetchPolicy::LocalThenRemote,
-            )
+        // #1239: repost 元が projection に無ければ、その key だけを反映する。topic の replica は走査しない。
+        self.ensure_object_projection(source_topic_id, &TimelineScope::Public, &source_object_id)
             .await?;
-        }
         let projection = ObjectProjectionStore::get_object_projection(
             self.services.projection_store.as_ref(),
             &source_object_id,
@@ -684,37 +679,40 @@ impl AppService {
         if commentary.is_some() {
             return Ok(None);
         }
-        let target_replica = topic_replica_id(target_topic_id);
+        // #1239: topic の全 `objects/` を読まず、projection の索引(著者 + repost 元)で引く。
+        // 取り下げ済みの repost は既存の repost として扱わない。
         let local_author_pubkey = self.current_author_pubkey();
-        for record in self
+        let candidates = self
             .services
-            .docs_sync
-            .query_replica(&target_replica, DocQuery::Prefix("objects/".into()))
-            .await?
-        {
-            if !record.key.ends_with("/state") {
+            .projection_store
+            .find_author_reposts_of(
+                target_topic_id,
+                local_author_pubkey.as_str(),
+                &EnvelopeId::from(source_object_id),
+                EXISTING_REPOST_LOOKUP_LIMIT,
+            )
+            .await?;
+        for row in candidates {
+            if row.channel_id != PUBLIC_CHANNEL_ID {
                 continue;
             }
-            let header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
-            if header.object_kind != "repost"
-                || header.author.as_str() != local_author_pubkey
-                || header.channel_id.is_some()
+            let commentary = match &row.payload_ref {
+                PayloadRef::InlineText { text } => normalize_repost_commentary(Some(text.clone())),
+                PayloadRef::BlobText { .. } => continue,
+            };
+            if commentary.is_some() {
+                continue;
+            }
+            if self
+                .services
+                .projection_store
+                .get_post_withdrawal(&row.object_id)
+                .await?
+                .is_some()
             {
                 continue;
             }
-            let Some(repost_of) = header.repost_of.as_ref() else {
-                continue;
-            };
-            if repost_of.source_object_id.as_str() != source_object_id {
-                continue;
-            }
-            let commentary = match &header.payload_ref {
-                PayloadRef::InlineText { text } => normalize_repost_commentary(Some(text.clone())),
-                PayloadRef::BlobText { .. } => None,
-            };
-            if commentary.is_none() {
-                return Ok(Some(header.object_id.as_str().to_string()));
-            }
+            return Ok(Some(row.object_id.as_str().to_string()));
         }
         Ok(None)
     }

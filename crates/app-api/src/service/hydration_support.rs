@@ -12,7 +12,7 @@ fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeade
     header
 }
 
-async fn hydrate_post_withdrawal_from_record(
+pub(crate) async fn hydrate_post_withdrawal_from_record(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
     replica: &ReplicaId,
@@ -273,6 +273,36 @@ pub(crate) async fn hydrate_object_projection_from_key(
         return Ok(false);
     };
     hydrate_object_projection_from_record(blob_service, projection_store, replica, record).await
+}
+
+/// object id を 1 つ指定して、その投稿を projection へ反映する(#1239)。replica は走査しない。
+///
+/// 取り下げを先に反映する。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
+/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。
+pub(crate) async fn hydrate_object_by_id(
+    services: &ServiceHandles,
+    replica: &ReplicaId,
+    object_id: &EnvelopeId,
+) -> Result<bool> {
+    let docs_sync = services.docs_sync.as_ref();
+    let projection_store = services.projection_store.as_ref();
+    let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
+    if let Some(record) = docs_sync
+        .query_replica(replica, DocQuery::Exact(withdrawal_key))
+        .await?
+        .into_iter()
+        .next()
+    {
+        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record).await?;
+    }
+    hydrate_object_projection_from_key(
+        docs_sync,
+        services.blob_service.as_ref(),
+        projection_store,
+        replica,
+        stable_key("objects", &format!("{}/state", object_id.as_str())).as_str(),
+    )
+    .await
 }
 
 pub(crate) async fn hydrate_reaction_cache_from_replica(
@@ -660,6 +690,21 @@ pub(crate) async fn hydrate_subscription_event(
         return Ok(
             hydrate_reaction_cache_from_key(docs_sync, projection_store, replica, key).await?
                 as usize,
+        );
+    }
+    // #1239: 取り下げの event も key 単位で反映する(以前は全件走査か hint まで反映されなかった)。
+    if key.starts_with("withdrawals/") && key.ends_with("/state") {
+        let Some(record) = docs_sync
+            .query_replica(replica, DocQuery::Exact(key.to_string()))
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(0);
+        };
+        return Ok(
+            hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record)
+                .await? as usize,
         );
     }
     if key.starts_with("sessions/live/") && key.ends_with("/state") {

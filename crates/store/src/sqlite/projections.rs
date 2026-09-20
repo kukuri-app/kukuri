@@ -140,6 +140,41 @@ impl ObjectProjectionStore for SqliteStore {
         row.map(row_to_object_projection).transpose()
     }
 
+    async fn find_author_reposts_of(
+        &self,
+        topic_id: &str,
+        author_pubkey: &str,
+        source_object_id: &EnvelopeId,
+        limit: usize,
+    ) -> Result<Vec<ObjectProjectionRow>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        // 条件の式は `idx_object_index_cache_repost_source` と同じ形に保つ(索引を使うため)。
+        let rows = sqlx::query(
+            r#"
+            SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
+                   reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
+                   repost_of_json, content_labels_json, source_replica_id, source_key,
+                   source_envelope_id, source_blob_hash, derived_at, projection_version
+            FROM object_index_cache
+            WHERE object_kind = 'repost'
+              AND topic_id = ?1
+              AND author_pubkey = ?2
+              AND json_extract(repost_of_json, '$.source_object_id') = ?3
+            ORDER BY created_at DESC
+            LIMIT ?4
+            "#,
+        )
+        .bind(topic_id)
+        .bind(author_pubkey)
+        .bind(source_object_id.as_str())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(row_to_object_projection).collect()
+    }
+
     async fn mark_adult_media_hashes(&self, hashes: &[BlobHash]) -> Result<()> {
         if hashes.is_empty() {
             return Ok(());

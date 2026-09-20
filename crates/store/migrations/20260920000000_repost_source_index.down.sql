@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_object_index_cache_repost_source;

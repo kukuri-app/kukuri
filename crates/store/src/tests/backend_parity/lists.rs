@@ -843,3 +843,137 @@ async fn direct_message_conversations_match_between_backends() {
         vec!["dm-c".to_string(), "dm-b".to_string()],
     );
 }
+
+fn parity_repost_row(
+    topic_id: &str,
+    author_pubkey: &str,
+    object_id: &str,
+    source_object_id: &str,
+    created_at: i64,
+) -> ObjectProjectionRow {
+    ObjectProjectionRow {
+        object_kind: "repost".into(),
+        author_pubkey: author_pubkey.to_string(),
+        payload_ref: PayloadRef::InlineText {
+            text: String::new(),
+        },
+        content: Some(String::new()),
+        source_blob_hash: None,
+        repost_of: Some(RepostSourceSnapshotV1 {
+            source_object_id: EnvelopeId::from(source_object_id),
+            source_topic_id: TopicId::new("kukuri:topic:parity-repost-source"),
+            source_author_pubkey: kukuri_core::Pubkey::from("c".repeat(64).as_str()),
+            source_object_kind: "post".into(),
+            content: "source body".into(),
+            attachments: Vec::new(),
+            reply_to_object_id: None,
+            root_id: None,
+            content_labels: Vec::new(),
+        }),
+        ..parity_projection_row(topic_id, "public", object_id, created_at)
+    }
+}
+
+async fn author_reposts_scenario<S: Store + ProjectionStore>(store: &S) -> Vec<Vec<String>> {
+    let topic = "kukuri:topic:parity-repost";
+    let me = "a".repeat(64);
+    let other = "b".repeat(64);
+    for row in [
+        parity_repost_row(topic, &me, "repost-old", "source-1", 10),
+        parity_repost_row(topic, &me, "repost-new", "source-1", 20),
+        parity_repost_row(topic, &me, "repost-other-source", "source-2", 30),
+        parity_repost_row(topic, &other, "repost-other-author", "source-1", 40),
+        parity_repost_row(
+            "kukuri:topic:parity-repost-elsewhere",
+            &me,
+            "repost-other-topic",
+            "source-1",
+            50,
+        ),
+        // repost ではない行は、同じ著者・topic でも対象にならない。
+        parity_projection_row(topic, "public", "plain-post", 60),
+    ] {
+        ObjectProjectionStore::put_object_projection(store, row)
+            .await
+            .expect("ObjectProjectionStore::put_object_projection");
+    }
+    let mut results = Vec::new();
+    for (source, limit) in [
+        ("source-1", 10usize),
+        ("source-1", 1),
+        ("source-2", 10),
+        ("missing", 10),
+        ("source-1", 0),
+    ] {
+        let rows = ObjectProjectionStore::find_author_reposts_of(
+            store,
+            topic,
+            me.as_str(),
+            &EnvelopeId::from(source),
+            limit,
+        )
+        .await
+        .expect("ObjectProjectionStore::find_author_reposts_of");
+        results.push(
+            rows.into_iter()
+                .map(|row| row.object_id.as_str().to_string())
+                .collect(),
+        );
+    }
+    results
+}
+
+// #1239: 自分の既存の repost の検索は、両実装で同じ結果を返す(新しい順、著者・topic・repost 元で絞る)。
+#[tokio::test]
+async fn author_reposts_lookup_matches_between_backends() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let memory = MemoryStore::default();
+    let from_sqlite = author_reposts_scenario(&sqlite).await;
+    let from_memory = author_reposts_scenario(&memory).await;
+    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(
+        from_sqlite,
+        vec![
+            vec!["repost-new".to_string(), "repost-old".to_string()],
+            vec!["repost-new".to_string()],
+            vec!["repost-other-source".to_string()],
+            vec![],
+            vec![],
+        ],
+    );
+}
+
+// #1239: SQLite の検索が、repost 元の式の索引を使う(全行の scan にならない)。
+#[tokio::test]
+async fn author_reposts_lookup_uses_the_repost_source_index() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let plan = sqlx::query(
+        r#"
+        EXPLAIN QUERY PLAN
+        SELECT object_id
+        FROM object_index_cache
+        WHERE object_kind = 'repost'
+          AND topic_id = ?1
+          AND author_pubkey = ?2
+          AND json_extract(repost_of_json, '$.source_object_id') = ?3
+        ORDER BY created_at DESC
+        LIMIT ?4
+        "#,
+    )
+    .bind("kukuri:topic:parity-repost")
+    .bind("a".repeat(64))
+    .bind("source-1")
+    .bind(10_i64)
+    .fetch_all(sqlite.pool())
+    .await
+    .expect("explain query plan");
+    let detail = plan
+        .iter()
+        .map(|row| sqlx::Row::get::<String, _>(row, "detail"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    assert!(
+        detail.contains("idx_object_index_cache_repost_source"),
+        "the lookup must use the repost source index, got: {detail}"
+    );
+}

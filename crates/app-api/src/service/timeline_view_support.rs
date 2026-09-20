@@ -495,14 +495,12 @@ impl AppService {
     }
 
     pub(crate) async fn profile_post_to_view(&self, profile_post: ProfilePost) -> Result<PostView> {
-        hydrate_post_withdrawals_from_replica(
-            self.services.docs_sync.as_ref(),
-            self.services.projection_store.as_ref(),
-            self.services.replica_scan_cache.as_ref(),
-            &topic_replica_id(profile_post.published_topic_id.as_str()),
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
+        // #1239: view の生成中に docs を読まない。取り下げは projection の表だけで判定し、
+        // 購読していない topic の投稿の取り下げは、背景の上限つきの確認で追いつく。
+        self.schedule_withdrawal_check(
+            profile_post.published_topic_id.as_str(),
+            &profile_post.object_id,
+        );
         let withdrawal = self
             .services
             .projection_store
@@ -609,14 +607,12 @@ impl AppService {
         &self,
         profile_repost: ProfileRepost,
     ) -> Result<PostView> {
-        hydrate_post_withdrawals_from_replica(
-            self.services.docs_sync.as_ref(),
-            self.services.projection_store.as_ref(),
-            self.services.replica_scan_cache.as_ref(),
-            &topic_replica_id(profile_repost.published_topic_id.as_str()),
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
+        // #1239: view の生成中に docs を読まない。取り下げは projection の表だけで判定し、
+        // 購読していない topic の投稿の取り下げは、背景の上限つきの確認で追いつく。
+        self.schedule_withdrawal_check(
+            profile_repost.published_topic_id.as_str(),
+            &profile_repost.object_id,
+        );
         let withdrawal = self
             .services
             .projection_store
@@ -717,14 +713,12 @@ impl AppService {
         snapshot: RepostSourceSnapshotV1,
         profiles: &HashMap<String, Profile>,
     ) -> Result<RepostSourceView> {
-        hydrate_post_withdrawals_from_replica(
-            self.services.docs_sync.as_ref(),
-            self.services.projection_store.as_ref(),
-            self.services.replica_scan_cache.as_ref(),
-            &topic_replica_id(snapshot.source_topic_id.as_str()),
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
+        // #1239: view の生成中に docs を読まない。取り下げは projection の表だけで判定し、
+        // 購読していない topic の投稿の取り下げは、背景の上限つきの確認で追いつく。
+        self.schedule_withdrawal_check(
+            snapshot.source_topic_id.as_str(),
+            &snapshot.source_object_id,
+        );
         let is_withdrawn = self
             .services
             .projection_store

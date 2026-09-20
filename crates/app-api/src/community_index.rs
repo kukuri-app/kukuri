@@ -54,31 +54,27 @@ impl AppService {
         }
 
         for (_, (topic, scope, entries)) in groups {
-            // #1225: 走査は指紋で省略される。解決対象が projection に無いときは省略を無効にして反映し直す。
-            let mut any_target_missing = false;
-            for input in &entries {
-                let known = self
-                    .services
-                    .projection_store
-                    .get_object_projection(&EnvelopeId::from(input.object_id.clone()))
-                    .await
-                    .is_ok_and(|projection| projection.is_some());
-                if !known {
-                    any_target_missing = true;
-                    break;
-                }
-            }
-            if any_target_missing {
-                self.forget_scope_scan_cache(topic.as_str(), &scope).await;
-            }
-            let scope_ready = self
+            // #1239: scope を走査しない。解決対象の object だけを、projection に無いときに key 指定で反映する。
+            let mut scope_ready = self
                 .ensure_scope_subscriptions(topic.as_str(), &scope)
                 .await
-                .is_ok()
-                && self
-                    .hydrate_scope_projection(topic.as_str(), &scope)
-                    .await
-                    .is_ok();
+                .is_ok();
+            if scope_ready {
+                for input in &entries {
+                    if self
+                        .ensure_object_projection(
+                            topic.as_str(),
+                            &scope,
+                            &EnvelopeId::from(input.object_id.clone()),
+                        )
+                        .await
+                        .is_err()
+                    {
+                        scope_ready = false;
+                        break;
+                    }
+                }
+            }
             if !scope_ready {
                 for input in entries {
                     results.insert(

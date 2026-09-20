@@ -70,6 +70,15 @@ pub trait ObjectProjectionStore: Send + Sync {
         &self,
         object_id: &EnvelopeId,
     ) -> Result<Option<ObjectProjectionRow>>;
+    /// #1239: `author_pubkey` が `topic_id` に書いた、`source_object_id` の repost を新しい順に最大 `limit` 件返す。
+    /// 自分の既存の repost の検索に使う。docs の replica を走査せず、projection の索引だけで引く。
+    async fn find_author_reposts_of(
+        &self,
+        topic_id: &str,
+        author_pubkey: &str,
+        source_object_id: &EnvelopeId,
+        limit: usize,
+    ) -> Result<Vec<ObjectProjectionRow>>;
     /// #858: 成人向けラベル付き投稿の添付として観測済みの blob hash を記録する
     /// (insert-only)。projection 書き込み時は実装側が自動で記録するが、projection を
     /// 経由しない表示経路(profile timeline 等)からも明示的に記録できるようにする。

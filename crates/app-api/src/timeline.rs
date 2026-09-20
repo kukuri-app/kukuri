@@ -214,7 +214,7 @@ impl AppService {
             },
         };
         let source_object_id = EnvelopeId::from(source_object_id);
-        Box::pin(self.hydrate_scope_projection_for_target(topic_id, &scope, &source_object_id))
+        self.ensure_object_projection(topic_id, &scope, &source_object_id)
             .await?;
         let projection = self
             .services
@@ -349,7 +349,7 @@ impl AppService {
             },
         };
         let target_object_id = EnvelopeId::from(object_id);
-        Box::pin(self.hydrate_scope_projection_for_target(topic_id, &scope, &target_object_id))
+        self.ensure_object_projection(topic_id, &scope, &target_object_id)
             .await?;
         let target = self
             .resolve_signed_post_envelope(&target_object_id)
@@ -471,12 +471,8 @@ impl AppService {
                     channel_id: channel_id.clone(),
                 },
             };
-            Box::pin(self.hydrate_scope_projection_for_target(
-                topic_id,
-                &scope,
-                &EnvelopeId::from(reply_to),
-            ))
-            .await?;
+            self.ensure_object_projection(topic_id, &scope, &EnvelopeId::from(reply_to))
+                .await?;
             Some(
                 self.resolve_parent_object(&EnvelopeId::from(reply_to))
                     .await?

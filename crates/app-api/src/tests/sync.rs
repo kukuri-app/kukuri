@@ -7,6 +7,8 @@ struct CountingDocsSync {
     inner: kukuri_docs_sync::MemoryDocsSync,
     queries: Arc<TokioMutex<Vec<(String, DocQuery)>>>,
     restarts: Arc<TokioMutex<Vec<String>>>,
+    /// query が返した record(または key)の総数。replica の大きさに比例する読み出しを検出する。
+    records_returned: Arc<std::sync::atomic::AtomicUsize>,
     assist_peer_ids: Vec<String>,
 }
 
@@ -38,6 +40,16 @@ impl CountingDocsSync {
 
     async fn restarts(&self) -> usize {
         self.restarts.lock().await.len()
+    }
+
+    fn records_returned(&self) -> usize {
+        self.records_returned
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn reset_records_returned(&self) {
+        self.records_returned
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -75,7 +87,21 @@ impl DocsSync for CountingDocsSync {
             .lock()
             .await
             .push((replica_id.as_str().to_string(), query.clone()));
-        self.inner.query_replica(replica_id, query).await
+        let records = self.inner.query_replica(replica_id, query).await?;
+        self.records_returned
+            .fetch_add(records.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(records)
+    }
+
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+        let entries = self.inner.query_replica_keys(replica_id, query).await?;
+        self.records_returned
+            .fetch_add(entries.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(entries)
     }
 
     async fn subscribe_replica(
@@ -323,6 +349,7 @@ mod diagnostics;
 mod gossip_toggle;
 mod hint_rehydration;
 mod hydration_limits;
+mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;
