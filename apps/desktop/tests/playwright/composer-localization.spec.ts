@@ -8,9 +8,11 @@ test('settings language localizes Explore and the file control across reloads', 
   await page.getByRole('dialog', { name: 'Settings', exact: true }).getByLabel('Language').selectOption('ja');
   await page.keyboard.press('Escape');
   await page.goto('/#/explore');
-  await expect(page.getByRole('heading', { name: 'コミュニティインデックス', exact: true })).toBeVisible();
+  // #1192: カラム見出しと重複するカード見出しを外したため、機能タブの accessible name で確認する。
+  await expect(page.getByRole('tablist', { name: 'コミュニティインデックスの機能' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '検索', exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'コミュニティインデックス', exact: true })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: 'コミュニティインデックスの機能' })).toBeVisible();
   await page.goto('/#/timeline');
   await page.locator('[data-column-id][aria-current="true"] .shell-column-primary-action').click();
   await expect(page.getByRole('button', { name: 'ファイルを選択', exact: true })).toBeVisible();

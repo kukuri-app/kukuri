@@ -794,8 +794,10 @@
   display: grid;
   gap: var(--space-2xs);
   min-width: 0;
-  margin: 0;
-  padding: 0;
+  /* コミュニティノードの行が、その上の設定ボタンに属することを字下げで示す。 */
+  margin: 0 0 var(--space-2xs) var(--space-sm);
+  padding: 0 0 0 var(--space-sm);
+  border-left: 1px solid var(--border-subtle);
   list-style: none;
 }
 
@@ -805,7 +807,7 @@
   gap: var(--space-xs);
   align-items: center;
   min-width: 0;
-  padding: var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) 0;
 }
 
 .shell-phase1 .shell-control-center-community-node-name {
@@ -823,8 +825,9 @@
 }
 
 .shell-phase1 .shell-control-center-community-node-empty {
-  margin: 0;
-  padding: 0 var(--space-sm);
+  margin: 0 0 var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) 0 var(--space-2xs) var(--space-sm);
+  border-left: 1px solid var(--border-subtle);
   color: var(--muted-foreground);
   font-size: var(--text-caption);
 }

@@ -754,11 +754,7 @@ export function CommunityIndexWorkspace({
   }
 
   return (
-    <Card
-      className='shell-workspace-card shell-community-index-workspace space-y-4'
-      data-testid={`community-index-${mode}`}
-      aria-label={mode === 'explore' ? t('shell:communityIndex.title') : undefined}
-    >
+    <Card className='shell-workspace-card shell-community-index-workspace space-y-4' data-testid={`community-index-${mode}`}>
       {/* #1192: 「見つける」カラムではカラム見出しと重複するため、
           カード内の見出しと説明文を出さない。トピック内カードは従来どおり。 */}
       {mode === 'topic' ? (
