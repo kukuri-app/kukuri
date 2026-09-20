@@ -413,3 +413,100 @@ async fn learned_peer_recovers_relay_backfilled_doc_entry_after_seed_peers_are_c
     node_b.shutdown().await?;
     Ok(())
 }
+
+// 実際の 2 node の同期で、`SyncFinished`・`ContentReady` が購読側へ届く。通知の数は entry の数に比例しない
+// (entry ごとの `ContentReady { hash }` は流さない)。独立監査 PR #1266 の確認 test を恒久化。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_boundaries_reach_the_notice_subscriber_and_stay_bounded() -> Result<()> {
+    use crate::ReplicaNotice;
+
+    const ENTRIES: usize = 60;
+    let (relay_url, _relay) = spawn_local_test_relay().await?;
+    let relay_config = TransportRelayConfig {
+        iroh_relay_urls: vec![relay_url],
+    }
+    .normalized();
+    let dir = tempdir()?;
+    let node_a = IrohDocsNode::persistent_with_discovery_config(
+        dir.path().join("notices-a"),
+        TransportNetworkConfig::loopback(),
+        DhtDiscoveryOptions::disabled(),
+        relay_config.clone(),
+    )
+    .await?;
+    let node_b = IrohDocsNode::persistent_with_discovery_config(
+        dir.path().join("notices-b"),
+        TransportNetworkConfig::loopback(),
+        DhtDiscoveryOptions::disabled(),
+        relay_config,
+    )
+    .await?;
+    let docs_a = IrohDocsSync::new(node_a.clone());
+    let docs_b = IrohDocsSync::new(node_b.clone());
+    let replica = topic_replica_id("kukuri:topic:notices-notices");
+
+    // A は同期の前に entry をまとめて書く(B は、1 回の同期でまとめて受け取る)。
+    docs_a.open_replica(&replica).await?;
+    for index in 0..ENTRIES {
+        docs_a
+            .apply_doc_op(
+                &replica,
+                DocOp::SetBytes {
+                    key: stable_key("timeline", &format!("{index:04}-entry")),
+                    value: format!("notice-entry-{index}").into_bytes().repeat(64),
+                },
+            )
+            .await?;
+    }
+
+    let mut notices_b = docs_b.subscribe_replica_notices(&replica).await?;
+    docs_a
+        .set_seed_peers(vec![SeedPeer {
+            endpoint_id: node_b.endpoint().id().to_string(),
+            addr_hint: None,
+        }])
+        .await?;
+    docs_b
+        .set_seed_peers(vec![SeedPeer {
+            endpoint_id: node_a.endpoint().id().to_string(),
+            addr_hint: None,
+        }])
+        .await?;
+
+    let mut remote_entries = 0usize;
+    let mut sync_finished = 0usize;
+    let mut content_ready = 0usize;
+    let mut lagged = 0u64;
+    let collected = timeout(relay_seeded_public_replication_timeout(), async {
+        while let Some(Ok(notice)) = notices_b.next().await {
+            match notice {
+                ReplicaNotice::Entry(event) if event.source_peer.is_some() => remote_entries += 1,
+                ReplicaNotice::Entry(_) => {}
+                ReplicaNotice::SyncFinished => sync_finished += 1,
+                ReplicaNotice::ContentReady => content_ready += 1,
+                ReplicaNotice::Lagged { missed } => lagged += missed,
+            }
+            if remote_entries as u64 + lagged >= ENTRIES as u64
+                && sync_finished > 0
+                && content_ready > 0
+            {
+                return;
+            }
+        }
+    })
+    .await;
+    docs_a.shutdown().await;
+    docs_b.shutdown().await;
+    node_a.shutdown().await?;
+    node_b.shutdown().await?;
+
+    collected?;
+    assert!(sync_finished > 0, "SyncFinished must reach the subscriber");
+    assert!(content_ready > 0, "ContentReady must reach the subscriber");
+    // 同期の通知は、entry の数ではなく同期の回数に比例する。
+    assert!(
+        sync_finished + content_ready <= 16,
+        "sync notices must not grow with the entries: finished={sync_finished} ready={content_ready}"
+    );
+    Ok(())
+}

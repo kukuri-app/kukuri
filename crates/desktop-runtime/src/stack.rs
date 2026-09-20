@@ -539,8 +539,9 @@ mod tests {
     use tempfile::tempdir;
     use tokio::time::{Duration, timeout};
 
-    // #1239: desktop が実際に使う `ReloadableDocsSync` 越しでも、上限つきの key の読み出しが内側へ
-    // 転送される。宣言が抜けると trait の既定実装(エラー)に落ち、窓の追いつきと遡りが動かなくなる。
+    // #1152 / ADR 0046 §6.2: desktop が実際に使う `ReloadableBlobService` 越しでも、
+    // ephemeral 取得は remote の bytes をローカルへ保存せず、状態確認は remote から取得しない。
+    // 既定実装へ落ちる method があると、黙って永続化する `fetch_blob` に戻る。
     #[tokio::test]
     async fn reloadable_blob_service_keeps_ephemeral_fetch_and_local_status_non_persistent() {
         let sender_dir = tempdir().expect("sender tempdir");
