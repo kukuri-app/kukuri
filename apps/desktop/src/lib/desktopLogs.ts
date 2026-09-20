@@ -31,10 +31,13 @@ export function mergeDesktopLogSnapshot(
   const oldestSeq = snapshot.oldest_seq;
   const contiguous =
     previous !== null && lastSeq !== null && oldestSeq !== null && oldestSeq <= lastSeq + 1;
+  const newer = contiguous ? snapshot.entries.filter((entry) => entry.seq > lastSeq) : [];
+  // 反復で再発行された行は、表示済みの同じ行(first_seq 以降)を置き換える。
+  const supersededFrom = newer[0]?.first_seq ?? Number.POSITIVE_INFINITY;
   const entries = contiguous
     ? [
-        ...previous.entries.filter((entry) => entry.seq >= oldestSeq),
-        ...snapshot.entries.filter((entry) => entry.seq > lastSeq),
+        ...previous.entries.filter((entry) => entry.seq >= oldestSeq && entry.seq < supersededFrom),
+        ...newer,
       ]
     : snapshot.entries;
   const gapSinceLastRefresh =
@@ -57,8 +60,17 @@ export function formatDesktopLogTimestamp(timestampMs: number): string {
   return Number.isNaN(date.getTime()) ? String(timestampMs) : date.toISOString();
 }
 
+/// 反復した行だけに付ける接尾辞。件数と最初の発生時刻を残し、期間を読めるようにする。
+export function formatDesktopLogRepeat(entry: DesktopLogEntry): string | null {
+  return entry.repeat_count > 1
+    ? `[repeated ${entry.repeat_count} times since ${formatDesktopLogTimestamp(entry.first_timestamp_ms)}]`
+    : null;
+}
+
 export function formatDesktopLogLine(entry: DesktopLogEntry): string {
-  return `${formatDesktopLogTimestamp(entry.timestamp_ms)} ${entry.level.padEnd(5)} ${entry.target}: ${entry.message}`;
+  const line = `${formatDesktopLogTimestamp(entry.timestamp_ms)} ${entry.level.padEnd(5)} ${entry.target}: ${entry.message}`;
+  const repeat = formatDesktopLogRepeat(entry);
+  return repeat ? `${line} ${repeat}` : line;
 }
 
 export function formatDesktopLogBytes(bytes: number): string {
