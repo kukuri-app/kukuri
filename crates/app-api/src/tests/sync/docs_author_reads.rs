@@ -10,6 +10,17 @@ use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header, sha
 use super::*;
 use crate::service::replica_window::ensure_index_entries_projected;
 
+/// docs の event(その entry を書いた docs author つき)。
+fn doc_event(replica: &ReplicaId, key: &str, docs_author: &str) -> kukuri_docs_sync::DocEvent {
+    kukuri_docs_sync::DocEvent {
+        replica_id: replica.clone(),
+        key: key.to_string(),
+        content_hash: String::new(),
+        source_peer: None,
+        docs_author: Some(docs_author.to_string()),
+    }
+}
+
 /// 著者の docs author の id。shadow の名義(`shadow_docs_author(n)`)より後ろに並ぶ。
 fn author_docs_author() -> String {
     "f0".repeat(32)
@@ -174,8 +185,11 @@ async fn doc_event_projects_a_post_behind_a_flooded_envelope_key() {
         &fixture.app.services,
         fixture.topic.as_str(),
         &fixture.replica,
-        fixture.envelope_key.as_str(),
-        Some(author_docs_author().as_str()),
+        &doc_event(
+            &fixture.replica,
+            fixture.envelope_key.as_str(),
+            author_docs_author().as_str(),
+        ),
     )
     .await
     .expect("doc event");
@@ -423,8 +437,11 @@ async fn writer_hint_applies_a_withdrawal_of_a_post_without_the_tag() {
         &app.services,
         topic.as_str(),
         &replica,
-        withdrawal_key.as_str(),
-        Some(author_docs_author().as_str()),
+        &doc_event(
+            &replica,
+            withdrawal_key.as_str(),
+            author_docs_author().as_str(),
+        ),
     )
     .await
     .expect("event");

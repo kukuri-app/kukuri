@@ -454,12 +454,22 @@ pub(crate) async fn hydrate_subscription_event(
     replica: &ReplicaId,
     key: &str,
 ) -> Result<usize> {
-    hydrate_subscription_doc_event(services, topic_id, replica, key, None).await
+    hydrate_doc_event_key(services, topic_id, replica, key, None).await
 }
 
 /// docs の event を 1 件、key 単位で反映する。`docs_author` は、その entry を書いた docs author(`DocEvent::docs_author`)。
 /// 投稿と取り下げの読み出しで、読む record を選ぶ手がかりに使う(ADR 0053 §3)。
 pub(crate) async fn hydrate_subscription_doc_event(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    event: &DocEvent,
+) -> Result<usize> {
+    let docs_author = event.docs_author.as_deref();
+    hydrate_doc_event_key(services, topic_id, replica, event.key.as_str(), docs_author).await
+}
+
+async fn hydrate_doc_event_key(
     services: &ServiceHandles,
     topic_id: &str,
     replica: &ReplicaId,

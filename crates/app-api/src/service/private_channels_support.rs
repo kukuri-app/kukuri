@@ -748,8 +748,7 @@ impl AppService {
                                 &services,
                                 topic.as_str(),
                                 &replica_for_task,
-                                event.key.as_str(),
-                                event.docs_author.as_deref(),
+                                &event,
                             ).await {
                                 Ok(count) => count,
                                 Err(error) => {
