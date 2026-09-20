@@ -178,7 +178,8 @@
   .shell-phase1 .shell-column-canvas:has(.shell-column-composer) .shell-column-page-indicator,
   .shell-phase1:has(.shell-column-composer:focus-within) .shell-account-menu-trigger,
   .shell-phase1:has(.shell-column-composer:focus-within) .shell-control-center-trigger,
-  .shell-phase1:has(.shell-column-composer:focus-within) .shell-tester-feedback-trigger {
+  .shell-phase1:has(.shell-column-composer:focus-within) .shell-tester-feedback-trigger,
+  .shell-phase1:has(.shell-column-composer:focus-within) .shell-update-available-trigger {
     display: none;
   }
 }

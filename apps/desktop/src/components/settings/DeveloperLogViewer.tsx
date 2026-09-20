@@ -9,6 +9,7 @@ import {
   DESKTOP_LOGS_EXPORT_FILE_NAME,
   buildDesktopLogsExport,
   formatDesktopLogBytes,
+  formatDesktopLogRepeat,
   formatDesktopLogTimestamp,
   type DesktopLogsView,
 } from '@/lib/desktopLogs';
@@ -118,6 +119,9 @@ export function DeveloperLogViewer({ status, view, errorMessage, onRefresh }: De
                 <span className='text-[var(--muted-foreground)]'>{formatDesktopLogTimestamp(entry.timestamp_ms)}</span>{' '}
                 <span className={cn('font-semibold', levelClassName(entry.level))}>{entry.level}</span>{' '}
                 <span className='text-[var(--muted-foreground)]'>{entry.target}:</span> {entry.message}
+                {entry.repeat_count > 1 ? (
+                  <span className='text-[var(--muted-foreground)]'> {formatDesktopLogRepeat(entry)}</span>
+                ) : null}
               </li>
             ))}
           </ol>

@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::Result;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore, watch};
 // 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
 use tokio::time::Instant;
 
@@ -25,6 +25,8 @@ use crate::config::SeedPeer;
 use crate::tickets::relay_assisted_endpoint_addr;
 
 pub const REMOTE_FETCH_RETRY_COOLDOWN: Duration = Duration::from_secs(3);
+/// 1 つの retry state が同時に実行する remote 走査の上限(#1207)。超過分は順番を待つ。
+pub const REMOTE_FETCH_MAX_CONCURRENT_WALKS: usize = 8;
 const PEER_FETCH_BACKOFF_BASE: Duration = Duration::from_secs(2);
 const PEER_FETCH_BACKOFF_MAX: Duration = Duration::from_secs(60);
 const PEER_CONNECTION_STATE_TTL: Duration = Duration::from_secs(300);
@@ -172,38 +174,97 @@ impl RequestRateLedger {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RemoteFetchStart {
-    Ready,
+/// 合流した呼び出しへ配る remote 取得の結果(#1207)。
+///
+/// 走査は呼び出し側の future から切り離して実行するため、結果は共有できる形で持つ。
+pub type SharedRemoteFetchResult = Result<Option<Arc<Vec<u8>>>, Arc<anyhow::Error>>;
+
+type RemoteFetchResultSender = watch::Sender<Option<SharedRemoteFetchResult>>;
+type RemoteFetchResultReceiver = watch::Receiver<Option<SharedRemoteFetchResult>>;
+
+/// `RemoteFetchRetryState::begin` の結果。
+pub enum RemoteFetchBegin {
+    /// この呼び出しが走査を実行する。結果は sender へ 1 回だけ流す。
+    Lead(RemoteFetchResultSender),
+    /// 同じ対象の走査が実行中。結果を受け取るだけで、新しい走査は始めない。
+    Join(RemoteFetchResultReceiver),
     CoolingDown,
 }
 
-/// リモートフェッチ失敗のクールダウン(対象キー毎)。
-#[derive(Default)]
+/// リモートフェッチ失敗のクールダウン(対象キー毎)と、実行中の走査の予約(#1207)。
+///
+/// 同じ flight key の走査は 1 本だけにする。実行中の予約は `finish` まで残るため、
+/// 呼び出し側が途中で待つのをやめても、後続の呼び出しが並行して走査を始めることはない。
+///
+/// 走査の同時実行数もこの state ごとに数える。blob の取得と docs entry の取得は別の state を
+/// 持つため、取得できない blob の走査が docs entry の取得を待たせることはない。
 pub struct RemoteFetchRetryState {
     retry_after: BTreeMap<String, Instant>,
+    in_flight: BTreeMap<String, RemoteFetchResultReceiver>,
+    walk_permits: Arc<Semaphore>,
+}
+
+impl Default for RemoteFetchRetryState {
+    fn default() -> Self {
+        Self {
+            retry_after: BTreeMap::new(),
+            in_flight: BTreeMap::new(),
+            walk_permits: Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS)),
+        }
+    }
 }
 
 impl RemoteFetchRetryState {
-    pub fn try_begin(&mut self, key: &str, now: Instant) -> RemoteFetchStart {
+    /// `cooldown_key` は失敗クールダウンの単位、`flight_key` は合流の単位。
+    /// 保存先が異なる取得(永続 / 一時)は `flight_key` を分けて合流させない。
+    pub fn begin(
+        &mut self,
+        cooldown_key: &str,
+        flight_key: &str,
+        now: Instant,
+    ) -> RemoteFetchBegin {
+        if let Some(receiver) = self.in_flight.get(flight_key) {
+            // 結果を流さずに sender が消えた予約(走査 task の異常終了)は引き継がない。
+            if receiver.borrow().is_some() || receiver.has_changed().is_ok() {
+                return RemoteFetchBegin::Join(receiver.clone());
+            }
+            self.in_flight.remove(flight_key);
+        }
         if self
             .retry_after
-            .get(key)
+            .get(cooldown_key)
             .is_some_and(|retry_after| *retry_after > now)
         {
-            return RemoteFetchStart::CoolingDown;
+            return RemoteFetchBegin::CoolingDown;
         }
-        self.retry_after.remove(key);
-        RemoteFetchStart::Ready
+        self.retry_after.remove(cooldown_key);
+        let (sender, receiver) = watch::channel(None);
+        self.in_flight.insert(flight_key.to_string(), receiver);
+        RemoteFetchBegin::Lead(sender)
     }
 
-    pub fn finish(&mut self, key: &str, success: bool, now: Instant) {
+    pub fn finish(&mut self, cooldown_key: &str, flight_key: &str, success: bool, now: Instant) {
+        self.in_flight.remove(flight_key);
+        // 期限切れのクールダウンを残さない(台帳を有限に保つ)。
+        self.retry_after.retain(|_, retry_after| *retry_after > now);
         if success {
-            self.retry_after.remove(key);
+            self.retry_after.remove(cooldown_key);
         } else {
             self.retry_after
-                .insert(key.to_string(), now + REMOTE_FETCH_RETRY_COOLDOWN);
+                .insert(cooldown_key.to_string(), now + REMOTE_FETCH_RETRY_COOLDOWN);
         }
+    }
+
+    pub fn walk_permits(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.walk_permits)
+    }
+
+    pub fn in_flight_len(&self) -> usize {
+        self.in_flight.len()
+    }
+
+    pub fn cooldown_len(&self) -> usize {
+        self.retry_after.len()
     }
 }
 
@@ -651,28 +712,74 @@ mod tests {
     }
 
     // かつて docs-sync / blob-service に同名で重複していたテストの単一版(WP-H2)。
+    // #1207: 実行中の同じ対象は並行させず、先行する走査へ合流させる契約に変えた。
     #[test]
-    fn remote_fetch_retry_state_cools_down_failures_without_blocking_active_fetches() {
+    fn remote_fetch_retry_state_joins_active_fetches_and_cools_down_failures() {
         let now = Instant::now();
         let mut state = RemoteFetchRetryState::default();
 
-        assert_eq!(state.try_begin("hash-a", now), RemoteFetchStart::Ready);
-        assert_eq!(state.try_begin("hash-a", now), RemoteFetchStart::Ready);
+        let RemoteFetchBegin::Lead(_sender) = state.begin("hash-a", "store:hash-a", now) else {
+            panic!("first caller must lead");
+        };
+        assert!(matches!(
+            state.begin("hash-a", "store:hash-a", now),
+            RemoteFetchBegin::Join(_)
+        ));
+        // 保存先が違う取得は合流しない。
+        let RemoteFetchBegin::Lead(_ephemeral) = state.begin("hash-a", "ephemeral:hash-a", now)
+        else {
+            panic!("a different flight key must not join");
+        };
+        state.finish("hash-a", "ephemeral:hash-a", false, now);
 
-        state.finish("hash-a", false, now);
-        assert_eq!(
-            state.try_begin("hash-a", now + Duration::from_secs(1)),
-            RemoteFetchStart::CoolingDown
-        );
-        assert_eq!(
-            state.try_begin("hash-a", now + REMOTE_FETCH_RETRY_COOLDOWN),
-            RemoteFetchStart::Ready
-        );
+        state.finish("hash-a", "store:hash-a", false, now);
+        assert_eq!(state.in_flight_len(), 0);
+        assert!(matches!(
+            state.begin("hash-a", "store:hash-a", now + Duration::from_secs(1)),
+            RemoteFetchBegin::CoolingDown
+        ));
+        let RemoteFetchBegin::Lead(_retry) =
+            state.begin("hash-a", "store:hash-a", now + REMOTE_FETCH_RETRY_COOLDOWN)
+        else {
+            panic!("cooldown expiry must allow a new attempt");
+        };
 
-        state.finish("hash-a", true, now + REMOTE_FETCH_RETRY_COOLDOWN);
-        assert_eq!(
-            state.try_begin("hash-a", now + REMOTE_FETCH_RETRY_COOLDOWN),
-            RemoteFetchStart::Ready
+        state.finish(
+            "hash-a",
+            "store:hash-a",
+            true,
+            now + REMOTE_FETCH_RETRY_COOLDOWN,
         );
+        assert_eq!(state.cooldown_len(), 0);
+    }
+
+    #[test]
+    fn remote_fetch_retry_state_does_not_join_an_abandoned_reservation() {
+        let now = Instant::now();
+        let mut state = RemoteFetchRetryState::default();
+        let RemoteFetchBegin::Lead(sender) = state.begin("hash-a", "store:hash-a", now) else {
+            panic!("first caller must lead");
+        };
+        drop(sender);
+        assert!(matches!(
+            state.begin("hash-a", "store:hash-a", now),
+            RemoteFetchBegin::Lead(_)
+        ));
+    }
+
+    #[test]
+    fn remote_fetch_retry_state_prunes_expired_cooldowns() {
+        let now = Instant::now();
+        let mut state = RemoteFetchRetryState::default();
+        for index in 0..4 {
+            let key = format!("hash-{index}");
+            let _ = state.begin(&key, &key, now);
+            state.finish(&key, &key, false, now);
+        }
+        assert_eq!(state.cooldown_len(), 4);
+        let later = now + REMOTE_FETCH_RETRY_COOLDOWN + Duration::from_secs(1);
+        let _ = state.begin("hash-z", "hash-z", later);
+        state.finish("hash-z", "hash-z", false, later);
+        assert_eq!(state.cooldown_len(), 1);
     }
 }

@@ -638,8 +638,10 @@
   gap: var(--space-sm);
 }
 
+/* #1189 の更新導線も同じ寸法で並べる。primary 塗りは `border: 0` なので border-color は効かない。 */
 .shell-phase1 .shell-control-center-trigger,
-.shell-phase1 .shell-tester-feedback-trigger {
+.shell-phase1 .shell-tester-feedback-trigger,
+.shell-phase1 .shell-update-available-trigger {
   min-width: 2.75rem;
   min-height: 2.75rem;
   border-color: var(--border-accent);
@@ -994,7 +996,8 @@
 @media (max-width: 759px) {
   /* 幅狭の control cluster 位置とアバターボタン寸法は mobile-column-workspace.css が持つ。 */
   .shell-phase1 .shell-control-center-trigger > span:not(.shell-control-center-status-dot),
-  .shell-phase1 .shell-tester-feedback-trigger > span {
+  .shell-phase1 .shell-tester-feedback-trigger > span,
+  .shell-phase1 .shell-update-available-trigger > span {
     display: none;
   }
 

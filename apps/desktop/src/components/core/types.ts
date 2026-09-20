@@ -59,6 +59,9 @@ export type PostMediaView = {
   extraAttachmentCount: number;
   // #1056: `pending` は Community Node への advisory 照会が未決(取得しない。スケルトン表示)。
   state: 'loading' | 'ready' | 'unavailable' | 'gated' | 'pending';
+  // #1207: `unavailable` のとき、利用者の明示再試行で取り直す hash と、その再試行中かどうか。
+  retryHashes?: string[];
+  retrying?: boolean;
   // #1055: `gated` の判定元。`advisory` は Community Node の推定(ADR 0046 §6)であり、
   // 投稿者の自己申告(`self_label`)とは文言を分ける。
   // #1107: `shared_media` は、この投稿自体は対象外だが、同じ blob が別の投稿で成人向けと
@@ -70,6 +73,9 @@ export type PostMediaView = {
   imageGalleryItems?: Array<{
     hash: string;
     src: string | null;
+    // #1207: 自動取得が上限に達した / その再取得を試行中。
+    failed?: boolean;
+    retrying?: boolean;
     mime: string;
     provenance?: ContentProvenance;
   }>;

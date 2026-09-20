@@ -60,6 +60,11 @@ fn directives_contains_target(directives: &str, target: &str) -> bool {
 
 /// 1件のログ行。`seq` はプロセス内で単調増加し、buffer から落ちた行の範囲を
 /// 呼出元が `oldest_seq` との差から判別できる。
+///
+/// #1206: 直前の行と level・target・message が同じ event は行を増やさず、末尾の行を
+/// 新しい `seq` で置き換えて `repeat_count` を進める。`first_seq` / `first_timestamp_ms` は
+/// 最初の発生、`seq` / `timestamp_ms` は最新の発生を指す。同一警告の連発で他の行が
+/// buffer から押し出されず、件数と期間も失われない。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct DesktopLogEntry {
     pub(crate) seq: u64,
@@ -67,6 +72,9 @@ pub(crate) struct DesktopLogEntry {
     pub(crate) level: &'static str,
     pub(crate) target: String,
     pub(crate) message: String,
+    pub(crate) repeat_count: u64,
+    pub(crate) first_seq: u64,
+    pub(crate) first_timestamp_ms: u64,
 }
 
 impl DesktopLogEntry {
@@ -75,7 +83,7 @@ impl DesktopLogEntry {
     }
 }
 
-/// `read_desktop_logs` の応答。`oldest_seq` は buffer に残っている最古の行、
+/// `read_desktop_logs` の応答。`oldest_seq` は buffer に残っている最古の行(の `first_seq`)、
 /// `next_seq` は次に採番される値(= これまでに記録した総件数 + 1)。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct DesktopLogSnapshot {
@@ -124,14 +132,29 @@ impl DesktopLogBuffer {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
+        let seq = inner.next_seq;
+        inner.next_seq += 1;
+        let timestamp_ms = unix_millis();
+        if let Some(last) = inner.entries.back_mut()
+            && last.level == level.as_str()
+            && last.target == target
+            && last.message == message
+        {
+            last.seq = seq;
+            last.timestamp_ms = timestamp_ms;
+            last.repeat_count += 1;
+            return;
+        }
         let entry = DesktopLogEntry {
-            seq: inner.next_seq,
-            timestamp_ms: unix_millis(),
+            seq,
+            timestamp_ms,
             level: level.as_str(),
             target: target.to_owned(),
             message,
+            repeat_count: 1,
+            first_seq: seq,
+            first_timestamp_ms: timestamp_ms,
         };
-        inner.next_seq += 1;
         inner.bytes += entry.byte_len();
         inner.entries.push_back(entry);
         while inner.entries.len() > self.max_entries || inner.bytes > self.max_bytes {
@@ -157,7 +180,7 @@ impl DesktopLogBuffer {
         let skip = matching.len().saturating_sub(limit);
         DesktopLogSnapshot {
             entries: matching.into_iter().skip(skip).cloned().collect(),
-            oldest_seq: inner.entries.front().map(|entry| entry.seq),
+            oldest_seq: inner.entries.front().map(|entry| entry.first_seq),
             next_seq: inner.next_seq,
             max_entries: self.max_entries,
             max_bytes: self.max_bytes,
@@ -366,6 +389,64 @@ mod tests {
         );
         assert_eq!(snapshot.oldest_seq, Some(3));
         assert_eq!(snapshot.next_seq, 6);
+        assert_eq!(buffer.stats().0, 3);
+    }
+
+    #[test]
+    fn repeated_identical_lines_collapse_into_one_entry_with_count() {
+        // #1206 TR-4: 反復 drop → 件数集約 → 復旧。先行する行を buffer から押し出さない。
+        let buffer = DesktopLogBuffer::with_limits(3, usize::MAX, usize::MAX);
+        buffer.push(&Level::INFO, "kukuri", "before".to_owned());
+        for _ in 0..1_000 {
+            buffer.push(
+                &Level::WARN,
+                "iroh",
+                "Dropping received relay packet".to_owned(),
+            );
+        }
+        buffer.push(&Level::INFO, "kukuri", "recovered".to_owned());
+
+        let snapshot = buffer.snapshot(None, 100);
+        assert_eq!(
+            snapshot
+                .entries
+                .iter()
+                .map(|entry| (entry.message.as_str(), entry.repeat_count))
+                .collect::<Vec<_>>(),
+            [
+                ("before", 1),
+                ("Dropping received relay packet", 1_000),
+                ("recovered", 1)
+            ]
+        );
+        let repeated = &snapshot.entries[1];
+        assert_eq!((repeated.first_seq, repeated.seq), (2, 1_001));
+        assert!(repeated.first_timestamp_ms <= repeated.timestamp_ms);
+        assert_eq!(snapshot.oldest_seq, Some(1));
+        assert_eq!(snapshot.next_seq, 1_003);
+    }
+
+    #[test]
+    fn repeated_line_is_reissued_to_incremental_readers() {
+        let buffer = DesktopLogBuffer::with_limits(10, usize::MAX, usize::MAX);
+        buffer.push(&Level::WARN, "k", "same".to_owned());
+        let last_seen = buffer.snapshot(None, 10).entries[0].seq;
+        buffer.push(&Level::WARN, "k", "same".to_owned());
+        // level か target が違えば別の行として扱う。
+        buffer.push(&Level::INFO, "k", "same".to_owned());
+        buffer.push(&Level::INFO, "other", "same".to_owned());
+
+        let newer = buffer.snapshot(Some(last_seen), 10);
+        assert_eq!(newer.entries.len(), 3);
+        assert_eq!(
+            (
+                newer.entries[0].first_seq,
+                newer.entries[0].seq,
+                newer.entries[0].repeat_count
+            ),
+            (1, 2, 2)
+        );
+        assert_eq!(newer.oldest_seq, Some(1));
         assert_eq!(buffer.stats().0, 3);
     }
 

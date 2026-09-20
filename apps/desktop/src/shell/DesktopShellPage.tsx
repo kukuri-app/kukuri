@@ -78,6 +78,7 @@ import {
   type ColumnTimelineView,
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
+import { MediaRetryContext } from '@/components/core/mediaRetryContext';
 
 const CLIPBOARD_TOAST_TIMEOUT_MS = 2200;
 export function DesktopShellPage({
@@ -210,6 +211,7 @@ export function DesktopShellPage({
     buildImageDraftItem: buildComposerImageDraftItem,
     buildVideoDraftItem: buildComposerVideoDraftItem,
     gatedAdultMediaHashes,
+    retryMediaFetch,
   } = useDesktopShellData({
     api,
     translate,
@@ -880,7 +882,7 @@ export function DesktopShellPage({
   );
 
   return (
-    <>
+    <MediaRetryContext.Provider value={retryMediaFetch}>
       <div className='shell-phase1' data-workspace-layout='column'>
         <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
           {t('shell:workspace.skipToWorkspace')}
@@ -987,6 +989,6 @@ export function DesktopShellPage({
         handleCreateCustomReactionAsset={shellActions.handleCreateCustomReactionAsset}
         handleRemoveBookmarkedCustomReaction={shellActions.handleRemoveBookmarkedCustomReaction}
       />
-    </>
+    </MediaRetryContext.Provider>
   );
 }

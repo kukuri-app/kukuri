@@ -8,12 +8,13 @@
 
 use std::fmt::Display;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use kukuri_transport::{
-    PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchRetryState, RemoteFetchStart,
-    RequestRateDecision,
+    PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchBegin, RemoteFetchRetryState,
+    RequestRateDecision, SharedRemoteFetchResult,
 };
 use tokio::sync::Mutex;
 use tokio::time::{Instant, timeout};
@@ -55,9 +56,9 @@ impl std::error::Error for BlobTooLarge {}
 
 /// CN scan ingress: stop consuming verified leaves before exceeding the bound.
 pub async fn fetch_bytes_ephemeral_bounded_with_cooldown(
-    node: &IrohDocsNode,
-    peers: &PeerAddrBook,
-    retries: &Mutex<RemoteFetchRetryState>,
+    node: &Arc<IrohDocsNode>,
+    peers: &Arc<PeerAddrBook>,
+    retries: &Arc<Mutex<RemoteFetchRetryState>>,
     hash: iroh_blobs::Hash,
     max_bytes: u64,
 ) -> Result<Option<Vec<u8>>> {
@@ -114,9 +115,9 @@ async fn fetch_ephemeral(
 /// 呼び出し側のローカル取得が返したエラーで、ログにのみ使う。
 /// 成功時はローカルストアへ取り込んだうえで bytes を返す。
 pub async fn fetch_bytes_with_cooldown(
-    node: &IrohDocsNode,
-    peers: &PeerAddrBook,
-    retries: &Mutex<RemoteFetchRetryState>,
+    node: &Arc<IrohDocsNode>,
+    peers: &Arc<PeerAddrBook>,
+    retries: &Arc<Mutex<RemoteFetchRetryState>>,
     subject: &str,
     hash_text: &str,
     hash: iroh_blobs::Hash,
@@ -140,9 +141,9 @@ pub async fn fetch_bytes_with_cooldown(
 /// safety scan の一時 fetch(#609)用。community node の no-permanent-blob-storage 前提を
 /// 構造的に守る(スキャン後の破棄処理が不要になる)。
 pub async fn fetch_bytes_ephemeral_with_cooldown(
-    node: &IrohDocsNode,
-    peers: &PeerAddrBook,
-    retries: &Mutex<RemoteFetchRetryState>,
+    node: &Arc<IrohDocsNode>,
+    peers: &Arc<PeerAddrBook>,
+    retries: &Arc<Mutex<RemoteFetchRetryState>>,
     subject: &str,
     hash_text: &str,
     hash: iroh_blobs::Hash,
@@ -163,9 +164,9 @@ pub async fn fetch_bytes_ephemeral_with_cooldown(
 
 #[allow(clippy::too_many_arguments)]
 async fn fetch_bytes_with_cooldown_mode(
-    node: &IrohDocsNode,
-    peers: &PeerAddrBook,
-    retries: &Mutex<RemoteFetchRetryState>,
+    node: &Arc<IrohDocsNode>,
+    peers: &Arc<PeerAddrBook>,
+    retries: &Arc<Mutex<RemoteFetchRetryState>>,
     subject: &str,
     hash_text: &str,
     hash: iroh_blobs::Hash,
@@ -177,45 +178,114 @@ async fn fetch_bytes_with_cooldown_mode(
         FetchMode::EphemeralBounded(limit) => format!("bounded:{limit}:{hash_text}"),
         _ => hash_text.to_owned(),
     };
-    match retries.lock().await.try_begin(&retry_key, Instant::now()) {
-        RemoteFetchStart::Ready => {}
-        RemoteFetchStart::CoolingDown => {
-            info!(
-                subject,
-                hash = %hash_text,
-                error = %local_error,
-                "remote fetch skipped during retry cooldown"
-            );
-            return Ok(None);
-        }
-    }
-    let result = match within_remote_fetch_budget(fetch_bytes_from_remote(
-        node,
-        peers,
-        subject,
-        hash_text,
-        hash,
-        local_error,
-        mode,
-    ))
-    .await
-    {
-        Some(result) => result,
-        None => {
-            warn!(
-                subject,
-                hash = %hash_text,
-                timeout_ms = REMOTE_FETCH_TOTAL_TIMEOUT.as_millis(),
-                "remote fetch exhausted the total attempt budget"
-            );
-            Ok(None)
+    // 保存先が違う取得を合流させない。永続取得へ一時取得が合流すると、保存しないはずの
+    // bytes がローカルストアへ残る(#1207 INVAR-2)。
+    let flight_key = match mode {
+        FetchMode::Store => format!("store:{hash_text}"),
+        FetchMode::Ephemeral => format!("ephemeral:{hash_text}"),
+        FetchMode::EphemeralBounded(_) => retry_key.clone(),
+    };
+    let walk = {
+        let node = Arc::clone(node);
+        let peers = Arc::clone(peers);
+        let subject = subject.to_owned();
+        let hash_text = hash_text.to_owned();
+        let local_error = local_error.to_string();
+        async move {
+            fetch_bytes_from_remote(&node, &peers, &subject, &hash_text, hash, local_error, mode)
+                .await
         }
     };
-    retries
-        .lock()
-        .await
-        .finish(&retry_key, matches!(&result, Ok(Some(_))), Instant::now());
-    result
+    let Some(result) =
+        run_single_flight(retries, &retry_key, &flight_key, subject, hash_text, walk).await
+    else {
+        info!(
+            subject,
+            hash = %hash_text,
+            "remote fetch skipped during retry cooldown"
+        );
+        return Ok(None);
+    };
+    match result {
+        Ok(bytes) => Ok(bytes.map(Arc::unwrap_or_clone)),
+        Err(error) => match error.downcast_ref::<BlobTooLarge>() {
+            // 呼び出し側(CN scan)が型で判定するため、合流した側にも同じ型で返す。
+            Some(too_large) => Err(BlobTooLarge {
+                limit: too_large.limit,
+            }
+            .into()),
+            None => Err(anyhow::anyhow!("{error:#}")),
+        },
+    }
+}
+
+/// 同じ対象の走査を 1 本にまとめ、結果を全呼び出しへ配る(#1207 AC-6)。
+///
+/// 走査は呼び出し側の future から切り離した task で最後まで実行する。呼び出し側が外側の
+/// timeout や cancel で待つのをやめても、クールダウンと peer 単位の成否は必ず記録される。
+/// 戻り値が `None` のときはクールダウン中で、走査を行っていない。
+async fn run_single_flight<F>(
+    retries: &Arc<Mutex<RemoteFetchRetryState>>,
+    retry_key: &str,
+    flight_key: &str,
+    subject: &str,
+    hash_text: &str,
+    walk: F,
+) -> Option<SharedRemoteFetchResult>
+where
+    F: Future<Output = Result<Option<Vec<u8>>>> + Send + 'static,
+{
+    let (begin, permits) = {
+        let mut state = retries.lock().await;
+        (
+            state.begin(retry_key, flight_key, Instant::now()),
+            state.walk_permits(),
+        )
+    };
+    let mut receiver = match begin {
+        RemoteFetchBegin::CoolingDown => return None,
+        RemoteFetchBegin::Join(receiver) => receiver,
+        RemoteFetchBegin::Lead(sender) => {
+            let receiver = sender.subscribe();
+            let retries = Arc::clone(retries);
+            let retry_key = retry_key.to_owned();
+            let flight_key = flight_key.to_owned();
+            let subject = subject.to_owned();
+            let hash_text = hash_text.to_owned();
+            tokio::spawn(async move {
+                let result = match permits.acquire().await {
+                    Ok(_permit) => match within_remote_fetch_budget(walk).await {
+                        Some(result) => result,
+                        None => {
+                            warn!(
+                                subject = %subject,
+                                hash = %hash_text,
+                                timeout_ms = REMOTE_FETCH_TOTAL_TIMEOUT.as_millis(),
+                                "remote fetch exhausted the total attempt budget"
+                            );
+                            Ok(None)
+                        }
+                    },
+                    Err(_) => Ok(None),
+                };
+                retries.lock().await.finish(
+                    &retry_key,
+                    &flight_key,
+                    matches!(&result, Ok(Some(_))),
+                    Instant::now(),
+                );
+                let _ = sender.send(Some(
+                    result.map(|bytes| bytes.map(Arc::new)).map_err(Arc::new),
+                ));
+            });
+            receiver
+        }
+    };
+    match receiver.wait_for(Option::is_some).await {
+        Ok(result) => result.clone(),
+        // 走査 task が結果を流さずに終わった(異常終了)。取得できなかったものとして扱う。
+        Err(_) => Some(Ok(None)),
+    }
 }
 
 async fn fetch_bytes_from_remote(
@@ -465,5 +535,207 @@ mod tests {
         })
         .await;
         assert_eq!(result, None);
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use kukuri_transport::REMOTE_FETCH_MAX_CONCURRENT_WALKS;
+
+    fn retries() -> Arc<Mutex<RemoteFetchRetryState>> {
+        Arc::new(Mutex::new(RemoteFetchRetryState::default()))
+    }
+
+    /// 応答しない peer を模した走査。開始回数だけを数え、総予算まで完了しない。
+    fn stalled_walk(
+        started: &Arc<AtomicUsize>,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send + 'static {
+        let started = Arc::clone(started);
+        async move {
+            started.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+            Ok(None)
+        }
+    }
+
+    // #1207 TR-10: 呼び出し側が外側の timeout で待つのをやめても、失敗のクールダウンが残る。
+    #[tokio::test(start_paused = true)]
+    async fn dropped_caller_still_records_the_failure_cooldown() {
+        let retries = retries();
+        let started = Arc::new(AtomicUsize::new(0));
+
+        let abandoned = timeout(
+            Duration::from_secs(2),
+            run_single_flight(
+                &retries,
+                "hash-a",
+                "store:hash-a",
+                "blob",
+                "hash-a",
+                stalled_walk(&started),
+            ),
+        )
+        .await;
+        assert!(
+            abandoned.is_err(),
+            "the caller gives up before the walk ends"
+        );
+
+        // 走査の総予算が尽きるまで進める。走査 task は呼び出し側と無関係に終わる。
+        tokio::time::sleep(REMOTE_FETCH_TOTAL_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        assert_eq!(retries.lock().await.in_flight_len(), 0);
+
+        let next = run_single_flight(
+            &retries,
+            "hash-a",
+            "store:hash-a",
+            "blob",
+            "hash-a",
+            stalled_walk(&started),
+        )
+        .await;
+        assert!(next.is_none(), "the next call must be inside the cooldown");
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+    }
+
+    // #1207 TR-10 / TR-11: 待つのをやめた直後の再要求は、実行中の走査へ合流し新しい走査を始めない。
+    #[tokio::test(start_paused = true)]
+    async fn repeated_callers_join_the_walk_in_flight() {
+        let retries = retries();
+        let started = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..5 {
+            let attempt = timeout(
+                Duration::from_secs(3),
+                run_single_flight(
+                    &retries,
+                    "hash-a",
+                    "store:hash-a",
+                    "blob",
+                    "hash-a",
+                    stalled_walk(&started),
+                ),
+            )
+            .await;
+            assert!(attempt.is_err());
+        }
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+        assert_eq!(retries.lock().await.in_flight_len(), 1);
+    }
+
+    // #1207 TR-11: 合流した全呼び出しが同じ結果を受け取り、成功後は予約もクールダウンも残らない。
+    #[tokio::test(start_paused = true)]
+    async fn joined_callers_share_one_result() {
+        let retries = retries();
+        let started = Arc::new(AtomicUsize::new(0));
+        let walk = |started: &Arc<AtomicUsize>| {
+            let started = Arc::clone(started);
+            async move {
+                started.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                Ok(Some(vec![1_u8, 2, 3]))
+            }
+        };
+
+        let (first, second) = tokio::join!(
+            run_single_flight(
+                &retries,
+                "hash-a",
+                "store:hash-a",
+                "blob",
+                "hash-a",
+                walk(&started)
+            ),
+            run_single_flight(
+                &retries,
+                "hash-a",
+                "store:hash-a",
+                "blob",
+                "hash-a",
+                walk(&started)
+            ),
+        );
+        for result in [first, second] {
+            let bytes = result.expect("not cooling down").expect("walk succeeded");
+            assert_eq!(bytes.as_deref(), Some(&vec![1_u8, 2, 3]));
+        }
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+        let state = retries.lock().await;
+        assert_eq!(state.in_flight_len(), 0);
+        assert_eq!(state.cooldown_len(), 0);
+    }
+
+    // #1207 INVAR-2: 永続取得と一時取得は合流しない(一時取得の bytes を保存経路へ混ぜない)。
+    #[tokio::test(start_paused = true)]
+    async fn store_and_ephemeral_walks_do_not_join() {
+        let retries = retries();
+        let started = Arc::new(AtomicUsize::new(0));
+        for flight_key in ["store:hash-a", "ephemeral:hash-a"] {
+            let attempt = timeout(
+                Duration::from_secs(1),
+                run_single_flight(
+                    &retries,
+                    "hash-a",
+                    flight_key,
+                    "blob",
+                    "hash-a",
+                    stalled_walk(&started),
+                ),
+            )
+            .await;
+            assert!(attempt.is_err());
+        }
+        assert_eq!(started.load(Ordering::SeqCst), 2);
+    }
+
+    // #1207 INVAR-3: 同時に動く走査は上限までで、超過分は先行の終了を待つ。
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_walks_are_bounded() {
+        let retries = retries();
+        let started = Arc::new(AtomicUsize::new(0));
+        let total = REMOTE_FETCH_MAX_CONCURRENT_WALKS + 3;
+        for index in 0..total {
+            let key = format!("hash-{index}");
+            let flight_key = format!("store:{key}");
+            let attempt = timeout(
+                Duration::from_millis(10),
+                run_single_flight(
+                    &retries,
+                    &key,
+                    &flight_key,
+                    "blob",
+                    &key,
+                    stalled_walk(&started),
+                ),
+            )
+            .await;
+            assert!(attempt.is_err());
+        }
+        assert_eq!(
+            started.load(Ordering::SeqCst),
+            REMOTE_FETCH_MAX_CONCURRENT_WALKS
+        );
+
+        tokio::time::sleep(REMOTE_FETCH_TOTAL_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        assert_eq!(started.load(Ordering::SeqCst), total);
+    }
+
+    // 合流した側にも、大きさ超過を同じ型で返す(CN scan が型で判定する)。
+    #[tokio::test(start_paused = true)]
+    async fn shared_error_keeps_the_too_large_type() {
+        let retries = retries();
+        let result = run_single_flight(
+            &retries,
+            "bounded:8:hash-a",
+            "bounded:8:hash-a",
+            "blob",
+            "hash-a",
+            async { Err(BlobTooLarge { limit: 8 }.into()) },
+        )
+        .await
+        .expect("not cooling down");
+        let error = result.expect_err("walk failed");
+        assert!(error.downcast_ref::<BlobTooLarge>().is_some());
     }
 }

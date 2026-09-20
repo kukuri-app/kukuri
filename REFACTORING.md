@@ -303,7 +303,7 @@ PR共通欄は `.github/PULL_REQUEST_TEMPLATE.md` を使い、本書の「記録
 | `crates/cn-*` | `cargo xtask cn-check` + `cargo xtask cn-test` |
 | `harness/scenarios/**` | `cargo xtask scenario <changed-scenario>` |
 | `apps/desktop/**`（`src-tauri/**` を除く） | `cargo xtask desktop-ui-check`（視覚回帰 `test:e2e:visual` を含む。CSS/スタイル変更で見た目が変わると CI の視覚 step が赤くなる。意図的な変更時は baseline を再生成する — 手順は `docs/runbooks/dev.md` の「視覚回帰」を参照） |
-| `apps/desktop/src-tauri/**` | `cargo xtask tauri-check` + `cargo xtask e2e-smoke` |
+| `apps/desktop/src-tauri/**` | `cargo xtask tauri-check` + `cargo xtask tauri-test`（lib 単体 test。CI では `Kukuri Linux Package` の `linux-appimage` job だけが Linux で実行するため、`cfg(windows)` の test は Windows ローカルでの実行が唯一の確認になる）+ `cargo xtask e2e-smoke` |
 | `docs/adr/**` | 対応する tests / contracts / scenarios を確認または更新する |
 | `docs/runbooks/**` | runbook 内の command と path を確認する |
 | `REFACTORING.md` | `git diff --check` + 記載した repository path / command の存在確認 + `cargo xtask oversized-files` |

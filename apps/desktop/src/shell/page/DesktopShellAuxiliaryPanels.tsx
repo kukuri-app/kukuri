@@ -3,6 +3,7 @@ import { Settings } from 'lucide-react';
 
 import { AuthorAvatar } from '@/components/core/AuthorAvatar';
 import { AuthorDetailCard } from '@/components/core/AuthorDetailCard';
+import { MediaFetchFailure } from '@/components/core/MediaFetchFailure';
 import { AuthorTrustDisplayExceptionField } from '@/components/core/AuthorTrustDisplayExceptionField';
 import { CommunityNodeAdvisoryPanel } from '@/components/core/CommunityNodeAdvisoryPanel';
 import { AuthorIdentityButton } from '@/components/core/AuthorIdentityButton';
@@ -124,6 +125,7 @@ export function DesktopShellMessagesSurface({
     selectedDirectMessagePeerPubkey,
     syncStatus,
     unsupportedVideoManifests,
+    mediaRetryingHashes,
   } = useDesktopShellStore(
     useShallow((s) => ({
       directMessageAttachmentInputKey: s.directMessageAttachmentInputKey,
@@ -139,6 +141,7 @@ export function DesktopShellMessagesSurface({
       selectedDirectMessagePeerPubkey: s.selectedDirectMessagePeerPubkey,
       syncStatus: s.syncStatus,
       unsupportedVideoManifests: s.unsupportedVideoManifests,
+      mediaRetryingHashes: s.mediaRetryingHashes,
     }))
   );
   const setDirectMessageComposer = useDesktopShellFieldSetter('directMessageComposer');
@@ -314,6 +317,12 @@ export function DesktopShellMessagesSurface({
                                 alt={t('common:media.imageAlt')}
                               />
                             </div>
+                          ) : mediaObjectUrls[image.hash] === null ? (
+                            <MediaFetchFailure
+                              hashes={[image.hash]}
+                              retrying={mediaRetryingHashes[image.hash] === true}
+                              testId={`dm-media-fetch-failure-${message.message_id}`}
+                            />
                           ) : (
                             <small>{t('common:media.syncingImage')}</small>
                           )
@@ -335,6 +344,21 @@ export function DesktopShellMessagesSurface({
                                 alt={t('common:media.videoPosterAlt')}
                               />
                             </div>
+                          ) : [video, poster].every(
+                              (attachment) =>
+                                attachment === null || mediaObjectUrls[attachment.hash] === null
+                            ) ? (
+                            <MediaFetchFailure
+                              hashes={[video, poster]
+                                .filter((attachment) => attachment !== null)
+                                .map((attachment) => attachment.hash)}
+                              retrying={[video, poster].some(
+                                (attachment) =>
+                                  attachment !== null &&
+                                  mediaRetryingHashes[attachment.hash] === true
+                              )}
+                              testId={`dm-video-fetch-failure-${message.message_id}`}
+                            />
                           ) : (
                             <small>{t('common:media.syncingPoster')}</small>
                           )

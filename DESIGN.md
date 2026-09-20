@@ -76,6 +76,8 @@ Columnの外底面とCanvasの横スクロールバーの間には`--space-sm`�
 
 投稿カード右上には端末timezoneの年月日と時分秒を常時表示する。日付順は選択localeに従い、日本語は年月日順とする。狭幅では折り返しを許容し、投稿者・公開範囲・日時を重ねたり切り捨てたりしない。
 
+投稿・DMの画像／動画と画像viewerは、自動取得が固定回数で失敗したら、その部分だけを「取得に失敗しました」と再取得のicon buttonへ置き換える。投稿本文、scroll位置、focus、表示制限による代替表示は変えず、表示制限中は失敗表示も再取得操作も出さない。icon buttonはaccessible nameを持ち、再取得中は同じ位置に残したままbusyを示して重複操作を受け付けない。reduced motionではiconの回転を止め、状態名で伝える。avatar・カスタムリアクションは既存のfallbackを使い、再取得操作を置かない。回数とリセット条件は`docs/architecture/blob-cache.md`に従う。
+
 投稿本文の資格情報を含まない絶対HTTP(S) URLは、全文を折り返せるlinkとして表示する。公開・表示可能・settledな投稿がviewport内にある場合は、primary contentの先頭URL 1件だけにsite、title、任意description／imageのpreview cardを表示できる。取得中は本文を押し下げるskeletonを置かず、失敗時はinline linkだけを維持する。private channel／DM、Composer参照preview、adult-content gate／trust collapse中、withdrawn／missing／local pending、viewport外では自動取得しない。cardとinline linkはpointer／keyboardから元URLをOS browserへ開き、親のthread操作を重複発火しない。remote HTML／imageをWebViewから直接読み込まず、送信・取得境界はADR 0051に従う。
 
 #### 自分のアカウント操作（#1005）
@@ -216,7 +218,7 @@ WCAG 2.2 AAを基準とする。自動検査の満点だけを適合の証明に
 - 表示中の選択Columnのspan変更では、header操作部へ到達できる最小のCanvas水平補正を行う。手動で選択Columnから離れた場合は引き戻さない。補正だけでfocus、本文縦scroll、入室・network session、Dome設定を変更しない。
 - 直前まで全幅を表示していた選択Columnは、Canvas幅やWebViewの拡大率が変わっても表示範囲へ追従させる。その補正scrollをMobileのpage移動と誤認しない。利用者が手動scrollで選択Columnから離れている場合は、閲覧位置を引き戻さない。
 - overlay、Control Center、Composer、fullscreen controlはsafe areaと互いのhit areaを塞がない。
-- Mobileの下部操作は、Column footerの投稿ボタン（primary action）を右寄せ、アバター・Control Center・フィードバックのclusterを左下に固定し、4つのボタンの高さ（44px）と下辺を揃える。Composer入力中はclusterの各ボタンを隠す。
+- Mobileの下部操作は、Column footerの投稿ボタン（primary action）を右寄せ、アバター・Control Center・フィードバックのclusterを左下に固定し、各ボタンの高さ（44px）と下辺を投稿ボタンへ揃える。更新が利用可能な間だけ、フィードバックの右へ「リリースと更新」を開くprimary塗りのボタンをclusterの最後に加える。幅狭ではclusterの各ボタンをアイコンのみにし、読み上げ名は保つ。Composer入力中はclusterの各ボタンを隠す。
 - Tauri／WebView依存surfaceはbrowserだけで完了とせず、影響するOS／WebViewでinput ownership、fullscreen、resource縮退を確認する。
 - 入室済みMetaverseの全画面ではheaderと補助面の開閉操作を除いた高さを3Dへ割り当てる。Domeの管理・接続・hostingは開閉式の補助面にまとめ、閉じた内容へfocusを入れない。同じscene、camera、chat draft、フォーム入力を保持し、退出後は元のColumnと本文scroll、focusへ戻る。未入室時はdiscoveryと入室導線を維持する。
 

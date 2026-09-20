@@ -199,7 +199,9 @@
     "viewers": "視聴者"
   },
   "media": {
-    "unavailable": "メディアを取得できません。",
+    "fetchFailed": "取得に失敗しました",
+    "retryFetch": "再取得",
+    "retryingFetch": "再取得しています",
     "closeDialog": "画像ビューアーを閉じる",
     "imageAlt": "画像添付",
     "reportVideo": "動画添付を通報",

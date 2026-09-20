@@ -6,6 +6,7 @@ use std::collections::HashMap;
 struct CountingDocsSync {
     inner: kukuri_docs_sync::MemoryDocsSync,
     queries: Arc<TokioMutex<Vec<(String, DocQuery)>>>,
+    restarts: Arc<TokioMutex<Vec<String>>>,
     assist_peer_ids: Vec<String>,
 }
 
@@ -23,6 +24,20 @@ impl CountingDocsSync {
 
     async fn queries(&self) -> Vec<(String, DocQuery)> {
         self.queries.lock().await.clone()
+    }
+
+    /// replica 全件走査(`objects/` の prefix 読み)の回数。
+    async fn object_scans(&self) -> usize {
+        self.queries
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, query)| *query == DocQuery::Prefix("objects/".into()))
+            .count()
+    }
+
+    async fn restarts(&self) -> usize {
+        self.restarts.lock().await.len()
     }
 }
 
@@ -76,6 +91,14 @@ impl DocsSync for CountingDocsSync {
 
     async fn assist_peer_ids(&self) -> Result<Vec<String>> {
         Ok(self.assist_peer_ids.clone())
+    }
+
+    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
+        self.restarts
+            .lock()
+            .await
+            .push(replica_id.as_str().to_string());
+        Ok(())
     }
 }
 
@@ -299,6 +322,7 @@ fn app_with_hanging_remote_docs(
 mod diagnostics;
 mod gossip_toggle;
 mod hint_rehydration;
+mod hydration_limits;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;

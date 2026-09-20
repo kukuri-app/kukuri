@@ -16,6 +16,7 @@ mod release;
 mod rust;
 #[cfg(feature = "harness")]
 mod scenario;
+mod tauri_test;
 
 pub(crate) use assets::*;
 pub(crate) use cn::*;
@@ -45,6 +46,7 @@ fn main() -> Result<()> {
         "rust-test" => rust_test(),
         "app-api-slow-test" => app_api_slow_test(),
         "tauri-check" => tauri_check(),
+        "tauri-test" => tauri_test::tauri_test(args),
         "desktop-lint" => desktop_lint(),
         "desktop-test" => desktop_test(),
         "desktop-storybook" => desktop_storybook(),
@@ -127,6 +129,6 @@ fn doctor() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <doctor|check|test|rust-check|rust-test|app-api-slow-test|tauri-check|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|ci-prune-target|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
+        "usage: cargo xtask <doctor|check|test|rust-check|rust-test|app-api-slow-test|tauri-check|tauri-test [--package-build] [-- <test args>]|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|ci-prune-target|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
     );
 }

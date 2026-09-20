@@ -11,7 +11,26 @@ import {
 } from './desktopLogs';
 
 function entry(seq: number, message = `line ${seq}`): DesktopLogEntry {
-  return { seq, timestamp_ms: 1_789_000_000_000 + seq * 1_000, level: 'INFO', target: 'kukuri', message };
+  const timestamp_ms = 1_789_000_000_000 + seq * 1_000;
+  return {
+    seq,
+    timestamp_ms,
+    level: 'INFO',
+    target: 'kukuri',
+    message,
+    repeat_count: 1,
+    first_seq: seq,
+    first_timestamp_ms: timestamp_ms,
+  };
+}
+
+function repeated(firstSeq: number, seq: number, message: string): DesktopLogEntry {
+  return {
+    ...entry(seq, message),
+    repeat_count: seq - firstSeq + 1,
+    first_seq: firstSeq,
+    first_timestamp_ms: entry(firstSeq).timestamp_ms,
+  };
 }
 
 function snapshot(entries: DesktopLogEntry[], oldestSeq: number | null, nextSeq: number): DesktopLogSnapshot {
@@ -48,6 +67,22 @@ describe('mergeDesktopLogSnapshot', () => {
     expect(next.droppedOlder).toBe(true);
   });
 
+  test('a reissued repeated line replaces the shown line instead of duplicating it', () => {
+    const previous = mergeDesktopLogSnapshot(null, snapshot([entry(1), entry(2, 'drop')], 1, 3));
+    const next = mergeDesktopLogSnapshot(previous, snapshot([repeated(2, 490, 'drop'), entry(491)], 1, 492));
+    expect(next.entries.map((item) => [item.seq, item.repeat_count])).toEqual([
+      [1, 1],
+      [490, 489],
+      [491, 1],
+    ]);
+    expect(next.gapSinceLastRefresh).toBe(false);
+
+    // buffer に反復行だけが残っても、first_seq が連続していれば欠落として扱わない。
+    const only = mergeDesktopLogSnapshot(previous, snapshot([repeated(2, 900, 'drop')], 2, 901));
+    expect(only.entries.map((item) => item.seq)).toEqual([900]);
+    expect(only.gapSinceLastRefresh).toBe(false);
+  });
+
   test('empty buffer after lines existed still reports dropped lines, and an empty refresh keeps the view', () => {
     const emptied = mergeDesktopLogSnapshot(null, snapshot([], null, 40));
     expect(emptied.entries).toEqual([]);
@@ -73,6 +108,11 @@ describe('export text', () => {
     expect(text).toContain('secret keys, auth tokens, DM bodies, and passphrases are never logged');
     expect(text.trim().endsWith(formatDesktopLogLine(entry(1, 'peer lost peer="abc"')))).toBe(true);
     expect(formatDesktopLogLine(entry(1, 'x'))).toBe(`${new Date(entry(1).timestamp_ms).toISOString()} INFO  kukuri: x`);
+  });
+
+  test('repeated lines keep their count and first occurrence in the exported line', () => {
+    const line = formatDesktopLogLine(repeated(2, 490, 'drop'));
+    expect(line.endsWith(`drop [repeated 489 times since ${new Date(entry(2).timestamp_ms).toISOString()}]`)).toBe(true);
   });
 
   test('formats buffer sizes in whole units only', () => {

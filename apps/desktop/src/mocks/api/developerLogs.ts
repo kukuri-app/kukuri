@@ -30,6 +30,9 @@ export function developerLogFixtureEntries(): DesktopLogEntry[] {
     level,
     target,
     message,
+    repeat_count: 1,
+    first_seq: index + 1,
+    first_timestamp_ms: BASE_TIMESTAMP_MS + index * 4_250,
   }));
 }
 

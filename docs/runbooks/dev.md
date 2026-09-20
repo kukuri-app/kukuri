@@ -36,6 +36,7 @@ cargo xtask rust-check
 cargo xtask rust-test
 cargo xtask app-api-slow-test
 cargo xtask tauri-check
+cargo xtask tauri-test
 cargo xtask desktop-lint
 cargo xtask desktop-test
 cargo xtask desktop-storybook
@@ -51,6 +52,10 @@ cargo xtask desktop-visual-test
 
 - `cargo xtask rust-test` は `cargo-nextest` を優先して non-CN package を流し、`kukuri-harness` は serial 実行、doctest は `cargo test --doc` で補完する。local で `cargo-nextest` が無い場合だけ `cargo test` に fallback する。
 - `cargo xtask tauri-check` は `CARGO_TARGET_DIR=target/desktop-tauri-check` を使って `apps/desktop/src-tauri` を warm cache 向けに compile する。
+- `cargo xtask tauri-test` は `apps/desktop/src-tauri` の lib 単体 test を実行する（#1234）。この crate は root workspace の `exclude` に入っており、`cargo xtask rust-test` / `cargo xtask test` の対象にならない。target は `tauri-check` と同じ `target/desktop-tauri-check`。`-- <filter>` 以降は test binary へ渡す（例: `cargo xtask tauri-test -- tracing::tests`）。
+  - CI では `Kukuri Linux Package` の `linux-appimage` job だけが `cargo xtask-lite tauri-test --package-build` で実行する。`--package-build` は `desktop-package` と同じ release profile / target で build し、package の成果物を再利用する。`Kukuri Fast` は `tauri-check`（compile のみ）で、lib test を実行しない。
+  - Windows の test exe は Common Controls v6 の manifest を持たず、そのままでは `STATUS_ENTRYPOINT_NOT_FOUND`（`TaskDialogIndirect`）で起動に失敗する。`tauri-test` は Windows で test exe の隣に外部 manifest（`<exe>.manifest`）を書いてから実行する。Windows は manifest の解決結果を exe の path と更新時刻で cache するため、exe の更新時刻も更新する（manifest なしで一度起動した exe は、manifest を置くだけでは失敗し続ける）。`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib` を直接実行すると同じ失敗になるので、Windows では `tauri-test` を使う。製品 binary の manifest と `build.rs` は変えていない。
+  - `cfg(windows)` の test（`commands/os_notification_windows.rs` など）は CI で実行されない。該当 file を変えたときは Windows ローカルで `cargo xtask tauri-test` を実行する。
 - `cargo xtask desktop-lint` / `desktop-test` / `desktop-storybook` / `desktop-browser-test` / `desktop-visual-test` は targeted rerun 用。workflow とローカル rerun のどちらでも同じ entrypoint を使う。
 - `cargo xtask cn-check` / `cargo xtask cn-test` は `cn-*` server slice の compile/test 用。
 - `cargo xtask-lite <command>` は xtask を `harness` feature なしで build して実行する alias（`.cargo/config.toml`）。`e2e-smoke` / `scenario` 以外の command は `cargo xtask` と同じ動作で、xtask 自体の build が軽い。CI の harness を使わない job はこちらを使う（#1120）。
@@ -78,6 +83,9 @@ CI は課金対象の計算資源で動く。実装しながら CI へ push し�
 - 変更 path に対応する validation は [検証マトリクス](../../REFACTORING.md#path別検証マトリクス) で選び、ローカルで実行してから commit する。
 - workflow を変えるときは `actionlint <対象 file>` を実行する。runner label を増やす場合は `.github/actionlint.yaml` にも追加する。
 - `docker/cn/**` や image の build 手順を変えるときは、ローカルの Docker で `docker buildx bake --file docker/cn/docker-bake.hcl --allow "fs.write=<出力先>"` を実行し、smoke まで通してから PR にする。
+  - `OUT_DIR=<出力先>` を設定し、`--set '*.platform=linux/amd64'` を付けて比較対象を固定する。出力先は build context の外に置く。
+  - bake 後に `python scripts/ci/cn_image_check.py <出力先>`（Linux は `python3`）を実行する。Python 3.11 以上、Docker、PATH 上の Bash が必要。Windows は Git Bash の `bin` を PATH の先頭へ加える。
+  - 4 本番 OCI の全 layer・圧縮サイズ・entrypoint を検査し、同じ config/layer を Docker に読み込んで起動確認する。PostgreSQL/Valkey は専用 internal network と一時 container を使い、終了時にその資源だけを除去する。既存 indexer の正負 smoke は `scripts/ci/cn_indexer_smoke.sh` を共用する。結果は出力先の `image-check-results.json` に残る。
 - CI 専用の設定（runner profile、Cache Volume、同時実行枠）を変えるときは、変更前後の計測値と根拠を Issue に記録する。
 - ローカルで再現できない項目（実 runner の版差、Cache Volume の当たり外れ、registry への push）は、PR の run か merge 後の run で確認する。その項目を PR 本文の「検証」に明記する。
 - 反復して失敗率を測るときは `Kukuri Flake Probe` を使い、通常の CI を繰り返し起動しない。

@@ -4,11 +4,11 @@ import { Flag } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/icon-button';
 
+import { MediaFetchFailure } from './MediaFetchFailure';
 import { type PostMediaView } from './types';
 
 type PostMediaProps = {
   media: PostMediaView;
-  showUnavailableDiagnostic?: boolean;
   onOpenImage?: (index: number) => void;
   /// 動画添付そのものを media として通報する(#697)。未指定なら操作を出さない。
   onReportVideo?: (hash: string) => void;
@@ -19,7 +19,6 @@ type PostMediaProps = {
 
 export function PostMedia({
   media,
-  showUnavailableDiagnostic = false,
   onOpenImage,
   onReportVideo,
   onOpenGatedDetails,
@@ -82,12 +81,15 @@ export function PostMedia({
       </div>
     );
   }
+  // #1207: 自動取得が上限に達した。失敗した部分だけを置き換え、明示再試行を出す。
   if (media.state === 'unavailable') {
-    return showUnavailableDiagnostic ? (
-      <p className='topic-diagnostic topic-diagnostic-secondary' role='status'>
-        {t('media.unavailable')}
-      </p>
-    ) : null;
+    return (
+      <MediaFetchFailure
+        hashes={media.retryHashes ?? []}
+        retrying={media.retrying ?? false}
+        testId={`media-fetch-failure-${media.objectId}`}
+      />
+    );
   }
 
   return (

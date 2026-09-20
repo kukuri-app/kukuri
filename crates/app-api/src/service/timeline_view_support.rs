@@ -498,6 +498,7 @@ impl AppService {
         hydrate_post_withdrawals_from_replica(
             self.services.docs_sync.as_ref(),
             self.services.projection_store.as_ref(),
+            self.services.replica_scan_cache.as_ref(),
             &topic_replica_id(profile_post.published_topic_id.as_str()),
             DocFetchPolicy::LocalThenRemote,
         )
@@ -611,6 +612,7 @@ impl AppService {
         hydrate_post_withdrawals_from_replica(
             self.services.docs_sync.as_ref(),
             self.services.projection_store.as_ref(),
+            self.services.replica_scan_cache.as_ref(),
             &topic_replica_id(profile_repost.published_topic_id.as_str()),
             DocFetchPolicy::LocalThenRemote,
         )
@@ -718,6 +720,7 @@ impl AppService {
         hydrate_post_withdrawals_from_replica(
             self.services.docs_sync.as_ref(),
             self.services.projection_store.as_ref(),
+            self.services.replica_scan_cache.as_ref(),
             &topic_replica_id(snapshot.source_topic_id.as_str()),
             DocFetchPolicy::LocalThenRemote,
         )

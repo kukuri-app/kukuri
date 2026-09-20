@@ -199,7 +199,9 @@
     "viewers": "观看者"
   },
   "media": {
-    "unavailable": "无法获取媒体。",
+    "fetchFailed": "获取失败",
+    "retryFetch": "重新获取",
+    "retryingFetch": "正在重新获取",
     "closeDialog": "关闭图片查看器",
     "imageAlt": "图片附件",
     "reportVideo": "举报视频附件",
