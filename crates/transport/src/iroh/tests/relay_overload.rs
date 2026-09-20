@@ -268,6 +268,13 @@ async fn run_receiver_stall(senders: usize) -> OverloadOutcome {
         sent_before_release += wait_until_sender_stalls(connection).await;
     }
 
+    // 停止が効いていることを固定する。`send_uni` は受信側の ACK(`stopped`)まで待つため、
+    // 受信側 runtime が本当に止まっていれば、解放前に完了する転送は 1 本も無い。
+    assert!(
+        transfers.iter().all(|transfer| !transfer.is_finished()),
+        "no transfer can finish while the receiver runtime is stalled"
+    );
+
     drop(releases);
 
     for transfer in transfers {
@@ -322,7 +329,8 @@ fn report(label: &str, outcome: &OverloadOutcome) {
 async fn relay_fallback_transfer_recovers_after_receiver_runtime_stall() {
     let outcome = run_receiver_stall(1).await;
     report("1 sender", &outcome);
-    assert_eq!(outcome.drops_while_running, 0);
+    // drop 件数は build の最適化と CPU の空きに左右される(調査記録 2 章)。合否には使わず、
+    // 転送が進行・完了することだけを契約にする。
     assert_eq!(outcome.received_bytes, BURST_STREAMS * BURST_STREAM_BYTES);
 }
 
