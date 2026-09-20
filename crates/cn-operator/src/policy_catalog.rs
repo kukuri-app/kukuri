@@ -26,6 +26,24 @@ pub struct GeneratedLegalDocument {
     pub translation_of_version: Option<i32>,
 }
 
+impl LegalDocumentKind {
+    /// `serde(rename_all = "snake_case")` と同じ wire 表現(#1192)。公開 policy カタログの
+    /// `policy_kind` として client へ渡す。slug は operator が決めるため、文書の役割は
+    /// この値で判別する。
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Terms => "terms",
+            Self::Privacy => "privacy",
+            Self::ExternalTransmission => "external_transmission",
+            Self::ModerationPolicy => "moderation_policy",
+            Self::AbusePolicy => "abuse_policy",
+            Self::DataRetention => "data_retention",
+            Self::RightsInfringement => "rights_infringement",
+            Self::TrustObservationSharing => "trust_observation_sharing",
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct CanonicalOperator<'a> {
     domain: &'a str,

@@ -762,7 +762,8 @@
   color: var(--muted-foreground);
 }
 
-/* #1192: 権利侵害申出ポリシーの折りたたみ提示。申出画面へ進む前に対応範囲を読める。 */
+/* #1192: 権利侵害申出ポリシーの折りたたみ提示。申出画面へ進む前に対応範囲を読める。
+   字送り・色は他の report 要素と同じく JSX 側の utility class で与える。 */
 .report-rights-policy {
   display: grid;
   min-width: 0;
@@ -773,13 +774,7 @@
   background: var(--surface-panel-soft);
 }
 
-.report-rights-policy h4 {
-  margin: 0;
-  font-size: var(--text-body);
-  font-weight: 700;
-}
-
-.report-rights-policy h4 button {
+.report-rights-policy button {
   display: flex;
   align-items: center;
   gap: var(--space-2xs);
@@ -787,12 +782,6 @@
   min-height: 2.75rem;
   text-align: start;
   overflow-wrap: anywhere;
-}
-
-.report-rights-policy-meta {
-  margin: 0;
-  font-size: var(--text-caption);
-  color: var(--muted-foreground);
 }
 
 .report-rights-policy-body {

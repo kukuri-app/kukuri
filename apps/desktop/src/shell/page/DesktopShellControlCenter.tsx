@@ -203,6 +203,13 @@ export function DesktopShellControlCenter({
   useEffect(() => {
     if (!workspaceState.controlCenterOpen) return;
     closeButtonRef.current?.focus();
+  }, [workspaceState.controlCenterOpen]);
+
+  // #1192: Escape は手前のモーダルだけを閉じる。規約 Dialog を開いている間にパネルごと
+  // 畳むと、読み終えた位置へ戻れなくなるため、その間は Escape を受け取らない。
+  const consentDialogOpen = consentFlow.dialog != null;
+  useEffect(() => {
+    if (!workspaceState.controlCenterOpen || consentDialogOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -210,7 +217,7 @@ export function DesktopShellControlCenter({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setOpen, workspaceState.controlCenterOpen]);
+  }, [consentDialogOpen, setOpen, workspaceState.controlCenterOpen]);
 
   const scopeLabel = (column: ColumnState) => {
     if (!column.scope) return null;

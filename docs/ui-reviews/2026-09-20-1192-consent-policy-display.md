@@ -54,7 +54,7 @@
 
 ## Accessibility・性能・未確認事項
 
-権利侵害申出ポリシーの開閉ボタンは見出し要素の中に置き、`aria-expanded` と、開いているときだけ `aria-controls` を持つ。同意 Dialog の見出し行は accessible description に版と同意状況を結ぶ形を維持し、外したのはバッジ 2 種だけとした。コントロールセンターのノード一覧は list / listitem で、各ボタンの accessible name にノード名を含める（`{{node}} の規約と同意状況を開く`）。Dialog を閉じると、開いた行のボタンへ focus が戻ることを Vitest で確認した。「見つける」カラムはカード見出しを外した後もカラム見出しとタブ一覧（`role="tablist"`、aria-label あり）で位置が分かる。
+権利侵害申出ポリシーの開閉ボタンは見出し要素の中に置き、`aria-expanded` と、開いているときだけ `aria-controls` を持つ。同意 Dialog の見出し行は accessible description に版と同意状況を結ぶ形を維持し、外したのはバッジ 2 種だけとした。コントロールセンターのノード一覧は list / listitem で、各ボタンの accessible name にノード名を含める（`{{node}} の規約と同意状況を開く`）。Dialog を閉じると、開いた行のボタンへ focus が戻ることを Vitest で確認した。Escape は手前の Dialog だけを閉じ、コントロールセンターは開いたままにする（独立監査で、両方閉じて戻り先を失う挙動を指摘され、失敗 test で再現してから直した）。「見つける」カラムはカード見出しを外した後もカラム見出しとタブ一覧（`role="tablist"`、aria-label あり）で位置が分かる。
 
 権利侵害申出ポリシーは、通報画面で理由に権利侵害を選んだときだけ取得し、閉じると破棄する。polling は無い。コントロールセンターのノード一覧は既に store にある設定・状態・manifest から描画し、追加の取得はしない。
 

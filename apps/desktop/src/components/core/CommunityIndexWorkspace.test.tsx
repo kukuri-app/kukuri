@@ -744,3 +744,21 @@ test('resolved posts are published for media prefetch and cleared when results e
   unmount();
   expect(onResolvedPostsChange.mock.calls.at(-1)?.[0]).toEqual([]);
 });
+
+// #1192: 「見つける」カラムではカラム見出しと重複するため、カード内の見出しと説明文を出さない。
+// トピック内カードはカラム見出しと文言が異なるため従来どおり残す。
+test('the explore card drops the heading and summary that repeat the column title', () => {
+  const api = {} as DesktopApi;
+  const explore = render(
+    <CommunityIndexWorkspace {...workspaceProps(api, { mode: 'explore' })} />
+  );
+
+  expect(screen.queryByRole('heading', { name: 'Community Index' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/across indexed topics/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('tablist', { name: 'Community Index surfaces' })).toBeInTheDocument();
+
+  explore.unmount();
+  render(<CommunityIndexWorkspace {...workspaceProps(api, { mode: 'topic' })} />);
+
+  expect(screen.getByRole('heading', { name: 'Community Index' })).toBeInTheDocument();
+});

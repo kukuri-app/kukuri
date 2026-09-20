@@ -53,6 +53,10 @@
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
+      "lines": 1039,
+      "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
+    },
+    {
       "lines": 1033,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
@@ -71,10 +75,6 @@
     {
       "lines": 1000,
       "path": "apps/desktop/src/components/core/PostCard.tsx"
-    },
-    {
-      "lines": 1000,
-      "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
       "lines": 1000,

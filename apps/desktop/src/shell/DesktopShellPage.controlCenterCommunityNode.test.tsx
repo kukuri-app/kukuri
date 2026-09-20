@@ -94,3 +94,26 @@ test('closing the policies dialog returns focus to the Community Node row that o
 
   await waitFor(() => expect(open).toHaveFocus());
 });
+
+// Escape は手前のモーダルだけを閉じる。コントロールセンターまで畳むと、規約を読み終えた
+// 位置へ戻れなくなる。
+test('Escape closes the policies dialog without also closing the Control Center', async () => {
+  const user = userEvent.setup();
+  const api = await withTwoConsentedNodes();
+  render(<App api={api} />);
+
+  const controlCenter = await openControlCenter(user);
+  const open = within(controlCenter).getByRole('button', {
+    name: `Open policies and consent state for ${SECOND_NODE}`,
+  });
+  await user.click(open);
+  await screen.findByRole('dialog', { name: 'Community node policies' });
+
+  await user.keyboard('{Escape}');
+
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Community node policies' })).not.toBeInTheDocument()
+  );
+  expect(screen.getByRole('complementary', { name: 'Control Center' })).toBeVisible();
+  await waitFor(() => expect(open).toHaveFocus());
+});

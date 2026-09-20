@@ -573,7 +573,7 @@ function RightsInfringementPolicy({ state }: { state: RightsInfringementPolicySt
   }
   return (
     <section className='report-rights-policy'>
-      <h4>
+      <h4 className='m-0 text-sm font-bold'>
         <button
           type='button'
           aria-expanded={expanded}
@@ -587,7 +587,7 @@ function RightsInfringementPolicy({ state }: { state: RightsInfringementPolicySt
           <span>{state.title}</span>
         </button>
       </h4>
-      <p className='report-rights-policy-meta'>
+      <p className='m-0 text-xs text-[var(--muted-foreground)]'>
         {[
           state.version != null ? `v${state.version}` : null,
           state.effectiveDate
