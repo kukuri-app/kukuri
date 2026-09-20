@@ -169,6 +169,7 @@ async fn topic_object_hints_do_not_rehydrate_whole_replica() {
                 objects: vec![HintObjectRef {
                     object_id: envelope.id.as_str().to_string(),
                     object_kind: "post".into(),
+                    docs_author: None,
                 }],
             },
         )
@@ -289,6 +290,7 @@ async fn topic_reaction_hints_rehydrate_only_target_reactions() {
                 objects: vec![HintObjectRef {
                     object_id: envelope.id.as_str().to_string(),
                     object_kind: "reaction".into(),
+                    docs_author: None,
                 }],
             },
         )
@@ -388,6 +390,7 @@ async fn public_topic_recovery_keeps_docs_probe_when_live_peer_has_not_delivered
                 objects: vec![HintObjectRef {
                     object_id: "missing-post".into(),
                     object_kind: "post".into(),
+                    docs_author: None,
                 }],
             },
         )

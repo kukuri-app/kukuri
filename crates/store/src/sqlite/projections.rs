@@ -27,9 +27,10 @@ impl ObjectProjectionStore for SqliteStore {
                   object_id, topic_id, channel_id, author_pubkey, created_at, object_kind,
                   root_object_id, reply_to_object_id, payload_ref_json, content, attachments_json,
                   repost_of_json, content_labels_json, source_replica_id, source_key,
-                  source_envelope_id, source_blob_hash, derived_at, projection_version
+                  source_envelope_id, source_blob_hash, derived_at, projection_version,
+                  source_docs_author
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
                 ON CONFLICT(object_id) DO UPDATE SET
                   topic_id = excluded.topic_id,
                   channel_id = excluded.channel_id,
@@ -48,7 +49,8 @@ impl ObjectProjectionStore for SqliteStore {
                   source_envelope_id = excluded.source_envelope_id,
                   source_blob_hash = excluded.source_blob_hash,
                   derived_at = excluded.derived_at,
-                  projection_version = excluded.projection_version
+                  projection_version = excluded.projection_version,
+                  source_docs_author = excluded.source_docs_author
                 "#,
             )
             .bind(row.object_id.as_str())
@@ -70,6 +72,7 @@ impl ObjectProjectionStore for SqliteStore {
             .bind(row.source_blob_hash.as_ref().map(BlobHash::as_str))
             .bind(row.derived_at)
             .bind(row.projection_version)
+            .bind(row.source_docs_author.as_deref())
             .execute(&mut *tx)
             .await?;
 
@@ -128,7 +131,8 @@ impl ObjectProjectionStore for SqliteStore {
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
                    repost_of_json, content_labels_json, source_replica_id, source_key,
-                   source_envelope_id, source_blob_hash, derived_at, projection_version
+                   source_envelope_id, source_blob_hash, derived_at, projection_version,
+                   source_docs_author
             FROM object_index_cache
             WHERE object_id = ?1
             "#,
@@ -156,7 +160,8 @@ impl ObjectProjectionStore for SqliteStore {
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
                    repost_of_json, content_labels_json, source_replica_id, source_key,
-                   source_envelope_id, source_blob_hash, derived_at, projection_version
+                   source_envelope_id, source_blob_hash, derived_at, projection_version,
+                   source_docs_author
             FROM object_index_cache
             WHERE object_kind = 'repost'
               AND topic_id = ?1
@@ -225,7 +230,8 @@ impl ObjectProjectionStore for SqliteStore {
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
                    repost_of_json, content_labels_json, source_replica_id, source_key,
-                   source_envelope_id, source_blob_hash, derived_at, projection_version
+                   source_envelope_id, source_blob_hash, derived_at, projection_version,
+                   source_docs_author
             FROM object_index_cache
             WHERE topic_id = ?1
               AND (
@@ -266,7 +272,8 @@ impl ObjectProjectionStore for SqliteStore {
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
                    repost_of_json, content_labels_json, source_replica_id, source_key,
-                   source_envelope_id, source_blob_hash, derived_at, projection_version
+                   source_envelope_id, source_blob_hash, derived_at, projection_version,
+                   source_docs_author
             FROM object_index_cache
             WHERE topic_id = "#,
         );
@@ -320,7 +327,7 @@ impl ObjectProjectionStore for SqliteStore {
                    oic.root_object_id, oic.reply_to_object_id, oic.channel_id,
                    oic.payload_ref_json, oic.content, oic.attachments_json, oic.repost_of_json,
                    oic.content_labels_json, oic.source_replica_id, oic.source_key,
-                   oic.source_envelope_id, oic.source_blob_hash, oic.derived_at,
+                   oic.source_docs_author, oic.source_envelope_id, oic.source_blob_hash, oic.derived_at,
                    oic.projection_version
             FROM object_thread_cache tc
             INNER JOIN object_index_cache oic ON oic.object_id = tc.object_id
@@ -374,7 +381,7 @@ impl ObjectProjectionStore for SqliteStore {
                    oic.root_object_id, oic.reply_to_object_id, oic.channel_id,
                    oic.payload_ref_json, oic.content, oic.attachments_json, oic.repost_of_json,
                    oic.content_labels_json, oic.source_replica_id, oic.source_key,
-                   oic.source_envelope_id, oic.source_blob_hash, oic.derived_at,
+                   oic.source_docs_author, oic.source_envelope_id, oic.source_blob_hash, oic.derived_at,
                    oic.projection_version
             FROM object_thread_cache tc
             INNER JOIN object_index_cache oic ON oic.object_id = tc.object_id

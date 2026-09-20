@@ -744,11 +744,12 @@ impl AppService {
                                     );
                                 }
                             }
-                            let mut hydrated = match hydrate_subscription_event(
+                            let mut hydrated = match hydrate_subscription_doc_event(
                                 &services,
                                 topic.as_str(),
                                 &replica_for_task,
                                 event.key.as_str(),
+                                event.docs_author.as_deref(),
                             ).await {
                                 Ok(count) => count,
                                 Err(error) => {

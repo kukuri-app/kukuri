@@ -342,10 +342,12 @@ async fn hint_does_not_project_a_header_with_a_forged_author() {
                 HintObjectRef {
                     object_id: header_only.id.as_str().to_string(),
                     object_kind: "post".into(),
+                    docs_author: None,
                 },
                 HintObjectRef {
                     object_id: signed_by_attacker.id.as_str().to_string(),
                     object_kind: "post".into(),
+                    docs_author: None,
                 },
             ],
         },

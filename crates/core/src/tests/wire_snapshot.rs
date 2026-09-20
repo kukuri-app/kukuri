@@ -57,9 +57,39 @@ fn gossip_hint_topic_objects_changed_snapshot() {
             objects: vec![HintObjectRef {
                 object_id: "obj-1".to_string(),
                 object_kind: "post".to_string(),
+                docs_author: None,
             }],
         },
         r#"{"TopicObjectsChanged":{"topic_id":"kukuri:topic:demo","objects":[{"object_id":"obj-1","object_kind":"post"}]}}"#,
+    );
+}
+
+// ADR 0053 §2: hint の docs author は任意の field。無ければ出力せず(旧 client と同じ wire)、旧 client の hint も読める。
+#[test]
+fn gossip_hint_object_ref_docs_author_is_optional_on_the_wire() {
+    assert_wire(
+        &GossipHint::TopicObjectsChanged {
+            topic_id: demo_topic(),
+            objects: vec![HintObjectRef {
+                object_id: "obj-1".to_string(),
+                object_kind: "post".to_string(),
+                docs_author: Some("ab".repeat(32)),
+            }],
+        },
+        r#"{"TopicObjectsChanged":{"topic_id":"kukuri:topic:demo","objects":[{"object_id":"obj-1","object_kind":"post","docs_author":"abababababababababababababababababababababababababababababababab"}]}}"#,
+    );
+    // field を知らない読み手(旧 client)と同じく、未知の field は無視して読める。
+    #[derive(serde::Deserialize)]
+    struct LegacyHintObjectRef {
+        object_id: String,
+        object_kind: String,
+    }
+    let legacy: LegacyHintObjectRef =
+        serde_json::from_str(r#"{"object_id":"obj-1","object_kind":"post","docs_author":"ab"}"#)
+            .expect("a reader that does not know the field");
+    assert_eq!(
+        (legacy.object_id.as_str(), legacy.object_kind.as_str()),
+        ("obj-1", "post")
     );
 }
 

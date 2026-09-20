@@ -129,6 +129,7 @@ impl AppService {
                     objects: vec![HintObjectRef {
                         object_id: target_object_id.as_str().to_string(),
                         object_kind: "reaction".into(),
+                        docs_author: None,
                     }],
                 },
             )

@@ -43,6 +43,7 @@ async fn reaction_hint(app: &AppService, topic: &TopicId, target: &str) {
             objects: vec![HintObjectRef {
                 object_id: target.to_string(),
                 object_kind: "reaction".into(),
+                docs_author: None,
             }],
         },
     )

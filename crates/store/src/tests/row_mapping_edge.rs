@@ -359,6 +359,7 @@ async fn object_projection_blank_root_and_reply_map_to_none() {
             source_envelope_id: EnvelopeId::from("env-obj-blank-refs"),
             // NULL の source_blob_hash は None(WP-B16 で Option decode を適正化)。
             source_blob_hash: None,
+            source_docs_author: None,
             derived_at: 1001,
             projection_version: 2,
         }

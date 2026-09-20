@@ -155,6 +155,7 @@ fn object_projection_max() -> ObjectProjectionRow {
         source_key: "objects/obj-max/header".into(),
         source_envelope_id: EnvelopeId::from("env-obj-max"),
         source_blob_hash: Some(BlobHash::new("5".repeat(64))),
+        source_docs_author: None,
         derived_at: 1_700_000_001_500,
         projection_version: 7,
     }
@@ -182,6 +183,7 @@ fn object_projection_min() -> ObjectProjectionRow {
         source_key: "objects/obj-min/header".into(),
         source_envelope_id: EnvelopeId::from("env-obj-min"),
         source_blob_hash: None,
+        source_docs_author: None,
         derived_at: 0,
         projection_version: 0,
     }

@@ -146,6 +146,7 @@ async fn reaction_state_whose_author_differs_from_the_signed_envelope_is_not_sho
             objects: vec![HintObjectRef {
                 object_id: target.as_str().to_string(),
                 object_kind: "reaction".into(),
+                docs_author: None,
             }],
         },
     )
@@ -195,6 +196,7 @@ async fn reaction_state_without_a_signed_envelope_is_not_counted() {
             objects: vec![HintObjectRef {
                 object_id: target.as_str().to_string(),
                 object_kind: "reaction".into(),
+                docs_author: None,
             }],
         },
     )
@@ -270,6 +272,7 @@ async fn reaction_in_the_public_replica_that_claims_a_private_channel_is_not_cou
             objects: vec![HintObjectRef {
                 object_id: target.as_str().to_string(),
                 object_kind: "reaction".into(),
+                docs_author: None,
             }],
         },
     )

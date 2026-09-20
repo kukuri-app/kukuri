@@ -92,6 +92,8 @@ impl PostRejection {
 pub(crate) struct VerifiedPost {
     header: CanonicalPostHeader,
     replica: ReplicaId,
+    /// 著者が envelope の tag で申告した docs author の id(ADR 0053 §2)。tag は署名の対象。無ければ旧 record。
+    docs_author: Option<String>,
 }
 
 impl VerifiedPost {
@@ -111,6 +113,7 @@ impl VerifiedPost {
         let Ok(Some(header)) = envelope.to_post_object() else {
             return Err(PostRejection::NotAPost);
         };
+        let docs_author = envelope.docs_author().map(str::to_string);
         let visibility_matches =
             scope.is_private_channel() || header.visibility == ObjectVisibility::Public;
         if !scope.accepts(&header.topic_id, header.channel_id.as_ref()) || !visibility_matches {
@@ -119,6 +122,7 @@ impl VerifiedPost {
         Ok(Self {
             header,
             replica: replica.clone(),
+            docs_author,
         })
     }
 
@@ -145,6 +149,11 @@ impl VerifiedPost {
 
     pub(crate) fn replica(&self) -> &ReplicaId {
         &self.replica
+    }
+
+    /// 著者が署名つきで申告した docs author の id。この投稿の取り下げは、この docs author と key の組で読む。
+    pub(crate) fn docs_author(&self) -> Option<&str> {
+        self.docs_author.as_deref()
     }
 
     /// 取り下げ済みの投稿として、本文・添付・repost 元を落とす。
@@ -206,10 +215,48 @@ pub(crate) async fn load_verified_post(
     object_id: &EnvelopeId,
     policy: DocFetchPolicy,
 ) -> Result<Option<VerifiedPost>> {
+    load_verified_post_with_hint(
+        docs_sync,
+        replica,
+        subscription_topic_id,
+        object_id,
+        None,
+        policy,
+    )
+    .await
+}
+
+/// `load_verified_post` に、その envelope を書いた docs author の手がかりを足したもの(ADR 0053 §3)。
+///
+/// 手がかり(docs の event、hint、索引の entry の docs author)は署名の無い入力で、読む record を選ぶことだけに使う。
+/// 手がかりがあれば、先に「docs author と key の組」で 1 件読む。同じ key に他の名義の record が何件あっても、
+/// この読み出しには入らない。読んだ envelope が検証に通ればそれを使い、通らない・無い場合は、key だけの上限つきの
+/// 読み出しへ落ちる(旧 record と、手がかりが偽の場合)。手がかりが偽でも、検証に通らない値は反映されない。
+pub(crate) async fn load_verified_post_with_hint(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    subscription_topic_id: &str,
+    object_id: &EnvelopeId,
+    docs_author_hint: Option<&str>,
+    policy: DocFetchPolicy,
+) -> Result<Option<VerifiedPost>> {
     let Some(scope) = ReplicaPostScope::for_replica(replica, subscription_topic_id) else {
         warn_rejected_post(replica, object_id, PostRejection::UnsupportedReplica);
         return Ok(None);
     };
+    if let Some(docs_author) = docs_author_hint
+        && let Some(record) = docs_sync
+            .query_replica_by_author(
+                replica,
+                docs_author,
+                post_envelope_key(object_id).as_str(),
+                policy,
+            )
+            .await?
+        && let Ok(Some(post)) = select_verified_post([&record], object_id, replica, &scope)
+    {
+        return Ok(Some(post));
+    }
     let records = docs_sync
         .query_replica_exact_bounded(
             replica,

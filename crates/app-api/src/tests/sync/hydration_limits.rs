@@ -234,6 +234,7 @@ async fn repeated_unresolved_hints_do_not_rescan_per_hint() {
                     objects: vec![HintObjectRef {
                         object_id: format!("not-synced-yet-{index}"),
                         object_kind: "post".into(),
+                        docs_author: None,
                     }],
                 },
             )

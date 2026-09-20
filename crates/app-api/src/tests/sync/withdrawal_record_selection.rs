@@ -259,6 +259,7 @@ async fn withdrawal_hint_applies_the_withdrawal_behind_invalid_records() {
             objects: vec![HintObjectRef {
                 object_id: fixture.post.id.as_str().to_string(),
                 object_kind: "post_withdrawal".into(),
+                docs_author: None,
             }],
         },
     )

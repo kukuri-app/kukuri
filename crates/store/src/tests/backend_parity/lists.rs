@@ -859,6 +859,7 @@ fn parity_repost_row(
         },
         content: Some(String::new()),
         source_blob_hash: None,
+        source_docs_author: None,
         repost_of: Some(RepostSourceSnapshotV1 {
             source_object_id: EnvelopeId::from(source_object_id),
             source_topic_id: TopicId::new("kukuri:topic:parity-repost-source"),

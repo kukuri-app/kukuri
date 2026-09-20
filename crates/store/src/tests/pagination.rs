@@ -92,6 +92,7 @@ fn projection_row(id: &str, created_at: i64) -> ObjectProjectionRow {
         source_key: format!("objects/{id}/header"),
         source_envelope_id: EnvelopeId::from(id),
         source_blob_hash: None,
+        source_docs_author: None,
         derived_at: created_at,
         projection_version: 2,
     }

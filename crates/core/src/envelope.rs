@@ -13,6 +13,10 @@ use crate::{BlobHash, DirectMessageAckV1, EnvelopeId, Pubkey, TopicId};
 pub struct HintObjectRef {
     pub object_id: String,
     pub object_kind: String,
+    /// その object を docs へ書いた docs author の id(ADR 0053 §2)。署名の無い手がかりで、読む record を選ぶことだけに使う。
+    /// 旧 client の hint には無い。旧 client は、この field を無視して読む。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_author: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
