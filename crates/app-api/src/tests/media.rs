@@ -603,13 +603,19 @@ async fn iroh_transport_syncs_image_post_between_apps() {
     assert_eq!(received.content, "caption over iroh");
     assert_eq!(received.attachments.len(), 1);
     assert_eq!(received.attachments[0].mime, "image/png");
-    assert_eq!(received.attachments[0].status, BlobViewStatus::Available);
+    // view の状態は remote から取得しない（#1152）。表示要求が取得して local へ保存する。
+    assert_eq!(received.attachments[0].status, BlobViewStatus::Missing);
+    let hash = received.attachments[0].hash.as_str();
     assert!(
         app_b
-            .blob_preview_data_url(received.attachments[0].hash.as_str(), "image/png")
+            .blob_preview_data_url(hash, "image/png")
             .await
             .expect("preview data url")
             .is_some()
+    );
+    assert_eq!(
+        timeline_attachment_status(&app_b, topic, &object_id, hash).await,
+        BlobViewStatus::Available
     );
 }
 
@@ -693,13 +699,17 @@ async fn remote_video_manifest_payload_available_after_sync() {
         .iter()
         .find(|attachment| attachment.role == "video_poster")
         .expect("video poster");
-    assert_eq!(poster.status, BlobViewStatus::Available);
+    assert_eq!(poster.status, BlobViewStatus::Missing);
     let poster_payload = app_b
         .blob_media_payload(poster.hash.as_str(), "image/jpeg")
         .await
         .expect("poster media payload")
         .expect("poster payload present");
     assert_eq!(poster_payload.mime, "image/jpeg");
+    assert_eq!(
+        timeline_attachment_status(&app_b, topic, &object_id, poster.hash.as_str()).await,
+        BlobViewStatus::Available
+    );
     let manifest = received
         .attachments
         .iter()
@@ -858,13 +868,17 @@ async fn late_joiner_backfills_video_media_payload() {
         .iter()
         .find(|attachment| attachment.role == "video_poster")
         .expect("video poster");
-    assert_eq!(poster.status, BlobViewStatus::Available);
+    assert_eq!(poster.status, BlobViewStatus::Missing);
     let poster_payload = app_b
         .blob_media_payload(poster.hash.as_str(), "image/jpeg")
         .await
         .expect("poster media payload")
         .expect("poster payload present");
     assert_eq!(poster_payload.mime, "image/jpeg");
+    assert_eq!(
+        timeline_attachment_status(&app_b, topic, &object_id, poster.hash.as_str()).await,
+        BlobViewStatus::Available
+    );
     let manifest = received
         .attachments
         .iter()

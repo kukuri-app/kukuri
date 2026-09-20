@@ -329,6 +329,34 @@ pub(crate) async fn wait_for_friend_plus_share_rejection(
     }
 }
 
+/// timeline を読み直して、投稿の添付の view 状態を返す。
+///
+/// view の状態は local の有無だけを見て remote から取得しない（#1152、ADR 0046 §4 / §6.2）。
+/// 受信直後は `Missing`、表示要求（`blob_media_payload` / `blob_preview_data_url`）が local へ
+/// 保存した後は `Available` になることを、実 Iroh の test から確かめるために使う。
+pub(crate) async fn timeline_attachment_status(
+    app: &AppService,
+    topic: &str,
+    object_id: &str,
+    hash: &str,
+) -> BlobViewStatus {
+    let timeline = app
+        .list_timeline(topic, None, 20)
+        .await
+        .expect("timeline for attachment status");
+    timeline
+        .items
+        .iter()
+        .find(|post| post.object_id == object_id)
+        .expect("post in timeline")
+        .attachments
+        .iter()
+        .find(|attachment| attachment.hash.as_str() == hash)
+        .expect("attachment in post")
+        .status
+        .clone()
+}
+
 #[cfg(test)]
 mod error_contract_tests {
     use crate::service::{PrivateChannelImportError, PrivateChannelImportKind};
