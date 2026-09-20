@@ -2,9 +2,10 @@
 
 ## Current status
 
-- 判定: In progress
+- 判定: Audit pending
 - Scope revision: `2026-09-20-peer-state-scheduler-v1`
 - 基準commit: `b302f942decd25ae834ab9c295edee516fa96e02`
+- 実装commit: `97f9d589`
 - リスク区分: C
 - Blocker: 0件
 
