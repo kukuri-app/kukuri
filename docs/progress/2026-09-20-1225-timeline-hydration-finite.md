@@ -30,6 +30,8 @@
   - 全件走査は、local に無い本文を台帳の間隔の内でだけ取りに行く。1 走査の所要時間が欠損数に比例しなくなった。
   - `list_timeline_scoped` / `list_thread` は、ページの行（権限で絞り込んだ後）の本文が local にあればその場で読んで反映し、無ければ背景 task で取りに行く。呼び出しは待たない。
   - 上限に達した後は、同じ行を指す docs event / hint の個別反映（その場で 1 回試す、既存の挙動）と再起動でだけ取り直す。
+  - 1 試行は drop guard（`MissingBodyAttempt`）で表す。取得を待つ走査が購読の再起動などで abort されても「取得中」のまま残らず、失敗として記録される
+    （独立監査の指摘で追加。当初は abort されると、その hash を process の終了まで取り直さなくなる欠陥があった）。
 - `list_timeline_scoped` / `list_thread` は、欠損を理由に全件走査・購読再起動・再 sync を起動しない。全件走査は「ページが空」か「private channel の現在 epoch が未反映」のときだけ、
   1 回の呼び出しで最大 1 回。`projection_page_needs_hydration` は削除した。
 - 購読タスク:
@@ -61,7 +63,7 @@
 | --- | --- |
 | AC-1 | `timeline_refresh_with_a_missing_body_does_not_rescan_or_restart`、`thread_refresh_with_a_missing_body_does_not_rescan_or_restart` |
 | AC-2 | `one_timeline_call_scans_the_replica_at_most_once` |
-| AC-3 | `missing_body_is_retried_on_the_ledger_schedule_and_recovers`、`hydration_limits::tests::attempts_follow_the_delays_and_stop_at_the_limit` |
+| AC-3 | `missing_body_is_retried_on_the_ledger_schedule_and_recovers`、`aborting_a_scan_during_a_body_fetch_does_not_block_later_attempts`、`hydration_limits::tests::attempts_follow_the_delays_and_stop_at_the_limit`・`an_abandoned_attempt_is_recorded_as_a_failure` |
 | AC-4 | `recovery_tick_backs_off_when_the_replica_does_not_change`、`repeated_unresolved_hints_do_not_rescan_per_hint`、既存の `public_topic_recovery_keeps_docs_probe_when_live_peer_has_not_delivered_content`・`hint_miss_coalesces_replica_sync_restarts`（無変更で成功） |
 | AC-5 | 本書の計測と結論 |
 | INVAR-1 | app-api の既存 test 207 本が無変更で成功（新着・取り下げ・リアクション・空のタイムラインからの復旧・private channel の epoch）。`list_timeline_rehydrates_placeholder_from_blob_store`・`thread_open_triggers_lazy_blob_fetch` は、local にある本文をその場で反映する経路で成功 |

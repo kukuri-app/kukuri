@@ -346,27 +346,27 @@ impl AppService {
                         .projection_store
                         .mark_blob_status(hash, BlobCacheStatus::Available)
                         .await;
-                    self.services.missing_body_ledger.succeed(hash);
+                    self.services.missing_body_ledger.forget(hash);
                 }
                 continue;
             }
-            if !self.services.missing_body_ledger.try_begin(hash, now) {
+            // `attempt` は task と一緒に破棄されても失敗として記録される(panic・runtime の終了を含む)。
+            let Some(attempt) = self.services.missing_body_ledger.try_begin(hash, now) else {
                 continue;
-            }
+            };
             let services = self.services.clone();
             let object_id = row.object_id.clone();
             let hash = hash.clone();
             tokio::spawn(async move {
-                let ledger = services.missing_body_ledger.clone();
-                let permits = ledger.fetch_permits();
+                let permits = services.missing_body_ledger.fetch_permits();
                 let Ok(_permit) = permits.acquire().await else {
-                    ledger.fail(&hash, Utc::now().timestamp_millis());
+                    attempt.fail();
                     return;
                 };
                 let Some(text) =
                     fetch_projection_blob_text(services.blob_service.as_ref(), &hash).await
                 else {
-                    ledger.fail(&hash, Utc::now().timestamp_millis());
+                    attempt.fail();
                     return;
                 };
                 let stored = async {
@@ -399,14 +399,14 @@ impl AppService {
                 }
                 .await;
                 match stored {
-                    Ok(()) => ledger.succeed(&hash),
+                    Ok(()) => attempt.succeed(),
                     Err(error) => {
                         warn!(
                             object_id = %object_id.as_str(),
                             error = %error,
                             "failed to store a recovered post body"
                         );
-                        ledger.fail(&hash, Utc::now().timestamp_millis());
+                        attempt.fail();
                     }
                 }
             });

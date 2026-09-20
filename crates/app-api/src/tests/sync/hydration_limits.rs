@@ -439,3 +439,78 @@ async fn measure_full_scan_cost() {
         assert_eq!(second, 0);
     }
 }
+
+/// 本文の取得が返ってこない blob service(応答しない peer を模す)。
+#[derive(Default)]
+struct HangingBlobService {
+    inner: MemoryBlobService,
+}
+
+#[async_trait]
+impl BlobService for HangingBlobService {
+    async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        self.inner.put_blob(data, mime).await
+    }
+
+    async fn fetch_blob(&self, _hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        std::future::pending::<()>().await;
+        Ok(None)
+    }
+
+    async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
+        self.inner.pin_blob(hash).await
+    }
+
+    async fn blob_status(&self, _hash: &BlobHash) -> Result<BlobStatus> {
+        Ok(BlobStatus::Missing)
+    }
+
+    async fn local_blob_status(&self, _hash: &BlobHash) -> Result<BlobStatus> {
+        Ok(BlobStatus::Missing)
+    }
+
+    async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
+        self.inner.import_peer_ticket(ticket).await
+    }
+}
+
+// TR-3: 本文の取得を待っている走査が abort されても(購読の再起動など)、その hash は「取得中」のまま残らない。
+#[tokio::test]
+async fn aborting_a_scan_during_a_body_fetch_does_not_block_later_attempts() {
+    let blob_service = Arc::new(HangingBlobService::default());
+    let ledger = Arc::new(crate::service::hydration_limits::MissingBodyLedger::default());
+    let hash = BlobHash::new("e".repeat(64));
+
+    let scan = tokio::spawn({
+        let blob_service = blob_service.clone();
+        let ledger = ledger.clone();
+        let hash = hash.clone();
+        async move {
+            crate::service::hydration_support::fetch_projection_blob_text_bounded(
+                blob_service.as_ref(),
+                ledger.as_ref(),
+                &hash,
+            )
+            .await
+        }
+    });
+    timeout(Duration::from_secs(5), async {
+        while ledger.attempts(&hash) == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the scan starts fetching the body");
+    assert!(
+        ledger.try_begin(&hash, i64::MAX).is_none(),
+        "the fetch is in flight"
+    );
+
+    scan.abort();
+    let _ = scan.await;
+
+    assert!(
+        ledger.try_begin(&hash, i64::MAX).is_some(),
+        "an aborted fetch must not leave the hash in flight forever"
+    );
+}

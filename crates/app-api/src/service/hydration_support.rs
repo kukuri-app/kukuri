@@ -191,14 +191,18 @@ pub(crate) async fn fetch_projection_blob_text_bounded(
         best_effort_blob_cache_status(blob_service, hash).await,
         BlobCacheStatus::Available | BlobCacheStatus::Pinned
     );
-    if !local && !missing_bodies.try_begin(hash, Utc::now().timestamp_millis()) {
-        return None;
-    }
+    // 取得を待つ間に走査が abort されても、`attempt` の drop で失敗として記録される。
+    let attempt = if local {
+        None
+    } else {
+        Some(missing_bodies.try_begin(hash, Utc::now().timestamp_millis())?)
+    };
     let payload = fetch_projection_blob_text(blob_service, hash).await;
-    if payload.is_some() {
-        missing_bodies.succeed(hash);
-    } else if !local {
-        missing_bodies.fail(hash, Utc::now().timestamp_millis());
+    match (payload.is_some(), attempt) {
+        (true, Some(attempt)) => attempt.succeed(),
+        (true, None) => missing_bodies.forget(hash),
+        (false, Some(attempt)) => attempt.fail(),
+        (false, None) => {}
     }
     payload
 }

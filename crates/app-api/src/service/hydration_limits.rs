@@ -94,22 +94,61 @@ struct MissingBodyEntry {
 }
 
 pub(crate) struct MissingBodyLedger {
-    entries: Mutex<HashMap<String, MissingBodyEntry>>,
+    entries: Arc<Mutex<HashMap<String, MissingBodyEntry>>>,
     fetch_permits: Arc<Semaphore>,
 }
 
 impl Default for MissingBodyLedger {
     fn default() -> Self {
         Self {
-            entries: Mutex::new(HashMap::new()),
+            entries: Arc::new(Mutex::new(HashMap::new())),
             fetch_permits: Arc::new(Semaphore::new(MISSING_BODY_MAX_CONCURRENT_FETCHES)),
         }
     }
 }
 
+/// 取得中の 1 試行。`succeed` を呼ばずに手放すと失敗として記録する。
+///
+/// 取得を待つ future は、購読タスクの abort や呼び出し側の cancel で途中で破棄されうる。その場合も
+/// 「取得中」のまま残さず、次の間隔で取り直せるようにする。
+pub(crate) struct MissingBodyAttempt {
+    entries: Arc<Mutex<HashMap<String, MissingBodyEntry>>>,
+    hash: String,
+    settled: bool,
+}
+
+impl MissingBodyAttempt {
+    pub(crate) fn succeed(mut self) {
+        self.settled = true;
+        self.entries
+            .lock()
+            .expect("missing body ledger lock")
+            .remove(&self.hash);
+    }
+
+    /// 失敗を記録する。何もせずに手放しても同じ結果になる。
+    pub(crate) fn fail(self) {}
+}
+
+impl Drop for MissingBodyAttempt {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut entries = self.entries.lock().expect("missing body ledger lock");
+        if let Some(entry) = entries.get_mut(&self.hash) {
+            entry.in_flight = false;
+            let step = (entry.attempts.saturating_sub(1) as usize)
+                .min(MISSING_BODY_RETRY_DELAYS_MS.len() - 1);
+            entry.next_attempt_at_ms = now_ms.saturating_add(MISSING_BODY_RETRY_DELAYS_MS[step]);
+        }
+    }
+}
+
 impl MissingBodyLedger {
-    /// この hash を今 remote へ取りに行ってよいか。`true` を返したときは試行を 1 回消費し、取得中にする。
-    pub(crate) fn try_begin(&self, hash: &BlobHash, now_ms: i64) -> bool {
+    /// この hash を今 remote へ取りに行ってよいか。`Some` を返したときは試行を 1 回消費し、取得中にする。
+    pub(crate) fn try_begin(&self, hash: &BlobHash, now_ms: i64) -> Option<MissingBodyAttempt> {
         let mut entries = self.entries.lock().expect("missing body ledger lock");
         if !entries.contains_key(hash.as_str()) && entries.len() >= MISSING_BODY_LEDGER_LIMIT {
             let evictable = entries
@@ -120,7 +159,7 @@ impl MissingBodyLedger {
                 Some(key) => {
                     entries.remove(&key);
                 }
-                None => return false,
+                None => return None,
             }
         }
         let entry = entries
@@ -134,27 +173,25 @@ impl MissingBodyLedger {
             || entry.attempts >= MISSING_BODY_MAX_ATTEMPTS
             || entry.next_attempt_at_ms > now_ms
         {
-            return false;
+            return None;
         }
         entry.attempts += 1;
         entry.in_flight = true;
-        true
+        Some(MissingBodyAttempt {
+            entries: Arc::clone(&self.entries),
+            hash: hash.as_str().to_string(),
+            settled: false,
+        })
     }
 
-    pub(crate) fn succeed(&self, hash: &BlobHash) {
-        self.entries
-            .lock()
-            .expect("missing body ledger lock")
-            .remove(hash.as_str());
-    }
-
-    pub(crate) fn fail(&self, hash: &BlobHash, now_ms: i64) {
+    /// local から本文を読めた。台帳に残っている記録を消す。
+    pub(crate) fn forget(&self, hash: &BlobHash) {
         let mut entries = self.entries.lock().expect("missing body ledger lock");
-        if let Some(entry) = entries.get_mut(hash.as_str()) {
-            entry.in_flight = false;
-            let step = (entry.attempts.saturating_sub(1) as usize)
-                .min(MISSING_BODY_RETRY_DELAYS_MS.len() - 1);
-            entry.next_attempt_at_ms = now_ms.saturating_add(MISSING_BODY_RETRY_DELAYS_MS[step]);
+        if entries
+            .get(hash.as_str())
+            .is_some_and(|entry| !entry.in_flight)
+        {
+            entries.remove(hash.as_str());
         }
     }
 
@@ -198,38 +235,62 @@ mod tests {
     fn attempts_follow_the_delays_and_stop_at_the_limit() {
         let ledger = MissingBodyLedger::default();
         let target = hash("a");
-        let mut now = 1_000;
+        let mut now = chrono::Utc::now().timestamp_millis();
         let mut waits = Vec::new();
         for _ in 0..MISSING_BODY_MAX_ATTEMPTS {
-            assert!(ledger.try_begin(&target, now));
-            assert!(!ledger.try_begin(&target, now), "in flight");
-            ledger.fail(&target, now);
+            let attempt = ledger.try_begin(&target, now).expect("due");
+            assert!(ledger.try_begin(&target, now).is_none(), "in flight");
+            let failed_at = chrono::Utc::now().timestamp_millis();
+            attempt.fail();
             let next = ledger.next_attempt_at(&target).expect("scheduled");
-            assert!(!ledger.try_begin(&target, next - 1), "still waiting");
-            waits.push(next - now);
+            assert!(
+                ledger.try_begin(&target, next - 1).is_none(),
+                "still waiting"
+            );
+            // 失敗時刻は実時計で記録されるので、待ち時間は 1 秒単位に丸めて比べる。
+            waits.push((next - failed_at + 500) / 1_000 * 1_000);
             now = next;
         }
         assert_eq!(&waits[..4], &[5_000, 30_000, 120_000, 600_000]);
         assert_eq!(ledger.attempts(&target), MISSING_BODY_MAX_ATTEMPTS);
-        assert!(!ledger.try_begin(&target, i64::MAX));
+        assert!(ledger.try_begin(&target, i64::MAX).is_none());
     }
 
     #[test]
     fn success_forgets_the_hash_and_in_flight_blocks_a_second_attempt() {
         let ledger = MissingBodyLedger::default();
         let target = hash("b");
-        assert!(ledger.try_begin(&target, 0));
+        let attempt = ledger.try_begin(&target, 0).expect("due");
         assert!(
-            !ledger.try_begin(&target, 0),
+            ledger.try_begin(&target, 0).is_none(),
             "a hash in flight is not started twice"
         );
         assert_eq!(ledger.len(), 1);
-        ledger.succeed(&target);
+        attempt.succeed();
         assert_eq!(ledger.len(), 0);
         assert!(
-            ledger.try_begin(&target, 0),
+            ledger.try_begin(&target, 0).is_some(),
             "a recovered hash starts from scratch"
         );
+    }
+
+    // 取得を待つ future が abort / cancel で破棄されても「取得中」のまま残らず、次の間隔で取り直せる。
+    #[test]
+    fn an_abandoned_attempt_is_recorded_as_a_failure() {
+        let ledger = MissingBodyLedger::default();
+        let target = hash("c");
+        let attempt = ledger.try_begin(&target, 0).expect("due");
+        drop(attempt);
+        let next = ledger.next_attempt_at(&target).expect("scheduled");
+        assert!(
+            ledger.try_begin(&target, next - 1).is_none(),
+            "cooling down"
+        );
+        assert!(
+            ledger.try_begin(&target, next).is_some(),
+            "an abandoned attempt must not block later attempts"
+        );
+        assert_eq!(ledger.attempts(&target), 2);
     }
 
     #[test]
