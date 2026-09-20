@@ -34,6 +34,9 @@ kukuri は、record の正しさを docs の層ではなく署名つき envelope
 - runtime は起動時に、導出した author を iroh-docs へ import し、既定の docs author にする。アカウントの切り替えと復元は runtime を作り直すので、同じ経路を通る。
   書き込みごとに docs author を選ぶ口は作らない。
 - それまで使っていた端末ごとの docs author の鍵は、保存場所に残す（消すと、その名義の entry の tombstone を書けなくなる）。その名義の entry は旧 record として扱う。
+- 既定の docs author を切り替えた後に同じ key を書き直すと、その key に新旧 2 つの名義の entry が並ぶ。key だけを指定して先頭を読む読み手（profile、session の state など、
+  投稿と取り下げ以外の key）が旧い値を読まないよう、書き込みのたびに、旧い名義が同じ key に持つ entry を消す（旧い名義ごとに key を 1 つ調べるだけで、件数に依存しない）。
+  prefix の削除は、旧い名義でも行う（旧い名義で書いた entry は、その名義でしか消せない）。
 - 導出した秘密鍵は、iroh-docs の保存場所（端末内）以外に保存しない。docs・gossip・log・エラー文言へ出さない。バックアップはアカウントの鍵を運べば足りる（復元先で導出し直す）。
 
 ### 2. 著者が自分の docs author を示す方法
@@ -54,10 +57,14 @@ kukuri は、record の正しさを docs の層ではなく署名つき envelope
 3. 手がかりが無い、組の record が無い、検証に通らない場合は、key だけを指定した上限つき（8 件）の読み出しへ落とす（旧 record と、手がかりが偽の場合）。
 
 手がかりは読む record を選ぶことだけに使う。手がかりが偽でも、検証に通らない値が反映されることは無い。
+手がかりを持たない入口（利用者の操作からの key 指定の反映、返信先の preview、repost 元の解決、hint の `ThreadUpdated`）は、投稿の envelope を 3 の読み出しで読む
+（旧 record と同じ best effort）。その投稿が反映済みなら、取り下げは行の列の docs author で読める。
 
 取り下げ（`withdrawals/<object id>/state`）:
 
 1. 対象の投稿の docs author（検証済みの envelope の tag。反映済みの行には列として保存する）があれば、「docs author と key の組」で 1 件読む。
+   取り下げを書いた docs author の手がかり（docs の event、hint）があれば、その組でも 1 件読む。tag の無い旧い投稿の取り下げでも、手がかりが届いていれば読める。
+   手がかりは署名の無い入力で、読む record を選ぶことだけに使う。取り下げの検証に使う対象の envelope も、対象の投稿の docs author が分かっていれば、その組で 1 件読む。
 2. 読んだ取り下げを、これまでと同じ検証（`verify_post_withdrawal`: 署名、対象の object id、対象の著者との一致）に通す。通れば反映する。
 3. tag が無い（旧 record）、組の record が無い、検証に通らない場合は、key だけを指定した上限つき（8 件）の読み出しへ落とす。
 

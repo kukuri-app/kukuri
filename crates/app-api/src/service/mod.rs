@@ -177,8 +177,8 @@ pub(crate) use attachment_support::{
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
     hint_refers_to_replica_content, hint_targets_topic, hydrate_object_in_topic,
-    hydrate_subscription_doc_event, hydrate_subscription_hint, hydrate_subscription_state,
-    hydrate_topic_state, profile_timeline_page,
+    hydrate_object_in_topic_with_hint, hydrate_subscription_doc_event, hydrate_subscription_hint,
+    hydrate_subscription_state, hydrate_topic_state, profile_timeline_page,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,

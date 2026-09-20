@@ -3,7 +3,7 @@
 //! 正しい record がこれまでどおり反映されること(INVAR-1)と、署名が正しくても受け入れない場合(別の鍵による上書き、
 //! 別の reaction の key への置き直し、古い envelope の再掲)を固定する。
 
-use super::hydration_integrity_contract::ShadowingDocsSync;
+use super::shadowing_docs::ShadowingDocsSync;
 use super::*;
 use kukuri_core::{
     GameRoomKind, GameRoomManifestBlobV1, GameRoomStateDocV1, GameRoomStatus,

@@ -1,129 +1,14 @@
 //! 投稿の反映の検証(#1248)の契約を固定する test。修正前の再現は `hydration_integrity.rs`。
 //!
 //! Issue #1248 の TR-3・7・9・10・12・15・16、AC-4・AC-7・AC-9、INV-2 に対応する。
-//! `ShadowingDocsSync` は `withdrawal_record_selection.rs`(#1250)も使う。
+//! test double の `ShadowingDocsSync` は `shadowing_docs.rs`。
 
 use super::hydration_integrity::{
     integrity_fixture, public_timeline_after_settle, signed_post, wait_for_row,
     write_object_entries,
 };
+use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header};
 use super::*;
-
-/// 同じ key に複数の record を返す docs(iroh-docs は、同じ key の entry を docs author ごとに持つ)。
-/// `shadows` に入れた値を、その key の正しい record より先に返す。
-#[derive(Clone, Default)]
-pub(super) struct ShadowingDocsSync {
-    inner: MemoryDocsSync,
-    shadows: Arc<TokioMutex<HashMap<String, Vec<Vec<u8>>>>>,
-    /// この key の読み出しを失敗させる(I/O の失敗)。
-    pub(super) failing_key: Arc<TokioMutex<Option<String>>>,
-    /// 上限つきの読み出しの key と上限(#1250)。
-    pub(super) bounded_reads: Arc<TokioMutex<Vec<(String, usize)>>>,
-}
-
-impl ShadowingDocsSync {
-    pub(super) async fn shadow(&self, key: &str, value: serde_json::Value) {
-        self.shadows
-            .lock()
-            .await
-            .entry(key.to_string())
-            .or_default()
-            .push(serde_json::to_vec(&value).expect("shadow json"));
-    }
-}
-
-#[async_trait]
-impl DocsSync for ShadowingDocsSync {
-    async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.open_replica(replica_id).await
-    }
-
-    async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()> {
-        self.inner.apply_doc_op(replica_id, op).await
-    }
-
-    async fn query_replica_with_policy(
-        &self,
-        replica_id: &ReplicaId,
-        query: DocQuery,
-        policy: DocFetchPolicy,
-    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
-        if let DocQuery::Exact(key) = &query
-            && self.failing_key.lock().await.as_deref() == Some(key.as_str())
-        {
-            anyhow::bail!("simulated docs read failure");
-        }
-        let records = self
-            .inner
-            .query_replica_with_policy(replica_id, query, policy)
-            .await?;
-        let shadows = self.shadows.lock().await;
-        let mut merged = Vec::new();
-        for record in records {
-            for value in shadows.get(record.key.as_str()).into_iter().flatten() {
-                merged.push(kukuri_docs_sync::DocRecord {
-                    key: record.key.clone(),
-                    content_hash: kukuri_docs_sync::value_hash(value),
-                    content_len: value.len() as u64,
-                    value: value.clone(),
-                    docs_author: None,
-                });
-            }
-            merged.push(record);
-        }
-        Ok(merged)
-    }
-
-    async fn query_replica_exact_bounded(
-        &self,
-        replica_id: &ReplicaId,
-        key: &str,
-        limit: usize,
-        policy: DocFetchPolicy,
-    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
-        self.bounded_reads
-            .lock()
-            .await
-            .push((key.to_string(), limit));
-        let mut records = self
-            .query_replica_with_policy(replica_id, DocQuery::Exact(key.to_string()), policy)
-            .await?;
-        records.truncate(limit);
-        Ok(records)
-    }
-
-    async fn subscribe_replica(
-        &self,
-        replica_id: &ReplicaId,
-    ) -> Result<kukuri_docs_sync::DocEventStream> {
-        self.inner.subscribe_replica(replica_id).await
-    }
-
-    async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
-        self.inner.import_peer_ticket(ticket).await
-    }
-}
-
-pub(super) fn app_over_docs(docs_sync: Arc<dyn DocsSync>) -> (AppService, Arc<MemoryStore>) {
-    let store = Arc::new(MemoryStore::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store.clone(),
-        Arc::new(StaticTransport::new(PeerSnapshot::default())),
-        Arc::new(NoopHintTransport),
-        docs_sync,
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    (app, store)
-}
-
-pub(super) fn honest_header(envelope: &KukuriEnvelope) -> CanonicalPostHeader {
-    envelope
-        .to_post_object()
-        .expect("post object")
-        .expect("post object")
-}
 
 // TR-7 / AC-7: 同じ key に、読めない record と別の投稿の envelope が先に並んでいても、検証に通る record から反映する。
 #[tokio::test]

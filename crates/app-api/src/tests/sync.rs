@@ -346,6 +346,7 @@ fn app_with_hanging_remote_docs(
 }
 
 mod diagnostics;
+mod docs_author_reads;
 mod gossip_toggle;
 mod hint_rehydration;
 mod hydration_integrity;
@@ -356,6 +357,7 @@ mod hydration_limits;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod scale_independence;
+mod shadowing_docs;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;

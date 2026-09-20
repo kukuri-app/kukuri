@@ -4,7 +4,7 @@
 //! 著者の正しい取り下げを反映する。Issue #1250 の TR-1〜TR-6・TR-8、AC-1〜AC-3、INVAR-1〜INVAR-3 に対応する。
 
 use super::hydration_integrity::{signed_post, write_object_entries};
-use super::hydration_integrity_contract::{ShadowingDocsSync, app_over_docs, honest_header};
+use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header};
 use super::*;
 
 /// 本文つきで反映済みの投稿と、その著者の正しい取り下げ。取り下げの key には、`shadows` が先に並ぶ。
