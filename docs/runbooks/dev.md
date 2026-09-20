@@ -78,6 +78,9 @@ CI は課金対象の計算資源で動く。実装しながら CI へ push し�
 - 変更 path に対応する validation は [検証マトリクス](../../REFACTORING.md#path別検証マトリクス) で選び、ローカルで実行してから commit する。
 - workflow を変えるときは `actionlint <対象 file>` を実行する。runner label を増やす場合は `.github/actionlint.yaml` にも追加する。
 - `docker/cn/**` や image の build 手順を変えるときは、ローカルの Docker で `docker buildx bake --file docker/cn/docker-bake.hcl --allow "fs.write=<出力先>"` を実行し、smoke まで通してから PR にする。
+  - `OUT_DIR=<出力先>` を設定し、`--set '*.platform=linux/amd64'` を付けて比較対象を固定する。出力先は build context の外に置く。
+  - bake 後に `python scripts/ci/cn_image_check.py <出力先>`（Linux は `python3`）を実行する。Python 3.11 以上、Docker、PATH 上の Bash が必要。Windows は Git Bash の `bin` を PATH の先頭へ加える。
+  - 4 本番 OCI の全 layer・圧縮サイズ・entrypoint を検査し、同じ config/layer を Docker に読み込んで起動確認する。PostgreSQL/Valkey は専用 internal network と一時 container を使い、終了時にその資源だけを除去する。既存 indexer の正負 smoke は `scripts/ci/cn_indexer_smoke.sh` を共用する。結果は出力先の `image-check-results.json` に残る。
 - CI 専用の設定（runner profile、Cache Volume、同時実行枠）を変えるときは、変更前後の計測値と根拠を Issue に記録する。
 - ローカルで再現できない項目（実 runner の版差、Cache Volume の当たり外れ、registry への push）は、PR の run か merge 後の run で確認する。その項目を PR 本文の「検証」に明記する。
 - 反復して失敗率を測るときは `Kukuri Flake Probe` を使い、通常の CI を繰り返し起動しない。

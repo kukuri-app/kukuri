@@ -31,7 +31,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN test -n "$TARGET_BIN"
-COPY --from=builder /workspace/target/release/ /tmp/release/
-RUN cp "/tmp/release/${TARGET_BIN}" /usr/local/bin/app
+COPY --from=builder /workspace/target/release/${TARGET_BIN} /usr/local/bin/app
 
 ENTRYPOINT ["/usr/local/bin/app"]

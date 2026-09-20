@@ -2,9 +2,9 @@
 #
 # builder stage は 4 package 分をまとめて compile し、4 target で共有する。各 image は
 # OCI layout（directory）へ書き出すだけで、registry へは出さない。smoke が通ってから
-# `docker buildx imagetools create` で GHCR へ push する（`kukuri-cn-images.yml`）。
-# cn-indexer だけは smoke 用に docker archive も出す（docker exporter は attestation を
-# 扱えないため、attestation を付ける production 用 target とは別 target にする）。
+# `regctl image copy` で GHCR へ push する（`kukuri-cn-images.yml`）。
+# smoke は cn_image_check.py が本番 OCI を読み込んで実行する。既存の cn-indexer
+# docker archive も手動確認用に維持する（attestation を持つ本番 OCI とは別 target）。
 
 variable "TARGET_PACKAGES" {
   default = "kukuri-cn-user-api kukuri-cn-iroh-relay kukuri-cn-cli kukuri-cn-indexer"
@@ -75,7 +75,7 @@ target "indexer" {
   output   = ["type=oci,dest=${OUT_DIR}/kukuri-cn-indexer,tar=false"]
 }
 
-# smoke 用。production target と同じ stage・同じ build args から作るため中身は同じで、
+# 手動確認用 archive。production target と同じ stage・同じ build args から作るため中身は同じで、
 # attestation を持たない点だけが違う。push には使わない。
 target "indexer-smoke" {
   inherits = ["_common"]
