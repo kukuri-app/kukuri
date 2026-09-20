@@ -62,7 +62,7 @@ pub(crate) fn desktop_package() -> Result<()> {
         );
     }
     if cfg!(target_os = "linux") {
-        // Tauri bundlerには同梱除外の設定がないため、linuxdeployの手前で除外する（#1222）。
+        // Tauri bundlerには同梱除外の設定がないため、AppImage出力の直前で除く（#1222）。
         crate::linuxdeploy::install_wrapper()?;
         let host_libraries = crate::linuxdeploy::host_libraries_env_value();
         run_pnpm_with_env(

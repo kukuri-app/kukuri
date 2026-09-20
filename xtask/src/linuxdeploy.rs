@@ -1,9 +1,8 @@
-//! AppImageへ同梱しない表示系libraryの一覧と、その除外をlinuxdeployへ届けるwrapper（#1222）。
+//! AppImageへ同梱しない表示系libraryの一覧と、AppImage出力の直前にそれを除くwrapper（#1222）。
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
 
 /// ホストのMesa（libEGL等）と同じ世代で揃える必要があるlibrary。file名の先頭一致で扱う。
 /// build hostの古い版を同梱すると、新しいMesaで `eglGetDisplay` が `EGL_BAD_PARAMETER` になる。
@@ -22,12 +21,13 @@ pub(crate) const HOST_PROVIDED_LIBRARIES: [&str; 10] = [
 
 pub(crate) const HOST_LIBRARIES_ENV: &str = "KUKURI_APPIMAGE_HOST_LIBRARIES";
 
-const WRAPPER: &str = include_str!("linuxdeploy-wrapper.sh");
-const WRAPPER_NAME: &str = "linuxdeploy-x86_64.AppImage";
-const REAL_NAME: &str = "linuxdeploy-x86_64.real.AppImage";
-// Tauri bundlerが取得するものと同じ配布物。内容が変わった場合は除外の再確認後にhashを更新する。
-const REAL_URL: &str = "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage";
-const REAL_SHA256: &str = "e762bea85c8eb0d4b3508d46e5c1f037f717d0f9303ae3b4aafc8b04991fa1ef";
+const WRAPPER: &str = include_str!("appimage-output-wrapper.sh");
+// linuxdeployは自身と同じdirectoryの `linuxdeploy-plugin-appimage*` を内蔵版より優先して使う。
+const WRAPPER_NAME: &str = "linuxdeploy-plugin-appimage.AppImage";
+// `linuxdeploy-plugin-` で始めるとlinuxdeployが別のpluginとして拾うため、別の名前にする。
+const REAL_NAME: &str = "kukuri-appimage-output.real.AppImage";
+// Tauri bundlerが取得するものと同じ配布物。同梱されるruntimeのhashはnative complianceが照合する。
+const REAL_URL: &str = "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage";
 
 pub(crate) fn host_libraries_env_value() -> String {
     HOST_PROVIDED_LIBRARIES.join(":")
@@ -64,21 +64,19 @@ fn install_wrapper_into(dir: &Path, download: impl FnOnce(&Path) -> Result<()>) 
     std::fs::create_dir_all(dir)?;
     let wrapper = dir.join(WRAPPER_NAME);
     let real = dir.join(REAL_NAME);
+    let is_elf = |path: &Path| std::fs::read(path).is_ok_and(|bytes| bytes.starts_with(b"ELF"));
     // Tauriが先に取得した本体が残っていれば、それをwrapperの呼出先へ移す。
-    if std::fs::read(&wrapper).is_ok_and(|bytes| bytes.starts_with(b"\x7fELF")) {
+    if is_elf(&wrapper) {
         std::fs::rename(&wrapper, &real)?;
     }
     if !real.is_file() {
+        // Tauriは取得失敗時に古い内蔵版へ切り替えるが、runtimeが変わるためここでは失敗させる。
         let partial = dir.join(format!("{REAL_NAME}.partial"));
         download(&partial)?;
+        if !is_elf(&partial) {
+            bail!("取得した AppImage output plugin がELFではありません: {REAL_URL}");
+        }
         std::fs::rename(&partial, &real)?;
-    }
-    let digest = hex::encode(Sha256::digest(std::fs::read(&real)?));
-    if digest != REAL_SHA256 {
-        bail!(
-            "linuxdeploy の内容が固定した版と一致しません（{digest}）。{} を削除して再実行し、それでも一致しなければ除外の動作を確認してhashを更新してください",
-            real.display()
-        );
     }
     make_executable(&real)?;
     std::fs::write(&wrapper, WRAPPER)?;
@@ -172,48 +170,70 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_install_rejects_unpinned_linuxdeploy() {
-        let dir = scratch("pin");
-        let error = install_wrapper_into(&dir, |target| {
-            std::fs::write(target, b"\x7fELF-not-the-pinned-build")?;
+    fn wrapper_install_keeps_the_plugin_tauri_downloaded_and_rejects_bad_downloads() {
+        let dir = scratch("install");
+        std::fs::write(dir.join(WRAPPER_NAME), b"ELF-from-tauri").unwrap();
+        install_wrapper_into(&dir, |_| panic!("must reuse the existing plugin")).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join(REAL_NAME)).unwrap(),
+            b"ELF-from-tauri"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(WRAPPER_NAME)).unwrap(),
+            WRAPPER
+        );
+        // 2回目はwrapperを本体として扱わない。
+        install_wrapper_into(&dir, |_| panic!("must not download again")).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join(REAL_NAME)).unwrap(),
+            b"ELF-from-tauri"
+        );
+
+        let empty = scratch("install-bad");
+        let error = install_wrapper_into(&empty, |target| {
+            std::fs::write(target, b"<html>not found</html>")?;
             Ok(())
         })
         .unwrap_err()
         .to_string();
-        assert!(error.contains("一致しません"), "{error}");
-        assert!(!dir.join(WRAPPER_NAME).exists());
+        assert!(error.contains("ELFではありません"), "{error}");
+        assert!(!empty.join(WRAPPER_NAME).exists() && !empty.join(REAL_NAME).exists());
         std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(empty).unwrap();
     }
 
-    /// 本体の代わりに引数を記録するscriptを置き、wrapperの2段階の呼出しを検査する。
+    /// 本体の代わりに引数とAppDirの状態を記録するscriptを置き、wrapperの動作を検査する。
     #[cfg(unix)]
     #[test]
-    fn wrapper_splits_output_and_removes_host_libraries_before_it() {
+    fn wrapper_removes_host_libraries_before_the_real_output_plugin() {
         let dir = scratch("wrapper");
-        let appdir = dir.join("kukuri.AppDir");
-        let lib = appdir.join("usr/lib");
-        std::fs::create_dir_all(&lib).unwrap();
+        let lib = dir.join("kukuri.AppDir/usr/lib");
+        std::fs::create_dir_all(lib.join("x86_64-linux-gnu")).unwrap();
         let wrapper = dir.join(WRAPPER_NAME);
         std::fs::write(&wrapper, WRAPPER).unwrap();
         make_executable(&wrapper).unwrap();
-        // 前段でGTK pluginが禁止libraryを持ち込む挙動を模す。後段では残っているものを記録する。
         let real = dir.join(REAL_NAME);
         std::fs::write(
             &real,
-            "#!/bin/sh\nlog=\"$(dirname \"$0\")/calls.log\"\n\
-             case \" $* \" in *\" --output \"*) echo \"libs: $(ls \"$APPDIR_LIB\" | tr '\\n' ' ')\" >>\"$log\";;\n\
-             *) touch \"$APPDIR_LIB/libwayland-client.so.0\" \"$APPDIR_LIB/libXau.so.6\" \"$APPDIR_LIB/libgtk-3.so.0\";; esac\n\
-             echo \"$*\" >>\"$log\"\n",
+            "#!/bin/sh
+echo \"$*|$(cd \"$APPDIR_LIB\" && find . -type f -o -type l | sort | tr '\n' ' ')\" >>\"$(dirname \"$0\")/calls.log\"
+",
         )
         .unwrap();
         make_executable(&real).unwrap();
 
-        let run = |host_libraries: Option<&str>| {
+        let run = |args: &[&str], host_libraries: Option<&str>| {
+            for name in [
+                "libgtk-3.so.0",
+                "libwayland-client.so.0",
+                "x86_64-linux-gnu/libXau.so.6",
+            ] {
+                std::fs::write(lib.join(name), b"").unwrap();
+            }
             let mut command = std::process::Command::new(&wrapper);
             command
-                .args(["--appimage-extract-and-run", "--verbosity", "1", "--appdir"])
-                .arg(&appdir)
-                .args(["--plugin", "gtk", "--output", "appimage"])
+                .args(args)
+                .current_dir(&dir)
                 .env("APPDIR_LIB", &lib)
                 .env_remove(HOST_LIBRARIES_ENV);
             if let Some(value) = host_libraries {
@@ -224,23 +244,36 @@ mod tests {
             std::fs::remove_file(dir.join("calls.log")).unwrap();
             log
         };
+        let value = host_libraries_env_value();
 
-        let log = run(Some(&host_libraries_env_value()));
-        let lines: Vec<&str> = log.lines().collect();
-        assert_eq!(lines.len(), 3, "{log}");
-        assert!(lines[0].ends_with("--plugin gtk") && !lines[0].contains("--output"));
-        assert_eq!(lines[1], "libs: libgtk-3.so.0 ");
-        assert!(lines[2].contains("--exclude-library libwayland-client.so*"));
-        assert!(lines[2].contains("--exclude-library libXdmcp.so*"));
-        assert!(lines[2].ends_with("--output appimage"));
-
-        // 環境変数がなければ他のTauri projectと同じ1回の呼出しのまま。
-        std::fs::write(lib.join("libwayland-client.so.0"), b"").unwrap();
-        let log = run(None);
-        let lines: Vec<&str> = log.lines().collect();
-        assert_eq!(lines.len(), 2, "{log}");
-        assert!(lines[0].starts_with("libs: ") && lines[0].contains("libwayland-client.so.0"));
-        assert!(lines[1].ends_with("--plugin gtk --output appimage"));
+        // linuxdeployの実際の呼出し形式（相対pathの2引数）。
+        assert_eq!(
+            run(&["--appdir", "kukuri.AppDir"], Some(&value)),
+            "--appdir kukuri.AppDir|./libgtk-3.so.0 
+"
+        );
+        assert_eq!(
+            run(&["--appdir=kukuri.AppDir"], Some(&value)),
+            "--appdir=kukuri.AppDir|./libgtk-3.so.0 
+"
+        );
+        // plugin情報の問合せと、環境変数がない他のTauri projectでは何も消さない。
+        for (args, env) in [
+            (&["--plugin-api-version"][..], Some(value.as_str())),
+            (&["--appdir", "kukuri.AppDir"][..], None),
+        ] {
+            let log = run(args, env);
+            assert!(log.contains("libwayland-client.so.0"), "{log}");
+            assert!(log.contains("libXau.so.6"), "{log}");
+        }
+        // AppDirを取り違えたまま本来のpluginへ進まない。
+        let mut command = std::process::Command::new(&wrapper);
+        command
+            .args(["--appdir", "missing.AppDir"])
+            .current_dir(&dir)
+            .env(HOST_LIBRARIES_ENV, &value);
+        assert!(!command.status().unwrap().success());
+        assert!(!dir.join("calls.log").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

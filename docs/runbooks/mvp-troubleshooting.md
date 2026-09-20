@@ -86,6 +86,7 @@ preview の primary UX は明示同意後のセッション確立・維持を自
 - 公開済みLinux成果物の有無はRelease asset一覧で確認する。AppImage／Debはx86_64、CLIはx86_64／aarch64で、別architectureのbinaryを実行しない。
 - Debの認証取消／拒否後は再起動や別認証の自動要求をしない。適用失敗時は`dpkg-query -W -f='${db:Status-Status} ${Version}\n' kukuri`で実状態を確認し、[Deb手順](linux-deb.md)に沿って明示回復する。旧版への自動rollbackは保証しない。
 - AppImageの実行権限、FUSE／展開実行、X11の前提は[quickstart](./mvp-user-quickstart.md)を確認する。追加Ubuntu／Debianやnative Wayland-onlyは確認済みとしない。
+- AppImageのwindowが真っ白のままで、端末に`Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`が出る場合は、v0.2.8以前のAppImageが同梱する古い表示系libraryと、新しいMesa（Fedora／Arch Linux／Ubuntu 26.04等）の不整合である（#1222）。修正を含む版のAppImageを取得し直す。画面が出ないためアプリ内の更新は使えない。それまでの暫定回避は、`ldconfig -p | grep libwayland-client.so.0`で得たホスト側のpathを`LD_PRELOAD=<path> ./kukuri_<version>_amd64.AppImage`のように指定して起動する。ホストのlibraryを削除・差替えしない。
 - CLIの接続失敗は、同じ`--profile`のdaemonが動いているか、同意状態、XDG runtime directoryを確認する。[foreground例](./linux-cli.md)はsystemdの導入を要求しない。
 - timeout／切断で変更結果が不明ならstatusを確認し、変更要求を無条件に再送しない。GUIのdata directoryをCLIへ共有したり、鍵取得失敗時にidentityを削除したりしない。
 - 配布担当者: native source取得／hash検証やasset集約が失敗した候補は公開しない。同一候補の再開とCDN確認は[release runbook](./release.md)に従い、既存assetの上書きで修復しない。

@@ -37,6 +37,10 @@ symlink33件はicon／desktop alias 3件とGTK input／pixbuf／printbackend lib
 GStreamer core／base library10件は含むがcodec plugin directoryはない。
 libc、GL／EGL／DRM等のホスト解決と実codec利用可否は、同梱済み・動作保証と区別する。
 
+### #1222以降の同梱構成（2026-09-20）
+
+上の件数は2026-09-07の検証用AppImageの観測で、`libwayland-*`／`libxkbcommon`／`libxcb-randr`／`-render`／`-shm`／`libXau`／`libXdmcp`の10件を含む。#1222以降はこの10件を同梱せず、GL／EGL／DRMと同じくホスト解決とする（理由と仕組みは[AppImage手順](linux-appimage-smoke.md#同梱しない表示系library1222)）。外側runtime、AppRun、GTK hookは変更しない。ELF inventoryとsource／noticeの対象は公開候補ごとのAppDirから導くため、除いたlibraryは自動的に対象外になる。linuxdeployが配置済みの`usr/share/doc/<package>/copyright`は残ることがあり、同梱ELFの一覧とは区別する。
+
 ## 外側runtimeのstatic依存
 
 [Makefile](https://github.com/AppImage/type2-runtime/blob/75849dc/src/runtime/Makefile)は
