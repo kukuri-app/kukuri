@@ -5,10 +5,14 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { IconButton } from '@/components/ui/icon-button';
 
+import { MediaFetchFailure } from './MediaFetchFailure';
+
 type MediaViewerDialogProps = {
   items: Array<{
     hash: string;
     src: string | null;
+    failed?: boolean;
+    retrying?: boolean;
     mime: string;
   }>;
   index: number;
@@ -130,6 +134,13 @@ export function MediaViewerDialog({
                 className='media-viewer-image'
                 src={currentItem.src}
                 alt={t('media.imageAlt')}
+              />
+            ) : currentItem?.failed ? (
+              <MediaFetchFailure
+                className='media-viewer-empty'
+                hashes={[currentItem.hash]}
+                retrying={currentItem.retrying ?? false}
+                testId='media-viewer-fetch-failure'
               />
             ) : (
               <div className='media-viewer-empty'>{t('media.syncingImage')}</div>

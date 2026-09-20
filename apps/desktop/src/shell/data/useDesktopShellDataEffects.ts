@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useState,
   type MutableRefObject,
 } from 'react';
 
@@ -19,6 +20,7 @@ import {
   createObjectUrlFromPayload,
   logMediaDebug,
 } from '@/shell/media';
+import { MediaFetchLedger } from '@/shell/data/mediaFetchLedger';
 import {
   PUBLIC_CHANNEL_REF,
   PUBLIC_TIMELINE_SCOPE,
@@ -138,12 +140,14 @@ export function useDesktopShellDataEffects({
   setTimelineScopeByTopic,
   setMediaObjectUrls,
 }: UseDesktopShellDataEffectsArgs) {
-  const mediaFetchInputRef = useRef(new Map<string, AttachmentView>());
-  // #1107: effect の再実行では取得結果を捨てない(捨てると入力の記録だけが残り、再取得されず
-  // スケルトンのまま残る)。hash ごとの最新の取得番号と、ゲートで取得を無効にした回数を持ち、
-  // ゲート前に始まった取得の結果は表示に使わない。
-  const mediaFetchLatestRef = useRef(new Map<string, number>());
-  const mediaFetchSequenceRef = useRef(0);
+  // #1207: 取得の要否は attachment の参照ではなく、hash 単位の試行台帳で決める。state の参照が
+  // 変わるだけの再計算(3 秒 refresh・通知・advisory)では、失敗した hash を取り直さない。
+  const mediaFetchLedgerRef = useRef(new MediaFetchLedger());
+  const mediaFetchApiRef = useRef(api);
+  const mediaRetryTimerRef = useRef<number | null>(null);
+  const [mediaRetryTick, setMediaRetryTick] = useState(0);
+  // #1107: ゲートで取得を無効にした回数を hash ごとに持ち、ゲート前に始まった取得の結果は
+  // 表示に使わない。
   const mediaGateEpochRef = useRef(new Map<string, number>());
   const gatedMediaHashesRef = useRef<ReadonlySet<string>>(new Set());
   const mediaFetchMountedRef = useRef(true);
@@ -154,6 +158,7 @@ export function useDesktopShellDataEffects({
     };
   }, []);
   const setAdultContentEnabled = useDesktopShellFieldSetter('adultContentEnabled');
+  const setMediaRetryingHashes = useDesktopShellFieldSetter('mediaRetryingHashes');
 
   // #858: 成人向け表現の表示設定(canonical は Rust 側ローカル JSON)を起動時に mirror する。
   useEffect(() => {
@@ -188,7 +193,7 @@ export function useDesktopShellDataEffects({
         URL.revokeObjectURL(url);
         remoteObjectUrlRef.current.delete(hash);
       }
-      mediaFetchInputRef.current.delete(hash);
+      mediaFetchLedgerRef.current.forget(hash);
       mediaFetchAttemptRef.current.delete(hash);
     }
     setMediaObjectUrls((current) => {
@@ -558,33 +563,80 @@ export function useDesktopShellDataEffects({
   ]);
 
   useEffect(() => {
+    const ledger = mediaFetchLedgerRef.current;
+    if (mediaFetchApiRef.current !== api) {
+      // api の差し替えは別の backend への接続を意味する。前の backend での失敗を引き継がない。
+      mediaFetchApiRef.current = api;
+      ledger.clear();
+      mediaGateEpochRef.current.clear();
+    }
     const currentHashes = new Set(previewableMediaAttachments.map((attachment) => attachment.hash));
-    for (const hash of mediaFetchInputRef.current.keys()) {
-      if (!currentHashes.has(hash)) {
-        mediaFetchInputRef.current.delete(hash);
+    for (const hash of mediaGateEpochRef.current.keys()) {
+      if (
+        !currentHashes.has(hash) &&
+        !ledger.isInFlight(hash) &&
+        !gatedMediaHashesRef.current.has(hash)
+      ) {
+        mediaGateEpochRef.current.delete(hash);
       }
     }
 
+    const now = Date.now();
+    let earliestRetryAt: number | null = null;
     for (const attachment of previewableMediaAttachments) {
       if (typeof mediaObjectUrls[attachment.hash] === 'string') {
         continue;
       }
-      if (mediaFetchInputRef.current.get(attachment.hash) === attachment) {
+      const decision = ledger.decide(attachment.hash, attachment.status ?? null, now);
+      if (decision.kind === 'wait') {
+        earliestRetryAt =
+          earliestRetryAt === null ? decision.retryAt : Math.min(earliestRetryAt, decision.retryAt);
         continue;
       }
-      mediaFetchInputRef.current.set(attachment.hash, attachment);
-      const fetchId = ++mediaFetchSequenceRef.current;
-      mediaFetchLatestRef.current.set(attachment.hash, fetchId);
+      if (decision.kind === 'skip') {
+        continue;
+      }
+      // 失敗が確定した hash を取り直す(明示再試行、status が `Available` へ変わった、api が替わった)。
+      // 失敗表示は残したまま再試行中にし、操作の重複と focus の喪失を防ぐ。
+      const retryingFailed = mediaObjectUrls[attachment.hash] === null;
+      if (retryingFailed) {
+        setMediaRetryingHashes((current) =>
+          current[attachment.hash] ? current : { ...current, [attachment.hash]: true }
+        );
+      }
+      const clearRetrying = () => {
+        if (!retryingFailed) {
+          return;
+        }
+        setMediaRetryingHashes((current) => {
+          if (!current[attachment.hash]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[attachment.hash];
+          return next;
+        });
+      };
       const gateEpoch = mediaGateEpochRef.current.get(attachment.hash) ?? 0;
       // 完了した結果を使ってよいか。取得後に一度でもゲートされた hash の bytes は使わない。
-      // 取得できた bytes は、後から始まった再試行より先に届いても使う(先着を採用する)。
       const resultUsable = () =>
         mediaFetchMountedRef.current &&
+        mediaFetchApiRef.current === api &&
         (mediaGateEpochRef.current.get(attachment.hash) ?? 0) === gateEpoch &&
         !gatedMediaHashesRef.current.has(attachment.hash);
-      // 取得不可の記録は、後続の再試行が無い場合だけ残す。
-      const failureUsable = () =>
-        resultUsable() && mediaFetchLatestRef.current.get(attachment.hash) === fetchId;
+      // 失敗を台帳へ記録し、上限に達したときだけ取得不可を表示へ出す。
+      const recordFailure = () => {
+        const outcome = ledger.fail(attachment.hash, Date.now());
+        if (outcome.kind === 'retry') {
+          setMediaRetryTick((tick) => tick + 1);
+          return;
+        }
+        setMediaObjectUrls((current) =>
+          typeof current[attachment.hash] === 'string' || current[attachment.hash] === null
+            ? current
+            : { ...current, [attachment.hash]: null }
+        );
+      };
 
       const nextAttempt = (mediaFetchAttemptRef.current.get(attachment.hash) ?? 0) + 1;
       mediaFetchAttemptRef.current.set(attachment.hash, nextAttempt);
@@ -599,14 +651,12 @@ export function useDesktopShellDataEffects({
       void api
         .getBlobMediaPayload(attachment.hash, attachment.mime)
         .then((payload) => {
+          clearRetrying();
           if (!resultUsable()) {
             return;
           }
           const nextUrl = payload ? createObjectUrlFromPayload(payload) : null;
           if (!nextUrl) {
-            if (!failureUsable()) {
-              return;
-            }
             logMediaDebug('warn', 'remote media fetch missing', {
               attempt: nextAttempt,
               hash: attachment.hash,
@@ -614,11 +664,7 @@ export function useDesktopShellDataEffects({
               role: attachment.role,
               status: attachment.status,
             });
-            setMediaObjectUrls((current) =>
-              typeof current[attachment.hash] === 'string' || current[attachment.hash] === null
-                ? current
-                : { ...current, [attachment.hash]: null }
-            );
+            recordFailure();
             return;
           }
 
@@ -632,6 +678,7 @@ export function useDesktopShellDataEffects({
             status: attachment.status,
           });
 
+          ledger.succeed(attachment.hash);
           setMediaObjectUrls((current) => {
             if (typeof current[attachment.hash] === 'string') {
               URL.revokeObjectURL(nextUrl);
@@ -645,7 +692,8 @@ export function useDesktopShellDataEffects({
           });
         })
         .catch((fetchError: unknown) => {
-          if (!failureUsable()) {
+          clearRetrying();
+          if (!resultUsable()) {
             return;
           }
           logMediaDebug('warn', 'remote media fetch error', {
@@ -656,20 +704,59 @@ export function useDesktopShellDataEffects({
             role: attachment.role,
             status: attachment.status,
           });
-          setMediaObjectUrls((current) =>
-            typeof current[attachment.hash] === 'string' || current[attachment.hash] === null
-              ? current
-              : { ...current, [attachment.hash]: null }
-          );
+          recordFailure();
         });
+    }
+
+    if (mediaRetryTimerRef.current !== null) {
+      window.clearTimeout(mediaRetryTimerRef.current);
+      mediaRetryTimerRef.current = null;
+    }
+    if (earliestRetryAt !== null) {
+      mediaRetryTimerRef.current = window.setTimeout(
+        () => {
+          mediaRetryTimerRef.current = null;
+          setMediaRetryTick((tick) => tick + 1);
+        },
+        Math.max(0, earliestRetryAt - Date.now())
+      );
     }
   }, [
     api,
     mediaFetchAttemptRef,
-    mediaFetchInputRef,
     mediaObjectUrls,
+    mediaRetryTick,
     previewableMediaAttachments,
     remoteObjectUrlRef,
     setMediaObjectUrls,
+    setMediaRetryingHashes,
   ]);
+
+  useEffect(
+    () => () => {
+      if (mediaRetryTimerRef.current !== null) {
+        window.clearTimeout(mediaRetryTimerRef.current);
+        mediaRetryTimerRef.current = null;
+      }
+    },
+    []
+  );
+
+  // #1207: 利用者の明示再試行。対象 hash だけ台帳を戻し、失敗表示を取得中へ切り替える。
+  const retryMediaFetch = useCallback(
+    (hashes: readonly string[]) => {
+      const accepted = hashes.filter(
+        (hash) =>
+          !gatedMediaHashesRef.current.has(hash) &&
+          mediaFetchLedgerRef.current.requestManualRetry(hash)
+      );
+      if (accepted.length === 0) {
+        return;
+      }
+      setMediaRetryTick((tick) => tick + 1);
+    },
+    []
+  );
+
+  return { retryMediaFetch };
 }

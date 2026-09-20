@@ -611,6 +611,15 @@ async fn projecting_remote_posts_fetches_attachments_only_on_ungated_display_req
         vec![plain_hash.clone()]
     );
     assert!(blob_service.is_local(plain_hash.as_str()).await);
+
+    // #1207 TR-4: 取得済みの hash はローカルから返し、remote 取得を増やさない。
+    assert!(
+        app.blob_media_payload(plain_hash.as_str(), "image/png")
+            .await
+            .expect("cached payload result")
+            .is_some()
+    );
+    assert_eq!(blob_service.remote_fetches().await, vec![plain_hash]);
 }
 
 // #1055: advisory が付いていない hash は、登録済みの別 hash があっても影響を受けない。

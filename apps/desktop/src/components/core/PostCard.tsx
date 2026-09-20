@@ -626,7 +626,6 @@ export function PostCard({
       {!isWithdrawn && view.media.kind ? (
         <PostMedia
           media={view.media}
-          showUnavailableDiagnostic={view.showUnavailableDiagnostics}
           onOpenGatedDetails={gatedAdvisory ? advisoryDetails.openDetails : undefined}
           onOpenImage={(index) => {
             setMediaViewerIndex(index);

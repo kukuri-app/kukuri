@@ -29,6 +29,7 @@ import {
 } from '@/shell/presentation';
 import {
   useDesktopShellFieldSetter,
+  useDesktopShellStore,
   type DesktopShellState,
 } from '@/shell/store';
 import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
@@ -92,6 +93,7 @@ export function useTimelineViewModels({
   authorTrustGates = EMPTY_TRUST_GATES,
 }: UseTimelineViewModelsArgs) {
   const gatedMediaHashSet = useMemo(() => new Set(gatedMediaHashes), [gatedMediaHashes]);
+  const mediaRetryingHashes = useDesktopShellStore((state) => state.mediaRetryingHashes);
   const setUnsupportedVideoManifests = useDesktopShellFieldSetter(
     'unsupportedVideoManifests'
   );
@@ -150,6 +152,7 @@ export function useTimelineViewModels({
         advisoryPending: advisoryState.pending,
         locale,
         mediaObjectUrls,
+        mediaRetryingHashes,
         unsupportedVideoManifests,
       });
       const logPlaybackEvent =
@@ -316,6 +319,7 @@ export function useTimelineViewModels({
       localProfile,
       locale,
       mediaObjectUrls,
+      mediaRetryingHashes,
       setUnsupportedVideoManifests,
       timelineAdvisoryLookup,
       timelineContentAdvisories,

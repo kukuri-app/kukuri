@@ -181,6 +181,41 @@
   background: var(--surface-media-ready);
 }
 
+/* #1207: 自動取得が上限に達したメディアの代替表示。失敗した部分だけを置き換え、
+   文言と再取得の icon button を 1 行に並べる。 */
+.media-fetch-failure {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.media-fetch-failure > p {
+  margin: 0;
+  min-width: 0;
+}
+
+.media-fetch-retry[aria-disabled='true'] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.media-fetch-retry-spin {
+  animation: media-fetch-retry-spin 1s linear infinite;
+}
+
+@keyframes media-fetch-retry-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-fetch-retry-spin {
+    animation: none;
+  }
+}
+
 /* #1056: 代替表示(確定後)。照会中・読み込み中のスケルトン(脈動)と区別するため静止させる。 */
 .media-frame-gated {
   background: var(--surface-panel-muted);

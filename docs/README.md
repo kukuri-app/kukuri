@@ -84,6 +84,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 ## Architecture
 - P2P-first community node の責任境界: `docs/architecture/p2p-first-community-node-responsibility-boundary.md`（operator docs / safety / report routing の共通前提）
 - desktop UI のCSS / state / data配置: `docs/architecture/desktop-ui-implementation.md`（製品・視覚契約はroot `DESIGN.md`、開発フローはADR 0014）
+- desktop の blob キャッシュと取得の再試行: `docs/architecture/blob-cache.md`（保持範囲、取得経路と I/O、自動再試行の回数・リセット条件、既知の欠落）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）
 - community node trust / relation foundation: `docs/adr/0026-community-node-trust-relation-foundation.md`

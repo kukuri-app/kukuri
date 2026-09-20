@@ -200,7 +200,9 @@
     "viewers": "viewers"
   },
   "media": {
-    "unavailable": "Media unavailable.",
+    "fetchFailed": "Failed to load.",
+    "retryFetch": "Retry loading",
+    "retryingFetch": "Retrying…",
     "closeDialog": "Close image viewer",
     "imageAlt": "image attachment",
     "reportVideo": "Report video attachment",

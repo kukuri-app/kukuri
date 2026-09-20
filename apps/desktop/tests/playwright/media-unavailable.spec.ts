@@ -79,7 +79,17 @@ async function installUnavailableMediaScenario(
   );
 }
 
-test('normal mode removes unavailable content and media after a null response', async ({ page }) => {
+// #1207: 自動取得は 5 秒・30 秒の待ちをはさんで 3 回試みる。実時間を待たず、時計を進めて上限へ到達させる。
+async function exhaustAutomaticMediaFetch(page: Page) {
+  for (const delay of [6_000, 31_000]) {
+    await page.clock.runFor(delay);
+  }
+}
+
+test('normal mode replaces unavailable media with the fetch failure and a retry control', async ({
+  page,
+}) => {
+  await page.clock.install();
   await installUnavailableMediaScenario(page, {
     developerMode: false,
     rejectInitialFetch: false,
@@ -92,7 +102,11 @@ test('normal mode removes unavailable content and media after a null response', 
   await expect(page.getByTestId('text-skeleton-browser-unavailable')).toHaveCount(0);
   await expect(page.getByTestId('media-skeleton-browser-unavailable')).toHaveCount(0);
   await expect(page.getByText('Content unavailable.')).toHaveCount(0);
-  await expect(page.getByText('Media unavailable.')).toHaveCount(0);
+
+  await exhaustAutomaticMediaFetch(page);
+  await expect(page.getByText('Failed to load.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry loading' })).toBeVisible();
+  await expect(page.getByTestId('media-skeleton-browser-unavailable')).toHaveCount(0);
 });
 
 test('developer mode reports a rejected fetch and an existing refresh can recover it', async ({
@@ -102,10 +116,12 @@ test('developer mode reports a rejected fetch and an existing refresh can recove
     developerMode: true,
     rejectInitialFetch: true,
   });
+  await page.clock.install();
   await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
 
   await expect(page.getByText('Content unavailable.')).toBeVisible();
-  await expect(page.getByText('Media unavailable.')).toBeVisible();
+  await exhaustAutomaticMediaFetch(page);
+  await expect(page.getByText('Failed to load.')).toBeVisible();
   await expect(page.getByText('fixture blob unavailable')).toHaveCount(0);
 
   await page.evaluate(() => {
@@ -117,5 +133,5 @@ test('developer mode reports a rejected fetch and an existing refresh can recove
   await expect(page.getByText('Recovered body')).toBeVisible();
   await expect(page.getByTestId('media-preview-browser-unavailable')).toBeVisible();
   await expect(page.getByText('Content unavailable.')).toHaveCount(0);
-  await expect(page.getByText('Media unavailable.')).toHaveCount(0);
+  await expect(page.getByText('Failed to load.')).toHaveCount(0);
 });

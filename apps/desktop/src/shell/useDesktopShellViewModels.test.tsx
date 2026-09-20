@@ -295,6 +295,8 @@ describe('useDesktopShellViewModels', () => {
       {
         hash: imageHash,
         src: null,
+        failed: false,
+        retrying: false,
         mime: 'image/png',
         provenance: {
           canonicalSource: 'blob',
@@ -329,6 +331,8 @@ describe('useDesktopShellViewModels', () => {
       {
         hash: imageHash,
         src: 'blob:image-preview-1',
+        failed: false,
+        retrying: false,
         mime: 'image/png',
         provenance: {
           canonicalSource: 'blob',

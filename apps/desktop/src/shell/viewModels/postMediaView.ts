@@ -9,6 +9,8 @@ import { formatBytes } from '@/shell/presentation';
 /// 購読する呼出元(タイムライン)が組み立てた結果へ付与する。
 export type BuildPostMediaViewOptions = {
   mediaObjectUrls: Record<string, string | null>;
+  /// #1207: 失敗が確定した hash のうち再取得を試行中のもの。
+  mediaRetryingHashes?: Record<string, true>;
   /// #858: 表示許可前の成人向けラベル付き投稿。取得済み object URL があっても参照しない。
   adultContentGated: boolean;
   /// #1055: ゲートの判定元。Community Node の advisory 由来なら代替表示の文言を変える。
@@ -25,6 +27,7 @@ export function buildPostMediaView(
   post: Pick<PostView, 'object_id' | 'attachments'>,
   {
     mediaObjectUrls,
+    mediaRetryingHashes = {},
     adultContentGated,
     gatedBy,
     advisoryPending = false,
@@ -46,6 +49,8 @@ export function buildPostMediaView(
         typeof mediaObjectUrls[attachment.hash] === 'string'
           ? mediaObjectUrls[attachment.hash]
           : null,
+      failed: mediaObjectUrls[attachment.hash] === null,
+      retrying: mediaRetryingHashes[attachment.hash] === true,
       mime: attachment.mime,
       provenance: contentProvenanceFromView(attachment.provenance),
     }));
@@ -86,6 +91,13 @@ export function buildPostMediaView(
             .filter((attachment): attachment is AttachmentView => attachment !== null)
             .every((attachment) => hasSettledUnavailable(attachment.hash))
         : false;
+  // #1207: 明示再試行の対象。表示に使う hash のうち、取得不可が確定したものだけを取り直す。
+  const retryHashes = hidden
+    ? []
+    : (mediaKind === 'image' ? [primaryImage] : mediaKind === 'video' ? [videoManifest, videoPoster] : [])
+        .filter((attachment): attachment is AttachmentView => attachment !== null)
+        .map((attachment) => attachment.hash)
+        .filter((hash) => hasSettledUnavailable(hash));
   const videoUnsupportedOnClient = Boolean(
     videoManifest && unsupportedVideoManifests[videoManifest.hash]
   );
@@ -130,6 +142,8 @@ export function buildPostMediaView(
     videoReportHash:
       mediaKind === 'video' ? (videoManifest?.hash ?? videoPoster?.hash ?? null) : null,
     videoUnsupportedOnClient,
+    retryHashes,
+    retrying: retryHashes.some((hash) => mediaRetryingHashes[hash] === true),
     provenance: contentProvenanceFromView(mediaMetaAttachment?.provenance),
   };
 }

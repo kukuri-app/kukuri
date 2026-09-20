@@ -3,6 +3,7 @@ import { expect, userEvent, within } from 'storybook/test';
 
 import type { LinkPreviewFetcher, SubmitCommunityNodeReportResult } from '@/lib/api';
 
+import { MediaRetryContext } from './mediaRetryContext';
 import { PostCard } from './PostCard';
 import { type PostCardView } from './types';
 
@@ -375,6 +376,73 @@ export const DeveloperUnavailableDiagnostics: Story = {
       },
       showUnavailableDiagnostics: true,
     }),
+  },
+};
+
+// #1207: 自動取得が上限に達したメディア。失敗した部分だけを置き換え、再取得の icon button を出す。
+export const MediaFetchFailed: Story = {
+  decorators: [
+    (StoryComponent) => (
+      <MediaRetryContext.Provider value={() => undefined}>
+        <StoryComponent />
+      </MediaRetryContext.Provider>
+    ),
+  ],
+  args: {
+    view: createView({
+      media: {
+        objectId: 'image-post',
+        kind: 'image',
+        extraAttachmentCount: 0,
+        state: 'unavailable',
+        metaMime: 'image/png',
+        metaBytesLabel: '2.0 KB',
+        imagePreviewSrc: null,
+        videoPosterPreviewSrc: null,
+        videoPlaybackSrc: null,
+        videoUnsupportedOnClient: false,
+        retryHashes: ['hash-image'],
+        retrying: false,
+      },
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('Failed to load.')).toBeInTheDocument();
+    await expect(canvas.getByRole('button', { name: 'Retry loading' })).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
+  },
+};
+
+// #1207: 再取得中。button は同じ位置に残し、busy を示して重複操作を受け付けない。
+export const MediaFetchRetrying: Story = {
+  decorators: MediaFetchFailed.decorators,
+  args: {
+    view: createView({
+      media: {
+        objectId: 'image-post',
+        kind: 'image',
+        extraAttachmentCount: 0,
+        state: 'unavailable',
+        metaMime: 'image/png',
+        metaBytesLabel: '2.0 KB',
+        imagePreviewSrc: null,
+        videoPosterPreviewSrc: null,
+        videoPlaybackSrc: null,
+        videoUnsupportedOnClient: false,
+        retryHashes: ['hash-image'],
+        retrying: true,
+      },
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole('button', { name: 'Retry loading' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
   },
 };
 

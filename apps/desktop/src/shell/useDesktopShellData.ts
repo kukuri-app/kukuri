@@ -776,7 +776,7 @@ export function useDesktopShellData({
     [applyPendingTimeline, refreshVisibleShellData, storeApi]
   );
 
-  useDesktopShellDataEffects({
+  const { retryMediaFetch } = useDesktopShellDataEffects({
     api,
     storeApi,
     trackedTopics,
@@ -833,6 +833,7 @@ export function useDesktopShellData({
 
   return {
     gatedAdultMediaHashes,
+    retryMediaFetch,
     loadTopics,
     retryCommunityNode,
     refreshConnectivityStatus,
