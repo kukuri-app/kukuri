@@ -351,6 +351,8 @@ mod hint_rehydration;
 mod hydration_integrity;
 mod hydration_integrity_contract;
 mod hydration_limits;
+#[cfg(feature = "iroh-integration-tests")]
+mod non_utf8_key;
 mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
