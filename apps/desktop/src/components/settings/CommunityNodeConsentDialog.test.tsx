@@ -76,8 +76,11 @@ test('policies start collapsed with their title and consent state still listed',
   const privacy = within(dialog).getByRole('button', { name: /Privacy Policy/ });
   expect(abuse).toHaveAttribute('aria-expanded', 'false');
   expect(privacy).toHaveAttribute('aria-expanded', 'false');
-  expect(abuse).toHaveAccessibleDescription(/Required.*Not accepted/);
-  expect(privacy).toHaveAccessibleDescription(/Optional.*Not accepted/);
+  // #1192: 一括同意なので必須 / 任意は出さない。版と同意状況だけを見出し行に残す。
+  expect(abuse).toHaveAccessibleDescription(/v1.*Not accepted/);
+  expect(privacy).toHaveAccessibleDescription(/v1.*Not accepted/);
+  expect(within(dialog).queryByText('Required')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Optional')).not.toBeInTheDocument();
   expect(within(dialog).queryByText('運営者: Example Operator')).not.toBeInTheDocument();
 });
 

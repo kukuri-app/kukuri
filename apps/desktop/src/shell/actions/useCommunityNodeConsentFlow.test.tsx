@@ -97,3 +97,31 @@ test('a configuration change before submit blocks acceptance even before shell r
   await act(async () => result.current.dialog!.onAccept());
   expect(accept).not.toHaveBeenCalled();
 });
+
+// #1192: 表示しない文書を同意記録にしない。観測提供(#1061)と権利侵害申請ポリシーは
+// 一覧から外れるため、受諾 payload にも入ってはならない。
+test('acceptance submits only the documents the dialog displayed', async () => {
+  const api = await setup();
+  const original = await api.fetchCommunityNodePolicies(A);
+  const hidden = [
+    { ...original.policies[0], policy_slug: 'trust_observation_sharing', policy_kind: 'trust_observation_sharing', title: 'Observation Sharing', required: false },
+    { ...original.policies[0], policy_slug: 'rights_infringement', policy_kind: 'rights_infringement', title: 'Rights Request Policy', required: false },
+  ];
+  vi.spyOn(api, 'fetchCommunityNodePolicies').mockResolvedValue({
+    policies: [
+      ...original.policies.map((policy, index) => ({
+        ...policy, policy_kind: index === 0 ? 'terms' : 'privacy',
+      })),
+      ...hidden,
+    ],
+  });
+  const accept = vi.fn().mockResolvedValue(undefined);
+  const { result } = renderHook(() => useCommunityNodeConsentFlow({ api, configuredBaseUrls: [A, B], acceptConsents: accept }));
+  act(() => result.current.open(A));
+  await waitFor(() => expect(result.current.dialog?.consent.loaded).toBe(true));
+  const displayed = result.current.dialog!.consent.policies.map((policy) => policy.policySlug);
+  expect(displayed).toEqual(['terms_of_service', 'privacy_policy']);
+  await act(async () => result.current.dialog!.onAccept());
+  expect(accept).toHaveBeenCalledWith(A, displayed.map((slug) => expect.objectContaining({ policy_slug: slug })), 'en');
+  expect(accept.mock.calls[0][1]).toHaveLength(2);
+});

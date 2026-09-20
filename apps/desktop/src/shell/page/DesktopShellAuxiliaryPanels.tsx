@@ -818,6 +818,9 @@ export function DesktopShellDetailSurfaceStack({
   );
   const fetchReportManifest = (baseUrl: string) =>
     api.fetchCommunityNodeManifest(baseUrl);
+  // #1192: 権利侵害申請モーダルで提示する権利侵害申出ポリシーの取得(認証不要の公開カタログ)。
+  const fetchNodePolicies = (baseUrl: string, language?: string) =>
+    api.fetchCommunityNodePolicies(baseUrl, language);
   const submitReport = (request: import('@/lib/api').SubmitCommunityNodeReportRequest) =>
     api.submitCommunityNodeReport(request);
   const threadContent = effectiveThreadId ? (
@@ -855,6 +858,7 @@ export function DesktopShellDetailSurfaceStack({
       onSubmitReport={submitReport}
       onCopyReportContact={(value) => void copyTextToClipboard(value)}
       onFetchReportManifest={fetchReportManifest}
+      onFetchNodePolicies={fetchNodePolicies}
       onMuteReportAuthor={(authorPubkey) => handleMuteAction(authorPubkey, false)}
     />
   ) : null;
@@ -872,6 +876,7 @@ export function DesktopShellDetailSurfaceStack({
         onSubmitReport={submitReport}
         onCopyReportContact={(value) => void copyTextToClipboard(value)}
         onFetchReportManifest={fetchReportManifest}
+        onFetchNodePolicies={fetchNodePolicies}
         trustDisplayException={
           effectiveAuthorPubkey ? (
             <AuthorTrustDisplayExceptionField
@@ -912,6 +917,7 @@ export function DesktopShellDetailSurfaceStack({
           onSubmitReport={submitReport}
           onCopyReportContact={(value) => void copyTextToClipboard(value)}
           onFetchReportManifest={fetchReportManifest}
+          onFetchNodePolicies={fetchNodePolicies}
           onMuteReportAuthor={(authorPubkey) => handleMuteAction(authorPubkey, false)}
         />
       </Card>

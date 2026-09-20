@@ -23,6 +23,7 @@ fn policy(version: i32, body: &str) -> CommunityNodePolicyDocument {
         title: "KingYoSun Node 利用規約".to_string(),
         body_markdown: body.to_string(),
         required: true,
+        policy_kind: None,
         effective_date: Some("2026-09-02".to_string()),
         language: Some("ja".to_string()),
         policy_snapshot_revision: Some(format!("snapshot-{version}")),

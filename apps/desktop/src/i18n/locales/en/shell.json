@@ -94,6 +94,11 @@
     },
     "createJoinChannel": "Create or join a private channel",
     "shareChannel": "Share active channel",
+    "communityNodes": {
+      "listLabel": "Configured Community Nodes",
+      "openConsents": "Open policies and consent state for {{node}}",
+      "empty": "No Community Node is configured."
+    },
     "release": "Release and updates",
     "settings": "Settings",
     "languageSettingsHint": "Language and theme",
@@ -378,7 +383,6 @@
     "selectedNodeUnavailable": "The explicitly selected Community Node is unavailable. Queries are paused.",
     "title": "Community Index",
     "topicSummary": "Search the active topic or private channel through an eligible Community Node.",
-    "exploreSummary": "Search, discover, and view recommendations across indexed topics.",
     "nodeLabel": "Search provider",
     "surfaces": "Community Index surfaces",
     "operations": {
@@ -521,6 +525,9 @@
       "other": "Other"
     },
     "rightsRequest": {
+      "policyLoading": "Fetching this Community Node’s rights-request policy…",
+      "policyUnavailable": "This Community Node’s rights-request policy could not be fetched. Review the scope on the dedicated request page.",
+      "policyEffectiveDate": "Effective {{date}}",
       "boundary": "A rights-infringement request needs your name, contact details, and the basis of your rights claim. Do not send those through the general report form. First review what this Community Node can and cannot do on its dedicated page.",
       "openDedicated": "The next page explains the node-local scope and submits only after your explicit acknowledgement.",
       "unavailable": "The selected Community Node does not publish a dedicated rights-request intake. Do not put rights claims or personal information in the general report.",

@@ -177,11 +177,8 @@ function ConsentPolicyItem({ policy }: { policy: CommunityNodeConsentPolicyView 
         </button>
       </h3>
       <div id={summaryId} className='flex flex-wrap items-center gap-x-2 gap-y-1 pb-3 pl-10 pr-4 text-xs text-[var(--muted-foreground)]'>
-        {policy.required ? (
-          <Badge tone='accent'>{t('communityNode.consent.required')}</Badge>
-        ) : (
-          <Badge tone='neutral'>{t('communityNode.consent.optional')}</Badge>
-        )}
+        {/* #1192: 一覧の文書はまとめて同意するため、必須 / 任意のバッジは出さない。
+            提示する文書の選別は communityNodeConsentView が持つ。 */}
         {policy.updated ? <Badge tone='warning'>{t('communityNode.consent.updatedBadge')}</Badge> : null}
         <span className='font-semibold uppercase tracking-[0.08em]'>v{policy.policyVersion}</span>
         <span>

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/context-action-menu';
 import type {
   CommunityNodeManifestFetch,
+  CommunityNodePoliciesResponse,
   SubmitCommunityNodeReportRequest,
   SubmitCommunityNodeReportResult,
 } from '@/lib/api';
@@ -50,6 +51,8 @@ type AuthorDetailCardProps = {
   ) => Promise<SubmitCommunityNodeReportResult>;
   onCopyReportContact?: (value: string) => void;
   onFetchReportManifest?: (baseUrl: string) => Promise<CommunityNodeManifestFetch>;
+  /// #1192: 権利侵害を選んだときに提示する権利侵害申出ポリシーの取得(読み取りのみ)。
+  onFetchNodePolicies?: (baseUrl: string, language?: string) => Promise<CommunityNodePoliciesResponse>;
 };
 
 export function AuthorDetailCard({
@@ -64,6 +67,7 @@ export function AuthorDetailCard({
   onSubmitReport,
   onCopyReportContact,
   onFetchReportManifest,
+  onFetchNodePolicies,
 }: AuthorDetailCardProps) {
   const { t } = useTranslation(['common']);
   const author = view.author;
@@ -265,6 +269,7 @@ export function AuthorDetailCard({
               plan={reportPlan}
               onSubmit={submitReport}
               onCopyContact={onCopyReportContact}
+              onFetchNodePolicies={onFetchNodePolicies}
               resolving={reportResolving}
               resolveError={reportResolveError}
               localActions={

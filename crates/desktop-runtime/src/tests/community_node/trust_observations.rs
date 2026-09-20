@@ -38,6 +38,7 @@ struct MockObservationState {
 
 fn policy(slug: &str, version: i32, required: bool) -> CommunityNodePolicyDocument {
     CommunityNodePolicyDocument {
+        policy_kind: None,
         policy_slug: slug.to_string(),
         policy_version: version,
         title: slug.to_string(),

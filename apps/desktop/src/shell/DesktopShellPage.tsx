@@ -894,6 +894,8 @@ export function DesktopShellPage({
           {workspace}
         </main>
         <DesktopShellControlCenter
+          api={api}
+          onAcceptCommunityNodeConsents={shellActions.handleAcceptCommunityNodeConsents}
           triggerRef={controlCenterTriggerRef}
           topicItems={topicNavItems}
           topicInput={topicInput}

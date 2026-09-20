@@ -201,8 +201,6 @@
       "updatedNotice": "This node updated its policies. Review the changes and accept again to keep connecting.",
       "noPolicies": "This node does not require any policy consent.",
       "noBody": "This policy does not provide a body text.",
-      "required": "Required",
-      "optional": "Optional",
       "updatedBadge": "Updated",
       "updatedDetail": "Updated from v{{previous}} to v{{current}}.",
       "updatedContentDetail": "The content was updated.",

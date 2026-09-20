@@ -1,6 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ExternalLink, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ChevronRight, ExternalLink, ShieldAlert } from 'lucide-react';
 
 import {
   REPORT_REASONS,
@@ -9,9 +9,14 @@ import {
   type ReportRoutingPlan,
   isCriticalSafetyReason,
 } from '@/lib/api/reportRouting';
-import { type SubmitCommunityNodeReportResult } from '@/lib/api';
+import {
+  type CommunityNodePoliciesResponse,
+  type SubmitCommunityNodeReportResult,
+} from '@/lib/api';
+import { POLICY_KIND_RIGHTS_INFRINGEMENT } from '@/lib/api/policyKind';
 import { InvokeError } from '@/lib/api/invoke/error';
 import { useExternalLinkOpener } from '@/lib/useExternalLinkOpener';
+import { MarkdownDocument } from '@/components/MarkdownDocument';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -67,6 +72,12 @@ export type ReportRoutingDialogProps = {
   onSubmitted?: (result: SubmitCommunityNodeReportResult) => void | Promise<void>;
   /// 閉じた後の focus 移動。別の dialog から開いた場合に、呼出元が元の操作へ戻す(#1108)。
   onCloseAutoFocus?: (event: Event) => void;
+  /// #1192: 権利侵害を選んだときに、選択ノードの権利侵害申出ポリシーを提示するための取得。
+  /// 読み取りのみで、同意記録は作らない。
+  onFetchNodePolicies?: (
+    baseUrl: string,
+    language?: string
+  ) => Promise<CommunityNodePoliciesResponse>;
 };
 
 function nodeHost(url: string): string {
@@ -94,6 +105,7 @@ export function ReportRoutingDialog({
   appeal = null,
   onSubmitted,
   onCloseAutoFocus,
+  onFetchNodePolicies,
 }: ReportRoutingDialogProps) {
   const { t } = useTranslation(['shell', 'common', 'profile']);
   const externalLink = useExternalLinkOpener();
@@ -141,6 +153,13 @@ export function ReportRoutingDialog({
   const isCriticalSafety = isCriticalSafetyReason(reason);
   const isRightsInfringement = !isAppeal && reason === 'rights_infringement';
   const rightsRequestUrl = selectedCandidate?.target.rightsRequestUrl;
+  // #1192: 権利侵害申出ポリシーは同意一覧ではなくここで提示する。申出画面へ進む前に
+  // ノードの対応範囲を読めるようにするだけで、同意操作も申出送信もここでは行わない。
+  const rightsPolicy = useRightsInfringementPolicy({
+    open: open && isRightsInfringement,
+    baseUrl: selectedCandidate?.target.nodeBaseUrl ?? null,
+    fetchPolicies: onFetchNodePolicies,
+  });
 
   const handleSubmit = async () => {
     // 最新の manifest を取得し終えるまで、古い候補への送信も連絡先の複写もしない(#696)。
@@ -338,16 +357,19 @@ export function ReportRoutingDialog({
               ) : null}
 
               {isRightsInfringement ? (
-                <Notice tone='warning' className='report-rights-request'>
-                  <div>
-                    <p>{t('report.rightsRequest.boundary')}</p>
-                    {rightsRequestUrl ? (
-                      <p>{t('report.rightsRequest.openDedicated')}</p>
-                    ) : (
-                      <p>{t('report.rightsRequest.unavailable')}</p>
-                    )}
-                  </div>
-                </Notice>
+                <>
+                  <Notice tone='warning' className='report-rights-request'>
+                    <div>
+                      <p>{t('report.rightsRequest.boundary')}</p>
+                      {rightsRequestUrl ? (
+                        <p>{t('report.rightsRequest.openDedicated')}</p>
+                      ) : (
+                        <p>{t('report.rightsRequest.unavailable')}</p>
+                      )}
+                    </div>
+                  </Notice>
+                  <RightsInfringementPolicy state={rightsPolicy} />
+                </>
               ) : null}
 
               {!isRightsInfringement ? <label className='report-field'>
@@ -460,5 +482,126 @@ export function ReportRoutingDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type RightsInfringementPolicyState = {
+  status: 'absent' | 'loading' | 'ready' | 'failed';
+  title: string;
+  body: string;
+  version: number | null;
+  effectiveDate: string | null;
+};
+
+const NO_RIGHTS_POLICY: RightsInfringementPolicyState = {
+  status: 'absent',
+  title: '',
+  body: '',
+  version: null,
+  effectiveDate: null,
+};
+
+/// #1192: 選択中のノードが公開する権利侵害申出ポリシーを、通報画面を開いている間だけ取得する。
+/// 公開 policy カタログの読み取りだけで、同意記録・申出送信は行わない(ADR 0033)。
+function useRightsInfringementPolicy(input: {
+  open: boolean;
+  baseUrl: string | null;
+  fetchPolicies?: (baseUrl: string, language?: string) => Promise<CommunityNodePoliciesResponse>;
+}): RightsInfringementPolicyState {
+  const { open, baseUrl, fetchPolicies } = input;
+  const { i18n } = useTranslation();
+  const language = i18n.resolvedLanguage ?? i18n.language;
+  const [state, setState] = useState<RightsInfringementPolicyState>(NO_RIGHTS_POLICY);
+  // 呼び出し側が毎描画で新しい関数を渡しても再取得を起こさないよう、参照だけを更新する。
+  const fetchRef = useRef(fetchPolicies);
+  useEffect(() => {
+    fetchRef.current = fetchPolicies;
+  });
+
+  useEffect(() => {
+    const fetchPolicies = fetchRef.current;
+    if (!open || !baseUrl || !fetchPolicies) {
+      setState(NO_RIGHTS_POLICY);
+      return;
+    }
+    let active = true;
+    setState({ ...NO_RIGHTS_POLICY, status: 'loading' });
+    fetchPolicies(baseUrl, language)
+      .then((catalog) => {
+        if (!active) return;
+        const policy = catalog.policies.find(
+          (candidate) => candidate.policy_kind === POLICY_KIND_RIGHTS_INFRINGEMENT
+        );
+        setState(
+          policy
+            ? {
+                status: 'ready',
+                title: policy.title,
+                body: policy.body_markdown,
+                version: policy.policy_version,
+                effectiveDate: policy.effective_date ?? null,
+              }
+            : NO_RIGHTS_POLICY
+        );
+      })
+      .catch(() => {
+        if (active) setState({ ...NO_RIGHTS_POLICY, status: 'failed' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [baseUrl, language, open]);
+
+  return state;
+}
+
+/// 申出画面へ進む前に読める対応範囲。折りたたみの既定は閉で、本文は展開時だけ描画する。
+function RightsInfringementPolicy({ state }: { state: RightsInfringementPolicyState }) {
+  const { t } = useTranslation('shell');
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  const panelId = `${id}-panel`;
+
+  if (state.status === 'absent') {
+    return null;
+  }
+  if (state.status === 'loading') {
+    return <Notice aria-live='polite'>{t('report.rightsRequest.policyLoading')}</Notice>;
+  }
+  if (state.status === 'failed') {
+    return <Notice tone='warning'>{t('report.rightsRequest.policyUnavailable')}</Notice>;
+  }
+  return (
+    <section className='report-rights-policy'>
+      <h4>
+        <button
+          type='button'
+          aria-expanded={expanded}
+          aria-controls={expanded ? panelId : undefined}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <ChevronRight
+            aria-hidden='true'
+            className={`size-4 shrink-0 motion-safe:transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+          <span>{state.title}</span>
+        </button>
+      </h4>
+      <p className='report-rights-policy-meta'>
+        {[
+          state.version != null ? `v${state.version}` : null,
+          state.effectiveDate
+            ? t('report.rightsRequest.policyEffectiveDate', { date: state.effectiveDate })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' / ')}
+      </p>
+      {expanded ? (
+        <div id={panelId} className='report-rights-policy-body'>
+          <MarkdownDocument source={state.body} headingLevel={5} />
+        </div>
+      ) : null}
+    </section>
   );
 }

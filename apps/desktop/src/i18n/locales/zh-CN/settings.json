@@ -201,8 +201,6 @@
       "updatedNotice": "该节点更新了政策。请查看变更并再次接受以继续连接。",
       "noPolicies": "该节点不需要任何政策同意。",
       "noBody": "该政策未提供正文。",
-      "required": "必需",
-      "optional": "可选",
       "updatedBadge": "已更新",
       "updatedDetail": "已从 v{{previous}} 更新至 v{{current}}。",
       "updatedContentDetail": "内容已更新。",

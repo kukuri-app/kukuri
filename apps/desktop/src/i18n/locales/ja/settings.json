@@ -201,8 +201,6 @@
       "updatedNotice": "このノードはポリシーを更新しました。変更内容を確認し、再度同意すると接続を継続できます。",
       "noPolicies": "このノードは同意が必要なポリシーを持っていません。",
       "noBody": "このポリシーには本文がありません。",
-      "required": "必須",
-      "optional": "任意",
       "updatedBadge": "更新",
       "updatedDetail": "v{{previous}} から v{{current}} に更新されました。",
       "updatedContentDetail": "内容が更新されました。",

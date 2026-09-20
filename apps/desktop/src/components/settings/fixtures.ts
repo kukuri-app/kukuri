@@ -223,6 +223,7 @@ export function createCommunityNodePanelFixture(): CommunityNodePanelView {
               title: 'Terms of Service',
               body: 'You must follow the community node terms of service.',
               policyVersion: 1,
+              policyKind: 'terms',
               referenceTranslation: false,
               fallback: false,
               required: true,

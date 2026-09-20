@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type {
   BookmarkedCustomReactionView,
   CommunityNodeManifestFetch,
+  CommunityNodePoliciesResponse,
   CustomReactionAssetView,
   ReactionKeyInput,
   RecentReactionView,
@@ -65,6 +66,8 @@ type TimelineFeedProps = {
   ) => Promise<SubmitCommunityNodeReportResult>;
   onCopyReportContact?: (value: string) => void;
   onFetchReportManifest?: (baseUrl: string) => Promise<CommunityNodeManifestFetch>;
+  /// #1192: 権利侵害を選んだときに提示する権利侵害申出ポリシーの取得(読み取りのみ)。
+  onFetchNodePolicies?: (baseUrl: string, language?: string) => Promise<CommunityNodePoliciesResponse>;
   onMuteReportAuthor?: (authorPubkey: string) => Promise<void> | void;
 };
 
@@ -107,6 +110,7 @@ export function TimelineFeed({
   onSubmitReport,
   onCopyReportContact,
   onFetchReportManifest,
+  onFetchNodePolicies,
   onMuteReportAuthor,
 }: TimelineFeedProps) {
   const { t } = useTranslation('common');
@@ -219,6 +223,7 @@ export function TimelineFeed({
             onSubmitReport={onSubmitReport}
             onCopyReportContact={onCopyReportContact}
             onFetchReportManifest={onFetchReportManifest}
+            onFetchNodePolicies={onFetchNodePolicies}
             onMuteReportAuthor={onMuteReportAuthor}
           />
         </li>

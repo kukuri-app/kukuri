@@ -762,6 +762,44 @@
   color: var(--muted-foreground);
 }
 
+/* #1192: 権利侵害申出ポリシーの折りたたみ提示。申出画面へ進む前に対応範囲を読める。 */
+.report-rights-policy {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-input);
+  background: var(--surface-panel-soft);
+}
+
+.report-rights-policy h4 {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 700;
+}
+
+.report-rights-policy h4 button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  width: 100%;
+  min-height: 2.75rem;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.report-rights-policy-meta {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--muted-foreground);
+}
+
+.report-rights-policy-body {
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--border-subtle);
+}
+
 .report-target-list {
   display: grid;
   min-width: 0;

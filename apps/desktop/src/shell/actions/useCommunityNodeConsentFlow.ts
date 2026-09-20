@@ -78,9 +78,14 @@ export function useCommunityNodeConsentFlow({
 
   const entry = catalog?.baseUrl === baseUrl && catalog.language === language
     ? catalog.entry : undefined;
+  const view = communityNodeConsentView(
+    statuses.find((status) => status.base_url === baseUrl), entry
+  );
   async function accept() {
     if (!baseUrl || !configured || entry?.status !== 'ok' || accepting.current) return;
-    const policies = entry.policies;
+    // #1192: 受諾するのは「表示した文書」だけ。一覧から外した文書(観測提供・権利侵害
+    // 申出ポリシー)を同意記録にしない。
+    const policies = view.policies;
     if (!policies.length) return;
     const target = baseUrl;
     const id = generation.current;
@@ -97,8 +102,8 @@ export function useCommunityNodeConsentFlow({
         return;
       }
       const documents = policies.map((policy) => ({
-        policy_slug: policy.policy_slug, policy_version: policy.policy_version,
-        policy_snapshot_revision: policy.policy_snapshot_revision ?? null,
+        policy_slug: policy.policySlug, policy_version: policy.policyVersion,
+        policy_snapshot_revision: policy.policySnapshotRevision ?? null,
       }));
       await (acceptConsents ?? api.acceptCommunityNodeConsents.bind(api))(target, documents, language);
       if (id === generation.current) {
@@ -119,7 +124,7 @@ export function useCommunityNodeConsentFlow({
     dialog: baseUrl && configured ? {
       open: true,
       baseUrl,
-      consent: communityNodeConsentView(statuses.find((status) => status.base_url === baseUrl), entry),
+      consent: view,
       busy,
       error,
       onOpenChange: (nextOpen: boolean) => { if (!nextOpen && !accepting.current) { close(); onDismiss?.(); } },

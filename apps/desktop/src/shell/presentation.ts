@@ -19,6 +19,7 @@ import {
   type TopicSyncStatus,
 } from '@/lib/api';
 import { TRUST_OBSERVATION_SHARING_POLICY_SLUG } from '@/lib/api/observationSharing';
+import { consentPolicyOrder, isConsentDialogHiddenPolicy } from '@/lib/api/policyKind';
 import type {
   CommunityNodeConsentPolicyView,
   CommunityNodeConsentView,
@@ -460,9 +461,20 @@ export function communityNodeConsentView(
   const localConsent = status?.local_consent ?? { records: [], withdrawn_at: null };
   const withdrawn = localConsent.withdrawn_at != null;
   // #1061: 観測提供の任意文書は、CN 設定の専用トグルでだけ同意する。一括受諾の一覧には出さない。
-  const catalog = (policiesEntry?.status === 'ok' ? policiesEntry.policies : []).filter(
-    (policy) => policy.policy_slug !== TRUST_OBSERVATION_SHARING_POLICY_SLUG
-  );
+  // #1192: 権利侵害申出ポリシーは権利侵害申請モーダルで提示するため同様に外す。
+  // 並びは 利用規約 → プライバシーポリシー → 残り（既存の slug 昇順）で安定させる。
+  const catalog = (policiesEntry?.status === 'ok' ? policiesEntry.policies : [])
+    .filter(
+      (policy) =>
+        policy.policy_slug !== TRUST_OBSERVATION_SHARING_POLICY_SLUG &&
+        !isConsentDialogHiddenPolicy(policy.policy_kind, policy.required)
+    )
+    .map((policy, index) => ({ policy, index }))
+    .sort((left, right) =>
+      consentPolicyOrder(left.policy.policy_kind) - consentPolicyOrder(right.policy.policy_kind) ||
+      left.index - right.index
+    )
+    .map((entry) => entry.policy);
   const policies: CommunityNodeConsentPolicyView[] = catalog.map((policy) => {
     const slugRecords = localConsent.records.filter(
       (record) => record.policy_slug === policy.policy_slug
@@ -494,6 +506,7 @@ export function communityNodeConsentView(
       referenceTranslation: policy.reference_translation ?? false,
       fallback: policy.fallback ?? false,
       required: policy.required,
+      policyKind: policy.policy_kind ?? null,
       acceptedAtLabel: accepted ? formatConsentAcceptedAt(acceptedRecord?.accepted_at) : null,
       // 旧版または旧 snapshot だけ同意済み = 再同意が必要な「更新」。
       updated: !accepted && previouslyAcceptedVersion != null,

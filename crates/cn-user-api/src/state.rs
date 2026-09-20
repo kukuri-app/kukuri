@@ -37,6 +37,10 @@ pub struct UserApiState {
     pub(crate) manifest: Option<Arc<CommunityNodeManifest>>,
     /// manifest が指す公開開示文書。operator config と同じ入力から決定論的に生成する。
     pub(crate) public_disclosures: Arc<BTreeMap<String, String>>,
+    /// policy slug -> operator config の `legal.documents[].kind`(#1192)。起動時の
+    /// operator config から作る読み取り専用の対応表で、DB には保存しない。公開 policy
+    /// カタログの応答へ `policy_kind` として付与する。
+    pub(crate) policy_kinds: Arc<BTreeMap<String, String>>,
     /// private channel の indexing request で受け取る channel secret を at-rest 暗号化する cipher。
     /// 鍵 material(`COMMUNITY_NODE_CHANNEL_SECRET_KEY`)が未設定なら None で、private channel の
     /// indexing request は受け付けない(secret を平文保存しないため)。
@@ -143,6 +147,7 @@ pub(crate) struct ManifestState {
 struct LoadedManifest {
     manifest: Option<Arc<CommunityNodeManifest>>,
     public_disclosures: Arc<BTreeMap<String, String>>,
+    policy_kinds: Arc<BTreeMap<String, String>>,
     policies_to_sync: Vec<CommunityNodePolicyDocument>,
     operator_config_yaml: Vec<u8>,
     retention: RetentionPolicy,
@@ -168,6 +173,7 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
     let LoadedManifest {
         manifest,
         public_disclosures,
+        policy_kinds,
         policies_to_sync,
         operator_config_yaml,
         retention,
@@ -371,6 +377,7 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         },
         manifest,
         public_disclosures,
+        policy_kinds,
         channel_secret_cipher,
         legal_data_cipher,
         retention,
@@ -432,6 +439,7 @@ fn load_manifest(path: Option<&std::path::Path>) -> Result<LoadedManifest> {
         return Ok(LoadedManifest {
             manifest: None,
             public_disclosures: Arc::new(BTreeMap::new()),
+            policy_kinds: Arc::new(BTreeMap::new()),
             policies_to_sync: Vec::new(),
             operator_config_yaml: Vec::new(),
             retention: RetentionPolicy::default(),
@@ -449,10 +457,17 @@ fn load_manifest(path: Option<&std::path::Path>) -> Result<LoadedManifest> {
         .filter(|document| !document.reference_translation)
         .map(|document| (document.filename.clone(), document.content.clone()))
         .collect();
+    // #1192: slug は operator が決めるため、文書の役割は kind で client へ渡す。
+    let policy_kinds = generated_policies
+        .iter()
+        .map(|document| (document.slug.clone(), document.kind.wire_name().to_string()))
+        .collect();
     let policies_to_sync = generated_policies
         .into_iter()
         .map(|document| CommunityNodePolicyDocument {
             policy_slug: document.slug,
+            // DB へは保存せず、応答組み立て時に `policy_kinds` から付与する。
+            policy_kind: None,
             policy_version: document.version,
             title: document.title,
             body_markdown: document.content,
@@ -497,6 +512,7 @@ fn load_manifest(path: Option<&std::path::Path>) -> Result<LoadedManifest> {
     Ok(LoadedManifest {
         manifest: Some(Arc::new(build_manifest(&resolved))),
         public_disclosures: Arc::new(public_disclosures),
+        policy_kinds: Arc::new(policy_kinds),
         policies_to_sync,
         operator_config_yaml: bytes,
         retention,

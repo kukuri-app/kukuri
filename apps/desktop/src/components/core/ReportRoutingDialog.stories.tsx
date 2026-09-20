@@ -70,14 +70,62 @@ const observedUnresolvedPlan: ReportRoutingPlan = {
   candidates: [],
 };
 
+// #1192: 権利侵害申出ポリシーは同意一覧ではなくこの画面で提示する。
+const RIGHTS_POLICY_BODY = `## このノードが取り得る措置
+
+- このノードが索引した投稿・メディアの索引除外
+- このノードが発行したリスク判定の取り下げ
+
+## このノードが取り得ない措置
+
+- 投稿正本の削除、他ノードの索引や配信の停止
+- 既に第三者端末へ届いたデータの回収
+
+申出の受付は権利侵害の認定や requested action の保証ではありません。`;
+
+const rightsPolicyCatalog = {
+  policies: [
+    {
+      policy_slug: 'terms_of_service',
+      policy_version: 1,
+      title: 'Community Node 利用規約',
+      body_markdown: '利用規約の本文。',
+      required: true,
+      policy_kind: 'terms',
+      is_current: true,
+      reference_translation: false,
+      fallback: false,
+      material_change: false,
+      requires_reconsent: false,
+    },
+    {
+      policy_slug: 'rights_infringement',
+      policy_version: 2,
+      title: 'Community Node 権利侵害申出ポリシー',
+      body_markdown: RIGHTS_POLICY_BODY,
+      required: false,
+      policy_kind: 'rights_infringement',
+      effective_date: '2026-09-02',
+      language: 'ja',
+      is_current: true,
+      reference_translation: false,
+      fallback: false,
+      material_change: false,
+      requires_reconsent: false,
+    },
+  ],
+};
+
 function DialogHarness({
   plan,
   label,
   appeal,
+  fetchPolicies,
 }: {
   plan: ReportRoutingPlan;
   label: string;
   appeal?: { riskSignalId: string; issuerNodeId: string };
+  fetchPolicies?: () => Promise<typeof rightsPolicyCatalog>;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -97,6 +145,7 @@ function DialogHarness({
           disputed_risk_signal_id: appealInput?.risk_signal_id ?? null,
         })}
         onCopyContact={() => {}}
+        onFetchNodePolicies={fetchPolicies}
         localActions={
           <Button type='button' variant='secondary'>
             Mute author
@@ -117,6 +166,28 @@ export const UnknownProvenance: Story = {
 
 export const ObservedButUnresolved: Story = {
   render: () => <DialogHarness plan={observedUnresolvedPlan} label='Report (observed, unresolved)' />,
+};
+
+export const RightsInfringementPolicyShown: Story = {
+  render: () => (
+    <DialogHarness
+      plan={endpointPlan}
+      label='Report (rights infringement)'
+      fetchPolicies={async () => rightsPolicyCatalog}
+    />
+  ),
+};
+
+export const RightsInfringementPolicyUnavailable: Story = {
+  render: () => (
+    <DialogHarness
+      plan={endpointPlan}
+      label='Report (rights policy unavailable)'
+      fetchPolicies={async () => {
+        throw new Error('offline');
+      }}
+    />
+  ),
 };
 
 const appealPlan: ReportRoutingPlan = {

@@ -754,17 +754,23 @@ export function CommunityIndexWorkspace({
   }
 
   return (
-    <Card className='shell-workspace-card shell-community-index-workspace space-y-4' data-testid={`community-index-${mode}`}>
-      <div className='flex flex-wrap items-start justify-between gap-3'>
-        <div className='space-y-1'>
-          <h3 className='text-lg font-semibold'>{t('shell:communityIndex.title')}</h3>
-          <p className='text-sm text-[var(--muted-foreground)]'>
-            {mode === 'topic'
-              ? t('shell:communityIndex.topicSummary')
-              : t('shell:communityIndex.exploreSummary')}
-          </p>
+    <Card
+      className='shell-workspace-card shell-community-index-workspace space-y-4'
+      data-testid={`community-index-${mode}`}
+      aria-label={mode === 'explore' ? t('shell:communityIndex.title') : undefined}
+    >
+      {/* #1192: 「見つける」カラムではカラム見出しと重複するため、
+          カード内の見出しと説明文を出さない。トピック内カードは従来どおり。 */}
+      {mode === 'topic' ? (
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='space-y-1'>
+            <h3 className='text-lg font-semibold'>{t('shell:communityIndex.title')}</h3>
+            <p className='text-sm text-[var(--muted-foreground)]'>
+              {t('shell:communityIndex.topicSummary')}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {mode === 'explore' ? (
         <div
@@ -957,6 +963,7 @@ export function CommunityIndexWorkspace({
                 onSubmitReport={(request) => api.submitCommunityNodeReport(request)}
                 onCopyReportContact={(value) => void copyTextToClipboard(value)}
                 onFetchReportManifest={(baseUrl) => api.fetchCommunityNodeManifest(baseUrl)}
+                onFetchNodePolicies={(baseUrl, language) => api.fetchCommunityNodePolicies(baseUrl, language)}
               />
             </li>
             );

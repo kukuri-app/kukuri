@@ -106,6 +106,7 @@ pub(crate) async fn mock_current_policies()
 -> Json<kukuri_cn_protocol::CommunityNodePoliciesResponse> {
     Json(kukuri_cn_protocol::CommunityNodePoliciesResponse {
         policies: vec![kukuri_cn_protocol::CommunityNodePolicyDocument {
+            policy_kind: None,
             policy_slug: MOCK_MANAGED_POLICY_SLUG.to_string(),
             policy_version: 1,
             title: "Builder Preview".to_string(),
@@ -368,6 +369,7 @@ pub(crate) async fn mock_managed_policies(
     let snapshot_update = state.simulate_snapshot_update.load(Ordering::SeqCst);
     Json(kukuri_cn_protocol::CommunityNodePoliciesResponse {
         policies: vec![kukuri_cn_protocol::CommunityNodePolicyDocument {
+            policy_kind: None,
             policy_slug: MOCK_MANAGED_POLICY_SLUG.to_string(),
             policy_version: if pending_update { 2 } else { 1 },
             title: "Builder Preview".to_string(),

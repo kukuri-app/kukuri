@@ -74,6 +74,7 @@ async fn admission_consent_status() -> Json<CommunityNodeConsentStatus> {
 async fn admission_policies() -> Json<kukuri_cn_protocol::CommunityNodePoliciesResponse> {
     Json(kukuri_cn_protocol::CommunityNodePoliciesResponse {
         policies: vec![kukuri_cn_protocol::CommunityNodePolicyDocument {
+            policy_kind: None,
             policy_slug: MOCK_MANAGED_POLICY_SLUG.to_string(),
             policy_version: 1,
             title: "Builder Preview".to_string(),

@@ -92,6 +92,21 @@ impl LegalDocumentKind {
         }
     }
 
+    /// `serde(rename_all = "snake_case")` と同じ wire 表現(#1192)。
+    /// 公開 policy カタログの `policy_kind` として client へ渡す。
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Terms => "terms",
+            Self::Privacy => "privacy",
+            Self::ExternalTransmission => "external_transmission",
+            Self::ModerationPolicy => "moderation_policy",
+            Self::AbusePolicy => "abuse_policy",
+            Self::DataRetention => "data_retention",
+            Self::RightsInfringement => "rights_infringement",
+            Self::TrustObservationSharing => "trust_observation_sharing",
+        }
+    }
+
     pub const fn public_path(self) -> &'static str {
         match self {
             Self::Terms => "terms",

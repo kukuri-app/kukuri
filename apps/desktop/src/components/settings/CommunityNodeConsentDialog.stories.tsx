@@ -36,17 +36,19 @@ const basePolicies = communityNodePanelFixture.nodes[0].consent.policies.map((po
 }));
 const longPolicies: CommunityNodeConsentPolicyView[] = [
   ...basePolicies,
+  // #1192: 一覧は 利用規約 → プライバシー → 残り の順。権利侵害申出ポリシーは
+  // 権利侵害申請モーダルで提示するため、この一覧には現れない。
   ...[
-    ['privacy_policy', 'プライバシーポリシー', true],
-    ['abuse_policy', 'Abuse ポリシー', true],
-    ['external_transmission', '外部送信に関する公表事項', true],
-    ['moderation_policy', 'モデレーションポリシー', true],
-    ['data_retention', 'データ保持ポリシー', false],
-    ['rights_infringement', '権利侵害への対応方針', false],
-  ].map(([policySlug, title, required]) => ({
+    ['privacy_policy', 'プライバシーポリシー', 'privacy', true],
+    ['abuse_policy', 'Abuse ポリシー', 'abuse_policy', true],
+    ['external_transmission', '外部送信に関する公表事項', 'external_transmission', true],
+    ['moderation_policy', 'モデレーションポリシー', 'moderation_policy', true],
+    ['data_retention', 'データ保持ポリシー', 'data_retention', false],
+  ].map(([policySlug, title, policyKind, required]) => ({
     ...basePolicies[0],
     policySlug: policySlug as string,
     title: title as string,
+    policyKind: policyKind as string,
     required: required as boolean,
     body: policySlug === 'abuse_policy' ? abuseBody : basePolicies[0].body,
     effectiveDate: '2026-09-17',

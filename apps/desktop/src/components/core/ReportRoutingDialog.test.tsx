@@ -291,3 +291,92 @@ test('keeps typed details and the selected candidate when the candidate list is 
   expect(screen.getByDisplayValue('typed while refreshing')).toBeInTheDocument();
   expect(screen.getByRole('radio', { name: /index\.example/ })).toBeChecked();
 });
+
+// #1192: 権利侵害申出ポリシーは同意一覧ではなくここで提示する。読み取りだけで、
+// 同意操作も申出送信もこの画面では行わない(ADR 0033 の申出画面へ進む)。
+const rightsPolicyCatalog = {
+  policies: [
+    {
+      policy_slug: 'terms_of_service',
+      policy_version: 1,
+      title: 'Terms of Service',
+      body_markdown: 'Terms body',
+      required: true,
+      policy_kind: 'terms',
+      is_current: true,
+      reference_translation: false,
+      fallback: false,
+      material_change: false,
+      requires_reconsent: false,
+    },
+    {
+      policy_slug: 'rights_infringement',
+      policy_version: 2,
+      title: '権利侵害申出ポリシー',
+      body_markdown: '## 対応できる範囲\n\nこのノードが索引した投稿の索引除外。',
+      required: false,
+      policy_kind: 'rights_infringement',
+      effective_date: '2026-09-02',
+      is_current: true,
+      reference_translation: false,
+      fallback: false,
+      material_change: false,
+      requires_reconsent: false,
+    },
+  ],
+};
+
+function renderRights(onFetchNodePolicies?: (baseUrl: string, language?: string) => Promise<typeof rightsPolicyCatalog>) {
+  render(
+    <ReportRoutingDialog
+      open
+      onOpenChange={vi.fn()}
+      subject={subject}
+      plan={endpointPlan}
+      onSubmit={vi.fn()}
+      onFetchNodePolicies={onFetchNodePolicies}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'rights_infringement' } });
+}
+
+test('shows the selected node rights infringement policy before the dedicated intake', async () => {
+  const fetchPolicies = vi.fn().mockResolvedValue(rightsPolicyCatalog);
+  renderRights(fetchPolicies);
+
+  const toggle = await screen.findByRole('button', { name: /権利侵害申出ポリシー/ });
+  expect(fetchPolicies).toHaveBeenCalledWith('https://index.example', 'en');
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getByText(/v2 \/ Effective 2026-09-02/)).toBeInTheDocument();
+  // 同意一覧で出す文書は出さない。
+  expect(screen.queryByRole('button', { name: /Terms of Service/ })).not.toBeInTheDocument();
+
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('heading', { name: '対応できる範囲' })).toBeInTheDocument();
+
+  // 読み取りだけ。ここに同意操作は無く、申出は外部の申出画面へ進む。
+  expect(screen.queryByRole('button', { name: /accept/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /review scope and submit a rights request/i })).toHaveAttribute(
+    'href',
+    'https://index.example/rights-requests/new',
+  );
+});
+
+test('keeps the dedicated intake reachable when the rights policy cannot be fetched', async () => {
+  renderRights(vi.fn().mockRejectedValue(new Error('offline')));
+
+  expect(
+    await screen.findByText(/rights-request policy could not be fetched/i),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /review scope and submit a rights request/i })).toBeInTheDocument();
+});
+
+test('omits the rights policy section when the node publishes none', async () => {
+  const fetchPolicies = vi.fn().mockResolvedValue({ policies: [rightsPolicyCatalog.policies[0]] });
+  renderRights(fetchPolicies);
+
+  await waitFor(() => expect(fetchPolicies).toHaveBeenCalled());
+  expect(screen.queryByRole('button', { name: /権利侵害申出ポリシー/ })).not.toBeInTheDocument();
+  expect(screen.getByText(/does not publish a dedicated rights-request intake|explains the node-local scope/i)).toBeInTheDocument();
+});

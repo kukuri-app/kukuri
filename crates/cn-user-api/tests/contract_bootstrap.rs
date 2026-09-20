@@ -59,6 +59,29 @@ async fn public_policies_are_served_without_auth() -> Result<()> {
                 .contains("You must follow the community node")
     }));
 
+    // #1192: slug は operator が自由に決めるため、client が文書の役割を判別できるよう
+    // operator config の kind を付けて返す。DB には保存しない。
+    let kind_of = |slug: &str| {
+        catalog
+            .policies
+            .iter()
+            .find(|policy| policy.policy_slug == slug)
+            .and_then(|policy| policy.policy_kind.clone())
+    };
+    assert_eq!(kind_of("terms_of_service").as_deref(), Some("terms"));
+    assert_eq!(kind_of("privacy_policy").as_deref(), Some("privacy"));
+    assert_eq!(
+        kind_of("rights_infringement").as_deref(),
+        Some("rights_infringement")
+    );
+    assert!(
+        catalog
+            .policies
+            .iter()
+            .all(|policy| policy.policy_kind.is_some()),
+        "every policy from the current operator config carries its kind"
+    );
+
     let current = catalog.policies.first().expect("current policy");
     let snapshot = current
         .policy_snapshot_revision
@@ -76,6 +99,7 @@ async fn public_policies_are_served_without_auth() -> Result<()> {
         .await?;
     assert_eq!(exact.policy_snapshot_revision.as_deref(), Some(snapshot));
     assert_eq!(exact.publication_status.as_deref(), Some("current"));
+    assert_eq!(exact.policy_kind, current.policy_kind);
 
     Ok(())
 }

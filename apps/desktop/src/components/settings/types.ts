@@ -83,6 +83,8 @@ export type CommunityNodeConsentPolicyView = {
   referenceTranslation: boolean;
   fallback: boolean;
   required: boolean;
+  /// #1192: 公開 policy カタログの `policy_kind`。slug ではなくこれで文書の役割を判別する。
+  policyKind?: string | null;
   acceptedAtLabel: string | null;
   // 版が上がって再同意が必要な「更新」状態か。
   updated: boolean;

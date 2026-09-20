@@ -333,6 +333,9 @@ export function DesktopShellPrimarySurface({
     api.submitCommunityNodeReport(request);
   const fetchReportManifest = (baseUrl: string) =>
     api.fetchCommunityNodeManifest(baseUrl);
+  // #1192: 権利侵害申請モーダルで提示する権利侵害申出ポリシーの取得(認証不要の公開カタログ)。
+  const fetchNodePolicies = (baseUrl: string, language?: string) =>
+    api.fetchCommunityNodePolicies(baseUrl, language);
   const muteReportAuthor = async (authorPubkey: string) => {
     await handleMuteAction(authorPubkey, false);
   };
@@ -495,6 +498,7 @@ export function DesktopShellPrimarySurface({
                   onSubmitReport={submitReport}
                   onCopyReportContact={copyReportContact}
                   onFetchReportManifest={fetchReportManifest}
+                  onFetchNodePolicies={fetchNodePolicies}
                   onMuteReportAuthor={muteReportAuthor}
                 />
               ) : (
@@ -541,6 +545,7 @@ export function DesktopShellPrimarySurface({
                       onSubmitReport={submitReport}
                       onCopyReportContact={copyReportContact}
                       onFetchReportManifest={fetchReportManifest}
+                      onFetchNodePolicies={fetchNodePolicies}
                       onMuteReportAuthor={muteReportAuthor}
                     />
                   )}

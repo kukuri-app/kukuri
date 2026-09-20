@@ -118,6 +118,11 @@ pub struct CommunityNodePolicyDocument {
     pub title: String,
     pub body_markdown: String,
     pub required: bool,
+    /// operator config の `legal.documents[].kind`(#1192)。slug は operator が自由に決める
+    /// ため、client が文書の役割(利用規約 / 権利侵害申出ポリシー等)を判別するのに使う。
+    /// node が現在公開していない slug(退役 revision 等)では欠落する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

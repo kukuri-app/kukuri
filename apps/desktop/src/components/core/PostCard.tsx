@@ -6,6 +6,7 @@ import { formatPostDateTime } from '@/i18n/format';
 import type {
   BookmarkedCustomReactionView,
   CommunityNodeManifestFetch,
+  CommunityNodePoliciesResponse,
   ContentProvenance,
   CustomReactionAssetView,
   LinkPreviewFetcher,
@@ -103,6 +104,8 @@ type PostCardProps = {
   onCopyReportContact?: (value: string) => void;
   // 通報画面を開いた時に観測元ノードの最新 manifest を取得する。未指定なら候補は作らない(#696)。
   onFetchReportManifest?: (baseUrl: string) => Promise<CommunityNodeManifestFetch>;
+  /// #1192: 権利侵害を選んだときに提示する権利侵害申出ポリシーの取得(読み取りのみ)。
+  onFetchNodePolicies?: (baseUrl: string, language?: string) => Promise<CommunityNodePoliciesResponse>;
   onMuteReportAuthor?: (authorPubkey: string) => Promise<void> | void;
   enableLinkPreview?: boolean;
   linkPreviewFetcher?: LinkPreviewFetcher;
@@ -148,6 +151,7 @@ export function PostCard({
   onSubmitReport,
   onCopyReportContact,
   onFetchReportManifest,
+  onFetchNodePolicies,
   onMuteReportAuthor,
   enableLinkPreview = false,
   linkPreviewFetcher,
@@ -967,6 +971,7 @@ export function PostCard({
           plan={reportPlan}
           onSubmit={handleSubmitReport}
           onCopyContact={onCopyReportContact}
+          onFetchNodePolicies={onFetchNodePolicies}
           resolving={reportResolving}
           resolveError={reportResolveError}
           localActions={

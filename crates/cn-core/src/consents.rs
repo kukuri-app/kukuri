@@ -183,6 +183,8 @@ fn policy_from_row(row: &PgRow) -> Result<CommunityNodePolicyDocument> {
         title: row.try_get("title")?,
         body_markdown: row.try_get("body_markdown")?,
         required: row.try_get("required")?,
+        // kind は DB へ保存せず、応答を返す層が operator config から付与する(#1192)。
+        policy_kind: None,
         effective_date: row.try_get("effective_date")?,
         language: language.clone(),
         policy_snapshot_revision: row.try_get("policy_snapshot_revision")?,

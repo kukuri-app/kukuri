@@ -44,7 +44,7 @@ pub(crate) async fn public_policies(
         .iter()
         .find_map(|policy| policy.policy_snapshot_revision.clone());
     Ok(Json(CommunityNodePoliciesResponse {
-        policies,
+        policies: with_policy_kinds(&state, policies),
         policy_snapshot_revision,
     }))
 }
@@ -52,6 +52,26 @@ pub(crate) async fn public_policies(
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct PolicyLanguageQuery {
     language: Option<String>,
+}
+
+/// #1192: slug は operator が自由に決めるため、文書の役割は operator config の
+/// `kind` から付与する。現在の config に無い slug(退役 revision 等)では付けない。
+fn with_policy_kind(
+    state: &UserApiState,
+    mut policy: CommunityNodePolicyDocument,
+) -> CommunityNodePolicyDocument {
+    policy.policy_kind = state.policy_kinds.get(&policy.policy_slug).cloned();
+    policy
+}
+
+fn with_policy_kinds(
+    state: &UserApiState,
+    policies: Vec<CommunityNodePolicyDocument>,
+) -> Vec<CommunityNodePolicyDocument> {
+    policies
+        .into_iter()
+        .map(|policy| with_policy_kind(state, policy))
+        .collect()
 }
 
 pub(crate) async fn public_policy_revisions(
@@ -78,7 +98,7 @@ pub(crate) async fn public_policy_revisions(
         policy_snapshot_revision: policies
             .first()
             .and_then(|policy| policy.policy_snapshot_revision.clone()),
-        policies,
+        policies: with_policy_kinds(&state, policies),
     }))
 }
 
@@ -108,7 +128,7 @@ pub(crate) async fn public_policy_revision(
             "the requested policy revision does not exist",
         )
     })?;
-    Ok(Json(policy))
+    Ok(Json(with_policy_kind(&state, policy)))
 }
 
 pub(crate) async fn public_policy_snapshot_revision(
@@ -137,7 +157,7 @@ pub(crate) async fn public_policy_snapshot_revision(
             "the requested policy snapshot revision does not exist",
         )
     })?;
-    Ok(Json(policy))
+    Ok(Json(with_policy_kind(&state, policy)))
 }
 
 pub(crate) async fn consent_status(

@@ -31,7 +31,14 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 
 import { FilterableTopicNavList } from '@/components/core/FilterableTopicNavList';
+import { CommunityNodeConsentDialog } from '@/components/settings/CommunityNodeConsentDialog';
 import type { TopicDiagnosticSummary } from '@/components/core/types';
+import type { DesktopApi } from '@/lib/api';
+import { communityIndexNodeLabel } from '@/lib/api/communityIndex';
+import {
+  useCommunityNodeConsentFlow,
+  type AcceptCommunityNodeConsents,
+} from '@/shell/actions/useCommunityNodeConsentFlow';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
@@ -49,7 +56,7 @@ import {
   type ColumnKind,
   type ColumnState,
 } from '@/shell/slices/workspace';
-import { formatCount } from '@/shell/presentation';
+import { communityNodeConsentLabel, formatCount } from '@/shell/presentation';
 import { connectivityGuidance } from '@/shell/connectivityGuidance';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts';
@@ -64,6 +71,9 @@ type TopicListProps = Omit<
 
 type DesktopShellControlCenterProps = TopicListProps & {
   triggerRef: RefObject<HTMLButtonElement | null>;
+  api: DesktopApi;
+  /// #1192: コミュニティノード欄から開く規約同意モーダルの受諾処理。
+  onAcceptCommunityNodeConsents: AcceptCommunityNodeConsents;
   topicItems: TopicDiagnosticSummary[];
   topicInput: string;
   titles: Record<ColumnKind, string>;
@@ -91,6 +101,8 @@ const ADDABLE_COLUMN_KINDS: ColumnKind[] = [
 
 export function DesktopShellControlCenter({
   triggerRef,
+  api,
+  onAcceptCommunityNodeConsents,
   topicItems,
   topicInput,
   titles,
@@ -116,6 +128,8 @@ export function DesktopShellControlCenter({
   const { t } = useTranslation(['shell', 'common', 'settings', 'channels']);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const {
+    communityNodeConfig,
+    communityNodeManifests,
     communityNodeStatuses,
     developerModeEnabled,
     joinedChannelsByTopic,
@@ -125,6 +139,8 @@ export function DesktopShellControlCenter({
     workspaceState,
   } = useDesktopShellStore(
     useShallow((state) => ({
+      communityNodeConfig: state.communityNodeConfig,
+      communityNodeManifests: state.communityNodeManifests,
       communityNodeStatuses: state.communityNodeStatuses,
       developerModeEnabled: state.developerModeEnabled,
       joinedChannelsByTopic: state.joinedChannelsByTopic,
@@ -139,6 +155,15 @@ export function DesktopShellControlCenter({
   const selectedChannelId = activeScope.channelId;
   const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
   const communityNodeNeedsAttention = communityNodeStatuses.some((status) => status.last_error);
+  // #1192: 設定画面へ行かずに、各コミュニティノードの規約同意モーダルを開けるようにする。
+  // per-node の境界を保つため一括操作は持たず、開く対象は行ごとに固定する。
+  const communityNodeBaseUrls = communityNodeConfig.nodes.map((node) => node.base_url);
+  const consentFlow = useCommunityNodeConsentFlow({
+    api,
+    configuredBaseUrls: communityNodeBaseUrls,
+    statuses: communityNodeStatuses,
+    acceptConsents: onAcceptCommunityNodeConsents,
+  });
   const guidance = connectivityGuidance(syncStatus, syncStatusRead, t);
   const connectionNeedsAttention = guidance.tone !== 'accent';
   const statusKey = communityNodeNeedsAttention
@@ -537,6 +562,47 @@ export function DesktopShellControlCenter({
                   <Radio className='size-4' aria-hidden='true' />
                   {t('shell:settingsSections.community-node.label')}
                 </Button>
+                {/* #1192: 設定画面へ行かずに、各ノードの規約同意モーダルを開ける。 */}
+                {communityNodeBaseUrls.length > 0 ? (
+                  <ul
+                    className='shell-control-center-community-node-list'
+                    aria-label={t('shell:controlCenter.communityNodes.listLabel')}
+                  >
+                    {communityNodeBaseUrls.map((baseUrl) => {
+                      const status = communityNodeStatuses.find(
+                        (candidate) => candidate.base_url === baseUrl
+                      );
+                      const label = communityIndexNodeLabel(
+                        baseUrl,
+                        communityNodeManifests[baseUrl]
+                      );
+                      return (
+                        <li key={baseUrl} className='shell-control-center-community-node-row'>
+                          <span className='shell-control-center-community-node-name'>
+                            <span title={baseUrl}>{label}</span>
+                            <Badge tone={status?.last_error ? 'warning' : 'neutral'}>
+                              {communityNodeConsentLabel(status)}
+                            </Badge>
+                          </span>
+                          <Button
+                            variant='secondary'
+                            type='button'
+                            aria-label={t('shell:controlCenter.communityNodes.openConsents', {
+                              node: label,
+                            })}
+                            onClick={(event) => consentFlow.open(baseUrl, event.currentTarget)}
+                          >
+                            {t('common:actions.consents')}
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className='shell-control-center-community-node-empty'>
+                    {t('shell:controlCenter.communityNodes.empty')}
+                  </p>
+                )}
                 <Button variant='ghost' type='button' onClick={() => openSettings('appearance')}
                   aria-label={t('shell:controlCenter.settings')} aria-describedby='control-center-appearance-hint'>
                   <Settings className='size-4' aria-hidden='true' />
@@ -571,6 +637,7 @@ export function DesktopShellControlCenter({
           </div>
         </aside>
       ) : null}
+      {consentFlow.dialog ? <CommunityNodeConsentDialog {...consentFlow.dialog} /> : null}
     </>
   );
 }
