@@ -37,8 +37,8 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | --- | --- | --- | --- | --- |
 | P-1 | `hydration_support.rs` `hydrate_post_withdrawals_from_replica`。全件走査のほか、view の生成中に行ごとに呼ばれる（`timeline_view_support.rs` の `profile_post_to_view`・`profile_repost_to_view`・`repost_snapshot_to_view_with_profiles`） | `withdrawals/` | topic の取り下げ総数 × ページの行数 | 対象。view の生成からは T3 で外した（背景の key 指定の確認へ）。関数は T7 で削除 |
 | P-2 | `hydration_support.rs` `hydrate_object_projection_from_replica` | `objects/`（1 投稿につき `state` と `envelope` の 2 entry） | topic の投稿総数 | 対象。T7 で削除 |
-| P-3 | `hydration_support.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | 対象。T7 で削除 |
-| P-4 | `hydration_support.rs` `hydrate_reaction_cache_for_target` | `reactions/<target object id>/` | 1 投稿のリアクション数 | 対象。T4 で上限つきの読み出しにする（集計は best effort）。T3 では、自分の reaction の確認を key 指定の読み出しにした |
+| P-3 | `reaction_hydration.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | 対象。T7 で削除 |
+| P-4 | `reaction_hydration.rs` `hydrate_reaction_cache_for_target`（reaction の hint の個別反映） | `reactions/<target object id>/` | 1 投稿のリアクション数 | 対象。T4 で上限つきの読み出しにする（集計は best effort）。T3 では、自分の reaction の確認を key 指定の読み出しにした。T5a で、上限つきの読み出し（`hydrate_reaction_cache_for_target_bounded`）を足し、ページの範囲の照合が使う（下の節） |
 | P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | 対象。T5b で上限つき、T7 で全件走査から外す |
 | P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | 同上 |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
@@ -57,6 +57,18 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 まとまった同期（初回の参加、長い離席の後）では、古い範囲のほとんどが全件走査で projection に入る。S-1〜S-5 を先に外すと、窓より古い投稿へ遡れない中間状態ができる。
 そこで、取得側の「ページの範囲の照合」（S-6 の置き換え）を T5a として先に入れ、その後に T4（購読タスク）を行う。T5 の残り（live / game、非表示の著者の読み飛ばしの上限、
 cursor の条件、V-1・V-2）は T5b とする。
+
+## ページの範囲の照合が読む reaction（T5a）
+
+照合は、新しく反映した投稿 1 件につき、`reactions/<target object id>/` の key だけの上限つきの一覧を 1 回（64 key）読み、見つかった reaction（最大 32 件）の `envelope` の key を
+key 指定・上限つき（8 件）で読む。読む量は「1 回の照合が反映する投稿の数（replica 1 つあたり最大 200 件）× 定数」で、対象の reaction の総数にも replica の総 entry 数にも依存しない。
+投稿が projection に入るときの 1 回だけで、projection に既にある投稿では読まない。以前は、空のページの全件走査（S-6）が `reactions/` の全 entry を読んでいた。
+
+## 反映の検証が足す読み出し（Issue #1252）
+
+reaction・live session・game room の検証は、prefix の読み出しを足さない。reaction は、P-3・P-4 の同じ prefix の読み出しに含まれる `envelope` の record から行を作る。
+live session と game room は、state 1 件につき `envelopes/<envelope id>` を key 指定・上限つき（8 件）で 1 回読む。key 指定の個別反映は、`state` の key も上限つきで読む。
+どれも object 1 件あたり定数で、replica の総 entry 数に依存しない。P-5・P-6 の全件走査では、session の総数ぶんの key 指定の読み出しが足される（T5・T7 で走査ごと無くなる）。
 
 ## view の生成に残る docs の読み出し（key 指定）
 

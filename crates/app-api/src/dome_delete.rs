@@ -221,29 +221,17 @@ impl AppService {
         let tombstone = dome_instance_manifest_from_game_manifest(&manifest)?;
         self.persist_dome_instance_manifest(&replica, &tombstone, operation.created_at)
             .await?;
-        let envelope = build_game_session_envelope(
-            self.services.keys.as_ref(),
-            input.spatial_context.topic_id(),
-            &input.instance_id,
-            &serde_json::json!({"status":"tombstoned", "generation": input.expected_generation}),
-        )?;
         let state = self
             .persist_game_room_manifest(
                 &replica,
                 input.spatial_context.topic_id().as_str(),
                 manifest.clone(),
                 operation.created_at,
-                envelope.id,
             )
             .await?;
         self.services
             .projection_store
-            .upsert_game_room_cache(game_projection_row_from_state(
-                &state,
-                &manifest,
-                input.spatial_context.topic_id().as_str(),
-                &replica,
-            ))
+            .upsert_game_room_cache(game_projection_row(&state))
             .await?;
         // Topology resolution discards endpoints of the tombstoned generation.
         self.list_dome_connection_topology(input.spatial_context.clone())

@@ -120,7 +120,7 @@ impl AppService {
         let session_id = format!(
             "live-{}-{}",
             now,
-            short_id_suffix(self.current_author_pubkey().as_str())
+            owner_bound_id_suffix(self.current_author_pubkey().as_str())
         );
         let topic = TopicId::new(topic_id);
         let manifest = LiveSessionManifestBlobV1 {
@@ -134,36 +134,12 @@ impl AppService {
             started_at: now,
             ended_at: None,
         };
-        let envelope = build_live_session_envelope(
-            self.services.keys.as_ref(),
-            &topic,
-            session_id.as_str(),
-            &serde_json::json!({
-                "session_id": session_id,
-                "topic_id": topic,
-                "channel_id": channel_id.as_ref().map(|value| value.as_str()),
-                "status": "live",
-                "title": manifest.title,
-                "description": manifest.description,
-            }),
-        )?;
         let state = self
-            .persist_live_session_manifest(
-                &source_replica_id,
-                topic_id,
-                manifest.clone(),
-                now,
-                envelope.id.clone(),
-            )
+            .persist_live_session_manifest(&source_replica_id, topic_id, manifest.clone(), now)
             .await?;
         self.services
             .projection_store
-            .upsert_live_session_cache(live_projection_row_from_state(
-                &state,
-                &manifest,
-                topic_id,
-                &source_replica_id,
-            ))
+            .upsert_live_session_cache(live_projection_row(&state))
             .await?;
         self.services
             .hint_transport
@@ -200,34 +176,17 @@ impl AppService {
         let now = Utc::now().timestamp_millis();
         manifest.status = LiveSessionStatus::Ended;
         manifest.ended_at = Some(now);
-        let envelope = build_live_session_envelope(
-            self.services.keys.as_ref(),
-            &TopicId::new(topic_id),
-            session_id,
-            &serde_json::json!({
-                "session_id": session_id,
-                "topic_id": topic_id,
-                "channel_id": state.channel_id.as_ref().map(|value| value.as_str()),
-                "status": "ended",
-            }),
-        )?;
         let state = self
             .persist_live_session_manifest(
                 &source_replica_id,
                 topic_id,
                 manifest.clone(),
                 state.created_at,
-                envelope.id.clone(),
             )
             .await?;
         self.services
             .projection_store
-            .upsert_live_session_cache(live_projection_row_from_state(
-                &state,
-                &manifest,
-                topic_id,
-                &source_replica_id,
-            ))
+            .upsert_live_session_cache(live_projection_row(&state))
             .await?;
         self.stop_live_presence_task(topic_id, channel_key.as_str(), session_id)
             .await;

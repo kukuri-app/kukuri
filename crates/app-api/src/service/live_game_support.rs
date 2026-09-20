@@ -489,15 +489,24 @@ impl AppService {
         Ok(())
     }
 
+    /// manifest を blob と署名つき envelope(`envelopes/<envelope id>`)へ置き、state を書く(#1252)。
+    ///
+    /// envelope を state より先に書く。読む側は `state.last_envelope_id` から envelope を引いて、署名された manifest を確かめる。
+    /// 戻り値は、docs から反映するときと同じ検証を通した session(docs は読まない)。
     pub(crate) async fn persist_live_session_manifest(
         &self,
         replica: &ReplicaId,
         topic_id: &str,
         manifest: LiveSessionManifestBlobV1,
         created_at: i64,
-        last_envelope_id: EnvelopeId,
-    ) -> Result<LiveSessionStateDocV1> {
+    ) -> Result<VerifiedLiveSession> {
         let now = Utc::now().timestamp_millis();
+        let envelope = build_live_session_envelope(
+            self.services.keys.as_ref(),
+            &manifest.topic_id,
+            manifest.session_id.as_str(),
+            &manifest,
+        )?;
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -517,25 +526,38 @@ impl AppService {
                 mime: stored.mime.clone(),
                 bytes: stored.bytes,
             },
-            last_envelope_id,
+            last_envelope_id: envelope.id.clone(),
         };
-        persist_live_session_state(self.services.docs_sync.as_ref(), replica, &state).await?;
+        let verified =
+            VerifiedLiveSession::verify(state, &envelope.pubkey, manifest, replica, topic_id)
+                .map_err(|reason| {
+                    anyhow::anyhow!("live session was rejected: {}", reason.as_str())
+                })?;
+        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        persist_live_session_state(self.services.docs_sync.as_ref(), replica, verified.state())
+            .await?;
         self.services
             .projection_store
             .mark_blob_status(&stored.hash, BlobCacheStatus::Available)
             .await?;
-        Ok(state)
+        Ok(verified)
     }
 
+    /// `persist_live_session_manifest` と同じ形。metaverse room は訪問者も書くので、署名者が owner とは限らない。
     pub(crate) async fn persist_game_room_manifest(
         &self,
         replica: &ReplicaId,
         topic_id: &str,
         manifest: GameRoomManifestBlobV1,
         created_at: i64,
-        last_envelope_id: EnvelopeId,
-    ) -> Result<GameRoomStateDocV1> {
+    ) -> Result<VerifiedGameRoom> {
         let now = Utc::now().timestamp_millis();
+        let envelope = build_game_session_envelope(
+            self.services.keys.as_ref(),
+            &manifest.topic_id,
+            manifest.room_id.as_str(),
+            &manifest,
+        )?;
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -555,16 +577,22 @@ impl AppService {
                 mime: stored.mime.clone(),
                 bytes: stored.bytes,
             },
-            last_envelope_id,
+            last_envelope_id: envelope.id.clone(),
         };
-        persist_game_room_state(self.services.docs_sync.as_ref(), replica, &state).await?;
+        let verified =
+            VerifiedGameRoom::verify(state, Some(&envelope.pubkey), manifest, replica, topic_id)
+                .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
+        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        persist_game_room_state(self.services.docs_sync.as_ref(), replica, verified.state())
+            .await?;
         self.services
             .projection_store
             .mark_blob_status(&stored.hash, BlobCacheStatus::Available)
             .await?;
-        Ok(state)
+        Ok(verified)
     }
 
+    /// 操作(終了・参加・更新)が使う state と manifest。docs から反映するときと同じ検証を通す(#1252)。
     pub(crate) async fn fetch_live_session_state_and_manifest(
         &self,
         topic_id: &str,
@@ -574,28 +602,23 @@ impl AppService {
             topic_id,
             self.joined_private_channel_states_for_topic(topic_id).await,
         ) {
-            let Some(state) = fetch_live_session_state_from_replica(
+            if let Some(verified) = load_verified_live_session(
                 self.services.docs_sync.as_ref(),
-                &replica,
-                session_id,
-            )
-            .await?
-            else {
-                continue;
-            };
-            let Some(manifest) = fetch_manifest_blob::<LiveSessionManifestBlobV1>(
                 self.services.blob_service.as_ref(),
-                &state.current_manifest,
+                &replica,
+                topic_id,
+                session_id,
+                DocFetchPolicy::LocalThenRemote,
             )
             .await?
-            else {
-                continue;
-            };
-            return Ok(Some((replica, state, manifest)));
+            {
+                return Ok(Some(verified.into_parts()));
+            }
         }
         Ok(None)
     }
 
+    /// `fetch_live_session_state_and_manifest` と同じ形。
     pub(crate) async fn fetch_game_room_state_and_manifest(
         &self,
         topic_id: &str,
@@ -605,24 +628,18 @@ impl AppService {
             topic_id,
             self.joined_private_channel_states_for_topic(topic_id).await,
         ) {
-            let Some(state) = fetch_game_room_state_from_replica(
+            if let Some(verified) = load_verified_game_room(
                 self.services.docs_sync.as_ref(),
-                &replica,
-                room_id,
-            )
-            .await?
-            else {
-                continue;
-            };
-            let Some(manifest) = fetch_manifest_blob::<GameRoomManifestBlobV1>(
                 self.services.blob_service.as_ref(),
-                &state.current_manifest,
+                &replica,
+                topic_id,
+                room_id,
+                DocFetchPolicy::LocalThenRemote,
             )
             .await?
-            else {
-                continue;
-            };
-            return Ok(Some((replica, state, manifest)));
+            {
+                return Ok(Some(verified.into_parts()));
+            }
         }
         Ok(None)
     }

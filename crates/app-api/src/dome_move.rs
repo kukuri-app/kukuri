@@ -187,24 +187,11 @@ impl AppService {
                 Utc::now().timestamp_millis(),
             )
             .await?;
-            let envelope = build_game_session_envelope(
-                self.services.keys.as_ref(),
-                &TopicId::new(target_topic_id.as_str()),
-                record.target_instance_id.as_str(),
-                &serde_json::json!({
-                    "instance_id": record.target_instance_id,
-                    "context": record.target_context.canonical_id(),
-                    "generation": record.target_generation,
-                    "status": "staging",
-                    "move_id": record.move_id,
-                }),
-            )?;
             self.persist_game_room_manifest(
                 &target_replica_id,
                 target_topic_id.as_str(),
                 staged,
                 Utc::now().timestamp_millis(),
-                envelope.id,
             )
             .await?;
             record.phase = DomeMovePhaseV1::TargetStaged;
@@ -240,34 +227,17 @@ impl AppService {
                 source_state.created_at,
             )
             .await?;
-            let envelope = build_game_session_envelope(
-                self.services.keys.as_ref(),
-                &TopicId::new(source_topic_id),
-                record.source_instance_id.as_str(),
-                &serde_json::json!({
-                    "instance_id": record.source_instance_id,
-                    "generation": record.source_generation,
-                    "relationships": "detached",
-                    "move_id": record.move_id,
-                }),
-            )?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,
                     source_topic_id,
                     source_manifest.clone(),
                     source_state.created_at,
-                    envelope.id,
                 )
                 .await?;
             self.services
                 .projection_store
-                .upsert_game_room_cache(game_projection_row_from_state(
-                    &persisted,
-                    &source_manifest,
-                    source_topic_id,
-                    &source_replica_id,
-                ))
+                .upsert_game_room_cache(game_projection_row(&persisted))
                 .await?;
             record.phase = DomeMovePhaseV1::SourceDetached;
             record.updated_at = Utc::now().timestamp_millis();
@@ -295,34 +265,17 @@ impl AppService {
                 target_state.created_at,
             )
             .await?;
-            let envelope = build_game_session_envelope(
-                self.services.keys.as_ref(),
-                &TopicId::new(target_topic_id.as_str()),
-                record.target_instance_id.as_str(),
-                &serde_json::json!({
-                    "instance_id": record.target_instance_id,
-                    "generation": record.target_generation,
-                    "status": "active",
-                    "move_id": record.move_id,
-                }),
-            )?;
             let persisted = self
                 .persist_game_room_manifest(
                     &target_source_replica,
                     target_topic_id.as_str(),
                     target_manifest.clone(),
                     target_state.created_at,
-                    envelope.id,
                 )
                 .await?;
             self.services
                 .projection_store
-                .upsert_game_room_cache(game_projection_row_from_state(
-                    &persisted,
-                    &target_manifest,
-                    target_topic_id.as_str(),
-                    &target_source_replica,
-                ))
+                .upsert_game_room_cache(game_projection_row(&persisted))
                 .await?;
             record.phase = DomeMovePhaseV1::TargetActive;
             record.updated_at = Utc::now().timestamp_millis();
@@ -352,35 +305,17 @@ impl AppService {
                 source_state.created_at,
             )
             .await?;
-            let envelope = build_game_session_envelope(
-                self.services.keys.as_ref(),
-                &TopicId::new(source_topic_id),
-                record.source_instance_id.as_str(),
-                &serde_json::json!({
-                    "instance_id": record.source_instance_id,
-                    "generation": record.source_generation,
-                    "status": "tombstoned",
-                    "replacement_instance_id": record.target_instance_id,
-                    "move_id": record.move_id,
-                }),
-            )?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,
                     source_topic_id,
                     source_manifest.clone(),
                     source_state.created_at,
-                    envelope.id,
                 )
                 .await?;
             self.services
                 .projection_store
-                .upsert_game_room_cache(game_projection_row_from_state(
-                    &persisted,
-                    &source_manifest,
-                    source_topic_id,
-                    &source_replica_id,
-                ))
+                .upsert_game_room_cache(game_projection_row(&persisted))
                 .await?;
             record.phase = DomeMovePhaseV1::SourceTombstoned;
             record.updated_at = Utc::now().timestamp_millis();

@@ -35,6 +35,12 @@ pub enum BlobCacheStatus {
 /// `20260921000000_drop_unverified_object_projections` が削除する(SQL の値と一致させること)。
 pub const VERIFIED_OBJECT_PROJECTION_VERSION: i64 = 3;
 
+/// reaction の行(`reaction_cache`)は、この version から、署名つき envelope と読んだ replica を確かめた reaction だけで作る(#1252)。
+pub const VERIFIED_REACTION_PROJECTION_VERSION: i64 = 2;
+
+/// live session・game room の行は、この version から、署名された manifest と読んだ replica を確かめた session だけで作る(#1252)。
+pub const VERIFIED_SESSION_PROJECTION_VERSION: i64 = 2;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectProjectionRow {
     pub object_id: EnvelopeId,

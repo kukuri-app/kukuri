@@ -69,6 +69,7 @@ impl AppService {
             hydrate_reaction_cache_from_key(
                 self.services.docs_sync.as_ref(),
                 self.services.projection_store.as_ref(),
+                target_topic_id.as_str(),
                 &target.source_replica_id,
                 stable_key(
                     "reactions",
@@ -102,8 +103,10 @@ impl AppService {
             &reaction_id,
             next_status.clone(),
         )?;
-        let reaction = parse_reaction(&envelope)?
-            .ok_or_else(|| anyhow::anyhow!("failed to parse reaction envelope"))?;
+        // 自分の reaction も、docs から反映するときと同じ検証を通す(#1252)。docs は読まない。
+        let verified = VerifiedReaction::verify_local(&envelope, &target.source_replica_id)
+            .map_err(|reason| anyhow::anyhow!("reaction was rejected: {}", reason.as_str()))?;
+        let reaction = verified.doc().clone();
         persist_reaction_doc(
             self.services.docs_sync.as_ref(),
             &target.source_replica_id,
@@ -114,10 +117,7 @@ impl AppService {
         self.services.store.put_envelope(envelope.clone()).await?;
         self.services
             .projection_store
-            .upsert_reaction_cache(reaction_projection_row_from_doc(
-                &reaction,
-                &target.source_replica_id,
-            ))
+            .upsert_reaction_cache(reaction_projection_row(&verified))
             .await?;
         if let Err(error) = self
             .services

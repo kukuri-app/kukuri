@@ -467,10 +467,19 @@ async fn topic_session_hints_retry_until_manifest_blob_is_available() {
         )
         .await
         .expect("create live session");
-    let state = fetch_live_session_state_from_replica(docs_sync.as_ref(), &replica, &session_id)
-        .await
-        .expect("fetch live state")
-        .expect("live state");
+    let state: LiveSessionStateDocV1 = serde_json::from_slice(
+        &docs_sync
+            .query_replica(
+                &replica,
+                DocQuery::Exact(stable_key("sessions/live", &format!("{session_id}/state"))),
+            )
+            .await
+            .expect("fetch live state")
+            .first()
+            .expect("live state")
+            .value,
+    )
+    .expect("parse live state");
     blob_service
         .delay_hash(&state.current_manifest.hash, 2)
         .await;

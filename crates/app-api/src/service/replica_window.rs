@@ -25,6 +25,8 @@ pub(crate) const RANGE_CHECK_RETRY_INTERVAL_MS: i64 = 5_000;
 pub(crate) const RANGE_CHECK_STALLED_MAX_INTERVAL_MS: i64 = 300_000;
 /// 照合の台帳の上限。超えたら期限の切れた項目を捨て、それでも超えるなら記録せずに照合する。
 pub(crate) const RANGE_CHECK_LEDGER_LIMIT: usize = 4_096;
+/// 照合が新しく反映した投稿 1 件について、一緒に反映する reaction の上限。
+pub(crate) const RANGE_CHECK_REACTIONS_PER_OBJECT: usize = 32;
 
 #[derive(Clone, Debug, Default)]
 struct RangeCheckState {
@@ -228,7 +230,21 @@ pub(crate) async fn ensure_index_entries_projected(
             )
             .await?
             {
-                ObjectHydration::Hydrated => outcome.hydrated += 1,
+                ObjectHydration::Hydrated => {
+                    outcome.hydrated += 1;
+                    // 新しく反映した投稿の reaction も、上限つきで反映する。以前は、空ページの全件走査が
+                    // reaction も反映していた。docs の event が届かない古い reaction は、ここでしか入らない。
+                    hydrate_reaction_cache_for_target_bounded(
+                        docs_sync,
+                        projection_store,
+                        topic_id,
+                        replica,
+                        &object_id,
+                        policy,
+                        RANGE_CHECK_REACTIONS_PER_OBJECT,
+                    )
+                    .await?;
+                }
                 ObjectHydration::Missing => outcome.unresolved += 1,
                 ObjectHydration::Invalid => outcome.invalid += 1,
             }

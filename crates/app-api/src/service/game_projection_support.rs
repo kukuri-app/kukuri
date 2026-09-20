@@ -37,27 +37,29 @@ pub(crate) async fn hydrate_game_room_from_record(
     // A moving docs pointer may invalidate more than one fetch. Bound re-resolution;
     // false keeps the existing caller's retry/recovery path, rather than claiming success.
     for _ in 0..session_projection_retry_attempts() {
-        let state: GameRoomStateDocV1 = serde_json::from_slice(&record.value)?;
-        services
-            .projection_store
-            .mark_blob_status(
-                &state.current_manifest.hash,
-                blob_status(
-                    services
-                        .blob_service
-                        .blob_status(&state.current_manifest.hash)
-                        .await?,
-                ),
-            )
-            .await?;
-        let Some(manifest) = fetch_manifest_blob::<GameRoomManifestBlobV1>(
+        // 行は、署名された manifest(metaverse room は Dome の id)と、読んだ replica の topic / channel に照らして
+        // 確かめた room から作る(#1252)。検証に通らない record は warn を出して `false` を返し、エラーにしない。
+        let Some(verified) = verify_game_room_record(
+            services.docs_sync.as_ref(),
             services.blob_service.as_ref(),
-            &state.current_manifest,
+            replica,
+            topic_id,
+            &record,
+            DocFetchPolicy::LocalThenRemote,
         )
         .await?
         else {
             return Ok(false);
         };
+        services
+            .projection_store
+            .mark_blob_status(
+                &verified.state().current_manifest.hash,
+                BlobCacheStatus::Available,
+            )
+            .await?;
+        let state = verified.state();
+        let manifest = verified.manifest();
         // Slow blob I/O precedes the room lock. Other rooms never wait for it.
         // Metaverse keeps its existing projection/lifecycle behavior.
         let projection_guard = if manifest.room_kind == GameRoomKind::ScoreGame {
@@ -65,22 +67,26 @@ pub(crate) async fn hydrate_game_room_from_record(
         } else {
             None
         };
-        let row = game_projection_row_from_state(&state, &manifest, topic_id, replica);
+        let row = game_projection_row(&verified);
         if projection_guard.is_some() {
-            let Some(current) = query_replica_local_only(
-                services.docs_sync.as_ref(),
-                replica,
-                DocQuery::Exact(record.key.clone()),
-            )
-            .await?
-            .into_iter()
-            .next() else {
+            // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけと比べると、不正な record を 1 件置くだけで
+            // 正しい room の反映を止められる(#1252)。候補が現在の record のどれかと一致すれば、まだ最新とみなす。
+            let mut current = services
+                .docs_sync
+                .query_replica_exact_bounded(
+                    replica,
+                    record.key.as_str(),
+                    MAX_ENVELOPE_RECORDS_PER_OBJECT,
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await?;
+            if current.is_empty() {
                 return Ok(false);
-            };
-            if current.value != record.value {
+            }
+            if !current.iter().any(|current| current.value == record.value) {
                 // Neither timestamps nor hash ordering decide freshness: docs does.
                 // Drop this guard before fetching the current candidate's blob.
-                record = current;
+                record = current.swap_remove(0);
                 continue;
             }
             if let Some(mut cached) = services

@@ -286,6 +286,18 @@ impl Fixture {
         let blob = store_manifest_blob(self.blobs.as_ref(), &manifest, GAME_MANIFEST_MIME)
             .await
             .unwrap();
+        // #1252: 反映は owner が署名した manifest を要求する。owner の別端末からの書き込みと同じ形で置く。
+        let envelope = kukuri_core::build_game_session_envelope(
+            self.app.services.keys.as_ref(),
+            &manifest.topic_id,
+            manifest.room_id.as_str(),
+            &manifest,
+        )
+        .unwrap();
+        persist_session_envelope(self.docs.as_ref(), &topic_replica_id(TOPIC), &envelope)
+            .await
+            .unwrap();
+        state.last_envelope_id = envelope.id;
         state.status = manifest.status;
         state.updated_at = updated_at;
         state.current_manifest = ManifestBlobRef {
@@ -771,7 +783,8 @@ async fn missing_and_corrupt_canonical_state_do_not_apply_the_candidate() {
             )
             .await
             .unwrap();
-        assert!(fixture.hydrate(&room_id).await.is_err());
+        // #1252: 読めない record は、その room だけを飛ばす(エラーにしない)。
+        assert!(!fixture.hydrate(&room_id).await.unwrap());
         assert_eq!(fixture.row(&room_id).await, before);
         fixture
             .docs

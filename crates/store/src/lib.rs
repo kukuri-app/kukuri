@@ -16,7 +16,8 @@ pub use models::{
     DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
     LiveSessionProjectionRow, MutedAuthorRow, NotificationKind, NotificationRow,
     ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
-    VERIFIED_OBJECT_PROJECTION_VERSION, adult_media_hashes_for_row,
+    VERIFIED_OBJECT_PROJECTION_VERSION, VERIFIED_REACTION_PROJECTION_VERSION,
+    VERIFIED_SESSION_PROJECTION_VERSION, adult_media_hashes_for_row,
 };
 pub use sqlite::{SqliteStore, StoreStartupError};
 pub use traits::{

@@ -2,6 +2,9 @@ use super::game_projection_support::hydrate_game_room_from_record;
 use super::hydration_limits::{
     MissingBodyLedger, ReplicaScanCache, fetch_projection_blob_text_bounded, scan_fingerprint,
 };
+use super::reaction_hydration::{
+    hydrate_reaction_cache_for_target, hydrate_reaction_cache_from_replica,
+};
 use super::*;
 
 /// 戻り値は今回反映した取り下げの件数。前回の走査から record が変わっていなければ何もせず 0 を返す(#1225)。
@@ -152,96 +155,6 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     Ok(hydrated)
 }
 
-pub(crate) async fn hydrate_reaction_cache_from_replica(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    scan_cache: &ReplicaScanCache,
-    replica: &ReplicaId,
-    policy: DocFetchPolicy,
-) -> Result<usize> {
-    const PREFIX: &str = "reactions/";
-    let records = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Prefix(PREFIX.into()),
-        policy,
-    )
-    .await?;
-    let fingerprint = scan_fingerprint(&records);
-    if scan_cache.is_unchanged(replica.as_str(), PREFIX, fingerprint) {
-        return Ok(0);
-    }
-    let mut hydrated = 0usize;
-    for record in records {
-        if !record.key.ends_with("/state") {
-            continue;
-        }
-        let reaction: ReactionDocV1 = serde_json::from_slice(record.value.as_slice())?;
-        projection_store
-            .upsert_reaction_cache(reaction_projection_row_from_doc(&reaction, replica))
-            .await?;
-        hydrated += 1;
-    }
-    scan_cache.record(replica.as_str(), PREFIX, fingerprint);
-    Ok(hydrated)
-}
-
-pub(crate) async fn hydrate_reaction_cache_from_record(
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    record: DocRecord,
-) -> Result<bool> {
-    let reaction: ReactionDocV1 = serde_json::from_slice(record.value.as_slice())?;
-    projection_store
-        .upsert_reaction_cache(reaction_projection_row_from_doc(&reaction, replica))
-        .await?;
-    Ok(true)
-}
-
-pub(crate) async fn hydrate_reaction_cache_from_key(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    key: &str,
-    policy: DocFetchPolicy,
-) -> Result<bool> {
-    let Some(record) = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Exact(key.to_string()),
-        policy,
-    )
-    .await?
-    .into_iter()
-    .next() else {
-        return Ok(false);
-    };
-    hydrate_reaction_cache_from_record(projection_store, replica, record).await
-}
-
-pub(crate) async fn hydrate_reaction_cache_for_target(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    target_object_id: &str,
-) -> Result<usize> {
-    let records = docs_sync
-        .query_replica(
-            replica,
-            DocQuery::Prefix(stable_key("reactions", &format!("{target_object_id}/"))),
-        )
-        .await?;
-    let mut hydrated = 0usize;
-    for record in records {
-        if !record.key.ends_with("/state") {
-            continue;
-        }
-        hydrated +=
-            hydrate_reaction_cache_from_record(projection_store, replica, record).await? as usize;
-    }
-    Ok(hydrated)
-}
-
 pub(crate) async fn hydrate_topic_state(
     services: &ServiceHandles,
     topic_id: &str,
@@ -292,6 +205,7 @@ pub(crate) async fn hydrate_subscription_state(
         docs_sync,
         projection_store,
         scan_cache,
+        topic_id,
         replica,
         policy,
     )
@@ -338,61 +252,57 @@ pub(crate) async fn hydrate_live_sessions_from_replica(
     let changed = scan_cache.observe(replica.as_str(), PREFIX, scan_fingerprint(&records));
     let mut hydrated = 0usize;
     for record in records {
-        let state: LiveSessionStateDocV1 = serde_json::from_slice(&record.value)?;
-        projection_store
-            .mark_blob_status(
-                &state.current_manifest.hash,
-                blob_status(
-                    blob_service
-                        .blob_status(&state.current_manifest.hash)
-                        .await?,
-                ),
-            )
-            .await?;
-        let Some(manifest) =
-            fetch_manifest_blob::<LiveSessionManifestBlobV1>(blob_service, &state.current_manifest)
-                .await?
-        else {
+        if !record.key.ends_with("/state") {
             continue;
-        };
-        projection_store
-            .upsert_live_session_cache(live_projection_row_from_state(
-                &state, &manifest, topic_id, replica,
-            ))
-            .await?;
-        hydrated += 1;
+        }
+        hydrated += hydrate_live_session_from_record(
+            docs_sync,
+            blob_service,
+            projection_store,
+            topic_id,
+            replica,
+            record,
+            policy,
+        )
+        .await? as usize;
     }
     Ok((hydrated, changed))
 }
 
+/// `sessions/live/<id>/state` の record を 1 件反映する。
+///
+/// 行は、owner が署名した manifest と、読んだ replica の topic / channel に照らして確かめた session から作る(#1252)。
+/// 検証に通らない record は warn を出して `false` を返し、エラーにしない。
 pub(crate) async fn hydrate_live_session_from_record(
+    docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
     topic_id: &str,
     replica: &ReplicaId,
     record: DocRecord,
+    policy: DocFetchPolicy,
 ) -> Result<bool> {
-    let state: LiveSessionStateDocV1 = serde_json::from_slice(&record.value)?;
-    projection_store
-        .mark_blob_status(
-            &state.current_manifest.hash,
-            blob_status(
-                blob_service
-                    .blob_status(&state.current_manifest.hash)
-                    .await?,
-            ),
-        )
-        .await?;
-    let Some(manifest) =
-        fetch_manifest_blob::<LiveSessionManifestBlobV1>(blob_service, &state.current_manifest)
+    let Some(verified) =
+        verify_live_session_record(docs_sync, blob_service, replica, topic_id, &record, policy)
             .await?
     else {
         return Ok(false);
     };
+    hydrate_verified_live_session(projection_store, &verified).await
+}
+
+async fn hydrate_verified_live_session(
+    projection_store: &dyn ProjectionStore,
+    verified: &VerifiedLiveSession,
+) -> Result<bool> {
     projection_store
-        .upsert_live_session_cache(live_projection_row_from_state(
-            &state, &manifest, topic_id, replica,
-        ))
+        .mark_blob_status(
+            &verified.state().current_manifest.hash,
+            BlobCacheStatus::Available,
+        )
+        .await?;
+    projection_store
+        .upsert_live_session_cache(live_projection_row(verified))
         .await?;
     Ok(true)
 }
@@ -405,16 +315,25 @@ pub(crate) async fn hydrate_live_session_from_key(
     replica: &ReplicaId,
     key: &str,
 ) -> Result<bool> {
-    let Some(record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(key.to_string()))
-        .await?
-        .into_iter()
-        .next()
+    let Some(session_id) = key
+        .strip_prefix("sessions/live/")
+        .and_then(|rest| rest.strip_suffix("/state"))
     else {
         return Ok(false);
     };
-    hydrate_live_session_from_record(blob_service, projection_store, topic_id, replica, record)
-        .await
+    let Some(verified) = load_verified_live_session(
+        docs_sync,
+        blob_service,
+        replica,
+        topic_id,
+        session_id,
+        DocFetchPolicy::LocalThenRemote,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    hydrate_verified_live_session(projection_store, &verified).await
 }
 
 pub(crate) async fn hydrate_live_session_from_key_with_retry(
@@ -478,6 +397,9 @@ async fn hydrate_game_rooms_from_replica_tracked(
             .observe(replica.as_str(), PREFIX, scan_fingerprint(&records));
     let mut hydrated = 0usize;
     for record in records {
+        if !record.key.ends_with("/state") {
+            continue;
+        }
         hydrated +=
             usize::from(hydrate_game_room_from_record(services, topic_id, replica, record).await?);
     }
@@ -490,16 +412,21 @@ pub(crate) async fn hydrate_game_room_from_key(
     replica: &ReplicaId,
     key: &str,
 ) -> Result<bool> {
-    let Some(record) = services
+    // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ない(#1252)。
+    let records = services
         .docs_sync
-        .query_replica(replica, DocQuery::Exact(key.to_string()))
-        .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(false);
-    };
-    hydrate_game_room_from_record(services, topic_id, replica, record).await
+        .query_replica_exact_bounded(
+            replica,
+            key,
+            MAX_ENVELOPE_RECORDS_PER_OBJECT,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await?;
+    let mut hydrated = false;
+    for record in records {
+        hydrated |= hydrate_game_room_from_record(services, topic_id, replica, record).await?;
+    }
+    Ok(hydrated)
 }
 
 pub(crate) async fn hydrate_game_room_from_key_with_retry(
@@ -548,10 +475,12 @@ pub(crate) async fn hydrate_subscription_event(
         )
         .await? as usize);
     }
-    if key.starts_with("reactions/") && key.ends_with("/state") {
+    // `state` と `envelope` のどちらの event でも反映を試す(#1252)。行は envelope から作る。
+    if ReactionKey::from_doc_key(key).is_some() {
         return Ok(hydrate_reaction_cache_from_key(
             docs_sync,
             projection_store,
+            topic_id,
             replica,
             key,
             DocFetchPolicy::LocalThenRemote,
@@ -628,6 +557,7 @@ pub(crate) async fn hydrate_subscription_hint(
                     hydrated += hydrate_reaction_cache_for_target(
                         docs_sync,
                         projection_store,
+                        topic_id,
                         replica,
                         object.object_id.as_str(),
                     )

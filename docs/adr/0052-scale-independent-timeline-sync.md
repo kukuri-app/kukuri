@@ -42,7 +42,7 @@ Accepted
 
 | 反映 | 契機 | 読む量 |
 | --- | --- | --- |
-| 個別反映 | docs の event（`InsertLocal` / `InsertRemote`）と gossip hint。key 単位。`objects/`・`reactions/`・`withdrawals/`・`sessions/*` の `/state` を扱う | 対象の key とその関連 key だけ |
+| 個別反映 | docs の event（`InsertLocal` / `InsertRemote`）と gossip hint。key 単位。`objects/`・`reactions/` の `/state` と `/envelope`、`withdrawals/`・`sessions/*` の `/state` を扱う | 対象の key とその関連 key だけ |
 | 窓の追いつき | 購読タスクの起動時、docs の同期の完了（`SyncFinished`）、event の取りこぼし（`Lagged`）の検出。定期の polling はしない | 時系列の索引の新しい側から固定件数（窓）。projection に無い object だけを key 指定で反映する |
 | ページの範囲の照合（遡りの取得） | タイムラインで、利用者が遡ったページ（cursor つき）、projection が尽きたページ（空を含む）、private channel の現在 epoch の行が 1 件も無いページを取得するとき。thread を取得するとき | そのページの範囲（cursor より古い側を `limit` 件、cursor が無ければ新しい側を `limit` 件）を索引から読み、projection に無い object だけを key 指定で反映する |
 
@@ -77,6 +77,10 @@ Accepted
     数十 ms で届くので、多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く。以前の全件走査は、本文を 1 件ずつ timeout（2〜5 秒）まで待っていた。
   - projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で確認する（取り下げの event を取りこぼした行の本文を出し続けない）。
     確認は、同じ key の複数の record を上限つきで調べる入口（`hydrate_post_withdrawal_for_object`、Issue #1250）を通す。
+  - 照合が新しく反映した投稿は、その投稿の reaction も上限つきで反映する（初期値: 1 投稿あたり 32 件）。読むのは `reactions/<target>/` の key だけの上限つきの一覧 1 回と、
+    見つかった reaction ごとの envelope の key（下の reaction の規則）で、対象の reaction の総数に依存しない。docs の event が届かない古い reaction は、投稿が projection に入るこの時点でしか入らない
+    （以前は、空のページの全件走査が reaction も反映していた）。検証に通らない reaction は飛ばし、ページの取得を失敗させない。
+    上限を超える reaction と、projection に既にある投稿の reaction は、個別反映と窓の追いつきに任せる（best effort）。
   - thread は途中の返信が欠けうるので、ページが空でなくても照合する。thread の索引（`indexes/thread/<root>/`）を古い側から 512 件まで読む。
     これを超える thread は、超えた分を照合しない（新しい側の返信は、個別反映と窓の追いつきで入る）。root が projection にあれば、その channel の replica だけを読む。
   - private channel の scope は、参加状態の確認を通った epoch の replica だけを読む。参加していない channel の thread は照合しない。
@@ -85,7 +89,7 @@ Accepted
 - 購読していない topic の投稿でありうる repost 元、profile の投稿、profile の投稿の返信先は、取り下げの event が届かない。表示したときに、背景で `withdrawals/<object id>/state` を key 指定で確認する。
   確認は確認先（replica と object id の組）ごとに間隔（初期値 60 秒）を空け、同時実行と台帳の件数に上限を置く。view の生成は確認を待たない。取り下げから表示が伏せられるまで、最大でこの間隔ぶん遅れうる。
   台帳の key に replica を含めるのは、topic を偽った repost の snapshot が、正しい topic での確認を見送らせないようにするため。
-- 個別反映で投稿（`objects/<object id>/state`）を反映するときは、同じ object の `withdrawals/<object id>/state` を先に key 指定で確認する。
+- 個別反映で投稿（`objects/<object id>/state` または `/envelope` の event）を反映するときは、同じ object の `withdrawals/<object id>/state` を先に key 指定で確認する。
   取り下げの event が対象の envelope より先に届いて反映できなかった場合も、投稿の反映の時点で取り下げが反映される。
 - 取り下げとして読めない record と、署名・著者が対象と合わない record は、取り下げとして扱わない（warn を出して無視し、投稿の反映を続ける）。
   public topic の replica は誰でも書けるので、読めない record を 1 件置くだけで、特定の投稿を隠したり topic 全体の操作を止めたりできないようにする。
@@ -109,6 +113,30 @@ Accepted
   正しい投稿を隠せないようにする。上限を超える数の不正な entry を 1 つの key へ積まれた投稿は反映できない（best effort の範囲）。
 - 検証に通らない record と読めない record は、その object だけを飛ばす（warn）。同じ replica の他の投稿の反映と、タイムライン・thread の取得を失敗させない。
 - projection の投稿の行は、`projection_version` 3 から検証済みの投稿だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
+- reaction の反映も、`reactions/<target>/<reaction id>/state` の値を使わない（Issue #1252）。行は同じ reaction の署名つき envelope
+  （`reactions/<target>/<reaction id>/envelope`）から作る。envelope は `verify()` と `parse_reaction` に通り、対象と reaction id が key と一致し、
+  reaction id が「読んだ replica・対象・署名者・reaction の key」から決まる値（`deterministic_reaction_id`）と一致し、topic / channel が読んだ replica の
+  受け入れる範囲（投稿と同じ規則）と一致しなければならない。`state` と `envelope` のどちらの event でも個別反映を試す。
+  同じ key の record は上限つき（8 件）で読み、検証に通るもののうち署名時刻が最も新しい 1 件を使う。反映済みの行より古い envelope では行を戻さない
+  （古い署名つき envelope を置き直して、取り消した reaction を復活させられないようにする）。
+- live session と game room の反映は、署名された manifest で確かめる（Issue #1252）。書く側は、manifest 全体を content にした envelope（kind は
+  `live-session` / `game-session`）に署名して、state と同じ replica の `envelopes/<envelope id>` へ state より先に置き、`state.last_envelope_id` がそれを指す
+  （Dome の Instance / Preset と同じ形）。読む側は `state` の key と `envelopes/<envelope id>` の key を、それぞれ上限つき（8 件）で読む。
+  - live session と ScoreGame: 署名者が manifest の `owner_pubkey` と一致し、id の末尾（最後の `-` より後）が owner の pubkey の先頭（8 桁以上の 16 進）と
+    一致し、state の id・topic・channel・owner・status と manifest blob の内容が署名された manifest と一致し、topic / channel が読んだ replica の受け入れる範囲と
+    一致しなければならない。docs は同じ key を別の鍵でも書けるので、id と owner を結び付けて、別の鍵で署名した state による上書きを防ぐ。
+    新しく作る id の末尾は 16 桁（64 bit）とする。それより前の id は 8 桁（32 bit）で、結び付けの強さはその桁数ぶんに留まる。
+  - metaverse room: 訪問者も chat で room の manifest を書く設計なので、owner の署名は要求しない。topic / channel と Spatial Context が読んだ replica と一致し、
+    id が Spatial Context と owner から決まる値（`dome-<hash>` の 24 桁）と一致することを確かめる。owner であることは、これまでどおり一覧の時点で
+    署名つきの Dome Instance で確かめる（ADR 0036）。title などの表示内容は、その topic に書ける者が変えられる（Dome の authority の対象外）。
+  - 署名された manifest を確かめる前に、未検証の state が指す manifest blob を取りに行かない。例外は、署名つきの envelope を持たない `dome-` の id の state
+    （修正前の client が書いた Dome）で、manifest blob から上の metaverse room の規則で確かめる。
+  - 利用者の操作（終了・参加・更新・Dome の移動と削除）が読む state と manifest も、同じ検証を通す。
+  - 互換: 修正前の client が書いた live session と ScoreGame は署名つきの envelope を持たないので、修正後の client には表示されず、操作（終了・参加・更新）も
+    できない（owner 自身の client でも同じ）。未検証の state へ owner が署名を付け直す経路は作らない（第三者が置いた内容へ署名させる入口になるため）。
+    修正前の client には、その session がそれまでの状態のまま見え続ける。state doc の形は変えていないので、修正前の client は修正後の record を読める。
+- reaction・live session・game room でも、検証に通らない record と読めない record は、その object だけを飛ばす（warn）。全件走査・event・hint・利用者の操作を失敗させない。
+- reaction の行と、live session・game room の行は、`projection_version` 2 から検証済みの record だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
 
 ### 3. docs の読み出しの規則
 
@@ -136,7 +164,7 @@ Accepted
 ### 4. 利用者の操作
 
 - repost・reaction・reply・bookmark・取り下げ・community index の解決は、対象の行だけを引く。projection に無ければ `withdrawals/<object id>/state` と
-  `objects/<object id>/state` を key 指定で反映し、無ければ操作を失敗として返す。replica を走査しない。
+  `objects/<object id>/envelope`（署名つき envelope。§2）を key 指定で読んで反映し、無ければ操作を失敗として返す。replica を走査しない。
 - 読み出しの policy: 利用者の操作の docs の key 指定の読み出しは `LocalOnly` とする（entry の本体が手元に無い対象は、remote 取得で操作を待たせずに失敗として返す）。
   対象の本文が blob のときは、手元に無ければ `MissingBodyLedger` の間隔と回数の内でだけ remote を試す（§2。待ち時間は本文の取得の timeout が上限で、対象 1 件ぶん）。
   repost 元の解決だけは、購読していない topic の投稿を対象にできるよう `LocalThenRemote` とする（取得は #1207 の単一走査・クールダウン・同時実行の上限に従う）。
@@ -180,7 +208,7 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
 
 ## References
 
-- Issue #1221（統括）、#1239（本 ADR の実装）、#1243（replica の時間分割）、#1224（接続と取得の統合設計）、#1225（全件走査の頻度の抑制）、#1207（blob の再取得）
+- Issue #1221（統括）、#1239（本 ADR の実装）、#1248・#1252（反映の検証）、#1243（replica の時間分割）、#1224（接続と取得の統合設計）、#1225（全件走査の頻度の抑制）、#1207（blob の再取得）
 - `AGENTS.md` の「設計原則: 件数に依存しない処理」
 - `docs/architecture/replica-read-inventory.md`
 - iroh-docs 0.101.0: `src/store/util.rs`（`IndexKind::from`）、`src/store/fs/query.rs`、`src/store/fs/bounds.rs`、`src/store/fs.rs`（`get_fingerprint`）
