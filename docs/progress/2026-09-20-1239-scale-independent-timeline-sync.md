@@ -402,3 +402,20 @@ blocker 0 件で PASS。main の `d22ce89c`（#1258 / PR #1264: 索引の entry 
 - N-5: 索引の端の読み出しも query 数の上限の内に収めた（1 回の読み出しは、同じ秒の 1 回 + 256 回以下）。inventory に `query_time_index_asc` を足した。
 - main の取り込み: thread の索引の key の分解は docs-sync の `parse_entry` に寄せてあるので、#1258 の docs author は thread の照合にもそのまま渡る（main の `thread_index_entry` の変更は不要になった）。
 
+## T4b-1: docs の購読の通知（基準 commit `833ce8cd`）
+
+T4a は PR #1265（merge commit `833ce8cd`）で完了した。独立監査は 2 回（PASS、delta PASS）、必須 CI は全 job 成功。
+
+T4b（購読タスクの全件走査の置き換え）は大きいので、挙動を変えない追加を先に分ける。この段階は、購読タスクにはまだ触れない。
+
+- PR #1265 の監査の non-blocker: 索引の entry の docs author（#1258）が、索引の読み出しの層を通って照合へ渡ることを固定した
+  （`reconcile_passes_the_index_entry_docs_author_to_the_envelope_read`。`parse_entry` が docs author を捨てる mutation で失敗することを確認した）。恒久化した監査の test の `println!` と topic 名を直した。
+- docs-sync: `ReplicaNotice { Entry, SyncFinished, ContentReady, Lagged }` と `DocsSync::subscribe_replica_notices` を足した。
+  docs の event は buffer（256 件）を通り、溢れた分は `item.ok()` で黙って捨てられていた。1 投稿は 4 entry なので、まとまった同期では必ず溢れる。
+  購読側は取りこぼしを知る手段が無く、replica の全件走査がそれを覆っていた。iroh-docs の `SyncFinished`・`PendingContentReady` も捨てていた。
+  - `IrohDocsSync`・`MemoryDocsSync` は、同じ buffer から通知を流す。`subscribe_replica`（cn-indexer も使う）は従来どおり entry だけを返す。
+  - `ReloadableDocsSync` は転送を宣言した（宣言が無いと既定実装に落ち、取りこぼしが購読側へ届かない）。
+  - test: `overflow_is_reported_as_lagged_on_memory_docs`・`…_on_iroh_docs`、`default_notices_carry_entries_only`、`reloadable_docs_sync_forwards_replica_notices`。
+  - 未確認: `SyncFinished`・`ContentReady` が実際の 2 node の同期で届くことは、購読タスクがそれを使う段階（T4b-2）の結合 test で確かめる。この段階では本番の caller が無い。
+- `crates/desktop-runtime/src/stack.rs` が 1,000 行を超えたので、docs sync の転送の test を `tests/reloadable_docs_sync.rs` へ移した（内容は同じ）。
+

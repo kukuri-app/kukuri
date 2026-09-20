@@ -169,6 +169,9 @@ Accepted
   その秒だけを諦める。1 回の読み出しの query 数には上限（256）を置き、達したら、そこまでに読めた分と「続きの起点」（同じ向きの読み出しへ渡すと、打ち切った位置から続ける）を返す。
   呼び出し側は、返った件数が足りないことだけで「尽きた」と判定しない。読み出しは、発行した query の数も返す（呼び出し側が、次の読み出しまでの間隔を決めるのに使う）。
   有効な形の key を大量に置く書き込みは、この層では防げない。
+- docs の entry の event は、上限つきの buffer（256 件）を通る。溢れた分を黙って捨てない。replica の購読（`DocsSync::subscribe_replica_notices`）は、entry の event のほかに、
+  取りこぼし（`Lagged`）・相手との同期の終わり（`SyncFinished`）・受け取った entry の本体がそろったこと（`ContentReady`）を通知として受け取る。購読側は、これらを窓の追いつきの契機にする（§2）。
+  entry だけの購読（`subscribe_replica`）の挙動は変えない。通知を知らせない実装（trait の既定実装）は entry だけを流す。委譲 wrapper（`ReloadableDocsSync`）は転送を宣言する。
 - `query_replica_keys` は、`limit` が 0 でも replica を開く（権限の無い private replica は、読む件数にかかわらず失敗する）。
 
 ### 4. 利用者の操作
