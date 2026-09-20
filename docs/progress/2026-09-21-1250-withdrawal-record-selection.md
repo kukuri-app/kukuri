@@ -51,8 +51,9 @@ test は `crates/app-api/src/tests/sync/withdrawal_record_selection.rs`。test d
 | INVAR-3 | TR-6 | `withdrawal_read_failure_is_an_error_and_does_not_project_the_body` |
 | INVAR-4 | TR-7 | 既存の全件走査の test（`posts.rs`、`scale_independence.rs` など）。全件走査の関数は変更していない |
 
-不正な record は 4 種類を並べる: 読めない JSON、取り下げでない envelope、署名が合わない取り下げ、別の object を対象とする正しい署名の取り下げ。
-対象の著者と合わない署名つきの取り下げの拒否は、#1248 の `verification_rejects_each_kind_of_mismatch` が純粋な検証として固定している。
+不正な record は 5 種類を並べる: 読めない JSON、取り下げでない envelope、署名が合わない取り下げ、別の object を対象とする正しい署名の取り下げ、
+対象の著者でない鍵が正しく署名し、その object と著者を申告する取り下げ（TR-2。署名の検証だけでは拒否できず、`verify_withdrawal_against_records` の著者の照合で拒否する）。
+最後の 1 種類は、独立監査の指摘（N-1: AC-1 の第 4 種と TR-2 を直接検証する test が無い）を受けて足した。
 
 ## inventory
 

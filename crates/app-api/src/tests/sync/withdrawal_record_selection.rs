@@ -21,8 +21,9 @@ struct ShadowedWithdrawal {
 
 const WITHDRAWN_WORDS: &str = "words the author took back";
 
-/// 取り下げとして検証に通らない record を 4 種類作る(読めない JSON、取り下げでない envelope、
-/// 署名が合わない取り下げ、別の object を対象とする正しい署名の取り下げ)。
+/// 取り下げとして検証に通らない record を 5 種類作る(読めない JSON、取り下げでない envelope、
+/// 署名が合わない取り下げ、別の object を対象とする正しい署名の取り下げ、対象の著者でない鍵が正しく署名した
+/// その object の取り下げ)。最後の 1 件が、署名の検証だけでは拒否できない最も強い形。
 fn invalid_withdrawal_records(topic: &TopicId, target: &KukuriEnvelope) -> Vec<serde_json::Value> {
     let attacker_keys = generate_keys();
     let attacker_post = signed_post(
@@ -46,11 +47,43 @@ fn invalid_withdrawal_records(topic: &TopicId, target: &KukuriEnvelope) -> Vec<s
     forged.content = forged
         .content
         .replace(attacker_post.id.as_str(), target.id.as_str());
+    // 攻撃者の鍵で正しく署名し、対象の id と著者を申告する取り下げ(TR-2)。署名は通るが、署名者が対象の著者と違う。
+    let claim = |value: &str| {
+        value
+            .replace(attacker_post.id.as_str(), target.id.as_str())
+            .replace(attacker_post.pubkey.as_str(), target.pubkey.as_str())
+    };
+    let foreign_signer = kukuri_core::sign_envelope_json(
+        &attacker_keys,
+        "post_withdrawal",
+        other_withdrawal
+            .tags
+            .iter()
+            .map(|tag| tag.iter().map(|value| claim(value)).collect())
+            .collect(),
+        &serde_json::from_str::<serde_json::Value>(claim(&other_withdrawal.content).as_str())
+            .expect("withdrawal content"),
+    )
+    .expect("withdrawal signed by another key");
+    foreign_signer
+        .verify()
+        .expect("the signature itself is valid");
+    assert_ne!(foreign_signer.pubkey, target.pubkey);
+    // 取り下げとして読め、この object を対象とする。拒否するのは、対象の著者との照合だけ。
+    assert_eq!(
+        foreign_signer
+            .post_withdrawal_content()
+            .expect("withdrawal content")
+            .expect("post withdrawal")
+            .target_object_id,
+        target.id
+    );
     vec![
         serde_json::json!({ "not": "a withdrawal" }),
         serde_json::to_value(&attacker_post).expect("post json"),
         serde_json::to_value(&forged).expect("forged json"),
         serde_json::to_value(&other_withdrawal).expect("other withdrawal json"),
+        serde_json::to_value(&foreign_signer).expect("foreign signer json"),
     ]
 }
 
