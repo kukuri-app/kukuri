@@ -3,6 +3,7 @@ mod docs_author;
 mod iroh_sync;
 mod keys;
 mod memory;
+mod notices;
 
 mod relay;
 mod replicas;

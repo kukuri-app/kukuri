@@ -8,6 +8,7 @@ use kukuri_transport::SeedPeer;
 use serde::{Deserialize, Serialize};
 
 pub type DocEventStream = Pin<Box<dyn Stream<Item = Result<DocEvent>> + Send>>;
+pub type ReplicaNoticeStream = Pin<Box<dyn Stream<Item = Result<ReplicaNotice>> + Send>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocOp {
@@ -98,6 +99,23 @@ pub struct DocEvent {
     pub docs_author: Option<String>,
 }
 
+/// replica の購読が受け取る通知(#1239)。
+///
+/// entry の event は上限つきの buffer を通るので、まとまった同期では取りこぼす。取りこぼしを黙って捨てると、
+/// 購読側は「全件を読み直す」以外に追いつく手段が無くなる。取りこぼしと同期の区切りを通知として流し、
+/// 購読側が上限つきの窓の追いつきを予約できるようにする。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplicaNotice {
+    /// entry が 1 件、手元の replica に入った。
+    Entry(DocEvent),
+    /// 相手との同期が 1 回終わった(成功・失敗を問わない)。
+    SyncFinished,
+    /// 同期で受け取った entry の本体が、手元にそろった。
+    ContentReady,
+    /// 購読側が遅れて、`missed` 件の通知を受け取れなかった。
+    Lagged { missed: u64 },
+}
+
 #[async_trait]
 pub trait DocsSync: Send + Sync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()>;
@@ -178,6 +196,18 @@ pub trait DocsSync: Send + Sync {
         anyhow::bail!("this DocsSync implementation does not support reads by docs author")
     }
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream>;
+    /// entry の event に加えて、取りこぼしと同期の区切りも受け取る購読(#1239)。
+    ///
+    /// 既定実装は `subscribe_replica` の entry だけを流す(取りこぼしと同期の区切りを知らせない実装として振る舞う)。
+    async fn subscribe_replica_notices(
+        &self,
+        replica_id: &ReplicaId,
+    ) -> Result<ReplicaNoticeStream> {
+        let events = self.subscribe_replica(replica_id).await?;
+        Ok(Box::pin(futures_util::StreamExt::map(events, |event| {
+            event.map(ReplicaNotice::Entry)
+        })))
+    }
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()>;
     async fn learn_peer(&self, _endpoint_id: &str) -> Result<()> {
         Ok(())

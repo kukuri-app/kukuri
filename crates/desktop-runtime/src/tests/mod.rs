@@ -59,6 +59,7 @@ mod device_backup;
 mod identity_restart;
 mod media_blob_restore;
 mod private_channels;
+mod reloadable_docs_sync;
 mod replication_heuristics;
 mod runtime_events;
 mod seeded_dht;

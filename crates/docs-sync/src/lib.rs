@@ -3,6 +3,7 @@ mod iroh_sync;
 mod keys;
 mod memory;
 
+mod notices;
 mod replicas;
 #[cfg(test)]
 mod tests;
@@ -24,5 +25,5 @@ pub use time_index::{
 };
 pub use types::{
     DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
-    DocOp, DocQuery, DocRecord, DocsSync,
+    DocOp, DocQuery, DocRecord, DocsSync, ReplicaNotice, ReplicaNoticeStream,
 };

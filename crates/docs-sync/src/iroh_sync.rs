@@ -13,20 +13,20 @@ use kukuri_core::{DocsAuthorSeed, ReplicaId};
 use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::BroadcastStream;
 use tracing::{info, warn};
 
 use crate::access::parse_namespace_secret_hex;
+use crate::notices::{entry_stream, notice_stream};
 use crate::replicas::public_replica_secret;
 use crate::types::{
     DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
-    DocOp, DocQuery, DocRecord, DocsSync,
+    DocOp, DocQuery, DocRecord, DocsSync, ReplicaNotice, ReplicaNoticeStream,
 };
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
 struct ReplicaHandle {
     doc: Doc,
-    events: broadcast::Sender<DocEvent>,
+    events: broadcast::Sender<ReplicaNotice>,
     sync_peer_ids: BTreeSet<String>,
     live_task: JoinHandle<()>,
 }
@@ -237,22 +237,28 @@ impl IrohDocsSync {
                 if let Ok(event) = item {
                     match event {
                         iroh_docs::engine::LiveEvent::InsertLocal { entry } => {
-                            let _ = live_events.send(DocEvent {
+                            let _ = live_events.send(ReplicaNotice::Entry(DocEvent {
                                 replica_id: live_replica.clone(),
                                 key: String::from_utf8_lossy(entry.key()).to_string(),
                                 content_hash: entry.content_hash().to_string(),
                                 source_peer: None,
                                 docs_author: Some(entry.author().to_string()),
-                            });
+                            }));
                         }
                         iroh_docs::engine::LiveEvent::InsertRemote { from, entry, .. } => {
-                            let _ = live_events.send(DocEvent {
+                            let _ = live_events.send(ReplicaNotice::Entry(DocEvent {
                                 replica_id: live_replica.clone(),
                                 key: String::from_utf8_lossy(entry.key()).to_string(),
                                 content_hash: entry.content_hash().to_string(),
                                 source_peer: Some(from.to_string()),
                                 docs_author: Some(entry.author().to_string()),
-                            });
+                            }));
+                        }
+                        iroh_docs::engine::LiveEvent::SyncFinished(_) => {
+                            let _ = live_events.send(ReplicaNotice::SyncFinished);
+                        }
+                        iroh_docs::engine::LiveEvent::PendingContentReady => {
+                            let _ = live_events.send(ReplicaNotice::ContentReady);
                         }
                         _ => {}
                     }
@@ -271,7 +277,7 @@ impl IrohDocsSync {
         Ok(doc)
     }
 
-    async fn sender(&self, replica_id: &ReplicaId) -> Result<broadcast::Sender<DocEvent>> {
+    async fn sender(&self, replica_id: &ReplicaId) -> Result<broadcast::Sender<ReplicaNotice>> {
         self.ensure_replica(replica_id).await?;
         let guard = self.replicas.lock().await;
         let sender = guard
@@ -436,13 +442,13 @@ impl DocsSync for IrohDocsSync {
                     .await?;
                 self.supersede_legacy_entry(&doc, &legacy, key.as_str())
                     .await?;
-                let _ = sender.send(DocEvent {
+                let _ = sender.send(ReplicaNotice::Entry(DocEvent {
                     replica_id: replica_id.clone(),
                     key,
                     content_hash: content_hash.to_string(),
                     source_peer: None,
                     docs_author: Some(author.to_string()),
-                });
+                }));
             }
             DocOp::SetBytes { key, value } => {
                 let content_hash = doc
@@ -450,13 +456,13 @@ impl DocsSync for IrohDocsSync {
                     .await?;
                 self.supersede_legacy_entry(&doc, &legacy, key.as_str())
                     .await?;
-                let _ = sender.send(DocEvent {
+                let _ = sender.send(ReplicaNotice::Entry(DocEvent {
                     replica_id: replica_id.clone(),
                     key,
                     content_hash: content_hash.to_string(),
                     source_peer: None,
                     docs_author: Some(author.to_string()),
-                });
+                }));
             }
             DocOp::DeletePrefix { prefix } => {
                 let _ = doc.del(author, prefix.as_bytes().to_vec()).await?;
@@ -588,11 +594,15 @@ impl DocsSync for IrohDocsSync {
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {
         let sender = self.sender(replica_id).await?;
-        let stream = futures_util::StreamExt::filter_map(
-            BroadcastStream::new(sender.subscribe()),
-            |item| async move { item.ok().map(Ok) },
-        );
-        Ok(Box::pin(stream))
+        Ok(entry_stream(sender.subscribe()))
+    }
+
+    async fn subscribe_replica_notices(
+        &self,
+        replica_id: &ReplicaId,
+    ) -> Result<ReplicaNoticeStream> {
+        let sender = self.sender(replica_id).await?;
+        Ok(notice_stream(sender.subscribe()))
     }
 
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {

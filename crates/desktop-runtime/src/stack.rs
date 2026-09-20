@@ -9,7 +9,7 @@ use kukuri_blob_service::{BlobService, BlobStatus, IrohBlobService, StoredBlob};
 use kukuri_core::{BlobHash, GossipHint, ReplicaId, TopicId};
 use kukuri_docs_sync::{
     DocEventStream, DocFetchPolicy, DocKeyPage, DocKeyQuery, DocOp, DocQuery, DocRecord, DocsSync,
-    IrohDocsSync,
+    IrohDocsSync, ReplicaNoticeStream,
 };
 use kukuri_iroh_node::IrohDocsNode;
 use kukuri_transport::{
@@ -150,6 +150,8 @@ reloadable_service! {
             policy: DocFetchPolicy,
         ) -> Result<Option<DocRecord>>;
         async fn subscribe_replica(replica_id: &ReplicaId) -> Result<DocEventStream>;
+        // #1239: 宣言が無いと trait の既定実装(entry だけ)に落ち、取りこぼしと同期の区切りが購読側へ届かない。
+        async fn subscribe_replica_notices(replica_id: &ReplicaId) -> Result<ReplicaNoticeStream>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
         async fn restart_replica_sync(replica_id: &ReplicaId) -> Result<()>;
@@ -539,57 +541,6 @@ mod tests {
 
     // #1239: desktop が実際に使う `ReloadableDocsSync` 越しでも、上限つきの key の読み出しが内側へ
     // 転送される。宣言が抜けると trait の既定実装(エラー)に落ち、窓の追いつきと遡りが動かなくなる。
-    #[tokio::test]
-    async fn reloadable_docs_sync_forwards_bounded_key_queries() {
-        let node = IrohDocsNode::memory().await.expect("docs node");
-        let docs = ReloadableDocsSync::new(Arc::new(IrohDocsSync::new(node.clone())));
-        let replica = kukuri_docs_sync::topic_replica_id("kukuri:topic:reloadable-key-query");
-        docs.open_replica(&replica).await.expect("open replica");
-        for key in [
-            "indexes/timeline/a",
-            "indexes/timeline/b",
-            "objects/a/state",
-        ] {
-            docs.apply_doc_op(
-                &replica,
-                kukuri_docs_sync::DocOp::SetJson {
-                    key: key.into(),
-                    value: serde_json::json!({}),
-                },
-            )
-            .await
-            .expect("write entry");
-        }
-
-        let entries = docs
-            .query_replica_keys(
-                &replica,
-                kukuri_docs_sync::DocKeyQuery {
-                    prefix: "indexes/timeline/".into(),
-                    order: kukuri_docs_sync::DocKeyOrder::Descending,
-                    limit: 1,
-                },
-            )
-            .await
-            .expect("bounded key query must be forwarded to the inner docs sync");
-
-        // #1257: 打ち切りの情報も、内側の結果をそのまま返す。
-        assert!(entries.reached_limit);
-        assert_eq!(
-            entries
-                .entries
-                .into_iter()
-                .map(|entry| entry.key)
-                .collect::<Vec<_>>(),
-            vec!["indexes/timeline/b"]
-        );
-        docs.current().await.shutdown().await;
-        node.shutdown().await.expect("shutdown node");
-    }
-
-    // #1152 / ADR 0046 §6.2: desktop が実際に使う `ReloadableBlobService` 越しでも、
-    // ephemeral 取得は remote の bytes をローカルへ保存せず、状態確認は remote から取得しない。
-    // 既定実装へ落ちる method があると、黙って永続化する `fetch_blob` に戻る。
     #[tokio::test]
     async fn reloadable_blob_service_keeps_ephemeral_fetch_and_local_status_non_persistent() {
         let sender_dir = tempdir().expect("sender tempdir");
