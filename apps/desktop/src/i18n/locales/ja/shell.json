@@ -10,6 +10,7 @@
   "navigation": {
     "activeCount": "{{count}} 件アクティブ",
     "addTopic": "トピックを追加",
+    "topicNameLabel": "トピック名",
     "channel": "チャンネル",
     "channelCreateJoin": "チャンネル作成/参加",
     "channelsGroup": "チャンネル",

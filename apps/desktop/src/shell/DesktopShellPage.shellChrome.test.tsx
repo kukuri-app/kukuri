@@ -259,7 +259,7 @@ test('desktop shell surfaces docs-assisted topic recovery in diagnostics', async
 
   const controlCenter = await openControlCenter(user);
   await user.type(within(controlCenter).getByPlaceholderText('general'), 'kukuri:topic:relay');
-  await user.click(within(controlCenter).getByRole('button', { name: 'Add' }));
+  await user.click(within(controlCenter).getByRole('button', { name: 'Add Topic' }));
 
   const drawer = await openSettingsSection(user, 'discovery');
   await waitFor(() => {

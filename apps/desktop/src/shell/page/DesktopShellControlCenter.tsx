@@ -416,12 +416,15 @@ export function DesktopShellControlCenter({
                   value={topicInput}
                   onChange={(event) => onTopicInputChange(event.target.value)}
                   placeholder={t('shell:navigation.placeholder')}
-                  aria-label={t('shell:navigation.addTopic')}
+                  aria-label={t('shell:navigation.topicNameLabel')}
                 />
+                {/* #1210: icon-only なので tooltip と accessible name が用途を伝える唯一の
+                    手段になる。総称の「追加」ではなく、何を追加するのかまで示す。入力欄と
+                    同じ名前にすると control が 2 つとも同名になるため、入力欄は項目名で呼ぶ。 */}
                 <IconButton
                   variant='secondary'
                   type='button'
-                  label={t('common:actions.add')}
+                  label={t('shell:navigation.addTopic')}
                   onClick={() => void onAddTopic()}
                 >
                   <BookPlus className='size-4' aria-hidden='true' />

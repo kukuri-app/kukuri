@@ -126,7 +126,7 @@ test('profile overview aggregates public posts across topics', async () => {
   const controlCenter = await openControlCenter(user);
   await user.click(within(controlCenter).getByPlaceholderText('general'));
   await user.paste('kukuri:topic:second');
-  await user.click(within(controlCenter).getByRole('button', { name: 'Add' }));
+  await user.click(within(controlCenter).getByRole('button', { name: 'Add Topic' }));
   await waitFor(() => {
     expectActiveTopic('kukuri:topic:second');
   });

@@ -5,7 +5,6 @@
   },
   "actions": {
     "accept": "Accept",
-    "add": "Add",
     "authenticate": "Authenticate",
     "bookmark": "Bookmark",
     "block": "Block",

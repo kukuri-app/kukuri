@@ -10,6 +10,7 @@
   "navigation": {
     "activeCount": "{{count}} 个活跃",
     "addTopic": "添加主题",
+    "topicNameLabel": "主题名称",
     "channel": "频道",
     "channelCreateJoin": "创建 / 加入频道",
     "channelsGroup": "频道",

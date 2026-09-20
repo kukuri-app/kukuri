@@ -5,7 +5,6 @@
   },
   "actions": {
     "accept": "接受",
-    "add": "添加",
     "authenticate": "认证",
     "bookmark": "收藏",
     "block": "屏蔽",

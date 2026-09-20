@@ -51,10 +51,10 @@ test('Control Center icon tooltips render in front of the panel', async ({ page 
   const controlCenter = page.getByRole('complementary', { name: 'Control Center' });
   await expect(controlCenter).toBeVisible();
 
-  const addTopic = controlCenter.getByRole('button', { name: 'Add', exact: true });
+  const addTopic = controlCenter.getByRole('button', { name: 'Add Topic', exact: true });
   await addTopic.hover();
   const tooltip = page.getByRole('tooltip');
-  await expect(tooltip).toHaveText('Add');
+  await expect(tooltip).toHaveText('Add Topic');
 
   await expect
     .poll(() =>

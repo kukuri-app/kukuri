@@ -10,6 +10,7 @@
   "navigation": {
     "activeCount": "{{count}} active",
     "addTopic": "Add Topic",
+    "topicNameLabel": "Topic name",
     "channel": "Channel",
     "channelCreateJoin": "Create / Join Channel",
     "channelsGroup": "Channels",

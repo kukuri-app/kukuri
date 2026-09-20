@@ -32,7 +32,7 @@ async function addTopic(user: ReturnType<typeof userEvent.setup>, topic: string)
   const controlCenter = await openControlCenter(user);
   await user.clear(within(controlCenter).getByPlaceholderText('general'));
   await user.type(within(controlCenter).getByPlaceholderText('general'), topic);
-  await user.click(within(controlCenter).getByRole('button', { name: 'Add' }));
+  await user.click(within(controlCenter).getByRole('button', { name: 'Add Topic' }));
 }
 
 beforeEach(() => {

@@ -474,7 +474,7 @@ test('topic and private channel selection sync into the hash route', async () =>
 
   let controlCenter = await openControlCenter(user);
   await user.type(within(controlCenter).getByPlaceholderText('general'), 'kukuri:topic:second');
-  await user.click(within(controlCenter).getByRole('button', { name: 'Add' }));
+  await user.click(within(controlCenter).getByRole('button', { name: 'Add Topic' }));
 
   await waitFor(() => {
     expect(window.location.hash).toBe('#/timeline?topic=kukuri%3Atopic%3Asecond');

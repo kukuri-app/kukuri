@@ -5,7 +5,6 @@
   },
   "actions": {
     "accept": "同意する",
-    "add": "追加",
     "authenticate": "認証",
     "bookmark": "ブックマーク",
     "block": "ブロック",
