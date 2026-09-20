@@ -196,6 +196,7 @@ table object_index_cache
   column cid=16 name=repost_of_json type=TEXT notnull=0 default=None pk=0
   column cid=17 name=attachments_json type=TEXT notnull=1 default=Some("'[]'") pk=0
   column cid=18 name=content_labels_json type=TEXT notnull=1 default=Some("'[]'") pk=0
+  column cid=19 name=source_docs_author type=TEXT notnull=0 default=None pk=0
 table object_thread_cache
   column cid=0 name=object_id type=TEXT notnull=0 default=None pk=1
   column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=0

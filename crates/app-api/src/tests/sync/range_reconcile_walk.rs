@@ -309,3 +309,54 @@ async fn malformed_keys_at_the_head_of_a_thread_index_do_not_hide_the_replies() 
         assert!(is_projected(store.as_ref(), reply).await);
     }
 }
+
+// thread の最後のページ(索引が尽きる範囲)で、符号つき 64 bit に収まらない時刻の範囲に形の違う key を
+// 置かれても、照合はその範囲を読まずに「確かめ終えた」とする(独立監査 PR #1265 の再現 test を恒久化)。
+// 続きの起点が `i64::MAX` に張り付くと、照合のたびに query 数の上限まで読み続ける。
+#[tokio::test]
+async fn malformed_keys_beyond_the_valid_time_range_do_not_keep_the_thread_tail_unfinished() {
+    let topic = "kukuri:topic:audit-t4a-thread-tail";
+    let replica = topic_replica_id(topic);
+    let docs_sync = Arc::new(RecordingDocsSync::default());
+    let (app, _store) =
+        recording_app_with_blobs(docs_sync.clone(), Arc::new(MemoryBlobService::default()));
+    let root = app
+        .create_post(topic, "root", None)
+        .await
+        .expect("create root");
+    let index_prefix = stable_key("indexes/thread", &format!("{root}/"));
+    for time in [
+        "09500000000000000001",
+        "09700000000000000002",
+        "09900000000000000003",
+    ] {
+        for index in 0..80usize {
+            docs_sync
+                .apply_doc_op(
+                    &replica,
+                    DocOp::SetJson {
+                        key: format!("{index_prefix}{time}-~junk-{index:03}"),
+                        value: serde_json::json!({}),
+                    },
+                )
+                .await
+                .expect("write junk");
+        }
+    }
+    let root_id = EnvelopeId::from(root.as_str());
+    let mut reads = Vec::new();
+    for _ in 0..8usize {
+        docs_sync.reads.lock().await.clear();
+        app.reconcile_thread(topic, &root_id, None, 30)
+            .await
+            .expect("reconcile thread");
+        reads.push(docs_sync.reads.lock().await.len());
+        app.services.range_checks.expire_all_for_test().await;
+    }
+    app.shutdown().await;
+    println!("audit_t4a: 照合ごとの docs の読み出しの回数 = {reads:?}");
+    assert!(
+        reads.iter().skip(2).any(|count| *count < 100),
+        "the tail of the thread must settle instead of walking to the query cap every time: {reads:?}"
+    );
+}

@@ -379,6 +379,10 @@ impl DesktopRuntime {
         )
         .await?;
         let keys = load_or_create_keys(&db_path, identity_mode)?;
+        // docs へ何かを書く前に、書き込みの名義をアカウントの docs author にする(ADR 0053 §1)。
+        iroh_stack
+            .use_account_docs_author(keys.derive_docs_author_seed())
+            .await?;
         let author_keys = Arc::new(keys.clone());
         let services = ServiceHandles::new(
             store.clone(),

@@ -446,11 +446,35 @@ pub(crate) async fn hydrate_game_room_from_key_with_retry(
     Ok(0)
 }
 
+/// key だけを指定する形(test 用)。本番の購読は、event の docs author を渡す `hydrate_subscription_doc_event` を使う。
+#[cfg(test)]
 pub(crate) async fn hydrate_subscription_event(
     services: &ServiceHandles,
     topic_id: &str,
     replica: &ReplicaId,
     key: &str,
+) -> Result<usize> {
+    hydrate_doc_event_key(services, topic_id, replica, key, None).await
+}
+
+/// docs の event を 1 件、key 単位で反映する。`docs_author` は、その entry を書いた docs author(`DocEvent::docs_author`)。
+/// 投稿と取り下げの読み出しで、読む record を選ぶ手がかりに使う(ADR 0053 §3)。
+pub(crate) async fn hydrate_subscription_doc_event(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    event: &DocEvent,
+) -> Result<usize> {
+    let docs_author = event.docs_author.as_deref();
+    hydrate_doc_event_key(services, topic_id, replica, event.key.as_str(), docs_author).await
+}
+
+async fn hydrate_doc_event_key(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    key: &str,
+    docs_author: Option<&str>,
 ) -> Result<usize> {
     let docs_sync = services.docs_sync.as_ref();
     let blob_service = services.blob_service.as_ref();
@@ -466,11 +490,12 @@ pub(crate) async fn hydrate_subscription_event(
         {
             return Ok(0);
         }
-        return Ok(hydrate_object_in_topic(
+        return Ok(hydrate_object_in_topic_with_hint(
             services,
             topic_id,
             replica,
             &object_id,
+            docs_author,
             DocFetchPolicy::LocalThenRemote,
         )
         .await? as usize);
@@ -489,11 +514,15 @@ pub(crate) async fn hydrate_subscription_event(
     }
     // #1239: 取り下げの event も key 単位で反映する(以前は全件走査か hint まで反映されなかった)。
     if let Some(object_id) = object_id_from_post_withdrawal_key(key) {
-        return Ok(hydrate_post_withdrawal_for_object(
+        return Ok(hydrate_post_withdrawal_for_object_with_hints(
             docs_sync,
             projection_store,
             replica,
             &object_id,
+            WithdrawalReadHints {
+                target_docs_author: None,
+                writer_docs_author: docs_author,
+            },
             DocFetchPolicy::LocalThenRemote,
         )
         .await?
@@ -541,11 +570,15 @@ pub(crate) async fn hydrate_subscription_hint(
             let mut hydrated = 0usize;
             for object in objects {
                 if object.object_kind == "post_withdrawal" {
-                    hydrated += hydrate_post_withdrawal_for_object(
+                    hydrated += hydrate_post_withdrawal_for_object_with_hints(
                         docs_sync,
                         projection_store,
                         replica,
                         &EnvelopeId::from(object.object_id.as_str()),
+                        WithdrawalReadHints {
+                            target_docs_author: None,
+                            writer_docs_author: object.docs_author.as_deref(),
+                        },
                         DocFetchPolicy::LocalThenRemote,
                     )
                     .await?
@@ -564,11 +597,12 @@ pub(crate) async fn hydrate_subscription_hint(
                     .await?;
                     continue;
                 }
-                hydrated += hydrate_object_in_topic(
+                hydrated += hydrate_object_in_topic_with_hint(
                     services,
                     topic_id,
                     replica,
                     &EnvelopeId::from(object.object_id.as_str()),
+                    object.docs_author.as_deref(),
                     DocFetchPolicy::LocalThenRemote,
                 )
                 .await? as usize;

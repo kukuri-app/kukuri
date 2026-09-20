@@ -97,11 +97,25 @@ pub(crate) async fn hydrate_object_in_topic(
     object_id: &EnvelopeId,
     policy: DocFetchPolicy,
 ) -> Result<bool> {
+    hydrate_object_in_topic_with_hint(services, topic_id, replica, object_id, None, policy).await
+}
+
+/// `hydrate_object_in_topic` に、その投稿の envelope を書いた docs author の手がかり(docs の event、hint の
+/// docs author)を足したもの(ADR 0053 §3)。手がかりは読む record を選ぶことだけに使う。
+pub(crate) async fn hydrate_object_in_topic_with_hint(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    object_id: &EnvelopeId,
+    docs_author_hint: Option<&str>,
+    policy: DocFetchPolicy,
+) -> Result<bool> {
     Ok(hydrate_object_in_topic_with(
         services,
         topic_id,
         replica,
         object_id,
+        docs_author_hint,
         policy,
         BodyFetch::Bounded,
     )
@@ -111,33 +125,57 @@ pub(crate) async fn hydrate_object_in_topic(
 
 /// `hydrate_object_in_topic` の本体。反映の結果の内訳と、本文の取り方を指定できる。
 ///
-/// 取り下げを先に反映する。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
-/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。取り下げの event が対象の
-/// envelope より先に届いて反映できなかった場合も、投稿を反映するときにここで取り直す。
+/// envelope を先に読んで検証し、著者が署名つきの tag で申告した docs author で取り下げを読む(ADR 0053 §3)。
+/// `docs_author_hint` は envelope を書いた docs author の手がかり(docs の event、hint、索引の entry の docs author)で、
+/// 読む record を選ぶことだけに使う。
+///
+/// 取り下げの反映は、投稿の行を書くより前に行う。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
+/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。取り下げの event が対象の envelope より先に届いて
+/// 反映できなかった場合も、投稿を反映するときにここで取り直す。検証に通る envelope が無いときは取り下げを読まない
+/// (対象が無い取り下げは検証できない。envelope が届いた event でもう一度ここを通る)。
 ///
 /// 行は署名つき envelope から作る(#1248)。`topic_id` は、その replica を読む文脈の topic(private channel の
-/// replica id は topic を含まない)。検証に通る envelope が無ければ反映しない。envelope が後から届いた場合は、
-/// その event でもう一度呼ばれる。読む docs の record は、取り下げの key と envelope の key の、それぞれ上限つきの
-/// 件数だけ(#1248、#1250)。
+/// replica id は topic を含まない)。読む docs の record 数は定数で、key に積まれた record 数にも replica の大きさにも
+/// 依存しない(#1248、#1250、#1258)。
 pub(crate) async fn hydrate_object_in_topic_with(
     services: &ServiceHandles,
     topic_id: &str,
     replica: &ReplicaId,
     object_id: &EnvelopeId,
+    docs_author_hint: Option<&str>,
     policy: DocFetchPolicy,
     body_fetch: BodyFetch,
 ) -> Result<ObjectHydration> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
-    // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
-    // 同じ key には docs author ごとの record がありうるので、先頭の 1 件だけを見ない(#1250)。
-    hydrate_post_withdrawal_for_object(docs_sync, projection_store, replica, object_id, policy)
-        .await?;
-    let post = match load_post(docs_sync, replica, topic_id, object_id, policy).await? {
+    let post = match load_post_with_hint(
+        docs_sync,
+        replica,
+        topic_id,
+        object_id,
+        docs_author_hint,
+        policy,
+    )
+    .await?
+    {
         PostLoad::Verified(post) => *post,
         PostLoad::Missing => return Ok(ObjectHydration::Missing),
         PostLoad::Rejected => return Ok(ObjectHydration::Invalid),
     };
+    // 反映できなかった取り下げ(検証できない)は、投稿の反映を止めない。読み出しの失敗はエラーとして返し、
+    // 「取り下げなし」として本文つきの行を作らない。
+    hydrate_post_withdrawal_for_object_with_hints(
+        docs_sync,
+        projection_store,
+        replica,
+        object_id,
+        WithdrawalReadHints {
+            target_docs_author: post.docs_author(),
+            writer_docs_author: None,
+        },
+        policy,
+    )
+    .await?;
     hydrate_object_projection_from_post(
         services.blob_service.as_ref(),
         projection_store,

@@ -30,6 +30,7 @@ fn projection_row(
         source_key: format!("objects/{object_id}/header"),
         source_envelope_id: EnvelopeId::from(object_id),
         source_blob_hash: Some(hash),
+        source_docs_author: None,
         derived_at: created_at,
         projection_version: 2,
     }
@@ -314,6 +315,7 @@ async fn projection_rebuild_from_docs_blobs_only() {
             source_key: "objects/object-root/header".into(),
             source_envelope_id: root_id.clone(),
             source_blob_hash: Some(BlobHash::new("1".repeat(64))),
+            source_docs_author: None,
             derived_at: 10,
             projection_version: 2,
         },
@@ -339,6 +341,7 @@ async fn projection_rebuild_from_docs_blobs_only() {
             source_key: "objects/object-reply/header".into(),
             source_envelope_id: reply_id.clone(),
             source_blob_hash: Some(BlobHash::new("2".repeat(64))),
+            source_docs_author: None,
             derived_at: 11,
             projection_version: 2,
         },

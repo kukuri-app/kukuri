@@ -8,8 +8,8 @@ use futures_util::StreamExt;
 use iroh::EndpointAddr;
 use iroh_docs::api::Doc;
 use iroh_docs::store::{Query, SortBy, SortDirection};
-use iroh_docs::{Capability, DocTicket, NamespaceSecret};
-use kukuri_core::ReplicaId;
+use iroh_docs::{Author, AuthorId, Capability, DocTicket, NamespaceSecret};
+use kukuri_core::{DocsAuthorSeed, ReplicaId};
 use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
@@ -46,6 +46,15 @@ pub struct IrohDocsSync {
     peers: Arc<PeerAddrBook>,
     private_replica_secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
+    /// アカウントの署名鍵から導出した docs author(ADR 0053)。設定するまでは `None`。
+    account_docs_author: Arc<Mutex<Option<AccountDocsAuthor>>>,
+}
+
+/// 導出した docs author と、それより前にこの保存場所で書き込みに使っていた docs author(端末ごとの乱数鍵)。
+#[derive(Clone)]
+struct AccountDocsAuthor {
+    id: AuthorId,
+    legacy: Vec<AuthorId>,
 }
 
 impl IrohDocsSync {
@@ -57,7 +66,62 @@ impl IrohDocsSync {
             peers,
             private_replica_secrets: Arc::new(Mutex::new(HashMap::new())),
             remote_fetch_retries: Arc::new(Mutex::new(RemoteFetchRetryState::default())),
+            account_docs_author: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// アカウントの署名鍵から導出した docs author を import し、既定の docs author にする(ADR 0053 §1)。戻り値はその id。
+    ///
+    /// 以後の書き込みは、この docs author の名義になる。それまでの docs author の鍵は保存場所に残す。その名義の entry は
+    /// 旧 record として扱い、同じ key を書き直すときと prefix を消すときに、旧い名義の entry も消す
+    /// (`supersede_legacy_entry`)。何度呼んでも同じ結果になる。
+    pub async fn use_account_docs_author(&self, seed: &DocsAuthorSeed) -> Result<String> {
+        let author = Author::from_bytes(seed.expose_secret_bytes());
+        let id = author.id();
+        let docs = self.node.docs();
+        docs.author_import(author).await?;
+        docs.author_set_default(id).await?;
+        let mut legacy = Vec::new();
+        let authors = docs.author_list().await?;
+        tokio::pin!(authors);
+        while let Some(existing) = authors.next().await {
+            let existing = existing?;
+            if existing != id {
+                legacy.push(existing);
+            }
+        }
+        *self.account_docs_author.lock().await = Some(AccountDocsAuthor { id, legacy });
+        Ok(id.to_string())
+    }
+
+    /// 書き込みに使う docs author と、旧い名義の docs author。
+    async fn write_authors(&self) -> Result<(AuthorId, Vec<AuthorId>)> {
+        if let Some(account) = self.account_docs_author.lock().await.clone() {
+            return Ok((account.id, account.legacy));
+        }
+        Ok((self.node.docs().author_default().await?, Vec::new()))
+    }
+
+    /// 旧い名義の docs author が同じ key に entry を持っていれば消す。
+    ///
+    /// 既定の docs author を切り替えた後に同じ key を書き直すと、その key に新旧 2 つの名義の entry が並ぶ。key だけを
+    /// 指定して先頭を読む読み手が、旧い値を読まないようにする。調べるのは、旧い名義ごとに key を 1 つ(定数)。
+    async fn supersede_legacy_entry(
+        &self,
+        doc: &Doc,
+        legacy: &[AuthorId],
+        key: &str,
+    ) -> Result<()> {
+        for author in legacy {
+            if doc
+                .get_exact(*author, key.as_bytes(), false)
+                .await?
+                .is_some()
+            {
+                let _ = doc.del(*author, key.as_bytes().to_vec()).await?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -133,7 +197,7 @@ impl IrohDocsSync {
             .ok_or_else(|| anyhow!("private replica capability is not registered"))
     }
 
-    async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Doc> {
+    pub(crate) async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Doc> {
         let imported = self.sync_peers().await;
         let imported_ids = imported
             .iter()
@@ -178,6 +242,7 @@ impl IrohDocsSync {
                                 key: String::from_utf8_lossy(entry.key()).to_string(),
                                 content_hash: entry.content_hash().to_string(),
                                 source_peer: None,
+                                docs_author: Some(entry.author().to_string()),
                             });
                         }
                         iroh_docs::engine::LiveEvent::InsertRemote { from, entry, .. } => {
@@ -186,6 +251,7 @@ impl IrohDocsSync {
                                 key: String::from_utf8_lossy(entry.key()).to_string(),
                                 content_hash: entry.content_hash().to_string(),
                                 source_peer: Some(from.to_string()),
+                                docs_author: Some(entry.author().to_string()),
                             });
                         }
                         _ => {}
@@ -278,6 +344,7 @@ impl IrohDocsSync {
                 value,
                 content_hash,
                 content_len: entry.content_len(),
+                docs_author: Some(entry.author().to_string()),
             });
         }
         warn_skipped_keys(replica_id, skipped_keys);
@@ -358,7 +425,7 @@ impl DocsSync for IrohDocsSync {
 
     async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()> {
         let doc = self.ensure_replica(replica_id).await?;
-        let author = self.node.docs().author_default().await?;
+        let (author, legacy) = self.write_authors().await?;
         let sender = self.sender(replica_id).await?;
 
         match op {
@@ -367,26 +434,36 @@ impl DocsSync for IrohDocsSync {
                 let content_hash = doc
                     .set_bytes(author, key.as_bytes().to_vec(), payload.clone())
                     .await?;
-                let _ = sender.send(DocEvent {
-                    replica_id: replica_id.clone(),
-                    key,
-                    content_hash: content_hash.to_string(),
-                    source_peer: None,
-                });
-            }
-            DocOp::SetBytes { key, value } => {
-                let content_hash = doc
-                    .set_bytes(author, key.as_bytes().to_vec(), value)
+                self.supersede_legacy_entry(&doc, &legacy, key.as_str())
                     .await?;
                 let _ = sender.send(DocEvent {
                     replica_id: replica_id.clone(),
                     key,
                     content_hash: content_hash.to_string(),
                     source_peer: None,
+                    docs_author: Some(author.to_string()),
+                });
+            }
+            DocOp::SetBytes { key, value } => {
+                let content_hash = doc
+                    .set_bytes(author, key.as_bytes().to_vec(), value)
+                    .await?;
+                self.supersede_legacy_entry(&doc, &legacy, key.as_str())
+                    .await?;
+                let _ = sender.send(DocEvent {
+                    replica_id: replica_id.clone(),
+                    key,
+                    content_hash: content_hash.to_string(),
+                    source_peer: None,
+                    docs_author: Some(author.to_string()),
                 });
             }
             DocOp::DeletePrefix { prefix } => {
                 let _ = doc.del(author, prefix.as_bytes().to_vec()).await?;
+                // 旧い名義で書いた entry は、その名義でしか消せない。
+                for legacy_author in legacy {
+                    let _ = doc.del(legacy_author, prefix.as_bytes().to_vec()).await?;
+                }
             }
         }
         Ok(())
@@ -458,6 +535,7 @@ impl DocsSync for IrohDocsSync {
                 key,
                 content_hash: entry.content_hash().to_string(),
                 content_len: entry.content_len(),
+                docs_author: Some(entry.author().to_string()),
             });
         }
         warn_skipped_keys(replica_id, skipped_keys);
@@ -465,6 +543,47 @@ impl DocsSync for IrohDocsSync {
             entries,
             reached_limit: scanned >= query_limit,
         })
+    }
+
+    async fn local_docs_author(&self) -> Result<Option<String>> {
+        Ok(self
+            .account_docs_author
+            .lock()
+            .await
+            .as_ref()
+            .map(|account| account.id.to_string()))
+    }
+
+    async fn query_replica_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        key: &str,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<DocRecord>> {
+        // 手がかりは信用しない入力。docs author の id として読めない値は「無い」として扱う。
+        let Ok(author) = AuthorId::from_str(docs_author) else {
+            return Ok(None);
+        };
+        let doc = self.ensure_replica(replica_id).await?;
+        // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
+        let Some(entry) = doc.get_exact(author, key.as_bytes(), false).await? else {
+            return Ok(None);
+        };
+        let content_hash = entry.content_hash().to_string();
+        let Some(value) = self
+            .fetch_entry_bytes(content_hash.as_str(), policy)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(DocRecord {
+            key: key.to_string(),
+            value,
+            content_hash,
+            content_len: entry.content_len(),
+            docs_author: Some(author.to_string()),
+        }))
     }
 
     async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {

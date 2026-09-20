@@ -86,6 +86,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - desktop UI のCSS / state / data配置: `docs/architecture/desktop-ui-implementation.md`（製品・視覚契約はroot `DESIGN.md`、開発フローはADR 0014）
 - desktop の blob キャッシュと取得の再試行: `docs/architecture/blob-cache.md`（保持範囲、取得経路と I/O、自動再試行の回数・リセット条件、既知の欠落）
 - タイムラインの反映と復旧を総件数に依存させない設計: `docs/adr/0052-scale-independent-timeline-sync.md`（#1239。同期は best effort、反映は個別反映・窓の追いつき・遡りの取得の 3 つ、docs の読み出しは key の索引と上限つき、replica の時間分割の方向）
+- アカウントの署名鍵から docs author を導出し、著者の record を docs author と key の組で読む: `docs/adr/0053-account-derived-docs-author.md`（#1258。同じ key に不正な record を積まれても、著者の投稿と取り下げを定数の読み出しで反映する）
 - replica の読み出しの inventory: `docs/architecture/replica-read-inventory.md`（prefix の全件読みの全 caller、比例する総数、解消する段階）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）

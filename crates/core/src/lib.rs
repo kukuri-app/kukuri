@@ -27,7 +27,8 @@ pub mod wire;
 mod tests;
 
 pub use crypto::{
-    KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys, is_placeholder_secret,
+    DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,
+    is_placeholder_secret,
 };
 pub use device_backup::{
     DEVICE_BACKUP_CHUNK_BYTES, DEVICE_BACKUP_COMPONENT_VERSION, DEVICE_BACKUP_FORMAT_VERSION,
@@ -150,13 +151,14 @@ pub use metaverse_resource_budget::{
     validate_metaverse_asset_metadata,
 };
 pub use posts::{
-    ADULT_CONTENT_LABEL, CanonicalPostHeader, ChannelRef, KukuriPostEnvelopeContentV1,
-    KukuriPostObjectV1, KukuriPostWithdrawalEnvelopeContentV1, ObjectStatus, ObjectVisibility,
-    PayloadRef, PostWithdrawalReason, PostWithdrawalV1, RepostSourceSnapshotV1, ThreadRef,
-    TimelineScope, WithdrawalReasonVisibility, build_post_envelope,
-    build_post_envelope_with_payload, build_post_envelope_with_payload_in_channel,
-    build_post_withdrawal_envelope, build_repost_envelope, has_adult_content_label,
-    timeline_sort_key, verify_post_withdrawal,
+    ADULT_CONTENT_LABEL, CanonicalPostHeader, ChannelRef, DOCS_AUTHOR_TAG,
+    KukuriPostEnvelopeContentV1, KukuriPostObjectV1, KukuriPostWithdrawalEnvelopeContentV1,
+    ObjectStatus, ObjectVisibility, PayloadRef, PostWithdrawalReason, PostWithdrawalV1,
+    RepostSourceSnapshotV1, ThreadRef, TimelineScope, WithdrawalReasonVisibility,
+    build_post_envelope, build_post_envelope_with_docs_author, build_post_envelope_with_payload,
+    build_post_envelope_with_payload_in_channel, build_post_withdrawal_envelope,
+    build_repost_envelope, build_repost_envelope_with_docs_author, has_adult_content_label,
+    is_docs_author_id, timeline_sort_key, verify_post_withdrawal,
 };
 pub use private_channels::{
     ChannelAudienceKind, ChannelSharingState, CreatePrivateChannelInput, FriendOnlyGrantPreview,

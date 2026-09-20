@@ -141,6 +141,14 @@ reloadable_service! {
             replica_id: &ReplicaId,
             query: DocKeyQuery,
         ) -> Result<DocKeyPage>;
+        // #1258: 宣言が無いと trait の既定実装に落ちる(docs author なし / 読み出しはエラー)。
+        async fn local_docs_author() -> Result<Option<String>>;
+        async fn query_replica_by_author(
+            replica_id: &ReplicaId,
+            docs_author: &str,
+            key: &str,
+            policy: DocFetchPolicy,
+        ) -> Result<Option<DocRecord>>;
         async fn subscribe_replica(replica_id: &ReplicaId) -> Result<DocEventStream>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
@@ -183,6 +191,8 @@ pub(crate) struct SharedIrohStack {
     pub(crate) root: PathBuf,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
+    /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
+    docs_author_seed: Mutex<Option<kukuri_core::DocsAuthorSeed>>,
 }
 
 fn should_rebuild_runtime_connectivity(
@@ -255,7 +265,26 @@ impl SharedIrohStack {
             root: root.to_path_buf(),
             network_config,
             dht_options,
+            docs_author_seed: Mutex::new(None),
         })
+    }
+
+    /// docs の書き込みを、アカウントの署名鍵から導出した docs author の名義にする(ADR 0053 §1)。
+    ///
+    /// runtime の起動時に、docs へ何かを書く前に呼ぶ。アカウントの切り替えと復元は runtime を作り直すので、
+    /// 同じ経路を通る。`rebuild` は、作り直した stack へ同じ設定を入れてから差し替える。
+    pub(crate) async fn use_account_docs_author(
+        &self,
+        seed: kukuri_core::DocsAuthorSeed,
+    ) -> Result<String> {
+        let current = self.current.lock().await;
+        let docs_sync = &current
+            .as_ref()
+            .context("missing active iroh stack")?
+            .docs_sync;
+        let id = docs_sync.use_account_docs_author(&seed).await?;
+        *self.docs_author_seed.lock().await = Some(seed);
+        Ok(id)
     }
 
     pub(crate) async fn rebuild(
@@ -298,6 +327,10 @@ impl SharedIrohStack {
             .restore_peer_state(transport_peer_state)
             .await?;
         next.docs_sync.restore_peer_state(docs_peer_state).await?;
+        // 差し替える前に設定する。設定の無い stack が、端末ごとの docs author で書くことが無いようにする。
+        if let Some(seed) = self.docs_author_seed.lock().await.as_ref() {
+            next.docs_sync.use_account_docs_author(seed).await?;
+        }
         next.blob_service
             .restore_peer_state(blob_peer_state)
             .await?;
@@ -765,6 +798,65 @@ mod tests {
             .await
             .expect("stack b shutdown timeout")
             .expect("stack b shutdown");
+    }
+
+    // #1258 TR-1: 起動時に設定した docs author は、stack を作り直しても同じで、`ReloadableDocsSync` 越しに
+    // 照会と「docs author と key の組」の読み出しが内側へ届く。
+    #[tokio::test]
+    async fn account_docs_author_survives_a_stack_rebuild() {
+        let dir = tempdir().expect("tempdir");
+        let discovery_config = DiscoveryConfig::static_peer_default();
+        let stack = SharedIrohStack::new(
+            &dir.path().join("stack-docs-author"),
+            TransportNetworkConfig::loopback(),
+            &discovery_config,
+            &[],
+            DhtDiscoveryOptions::disabled(),
+            TransportRelayConfig::default(),
+        )
+        .await
+        .expect("stack");
+        assert_eq!(
+            stack.docs_sync.local_docs_author().await.expect("before"),
+            None
+        );
+        let keys = kukuri_core::generate_keys();
+        let id = stack
+            .use_account_docs_author(keys.derive_docs_author_seed())
+            .await
+            .expect("use the account docs author");
+        let replica = kukuri_docs_sync::topic_replica_id("kukuri:topic:stack-docs-author");
+        let write = |key: &'static str| {
+            stack.docs_sync.apply_doc_op(
+                &replica,
+                DocOp::SetBytes {
+                    key: key.into(),
+                    value: key.as_bytes().to_vec(),
+                },
+            )
+        };
+        write("objects/before/envelope").await.expect("write");
+
+        stack
+            .rebuild(&discovery_config, &[], TransportRelayConfig::default())
+            .await
+            .expect("rebuild");
+        assert_eq!(
+            stack.docs_sync.local_docs_author().await.expect("after"),
+            Some(id.clone()),
+            "a rebuilt stack must keep writing as the account docs author"
+        );
+        write("objects/after/envelope").await.expect("write");
+        for key in ["objects/before/envelope", "objects/after/envelope"] {
+            let record = stack
+                .docs_sync
+                .query_replica_by_author(&replica, id.as_str(), key, DocFetchPolicy::LocalOnly)
+                .await
+                .expect("read by docs author")
+                .expect("record");
+            assert_eq!(record.docs_author.as_deref(), Some(id.as_str()));
+        }
+        stack.shutdown_checked().await.expect("shutdown");
     }
 
     /// `ReloadableBlobService` 越しの `unpin_blob` が内側の `IrohBlobService` まで届き、

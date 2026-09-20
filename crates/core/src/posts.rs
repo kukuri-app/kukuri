@@ -206,7 +206,40 @@ pub struct ThreadRef {
 
 pub type CanonicalPostHeader = KukuriPostObjectV1;
 
+/// 投稿の envelope が、著者の docs author の id を申告する tag の名前(ADR 0053 §2)。
+pub const DOCS_AUTHOR_TAG: &str = "docs_author";
+
+/// docs author の id の形(ed25519 の公開鍵 32 byte の、小文字の hex 64 桁)か。
+pub fn is_docs_author_id(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn push_docs_author_tag(tags: &mut Vec<Vec<String>>, docs_author: Option<&str>) -> Result<()> {
+    if let Some(docs_author) = docs_author {
+        if !is_docs_author_id(docs_author) {
+            bail!("docs author id must be 64 lowercase hex characters");
+        }
+        tags.push(vec![DOCS_AUTHOR_TAG.into(), docs_author.to_string()]);
+    }
+    Ok(())
+}
+
 impl KukuriEnvelope {
+    /// 著者が申告した docs author の id(ADR 0053 §2)。tag は署名の対象なので、`verify()` に通った envelope では
+    /// 「この `pubkey` の著者は、この docs author で書く」という著者自身の申告になる。tag が無い(旧 record)か、
+    /// 値が docs author の id の形でなければ `None`。
+    pub fn docs_author(&self) -> Option<&str> {
+        self.tags
+            .iter()
+            .find(|tag| tag.first().map(String::as_str) == Some(DOCS_AUTHOR_TAG))
+            .and_then(|tag| tag.get(1))
+            .map(String::as_str)
+            .filter(|value| is_docs_author_id(value))
+    }
+
     pub fn topic_id(&self) -> Option<TopicId> {
         self.tags
             .iter()
@@ -357,6 +390,35 @@ pub fn build_post_envelope_with_payload_in_channel(
     channel_id: Option<&ChannelId>,
     content_labels: Vec<String>,
 ) -> Result<KukuriEnvelope> {
+    build_post_envelope_with_docs_author(
+        keys,
+        topic,
+        payload_ref,
+        attachments,
+        media_manifest_refs,
+        reply_to,
+        visibility,
+        channel_id,
+        content_labels,
+        None,
+    )
+}
+
+/// `docs_author` は、この投稿を docs へ書く docs author の id(ADR 0053 §2)。`Some` なら署名の対象の tag に入れる。
+/// docs author を持たない docs へ書くときは `None`(tag なし = 旧 record と同じ扱い)。
+#[allow(clippy::too_many_arguments)]
+pub fn build_post_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    topic: &TopicId,
+    payload_ref: PayloadRef,
+    attachments: Vec<AssetRef>,
+    media_manifest_refs: Vec<String>,
+    reply_to: Option<&KukuriEnvelope>,
+    visibility: ObjectVisibility,
+    channel_id: Option<&ChannelId>,
+    content_labels: Vec<String>,
+    docs_author: Option<&str>,
+) -> Result<KukuriEnvelope> {
     let thread = reply_to
         .and_then(KukuriEnvelope::thread_ref)
         .unwrap_or_else(|| {
@@ -403,6 +465,7 @@ pub fn build_post_envelope_with_payload_in_channel(
     if let Some(channel_id) = channel_id {
         tags.push(vec!["channel".into(), channel_id.as_str().to_string()]);
     }
+    push_docs_author_tag(&mut tags, docs_author)?;
     crate::sign_envelope_json(keys, kind, tags, &content)
 }
 
@@ -411,6 +474,17 @@ pub fn build_repost_envelope(
     topic: &TopicId,
     repost_of: RepostSourceSnapshotV1,
     commentary: Option<&str>,
+) -> Result<KukuriEnvelope> {
+    build_repost_envelope_with_docs_author(keys, topic, repost_of, commentary, None)
+}
+
+/// `docs_author` の扱いは `build_post_envelope_with_docs_author` と同じ。
+pub fn build_repost_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    topic: &TopicId,
+    repost_of: RepostSourceSnapshotV1,
+    commentary: Option<&str>,
+    docs_author: Option<&str>,
 ) -> Result<KukuriEnvelope> {
     if !matches!(repost_of.source_object_kind.as_str(), "post" | "comment") {
         bail!("repost source object kind must be post or comment");
@@ -436,27 +510,24 @@ pub fn build_repost_envelope(
         content_labels: repost_of.content_labels.clone(),
         repost_of: Some(repost_of.clone()),
     };
-    crate::sign_envelope_json(
-        keys,
-        "repost",
+    let mut tags = vec![
+        vec!["topic".into(), topic.as_str().into()],
+        vec!["object".into(), "repost".into()],
         vec![
-            vec!["topic".into(), topic.as_str().into()],
-            vec!["object".into(), "repost".into()],
-            vec![
-                "source_topic".into(),
-                repost_of.source_topic_id.as_str().to_string(),
-            ],
-            vec![
-                "source_object".into(),
-                repost_of.source_object_id.as_str().to_string(),
-            ],
-            vec![
-                "source_author".into(),
-                repost_of.source_author_pubkey.as_str().to_string(),
-            ],
+            "source_topic".into(),
+            repost_of.source_topic_id.as_str().to_string(),
         ],
-        &content,
-    )
+        vec![
+            "source_object".into(),
+            repost_of.source_object_id.as_str().to_string(),
+        ],
+        vec![
+            "source_author".into(),
+            repost_of.source_author_pubkey.as_str().to_string(),
+        ],
+    ];
+    push_docs_author_tag(&mut tags, docs_author)?;
+    crate::sign_envelope_json(keys, "repost", tags, &content)
 }
 
 #[allow(clippy::too_many_arguments)]

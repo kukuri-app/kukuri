@@ -111,11 +111,14 @@ impl AppService {
             .resolve_repost_source(source_topic_id, source_object_id)
             .await?;
         let topic = TopicId::new(target_topic_id);
-        let envelope = build_repost_envelope(
+        // ADR 0053 §2: docs へ書く docs author を、署名の対象の tag と hint に入れる。
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_repost_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &topic,
             source_object.repost_of.clone(),
             normalized_commentary.as_deref(),
+            docs_author.as_deref(),
         )?;
         let repost_object = envelope
             .to_post_object()?
@@ -159,6 +162,7 @@ impl AppService {
                     objects: vec![HintObjectRef {
                         object_id: envelope.id.0.clone(),
                         object_kind: envelope.kind.clone(),
+                        docs_author,
                     }],
                 },
             )
@@ -429,6 +433,11 @@ impl AppService {
                     objects: vec![HintObjectRef {
                         object_id: target_object_id.0.clone(),
                         object_kind: "post_withdrawal".to_string(),
+                        // 取り下げを書いた docs author(ADR 0053 §2)。private channel の hint には載せない。
+                        docs_author: match target_content.channel_id {
+                            Some(_) => None,
+                            None => self.services.docs_sync.local_docs_author().await?,
+                        },
                     }],
                 },
             )
@@ -582,7 +591,9 @@ impl AppService {
             .await?;
             vec![manifest_id]
         };
-        let envelope = build_post_envelope_with_payload_in_channel(
+        // ADR 0053 §2: docs へ書く docs author を、署名の対象の tag と hint に入れる。
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_post_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &topic,
             PayloadRef::BlobText {
@@ -608,6 +619,7 @@ impl AppService {
             },
             effective_channel_id.as_ref(),
             content_labels,
+            docs_author.as_deref(),
         )?;
         let post_object = envelope
             .to_post_object()?
@@ -652,6 +664,11 @@ impl AppService {
             objects: vec![HintObjectRef {
                 object_id: envelope.id.0.clone(),
                 object_kind: envelope.kind.clone(),
+                // private channel の hint の topic は epoch の秘密に依存しないので、docs author を載せない
+                // (ADR 0053 §2)。channel の参加者は、docs の event と索引の entry から同じ手がかりを得る。
+                docs_author: docs_author
+                    .clone()
+                    .filter(|_| effective_channel_id.is_none()),
             }],
         };
         let mut hint_error = None;

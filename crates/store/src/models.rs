@@ -62,6 +62,9 @@ pub struct ObjectProjectionRow {
     pub source_key: String,
     pub source_envelope_id: EnvelopeId,
     pub source_blob_hash: Option<BlobHash>,
+    /// 著者が投稿の envelope の tag で申告した docs author の id(#1258、ADR 0053)。tag の無い投稿と旧い行は `None`。
+    #[serde(default)]
+    pub source_docs_author: Option<String>,
     pub derived_at: i64,
     pub projection_version: i64,
 }

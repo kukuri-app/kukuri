@@ -219,11 +219,14 @@ pub(crate) async fn ensure_index_entries_projected(
             .is_none()
         {
             // 1 回に多数の object を反映するので、本文は手元にあるものだけを読む(表示を remote 取得で待たせない)。
+            // 索引の entry を書いた docs author を、envelope を読む手がかりにする(ADR 0053 §3)。envelope の key に
+            // 不正な record を積まれていても、著者の docs author と key の組の 1 件引きで読める。
             match hydrate_object_in_topic_with(
                 services,
                 topic_id,
                 replica,
                 &object_id,
+                entry.docs_author.as_deref(),
                 policy,
                 BodyFetch::LocalOnly,
             )

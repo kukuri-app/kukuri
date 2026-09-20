@@ -101,6 +101,7 @@ fn parity_projection_row(
         source_key: format!("objects/{object_id}/header"),
         source_envelope_id: EnvelopeId::from(object_id),
         source_blob_hash: Some(hash),
+        source_docs_author: None,
         derived_at: created_at,
         projection_version: 2,
     }

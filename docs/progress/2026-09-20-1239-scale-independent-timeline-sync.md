@@ -389,3 +389,16 @@ T4b で、購読タスクの全件走査（S-1〜S-5）を窓の追いつきへ�
   reaction の反映の全体（購読タスクの全件走査が担っている分、`Lagged` の後の読み直し、表示の経路での読む量の上限）と合わせて、T4b で設計する。
 - 読み進めた位置が残っている間の照合は、間隔を伸ばさない（5 秒）。読み進めるたびに位置が先へ進むので、同じ仕事の繰り返しにはならない。
 - 非表示の著者の行を「projection に在る」と数える点は、T5b の Q-2 と合わせて扱う。
+
+### 独立監査（対象 `602658c8`、PASS）と、取り込みで直したもの
+
+blocker 0 件で PASS。main の `d22ce89c`（#1258 / PR #1264: 索引の entry に docs author を持たせる）の取り込みで head が変わるので、同じ delta で non-blocker を直した。
+
+- N-1: 古い順の読み出しが、符号つき 64 bit に収まらない時刻の範囲（有効な entry は在りえない）で query 数の上限に達すると、続きの起点が `i64::MAX` に張り付き、
+  thread の最後のページの照合が毎回 257 query を読んで「確かめ終えた」にならなかった。その範囲の prefix は読まず、古い順ではそこで索引は尽きたとする。
+  回帰 test `malformed_keys_beyond_the_valid_time_range_do_not_keep_the_thread_tail_unfinished`、`ascending_resume_beyond_i64_max_makes_progress`（監査の再現 test）。
+- N-2: 続きの起点の向き・細分化の積む順を固定する test が無かった。監査の乱数 test（基準実装との突き合わせ。memory と iroh）を `time_index_random.rs` として取り込んだ。
+- N-4: 「sort key の object id と末尾の object id の一致」の assert を docs-sync の test へ足した。
+- N-5: 索引の端の読み出しも query 数の上限の内に収めた（1 回の読み出しは、同じ秒の 1 回 + 256 回以下）。inventory に `query_time_index_asc` を足した。
+- main の取り込み: thread の索引の key の分解は docs-sync の `parse_entry` に寄せてあるので、#1258 の docs author は thread の照合にもそのまま渡る（main の `thread_index_entry` の変更は不要になった）。
+

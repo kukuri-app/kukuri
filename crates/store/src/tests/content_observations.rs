@@ -23,6 +23,7 @@ fn observation_projection_row(object_id: &str) -> ObjectProjectionRow {
         source_key: format!("objects/{object_id}/header"),
         source_envelope_id: EnvelopeId::from(object_id),
         source_blob_hash: None,
+        source_docs_author: None,
         derived_at: 1,
         projection_version: 2,
     }

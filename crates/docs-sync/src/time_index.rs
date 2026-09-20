@@ -35,6 +35,9 @@ pub struct TimeIndexEntry {
     pub created_at: i64,
     pub object_id: String,
     pub key: String,
+    /// 索引の entry を書いた docs author の id(ADR 0053)。その object の envelope を読むときの手がかりになる
+    /// (投稿と索引は、同じ docs author が書く)。署名の無い値で、読む record を選ぶことだけに使う。
+    pub docs_author: Option<String>,
 }
 
 /// 読み出しの起点。古い側へ読むときはこの位置より古い entry だけを、新しい側へ読むときはこの位置より新しい
@@ -271,6 +274,15 @@ async fn walk_time_index(
             break;
         }
         let (prefix_min, prefix_max) = time_prefix_bounds(time_prefix.as_str());
+        if prefix_min > i64::MAX as u64 {
+            // この prefix の時刻は符号つき 64 bit に収まらず、有効な entry は在りえない。読まない。
+            // 古い順では、残りの prefix もすべて同じなので、索引は尽きている(続きの起点を作ると、
+            // `i64::MAX` に張り付いて読み進めが先へ進まなくなる)。
+            match order {
+                DocKeyOrder::Descending => continue,
+                DocKeyOrder::Ascending => break,
+            }
+        }
         if let IndexEdge::At(edge) = edge {
             let past_the_edge = match order {
                 DocKeyOrder::Descending => prefix_max < edge,
@@ -326,7 +338,7 @@ async fn walk_time_index(
             }
             continue;
         }
-        if valid.is_empty() && !truncated && !edge_checked {
+        if valid.is_empty() && !truncated && !edge_checked && queries < MAX_WALK_QUERIES {
             // entry の無い範囲へ出た。索引の端を 1 回だけ調べ、端より先の prefix を読まない。
             // 調べないと、entry が尽きた後も、残りの桁の prefix を空振りで読み続ける。
             edge_checked = true;
@@ -399,12 +411,16 @@ fn clamp_time(value: u64) -> i64 {
 
 fn parse_entries(index_prefix: &str, keys: Vec<DocKeyEntry>) -> Vec<TimeIndexEntry> {
     keys.into_iter()
-        .filter_map(|entry| parse_entry(index_prefix, entry.key))
+        .filter_map(|entry| parse_entry(index_prefix, entry.key, entry.docs_author))
         .collect()
 }
 
 /// `<index prefix><20 桁>-<object id>/<object id>` を分解する。形が違う key は捨てる。
-fn parse_entry(index_prefix: &str, key: String) -> Option<TimeIndexEntry> {
+fn parse_entry(
+    index_prefix: &str,
+    key: String,
+    docs_author: Option<String>,
+) -> Option<TimeIndexEntry> {
     let rest = key.strip_prefix(index_prefix)?;
     let (sort_key, object_id) = rest.rsplit_once('/')?;
     let (time, sort_object_id) = sort_key.split_once('-')?;
@@ -421,5 +437,6 @@ fn parse_entry(index_prefix: &str, key: String) -> Option<TimeIndexEntry> {
         created_at,
         object_id: object_id.to_string(),
         key,
+        docs_author,
     })
 }

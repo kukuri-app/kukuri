@@ -272,6 +272,7 @@ async fn hint_miss_coalesces_replica_sync_restarts() {
                     objects: vec![HintObjectRef {
                         object_id: format!("missing-{suffix}"),
                         object_kind: "post".into(),
+                        docs_author: None,
                     }],
                 },
             )

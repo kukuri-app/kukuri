@@ -42,11 +42,11 @@ pub(crate) use kukuri_core::{
     build_dome_instance_envelope, build_dome_move_envelope, build_dome_preset_envelope,
     build_follow_edge_envelope, build_friend_only_grant_token, build_friend_plus_share_token,
     build_game_session_envelope, build_live_session_envelope, build_media_manifest_envelope,
-    build_metaverse_room_event_envelope, build_post_envelope_with_payload_in_channel,
+    build_metaverse_room_event_envelope, build_post_envelope_with_docs_author,
     build_post_withdrawal_envelope, build_private_channel_epoch_handoff_grant_envelope,
     build_private_channel_invite_token, build_private_channel_participant_envelope,
     build_private_channel_policy_envelope, build_profile_envelope, build_profile_post_envelope,
-    build_profile_repost_envelope, build_reaction_envelope, build_repost_envelope,
+    build_profile_repost_envelope, build_reaction_envelope, build_repost_envelope_with_docs_author,
     decrypt_direct_message_attachment, decrypt_direct_message_frame,
     decrypt_private_channel_epoch_handoff_grant, derive_direct_message_topic,
     deterministic_reaction_id, direct_message_id_for_participants,
@@ -134,7 +134,9 @@ mod hydration_support;
 use game_projection_support::GameRoomProjectionLocks;
 pub(crate) use hydration_limits::{HintRecoveryGate, recovery_probe_peer_state};
 #[cfg(test)]
-pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_game_rooms_from_replica};
+pub(crate) use hydration_support::{
+    hydrate_game_room_from_key, hydrate_game_rooms_from_replica, hydrate_subscription_event,
+};
 mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
@@ -178,7 +180,7 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_event,
+    hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_doc_event,
     hydrate_subscription_hint, hydrate_subscription_state, hydrate_topic_state,
     profile_timeline_page,
 };
@@ -194,6 +196,7 @@ pub(crate) use notifications_support::{
 };
 pub(crate) use object_hydration::{
     BodyFetch, ObjectHydration, hydrate_object_in_topic, hydrate_object_in_topic_with,
+    hydrate_object_in_topic_with_hint,
 };
 pub(crate) use object_persistence_support::{
     best_effort_blob_cache_status, best_effort_blob_view_status,
@@ -212,12 +215,14 @@ pub(crate) use object_persistence_support::{
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
-    VerifiedPost, WithdrawalTargetCheck, load_post, load_verified_post, object_id_from_post_key,
-    post_envelope_key, select_verified_post, verify_withdrawal_against_records, warn_rejected_post,
+    VerifiedPost, WithdrawalTargetCheck, load_post_with_hint, load_verified_post,
+    object_id_from_post_key, post_envelope_key, select_verified_post,
+    verify_withdrawal_against_records, warn_rejected_post,
 };
 pub(crate) use post_withdrawal_hydration::{
-    PostWithdrawalHydration, hydrate_post_withdrawal_for_object,
-    hydrate_post_withdrawal_from_record, object_id_from_post_withdrawal_key,
+    PostWithdrawalHydration, WithdrawalReadHints, hydrate_post_withdrawal_for_object,
+    hydrate_post_withdrawal_for_object_with_hints, hydrate_post_withdrawal_from_record,
+    object_id_from_post_withdrawal_key,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope_by_id, hydrate_author_state,
@@ -258,6 +263,8 @@ pub(crate) use timeline_view_support::{
 };
 
 // テストからのみ参照される再輸出(依存の可視化。WP-H5 PR1)。
+#[cfg(test)]
+pub(crate) use kukuri_core::{build_post_envelope_with_payload_in_channel, build_repost_envelope};
 #[cfg(test)]
 pub(crate) use object_persistence_support::custom_reaction_asset_view_from_snapshot;
 

@@ -96,10 +96,11 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
   T2 で並びを key の索引に変えても、`Exact` の結果の順序（docs 著者 id の昇順）と、prefix 読みで同じ key の最後に反映される entry は変わらない。
   ただし、投稿の envelope（`objects/<object id>/envelope`、#1248）と取り下げ（`withdrawals/<object id>/state`、#1250）の key 指定の読み出しは、先頭の 1 件を使わず、
   上限つき（key ごとに最大 8 record）で検証に通る最初の record を選ぶ（ADR 0052 §2）。
+  著者が docs author を示した投稿（#1258、ADR 0053）は、その前に「docs author と key の組」で 1 件読む。同じ key に他の名義の record が何件あっても、読む record は 1 件。
 - repost 元、profile の投稿、profile の投稿の返信先の取り下げの確認は、購読していない topic の replica を開いて同期する（T3 より前から、view の生成のたびに起きていた副作用）。T3 で確認は背景の key 指定になったが、replica を開くこと自体は残る。
   開く replica の上限と、取り下げの置き場所は #1224・#1243 で扱う。
 - private channel の取り下げは、現在の epoch の replica に書かれる。対象の投稿が過去の epoch の replica にあると、取り下げを反映する側は同じ replica で対象の envelope を見つけられず、
   取り下げを検証できない（T3 より前から同じ。key 単位の反映でも全件走査でも変わらない）。epoch をまたぐ取り下げの扱いは別 Issue で決める。
 - iroh-docs の同期と保存は replica の総 entry 数に比例する（ADR 0052 §7）。replica の時間分割は #1243 が所有する。
 - UTF-8 でない key の entry は、`IrohDocsSync` の prefix の読み出しと key の一覧（`query_replica_keys`）が飛ばす（#1253）。飛ばした entry は返る件数に入らないので、
-  `query_replica_keys` は「`limit` 件を読んで打ち切られたか」を別に返し、時系列の索引の読み出し（`query_time_index_window`・`query_time_index_desc`）はそれで「尽きたか」を判定する（#1257。T5a の PR で対応）。
+  `query_replica_keys` は「`limit` 件を読んで打ち切られたか」を別に返し、時系列の索引の読み出し（`query_time_index_window`・`query_time_index_desc`・`query_time_index_asc`）はそれで「尽きたか」を判定する（#1257。T5a の PR で対応）。

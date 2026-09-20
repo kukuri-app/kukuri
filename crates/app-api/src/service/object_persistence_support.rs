@@ -656,6 +656,7 @@ pub(crate) fn projection_row_from_post(
         source_key: stable_key("objects", &format!("{}/state", header.object_id.as_str())),
         source_envelope_id: header.envelope_id.clone(),
         source_blob_hash,
+        source_docs_author: post.docs_author().map(str::to_string),
         derived_at: Utc::now().timestamp_millis(),
         projection_version: kukuri_store::VERIFIED_OBJECT_PROJECTION_VERSION,
     }

@@ -81,6 +81,7 @@ pub(crate) fn row_to_object_projection(
         source_key: row.get("source_key"),
         source_envelope_id: row.get::<String, _>("source_envelope_id").into(),
         source_blob_hash: opt_col::<String>(&row, "source_blob_hash").map(BlobHash::new),
+        source_docs_author: opt_col::<String>(&row, "source_docs_author"),
         derived_at: row.get("derived_at"),
         projection_version: row.get("projection_version"),
     })

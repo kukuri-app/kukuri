@@ -275,6 +275,7 @@ pub(crate) async fn remote_doc_event(
         key,
         content_hash: record.content_hash,
         source_peer: Some("remote-peer".into()),
+        docs_author: record.docs_author,
     }
 }
 

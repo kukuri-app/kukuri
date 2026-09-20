@@ -391,6 +391,16 @@ async fn signed_time_keys_are_not_index_entries() -> Result<()> {
         )
         .await?;
     }
+    // sort key の object id と、末尾の object id が合わない key も entry ではない。
+    put_key(
+        &docs,
+        &replica,
+        stable_key(
+            "indexes/timeline",
+            &format!("{:020}-{}/{}", 3_000, object_id(3), object_id(4)),
+        ),
+    )
+    .await?;
     for order in [DocKeyOrder::Ascending, DocKeyOrder::Descending] {
         let page = query(&docs, &replica, order, None, 10).await?;
         assert_eq!(ids(&page), vec![valid.clone()], "{order:?}");

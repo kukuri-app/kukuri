@@ -32,6 +32,7 @@ pub(crate) async fn wait_for_hint_roundtrip<T>(
         objects: vec![HintObjectRef {
             object_id: format!("{label}-from-a"),
             object_kind: "post".into(),
+            docs_author: None,
         }],
     };
     let hint_from_b = GossipHint::TopicObjectsChanged {
@@ -39,6 +40,7 @@ pub(crate) async fn wait_for_hint_roundtrip<T>(
         objects: vec![HintObjectRef {
             object_id: format!("{label}-from-b"),
             object_kind: "post".into(),
+            docs_author: None,
         }],
     };
     match timeout(step_timeout, async {
