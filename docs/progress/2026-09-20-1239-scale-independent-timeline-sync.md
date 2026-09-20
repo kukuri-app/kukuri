@@ -298,7 +298,18 @@ main の `150ca5f7`（#1253 / PR #1255）を取り込んだ。`IrohDocsSync` の
 | INVAR-2 | `non_utf8_key_does_not_fail_prefix_reads`（#1253 の test。期待は無変更）、`non_utf8_key_does_not_stop_the_timeline` |
 | INVAR-3 | `key_query_respects_prefix_order_and_limit_on_both_implementations`（返る件数は `limit` 以下） |
 
+### #1250（PR #1256）の取り込み
+
+main の `515d8c18`（取り下げの key に不正な record が先にあっても、著者の取り下げを反映する）を取り込んだ。PR #1247 へのコメント（#1250 の INV-6）の依頼に対応する。
+
+- 取り下げの反映は `post_withdrawal_hydration.rs` へ移り、key を指定して読む入口は `hydrate_post_withdrawal_for_object`（同じ key の record を上限つきで複数調べる）を通す規則になった。
+  この PR の入口 2 つを載せ替えた: ページの範囲の照合が projection にある行の取り下げを確認する箇所（`replica_window.rs` の `ensure_index_entries_projected`）と、
+  object を 1 件反映するときの取り下げの先読み（`object_hydration.rs` の `hydrate_object_in_topic_with`。main の `hydrate_object_in_topic` と同じ形）。どちらも先頭の 1 件（`.into_iter().next()`）を見なくなった。
+- 保存できない `generation` の取り下げを取り下げとして扱わない修正（この PR）は、`post_withdrawal_hydration.rs` の `storable_post_withdrawal` として載せ直した。
+  record 単位の入口（全件走査）と、key 指定の入口の両方に効く。key 指定の入口は、保存できない取り下げを飛ばして残りの候補を調べる。
+- 回帰 test `range_reconcile_applies_the_withdrawal_behind_invalid_records`（`withdrawal_record_selection.rs`）。照合の確認を「先頭の 1 件だけを読む」形へ戻すと失敗することを確認した。
+
 ### 検証
 
-`cargo xtask rust-test`（nextest と doc test: 成功。件数は PR の本文に記録）、`cargo test -p kukuri-app-api --lib`（293 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（成功）、
+`cargo xtask rust-test`（nextest と doc test: 成功。件数は PR の本文に記録）、`cargo test -p kukuri-app-api --lib`（成功。件数は PR の本文に記録）、`cargo test -p kukuri-docs-sync --lib`（成功）、
 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。

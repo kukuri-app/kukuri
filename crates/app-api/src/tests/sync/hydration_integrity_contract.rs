@@ -1,6 +1,7 @@
 //! 投稿の反映の検証(#1248)の契約を固定する test。修正前の再現は `hydration_integrity.rs`。
 //!
 //! Issue #1248 の TR-3・7・9・10・12・15・16、AC-4・AC-7・AC-9、INV-2 に対応する。
+//! `ShadowingDocsSync` は `withdrawal_record_selection.rs`(#1250)も使う。
 
 use super::hydration_integrity::{
     integrity_fixture, public_timeline_after_settle, signed_post, wait_for_row,
@@ -11,15 +12,17 @@ use super::*;
 /// 同じ key に複数の record を返す docs(iroh-docs は、同じ key の entry を docs author ごとに持つ)。
 /// `shadows` に入れた値を、その key の正しい record より先に返す。
 #[derive(Clone, Default)]
-struct ShadowingDocsSync {
+pub(super) struct ShadowingDocsSync {
     inner: MemoryDocsSync,
     shadows: Arc<TokioMutex<HashMap<String, Vec<Vec<u8>>>>>,
     /// この key の読み出しを失敗させる(I/O の失敗)。
-    failing_key: Arc<TokioMutex<Option<String>>>,
+    pub(super) failing_key: Arc<TokioMutex<Option<String>>>,
+    /// 上限つきの読み出しの key と上限(#1250)。
+    pub(super) bounded_reads: Arc<TokioMutex<Vec<(String, usize)>>>,
 }
 
 impl ShadowingDocsSync {
-    async fn shadow(&self, key: &str, value: serde_json::Value) {
+    pub(super) async fn shadow(&self, key: &str, value: serde_json::Value) {
         self.shadows
             .lock()
             .await
@@ -79,6 +82,24 @@ impl DocsSync for ShadowingDocsSync {
         self.inner.query_replica_keys(replica_id, query).await
     }
 
+    async fn query_replica_exact_bounded(
+        &self,
+        replica_id: &ReplicaId,
+        key: &str,
+        limit: usize,
+        policy: DocFetchPolicy,
+    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
+        self.bounded_reads
+            .lock()
+            .await
+            .push((key.to_string(), limit));
+        let mut records = self
+            .query_replica_with_policy(replica_id, DocQuery::Exact(key.to_string()), policy)
+            .await?;
+        records.truncate(limit);
+        Ok(records)
+    }
+
     async fn subscribe_replica(
         &self,
         replica_id: &ReplicaId,
@@ -91,7 +112,7 @@ impl DocsSync for ShadowingDocsSync {
     }
 }
 
-fn app_over_docs(docs_sync: Arc<dyn DocsSync>) -> (AppService, Arc<MemoryStore>) {
+pub(super) fn app_over_docs(docs_sync: Arc<dyn DocsSync>) -> (AppService, Arc<MemoryStore>) {
     let store = Arc::new(MemoryStore::default());
     let app = app_service_from_dependencies(
         store.clone(),
@@ -105,7 +126,7 @@ fn app_over_docs(docs_sync: Arc<dyn DocsSync>) -> (AppService, Arc<MemoryStore>)
     (app, store)
 }
 
-fn honest_header(envelope: &KukuriEnvelope) -> CanonicalPostHeader {
+pub(super) fn honest_header(envelope: &KukuriEnvelope) -> CanonicalPostHeader {
     envelope
         .to_post_object()
         .expect("post object")

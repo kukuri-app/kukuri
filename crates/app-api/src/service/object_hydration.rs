@@ -117,7 +117,8 @@ pub(crate) async fn hydrate_object_in_topic(
 ///
 /// 行は署名つき envelope から作る(#1248)。`topic_id` は、その replica を読む文脈の topic(private channel の
 /// replica id は topic を含まない)。検証に通る envelope が無ければ反映しない。envelope が後から届いた場合は、
-/// その event でもう一度呼ばれる。読む docs の record は、取り下げの key と envelope の key だけ。
+/// その event でもう一度呼ばれる。読む docs の record は、取り下げの key と envelope の key の、それぞれ上限つきの
+/// 件数だけ(#1248、#1250)。
 pub(crate) async fn hydrate_object_in_topic_with(
     services: &ServiceHandles,
     topic_id: &str,
@@ -128,17 +129,10 @@ pub(crate) async fn hydrate_object_in_topic_with(
 ) -> Result<ObjectHydration> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
-    let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-    if let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(withdrawal_key), policy)
-            .await?
-            .into_iter()
-            .next()
-    {
-        // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
-        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
-            .await?;
-    }
+    // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
+    // 同じ key には docs author ごとの record がありうるので、先頭の 1 件だけを見ない(#1250)。
+    hydrate_post_withdrawal_for_object(docs_sync, projection_store, replica, object_id, policy)
+        .await?;
     let post = match load_post(docs_sync, replica, topic_id, object_id, policy).await? {
         PostLoad::Verified(post) => *post,
         PostLoad::Missing => return Ok(ObjectHydration::Missing),

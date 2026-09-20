@@ -369,4 +369,5 @@ mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;
+mod withdrawal_record_selection;
 mod withdrawal_reflection;

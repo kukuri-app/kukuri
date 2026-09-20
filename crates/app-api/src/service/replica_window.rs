@@ -242,30 +242,20 @@ pub(crate) async fn ensure_index_entries_projected(
         {
             continue;
         }
-        let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-        if let Some(record) = query_replica_with_fetch_policy(
+        // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ると、検証に通らない record を
+        // 先に置くだけで、著者の正しい取り下げを無効にできてしまうので、上限つきで複数を調べる helper を通す(#1250)。
+        match hydrate_post_withdrawal_for_object(
             docs_sync,
+            projection_store,
             replica,
-            DocQuery::Exact(withdrawal_key),
+            &object_id,
             policy,
         )
         .await?
-        .into_iter()
-        .next()
         {
-            match hydrate_post_withdrawal_from_record(
-                docs_sync,
-                projection_store,
-                replica,
-                record,
-                policy,
-            )
-            .await?
-            {
-                PostWithdrawalHydration::Applied => outcome.hydrated += 1,
-                PostWithdrawalHydration::TargetMissing => outcome.unresolved += 1,
-                PostWithdrawalHydration::Invalid => {}
-            }
+            Some(PostWithdrawalHydration::Applied) => outcome.hydrated += 1,
+            Some(PostWithdrawalHydration::TargetMissing) => outcome.unresolved += 1,
+            Some(PostWithdrawalHydration::Invalid) | None => {}
         }
     }
     Ok(outcome)

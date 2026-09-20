@@ -76,6 +76,7 @@ Accepted
   - 欠けた本文の取り直し（`recover_missing_bodies`）は、取りに行き始めた本文を決まった短い時間（初期値 300 ms）だけ待ってから view を作る。接続済みの peer からの本文は
     数十 ms で届くので、多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く。以前の全件走査は、本文を 1 件ずつ timeout（2〜5 秒）まで待っていた。
   - projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で確認する（取り下げの event を取りこぼした行の本文を出し続けない）。
+    確認は、同じ key の複数の record を上限つきで調べる入口（`hydrate_post_withdrawal_for_object`、Issue #1250）を通す。
   - thread は途中の返信が欠けうるので、ページが空でなくても照合する。thread の索引（`indexes/thread/<root>/`）を古い側から 512 件まで読む。
     これを超える thread は、超えた分を照合しない（新しい側の返信は、個別反映と窓の追いつきで入る）。root が projection にあれば、その channel の replica だけを読む。
   - private channel の scope は、参加状態の確認を通った epoch の replica だけを読む。参加していない channel の thread は照合しない。
@@ -89,6 +90,12 @@ Accepted
 - 取り下げとして読めない record と、署名・著者が対象と合わない record は、取り下げとして扱わない（warn を出して無視し、投稿の反映を続ける）。
   public topic の replica は誰でも書けるので、読めない record を 1 件置くだけで、特定の投稿を隠したり topic 全体の操作を止めたりできないようにする。
   対象の envelope がまだ手元に無い取り下げは、対象が届いたときに反映し直す。docs と projection の読み書きの失敗は、無視せずエラーとして返す。
+- 逆向きも同じく防ぐ（Issue #1250）。取り下げとして検証に通らない record を 1 件置くだけで、著者の正しい取り下げを無効にできないようにする。
+  同じ key には docs author ごとの record があり、key 指定の読み出しは docs author の昇順で返すので、先頭の 1 件だけを見てはならない。
+  `withdrawals/<object id>/state` を key 指定で読む入口（投稿の個別反映、取り下げの event・hint、背景の確認、遡りの取得）は、上限つきの読み出しで
+  最大 8 record を調べ、その object を対象とし、検証に通る最初の取り下げを反映する。対象の envelope は、候補があるときだけ 1 回読む。
+  上限を超える数の不正な record を先に積まれた取り下げは、この読み出しでは反映できない（best effort）。「上限に達したら伏せる」とはしない
+  （不正な record を積むだけで他人の投稿を隠せてしまう）。これを防ぐには key 設計か protocol の変更が要り、本 ADR の時点では未決。
 - 投稿の反映は、`objects/<object id>/state` の値を使わない（Issue #1248）。projection の行・通知・repost の snapshot・bookmark は、同じ object の
   署名つき envelope（`objects/<object id>/envelope`）から作る。envelope は `verify()` に通り、`envelope.id` が object id と一致し、投稿（post・comment・repost）で
   なければならない。public topic の replica は誰でも書けるので、署名の無い `state` の申告値（著者・本文・添付・topic・channel）を信用しない。
