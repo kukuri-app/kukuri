@@ -1,4 +1,5 @@
 use super::game_projection_support::hydrate_game_room_from_record;
+use super::hydration_limits::{MissingBodyLedger, ReplicaScanCache, scan_fingerprint};
 use super::*;
 
 fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeader {
@@ -61,45 +62,74 @@ async fn hydrate_post_withdrawal_from_record(
     Ok(true)
 }
 
+/// 戻り値は今回反映した取り下げの件数。前回の走査から record が変わっていなければ何もせず 0 を返す(#1225)。
 pub(crate) async fn hydrate_post_withdrawals_from_replica(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
+    scan_cache: &ReplicaScanCache,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
 ) -> Result<usize> {
+    const PREFIX: &str = "withdrawals/";
     let records = query_replica_with_fetch_policy(
         docs_sync,
         replica,
-        DocQuery::Prefix("withdrawals/".into()),
+        DocQuery::Prefix(PREFIX.into()),
         policy,
     )
     .await?;
+    let fingerprint = scan_fingerprint(&records);
+    if scan_cache.is_unchanged(replica.as_str(), PREFIX, fingerprint) {
+        return Ok(0);
+    }
     let mut hydrated = 0usize;
+    let mut complete = true;
     for record in records {
-        if record.key.ends_with("/state")
-            && hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record)
-                .await?
+        if !record.key.ends_with("/state") {
+            continue;
+        }
+        if hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record).await?
         {
             hydrated += 1;
+        } else {
+            // 対象の投稿がまだ届いていない。次の走査でやり直す。
+            complete = false;
         }
+    }
+    if complete {
+        scan_cache.record(replica.as_str(), PREFIX, fingerprint);
+    } else {
+        scan_cache.forget(replica.as_str(), PREFIX);
     }
     Ok(hydrated)
 }
 
+/// 戻り値は今回反映した投稿の件数。record が前回の走査と同じで、取り下げにも変化が無ければ 0 を返す(#1225)。
+///
+/// 取得できない本文 blob は走査のたびに取りに行かず、`MissingBodyLedger` の間隔と回数に従う。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn hydrate_object_projection_from_replica(
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
+    scan_cache: &ReplicaScanCache,
+    missing_bodies: &MissingBodyLedger,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
+    withdrawals_changed: bool,
 ) -> Result<usize> {
+    const PREFIX: &str = "objects/";
     let records = query_replica_with_fetch_policy(
         docs_sync,
         replica,
-        DocQuery::Prefix("objects/".into()),
+        DocQuery::Prefix(PREFIX.into()),
         policy,
     )
     .await?;
+    let fingerprint = scan_fingerprint(&records);
+    if !withdrawals_changed && scan_cache.is_unchanged(replica.as_str(), PREFIX, fingerprint) {
+        return Ok(0);
+    }
     let mut hydrated = 0usize;
     let mut blob_statuses = Vec::new();
     let mut projections = Vec::new();
@@ -125,7 +155,8 @@ pub(crate) async fn hydrate_object_projection_from_replica(
         let content = match &header.payload_ref {
             PayloadRef::InlineText { text } => Some(text.clone()),
             PayloadRef::BlobText { hash, .. } => {
-                let payload = fetch_projection_blob_text(blob_service, hash).await;
+                let payload =
+                    fetch_projection_blob_text_bounded(blob_service, missing_bodies, hash).await;
                 blob_statuses.push((
                     hash.clone(),
                     match payload {
@@ -145,7 +176,31 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     }
     projection_store.mark_blob_statuses(blob_statuses).await?;
     projection_store.put_object_projections(projections).await?;
+    // 本文が欠けた行は行単位の取り直し(`MissingBodyLedger`)が担うので、走査としては完了とみなす。
+    scan_cache.record(replica.as_str(), PREFIX, fingerprint);
     Ok(hydrated)
+}
+
+/// 走査中の本文取得。local にあれば読み、無ければ台帳の間隔と回数の内でだけ remote を試す。
+pub(crate) async fn fetch_projection_blob_text_bounded(
+    blob_service: &dyn BlobService,
+    missing_bodies: &MissingBodyLedger,
+    hash: &kukuri_core::BlobHash,
+) -> Option<String> {
+    let local = matches!(
+        best_effort_blob_cache_status(blob_service, hash).await,
+        BlobCacheStatus::Available | BlobCacheStatus::Pinned
+    );
+    if !local && !missing_bodies.try_begin(hash, Utc::now().timestamp_millis()) {
+        return None;
+    }
+    let payload = fetch_projection_blob_text(blob_service, hash).await;
+    if payload.is_some() {
+        missing_bodies.succeed(hash);
+    } else if !local {
+        missing_bodies.fail(hash, Utc::now().timestamp_millis());
+    }
+    payload
 }
 
 pub(crate) async fn hydrate_object_projection_from_record(
@@ -219,16 +274,22 @@ pub(crate) async fn hydrate_object_projection_from_key(
 pub(crate) async fn hydrate_reaction_cache_from_replica(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
+    scan_cache: &ReplicaScanCache,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
 ) -> Result<usize> {
+    const PREFIX: &str = "reactions/";
     let records = query_replica_with_fetch_policy(
         docs_sync,
         replica,
-        DocQuery::Prefix("reactions/".into()),
+        DocQuery::Prefix(PREFIX.into()),
         policy,
     )
     .await?;
+    let fingerprint = scan_fingerprint(&records);
+    if scan_cache.is_unchanged(replica.as_str(), PREFIX, fingerprint) {
+        return Ok(0);
+    }
     let mut hydrated = 0usize;
     for record in records {
         if !record.key.ends_with("/state") {
@@ -240,6 +301,7 @@ pub(crate) async fn hydrate_reaction_cache_from_replica(
             .await?;
         hydrated += 1;
     }
+    scan_cache.record(replica.as_str(), PREFIX, fingerprint);
     Ok(hydrated)
 }
 
@@ -300,9 +362,17 @@ pub(crate) async fn hydrate_topic_state(
     topic_id: &str,
     policy: DocFetchPolicy,
 ) -> Result<usize> {
-    hydrate_subscription_state(services, topic_id, &topic_replica_id(topic_id), policy).await
+    Box::pin(hydrate_subscription_state(
+        services,
+        topic_id,
+        &topic_replica_id(topic_id),
+        policy,
+    ))
+    .await
 }
 
+/// replica の全件走査。戻り値は今回反映した件数で、replica に変化が無ければ 0 になる(#1225)。
+/// caller はこの値を「進展があったか」の判定に使う。
 pub(crate) async fn hydrate_subscription_state(
     services: &ServiceHandles,
     topic_id: &str,
@@ -312,46 +382,74 @@ pub(crate) async fn hydrate_subscription_state(
     let docs_sync = services.docs_sync.as_ref();
     let blob_service = services.blob_service.as_ref();
     let projection_store = services.projection_store.as_ref();
-    let withdrawal_count =
-        hydrate_post_withdrawals_from_replica(docs_sync, projection_store, replica, policy).await?;
-    let post_count = hydrate_object_projection_from_replica(
+    let scan_cache = services.replica_scan_cache.as_ref();
+    let withdrawal_count = hydrate_post_withdrawals_from_replica(
         docs_sync,
-        blob_service,
         projection_store,
+        scan_cache,
         replica,
         policy,
     )
     .await?;
-    let reaction_count =
-        hydrate_reaction_cache_from_replica(docs_sync, projection_store, replica, policy).await?;
-    let live_count = hydrate_live_sessions_from_replica(
+    let post_count = Box::pin(hydrate_object_projection_from_replica(
         docs_sync,
         blob_service,
         projection_store,
+        scan_cache,
+        services.missing_body_ledger.as_ref(),
+        replica,
+        policy,
+        withdrawal_count > 0,
+    ))
+    .await?;
+    let reaction_count = hydrate_reaction_cache_from_replica(
+        docs_sync,
+        projection_store,
+        scan_cache,
+        replica,
+        policy,
+    )
+    .await?;
+    let (live_count, live_changed) = hydrate_live_sessions_from_replica(
+        docs_sync,
+        blob_service,
+        projection_store,
+        scan_cache,
         topic_id,
         replica,
         policy,
     )
     .await?;
-    let game_count = hydrate_game_rooms_from_replica(services, topic_id, replica, policy).await?;
-    Ok(withdrawal_count + post_count + reaction_count + live_count + game_count)
+    let (game_count, game_changed) =
+        hydrate_game_rooms_from_replica_tracked(services, topic_id, replica, policy).await?;
+    // live / game は毎回反映し直すので、record に変化があったときだけ「進展」に数える。
+    Ok(withdrawal_count
+        + post_count
+        + reaction_count
+        + if live_changed { live_count } else { 0 }
+        + if game_changed { game_count } else { 0 })
 }
 
 pub(crate) async fn hydrate_live_sessions_from_replica(
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
+    scan_cache: &ReplicaScanCache,
     topic_id: &str,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
-) -> Result<usize> {
+) -> Result<(usize, bool)> {
+    const PREFIX: &str = "sessions/live/";
     let records = query_replica_with_fetch_policy(
         docs_sync,
         replica,
-        DocQuery::Prefix("sessions/live/".into()),
+        DocQuery::Prefix(PREFIX.into()),
         policy,
     )
     .await?;
+    // live / game は件数が少なく、manifest の到着や参加状態で反映結果が変わるため、指紋による省略をしない。
+    // 指紋は「record に変化があったか」を caller へ返すためだけに使う。
+    let changed = scan_cache.observe(replica.as_str(), PREFIX, scan_fingerprint(&records));
     let mut hydrated = 0usize;
     for record in records {
         let state: LiveSessionStateDocV1 = serde_json::from_slice(&record.value)?;
@@ -378,7 +476,7 @@ pub(crate) async fn hydrate_live_sessions_from_replica(
             .await?;
         hydrated += 1;
     }
-    Ok(hydrated)
+    Ok((hydrated, changed))
 }
 
 pub(crate) async fn hydrate_live_session_from_record(
@@ -461,25 +559,43 @@ pub(crate) async fn hydrate_live_session_from_key_with_retry(
     Ok(0)
 }
 
+#[cfg(test)]
 pub(crate) async fn hydrate_game_rooms_from_replica(
     services: &ServiceHandles,
     topic_id: &str,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
 ) -> Result<usize> {
+    hydrate_game_rooms_from_replica_tracked(services, topic_id, replica, policy)
+        .await
+        .map(|(hydrated, _)| hydrated)
+}
+
+/// 反映した件数と、前回の走査から record に変化があったかを返す。
+async fn hydrate_game_rooms_from_replica_tracked(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    policy: DocFetchPolicy,
+) -> Result<(usize, bool)> {
+    const PREFIX: &str = "sessions/game/";
     let records = query_replica_with_fetch_policy(
         services.docs_sync.as_ref(),
         replica,
-        DocQuery::Prefix("sessions/game/".into()),
+        DocQuery::Prefix(PREFIX.into()),
         policy,
     )
     .await?;
+    let changed =
+        services
+            .replica_scan_cache
+            .observe(replica.as_str(), PREFIX, scan_fingerprint(&records));
     let mut hydrated = 0usize;
     for record in records {
         hydrated +=
             usize::from(hydrate_game_room_from_record(services, topic_id, replica, record).await?);
     }
-    Ok(hydrated)
+    Ok((hydrated, changed))
 }
 
 pub(crate) async fn hydrate_game_room_from_key(
@@ -557,6 +673,17 @@ pub(crate) async fn hydrate_subscription_event(
         return hydrate_game_room_from_key_with_retry(services, topic_id, replica, key).await;
     }
     Ok(0)
+}
+
+/// replica の内容(投稿・thread・session)を指す hint か。それ以外の hint は、個別反映が 0 件でも
+/// 全件走査の契機にしない(#1225)。
+pub(crate) fn hint_refers_to_replica_content(hint: &GossipHint) -> bool {
+    matches!(
+        hint,
+        GossipHint::TopicObjectsChanged { .. }
+            | GossipHint::ThreadUpdated { .. }
+            | GossipHint::SessionChanged { .. }
+    )
 }
 
 pub(crate) async fn hydrate_subscription_hint(
@@ -679,10 +806,6 @@ pub(crate) fn hint_targets_topic(hint: &GossipHint, topic: &str) -> bool {
         | GossipHint::DirectMessageAck { topic_id, .. } => topic_id.as_str() == topic,
         GossipHint::ThreadUpdated { .. } | GossipHint::ProfileUpdated { .. } => true,
     }
-}
-
-pub(crate) fn projection_page_needs_hydration(page: &Page<ObjectProjectionRow>) -> bool {
-    page.items.iter().any(|item| item.content.is_none())
 }
 
 pub(crate) fn profile_timeline_page(

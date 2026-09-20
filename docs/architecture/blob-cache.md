@@ -83,5 +83,6 @@ relay 経由の接続確立や提供 peer の一時的な不在（数十秒）�
 - `put_blob` は一時 tag で追加するだけで、pin していない blob を保護する仕組みは無い（現状は GC が無いため消えない）。
 - 画面側の `mediaObjectUrls` と object URL に件数の上限が無い。長時間の閲覧で memory が増える（#1221 の調査で記録）。
 - peer 台帳に削除経路が無い（#1224）。
-- 本文 blob の取得（`fetch_projection_blob_text`）には回数の上限が無く、タイムライン取得のたびに試みる（#1225）。
-  ただし backend 側の契約により、同じ hash の走査が並行することと、クールダウンが記録されないことは無くなった。
+- 本文 blob の取得は #1225 で有限にした。local に無い本文は hash 単位の台帳（`MissingBodyLedger`）に従い、5 秒・30 秒・2 分・10 分の間隔で最大 8 試行、
+  同時実行は 4 本まで。全件走査も同じ台帳に従う。上限に達した後は、その行を指す docs event / hint の個別反映と再起動でだけ取り直す
+  （`docs/progress/2026-09-20-1225-timeline-hydration-finite.md`）。

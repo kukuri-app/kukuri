@@ -21,9 +21,13 @@ impl AppService {
             }
             Some(ChannelRef::Public) | None => TimelineScope::Public,
         };
-        self.hydrate_scope_projection(target_topic_id.as_str(), &scope)
-            .await?;
         let target_object_id = EnvelopeId::from(target_object_id);
+        Box::pin(self.hydrate_scope_projection_for_target(
+            target_topic_id.as_str(),
+            &scope,
+            &target_object_id,
+        ))
+        .await?;
         let target = self
             .services
             .projection_store

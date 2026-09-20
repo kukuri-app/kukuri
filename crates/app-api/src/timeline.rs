@@ -213,8 +213,9 @@ impl AppService {
                 channel_id: channel_id.clone(),
             },
         };
-        self.hydrate_scope_projection(topic_id, &scope).await?;
         let source_object_id = EnvelopeId::from(source_object_id);
+        Box::pin(self.hydrate_scope_projection_for_target(topic_id, &scope, &source_object_id))
+            .await?;
         let projection = self
             .services
             .projection_store
@@ -347,8 +348,9 @@ impl AppService {
                 channel_id: channel_id.clone(),
             },
         };
-        self.hydrate_scope_projection(topic_id, &scope).await?;
         let target_object_id = EnvelopeId::from(object_id);
+        Box::pin(self.hydrate_scope_projection_for_target(topic_id, &scope, &target_object_id))
+            .await?;
         let target = self
             .resolve_signed_post_envelope(&target_object_id)
             .await?
@@ -469,7 +471,12 @@ impl AppService {
                     channel_id: channel_id.clone(),
                 },
             };
-            self.hydrate_scope_projection(topic_id, &scope).await?;
+            Box::pin(self.hydrate_scope_projection_for_target(
+                topic_id,
+                &scope,
+                &EnvelopeId::from(reply_to),
+            ))
+            .await?;
             Some(
                 self.resolve_parent_object(&EnvelopeId::from(reply_to))
                     .await?
@@ -732,49 +739,39 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        let needs_hydration = projection_page_needs_hydration(&page)
-            || self
-                .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
-                .await;
+        // #1225: 本文が欠けた行は全件走査の理由にしない。欠損は行単位の取り直しへ渡し、
+        // 全件走査は「ページが空」か「private channel の現在 epoch が未反映」のときだけ、1 回まで行う。
+        let needs_epoch_hydration = self
+            .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
+            .await;
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if (page.items.is_empty() || needs_hydration)
-            && self.hydrate_scope_projection(topic_id, &scope).await? > 0
-        {
-            *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
-            page = filtered_timeline_page(
-                self.services.projection_store.as_ref(),
-                topic_id,
-                cursor.clone(),
-                limit,
-                &self.allowed_channel_ids_for_scope(topic_id, &scope).await?,
-                &hidden_author_pubkeys,
-            )
-            .await?;
-        }
-        if needs_hydration || (page.items.is_empty() && restart_after_empty) {
-            if had_topic_subscription {
-                self.maybe_restart_scope_subscription(topic_id, &scope)
-                    .await;
-            }
-            self.maybe_restart_scope_replica_sync(topic_id, &scope)
-                .await;
+        if page.items.is_empty() || needs_epoch_hydration {
             if self.hydrate_scope_projection(topic_id, &scope).await? > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+                page = filtered_timeline_page(
+                    self.services.projection_store.as_ref(),
+                    topic_id,
+                    cursor,
+                    limit,
+                    &self.allowed_channel_ids_for_scope(topic_id, &scope).await?,
+                    &hidden_author_pubkeys,
+                )
+                .await?;
             }
-            page = filtered_timeline_page(
-                self.services.projection_store.as_ref(),
-                topic_id,
-                cursor,
-                limit,
-                &self.allowed_channel_ids_for_scope(topic_id, &scope).await?,
-                &hidden_author_pubkeys,
-            )
-            .await?;
+            if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
+                if had_topic_subscription {
+                    self.maybe_restart_scope_subscription(topic_id, &scope)
+                        .await;
+                }
+                self.maybe_restart_scope_replica_sync(topic_id, &scope)
+                    .await;
+            }
         }
+        Box::pin(self.recover_missing_bodies(&mut page.items)).await;
         if !page.items.is_empty() {
             self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
                 .await;
@@ -812,67 +809,46 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        let needs_hydration = projection_page_needs_hydration(&page);
+        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は全件走査の理由にしない。
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if (page.items.is_empty() || needs_hydration)
-            && self
-                .hydrate_scope_projection(topic_id, &TimelineScope::AllJoined)
-                .await?
-                > 0
-        {
-            *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
-            let root_channel = self
-                .services
-                .projection_store
-                .get_object_projection(&thread_root)
-                .await?
-                .map(|row| row.channel_id);
-            page = filtered_thread_page(
-                self.services.projection_store.as_ref(),
-                topic_id,
-                &thread_root,
-                cursor.clone(),
-                limit,
-                root_channel.as_deref(),
-                &hidden_author_pubkeys,
-            )
-            .await?;
-        }
-        if needs_hydration || (page.items.is_empty() && restart_after_empty) {
-            if had_topic_subscription {
-                self.maybe_restart_scope_subscription(topic_id, &TimelineScope::AllJoined)
-                    .await;
-            }
-            self.maybe_restart_scope_replica_sync(topic_id, &TimelineScope::AllJoined)
-                .await;
+        if page.items.is_empty() {
             if self
                 .hydrate_scope_projection(topic_id, &TimelineScope::AllJoined)
                 .await?
                 > 0
             {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+                let root_channel = self
+                    .services
+                    .projection_store
+                    .get_object_projection(&thread_root)
+                    .await?
+                    .map(|row| row.channel_id);
+                page = filtered_thread_page(
+                    self.services.projection_store.as_ref(),
+                    topic_id,
+                    &thread_root,
+                    cursor,
+                    limit,
+                    root_channel.as_deref(),
+                    &hidden_author_pubkeys,
+                )
+                .await?;
             }
-            let root_channel = self
-                .services
-                .projection_store
-                .get_object_projection(&thread_root)
-                .await?
-                .map(|row| row.channel_id);
-            page = filtered_thread_page(
-                self.services.projection_store.as_ref(),
-                topic_id,
-                &thread_root,
-                cursor,
-                limit,
-                root_channel.as_deref(),
-                &hidden_author_pubkeys,
-            )
-            .await?;
+            if page.items.is_empty() && restart_after_empty {
+                if had_topic_subscription {
+                    self.maybe_restart_scope_subscription(topic_id, &TimelineScope::AllJoined)
+                        .await;
+                }
+                self.maybe_restart_scope_replica_sync(topic_id, &TimelineScope::AllJoined)
+                    .await;
+            }
         }
+        Box::pin(self.recover_missing_bodies(&mut page.items)).await;
         if !page.items.is_empty() {
             self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
                 .await;

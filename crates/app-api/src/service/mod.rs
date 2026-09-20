@@ -127,10 +127,13 @@ pub(crate) use dome_connection_support::*;
 mod errors;
 mod game_projection_support;
 mod gossip_subscription_support;
+mod hydration_limits;
 mod hydration_support;
 use game_projection_support::GameRoomProjectionLocks;
 #[cfg(test)]
-pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_game_rooms_from_replica};
+pub(crate) use hydration_support::hydrate_game_room_from_key;
+#[cfg(test)]
+pub(crate) use hydration_support::hydrate_game_rooms_from_replica;
 mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
@@ -164,9 +167,9 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
-    hint_targets_topic, hydrate_post_withdrawals_from_replica, hydrate_subscription_event,
-    hydrate_subscription_hint, hydrate_subscription_state, hydrate_topic_state,
-    profile_timeline_page, projection_page_needs_hydration,
+    hint_refers_to_replica_content, hint_targets_topic, hydrate_post_withdrawals_from_replica,
+    hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
+    hydrate_topic_state, profile_timeline_page,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
@@ -352,6 +355,9 @@ pub struct ServiceHandles {
     pub(crate) keys: Arc<KukuriKeys>,
     pub(crate) game_room_projections: Arc<GameRoomProjectionLocks>,
     pub(crate) dome_mutations: Arc<Mutex<()>>,
+    /// #1225: replica 全件走査の指紋と、欠損した本文 blob の試行台帳。
+    pub(crate) replica_scan_cache: Arc<hydration_limits::ReplicaScanCache>,
+    pub(crate) missing_body_ledger: Arc<hydration_limits::MissingBodyLedger>,
 }
 
 impl ServiceHandles {
@@ -374,6 +380,8 @@ impl ServiceHandles {
             keys: Arc::new(keys),
             game_room_projections: Arc::default(),
             dome_mutations: Arc::default(),
+            replica_scan_cache: Arc::default(),
+            missing_body_ledger: Arc::default(),
         }
     }
 }
