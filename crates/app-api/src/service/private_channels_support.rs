@@ -647,7 +647,11 @@ impl AppService {
                 .await;
         }
         services.docs_sync.open_replica(&replica).await?;
-        let mut doc_stream = services.docs_sync.subscribe_replica(&replica).await?;
+        // #1239: entry の event のほかに、取りこぼしと同期の区切りも受け取る(窓の追いつきの契機にする)。
+        let mut doc_stream = services
+            .docs_sync
+            .subscribe_replica_notices(&replica)
+            .await?;
         let mut hint_stream = services.hint_transport.subscribe_hints(&hint_topic).await?;
         let replica_for_task = replica.clone();
         let hint_topic_for_task = hint_topic.clone();
@@ -657,10 +661,9 @@ impl AppService {
             let blob_service = &services.blob_service;
             let hint_transport = &services.hint_transport;
             let transport = &services.transport;
-            let notification_baseline = match snapshot_object_notification_baseline(
+            let notification_baseline = match snapshot_window_notification_baseline(
                 docs_sync.as_ref(),
                 &replica_for_task,
-                DocFetchPolicy::LocalOnly,
             )
             .await
             {
@@ -677,11 +680,13 @@ impl AppService {
             };
             let mut recovery_tick = tokio::time::interval(std::time::Duration::from_secs(1));
             recovery_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            if let Err(error) = hydrate_subscription_state(
+            // #1239: replica を走査しない。起動時は、窓(新しい側の固定件数)だけを手元の docs から追いつく。
+            if let Err(error) = catch_up_replica_window(
                 &services,
                 topic.as_str(),
                 &replica_for_task,
                 DocFetchPolicy::LocalOnly,
+                true,
             )
             .await
             {
@@ -696,10 +701,23 @@ impl AppService {
             let mut recovery_probe_due_at = Utc::now()
                 .timestamp_millis()
                 .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-            let mut hint_recovery_gate = HintRecoveryGate::default();
+            let mut catch_up = CatchUpSchedule::default();
             loop {
                 tokio::select! {
-                    Some(event) = doc_stream.next() => {
+                    Some(notice) = doc_stream.next() => {
+                        let event = match notice {
+                            Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => Ok(event),
+                            Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. }) => {
+                                catch_up.request_after_lag();
+                                continue;
+                            }
+                            Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished
+                                | kukuri_docs_sync::ReplicaNotice::ContentReady) => {
+                                catch_up.request();
+                                continue;
+                            }
+                            Err(error) => Err(error),
+                        };
                         if let Ok(event) = event {
                             let now = Utc::now().timestamp_millis();
                             let had_source_peer = event.source_peer.is_some();
@@ -744,7 +762,7 @@ impl AppService {
                                     );
                                 }
                             }
-                            let mut hydrated = match hydrate_subscription_doc_event(
+                            let hydrated = match hydrate_subscription_doc_event(
                                 &services,
                                 topic.as_str(),
                                 &replica_for_task,
@@ -761,27 +779,14 @@ impl AppService {
                                     0
                                 }
                             };
-                            if hydrated == 0 && !is_public_topic {
-                                hydrated = match hydrate_subscription_state(
-                                    &services,
-                                    topic.as_str(),
-                                    &replica_for_task,
-                                    DocFetchPolicy::LocalThenRemote,
-                                )
-                                .await {
-                                    Ok(count) => count,
-                                    Err(error) => {
-                                        warn!(
-                                            topic = %topic,
-                                            replica = %replica_for_task.as_str(),
-                                            error = %error,
-                                            "failed to hydrate subscription from docs-event recovery"
-                                        );
-                                        0
-                                    }
-                                };
+                            if hydrated == 0 && had_source_peer {
+                                // 相手から届いた、個別反映の対象でない key(索引など)や、本体がまだ届いていない
+                                // entry。走査はせず、追いつきを依頼する(間隔を空けて 1 回にまとまる)。
+                                // 自分が書いた entry は、書き込みの時点で projection に入っている。
+                                catch_up.request();
                             }
                             if hydrated > 0 {
+                                catch_up.record_progress();
                                 recovery_backoff.reset();
                                 if is_public_topic && event.source_peer.is_some() {
                                     record_public_topic_docs_activity_if_current(
@@ -888,7 +893,7 @@ impl AppService {
                                     *last_sync.lock().await = Some(now);
                                 }
                                 _ => {
-                                    let mut hydrated = match hydrate_subscription_hint(
+                                    let hydrated = match hydrate_subscription_hint(
                                         &services,
                                         topic.as_str(),
                                         &replica_for_task,
@@ -906,30 +911,16 @@ impl AppService {
                                         }
                                     };
                                     let now = Utc::now().timestamp_millis();
-                                    // #1225: 個別反映が 0 件でも、hint ごとに全件走査しない。
-                                    if hydrated == 0 && !hint_recovery_gate.allow(&event.hint, now) {
-                                        continue;
-                                    }
+                                    // #1239: 個別反映が 0 件でも走査しない。replica の内容を指す hint だけ、
+                                    // 追いつきを依頼する(docs の同期より先に hint が届いた場合など)。
                                     if hydrated == 0 {
-                                        hydrated = match hydrate_subscription_state(
-                                            &services,
-                                            topic.as_str(),
-                                            &replica_for_task,
-                                            DocFetchPolicy::LocalThenRemote,
-                                        )
-                                        .await {
-                                            Ok(count) => count,
-                                            Err(error) => {
-                                                warn!(
-                                                    topic = %topic,
-                                                    error = %error,
-                                                    "failed to hydrate subscription from docs-first recovery probe"
-                                                );
-                                                0
-                                            }
-                                        };
+                                        if !hint_refers_to_replica_content(&event.hint) {
+                                            continue;
+                                        }
+                                        catch_up.request();
                                     }
                                     if hydrated > 0 {
+                                        catch_up.record_progress();
                                         recovery_backoff.reset();
                                         if is_public_topic && !event.source_peer.is_empty() {
                                             record_public_topic_docs_activity_if_current(
@@ -959,9 +950,39 @@ impl AppService {
                             }
                         }
                     }
-                    _ = recovery_tick.tick(), if is_public_topic => {
+                    _ = recovery_tick.tick() => {
                         let now = Utc::now().timestamp_millis();
-                        if recovery_probe_due_at > now {
+                        if let Some(run) = catch_up.take_due(now) {
+                            let hydrated = match catch_up_replica_window(
+                                &services,
+                                topic.as_str(),
+                                &replica_for_task,
+                                DocFetchPolicy::LocalThenRemote,
+                                run.refresh_reactions,
+                            )
+                            .await {
+                                Ok(count) => count,
+                                Err(error) => {
+                                    warn!(
+                                        topic = %topic,
+                                        replica = %replica_for_task.as_str(),
+                                        error = %error,
+                                        "failed to catch up the replica window"
+                                    );
+                                    0
+                                }
+                            };
+                            let now = Utc::now().timestamp_millis();
+                            catch_up.record_finished(now, hydrated);
+                            if hydrated > 0 {
+                                recovery_backoff.reset();
+                                recovery_probe_due_at =
+                                    now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
+                                *last_sync.lock().await = Some(now);
+                            }
+                            continue;
+                        }
+                        if !is_public_topic || recovery_probe_due_at > now {
                             continue;
                         }
                         let (has_live_topic_peer, has_configured_topic_peer, docs_assist_peer_count) =
@@ -979,48 +1000,16 @@ impl AppService {
                                 now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
                             continue;
                         }
-                        let hydrated = match hydrate_subscription_state(
-                            &services,
+                        // #1239: recovery tick は docs を読まない。再 sync を backoff つきで促すだけで、
+                        // 届いた entry は docs の event が、取りこぼしは同期の区切りの通知からの追いつきが反映する。
+                        restart_replica_sync_with_backoff(
+                            docs_sync.as_ref(),
                             topic.as_str(),
                             &replica_for_task,
-                            DocFetchPolicy::LocalThenRemote,
+                            &mut recovery_backoff,
                         )
-                        .await {
-                            Ok(count) => count,
-                            Err(error) => {
-                                warn!(
-                                    topic = %topic,
-                                    error = %error,
-                                    "failed to hydrate subscription during periodic docs-first recovery"
-                                );
-                                0
-                            }
-                        };
-                        if hydrated > 0 {
-                            if docs_assist_peer_count > 0 {
-                                record_public_topic_docs_activity_if_current(
-                                    &public_topic_delivery,
-                                    topic.as_str(),
-                                    generation,
-                                    now,
-                                )
-                                .await;
-                            }
-                            recovery_backoff.reset();
-                            recovery_probe_due_at =
-                                now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                            *last_sync.lock().await = Some(now);
-                        } else {
-                            restart_replica_sync_with_backoff(
-                                docs_sync.as_ref(),
-                                topic.as_str(),
-                                &replica_for_task,
-                                &mut recovery_backoff,
-                            )
-                            .await;
-                            // #1225: 変化が無い間は、全件走査の間隔も再 sync の backoff に合わせて伸ばす。
-                            recovery_probe_due_at = recovery_backoff.next_probe_at(now);
-                        }
+                        .await;
+                        recovery_probe_due_at = recovery_backoff.next_probe_at(now);
                     }
                     else => {
                         let _ = hint_transport.unsubscribe_hints(&hint_topic_for_task).await;

@@ -312,13 +312,9 @@ async fn repost_notification_survives_hydration_before_live_doc_event() {
         .create_post(topic.as_str(), "source post", None)
         .await
         .expect("create source post");
-    let baseline = snapshot_object_notification_baseline(
-        docs_sync.as_ref(),
-        &replica,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await
-    .expect("snapshot object baseline");
+    let baseline = snapshot_window_notification_baseline(docs_sync.as_ref(), &replica)
+        .await
+        .expect("snapshot object baseline");
     let remote_keys = generate_keys();
     let repost_source = app
         .resolve_repost_source(topic.as_str(), source_object_id.as_str())
@@ -391,13 +387,9 @@ async fn quote_repost_notification_survives_hydration_before_live_doc_event() {
         .create_post(topic.as_str(), "quoted source", None)
         .await
         .expect("create source post");
-    let baseline = snapshot_object_notification_baseline(
-        docs_sync.as_ref(),
-        &replica,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await
-    .expect("snapshot object baseline");
+    let baseline = snapshot_window_notification_baseline(docs_sync.as_ref(), &replica)
+        .await
+        .expect("snapshot object baseline");
     let remote_keys = generate_keys();
     let repost_source = app
         .resolve_repost_source(topic.as_str(), source_object_id.as_str())
@@ -795,13 +787,9 @@ async fn restart_or_manual_hydration_does_not_backfill_or_duplicate_notification
         .to_post_object()
         .expect("parse existing reply")
         .expect("existing reply object");
-    let baseline = snapshot_object_notification_baseline(
-        docs_sync.as_ref(),
-        &replica,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await
-    .expect("snapshot object baseline");
+    let baseline = snapshot_window_notification_baseline(docs_sync.as_ref(), &replica)
+        .await
+        .expect("snapshot object baseline");
     hydrate_subscription_state(
         &app.services,
         topic.as_str(),

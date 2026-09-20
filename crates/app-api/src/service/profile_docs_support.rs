@@ -608,27 +608,6 @@ pub(crate) async fn load_profile_reposts_from_author_replica(
     Ok(items)
 }
 
-pub(crate) async fn snapshot_object_notification_baseline(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    policy: DocFetchPolicy,
-) -> Result<NotificationDocEventBaseline> {
-    let records = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Prefix("objects/".into()),
-        policy,
-    )
-    .await?;
-    // 通知は `state` と `envelope` のどちらの event でも試す(#1248)。両方の key を起点に含める。
-    Ok(NotificationDocEventBaseline::from_records(
-        &records
-            .into_iter()
-            .filter(|record| object_id_from_post_key(record.key.as_str()).is_some())
-            .collect::<Vec<_>>(),
-    ))
-}
-
 pub(crate) async fn snapshot_follow_notification_baseline(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,

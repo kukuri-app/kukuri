@@ -48,6 +48,19 @@ Accepted
 
 - 窓の大きさと 1 ページの件数は、replica の総件数に依存しない定数とする（初期値: 窓 200、ページは呼び出し側の `limit`）。
 - 窓より古い範囲の取りこぼしは、ページの範囲の照合で埋まる。埋まらない範囲が残ることを許容する。
+- 窓の追いつき（購読タスク）の規則:
+  - 契機は、購読タスクの起動、docs の通知（取りこぼし `Lagged`・同期の終わり `SyncFinished`・本体がそろった `ContentReady`）、相手から届いた entry の個別反映が 0 件だったとき
+    （索引の key や、本体がまだ届いていない entry）、replica の内容を指す hint の個別反映が 0 件だったとき。自分が書いた entry の event は契機にしない（書き込みの時点で projection に入っている）。
+  - 契機は覚えておき、間隔を空けて 1 回にまとめる（最小 3 秒）。何も反映できない追いつきが続くあいだは、間隔を 2 倍ずつ伸ばす（上限 5 分）。個別反映か追いつきで何かが入ったら、最小へ戻す。
+  - 読むのは、時系列の索引の新しい側の窓（200 件）と、session の固定件数（live・score game は key の降順、Dome の room は昇順で、それぞれ 32 件）。どちらも key だけの上限つきの一覧で、
+    projection に無い object だけを key 指定で反映する。replica の総 entry 数に依存しない。起動時は `LocalOnly`、それ以外は `LocalThenRemote`。
+  - 起動時と取りこぼしの後は、窓の object の取り下げと reaction も読み直す（取りこぼした event に含まれうる）。それ以外の追いつきは、projection に無い object だけを対象にする。
+  - recovery tick は docs を読まない。docs の支援 peer がいるあいだ、再 sync を backoff つきで促すだけで、届いた entry は docs の event が、取りこぼしは通知からの追いつきが反映する。
+  - 通知の起点（購読を始める前から手元にあった投稿の entry の event を通知にしない）は、窓の object の `objects/<id>/` の key と content hash だけから作る。窓より古い entry の event が
+    再び届いたときは通知の候補になる（通知の id は決定的なので、既にある通知は重複しない）。
+- reaction の上限つきの読み出し（1 対象あたり 32 件）は、key の一覧が上限で打ち切られたとき、reaction id（16 進）の先頭の 1 文字ごとに少しずつ（8 key）読んで混ぜる。
+  先頭に並ぶ key だけを見ていると、正しい reaction より先に並ぶ key を置くだけで、その投稿の reaction を隠せてしまう。読む量は定数（16 回の一覧）で、reaction の総数に依存しない。
+  hint の個別反映（対象の reaction）も、同じ上限つきの読み出しを使う。32 件を超える reaction は、docs の event の個別反映でしか入らない（best effort）。
 - ページの範囲の照合は、表示の経路で行う。次の規則で、表示を待たせず、同じ仕事を繰り返さない。
   - 読み出しは `LocalOnly` とする。entry の本体が手元に無い object は飛ばし、後の照合で拾う。本文が blob の投稿は、手元にある本文だけを読み、
     欠けた本文は行単位の取り直し（`MissingBodyLedger`、背景）に任せる。本文の取り方は、docs の読み出しの policy とは別に決める。

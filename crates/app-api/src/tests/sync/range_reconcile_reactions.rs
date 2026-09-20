@@ -174,7 +174,9 @@ async fn reconcile_does_not_wait_for_a_remote_reaction_envelope() {
 #[tokio::test]
 async fn reaction_key_listing_returns_a_bounded_number_of_keys() {
     let mut returned = Vec::new();
-    for reactions in [40usize, 128] {
+    // どちらも、reaction id の先頭の 1 文字ごとの一覧が上限まで埋まる件数にする(埋まらない件数同士では、
+    // 返る key の数が reaction の数で変わる。上限があることは変わらない)。
+    for reactions in [240usize, 480] {
         let topic = format!("kukuri:topic:range-reaction-keys-{reactions}");
         let docs_sync = Arc::new(CountingDocsSync::default());
         let blob_service = Arc::new(MemoryBlobService::default());
@@ -207,5 +209,49 @@ async fn reaction_key_listing_returns_a_bounded_number_of_keys() {
     assert_eq!(
         returned[0], returned[1],
         "the keys and records returned by docs must not grow with the number of reactions: {returned:?}"
+    );
+}
+
+// `reactions/<target>/` の下に、正しい reaction より先に並ぶ key を一覧の上限ぶん置かれても、正しい reaction は
+// 反映される(独立監査 PR #1247 の再現 test を恒久化)。public topic の replica は誰もが書ける。
+#[tokio::test]
+async fn junk_keys_before_the_real_reactions_do_not_hide_them_from_the_reconcile() {
+    let topic = "kukuri:topic:range-reactions-junk";
+    let replica = topic_replica_id(topic);
+    let docs_sync = Arc::new(RecordingDocsSync::default());
+    let blob_service = Arc::new(MemoryBlobService::default());
+    let (author, _author_store) = recording_app_with_blobs(docs_sync.clone(), blob_service.clone());
+    let target = post_with_reactions(&author, topic, 3).await;
+    author.shutdown().await;
+    // `!` は 16 進の文字より前に並ぶ。reaction id の形(`/` を含まない 1 区画)で、envelope の無い key。
+    for index in 0..64usize {
+        docs_sync
+            .apply_doc_op(
+                &replica,
+                DocOp::SetJson {
+                    key: stable_key("reactions", &format!("{target}/!junk-{index:03}/state")),
+                    value: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("write a junk key");
+    }
+
+    let (viewer, viewer_store) = recording_app_with_blobs(docs_sync.clone(), blob_service);
+    let hydrated = viewer
+        .reconcile_timeline_range(topic, &TimelineScope::Public, None, 20)
+        .await
+        .expect("the reconcile itself must not fail");
+    assert_eq!(hydrated, 1, "the post is still reflected");
+    let projection_store: &dyn ProjectionStore = viewer_store.as_ref();
+    let rows = projection_store
+        .list_reaction_cache_for_target(&replica, &EnvelopeId::from(target.as_str()))
+        .await
+        .expect("reaction rows");
+    viewer.shutdown().await;
+    assert_eq!(
+        rows.len(),
+        3,
+        "the three honest reactions are reflected even when junk keys sort first"
     );
 }

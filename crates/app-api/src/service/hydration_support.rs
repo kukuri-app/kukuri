@@ -2,9 +2,7 @@ use super::game_projection_support::hydrate_game_room_from_record;
 use super::hydration_limits::{
     MissingBodyLedger, ReplicaScanCache, fetch_projection_blob_text_bounded, scan_fingerprint,
 };
-use super::reaction_hydration::{
-    hydrate_reaction_cache_for_target, hydrate_reaction_cache_from_replica,
-};
+use super::reaction_hydration::hydrate_reaction_cache_from_replica;
 use super::*;
 
 /// 戻り値は今回反映した取り下げの件数。前回の走査から record が変わっていなければ何もせず 0 を返す(#1225)。
@@ -587,12 +585,16 @@ pub(crate) async fn hydrate_subscription_hint(
                     continue;
                 }
                 if object.object_kind == "reaction" {
-                    hydrated += hydrate_reaction_cache_for_target(
+                    // #1239: 対象の reaction の総数ぶんを読まない。上限つきで読む(その hint が指す reaction は、
+                    // docs の event が key 単位で反映する)。
+                    hydrated += hydrate_reaction_cache_for_target_bounded(
                         docs_sync,
                         projection_store,
                         topic_id,
                         replica,
-                        object.object_id.as_str(),
+                        &EnvelopeId::from(object.object_id.as_str()),
+                        DocFetchPolicy::LocalThenRemote,
+                        super::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT,
                     )
                     .await?;
                     continue;

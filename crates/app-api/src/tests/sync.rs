@@ -372,6 +372,7 @@ mod range_reconcile_reactions;
 mod range_reconcile_walk;
 mod scale_independence;
 mod shadowing_docs;
+mod subscription_catch_up;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;

@@ -132,7 +132,7 @@ mod gossip_subscription_support;
 mod hydration_limits;
 mod hydration_support;
 use game_projection_support::GameRoomProjectionLocks;
-pub(crate) use hydration_limits::{HintRecoveryGate, recovery_probe_peer_state};
+pub(crate) use hydration_limits::recovery_probe_peer_state;
 #[cfg(test)]
 pub(crate) use hydration_support::{
     hydrate_game_room_from_key, hydrate_game_rooms_from_replica, hydrate_subscription_event,
@@ -158,6 +158,10 @@ mod session_integrity;
 mod social_helpers;
 mod social_runtime_support;
 mod spatial_access_support;
+mod subscription_catch_up;
+pub(crate) use subscription_catch_up::{
+    CatchUpSchedule, catch_up_replica_window, snapshot_window_notification_baseline,
+};
 mod subscription_registry;
 mod timeline_subscription_support;
 mod timeline_view_support;
@@ -230,7 +234,7 @@ pub(crate) use profile_docs_support::{
     load_profile_reposts_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,
-    snapshot_follow_notification_baseline, snapshot_object_notification_baseline,
+    snapshot_follow_notification_baseline,
 };
 pub(crate) use projection_support::{
     active_private_channel_participants, archive_private_channel_epoch,
@@ -549,6 +553,20 @@ impl NotificationDocEventBaseline {
                 .iter()
                 .map(|record| {
                     notification_doc_event_fingerprint_parts(&record.key, &record.content_hash)
+                })
+                .collect(),
+        }
+    }
+
+    /// key だけの読み出しの結果(key と content hash)から作る。値は読まない。
+    pub(crate) fn from_key_entries<'a>(
+        entries: impl IntoIterator<Item = &'a kukuri_docs_sync::DocKeyEntry>,
+    ) -> Self {
+        Self {
+            fingerprints: entries
+                .into_iter()
+                .map(|entry| {
+                    notification_doc_event_fingerprint_parts(&entry.key, &entry.content_hash)
                 })
                 .collect(),
         }

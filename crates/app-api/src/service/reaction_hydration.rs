@@ -110,21 +110,8 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     hydrate_reaction_cache_from_reaction(projection_store, &reaction).await
 }
 
-pub(crate) async fn hydrate_reaction_cache_for_target(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    topic_id: &str,
-    replica: &ReplicaId,
-    target_object_id: &str,
-) -> Result<usize> {
-    let records = docs_sync
-        .query_replica(
-            replica,
-            DocQuery::Prefix(stable_key("reactions", &format!("{target_object_id}/"))),
-        )
-        .await?;
-    hydrate_reactions_from_records(projection_store, topic_id, replica, &records).await
-}
+/// reaction id の先頭の 1 文字ごとの一覧で読む key の数(reaction 4 件ぶん)。
+const REACTION_KEYS_PER_LEAD: usize = 8;
 
 /// 対象の投稿 1 件の reaction を、上限つきで反映する(#1239)。replica は走査しない。
 ///
@@ -141,22 +128,58 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
     max_reactions: usize,
 ) -> Result<usize> {
     // reaction 1 件につき、`state` と `envelope` の 2 つの key がある。
-    let page = docs_sync
-        .query_replica_keys(
-            replica,
-            kukuri_docs_sync::DocKeyQuery {
-                prefix: stable_key("reactions", &format!("{}/", target_object_id.as_str())),
-                order: kukuri_docs_sync::DocKeyOrder::Ascending,
-                limit: max_reactions.saturating_mul(2),
-            },
-        )
-        .await?;
-    let keys = page
-        .entries
-        .iter()
-        .filter_map(|entry| ReactionKey::from_doc_key(entry.key.as_str()))
-        .filter(|key| key.target_object_id == *target_object_id)
-        .collect::<BTreeSet<_>>();
+    let prefix = stable_key("reactions", &format!("{}/", target_object_id.as_str()));
+    let list = |prefix: String, limit: usize| async move {
+        docs_sync
+            .query_replica_keys(
+                replica,
+                kukuri_docs_sync::DocKeyQuery {
+                    prefix,
+                    order: kukuri_docs_sync::DocKeyOrder::Ascending,
+                    limit,
+                },
+            )
+            .await
+    };
+    let reaction_keys = |page: kukuri_docs_sync::DocKeyPage| {
+        page.entries
+            .iter()
+            .filter_map(|entry| ReactionKey::from_doc_key(entry.key.as_str()))
+            .filter(|key| key.target_object_id == *target_object_id)
+            .collect::<BTreeSet<_>>()
+    };
+    let head = list(prefix.clone(), max_reactions.saturating_mul(2)).await?;
+    let truncated = head.reached_limit;
+    let mut keys = reaction_keys(head).into_iter().collect::<Vec<_>>();
+    if truncated {
+        // 一覧が上限で打ち切られた。先頭に並ぶ key だけを見ていると、正しい reaction より先に並ぶ key を置くだけで、
+        // その投稿の reaction を隠せてしまう。reaction id(16 進)の先頭の 1 文字ごとに少しずつ読み、混ぜて選ぶ。
+        // 読む量は定数(16 回の上限つきの一覧)で、reaction の総数に依存しない。それでも覆えない分は best effort。
+        let mut buckets = Vec::new();
+        for lead in "0123456789abcdef".chars() {
+            let page = list(format!("{prefix}{lead}"), REACTION_KEYS_PER_LEAD).await?;
+            buckets.push(reaction_keys(page).into_iter().collect::<Vec<_>>());
+        }
+        let mut mixed = Vec::new();
+        let mut index = 0usize;
+        while mixed.len() < max_reactions && buckets.iter().any(|bucket| index < bucket.len()) {
+            for bucket in &buckets {
+                if let Some(key) = bucket.get(index)
+                    && !mixed.contains(key)
+                {
+                    mixed.push(key.clone());
+                }
+            }
+            index += 1;
+        }
+        // 打ち切られた一覧の先頭のぶんは、残りの枠へ入れる。
+        for key in keys {
+            if !mixed.contains(&key) {
+                mixed.push(key);
+            }
+        }
+        keys = mixed;
+    }
     let mut hydrated = 0usize;
     for key in keys.into_iter().take(max_reactions) {
         hydrated += hydrate_reaction_cache_from_key(

@@ -309,33 +309,28 @@ async fn topic_reaction_hints_rehydrate_only_target_reactions() {
     .expect("reaction hint handling timeout");
 
     let queries = docs_sync.queries().await;
+    // #1239: 対象の reaction を、上限つきの key の一覧と、reaction ごとの envelope の key 指定で読む。
+    // 対象の reaction の総数ぶんの prefix 読みも、replica の走査もしない。
     assert!(
         queries.iter().any(|(_, query)| {
             *query
-                == DocQuery::Prefix(stable_key(
+                == DocQuery::Exact(stable_key(
                     "reactions",
-                    &format!("{}/", envelope.id.as_str()),
+                    &format!("{}/{}/envelope", envelope.id.as_str(), reaction_id.as_str()),
                 ))
         }),
-        "expected targeted reaction prefix query after hint, got {queries:?}"
+        "expected the target's reaction envelope to be read by key after the hint, got {queries:?}"
     );
     assert!(
-        queries.iter().all(|(_, query)| {
-            !matches!(
-                query,
-                DocQuery::Prefix(prefix)
-                    if prefix == "objects/"
-                        || prefix == "reactions/"
-                        || prefix == "sessions/live/"
-                        || prefix == "sessions/game/"
-            )
-        }),
-        "reaction hint should not trigger whole-replica rehydrate, got {queries:?}"
+        queries
+            .iter()
+            .all(|(_, query)| matches!(query, DocQuery::Exact(_))),
+        "a reaction hint must not read a prefix, got {queries:?}"
     );
 }
 
 #[tokio::test]
-async fn public_topic_recovery_keeps_docs_probe_when_live_peer_has_not_delivered_content() {
+async fn public_topic_recovery_keeps_prompting_a_resync_without_scanning_the_replica() {
     let store = Arc::new(MemoryStore::default());
     let topic = TopicId::new("kukuri:topic:live-peer-docs-probe");
     let transport = Arc::new(StaticTransport::new(PeerSnapshot {
@@ -397,39 +392,35 @@ async fn public_topic_recovery_keeps_docs_probe_when_live_peer_has_not_delivered
         .await
         .expect("publish hint miss");
 
+    // #1239: 個別反映が 0 件でも replica を走査しない。docs の支援 peer がいるあいだは、再 sync を
+    // backoff つきで促し続ける(届いた entry は docs の event と窓の追いつきが反映する)。
+    let restarts_before = docs_sync.restarts().await;
     timeout(Duration::from_secs(5), async {
-        loop {
-            let queries = docs_sync.queries().await;
-            if queries
-                .iter()
-                .any(|(_, query)| *query == DocQuery::Prefix("objects/".into()))
-            {
-                break;
-            }
+        while docs_sync.restarts().await == restarts_before {
             sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("initial recovery probe timeout");
-    docs_sync.clear_queries().await;
-
+    .expect("the hint miss must prompt a replica re-sync");
+    let restarts_after_hint = docs_sync.restarts().await;
     timeout(
-        Duration::from_millis(PUBLIC_TOPIC_RECOVERY_GRACE_MS as u64 + 2_000),
+        Duration::from_millis(
+            (PUBLIC_TOPIC_RECOVERY_GRACE_MS + PUBLIC_TOPIC_RECOVERY_BACKOFF_MS[0]) as u64 + 3_000,
+        ),
         async {
-            loop {
-                let queries = docs_sync.queries().await;
-                if queries
-                    .iter()
-                    .any(|(_, query)| *query == DocQuery::Prefix("objects/".into()))
-                {
-                    break;
-                }
+            while docs_sync.restarts().await == restarts_after_hint {
                 sleep(Duration::from_millis(50)).await;
             }
         },
     )
     .await
-    .expect("periodic docs-assisted recovery probe timeout");
+    .expect("the periodic recovery must keep prompting the re-sync");
+    assert_eq!(
+        docs_sync.object_scans().await,
+        0,
+        "neither the hint miss nor the recovery tick scans the replica"
+    );
+    app.shutdown().await;
 }
 
 #[tokio::test]

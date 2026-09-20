@@ -327,25 +327,6 @@ impl WithdrawalCheckLedger {
     }
 }
 
-/// hint を契機にした全件走査の門(#1225)。
-///
-/// replica の内容を指さない hint は契機にしない。内容を指す hint でも、最初の 1 回はすぐ走査し、
-/// 以後は最小間隔を空ける(取りこぼしは docs event と recovery tick が拾う)。
-#[derive(Default)]
-pub(crate) struct HintRecoveryGate {
-    next_scan_at_ms: i64,
-}
-
-impl HintRecoveryGate {
-    pub(crate) fn allow(&mut self, hint: &GossipHint, now_ms: i64) -> bool {
-        if !hint_refers_to_replica_content(hint) || self.next_scan_at_ms > now_ms {
-            return false;
-        }
-        self.next_scan_at_ms = now_ms.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-        true
-    }
-}
-
 /// recovery tick が走査の要否を決めるための peer の状態。
 /// 戻り値は (topic に live な peer がいる, topic に設定済みの peer がいる, docs の支援 peer 数)。
 pub(crate) async fn recovery_probe_peer_state(

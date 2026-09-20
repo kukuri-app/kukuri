@@ -20,11 +20,11 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 
 | ID | 入口・契機 | 読む範囲 | 比例する総数 | 解消する段階 |
 | --- | --- | --- | --- | --- |
-| S-1 | 購読タスクの起動時・再起動時（`private_channels_support.rs` の `hydrate_subscription_state(LocalOnly)`）。再起動は `restart_active_subscriptions`（`set_discovery_seeds`・`import_peer_ticket`・CN 自己修復）で全購読ぶん | 5 prefix の全 entry | topic / channel epoch の投稿・リアクション・取り下げ・session の総数 × 購読数 | T4、T7（一括の再起動の廃止は #1224） |
-| S-2 | 購読タスクの起動時の通知の baseline（`snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline`）。結果を task の寿命のあいだ memory に保持する | `objects/` の全 entry、`graph/follows/` の全 entry | topic の投稿総数、author の follow 総数 | T4（topic）、T6（author） |
-| S-3 | public topic の recovery tick（最大 30 秒間隔） | 5 prefix の全 entry（`LocalThenRemote`） | 同 S-1 | T4 |
-| S-4 | replica の内容を指す hint で個別反映が 0 件（3 秒の最小間隔） | 同上 | 同 S-1 | T4 |
-| S-5 | private channel の doc event で個別反映が 0 件（`withdrawals/` などの event） | 同上 | 同 S-1 | T4 |
+| S-1 | 購読タスクの起動時・再起動時（`private_channels_support.rs` の `hydrate_subscription_state(LocalOnly)`）。再起動は `restart_active_subscriptions`（`set_discovery_seeds`・`import_peer_ticket`・CN 自己修復）で全購読ぶん | 5 prefix の全 entry | topic / channel epoch の投稿・リアクション・取り下げ・session の総数 × 購読数 | T4b-2（解消済み。起動時は窓の追いつき `catch_up_replica_window`）。関数の削除は T7（一括の再起動の廃止は #1224） |
+| S-2 | 購読タスクの起動時の通知の baseline（`snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline`）。結果を task の寿命のあいだ memory に保持する | `objects/` の全 entry、`graph/follows/` の全 entry | topic の投稿総数、author の follow 総数 | T4b-2（投稿の側は解消済み。窓の object の key と hash だけを読む `snapshot_window_notification_baseline`）。follow の側は T6 |
+| S-3 | public topic の recovery tick（最大 30 秒間隔） | 5 prefix の全 entry（`LocalThenRemote`） | 同 S-1 | T4b-2（解消済み。recovery tick は docs を読まず、再 sync を促すだけ） |
+| S-4 | replica の内容を指す hint で個別反映が 0 件（3 秒の最小間隔） | 同上 | 同 S-1 | T4b-2（解消済み。追いつきの依頼にした） |
+| S-5 | private channel の doc event で個別反映が 0 件（`withdrawals/` などの event） | 同上 | 同 S-1 | T4b-2（解消済み。追いつきの依頼にした） |
 | S-6 | `list_timeline_scoped`（空ページ、private channel の現在 epoch が未反映）・`list_thread`（空ページ）。private channel の現在 epoch に投稿が無い間は、取得のたびに走査していた | scope の全 replica の 5 prefix | 同 S-1 × scope の replica 数 | T5a（解消済み。`reconcile_timeline_range`・`reconcile_thread` が、ページの範囲を時系列の索引と照合する） |
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
@@ -38,7 +38,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-1 | `hydration_support.rs` `hydrate_post_withdrawals_from_replica`。全件走査のほか、view の生成中に行ごとに呼ばれる（`timeline_view_support.rs` の `profile_post_to_view`・`profile_repost_to_view`・`repost_snapshot_to_view_with_profiles`） | `withdrawals/` | topic の取り下げ総数 × ページの行数 | 対象。view の生成からは T3 で外した（背景の key 指定の確認へ）。関数は T7 で削除 |
 | P-2 | `hydration_support.rs` `hydrate_object_projection_from_replica` | `objects/`（1 投稿につき `state` と `envelope` の 2 entry） | topic の投稿総数 | 対象。T7 で削除 |
 | P-3 | `reaction_hydration.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | 対象。T7 で削除 |
-| P-4 | `reaction_hydration.rs` `hydrate_reaction_cache_for_target`（reaction の hint の個別反映） | `reactions/<target object id>/` | 1 投稿のリアクション数 | 対象。T4 で上限つきの読み出しにする（集計は best effort）。T3 では、自分の reaction の確認を key 指定の読み出しにした。T5a で、上限つきの読み出し（`hydrate_reaction_cache_for_target_bounded`）を足し、ページの範囲の照合が使う（下の節） |
+| P-4 | `reaction_hydration.rs` `hydrate_reaction_cache_for_target`（reaction の hint の個別反映） | `reactions/<target object id>/` | 1 投稿のリアクション数 | T4b-2（解消済み。`hydrate_reaction_cache_for_target` を削除し、hint の個別反映も上限つきの `hydrate_reaction_cache_for_target_bounded` を使う） |
 | P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | 対象。T5b で上限つき、T7 で全件走査から外す |
 | P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | 同上 |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
