@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::Result;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, Semaphore, watch};
 // 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
 use tokio::time::Instant;
 
@@ -25,6 +25,8 @@ use crate::config::SeedPeer;
 use crate::tickets::relay_assisted_endpoint_addr;
 
 pub const REMOTE_FETCH_RETRY_COOLDOWN: Duration = Duration::from_secs(3);
+/// 1 つの retry state が同時に実行する remote 走査の上限(#1207)。超過分は順番を待つ。
+pub const REMOTE_FETCH_MAX_CONCURRENT_WALKS: usize = 8;
 const PEER_FETCH_BACKOFF_BASE: Duration = Duration::from_secs(2);
 const PEER_FETCH_BACKOFF_MAX: Duration = Duration::from_secs(60);
 const PEER_CONNECTION_STATE_TTL: Duration = Duration::from_secs(300);
@@ -193,10 +195,23 @@ pub enum RemoteFetchBegin {
 ///
 /// 同じ flight key の走査は 1 本だけにする。実行中の予約は `finish` まで残るため、
 /// 呼び出し側が途中で待つのをやめても、後続の呼び出しが並行して走査を始めることはない。
-#[derive(Default)]
+///
+/// 走査の同時実行数もこの state ごとに数える。blob の取得と docs entry の取得は別の state を
+/// 持つため、取得できない blob の走査が docs entry の取得を待たせることはない。
 pub struct RemoteFetchRetryState {
     retry_after: BTreeMap<String, Instant>,
     in_flight: BTreeMap<String, RemoteFetchResultReceiver>,
+    walk_permits: Arc<Semaphore>,
+}
+
+impl Default for RemoteFetchRetryState {
+    fn default() -> Self {
+        Self {
+            retry_after: BTreeMap::new(),
+            in_flight: BTreeMap::new(),
+            walk_permits: Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS)),
+        }
+    }
 }
 
 impl RemoteFetchRetryState {
@@ -238,6 +253,10 @@ impl RemoteFetchRetryState {
             self.retry_after
                 .insert(cooldown_key.to_string(), now + REMOTE_FETCH_RETRY_COOLDOWN);
         }
+    }
+
+    pub fn walk_permits(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.walk_permits)
     }
 
     pub fn in_flight_len(&self) -> usize {

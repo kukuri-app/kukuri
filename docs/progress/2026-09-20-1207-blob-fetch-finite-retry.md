@@ -16,7 +16,8 @@
 - backend（`crates/transport/src/peers.rs`、`crates/iroh-node/src/remote_fetch.rs`）
   - `RemoteFetchRetryState` に実行中の走査の予約を追加した。同じ対象の要求は実行中の走査へ合流する。
   - 走査は呼び出し側の future から切り離した task で実行し、`finish`（クールダウン）と peer 単位の成否を必ず記録する。
-  - 保存先が違う取得（永続 / 一時 / 上限つき一時）は合流させない。同時に実行する走査は 8 本まで。
+  - 保存先が違う取得（永続 / 一時 / 上限つき一時）は合流させない。同時に実行する走査は retry state ごとに 8 本まで
+    （独立監査の指摘を受け、blob の取得と docs entry の取得で待ち行列を共有しない形にした）。
   - 期限切れのクールダウンは `finish` のたびに捨てる。
   - caller（blob-service、docs-sync、cn-indexer）が使う関数の戻り値と `BlobService` trait は変えていない。引数は `&Arc<_>` になった。
 - 画面（`apps/desktop/src/shell/data/`）

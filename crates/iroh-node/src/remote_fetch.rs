@@ -16,7 +16,7 @@ use kukuri_transport::{
     PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchBegin, RemoteFetchRetryState,
     RequestRateDecision, SharedRemoteFetchResult,
 };
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Mutex;
 use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 
@@ -27,12 +27,6 @@ pub const REMOTE_FETCH_TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
 /// One blob must not consume the sum of every peer/candidate timeout. The caller keeps the
 /// existing entry and retries later when this budget is exhausted.
 pub const REMOTE_FETCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// 同時に実行する remote 走査の上限(#1207)。超過分は順番を待つ。
-/// 走査は呼び出し側から切り離した task で動くため、task 数をここで有限にする。
-const REMOTE_FETCH_MAX_CONCURRENT_WALKS: usize = 8;
-static REMOTE_FETCH_WALK_PERMITS: std::sync::LazyLock<Arc<Semaphore>> =
-    std::sync::LazyLock::new(|| Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS)));
 
 async fn within_remote_fetch_budget<T>(future: impl Future<Output = T>) -> Option<T> {
     timeout(REMOTE_FETCH_TOTAL_TIMEOUT, future).await.ok()
@@ -202,16 +196,8 @@ async fn fetch_bytes_with_cooldown_mode(
                 .await
         }
     };
-    let Some(result) = run_single_flight(
-        retries,
-        &REMOTE_FETCH_WALK_PERMITS,
-        &retry_key,
-        &flight_key,
-        subject,
-        hash_text,
-        walk,
-    )
-    .await
+    let Some(result) =
+        run_single_flight(retries, &retry_key, &flight_key, subject, hash_text, walk).await
     else {
         info!(
             subject,
@@ -240,7 +226,6 @@ async fn fetch_bytes_with_cooldown_mode(
 /// 戻り値が `None` のときはクールダウン中で、走査を行っていない。
 async fn run_single_flight<F>(
     retries: &Arc<Mutex<RemoteFetchRetryState>>,
-    permits: &Arc<Semaphore>,
     retry_key: &str,
     flight_key: &str,
     subject: &str,
@@ -250,17 +235,19 @@ async fn run_single_flight<F>(
 where
     F: Future<Output = Result<Option<Vec<u8>>>> + Send + 'static,
 {
-    let mut receiver = match retries
-        .lock()
-        .await
-        .begin(retry_key, flight_key, Instant::now())
-    {
+    let (begin, permits) = {
+        let mut state = retries.lock().await;
+        (
+            state.begin(retry_key, flight_key, Instant::now()),
+            state.walk_permits(),
+        )
+    };
+    let mut receiver = match begin {
         RemoteFetchBegin::CoolingDown => return None,
         RemoteFetchBegin::Join(receiver) => receiver,
         RemoteFetchBegin::Lead(sender) => {
             let receiver = sender.subscribe();
             let retries = Arc::clone(retries);
-            let permits = Arc::clone(permits);
             let retry_key = retry_key.to_owned();
             let flight_key = flight_key.to_owned();
             let subject = subject.to_owned();
@@ -552,6 +539,8 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use kukuri_transport::REMOTE_FETCH_MAX_CONCURRENT_WALKS;
+
     fn retries() -> Arc<Mutex<RemoteFetchRetryState>> {
         Arc::new(Mutex::new(RemoteFetchRetryState::default()))
     }
@@ -572,14 +561,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn dropped_caller_still_records_the_failure_cooldown() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let started = Arc::new(AtomicUsize::new(0));
 
         let abandoned = timeout(
             Duration::from_secs(2),
             run_single_flight(
                 &retries,
-                &permits,
                 "hash-a",
                 "store:hash-a",
                 "blob",
@@ -600,7 +587,6 @@ mod tests {
 
         let next = run_single_flight(
             &retries,
-            &permits,
             "hash-a",
             "store:hash-a",
             "blob",
@@ -616,7 +602,6 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn repeated_callers_join_the_walk_in_flight() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let started = Arc::new(AtomicUsize::new(0));
 
         for _ in 0..5 {
@@ -624,7 +609,6 @@ mod tests {
                 Duration::from_secs(3),
                 run_single_flight(
                     &retries,
-                    &permits,
                     "hash-a",
                     "store:hash-a",
                     "blob",
@@ -643,7 +627,6 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn joined_callers_share_one_result() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let started = Arc::new(AtomicUsize::new(0));
         let walk = |started: &Arc<AtomicUsize>| {
             let started = Arc::clone(started);
@@ -657,7 +640,6 @@ mod tests {
         let (first, second) = tokio::join!(
             run_single_flight(
                 &retries,
-                &permits,
                 "hash-a",
                 "store:hash-a",
                 "blob",
@@ -666,7 +648,6 @@ mod tests {
             ),
             run_single_flight(
                 &retries,
-                &permits,
                 "hash-a",
                 "store:hash-a",
                 "blob",
@@ -688,14 +669,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn store_and_ephemeral_walks_do_not_join() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let started = Arc::new(AtomicUsize::new(0));
         for flight_key in ["store:hash-a", "ephemeral:hash-a"] {
             let attempt = timeout(
                 Duration::from_secs(1),
                 run_single_flight(
                     &retries,
-                    &permits,
                     "hash-a",
                     flight_key,
                     "blob",
@@ -713,7 +692,6 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn concurrent_walks_are_bounded() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let started = Arc::new(AtomicUsize::new(0));
         let total = REMOTE_FETCH_MAX_CONCURRENT_WALKS + 3;
         for index in 0..total {
@@ -723,7 +701,6 @@ mod tests {
                 Duration::from_millis(10),
                 run_single_flight(
                     &retries,
-                    &permits,
                     &key,
                     &flight_key,
                     "blob",
@@ -748,10 +725,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn shared_error_keeps_the_too_large_type() {
         let retries = retries();
-        let permits = Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS));
         let result = run_single_flight(
             &retries,
-            &permits,
             "bounded:8:hash-a",
             "bounded:8:hash-a",
             "blob",
