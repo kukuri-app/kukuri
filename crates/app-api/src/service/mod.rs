@@ -140,6 +140,7 @@ pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_enve
 mod metaverse_room_event_support;
 mod notifications_support;
 mod object_persistence_support;
+mod post_integrity;
 mod private_channels_support;
 mod profile_docs_support;
 mod projection_support;
@@ -155,11 +156,11 @@ pub(crate) use errors::{
 };
 
 pub(crate) use attachment_support::{
-    attachment_views, attachment_views_from_refs, blob_status, blob_view_status,
-    blob_view_status_for_payload, channel_hint_topic_for, channel_id_for_view,
-    channel_id_from_storage, channel_storage_id, combine_delivery_states, delivery_state_for_topic,
-    direct_message_attachment_views, direct_message_preview, direct_message_topic_peer_count,
-    effective_sync_status_detail, effective_topic_status_detail, joined_private_channel_key,
+    attachment_views_from_refs, blob_status, blob_view_status, blob_view_status_for_payload,
+    channel_hint_topic_for, channel_id_for_view, channel_id_from_storage, channel_storage_id,
+    combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
+    direct_message_preview, direct_message_topic_peer_count, effective_sync_status_detail,
+    effective_topic_status_detail, joined_private_channel_key,
     joined_private_channel_subscription_key, joined_private_channel_subscription_prefix,
     live_presence_task_key, materialize_direct_message_manifest, merge_optional_timestamp,
     normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
@@ -168,7 +169,7 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_object_by_id,
+    hint_refers_to_replica_content, hint_targets_topic, hydrate_object_in_topic,
     hydrate_post_withdrawal_from_record, hydrate_reaction_cache_from_key,
     hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
     hydrate_topic_state, profile_timeline_page,
@@ -194,10 +195,15 @@ pub(crate) use object_persistence_support::{
     persist_post_object, persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
     persist_private_channel_metadata, persist_private_channel_participant,
     persist_private_channel_policy, post_withdrawal_row, private_channel_rotation_is_pending,
-    projection_row_from_header, reaction_cache_key, reaction_projection_row_from_doc,
+    projection_row_from_post, reaction_cache_key, reaction_projection_row_from_doc,
     reaction_state_view_from_rows, recent_reaction_view_from_projection, search_key_or_asset_id,
     session_projection_retry_attempts, session_projection_retry_delay, store_manifest_blob,
     wait_for_private_channel_epoch_snapshot,
+};
+pub(crate) use post_integrity::{
+    MAX_ENVELOPE_RECORDS_PER_OBJECT, ReplicaPostScope, VerifiedPost, WithdrawalTargetCheck,
+    load_verified_post, object_id_from_post_key, post_envelope_key, select_verified_post,
+    verify_withdrawal_against_records, warn_rejected_post,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope_by_id, hydrate_author_state,
@@ -209,9 +215,8 @@ pub(crate) use profile_docs_support::{
 };
 pub(crate) use projection_support::{
     active_private_channel_participants, archive_private_channel_epoch,
-    bookmarked_post_row_is_hidden, current_private_channel_replica_id,
-    fetch_post_object_for_projection, filter_channel_rows, filtered_thread_page,
-    filtered_timeline_page, initial_private_channel_epoch_id,
+    bookmarked_post_row_is_hidden, current_private_channel_replica_id, filter_channel_rows,
+    filtered_thread_page, filtered_timeline_page, initial_private_channel_epoch_id,
     joined_private_channel_state_from_capability, merged_private_channel_state_from_epoch_join,
     next_private_channel_epoch_id, private_channel_epoch_capabilities,
     private_channel_is_epoch_aware, private_channel_replica_for_epoch,
@@ -645,13 +650,8 @@ impl AppService {
             anyhow::bail!("only public posts and comments can be reposted");
         }
 
-        let header = fetch_post_object_for_projection(
-            self.services.docs_sync.as_ref(),
-            &projection.source_replica_id,
-            projection.source_key.as_str(),
-        )
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("repost source header not found"))?;
+        // snapshot は検証済みの行から作る(#1248)。docs の `state` は読まない。行は署名つき envelope から
+        // 作られているので、著者・添付・返信先は署名された値になる。
         let content = match &projection.payload_ref {
             PayloadRef::InlineText { text } => text.clone(),
             PayloadRef::BlobText { hash, .. } => {
@@ -662,15 +662,15 @@ impl AppService {
         };
         Ok(ResolvedRepostSource {
             repost_of: RepostSourceSnapshotV1 {
-                source_object_id: header.object_id,
-                source_topic_id: header.topic_id,
-                source_author_pubkey: header.author,
-                source_object_kind: header.object_kind,
+                source_object_id: projection.object_id,
+                source_topic_id: TopicId::new(projection.topic_id),
+                source_author_pubkey: Pubkey::from(projection.author_pubkey),
+                source_object_kind: projection.object_kind,
                 content,
-                attachments: header.attachments,
-                reply_to_object_id: header.reply_to,
-                root_id: header.root,
-                content_labels: header.content_labels,
+                attachments: projection.attachments,
+                reply_to_object_id: projection.reply_to_object_id,
+                root_id: projection.root_object_id,
+                content_labels: projection.content_labels,
             },
         })
     }

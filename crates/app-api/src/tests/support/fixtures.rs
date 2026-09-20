@@ -76,12 +76,23 @@ pub(crate) async fn persist_test_post_with_labels(
     if let Some(projection_store) = projection_store {
         ObjectProjectionStore::put_object_projection(
             projection_store,
-            projection_row_from_header(&object, None, &replica),
+            verified_projection_row(&envelope, &replica, None),
         )
         .await
         .expect("put placeholder projection");
     }
     envelope
+}
+
+/// 署名つき envelope から、反映と同じ検証を通して projection の行を作る(#1248)。
+pub(crate) fn verified_projection_row(
+    envelope: &KukuriEnvelope,
+    replica: &ReplicaId,
+    content: Option<String>,
+) -> ObjectProjectionRow {
+    let post = VerifiedPost::verify_local(envelope.clone(), replica)
+        .expect("the test envelope must pass the post verification");
+    projection_row_from_post(&post, content)
 }
 pub(crate) fn pending_image_attachment(mime: &str, bytes: &[u8]) -> PendingAttachment {
     PendingAttachment {
@@ -293,11 +304,17 @@ pub(crate) async fn create_remote_object_notification_with_baseline(
     baseline: &NotificationDocEventBaseline,
     event: DocEvent,
 ) -> bool {
+    // public topic の replica は、replica id から購読の topic が決まる。
+    let topic_id = match kukuri_docs_sync::post_replica_kind(&event.replica_id) {
+        Some(kukuri_docs_sync::PostReplicaKind::PublicTopic { topic_id }) => topic_id,
+        other => panic!("the notification fixture expects a public topic replica: {other:?}"),
+    };
     AppService::maybe_create_notification_for_remote_object_event(
         projection_store,
         docs_sync,
         blob_service,
         app.current_author_pubkey().as_str(),
+        topic_id.as_str(),
         baseline,
         &event,
     )

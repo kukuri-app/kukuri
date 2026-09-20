@@ -65,6 +65,7 @@ impl AppService {
         docs_sync: &dyn DocsSync,
         blob_service: &dyn BlobService,
         local_author_pubkey: &str,
+        topic_id: &str,
         notification_baseline: &NotificationDocEventBaseline,
         event: &DocEvent,
     ) -> Result<bool> {
@@ -76,6 +77,7 @@ impl AppService {
             docs_sync,
             blob_service,
             local_author_pubkey,
+            topic_id,
             event,
         )
         .await?

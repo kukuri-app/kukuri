@@ -58,6 +58,19 @@ Accepted
 - 取り下げとして読めない record と、署名・著者が対象と合わない record は、取り下げとして扱わない（warn を出して無視し、投稿の反映を続ける）。
   public topic の replica は誰でも書けるので、読めない record を 1 件置くだけで、特定の投稿を隠したり topic 全体の操作を止めたりできないようにする。
   対象の envelope がまだ手元に無い取り下げは、対象が届いたときに反映し直す。docs と projection の読み書きの失敗は、無視せずエラーとして返す。
+- 投稿の反映は、`objects/<object id>/state` の値を使わない（Issue #1248）。projection の行・通知・repost の snapshot・bookmark は、同じ object の
+  署名つき envelope（`objects/<object id>/envelope`）から作る。envelope は `verify()` に通り、`envelope.id` が object id と一致し、投稿（post・comment・repost）で
+  なければならない。public topic の replica は誰でも書けるので、署名の無い `state` の申告値（著者・本文・添付・topic・channel）を信用しない。
+  `state` と `envelope` のどちらの event でも個別反映を試す（`state` が先に届いた投稿は、`envelope` の event で反映される）。
+- 読んだ replica が受け入れる投稿だけを反映する。public topic の replica（`topic::<topic id>`）は、envelope の `topic_id` がその topic で、`channel_id` が無く、
+  公開範囲が public の投稿。private channel の replica（`channel::<channel id>[::epoch::<epoch id>]`）は、envelope の `channel_id` がその channel で、`topic_id` が
+  その channel を購読している topic の投稿（replica id は topic を含まないので、topic は購読の文脈から渡す。channel id は owner が決める文字列で、別の topic の
+  channel と重なりうる）。それ以外の replica（author・device、区切りを含む channel id / epoch id）からは投稿を反映しない。署名が正しくても、別の replica に
+  置かれた投稿は反映しない（public replica に置いた投稿が private channel の id を申告しても、その channel には出ない）。
+- 同じ key には docs author ごとの entry がありうる。envelope の key は上限つき（8 件）で読み、検証に通る最初の 1 件を使う。先頭に不正な entry を 1 件置くだけで
+  正しい投稿を隠せないようにする。上限を超える数の不正な entry を 1 つの key へ積まれた投稿は反映できない（best effort の範囲）。
+- 検証に通らない record と読めない record は、その object だけを飛ばす（warn）。同じ replica の他の投稿の反映と、タイムライン・thread の取得を失敗させない。
+- projection の投稿の行は、`projection_version` 3 から検証済みの投稿だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
 
 ### 3. docs の読み出しの規則
 

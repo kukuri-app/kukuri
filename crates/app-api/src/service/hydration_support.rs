@@ -2,14 +2,17 @@ use super::game_projection_support::hydrate_game_room_from_record;
 use super::hydration_limits::{MissingBodyLedger, ReplicaScanCache, scan_fingerprint};
 use super::*;
 
-fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeader {
-    header.payload_ref = PayloadRef::InlineText {
+/// 反映済みの行を、取り下げ済みの投稿として伏せる。`VerifiedPost::withdrawn` から作る行と同じ形にする。
+fn scrub_withdrawn_row(mut row: ObjectProjectionRow) -> ObjectProjectionRow {
+    row.payload_ref = PayloadRef::InlineText {
         text: String::new(),
     };
-    header.attachments.clear();
-    header.media_manifest_refs.clear();
-    header.repost_of = None;
-    header
+    row.content = Some(String::new());
+    row.attachments.clear();
+    row.repost_of = None;
+    row.source_blob_hash = None;
+    row.derived_at = Utc::now().timestamp_millis();
+    row
 }
 
 /// `withdrawals/<object id>/state` の record を 1 件反映した結果(#1239)。
@@ -65,54 +68,44 @@ pub(crate) async fn hydrate_post_withdrawal_from_record(
         }
         Err(error) => return Ok(invalid("the withdrawal content is malformed", &error)),
     };
-    let target_envelope_key = stable_key(
-        "objects",
-        &format!("{}/envelope", content.target_object_id.as_str()),
-    );
-    let Some(target_record) = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Exact(target_envelope_key),
-        policy,
-    )
-    .await?
-    .into_iter()
-    .next() else {
-        return Ok(PostWithdrawalHydration::TargetMissing);
-    };
-    let target: KukuriEnvelope = match serde_json::from_slice(&target_record.value) {
-        Ok(target) => target,
-        Err(error) => return Ok(invalid("the target record is not an envelope", &error)),
-    };
-    let withdrawal = match verify_post_withdrawal(&envelope, &target) {
-        Ok(withdrawal) => withdrawal,
-        Err(error) => return Ok(invalid("the withdrawal does not match the target", &error)),
+    if let Err(error) = envelope.verify() {
+        return Ok(invalid("the withdrawal signature is invalid", &error));
+    }
+    // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ず、上限つきで対象を探す(#1248)。
+    let target_records = docs_sync
+        .query_replica_exact_bounded(
+            replica,
+            post_envelope_key(&content.target_object_id).as_str(),
+            MAX_ENVELOPE_RECORDS_PER_OBJECT,
+            policy,
+        )
+        .await?;
+    let withdrawal = match verify_withdrawal_against_records(
+        &envelope,
+        &content.target_object_id,
+        &target_records,
+    ) {
+        WithdrawalTargetCheck::Verified(withdrawal) => *withdrawal,
+        WithdrawalTargetCheck::Mismatch(error) => {
+            return Ok(invalid("the withdrawal does not match the target", &error));
+        }
+        // 対象として読める envelope がまだ無い。対象が届いたときに反映し直す。
+        WithdrawalTargetCheck::TargetMissing => {
+            return Ok(PostWithdrawalHydration::TargetMissing);
+        }
     };
     projection_store
         .put_post_withdrawal(post_withdrawal_row(withdrawal, replica))
         .await?;
 
-    let target_state_key = stable_key(
-        "objects",
-        &format!("{}/state", content.target_object_id.as_str()),
-    );
-    if let Some(state_record) = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Exact(target_state_key),
-        policy,
-    )
-    .await?
-    .into_iter()
-    .next()
-        && let Ok(header) = serde_json::from_slice::<CanonicalPostHeader>(&state_record.value)
+    // 反映済みの行を伏せる。行がまだ無ければ、投稿を反映する時点で伏せた行ができる
+    // (`hydrate_object_in_topic` と全件走査は、取り下げを先に確認する)。docs の `state` の値は使わない(#1248)。
+    if let Some(row) = projection_store
+        .get_object_projection(&content.target_object_id)
+        .await?
     {
         projection_store
-            .put_object_projection(projection_row_from_header(
-                &scrub_withdrawn_header(header),
-                Some(String::new()),
-                replica,
-            ))
+            .put_object_projection(scrub_withdrawn_row(row))
             .await?;
     }
     Ok(PostWithdrawalHydration::Applied)
@@ -171,6 +164,9 @@ pub(crate) async fn hydrate_post_withdrawals_from_replica(
 /// 戻り値は今回反映した投稿の件数。record が前回の走査と同じで、取り下げにも変化が無ければ 0 を返す(#1225)。
 ///
 /// 取得できない本文 blob は走査のたびに取りに行かず、`MissingBodyLedger` の間隔と回数に従う。
+///
+/// 行は署名つき envelope(`objects/<id>/envelope`)から作る。検証に通らない object は warn を出して飛ばし、
+/// 走査は続ける(#1248)。envelope の record は同じ prefix の読み出しに含まれるので、追加の読み出しは無い。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn hydrate_object_projection_from_replica(
     docs_sync: &dyn DocsSync,
@@ -178,6 +174,7 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     projection_store: &dyn ProjectionStore,
     scan_cache: &ReplicaScanCache,
     missing_bodies: &MissingBodyLedger,
+    topic_id: &str,
     replica: &ReplicaId,
     policy: DocFetchPolicy,
     withdrawals_changed: bool,
@@ -194,28 +191,45 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     if !withdrawals_changed && scan_cache.is_unchanged(replica.as_str(), PREFIX, fingerprint) {
         return Ok(0);
     }
+    let Some(scope) = ReplicaPostScope::for_replica(replica, topic_id) else {
+        // 投稿を置く replica ではない。何も反映しない。
+        scan_cache.record(replica.as_str(), PREFIX, fingerprint);
+        return Ok(0);
+    };
+    // object ごとに envelope の record をまとめる(同じ key には docs author ごとの record がありうる)。
+    let mut envelope_records: BTreeMap<EnvelopeId, Vec<&DocRecord>> = BTreeMap::new();
+    for record in &records {
+        if record.key.ends_with("/envelope")
+            && let Some(object_id) = object_id_from_post_key(record.key.as_str())
+        {
+            envelope_records.entry(object_id).or_default().push(record);
+        }
+    }
     let mut hydrated = 0usize;
     let mut blob_statuses = Vec::new();
     let mut projections = Vec::new();
-    for record in records {
-        if !record.key.ends_with("/state") {
-            continue;
-        }
-        let mut header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
+    for (object_id, candidates) in envelope_records {
+        let post = match select_verified_post(candidates, &object_id, replica, &scope) {
+            Ok(Some(post)) => post,
+            Ok(None) => continue,
+            Err(reason) => {
+                warn_rejected_post(replica, &object_id, reason);
+                continue;
+            }
+        };
         if projection_store
-            .get_post_withdrawal(&header.object_id)
+            .get_post_withdrawal(&object_id)
             .await?
             .is_some()
         {
-            header = scrub_withdrawn_header(header);
-            projections.push(projection_row_from_header(
-                &header,
+            projections.push(projection_row_from_post(
+                &post.withdrawn(),
                 Some(String::new()),
-                replica,
             ));
             hydrated += 1;
             continue;
         }
+        let header = post.header();
         let content = match &header.payload_ref {
             PayloadRef::InlineText { text } => Some(text.clone()),
             PayloadRef::BlobText { hash, .. } => {
@@ -235,7 +249,7 @@ pub(crate) async fn hydrate_object_projection_from_replica(
             let status = best_effort_blob_cache_status(blob_service, &attachment.hash).await;
             blob_statuses.push((attachment.hash.clone(), status));
         }
-        projections.push(projection_row_from_header(&header, content, replica));
+        projections.push(projection_row_from_post(&post, content));
         hydrated += 1;
     }
     projection_store.mark_blob_statuses(blob_statuses).await?;
@@ -271,28 +285,26 @@ pub(crate) async fn fetch_projection_blob_text_bounded(
     payload
 }
 
-pub(crate) async fn hydrate_object_projection_from_record(
+/// 検証済みの投稿を 1 件、projection へ反映する。
+pub(crate) async fn hydrate_object_projection_from_post(
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    record: DocRecord,
+    post: VerifiedPost,
 ) -> Result<bool> {
-    let mut header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
     if projection_store
-        .get_post_withdrawal(&header.object_id)
+        .get_post_withdrawal(&post.header().object_id)
         .await?
         .is_some()
     {
-        header = scrub_withdrawn_header(header);
         projection_store
-            .put_object_projection(projection_row_from_header(
-                &header,
+            .put_object_projection(projection_row_from_post(
+                &post.withdrawn(),
                 Some(String::new()),
-                replica,
             ))
             .await?;
         return Ok(true);
     }
+    let header = post.header();
     let content = match &header.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { hash, .. } => {
@@ -316,7 +328,7 @@ pub(crate) async fn hydrate_object_projection_from_record(
             .await?;
     }
     projection_store
-        .put_object_projection(projection_row_from_header(&header, content, replica))
+        .put_object_projection(projection_row_from_post(&post, content))
         .await?;
     Ok(true)
 }
@@ -329,8 +341,13 @@ pub(crate) async fn hydrate_object_projection_from_record(
 ///
 /// `policy` は 2 つの key の読み出しに使う。利用者の操作は `LocalOnly`(操作を remote 取得で待たせない)、
 /// event・hint・repost 元の解決は `LocalThenRemote`。
-pub(crate) async fn hydrate_object_by_id(
+///
+/// 行は署名つき envelope から作る(#1248)。`topic_id` は、その replica を読む文脈の topic(private channel の
+/// replica id は topic を含まない)。検証に通る envelope が無ければ `false` を返す。envelope が後から届いた場合は、
+/// その event でもう一度呼ばれる。読む docs の record は、取り下げの key と envelope の key だけ。
+pub(crate) async fn hydrate_object_in_topic(
     services: &ServiceHandles,
+    topic_id: &str,
     replica: &ReplicaId,
     object_id: &EnvelopeId,
     policy: DocFetchPolicy,
@@ -348,28 +365,12 @@ pub(crate) async fn hydrate_object_by_id(
         hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
             .await?;
     }
-    let state_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
-    let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(state_key), policy)
-            .await?
-            .into_iter()
-            .next()
+    let Some(post) = load_verified_post(docs_sync, replica, topic_id, object_id, policy).await?
     else {
         return Ok(false);
     };
-    hydrate_object_projection_from_record(
-        services.blob_service.as_ref(),
-        projection_store,
-        replica,
-        record,
-    )
-    .await
-}
-
-/// `objects/<object id>/state` の key から object id を取り出す。
-fn object_id_from_state_key(key: &str) -> Option<EnvelopeId> {
-    let object_id = key.strip_prefix("objects/")?.strip_suffix("/state")?;
-    (!object_id.is_empty() && !object_id.contains('/')).then(|| EnvelopeId::from(object_id))
+    hydrate_object_projection_from_post(services.blob_service.as_ref(), projection_store, post)
+        .await
 }
 
 pub(crate) async fn hydrate_reaction_cache_from_replica(
@@ -502,6 +503,7 @@ pub(crate) async fn hydrate_subscription_state(
         projection_store,
         scan_cache,
         services.missing_body_ledger.as_ref(),
+        topic_id,
         replica,
         policy,
         withdrawal_count > 0,
@@ -747,9 +749,20 @@ pub(crate) async fn hydrate_subscription_event(
     let docs_sync = services.docs_sync.as_ref();
     let blob_service = services.blob_service.as_ref();
     let projection_store = services.projection_store.as_ref();
-    if let Some(object_id) = object_id_from_state_key(key) {
-        return Ok(hydrate_object_by_id(
+    // `state` と `envelope` のどちらの event でも反映を試す(#1248)。行は envelope から作るので、`state` が先に
+    // 届いた投稿は `envelope` の event で反映される。`envelope` の event は、行がまだ無いときだけ反映する。
+    if let Some(object_id) = object_id_from_post_key(key) {
+        if key.ends_with("/envelope")
+            && projection_store
+                .get_object_projection(&object_id)
+                .await?
+                .is_some()
+        {
+            return Ok(0);
+        }
+        return Ok(hydrate_object_in_topic(
             services,
+            topic_id,
             replica,
             &object_id,
             DocFetchPolicy::LocalThenRemote,
@@ -860,8 +873,9 @@ pub(crate) async fn hydrate_subscription_hint(
                     .await?;
                     continue;
                 }
-                hydrated += hydrate_object_by_id(
+                hydrated += hydrate_object_in_topic(
                     services,
+                    topic_id,
                     replica,
                     &EnvelopeId::from(object.object_id.as_str()),
                     DocFetchPolicy::LocalThenRemote,
@@ -873,8 +887,9 @@ pub(crate) async fn hydrate_subscription_hint(
         GossipHint::ThreadUpdated { object_ids, .. } => {
             let mut hydrated = 0usize;
             for object_id in object_ids {
-                hydrated += hydrate_object_by_id(
+                hydrated += hydrate_object_in_topic(
                     services,
+                    topic_id,
                     replica,
                     object_id,
                     DocFetchPolicy::LocalThenRemote,

@@ -14,9 +14,9 @@ pub use keys::SharedReplicaKeyFamily;
 pub use memory::MemoryDocsSync;
 
 pub use replicas::{
-    author_replica_id, device_replica_id, private_channel_epoch_replica_id,
-    private_channel_hint_topic, private_channel_replica_id, stable_key, topic_replica_id,
-    value_hash,
+    PostReplicaKind, author_replica_id, device_replica_id, post_replica_kind,
+    private_channel_epoch_replica_id, private_channel_hint_topic, private_channel_replica_id,
+    stable_key, topic_replica_id, value_hash,
 };
 pub use time_index::{TimeIndexCursor, TimeIndexEntry, query_time_index_desc};
 pub use types::{

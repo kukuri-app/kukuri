@@ -161,7 +161,7 @@ impl AppService {
         let reply_preview = self
             .reply_preview_for_object_id(
                 row.reply_to_object_id.as_ref(),
-                Some(&row.source_replica_id),
+                Some((&row.source_replica_id, row.topic_id.as_str())),
                 profiles,
             )
             .await?;
@@ -230,10 +230,14 @@ impl AppService {
         })
     }
 
+    /// 返信先が projection に無ければ、返信と同じ replica から key 指定で反映する(`LocalOnly`)。
+    ///
+    /// `source` は返信の行の replica と topic。返信先も同じ replica にある投稿として、署名つき envelope と
+    /// replica の scope を確かめてから反映する(#1248)。
     pub(crate) async fn hydrate_reply_preview_row(
         &self,
         object_id: &EnvelopeId,
-        source_replica_id: Option<&ReplicaId>,
+        source: Option<(&ReplicaId, &str)>,
     ) -> Result<Option<ObjectProjectionRow>> {
         if let Some(row) = self
             .services
@@ -243,16 +247,18 @@ impl AppService {
         {
             return Ok(Some(row));
         }
-        let Some(source_replica_id) = source_replica_id else {
+        let Some((source_replica_id, source_topic_id)) = source else {
             return Ok(None);
         };
-        let source_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
-        let Some(header) = fetch_post_object_for_projection(
+        // 手元の docs が読めないとき(権限を失った private replica など)は、preview を出さずに続ける。
+        let Ok(Some(post)) = load_verified_post(
             self.services.docs_sync.as_ref(),
             source_replica_id,
-            source_key.as_str(),
+            source_topic_id,
+            object_id,
+            DocFetchPolicy::LocalOnly,
         )
-        .await?
+        .await
         else {
             return Ok(None);
         };
@@ -262,17 +268,17 @@ impl AppService {
             .get_post_withdrawal(object_id)
             .await?
             .is_some();
-        let content = if is_withdrawn {
-            Some(String::new())
+        let row = if is_withdrawn {
+            projection_row_from_post(&post.withdrawn(), Some(String::new()))
         } else {
-            match &header.payload_ref {
+            let content = match &post.header().payload_ref {
                 PayloadRef::InlineText { text } => Some(text.clone()),
                 PayloadRef::BlobText { hash, .. } => {
                     fetch_projection_blob_text(self.services.blob_service.as_ref(), hash).await
                 }
-            }
+            };
+            projection_row_from_post(&post, content)
         };
-        let row = projection_row_from_header(&header, content, source_replica_id);
         self.services
             .projection_store
             .put_object_projection(row.clone())
@@ -283,7 +289,7 @@ impl AppService {
     pub(crate) async fn reply_preview_for_object_id(
         &self,
         object_id: Option<&EnvelopeId>,
-        source_replica_id: Option<&ReplicaId>,
+        source: Option<(&ReplicaId, &str)>,
         profiles: &HashMap<String, Profile>,
     ) -> Result<Option<ReplyPreviewView>> {
         let Some(object_id) = object_id else {
@@ -295,10 +301,7 @@ impl AppService {
             .get_post_withdrawal(object_id)
             .await?
             .is_some();
-        let Some(row) = self
-            .hydrate_reply_preview_row(object_id, source_replica_id)
-            .await?
-        else {
+        let Some(row) = self.hydrate_reply_preview_row(object_id, source).await? else {
             return Ok(None);
         };
         let provenance = self
@@ -351,24 +354,9 @@ impl AppService {
         if row.object_kind == "repost" {
             return Ok(Vec::new());
         }
-        if !row.attachments.is_empty() || row.projection_version >= 2 {
-            return attachment_views_from_refs(
-                self.services.blob_service.as_ref(),
-                &row.attachments,
-            )
-            .await;
-        }
-
-        let post_object = fetch_post_object_for_projection(
-            self.services.docs_sync.as_ref(),
-            &row.source_replica_id,
-            row.source_key.as_str(),
-        )
-        .await?;
-        if let Some(post_object) = post_object {
-            return attachment_views(self.services.blob_service.as_ref(), &post_object).await;
-        }
-        Ok(Vec::new())
+        // 添付は行から読む。添付の列が無い旧い行(`projection_version < 2`)を docs の `state` で補う fallback は、
+        // 未検証の値を表示するので削除した(#1248。旧い行は migration が消す)。
+        attachment_views_from_refs(self.services.blob_service.as_ref(), &row.attachments).await
     }
 
     pub(crate) async fn bookmarked_post_view_from_row(
@@ -435,7 +423,7 @@ impl AppService {
         let reply_preview = self
             .reply_preview_for_object_id(
                 row.reply_to_object_id.as_ref(),
-                Some(&row.source_replica_id),
+                Some((&row.source_replica_id, row.topic_id.as_str())),
                 &empty_profiles,
             )
             .await?;
@@ -534,7 +522,7 @@ impl AppService {
         let reply_preview = self
             .reply_preview_for_object_id(
                 profile_post.reply_to_object_id.as_ref(),
-                Some(&source_replica_id),
+                Some((&source_replica_id, profile_post.published_topic_id.as_str())),
                 &empty_profiles,
             )
             .await?;

@@ -620,10 +620,11 @@ pub(crate) async fn snapshot_object_notification_baseline(
         policy,
     )
     .await?;
+    // 通知は `state` と `envelope` のどちらの event でも試す(#1248)。両方の key を起点に含める。
     Ok(NotificationDocEventBaseline::from_records(
         &records
             .into_iter()
-            .filter(|record| record.key.ends_with("/state"))
+            .filter(|record| object_id_from_post_key(record.key.as_str()).is_some())
             .collect::<Vec<_>>(),
     ))
 }

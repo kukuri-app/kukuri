@@ -246,6 +246,37 @@ impl IrohDocsSync {
             }
         }
     }
+
+    /// query の結果を record にする。entry の本体が取得できない record は飛ばす。
+    async fn collect_records(
+        &self,
+        replica_id: &ReplicaId,
+        query: Query,
+        policy: DocFetchPolicy,
+    ) -> Result<Vec<DocRecord>> {
+        let doc = self.ensure_replica(replica_id).await?;
+        let stream = doc.get_many(query).await?;
+        tokio::pin!(stream);
+        let mut records = Vec::new();
+        while let Some(entry) = stream.next().await {
+            let entry = entry?;
+            let key = String::from_utf8(entry.key().to_vec()).context("docs key is not utf8")?;
+            let content_hash = entry.content_hash().to_string();
+            let Some(value) = self
+                .fetch_entry_bytes(content_hash.as_str(), policy)
+                .await?
+            else {
+                continue;
+            };
+            records.push(DocRecord {
+                key,
+                value,
+                content_hash,
+                content_len: entry.content_len(),
+            });
+        }
+        Ok(records)
+    }
 }
 
 /// #1239: 必ず key の索引(`SortBy::KeyAuthor`)で読む query を組む。
@@ -260,6 +291,14 @@ pub(crate) fn indexed_query(query: DocQuery) -> Query {
     };
     builder
         .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+        .build()
+}
+
+/// #1248: key を 1 つ指定し、読む entry 数に上限を置く query。同じ key の entry は docs author の昇順で返る。
+pub(crate) fn bounded_exact_query(key: &str, limit: usize) -> Query {
+    Query::key_exact(key)
+        .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
+        .limit(limit as u64)
         .build()
 }
 
@@ -336,29 +375,24 @@ impl DocsSync for IrohDocsSync {
         query: DocQuery,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
-        let doc = self.ensure_replica(replica_id).await?;
-        let query = indexed_query(query);
-        let stream = doc.get_many(query).await?;
-        tokio::pin!(stream);
-        let mut records = Vec::new();
-        while let Some(entry) = stream.next().await {
-            let entry = entry?;
-            let key = String::from_utf8(entry.key().to_vec()).context("docs key is not utf8")?;
-            let content_hash = entry.content_hash().to_string();
-            let Some(value) = self
-                .fetch_entry_bytes(content_hash.as_str(), policy)
-                .await?
-            else {
-                continue;
-            };
-            records.push(DocRecord {
-                key,
-                value,
-                content_hash,
-                content_len: entry.content_len(),
-            });
+        self.collect_records(replica_id, indexed_query(query), policy)
+            .await
+    }
+
+    async fn query_replica_exact_bounded(
+        &self,
+        replica_id: &ReplicaId,
+        key: &str,
+        limit: usize,
+        policy: DocFetchPolicy,
+    ) -> Result<Vec<DocRecord>> {
+        if limit == 0 {
+            // 読む件数にかかわらず replica は開く(権限の無い private replica は失敗する)。
+            let _ = self.ensure_replica(replica_id).await?;
+            return Ok(Vec::new());
         }
-        Ok(records)
+        self.collect_records(replica_id, bounded_exact_query(key, limit), policy)
+            .await
     }
 
     async fn query_replica_keys(
@@ -529,4 +563,65 @@ mod tests {
     }
 
     // リトライ状態のテストは共通実装側(kukuri-transport::peers)へ移動した(WP-H2)。
+
+    // #1248: 同じ key には docs author ごとの entry がある。key 指定の読み出しは全部を返すので、
+    // 上限つきの読み出しは query の `limit` で読む entry 数を抑える(読んでから切り詰めるのではない)。
+    #[tokio::test]
+    async fn exact_bounded_query_limits_the_entries_of_one_key() {
+        let node = IrohDocsNode::memory().await.expect("docs node");
+        let docs = IrohDocsSync::new(node.clone());
+        let replica = crate::topic_replica_id("kukuri:topic:exact-bounded");
+        let doc = docs.ensure_replica(&replica).await.expect("open replica");
+        let key = "objects/shared/envelope";
+        for index in 0..3u8 {
+            let author = node.docs().author_create().await.expect("docs author");
+            doc.set_bytes(author, key.as_bytes().to_vec(), vec![b'a' + index])
+                .await
+                .expect("write the same key as another docs author");
+        }
+        doc.set_bytes(
+            node.docs().author_default().await.expect("default author"),
+            b"objects/shared/envelope-longer".to_vec(),
+            b"another key".to_vec(),
+        )
+        .await
+        .expect("write a key that extends the exact key");
+
+        let all = docs
+            .query_replica_with_policy(
+                &replica,
+                DocQuery::Exact(key.into()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            .expect("exact query");
+        assert_eq!(all.len(), 3, "one entry per docs author");
+
+        let bounded = docs
+            .query_replica_exact_bounded(&replica, key, 2, DocFetchPolicy::LocalOnly)
+            .await
+            .expect("bounded exact query");
+        assert_eq!(bounded.len(), 2);
+        assert_eq!(
+            bounded
+                .iter()
+                .map(|record| record.content_hash.clone())
+                .collect::<Vec<_>>(),
+            all.iter()
+                .take(2)
+                .map(|record| record.content_hash.clone())
+                .collect::<Vec<_>>(),
+            "the bounded query returns the head of the same order"
+        );
+        assert!(bounded.iter().all(|record| record.key == key));
+        assert!(
+            docs.query_replica_exact_bounded(&replica, key, 0, DocFetchPolicy::LocalOnly)
+                .await
+                .expect("zero limit")
+                .is_empty()
+        );
+
+        docs.shutdown().await;
+        node.shutdown().await.expect("shutdown node");
+    }
 }

@@ -83,21 +83,13 @@ impl AppService {
         _stored_blob: Option<StoredBlob>,
         attachments: Vec<(AssetRole, StoredBlob)>,
     ) -> Result<()> {
+        // 自分の投稿も、他人の投稿と同じ検証(署名、書き込む replica と topic / channel の整合)を通す(#1248)。
+        // docs は読まない。header と行は envelope から作るので、remote の反映が作る行と同じ値になる。
+        let post = VerifiedPost::verify_local(envelope.clone(), replica).map_err(|reason| {
+            anyhow::anyhow!("local post cannot be verified: {}", reason.as_str())
+        })?;
         self.services.store.put_envelope(envelope.clone()).await?;
-        let mut object = envelope
-            .to_post_object()?
-            .ok_or_else(|| anyhow::anyhow!("expected timeline envelope"))?;
-        if object.object_kind != "repost" {
-            object.attachments = attachments
-                .iter()
-                .map(|(role, stored)| kukuri_core::AssetRef {
-                    hash: stored.hash.clone(),
-                    mime: stored.mime.clone(),
-                    bytes: stored.bytes,
-                    role: role.clone(),
-                })
-                .collect();
-        }
+        let object = post.header().clone();
         let content = match &object.payload_ref {
             PayloadRef::InlineText { text } => Some(text.clone()),
             PayloadRef::BlobText { hash, .. } => self
@@ -123,7 +115,7 @@ impl AppService {
         }
         ObjectProjectionStore::put_object_projection(
             self.services.projection_store.as_ref(),
-            projection_row_from_header(&object, content, replica),
+            projection_row_from_post(&post, content),
         )
         .await?;
         if let PayloadRef::BlobText { hash, .. } = &object.payload_ref {
@@ -444,7 +436,9 @@ impl AppService {
             return Ok(true);
         }
         for replica in self.scope_replicas(topic_id, scope).await? {
-            if hydrate_object_by_id(&self.services, &replica, object_id, policy).await? {
+            if hydrate_object_in_topic(&self.services, topic_id, &replica, object_id, policy)
+                .await?
+            {
                 return Ok(true);
             }
         }

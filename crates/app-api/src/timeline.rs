@@ -245,17 +245,11 @@ impl AppService {
         ) {
             anyhow::bail!("bookmark target must be a timeline post");
         }
+        // 添付は検証済みの行から写す(#1248)。docs の `state` は読まない。
         let attachments = if projection.object_kind == "repost" {
             Vec::new()
         } else {
-            fetch_post_object_for_projection(
-                self.services.docs_sync.as_ref(),
-                &projection.source_replica_id,
-                projection.source_key.as_str(),
-            )
-            .await?
-            .map(|post_object| post_object.attachments)
-            .unwrap_or_default()
+            projection.attachments.clone()
         };
         let row = BookmarkedPostRow {
             source_object_id: projection.object_id.clone(),
