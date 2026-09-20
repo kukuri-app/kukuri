@@ -430,3 +430,31 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
   `missing_manifest_still_deindexes_indexed_media_post`、
   `blob_text_fetch_failure_keeps_an_existing_entry_until_validation_fails`、
   cn-e2e `replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery`。
+
+### 7.8 復旧時のpeer状態管理と投稿取得scheduler（#1212、2026-09-20）
+
+- remote fetchはendpointの接続世代・接続状態と、peerごとの取得成功/失敗・転送時間・短期backoffを
+  更新する。接続成功だけをblob取得成功と扱わず、古い接続世代の通知で新しい状態を上書きしない。
+- 次のblob取得は、現在接続中か、直近に検証済み取得へ成功したpeerを優先する。失敗peerも期限後の
+  回復probeとして候補に残す。取得全体には30秒のattempt budgetを設け、全peer・candidateのtimeoutの
+  合計まで1投稿を待たせない。budget超過は一時的な取得不能であり、allowへ変換しない。
+- peerへの取得要求頻度はendpoint identity単位のledgerで制限する。HTTPのIP主体、P2P endpoint、
+  relay clientは型で区別する。HTTPはtower-governor、relay ingress byteはupstream limiterを唯一の
+  enforcement adapterとして維持し、同一要求を二重計上しない。
+- cn-indexerは `scope kind + scope id + object id + source revision` のjobをschedulerで管理し、
+  queued / fetching / processing / retry_wait / completed / suppressed / cancelledを観測する。
+  一つのscope内では設定値（既定4）を上限として投稿を並列処理する。新revisionは旧leaseを失効させ、
+  stale completionを反映しない。再起動後はraw bytesを復元せず、authoritative replicaの全件照合から
+  jobを再構築する。
+- schedulerは実行順と並列上限だけを所有する。署名、scope、withdrawal、transmission prevention、
+  source revision、moderation verdictのguardと、真実源→投影のmutation順は既存pipelineが所有する。
+  一時的な失敗では既存entryを保持し、確定した理由と非allowだけが既存規則でde-indexする。
+- `/v1/status`は投稿schedulerの状態別件数と最古pending時刻を出す。本文、hash、peer ID、addressは
+  statusへ含めない。全件巡回の同期時刻は従来どおりreconciliation完了を表し、schedulerの進捗と
+  混同しない。
+- contract: `successful_peer_is_ranked_before_recently_timed_out_peer`、
+  `stale_disconnect_does_not_replace_newer_connection_generation`、
+  `request_frequency_keeps_http_peer_and_relay_subjects_separate`、
+  `bounded_scheduler_allows_healthy_job_while_slow_job_is_waiting`、
+  `stale_completion_cannot_replace_newer_revision`、
+  `independent_posts_are_ingested_concurrently_within_the_configured_bound`。

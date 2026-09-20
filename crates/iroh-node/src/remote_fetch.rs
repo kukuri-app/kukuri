@@ -7,10 +7,14 @@
 //! ピア台帳・リトライ状態そのものは kukuri-transport の共通実装(WP-H2)。
 
 use std::fmt::Display;
+use std::future::Future;
 use std::time::Duration;
 
 use anyhow::Result;
-use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, RemoteFetchStart};
+use kukuri_transport::{
+    PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchRetryState, RemoteFetchStart,
+    RequestRateDecision,
+};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
@@ -19,6 +23,13 @@ use crate::IrohDocsNode;
 
 pub const REMOTE_FETCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const REMOTE_FETCH_TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
+/// One blob must not consume the sum of every peer/candidate timeout. The caller keeps the
+/// existing entry and retries later when this budget is exhausted.
+pub const REMOTE_FETCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn within_remote_fetch_budget<T>(future: impl Future<Output = T>) -> Option<T> {
+    timeout(REMOTE_FETCH_TOTAL_TIMEOUT, future).await.ok()
+}
 
 /// remote fetch の取得モード。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,8 +189,28 @@ async fn fetch_bytes_with_cooldown_mode(
             return Ok(None);
         }
     }
-    let result =
-        fetch_bytes_from_remote(node, peers, subject, hash_text, hash, local_error, mode).await;
+    let result = match within_remote_fetch_budget(fetch_bytes_from_remote(
+        node,
+        peers,
+        subject,
+        hash_text,
+        hash,
+        local_error,
+        mode,
+    ))
+    .await
+    {
+        Some(result) => result,
+        None => {
+            warn!(
+                subject,
+                hash = %hash_text,
+                timeout_ms = REMOTE_FETCH_TOTAL_TIMEOUT.as_millis(),
+                "remote fetch exhausted the total attempt budget"
+            );
+            Ok(None)
+        }
+    };
     retries
         .lock()
         .await
@@ -196,7 +227,7 @@ async fn fetch_bytes_from_remote(
     local_error: impl Display,
     mode: FetchMode,
 ) -> Result<Option<Vec<u8>>> {
-    let imported_peers = peers.merged_peers().await;
+    let imported_peers = peers.ranked_peers().await;
     info!(
         subject,
         hash = %hash_text,
@@ -215,6 +246,19 @@ async fn fetch_bytes_from_remote(
             "fetch prepared remote peer candidates"
         );
         for peer in candidates {
+            if let RequestRateDecision::Limited { retry_after } =
+                peers.record_peer_fetch_request(imported_peer.id).await
+            {
+                info!(
+                    subject,
+                    hash = %hash_text,
+                    peer_id = %imported_peer.id,
+                    retry_after_ms = retry_after.as_millis(),
+                    "peer fetch request deferred by the shared request-frequency ledger"
+                );
+                break;
+            }
+            let connection_generation = peers.begin_connection_attempt(imported_peer.id).await;
             match timeout(
                 REMOTE_FETCH_CONNECT_TIMEOUT,
                 node.endpoint().connect(peer.clone(), iroh_blobs::ALPN),
@@ -222,6 +266,13 @@ async fn fetch_bytes_from_remote(
             .await
             {
                 Ok(Ok(conn)) => {
+                    peers
+                        .record_connection_state(
+                            imported_peer.id,
+                            connection_generation,
+                            PeerConnectionStatus::Connected,
+                        )
+                        .await;
                     info!(
                         subject,
                         hash = %hash_text,
@@ -231,6 +282,7 @@ async fn fetch_bytes_from_remote(
                     );
                     match mode {
                         FetchMode::Store => {
+                            let transfer_started = Instant::now();
                             match timeout(
                                 REMOTE_FETCH_TRANSFER_TIMEOUT,
                                 node.blobs().remote().fetch(conn, hash),
@@ -238,6 +290,12 @@ async fn fetch_bytes_from_remote(
                             .await
                             {
                                 Ok(Ok(_)) => {
+                                    peers
+                                        .record_fetch_success(
+                                            imported_peer.id,
+                                            transfer_started.elapsed(),
+                                        )
+                                        .await;
                                     info!(
                                         subject,
                                         hash = %hash_text,
@@ -246,6 +304,12 @@ async fn fetch_bytes_from_remote(
                                     );
                                 }
                                 Ok(Err(error)) => {
+                                    peers
+                                        .record_fetch_failure(
+                                            imported_peer.id,
+                                            PeerFetchFailure::TransferFailed,
+                                        )
+                                        .await;
                                     warn!(
                                         subject,
                                         hash = %hash_text,
@@ -257,6 +321,12 @@ async fn fetch_bytes_from_remote(
                                     continue;
                                 }
                                 Err(_) => {
+                                    peers
+                                        .record_fetch_failure(
+                                            imported_peer.id,
+                                            PeerFetchFailure::TransferTimeout,
+                                        )
+                                        .await;
                                     warn!(
                                         subject,
                                         hash = %hash_text,
@@ -283,6 +353,7 @@ async fn fetch_bytes_from_remote(
                         }
                         FetchMode::Ephemeral | FetchMode::EphemeralBounded(_) => {
                             // ストアへ書き込まず、検証付きで memory へ直接取得する。
+                            let transfer_started = Instant::now();
                             match timeout(
                                 REMOTE_FETCH_TRANSFER_TIMEOUT,
                                 fetch_ephemeral(conn, hash, mode),
@@ -290,6 +361,12 @@ async fn fetch_bytes_from_remote(
                             .await
                             {
                                 Ok(Ok(bytes)) => {
+                                    peers
+                                        .record_fetch_success(
+                                            imported_peer.id,
+                                            transfer_started.elapsed(),
+                                        )
+                                        .await;
                                     info!(
                                         subject,
                                         hash = %hash_text,
@@ -302,6 +379,12 @@ async fn fetch_bytes_from_remote(
                                     if error.is::<BlobTooLarge>() {
                                         return Err(error);
                                     }
+                                    peers
+                                        .record_fetch_failure(
+                                            imported_peer.id,
+                                            PeerFetchFailure::TransferFailed,
+                                        )
+                                        .await;
                                     warn!(
                                         subject,
                                         hash = %hash_text,
@@ -313,6 +396,12 @@ async fn fetch_bytes_from_remote(
                                     continue;
                                 }
                                 Err(_) => {
+                                    peers
+                                        .record_fetch_failure(
+                                            imported_peer.id,
+                                            PeerFetchFailure::TransferTimeout,
+                                        )
+                                        .await;
                                     warn!(
                                         subject,
                                         hash = %hash_text,
@@ -328,6 +417,9 @@ async fn fetch_bytes_from_remote(
                     }
                 }
                 Ok(Err(error)) => {
+                    peers
+                        .record_fetch_failure(imported_peer.id, PeerFetchFailure::ConnectFailed)
+                        .await;
                     warn!(
                         subject,
                         hash = %hash_text,
@@ -338,6 +430,9 @@ async fn fetch_bytes_from_remote(
                     );
                 }
                 Err(_) => {
+                    peers
+                        .record_fetch_failure(imported_peer.id, PeerFetchFailure::ConnectTimeout)
+                        .await;
                     warn!(
                         subject,
                         hash = %hash_text,
@@ -356,4 +451,19 @@ async fn fetch_bytes_from_remote(
         "fetch exhausted remote peers without success"
     );
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn total_budget_cancels_a_fetch_that_never_completes() {
+        let result = within_remote_fetch_budget(async {
+            tokio::time::sleep(REMOTE_FETCH_TOTAL_TIMEOUT + Duration::from_secs(1)).await;
+            1_u8
+        })
+        .await;
+        assert_eq!(result, None);
+    }
 }

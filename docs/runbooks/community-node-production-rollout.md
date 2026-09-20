@@ -294,6 +294,7 @@ sudo systemctl list-timers kukuri-readiness.timer --all
 - provider credentialが全slotでpass
 - `permanent_blob_storage_disabled` がpass
 - worker running、supported public scopes opened、sync / ingest fresh
+- `post_scheduler` の processing / retry_wait / oldest_pending_at が実進捗と整合し、同じ値のまま停止していない
 - `scan_errors=0` かつ失敗からallowへのfallbackが0
 - Postgres truthとArcadeDB projectionが一致
 - relation analysis recent
@@ -483,6 +484,12 @@ readinessの `truth=projection=0` はデータ整合性の結果であり、検�
 本文取得失敗も `skipped_non_allow` に含まれるため、有害判定と同一視しない。本文が再取得不能な
 場合は索引を抑止する既存境界を維持し、供給元の接続・保持状態と最新logを照合する。
 再起動・再巡回後にも実結果と監視値を確認する。過去の検索・media検証で今回の実動を代替しない。
+
+#1212以降、投稿処理は`COMMUNITY_NODE_INDEXER_MAX_CONCURRENT_POSTS`（既定4）で上限付き並列化される。
+復旧時は`/v1/status`の`post_scheduler`と`last_pass_duration_ms`を記録する。並列度を上げる前にVMの
+memory、safety providerの同時実行制限、peer側負荷を確認し、一つずつ増やす。取得不能を解消するために
+readinessの鮮度やfail-closed判定を緩めない。remote blob取得は1件30秒のattempt budgetでretry_waitへ
+移り、次のreconcileで再試行される。retry_waitの増加とindexed時刻の前進を区別して確認する。
 
 ### 5.6 verdict再利用とrisk signal集約の確認（#1050）
 

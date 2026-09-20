@@ -32,6 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use tracing::{debug, warn};
 
 use kukuri_blob_service::BlobService;
@@ -43,6 +44,7 @@ use kukuri_core::{KukuriEnvelope, ObjectStatus, ReplicaId, verify_post_withdrawa
 use kukuri_docs_sync::{DocFetchPolicy, DocQuery, DocRecord, DocsSync, SharedReplicaKeyFamily};
 
 use crate::projection::{IndexProjection, IndexedEntry};
+use crate::scheduler::{PostFetchJobKey, PostFetchJobState, PostFetchScheduler};
 
 mod failure;
 mod reference_guard;
@@ -174,6 +176,13 @@ struct ScopeContext {
     withdrawn_object_ids: HashSet<String>,
 }
 
+#[derive(Clone, Copy)]
+struct IngestScopeRef<'a> {
+    kind: IndexScopeKind,
+    id: &'a str,
+    replica_id: &'a ReplicaId,
+}
+
 /// 1 record の取り込みで行った scan の内訳（#1050）。
 #[derive(Debug, Default)]
 struct ScanStats {
@@ -195,6 +204,8 @@ pub struct IngestPipeline {
     blob_service: Option<Arc<dyn BlobService>>,
     /// 観測状態（#613 T3）。設定時のみスキャン失敗 / プロバイダ利用不可を分類して数える。
     metrics: Option<Arc<crate::state::IndexerRuntimeState>>,
+    post_scheduler: Arc<PostFetchScheduler>,
+    max_concurrent_posts: usize,
 }
 
 impl IngestPipeline {
@@ -211,6 +222,8 @@ impl IngestPipeline {
             projection,
             blob_service: None,
             metrics: None,
+            post_scheduler: Arc::new(PostFetchScheduler::new(4)),
+            max_concurrent_posts: 4,
         }
     }
 
@@ -223,6 +236,16 @@ impl IngestPipeline {
     /// 観測状態を接続する（#613 T3。常駐ワーカーの組み立て時に使う）。
     pub fn with_metrics(mut self, metrics: Arc<crate::state::IndexerRuntimeState>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_post_scheduler(
+        mut self,
+        scheduler: Arc<PostFetchScheduler>,
+        max_concurrent_posts: usize,
+    ) -> Self {
+        self.post_scheduler = scheduler;
+        self.max_concurrent_posts = max_concurrent_posts.max(1);
         self
     }
 
@@ -453,15 +476,34 @@ impl IngestPipeline {
         state_records: &[DocRecord],
         context: &ScopeContext,
     ) -> Result<IngestSummary> {
+        let current_object_ids = state_records
+            .iter()
+            .filter_map(|record| post_id_from_state_key(&record.key).map(str::to_string))
+            .collect();
+        self.post_scheduler
+            .reconcile_scope(scope_kind.as_str(), scope_id, &current_object_ids);
+        let mut waiting = state_records.iter();
+        let mut active = FuturesUnordered::new();
+        for _ in 0..self.max_concurrent_posts {
+            if let Some(record) = waiting.next() {
+                active.push(
+                    self.ingest_scheduled_record(scope_kind, scope_id, replica_id, record, context),
+                );
+            }
+        }
+        let mut results = Vec::with_capacity(state_records.len());
+        while let Some(result) = active.next().await {
+            results.push(result);
+            if let Some(record) = waiting.next() {
+                active.push(
+                    self.ingest_scheduled_record(scope_kind, scope_id, replica_id, record, context),
+                );
+            }
+        }
+
         let mut summary = IngestSummary::default();
-        for record in state_records {
+        for (record_key, outcome, stats) in results {
             summary.scanned += 1;
-            let mut stats = ScanStats::default();
-            let outcome = self
-                .ingest_object_record(
-                    scope_kind, scope_id, replica_id, record, context, &mut stats,
-                )
-                .await;
             summary.scans_fresh += stats.fresh;
             summary.scans_reused += stats.reused;
             match outcome {
@@ -474,20 +516,20 @@ impl IngestPipeline {
                     // 索引しない（upsert へ到達していない）。次の走査で再評価する（#1090）。
                     warn!(
                         replica_id = %replica_id.as_str(),
-                        key = %record.key,
+                        key = %record_key,
                         error = %format!("{error:#}"),
                         "temporarily failed to ingest object record; keeping any existing entry"
                     );
                     summary.skipped_non_allow += 1;
                 }
                 Err(error) => {
-                    if let Some(id) = post_id_from_state_key(&record.key) {
+                    if let Some(id) = post_id_from_state_key(&record_key) {
                         self.deindex_object(scope_kind, scope_id, id).await?;
                     }
                     // 単一 entry の失敗で scope 全体を止めない。fail-closed（投影しない）側に倒す。
                     warn!(
                         replica_id = %replica_id.as_str(),
-                        key = %record.key,
+                        key = %record_key,
                         error = %format!("{error:#}"),
                         "failed to ingest object record; skipping (fail-closed)"
                     );
@@ -498,15 +540,75 @@ impl IngestPipeline {
         Ok(summary)
     }
 
-    async fn ingest_object_record(
+    async fn ingest_scheduled_record(
         &self,
         scope_kind: IndexScopeKind,
         scope_id: &str,
         replica_id: &ReplicaId,
         record: &DocRecord,
         context: &ScopeContext,
+    ) -> (String, Result<IngestOutcome>, ScanStats) {
+        let object_id = post_id_from_state_key(&record.key)
+            .unwrap_or(record.key.as_str())
+            .to_string();
+        let Some(lease) = self.post_scheduler.enqueue(
+            PostFetchJobKey {
+                scope_kind: scope_kind.as_str().to_string(),
+                scope_id: scope_id.to_string(),
+                object_id,
+            },
+            record.content_hash.clone(),
+        ) else {
+            return (
+                record.key.clone(),
+                Ok(IngestOutcome::Ignored),
+                ScanStats::default(),
+            );
+        };
+        let Some(_permit) = self.post_scheduler.start(&lease).await else {
+            return (
+                record.key.clone(),
+                Ok(IngestOutcome::Ignored),
+                ScanStats::default(),
+            );
+        };
+        let mut stats = ScanStats::default();
+        let outcome = self
+            .ingest_object_record(
+                IngestScopeRef {
+                    kind: scope_kind,
+                    id: scope_id,
+                    replica_id,
+                },
+                record,
+                context,
+                &lease,
+                &mut stats,
+            )
+            .await;
+        let state = match &outcome {
+            Ok(IngestOutcome::Indexed | IngestOutcome::Ignored) => PostFetchJobState::Completed,
+            Ok(IngestOutcome::SkippedNonAllow | IngestOutcome::Deindexed) => {
+                PostFetchJobState::Suppressed
+            }
+            Err(error) if is_transient(error) => PostFetchJobState::RetryWait,
+            Err(_) => PostFetchJobState::Suppressed,
+        };
+        self.post_scheduler.finish(&lease, state);
+        (record.key.clone(), outcome, stats)
+    }
+
+    async fn ingest_object_record(
+        &self,
+        scope: IngestScopeRef<'_>,
+        record: &DocRecord,
+        context: &ScopeContext,
+        job_lease: &crate::scheduler::PostFetchJobLease,
         stats: &mut ScanStats,
     ) -> Result<IngestOutcome> {
+        let scope_kind = scope.kind;
+        let scope_id = scope.id;
+        let replica_id = scope.replica_id;
         // Other key domains are not posts. A corrupt value under a real post identity,
         // however, must reach the error path to remove a previously indexed row.
         if post_id_from_state_key(&record.key).is_none() {
@@ -561,6 +663,8 @@ impl IngestPipeline {
             envelope: context.envelopes.get(&object.object_id),
             media_targets: std::sync::Mutex::new(None),
             definitive_failure: std::sync::atomic::AtomicBool::new(false),
+            scheduler: self.post_scheduler.as_ref(),
+            job_lease,
         };
         guard.verify().await?;
         // 本文 text を取り出す。blob 参照は scan 用の一時 fetch のみ（恒久保存しない）。
@@ -582,6 +686,11 @@ impl IngestPipeline {
                 return Ok(IngestOutcome::SkippedNonAllow);
             }
         };
+        if !self.post_scheduler.mark_processing(job_lease) {
+            return Err(transient(anyhow::anyhow!(
+                "post source revision was superseded after fetch"
+            )));
+        }
 
         // safety scan（fail-closed）。post 本文 text を scan service に渡す。生成された
         // moderation artifact（risk signal / signed event）は service が署名・永続化する（#406）。

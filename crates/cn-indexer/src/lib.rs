@@ -27,6 +27,7 @@ pub mod query;
 pub mod relation_graph;
 pub mod relation_worker;
 pub mod runtime;
+pub mod scheduler;
 pub mod state;
 pub mod status;
 pub mod worker;
@@ -43,6 +44,9 @@ pub use relation_worker::{
     DEFAULT_ANALYSIS_LIMIT, RelationAnalysisReport, analyze_relations, topic_cluster,
 };
 pub use runtime::{run_from_env, validate_config_from_env};
+pub use scheduler::{
+    PostFetchJobKey, PostFetchJobState, PostFetchScheduler, PostFetchSchedulerSnapshot,
+};
 pub use state::{IndexerRuntimeState, IndexerStateSnapshot};
 pub use status::{StatusServerHandle, spawn_status_server};
 pub use worker::{IndexerWorker, WorkerConfig, WorkerHandle};

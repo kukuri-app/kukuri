@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 use crate::ingest::IngestSummary;
+use crate::scheduler::{PostFetchScheduler, PostFetchSchedulerSnapshot};
 
 /// 観測状態の写し。`GET /v1/status` はこの形をそのまま JSON で返す。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -73,6 +74,9 @@ pub struct IndexerStateSnapshot {
     /// 直近の全体見直しへ倒した理由（key の種別 prefix。object id 等は含めない。#1065）。
     #[serde(default)]
     pub last_whole_scope_fallback_reason: Option<String>,
+    /// 投稿取得schedulerの現在状態。本文・hash・peer識別子は含めない。
+    #[serde(default)]
+    pub post_scheduler: PostFetchSchedulerSnapshot,
 }
 
 /// 共有の観測状態。ワーカー・取り込みパイプライン・メディア取得器が更新する。
@@ -102,9 +106,16 @@ pub struct IndexerRuntimeState {
     last_index_lag_secs: RwLock<Option<i64>>,
     event_whole_scope_fallbacks: AtomicU64,
     last_whole_scope_fallback_reason: RwLock<Option<String>>,
+    post_scheduler: RwLock<Option<std::sync::Arc<PostFetchScheduler>>>,
 }
 
 impl IndexerRuntimeState {
+    pub fn set_post_scheduler(&self, scheduler: std::sync::Arc<PostFetchScheduler>) {
+        *self
+            .post_scheduler
+            .write()
+            .expect("post scheduler lock poisoned") = Some(scheduler);
+    }
     pub fn set_moderation_metrics(
         &self,
         metrics: Option<std::sync::Arc<kukuri_cn_safety::metrics::ModerationMetrics>>,
@@ -277,6 +288,13 @@ impl IndexerRuntimeState {
                 .read()
                 .expect("last_whole_scope_fallback_reason poisoned")
                 .clone(),
+            post_scheduler: self
+                .post_scheduler
+                .read()
+                .expect("post scheduler lock poisoned")
+                .as_ref()
+                .map(|scheduler| scheduler.snapshot())
+                .unwrap_or_default(),
         }
     }
 }
@@ -318,6 +336,16 @@ mod tests {
         state.record_error(Some("topic::rust"), "boom");
         state.record_whole_scope_fallback("unregistered:a");
         state.record_whole_scope_fallback("manifests/media");
+        let scheduler = std::sync::Arc::new(PostFetchScheduler::new(2));
+        scheduler.enqueue(
+            crate::scheduler::PostFetchJobKey {
+                scope_kind: "public_topic".into(),
+                scope_id: "rust".into(),
+                object_id: "post-1".into(),
+            },
+            "revision-1".into(),
+        );
+        state.set_post_scheduler(scheduler);
 
         let snapshot = state.snapshot();
         assert!(snapshot.worker_running);
@@ -351,6 +379,7 @@ mod tests {
             snapshot.last_whole_scope_fallback_reason.as_deref(),
             Some("manifests/media")
         );
+        assert_eq!(snapshot.post_scheduler.queued, 1);
     }
 
     #[test]
@@ -383,6 +412,10 @@ mod tests {
         assert_eq!(snapshot.last_index_lag_secs, None);
         assert_eq!(snapshot.event_whole_scope_fallbacks, 0);
         assert_eq!(snapshot.last_whole_scope_fallback_reason, None);
+        assert_eq!(
+            snapshot.post_scheduler,
+            PostFetchSchedulerSnapshot::default()
+        );
     }
 
     #[test]
@@ -398,5 +431,6 @@ mod tests {
         assert!(json.get("media_fetch_timeout").is_some());
         assert!(json.get("event_whole_scope_fallbacks").is_some());
         assert!(json.get("last_whole_scope_fallback_reason").is_some());
+        assert!(json.get("post_scheduler").is_some());
     }
 }

@@ -241,8 +241,11 @@ impl RateLimitConfig {
         })
     }
 
-    pub(crate) fn replenish_period_ms(&self) -> u64 {
-        (1_000 / self.per_second.max(1)).max(1)
+    pub(crate) fn request_policy(&self) -> kukuri_transport::RequestRatePolicy {
+        kukuri_transport::RequestRatePolicy {
+            limit: self.per_second,
+            window: std::time::Duration::from_secs(1),
+        }
     }
 }
 

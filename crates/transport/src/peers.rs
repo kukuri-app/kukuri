@@ -8,9 +8,10 @@
 //!   これを見て全レプリカへ同期先を配り直す(reapply)。blob-service は無視する。
 //! - 状態復元(peer_state / restore)後の reapply も docs-sync 呼び出し側の責務。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -24,6 +25,152 @@ use crate::config::SeedPeer;
 use crate::tickets::relay_assisted_endpoint_addr;
 
 pub const REMOTE_FETCH_RETRY_COOLDOWN: Duration = Duration::from_secs(3);
+const PEER_FETCH_BACKOFF_BASE: Duration = Duration::from_secs(2);
+const PEER_FETCH_BACKOFF_MAX: Duration = Duration::from_secs(60);
+const PEER_CONNECTION_STATE_TTL: Duration = Duration::from_secs(300);
+const PEER_FETCH_SUCCESS_TTL: Duration = Duration::from_secs(600);
+const PEER_FETCH_REQUEST_LIMIT: u64 = 16;
+const PEER_FETCH_REQUEST_WINDOW: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PeerConnectionStatus {
+    Connecting,
+    Connected,
+    Disconnected,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerFetchFailure {
+    ConnectFailed,
+    ConnectTimeout,
+    TransferFailed,
+    TransferTimeout,
+    NotFound,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeerStateSnapshot {
+    pub connection_generation: u64,
+    pub connection_status: PeerConnectionStatus,
+    pub fetch_successes: u64,
+    pub fetch_failures: u64,
+    pub consecutive_fetch_failures: u32,
+    pub smoothed_fetch_latency_ms: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct PeerRuntimeRecord {
+    connection_generation: u64,
+    connection_status: PeerConnectionStatus,
+    connection_observed_at: Option<Instant>,
+    fetch_successes: u64,
+    fetch_failures: u64,
+    consecutive_fetch_failures: u32,
+    smoothed_fetch_latency_ms: Option<u64>,
+    last_success_at: Option<Instant>,
+    retry_after: Option<Instant>,
+}
+
+impl PeerRuntimeRecord {
+    fn connection_status_at(&self, now: Instant) -> PeerConnectionStatus {
+        if self
+            .connection_observed_at
+            .is_some_and(|observed| now.duration_since(observed) <= PEER_CONNECTION_STATE_TTL)
+        {
+            self.connection_status
+        } else {
+            PeerConnectionStatus::Unknown
+        }
+    }
+
+    fn snapshot(&self, now: Instant) -> PeerStateSnapshot {
+        PeerStateSnapshot {
+            connection_generation: self.connection_generation,
+            connection_status: self.connection_status_at(now),
+            fetch_successes: self.fetch_successes,
+            fetch_failures: self.fetch_failures,
+            consecutive_fetch_failures: self.consecutive_fetch_failures,
+            smoothed_fetch_latency_ms: self.smoothed_fetch_latency_ms,
+        }
+    }
+}
+
+/// Rate-limit subjects stay typed so an HTTP address is never treated as a verified P2P identity.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RequestRateSubject {
+    HttpIp(String),
+    PeerEndpoint(String),
+    RelayClient(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RequestRateClass {
+    HttpRequest,
+    P2pRequest,
+    RelayIngressBytes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RequestRatePolicy {
+    pub limit: u64,
+    pub window: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestRateDecision {
+    Allowed,
+    Limited { retry_after: Duration },
+}
+
+type RequestRateWindows =
+    BTreeMap<(RequestRateSubject, RequestRateClass), VecDeque<(Instant, u64)>>;
+
+#[derive(Default)]
+pub struct RequestRateLedger {
+    windows: Mutex<RequestRateWindows>,
+}
+
+impl RequestRateLedger {
+    pub async fn check_and_record(
+        &self,
+        subject: RequestRateSubject,
+        class: RequestRateClass,
+        amount: u64,
+        policy: RequestRatePolicy,
+        now: Instant,
+    ) -> RequestRateDecision {
+        let mut windows = self.windows.lock().await;
+        let entries = windows.entry((subject, class)).or_default();
+        while entries
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) >= policy.window)
+        {
+            entries.pop_front();
+        }
+        let used = entries.iter().map(|(_, amount)| *amount).sum::<u64>();
+        if used.saturating_add(amount) > policy.limit {
+            let retry_after = entries
+                .front()
+                .map(|(at, _)| policy.window.saturating_sub(now.duration_since(*at)))
+                .unwrap_or(policy.window);
+            return RequestRateDecision::Limited { retry_after };
+        }
+        entries.push_back((now, amount));
+        RequestRateDecision::Allowed
+    }
+
+    pub async fn retain_recent(&self, oldest: Instant) {
+        self.windows.lock().await.retain(|_, entries| {
+            while entries.front().is_some_and(|(at, _)| *at < oldest) {
+                entries.pop_front();
+            }
+            !entries.is_empty()
+        });
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteFetchStart {
@@ -81,6 +228,9 @@ pub struct PeerAddrBook {
     learned_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     seed_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     imported_peers: Mutex<BTreeMap<String, EndpointAddr>>,
+    peer_states: Mutex<BTreeMap<String, PeerRuntimeRecord>>,
+    connection_generation: AtomicU64,
+    request_rates: RequestRateLedger,
 }
 
 impl PeerAddrBook {
@@ -91,6 +241,9 @@ impl PeerAddrBook {
             learned_peers: Mutex::new(BTreeMap::new()),
             seed_peers: Mutex::new(BTreeMap::new()),
             imported_peers: Mutex::new(BTreeMap::new()),
+            peer_states: Mutex::new(BTreeMap::new()),
+            connection_generation: AtomicU64::new(0),
+            request_rates: RequestRateLedger::default(),
         }
     }
 
@@ -114,6 +267,127 @@ impl PeerAddrBook {
             }
         }
         peers
+    }
+
+    /// Prefer currently connected and recently successful peers. A peer in backoff remains in the
+    /// list as a recovery probe, but is tried after healthy or unknown peers.
+    pub async fn ranked_peers(&self) -> Vec<EndpointAddr> {
+        let mut peers = self.merged_peers().await;
+        let states = self.peer_states.lock().await;
+        let now = Instant::now();
+        peers.sort_by_key(|peer| {
+            let state = states.get(&peer.id.to_string());
+            let backing_off = state
+                .and_then(|state| state.retry_after)
+                .is_some_and(|retry_after| retry_after > now);
+            let connection_rank = match state.map(|state| state.connection_status_at(now)) {
+                Some(PeerConnectionStatus::Connected) => 0,
+                Some(PeerConnectionStatus::Connecting) => 1,
+                Some(PeerConnectionStatus::Unknown) | None => 2,
+                Some(PeerConnectionStatus::Disconnected) => 3,
+            };
+            let recent_success = state
+                .and_then(|state| state.last_success_at)
+                .is_some_and(|at| now.duration_since(at) <= PEER_FETCH_SUCCESS_TTL);
+            let success_rank = usize::from(!recent_success);
+            let failures = state
+                .filter(|_| backing_off)
+                .map(|state| state.consecutive_fetch_failures)
+                .unwrap_or_default();
+            let latency = state
+                .and_then(|state| state.smoothed_fetch_latency_ms)
+                .unwrap_or(u64::MAX);
+            (
+                backing_off,
+                connection_rank,
+                success_rank,
+                failures,
+                latency,
+            )
+        });
+        peers
+    }
+
+    pub async fn record_connection_state(
+        &self,
+        peer: EndpointId,
+        generation: u64,
+        status: PeerConnectionStatus,
+    ) {
+        let mut states = self.peer_states.lock().await;
+        let state = states.entry(peer.to_string()).or_default();
+        if generation < state.connection_generation {
+            return;
+        }
+        state.connection_generation = generation;
+        state.connection_status = status;
+        state.connection_observed_at = Some(Instant::now());
+    }
+
+    pub async fn begin_connection_attempt(&self, peer: EndpointId) -> u64 {
+        let generation = self.connection_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        self.record_connection_state(peer, generation, PeerConnectionStatus::Connecting)
+            .await;
+        generation
+    }
+
+    pub async fn record_peer_fetch_request(&self, peer: EndpointId) -> RequestRateDecision {
+        self.request_rates
+            .check_and_record(
+                RequestRateSubject::PeerEndpoint(peer.to_string()),
+                RequestRateClass::P2pRequest,
+                1,
+                RequestRatePolicy {
+                    limit: PEER_FETCH_REQUEST_LIMIT,
+                    window: PEER_FETCH_REQUEST_WINDOW,
+                },
+                Instant::now(),
+            )
+            .await
+    }
+
+    pub async fn record_fetch_success(&self, peer: EndpointId, latency: Duration) {
+        let mut states = self.peer_states.lock().await;
+        let state = states.entry(peer.to_string()).or_default();
+        state.fetch_successes = state.fetch_successes.saturating_add(1);
+        state.consecutive_fetch_failures = 0;
+        state.retry_after = None;
+        state.last_success_at = Some(Instant::now());
+        state.connection_status = PeerConnectionStatus::Connected;
+        state.connection_observed_at = state.last_success_at;
+        let latency_ms = u64::try_from(latency.as_millis()).unwrap_or(u64::MAX);
+        state.smoothed_fetch_latency_ms = Some(match state.smoothed_fetch_latency_ms {
+            Some(previous) => previous.saturating_mul(3).saturating_add(latency_ms) / 4,
+            None => latency_ms,
+        });
+    }
+
+    pub async fn record_fetch_failure(&self, peer: EndpointId, failure: PeerFetchFailure) {
+        let mut states = self.peer_states.lock().await;
+        let state = states.entry(peer.to_string()).or_default();
+        state.fetch_failures = state.fetch_failures.saturating_add(1);
+        state.consecutive_fetch_failures = state.consecutive_fetch_failures.saturating_add(1);
+        if matches!(
+            failure,
+            PeerFetchFailure::ConnectFailed | PeerFetchFailure::ConnectTimeout
+        ) {
+            state.connection_status = PeerConnectionStatus::Disconnected;
+        }
+        if !matches!(failure, PeerFetchFailure::Cancelled) {
+            let exponent = state.consecutive_fetch_failures.saturating_sub(1).min(5);
+            let delay = PEER_FETCH_BACKOFF_BASE
+                .saturating_mul(2u32.saturating_pow(exponent))
+                .min(PEER_FETCH_BACKOFF_MAX);
+            state.retry_after = Some(Instant::now() + delay);
+        }
+    }
+
+    pub async fn peer_state_snapshot(&self, peer: EndpointId) -> Option<PeerStateSnapshot> {
+        self.peer_states
+            .lock()
+            .await
+            .get(&peer.to_string())
+            .map(|state| state.snapshot(Instant::now()))
     }
 
     /// learned 台帳へ挿入し、台帳に変化があったかを返す(同値なら false)。
@@ -246,6 +520,135 @@ impl PeerAddrBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iroh::endpoint::presets;
+
+    #[tokio::test]
+    async fn successful_peer_is_ranked_before_recently_timed_out_peer() {
+        let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let discovery = Arc::new(MemoryLookup::new());
+        let book = PeerAddrBook::new(endpoint, discovery);
+        let slow_endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let fast_endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let slow = slow_endpoint.id();
+        let fast = fast_endpoint.id();
+        book.set_seed_peers(
+            vec![
+                SeedPeer {
+                    endpoint_id: slow.to_string(),
+                    addr_hint: Some("192.0.2.1:4433".into()),
+                },
+                SeedPeer {
+                    endpoint_id: fast.to_string(),
+                    addr_hint: Some("192.0.2.2:4433".into()),
+                },
+            ],
+            &[],
+        )
+        .await
+        .unwrap();
+
+        book.record_fetch_failure(slow, PeerFetchFailure::TransferTimeout)
+            .await;
+        book.record_fetch_success(fast, Duration::from_millis(12))
+            .await;
+
+        let ranked = book.ranked_peers().await;
+        assert_eq!(ranked.first().map(|peer| peer.id), Some(fast));
+        assert_eq!(ranked.last().map(|peer| peer.id), Some(slow));
+    }
+
+    #[tokio::test]
+    async fn stale_disconnect_does_not_replace_newer_connection_generation() {
+        let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let discovery = Arc::new(MemoryLookup::new());
+        let book = PeerAddrBook::new(endpoint, discovery);
+        let peer_endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+        let peer = peer_endpoint.id();
+
+        book.record_connection_state(peer, 2, PeerConnectionStatus::Connected)
+            .await;
+        book.record_connection_state(peer, 1, PeerConnectionStatus::Disconnected)
+            .await;
+
+        let snapshot = book.peer_state_snapshot(peer).await.unwrap();
+        assert_eq!(snapshot.connection_generation, 2);
+        assert_eq!(snapshot.connection_status, PeerConnectionStatus::Connected);
+    }
+
+    #[test]
+    fn stale_connection_observation_expires_to_unknown() {
+        let now = Instant::now();
+        let state = PeerRuntimeRecord {
+            connection_generation: 7,
+            connection_status: PeerConnectionStatus::Connected,
+            connection_observed_at: Some(now),
+            ..PeerRuntimeRecord::default()
+        };
+        assert_eq!(
+            state
+                .snapshot(now + PEER_CONNECTION_STATE_TTL + Duration::from_secs(1))
+                .connection_status,
+            PeerConnectionStatus::Unknown
+        );
+    }
+
+    #[tokio::test]
+    async fn request_frequency_keeps_http_peer_and_relay_subjects_separate() {
+        let ledger = RequestRateLedger::default();
+        let now = Instant::now();
+        let policy = RequestRatePolicy {
+            limit: 1,
+            window: Duration::from_secs(10),
+        };
+        assert_eq!(
+            ledger
+                .check_and_record(
+                    RequestRateSubject::HttpIp("192.0.2.1".into()),
+                    RequestRateClass::HttpRequest,
+                    1,
+                    policy,
+                    now,
+                )
+                .await,
+            RequestRateDecision::Allowed
+        );
+        assert!(matches!(
+            ledger
+                .check_and_record(
+                    RequestRateSubject::HttpIp("192.0.2.1".into()),
+                    RequestRateClass::HttpRequest,
+                    1,
+                    policy,
+                    now,
+                )
+                .await,
+            RequestRateDecision::Limited { .. }
+        ));
+        assert_eq!(
+            ledger
+                .check_and_record(
+                    RequestRateSubject::PeerEndpoint("192.0.2.1".into()),
+                    RequestRateClass::P2pRequest,
+                    1,
+                    policy,
+                    now,
+                )
+                .await,
+            RequestRateDecision::Allowed
+        );
+        assert_eq!(
+            ledger
+                .check_and_record(
+                    RequestRateSubject::RelayClient("192.0.2.1".into()),
+                    RequestRateClass::RelayIngressBytes,
+                    1,
+                    policy,
+                    now,
+                )
+                .await,
+            RequestRateDecision::Allowed
+        );
+    }
 
     // かつて docs-sync / blob-service に同名で重複していたテストの単一版(WP-H2)。
     #[test]

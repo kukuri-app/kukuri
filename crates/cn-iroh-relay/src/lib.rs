@@ -46,6 +46,15 @@ pub struct IrohRelayClientRxLimit {
     pub max_burst_bytes: Option<NonZeroU32>,
 }
 
+impl IrohRelayClientRxLimit {
+    pub fn request_policy(self) -> kukuri_transport::RequestRatePolicy {
+        kukuri_transport::RequestRatePolicy {
+            limit: u64::from(self.bytes_per_second.get()),
+            window: std::time::Duration::from_secs(1),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrohRelayPublicOriginMode {
     HttpOnly,
@@ -129,7 +138,14 @@ pub async fn spawn_server(config: IrohRelayConfig) -> Result<SpawnedIrohRelay> {
 
     let mut limits = Limits::default();
     limits.client_rx = config.client_rx_limit.map(|limit| {
-        let mut client_rx = ClientRateLimit::new(limit.bytes_per_second);
+        let shared_policy = limit.request_policy();
+        // The upstream relay limiter remains the byte-accounting adapter. Keeping it as the only
+        // enforcement point avoids double charging while using the same typed policy vocabulary.
+        let bytes_per_second = NonZeroU32::new(
+            u32::try_from(shared_policy.limit).expect("relay policy originates from NonZeroU32"),
+        )
+        .expect("relay request policy remains nonzero");
+        let mut client_rx = ClientRateLimit::new(bytes_per_second);
         client_rx.max_burst_bytes = limit.max_burst_bytes;
         client_rx
     });

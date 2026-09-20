@@ -11,6 +11,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use kukuri_blob_service::MemoryBlobService;
 use kukuri_cn_core::IndexScopeKind;
+use kukuri_cn_indexer::PostFetchScheduler;
 use kukuri_cn_indexer::config::{MediaFetchConfig, RelayConfig};
 use kukuri_cn_indexer::ingest::IngestPipeline;
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
@@ -32,6 +33,7 @@ use kukuri_cn_safety_runtime::{
 };
 use kukuri_core::TopicId;
 use kukuri_docs_sync::{DocOp, DocQuery, DocsSync, MemoryDocsSync, stable_key, topic_replica_id};
+use tokio::sync::Barrier;
 
 mod ingest_support;
 use ingest_support::*;
@@ -44,6 +46,71 @@ fn scan_failed_service() -> (Arc<SafetyScanService>, Arc<MemorySafetyArtifactSto
 /// known CSAM hash match を返す service（exclude のテスト用）。
 fn known_csam_service(post_id: &str) -> (Arc<SafetyScanService>, Arc<MemorySafetyArtifactStore>) {
     service_with(MockSafetyProvider::known_csam("mock-known-csam").with_known_hash_match(post_id))
+}
+
+struct BarrierProvider {
+    barrier: Barrier,
+}
+
+#[async_trait]
+impl SafetyProvider for BarrierProvider {
+    fn name(&self) -> &str {
+        "barrier-known-csam"
+    }
+
+    fn capabilities(&self) -> &[SafetyProviderCapability] {
+        &[SafetyProviderCapability::KnownCsamHashMatch]
+    }
+
+    async fn scan(&self, _: &ProviderScanRequest) -> Result<ProviderScanResult, ScanError> {
+        self.barrier.wait().await;
+        let mut result = ProviderScanResult::completed(
+            self.name(),
+            SafetyProviderCapability::KnownCsamHashMatch,
+        );
+        result.outcome = ScanOutcome::NoKnownMatch;
+        Ok(result)
+    }
+}
+
+#[tokio::test]
+async fn independent_posts_are_ingested_concurrently_within_the_configured_bound() -> Result<()> {
+    let docs = Arc::new(MemoryDocsSync::default());
+    let projection = Arc::new(MemoryIndexProjection::new());
+    let topic = TopicId::new("rust");
+    let replica = topic_replica_id("rust");
+    persist_post(&docs, &replica, &topic, "first concurrent post").await;
+    persist_post(&docs, &replica, &topic, "second concurrent post").await;
+
+    let provider = Arc::new(BarrierProvider {
+        barrier: Barrier::new(2),
+    });
+    let signer = Secp256k1ModerationEventSigner::from_secret(TEST_SECRET).expect("signer");
+    let issuer = signer.issuer_node_id().to_string();
+    let store = Arc::new(MemorySafetyArtifactStore::new());
+    let orchestrator = SafetyOrchestrator::builder(
+        &issuer,
+        Arc::new(SystemScanClock),
+        Arc::new(UuidEventIdGenerator),
+    )
+    .provider(provider)
+    .build()?;
+    let service = Arc::new(
+        SafetyScanService::builder(Arc::new(orchestrator), store.clone())
+            .signer(Arc::new(signer))
+            .build()?,
+    );
+    let (pipeline, _, _) = pipeline_with(&docs, &projection, (service, store));
+    let pipeline = pipeline.with_post_scheduler(Arc::new(PostFetchScheduler::new(2)), 2);
+
+    let summary = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pipeline.ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica),
+    )
+    .await??;
+    assert_eq!(summary.scanned, 2);
+    assert_eq!(summary.indexed, 2);
+    Ok(())
 }
 
 #[tokio::test]

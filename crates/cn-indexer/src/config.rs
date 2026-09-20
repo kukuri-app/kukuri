@@ -144,6 +144,8 @@ pub struct IndexerConfig {
     pub seed_peers: Vec<SeedPeer>,
     /// 常駐ワーカーの全件見直し間隔（#613 T2）。
     pub poll_interval: std::time::Duration,
+    /// 投稿取得・検査を同時に進める最大件数。
+    pub max_concurrent_posts: usize,
     /// 観測状態の HTTP エンドポイントの待ち受けアドレス（#613 T3）。None なら公開しない。
     pub status_addr: Option<std::net::SocketAddr>,
 }
@@ -161,6 +163,7 @@ impl std::fmt::Debug for IndexerConfig {
             .field("media_fetch", &self.media_fetch)
             .field("seed_peers", &self.seed_peers)
             .field("poll_interval", &self.poll_interval)
+            .field("max_concurrent_posts", &self.max_concurrent_posts)
             .field("status_addr", &self.status_addr)
             .finish()
     }
@@ -187,6 +190,7 @@ pub const SEED_PEERS_ENV: &str = "COMMUNITY_NODE_INDEXER_SEED_PEERS";
 
 /// 常駐ワーカーの全件見直し間隔（秒。#613 T2）。未設定なら既定 300 秒。0 は起動エラー。
 pub const POLL_INTERVAL_SECS_ENV: &str = "COMMUNITY_NODE_INDEXER_POLL_INTERVAL_SECS";
+pub const MAX_CONCURRENT_POSTS_ENV: &str = "COMMUNITY_NODE_INDEXER_MAX_CONCURRENT_POSTS";
 
 /// 観測状態の HTTP エンドポイントの待ち受けアドレス（#613 T3）。
 /// 未設定なら HTTP では公開しない。例: `127.0.0.1:8630`。
@@ -349,9 +353,23 @@ impl IndexerConfig {
             media_fetch: MediaFetchConfig::from_env()?,
             seed_peers: parse_seed_peers_env()?,
             poll_interval: parse_poll_interval_env()?,
+            max_concurrent_posts: parse_max_concurrent_posts_env()?,
             status_addr: parse_status_addr_env()?,
         })
     }
+}
+
+fn parse_max_concurrent_posts_env() -> Result<usize> {
+    let Some(raw) = non_empty_env(MAX_CONCURRENT_POSTS_ENV) else {
+        return Ok(4);
+    };
+    let value = raw
+        .parse::<usize>()
+        .with_context(|| format!("{MAX_CONCURRENT_POSTS_ENV} must be a positive integer"))?;
+    if value == 0 {
+        bail!("{MAX_CONCURRENT_POSTS_ENV} must not be zero");
+    }
+    Ok(value)
 }
 
 /// 全件見直し間隔 env を読む。0 や非数値は起動エラー（fail-closed）。
@@ -510,6 +528,7 @@ mod tests {
         MEDIA_FETCH_TIMEOUT_SECS_ENV,
         SEED_PEERS_ENV,
         POLL_INTERVAL_SECS_ENV,
+        MAX_CONCURRENT_POSTS_ENV,
         STATUS_ADDR_ENV,
     ];
 
@@ -814,6 +833,22 @@ mod tests {
             assert!(IndexerConfig::from_env().is_err());
             unsafe {
                 std::env::set_var(POLL_INTERVAL_SECS_ENV, "soon");
+            }
+            assert!(IndexerConfig::from_env().is_err());
+        });
+    }
+
+    #[test]
+    fn max_concurrent_posts_defaults_and_rejects_zero() {
+        with_clean_indexer_env(|| {
+            set_minimal_indexer_env();
+            assert_eq!(IndexerConfig::from_env().unwrap().max_concurrent_posts, 4);
+            unsafe {
+                std::env::set_var(MAX_CONCURRENT_POSTS_ENV, "8");
+            }
+            assert_eq!(IndexerConfig::from_env().unwrap().max_concurrent_posts, 8);
+            unsafe {
+                std::env::set_var(MAX_CONCURRENT_POSTS_ENV, "0");
             }
             assert!(IndexerConfig::from_env().is_err());
         });

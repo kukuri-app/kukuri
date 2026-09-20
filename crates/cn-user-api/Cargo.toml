@@ -38,6 +38,7 @@ kukuri-cn-runtime-support = { path = "../cn-runtime-support" }
 kukuri-cn-safety-runtime = { path = "../cn-safety-runtime" }
 kukuri-core = { path = "../core" }
 kukuri-metaverse-host = { path = "../metaverse-host" }
+kukuri-transport = { path = "../transport" }
 
 [dev-dependencies]
 kukuri-test-support = { path = "../test-support" }

@@ -22,6 +22,8 @@ pub(super) struct ReferenceGuard<'a> {
     /// 確定した理由で再確認に失敗したことがあるか（#1090）。scan service 越しに返る失敗は
     /// 分類の印を失うため、ここに残して呼び出し側の分類に使う。
     pub definitive_failure: AtomicBool,
+    pub scheduler: &'a crate::scheduler::PostFetchScheduler,
+    pub job_lease: &'a crate::scheduler::PostFetchJobLease,
 }
 
 impl ReferenceGuard<'_> {
@@ -47,6 +49,11 @@ impl ReferenceGuard<'_> {
     }
 
     async fn check_current(&self) -> Result<()> {
+        if !self.scheduler.is_current(self.job_lease) {
+            return Err(transient(anyhow::anyhow!(
+                "post source revision was superseded while ingesting"
+            )));
+        }
         ensure!(
             !self.object.object_id.trim().is_empty()
                 && !self.object.author.trim().is_empty()

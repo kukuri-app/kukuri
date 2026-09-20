@@ -35,8 +35,14 @@ where
     K: KeyExtractor + Send + Sync + Clone + 'static,
     K::Key: Send + Sync + 'static,
 {
+    // The shared policy describes the subject window; tower-governor remains the HTTP/IP adapter
+    // that owns atomic buckets and trusted-proxy extraction for this process.
+    let policy = config.request_policy();
     let governor = GovernorConfigBuilder::default()
-        .per_millisecond(config.replenish_period_ms())
+        .per_millisecond(
+            (u64::try_from(policy.window.as_millis()).unwrap_or(u64::MAX) / policy.limit.max(1))
+                .max(1),
+        )
         .burst_size(config.burst)
         .key_extractor(key_extractor)
         .finish()

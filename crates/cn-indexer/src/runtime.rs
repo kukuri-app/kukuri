@@ -35,6 +35,7 @@ use crate::config::IndexerConfig;
 use crate::ingest::IngestPipeline;
 use crate::media_fetcher::BlobMediaFetcher;
 use crate::participant::IndexerParticipant;
+use crate::scheduler::PostFetchScheduler;
 use crate::state::IndexerRuntimeState;
 use crate::status::spawn_status_server;
 use crate::worker::{IndexerWorker, WorkerConfig};
@@ -319,13 +320,16 @@ async fn compose_ingest_stack(
     )?;
     let projection = Arc::new(projection);
 
+    let post_scheduler = Arc::new(PostFetchScheduler::new(config.max_concurrent_posts));
+    state.set_post_scheduler(Arc::clone(&post_scheduler));
     let pipeline = IngestPipeline::new(
         docs_sync.clone(),
         Arc::new(safety),
         entries.clone(),
         projection.clone(),
     )
-    .with_metrics(state);
+    .with_metrics(state)
+    .with_post_scheduler(post_scheduler, config.max_concurrent_posts);
     let participant = IndexerParticipant::new(
         pool,
         docs_sync.clone(),
@@ -371,6 +375,7 @@ mod tests {
             media_fetch: MediaFetchConfig::default(),
             seed_peers: Vec::new(),
             poll_interval: std::time::Duration::from_secs(300),
+            max_concurrent_posts: 4,
             status_addr: None,
         }
     }
