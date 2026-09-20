@@ -225,7 +225,35 @@ T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 
 - `hydration_limits.rs` の陳腐化した comment、inventory の段階の表記（T5 → T5b）、ADR 0052 §2 の契機（private channel の現在 epoch）と上限の記述を直した。
 - file の行数の上限（1,000 行）を守るため、object を 1 件 key 指定で反映する関数群を `service/object_hydration.rs` へ分けた。
 
+### 独立監査の 2 回目（対象 `e09f6118`、FAIL）と修正
+
+2 回目の監査（delta `01a3faba..e09f6118`）は、1 回目の blocker の解消と、読み飛ばしの loop・本文の取り方・関数の移動を確認したうえで、同じ種類の入力が 2 つ残っているとして FAIL だった（どちらも `01a3faba` の時点からあり、1 回目の監査で見落とされていた）。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 索引の prefix の下に UTF-8 でない key が 1 件あるだけで、行のあるページの取得が失敗を返す（public topic の namespace の secret は replica id から決まるので、誰でも書ける） | `IrohDocsSync::query_replica_keys` が、UTF-8 でない key を読み出し全体の失敗にしている | この PR では直さない。docs-sync の読み出しの層の問題として #1253 が所有し、並行して修正が進んでいる（利用者の指示、2026-09-21）。#1253 の In scope に `query_replica_keys` と、この PR の範囲の照合が明記されている |
+| 署名の正しい取り下げで `generation` が符号つき 64 bit に収まらないと、projection への書き込みが失敗し、その object を含む範囲の取得が失敗を返す | 検証は `generation` が 0 でないことしか見ておらず、保存のときの変換の失敗が取得まで伝わっていた | 保存できない `generation` の取り下げは `PostWithdrawalHydration::Invalid` とする。回帰 test `withdrawal_with_an_oversized_generation_does_not_fail_a_non_empty_head_page` |
+
+監査は、照合の call tree の失敗源を iroh と sqlite の実装で全件たどり、投稿者の data が到達する失敗源はこの 2 つだけだと確認している。
+このうち UTF-8 でない key は #1253 の修正で解消する。#1253 が入るまでは、その replica に書ける誰かが索引の prefix の下にそのような key を置くと、行のあるページの取得が失敗しうる
+（基準 commit でも、反映が空の利用者の取得と購読タスクの全件走査は同じ入力で失敗する）。
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 反映できない entry が残ったまま何も反映できない照合が続く範囲は、照合の間隔を 5 秒から 2 倍ずつ伸ばす（上限 5 分）。監査の計測では、実体の無い索引の key が 1 件あるだけで、5 秒ごとに exact query 約 100 回の照合が続いていた。
+- test で固定されていなかった主張に test を足した（`range_reconcile_ledger.rs`）: 反映できない entry が残った範囲は短い間隔、欠けの無い範囲は長い間隔、取り下げの対象の envelope が未着の行は短い間隔、
+  読めない entry は「反映済み」に数えない（数える mutation で失敗することを確認した）、docs の読み出しの失敗はエラーとして返す。
+- ADR 0052 §2 の「索引が空の先頭の範囲」の記述と、1 回の照合が読む key 数の上限の記述を、実装に合わせて直した。§4 に、利用者の操作の対象の本文の取り方を書いた。
+
+### T4・T5b への申し送り（2 回目の監査から）
+
+- 読み進めた位置（`resume_before`）が残っている間の照合は、その位置より古い側だけを読む。`before` と `resume_before` のあいだの entry は、その範囲が `before` から読み直されるまで拾われない（1 ページぶんを確かめ終えると、次の照合は `before` から読み直す）。
+- 反映できない entry が 1 回の上限（200 件）を超えて続く範囲は、同じ cursor の取得を重ねる必要がある。現行の画面は、`next_cursor` が null で返ったページを再取得しないので、画面からは先へ進めない。
+  この段階では購読タスクの全件走査が projection を埋めるので、顕在化しにくい。T5b で TR-6 の画面側（取得できなかった範囲の表示と再取得）と合わせて扱う。
+- 同じ `objects/<id>/state` に、docs 著者 id の小さい読めない record を置かれると、key 指定の経路は先頭の 1 件しか見ないので、正しい投稿が反映されない（基準 commit でも、event の経路はエラーになり、全件走査は全体が失敗していた）。
+  T4 で、parse できる最初の entry を使う形を検討する。
+
 ### 検証
 
-`cargo xtask rust-test`（nextest 1,141 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（265 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（24 件: 成功）、
+`cargo xtask rust-test`（nextest 1,148 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（271 件: 成功）、`cargo test -p kukuri-docs-sync --lib`（25 件: 成功）、
 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。

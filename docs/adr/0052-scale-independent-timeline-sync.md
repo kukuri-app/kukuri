@@ -55,13 +55,19 @@ Accepted
     台帳の間隔と回数の内でだけ remote を試す（表示や bookmark の内容を、本文の無いままにしない）。
   - 1 回の照合が replica 1 つから受け取る索引の entry 数に上限を置く（初期値 200）。scope に含まれる replica ごとに行うので、読む量は「scope の replica 数 × 上限」で決まる。
     索引の読み出しそのものは、§3 の余裕（`limit` + 64 件）、同じ秒の読み出し（512 件）、query 数の上限（256 回）の範囲で key を読む。
+    これは遡りの読み出し 1 回あたりの値で、1 回の照合は、読む件数を増やしながら遡りを最大 4 回ほど繰り返す。どれも定数の上限で、replica の総 entry 数には依存しない。
   - 反映できない entry（本体が手元に無い、投稿として読めない）は読み飛ばして先へ進み、projection に在る object が 1 ページぶんに届くまで読む。
     そうしないと、反映できない entry が 1 ページぶん続いただけで、その先の投稿へ遡れなくなる（以前の全件走査は、反映できる object をすべて反映していた）。
     1 回目はページに要る件数だけを読み、届かなかったときだけ、読む件数を 4 倍ずつ増やす。1 回の上限まで読んでも届かなければ、読み進めた位置を台帳に残し、次の照合がそこから続ける。
   - 1 件の entry の反映の失敗で、ページの取得を失敗させない。投稿の header として読めない `objects/<object id>/state` は、投稿として扱わない（warn を出して読み飛ばす）。
     索引と `objects/` は、その replica に書ける誰もが置けるので、読めない record を 1 件置くだけで表示を止められないようにする。docs と projection の読み書きの失敗は、エラーとして返す。
+    署名の正しい取り下げでも、projection に保存できない値（符号つき 64 bit に収まらない `generation`）を持つものは、取り下げとして扱わない。
+    UTF-8 でない key の entry が docs の読み出し全体を失敗させる問題は、docs-sync の読み出しの層で #1253 が扱う（照合は `query_replica_keys` を通るので、#1253 の修正の対象に含まれる）。
   - 同じ範囲（replica・索引・起点・件数）の照合は、間隔を空ける（欠けが無かった範囲は 30 秒、まだ反映できない entry が残った範囲と読み進めている途中の範囲は 5 秒）。台帳の件数に上限を置く。
-    索引がまだ空の先頭の範囲は、間隔を空けない（読むのは key だけの読み出し 1 回。参加した直後に投稿が同期されたとき、docs の event に頼らずにページを組み立てられる）。
+    まだ反映できない entry が残ったまま、何も反映できない照合が続く範囲は、間隔を 5 秒から 2 倍ずつ伸ばす（上限 5 分）。何かを反映できたら 5 秒へ戻す。
+    索引から 1 件も読めなかった先頭の範囲は、間隔を空けない（参加した直後に投稿が同期されたとき、docs の event に頼らずにページを組み立てられる）。
+    通常は key だけの読み出し 1 回で済む。索引の entry がすべて未来の時刻のときは、遡りの読み出しへ落ちるので query が数十回になる。
+    AllJoined の scope で投稿の無い channel・epoch が多いときは、取得のたびに replica 数ぶんの key の読み出しが走る（replica 数の上限は #1224 が扱う）。
   - 先頭ページ（cursor なし）は、projection が尽きていなければ照合しない。先頭の範囲の追いつきは、窓の追いつきが担う。
   - projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で確認する（取り下げの event を取りこぼした行の本文を出し続けない）。
   - thread は途中の返信が欠けうるので、ページが空でなくても照合する。thread の索引（`indexes/thread/<root>/`）を古い側から 512 件まで読む。
@@ -99,7 +105,8 @@ Accepted
 
 - repost・reaction・reply・bookmark・取り下げ・community index の解決は、対象の行だけを引く。projection に無ければ `withdrawals/<object id>/state` と
   `objects/<object id>/state` を key 指定で反映し、無ければ操作を失敗として返す。replica を走査しない。
-- 読み出しの policy: 利用者の操作の key 指定の読み出しは `LocalOnly` とする（entry の本体が手元に無い対象は、remote 取得で操作を待たせずに失敗として返す）。
+- 読み出しの policy: 利用者の操作の docs の key 指定の読み出しは `LocalOnly` とする（entry の本体が手元に無い対象は、remote 取得で操作を待たせずに失敗として返す）。
+  対象の本文が blob のときは、手元に無ければ `MissingBodyLedger` の間隔と回数の内でだけ remote を試す（§2。待ち時間は本文の取得の timeout が上限で、対象 1 件ぶん）。
   repost 元の解決だけは、購読していない topic の投稿を対象にできるよう `LocalThenRemote` とする（取得は #1207 の単一走査・クールダウン・同時実行の上限に従う）。
   event・hint の個別反映と背景の確認は `LocalThenRemote` とする。
 - private channel の scope の操作は、対象の行が projection に残っていても、参加状態の確認（`ensure_private_channel_access`）を先に通す。

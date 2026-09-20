@@ -360,6 +360,7 @@ mod hydration_limits;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;
+mod range_reconcile_ledger;
 mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]

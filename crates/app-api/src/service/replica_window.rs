@@ -21,6 +21,8 @@ pub(crate) const TIME_INDEX_FUTURE_ALLOWANCE_SECS: i64 = 600;
 pub(crate) const RANGE_CHECK_INTERVAL_MS: i64 = 30_000;
 /// まだ反映できない entry が残った範囲と、読み進めている途中の範囲を、次に照合するまでの間隔。
 pub(crate) const RANGE_CHECK_RETRY_INTERVAL_MS: i64 = 5_000;
+/// 反映できない entry が残ったまま進展の無い範囲の、照合の間隔の上限。進展が無い間は、間隔を 2 倍ずつ伸ばす。
+pub(crate) const RANGE_CHECK_STALLED_MAX_INTERVAL_MS: i64 = 300_000;
 /// 照合の台帳の上限。超えたら期限の切れた項目を捨て、それでも超えるなら記録せずに照合する。
 pub(crate) const RANGE_CHECK_LEDGER_LIMIT: usize = 4_096;
 
@@ -29,6 +31,19 @@ struct RangeCheckState {
     next_check_at_ms: i64,
     /// 反映できない entry が続いて、上限まで読んでも 1 ページぶんに届かなかった範囲の、続きの起点。
     resume_before: Option<TimeIndexCursor>,
+    /// 反映できない entry が残ったまま、何も反映できなかった照合が続いた回数。
+    stalled_checks: u32,
+}
+
+/// 確かめ終えた範囲の状態。次の照合までの間隔を決める。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RangeCheckResult {
+    /// 欠けが無かった。
+    Complete,
+    /// まだ反映できない entry が残ったが、今回なにかを反映できた。
+    Progressed,
+    /// まだ反映できない entry が残り、今回は何も反映できなかった。
+    Stalled,
 }
 
 /// 同じ範囲の照合を、表示の更新のたびに繰り返さないための台帳。
@@ -68,18 +83,42 @@ impl RangeCheckLedger {
             RangeCheckState {
                 next_check_at_ms: now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
                 resume_before: None,
+                stalled_checks: 0,
             },
         );
         Some(None)
     }
 
-    /// 1 ページぶんを確かめ終えた範囲。欠けが無ければ、次の照合を先へ延ばす。
-    pub(crate) async fn record_finished(&self, range_key: &str, now_ms: i64, complete: bool) {
+    /// 1 ページぶんを確かめ終えた範囲の、次の照合までの間隔を決める。
+    ///
+    /// 欠けが無ければ 30 秒。反映できない entry が残っていて、今回なにかを反映できたなら 5 秒。
+    /// 何も反映できない照合が続く間は、5 秒から 2 倍ずつ伸ばす(上限 5 分)。同じ仕事を繰り返さないため。
+    pub(crate) async fn record_finished(
+        &self,
+        range_key: &str,
+        now_ms: i64,
+        result: RangeCheckResult,
+    ) {
         if let Some(state) = self.entries.lock().await.get_mut(range_key) {
             state.resume_before = None;
-            if complete {
-                state.next_check_at_ms = now_ms.saturating_add(RANGE_CHECK_INTERVAL_MS);
-            }
+            let interval = match result {
+                RangeCheckResult::Complete => {
+                    state.stalled_checks = 0;
+                    RANGE_CHECK_INTERVAL_MS
+                }
+                RangeCheckResult::Progressed => {
+                    state.stalled_checks = 0;
+                    RANGE_CHECK_RETRY_INTERVAL_MS
+                }
+                RangeCheckResult::Stalled => {
+                    let interval = RANGE_CHECK_RETRY_INTERVAL_MS
+                        .saturating_mul(1_i64 << state.stalled_checks.min(16))
+                        .min(RANGE_CHECK_STALLED_MAX_INTERVAL_MS);
+                    state.stalled_checks = state.stalled_checks.saturating_add(1);
+                    interval
+                }
+            };
+            state.next_check_at_ms = now_ms.saturating_add(interval);
         }
     }
 
@@ -98,6 +137,17 @@ impl RangeCheckLedger {
     #[cfg(test)]
     pub(crate) async fn len(&self) -> usize {
         self.entries.lock().await.len()
+    }
+
+    /// test 用: 台帳にある範囲のうち、次の照合が最も遅い時刻。
+    #[cfg(test)]
+    pub(crate) async fn latest_next_check_at_ms_for_test(&self) -> Option<i64> {
+        self.entries
+            .lock()
+            .await
+            .values()
+            .map(|state| state.next_check_at_ms)
+            .max()
     }
 
     /// test 用: 間隔が過ぎた状態にする(読み進めた位置は保つ)。
@@ -124,6 +174,16 @@ pub(crate) struct RangeCheckOutcome {
 }
 
 impl RangeCheckOutcome {
+    fn result(&self) -> RangeCheckResult {
+        if self.unresolved == 0 {
+            RangeCheckResult::Complete
+        } else if self.hydrated > 0 {
+            RangeCheckResult::Progressed
+        } else {
+            RangeCheckResult::Stalled
+        }
+    }
+
     fn merge(&mut self, other: Self) {
         self.hydrated += other.hydrated;
         self.present += other.present;
@@ -349,11 +409,7 @@ impl AppService {
             }
             _ => {
                 ledger
-                    .record_finished(
-                        range_key.as_str(),
-                        now.timestamp_millis(),
-                        total.unresolved == 0,
-                    )
+                    .record_finished(range_key.as_str(), now.timestamp_millis(), total.result())
                     .await;
             }
         }
@@ -425,7 +481,7 @@ impl AppService {
             .await?;
             self.services
                 .range_checks
-                .record_finished(range_key.as_str(), now_ms, outcome.unresolved == 0)
+                .record_finished(range_key.as_str(), now_ms, outcome.result())
                 .await;
             total.merge(outcome);
         }
@@ -475,7 +531,11 @@ mod tests {
                 .is_some()
         );
         ledger
-            .record_finished("range-a", RANGE_CHECK_RETRY_INTERVAL_MS, true)
+            .record_finished(
+                "range-a",
+                RANGE_CHECK_RETRY_INTERVAL_MS,
+                RangeCheckResult::Complete,
+            )
             .await;
         assert!(
             ledger
@@ -525,7 +585,11 @@ mod tests {
             "the next check continues from the recorded position"
         );
         ledger
-            .record_finished("range", RANGE_CHECK_RETRY_INTERVAL_MS, false)
+            .record_finished(
+                "range",
+                RANGE_CHECK_RETRY_INTERVAL_MS,
+                RangeCheckResult::Progressed,
+            )
             .await;
         assert_eq!(
             ledger
@@ -533,6 +597,47 @@ mod tests {
                 .await,
             Some(None),
             "a finished range starts over from its original position"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stalled_range_is_checked_less_and_less_often() {
+        let ledger = RangeCheckLedger::default();
+        let mut now = 0_i64;
+        let mut intervals = Vec::new();
+        assert!(ledger.try_begin("range", now).await.is_some());
+        for _ in 0..8 {
+            ledger
+                .record_finished("range", now, RangeCheckResult::Stalled)
+                .await;
+            // 次に照合できる最初の時刻を探す(見つかった時刻で、次の照合が始まる)。
+            let mut next = now;
+            while ledger.try_begin("range", next).await.is_none() {
+                next += 1_000;
+            }
+            intervals.push(next - now);
+            now = next;
+        }
+        assert_eq!(intervals[0], RANGE_CHECK_RETRY_INTERVAL_MS);
+        assert!(
+            intervals.windows(2).all(|pair| pair[1] >= pair[0]),
+            "{intervals:?}"
+        );
+        assert_eq!(
+            *intervals.last().expect("intervals"),
+            RANGE_CHECK_STALLED_MAX_INTERVAL_MS,
+            "{intervals:?}"
+        );
+
+        // 反映できたら、間隔は元へ戻る。
+        ledger
+            .record_finished("range", now, RangeCheckResult::Progressed)
+            .await;
+        assert!(
+            ledger
+                .try_begin("range", now + RANGE_CHECK_RETRY_INTERVAL_MS)
+                .await
+                .is_some()
         );
     }
 

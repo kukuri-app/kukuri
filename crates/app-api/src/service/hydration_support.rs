@@ -90,6 +90,11 @@ pub(crate) async fn hydrate_post_withdrawal_from_record(
         Ok(withdrawal) => withdrawal,
         Err(error) => return Ok(invalid("the withdrawal does not match the target", &error)),
     };
+    // projection は generation を符号つき 64 bit で持つ。収まらない値は保存できず、書き込みの失敗として
+    // 伝わると、署名の正しい取り下げを 1 件置くだけで、その object を含む範囲の取得を止められてしまう。
+    if let Err(error) = i64::try_from(withdrawal.generation) {
+        return Ok(invalid("the withdrawal generation is out of range", &error));
+    }
     projection_store
         .put_post_withdrawal(post_withdrawal_row(withdrawal, replica))
         .await?;
