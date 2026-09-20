@@ -54,11 +54,11 @@ async fn late_joiner_backfills_timeline_from_docs() {
                 })
                 .await
                 .expect("timeline b");
-            if let Some(post) = timeline
-                .items
-                .iter()
-                .find(|post| post.object_id == object_id)
-            {
+            // 行は docs の索引から反映され、本文(blob)は背景の取得で後から入ることがある(#1239)。
+            // 本文が入るまで待つ。
+            if let Some(post) = timeline.items.iter().find(|post| {
+                post.object_id == object_id && post.content == "hello from before join"
+            }) {
                 return post.clone();
             }
             sleep(Duration::from_millis(50)).await;

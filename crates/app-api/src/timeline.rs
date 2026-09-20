@@ -754,8 +754,7 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: 本文が欠けた行は全件走査の理由にしない。欠損は行単位の取り直しへ渡し、
-        // 全件走査は「ページが空」か「private channel の現在 epoch が未反映」のときだけ、1 回まで行う。
+        // #1225: 本文が欠けた行は復旧の理由にしない。欠損は行単位の取り直しへ渡す。
         let needs_epoch_hydration = self
             .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
             .await;
@@ -764,9 +763,20 @@ impl AppService {
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if page.items.is_empty() || needs_epoch_hydration {
-            if self.hydrate_scope_projection(topic_id, &scope).await? > 0 {
+        // #1239: replica を走査しない。利用者が遡ったページ(cursor つき)と、projection が尽きたページ
+        // (空を含む)は、その 1 ページぶんの範囲を時系列の索引と照合して、欠けている object だけを key 指定で
+        // 反映する。先頭の範囲の追いつきは購読タスクが行う。
+        let projection_exhausted = page.next_cursor.is_none();
+        if cursor.is_some() || projection_exhausted || needs_epoch_hydration {
+            let reconcile = self
+                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
+                .await?;
+            if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+            }
+            // 照合した範囲に、最初のページより多くの object が projection に在ると分かったときだけ、ページを
+            // 読み直す(今回反映した、または購読タスクが同じ範囲を先に反映していた)。それ以外は読み直さない。
+            if reconcile.page_is_stale(page.items.len()) {
                 page = filtered_timeline_page(
                     self.services.projection_store.as_ref(),
                     topic_id,
@@ -824,19 +834,25 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は全件走査の理由にしない。
+        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は復旧の理由にしない。
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if page.items.is_empty() {
-            if self
-                .hydrate_scope_projection(topic_id, &TimelineScope::AllJoined)
-                .await?
-                > 0
-            {
+        // #1239: replica を走査しない。thread の索引と照合して、欠けている object だけを key 指定で反映する
+        // (範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても照合する。
+        let reconcile = self
+            .reconcile_thread_checked(topic_id, &thread_root)
+            .await?;
+        let page_is_stale = reconcile.page_is_stale(page.items.len());
+        if page_is_stale || page.items.is_empty() {
+            if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+            }
+            // 照合した範囲に、最初のページより多くの object が在ると分かったときだけ読み直す
+            // (`list_timeline_scoped` と同じ)。
+            if page_is_stale {
                 let root_channel = self
                     .services
                     .projection_store

@@ -16,9 +16,11 @@ use super::*;
 
 /// n 回目の失敗から次の試行までの待ち時間。最後の値を以後の間隔として使う。
 pub(crate) const MISSING_BODY_RETRY_DELAYS_MS: [i64; 4] = [5_000, 30_000, 120_000, 600_000];
-/// 本文 blob 1 つあたりの最大試行数。超えた後は、同じ行を指す docs event / hint の個別反映(その場で 1 回試す)と
-/// 再起動でだけ取り直す。
+/// 本文 blob 1 つあたりの最大試行数。docs の event・hint の個別反映、利用者の操作の対象の反映、表示した行の
+/// 取り直しは、どれもこの台帳を通る。超えた後は、再起動(台帳は memory 上にある)まで取り直さない。
 pub(crate) const MISSING_BODY_MAX_ATTEMPTS: u32 = 8;
+/// 表示のときに取りに行き始めた本文を待つ時間の上限。件数に依存しない。過ぎた取得は背景で続く。
+pub(crate) const MISSING_BODY_DISPLAY_GRACE_MS: u64 = 300;
 /// 背景で同時に取り直す本文 blob の上限。
 pub(crate) const MISSING_BODY_MAX_CONCURRENT_FETCHES: usize = 4;
 /// 台帳の上限。超えた分は、取得中でない項目から捨てる。
@@ -215,6 +217,47 @@ impl MissingBodyLedger {
     pub(crate) fn len(&self) -> usize {
         self.entries.lock().expect("missing body ledger lock").len()
     }
+}
+
+/// 走査中の本文取得。local にあれば読み、無ければ台帳の間隔と回数の内でだけ remote を試す。
+pub(crate) async fn fetch_projection_blob_text_bounded(
+    blob_service: &dyn BlobService,
+    missing_bodies: &MissingBodyLedger,
+    hash: &kukuri_core::BlobHash,
+) -> Option<String> {
+    let local = matches!(
+        best_effort_blob_cache_status(blob_service, hash).await,
+        BlobCacheStatus::Available | BlobCacheStatus::Pinned
+    );
+    // 取得を待つ間に走査が abort されても、`attempt` の drop で失敗として記録される。
+    let attempt = if local {
+        None
+    } else {
+        Some(missing_bodies.try_begin(hash, Utc::now().timestamp_millis())?)
+    };
+    let payload = fetch_projection_blob_text(blob_service, hash).await;
+    match (payload.is_some(), attempt) {
+        (true, Some(attempt)) => attempt.succeed(),
+        (true, None) => missing_bodies.forget(hash),
+        (false, Some(attempt)) => attempt.fail(),
+        (false, None) => {}
+    }
+    payload
+}
+
+/// 手元にある本文だけを読む。remote からは取得しない。
+pub(crate) async fn fetch_local_projection_blob_text(
+    blob_service: &dyn BlobService,
+    hash: &kukuri_core::BlobHash,
+) -> Option<String> {
+    let local = matches!(
+        best_effort_blob_cache_status(blob_service, hash).await,
+        BlobCacheStatus::Available | BlobCacheStatus::Pinned
+    );
+    if !local {
+        return None;
+    }
+    fetch_projection_blob_text(blob_service, hash).await
 }
 
 /// 購読していない topic の投稿(repost 元、profile の投稿)の取り下げを確認する間隔(#1239)。

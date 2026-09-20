@@ -97,11 +97,11 @@ impl DocsSync for CountingDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
-        let entries = self.inner.query_replica_keys(replica_id, query).await?;
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        let page = self.inner.query_replica_keys(replica_id, query).await?;
         self.records_returned
-            .fetch_add(entries.len(), std::sync::atomic::Ordering::SeqCst);
-        Ok(entries)
+            .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(page)
     }
 
     async fn subscribe_replica(
@@ -168,6 +168,14 @@ impl DocsSync for HangingRemoteOnMissDocsSync {
             sleep(Duration::from_secs(30)).await;
         }
         Ok(records)
+    }
+
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica_id, query).await
     }
 
     async fn subscribe_replica(
@@ -356,6 +364,10 @@ mod hydration_integrity_sessions_contract;
 mod hydration_limits;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
+mod range_reconcile;
+mod range_reconcile_access;
+mod range_reconcile_faults;
+mod range_reconcile_ledger;
 mod scale_independence;
 mod shadowing_docs;
 mod subscription_restarts;

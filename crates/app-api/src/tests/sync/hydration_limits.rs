@@ -487,7 +487,7 @@ async fn aborting_a_scan_during_a_body_fetch_does_not_block_later_attempts() {
         let ledger = ledger.clone();
         let hash = hash.clone();
         async move {
-            crate::service::hydration_support::fetch_projection_blob_text_bounded(
+            crate::service::hydration_limits::fetch_projection_blob_text_bounded(
                 blob_service.as_ref(),
                 ledger.as_ref(),
                 &hash,

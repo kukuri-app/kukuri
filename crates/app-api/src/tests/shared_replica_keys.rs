@@ -57,6 +57,14 @@ impl DocsSync for KeyRecordingDocsSync {
             .await
     }
 
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica_id, query).await
+    }
+
     async fn subscribe_replica(
         &self,
         replica_id: &ReplicaId,

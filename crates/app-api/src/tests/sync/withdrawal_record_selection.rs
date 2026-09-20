@@ -555,3 +555,46 @@ async fn withdrawal_read_failure_is_an_error_and_does_not_project_the_body() {
     );
     assert!(projected_content(&store, &post.id).await.is_none());
 }
+
+// INV-6(#1239 T5a の入口): ページの範囲の照合は、projection に既にある行の取り下げを key 指定で確認する。
+// 検証に通らない record が先に並んでいても、上限内にある著者の正しい取り下げを反映する。
+#[tokio::test]
+async fn range_reconcile_applies_the_withdrawal_behind_invalid_records() {
+    let fixture = shadowed_withdrawal("range-reconcile", Vec::new()).await;
+    for shadow in invalid_withdrawal_records(&fixture.topic, &fixture.post) {
+        fixture
+            .docs_sync
+            .shadow(fixture.withdrawal_key.as_str(), shadow)
+            .await;
+    }
+    // 照合は時系列の索引から範囲を読む。`write_object_entries` は索引を書かないので、ここで足す。
+    fixture
+        .docs_sync
+        .apply_doc_op(
+            &fixture.replica,
+            DocOp::SetJson {
+                key: stable_key(
+                    "indexes/timeline",
+                    &format!(
+                        "{}/{}",
+                        kukuri_core::timeline_sort_key(fixture.post.created_at, &fixture.post.id),
+                        fixture.post.id.as_str()
+                    ),
+                ),
+                value: serde_json::json!({}),
+            },
+        )
+        .await
+        .expect("write the timeline index entry");
+
+    let hydrated = fixture
+        .app
+        .reconcile_timeline_range(fixture.topic.as_str(), &TimelineScope::Public, None, 20)
+        .await
+        .expect("reconcile");
+    assert_eq!(
+        hydrated, 1,
+        "the withdrawal of the projected row is applied"
+    );
+    assert_withdrawal_applied(&fixture).await;
+}

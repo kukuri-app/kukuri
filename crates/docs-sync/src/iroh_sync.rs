@@ -19,8 +19,8 @@ use tracing::{info, warn};
 use crate::access::parse_namespace_secret_hex;
 use crate::replicas::public_replica_secret;
 use crate::types::{
-    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
-    DocQuery, DocRecord, DocsSync,
+    DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,
+    DocOp, DocQuery, DocRecord, DocsSync,
 };
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
@@ -499,15 +499,17 @@ impl DocsSync for IrohDocsSync {
         &self,
         replica_id: &ReplicaId,
         query: DocKeyQuery,
-    ) -> Result<Vec<DocKeyEntry>> {
-        if query.limit == 0 {
-            return Ok(Vec::new());
-        }
+    ) -> Result<DocKeyPage> {
+        // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
         let doc = self.ensure_replica(replica_id).await?;
+        if query.limit == 0 {
+            return Ok(DocKeyPage::default());
+        }
         let direction = match query.order {
             DocKeyOrder::Ascending => SortDirection::Asc,
             DocKeyOrder::Descending => SortDirection::Desc,
         };
+        let query_limit = query.limit;
         let stream = doc
             .get_many(
                 Query::key_prefix(query.prefix)
@@ -519,9 +521,12 @@ impl DocsSync for IrohDocsSync {
         tokio::pin!(stream);
         let mut entries = Vec::new();
         let mut skipped_keys = 0usize;
+        let mut scanned = 0usize;
         while let Some(entry) = stream.next().await {
             let entry = entry?;
+            scanned += 1;
             // 飛ばした分を読み足さない(追加の query を発行しない)。返す件数が `limit` より減るだけである。
+            // 飛ばした entry も `scanned` に数え、打ち切られたかどうかを呼び出し側へ伝える(#1257)。
             let Some(key) = utf8_key(entry.key()) else {
                 skipped_keys += 1;
                 continue;
@@ -534,7 +539,10 @@ impl DocsSync for IrohDocsSync {
             });
         }
         warn_skipped_keys(replica_id, skipped_keys);
-        Ok(entries)
+        Ok(DocKeyPage {
+            entries,
+            reached_limit: scanned >= query_limit,
+        })
     }
 
     async fn local_docs_author(&self) -> Result<Option<String>> {
@@ -828,10 +836,15 @@ mod tests {
             vec![valid_key]
         );
         assert_eq!(
-            keys.iter()
+            keys.entries
+                .iter()
                 .map(|entry| entry.key.as_str())
                 .collect::<Vec<_>>(),
             vec![valid_key]
+        );
+        assert!(
+            !keys.reached_limit,
+            "two entries were read under a limit of eight: the prefix is exhausted"
         );
 
         let exact = docs
@@ -872,9 +885,12 @@ mod tests {
             .await
             .expect("bounded key listing");
         assert!(
-            head.is_empty(),
+            head.entries.is_empty(),
             "the non-utf8 key sorts first and the listing does not read past the limit"
         );
+        // #1257: 飛ばした entry も「読んだ件数」に数える。呼び出し側は、返った件数が 0 でも、
+        // この prefix が尽きていないことが分かる。
+        assert!(head.reached_limit);
 
         docs.shutdown().await;
         node.shutdown().await.expect("shutdown node");

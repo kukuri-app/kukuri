@@ -77,6 +77,26 @@ fn warn_invalid_post_withdrawal(
     );
 }
 
+/// projection が保存できる取り下げか。
+///
+/// projection は `generation` を符号つき 64 bit で持つ。収まらない値は保存できず、書き込みの失敗として伝わると、
+/// 署名の正しい取り下げを 1 件置くだけで、その object を含む範囲の取得や、投稿の反映を止められてしまう
+/// (ADR 0052 §2)。保存できない取り下げは、取り下げとして扱わない。
+fn storable_post_withdrawal(replica: &ReplicaId, key: &str, withdrawal: &PostWithdrawalV1) -> bool {
+    match i64::try_from(withdrawal.generation) {
+        Ok(_) => true,
+        Err(error) => {
+            warn_invalid_post_withdrawal(
+                replica,
+                key,
+                "the withdrawal generation is out of range",
+                &error,
+            );
+            false
+        }
+    }
+}
+
 /// 検証できた取り下げを projection へ反映する。取り下げの行と伏せた行を書くのは、ここだけ。
 async fn apply_verified_post_withdrawal(
     projection_store: &dyn ProjectionStore,
@@ -144,6 +164,9 @@ pub(crate) async fn hydrate_post_withdrawal_from_record(
                 return Ok(PostWithdrawalHydration::TargetMissing);
             }
         };
+    if !storable_post_withdrawal(replica, record.key.as_str(), &withdrawal) {
+        return Ok(PostWithdrawalHydration::Invalid);
+    }
     apply_verified_post_withdrawal(projection_store, replica, withdrawal, &target_object_id)
         .await?;
     Ok(PostWithdrawalHydration::Applied)
@@ -367,6 +390,10 @@ async fn apply_first_verified_withdrawal(
     for envelope in &candidates {
         match verify_withdrawal_against_records(envelope, object_id, target_records) {
             WithdrawalTargetCheck::Verified(withdrawal) => {
+                // 保存できない取り下げは飛ばして、残りの候補を調べる。
+                if !storable_post_withdrawal(replica, key.as_str(), &withdrawal) {
+                    continue;
+                }
                 apply_verified_post_withdrawal(projection_store, replica, *withdrawal, object_id)
                     .await?;
                 return Ok(PostWithdrawalHydration::Applied);

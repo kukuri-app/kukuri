@@ -126,6 +126,19 @@ pub fn sign_envelope_json<T: Serialize>(
     sign_envelope(keys, kind, tags, content)
 }
 
+/// 作成時刻を指定して署名する。作成時刻が「今」でない envelope を作るとき(時系列の並びを固定する test など)に使う。
+/// `created_at` は署名者の申告値で、受け取る側は信頼できる時刻として扱わない。
+pub fn sign_envelope_json_at<T: Serialize>(
+    keys: &crate::KukuriKeys,
+    kind: impl Into<String>,
+    tags: Vec<Vec<String>>,
+    content: &T,
+    created_at: i64,
+) -> Result<KukuriEnvelope> {
+    let content = serde_json::to_string(content).context("failed to encode envelope content")?;
+    sign_envelope_at(keys, kind, tags, content, created_at)
+}
+
 pub(crate) fn sign_envelope(
     keys: &crate::KukuriKeys,
     kind: impl Into<String>,

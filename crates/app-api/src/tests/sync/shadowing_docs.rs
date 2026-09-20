@@ -135,6 +135,15 @@ impl DocsSync for ShadowingDocsSync {
             .find(|record| record.docs_author.as_deref() == Some(docs_author)))
     }
 
+    // #1239: タイムラインの取得は、ページの範囲を時系列の索引と照合する(key だけの上限つきの読み出し)。
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica_id, query).await
+    }
+
     async fn query_replica_exact_bounded(
         &self,
         replica_id: &ReplicaId,

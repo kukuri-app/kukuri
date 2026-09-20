@@ -73,10 +73,19 @@ async fn invalid_records_placed_before_the_signed_envelope_do_not_hide_the_post(
     assert_eq!(row.author_pubkey, author_keys.public_key_hex());
     assert_eq!(row.content.as_deref(), Some("the real words"));
 
-    // 全件走査でも同じ結果になる。
+    // 全件走査でも同じ結果になる。#1239 の T5a の後、タイムラインの取得は全件走査をしない(ページの範囲を
+    // 時系列の索引と照合する)ので、購読タスクが使う全件走査を直接呼ぶ。
     ObjectProjectionStore::rebuild_object_projections(store.as_ref(), Vec::new())
         .await
         .expect("clear projection");
+    hydrate_subscription_state(
+        &app.services,
+        topic.as_str(),
+        &replica,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("full scan");
     let view = app
         .list_timeline(topic.as_str(), None, 20)
         .await

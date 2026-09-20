@@ -171,7 +171,13 @@ async fn read_by_docs_author_returns_one_record_among_many_authors() {
         )
         .await
         .expect("keys");
-    assert!(entries.iter().all(|entry| entry.docs_author.is_some()));
+    assert!(!entries.entries.is_empty());
+    assert!(
+        entries
+            .entries
+            .iter()
+            .all(|entry| entry.docs_author.is_some())
+    );
 
     docs.shutdown().await;
     node.shutdown().await.expect("shutdown node");

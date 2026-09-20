@@ -57,6 +57,19 @@ pub struct DocKeyEntry {
     pub docs_author: Option<String>,
 }
 
+/// 上限つきの key の一覧(`DocsSync::query_replica_keys`)の結果(#1257)。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DocKeyPage {
+    /// 返せた entry。件数は `limit` 以下。
+    pub entries: Vec<DocKeyEntry>,
+    /// query が `limit` 件の entry を読んで打ち切られたか。返さずに飛ばした entry(UTF-8 でない key)も数える。
+    ///
+    /// `false` なら、その prefix の entry は今回読んだもので尽きている。`true` なら、続きがありうる。
+    /// 呼び出し側は「尽きたか」の判定に、`entries` の件数ではなくこの値を使う。飛ばした entry があると、
+    /// 打ち切られた読み出しでも `entries` の件数は `limit` に満たない。
+    pub reached_limit: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocFetchPolicy {
     LocalOnly,
@@ -139,7 +152,7 @@ pub trait DocsSync: Send + Sync {
         &self,
         _replica_id: &ReplicaId,
         _query: DocKeyQuery,
-    ) -> Result<Vec<DocKeyEntry>> {
+    ) -> Result<DocKeyPage> {
         anyhow::bail!("this DocsSync implementation does not support bounded key queries")
     }
     /// この実装が書き込みに使う、アカウントの署名鍵から導出した docs author の id(ADR 0053)。

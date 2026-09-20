@@ -3,6 +3,7 @@
 - 対象 Issue: #1239（区分 C、Scope revision 2026-09-20-v2）。統括は #1221。子は #1243（replica の時間分割）。
 - 設計: [ADR 0052](../adr/0052-scale-independent-timeline-sync.md)。inventory: [replica の読み出しの inventory](../architecture/replica-read-inventory.md)。
 - 段階ごとに PR と独立監査を分ける。本書は段階ごとに追記する。
+- 段階の順序: T1 → T2 → T3 → T5a（タイムラインと thread の取得）→ T4（購読タスク）→ T5b → T6 → T7。T5a を T4 より先に行う理由は、inventory の「段階の順序の変更」に書いた。
 
 ## T1: ADR と inventory（PR #1244、merge commit `1c70abd3`）
 
@@ -145,3 +146,205 @@ T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PA
 - bookmark した投稿とその返信先は、その topic を購読していないと取り下げが届かない（以前から同じ。view の生成時の確認は基準 commit にも無い）。
 - `toggle_reaction` を channel の指定なしで呼ぶと、参加状態の確認を通らない（以前から同じ。2 回目の監査の範囲外の観察）。
 - `cargo xtask rust-test` の 1 回目で `kukuri-transport` の `transport_custom_relay_bootstrap_seed_reports_relay_supported_p2p` が失敗した（差分外。単独実行と再実行では成功）。
+
+## T5a: タイムラインと thread の取得（基準 commit `0521a38b`）
+
+T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 回目で PASS（blocker 0 件）、必須 CI は全 job 成功。
+
+### 着手前に洗い出した、全件走査が覆っていた対象
+
+`list_timeline_scoped` と `list_thread` の全件走査（S-6）は、scope の全 replica の 5 prefix（取り下げ・投稿・reaction・live・game）を反映していた。置き換え後の対応は次のとおり。
+
+| 走査が覆っていた対象 | 置き換え後 |
+| --- | --- |
+| ページの範囲の投稿 | ページの範囲の照合（`reconcile_timeline_range`・`reconcile_thread`）が、索引にあって projection に無い object を key 指定で反映する |
+| ページの範囲の取り下げ | 同じ照合が、projection にある行の `withdrawals/<id>/state` を key 指定で確認する。新しく反映する object は、`hydrate_object_in_topic_with` が取り下げを先に確認する |
+| ページの範囲より古い投稿・取り下げ | 反映しない（利用者がその範囲へ遡ったときに照合する。best effort） |
+| reaction | 照合が新しく反映した投稿の reaction は、照合が上限つき（1 投稿あたり 32 件）で反映する（#1252 の取り込みの節）。それ以外の reaction は、この段階では、docs の event と購読タスクの全件走査（S-1〜S-5。T4 で置き換える）が引き続き覆う |
+| live、game | この段階では、購読タスクの全件走査（S-1〜S-5。T4 で置き換える）と `list_live_sessions`・`list_game_rooms`（S-9。T5b）が引き続き覆う |
+| 欠けた本文の取り直し | 本文の取り方（`BodyFetch`）を docs の読み出しの policy から分けた。object を 1 件ずつ反映する経路（`Bounded`）は `MissingBodyLedger` の間隔の内でだけ remote を試す。照合（`LocalOnly`）は手元の本文だけを読み、欠けた本文は `recover_missing_bodies`（背景）に任せる |
+
+### 修正前の再現
+
+`crates/app-api/src/tests/sync/range_reconcile.rs` の `timeline_and_thread_pages_are_built_without_any_replica_scan` は、prefix の読み出し（全件走査）を失敗させる docs で
+`list_timeline` と `list_thread` を呼ぶ。`timeline.rs` を基準 commit の実装へ戻すと、空の projection からの先頭ページが `hydrate_scope_projection` の全件走査に頼るため、失敗する。
+
+### 変更の要約
+
+- `crates/docs-sync/src/time_index.rs`: 新しい側の読み出し `query_time_index_window`（未来の時刻の entry を読み飛ばす）を追加した。遡りの読み出しは、形の違う key が余裕を超えて
+  枠を埋めたとき、古い側の prefix へ進まずに prefix を 1 桁細かく分けて読み直す（T2 の監査の non-blocker。有効な entry を飛ばしたページを返さない）。query 数に上限（256）を置いた。
+- `crates/docs-sync/src/iroh_sync.rs`: `query_replica_keys` は `limit` が 0 でも replica を開く（`MemoryDocsSync` と同じ挙動。T2 の監査の non-blocker）。
+- `crates/app-api/src/service/replica_window.rs`（新規）: `ensure_index_entries_projected`、`reconcile_timeline_range_checked`、`reconcile_thread_checked`、`RangeCheckLedger`。
+  照合の結果（`RangeReconcile`）は、今回反映した件数と、索引の範囲のうち projection に在る件数を持つ。
+- `crates/app-api/src/timeline.rs`: `list_timeline_scoped` と `list_thread` の全件走査を、ページの範囲の照合へ置き換えた。
+  private channel の現在 epoch に投稿が無い間、取得のたびに scope を全件走査していた経路も、間隔つきの照合になった。
+- `crates/app-api/src/service/object_hydration.rs`（新規）: object を 1 件 key 指定で反映する関数群（`hydrate_object_in_topic_with`）。本文の取り方を `BodyFetch` で受け取る
+  （`LocalOnly` は手元の本文だけ、`Bounded` は `MissingBodyLedger` の間隔の内でだけ remote を試す）。反映の結果は `ObjectHydration`（`Hydrated`・`Missing`・`Invalid`）で返す。
+  以前は、key 指定の反映が台帳を通らず、直後の行単位の取り直しと合わせて同じ本文を 2 回取りに行っていた。
+  （1 回目の実装は本文の取り方を docs の読み出しの policy で決めていた。監査の指摘で分けた。下の監査の節。）
+- test double: `query_replica_keys` の既定実装はエラーを返すので、app-api の test double に転送を宣言した。
+
+### AC / TR と証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| AC-1、AC-2、TR-5 | `older_page_is_filled_from_the_time_index_with_a_bounded_number_of_reads`（300 件と 1,500 件で、読む docs の record 数が同じ。prefix の読み出しは 0 回）、`head_page_reads_only_the_newest_entries`、`timeline_and_thread_pages_are_built_without_any_replica_scan` |
+| AC-7 の前提（同じ仕事を繰り返さない） | `the_same_range_is_not_checked_again_within_the_interval`、`range_checks_are_spaced_per_range_and_bounded` |
+| INVAR-1 | `reconcile_applies_a_withdrawal_that_was_never_delivered_as_an_event`、既存の取り下げの test |
+| INVAR-2、TR-12 | `private_channel_range_is_not_read_without_membership`、既存の private channel の test |
+| thread | `thread_reconcile_fills_missing_replies_without_scanning`、`thread_index_keys_are_parsed_and_malformed_keys_are_dropped` |
+| T3 の監査の non-blocker(取り下げの中の読み出しの policy) | `user_operation_does_not_wait_for_a_remote_fetch_inside_the_withdrawal_check`(対象の envelope の読み出しを `LocalThenRemote` に固定する mutation で失敗することを確認した) |
+| TR-13、docs-sync の読み出し | `window_skips_future_entries_with_a_bounded_number_of_queries`、`malformed_index_keys_do_not_make_the_walk_skip_valid_entries`、`zero_limit_key_query_opens_the_replica_on_both_implementations`、`walking_older_entries_uses_a_bounded_number_of_bounded_queries`（1 回の query が返す key 数の上限を assert に足した） |
+
+### 未確認・残課題
+
+- TR-6（遡った範囲の提供 peer が不在のとき、取得できない旨を示す）の画面側は T5b で扱う。この段階では、本体が手元に無い entry は飛ばし、5 秒以上の間隔で照合し直す。
+- 索引の key は、その replica に書ける誰もが置ける。有効な形の偽の key や、形の違う key を大量に置かれると、その古い側へ遡るのに照合を何度も重ねる必要がある（1 回の照合と 1 回の遡りの読み出しには上限がある。best effort）。
+- 512 件を超える thread は、超えた分を照合しない。
+- 先頭ページの途中の欠け（projection が尽きていないページ）は、この段階では購読タスクの全件走査が埋める。T4 で窓の追いつきに置き換える。
+- `list_thread` は、最初に channel を絞らずに projection を読む（以前から同じ）。退出した private channel の thread の行が projection に残っていると、その行を表示しうる。
+  照合は参加状態の確認を通らない channel の replica を読まない。表示側の扱いは別 Issue の候補。
+
+### 独立監査の 1 回目（対象 `01a3faba`、FAIL）と修正
+
+1 回目の独立監査は、blocker 1 件で FAIL だった。監査が失敗する test で再現し、その test を恒久の回帰 test として取り込んだ。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 投稿として読めない `objects/<id>/state` と、それを指す索引の entry が 1 件ずつあるだけで、行のあるページの `list_timeline` / `list_thread` が失敗を返す（基準 commit では成功。台帳の再試行の間隔で失敗が繰り返す） | 照合が、1 件の反映の失敗（header の parse の失敗）をページ全体の失敗として返していた | 投稿の header として読めない state は `ObjectHydration::Invalid` として warn を出して読み飛ばす。docs と projection の読み書きの失敗はエラーのまま返す（ADR 0052 §2）。回帰 test `unreadable_state_record_does_not_fail_a_non_empty_head_page`・`…_cursor_page`・`…_thread` |
+
+同じ監査の non-blocker と、監査の再現から分かった弱点のうち、この段階で直したもの。
+
+- 反映できない entry（本体が届いていない、投稿として読めない）が 1 ページぶん続くと、その先の投稿へ遡れなかった（cursor は projection の行でしか進まないため。以前の全件走査は、反映できる object をすべて反映していた）。
+  照合は、反映できない entry を読み飛ばして先へ進み、projection に在る object が 1 ページぶんに届くまで読む。1 回に受け取る索引の entry 数は上限（200 件）のままで、届かなかったときは読み進めた位置を台帳に残し、次の照合が続ける。
+  回帰 test `a_run_of_unresolvable_entries_does_not_block_older_history`、`a_long_run_of_unresolvable_entries_is_passed_over_several_bounded_checks`（読み飛ばしを無効にする mutation で失敗することを確認した）。
+- 本文の取り方を、docs の読み出しの policy から分けた（`BodyFetch`）。1 回に多数の object を反映する照合は手元の本文だけを読み、object を 1 件ずつ反映する経路（docs の event・hint、利用者の操作の対象、community index の解決）は、
+  台帳の内で remote を試す。1 回目の実装は `LocalOnly` の key 指定の反映がすべて本文を取りに行かなくなり、community index の解決と bookmark の内容が本文の無いままになりえた（監査の指摘）。
+  回帰 test `community_index_resolution_shows_the_body_of_an_unprojected_post`、`reconcile_does_not_fetch_a_body_blob_that_is_not_local`、`event_hydration_and_the_following_listing_share_the_missing_body_schedule`。
+- 空の索引を 1 回見た先頭の範囲が 30 秒の間隔に入り、投稿が同期された直後のページの復旧が遅れた。索引が空の先頭の範囲は、間隔を空けない。回帰 test `an_empty_head_range_is_checked_again_on_the_next_listing`。
+- 取り下げの対象の envelope がまだ手元に無い行は、「まだ反映できない」として短い間隔で照合し直す。
+- test で固定されていなかった主張に test を足した: 遡ったページは projection が尽きていなくても欠けを埋める、先頭のページは projection が尽きていれば行があっても照合する、thread はページが空でなくても照合する、
+  1 回の照合の上限（200 件、thread は 512 件）、照合は remote を待たない、退出した private channel の replica を読まない、窓の読み出しの境界（`not_after` ちょうどの秒）、遡りの query 数の上限。
+- `hydration_limits.rs` の陳腐化した comment、inventory の段階の表記（T5 → T5b）、ADR 0052 §2 の契機（private channel の現在 epoch）と上限の記述を直した。
+- file の行数の上限（1,000 行）を守るため、object を 1 件 key 指定で反映する関数群を `service/object_hydration.rs` へ分けた。
+
+### 独立監査の 2 回目（対象 `e09f6118`、FAIL）と修正
+
+2 回目の監査（delta `01a3faba..e09f6118`）は、1 回目の blocker の解消と、読み飛ばしの loop・本文の取り方・関数の移動を確認したうえで、同じ種類の入力が 2 つ残っているとして FAIL だった（どちらも `01a3faba` の時点からあり、1 回目の監査で見落とされていた）。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 索引の prefix の下に UTF-8 でない key が 1 件あるだけで、行のあるページの取得が失敗を返す（public topic の namespace の secret は replica id から決まるので、誰でも書ける） | `IrohDocsSync::query_replica_keys` が、UTF-8 でない key を読み出し全体の失敗にしていた | docs-sync の読み出しの層の問題として #1253（PR #1255）が直した（UTF-8 でない key の entry を飛ばす）。この PR は main を取り込んでそれを含む。飛ばした entry が「尽きたか」の判定を狂わせる点は、#1257 としてこの PR で直した（下の節） |
+| 署名の正しい取り下げで `generation` が符号つき 64 bit に収まらないと、projection への書き込みが失敗し、その object を含む範囲の取得が失敗を返す | 検証は `generation` が 0 でないことしか見ておらず、保存のときの変換の失敗が取得まで伝わっていた | 保存できない `generation` の取り下げは `PostWithdrawalHydration::Invalid` とする。回帰 test `withdrawal_with_an_oversized_generation_does_not_fail_a_non_empty_head_page` |
+
+監査は、照合の call tree の失敗源を iroh と sqlite の実装で全件たどり、投稿者の data が到達する失敗源はこの 2 つだけだと確認している。
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 反映できない entry が残ったまま何も反映できない照合が続く範囲は、照合の間隔を 5 秒から 2 倍ずつ伸ばす（上限 5 分）。監査の計測では、実体の無い索引の key が 1 件あるだけで、5 秒ごとに exact query 約 100 回の照合が続いていた。
+- test で固定されていなかった主張に test を足した（`range_reconcile_ledger.rs`）: 反映できない entry が残った範囲は短い間隔、欠けの無い範囲は長い間隔、取り下げの対象の envelope が未着の行は短い間隔、
+  読めない entry は「反映済み」に数えない（数える mutation で失敗することを確認した）、docs の読み出しの失敗はエラーとして返す。
+- ADR 0052 §2 の「索引が空の先頭の範囲」の記述と、1 回の照合が読む key 数の上限の記述を、実装に合わせて直した。§4 に、利用者の操作の対象の本文の取り方を書いた。
+
+### T4・T5b への申し送り（2 回目の監査から）
+
+- 読み進めた位置（`resume_before`）が残っている間の照合は、その位置より古い側だけを読む。`before` と `resume_before` のあいだの entry は、その範囲が `before` から読み直されるまで拾われない（1 ページぶんを確かめ終えると、次の照合は `before` から読み直す）。
+- 反映できない entry が 1 回の上限（200 件）を超えて続く範囲は、同じ cursor の取得を重ねる必要がある。現行の画面は、`next_cursor` が null で返ったページを再取得しないので、画面からは先へ進めない。
+  この段階では購読タスクの全件走査が projection を埋めるので、顕在化しにくい。T5b で TR-6 の画面側（取得できなかった範囲の表示と再取得）と合わせて扱う。
+- 同じ `objects/<id>/state` に、docs 著者 id の小さい読めない record を置かれると、key 指定の経路は先頭の 1 件しか見ないので、正しい投稿が反映されない（基準 commit でも、event の経路はエラーになり、全件走査は全体が失敗していた）。
+  T4 で、parse できる最初の entry を使う形を検討する。
+
+### main（#1248 / PR #1249）の取り込み
+
+`bed95a98`（投稿の反映で署名つき envelope と replica を確かめる。この段階の作業中に切り出した task が #1248 になったもの）を取り込んだ。
+
+- 投稿の反映は `objects/<id>/state` を読まず、署名つき envelope から行を作る形になった。object を 1 件 key 指定で反映する関数は `hydrate_object_in_topic`（topic を受け取る）になり、
+  この PR の `object_hydration.rs` は、その上に `BodyFetch`（本文の取り方）と `ObjectHydration`（反映の結果の内訳）を載せる形に作り直した。
+  envelope が未着の object（`Missing`）と、record はあるが検証に通らない object（`Invalid`）を区別するため、`post_integrity.rs` に `load_post` / `PostLoad` を足した（`load_verified_post` はその wrapper）。
+- 同じ key に複数の docs 著者の record があるとき先頭だけを見る問題（T3 の監査の申し送り）は、#1248 の `query_replica_exact_bounded` で解消済み。
+- test: 行は envelope から作られるので、時系列の並びを固定する test は、作成時刻を指定して署名した envelope を使う（`kukuri_core::sign_envelope_json_at` を公開した）。
+  「読めない record」の test は、読めない record を `envelope` の key に置く形に直した。#1248 の test のうち、`list_timeline` が空の projection から全件走査することに頼っていた 1 本は、
+  購読タスクが使う全件走査（`hydrate_subscription_state`）を直接呼ぶ形に直し、その test double に `query_replica_keys` の転送を足した。
+
+### 取り込みの後に直したもの
+
+- `late_joiner_backfills_timeline_from_docs`（desktop-runtime）が失敗した。ページの範囲の照合は本文の blob を remote から取らないので、後から参加した利用者のタイムラインに、
+  投稿が本文の無いまま先に現れる（以前の全件走査は、本文を 1 件ずつ待ってから返していた）。`recover_missing_bodies` が、取りに行き始めた本文を 300 ms だけ待ってから view を作る形にした
+  （件数に依存しない上限。過ぎた取得は背景で続く）。test は、本文が入るまで待つ形に直した。
+- 購読タスクが同じ範囲を先に反映すると、照合の反映件数が 0 になり、最初に読んだ古い（空の）ページをそのまま返していた。照合の結果に「索引の範囲のうち projection に在る件数」を持たせ、
+  それが最初のページの行数より多いときだけページを読み直す。照合のたびに必ず読み直す形は採らない（ページの読み出しに Q-1・Q-2 の問題が残っているため）。
+  test `the_page_is_read_again_only_when_the_projection_holds_more_than_the_page_showed`。
+
+### #1253 の取り込みと、#1257 の対応（この PR で合わせて扱う）
+
+main の `150ca5f7`（#1253 / PR #1255）を取り込んだ。`IrohDocsSync` の読み出しは、UTF-8 でない key の entry を飛ばすようになった（飛ばした分は読み足さない）。
+
+#1257（利用者の指示で、この PR で合わせて対応）: 飛ばした entry は返る件数に入らないので、この PR の `time_index.rs` が「返った件数が要求した件数に達したか」で行っていた
+「打ち切られたか」の判定が働かなくなる。UTF-8 でない byte は数字より後ろに並び、降順の読み出しでは必ず先頭に来るので、UTF-8 でない key が余裕を超えて新しい側を埋めるだけで、
+窓の読み出しは 0 件を返し、遡りは埋まった prefix の有効な entry を飛ばしていた。
+
+- `DocsSync::query_replica_keys` の戻り値を `DocKeyPage { entries, reached_limit }` にした。`reached_limit` は「query が `limit` 件の entry を読んで打ち切られたか」で、飛ばした entry も数える。
+  `IrohDocsSync`・`MemoryDocsSync`・`ReloadableDocsSync`（転送）・test の double の全実装が、同じ意味で返す。trait の既定実装は従来どおりエラーを返す（黙って「打ち切られていない」を返さない）。
+- `query_time_index_window` と `query_time_index_desc` は、`reached_limit` で判定する。UTF-8 でない key の entry は、形の違う key と同じ余裕・読み直しの対象になる。query 数の上限（256）は変えていない。
+- 再現: `non_utf8_keys_filling_the_newest_side_do_not_hide_valid_entries_from_the_window`（有効な entry 5 件 + UTF-8 でない key 80 件で、窓が 5 件を返す）と
+  `non_utf8_keys_do_not_make_the_walk_skip_valid_entries`。判定を「返った件数」へ戻すと、前者は `[]` を返し、後者は古い側の entry だけを返して失敗することを確認した。
+  実 iroh-docs を通す結合 test `non_utf8_keys_on_the_newest_side_of_the_time_index_do_not_hide_the_timeline`（feature `iroh-integration-tests`）も足した。
+- `query_replica_keys` の caller を再列挙した（`rg "query_replica_keys\(" crates`）: `time_index.rs`（4 か所）、`replica_window.rs` の thread の照合（1 か所）、`ReloadableDocsSync` の転送。
+  thread の照合は、返った件数を「尽きたか」の判定に使っていない（古い側から最大 512 件を読むだけ）。
+
+| #1257 の条件 | 証跡 |
+| --- | --- |
+| AC-1、TR-2、TR-3 | `non_utf8_keys_filling_the_newest_side_do_not_hide_valid_entries_from_the_window`（未来の時刻の有効な entry も混在） |
+| AC-2、AC-3、TR-4、TR-5 | `non_utf8_keys_do_not_make_the_walk_skip_valid_entries`、`walk_stops_at_the_query_cap_and_returns_a_contiguous_head`（query 数の上限） |
+| AC-4 | `key_query_respects_prefix_order_and_limit_on_both_implementations`（memory と iroh が同じ意味で `reached_limit` を返す）、`non_utf8_key_does_not_fail_prefix_reads`（飛ばした entry も数える）、`reloadable_docs_sync_forwards_bounded_key_queries` |
+| INVAR-1 | `crates/docs-sync/src/tests/time_index.rs` の既存 test（無変更の期待で成功） |
+| INVAR-2 | `non_utf8_key_does_not_fail_prefix_reads`（#1253 の test。期待は無変更）、`non_utf8_key_does_not_stop_the_timeline` |
+| INVAR-3 | `key_query_respects_prefix_order_and_limit_on_both_implementations`（返る件数は `limit` 以下） |
+
+### #1250（PR #1256）の取り込み
+
+main の `515d8c18`（取り下げの key に不正な record が先にあっても、著者の取り下げを反映する）を取り込んだ。PR #1247 へのコメント（#1250 の INV-6）の依頼に対応する。
+
+- 取り下げの反映は `post_withdrawal_hydration.rs` へ移り、key を指定して読む入口は `hydrate_post_withdrawal_for_object`（同じ key の record を上限つきで複数調べる）を通す規則になった。
+  この PR の入口 2 つを載せ替えた: ページの範囲の照合が projection にある行の取り下げを確認する箇所（`replica_window.rs` の `ensure_index_entries_projected`）と、
+  object を 1 件反映するときの取り下げの先読み（`object_hydration.rs` の `hydrate_object_in_topic_with`。main の `hydrate_object_in_topic` と同じ形）。どちらも先頭の 1 件（`.into_iter().next()`）を見なくなった。
+- 保存できない `generation` の取り下げを取り下げとして扱わない修正（この PR）は、`post_withdrawal_hydration.rs` の `storable_post_withdrawal` として載せ直した。
+  record 単位の入口（全件走査）と、key 指定の入口の両方に効く。key 指定の入口は、保存できない取り下げを飛ばして残りの候補を調べる。
+- 回帰 test `range_reconcile_applies_the_withdrawal_behind_invalid_records`（`withdrawal_record_selection.rs`）。照合の確認を「先頭の 1 件だけを読む」形へ戻すと失敗することを確認した。
+
+### 全体の独立監査（対象 `7a6c3bd1`、PASS）と、T4 の前提条件
+
+#1248・#1253・#1257・#1250 を取り込んだ後の PR 全体を、別コンテキストの監査人が監査し直した。blocker 0 件で PASS。non-blocker のうち、次の 3 件は T4（窓の追いつき）が同じ関数を使う前に直す。
+
+- 遡りの読み出しが query 数の上限（256）に達すると、`reconcile_replica_timeline_range` は「有効な entry の件数が要求に満たない」を「索引は尽きた」とみなし、読み進めた位置を台帳に残さない。
+  `query_time_index_desc` が「上限に達して打ち切った」を返し、照合が `record_resume` へつなぐ形にする。
+- thread の索引の読み出し（古い側から 512 件）には、形の違う key・UTF-8 でない key への余裕と読み直しが無い。
+- 照合は、非表示の著者の行も「projection に在る」と数える。ページの読み出しは非表示の著者の行を読み飛ばすので、非表示の著者の投稿が多い範囲では、照合のたびにページを読み直す。T5b の Q-2（読むページ数の上限）と合わせて扱う。
+
+その他の non-blocker（この段階では直さない。T4・T5b で扱う）。
+
+- test で固定されていない主張: ページを読み直す条件は単体 test だけで固定している（`list_timeline` を通した test は無い）。docs の event の経路が `MissingBodyLedger` を通ること、300 ms の待ちが上限として働くことは、直接の assert が無い。
+- 欠けの無い定常状態でも読み直す場面が残る: 1 ページを超える thread、scope に複数の replica がある範囲、非表示の著者の行がある範囲。
+- 先頭の範囲が形の違う key で埋まっていると、「索引から 1 件も読めなかった」として間隔を空けずに、取得のたびに最大 257 回の query を発行する。読み進めた位置が残っている間は、間隔を伸ばさない。
+
+### #1252（PR #1259）の取り込み
+
+main の `d40c1ea6`（reaction・live session・game room の反映で署名と replica を確かめる）を取り込んだ。
+
+- `hydration_support.rs` は main の内容を土台にし、この PR の差分（`fetch_projection_blob_text_bounded` を `hydration_limits.rs` へ、投稿の key 指定の反映を `object_hydration.rs` へ移したこと）だけを載せ直した。
+  reaction の反映は main の `reaction_hydration.rs`、検証は `reaction_integrity.rs`・`session_integrity.rs` にある。
+- #1252 の test `honest_reaction_is_counted_by_another_viewer` が失敗した。空の projection の viewer が最初の `list_timeline` を呼び、その戻り値で投稿の reaction が数えられていることを確かめる test で、
+  main では空ページの全件走査（取得の中で完了を待つ）が reaction も反映していた。この PR の照合は投稿しか反映しないので、最初のページには投稿が reaction 0 件で現れ、reaction は購読タスクの起動時の全件走査（背景）が終わるまで入らなかった（着手前の洗い出しで「購読タスクの全件走査が覆う」とした対象が、
+  最初のページでは覆われていなかった）。
+- 修正: 照合が新しく反映した投稿について、その投稿の reaction を上限つきで反映する（`hydrate_reaction_cache_for_target_bounded`、1 投稿あたり `RANGE_CHECK_REACTIONS_PER_OBJECT` = 32 件）。
+  読むのは `reactions/<target>/` の key だけの上限つきの一覧 1 回（64 key）と、見つかった reaction ごとの envelope の key（#1252 の検証。上限つき 8 record）で、対象の reaction の総数にも replica の総件数にも依存しない。
+  検証に通らない reaction は飛ばす（warn）。docs の読み出しの失敗だけをエラーとして返す。投稿 1 件につき 1 回（projection に入るとき）だけ走る。
+- 回帰 test `newly_reconciled_post_brings_a_bounded_number_of_its_reactions`: reaction が 40 件の投稿でも 128 件の投稿でも、照合が反映する reaction は 32 件で、
+  照合が発行する docs の読み出しの回数が同じ。上限を外す mutation で失敗することを確認した（40 件が反映される）。
+- 残る範囲（T4 へ申し送り）: 上限を超える reaction と、projection に既にある投稿の reaction は、照合では反映しない。#1252 の migration は reaction の行を消して手元の docs から反映し直す前提で、
+  いまは購読タスクの全件走査（S-1〜S-5）がそれを担っている。T4 で全件走査を外すときは、窓の object の reaction を上限つきで読み直す経路が要る。
+
+### 検証
+
+`cargo xtask rust-test`（nextest と doc test: 成功。件数は PR の本文に記録）、`cargo test -p kukuri-app-api --lib`（成功。件数は PR の本文に記録）、`cargo test -p kukuri-docs-sync --lib`（成功）、
+`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。

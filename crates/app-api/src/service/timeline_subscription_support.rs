@@ -305,7 +305,9 @@ impl AppService {
     /// 対象は呼び出し側が権限で絞り込んだ後のページの行だけで、replica の走査は行わない。
     pub(crate) async fn recover_missing_bodies(&self, rows: &mut [ObjectProjectionRow]) {
         let now = Utc::now().timestamp_millis();
-        for row in rows {
+        // 今回の呼び出しで取りに行き始めた本文(行の位置と task)。
+        let mut started = Vec::new();
+        for (index, row) in rows.iter_mut().enumerate() {
             if row.content.is_some() {
                 continue;
             }
@@ -349,7 +351,7 @@ impl AppService {
             let services = self.services.clone();
             let object_id = row.object_id.clone();
             let hash = hash.clone();
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let permits = services.missing_body_ledger.fetch_permits();
                 let Ok(_permit) = permits.acquire().await else {
                     attempt.fail();
@@ -402,6 +404,31 @@ impl AppService {
                     }
                 }
             });
+            started.push((index, task));
+        }
+        if started.is_empty() {
+            return;
+        }
+        // 取りに行き始めた本文を、決まった短い時間だけ待つ。接続済みの peer からの本文は数十 ms で届くので、
+        // 多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く
+        // (台帳があるので、次の表示が同じ本文を重ねて取りに行くことはない)。
+        let (indexes, tasks): (Vec<_>, Vec<_>) = started.into_iter().unzip();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(hydration_limits::MISSING_BODY_DISPLAY_GRACE_MS),
+            futures_util::future::join_all(tasks),
+        )
+        .await;
+        for index in indexes {
+            let row = &mut rows[index];
+            if let Ok(Some(current)) = self
+                .services
+                .projection_store
+                .get_object_projection(&row.object_id)
+                .await
+                && current.content.is_some()
+            {
+                row.content = current.content;
+            }
         }
     }
 

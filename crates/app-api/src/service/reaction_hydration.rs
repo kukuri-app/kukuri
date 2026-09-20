@@ -125,3 +125,49 @@ pub(crate) async fn hydrate_reaction_cache_for_target(
         .await?;
     hydrate_reactions_from_records(projection_store, topic_id, replica, &records).await
 }
+
+/// 対象の投稿 1 件の reaction を、上限つきで反映する(#1239)。replica は走査しない。
+///
+/// 読むのは、`reactions/<target>/` の key だけの上限つきの一覧(`max_reactions` 件ぶん)と、見つかった reaction ごとの
+/// envelope の key(#1252 の検証)。読む量は対象の reaction の総数に依存しない。上限を超える reaction は、ここでは
+/// 反映しない(docs の event と、購読タスクの反映が拾う)。検証に通らない reaction は飛ばす。
+pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
+    docs_sync: &dyn DocsSync,
+    projection_store: &dyn ProjectionStore,
+    topic_id: &str,
+    replica: &ReplicaId,
+    target_object_id: &EnvelopeId,
+    policy: DocFetchPolicy,
+    max_reactions: usize,
+) -> Result<usize> {
+    // reaction 1 件につき、`state` と `envelope` の 2 つの key がある。
+    let page = docs_sync
+        .query_replica_keys(
+            replica,
+            kukuri_docs_sync::DocKeyQuery {
+                prefix: stable_key("reactions", &format!("{}/", target_object_id.as_str())),
+                order: kukuri_docs_sync::DocKeyOrder::Ascending,
+                limit: max_reactions.saturating_mul(2),
+            },
+        )
+        .await?;
+    let keys = page
+        .entries
+        .iter()
+        .filter_map(|entry| ReactionKey::from_doc_key(entry.key.as_str()))
+        .filter(|key| key.target_object_id == *target_object_id)
+        .collect::<BTreeSet<_>>();
+    let mut hydrated = 0usize;
+    for key in keys.into_iter().take(max_reactions) {
+        hydrated += hydrate_reaction_cache_from_key(
+            docs_sync,
+            projection_store,
+            topic_id,
+            replica,
+            key.envelope_key().as_str(),
+            policy,
+        )
+        .await? as usize;
+    }
+    Ok(hydrated)
+}

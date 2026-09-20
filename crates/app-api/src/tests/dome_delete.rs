@@ -32,6 +32,13 @@ impl DocsSync for DeleteFaultDocs {
             .query_replica_with_policy(replica, query, policy)
             .await
     }
+    async fn query_replica_keys(
+        &self,
+        replica: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica, query).await
+    }
     async fn subscribe_replica(&self, replica: &ReplicaId) -> Result<DocEventStream> {
         self.inner.subscribe_replica(replica).await
     }

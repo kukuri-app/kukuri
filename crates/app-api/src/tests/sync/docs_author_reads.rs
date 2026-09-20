@@ -8,6 +8,7 @@
 use super::hydration_integrity::write_object_entries;
 use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header, shadow_docs_author};
 use super::*;
+use crate::service::replica_window::ensure_index_entries_projected;
 
 /// 著者の docs author の id。shadow の名義(`shadow_docs_author(n)`)より後ろに並ぶ。
 fn author_docs_author() -> String {
@@ -625,4 +626,45 @@ async fn created_post_declares_the_local_docs_author() {
         };
         assert_eq!(objects[0].docs_author, docs_author);
     }
+}
+
+// TR-5 / AC-4(索引の entry): ページの範囲の照合は、索引の entry を書いた docs author を手がかりにする。
+// envelope の key を上限を超えて埋められていても、著者の投稿を反映する。手がかりの無い entry(旧 record)は反映できない。
+#[tokio::test]
+async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key() {
+    let fixture = fixture("index-entry").await;
+    fixture.flood(fixture.envelope_key.as_str(), FLOOD).await;
+    let entry = |docs_author: Option<String>| kukuri_docs_sync::TimeIndexEntry {
+        created_at: fixture.post.created_at,
+        object_id: fixture.post.id.as_str().to_string(),
+        key: "indexes/timeline/unused".into(),
+        docs_author,
+    };
+
+    let legacy = ensure_index_entries_projected(
+        &fixture.app.services,
+        fixture.topic.as_str(),
+        &fixture.replica,
+        &[entry(None)],
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("range check without a hint");
+    assert_eq!(legacy.hydrated, 0);
+    assert!(fixture.row().await.is_none());
+
+    let outcome = ensure_index_entries_projected(
+        &fixture.app.services,
+        fixture.topic.as_str(),
+        &fixture.replica,
+        &[entry(Some(author_docs_author()))],
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("range check");
+    assert_eq!(outcome.hydrated, 1);
+    assert_eq!(
+        fixture.row().await.and_then(|row| row.content).as_deref(),
+        Some(WORDS)
+    );
 }

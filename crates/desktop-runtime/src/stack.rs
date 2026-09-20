@@ -8,7 +8,7 @@ use futures_util::TryStreamExt;
 use kukuri_blob_service::{BlobService, BlobStatus, IrohBlobService, StoredBlob};
 use kukuri_core::{BlobHash, GossipHint, ReplicaId, TopicId};
 use kukuri_docs_sync::{
-    DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyQuery, DocOp, DocQuery, DocRecord, DocsSync,
+    DocEventStream, DocFetchPolicy, DocKeyPage, DocKeyQuery, DocOp, DocQuery, DocRecord, DocsSync,
     IrohDocsSync,
 };
 use kukuri_iroh_node::IrohDocsNode;
@@ -140,7 +140,7 @@ reloadable_service! {
         async fn query_replica_keys(
             replica_id: &ReplicaId,
             query: DocKeyQuery,
-        ) -> Result<Vec<DocKeyEntry>>;
+        ) -> Result<DocKeyPage>;
         // #1258: 宣言が無いと trait の既定実装に落ちる(docs author なし / 読み出しはエラー)。
         async fn local_docs_author() -> Result<Option<String>>;
         async fn query_replica_by_author(
@@ -573,8 +573,11 @@ mod tests {
             .await
             .expect("bounded key query must be forwarded to the inner docs sync");
 
+        // #1257: 打ち切りの情報も、内側の結果をそのまま返す。
+        assert!(entries.reached_limit);
         assert_eq!(
             entries
+                .entries
                 .into_iter()
                 .map(|entry| entry.key)
                 .collect::<Vec<_>>(),
