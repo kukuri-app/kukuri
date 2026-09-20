@@ -9,7 +9,7 @@ use kukuri_iroh_node::IrohDocsNode;
 use crate::{
     DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp, DocQuery,
     DocRecord, DocsSync, IrohDocsSync, MemoryDocsSync, TimeIndexCursor, query_time_index_desc,
-    stable_key, topic_replica_id,
+    query_time_index_window, stable_key, topic_replica_id,
 };
 
 const INDEX_PREFIX: &str = "indexes/timeline/";
@@ -371,11 +371,185 @@ async fn walking_older_entries_uses_a_bounded_number_of_bounded_queries() -> Res
             query_time_index_desc(docs.as_ref(), &replica, INDEX_PREFIX, Some(&end), 20).await?;
         assert!(nothing.is_empty());
         assert!(docs.queries.load(Ordering::SeqCst) <= 91);
+        // 1 回の query が返す entry 数にも上限がある(同じ秒の読み出しの 512 件が最大)。
+        let largest = docs.largest_result.load(Ordering::SeqCst);
+        assert!(
+            largest <= 512,
+            "size={size}: a query returned {largest} keys"
+        );
     }
     assert!(
         counts[1] <= counts[0] + 10,
         "the number of queries must not grow with the index size: {counts:?}"
     );
+    Ok(())
+}
+
+async fn put_key(docs: &dyn DocsSync, replica: &ReplicaId, key: String) -> Result<()> {
+    docs.apply_doc_op(
+        replica,
+        DocOp::SetJson {
+            key,
+            value: serde_json::json!({}),
+        },
+    )
+    .await
+}
+
+fn ids(entries: &[crate::TimeIndexEntry]) -> Vec<(i64, String)> {
+    entries
+        .iter()
+        .map(|entry| (entry.created_at, entry.object_id.clone()))
+        .collect()
+}
+
+// 窓の読み出しは、現在時刻 + 許容幅より未来の entry を読み飛ばす。未来の entry が少ないときは読み出し 1 回、
+// 枠を埋めるほど多いときは、起点つきの遡りへ落ちて同じ結果を返す。
+#[tokio::test]
+async fn window_skips_future_entries_with_a_bounded_number_of_queries() -> Result<()> {
+    let now = 1_758_000_000_i64;
+    for future_entries in [3usize, 400] {
+        let docs = Arc::new(CountingKeys::default());
+        let replica =
+            topic_replica_id(format!("kukuri:topic:time-index-window-{future_entries}").as_str());
+        docs.open_replica(&replica).await?;
+        let mut rows = Vec::new();
+        for index in 0..60usize {
+            let row = (now - 10 * index as i64, object_id(index));
+            put_key(docs.as_ref(), &replica, index_key(row.0, &row.1)).await?;
+            rows.push(row);
+        }
+        for index in 0..future_entries {
+            put_key(
+                docs.as_ref(),
+                &replica,
+                index_key(now + 86_400 + index as i64, &object_id(10_000 + index)),
+            )
+            .await?;
+        }
+        docs.queries.store(0, Ordering::SeqCst);
+        let window =
+            query_time_index_window(docs.as_ref(), &replica, INDEX_PREFIX, now + 600, 20).await?;
+        assert_eq!(
+            ids(&window),
+            expected(&rows, None, 20),
+            "future_entries={future_entries}"
+        );
+        let queries = docs.queries.load(Ordering::SeqCst);
+        if future_entries == 3 {
+            assert_eq!(
+                queries, 1,
+                "a small number of future entries costs one query"
+            );
+        } else {
+            assert!(queries <= 92, "{queries} queries");
+        }
+        let largest = docs.largest_result.load(Ordering::SeqCst);
+        assert!(largest <= 512, "a query returned {largest} keys");
+    }
+    Ok(())
+}
+
+// 形の違う key は、読み出しごとの余裕の範囲なら有効な entry を押し出さない。余裕を超えたときは、古い側の
+// prefix へ進まずに prefix を細かく分けて読み直し、有効な entry を飛ばしたページを返さない。
+#[tokio::test]
+async fn malformed_index_keys_do_not_make_the_walk_skip_valid_entries() -> Result<()> {
+    let docs = MemoryDocsSync::default();
+    let replica = topic_replica_id("kukuri:topic:time-index-malformed");
+    docs.open_replica(&replica).await?;
+    // 同じ 10 秒の prefix(175800000x)に、形の違う key と有効な entry を混ぜる。形の違う key は
+    // 降順で有効な entry より先に並ぶ(`~` は 16 進の文字より大きい)。
+    let mut rows = Vec::new();
+    for index in 0..6usize {
+        let row = (1_758_000_001 + index as i64, object_id(index));
+        put_key(&docs, &replica, index_key(row.0, &row.1)).await?;
+        rows.push(row);
+    }
+    let older = (1_757_000_000_i64, object_id(99));
+    put_key(&docs, &replica, index_key(older.0, &older.1)).await?;
+    rows.push(older.clone());
+    for index in 0..8usize {
+        put_key(
+            &docs,
+            &replica,
+            stable_key(
+                "indexes/timeline",
+                &format!("{:020}-~malformed-{index}", 1_758_000_008),
+            ),
+        )
+        .await?;
+    }
+    let cursor = TimeIndexCursor {
+        created_at: 1_758_000_050,
+        object_id: "f".repeat(64),
+    };
+    let page = query_time_index_desc(&docs, &replica, INDEX_PREFIX, Some(&cursor), 4).await?;
+    assert_eq!(
+        ids(&page),
+        expected(&rows, Some(&cursor), 4),
+        "within the allowance"
+    );
+
+    // 余裕(32 件)を超える数の形の違う key を足す。
+    for index in 0..64usize {
+        put_key(
+            &docs,
+            &replica,
+            stable_key(
+                "indexes/timeline",
+                &format!("{:020}-~more-malformed-{index:03}", 1_758_000_009),
+            ),
+        )
+        .await?;
+    }
+    let page = query_time_index_desc(&docs, &replica, INDEX_PREFIX, Some(&cursor), 4).await?;
+    assert_eq!(
+        ids(&page),
+        expected(&rows, Some(&cursor), 4),
+        "beyond the allowance: the walk splits the prefix instead of moving on to an older one"
+    );
+    // ページを継いでも、有効な entry をすべて新しい順に読める。
+    let mut walked = Vec::new();
+    let mut next = Some(cursor);
+    while let Some(current) = next.take() {
+        let page = query_time_index_desc(&docs, &replica, INDEX_PREFIX, Some(&current), 3).await?;
+        if let Some(last) = page.last() {
+            next = Some(TimeIndexCursor {
+                created_at: last.created_at,
+                object_id: last.object_id.clone(),
+            });
+        }
+        walked.extend(ids(&page));
+    }
+    assert_eq!(walked, expected(&rows, None, usize::MAX));
+    Ok(())
+}
+
+// `limit` が 0 の読み出しは、どちらの実装も replica を開いてから空を返す。
+#[tokio::test]
+async fn zero_limit_key_query_opens_the_replica_on_both_implementations() -> Result<()> {
+    let query = || DocKeyQuery {
+        prefix: INDEX_PREFIX.into(),
+        order: DocKeyOrder::Descending,
+        limit: 0,
+    };
+    let memory = MemoryDocsSync::default();
+    let replica = topic_replica_id("kukuri:topic:time-index-zero-limit");
+    assert!(
+        memory
+            .query_replica_keys(&replica, query())
+            .await?
+            .is_empty()
+    );
+
+    let node = IrohDocsNode::memory().await?;
+    let iroh = IrohDocsSync::new(node.clone());
+    assert!(iroh.query_replica_keys(&replica, query()).await?.is_empty());
+    // 権限の無い private replica は、`limit` が 0 でも失敗する(開けないものを開けたことにしない)。
+    let private = crate::private_channel_epoch_replica_id("channel", "epoch");
+    assert!(iroh.query_replica_keys(&private, query()).await.is_err());
+    iroh.shutdown().await;
+    node.shutdown().await?;
     Ok(())
 }
 

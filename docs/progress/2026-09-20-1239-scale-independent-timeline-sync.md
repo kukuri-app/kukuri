@@ -3,6 +3,7 @@
 - 対象 Issue: #1239（区分 C、Scope revision 2026-09-20-v2）。統括は #1221。子は #1243（replica の時間分割）。
 - 設計: [ADR 0052](../adr/0052-scale-independent-timeline-sync.md)。inventory: [replica の読み出しの inventory](../architecture/replica-read-inventory.md)。
 - 段階ごとに PR と独立監査を分ける。本書は段階ごとに追記する。
+- 段階の順序: T1 → T2 → T3 → T5a（タイムラインと thread の取得）→ T4（購読タスク）→ T5b → T6 → T7。T5a を T4 より先に行う理由は、inventory の「段階の順序の変更」に書いた。
 
 ## T1: ADR と inventory（PR #1244、merge commit `1c70abd3`）
 
@@ -145,3 +146,62 @@ T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PA
 - bookmark した投稿とその返信先は、その topic を購読していないと取り下げが届かない（以前から同じ。view の生成時の確認は基準 commit にも無い）。
 - `toggle_reaction` を channel の指定なしで呼ぶと、参加状態の確認を通らない（以前から同じ。2 回目の監査の範囲外の観察）。
 - `cargo xtask rust-test` の 1 回目で `kukuri-transport` の `transport_custom_relay_bootstrap_seed_reports_relay_supported_p2p` が失敗した（差分外。単独実行と再実行では成功）。
+
+## T5a: タイムラインと thread の取得（基準 commit `0521a38b`）
+
+T3 は PR #1246（merge commit `0521a38b`）で完了した。独立監査は 3 回目で PASS（blocker 0 件）、必須 CI は全 job 成功。
+
+### 着手前に洗い出した、全件走査が覆っていた対象
+
+`list_timeline_scoped` と `list_thread` の全件走査（S-6）は、scope の全 replica の 5 prefix（取り下げ・投稿・reaction・live・game）を反映していた。置き換え後の対応は次のとおり。
+
+| 走査が覆っていた対象 | 置き換え後 |
+| --- | --- |
+| ページの範囲の投稿 | ページの範囲の照合（`reconcile_timeline_range`・`reconcile_thread`）が、索引にあって projection に無い object を key 指定で反映する |
+| ページの範囲の取り下げ | 同じ照合が、projection にある行の `withdrawals/<id>/state` を key 指定で確認する。新しく反映する object は、`hydrate_object_by_id` が取り下げを先に確認する |
+| ページの範囲より古い投稿・取り下げ | 反映しない（利用者がその範囲へ遡ったときに照合する。best effort） |
+| reaction、live、game | この段階では、購読タスクの全件走査（S-1〜S-5。T4 で置き換える）と `list_live_sessions`・`list_game_rooms`（S-9。T5b）が引き続き覆う |
+| 欠けた本文の取り直し | key 指定の反映も `MissingBodyLedger` の間隔に従う（`LocalThenRemote`）。`LocalOnly` は手元の本文だけを読み、欠けた本文は `recover_missing_bodies`（背景）に任せる |
+
+### 修正前の再現
+
+`crates/app-api/src/tests/sync/range_reconcile.rs` の `timeline_and_thread_pages_are_built_without_any_replica_scan` は、prefix の読み出し（全件走査）を失敗させる docs で
+`list_timeline` と `list_thread` を呼ぶ。`timeline.rs` を基準 commit の実装へ戻すと、空の projection からの先頭ページが `hydrate_scope_projection` の全件走査に頼るため、失敗する。
+
+### 変更の要約
+
+- `crates/docs-sync/src/time_index.rs`: 新しい側の読み出し `query_time_index_window`（未来の時刻の entry を読み飛ばす）を追加した。遡りの読み出しは、形の違う key が余裕を超えて
+  枠を埋めたとき、古い側の prefix へ進まずに prefix を 1 桁細かく分けて読み直す（T2 の監査の non-blocker。有効な entry を飛ばしたページを返さない）。query 数に上限（256）を置いた。
+- `crates/docs-sync/src/iroh_sync.rs`: `query_replica_keys` は `limit` が 0 でも replica を開く（`MemoryDocsSync` と同じ挙動。T2 の監査の non-blocker）。
+- `crates/app-api/src/service/replica_window.rs`（新規）: `ensure_index_entries_projected`、`reconcile_timeline_range`、`reconcile_thread`、`RangeCheckLedger`。
+- `crates/app-api/src/timeline.rs`: `list_timeline_scoped` と `list_thread` の全件走査を、ページの範囲の照合へ置き換えた。
+  private channel の現在 epoch に投稿が無い間、取得のたびに scope を全件走査していた経路も、間隔つきの照合になった。
+- `crates/app-api/src/service/hydration_support.rs`: key 指定の投稿の反映（`hydrate_object_projection_from_record`）の本文の取得を、policy に従わせた
+  （`LocalOnly` は手元の本文だけ、`LocalThenRemote` は `MissingBodyLedger` の間隔の内でだけ remote を試す）。以前は、key 指定の反映が台帳を通らず、
+  直後の行単位の取り直しと合わせて同じ本文を 2 回取りに行っていた。
+- test double: `query_replica_keys` の既定実装はエラーを返すので、app-api の test double に転送を宣言した。
+
+### AC / TR と証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| AC-1、AC-2、TR-5 | `older_page_is_filled_from_the_time_index_with_a_bounded_number_of_reads`（300 件と 1,500 件で、読む docs の record 数が同じ。prefix の読み出しは 0 回）、`head_page_reads_only_the_newest_entries`、`timeline_and_thread_pages_are_built_without_any_replica_scan` |
+| AC-7 の前提（同じ仕事を繰り返さない） | `the_same_range_is_not_checked_again_within_the_interval`、`range_checks_are_spaced_per_range_and_bounded` |
+| INVAR-1 | `reconcile_applies_a_withdrawal_that_was_never_delivered_as_an_event`、既存の取り下げの test |
+| INVAR-2、TR-12 | `private_channel_range_is_not_read_without_membership`、既存の private channel の test |
+| thread | `thread_reconcile_fills_missing_replies_without_scanning`、`thread_index_keys_are_parsed_and_malformed_keys_are_dropped` |
+| T3 の監査の non-blocker(取り下げの中の読み出しの policy) | `user_operation_does_not_wait_for_a_remote_fetch_inside_the_withdrawal_check`(対象の envelope の読み出しを `LocalThenRemote` に固定する mutation で失敗することを確認した) |
+| TR-13、docs-sync の読み出し | `window_skips_future_entries_with_a_bounded_number_of_queries`、`malformed_index_keys_do_not_make_the_walk_skip_valid_entries`、`zero_limit_key_query_opens_the_replica_on_both_implementations`、`walking_older_entries_uses_a_bounded_number_of_bounded_queries`（1 回の query が返す key 数の上限を assert に足した） |
+
+### 未確認・残課題
+
+- TR-6（遡った範囲の提供 peer が不在のとき、取得できない旨を示す）の画面側は T5b で扱う。この段階では、本体が手元に無い entry は飛ばし、5 秒以上の間隔で照合し直す。
+- 512 件を超える thread は、超えた分を照合しない。
+- 先頭ページの途中の欠け（projection が尽きていないページ）は、この段階では購読タスクの全件走査が埋める。T4 で窓の追いつきに置き換える。
+- `list_thread` は、最初に channel を絞らずに projection を読む（以前から同じ）。退出した private channel の thread の行が projection に残っていると、その行を表示しうる。
+  照合は参加状態の確認を通らない channel の replica を読まない。表示側の扱いは別 Issue の候補。
+
+### 検証
+
+`cargo xtask rust-test`(nextest 1,121 件と doc test: 成功)、`cargo test -p kukuri-app-api --lib`(248 件: 成功)、`cargo test -p kukuri-docs-sync --lib`(22 件: 成功)、
+`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`(いずれも成功)。

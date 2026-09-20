@@ -314,6 +314,8 @@ async fn community_index_resolution_reads_a_constant_number_of_docs_records() {
 #[tokio::test]
 async fn timeline_view_generation_does_not_scan_docs() {
     let fixture = fixture("view", SMALL).await;
+    // 同じ秒の中の並びは object id で決まる。repost を先頭のページに確実に入れるため、秒をまたいでから作る。
+    sleep(Duration::from_millis(1_100)).await;
     fixture
         .app
         .create_repost(
@@ -327,12 +329,15 @@ async fn timeline_view_generation_does_not_scan_docs() {
     sleep(Duration::from_millis(150)).await;
     fixture.docs_sync.clear_queries().await;
 
+    // projection が尽きないページを取る(尽きたページは、取得側が範囲を索引と照合する。
+    // それは view の生成ではなく、`range_reconcile.rs` が固定する)。
     for _ in 0..3 {
         let view = fixture
             .app
-            .list_timeline(fixture.topic.as_str(), None, 50)
+            .list_timeline(fixture.topic.as_str(), None, 5)
             .await
             .expect("timeline with a repost");
+        assert!(view.next_cursor.is_some());
         assert!(view.items.iter().any(|item| item.repost_of.is_some()));
     }
     sleep(Duration::from_millis(150)).await;

@@ -57,6 +57,14 @@ impl DocsSync for AssistedDocsSync {
         Ok(Vec::new())
     }
 
+    async fn query_replica_keys(
+        &self,
+        _replica_id: &ReplicaId,
+        _query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+        Ok(Vec::new())
+    }
+
     async fn subscribe_replica(
         &self,
         _replica_id: &ReplicaId,
@@ -98,6 +106,14 @@ impl DocsSync for TrackingDocsSync {
         _query: DocQuery,
         _policy: kukuri_docs_sync::DocFetchPolicy,
     ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
+        Ok(Vec::new())
+    }
+
+    async fn query_replica_keys(
+        &self,
+        _replica_id: &ReplicaId,
+        _query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
         Ok(Vec::new())
     }
 

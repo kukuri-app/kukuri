@@ -217,6 +217,47 @@ impl MissingBodyLedger {
     }
 }
 
+/// 走査中の本文取得。local にあれば読み、無ければ台帳の間隔と回数の内でだけ remote を試す。
+pub(crate) async fn fetch_projection_blob_text_bounded(
+    blob_service: &dyn BlobService,
+    missing_bodies: &MissingBodyLedger,
+    hash: &kukuri_core::BlobHash,
+) -> Option<String> {
+    let local = matches!(
+        best_effort_blob_cache_status(blob_service, hash).await,
+        BlobCacheStatus::Available | BlobCacheStatus::Pinned
+    );
+    // 取得を待つ間に走査が abort されても、`attempt` の drop で失敗として記録される。
+    let attempt = if local {
+        None
+    } else {
+        Some(missing_bodies.try_begin(hash, Utc::now().timestamp_millis())?)
+    };
+    let payload = fetch_projection_blob_text(blob_service, hash).await;
+    match (payload.is_some(), attempt) {
+        (true, Some(attempt)) => attempt.succeed(),
+        (true, None) => missing_bodies.forget(hash),
+        (false, Some(attempt)) => attempt.fail(),
+        (false, None) => {}
+    }
+    payload
+}
+
+/// 手元にある本文だけを読む。remote からは取得しない。
+pub(crate) async fn fetch_local_projection_blob_text(
+    blob_service: &dyn BlobService,
+    hash: &kukuri_core::BlobHash,
+) -> Option<String> {
+    let local = matches!(
+        best_effort_blob_cache_status(blob_service, hash).await,
+        BlobCacheStatus::Available | BlobCacheStatus::Pinned
+    );
+    if !local {
+        return None;
+    }
+    fetch_projection_blob_text(blob_service, hash).await
+}
+
 /// 購読していない topic の投稿(repost 元、profile の投稿)の取り下げを確認する間隔(#1239)。
 pub(crate) const WITHDRAWAL_CHECK_INTERVAL_MS: i64 = 60_000;
 /// 取り下げの確認の台帳の上限。超えたら、期限の切れた項目を捨て、それでも超えるなら確認を見送る。

@@ -366,10 +366,11 @@ impl DocsSync for IrohDocsSync {
         replica_id: &ReplicaId,
         query: DocKeyQuery,
     ) -> Result<Vec<DocKeyEntry>> {
+        // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
+        let doc = self.ensure_replica(replica_id).await?;
         if query.limit == 0 {
             return Ok(Vec::new());
         }
-        let doc = self.ensure_replica(replica_id).await?;
         let direction = match query.order {
             DocKeyOrder::Ascending => SortDirection::Asc,
             DocKeyOrder::Descending => SortDirection::Desc,

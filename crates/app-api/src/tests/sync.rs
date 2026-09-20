@@ -170,6 +170,14 @@ impl DocsSync for HangingRemoteOnMissDocsSync {
         Ok(records)
     }
 
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+        self.inner.query_replica_keys(replica_id, query).await
+    }
+
     async fn subscribe_replica(
         &self,
         replica_id: &ReplicaId,
@@ -349,6 +357,7 @@ mod diagnostics;
 mod gossip_toggle;
 mod hint_rehydration;
 mod hydration_limits;
+mod range_reconcile;
 mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]

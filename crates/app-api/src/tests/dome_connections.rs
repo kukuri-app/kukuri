@@ -40,6 +40,14 @@ impl DocsSync for ConnectionIoProbe {
             .query_replica_with_policy(replica, query, policy)
             .await
     }
+    async fn query_replica_keys(
+        &self,
+        replica: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<Vec<kukuri_docs_sync::DocKeyEntry>> {
+        self.io.fetch_add(1, Ordering::SeqCst);
+        self.inner.query_replica_keys(replica, query).await
+    }
     async fn subscribe_replica(&self, replica: &ReplicaId) -> Result<DocEventStream> {
         self.io.fetch_add(1, Ordering::SeqCst);
         self.inner.subscribe_replica(replica).await

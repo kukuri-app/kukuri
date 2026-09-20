@@ -43,11 +43,21 @@ Accepted
 | 反映 | 契機 | 読む量 |
 | --- | --- | --- |
 | 個別反映 | docs の event（`InsertLocal` / `InsertRemote`）と gossip hint。key 単位。`objects/`・`reactions/`・`withdrawals/`・`sessions/*` の `/state` を扱う | 対象の key とその関連 key だけ |
-| 窓の追いつき | 購読タスクの起動時、docs の同期の完了（`SyncFinished`）、event の取りこぼし（`Lagged`）の検出、空ページの表示。定期の polling はしない | 時系列の索引の新しい側から固定件数（窓）。projection に無い object だけを key 指定で反映する |
-| 遡りの取得 | タイムライン・thread・profile で、projection のページが足りないとき | 表示中の最古の行より古い側を、索引から 1 ページぶん |
+| 窓の追いつき | 購読タスクの起動時、docs の同期の完了（`SyncFinished`）、event の取りこぼし（`Lagged`）の検出。定期の polling はしない | 時系列の索引の新しい側から固定件数（窓）。projection に無い object だけを key 指定で反映する |
+| ページの範囲の照合（遡りの取得） | タイムラインで、利用者が遡ったページ（cursor つき）と、projection が尽きたページ（空を含む）を取得するとき。thread を取得するとき | そのページの範囲（cursor より古い側を `limit` 件、cursor が無ければ新しい側を `limit` 件）を索引から読み、projection に無い object だけを key 指定で反映する |
 
 - 窓の大きさと 1 ページの件数は、replica の総件数に依存しない定数とする（初期値: 窓 200、ページは呼び出し側の `limit`）。
-- 窓より古い範囲の取りこぼしは、遡りの取得で埋まる。埋まらない範囲が残ることを許容する。
+- 窓より古い範囲の取りこぼしは、ページの範囲の照合で埋まる。埋まらない範囲が残ることを許容する。
+- ページの範囲の照合は、表示の経路で行う。次の規則で、表示を待たせず、同じ仕事を繰り返さない。
+  - 読み出しは `LocalOnly` とする。entry の本体が手元に無い object は飛ばし、後の照合で拾う。本文が blob の投稿は、手元にある本文だけを読み、
+    欠けた本文は行単位の取り直し（`MissingBodyLedger`、背景）に任せる。
+  - 1 回の照合で読む索引の entry 数に上限を置く（初期値 200）。scope に含まれる replica ごとに行うので、読む量は「scope の replica 数 × 上限」で決まる。
+  - 同じ範囲（replica・索引・起点・件数）の照合は、間隔を空ける（欠けが無かった範囲は 30 秒、反映できない entry が残った範囲は 5 秒）。台帳の件数に上限を置く。
+  - 先頭ページ（cursor なし）は、projection が尽きていなければ照合しない。先頭の範囲の追いつきは、窓の追いつきが担う。
+  - projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で確認する（取り下げの event を取りこぼした行の本文を出し続けない）。
+  - thread は途中の返信が欠けうるので、ページが空でなくても照合する。thread の索引（`indexes/thread/<root>/`）を古い側から 512 件まで読む。
+    これを超える thread は、超えた分を照合しない（新しい側の返信は、個別反映と窓の追いつきで入る）。root が projection にあれば、その channel の replica だけを読む。
+  - private channel の scope は、参加状態の確認を通った epoch の replica だけを読む。参加していない channel の thread は照合しない。
 - 取り下げは、取り下げの event・hint と、`withdrawals/` の新しい側の窓で反映する。表示側は projection の取り下げ表だけで判定し、view の生成中に docs を読まない。
   取り下げ済みの投稿の本文と添付は表示しない（窓より古い取り下げを持たない投稿を遡って反映するときは、その object の `withdrawals/<object id>/state` を key 指定で確認する）。
 - 購読していない topic の投稿でありうる repost 元、profile の投稿、profile の投稿の返信先は、取り下げの event が届かない。表示したときに、背景で `withdrawals/<object id>/state` を key 指定で確認する。
@@ -69,6 +79,12 @@ Accepted
   cursor の時刻の桁を下から順に 1 つずつ減らした prefix を新しい側からたどって、古い側の 1 ページを読む（`query_time_index_desc`）。
   1 回の呼び出しの query 数は「時刻の各桁の数字の和 + 1」以下の定数で、replica の総 entry 数に依存しない。
 - 同じ秒の中の遡りは 512 件までを見る。1 秒に同じ索引へそれを超える投稿があると、超えた分は遡りで取りこぼしうる（best effort の範囲）。
+- 新しい側の読み出し（`query_time_index_window`）は、現在時刻 + 許容幅（10 分）より未来の時刻の entry を読み飛ばす。通常は降順の読み出し 1 回で済ませ、
+  未来の entry が読み出しの余裕（32 件）を超えて新しい側を埋めているときだけ、「現在時刻 + 許容幅」を起点にした遡りの読み出しへ落ちる。
+- 索引の key は、その replica に書ける誰もが置ける。形の違う key への耐性は best effort とする。読み出しごとに固定の余裕（32 件）を持ち、形の違う key が余裕を超えて
+  枠を埋めたときは、古い側の prefix へ進まずに、その prefix を 1 桁細かく分けて読み直す（有効な entry を飛ばしたページを返さない）。1 秒まで分けても埋まっている場合は、
+  その秒だけを諦める。1 回の遡りの query 数には上限（256）を置き、達したらそこまでに読めた分を返す。有効な形の key を大量に置く書き込みは、この層では防げない。
+- `query_replica_keys` は、`limit` が 0 でも replica を開く（権限の無い private replica は、読む件数にかかわらず失敗する）。
 
 ### 4. 利用者の操作
 

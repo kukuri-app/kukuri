@@ -750,8 +750,7 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: 本文が欠けた行は全件走査の理由にしない。欠損は行単位の取り直しへ渡し、
-        // 全件走査は「ページが空」か「private channel の現在 epoch が未反映」のときだけ、1 回まで行う。
+        // #1225: 本文が欠けた行は復旧の理由にしない。欠損は行単位の取り直しへ渡す。
         let needs_epoch_hydration = self
             .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
             .await;
@@ -760,8 +759,16 @@ impl AppService {
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if page.items.is_empty() || needs_epoch_hydration {
-            if self.hydrate_scope_projection(topic_id, &scope).await? > 0 {
+        // #1239: replica を走査しない。利用者が遡ったページ(cursor つき)と、projection が尽きたページ
+        // (空を含む)は、その 1 ページぶんの範囲を時系列の索引と照合して、欠けている object だけを key 指定で
+        // 反映する。先頭の範囲の追いつきは購読タスクが行う。
+        let projection_exhausted = page.next_cursor.is_none();
+        if cursor.is_some() || projection_exhausted || needs_epoch_hydration {
+            if self
+                .reconcile_timeline_range(topic_id, &scope, cursor.as_ref(), limit)
+                .await?
+                > 0
+            {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
                 page = filtered_timeline_page(
                     self.services.projection_store.as_ref(),
@@ -820,18 +827,17 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は全件走査の理由にしない。
+        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は復旧の理由にしない。
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        if page.items.is_empty() {
-            if self
-                .hydrate_scope_projection(topic_id, &TimelineScope::AllJoined)
-                .await?
-                > 0
-            {
+        // #1239: replica を走査しない。thread の索引と照合して、欠けている object だけを key 指定で反映する
+        // (範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても照合する。
+        let reconciled = self.reconcile_thread(topic_id, &thread_root).await?;
+        if reconciled > 0 || page.items.is_empty() {
+            if reconciled > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
                 let root_channel = self
                     .services

@@ -143,6 +143,7 @@ mod object_persistence_support;
 mod private_channels_support;
 mod profile_docs_support;
 mod projection_support;
+mod replica_window;
 mod social_helpers;
 mod social_runtime_support;
 mod spatial_access_support;
@@ -362,6 +363,8 @@ pub struct ServiceHandles {
     pub(crate) missing_body_ledger: Arc<hydration_limits::MissingBodyLedger>,
     /// #1239: 表示した投稿の取り下げの、背景での確認の台帳。
     pub(crate) withdrawal_checks: Arc<hydration_limits::WithdrawalCheckLedger>,
+    /// #1239: ページの範囲と時系列の索引の照合の台帳。
+    pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
 }
 
 impl ServiceHandles {
@@ -387,6 +390,7 @@ impl ServiceHandles {
             replica_scan_cache: Arc::default(),
             missing_body_ledger: Arc::default(),
             withdrawal_checks: Arc::default(),
+            range_checks: Arc::default(),
         }
     }
 }

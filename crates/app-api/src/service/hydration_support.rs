@@ -1,5 +1,8 @@
 use super::game_projection_support::hydrate_game_room_from_record;
-use super::hydration_limits::{MissingBodyLedger, ReplicaScanCache, scan_fingerprint};
+use super::hydration_limits::{
+    MissingBodyLedger, ReplicaScanCache, fetch_local_projection_blob_text,
+    fetch_projection_blob_text_bounded, scan_fingerprint,
+};
 use super::*;
 
 fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeader {
@@ -245,37 +248,18 @@ pub(crate) async fn hydrate_object_projection_from_replica(
     Ok(hydrated)
 }
 
-/// 走査中の本文取得。local にあれば読み、無ければ台帳の間隔と回数の内でだけ remote を試す。
-pub(crate) async fn fetch_projection_blob_text_bounded(
-    blob_service: &dyn BlobService,
-    missing_bodies: &MissingBodyLedger,
-    hash: &kukuri_core::BlobHash,
-) -> Option<String> {
-    let local = matches!(
-        best_effort_blob_cache_status(blob_service, hash).await,
-        BlobCacheStatus::Available | BlobCacheStatus::Pinned
-    );
-    // 取得を待つ間に走査が abort されても、`attempt` の drop で失敗として記録される。
-    let attempt = if local {
-        None
-    } else {
-        Some(missing_bodies.try_begin(hash, Utc::now().timestamp_millis())?)
-    };
-    let payload = fetch_projection_blob_text(blob_service, hash).await;
-    match (payload.is_some(), attempt) {
-        (true, Some(attempt)) => attempt.succeed(),
-        (true, None) => missing_bodies.forget(hash),
-        (false, Some(attempt)) => attempt.fail(),
-        (false, None) => {}
-    }
-    payload
-}
-
+/// `objects/<object id>/state` の record を 1 件、projection へ反映する。
+///
+/// 本文が blob のとき、`LocalOnly` は手元の本文だけを読む(表示と操作を remote 取得で待たせない。欠けた本文は
+/// `recover_missing_bodies` が背景で取りに行く)。`LocalThenRemote` は、台帳(`MissingBodyLedger`)の間隔と
+/// 回数の内でだけ remote を試す。
 pub(crate) async fn hydrate_object_projection_from_record(
     blob_service: &dyn BlobService,
     projection_store: &dyn ProjectionStore,
+    missing_bodies: &MissingBodyLedger,
     replica: &ReplicaId,
     record: DocRecord,
+    policy: DocFetchPolicy,
 ) -> Result<bool> {
     let mut header: CanonicalPostHeader = serde_json::from_slice(&record.value)?;
     if projection_store
@@ -296,7 +280,14 @@ pub(crate) async fn hydrate_object_projection_from_record(
     let content = match &header.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { hash, .. } => {
-            let payload = fetch_projection_blob_text(blob_service, hash).await;
+            let payload = match policy {
+                DocFetchPolicy::LocalOnly => {
+                    fetch_local_projection_blob_text(blob_service, hash).await
+                }
+                DocFetchPolicy::LocalThenRemote => {
+                    fetch_projection_blob_text_bounded(blob_service, missing_bodies, hash).await
+                }
+            };
             projection_store
                 .mark_blob_status(
                     hash,
@@ -360,8 +351,10 @@ pub(crate) async fn hydrate_object_by_id(
     hydrate_object_projection_from_record(
         services.blob_service.as_ref(),
         projection_store,
+        services.missing_body_ledger.as_ref(),
         replica,
         record,
+        policy,
     )
     .await
 }

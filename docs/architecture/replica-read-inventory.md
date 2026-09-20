@@ -25,7 +25,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | S-3 | public topic の recovery tick（最大 30 秒間隔） | 5 prefix の全 entry（`LocalThenRemote`） | 同 S-1 | T4 |
 | S-4 | replica の内容を指す hint で個別反映が 0 件（3 秒の最小間隔） | 同上 | 同 S-1 | T4 |
 | S-5 | private channel の doc event で個別反映が 0 件（`withdrawals/` などの event） | 同上 | 同 S-1 | T4 |
-| S-6 | `list_timeline_scoped`（空ページ、private channel の現在 epoch が未反映）・`list_thread`（空ページ） | scope の全 replica の 5 prefix | 同 S-1 × scope の replica 数 | T5 |
+| S-6 | `list_timeline_scoped`（空ページ、private channel の現在 epoch が未反映）・`list_thread`（空ページ）。private channel の現在 epoch に投稿が無い間は、取得のたびに走査していた | scope の全 replica の 5 prefix | 同 S-1 × scope の replica 数 | T5a（解消済み。`reconcile_timeline_range`・`reconcile_thread` が、ページの範囲を時系列の索引と照合する） |
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
 | S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5 |
@@ -50,6 +50,13 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-13 | `dome_connections.rs`（4 か所）、`dome_hosting.rs`（3 か所）、`dome_delete.rs`（1 か所） | `metaverse/dome-instances/`・提案・選択・接続・削除・layout commit | topic の Dome と提案の総数 | Non-goal（本 Issue の固定 AC に含まれない。Dome の一覧と接続の読み出しは別 Issue で、同じ原則で見直す） |
 | P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（3 か所。変更通知で対象を特定できないときの fallback と初回） | `objects/`・`withdrawals/` など | scope の投稿総数 | Non-goal（CN 側。`ingest_changed_keys` が通常経路。T2 の索引化は効く。全件走査の廃止は CN 側の Issue で扱う） |
 | P-15 | `desktop-runtime/src/runtime/sync_live_api.rs` `has_topic_timeline_doc_index_entry`（test と harness 用） | `indexes/timeline/` | topic の投稿総数 | 対象。T2 で key 指定の読み出し 2 回へ置き換えた |
+
+## 段階の順序の変更（T5a を T4 より先に行う）
+
+購読タスクの全件走査（S-1〜S-5）は、窓（新しい側の固定件数）より古い範囲の反映も担っていた。docs の event は broadcast（容量 256）の溢れで取りこぼされ、
+まとまった同期（初回の参加、長い離席の後）では、古い範囲のほとんどが全件走査で projection に入る。S-1〜S-5 を先に外すと、窓より古い投稿へ遡れない中間状態ができる。
+そこで、取得側の「ページの範囲の照合」（S-6 の置き換え）を T5a として先に入れ、その後に T4（購読タスク）を行う。T5 の残り（live / game、非表示の著者の読み飛ばしの上限、
+cursor の条件、V-1・V-2）は T5b とする。
 
 ## view の生成に残る docs の読み出し（key 指定）
 

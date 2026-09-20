@@ -18,7 +18,9 @@ pub use replicas::{
     private_channel_hint_topic, private_channel_replica_id, stable_key, topic_replica_id,
     value_hash,
 };
-pub use time_index::{TimeIndexCursor, TimeIndexEntry, query_time_index_desc};
+pub use time_index::{
+    TimeIndexCursor, TimeIndexEntry, query_time_index_desc, query_time_index_window,
+};
 pub use types::{
     DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyQuery, DocOp,
     DocQuery, DocRecord, DocsSync,
