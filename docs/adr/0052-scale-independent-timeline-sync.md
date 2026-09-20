@@ -55,6 +55,9 @@ Accepted
   台帳の key に replica を含めるのは、topic を偽った repost の snapshot が、正しい topic での確認を見送らせないようにするため。
 - 個別反映で投稿（`objects/<object id>/state`）を反映するときは、同じ object の `withdrawals/<object id>/state` を先に key 指定で確認する。
   取り下げの event が対象の envelope より先に届いて反映できなかった場合も、投稿の反映の時点で取り下げが反映される。
+- 取り下げとして読めない record と、署名・著者が対象と合わない record は、取り下げとして扱わない（warn を出して無視し、投稿の反映を続ける）。
+  public topic の replica は誰でも書けるので、読めない record を 1 件置くだけで、特定の投稿を隠したり topic 全体の操作を止めたりできないようにする。
+  対象の envelope がまだ手元に無い取り下げは、対象が届いたときに反映し直す。docs と projection の読み書きの失敗は、無視せずエラーとして返す。
 
 ### 3. docs の読み出しの規則
 

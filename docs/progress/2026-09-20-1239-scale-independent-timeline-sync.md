@@ -86,7 +86,7 @@ T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PA
   repost の行だけを対象にした式の索引（migration `20260920000000_repost_source_index`）を追加した。取り下げ済みの repost は既存の repost として扱わない
   （以前は docs の state が残るため、取り下げた repost の id を返し続け、同じ投稿を repost し直せなかった）。
 - view の生成（`timeline_view_support.rs` の 3 か所）: 行ごとの `withdrawals/` の全件読みをやめ、projection の取り下げ表だけで判定する。購読していない topic の投稿でありうる
-  repost 元と profile の投稿は、背景で `withdrawals/<id>/state` を key 指定で確認する（`WithdrawalCheckLedger`: object ごとに 60 秒の間隔、同時 4 本、台帳 4,096 件）。
+  repost 元と profile の投稿は、背景で `withdrawals/<id>/state` を key 指定で確認する（`WithdrawalCheckLedger`: 確認先（replica と object id の組）ごとに 60 秒の間隔、同時 4 本、台帳 4,096 件）。
 - docs の event の個別反映に `withdrawals/` の key を足した（以前は public topic では hint か全件走査まで反映されなかった）。
 
 ### 独立監査の指摘と修正（1 回目は FAIL）
@@ -108,17 +108,30 @@ T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PA
 - 取り下げ済みの simple repost を既存の repost として扱わない点を ADR 0016 §2.3 に書き、回帰 test `withdrawn_simple_repost_can_be_reposted_again` を足した。
   envelope の id は著者・秒単位の作成時刻・内容から決まるので、取り下げと同じ秒のうちに repost し直すと、取り下げた repost と同じ id になり取り下げ済みのままになる（以前から同じ。test は秒をまたぐ）。
 
+### 独立監査の 2 回目（対象 `40838d4e`、PASS）の non-blocker の対応
+
+2 回目の監査は blocker 0 件で PASS だった。non-blocker のうち 3 件は、窓の追いつき（T4）が同じ helper を使う前に決めておくべき内容なので、この段階で直した。
+
+| 指摘 | 修正 |
+| --- | --- |
+| 投稿の個別反映で、取り下げの先読みの失敗（読めない record、署名の不一致）が投稿の反映を止める。読めない record を 1 件置くだけで、後から同期した閲覧者から特定の投稿を隠せる | 取り下げとして扱えない record は `PostWithdrawalHydration::Invalid` として warn を出して無視し、投稿の反映を続ける（ADR 0052 §2 に明記）。docs と projection の読み書きの失敗はエラーのまま返す。全件走査（T7 で削除）も、読めない record 1 件で topic 全体が失敗しなくなる。回帰 test `unreadable_withdrawal_record_does_not_hide_the_post`、`withdrawal_record_signed_by_another_author_does_not_hide_the_post` |
+| reaction の「自分の既存の reaction」の読み出しだけが `LocalThenRemote` のままで、利用者の操作が remote を待ちうる | `hydrate_reaction_cache_from_key` と `hydrate_post_withdrawal_from_record` に読み出しの policy を渡す。利用者の操作は入れ子の読み出しまで `LocalOnly`。回帰 test `user_operations_do_not_wait_for_a_remote_docs_fetch` |
+| 「取り下げ → 投稿」の順序を固定する test が無い（先読みを無効にしても全 test が通る） | 回帰 test `withdrawal_that_arrives_before_the_post_masks_it_when_the_post_is_projected`。先読みを無効にする mutation で失敗することを確認した |
+
+追加した 4 本（`crates/app-api/src/tests/sync/withdrawal_reflection.rs`）のうち 3 本は、修正前（`40838d4e`）の実装で失敗することを確認した。
+残る 1 本（順序の test）は `40838d4e` で成功し、mutation で失敗する。
+
 ### AC / INVAR と証跡
 
 | 条件 | 証跡 |
 | --- | --- |
 | AC-3、TR-7 | `reaction_reads_a_constant_number_of_docs_records`、`reaction_on_an_unprojected_target_reads_only_the_target_keys`、`bookmark_…`、`reply_…`、`repost_…`、`withdrawal_…`、`community_index_resolution_…`、`missing_target_fails_without_scanning` |
 | AC-6、TR-9 | `timeline_view_generation_does_not_scan_docs` |
-| INVAR-1 | `withdrawn_repost_source_in_an_unsubscribed_topic_is_masked_after_the_background_check`、`withdrawn_reply_parent_in_an_unsubscribed_topic_is_masked_in_the_profile_reply_preview`、`withdrawal_doc_event_is_reflected_by_key_without_scanning`、既存の取り下げ・repost・bookmark・reaction の test（無変更で成功） |
-| INVAR-2 | `private_channel_target_is_not_read_without_membership`、`left_private_channel_post_cannot_be_bookmarked_from_a_leftover_projection_row`、既存の private channel の test |
+| INVAR-1 | `withdrawn_repost_source_in_an_unsubscribed_topic_is_masked_after_the_background_check`、`withdrawn_reply_parent_in_an_unsubscribed_topic_is_masked_in_the_profile_reply_preview`、`withdrawal_doc_event_is_reflected_by_key_without_scanning`、`withdrawal_that_arrives_before_the_post_masks_it_when_the_post_is_projected`、`unreadable_withdrawal_record_does_not_hide_the_post`、`withdrawal_record_signed_by_another_author_does_not_hide_the_post`、既存の取り下げ・repost・bookmark・reaction の test（無変更で成功） |
+| INVAR-2 | `private_channel_target_is_not_read_without_membership`、`left_private_channel_post_cannot_be_bookmarked_from_a_leftover_projection_row`、`user_operations_do_not_wait_for_a_remote_docs_fetch`（利用者の操作は `LocalOnly`）、既存の private channel の test |
 | INVAR-4 | store の migration の round trip と schema の golden（索引 1 件の追加）、`author_reposts_lookup_matches_between_backends`、`author_reposts_lookup_uses_the_repost_source_index` |
 
-修正後の検証: `cargo xtask rust-test`（nextest 1,104 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（234 件: 成功。追加した回帰 test 3 本を含む）、
+修正後の検証: `cargo xtask rust-test`（nextest 1,109 件と doc test: 成功）、`cargo test -p kukuri-app-api --lib`（238 件: 成功。追加した回帰 test 7 本を含む）、
 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo xtask oversized-files`（いずれも成功）。
 
 ### 未確認・残課題
@@ -127,4 +140,8 @@ T2 は PR #1245（merge commit `783a813e`）で完了した。独立監査は PA
 - repost 元と profile の投稿の取り下げの確認は、購読していない topic の replica を開いて同期する。以前からの副作用で、開く replica の上限は #1224・#1243 で扱う。
 - view の生成には、key を 1 つ指定した `LocalOnly` の docs の読み出しが 2 か所残る（inventory の V-1・V-2）。総件数には依存しないが、T5 で外す。
 - private channel の取り下げは現在の epoch の replica に書かれ、対象が過去の epoch にあると検証できない（以前から同じ。inventory の観察に記録した。別 Issue の候補）。
+- 取り下げの検証には対象の envelope が要る。envelope の本体だけが手元に無く state の本体はある、という順序では、投稿が伏せられずに反映されうる
+  （envelope は key の順で state より先に届くので、通常の同期では起きにくい。対象の envelope が届いた後の次の個別反映か背景の確認で伏せられる）。
+- bookmark した投稿とその返信先は、その topic を購読していないと取り下げが届かない（以前から同じ。view の生成時の確認は基準 commit にも無い）。
+- `toggle_reaction` を channel の指定なしで呼ぶと、参加状態の確認を通らない（以前から同じ。2 回目の監査の範囲外の観察）。
 - `cargo xtask rust-test` の 1 回目で `kukuri-transport` の `transport_custom_relay_bootstrap_seed_reports_relay_supported_p2p` が失敗した（差分外。単独実行と再実行では成功）。

@@ -12,30 +12,82 @@ fn scrub_withdrawn_header(mut header: CanonicalPostHeader) -> CanonicalPostHeade
     header
 }
 
+/// `withdrawals/<object id>/state` の record を 1 件反映した結果(#1239)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PostWithdrawalHydration {
+    /// 検証できた取り下げを projection へ反映した。
+    Applied,
+    /// 対象の envelope がまだ手元に無く、検証できない。対象が届いたときに反映し直す。
+    TargetMissing,
+    /// 取り下げとして読めない、または署名・著者が対象と合わない。取り下げとして扱わない。
+    Invalid,
+}
+
+impl PostWithdrawalHydration {
+    pub(crate) fn applied(self) -> bool {
+        self == Self::Applied
+    }
+}
+
+/// 取り下げの record を検証して projection へ反映する。
+///
+/// 読めない record と検証できない record は `Invalid` を返し、エラーにしない。public topic の replica は
+/// 誰でも書けるので、読めない record を 1 件置くだけで、投稿の反映や topic 全体の操作を止められないようにする
+/// (ADR 0052 §2)。docs と projection の読み書きの失敗はエラーとして返す。
 pub(crate) async fn hydrate_post_withdrawal_from_record(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
     replica: &ReplicaId,
     record: DocRecord,
-) -> Result<bool> {
-    let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
-    let Some(content) = envelope.post_withdrawal_content()? else {
-        return Ok(false);
+    policy: DocFetchPolicy,
+) -> Result<PostWithdrawalHydration> {
+    let invalid = |reason: &str, error: &dyn std::fmt::Display| {
+        warn!(
+            replica = %replica.as_str(),
+            key = %record.key,
+            reason,
+            error = %error,
+            "ignored a post withdrawal record that cannot be verified"
+        );
+        PostWithdrawalHydration::Invalid
+    };
+    let envelope: KukuriEnvelope = match serde_json::from_slice(&record.value) {
+        Ok(envelope) => envelope,
+        Err(error) => return Ok(invalid("the record is not an envelope", &error)),
+    };
+    let content = match envelope.post_withdrawal_content() {
+        Ok(Some(content)) => content,
+        Ok(None) => {
+            return Ok(invalid(
+                "the envelope is not a post withdrawal",
+                &"kind mismatch",
+            ));
+        }
+        Err(error) => return Ok(invalid("the withdrawal content is malformed", &error)),
     };
     let target_envelope_key = stable_key(
         "objects",
         &format!("{}/envelope", content.target_object_id.as_str()),
     );
-    let Some(target_record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(target_envelope_key))
-        .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(false);
+    let Some(target_record) = query_replica_with_fetch_policy(
+        docs_sync,
+        replica,
+        DocQuery::Exact(target_envelope_key),
+        policy,
+    )
+    .await?
+    .into_iter()
+    .next() else {
+        return Ok(PostWithdrawalHydration::TargetMissing);
     };
-    let target: KukuriEnvelope = serde_json::from_slice(&target_record.value)?;
-    let withdrawal = verify_post_withdrawal(&envelope, &target)?;
+    let target: KukuriEnvelope = match serde_json::from_slice(&target_record.value) {
+        Ok(target) => target,
+        Err(error) => return Ok(invalid("the target record is not an envelope", &error)),
+    };
+    let withdrawal = match verify_post_withdrawal(&envelope, &target) {
+        Ok(withdrawal) => withdrawal,
+        Err(error) => return Ok(invalid("the withdrawal does not match the target", &error)),
+    };
     projection_store
         .put_post_withdrawal(post_withdrawal_row(withdrawal, replica))
         .await?;
@@ -44,13 +96,17 @@ pub(crate) async fn hydrate_post_withdrawal_from_record(
         "objects",
         &format!("{}/state", content.target_object_id.as_str()),
     );
-    if let Some(state_record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(target_state_key))
-        .await?
-        .into_iter()
-        .next()
+    if let Some(state_record) = query_replica_with_fetch_policy(
+        docs_sync,
+        replica,
+        DocQuery::Exact(target_state_key),
+        policy,
+    )
+    .await?
+    .into_iter()
+    .next()
+        && let Ok(header) = serde_json::from_slice::<CanonicalPostHeader>(&state_record.value)
     {
-        let header: CanonicalPostHeader = serde_json::from_slice(&state_record.value)?;
         projection_store
             .put_object_projection(projection_row_from_header(
                 &scrub_withdrawn_header(header),
@@ -59,7 +115,7 @@ pub(crate) async fn hydrate_post_withdrawal_from_record(
             ))
             .await?;
     }
-    Ok(true)
+    Ok(PostWithdrawalHydration::Applied)
 }
 
 /// 戻り値は今回反映した取り下げの件数。前回の走査から record が変わっていなければ何もせず 0 を返す(#1225)。
@@ -88,12 +144,20 @@ pub(crate) async fn hydrate_post_withdrawals_from_replica(
         if !record.key.ends_with("/state") {
             continue;
         }
-        if hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record).await?
+        match hydrate_post_withdrawal_from_record(
+            docs_sync,
+            projection_store,
+            replica,
+            record,
+            policy,
+        )
+        .await?
         {
-            hydrated += 1;
-        } else {
+            PostWithdrawalHydration::Applied => hydrated += 1,
             // 対象の投稿がまだ届いていない。次の走査でやり直す。
-            complete = false;
+            PostWithdrawalHydration::TargetMissing => complete = false,
+            // 取り下げとして扱えない record は、走査をやり直しても変わらない。
+            PostWithdrawalHydration::Invalid => {}
         }
     }
     if complete {
@@ -280,7 +344,9 @@ pub(crate) async fn hydrate_object_by_id(
             .into_iter()
             .next()
     {
-        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record).await?;
+        // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
+        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
+            .await?;
     }
     let state_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
     let Some(record) =
@@ -357,13 +423,17 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     projection_store: &dyn ProjectionStore,
     replica: &ReplicaId,
     key: &str,
+    policy: DocFetchPolicy,
 ) -> Result<bool> {
-    let Some(record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(key.to_string()))
-        .await?
-        .into_iter()
-        .next()
-    else {
+    let Some(record) = query_replica_with_fetch_policy(
+        docs_sync,
+        replica,
+        DocQuery::Exact(key.to_string()),
+        policy,
+    )
+    .await?
+    .into_iter()
+    .next() else {
         return Ok(false);
     };
     hydrate_reaction_cache_from_record(projection_store, replica, record).await
@@ -687,10 +757,14 @@ pub(crate) async fn hydrate_subscription_event(
         .await? as usize);
     }
     if key.starts_with("reactions/") && key.ends_with("/state") {
-        return Ok(
-            hydrate_reaction_cache_from_key(docs_sync, projection_store, replica, key).await?
-                as usize,
-        );
+        return Ok(hydrate_reaction_cache_from_key(
+            docs_sync,
+            projection_store,
+            replica,
+            key,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await? as usize);
     }
     // #1239: 取り下げの event も key 単位で反映する(以前は全件走査か hint まで反映されなかった)。
     if key.starts_with("withdrawals/") && key.ends_with("/state") {
@@ -702,10 +776,15 @@ pub(crate) async fn hydrate_subscription_event(
         else {
             return Ok(0);
         };
-        return Ok(
-            hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record)
-                .await? as usize,
-        );
+        return Ok(hydrate_post_withdrawal_from_record(
+            docs_sync,
+            projection_store,
+            replica,
+            record,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await?
+        .applied() as usize);
     }
     if key.starts_with("sessions/live/") && key.ends_with("/state") {
         return hydrate_live_session_from_key_with_retry(
@@ -764,8 +843,10 @@ pub(crate) async fn hydrate_subscription_hint(
                             projection_store,
                             replica,
                             record,
+                            DocFetchPolicy::LocalThenRemote,
                         )
-                        .await? as usize;
+                        .await?
+                        .applied() as usize;
                     }
                     continue;
                 }

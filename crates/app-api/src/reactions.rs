@@ -79,6 +79,8 @@ impl AppService {
                     ),
                 )
                 .as_str(),
+                // 利用者の操作は remote 取得で待たせない(ADR 0052 §4)。
+                DocFetchPolicy::LocalOnly,
             )
             .await?;
         }

@@ -454,8 +454,8 @@ impl AppService {
     /// 表示した投稿の取り下げを、背景で確認する(#1239)。呼び出し側は待たない。
     ///
     /// 対象は、購読していない topic の投稿でありうる repost 元と profile の投稿。projection に取り下げが
-    /// 既にあれば何もしない。確認は object ごとに間隔を空け、`withdrawals/<object id>/state` を key 指定で
-    /// 読むだけで、replica は走査しない。
+    /// 既にあれば何もしない。確認は確認先(replica と object id の組)ごとに間隔を空け、
+    /// `withdrawals/<object id>/state` を key 指定で読むだけで、replica は走査しない。
     pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
         let replica = topic_replica_id(topic_id);
         // 台帳の key は replica と object id の組にする。topic を偽った repost の snapshot が、
@@ -497,6 +497,7 @@ impl AppService {
                         projection_store,
                         &replica,
                         record,
+                        DocFetchPolicy::LocalThenRemote,
                     )
                     .await?;
                 }
