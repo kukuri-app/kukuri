@@ -14,6 +14,12 @@ use kukuri_docs_sync::{PostReplicaKind, post_replica_kind};
 /// 正しい投稿を隠せる。上限を超える数の不正な entry を積まれた投稿は反映できない(best effort の範囲)。
 pub(crate) const MAX_ENVELOPE_RECORDS_PER_OBJECT: usize = 8;
 
+/// 1 つの object の `withdrawals/<object id>/state` の key で調べる record 数の上限(#1250)。
+///
+/// 同じ key には docs author ごとの record がありうる。検証に通らない record が先に並んでいても、この件数までは
+/// 後ろの record を調べる。上限を超える数の不正な record を積まれた取り下げは反映できない(best effort)。
+pub(crate) const MAX_WITHDRAWAL_RECORDS_PER_OBJECT: usize = 8;
+
 /// 投稿を読んだ replica が受け入れる topic と channel。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplicaPostScope {

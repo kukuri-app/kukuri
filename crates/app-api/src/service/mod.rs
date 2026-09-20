@@ -141,6 +141,7 @@ mod metaverse_room_event_support;
 mod notifications_support;
 mod object_persistence_support;
 mod post_integrity;
+mod post_withdrawal_hydration;
 mod private_channels_support;
 mod profile_docs_support;
 mod projection_support;
@@ -174,8 +175,8 @@ pub(crate) use attachment_support::{
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
     hint_refers_to_replica_content, hint_targets_topic, hydrate_object_in_topic,
-    hydrate_post_withdrawal_from_record, hydrate_subscription_event, hydrate_subscription_hint,
-    hydrate_subscription_state, hydrate_topic_state, profile_timeline_page,
+    hydrate_subscription_event, hydrate_subscription_hint, hydrate_subscription_state,
+    hydrate_topic_state, profile_timeline_page,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
@@ -203,9 +204,13 @@ pub(crate) use object_persistence_support::{
     store_manifest_blob, wait_for_private_channel_epoch_snapshot,
 };
 pub(crate) use post_integrity::{
-    MAX_ENVELOPE_RECORDS_PER_OBJECT, ReplicaPostScope, VerifiedPost, WithdrawalTargetCheck,
-    load_verified_post, object_id_from_post_key, post_envelope_key, select_verified_post,
-    verify_withdrawal_against_records, warn_rejected_post,
+    MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, ReplicaPostScope,
+    VerifiedPost, WithdrawalTargetCheck, load_verified_post, object_id_from_post_key,
+    post_envelope_key, select_verified_post, verify_withdrawal_against_records, warn_rejected_post,
+};
+pub(crate) use post_withdrawal_hydration::{
+    PostWithdrawalHydration, hydrate_post_withdrawal_for_object,
+    hydrate_post_withdrawal_from_record, object_id_from_post_withdrawal_key,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope_by_id, hydrate_author_state,

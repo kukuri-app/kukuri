@@ -353,8 +353,11 @@ mod hydration_integrity_contract;
 mod hydration_integrity_sessions;
 mod hydration_integrity_sessions_contract;
 mod hydration_limits;
+#[cfg(feature = "iroh-integration-tests")]
+mod non_utf8_key;
 mod scale_independence;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;
+mod withdrawal_record_selection;
 mod withdrawal_reflection;

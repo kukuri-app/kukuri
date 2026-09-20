@@ -5,115 +5,6 @@ use super::reaction_hydration::{
 };
 use super::*;
 
-/// 反映済みの行を、取り下げ済みの投稿として伏せる。`VerifiedPost::withdrawn` から作る行と同じ形にする。
-fn scrub_withdrawn_row(mut row: ObjectProjectionRow) -> ObjectProjectionRow {
-    row.payload_ref = PayloadRef::InlineText {
-        text: String::new(),
-    };
-    row.content = Some(String::new());
-    row.attachments.clear();
-    row.repost_of = None;
-    row.source_blob_hash = None;
-    row.derived_at = Utc::now().timestamp_millis();
-    row
-}
-
-/// `withdrawals/<object id>/state` の record を 1 件反映した結果(#1239)。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PostWithdrawalHydration {
-    /// 検証できた取り下げを projection へ反映した。
-    Applied,
-    /// 対象の envelope がまだ手元に無く、検証できない。対象が届いたときに反映し直す。
-    TargetMissing,
-    /// 取り下げとして読めない、または署名・著者が対象と合わない。取り下げとして扱わない。
-    Invalid,
-}
-
-impl PostWithdrawalHydration {
-    pub(crate) fn applied(self) -> bool {
-        self == Self::Applied
-    }
-}
-
-/// 取り下げの record を検証して projection へ反映する。
-///
-/// 読めない record と検証できない record は `Invalid` を返し、エラーにしない。public topic の replica は
-/// 誰でも書けるので、読めない record を 1 件置くだけで、投稿の反映や topic 全体の操作を止められないようにする
-/// (ADR 0052 §2)。docs と projection の読み書きの失敗はエラーとして返す。
-pub(crate) async fn hydrate_post_withdrawal_from_record(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    record: DocRecord,
-    policy: DocFetchPolicy,
-) -> Result<PostWithdrawalHydration> {
-    let invalid = |reason: &str, error: &dyn std::fmt::Display| {
-        warn!(
-            replica = %replica.as_str(),
-            key = %record.key,
-            reason,
-            error = %error,
-            "ignored a post withdrawal record that cannot be verified"
-        );
-        PostWithdrawalHydration::Invalid
-    };
-    let envelope: KukuriEnvelope = match serde_json::from_slice(&record.value) {
-        Ok(envelope) => envelope,
-        Err(error) => return Ok(invalid("the record is not an envelope", &error)),
-    };
-    let content = match envelope.post_withdrawal_content() {
-        Ok(Some(content)) => content,
-        Ok(None) => {
-            return Ok(invalid(
-                "the envelope is not a post withdrawal",
-                &"kind mismatch",
-            ));
-        }
-        Err(error) => return Ok(invalid("the withdrawal content is malformed", &error)),
-    };
-    if let Err(error) = envelope.verify() {
-        return Ok(invalid("the withdrawal signature is invalid", &error));
-    }
-    // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ず、上限つきで対象を探す(#1248)。
-    let target_records = docs_sync
-        .query_replica_exact_bounded(
-            replica,
-            post_envelope_key(&content.target_object_id).as_str(),
-            MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            policy,
-        )
-        .await?;
-    let withdrawal = match verify_withdrawal_against_records(
-        &envelope,
-        &content.target_object_id,
-        &target_records,
-    ) {
-        WithdrawalTargetCheck::Verified(withdrawal) => *withdrawal,
-        WithdrawalTargetCheck::Mismatch(error) => {
-            return Ok(invalid("the withdrawal does not match the target", &error));
-        }
-        // 対象として読める envelope がまだ無い。対象が届いたときに反映し直す。
-        WithdrawalTargetCheck::TargetMissing => {
-            return Ok(PostWithdrawalHydration::TargetMissing);
-        }
-    };
-    projection_store
-        .put_post_withdrawal(post_withdrawal_row(withdrawal, replica))
-        .await?;
-
-    // 反映済みの行を伏せる。行がまだ無ければ、投稿を反映する時点で伏せた行ができる
-    // (`hydrate_object_in_topic` と全件走査は、取り下げを先に確認する)。docs の `state` の値は使わない(#1248)。
-    if let Some(row) = projection_store
-        .get_object_projection(&content.target_object_id)
-        .await?
-    {
-        projection_store
-            .put_object_projection(scrub_withdrawn_row(row))
-            .await?;
-    }
-    Ok(PostWithdrawalHydration::Applied)
-}
-
 /// 戻り値は今回反映した取り下げの件数。前回の走査から record が変わっていなければ何もせず 0 を返す(#1225)。
 pub(crate) async fn hydrate_post_withdrawals_from_replica(
     docs_sync: &dyn DocsSync,
@@ -357,17 +248,9 @@ pub(crate) async fn hydrate_object_in_topic(
 ) -> Result<bool> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
-    let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-    if let Some(record) =
-        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(withdrawal_key), policy)
-            .await?
-            .into_iter()
-            .next()
-    {
-        // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
-        hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record, policy)
-            .await?;
-    }
+    // 反映できなかった取り下げ(検証できない、対象が未着)は、投稿の反映を止めない。
+    hydrate_post_withdrawal_for_object(docs_sync, projection_store, replica, object_id, policy)
+        .await?;
     let Some(post) = load_verified_post(docs_sync, replica, topic_id, object_id, policy).await?
     else {
         return Ok(false);
@@ -709,24 +592,16 @@ pub(crate) async fn hydrate_subscription_event(
         .await? as usize);
     }
     // #1239: 取り下げの event も key 単位で反映する(以前は全件走査か hint まで反映されなかった)。
-    if key.starts_with("withdrawals/") && key.ends_with("/state") {
-        let Some(record) = docs_sync
-            .query_replica(replica, DocQuery::Exact(key.to_string()))
-            .await?
-            .into_iter()
-            .next()
-        else {
-            return Ok(0);
-        };
-        return Ok(hydrate_post_withdrawal_from_record(
+    if let Some(object_id) = object_id_from_post_withdrawal_key(key) {
+        return Ok(hydrate_post_withdrawal_for_object(
             docs_sync,
             projection_store,
             replica,
-            record,
+            &object_id,
             DocFetchPolicy::LocalThenRemote,
         )
         .await?
-        .applied() as usize);
+        .is_some_and(PostWithdrawalHydration::applied) as usize);
     }
     if key.starts_with("sessions/live/") && key.ends_with("/state") {
         return hydrate_live_session_from_key_with_retry(
@@ -770,26 +645,16 @@ pub(crate) async fn hydrate_subscription_hint(
             let mut hydrated = 0usize;
             for object in objects {
                 if object.object_kind == "post_withdrawal" {
-                    let key = stable_key(
-                        "withdrawals",
-                        &format!("{}/state", object.object_id.as_str()),
-                    );
-                    if let Some(record) = docs_sync
-                        .query_replica(replica, DocQuery::Exact(key))
-                        .await?
-                        .into_iter()
-                        .next()
-                    {
-                        hydrated += hydrate_post_withdrawal_from_record(
-                            docs_sync,
-                            projection_store,
-                            replica,
-                            record,
-                            DocFetchPolicy::LocalThenRemote,
-                        )
-                        .await?
-                        .applied() as usize;
-                    }
+                    hydrated += hydrate_post_withdrawal_for_object(
+                        docs_sync,
+                        projection_store,
+                        replica,
+                        &EnvelopeId::from(object.object_id.as_str()),
+                        DocFetchPolicy::LocalThenRemote,
+                    )
+                    .await?
+                    .is_some_and(PostWithdrawalHydration::applied)
+                        as usize;
                     continue;
                 }
                 if object.object_kind == "reaction" {

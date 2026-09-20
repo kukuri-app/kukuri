@@ -58,6 +58,12 @@ Accepted
 - 取り下げとして読めない record と、署名・著者が対象と合わない record は、取り下げとして扱わない（warn を出して無視し、投稿の反映を続ける）。
   public topic の replica は誰でも書けるので、読めない record を 1 件置くだけで、特定の投稿を隠したり topic 全体の操作を止めたりできないようにする。
   対象の envelope がまだ手元に無い取り下げは、対象が届いたときに反映し直す。docs と projection の読み書きの失敗は、無視せずエラーとして返す。
+- 逆向きも同じく防ぐ（Issue #1250）。取り下げとして検証に通らない record を 1 件置くだけで、著者の正しい取り下げを無効にできないようにする。
+  同じ key には docs author ごとの record があり、key 指定の読み出しは docs author の昇順で返すので、先頭の 1 件だけを見てはならない。
+  `withdrawals/<object id>/state` を key 指定で読む入口（投稿の個別反映、取り下げの event・hint、背景の確認、遡りの取得）は、上限つきの読み出しで
+  最大 8 record を調べ、その object を対象とし、検証に通る最初の取り下げを反映する。対象の envelope は、候補があるときだけ 1 回読む。
+  上限を超える数の不正な record を先に積まれた取り下げは、この読み出しでは反映できない（best effort）。「上限に達したら伏せる」とはしない
+  （不正な record を積むだけで他人の投稿を隠せてしまう）。これを防ぐには key 設計か protocol の変更が要り、本 ADR の時点では未決。
 - 投稿の反映は、`objects/<object id>/state` の値を使わない（Issue #1248）。projection の行・通知・repost の snapshot・bookmark は、同じ object の
   署名つき envelope（`objects/<object id>/envelope`）から作る。envelope は `verify()` に通り、`envelope.id` が object id と一致し、投稿（post・comment・repost）で
   なければならない。public topic の replica は誰でも書けるので、署名の無い `state` の申告値（著者・本文・添付・topic・channel）を信用しない。
@@ -104,6 +110,8 @@ Accepted
 - iroh-docs の query には「この key より古い側」という範囲指定が無い。時系列の索引（時刻を 20 桁で 0 埋め）は、10 進の桁の prefix がそのまま時間の範囲になるので、
   cursor の時刻の桁を下から順に 1 つずつ減らした prefix を新しい側からたどって、古い側の 1 ページを読む（`query_time_index_desc`）。
   1 回の呼び出しの query 数は「時刻の各桁の数字の和 + 1」以下の定数で、replica の総 entry 数に依存しない。
+- iroh-docs の key は任意の byte 列で、public topic の replica は誰もが書ける。UTF-8 でない key の entry は kukuri の key ではないので、読み出しはその entry だけを飛ばし、
+  全体を失敗させない（#1253）。飛ばした分を読み足さず（追加の query を発行しない）、記録は読み出し 1 回につき 1 回だけ出す。飛ばす entry の本体は取得しない。
 - 同じ秒の中の遡りは 512 件までを見る。1 秒に同じ索引へそれを超える投稿があると、超えた分は遡りで取りこぼしうる（best effort の範囲）。
 
 ### 4. 利用者の操作
