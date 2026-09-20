@@ -58,6 +58,8 @@
 
 権利侵害申出ポリシーは、通報画面で理由に権利侵害を選んだときだけ取得し、閉じると破棄する。polling は無い。コントロールセンターのノード一覧は既に store にある設定・状態・manifest から描画し、追加の取得はしない。
 
+視覚回帰 baseline（Linux / Chromium）は「Kukuri Visual Baseline」workflow で再生成した（10 面。「見つける」カラムの見出し削除が、既定 deck を含む面へ波及したため）。
+
 未確認: Windows WebView2 と Ubuntu WebKitGTK の実機描画、screen reader の実際の読み上げ、200% zoom、Windows High Contrast、物理タッチ入力、en / zh-CN の撮影。本番コミュニティノードでの `policy_kind` 付き応答は未反映で、反映確認は別 Issue とする。
 
 ## Review result
