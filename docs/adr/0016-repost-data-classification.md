@@ -96,6 +96,8 @@ manual に profile topic へ直接 repost する UI は作らない。profile fe
 ### 2.3 Simple / quote normalization
 
 - simple repost は `(author_pubkey, target_topic_id, source_object_id)` ごとに 1 件へ正規化する
+  - 既存の simple repost の検索は projection の索引（著者 + repost 元）で行う。topic の replica は走査しない（ADR 0052 §4）
+  - 取り下げ済みの simple repost は既存の repost として扱わない。取り下げた後は、同じ投稿をもう一度 simple repost できる
 - quote repost は別投稿として複数許可する
 - quote repost の commentary は v1 では text-only
 - quote repost 自体への追加 attachment は持たない

@@ -203,6 +203,63 @@ async fn repost_reads_a_constant_number_of_docs_records() {
     assert_independent_of_replica_size("repost", small, large);
 }
 
+// ADR 0016 §2.3: 取り下げ済みの simple repost は既存の repost として扱わない。
+// 以前は docs の state が残るため、取り下げた repost の id を返し続け、同じ投稿を repost し直せなかった。
+#[tokio::test]
+async fn withdrawn_simple_repost_can_be_reposted_again() {
+    let fixture = fixture("repost-after-withdrawal", SMALL).await;
+    let first = fixture
+        .app
+        .create_repost(
+            fixture.topic.as_str(),
+            fixture.topic.as_str(),
+            fixture.target.id.as_str(),
+            None,
+        )
+        .await
+        .expect("repost");
+    fixture
+        .app
+        .withdraw_post(
+            fixture.topic.as_str(),
+            first.as_str(),
+            ChannelRef::Public,
+            None,
+            WithdrawalReasonVisibility::Private,
+            None,
+        )
+        .await
+        .expect("withdraw the repost");
+    // envelope の id は著者・秒単位の作成時刻・内容から決まる。同じ秒のうちに作り直すと取り下げた
+    // repost と同じ id になるので、秒をまたいでから repost し直す。
+    sleep(Duration::from_millis(1_100)).await;
+    let second = fixture
+        .app
+        .create_repost(
+            fixture.topic.as_str(),
+            fixture.topic.as_str(),
+            fixture.target.id.as_str(),
+            None,
+        )
+        .await
+        .expect("repost again after the withdrawal");
+    assert_ne!(
+        first, second,
+        "a withdrawn simple repost is not reused as the existing repost"
+    );
+    let third = fixture
+        .app
+        .create_repost(
+            fixture.topic.as_str(),
+            fixture.topic.as_str(),
+            fixture.target.id.as_str(),
+            None,
+        )
+        .await
+        .expect("repost a third time");
+    assert_eq!(second, third, "the new simple repost is created once");
+}
+
 #[tokio::test]
 async fn withdrawal_reads_a_constant_number_of_docs_records() {
     let mut counts = Vec::new();
@@ -490,6 +547,7 @@ async fn private_channel_target_is_not_read_without_membership() {
             fixture.topic.as_str(),
             &TimelineScope::Channel { channel_id },
             &missing,
+            DocFetchPolicy::LocalOnly,
         )
         .await;
     assert!(
@@ -532,5 +590,136 @@ async fn missing_target_fails_without_scanning() {
             .iter()
             .all(|(_, query)| matches!(query, DocQuery::Exact(_))),
         "a missing target must be resolved by key only, got {queries:?}"
+    );
+}
+
+fn shared_docs_app(
+    docs_sync: &Arc<MemoryDocsSync>,
+    blob_service: &Arc<MemoryBlobService>,
+    keys: KukuriKeys,
+) -> AppService {
+    let store = Arc::new(MemoryStore::default());
+    app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        docs_sync.clone(),
+        blob_service.clone(),
+        keys,
+    )
+}
+
+// INVAR-1 / ADR 0032 §2(返信先 preview): 購読していない topic の投稿を profile で表示するとき、
+// 取り下げ済みの返信先の本文を reply preview に出さない(独立監査の再現 test を恒久化)。
+#[tokio::test]
+async fn withdrawn_reply_parent_in_an_unsubscribed_topic_is_masked_in_the_profile_reply_preview() {
+    let docs_sync = Arc::new(MemoryDocsSync::default());
+    let blob_service = Arc::new(MemoryBlobService::default());
+    let parent_author = shared_docs_app(&docs_sync, &blob_service, generate_keys());
+    let reply_keys = generate_keys();
+    let reply_author_pubkey = reply_keys.public_key_hex();
+    let reply_author = shared_docs_app(&docs_sync, &blob_service, reply_keys);
+    let viewer = shared_docs_app(&docs_sync, &blob_service, generate_keys());
+    let topic = "kukuri:topic:unsubscribed-reply-parent";
+
+    let parent = parent_author
+        .create_post(topic, "parent body to be withdrawn", None)
+        .await
+        .expect("parent post");
+    let reply = reply_author
+        .create_post(topic, "reply body", Some(parent.as_str()))
+        .await
+        .expect("reply post");
+    parent_author
+        .withdraw_post(
+            topic,
+            parent.as_str(),
+            ChannelRef::Public,
+            None,
+            WithdrawalReasonVisibility::Public,
+            Some(PostWithdrawalReason::AuthorRequest),
+        )
+        .await
+        .expect("withdraw parent");
+
+    // viewer は topic を購読しない。返信した著者の profile だけを開く。
+    let mut last_preview_content = None;
+    let masked = timeout(Duration::from_secs(5), async {
+        loop {
+            let view = viewer
+                .list_profile_timeline(reply_author_pubkey.as_str(), None, 20)
+                .await
+                .expect("profile timeline");
+            let item = view
+                .items
+                .iter()
+                .find(|item| item.object_id == reply)
+                .expect("reply row in the profile timeline");
+            match item.reply_preview.as_ref() {
+                None => break,
+                Some(preview) if preview.content.is_empty() => break,
+                Some(preview) => last_preview_content = Some(preview.content.clone()),
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .is_ok();
+    assert!(
+        masked,
+        "the withdrawn reply parent body stayed visible in the profile reply preview: \
+         {last_preview_content:?}"
+    );
+}
+
+// INVAR-2 / TR-12: 退出した private channel の投稿は、projection に行が残っていても操作できない。
+// 参加状態の確認は、projection の早期 return より前に通す(独立監査の再現 test を恒久化)。
+#[tokio::test]
+async fn left_private_channel_post_cannot_be_bookmarked_from_a_leftover_projection_row() {
+    let (app, store, _docs, _blobs) = local_app_with_memory_services();
+    let topic = "kukuri:topic:bookmark-after-leave";
+    let channel = app
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "leftover".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create private channel");
+    let channel_ref = ChannelRef::PrivateChannel {
+        channel_id: ChannelId::new(channel.channel_id.clone()),
+    };
+    let object_id = app
+        .create_post_in_channel(topic, channel_ref.clone(), "private body", None)
+        .await
+        .expect("private post");
+    app.leave_private_channel(topic, channel.channel_id.as_str())
+        .await
+        .expect("leave private channel");
+    assert!(
+        ObjectProjectionStore::get_object_projection(
+            store.as_ref(),
+            &EnvelopeId::from(object_id.as_str()),
+        )
+        .await
+        .expect("projection")
+        .is_some(),
+        "the projection row is still there after leaving"
+    );
+
+    let outcome = app
+        .bookmark_post_in_channel(topic, object_id.as_str(), channel_ref)
+        .await;
+    assert!(
+        outcome.is_err(),
+        "a left private channel post must not be bookmarked from a leftover projection row"
+    );
+    assert!(
+        app.list_bookmarked_posts()
+            .await
+            .expect("bookmarks")
+            .is_empty(),
+        "no bookmark may be stored"
     );
 }

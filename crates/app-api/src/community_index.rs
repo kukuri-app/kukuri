@@ -66,6 +66,7 @@ impl AppService {
                             topic.as_str(),
                             &scope,
                             &EnvelopeId::from(input.object_id.clone()),
+                            DocFetchPolicy::LocalOnly,
                         )
                         .await
                         .is_err()

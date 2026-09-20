@@ -419,12 +419,21 @@ impl AppService {
     /// projection にあれば何も読まない。無ければ、scope の replica から対象の key だけを読んで反映する。
     /// replica は走査しない。読む docs の record 数は、replica の大きさに依存しない。
     /// 戻り値は、対象が projection に用意できたか。
+    ///
+    /// 利用者の操作は `LocalOnly` で呼ぶ(entry の本体が手元に無い対象は、操作を待たせずに失敗させる)。
     pub(crate) async fn ensure_object_projection(
         &self,
         topic_id: &str,
         scope: &TimelineScope,
         object_id: &EnvelopeId,
+        policy: DocFetchPolicy,
     ) -> Result<bool> {
+        // private channel の scope は、projection に行が残っていても、参加状態の確認を先に通す。
+        // 退出した channel の投稿を、手元に残った行から操作できないようにする(照会だけで docs は読まない)。
+        if let TimelineScope::Channel { channel_id } = scope {
+            self.ensure_private_channel_access(topic_id, channel_id)
+                .await?;
+        }
         if self
             .services
             .projection_store
@@ -435,7 +444,7 @@ impl AppService {
             return Ok(true);
         }
         for replica in self.scope_replicas(topic_id, scope).await? {
-            if hydrate_object_by_id(&self.services, &replica, object_id).await? {
+            if hydrate_object_by_id(&self.services, &replica, object_id, policy).await? {
                 return Ok(true);
             }
         }
@@ -448,15 +457,18 @@ impl AppService {
     /// 既にあれば何もしない。確認は object ごとに間隔を空け、`withdrawals/<object id>/state` を key 指定で
     /// 読むだけで、replica は走査しない。
     pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
+        let replica = topic_replica_id(topic_id);
+        // 台帳の key は replica と object id の組にする。topic を偽った repost の snapshot が、
+        // 正しい topic での確認を見送らせないようにする。
+        let ledger_key = format!("{}\n{}", replica.as_str(), object_id.as_str());
         if !self
             .services
             .withdrawal_checks
-            .try_begin(object_id.as_str(), Utc::now().timestamp_millis())
+            .try_begin(ledger_key.as_str(), Utc::now().timestamp_millis())
         {
             return;
         }
         let services = self.services.clone();
-        let replica = topic_replica_id(topic_id);
         let object_id = object_id.clone();
         tokio::spawn(async move {
             let permits = services.withdrawal_checks.permits();

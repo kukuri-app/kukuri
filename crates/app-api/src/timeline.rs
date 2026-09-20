@@ -214,8 +214,13 @@ impl AppService {
             },
         };
         let source_object_id = EnvelopeId::from(source_object_id);
-        self.ensure_object_projection(topic_id, &scope, &source_object_id)
-            .await?;
+        self.ensure_object_projection(
+            topic_id,
+            &scope,
+            &source_object_id,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?;
         let projection = self
             .services
             .projection_store
@@ -349,8 +354,13 @@ impl AppService {
             },
         };
         let target_object_id = EnvelopeId::from(object_id);
-        self.ensure_object_projection(topic_id, &scope, &target_object_id)
-            .await?;
+        self.ensure_object_projection(
+            topic_id,
+            &scope,
+            &target_object_id,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?;
         let target = self
             .resolve_signed_post_envelope(&target_object_id)
             .await?
@@ -471,8 +481,13 @@ impl AppService {
                     channel_id: channel_id.clone(),
                 },
             };
-            self.ensure_object_projection(topic_id, &scope, &EnvelopeId::from(reply_to))
-                .await?;
+            self.ensure_object_projection(
+                topic_id,
+                &scope,
+                &EnvelopeId::from(reply_to),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?;
             Some(
                 self.resolve_parent_object(&EnvelopeId::from(reply_to))
                     .await?

@@ -22,8 +22,13 @@ impl AppService {
             Some(ChannelRef::Public) | None => TimelineScope::Public,
         };
         let target_object_id = EnvelopeId::from(target_object_id);
-        self.ensure_object_projection(target_topic_id.as_str(), &scope, &target_object_id)
-            .await?;
+        self.ensure_object_projection(
+            target_topic_id.as_str(),
+            &scope,
+            &target_object_id,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?;
         let target = self
             .services
             .projection_store

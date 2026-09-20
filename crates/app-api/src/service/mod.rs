@@ -622,8 +622,13 @@ impl AppService {
     ) -> Result<ResolvedRepostSource> {
         let source_object_id = EnvelopeId::from(source_object_id);
         // #1239: repost 元が projection に無ければ、その key だけを反映する。topic の replica は走査しない。
-        self.ensure_object_projection(source_topic_id, &TimelineScope::Public, &source_object_id)
-            .await?;
+        self.ensure_object_projection(
+            source_topic_id,
+            &TimelineScope::Public,
+            &source_object_id,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await?;
         let projection = ObjectProjectionStore::get_object_projection(
             self.services.projection_store.as_ref(),
             &source_object_id,

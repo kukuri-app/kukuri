@@ -51,6 +51,16 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（3 か所。変更通知で対象を特定できないときの fallback と初回） | `objects/`・`withdrawals/` など | scope の投稿総数 | Non-goal（CN 側。`ingest_changed_keys` が通常経路。T2 の索引化は効く。全件走査の廃止は CN 側の Issue で扱う） |
 | P-15 | `desktop-runtime/src/runtime/sync_live_api.rs` `has_topic_timeline_doc_index_entry`（test と harness 用） | `indexes/timeline/` | topic の投稿総数 | 対象。T2 で key 指定の読み出し 2 回へ置き換えた |
 
+## view の生成に残る docs の読み出し（key 指定）
+
+T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る。どちらも key を 1 つ指定した `LocalOnly` の読み出しで、replica の総 entry 数には依存しない
+（T2 の索引化の後）。ただし ADR 0052 §2 の「view の生成中に docs を読まない」に反するので、T5 で外す。
+
+| ID | 箇所 | 読む範囲・契機 | 比例する総数 | 分類 |
+| --- | --- | --- | --- | --- |
+| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`fetch_post_object_for_projection`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/state` を 1 回（`LocalOnly`）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 対象。T5 で、返信先の反映を取得側（窓の追いつき・遡りの取得）と背景へ移す |
+| V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | `projection_version < 2` で添付の列が空の行だけ、`objects/<id>/state` を 1 回（`LocalOnly`）。現行の反映が書く行は対象外 | 依存しない（旧い行ごとに 1 key） | 対象。T5 で、旧い行は反映し直すときに列を埋める形にして fallback を削除する |
+
 ## projection 側
 
 | ID | 箇所 | 問題 | 解消する段階 |
@@ -63,6 +73,8 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 
 - 同じ key に複数の docs 著者の entry があるとき、caller は `Exact` の結果の先頭（docs 著者 id の昇順で最初）を使う。最新の entry ではない。
   T2 で並びを key の索引に変えても、`Exact` の結果の順序（docs 著者 id の昇順）と、prefix 読みで同じ key の最後に反映される entry は変わらない。
-- repost 元と profile の投稿の取り下げの確認は、購読していない topic の replica を開いて同期する（T3 より前から、view の生成のたびに起きていた副作用）。T3 で確認は背景の key 指定になったが、replica を開くこと自体は残る。
+- repost 元、profile の投稿、profile の投稿の返信先の取り下げの確認は、購読していない topic の replica を開いて同期する（T3 より前から、view の生成のたびに起きていた副作用）。T3 で確認は背景の key 指定になったが、replica を開くこと自体は残る。
   開く replica の上限と、取り下げの置き場所は #1224・#1243 で扱う。
+- private channel の取り下げは、現在の epoch の replica に書かれる。対象の投稿が過去の epoch の replica にあると、取り下げを反映する側は同じ replica で対象の envelope を見つけられず、
+  取り下げを検証できない（T3 より前から同じ。key 単位の反映でも全件走査でも変わらない）。epoch をまたぐ取り下げの扱いは別 Issue で決める。
 - iroh-docs の同期と保存は replica の総 entry 数に比例する（ADR 0052 §7）。replica の時間分割は #1243 が所有する。

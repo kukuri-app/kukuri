@@ -50,8 +50,11 @@ Accepted
 - 窓より古い範囲の取りこぼしは、遡りの取得で埋まる。埋まらない範囲が残ることを許容する。
 - 取り下げは、取り下げの event・hint と、`withdrawals/` の新しい側の窓で反映する。表示側は projection の取り下げ表だけで判定し、view の生成中に docs を読まない。
   取り下げ済みの投稿の本文と添付は表示しない（窓より古い取り下げを持たない投稿を遡って反映するときは、その object の `withdrawals/<object id>/state` を key 指定で確認する）。
-- 購読していない topic の投稿でありうる repost 元と profile の投稿は、取り下げの event が届かない。表示したときに、背景で `withdrawals/<object id>/state` を key 指定で確認する。
-  確認は object ごとに間隔（初期値 60 秒）を空け、同時実行と台帳の件数に上限を置く。view の生成は確認を待たない。取り下げから表示が伏せられるまで、最大でこの間隔ぶん遅れうる。
+- 購読していない topic の投稿でありうる repost 元、profile の投稿、profile の投稿の返信先は、取り下げの event が届かない。表示したときに、背景で `withdrawals/<object id>/state` を key 指定で確認する。
+  確認は確認先（replica と object id の組）ごとに間隔（初期値 60 秒）を空け、同時実行と台帳の件数に上限を置く。view の生成は確認を待たない。取り下げから表示が伏せられるまで、最大でこの間隔ぶん遅れうる。
+  台帳の key に replica を含めるのは、topic を偽った repost の snapshot が、正しい topic での確認を見送らせないようにするため。
+- 個別反映で投稿（`objects/<object id>/state`）を反映するときは、同じ object の `withdrawals/<object id>/state` を先に key 指定で確認する。
+  取り下げの event が対象の envelope より先に届いて反映できなかった場合も、投稿の反映の時点で取り下げが反映される。
 
 ### 3. docs の読み出しの規則
 
@@ -66,8 +69,13 @@ Accepted
 
 ### 4. 利用者の操作
 
-- repost・reaction・reply・bookmark・community index の解決は、対象の行だけを引く。projection に無ければ `objects/<object id>/state` を key 指定で 1 回反映し、
-  無ければ操作を失敗として返す。replica を走査しない。
+- repost・reaction・reply・bookmark・取り下げ・community index の解決は、対象の行だけを引く。projection に無ければ `withdrawals/<object id>/state` と
+  `objects/<object id>/state` を key 指定で反映し、無ければ操作を失敗として返す。replica を走査しない。
+- 読み出しの policy: 利用者の操作の key 指定の読み出しは `LocalOnly` とする（entry の本体が手元に無い対象は、remote 取得で操作を待たせずに失敗として返す）。
+  repost 元の解決だけは、購読していない topic の投稿を対象にできるよう `LocalThenRemote` とする（取得は #1207 の単一走査・クールダウン・同時実行の上限に従う）。
+  event・hint の個別反映と背景の確認は `LocalThenRemote` とする。
+- private channel の scope の操作は、対象の行が projection に残っていても、参加状態の確認（`ensure_private_channel_access`）を先に通す。
+  退出した channel の投稿を、手元に残った行から操作できないようにする。確認は手元の状態の照会だけで、docs は読まない。
 - 自分の既存の repost の検索など、条件で探す処理は projection の索引で行う。必要な列と索引は projection の schema に足す。
 
 ### 5. 上限

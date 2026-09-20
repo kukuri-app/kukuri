@@ -257,52 +257,53 @@ pub(crate) async fn hydrate_object_projection_from_record(
     Ok(true)
 }
 
-pub(crate) async fn hydrate_object_projection_from_key(
-    docs_sync: &dyn DocsSync,
-    blob_service: &dyn BlobService,
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    key: &str,
-) -> Result<bool> {
-    let Some(record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(key.to_string()))
-        .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(false);
-    };
-    hydrate_object_projection_from_record(blob_service, projection_store, replica, record).await
-}
-
 /// object id を 1 つ指定して、その投稿を projection へ反映する(#1239)。replica は走査しない。
 ///
 /// 取り下げを先に反映する。投稿の反映は projection の取り下げ表を見て本文と添付を伏せるため、
-/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。
+/// この順にすると、取り下げより後に反映した投稿でも本文が残らない。取り下げの event が対象の
+/// envelope より先に届いて反映できなかった場合も、投稿を反映するときにここで取り直す。
+///
+/// `policy` は 2 つの key の読み出しに使う。利用者の操作は `LocalOnly`(操作を remote 取得で待たせない)、
+/// event・hint・repost 元の解決は `LocalThenRemote`。
 pub(crate) async fn hydrate_object_by_id(
     services: &ServiceHandles,
     replica: &ReplicaId,
     object_id: &EnvelopeId,
+    policy: DocFetchPolicy,
 ) -> Result<bool> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
     let withdrawal_key = stable_key("withdrawals", &format!("{}/state", object_id.as_str()));
-    if let Some(record) = docs_sync
-        .query_replica(replica, DocQuery::Exact(withdrawal_key))
-        .await?
-        .into_iter()
-        .next()
+    if let Some(record) =
+        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(withdrawal_key), policy)
+            .await?
+            .into_iter()
+            .next()
     {
         hydrate_post_withdrawal_from_record(docs_sync, projection_store, replica, record).await?;
     }
-    hydrate_object_projection_from_key(
-        docs_sync,
+    let state_key = stable_key("objects", &format!("{}/state", object_id.as_str()));
+    let Some(record) =
+        query_replica_with_fetch_policy(docs_sync, replica, DocQuery::Exact(state_key), policy)
+            .await?
+            .into_iter()
+            .next()
+    else {
+        return Ok(false);
+    };
+    hydrate_object_projection_from_record(
         services.blob_service.as_ref(),
         projection_store,
         replica,
-        stable_key("objects", &format!("{}/state", object_id.as_str())).as_str(),
+        record,
     )
     .await
+}
+
+/// `objects/<object id>/state` の key から object id を取り出す。
+fn object_id_from_state_key(key: &str) -> Option<EnvelopeId> {
+    let object_id = key.strip_prefix("objects/")?.strip_suffix("/state")?;
+    (!object_id.is_empty() && !object_id.contains('/')).then(|| EnvelopeId::from(object_id))
 }
 
 pub(crate) async fn hydrate_reaction_cache_from_replica(
@@ -676,13 +677,12 @@ pub(crate) async fn hydrate_subscription_event(
     let docs_sync = services.docs_sync.as_ref();
     let blob_service = services.blob_service.as_ref();
     let projection_store = services.projection_store.as_ref();
-    if key.starts_with("objects/") && key.ends_with("/state") {
-        return Ok(hydrate_object_projection_from_key(
-            docs_sync,
-            blob_service,
-            projection_store,
+    if let Some(object_id) = object_id_from_state_key(key) {
+        return Ok(hydrate_object_by_id(
+            services,
             replica,
-            key,
+            &object_id,
+            DocFetchPolicy::LocalThenRemote,
         )
         .await? as usize);
     }
@@ -779,12 +779,11 @@ pub(crate) async fn hydrate_subscription_hint(
                     .await?;
                     continue;
                 }
-                hydrated += hydrate_object_projection_from_key(
-                    docs_sync,
-                    blob_service,
-                    projection_store,
+                hydrated += hydrate_object_by_id(
+                    services,
                     replica,
-                    stable_key("objects", &format!("{}/state", object.object_id)).as_str(),
+                    &EnvelopeId::from(object.object_id.as_str()),
+                    DocFetchPolicy::LocalThenRemote,
                 )
                 .await? as usize;
             }
@@ -793,12 +792,11 @@ pub(crate) async fn hydrate_subscription_hint(
         GossipHint::ThreadUpdated { object_ids, .. } => {
             let mut hydrated = 0usize;
             for object_id in object_ids {
-                hydrated += hydrate_object_projection_from_key(
-                    docs_sync,
-                    blob_service,
-                    projection_store,
+                hydrated += hydrate_object_by_id(
+                    services,
                     replica,
-                    stable_key("objects", &format!("{}/state", object_id.as_str())).as_str(),
+                    object_id,
+                    DocFetchPolicy::LocalThenRemote,
                 )
                 .await? as usize;
             }

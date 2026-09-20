@@ -224,7 +224,7 @@ pub(crate) const WITHDRAWAL_CHECK_LEDGER_LIMIT: usize = 4_096;
 /// 背景で同時に行う取り下げの確認の上限。
 pub(crate) const WITHDRAWAL_CHECK_MAX_CONCURRENT: usize = 4;
 
-/// 表示した投稿の取り下げを、object id ごとに間隔を空けて確認するための台帳(#1239)。
+/// 表示した投稿の取り下げを、確認先(replica と object id の組)ごとに間隔を空けて確認するための台帳(#1239)。
 ///
 /// view の生成中に docs を読まないため、取り下げの確認は背景へ出す。同じ object を表示し続けても、
 /// 確認は間隔ごとに 1 回で、key を指定した読み出しだけを行う(replica は走査しない)。
@@ -243,26 +243,29 @@ impl Default for WithdrawalCheckLedger {
 }
 
 impl WithdrawalCheckLedger {
-    /// この object の取り下げを今確認してよいか。`true` を返したときは、次の確認の時刻を先へ進める。
-    pub(crate) fn try_begin(&self, object_id: &str, now_ms: i64) -> bool {
+    /// この確認先の取り下げを今確認してよいか。`true` を返したときは、次の確認の時刻を先へ進める。
+    ///
+    /// `check_key` は replica と object id の組から作る。object id だけにすると、topic を偽った repost の
+    /// snapshot が、正しい topic での確認を見送らせてしまう。
+    pub(crate) fn try_begin(&self, check_key: &str, now_ms: i64) -> bool {
         let mut entries = self
             .next_check_at_ms
             .lock()
             .expect("withdrawal check ledger lock");
         if entries
-            .get(object_id)
+            .get(check_key)
             .is_some_and(|next_check_at| *next_check_at > now_ms)
         {
             return false;
         }
-        if !entries.contains_key(object_id) && entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
+        if !entries.contains_key(check_key) && entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
             entries.retain(|_, next_check_at| *next_check_at > now_ms);
             if entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
                 return false;
             }
         }
         entries.insert(
-            object_id.to_string(),
+            check_key.to_string(),
             now_ms.saturating_add(WITHDRAWAL_CHECK_INTERVAL_MS),
         );
         true
