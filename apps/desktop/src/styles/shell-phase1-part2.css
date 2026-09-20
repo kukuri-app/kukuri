@@ -508,7 +508,11 @@
 }
 
 .ui-tooltip-content {
-  z-index: 50;
+  /* #1210: tooltip は portal で body 直下へ出るため、overlay surface（Control Center 71、
+     settings drawer 74、dialog 81、popover 82、toast 90）より手前へ積む。ここが下だと
+     DOM には出ているのに panel の背後へ隠れ、hover しても何も見えない。
+     skip link (100) だけは常に最前面へ残す。 */
+  z-index: 95;
   max-width: min(34rem, calc(100vw - 2rem));
   overflow-wrap: anywhere;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);

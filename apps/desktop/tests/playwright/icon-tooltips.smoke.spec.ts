@@ -39,3 +39,33 @@ test('icon-only controls expose the same localized action on hover and focus', a
   await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
   await expect(notifications.locator('.shell-column-body .shell-workspace-header')).toHaveCount(0);
 });
+
+// #1210: Control Center の topic 追加ボタンで tooltip が見えなかった。tooltip は portal で
+// body 直下へ出るため、overlay surface より手前に積まれていないと panel の背後へ隠れる。
+// DOM に存在するだけでは再現を捉えられないので、hit test で最前面かどうかを確認する。
+test('Control Center icon tooltips render in front of the panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
+
+  await page.getByTestId('control-center-trigger').click();
+  const controlCenter = page.getByRole('complementary', { name: 'Control Center' });
+  await expect(controlCenter).toBeVisible();
+
+  const addTopic = controlCenter.getByRole('button', { name: 'Add', exact: true });
+  await addTopic.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toHaveText('Add');
+
+  await expect
+    .poll(() =>
+      tooltip.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+        return hit === node || node.contains(hit);
+      })
+    )
+    .toBe(true);
+});
