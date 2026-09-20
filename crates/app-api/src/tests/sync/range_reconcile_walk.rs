@@ -315,7 +315,7 @@ async fn malformed_keys_at_the_head_of_a_thread_index_do_not_hide_the_replies() 
 // 続きの起点が `i64::MAX` に張り付くと、照合のたびに query 数の上限まで読み続ける。
 #[tokio::test]
 async fn malformed_keys_beyond_the_valid_time_range_do_not_keep_the_thread_tail_unfinished() {
-    let topic = "kukuri:topic:audit-t4a-thread-tail";
+    let topic = "kukuri:topic:range-walk-thread-tail";
     let replica = topic_replica_id(topic);
     let docs_sync = Arc::new(RecordingDocsSync::default());
     let (app, _store) =
@@ -354,7 +354,6 @@ async fn malformed_keys_beyond_the_valid_time_range_do_not_keep_the_thread_tail_
         app.services.range_checks.expire_all_for_test().await;
     }
     app.shutdown().await;
-    println!("audit_t4a: 照合ごとの docs の読み出しの回数 = {reads:?}");
     assert!(
         reads.iter().skip(2).any(|count| *count < 100),
         "the tail of the thread must settle instead of walking to the query cap every time: {reads:?}"

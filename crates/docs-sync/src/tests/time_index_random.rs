@@ -228,7 +228,7 @@ async fn assert_random_matches_reference(
 async fn random_walk_matches_reference_on_memory_docs() -> Result<()> {
     for seed in 1..=6u64 {
         let docs = MemoryDocsSync::default();
-        let replica = topic_replica_id(format!("kukuri:topic:audit-t4a-random-{seed}").as_str());
+        let replica = topic_replica_id(format!("kukuri:topic:time-index-random-{seed}").as_str());
         assert_random_matches_reference(&docs, &replica, seed, 400, 60).await?;
     }
     Ok(())
@@ -238,7 +238,7 @@ async fn random_walk_matches_reference_on_memory_docs() -> Result<()> {
 async fn random_walk_matches_reference_on_iroh_docs() -> Result<()> {
     let node = IrohDocsNode::memory().await?;
     let docs = IrohDocsSync::new(node.clone());
-    let replica = topic_replica_id("kukuri:topic:audit-t4a-random-iroh");
+    let replica = topic_replica_id("kukuri:topic:time-index-random-iroh");
     let result = assert_random_matches_reference(&docs, &replica, 42, 150, 12).await;
     docs.shutdown().await;
     node.shutdown().await?;
@@ -253,7 +253,7 @@ async fn query_count_of_one_call_is_bounded() -> Result<()> {
         for clusters in [1usize, 2, 3, 30, 300] {
             let docs = Arc::new(CountingKeys::default());
             let replica = topic_replica_id(
-                format!("kukuri:topic:audit-t4a-bound-{order:?}-{clusters}").as_str(),
+                format!("kukuri:topic:time-index-bound-{order:?}-{clusters}").as_str(),
             );
             docs.open_replica(&replica).await?;
             let top = 1_758_000_000_i64;
@@ -295,7 +295,6 @@ async fn query_count_of_one_call_is_bounded() -> Result<()> {
             }
         }
     }
-    println!("audit_t4a: 1 回の読み出しの query 数の最大値 = {worst}");
     assert!(worst <= 258, "{worst}");
     Ok(())
 }
@@ -305,7 +304,7 @@ async fn query_count_of_one_call_is_bounded() -> Result<()> {
 #[tokio::test]
 async fn ascending_resume_beyond_i64_max_makes_progress() -> Result<()> {
     let docs = Arc::new(CountingKeys::default());
-    let replica = topic_replica_id("kukuri:topic:audit-t4a-asc-clamp");
+    let replica = topic_replica_id("kukuri:topic:time-index-asc-clamp");
     docs.open_replica(&replica).await?;
     let rows = vec![
         (1_758_000_000_i64, object_id(1)),
@@ -335,7 +334,7 @@ async fn ascending_resume_beyond_i64_max_makes_progress() -> Result<()> {
     };
     let mut position = start;
     let mut seen = Vec::new();
-    for call in 0..12usize {
+    for _ in 0..12usize {
         let page = query(
             docs.as_ref(),
             &replica,
@@ -346,7 +345,6 @@ async fn ascending_resume_beyond_i64_max_makes_progress() -> Result<()> {
         .await?;
         assert!(page.entries.is_empty());
         let Some(resume) = page.resume else {
-            println!("audit_t4a: {call} 回の続きの後に尽きた");
             return Ok(());
         };
         assert!(

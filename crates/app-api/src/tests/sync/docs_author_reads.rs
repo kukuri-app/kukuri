@@ -686,6 +686,65 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
     );
 }
 
+// 索引の entry を書いた docs author は、索引の読み出し(key の一覧)から照合へ渡る。読み出しの層が docs author を
+// 落とすと、envelope の key に不正な record を積まれた投稿を、タイムラインと thread の照合が反映できなくなる
+// (独立監査 PR #1265 の指摘。`TimeIndexEntry` を手で組み立てる test では検出できない)。
+#[tokio::test]
+async fn reconcile_passes_the_index_entry_docs_author_to_the_envelope_read() {
+    let fixture = fixture("index-walk-timeline").await;
+    fixture.flood(fixture.envelope_key.as_str(), FLOOD).await;
+    fixture.write_index_entries().await;
+    let hydrated = fixture
+        .app
+        .reconcile_timeline_range(fixture.topic.as_str(), &TimelineScope::Public, None, 20)
+        .await
+        .expect("timeline reconcile");
+    assert_eq!(hydrated, 1);
+    assert_eq!(
+        fixture.row().await.and_then(|row| row.content).as_deref(),
+        Some(WORDS)
+    );
+
+    let fixture = fixture_for_thread().await;
+    let hydrated = fixture
+        .app
+        .reconcile_thread(fixture.topic.as_str(), &fixture.post.id, None, 20)
+        .await
+        .expect("thread reconcile");
+    assert_eq!(hydrated, 1);
+    assert!(fixture.row().await.is_some());
+}
+
+async fn fixture_for_thread() -> Fixture {
+    let fixture = fixture("index-walk-thread").await;
+    fixture.flood(fixture.envelope_key.as_str(), FLOOD).await;
+    fixture.write_index_entries().await;
+    fixture
+}
+
+impl Fixture {
+    /// 著者の docs author の名義で、時系列と thread の索引の entry を書く(投稿の保存が書くものと同じ key)。
+    async fn write_index_entries(&self) {
+        let id = self.post.id.as_str();
+        let sort_key = timeline_sort_key(self.post.created_at, &self.post.id);
+        for key in [
+            stable_key("indexes/timeline", &format!("{sort_key}/{id}")),
+            stable_key("indexes/thread", &format!("{id}/{sort_key}/{id}")),
+        ] {
+            self.docs_sync
+                .apply_doc_op(
+                    &self.replica,
+                    DocOp::SetJson {
+                        key,
+                        value: serde_json::json!({}),
+                    },
+                )
+                .await
+                .expect("write an index entry");
+        }
+    }
+}
+
 // INVAR-6: private channel の hint の topic は epoch の秘密に依存しないので、docs author の id を載せない。
 // envelope の tag(その channel の replica の中)と、行の列には入る。
 #[tokio::test]

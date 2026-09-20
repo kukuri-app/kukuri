@@ -141,7 +141,12 @@ impl DocsSync for ShadowingDocsSync {
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
     ) -> Result<kukuri_docs_sync::DocKeyPage> {
-        self.inner.query_replica_keys(replica_id, query).await
+        // `inner` の entry は、`account_docs_author` の名義で書かれたものとして返す(record の読み出しと同じ)。
+        let mut page = self.inner.query_replica_keys(replica_id, query).await?;
+        for entry in &mut page.entries {
+            entry.docs_author = self.account_docs_author.clone();
+        }
+        Ok(page)
     }
 
     async fn query_replica_exact_bounded(
