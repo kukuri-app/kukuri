@@ -80,7 +80,7 @@ V-2 は Issue #1248 で削除し、V-1 は #1239 の AC-6（#1277）で背景の
 
 | ID | 箇所 | 読む範囲・契機 | 比例する総数 | 分類 |
 | --- | --- | --- | --- | --- |
-| V-1 | `timeline_view_support.rs` の返信先の preview | 解消済み（#1239 AC-6、#1277）。view の生成は projection だけを読む。返信先が projection に無ければ、`reflect_reply_target` を背景へ出し（確認先ごとに 60 秒の間隔、台帳 4,096 件、同時 4 件）、この回の preview は出さない。反映できれば次の取得で出る。画面は preview が無い行の返信先の枠を描かない | — | 解消済み |
+| V-1 | `timeline_view_support.rs` の返信先の preview | 解消済み（#1239 AC-6、#1277）。view の生成は projection だけを読む。タイムラインと thread の取得は、view の生成の前に、ページの行の返信先が projection に無ければ key 指定で反映する（`reflect_reply_targets_for_rows`。`LocalOnly`、ページの行の数まで、確認先ごとに 60 秒の間隔）。それ以外の経路（community index、bookmark、プロフィール）は、view の生成が `reflect_reply_target` を背景へ出し（台帳 4,096 件、同時 4 件）、この回の preview は出さない。画面は preview が無い行の返信先の枠を描かない | — | 解消済み |
 | V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | 削除済み（#1248）。署名の無い `state` の添付を表示する経路だった。旧い行（`projection_version < 3`）は migration が消し、docs から反映し直す | — | 解消済み |
 
 ## projection 側
@@ -117,6 +117,8 @@ replica と projection の件数を 1,000 / 10,000 / 100,000 にしても、次�
 SQLite が実行した命令の数が同じであることを、`crates/app-api/src/tests/sync/scale_counts.rs` の test が数で確かめる（所要時間の閾値は使わない。
 命令の数は読み書きした行の数とともに増え、B-tree の深さには依存しない。上限を外す mutation と、ページの取得の SQL が索引を使わなくなる mutation で、
 量が件数に比例して増えることが検出される）。projection には、時系列の索引の埋め草と同じ object の行を同じ数だけ置く。
+埋め草を置くのは投稿の projection の表だけで、reaction・取り下げ・通知などの表の件数に比例する読み書きは、この test では検出しない。
+また、1 つの命令の中で表全体を処理する SQL（条件の無い `COUNT(*)`、全件の削除、sorter の内部）は命令の数に出ない。今の経路にそうした SQL は無い。
 
 | 操作 | 種類 | docs の読む量 | projection の命令の数 |
 | --- | --- | --- | --- |

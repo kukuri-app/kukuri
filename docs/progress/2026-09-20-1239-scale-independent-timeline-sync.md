@@ -870,6 +870,8 @@ blocker は無かった。non-blocker のうち、次を直した。
   背景の反映は、確認先（replica と object id の組）ごとに 60 秒の間隔を空け、台帳（4,096 件）と同時実行（4 件）に上限を置く。取り下げの確認と同じ台帳の型
   （`BackgroundCheckLedger`。用途ごとに別の台帳）を使う。画面は、preview の無い返信の行に返信先の枠を描かない（`PostCard.test.tsx` の
   `reply context stays hidden when missing`）。反映できれば、次の取得で preview が出る。
+  タイムラインと thread の取得は、view の生成の前に、ページの行の返信先を同じ台帳の間隔で key 指定で反映する（`reflect_reply_targets_for_rows`）。
+  遡ったページの行も、その取得で preview が出る（独立監査の non-blocker。画面の定期の取得は先頭のページだけなので、背景の反映だけでは遡ったページの preview が出ないままになる）。
 - AC-7: `scale_counts` に、新着 1 件の受信（相手の peer から、投稿の entry と本体が届く）を足した。projection にも件数と同じ行を置き、
   projection の読み書きを SQLite の仮想機械が実行した命令の数で数える（`SqliteStore::connect_memory_counting_vm_steps`。store の `test-support` feature）。
   1,000 / 10,000 / 100,000 件で、どの操作の docs の読む量も命令の数も同じ。タイムラインのページの SQL が索引を使わなくなる mutation
@@ -884,6 +886,13 @@ blocker は無かった。non-blocker のうち、次を直した。
 | --- | --- |
 | AC-6: view の生成は docs を読まない | `a_missing_reply_target_is_reflected_in_the_background_without_docs_reads_in_the_view`（背景の permit を止めた状態で、view の生成の docs の query が 0 回、record も 0 件。背景の反映の後に preview が出る） |
 | AC-6: 背景の反映の間隔 | `background_reflection_of_a_reply_target_is_spaced_per_target`（反映できない返信先を 5 回表示しても、docs の読み出しは 1 回） |
+| AC-6: 遡ったページの preview | `an_older_page_reflects_the_reply_target_before_building_the_view`（取得側の反映を外す mutation で失敗することを確かめた） |
 | AC-6: 反映の検証（#1248） | `reply_preview_row_is_built_from_the_signed_envelope`（`reflect_reply_target` を直接呼ぶ形にした） |
 | AC-7 | `reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries`（docs と projection の両方。inventory の「完了の確認」の表） |
 | 新着の受信で追いつきを依頼しない | `a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object`（反映済みの投稿の envelope の entry を足した。変更を戻す mutation で失敗することを確かめた） |
+
+### 独立監査の 1 回目（PR #1283、head `cb681ed2`、PASS）と non-blocker の対応
+
+blocker は無かった。non-blocker のうち、遡ったページの行の preview が出ないままになる後退（上記の取得側の反映で直した）、`scale_counts` の古い comment、
+命令の数で検出できない SQL と埋め草の無い表の限界の記録（inventory）を直した。残した non-blocker: 新着の受信の double は本体がそろってからの受信順だけを測る
+（本体が遅れる順は窓の追いつきに回り、その量は別に測っている）。背景の task は shutdown を待たない（既存の取り下げの確認と同じ形）。

@@ -123,3 +123,71 @@ async fn background_reflection_of_a_reply_target_is_spaced_per_target() {
     assert_eq!(reads, 1, "one background read per target and interval");
     assert_eq!(app.services.reply_target_checks.len(), 1);
 }
+
+// 取得側の反映(#1277): 遡ったページの行でも、返信先が手元の docs にあれば、その取得で preview が出る
+// (view の生成は docs を読まず、取得が view の生成の前に key 指定で反映する)。
+#[tokio::test]
+async fn an_older_page_reflects_the_reply_target_before_building_the_view() {
+    let docs_sync = Arc::new(MemoryDocsSync::default());
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync.clone(),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let topic = TopicId::new("kukuri:topic:reply-target-older-page");
+    let replica = topic_replica_id(topic.as_str());
+    let keys = generate_keys();
+    let parent = super::range_reconcile::put_post_at(
+        docs_sync.as_ref(),
+        &replica,
+        &keys,
+        &topic,
+        1_700_000_000,
+        "the parent",
+        None,
+    )
+    .await;
+    let reply = super::range_reconcile::put_post_at(
+        docs_sync.as_ref(),
+        &replica,
+        &keys,
+        &topic,
+        1_700_000_010,
+        "the reply",
+        Some(&parent.envelope),
+    )
+    .await;
+    // 返信だけが projection にある(返信先は、索引の照合の範囲の外)。
+    super::range_reconcile::project(store.as_ref(), &reply, &replica).await;
+
+    let page = app
+        .list_timeline(
+            topic.as_str(),
+            Some(TimelineCursor {
+                created_at: 1_700_000_011,
+                object_id: EnvelopeId::from("f".repeat(64).as_str()),
+            }),
+            1,
+        )
+        .await
+        .expect("older page");
+
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.object_id == reply.object_id.as_str())
+        .expect("the reply is listed");
+    assert_eq!(
+        item.reply_preview
+            .as_ref()
+            .map(|preview| preview.content.as_str()),
+        Some("the parent"),
+        "the preview is shown by the same listing"
+    );
+}

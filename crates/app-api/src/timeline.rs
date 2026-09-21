@@ -802,6 +802,7 @@ impl AppService {
         }
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
+        self.reflect_reply_targets_for_rows(&page.items).await;
         let view = self.page_to_view(page).await?;
         let mut last_sync = self.last_sync_ts.lock().await;
         if !view.items.is_empty() && last_sync.is_none() {
@@ -888,6 +889,7 @@ impl AppService {
         }
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
+        self.reflect_reply_targets_for_rows(&page.items).await;
         let view = self.page_to_view(page).await?;
         let mut last_sync = self.last_sync_ts.lock().await;
         if !view.items.is_empty() && last_sync.is_none() {

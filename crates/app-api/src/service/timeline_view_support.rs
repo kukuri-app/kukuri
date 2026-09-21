@@ -230,6 +230,48 @@ impl AppService {
         })
     }
 
+    /// 取得側(#1239 AC-6、#1277): ページの行の返信先が projection に無ければ、view の生成の前に反映する。
+    ///
+    /// 返信と同じ replica から key 指定で読む(`LocalOnly`)。読むのはページの行の数(`limit`)までで、確認先ごとに
+    /// 背景の反映と同じ台帳で間隔を空ける(反映できない返信先を、取得のたびに読み直さない)。遡ったページの行も、
+    /// その取得で preview が出る。view の生成は docs を読まない。
+    pub(crate) async fn reflect_reply_targets_for_rows(&self, rows: &[ObjectProjectionRow]) {
+        for row in rows {
+            let Some(target) = row.reply_to_object_id.as_ref() else {
+                continue;
+            };
+            let ledger_key = format!("{}\n{}", row.source_replica_id.as_str(), target.as_str());
+            let exists = self
+                .services
+                .projection_store
+                .get_object_projection(target)
+                .await
+                .map_or(true, |row| row.is_some());
+            if exists
+                || !self
+                    .services
+                    .reply_target_checks
+                    .try_begin(ledger_key.as_str(), Utc::now().timestamp_millis())
+            {
+                continue;
+            }
+            if let Err(error) = reflect_reply_target(
+                &self.services,
+                target,
+                &row.source_replica_id,
+                row.topic_id.as_str(),
+            )
+            .await
+            {
+                warn!(
+                    object_id = %target.as_str(),
+                    error = %error,
+                    "failed to reflect a reply target of a listed row"
+                );
+            }
+        }
+    }
+
     /// 返信先の行を projection から読む(#1239 AC-6)。view の生成中は docs を読まない。
     ///
     /// 返信先が projection に無ければ、返信と同じ replica からの反映を背景へ出し、この回の preview は出さない
