@@ -30,8 +30,8 @@ import { useNotificationLoaders } from '@/shell/data/loaders/useNotificationLoad
 import { useDesktopShellSectionLoaders } from '@/shell/data/loaders/useDesktopShellSectionLoaders';
 import { useQueuedLoadTopics } from '@/shell/data/useQueuedLoadTopics';
 import {
-  cursorIsBeyond,
   hasLoadedOlderAuthoritativePosts,
+  hasReadPastHeadPage,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
   postIdentityKey,
@@ -483,12 +483,13 @@ export function useDesktopShellData({
           const baselinePosts = currentState.timelinesByKey[timelineKey] ?? EMPTY_POSTS;
           const preserveTimelinePages =
             mode === 'buffer' &&
-            (hasLoadedOlderAuthoritativePosts(baselinePosts, normalizedTimelineItems) ||
-              cursorIsBeyond(
-                currentState.timelineNextCursorByKey[timelineKey],
-                timeline.next_cursor,
-                'desc'
-              ));
+            hasReadPastHeadPage(
+              baselinePosts,
+              normalizedTimelineItems,
+              currentState.timelineNextCursorByKey[timelineKey],
+              timeline.next_cursor,
+              'desc'
+            );
           const resolvedTimelineCursor = preserveTimelinePages
             ? (currentState.timelineNextCursorByKey[timelineKey] ?? null)
             : (timeline.next_cursor ?? null);
@@ -564,12 +565,13 @@ export function useDesktopShellData({
             const currentThreadPosts = currentState.threadsById[currentThread] ?? EMPTY_POSTS;
             const preserveThreadPages =
               mode === 'buffer' &&
-              (hasLoadedOlderAuthoritativePosts(currentThreadPosts, incomingThreadItems) ||
-                cursorIsBeyond(
-                  currentState.threadNextCursorById[currentThread],
-                  threadView?.next_cursor,
-                  'asc'
-                ));
+              hasReadPastHeadPage(
+                currentThreadPosts,
+                incomingThreadItems,
+                currentState.threadNextCursorById[currentThread],
+                threadView?.next_cursor,
+                'asc'
+              );
             const resolvedThreadCursor = preserveThreadPages
               ? (currentState.threadNextCursorById[currentThread] ?? null)
               : (threadView?.next_cursor ?? null);

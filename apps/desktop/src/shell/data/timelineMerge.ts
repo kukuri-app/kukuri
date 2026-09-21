@@ -51,6 +51,52 @@ export function cursorIsBeyond(
   return order === 'desc' ? current.object_id < head.object_id : current.object_id > head.object_id;
 }
 
+/**
+ * 保存している続きの位置(`stored`)が、表示中の行を越えて読み進めた位置か(#1239)。
+ *
+ * 非表示の著者の投稿が続く範囲では、続きの読み込みが行を増やさずに位置だけを進める。そのとき、続きの位置は
+ * 表示中の最後の行より先にある。逆に、読み進めていないときの続きの位置は、表示中の最後の行そのもの。
+ * 新着が届くと先頭のページの続きの位置は新しい側へ動くので、「先頭のページの続きの位置より先か」だけで判定すると、
+ * 読み進めていないのに古い位置を残してしまう(新着を適用した後の続きの読み込みが、押し出された行を飛ばす)。
+ */
+export function cursorIsBeyondVisiblePosts(
+  stored: TimelineCursor | null | undefined,
+  visible: PostView[],
+  order: 'asc' | 'desc'
+): boolean {
+  if (!stored) {
+    return false;
+  }
+  let furthest: TimelineCursor | null = null;
+  for (const post of visible) {
+    if (post.local_state) {
+      continue;
+    }
+    const position = { created_at: post.created_at, object_id: post.object_id };
+    if (!furthest || cursorIsBeyond(position, furthest, order)) {
+      furthest = position;
+    }
+  }
+  return !furthest || cursorIsBeyond(stored, furthest, order);
+}
+
+/**
+ * refresh(buffer)が、表示中の続きの位置を残すべきか。行を読み足したか、行を増やさずに読み進めたとき。
+ */
+export function hasReadPastHeadPage(
+  current: PostView[],
+  incoming: PostView[],
+  storedCursor: TimelineCursor | null | undefined,
+  headCursor: TimelineCursor | null | undefined,
+  order: 'asc' | 'desc'
+): boolean {
+  return (
+    hasLoadedOlderAuthoritativePosts(current, incoming) ||
+    (cursorIsBeyond(storedCursor, headCursor, order) &&
+      cursorIsBeyondVisiblePosts(storedCursor, current, order))
+  );
+}
+
 export function hasLoadedOlderAuthoritativePosts(
   current: PostView[],
   incoming: PostView[]
