@@ -571,6 +571,7 @@ async fn follow_notification_survives_hydration_before_live_doc_event() {
         docs_sync.as_ref(),
         &replica,
         local_author_pubkey.as_str(),
+        None,
     )
     .await
     .expect("snapshot follow baseline");
@@ -647,6 +648,7 @@ async fn initial_follow_baseline_prevents_backfill_notification() {
         docs_sync.as_ref(),
         &replica,
         local_author_pubkey.as_str(),
+        None,
     )
     .await
     .expect("snapshot follow baseline");

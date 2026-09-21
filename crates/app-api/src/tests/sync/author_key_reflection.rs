@@ -194,6 +194,7 @@ async fn the_follow_notification_baseline_reads_only_the_local_author_key() {
         docs_sync.as_ref(),
         &replica,
         local_author_pubkey.as_str(),
+        None,
     )
     .await
     .expect("baseline");
@@ -532,10 +533,13 @@ async fn a_shadowed_custom_reaction_asset_is_still_listed() {
         )
         .await;
 
-    let assets =
-        load_custom_reaction_assets_from_author_replica(docs_sync.as_ref(), author_pubkey.as_str())
-            .await
-            .expect("assets");
+    let assets = load_custom_reaction_assets_from_author_replica(
+        docs_sync.as_ref(),
+        author_pubkey.as_str(),
+        None,
+    )
+    .await
+    .expect("assets");
 
     assert_eq!(assets.len(), 1);
     assert_eq!(assets[0].author_pubkey.as_str(), author_pubkey);

@@ -391,6 +391,64 @@ pub(crate) fn indexed_query(query: DocQuery) -> Query {
 }
 
 /// #1248: key を 1 つ指定し、読む entry 数に上限を置く query。同じ key の entry は docs author の昇順で返る。
+impl IrohDocsSync {
+    /// 上限つきの key の一覧。`author` があれば、その docs author の entry だけを読む。
+    async fn key_page(
+        &self,
+        replica_id: &ReplicaId,
+        author: Option<AuthorId>,
+        query: DocKeyQuery,
+    ) -> Result<DocKeyPage> {
+        // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
+        let doc = self.ensure_replica(replica_id).await?;
+        if query.limit == 0 {
+            return Ok(DocKeyPage::default());
+        }
+        let direction = match query.order {
+            DocKeyOrder::Ascending => SortDirection::Asc,
+            DocKeyOrder::Descending => SortDirection::Desc,
+        };
+        let query_limit = query.limit;
+        let builder = match author {
+            Some(author) => Query::author(author).key_prefix(query.prefix),
+            None => Query::key_prefix(query.prefix),
+        };
+        let stream = doc
+            .get_many(
+                builder
+                    .sort_by(SortBy::KeyAuthor, direction)
+                    .limit(query.limit as u64)
+                    .build(),
+            )
+            .await?;
+        tokio::pin!(stream);
+        let mut entries = Vec::new();
+        let mut skipped_keys = 0usize;
+        let mut scanned = 0usize;
+        while let Some(entry) = stream.next().await {
+            let entry = entry?;
+            scanned += 1;
+            // 飛ばした分を読み足さない(追加の query を発行しない)。返す件数が `limit` より減るだけである。
+            // 飛ばした entry も `scanned` に数え、打ち切られたかどうかを呼び出し側へ伝える(#1257)。
+            let Some(key) = utf8_key(entry.key()) else {
+                skipped_keys += 1;
+                continue;
+            };
+            entries.push(DocKeyEntry {
+                key,
+                content_hash: entry.content_hash().to_string(),
+                content_len: entry.content_len(),
+                docs_author: Some(entry.author().to_string()),
+            });
+        }
+        warn_skipped_keys(replica_id, skipped_keys);
+        Ok(DocKeyPage {
+            entries,
+            reached_limit: scanned >= query_limit,
+        })
+    }
+}
+
 pub(crate) fn bounded_exact_query(key: &str, limit: usize) -> Query {
     Query::key_exact(key)
         .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
@@ -506,49 +564,21 @@ impl DocsSync for IrohDocsSync {
         replica_id: &ReplicaId,
         query: DocKeyQuery,
     ) -> Result<DocKeyPage> {
-        // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
-        let doc = self.ensure_replica(replica_id).await?;
-        if query.limit == 0 {
+        self.key_page(replica_id, None, query).await
+    }
+
+    async fn query_replica_keys_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        query: DocKeyQuery,
+    ) -> Result<DocKeyPage> {
+        // 手がかりは信用しない入力。docs author の id として読めない値は「無い」として扱う。
+        let Ok(author) = AuthorId::from_str(docs_author) else {
+            self.ensure_replica(replica_id).await?;
             return Ok(DocKeyPage::default());
-        }
-        let direction = match query.order {
-            DocKeyOrder::Ascending => SortDirection::Asc,
-            DocKeyOrder::Descending => SortDirection::Desc,
         };
-        let query_limit = query.limit;
-        let stream = doc
-            .get_many(
-                Query::key_prefix(query.prefix)
-                    .sort_by(SortBy::KeyAuthor, direction)
-                    .limit(query.limit as u64)
-                    .build(),
-            )
-            .await?;
-        tokio::pin!(stream);
-        let mut entries = Vec::new();
-        let mut skipped_keys = 0usize;
-        let mut scanned = 0usize;
-        while let Some(entry) = stream.next().await {
-            let entry = entry?;
-            scanned += 1;
-            // 飛ばした分を読み足さない(追加の query を発行しない)。返す件数が `limit` より減るだけである。
-            // 飛ばした entry も `scanned` に数え、打ち切られたかどうかを呼び出し側へ伝える(#1257)。
-            let Some(key) = utf8_key(entry.key()) else {
-                skipped_keys += 1;
-                continue;
-            };
-            entries.push(DocKeyEntry {
-                key,
-                content_hash: entry.content_hash().to_string(),
-                content_len: entry.content_len(),
-                docs_author: Some(entry.author().to_string()),
-            });
-        }
-        warn_skipped_keys(replica_id, skipped_keys);
-        Ok(DocKeyPage {
-            entries,
-            reached_limit: scanned >= query_limit,
-        })
+        self.key_page(replica_id, Some(author), query).await
     }
 
     async fn local_docs_author(&self) -> Result<Option<String>> {
@@ -667,6 +697,10 @@ impl DocsSync for IrohDocsSync {
 async fn doc_start_sync(doc: &Doc, peers: Vec<EndpointAddr>) -> Result<()> {
     doc.start_sync(peers).await
 }
+
+#[cfg(test)]
+#[path = "iroh_sync_key_query_tests.rs"]
+mod key_query_tests;
 
 #[cfg(test)]
 mod tests {

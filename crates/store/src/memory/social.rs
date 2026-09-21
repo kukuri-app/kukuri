@@ -245,6 +245,23 @@ impl SocialProjectionStore for MemoryStore {
         Ok(())
     }
 
+    async fn get_author_docs_author(&self, author_pubkey: &str) -> Result<Option<String>> {
+        Ok(self
+            .author_docs_authors
+            .read()
+            .await
+            .get(author_pubkey)
+            .cloned())
+    }
+
+    async fn put_author_docs_author(&self, author_pubkey: &str, docs_author: &str) -> Result<()> {
+        self.author_docs_authors
+            .write()
+            .await
+            .insert(author_pubkey.to_string(), docs_author.to_string());
+        Ok(())
+    }
+
     async fn remove_muted_author(&self, author_pubkey: &str) -> Result<()> {
         self.muted_authors.write().await.remove(author_pubkey);
         Ok(())

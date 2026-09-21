@@ -3,6 +3,24 @@
 use super::*;
 
 async fn assert_checkpoints(store: &dyn SocialProjectionStore) {
+    // author ごとの docs author の id(ADR 0053 §6)。
+    assert_eq!(store.get_author_docs_author("x").await.expect("get"), None);
+    store
+        .put_author_docs_author("x", "d1")
+        .await
+        .expect("put docs author");
+    store
+        .put_author_docs_author("x", "d2")
+        .await
+        .expect("overwrite docs author");
+    assert_eq!(
+        store
+            .get_author_docs_author("x")
+            .await
+            .expect("get docs author")
+            .as_deref(),
+        Some("d2")
+    );
     assert_eq!(store.get_sync_checkpoint("a").await.expect("get"), None);
     store
         .put_sync_checkpoint("a", "after:1")

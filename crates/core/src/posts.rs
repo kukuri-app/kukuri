@@ -217,7 +217,10 @@ pub fn is_docs_author_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn push_docs_author_tag(tags: &mut Vec<Vec<String>>, docs_author: Option<&str>) -> Result<()> {
+pub(crate) fn push_docs_author_tag(
+    tags: &mut Vec<Vec<String>>,
+    docs_author: Option<&str>,
+) -> Result<()> {
     if let Some(docs_author) = docs_author {
         if !is_docs_author_id(docs_author) {
             bail!("docs author id must be 64 lowercase hex characters");

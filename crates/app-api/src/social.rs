@@ -104,7 +104,9 @@ impl AppService {
         } else {
             current_profile.picture_asset.clone()
         };
-        build_profile_envelope(
+        // #1239 / ADR 0053 §6: 読む側が docs author と key の組で読めるよう、docs author を申告する。
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        build_profile_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &KukuriProfileEnvelopeContentV1 {
                 author_pubkey: author_pubkey.clone(),
@@ -113,6 +115,7 @@ impl AppService {
                 about,
                 picture_asset,
             },
+            docs_author.as_deref(),
         )
     }
 
@@ -140,10 +143,12 @@ impl AppService {
 
     pub async fn follow_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let target_pubkey = Pubkey::from(normalize_author_pubkey(pubkey)?);
-        let envelope = build_follow_edge_envelope(
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_follow_edge_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &target_pubkey,
             FollowEdgeStatus::Active,
+            docs_author.as_deref(),
         )?;
         let edge = parse_follow_edge(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
@@ -158,10 +163,12 @@ impl AppService {
 
     pub async fn unfollow_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let target_pubkey = Pubkey::from(normalize_author_pubkey(pubkey)?);
-        let envelope = build_follow_edge_envelope(
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_follow_edge_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &target_pubkey,
             FollowEdgeStatus::Revoked,
+            docs_author.as_deref(),
         )?;
         let edge = parse_follow_edge(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
@@ -233,8 +240,13 @@ impl AppService {
         status: BlockEdgeStatus,
     ) -> Result<AuthorSocialView> {
         let target_pubkey = Pubkey::from(normalize_author_pubkey(pubkey)?);
-        let envelope =
-            build_block_edge_envelope(self.services.keys.as_ref(), &target_pubkey, status)?;
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_block_edge_envelope_with_docs_author(
+            self.services.keys.as_ref(),
+            &target_pubkey,
+            status,
+            docs_author.as_deref(),
+        )?;
         let edge = parse_block_edge(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse block edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;

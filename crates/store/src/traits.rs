@@ -288,6 +288,10 @@ pub trait SocialProjectionStore: Send + Sync {
     async fn get_sync_checkpoint(&self, checkpoint_key: &str) -> Result<Option<String>>;
     /// 背景で小分けに進む docs の読み出しの進み具合を書く(#1239)。同じ key は上書きする。
     async fn put_sync_checkpoint(&self, checkpoint_key: &str, value: &str) -> Result<()>;
+    /// author が署名つきの envelope で申告した docs author の id(#1239、ADR 0053 §6)。無ければ `None`。
+    async fn get_author_docs_author(&self, author_pubkey: &str) -> Result<Option<String>>;
+    /// author が署名つきの envelope で申告した docs author の id を書く(#1239)。同じ author は上書きする。
+    async fn put_author_docs_author(&self, author_pubkey: &str, docs_author: &str) -> Result<()>;
 }
 
 /// `list_author_relationships` の既定動作: 1 件ずつ `get_author_relationship` を呼ぶ。

@@ -1,6 +1,10 @@
 table adult_media_hashes
   column cid=0 name=blob_hash type=TEXT notnull=1 default=None pk=1
   column cid=1 name=marked_at type=INTEGER notnull=1 default=Some("0") pk=0
+table author_docs_authors
+  column cid=0 name=author_pubkey type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=docs_author type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=updated_at type=INTEGER notnull=1 default=None pk=0
 table author_relationship_cache
   column cid=0 name=local_author_pubkey type=TEXT notnull=1 default=None pk=1
   column cid=1 name=author_pubkey type=TEXT notnull=1 default=None pk=2
@@ -459,6 +463,9 @@ index idx_topic_objects_timeline table=topic_objects unique=0 origin=c partial=0
   sql=Some("CREATE INDEX idx_topic_objects_timeline ON topic_objects (topic_id, created_at DESC, object_id DESC)")
 index sqlite_autoindex_adult_media_hashes_1 table=adult_media_hashes unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("blob_hash")
+  sql=None
+index sqlite_autoindex_author_docs_authors_1 table=author_docs_authors unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("author_pubkey")
   sql=None
 index sqlite_autoindex_author_relationship_cache_1 table=author_relationship_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("local_author_pubkey")

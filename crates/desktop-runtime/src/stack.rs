@@ -141,6 +141,11 @@ reloadable_service! {
             replica_id: &ReplicaId,
             query: DocKeyQuery,
         ) -> Result<DocKeyPage>;
+        async fn query_replica_keys_by_author(
+            replica_id: &ReplicaId,
+            docs_author: &str,
+            query: DocKeyQuery,
+        ) -> Result<DocKeyPage>;
         // #1258: 宣言が無いと trait の既定実装に落ちる(docs author なし / 読み出しはエラー)。
         async fn local_docs_author() -> Result<Option<String>>;
         async fn query_replica_by_author(

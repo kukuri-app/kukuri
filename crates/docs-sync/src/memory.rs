@@ -165,6 +165,20 @@ impl DocsSync for MemoryDocsSync {
         })
     }
 
+    async fn query_replica_keys_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        query: DocKeyQuery,
+    ) -> Result<DocKeyPage> {
+        // この docs の record は、すべて `self.docs_author` の名義。他の docs author の record は無い。
+        if self.docs_author.as_deref() != Some(docs_author) {
+            self.open_replica(replica_id).await?;
+            return Ok(DocKeyPage::default());
+        }
+        self.query_replica_keys(replica_id, query).await
+    }
+
     async fn local_docs_author(&self) -> Result<Option<String>> {
         Ok(self.docs_author.clone())
     }

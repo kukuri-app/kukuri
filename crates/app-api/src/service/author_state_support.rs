@@ -61,6 +61,7 @@ pub(crate) struct HexBucketedKeys {
     done_through: Option<String>,
     last_bucket: Option<String>,
     stopped_early: bool,
+    docs_author: Option<String>,
 }
 
 impl HexBucketedKeys {
@@ -78,7 +79,14 @@ impl HexBucketedKeys {
             done_through,
             last_bucket: None,
             stopped_early: false,
+            docs_author: None,
         }
+    }
+
+    /// この docs author が書いた key だけを読む(他の名義の key で query の上限を使わせない。ADR 0053 §6)。
+    pub(crate) fn by_docs_author(mut self, docs_author: Option<String>) -> Self {
+        self.docs_author = docs_author;
+        self
     }
 
     fn split(&mut self, bucket: &str) {
@@ -123,16 +131,19 @@ impl HexBucketedKeys {
                 return Ok(None);
             }
             self.queries_left -= 1;
-            let page = docs_sync
-                .query_replica_keys(
-                    replica,
-                    DocKeyQuery {
-                        prefix: bucket.clone(),
-                        order: DocKeyOrder::Ascending,
-                        limit: self.batch,
-                    },
-                )
-                .await?;
+            let query = DocKeyQuery {
+                prefix: bucket.clone(),
+                order: DocKeyOrder::Ascending,
+                limit: self.batch,
+            };
+            let page = match self.docs_author.as_deref() {
+                Some(docs_author) => {
+                    docs_sync
+                        .query_replica_keys_by_author(replica, docs_author, query)
+                        .await?
+                }
+                None => docs_sync.query_replica_keys(replica, query).await?,
+            };
             if page.reached_limit && bucket.len() < self.root_len + 64 {
                 self.split(&bucket);
                 continue;
@@ -144,31 +155,35 @@ impl HexBucketedKeys {
     }
 }
 
-/// 起動時と追いつきで読む author replica の key。`profile/latest`、自分を指す follow・block の key、
+/// 起動時と追いつきで読む author replica の key(`profile/latest` は別に先に読む)。自分を指す follow・block の key、
 /// `graph/follows/`・`graph/blocks/` の key の上限つきの一覧(それぞれ `AUTHOR_EDGE_KEYS` 件)。値は読まない。
 /// 同じ key は 1 回だけ返す(一覧は docs author ごとの entry を返す)。
 async fn author_state_keys(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     local_author_pubkey: &str,
+    docs_author: Option<&str>,
 ) -> Result<Vec<String>> {
     let mut keys = vec![
-        stable_key("profile", "latest"),
         stable_key("graph/follows", local_author_pubkey),
         stable_key("graph/blocks", local_author_pubkey),
     ];
     let mut seen = keys.iter().cloned().collect::<BTreeSet<_>>();
     for prefix in ["graph/follows/", "graph/blocks/"] {
-        let page = docs_sync
-            .query_replica_keys(
-                replica,
-                DocKeyQuery {
-                    prefix: prefix.to_string(),
-                    order: DocKeyOrder::Ascending,
-                    limit: AUTHOR_EDGE_KEYS,
-                },
-            )
-            .await?;
+        let query = DocKeyQuery {
+            prefix: prefix.to_string(),
+            order: DocKeyOrder::Ascending,
+            limit: AUTHOR_EDGE_KEYS,
+        };
+        // 著者の docs author が分かれば、その名義の key だけで窓を作る(他の名義の key で窓を埋められない)。
+        let page = match docs_author {
+            Some(docs_author) => {
+                docs_sync
+                    .query_replica_keys_by_author(replica, docs_author, query)
+                    .await?
+            }
+            None => docs_sync.query_replica_keys(replica, query).await?,
+        };
         for entry in page.entries {
             if seen.insert(entry.key.clone()) {
                 keys.push(entry.key);
@@ -185,12 +200,58 @@ async fn hydrate_author_keys(
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
     let replica = author_replica_id(author_pubkey);
-    let mut outcome = AuthorHydration::default();
-    for key in author_state_keys(services.docs_sync.as_ref(), &replica, local_author_pubkey).await?
+    let mut docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    // profile を先に読む。docs author がまだ分からない著者でも、profile の envelope の tag から覚えれば、
+    // 同じ回の follow・block の窓と読み出しから docs author と key の組で読める。
+    let mut outcome = hydrate_author_record(
+        services,
+        author_pubkey,
+        &replica,
+        stable_key("profile", "latest").as_str(),
+        docs_author.as_deref(),
+        policy,
+    )
+    .await?;
+    if docs_author.is_none() {
+        docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    }
+    for key in author_state_keys(
+        services.docs_sync.as_ref(),
+        &replica,
+        local_author_pubkey,
+        docs_author.as_deref(),
+    )
+    .await?
     {
-        outcome.add(hydrate_author_record(services, author_pubkey, &replica, &key, policy).await?);
+        outcome.add(
+            hydrate_author_record(
+                services,
+                author_pubkey,
+                &replica,
+                &key,
+                docs_author.as_deref(),
+                policy,
+            )
+            .await?,
+        );
     }
     Ok(outcome)
+}
+
+/// author の docs author の id(ADR 0053 §6)。自分は手元の値。相手は、署名つきの envelope の tag から覚えた値
+/// (`hydrate_author_record` が覚える)。分からなければ `None`。
+pub(crate) async fn known_docs_author(
+    services: &ServiceHandles,
+    local_author_pubkey: &str,
+    author_pubkey: &str,
+) -> Result<Option<String>> {
+    if author_pubkey == local_author_pubkey {
+        return services.docs_sync.local_docs_author().await;
+    }
+    services
+        .projection_store
+        .get_author_docs_author(author_pubkey)
+        .await
 }
 
 async fn rebuild_relationships(services: &ServiceHandles, local_author_pubkey: &str) -> Result<()> {
@@ -242,7 +303,16 @@ pub(crate) async fn hydrate_author_key(
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
     let replica = author_replica_id(author_pubkey);
-    let outcome = hydrate_author_record(services, author_pubkey, &replica, key, policy).await?;
+    let docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    let outcome = hydrate_author_record(
+        services,
+        author_pubkey,
+        &replica,
+        key,
+        docs_author.as_deref(),
+        policy,
+    )
+    .await?;
     if outcome.changed > 0 {
         rebuild_relationships(services, local_author_pubkey).await?;
     }
@@ -276,6 +346,8 @@ pub(crate) async fn sweep_own_author_edges_with(
 ) -> Result<AuthorHydration> {
     let replica = author_replica_id(local_author_pubkey);
     let projection_store = services.projection_store.as_ref();
+    // 自分の docs author が分かれば、自分の名義の key だけを読む(他の名義のごみの key で query の上限を使わせない)。
+    let docs_author = services.docs_sync.local_docs_author().await?;
     let mut outcome = AuthorHydration::default();
     for prefix in ["graph/follows/", "graph/blocks/"] {
         let checkpoint_key = own_edge_checkpoint_key(local_author_pubkey, prefix);
@@ -289,7 +361,8 @@ pub(crate) async fn sweep_own_author_edges_with(
             .as_deref()
             .and_then(|value| value.strip_prefix(CHECKPOINT_AFTER))
             .map(str::to_string);
-        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through);
+        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through)
+            .by_docs_author(docs_author.clone());
         while let Some(entries) = keys
             .next_batch(services.docs_sync.as_ref(), &replica)
             .await?
@@ -305,6 +378,7 @@ pub(crate) async fn sweep_own_author_edges_with(
                     local_author_pubkey,
                     &replica,
                     &entry.key,
+                    docs_author.as_deref(),
                     DocFetchPolicy::LocalThenRemote,
                 )
                 .await
@@ -376,6 +450,7 @@ async fn verified_author_envelope(
     author_pubkey: &str,
     kind: AuthorKeyKind,
     record: &DocRecord,
+    docs_author: Option<&str>,
     policy: DocFetchPolicy,
 ) -> Result<Option<KukuriEnvelope>> {
     let decoded = match kind {
@@ -417,7 +492,7 @@ async fn verified_author_envelope(
         }
     };
     let Some(envelope) =
-        fetch_author_envelope_by_id(docs_sync, replica, &envelope_id, policy).await?
+        fetch_author_envelope(docs_sync, replica, &envelope_id, docs_author, policy).await?
     else {
         return Ok(None);
     };
@@ -446,14 +521,18 @@ async fn verified_author_envelope(
 /// `profile/latest`・`graph/follows/<target>`・`graph/blocks/<target>` の key を 1 つ読んで反映する。
 /// それ以外の key は何もしない。
 ///
-/// 同じ key に docs author ごとの record がありうる(誰でも書ける replica。ADR 0053 以前の端末ごとの名義も残る)。
-/// 先頭の 1 件だけを見ず、上限つき(`AUTHOR_RECORDS_PER_KEY` 件)で調べ、検証に通ったものから最も新しい
-/// envelope を選ぶ。読めない record と、検証に通らない record は飛ばす。
+/// 著者の docs author が分かっていれば、docs author と key の組で 1 件読む(ADR 0053 §6)。誰でも書ける replica でも、
+/// 他の名義の record は何件あっても読まない。組の record が無い・検証に通らないとき(docs author を申告する前の旧 record、
+/// 端末ごとの旧名義)と、docs author が分からないときは、上限つき(`AUTHOR_RECORDS_PER_KEY` 件)で調べ、
+/// 検証に通ったものから最も新しい envelope を選ぶ(best effort)。
+///
+/// 反映した envelope が docs author を申告していれば(署名つきの tag)、その著者の docs author として覚える。
 async fn hydrate_author_record(
     services: &ServiceHandles,
     author_pubkey: &str,
     replica: &ReplicaId,
     key: &str,
+    docs_author: Option<&str>,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
     let kind = if key == stable_key("profile", "latest") {
@@ -466,31 +545,64 @@ async fn hydrate_author_record(
         return Ok(AuthorHydration::default());
     };
     let docs_sync = services.docs_sync.as_ref();
-    let records = docs_sync
-        .query_replica_exact_bounded(replica, key, AUTHOR_RECORDS_PER_KEY, policy)
-        .await?;
     let mut newest: Option<KukuriEnvelope> = None;
-    for record in &records {
-        if let Some(envelope) =
-            verified_author_envelope(docs_sync, replica, author_pubkey, kind, record, policy)
-                .await?
-            && newest.as_ref().is_none_or(|current| {
-                (envelope.created_at, envelope.id.as_str())
-                    > (current.created_at, current.id.as_str())
-            })
-        {
-            newest = Some(envelope);
+    if let Some(docs_author) = docs_author
+        && let Some(record) = docs_sync
+            .query_replica_by_author(replica, docs_author, key, policy)
+            .await?
+    {
+        newest = verified_author_envelope(
+            docs_sync,
+            replica,
+            author_pubkey,
+            kind,
+            &record,
+            Some(docs_author),
+            policy,
+        )
+        .await?;
+    }
+    if newest.is_none() {
+        let records = docs_sync
+            .query_replica_exact_bounded(replica, key, AUTHOR_RECORDS_PER_KEY, policy)
+            .await?;
+        for record in &records {
+            if let Some(envelope) = verified_author_envelope(
+                docs_sync,
+                replica,
+                author_pubkey,
+                kind,
+                record,
+                None,
+                policy,
+            )
+            .await?
+                && newest.as_ref().is_none_or(|current| {
+                    (envelope.created_at, envelope.id.as_str())
+                        > (current.created_at, current.id.as_str())
+                })
+            {
+                newest = Some(envelope);
+            }
         }
     }
     let Some(envelope) = newest else {
         return Ok(AuthorHydration::default());
     };
-    let store = services.store.as_ref();
-    // 手元にある envelope は書き直さない。
-    let changed = store.get_envelope(&envelope.id).await?.is_none();
-    if changed {
-        store.put_envelope(envelope.clone()).await?;
+    if let Some(declared) = envelope.docs_author()
+        && Some(declared) != docs_author
+    {
+        services
+            .projection_store
+            .put_author_docs_author(author_pubkey, declared)
+            .await?;
     }
+    let store = services.store.as_ref();
+    // envelope が手元にあっても書き直す。`put_envelope` は envelope から follow・block・profile の行も作り直すので、
+    // 行だけが失われた状態から戻せる
+    // (envelope の有無だけで判断して書かないと、失われた行が二度と作られない。desktop の再起動の test で発生)。`changed` は関係の再計算の要否に使う。
+    let changed = store.get_envelope(&envelope.id).await?.is_none();
+    store.put_envelope(envelope.clone()).await?;
     if kind == AuthorKeyKind::Profile
         && let Ok(Some(profile)) = parse_profile(&envelope)
     {

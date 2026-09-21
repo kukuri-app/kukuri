@@ -173,6 +173,18 @@ pub trait DocsSync: Send + Sync {
     ) -> Result<DocKeyPage> {
         anyhow::bail!("this DocsSync implementation does not support bounded key queries")
     }
+    /// docs author を指定した、上限つきの key の一覧(#1239、ADR 0053 §6)。`query_replica_keys` と同じ意味で、
+    /// その docs author が書いた entry だけを返す。他の名義の entry は、何件あっても読まず、`limit` にも数えない。
+    /// `docs_author` が docs author の id として読めない値のときは、空の結果を返す。
+    /// 既定実装はエラーを返す(名義を問わない一覧へ黙って落ちると、他の名義の entry で窓が埋まる経路が戻るため)。
+    async fn query_replica_keys_by_author(
+        &self,
+        _replica_id: &ReplicaId,
+        _docs_author: &str,
+        _query: DocKeyQuery,
+    ) -> Result<DocKeyPage> {
+        anyhow::bail!("this DocsSync implementation does not support key queries by docs author")
+    }
     /// この実装が書き込みに使う、アカウントの署名鍵から導出した docs author の id(ADR 0053)。
     ///
     /// 導出した docs author を設定していない実装と、docs author を持たない実装は `None` を返す。`None` のとき、

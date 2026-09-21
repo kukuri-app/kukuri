@@ -49,6 +49,17 @@ impl DocsSync for InjectedNoticesDocsSync {
         self.inner.query_replica_keys(replica_id, query).await
     }
 
+    async fn query_replica_keys_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner
+            .query_replica_keys_by_author(replica_id, docs_author, query)
+            .await
+    }
+
     async fn subscribe_replica(
         &self,
         _replica_id: &ReplicaId,

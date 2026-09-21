@@ -182,14 +182,17 @@ pub use profile::{
     KukuriBlockEdgeEnvelopeContentV1, KukuriFollowEdgeEnvelopeContentV1,
     KukuriProfileEnvelopeContentV1, KukuriProfilePostEnvelopeContentV1,
     KukuriProfileRepostEnvelopeContentV1, Profile, ProfilePost, ProfileRepost,
-    build_block_edge_envelope, build_follow_edge_envelope, build_profile_envelope,
-    build_profile_post_envelope, build_profile_repost_envelope, parse_block_edge,
-    parse_follow_edge, parse_profile, parse_profile_post, parse_profile_repost,
+    build_block_edge_envelope, build_block_edge_envelope_with_docs_author,
+    build_follow_edge_envelope, build_follow_edge_envelope_with_docs_author,
+    build_profile_envelope, build_profile_envelope_with_docs_author, build_profile_post_envelope,
+    build_profile_repost_envelope, parse_block_edge, parse_follow_edge, parse_profile,
+    parse_profile_post, parse_profile_repost,
 };
 pub use reactions::{
     CustomReactionAssetDocV1, CustomReactionAssetSnapshotV1,
     KukuriCustomReactionAssetEnvelopeContentV1, KukuriReactionEnvelopeContentV1, ReactionDocV1,
-    ReactionKeyKind, ReactionKeyV1, build_custom_reaction_asset_envelope, build_reaction_envelope,
+    ReactionKeyKind, ReactionKeyV1, build_custom_reaction_asset_envelope,
+    build_custom_reaction_asset_envelope_with_docs_author, build_reaction_envelope,
     deterministic_reaction_id, parse_custom_reaction_asset, parse_reaction,
 };
 pub use rendezvous::{private_topic_rendezvous_key_hex_secret, public_topic_rendezvous_key};

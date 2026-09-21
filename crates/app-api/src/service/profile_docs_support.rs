@@ -283,12 +283,36 @@ pub(crate) async fn fetch_author_envelope_by_id(
     envelope_id: &EnvelopeId,
     policy: DocFetchPolicy,
 ) -> Result<Option<KukuriEnvelope>> {
+    fetch_author_envelope(docs_sync, replica, envelope_id, None, policy).await
+}
+
+/// author replica の `envelopes/<id>` を読む。著者の docs author が分かっていれば、docs author と key の組で 1 件読む
+/// (他の名義の record は何件あっても読まない。ADR 0053 §6)。無い・検証に通らないときは、key だけを指定した上限つきの
+/// 読み出しに落とす(旧 record)。
+pub(crate) async fn fetch_author_envelope(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    envelope_id: &EnvelopeId,
+    docs_author: Option<&str>,
+    policy: DocFetchPolicy,
+) -> Result<Option<KukuriEnvelope>> {
+    let key = stable_key("envelopes", envelope_id.as_str());
+    if let Some(docs_author) = docs_author
+        && let Some(record) = docs_sync
+            .query_replica_by_author(replica, docs_author, key.as_str(), policy)
+            .await?
+        && let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(record.value.as_slice())
+        && envelope.id == *envelope_id
+        && envelope.verify().is_ok()
+    {
+        return Ok(Some(envelope));
+    }
     // 同じ key に docs author ごとの record がありうる(誰でも書ける replica)。先頭の 1 件だけを見ず、上限つきで調べ、
     // 署名が通り id が一致する最初の envelope を返す(#1239)。
     let records = docs_sync
         .query_replica_exact_bounded(
             replica,
-            stable_key("envelopes", envelope_id.as_str()).as_str(),
+            key.as_str(),
             MAX_ENVELOPE_RECORDS_PER_OBJECT,
             policy,
         )
@@ -307,21 +331,27 @@ pub(crate) async fn fetch_author_envelope_by_id(
 pub(crate) async fn load_custom_reaction_assets_from_author_replica(
     docs_sync: &dyn DocsSync,
     author_pubkey: &str,
+    docs_author: Option<&str>,
 ) -> Result<Vec<CustomReactionAssetDocV1>> {
     // #1239: replica は走査しない。asset 1 件につき `state` と `envelope` の 2 key があるので、
     // `AUTHOR_REACTION_ASSETS` 件の asset ぶんの key を一覧し、`state` の key だけを読む。上限を超える asset は
     // 返さない(best effort)。
     let replica = author_replica_id(author_pubkey);
-    let page = docs_sync
-        .query_replica_keys(
-            &replica,
-            DocKeyQuery {
-                prefix: stable_key("reactions/assets", ""),
-                order: DocKeyOrder::Ascending,
-                limit: AUTHOR_REACTION_ASSETS.saturating_mul(2),
-            },
-        )
-        .await?;
+    // 自分の docs author が分かれば、自分の名義の key だけを一覧し、組で 1 件読む(他の名義の key で窓を埋められず、
+    // 他の名義の record で隠されない。ADR 0053 §6)。
+    let query = DocKeyQuery {
+        prefix: stable_key("reactions/assets", ""),
+        order: DocKeyOrder::Ascending,
+        limit: AUTHOR_REACTION_ASSETS.saturating_mul(2),
+    };
+    let page = match docs_author {
+        Some(docs_author) => {
+            docs_sync
+                .query_replica_keys_by_author(&replica, docs_author, query)
+                .await?
+        }
+        None => docs_sync.query_replica_keys(&replica, query).await?,
+    };
     let mut items = Vec::new();
     let mut seen = BTreeSet::new();
     for entry in page.entries {
@@ -331,7 +361,25 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
         if !seen.insert(entry.key.clone()) {
             continue;
         }
-        // 同じ key に docs author ごとの record がありうる。先頭の 1 件だけを見ず、上限つきで調べる。
+        if let Some(docs_author) = docs_author {
+            if let Some(record) = docs_sync
+                .query_replica_by_author(
+                    &replica,
+                    docs_author,
+                    entry.key.as_str(),
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await?
+                && let Ok(doc) =
+                    serde_json::from_slice::<CustomReactionAssetDocV1>(record.value.as_slice())
+                && doc.author_pubkey.as_str() == author_pubkey
+            {
+                items.push(doc);
+            }
+            continue;
+        }
+        // 名義が分からない(docs author を持たない実装)。同じ key に docs author ごとの record がありうるので、
+        // 先頭の 1 件だけを見ず、上限つきで調べる。
         for record in docs_sync
             .query_replica_exact_bounded(
                 &replica,
@@ -516,18 +564,23 @@ pub(crate) async fn snapshot_follow_notification_baseline(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     local_author_pubkey: &str,
+    docs_author: Option<&str>,
 ) -> Result<NotificationDocEventBaseline> {
     let key = stable_key("graph/follows", local_author_pubkey);
-    let page = docs_sync
-        .query_replica_keys(
-            replica,
-            DocKeyQuery {
-                prefix: key.clone(),
-                order: DocKeyOrder::Ascending,
-                limit: 1,
-            },
-        )
-        .await?;
+    let query = DocKeyQuery {
+        prefix: key.clone(),
+        order: DocKeyOrder::Ascending,
+        limit: 1,
+    };
+    // 相手の docs author が分かれば、その名義の entry だけを起点にする(他の名義の entry で 1 件の枠を埋められない)。
+    let page = match docs_author {
+        Some(docs_author) => {
+            docs_sync
+                .query_replica_keys_by_author(replica, docs_author, query)
+                .await?
+        }
+        None => docs_sync.query_replica_keys(replica, query).await?,
+    };
     Ok(NotificationDocEventBaseline::from_key_entries(
         page.entries.iter().filter(|entry| entry.key == key),
     ))

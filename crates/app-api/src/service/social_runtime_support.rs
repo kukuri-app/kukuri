@@ -274,6 +274,15 @@ impl AppService {
                 docs_sync.as_ref(),
                 &replica,
                 local_author_pubkey.as_str(),
+                known_docs_author(
+                    &services,
+                    local_author_pubkey.as_str(),
+                    author_key_for_task.as_str(),
+                )
+                .await
+                .ok()
+                .flatten()
+                .as_deref(),
             )
             .await
             {
@@ -321,7 +330,8 @@ impl AppService {
             let recovery_direct_message_subscriptions = Arc::clone(&direct_message_subscriptions);
             let recovery_local_author_pubkey = local_author_pubkey.clone();
             let recovery_author_pubkey = author_key_for_task.clone();
-            tokio::spawn(async move {
+            // 購読タスクが止まると、この task も止まる(#1239。切り離すと、購読の後にも読み出しが続く)。
+            let _bootstrap_recovery = AbortOnDrop(tokio::spawn(async move {
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     hydrate_author_state(
@@ -359,7 +369,7 @@ impl AppService {
                         );
                     }
                 }
-            });
+            }));
             // #1239: 自分の replica の follow・block は、起動時の上限つきの一覧に収まらないことがある。背景で小分けに
             // すべて読む(読み終えた位置を残し、読み終えたら繰り返さない)。購読タスクが止まると、この task も止まる。
             let is_own_replica = author_key_for_task == local_author_pubkey;

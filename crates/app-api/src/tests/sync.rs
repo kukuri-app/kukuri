@@ -104,6 +104,21 @@ impl DocsSync for CountingDocsSync {
         Ok(page)
     }
 
+    async fn query_replica_keys_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        let page = self
+            .inner
+            .query_replica_keys_by_author(replica_id, docs_author, query)
+            .await?;
+        self.records_returned
+            .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
+        Ok(page)
+    }
+
     async fn subscribe_replica(
         &self,
         replica_id: &ReplicaId,
@@ -353,6 +368,7 @@ fn app_with_hanging_remote_docs(
     )
 }
 
+mod author_docs_author;
 mod author_key_reflection;
 mod diagnostics;
 mod docs_author_reads;

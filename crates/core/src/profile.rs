@@ -265,22 +265,27 @@ pub fn build_profile_envelope(
     keys: &KukuriKeys,
     content: &KukuriProfileEnvelopeContentV1,
 ) -> Result<KukuriEnvelope> {
+    build_profile_envelope_with_docs_author(keys, content, None)
+}
+
+/// profile の envelope に、著者の docs author の id の tag を入れる(ADR 0053 §2、#1239)。
+pub fn build_profile_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    content: &KukuriProfileEnvelopeContentV1,
+    docs_author: Option<&str>,
+) -> Result<KukuriEnvelope> {
     let author_pubkey = keys.public_key();
     if content.author_pubkey != author_pubkey {
         bail!("profile author pubkey must match signer");
     }
     let created_at = now_timestamp_millis()?;
     let encoded = serde_json::to_string(content).context("failed to encode envelope content")?;
-    crate::sign_envelope_at(
-        keys,
-        "identity-profile",
-        vec![
-            vec!["author".into(), content.author_pubkey.as_str().to_string()],
-            vec!["object".into(), "identity-profile".into()],
-        ],
-        encoded,
-        created_at,
-    )
+    let mut tags = vec![
+        vec!["author".into(), content.author_pubkey.as_str().to_string()],
+        vec!["object".into(), "identity-profile".into()],
+    ];
+    crate::posts::push_docs_author_tag(&mut tags, docs_author)?;
+    crate::sign_envelope_at(keys, "identity-profile", tags, encoded, created_at)
 }
 
 pub fn build_profile_post_envelope(
@@ -366,6 +371,16 @@ pub fn build_follow_edge_envelope(
     target_pubkey: &Pubkey,
     status: FollowEdgeStatus,
 ) -> Result<KukuriEnvelope> {
+    build_follow_edge_envelope_with_docs_author(keys, target_pubkey, status, None)
+}
+
+/// follow の edge の envelope に、著者の docs author の id の tag を入れる(ADR 0053 §2、#1239)。
+pub fn build_follow_edge_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    target_pubkey: &Pubkey,
+    status: FollowEdgeStatus,
+    docs_author: Option<&str>,
+) -> Result<KukuriEnvelope> {
     let subject_pubkey = keys.public_key();
     if subject_pubkey == *target_pubkey {
         bail!("self follow is not allowed");
@@ -377,23 +392,29 @@ pub fn build_follow_edge_envelope(
     };
     let created_at = now_timestamp_millis()?;
     let encoded = serde_json::to_string(&content).context("failed to encode envelope content")?;
-    crate::sign_envelope_at(
-        keys,
-        "follow-edge",
-        vec![
-            vec!["subject".into(), subject_pubkey.as_str().to_string()],
-            vec!["target".into(), target_pubkey.as_str().to_string()],
-            vec!["object".into(), "follow-edge".into()],
-        ],
-        encoded,
-        created_at,
-    )
+    let mut tags = vec![
+        vec!["subject".into(), subject_pubkey.as_str().to_string()],
+        vec!["target".into(), target_pubkey.as_str().to_string()],
+        vec!["object".into(), "follow-edge".into()],
+    ];
+    crate::posts::push_docs_author_tag(&mut tags, docs_author)?;
+    crate::sign_envelope_at(keys, "follow-edge", tags, encoded, created_at)
 }
 
 pub fn build_block_edge_envelope(
     keys: &KukuriKeys,
     target_pubkey: &Pubkey,
     status: BlockEdgeStatus,
+) -> Result<KukuriEnvelope> {
+    build_block_edge_envelope_with_docs_author(keys, target_pubkey, status, None)
+}
+
+/// block の edge の envelope に、著者の docs author の id の tag を入れる(ADR 0053 §2、#1239)。
+pub fn build_block_edge_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    target_pubkey: &Pubkey,
+    status: BlockEdgeStatus,
+    docs_author: Option<&str>,
 ) -> Result<KukuriEnvelope> {
     let subject_pubkey = keys.public_key();
     if subject_pubkey == *target_pubkey {
@@ -406,17 +427,13 @@ pub fn build_block_edge_envelope(
     };
     let created_at = now_timestamp_millis()?;
     let encoded = serde_json::to_string(&content).context("failed to encode envelope content")?;
-    crate::sign_envelope_at(
-        keys,
-        "block-edge",
-        vec![
-            vec!["subject".into(), subject_pubkey.as_str().to_string()],
-            vec!["target".into(), target_pubkey.as_str().to_string()],
-            vec!["object".into(), "block-edge".into()],
-        ],
-        encoded,
-        created_at,
-    )
+    let mut tags = vec![
+        vec!["subject".into(), subject_pubkey.as_str().to_string()],
+        vec!["target".into(), target_pubkey.as_str().to_string()],
+        vec!["object".into(), "block-edge".into()],
+    ];
+    crate::posts::push_docs_author_tag(&mut tags, docs_author)?;
+    crate::sign_envelope_at(keys, "block-edge", tags, encoded, created_at)
 }
 
 pub fn parse_profile(envelope: &KukuriEnvelope) -> Result<Option<Profile>> {

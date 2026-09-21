@@ -625,7 +625,7 @@ B-1・B-2 の解消は確認された（修正を戻す mutation でそれぞれ
 
 | 指摘 | 原因 | 修正 |
 | --- | --- | --- |
-| B-3: 自分の edge を背景で読む処理が、購読を張り直すたびに最初から全件を読み直す。張り直しは 5 秒間隔で起こりうるので、自分の follow が多いと一度も終わらず、同じ全件の読み出しを繰り返す。query 数の上限に達すると、後ろの key が黙って落ちる | 読んだ位置も、読み終えた印も残していなかった。手元にある envelope も書き直していた | 読み終えた桶（key の prefix）の位置を store の新しい表 `sync_checkpoints`（migration `20260921030000`）に残し、次の実行は続きから読む（`HexBucketedKeys` の `done_through`。前回の桶の祖先は読まずに分け、それより前の桶は読まない）。1 回の実行は query 数の上限で止まり、位置を残す。読み終えたら印を残し、以後この端末では行わない。手元にある envelope は書き直さない。test `the_own_edge_sweep_resumes_and_stops_after_completion`（query の上限を小さくして複数回に分け、どの桶も 2 回読まないこと、読み終えた後は docs を 1 件も読まないこと） |
+| B-3: 自分の edge を背景で読む処理が、購読を張り直すたびに最初から全件を読み直す。張り直しは 5 秒間隔で起こりうるので、自分の follow が多いと一度も終わらず、同じ全件の読み出しを繰り返す。query 数の上限に達すると、後ろの key が黙って落ちる | 読んだ位置も、読み終えた印も残していなかった。手元にある envelope も書き直していた | 読み終えた桶（key の prefix）の位置を store の新しい表 `sync_checkpoints`（migration `20260921030000`）に残し、次の実行は続きから読む（`HexBucketedKeys` の `done_through`。前回の桶の祖先は読まずに分け、それより前の桶は読まない）。1 回の実行は query 数の上限で止まり、位置を残す。読み終えたら印を残し、以後この端末では行わない。test `the_own_edge_sweep_resumes_and_stops_after_completion`（query の上限を小さくして複数回に分け、どの桶も 2 回読まないこと、読み終えた後は docs を 1 件も読まないこと） |
 
 同じ監査の non-blocker のうち、この段階で直したもの（test で固定し、それぞれ規則を外す mutation で失敗することを確かめた）。
 
@@ -650,3 +650,23 @@ B-3 の解消（実行ごとに位置が進み、読み終えた桶を読み直�
 
 残した non-blocker: `sync_checkpoints` の行はアカウントごとに 4 行（自分の edge の follow・block、プロフィールの索引の補完の投稿・repost）で、アカウントの削除では消えない。
 「手元にある envelope は書き直さない」ことを固定する test が無い。
+
+### author replica を docs author と key の組で読む（ADR 0053 §6）
+
+独立監査の B-1（同じ key に他の名義の record を積むと著者の record を隠せる）は、上限つき（8 件）の読み出しで解消したが、
+9 件以上積まれると隠せる（ADR 0053 §4 の旧 record と同じ best effort）。利用者の指示で、投稿と同じく名義を決定的に選ぶ形にした（ADR 0053 §6）。
+
+- profile・follow・block・custom reaction の asset の envelope に `docs_author` の tag を入れる（`build_*_with_docs_author`）。
+- 読む側は、署名を検証した著者の envelope の tag から著者の docs author を覚え（store の `author_docs_authors`。migration `20260921030000` に追加）、
+  分かっていれば、profile・follow・block の record とその envelope を docs author と key の組で 1 件読み、follow・block の窓も docs author を指定した key の一覧
+  （`DocsSync::query_replica_keys_by_author`。iroh-docs の `Query::author(..).key_prefix(..)`）で作る。
+  follow の通知の起点、自分の edge の背景の読み出し、自分の custom reaction の asset の一覧も、docs author を指定して読む。
+- 分からないとき（tag の無い旧 record、docs author を申告する前の著者）と、組の record が無い・検証に通らないときは、上限つきの読み出しに落とす。
+- test: `crates/app-api/src/tests/sync/author_docs_author.rs`（10 件のごみの後ろの follow を、profile の tag から覚えた docs author で読む。tag の無い envelope からは覚えない。
+  自分の asset は自分の docs author で読むので、ごみが何件あっても消えない）、`crates/docs-sync/src/iroh_sync.rs` の `key_query_by_author_skips_entries_of_other_authors`
+  （実際の iroh-docs で、他の名義の key が窓を埋めないこと）。組での読み出し・profile の後の覚え直し・tag から覚える処理・asset の組での読み出しを外す mutation で、それぞれ test が失敗する。
+
+ローカルの全件の test で、desktop の friend-plus の再起動の test（`friend_plus_channel_restore_accepts_fresh_share_after_restart`）が、T6-1 の 2 回目の監査への修正（`8b8ac591`）から失敗していた
+（main と `ae0621a7` では通る。コミットをたどって特定した）。再起動した端末で、自分の follow の envelope は手元にあるのに follow の行が無く、
+「手元にある envelope は書き直さない」判定のため、行が二度と作られなかった。`put_envelope` は envelope から follow・block・profile の行も作り直すので、
+envelope が手元にあっても毎回書く形に戻した（`changed` は関係の再計算の要否にだけ使う）。

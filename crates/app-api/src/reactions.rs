@@ -156,7 +156,8 @@ impl AppService {
             .blob_service
             .put_blob(input.bytes, input.mime.as_str())
             .await?;
-        let envelope = build_custom_reaction_asset_envelope(
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
+        let envelope = build_custom_reaction_asset_envelope_with_docs_author(
             self.services.keys.as_ref(),
             stored_blob.hash.clone(),
             input.search_key,
@@ -164,6 +165,7 @@ impl AppService {
             stored_blob.bytes,
             input.width,
             input.height,
+            docs_author.as_deref(),
         )?;
         let asset = parse_custom_reaction_asset(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse custom reaction asset envelope"))?;
@@ -180,9 +182,11 @@ impl AppService {
 
     pub async fn list_my_custom_reaction_assets(&self) -> Result<Vec<CustomReactionAssetView>> {
         let author_pubkey = self.current_author_pubkey();
+        let docs_author = self.services.docs_sync.local_docs_author().await?;
         let mut items = load_custom_reaction_assets_from_author_replica(
             self.services.docs_sync.as_ref(),
             &author_pubkey,
+            docs_author.as_deref(),
         )
         .await?;
         items.sort_by(|left, right| {

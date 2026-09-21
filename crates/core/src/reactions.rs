@@ -302,6 +302,23 @@ pub fn build_custom_reaction_asset_envelope(
     width: u32,
     height: u32,
 ) -> Result<KukuriEnvelope> {
+    build_custom_reaction_asset_envelope_with_docs_author(
+        keys, blob_hash, search_key, mime, bytes, width, height, None,
+    )
+}
+
+/// custom reaction の asset の envelope に、著者の docs author の id の tag を入れる(ADR 0053 §2、#1239)。
+#[allow(clippy::too_many_arguments)]
+pub fn build_custom_reaction_asset_envelope_with_docs_author(
+    keys: &KukuriKeys,
+    blob_hash: BlobHash,
+    search_key: String,
+    mime: String,
+    bytes: u64,
+    width: u32,
+    height: u32,
+    docs_author: Option<&str>,
+) -> Result<KukuriEnvelope> {
     let author_pubkey = keys.public_key();
     if mime.trim().is_empty() {
         bail!("custom reaction asset mime must not be empty");
@@ -314,14 +331,16 @@ pub fn build_custom_reaction_asset_envelope(
         bail!("custom reaction asset dimensions must be non-zero");
     }
     let created_at = now_timestamp_millis()?;
+    let mut tags = vec![
+        vec!["author".into(), author_pubkey.as_str().to_string()],
+        vec!["object".into(), "custom-reaction-asset".into()],
+        vec!["blob_hash".into(), blob_hash.as_str().to_string()],
+    ];
+    crate::posts::push_docs_author_tag(&mut tags, docs_author)?;
     crate::sign_envelope_at(
         keys,
         "custom-reaction-asset",
-        vec![
-            vec!["author".into(), author_pubkey.as_str().to_string()],
-            vec!["object".into(), "custom-reaction-asset".into()],
-            vec!["blob_hash".into(), blob_hash.as_str().to_string()],
-        ],
+        tags,
         serde_json::to_string(&KukuriCustomReactionAssetEnvelopeContentV1 {
             author_pubkey,
             blob_hash,

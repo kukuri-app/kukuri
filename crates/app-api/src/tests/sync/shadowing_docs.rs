@@ -116,6 +116,19 @@ impl DocsSync for ShadowingDocsSync {
         Ok(self.account_docs_author.clone())
     }
 
+    async fn query_replica_keys_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        // `inner` の entry は `account_docs_author` の名義。shadow は他の名義なので、一覧には入らない。
+        if self.account_docs_author.as_deref() != Some(docs_author) {
+            return Ok(kukuri_docs_sync::DocKeyPage::default());
+        }
+        self.query_replica_keys(replica_id, query).await
+    }
+
     async fn query_replica_by_author(
         &self,
         replica_id: &ReplicaId,

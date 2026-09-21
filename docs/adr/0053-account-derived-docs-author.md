@@ -96,6 +96,22 @@ docs author が合うことは、検証の代わりにしない。他人の docs
 - 端末ごとの docs author を署名つきで公開する: 投稿した端末と取り下げる端末が違うと成り立たない。
 - 著者しか書けない replica にも置く、docs とは別の経路で envelope を運ぶ: 開く replica の数や復旧の経路という別の問題を増やす。
 
+### 6. author replica の読み出し（#1239 で追加）
+
+author replica（`author::<pubkey>`）の profile・follow・block・custom reaction の asset も、誰でも書ける replica に置かれる。
+同じ key に他の名義の record を積まれると、先頭の 1 件や上限つきの読み出しでは、著者の record を隠せる。投稿と同じ方法で、名義を決定的に選んで読む。
+
+- profile（`identity-profile`）・follow の edge（`follow-edge`）・block の edge（`block-edge`）・custom reaction の asset（`custom-reaction-asset`）の envelope にも、
+  §2 と同じ `docs_author` の tag を入れる。
+- 読む側は、著者の docs author の id を、署名を検証した著者の envelope の tag から覚え、端末内に保存する（`author_docs_authors`。著者ごとに 1 行）。
+  自分の docs author は手元の値を使う。profile を先に読み、そこで覚えた docs author を、同じ回の follow・block の読み出しから使う。
+- 著者の docs author が分かっているとき:
+  - profile・follow・block の record と、それが指す `envelopes/<id>` は、docs author と key の組で 1 件読む。
+  - follow・block の窓（上限つきの key の一覧）は、docs author を指定した一覧（`query_replica_keys_by_author`）で作る。他の名義の key で窓を埋められない。
+  - follow の通知の起点、自分の edge の背景の読み出し、自分の custom reaction の asset の一覧も、docs author を指定して読む。
+- 組の record が無い・検証に通らないとき（tag の無い旧 record、端末ごとの旧名義）と、docs author が分からないときは、§3 と同じく key だけを指定した上限つき（8 件）の読み出しに落とし、
+  検証に通ったものから最も新しい envelope を選ぶ（best effort）。旧名義の edge は、docs author を指定した窓には入らない（docs の event と key 指定の読み出しでは入る）。
+
 ## Consequences
 
 - 同じアカウントの書き込みは、端末が違っても同じ docs author になる。docs の層から端末を区別できなくなる。
@@ -106,7 +122,8 @@ docs author が合うことは、検証の代わりにしない。他人の docs
 
 ## Data classification
 
-- 新しく docs と gossip へ置く情報: docs author の id（公開の識別子）。Canonical Source は投稿の envelope の tag。公開範囲は `pubkey` と同じ。
+- 新しく docs と gossip へ置く情報: docs author の id（公開の識別子）。Canonical Source は投稿の envelope の tag（§6 の後は、profile・follow・block・custom reaction の asset の envelope の tag も）。公開範囲は `pubkey` と同じ。
+- 端末内に置く情報（§6）: 著者ごとの docs author の id（`author_docs_authors`）。著者の envelope の tag から得た公開の識別子の写しで、Canonical Source は envelope の tag。
 - 端末内だけに置く情報: 導出した docs author の秘密鍵（iroh-docs の保存場所）。暗号化された端末バックアップには保存場所ごと含まれるが、復元先はアカウントの秘密鍵から導出し直す。
 - 外部送信の一覧（`docs/legal/app-data-flow-inventory.md`）の「公開鍵・endpoint ID・接続情報」の行に、docs author の id を加える。
 
