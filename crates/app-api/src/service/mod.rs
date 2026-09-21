@@ -382,7 +382,7 @@ pub struct ServiceHandles {
     pub(crate) keys: Arc<KukuriKeys>,
     pub(crate) game_room_projections: Arc<GameRoomProjectionLocks>,
     pub(crate) dome_mutations: Arc<Mutex<()>>,
-    /// #1225: replica 全件走査の指紋と、欠損した本文 blob の試行台帳。
+    /// #1225: 欠損した本文 blob の試行台帳。
     pub(crate) missing_body_ledger: Arc<hydration_limits::MissingBodyLedger>,
     /// #1239: 表示した投稿の取り下げの、背景での確認の台帳。
     pub(crate) withdrawal_checks: Arc<hydration_limits::WithdrawalCheckLedger>,
@@ -465,7 +465,7 @@ impl SubscriptionRecoveryBackoff {
         self.step = 0;
     }
 
-    /// 変化が無い間の次の全件走査の時刻。再 sync の backoff に合わせて伸ばす(#1225)。
+    /// 変化が無い間の、次に再 sync を促す時刻。再 sync の backoff に合わせて伸ばす(#1225)。
     pub(crate) fn next_probe_at(&self, now_ms: i64) -> i64 {
         now_ms
             .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS)

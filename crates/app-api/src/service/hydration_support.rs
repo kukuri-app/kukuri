@@ -236,7 +236,7 @@ async fn hydrate_doc_event_key(
 }
 
 /// replica の内容(投稿・thread・session)を指す hint か。それ以外の hint は、個別反映が 0 件でも
-/// 全件走査の契機にしない(#1225)。
+/// 窓の追いつきの契機にしない(#1225、#1239)。
 pub(crate) fn hint_refers_to_replica_content(hint: &GossipHint) -> bool {
     matches!(
         hint,

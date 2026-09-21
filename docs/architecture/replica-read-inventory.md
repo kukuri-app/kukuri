@@ -6,7 +6,8 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 
 - 基準 commit: `117af820`
 - 列挙方法: `grep -rn "DocQuery::Prefix\|DocQuery::All" crates --include=*.rs` から test と `docs-sync` の実装を除く。全件走査の入口は
-  `hydrate_subscription_state` / `hydrate_topic_state` / `hydrate_scope_projection` / `hydrate_author_state` の caller を逆引きする。
+  `hydrate_subscription_state` / `hydrate_topic_state` / `hydrate_scope_projection` / `hydrate_author_state` の caller を逆引きした
+  （前の 3 つは T5b-1 で削除済み。残る入口は `hydrate_author_state`）。
 - 未分類: 0
 
 ## 前提: query の実行計画

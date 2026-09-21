@@ -364,3 +364,208 @@ async fn sync_finished_waits_for_the_interval_stretched_by_empty_runs() {
     pair.author.shutdown().await;
     pair.viewer.shutdown().await;
 }
+
+// ここから下は、独立監査(PR #1268)の確認 test を恒久化したもの。
+
+/// session が固定件数を超える replica で、読む量が session の総数に依存せず、新しい側が必ず入る。
+async fn catch_up_with_rooms(rooms: usize) -> (usize, Vec<String>, Vec<String>) {
+    let docs_sync = Arc::new(CountingDocsSync::default());
+    let pair = pair(docs_sync.clone());
+    let topic = format!("kukuri:topic:session-window-{rooms}");
+    let mut created = Vec::new();
+    for index in 0..rooms {
+        created.push(
+            pair.author
+                .create_game_room(
+                    topic.as_str(),
+                    game_room_input(format!("room {index}").as_str()),
+                )
+                .await
+                .expect("create game room"),
+        );
+        // id は `game-<ms>-<owner>` なので、同じ ms に 2 件作らない。
+        sleep(Duration::from_millis(2)).await;
+    }
+    docs_sync.reset_records_returned();
+    crate::service::catch_up_sessions(
+        &pair.viewer.services,
+        topic.as_str(),
+        &topic_replica_id(topic.as_str()),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("catch up sessions");
+    let returned = docs_sync.records_returned();
+    let projection_store: &dyn ProjectionStore = pair.viewer_store.as_ref();
+    let projected = projection_store
+        .list_topic_game_rooms(topic.as_str())
+        .await
+        .expect("rooms")
+        .into_iter()
+        .map(|row| row.room_id)
+        .collect::<Vec<_>>();
+    pair.author.shutdown().await;
+    pair.viewer.shutdown().await;
+    (returned, created, projected)
+}
+
+#[tokio::test]
+async fn session_catch_up_is_bounded_and_prefers_the_new_side() {
+    let (returned_small, created_small, projected_small) = catch_up_with_rooms(140).await;
+    let (returned_large, created_large, projected_large) = catch_up_with_rooms(280).await;
+    for (created, projected) in [
+        (&created_small, &projected_small),
+        (&created_large, &projected_large),
+    ] {
+        // 新しい側の 32 件は必ず入る。
+        for room_id in created.iter().rev().take(32) {
+            assert!(
+                projected.contains(room_id),
+                "the newest rooms must be projected"
+            );
+        }
+        // 反映は固定件数(新しい側 32 + 古い側 32)まで。
+        assert_eq!(projected.len(), 64);
+    }
+    // 読んだ record と key の数は、session の総数を 2 倍にしても変わらない(key の一覧の上限 128 件を超えた範囲)。
+    assert_eq!(returned_small, returned_large);
+}
+
+// 監査: 一覧の追いつきは replica ごとに間隔を空ける(5 秒)。間隔のあいだは docs を読まず、過ぎれば反映する。
+#[tokio::test]
+async fn list_catch_up_is_spaced_per_replica() {
+    let docs_sync = Arc::new(SilentNoScanDocsSync::default());
+    let pair = pair(docs_sync);
+    let topic = "kukuri:topic:session-list-interval";
+    // TR-10: live / game の無い topic は空を返す(走査のできない docs でも失敗しない)。
+    assert!(
+        pair.viewer
+            .list_game_rooms(topic)
+            .await
+            .expect("rooms")
+            .is_empty()
+    );
+    assert!(
+        pair.viewer
+            .list_live_sessions(topic)
+            .await
+            .expect("sessions")
+            .is_empty()
+    );
+    sleep(Duration::from_millis(300)).await;
+    let room_id = pair
+        .author
+        .create_game_room(topic, game_room_input("late room"))
+        .await
+        .expect("create game room");
+    // 間隔のあいだ(event は届かない docs)。
+    assert!(
+        pair.viewer
+            .list_game_rooms(topic)
+            .await
+            .expect("rooms")
+            .is_empty()
+    );
+    sleep(Duration::from_millis(5_200)).await;
+    let rooms = pair.viewer.list_game_rooms(topic).await.expect("rooms");
+    assert!(rooms.iter().any(|room| room.room_id == room_id));
+    pair.author.shutdown().await;
+    pair.viewer.shutdown().await;
+}
+
+// 監査: viewer が 0 の live session があるあいだは、行があっても一覧の取得が session を反映し直す
+// (以前は全件走査が担っていた。終了の event を取りこぼしても、一覧が「配信中」のまま残らない)。
+// 注意: この test は head で成功するが、`needs_refresh` の分岐を外す mutation では失敗しなかった
+// (購読タスクの側の反映でも Ended になる)。分岐そのものを固定する test にはなっていない。
+#[tokio::test]
+async fn live_list_refreshes_a_live_session_without_viewers() {
+    let docs_sync = Arc::new(SilentNoScanDocsSync::default());
+    let pair = pair(docs_sync);
+    let topic = "kukuri:topic:live-refresh";
+    let session_id = pair
+        .author
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "a session".into(),
+                description: String::new(),
+            },
+        )
+        .await
+        .expect("create live session");
+    let sessions = pair
+        .viewer
+        .list_live_sessions(topic)
+        .await
+        .expect("sessions");
+    let session = sessions
+        .iter()
+        .find(|session| session.session_id == session_id)
+        .expect("the session is listed");
+    assert_eq!(session.status, LiveSessionStatus::Live);
+    pair.author
+        .end_live_session(topic, session_id.as_str())
+        .await
+        .expect("end live session");
+    sleep(Duration::from_millis(5_200)).await;
+    let sessions = pair
+        .viewer
+        .list_live_sessions(topic)
+        .await
+        .expect("sessions");
+    let session = sessions
+        .iter()
+        .find(|session| session.session_id == session_id)
+        .expect("the session is still listed");
+    assert_eq!(session.status, LiveSessionStatus::Ended);
+    pair.author.shutdown().await;
+    pair.viewer.shutdown().await;
+}
+
+// 監査: 形の違う key(誰でも書ける)で prefix 全体の昇順と降順の固定件数を埋められても、
+// `sessions/game/game-` の降順が新しい score game を反映する。
+#[tokio::test]
+async fn foreign_keys_after_the_game_prefix_do_not_hide_new_rooms() {
+    let docs_sync = Arc::new(CountingDocsSync::default());
+    let pair = pair(docs_sync.clone());
+    let topic = "kukuri:topic:session-junk";
+    let replica = topic_replica_id(topic);
+    let room_id = pair
+        .author
+        .create_game_room(topic, game_room_input("a room"))
+        .await
+        .expect("create game room");
+    // 昇順の側も降順の側も、形の違う key で埋める。
+    for index in 0..400 {
+        let side = if index % 2 == 0 { "aa" } else { "zz" };
+        docs_sync
+            .apply_doc_op(
+                &replica,
+                DocOp::SetJson {
+                    key: format!("sessions/game/{side}-{index:04}/state"),
+                    value: serde_json::json!({ "junk": index }),
+                },
+            )
+            .await
+            .expect("write a foreign key");
+    }
+    crate::service::catch_up_sessions(
+        &pair.viewer.services,
+        topic,
+        &replica,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("catch up sessions");
+    let projection_store: &dyn ProjectionStore = pair.viewer_store.as_ref();
+    assert!(
+        projection_store
+            .list_topic_game_rooms(topic)
+            .await
+            .expect("rooms")
+            .iter()
+            .any(|row| row.room_id == room_id)
+    );
+    pair.author.shutdown().await;
+    pair.viewer.shutdown().await;
+}
