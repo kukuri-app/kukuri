@@ -15,6 +15,7 @@ import {
   cursorIsBeyond,
   cursorIsBeyondVisiblePosts,
   hasReadPastHeadPage,
+  headPageReachesVisiblePosts,
   hasLoadedOlderAuthoritativePosts,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
@@ -364,6 +365,20 @@ describe('hasReadPastHeadPage', () => {
     expect(
       hasReadPastHeadPage([row('a', 30)], [row('a', 30)], at(5, 'hidden-4'), at(9, 'hidden-1'), 'desc')
     ).toBe(true);
+  });
+
+  test('先頭のページと表示中の行のあいだに新着の隙間があれば、読み進めた位置を残さない', () => {
+    // 表示中は r1 だけ。その先を読み進めた後に、1 ページ(3 行)を超える新着が届いた。
+    const visible = [row('r1', 10)];
+    const incoming = [row('n1', 40), row('n2', 30), row('n3', 20)];
+    expect(headPageReachesVisiblePosts(visible, incoming)).toBe(false);
+    expect(hasReadPastHeadPage(visible, incoming, at(1, 'h9'), at(20, 'n3'), 'desc')).toBe(false);
+    // 新着が 1 ページに収まり、先頭のページが表示中の行と重なれば、位置を残す。
+    const reaching = [row('n1', 40), row('n2', 30), row('r1', 10)];
+    expect(headPageReachesVisiblePosts(visible, reaching)).toBe(true);
+    expect(hasReadPastHeadPage(visible, reaching, at(1, 'h9'), at(10, 'r1'), 'desc')).toBe(true);
+    // 先頭のページに新しい行が無ければ(非表示の範囲の途中)、あいだは無い。
+    expect(headPageReachesVisiblePosts([], [])).toBe(true);
   });
 
   test('thread は古い順', () => {

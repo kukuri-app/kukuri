@@ -161,13 +161,6 @@ async function runScenario(seed: number) {
   });
 
   const trace: string[] = [];
-  // 前回の新着の適用から、表示できる新着が何件届いたか。
-  //
-  // 注記: 適用の前に 1 ページ(`LIMIT`)を超える数の新着がたまると、新着の banner は新しい側の 1 ページだけを
-  // 表示し、その手前の新着は続きの読み込み(古い側)の範囲にも入らないので表示されない。これは #1239 より前からの
-  // 挙動で(`main` の画面と、読み飛ばしの上限の無い backend でも同じ)、#1274 で扱う。この test は、
-  // 読み飛ばしの上限と続きの位置の扱いを確かめるために、その形を作らない。
-  let newVisibleSinceApply = 0;
   for (let step = 0; step < 14; step += 1) {
     const roll = next();
     if (roll < 0.4) {
@@ -180,19 +173,7 @@ async function runScenario(seed: number) {
       trace.push(`arrive${count}`);
       for (let index = 0; index < count; index += 1) {
         const hidden = next() < 0.4;
-        if (!hidden && newVisibleSinceApply >= LIMIT) {
-          // 1 ページを超える数の新着を、適用の前にためない(下の注記)。
-          trace.push('apply');
-          await act(async () => {
-            await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_MS);
-          });
-          await act(async () => {
-            await view.result.current.refreshTimelineFeed(TOPIC, null);
-          });
-          newVisibleSinceApply = 0;
-        }
         addRow(hidden);
-        newVisibleSinceApply += hidden ? 0 : 1;
       }
       await act(async () => {
         await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_MS);
@@ -202,7 +183,6 @@ async function runScenario(seed: number) {
       await act(async () => {
         await view.result.current.refreshTimelineFeed(TOPIC, null);
       });
-      newVisibleSinceApply = 0;
     } else {
       trace.push('tick');
       await act(async () => {

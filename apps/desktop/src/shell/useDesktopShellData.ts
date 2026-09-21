@@ -30,8 +30,6 @@ import { useNotificationLoaders } from '@/shell/data/loaders/useNotificationLoad
 import { useDesktopShellSectionLoaders } from '@/shell/data/loaders/useDesktopShellSectionLoaders';
 import { useQueuedLoadTopics } from '@/shell/data/useQueuedLoadTopics';
 import {
-  cursorIsBeyondVisiblePosts,
-  hasLoadedOlderAuthoritativePosts,
   hasReadPastHeadPage,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
@@ -410,12 +408,17 @@ export function useDesktopShellData({
       }
       const currentTimelinePosts = currentState.timelinesByKey[key] ?? EMPTY_POSTS;
       const pendingCursor = currentState.pendingTimelineNextCursorByKey[key] ?? null;
-      // refresh は、読み進めた位置を残すと決めたときだけ、保留の続きの位置に先頭のページより先の位置を入れる
-      // (#1239)。そのときは、表示中の古い行も残す(先頭のページに置き換えると、読み進めた範囲の手前の行が消え、
-      // 続きの読み込みはその先から始まるので、二度と表示されない)。
-      const preserveOlderPages =
-        hasLoadedOlderAuthoritativePosts(currentTimelinePosts, pendingItems) ||
-        cursorIsBeyondVisiblePosts(pendingCursor, pendingItems, 'desc');
+      // refresh と同じ判定で、表示中の古い行を残すかを決める(#1239、#1274)。refresh が読み進めた位置を残したとき、
+      // 保留の続きの位置は保留中の先頭のページより先にある。判定が refresh と食い違うと、表示と続きの位置が
+      // 食い違う(行が消える、または順序が崩れる)。
+      const lastPending = pendingItems.filter((post) => !post.local_state).at(-1);
+      const preserveOlderPages = hasReadPastHeadPage(
+        currentTimelinePosts,
+        pendingItems,
+        pendingCursor,
+        lastPending ? { created_at: lastPending.created_at, object_id: lastPending.object_id } : null,
+        'desc'
+      );
       startTransition(() => {
         setTimelinesByKey(updateRecordEntry(key, (prev) => mergeRefreshedVisiblePosts(
             prev ?? EMPTY_POSTS,
@@ -533,9 +536,16 @@ export function useDesktopShellData({
           const publicTimelineKey = timelineScopeStorageKey(topic, PUBLIC_TIMELINE_SCOPE);
           const baselinePublicTimeline =
             currentState.timelinesByKey[publicTimelineKey] ?? EMPTY_POSTS;
+          // 公開の scope の列も、選択中の scope と同じ判定で古い行と続きの位置を残す(#1239、#1274)。
           const preservePublicTimelinePages =
             mode === 'buffer' &&
-            hasLoadedOlderAuthoritativePosts(baselinePublicTimeline, publicTimeline.items);
+            hasReadPastHeadPage(
+              baselinePublicTimeline,
+              publicTimeline.items,
+              currentState.timelineNextCursorByKey[publicTimelineKey],
+              publicTimeline.next_cursor,
+              'desc'
+            );
           const resolvedPublicTimelineCursor = preservePublicTimelinePages
             ? (currentState.timelineNextCursorByKey[publicTimelineKey] ?? null)
             : (publicTimeline.next_cursor ?? null);

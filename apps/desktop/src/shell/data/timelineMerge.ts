@@ -81,7 +81,39 @@ export function cursorIsBeyondVisiblePosts(
 }
 
 /**
- * refresh(buffer)が、表示中の続きの位置を残すべきか。行を読み足したか、行を増やさずに読み進めたとき。
+ * 先頭のページと表示中の行のあいだに、読んでいない行が無いか(#1239)。
+ *
+ * 先頭のページに新しい行が無いか、先頭のページが表示中の行と重なっていれば、あいだは無い。新しい行があって
+ * 重なっていなければ、1 ページを超える数の新着が届いていて、先頭のページの先から表示中の行までのあいだに、
+ * まだ読んでいない新着がありうる。
+ */
+export function headPageReachesVisiblePosts(current: PostView[], incoming: PostView[]): boolean {
+  const visibleIds = new Set(
+    current.filter((post) => !post.local_state).map((post) => postIdentityKey(post))
+  );
+  let hasNewRows = false;
+  for (const post of incoming) {
+    if (visibleIds.has(postIdentityKey(post))) {
+      return true;
+    }
+    hasNewRows = true;
+  }
+  return !hasNewRows;
+}
+
+/**
+ * refresh(buffer)と新着の適用が、表示中の古い行と続きの位置を残すべきか(#1239、#1274)。
+ *
+ * 表示は「先頭から続きの位置まで」を欠けなく並べたものでなければならない。残すのは、先頭のページと表示中の行の
+ * あいだに読んでいない行が無く(`headPageReachesVisiblePosts`)、かつ先頭のページより先を読んでいるときだけ。
+ * 先を読んでいるとは、行を読み足した(行数)か、行を増やさずに読み進めた(非表示の著者の範囲。続きの位置)こと。
+ *
+ * あいだがあるとき(1 ページを超える数の新着が届いた)に古い行を残すと、あいだの新着が表示されないか、
+ * 続きの読み込みが古い行の後ろへ並べる。そのときは先頭のページから読み直す(読んだ範囲は読み直しになるが、
+ * 行は欠けず、順序も崩れない)。
+ *
+ * `storedCursor` は、表示中の続きの位置。新着の適用では、refresh が決めた保留の続きの位置を渡し、
+ * `headCursor` には保留中の先頭のページの最後の行の位置を渡す。
  */
 export function hasReadPastHeadPage(
   current: PostView[],
@@ -90,6 +122,9 @@ export function hasReadPastHeadPage(
   headCursor: TimelineCursor | null | undefined,
   order: 'asc' | 'desc'
 ): boolean {
+  if (!headPageReachesVisiblePosts(current, incoming)) {
+    return false;
+  }
   return (
     hasLoadedOlderAuthoritativePosts(current, incoming) ||
     (cursorIsBeyond(storedCursor, headCursor, order) &&
