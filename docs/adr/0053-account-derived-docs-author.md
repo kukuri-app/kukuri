@@ -111,8 +111,9 @@ author replica（`author::<pubkey>`）の profile・follow・block・custom reac
   - follow の通知の起点、自分の edge の背景の読み出し、自分の custom reaction の asset の一覧も、docs author を指定して読む。
 - 組の record が無い・検証に通らないとき（tag の無い旧 record、端末ごとの旧名義）と、docs author が分からないときは、§3 と同じく key だけを指定した上限つき（8 件）の読み出しに落とし、
   検証に通ったものから最も新しい envelope を選ぶ（best effort）。旧名義の edge は、docs author を指定した窓には入らない（docs の event と key 指定の読み出しでは入る）。
-- 自分の replica の edge は、背景で名義を問わない一覧で小分けに読み（読み終えた位置を残し、event を取りこぼしたら最初から読み直す）、旧名義でしか読めなかった edge を
-  自分の docs author で書き直す（書き直すと、同じ key の旧名義の entry は §4 の規則で消える）。以後は、どの端末でも docs author と key の組で読める。
+- 自分の replica の edge は、背景で名義を問わない一覧で小分けに読む（読み終えた位置を残し、event を取りこぼしたら最初から読み直す）。旧名義でしか読めない edge も入る。
+  読み出しの中で旧名義の edge を自分の docs author へ書き直すことはしない。同期の途中では、ほかの端末が自分の docs author で書いた新しい状態がまだ届いていないことがあり、
+  古い状態を新しい時刻で書き戻すと、全端末の状態を巻き戻すため。自分の docs author へ移るのは、利用者がその edge を書いた（follow・unfollow・block・unblock した）とき。
 - 旧版の client が、新版と同じアカウントで旧名義に後から書いた edge は、組の record が先に使われるので読まれない（旧版との混在期間だけの best effort）。
 
 ## Consequences

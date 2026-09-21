@@ -1,8 +1,8 @@
-//! #1239 / ADR 0053 §6: 自分の replica の、ADR 0053 以前の端末ごとの名義(旧名義)で書かれた edge も、背景の読み出しで読み、
-//! 自分の docs author で書き直す(独立監査 B-5)。
+//! #1239 / ADR 0053 §6: 自分の replica の、ADR 0053 以前の端末ごとの名義(旧名義)で書かれた edge も、背景の読み出しで読む
+//! (独立監査 B-5)。読み出しの中では書き直さない(独立監査 B-6。同期の途中で古い状態を新しい時刻で書き戻すため)。
 
 use super::*;
-use crate::service::author_state_support::{AUTHOR_EDGE_KEYS, sweep_own_author_edges_with};
+use crate::service::author_state_support::sweep_own_author_edges_with;
 use std::collections::HashSet;
 
 const ACCOUNT_DOCS_AUTHOR: &str =
@@ -116,10 +116,9 @@ impl DocsSync for LegacyNameDocsSync {
     }
 }
 
-// 旧名義の自分の follow は、背景の読み出しで入り、自分の docs author で書き直される。書き直した後は、docs author を指定した
-// 窓(起動時と追いつき)にも入る。
+// 旧名義の自分の follow は、背景の読み出しで入る。読み出しは docs に何も書かない(旧名義の edge を書き直さない)。
 #[tokio::test]
-async fn own_legacy_edges_are_read_and_rewritten_under_the_account_docs_author() {
+async fn own_legacy_edges_are_read_without_being_rewritten() {
     let docs_sync = Arc::new(LegacyNameDocsSync::default());
     let local_keys = generate_keys();
     let local_author_pubkey = local_keys.public_key_hex();
@@ -165,36 +164,8 @@ async fn own_legacy_edges_are_read_and_rewritten_under_the_account_docs_author()
         edges
     );
     assert_eq!(
-        docs_sync.rewritten("graph/follows/").await,
-        edges,
-        "each legacy edge is rewritten under the account docs author"
+        docs_sync.rewritten("").await,
+        0,
+        "the reading does not write to docs"
     );
-    let window = docs_sync
-        .query_replica_keys_by_author(
-            &author_replica_id(local_author_pubkey.as_str()),
-            ACCOUNT_DOCS_AUTHOR,
-            kukuri_docs_sync::DocKeyQuery {
-                prefix: "graph/follows/".into(),
-                order: kukuri_docs_sync::DocKeyOrder::Ascending,
-                limit: AUTHOR_EDGE_KEYS,
-            },
-        )
-        .await
-        .expect("window");
-    assert_eq!(window.entries.len(), edges);
-
-    // 書き直した edge は組で読めるので、もう一度読み出しても書き直さない。
-    restart_own_author_edge_sweep(store.as_ref(), local_author_pubkey.as_str())
-        .await
-        .expect("restart");
-    docs_sync
-        .account_keys
-        .lock()
-        .await
-        .retain(|key| key.starts_with("graph/"));
-    let before = docs_sync.account_keys.lock().await.len();
-    sweep_own_author_edges_with(&app.services, local_author_pubkey.as_str(), 16, 64)
-        .await
-        .expect("sweep again");
-    assert_eq!(docs_sync.account_keys.lock().await.len(), before);
 }

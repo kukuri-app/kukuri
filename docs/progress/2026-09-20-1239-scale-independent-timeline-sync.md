@@ -678,10 +678,18 @@ B-4 の修正（取りこぼしで読み直す）と、docs author の覚え方�
 
 | 指摘 | 原因 | 修正 |
 | --- | --- | --- |
-| B-5: 今の利用者の自分の follow・block は ADR 0053 以前の端末ごとの名義（旧名義）で書かれている。自分の edge の背景の読み出しと起動時の窓が、自分の docs author の key だけを一覧するので、取りこぼした旧名義の edge は、その端末では二度と入らない | 背景の読み出しを docs author を指定した一覧にしていた | 自分の edge の背景の読み出しは、名義を問わない一覧で読む（位置を残して小分けに進むので、他の名義のごみの key は読み進めを遅らせるだけ）。旧名義でしか読めなかった自分の edge は、自分の docs author で書き直す（ADR 0053 §4 の規則で旧名義の entry が消え、以後はどの端末でも組で読める）。test `own_legacy_edges_are_read_and_rewritten_under_the_account_docs_author`（旧名義の record と、書き直した key だけを自分の名義として扱う double） |
+| B-5: 今の利用者の自分の follow・block は ADR 0053 以前の端末ごとの名義（旧名義）で書かれている。自分の edge の背景の読み出しと起動時の窓が、自分の docs author の key だけを一覧するので、取りこぼした旧名義の edge は、その端末では二度と入らない | 背景の読み出しを docs author を指定した一覧にしていた | 自分の edge の背景の読み出しは、名義を問わない一覧で読む（位置を残して小分けに進むので、他の名義のごみの key は読み進めを遅らせるだけ）。test `own_legacy_edges_are_read_without_being_rewritten`（旧名義の record を返す double） |
 
-ADR 0053 §6 に、自分の旧名義の edge の書き直しと、旧版の client との混在期間の扱い（組の record が先に使われる）を追記した。
+ADR 0053 §6 に、自分の旧名義の edge の読み方と、旧版の client との混在期間の扱い（組の record が先に使われる）を追記した。
 
 残した non-blocker: 反映に失敗した自分の edge の event（本体の取得の失敗）で読み出しをやり直さない、`changed` が「envelope が手元に無かった」だけを表す、
 `author_docs_authors` の削除の契機が無い（行は author 購読を開いた著者の数だけ。profile cache と同じ規模）、`Lagged` のときの位置の書き込みの競合（次の `Lagged` で直る）、
 docs author を指定した読み出しに未対応の DocsSync では反映全体が失敗する（本番の実装はすべて対応）。
+
+### 独立監査の 5 回目（delta `cdc45c77..e6c2a2c8`、FAIL）と修正
+
+名義を問わない一覧での読み出し（B-5 の解消）は確認された。4 回目への修正で入れた「旧名義でしか読めなかった自分の edge を自分の docs author で書き直す」処理が、新たな blocker だった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-6: 同期の途中で、ほかの端末が自分の docs author で書いた新しい状態（例: follow の解除）がまだ届いていない key を、旧名義の古い状態で新しい時刻に書き直すと、同期がそろった後に全端末の状態が巻き戻る（follow の解除が follow に戻る） | 読み出しの中で書き直していた。同じ（docs author、key）では新しい時刻が勝つ | 書き直しを外した。B-5 の解消は名義を問わない一覧での読み出しだけで足りる。自分の docs author へ移るのは、利用者がその edge を書いたとき（ADR 0053 §6 に理由を書いた）。test は、読み出しが docs に何も書かないことを確かめる形にした |
