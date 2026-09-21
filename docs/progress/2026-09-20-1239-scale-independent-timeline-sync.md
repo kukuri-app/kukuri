@@ -485,3 +485,25 @@ T4b-2 は PR #1267（merge commit `323be894`）で完了した。独立監査は
   索引の entry を書かない fixture は、追いつきが索引から読むので、索引の entry を足した。
 - PR #1267 の監査が「直接の test が無い」とした経路の test を足した（`session_catch_up.rs`）: session の追いつき、取りこぼしの後の reaction の読み直し、hint からの依頼、
   同期の終わりの通知が伸びた間隔を待つこと。
+
+## T5b-2: ページの取得の上限と、索引の範囲の読み出し（基準 commit `7f19158d`）
+
+T5b-1 は PR #1268（merge commit `7f19158d`）で完了した。独立監査は PASS、必須 CI は全 job 成功。
+
+- PR #1268 の監査の non-blocker: 監査の test 4 本（session の一覧の間隔、`game-` の降順、固定件数と読む量、live の「viewer が 0」の分岐）を恒久化し、全件走査の削除の後に残っていたコメントと inventory の列挙方法を直した。
+- Q-2（`filtered_timeline_page`・`filtered_thread_page`）: 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続けていた。読むページ数に上限（4）を置き、届かなかったときは集まった分と読み進めた位置を返す。
+  `limit` 件に届いたときの `next_cursor` がページの末尾を指していて、`limit` が 20 未満のときに同じページの残りの行を飛ばしていた点も直した。
+  test `hidden_author_rows_are_skipped_with_a_bounded_number_of_pages`、`next_cursor_points_at_the_last_returned_row`。
+- Q-1（`crates/store/src/sqlite/projections.rs`）: cursor の条件が `? IS NULL OR created_at < ? OR (…)` の形で、索引の範囲の読み出しにならなかった。行の値の比較にし、cursor の有無で SQL を分けた。
+  thread は `ORDER BY CASE …`（root を先頭に置くための並べ替え）が全行の並べ替えを強いていた（1 ページの取得が thread の返信の総数に比例する）。root は最初のページでだけ 1 行引きし、
+  返信は `object_thread_cache` の索引の範囲を読む。test `page_queries_are_index_range_reads`（`EXPLAIN QUERY PLAN` に並べ替えの一時的な木が出ないこと）、
+  `thread_pages_list_the_root_first_and_every_reply_once`（root の時刻が返信より後でも、全行を 1 回ずつ読める）、`timeline_pages_list_every_row_once_for_each_channel_filter`。
+- 照合が非表示の著者の行を「projection に在る」と数えるので、非表示の著者の投稿がある範囲では照合のたびにページを読み直していた。ページが行を除いて作られているときは、今回反映したときだけ読み直す。
+- 1 回の照合・追いつきが reaction を読む投稿の数に上限（64）を置いた（PR #1267 の監査の N-3 のうち、最悪の読み出し回数）。test `one_reconcile_reads_the_reactions_of_a_bounded_number_of_posts`。
+
+### 残した事項
+
+- view の生成に残る docs の key 指定の読み出し（V-1: 返信先が projection に無いときの 1 回の `LocalOnly` の読み出し）と、TR-6 の画面側（遡って取得できなかった範囲の表示）は、この段階では変えていない。
+  どちらも総件数には依存しない。T7 の統合確認で、Issue の AC との対応を整理する。
+- 追いつきが走っているあいだ購読タスクが event を消費しない点は、1 回の追いつきの量を定数で抑えたうえで残している。
+- 32 件を超える reaction の背景の backfill は入れていない（best effort。ADR 0052 §2）。

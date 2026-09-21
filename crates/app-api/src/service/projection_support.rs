@@ -1,5 +1,48 @@
 use super::*;
 
+/// 非表示の著者の行を読み飛ばすために、1 回の取得で読む projection のページ数の上限(ADR 0052 §5)。
+/// 非表示の著者の投稿が続く範囲でも、1 回の取得が読む行数を定数で抑える。
+pub(crate) const HIDDEN_AUTHOR_SKIP_PAGES: usize = 4;
+
+enum VisibleRows {
+    /// `limit` 件に届いた、または行が尽きた。値は、返すページの `next_cursor`。
+    Done(Option<TimelineCursor>),
+    /// まだ `limit` 件に届かず、続きがある。値は、次に読むページの cursor。
+    Continue(TimelineCursor),
+}
+
+/// 読んだページから、非表示の著者の行を除いて `items` へ足す。
+///
+/// `limit` 件に届いたときの `next_cursor` は、ページの末尾ではなく、最後に返した行の位置にする。ページの末尾に
+/// すると、同じページの残りの行(まだ返していない行)を次の取得が飛ばしてしまう。
+fn take_visible_rows(
+    page: Page<ObjectProjectionRow>,
+    items: &mut Vec<ObjectProjectionRow>,
+    limit: usize,
+    hidden_author_pubkeys: &BTreeSet<String>,
+) -> VisibleRows {
+    let page_next = page.next_cursor;
+    let rows = page.items.len();
+    for (index, row) in page.items.into_iter().enumerate() {
+        if object_projection_row_is_hidden(&row, hidden_author_pubkeys) {
+            continue;
+        }
+        let position = TimelineCursor {
+            created_at: row.created_at,
+            object_id: row.object_id.clone(),
+        };
+        items.push(row);
+        if items.len() >= limit {
+            let exhausted = index + 1 == rows && page_next.is_none();
+            return VisibleRows::Done((!exhausted).then_some(position));
+        }
+    }
+    match page_next {
+        Some(next_cursor) => VisibleRows::Continue(next_cursor),
+        None => VisibleRows::Done(None),
+    }
+}
+
 pub(crate) async fn filtered_timeline_page(
     projection_store: &dyn ProjectionStore,
     topic_id: &str,
@@ -17,7 +60,7 @@ pub(crate) async fn filtered_timeline_page(
     let mut current_cursor = cursor;
     let mut items = Vec::new();
     let page_size = limit.max(20);
-    loop {
+    for _ in 0..HIDDEN_AUTHOR_SKIP_PAGES {
         let page = ObjectProjectionStore::list_topic_timeline_filtered(
             projection_store,
             topic_id,
@@ -26,20 +69,17 @@ pub(crate) async fn filtered_timeline_page(
             page_size,
         )
         .await?;
-        let next_cursor = page.next_cursor.clone();
-        for row in page.items {
-            if !object_projection_row_is_hidden(&row, hidden_author_pubkeys) {
-                items.push(row);
-                if items.len() >= limit {
-                    return Ok(Page { items, next_cursor });
-                }
-            }
+        match take_visible_rows(page, &mut items, limit, hidden_author_pubkeys) {
+            VisibleRows::Done(next_cursor) => return Ok(Page { items, next_cursor }),
+            VisibleRows::Continue(next_cursor) => current_cursor = Some(next_cursor),
         }
-        if next_cursor.is_none() {
-            return Ok(Page { items, next_cursor });
-        }
-        current_cursor = next_cursor;
     }
+    // 非表示の著者の行が続いて、上限まで読んでも `limit` 件に届かなかった。集まった分と、読み進めた位置を返す
+    // (呼び出し側は、その位置から続きを取得できる)。
+    Ok(Page {
+        items,
+        next_cursor: current_cursor,
+    })
 }
 
 pub(crate) async fn filtered_thread_page(
@@ -60,7 +100,7 @@ pub(crate) async fn filtered_thread_page(
     let mut current_cursor = cursor;
     let mut items = Vec::new();
     let page_size = limit.max(20);
-    loop {
+    for _ in 0..HIDDEN_AUTHOR_SKIP_PAGES {
         let page = ObjectProjectionStore::list_thread_filtered(
             projection_store,
             topic_id,
@@ -70,20 +110,17 @@ pub(crate) async fn filtered_thread_page(
             page_size,
         )
         .await?;
-        let next_cursor = page.next_cursor.clone();
-        for row in page.items {
-            if !object_projection_row_is_hidden(&row, hidden_author_pubkeys) {
-                items.push(row);
-                if items.len() >= limit {
-                    return Ok(Page { items, next_cursor });
-                }
-            }
+        match take_visible_rows(page, &mut items, limit, hidden_author_pubkeys) {
+            VisibleRows::Done(next_cursor) => return Ok(Page { items, next_cursor }),
+            VisibleRows::Continue(next_cursor) => current_cursor = Some(next_cursor),
         }
-        if next_cursor.is_none() {
-            return Ok(Page { items, next_cursor });
-        }
-        current_cursor = next_cursor;
     }
+    // 非表示の著者の行が続いて、上限まで読んでも `limit` 件に届かなかった。集まった分と、読み進めた位置を返す
+    // (呼び出し側は、その位置から続きを取得できる)。
+    Ok(Page {
+        items,
+        next_cursor: current_cursor,
+    })
 }
 
 pub(crate) fn filter_channel_rows<T>(

@@ -87,8 +87,8 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 
 | ID | 箇所 | 問題 | 解消する段階 |
 | --- | --- | --- | --- |
-| Q-1 | `crates/store/src/sqlite/projections.rs` のタイムライン・thread の cursor 条件（`created_at < ? OR (created_at = ? AND object_id < ?)`） | OR 形のため、深いページほど索引の読み飛ばしが増える（遡った深さに比例） | T5b（range seek になる形へ） |
-| Q-2 | `projection_support.rs` `filtered_timeline_page` / `filtered_thread_page` | 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続ける。`limit` が 20 未満のときと非表示の著者があるときは、返す `next_cursor` が行を飛ばす | T5b（読むページ数に上限、`next_cursor` の位置） |
+| Q-1 | `crates/store/src/sqlite/projections.rs` のタイムライン・thread の cursor 条件（`created_at < ? OR (created_at = ? AND object_id < ?)`） | OR 形のため、深いページほど索引の読み飛ばしが増える（遡った深さに比例） | T5b-2（解消済み。cursor の条件を行の値の比較にし、cursor の有無で SQL を分けた。thread は root を 1 行引きして、返信を索引の範囲で読む。query plan の test あり） |
+| Q-2 | `projection_support.rs` `filtered_timeline_page` / `filtered_thread_page` | 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続ける。`limit` が 20 未満のときと非表示の著者があるときは、返す `next_cursor` が行を飛ばす | T5b-2（解消済み。読むページ数の上限 4。`next_cursor` は最後に返した行の位置） |
 | Q-3 | `timeline.rs` `list_profile_timeline` | author の全投稿・全 repost をロードしてソートしてからページを切る | T6 |
 
 ## 観察（本 Issue では変えない）

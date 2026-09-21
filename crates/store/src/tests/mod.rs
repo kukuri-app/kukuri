@@ -18,6 +18,7 @@ mod content_observations;
 mod direct_messages;
 mod migrations;
 mod migrations_roundtrip;
+mod page_query_plans;
 mod pagination;
 mod post_withdrawals;
 mod row_mapping_edge;

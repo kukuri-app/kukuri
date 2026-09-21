@@ -255,3 +255,80 @@ async fn junk_keys_before_the_real_reactions_do_not_hide_them_from_the_reconcile
         "the three honest reactions are reflected even when junk keys sort first"
     );
 }
+
+// 1 回の照合が reaction を読む投稿の数には上限がある(1 回の読み出しの最悪の量を抑える)。超えた投稿の
+// reaction は、その reaction の docs の event で入る(best effort)。
+#[tokio::test]
+async fn one_reconcile_reads_the_reactions_of_a_bounded_number_of_posts() {
+    use crate::service::replica_window::RANGE_CHECK_REACTION_TARGETS;
+
+    let topic = "kukuri:topic:range-reactions-targets";
+    let replica = topic_replica_id(topic);
+    let docs_sync = Arc::new(RecordingDocsSync::default());
+    let blob_service = Arc::new(MemoryBlobService::default());
+    let posts = RANGE_CHECK_REACTION_TARGETS + 10;
+    let keys = generate_keys();
+    let topic_id = TopicId::new(topic);
+    let mut targets = Vec::new();
+    for index in 0..posts {
+        let post = put_post_at(
+            docs_sync.as_ref(),
+            &replica,
+            &keys,
+            &topic_id,
+            BASE_TIME + index as i64,
+            format!("post {index}").as_str(),
+            None,
+        )
+        .await;
+        let reaction_key = ReactionKeyV1::Emoji {
+            emoji: "👍".into()
+        };
+        let reaction_id = deterministic_reaction_id(
+            &replica,
+            &post.object_id,
+            &keys.public_key(),
+            reaction_key
+                .normalized_key()
+                .expect("normalized reaction key")
+                .as_str(),
+        );
+        let envelope = build_reaction_envelope(
+            &keys,
+            &topic_id,
+            None,
+            &post.object_id,
+            reaction_key,
+            &reaction_id,
+            ObjectStatus::Active,
+        )
+        .expect("reaction envelope");
+        let reaction = parse_reaction(&envelope)
+            .expect("parse reaction")
+            .expect("reaction doc");
+        persist_reaction_doc(docs_sync.as_ref(), &replica, &reaction, &envelope)
+            .await
+            .expect("persist reaction");
+        targets.push(post.object_id.as_str().to_string());
+    }
+
+    let (viewer, viewer_store) = recording_app_with_blobs(docs_sync.clone(), blob_service);
+    let hydrated = viewer
+        .reconcile_timeline_range(topic, &TimelineScope::Public, None, posts)
+        .await
+        .expect("reconcile");
+    assert_eq!(hydrated, posts);
+    let projection_store: &dyn ProjectionStore = viewer_store.as_ref();
+    let mut with_reactions = 0usize;
+    for target in &targets {
+        with_reactions += usize::from(
+            !projection_store
+                .list_reaction_cache_for_target(&replica, &EnvelopeId::from(target.as_str()))
+                .await
+                .expect("reaction rows")
+                .is_empty(),
+        );
+    }
+    viewer.shutdown().await;
+    assert_eq!(with_reactions, RANGE_CHECK_REACTION_TARGETS);
+}
