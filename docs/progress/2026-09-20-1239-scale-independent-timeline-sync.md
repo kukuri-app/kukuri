@@ -525,3 +525,19 @@ T5b-1 は PR #1268（merge commit `7f19158d`）で完了した。独立監査は
 
 残した non-blocker: `timeline.rs` が `rows_may_be_hidden` を渡すことの結合 test（判定式は単体 test で固定）、root の位置の cursor での thread の照合（`limit` 1 のときだけ）、
 非表示の著者がいる利用者の、同じ呼び出しの中での購読タスクとの競合（次の取得で解消する）。
+
+### 独立監査の 2 回目（delta `fd56636d..7c2b3b0d`、FAIL）と修正
+
+2 回目の監査は、Fable の利用上限で中断したため、Opus 5 の監査人が引き継いだ。この delta の修正（SQL の組み立ての関数化、reaction の上限の数え方、`MemoryStore` の thread、再起動の条件）は、
+いずれも主張どおりに動くことを確かめたうえで、B-1 の残りを blocker として FAIL だった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 画面は行が 0 件でも続きを読むようになったが、表示できる行が 0 件のあいだは、3 秒ごとの refresh（buffer）が、読み進めた cursor を先頭のページの cursor に戻す。非表示の著者の範囲が長いと、その先の投稿へ届かない | refresh が「読み進めたか」を、表示中の行数が先頭のページの行数より多いか（`hasLoadedOlderAuthoritativePosts`）だけで判定していた。行が 0 件のまま読み進めると、判定が偽になる | 表示中の続きの位置が、先頭のページの続きの位置より先へ進んでいれば、読み進めたとみなす（`cursorIsBeyond`。タイムラインは新しい順、thread は古い順）。Vitest `useDesktopShellData.emptyCursorRefresh.test.tsx`（監査の再現 test を恒久化。thread の fixture は、実際の並びに合わせて cursor を古い順に進める形に直した）、`timelineMerge.test.ts` の単体 test |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- query plan の test が、cursor の位置が索引の範囲の条件に入っていることを確かめていなかった（cursor の条件を OR の形へ戻す mutation が生き残った）。plan の検索条件に `(created_at,object_id)<(?,?)` が入ることを確かめる。
+- `timeline_page_query` が、空の channel 集合を「channel で絞らない」と扱っていた（唯一の caller が先に弾くので、いまは漏れない）。空の集合なら何も読まない。test `an_empty_channel_set_reads_nothing`。
+- ADR 0052 §5 の reaction の上限の文言を、replica ごとに数える実装に合わせた。
+

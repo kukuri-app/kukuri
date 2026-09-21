@@ -12,6 +12,7 @@ import type { PostView } from '@/lib/api';
 
 import { buildPaginatedPost } from '../DesktopShellPage.testHelpers';
 import {
+  cursorIsBeyond,
   hasLoadedOlderAuthoritativePosts,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
@@ -317,3 +318,28 @@ describe('mergeRefreshedVisiblePosts', () => {
     expect(result[0]?.created_at).toBe(111);
   });
 });
+
+describe('cursorIsBeyond', () => {
+  const at = (created_at: number, object_id: string) => ({ created_at, object_id });
+
+  test('新しい順のページでは、古い位置が先', () => {
+    expect(cursorIsBeyond(at(90, 'b'), at(100, 'a'), 'desc')).toBe(true);
+    expect(cursorIsBeyond(at(100, 'a'), at(100, 'b'), 'desc')).toBe(true);
+    expect(cursorIsBeyond(at(110, 'a'), at(100, 'a'), 'desc')).toBe(false);
+    expect(cursorIsBeyond(at(100, 'b'), at(100, 'a'), 'desc')).toBe(false);
+  });
+
+  test('古い順のページでは、新しい位置が先', () => {
+    expect(cursorIsBeyond(at(110, 'a'), at(100, 'b'), 'asc')).toBe(true);
+    expect(cursorIsBeyond(at(100, 'b'), at(100, 'a'), 'asc')).toBe(true);
+    expect(cursorIsBeyond(at(90, 'z'), at(100, 'a'), 'asc')).toBe(false);
+  });
+
+  test('同じ位置と、どちらかが無いときは先ではない', () => {
+    expect(cursorIsBeyond(at(100, 'a'), at(100, 'a'), 'desc')).toBe(false);
+    expect(cursorIsBeyond(null, at(100, 'a'), 'desc')).toBe(false);
+    // 先頭のページに続きが無いとき(全件が 1 ページに収まる)は、古い位置を残さない。
+    expect(cursorIsBeyond(at(90, 'a'), null, 'desc')).toBe(false);
+  });
+});
+

@@ -94,10 +94,16 @@ async fn page_queries_are_index_range_reads() {
             ("several channels", Some(&several)),
         ] {
             let builder = timeline_page_query(EXPLAIN, "t", channels, cursor, 20);
-            assert_range_read(
-                format!("timeline, {name}, cursor={with_cursor}").as_str(),
-                plan(&store, builder).await.as_str(),
-            );
+            let plan = plan(&store, builder).await;
+            let name = format!("timeline, {name}, cursor={with_cursor}");
+            assert_range_read(name.as_str(), plan.as_str());
+            if with_cursor {
+                // cursor の位置は、索引の範囲の読み出しの条件になる(行を読み飛ばす絞り込みではない)。
+                assert!(
+                    plan.contains("(created_at,object_id)<(?,?)"),
+                    "{name}: the cursor must bound the index range: {plan}"
+                );
+            }
         }
         for channel in [None, Some("public")] {
             let replies = thread_page_query(
@@ -110,10 +116,15 @@ async fn page_queries_are_index_range_reads() {
                     limit: 20,
                 },
             );
-            assert_range_read(
-                format!("thread replies, channel={channel:?}, cursor={with_cursor}").as_str(),
-                plan(&store, replies).await.as_str(),
-            );
+            let plan = plan(&store, replies).await;
+            let name = format!("thread replies, channel={channel:?}, cursor={with_cursor}");
+            assert_range_read(name.as_str(), plan.as_str());
+            if with_cursor {
+                assert!(
+                    plan.contains("(created_at,object_id)>(?,?)"),
+                    "{name}: the cursor must bound the index range: {plan}"
+                );
+            }
         }
     }
     for channel in [None, Some("public")] {
@@ -124,6 +135,32 @@ async fn page_queries_are_index_range_reads() {
             "thread root, channel={channel:?}: {plan}"
         );
     }
+}
+
+// 許可された channel が 1 つも無いときは、何も読まない(channel で絞らない、にしない)。
+#[tokio::test]
+async fn an_empty_channel_set_reads_nothing() {
+    use crate::sqlite::projections::timeline_page_query;
+    use sqlx::Row;
+
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    ObjectProjectionStore::put_object_projection(&store, row("t", "public", "post-1", 1))
+        .await
+        .expect("row");
+    let empty = BTreeSet::new();
+    let rows = timeline_page_query("", "t", Some(&empty), None, 20)
+        .build()
+        .fetch_all(store.pool())
+        .await
+        .expect("query");
+    assert!(rows.is_empty());
+    let all = timeline_page_query("", "t", None, None, 20)
+        .build()
+        .fetch_all(store.pool())
+        .await
+        .expect("query");
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].get::<String, _>("object_id"), "post-1");
 }
 
 // thread のページは、root が先頭、返信は古い順。root の時刻が返信より後でも(時計のずれ)、ページを継いで

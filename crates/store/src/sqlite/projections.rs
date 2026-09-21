@@ -50,6 +50,11 @@ pub(crate) fn timeline_page_query<'a>(
         .map(|channels| channels.iter().collect::<Vec<_>>())
         .unwrap_or_default();
     match channels.as_slice() {
+        // 空の集合を渡されたら、何も読まない(channel で絞らない、にしない)。
+        [] if allowed_channels.is_some() => {
+            builder.push(" FROM object_index_cache WHERE 0 AND topic_id = ");
+            builder.push_bind(topic_id);
+        }
         [] => {
             builder.push(" FROM object_index_cache WHERE topic_id = ");
             builder.push_bind(topic_id);
