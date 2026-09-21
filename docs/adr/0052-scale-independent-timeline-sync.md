@@ -264,8 +264,9 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
 - docs 同期より先に届いた hint の対象は、doc event の到着か次の窓の追いつきまで表示されない。
 - 完了条件は、replica の件数を 1,000 / 10,000 / 100,000 にしても、定期処理・利用者の操作・表示の各操作が読む docs の entry 数と projection の行数が増えないことを、
   回数で assert する test で示す。所要時間の閾値は使わない。
-  docs の entry 数は `crates/app-api/src/tests/sync/scale_counts.rs` で示した（T7）。projection の行数は、ページの取得が索引の範囲の読み出しであることを
-  query plan の test（`crates/store/src/tests/page_query_plans.rs`、T5b-2）で示した。
+  docs の entry 数は `crates/app-api/src/tests/sync/scale_counts.rs` で、回数で示した（T7）。projection の行数は回数では示していない。代わりに、ページの取得が
+  索引の範囲の読み出しであることを query plan の test（`crates/store/src/tests/page_query_plans.rs`、T5b-2）で構造として確かめた。ただし、複数の channel の
+  ページの取得は、許可されない channel の行を読み飛ばすので、読む行の数は範囲内にある許可されない行の数に依存する。
 
 ## References
 

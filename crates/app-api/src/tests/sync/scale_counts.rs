@@ -213,6 +213,8 @@ struct Fixture {
 
 impl Fixture {
     /// 背景の仕事(購読タスクの起動時の追いつきなど)が落ち着くまで待つ。読んだ量が 300ms 変わらなければ落ち着いたとみなす。
+    /// 300ms より遅れて始まる背景の読み出し(最小間隔を空けた追いつき、tick ごとの処理)は数えない。double は docs の通知を
+    /// 出さないので、測定の間にそうした読み出しは起きない。
     async fn settle(&self) {
         let mut last = self.docs_sync.returned();
         for _ in 0..200 {
@@ -323,13 +325,7 @@ async fn fixture(size: usize) -> Fixture {
         .put_author_docs_author(remote_pubkey.as_str(), DOCS_AUTHOR)
         .await
         .expect("learn the docs author");
-    // 購読タスクを起動し、起動時の追いつきを済ませる。
-    app.list_timeline(topic.as_str(), None, 20)
-        .await
-        .expect("initial timeline");
-    app.list_profile_timeline(remote_pubkey.as_str(), None, 20)
-        .await
-        .expect("initial profile timeline");
+    // 購読はまだ起動しない。topic とプロフィールを初めて開く操作(購読タスクと author 購読の起動と、その背景の続き)も測る。
     Fixture {
         app,
         docs_sync,
@@ -349,6 +345,27 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<usize>> {
         let replica = topic_replica_id(topic);
         let deep = 500;
         let measured = [
+            (
+                // 画面の取得と同時に走らせると、どちらが先に同じ object を反映するかで読む量が 1 件揺れる。起動だけを測る。
+                "topic subscription start",
+                fixture
+                    .reads_of(|| async {
+                        app.ensure_topic_subscription(topic)
+                            .await
+                            .expect("subscribe the topic");
+                    })
+                    .await,
+            ),
+            (
+                "profile first open (author subscription start)",
+                fixture
+                    .reads_of(|| async {
+                        app.list_profile_timeline(fixture.remote_pubkey.as_str(), None, 20)
+                            .await
+                            .expect("first profile timeline");
+                    })
+                    .await,
+            ),
             (
                 "subscription catch-up",
                 fixture
