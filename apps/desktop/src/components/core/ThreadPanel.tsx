@@ -37,6 +37,8 @@ type ThreadPanelProps = {
   onCopyPostLink?: (link: string) => void;
   focusedPostObjectId?: string | null;
   hasMore?: boolean;
+  /** 読んだ範囲にあるが、まだ取得できていない返信の数(#1239 AC-4)。 */
+  unavailableCount?: number;
   loadingMore?: boolean;
   onLoadMore?: () => void;
   onSubmitReport?: (
@@ -73,6 +75,7 @@ export function ThreadPanel({
   onCopyPostLink,
   focusedPostObjectId,
   hasMore = false,
+  unavailableCount = 0,
   loadingMore = false,
   onLoadMore,
   onSubmitReport,
@@ -107,6 +110,7 @@ export function ThreadPanel({
         onCopyPostLink={onCopyPostLink}
         focusedPostObjectId={focusedPostObjectId}
         hasMore={hasMore}
+        unavailableCount={unavailableCount}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
         onSubmitReport={onSubmitReport}

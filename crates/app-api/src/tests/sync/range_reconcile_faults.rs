@@ -10,7 +10,7 @@ use super::range_reconcile::{
 use super::*;
 
 /// 投稿として読めない `objects/<id>/envelope`(と `state`)と、それを指す時系列の索引の entry を置く。
-async fn put_unreadable_post(
+pub(super) async fn put_unreadable_post(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     created_at: i64,
@@ -41,7 +41,7 @@ async fn put_unreadable_post(
 }
 
 /// state の無い(本体が届いていない投稿と同じ状態の)索引の entry を置く。
-async fn put_dangling_index_entry(
+pub(super) async fn put_dangling_index_entry(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     created_at: i64,

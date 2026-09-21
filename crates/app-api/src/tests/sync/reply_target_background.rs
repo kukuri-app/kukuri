@@ -313,10 +313,11 @@ impl BlobService for RemoteBodyBlobService {
     }
 }
 
-// 取得の経路は remote の本文を待たない。本文が手元に無い返信先は、取得では反映せず、背景へ回す。
+// 取得の経路は remote の本文を待たない。本文が手元に無い返信先は、取得では反映せず、remote から本文を取る背景の反映へ回す。
 #[tokio::test]
 async fn the_listing_does_not_wait_for_a_remote_body_of_the_reply_target() {
-    let docs_sync = Arc::new(MemoryDocsSync::default());
+    // 購読タスクへは test が流した通知だけが届く(購読の窓の追いつきが返信先を先に反映しないように)。
+    let docs_sync = Arc::new(super::subscription_catch_up::InjectedNoticesDocsSync::default());
     let store = Arc::new(MemoryStore::default());
     let blobs = Arc::new(RemoteBodyBlobService::default());
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
@@ -331,6 +332,10 @@ async fn the_listing_does_not_wait_for_a_remote_body_of_the_reply_target() {
     );
     let topic = TopicId::new("kukuri:topic:reply-target-remote-body");
     let replica = topic_replica_id(topic.as_str());
+    app.ensure_topic_subscription(topic.as_str())
+        .await
+        .expect("subscribe the topic");
+    sleep(Duration::from_millis(200)).await;
     let keys = generate_keys();
     let stored = blobs
         .put_blob(b"the remote parent".to_vec(), "text/plain")
@@ -401,17 +406,20 @@ async fn the_listing_does_not_wait_for_a_remote_body_of_the_reply_target() {
     assert!(page.items.iter().all(|item| item.reply_preview.is_none()));
     drop(held);
 
-    // 取得の後に、返信先は反映される(背景の反映、または購読タスクの窓の追いつき)。
+    // 取得が起こした背景の反映が、remote から本文を取って返信先を反映する(購読の窓の追いつきは走らない)。
     timeout(Duration::from_secs(10), async {
-        while store
-            .get_object_projection(&parent_header.object_id)
-            .await
-            .expect("projection")
-            .is_none()
-        {
+        loop {
+            let row = store
+                .get_object_projection(&parent_header.object_id)
+                .await
+                .expect("projection");
+            if row.is_some_and(|row| row.content.as_deref() == Some("the remote parent")) {
+                break;
+            }
             sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("the reply target is reflected after the listing");
+    .expect("the background reflects the reply target with its remote body");
+    assert!(blobs.fetches.load(std::sync::atomic::Ordering::SeqCst) >= 1);
 }

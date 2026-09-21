@@ -16,6 +16,7 @@ import type { InternalSmartReference } from '@/lib/internalLinks';
 import { Button } from '@/components/ui/button';
 
 import { buildThreadTree } from './buildThreadTree';
+import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { PostCard } from './PostCard';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
@@ -46,6 +47,8 @@ type ThreadTreeProps = {
   onCopyPostLink?: (link: string) => void;
   focusedPostObjectId?: string | null;
   hasMore?: boolean;
+  /** 読んだ範囲にあるが、まだ取得できていない返信の数(#1239 AC-4)。 */
+  unavailableCount?: number;
   loadingMore?: boolean;
   onLoadMore?: () => void;
   onSubmitReport?: (
@@ -82,6 +85,7 @@ export function ThreadTree({
   onCopyPostLink,
   focusedPostObjectId,
   hasMore = false,
+  unavailableCount = 0,
   loadingMore = false,
   onLoadMore,
   onSubmitReport,
@@ -99,7 +103,7 @@ export function ThreadTree({
   });
 
   // 行が 0 件でも、続きがある(`hasMore`)あいだは、続きを読む手段を描く(#1239。`TimelineFeed` と同じ)。
-  if (nodes.length === 0 && !hasMore) {
+  if (nodes.length === 0 && !hasMore && unavailableCount <= 0) {
     return <p className='empty'>{emptyCopy}</p>;
   }
 
@@ -158,6 +162,11 @@ export function ThreadTree({
           </li>
         );
       })}
+      {unavailableCount > 0 ? (
+        <li className='thread-tree-item' data-depth={0}>
+          <UnavailablePostsNotice count={unavailableCount} />
+        </li>
+      ) : null}
       {hasMore ? (
         <li className='thread-tree-item' data-depth={0}>
           {canAutoLoad ? <div ref={loadMoreRef} aria-hidden='true' /> : null}

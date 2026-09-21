@@ -239,7 +239,8 @@ export const timelineView = {
   "next_cursor": {
     "created_at": 1700000001,
     "object_id": "post-2"
-  }
+  },
+  "unavailable_count": 2
 } satisfies TimelineView;
 
 // bookmarked_post_view.json

@@ -149,7 +149,8 @@ enum ReplyTargetReflection {
     Unavailable,
 }
 
-/// 返信先を、返信と同じ replica から key 指定で反映する(`LocalOnly`。#1239 AC-6 の背景の反映)。本文は remote からも取る。
+/// 返信先を、返信と同じ replica から key 指定で反映する(#1239 AC-6 の背景の反映)。docs は手元だけを読み
+/// (`DocFetchPolicy::LocalOnly`)、本文の blob は手元に無ければ remote から取る(`ReplyTargetBody::Remote`)。
 ///
 /// 返信先も同じ replica にある投稿として、署名つき envelope と replica の scope を確かめてから反映する(#1248)。
 /// 既に projection にあれば、その行を返す。

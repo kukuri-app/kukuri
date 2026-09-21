@@ -430,5 +430,6 @@ mod subscription_catch_up;
 mod subscription_restarts;
 #[cfg(feature = "iroh-integration-tests")]
 mod transport_replication;
+mod unavailable_range;
 mod withdrawal_record_selection;
 mod withdrawal_reflection;

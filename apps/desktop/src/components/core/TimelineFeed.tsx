@@ -17,6 +17,7 @@ import type { InternalSmartReference } from '@/lib/internalLinks';
 import { Button } from '@/components/ui/button';
 
 import { PostCard } from './PostCard';
+import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
 
@@ -58,6 +59,8 @@ type TimelineFeedProps = {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  /** 読んだ範囲にあるが、まだ取得できていない投稿の数(#1239 AC-4)。続きを読む操作は止めない。 */
+  unavailableCount?: number;
   pendingCount?: number;
   onApplyPending?: () => void;
   // 分散通報ルーティング（#310）。取得済み community node manifest（ok のみ）と送信導線。
@@ -105,6 +108,7 @@ export function TimelineFeed({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  unavailableCount = 0,
   pendingCount = 0,
   onApplyPending,
   onSubmitReport,
@@ -169,7 +173,8 @@ export function TimelineFeed({
   // 行が 0 件でも、続きがある(`hasMore`)あいだは、続きを読む手段(sentinel か button)を描く。
   // 非表示の著者の投稿が続く範囲では、取得が空のページと `next_cursor` を返す(#1239)。ここで空の文言だけを
   // 返すと、その先の表示できる投稿へ進めない。
-  if (posts.length === 0 && !canApplyPending && !hasMore) {
+  // まだ取得できていない投稿があるときも、空の文言ではなく、その旨を描く(#1239 AC-4)。
+  if (posts.length === 0 && !canApplyPending && !hasMore && unavailableCount <= 0) {
     if (emptyState !== undefined) return <>{emptyState}</>;
     return <p className='empty'>{emptyCopy}</p>;
   }
@@ -231,6 +236,11 @@ export function TimelineFeed({
           />
         </li>
       ))}
+      {unavailableCount > 0 ? (
+        <li className={itemClassName}>
+          <UnavailablePostsNotice count={unavailableCount} />
+        </li>
+      ) : null}
       {hasMore ? (
         <li className={itemClassName}>
           {canAutoLoad ? <div ref={loadMoreRef} aria-hidden='true' /> : null}

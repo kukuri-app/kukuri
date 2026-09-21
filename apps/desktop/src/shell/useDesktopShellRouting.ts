@@ -123,6 +123,7 @@ export function useDesktopShellRouting({
   useEffect(() => () => { threadNavigationRequestRef.current += 1; }, []);
   const setThreadsById = useDesktopShellFieldSetter('threadsById');
   const setThreadNextCursorById = useDesktopShellFieldSetter('threadNextCursorById');
+  const setThreadUnavailableById = useDesktopShellFieldSetter('threadUnavailableById');
   const setSelectedAuthorPubkey = useDesktopShellFieldSetter('selectedAuthorPubkey');
   const setSelectedAuthor = useDesktopShellFieldSetter('selectedAuthor');
   const setSelectedAuthorTimeline = useDesktopShellFieldSetter('selectedAuthorTimeline');
@@ -414,6 +415,7 @@ export function useDesktopShellRouting({
           if (nextFocusedObjectId) setThreadFocusRequestId((current) => current + 1);
           setThreadsById(setRecordEntry(threadId, threadView.items));
           setThreadNextCursorById(setRecordEntry(threadId, threadView.next_cursor ?? null));
+          setThreadUnavailableById(setRecordEntry(threadId, threadView.unavailable_count ?? 0));
           setSelectedAuthorPubkey(null);
           setSelectedAuthor(null);
           setAuthorError(null);
@@ -497,6 +499,7 @@ export function useDesktopShellRouting({
       storeApi,
       setThreadsById,
       setThreadNextCursorById,
+      setThreadUnavailableById,
       setTimelineScopeByTopic,
       syncRoute,
       translate,

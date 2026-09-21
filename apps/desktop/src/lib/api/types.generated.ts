@@ -77,7 +77,12 @@ export type NotificationView = { notification_id: string, kind: NotificationKind
 
 export type NotificationStatusView = { unread_count: number, };
 
-export type TimelineView = { items: Array<PostView>, next_cursor?: TimelineCursor | null, };
+export type TimelineView = { items: Array<PostView>, next_cursor?: TimelineCursor | null, 
+/**
+ * このページの範囲の索引にあるが、本体が手元に無く表示できない投稿の数(#1239 AC-4)。取得側が範囲を照合した
+ * ページ(遡ったページ、projection が尽きたページ、thread)でだけ数える。0 なら、画面は何も示さない。
+ */
+unavailable_count?: number | null, };
 
 export type DirectMessageTimelineView = { items: Array<DirectMessageMessageView>, next_cursor?: TimelineCursor | null, };
 

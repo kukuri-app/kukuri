@@ -35,9 +35,9 @@ fn view(properties: Value) -> Value {
 pub(super) fn output(name: &str) -> Value {
     match name {
         "create_post" | "withdraw_post" | "create_repost" => string(),
-        "list_timeline" | "list_thread" | "list_profile_timeline" => {
-            view(json!({"items": array(post()), "next_cursor": nullable(schema::cursor())}))
-        }
+        "list_timeline" | "list_thread" | "list_profile_timeline" => view(
+            json!({"items": array(post()), "next_cursor": nullable(schema::cursor()), "unavailable_count": {"type": "integer", "minimum": 0}}),
+        ),
         "get_blob_preview_url" | "get_blob_media_payload" => media_output::output_schema(),
         "bookmark_post" => bookmark(),
         "list_bookmarked_posts" => array(bookmark()),

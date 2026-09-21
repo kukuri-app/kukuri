@@ -36,5 +36,6 @@
   "next_cursor": {
     "created_at": 1700000001,
     "object_id": "post-2"
-  }
+  },
+  "unavailable_count": 2
 }

@@ -37,6 +37,9 @@ struct RangeCheckState {
     resume_from: Option<TimeIndexCursor>,
     /// 反映できない entry が残ったまま、何も反映できなかった照合が続いた回数。
     stalled_checks: u32,
+    /// 前回の照合で、索引にあるが本体が手元に無く反映できなかった object の数(#1239 AC-4)。台帳の間隔の内で
+    /// 照合しなかった取得も、この数を画面へ返す。
+    last_missing: usize,
 }
 
 /// 確かめ終えた範囲の状態。次の照合までの間隔を決める。
@@ -88,6 +91,7 @@ impl RangeCheckLedger {
                 next_check_at_ms: now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
                 resume_from: None,
                 stalled_checks: 0,
+                last_missing: 0,
             },
         );
         Some(None)
@@ -102,9 +106,11 @@ impl RangeCheckLedger {
         range_key: &str,
         now_ms: i64,
         result: RangeCheckResult,
+        missing: usize,
     ) {
         if let Some(state) = self.entries.lock().await.get_mut(range_key) {
             state.resume_from = None;
+            state.last_missing = missing;
             let interval = match result {
                 RangeCheckResult::Complete => {
                     state.stalled_checks = 0;
@@ -127,10 +133,27 @@ impl RangeCheckLedger {
     }
 
     /// 上限まで読んでも 1 ページぶんに届かなかった範囲。次の照合は、読み進めた位置から続ける。
-    pub(crate) async fn record_resume(&self, range_key: &str, resume_from: TimeIndexCursor) {
+    pub(crate) async fn record_resume(
+        &self,
+        range_key: &str,
+        resume_from: TimeIndexCursor,
+        missing: usize,
+    ) {
         if let Some(state) = self.entries.lock().await.get_mut(range_key) {
             state.resume_from = Some(resume_from);
+            state.last_missing = missing;
         }
+    }
+
+    /// 台帳の間隔の内で照合しなかった範囲の、前回の照合の結果: 本体が手元に無かった object の数と、まだ読み終えて
+    /// いない範囲の読み進めた位置(#1239 AC-4)。台帳に無ければ 0 件と `None`。
+    pub(crate) async fn last_result(&self, range_key: &str) -> (usize, Option<TimeIndexCursor>) {
+        self.entries
+            .lock()
+            .await
+            .get(range_key)
+            .map(|state| (state.last_missing, state.resume_from.clone()))
+            .unwrap_or_default()
     }
 
     /// 間隔を空けずに次も照合する範囲を、台帳から外す。
@@ -175,6 +198,9 @@ pub(crate) struct RangeCheckOutcome {
     pub(crate) unresolved: usize,
     /// 索引にあるが、投稿として読めない件数。照合し直しても変わらないので、反映の対象から外す。
     pub(crate) invalid: usize,
+    /// `unresolved` のうち、投稿の本体(object の entry や envelope)が手元に無い件数(#1239 AC-4)。
+    /// 画面は「この範囲に、まだ取得できていない投稿がある」と示す。取り下げの対象の envelope の未着は含まない。
+    pub(crate) missing: usize,
 }
 
 impl RangeCheckOutcome {
@@ -193,6 +219,7 @@ impl RangeCheckOutcome {
         self.present += other.present;
         self.unresolved += other.unresolved;
         self.invalid += other.invalid;
+        self.missing += other.missing;
     }
 }
 
@@ -255,7 +282,10 @@ pub(crate) async fn ensure_index_entries_projected(
                     )
                     .await?;
                 }
-                ObjectHydration::Missing => outcome.unresolved += 1,
+                ObjectHydration::Missing => {
+                    outcome.unresolved += 1;
+                    outcome.missing += 1;
+                }
                 ObjectHydration::Invalid => outcome.invalid += 1,
             }
             continue;
@@ -288,13 +318,34 @@ pub(crate) async fn ensure_index_entries_projected(
 }
 
 /// 取得側へ返す照合の結果。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RangeReconcile {
     /// 今回 projection へ反映した件数。
     pub(crate) hydrated: usize,
     /// 照合した索引の範囲のうち、projection に在る object の件数(今回反映したものと、既にあったもの)。
     /// 台帳の間隔の内で照合しなかった replica のぶんは含まない。
     pub(crate) projected: usize,
+    /// この範囲の索引にあるが、本体が手元に無く表示できない投稿の数(#1239 AC-4)。台帳の間隔の内で照合しなかった
+    /// replica は、前回の照合の数を使う。
+    pub(crate) unavailable: usize,
+    /// 反映できない entry が続いて 1 ページぶんに届かず、読み終えていない範囲の、読み進めた位置(#1239 AC-4)。
+    /// replica が複数あるときは、最も進んでいない位置。取得側は、projection が尽きたページの続きの位置にする
+    /// (利用者が、取得できない投稿の先へ進めるように)。
+    pub(crate) read_past: Option<TimeIndexCursor>,
+}
+
+/// replica 1 つの照合の結果。
+struct ReplicaRangeCheck {
+    /// 台帳の間隔の内で照合しなかったときは `None`。
+    outcome: Option<RangeCheckOutcome>,
+    /// 本体が手元に無い投稿の数(照合しなかったときは前回の数)。
+    missing: usize,
+    /// 読み終えていない範囲の、読み進めた位置。
+    read_past: Option<TimeIndexCursor>,
+}
+
+fn cursor_key(cursor: &TimeIndexCursor) -> (i64, &str) {
+    (cursor.created_at, cursor.object_id.as_str())
 }
 
 impl RangeReconcile {
@@ -382,12 +433,28 @@ impl AppService {
     ) -> Result<RangeReconcile> {
         let mut reconcile = RangeReconcile::default();
         for replica in replicas {
-            if let Some(outcome) = self
+            let check = self
                 .reconcile_replica_index_range(topic_id, replica, range)
-                .await?
-            {
+                .await?;
+            if let Some(outcome) = check.outcome {
                 reconcile.hydrated += outcome.hydrated;
                 reconcile.projected += outcome.hydrated + outcome.present;
+            }
+            reconcile.unavailable += check.missing;
+            if let Some(position) = check.read_past {
+                // 最も進んでいない位置を残す(進んだ replica の読み直しは、重複として画面が除く)。
+                let less_advanced = match (&reconcile.read_past, range.order) {
+                    (None, _) => true,
+                    (Some(current), DocKeyOrder::Descending) => {
+                        cursor_key(&position) > cursor_key(current)
+                    }
+                    (Some(current), DocKeyOrder::Ascending) => {
+                        cursor_key(&position) < cursor_key(current)
+                    }
+                };
+                if less_advanced {
+                    reconcile.read_past = Some(position);
+                }
             }
         }
         Ok(reconcile)
@@ -399,13 +466,13 @@ impl AppService {
     ///
     /// 1 回に読む索引の entry 数は `RANGE_CHECK_ENTRY_LIMIT` まで。届かなかったときと、索引の読み出しが
     /// query 数の上限に達したときは、読み進めた位置を台帳に残し、次の照合がそこから続ける。
-    /// 台帳の間隔の内で照合しなかったときは `None`。
+    /// 台帳の間隔の内で照合しなかったときは、前回の照合の結果(本体が手元に無い数と読み進めた位置)を返す。
     async fn reconcile_replica_index_range(
         &self,
         topic_id: &str,
         replica: &ReplicaId,
         range: &IndexRange<'_>,
-    ) -> Result<Option<RangeCheckOutcome>> {
+    ) -> Result<ReplicaRangeCheck> {
         let limit = range.limit;
         let range_key = format!(
             "{}\n{}\n{}\n{limit}",
@@ -423,7 +490,16 @@ impl AppService {
             .try_begin(range_key.as_str(), now.timestamp_millis())
             .await
         else {
-            return Ok(None);
+            let (missing, read_past) = self
+                .services
+                .range_checks
+                .last_result(range_key.as_str())
+                .await;
+            return Ok(ReplicaRangeCheck {
+                outcome: None,
+                missing,
+                read_past,
+            });
         };
         let docs_sync = self.services.docs_sync.as_ref();
         let mut position = resume_from.or_else(|| range.start.cloned());
@@ -508,20 +584,37 @@ impl AppService {
             // 読むのは key だけの読み出し 1 回で、投稿が同期された直後のページをすぐに組み立てられる。
             // 形の違う key が先頭を埋めていて読み出しが何回にもなったときは、間隔を空ける。
             ledger.forget(range_key.as_str()).await;
-            return Ok(Some(total));
+            return Ok(ReplicaRangeCheck {
+                outcome: Some(total),
+                missing: 0,
+                read_past: None,
+            });
         }
         let page_resolved = total.hydrated + total.present >= limit;
-        match position {
+        let read_past = match position {
             Some(resume) if !page_resolved && !index_exhausted => {
-                ledger.record_resume(range_key.as_str(), resume).await;
+                ledger
+                    .record_resume(range_key.as_str(), resume.clone(), total.missing)
+                    .await;
+                Some(resume)
             }
             _ => {
                 ledger
-                    .record_finished(range_key.as_str(), now.timestamp_millis(), total.result())
+                    .record_finished(
+                        range_key.as_str(),
+                        now.timestamp_millis(),
+                        total.result(),
+                        total.missing,
+                    )
                     .await;
+                None
             }
-        }
-        Ok(Some(total))
+        };
+        Ok(ReplicaRangeCheck {
+            outcome: Some(total),
+            missing: total.missing,
+            read_past,
+        })
     }
 
     /// thread の 1 ページぶんの範囲(`after` より新しい側、`after` が無ければ古い側)を、thread の索引
@@ -617,6 +710,7 @@ mod tests {
                 "range-a",
                 RANGE_CHECK_RETRY_INTERVAL_MS,
                 RangeCheckResult::Complete,
+                0,
             )
             .await;
         assert!(
@@ -658,7 +752,7 @@ mod tests {
             created_at: 1_758_000_000,
             object_id: "a".repeat(64),
         };
-        ledger.record_resume("range", resume.clone()).await;
+        ledger.record_resume("range", resume.clone(), 0).await;
         assert_eq!(
             ledger
                 .try_begin("range", RANGE_CHECK_RETRY_INTERVAL_MS)
@@ -671,6 +765,7 @@ mod tests {
                 "range",
                 RANGE_CHECK_RETRY_INTERVAL_MS,
                 RangeCheckResult::Progressed,
+                0,
             )
             .await;
         assert_eq!(
@@ -690,7 +785,7 @@ mod tests {
         assert!(ledger.try_begin("range", now).await.is_some());
         for _ in 0..8 {
             ledger
-                .record_finished("range", now, RangeCheckResult::Stalled)
+                .record_finished("range", now, RangeCheckResult::Stalled, 0)
                 .await;
             // 次に照合できる最初の時刻を探す(見つかった時刻で、次の照合が始まる)。
             let mut next = now;
@@ -713,7 +808,7 @@ mod tests {
 
         // 反映できたら、間隔は元へ戻る。
         ledger
-            .record_finished("range", now, RangeCheckResult::Progressed)
+            .record_finished("range", now, RangeCheckResult::Progressed, 0)
             .await;
         assert!(
             ledger
@@ -730,6 +825,7 @@ mod tests {
         let steady = RangeReconcile {
             hydrated: 0,
             projected: 20,
+            ..RangeReconcile::default()
         };
         assert!(!steady.page_is_stale(20, false), "nothing changed");
         assert!(
@@ -739,6 +835,7 @@ mod tests {
         let hydrated_now = RangeReconcile {
             hydrated: 3,
             projected: 20,
+            ..RangeReconcile::default()
         };
         assert!(hydrated_now.page_is_stale(17, false));
         assert!(hydrated_now.page_is_stale(17, true));
@@ -746,6 +843,7 @@ mod tests {
         let hydrated_by_someone_else = RangeReconcile {
             hydrated: 0,
             projected: 20,
+            ..RangeReconcile::default()
         };
         assert!(hydrated_by_someone_else.page_is_stale(0, false));
         // 非表示の著者がいるときは、行数の差だけでは読み直さない。

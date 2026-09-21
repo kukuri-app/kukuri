@@ -726,6 +726,12 @@ pub type MetaverseAssetRefView = MetaverseAssetRef;
 pub struct TimelineView {
     pub items: Vec<PostView>,
     pub next_cursor: Option<TimelineCursor>,
+    /// このページの範囲の索引にあるが、本体が手元に無く表示できない投稿の数(#1239 AC-4)。取得側が範囲を照合した
+    /// ページ(遡ったページ、projection が尽きたページ、thread)でだけ数える。0 なら、画面は何も示さない。
+    // front では任意(旧い runtime の応答と mock は持たない)。`?: number | null` を生成する。
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<u32>"))]
+    pub unavailable_count: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

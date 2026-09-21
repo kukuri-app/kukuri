@@ -138,6 +138,7 @@ export function useDesktopShellData({
   const setTimelinesByKey = useDesktopShellFieldSetter('timelinesByKey');
   const setTimelineNextCursorByKey = useDesktopShellFieldSetter('timelineNextCursorByKey');
   const setTimelineLoadingMoreByKey = useDesktopShellFieldSetter('timelineLoadingMoreByKey');
+  const setTimelineUnavailableByKey = useDesktopShellFieldSetter('timelineUnavailableByKey');
   const setPendingTimelineSnapshotsByKey = useDesktopShellFieldSetter(
     'pendingTimelineSnapshotsByKey'
   );
@@ -174,6 +175,7 @@ export function useDesktopShellData({
   const setThreadsById = useDesktopShellFieldSetter('threadsById');
   const setThreadNextCursorById = useDesktopShellFieldSetter('threadNextCursorById');
   const setThreadLoadingMoreById = useDesktopShellFieldSetter('threadLoadingMoreById');
+  const setThreadUnavailableById = useDesktopShellFieldSetter('threadUnavailableById');
   const setCommunityNodeStatuses = useDesktopShellFieldSetter('communityNodeStatuses');
   const setMediaObjectUrls = useDesktopShellFieldSetter('mediaObjectUrls');
   const setSyncStatus = useDesktopShellFieldSetter('syncStatus');
@@ -527,6 +529,12 @@ export function useDesktopShellData({
                 preserveTimelinePages
               )));
             setTimelineNextCursorByKey(setRecordEntry(timelineKey, resolvedTimelineCursor));
+            // 読んだ範囲を残すときは、その範囲の数も残す(#1239 AC-4)。
+            if (!preserveTimelinePages) {
+              setTimelineUnavailableByKey(
+                setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
+              );
+            }
             clearPendingTimeline(timelineKey);
           }
         }
@@ -557,6 +565,11 @@ export function useDesktopShellData({
           setTimelineNextCursorByKey(
             setRecordEntry(publicTimelineKey, resolvedPublicTimelineCursor)
           );
+          if (!preservePublicTimelinePages) {
+            setTimelineUnavailableByKey(
+              setRecordEntry(publicTimelineKey, publicTimeline.unavailable_count ?? 0)
+            );
+          }
         }
 
         if (joinedChannelsResult.status === 'fulfilled') {
@@ -601,6 +614,11 @@ export function useDesktopShellData({
               ),
             }));
             setThreadNextCursorById(setRecordEntry(currentThread, resolvedThreadCursor));
+            if (!preserveThreadPages) {
+              setThreadUnavailableById(
+                setRecordEntry(currentThread, threadView?.unavailable_count ?? 0)
+              );
+            }
           }
         }
 
@@ -623,7 +641,9 @@ export function useDesktopShellData({
       setPendingTimelineSnapshotsByKey,
       setThreadsById,
       setThreadNextCursorById,
+      setThreadUnavailableById,
       setTimelineNextCursorByKey,
+      setTimelineUnavailableByKey,
       setTimelinesByKey,
       storeApi,
       translate,
@@ -656,6 +676,7 @@ export function useDesktopShellData({
         startTransition(() => {
           setTimelinesByKey(updateRecordEntry(timelineKey, (prev) => mergeUniquePosts(prev ?? EMPTY_POSTS, timeline.items)));
           setTimelineNextCursorByKey(setRecordEntry(timelineKey, timeline.next_cursor ?? null));
+          setTimelineUnavailableByKey(setRecordEntry(timelineKey, timeline.unavailable_count ?? 0));
         });
       } finally {
         setTimelineLoadingMoreByKey(setRecordEntry(timelineKey, false));
@@ -665,6 +686,7 @@ export function useDesktopShellData({
       api,
       setTimelineLoadingMoreByKey,
       setTimelineNextCursorByKey,
+      setTimelineUnavailableByKey,
       setTimelinesByKey,
       storeApi,
     ]
@@ -686,6 +708,7 @@ export function useDesktopShellData({
             [threadId]: mergeUniquePosts(current[threadId] ?? [], threadView.items),
           }));
           setThreadNextCursorById(setRecordEntry(threadId, threadView.next_cursor ?? null));
+          setThreadUnavailableById(setRecordEntry(threadId, threadView.unavailable_count ?? 0));
         });
       } finally {
         setThreadLoadingMoreById(setRecordEntry(threadId, false));
@@ -696,6 +719,7 @@ export function useDesktopShellData({
       setThreadsById,
       setThreadLoadingMoreById,
       setThreadNextCursorById,
+      setThreadUnavailableById,
       storeApi,
     ]
   );

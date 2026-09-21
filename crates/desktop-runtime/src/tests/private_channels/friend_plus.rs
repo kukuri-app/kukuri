@@ -745,6 +745,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
                 .unwrap_or_else(|_| TimelineView {
                     items: vec![],
                     next_cursor: None,
+                    unavailable_count: 0,
                 });
             panic!(
                 "friend-plus restarted rotated post visibility timeout: restarted={} joined={joined:?} private_items={:?}",

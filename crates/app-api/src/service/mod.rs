@@ -156,6 +156,7 @@ pub(crate) use reaction_hydration::{
 };
 mod reaction_integrity;
 mod replica_window;
+pub(crate) use replica_window::RangeReconcile;
 mod session_integrity;
 mod social_helpers;
 mod social_runtime_support;

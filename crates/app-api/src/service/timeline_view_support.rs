@@ -115,6 +115,7 @@ impl AppService {
         Ok(TimelineView {
             items,
             next_cursor: page.next_cursor,
+            unavailable_count: 0,
         })
     }
 

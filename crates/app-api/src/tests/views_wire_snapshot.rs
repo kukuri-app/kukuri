@@ -253,6 +253,7 @@ fn views_wire_timeline_view() {
                 created_at: 1_700_000_001,
                 object_id: kukuri_core::EnvelopeId("post-2".to_string()),
             }),
+            unavailable_count: 2,
         },
     );
 }

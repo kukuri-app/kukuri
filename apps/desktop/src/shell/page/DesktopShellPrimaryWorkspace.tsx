@@ -251,6 +251,7 @@ export function DesktopShellPrimarySurface({
     syncStatus,
     timelineLoadingMoreByKey,
     timelineNextCursorByKey,
+    timelineUnavailableByKey,
     timelinesByKey,
     joinedChannelsByTopic,
     liveSessionsByScopeKey,
@@ -303,6 +304,7 @@ export function DesktopShellPrimarySurface({
       syncStatus: s.syncStatus,
       timelineLoadingMoreByKey: s.timelineLoadingMoreByKey,
       timelineNextCursorByKey: s.timelineNextCursorByKey,
+      timelineUnavailableByKey: s.timelineUnavailableByKey,
       timelinesByKey: s.timelinesByKey,
       joinedChannelsByTopic: s.joinedChannelsByTopic,
       liveSessionsByScopeKey: s.liveSessionsByScopeKey,
@@ -399,6 +401,7 @@ export function DesktopShellPrimarySurface({
   const activeTimelinePendingCount = pendingTimelineCountsByKey[activeTimelineKey] ?? 0;
   const activeTimelineHasMore = Boolean(timelineNextCursorByKey[activeTimelineKey]);
   const activeTimelineLoadingMore = timelineLoadingMoreByKey[activeTimelineKey] ?? false;
+  const activeTimelineUnavailable = timelineUnavailableByKey[activeTimelineKey] ?? 0;
   const metaverseRooms = useMemo(
     () => surfaceGameRooms.filter((room) => room.room_kind === 'metaverse_room'),
     [surfaceGameRooms]
@@ -489,6 +492,7 @@ export function DesktopShellPrimarySurface({
                   onCopyPostLink={handleCopyInternalLink}
                   hasMore={activeTimelineHasMore}
                   loadingMore={activeTimelineLoadingMore}
+                  unavailableCount={activeTimelineUnavailable}
                   onLoadMore={() => void loadMoreTimeline(surfaceTopic, surfaceChannelId)}
                   pendingCount={activeTimelinePendingCount}
                   onApplyPending={() =>

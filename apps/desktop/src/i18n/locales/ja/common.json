@@ -125,6 +125,8 @@
     "localSyncing": "同期中…",
     "pendingPosts_one": "新しい投稿を{{count}}件表示",
     "pendingPosts_other": "新しい投稿を{{count}}件表示",
+    "unavailablePosts_one": "この範囲の投稿{{count}}件は、まだ取得できていません。届いたら表示します。",
+    "unavailablePosts_other": "この範囲の投稿{{count}}件は、まだ取得できていません。届いたら表示します。",
     "moreMedia": "メディア{{count}}件",
     "quoteRepost": "コメント付きリポスト",
     "replyingTo": "{{author}}さんへの返信",

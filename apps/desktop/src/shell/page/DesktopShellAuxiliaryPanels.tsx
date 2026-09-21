@@ -727,6 +727,7 @@ export function DesktopShellDetailSurfaceStack({
     syncStatus,
     threadLoadingMoreById,
     threadNextCursorById,
+    threadUnavailableById,
     threadsById,
   } = useDesktopShellStore(
     useShallow((s) => ({
@@ -748,6 +749,7 @@ export function DesktopShellDetailSurfaceStack({
       syncStatus: s.syncStatus,
       threadLoadingMoreById: s.threadLoadingMoreById,
       threadNextCursorById: s.threadNextCursorById,
+      threadUnavailableById: s.threadUnavailableById,
       threadsById: s.threadsById,
     }))
   );
@@ -852,6 +854,7 @@ export function DesktopShellDetailSurfaceStack({
       state={{ ...viewModels.threadPanelState, selectedThreadId: effectiveThreadId }}
       posts={effectiveThreadPostViews}
       hasMore={selectedThreadHasMore}
+      unavailableCount={effectiveThreadId ? (threadUnavailableById[effectiveThreadId] ?? 0) : 0}
       loadingMore={selectedThreadLoadingMore}
       onLoadMore={() => void loadMoreThread(effectiveTopicId, effectiveThreadId)}
       onOpenAuthor={(authorPubkey) =>

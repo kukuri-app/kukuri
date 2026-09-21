@@ -909,3 +909,29 @@ blocker は無かった。non-blocker のうち、次を直した。
   mutation で、3 回とも失敗することを確かめた）。
 
 残した non-blocker: 取得側の反映をしない経路（プロフィール、bookmark、community index）の遡ったページは、背景の反映の後の取り直しまで preview が出ない。
+
+## T10: 取得できなかった範囲の表示（AC-4、TR-6）（2026-09-22）
+
+- 照合（`replica_window.rs`）は、ページの範囲の索引にあるが本体（object の entry や envelope）が手元に無い object の数を数え（`RangeCheckOutcome::missing`。取り下げの対象の
+  envelope の未着は含まない）、台帳に残す（台帳の間隔の内で照合しなかった取得も、前回の数を返す）。反映できない entry が続いて 1 ページぶんに届かず、読み終えていない範囲は、
+  読み進めた位置を返す（replica が複数あるときは、最も進んでいない位置）。
+- タイムラインと thread の取得は、その数を `TimelineView.unavailable_count` で返し、projection が尽きたページで照合が範囲を読み終えていなければ、読み進めた位置を
+  `next_cursor` にする（`continue_past_unavailable`）。以前は、反映できない entry が 1 回の上限（200 件）を超えて続く範囲で `next_cursor` が null になり、画面から先へ進めなかった
+  （T5a の申し送り）。
+- 画面: `TimelineFeed` と `ThreadTree`（`ThreadPanel` 経由）は、数が 1 以上なら `UnavailablePostsNotice`（`role='status'`、既存の `empty` の文字の扱い）を、続きを読む手段の前に描く。
+  行が 0 件でも、数が 1 以上なら空の文言にしない。store は、読んだ範囲ごとに数を持つ（`timelineUnavailableByKey`・`threadUnavailableById`）。続きの読み込みと、読んだ範囲を
+  捨てる refresh はその取得の数に置き換え、読んだ範囲を残す refresh（`hasReadPastHeadPage`）は数も残す。文言は ja / en / zh-CN（en は単数・複数）。
+- IPC の型（`types.generated.ts`）は `unavailable_count?: number | null`（旧い runtime の応答と mock は持たない）。
+- PR #1283 の監査で残した non-blocker も直した: `BodyNotLocal` の後の背景の反映を固定する test（購読の窓の追いつきを止めた double で、背景が remote から本文を取って
+  反映することを確かめる。spawn を外す mutation で失敗する）と、`reflect_reply_target` の doc comment の `LocalOnly` の書き方。
+
+### 証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| 数を返す（タイムライン、台帳の間隔の内も） | `an_older_page_reports_the_posts_whose_body_is_not_here`（前回の数を返さない mutation で失敗） |
+| 取得できない投稿の先へ進める | `following_the_next_cursor_passes_over_a_long_run_of_unavailable_posts`（450 件の反映できない entry の先の投稿へ、続きの位置をたどるだけで届く。続きの位置にしない mutation で失敗） |
+| thread | `a_thread_page_reports_the_replies_whose_body_is_not_here` |
+| 画面（component） | `TimelineFeed.unavailable.test.tsx`（数と続きを読む button、行 0 件で空の文言にしない、0 件で何も描かない、thread） |
+| 画面（store） | `useDesktopShellData.unavailableCount.test.tsx`（続きの読み込みで数を残し、読んだ範囲を残す refresh で消さない。refresh で常に置き換える mutation で失敗） |
+| 見た目 | Storybook `Core/TimelineFeed` の `UnavailablePosts`・`OnlyUnavailablePosts`。`docs/progress/assets/1239/` の画像（ja dark / light の 800px、en dark と zh-CN light の 375px。375px で横の overflow が無いことを確かめた） |

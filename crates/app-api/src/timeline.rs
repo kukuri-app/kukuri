@@ -68,6 +68,7 @@ impl AppService {
         Ok(TimelineView {
             items: views,
             next_cursor: page.next_cursor,
+            unavailable_count: 0,
         })
     }
 
@@ -766,6 +767,7 @@ impl AppService {
         // (空を含む)は、その 1 ページぶんの範囲を時系列の索引と照合して、欠けている object だけを key 指定で
         // 反映する。先頭の範囲の追いつきは購読タスクが行う。
         let projection_exhausted = page.next_cursor.is_none();
+        let mut unavailable = 0usize;
         if cursor.is_some() || projection_exhausted || needs_epoch_hydration {
             let reconcile = self
                 .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
@@ -786,6 +788,8 @@ impl AppService {
                 )
                 .await?;
             }
+            unavailable = reconcile.unavailable;
+            continue_past_unavailable(&mut page, &reconcile);
             if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
                 if had_topic_subscription {
                     self.maybe_restart_scope_subscription(topic_id, &scope)
@@ -803,7 +807,8 @@ impl AppService {
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
         self.reflect_reply_targets_for_rows(&page.items).await;
-        let view = self.page_to_view(page).await?;
+        let mut view = self.page_to_view(page).await?;
+        view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
         let mut last_sync = self.last_sync_ts.lock().await;
         if !view.items.is_empty() && last_sync.is_none() {
             *last_sync = Some(Utc::now().timestamp_millis());
@@ -849,6 +854,7 @@ impl AppService {
             .await?;
         let page_is_stale =
             reconcile.page_is_stale(page.items.len(), !hidden_author_pubkeys.is_empty());
+        let unavailable = reconcile.unavailable;
         if page_is_stale || page.items.is_empty() {
             if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
@@ -889,8 +895,10 @@ impl AppService {
         }
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
+        continue_past_unavailable(&mut page, &reconcile);
         self.reflect_reply_targets_for_rows(&page.items).await;
-        let view = self.page_to_view(page).await?;
+        let mut view = self.page_to_view(page).await?;
+        view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
         let mut last_sync = self.last_sync_ts.lock().await;
         if !view.items.is_empty() && last_sync.is_none() {
             *last_sync = Some(Utc::now().timestamp_millis());
@@ -915,4 +923,21 @@ fn scope_empty_recovery_key(topic_id: &str, scope: &TimelineScope) -> String {
 
 fn thread_empty_recovery_key(topic_id: &str, thread_id: &str) -> String {
     format!("empty-thread:{topic_id}:{thread_id}")
+}
+
+/// 照合の結果を、取得したページへ映す(#1239 AC-4)。
+///
+/// projection が尽きたページで、照合が反映できない entry の続く範囲を読み終えていなければ、読み進めた位置を続きの位置にする
+/// (利用者が、取得できない投稿の先へ進めるように)。読み進めた位置より古い行が既にページにあっても、次のページで
+/// 重なるだけで欠けない(画面は重複を除く)。
+fn continue_past_unavailable(page: &mut Page<ObjectProjectionRow>, reconcile: &RangeReconcile) {
+    if page.next_cursor.is_some() {
+        return;
+    }
+    if let Some(read_past) = reconcile.read_past.as_ref() {
+        page.next_cursor = Some(TimelineCursor {
+            created_at: read_past.created_at,
+            object_id: EnvelopeId::from(read_past.object_id.as_str()),
+        });
+    }
 }
