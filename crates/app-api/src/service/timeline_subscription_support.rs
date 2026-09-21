@@ -564,68 +564,6 @@ impl AppService {
         Ok(replicas)
     }
 
-    pub(crate) async fn hydrate_scope_projection(
-        &self,
-        topic_id: &str,
-        scope: &TimelineScope,
-    ) -> Result<usize> {
-        let mut hydrated =
-            hydrate_topic_state(&self.services, topic_id, DocFetchPolicy::LocalOnly).await?;
-        match scope {
-            TimelineScope::Public => {}
-            TimelineScope::AllJoined => {
-                for state in self.joined_private_channel_states_for_topic(topic_id).await {
-                    for replica in
-                        private_channel_epoch_capabilities(&state)
-                            .into_iter()
-                            .map(|epoch| {
-                                private_channel_replica_for_epoch(
-                                    state.channel_id.as_str(),
-                                    epoch.epoch_id.as_str(),
-                                )
-                            })
-                    {
-                        hydrated += hydrate_subscription_state(
-                            &self.services,
-                            topic_id,
-                            &replica,
-                            DocFetchPolicy::LocalOnly,
-                        )
-                        .await?;
-                    }
-                }
-            }
-            TimelineScope::Channel { channel_id } => {
-                self.ensure_private_channel_access(topic_id, channel_id)
-                    .await?;
-                if let Some(state) = self
-                    .joined_private_channel_state(topic_id, channel_id.as_str())
-                    .await
-                {
-                    for replica in
-                        private_channel_epoch_capabilities(&state)
-                            .into_iter()
-                            .map(|epoch| {
-                                private_channel_replica_for_epoch(
-                                    state.channel_id.as_str(),
-                                    epoch.epoch_id.as_str(),
-                                )
-                            })
-                    {
-                        hydrated += hydrate_subscription_state(
-                            &self.services,
-                            topic_id,
-                            &replica,
-                            DocFetchPolicy::LocalOnly,
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
-        Ok(hydrated)
-    }
-
     pub(crate) async fn maybe_restart_scope_replica_sync(
         &self,
         topic_id: &str,

@@ -467,3 +467,21 @@ T4b-1 は PR #1266（merge commit `9fe399fa`）で完了した。独立監査は
 - 取りこぼした取り下げが、`Lagged` の後と起動時の追いつきで反映されることの test（監査の test を恒久化）。
 
 残した non-blocker: session と reaction の読み直しを直接確かめる test、追いつきが走っているあいだ event を消費しない点と `refresh_all` の最悪の読み出し回数（約 1 万回。T5b の「1 回の追いつきが読む reaction の総数の上限」で扱う）。
+
+## T5b-1: live / game の一覧の全件走査の置き換えと、全件走査の関数の削除（基準 commit `323be894`）
+
+T4b-2 は PR #1267（merge commit `323be894`）で完了した。独立監査は 2 回（FAIL、delta PASS）、必須 CI は全 job 成功。
+
+- `list_live_sessions`・`list_game_rooms`（S-9）は、行が空のとき（live は viewer が 0 の live session があるときも）scope の全 replica を全件走査していた。
+  session の固定件数を key の一覧から反映する形（`catch_up_scope_sessions`）に置き換えた。読むのは、参加状態の確認を通った replica の手元の docs だけで、replica ごとに間隔を空ける。
+- session の固定件数の読み方を、id の形に依らないものにした。`live-`・`game-` の prefix の降順（ほぼ新しい順）に加えて、prefix 全体の昇順と降順の固定件数も読む
+  （Dome の room の `dome-<hash>` や、それ以外の形の id は時刻順に並ばない。id の形は検証の対象ではない）。
+- これで replica の全件走査の本番の caller が無くなったので、関数を削除した（T7 の予定を前倒しした）:
+  `hydrate_subscription_state`・`hydrate_topic_state`・`hydrate_scope_projection`・`hydrate_post_withdrawals_from_replica`・`hydrate_object_projection_from_replica`・
+  `hydrate_reaction_cache_from_replica`・`hydrate_live_sessions_from_replica`・`hydrate_game_rooms_from_replica`・`hydrate_post_withdrawal_from_record`、`ReplicaScanCache` と `scan_fingerprint`。
+  app-api に残る `DocQuery::Prefix` は、inventory の P-8〜P-13（author・profile・Dome・private channel の参加者）だけになった。
+- 全件走査に頼っていた test の載せ替え: 通知と検証の契約 test は窓の追いつき（`catch_up_replica_window`）へ、game room の test は session の固定件数の反映（`catch_up_sessions`）へ。
+  全件走査の所要時間を測るだけの test（`measure_full_scan_cost`、`#[ignore]`）と、指紋の単体 test は、対象が無くなったので削除した。
+  索引の entry を書かない fixture は、追いつきが索引から読むので、索引の entry を足した。
+- PR #1267 の監査が「直接の test が無い」とした経路の test を足した（`session_catch_up.rs`）: session の追いつき、取りこぼしの後の reaction の読み直し、hint からの依頼、
+  同期の終わりの通知が伸びた間隔を待つこと。

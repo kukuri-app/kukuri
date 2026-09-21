@@ -28,19 +28,19 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | S-6 | `list_timeline_scoped`（空ページ、private channel の現在 epoch が未反映）・`list_thread`（空ページ）。private channel の現在 epoch に投稿が無い間は、取得のたびに走査していた | scope の全 replica の 5 prefix | 同 S-1 × scope の replica 数 | T5a（解消済み。`reconcile_timeline_range`・`reconcile_thread` が、ページの範囲を時系列の索引と照合する） |
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
-| S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5b |
+| S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5b-1（解消済み。session の固定件数を key の一覧から反映する `catch_up_scope_sessions`。replica ごとに間隔を空ける） |
 | S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6 |
 
 ## prefix の全件読み（caller ごと）
 
 | ID | caller | prefix | 比例する総数 | 分類 |
 | --- | --- | --- | --- | --- |
-| P-1 | `hydration_support.rs` `hydrate_post_withdrawals_from_replica`。全件走査のほか、view の生成中に行ごとに呼ばれる（`timeline_view_support.rs` の `profile_post_to_view`・`profile_repost_to_view`・`repost_snapshot_to_view_with_profiles`） | `withdrawals/` | topic の取り下げ総数 × ページの行数 | 対象。view の生成からは T3 で外した（背景の key 指定の確認へ）。関数は T7 で削除 |
-| P-2 | `hydration_support.rs` `hydrate_object_projection_from_replica` | `objects/`（1 投稿につき `state` と `envelope` の 2 entry） | topic の投稿総数 | 対象。T7 で削除 |
-| P-3 | `reaction_hydration.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | 対象。T7 で削除 |
+| P-1 | `hydration_support.rs` `hydrate_post_withdrawals_from_replica`。全件走査のほか、view の生成中に行ごとに呼ばれる（`timeline_view_support.rs` の `profile_post_to_view`・`profile_repost_to_view`・`repost_snapshot_to_view_with_profiles`） | `withdrawals/` | topic の取り下げ総数 × ページの行数 | T5b-1（解消済み。関数を削除した） |
+| P-2 | `hydration_support.rs` `hydrate_object_projection_from_replica` | `objects/`（1 投稿につき `state` と `envelope` の 2 entry） | topic の投稿総数 | T5b-1（解消済み。関数を削除した） |
+| P-3 | `reaction_hydration.rs` `hydrate_reaction_cache_from_replica` | `reactions/` | topic のリアクション総数 | T5b-1（解消済み。関数を削除した） |
 | P-4 | `reaction_hydration.rs` `hydrate_reaction_cache_for_target`（reaction の hint の個別反映） | `reactions/<target object id>/` | 1 投稿のリアクション数 | T4b-2（解消済み。`hydrate_reaction_cache_for_target` を削除し、hint の個別反映も上限つきの `hydrate_reaction_cache_for_target_bounded` を使う） |
-| P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | 対象。T5b で上限つき、T7 で全件走査から外す |
-| P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | 同上 |
+| P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | T5b-1（解消済み。関数を削除した） |
+| P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | T5b-1（解消済み。関数を削除した） |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
 | P-8 | `profile_docs_support.rs` `hydrate_author_state` | `graph/follows/`、`graph/blocks/` | author の follow・block の総数 | 対象。T6（event 駆動と上限つきの読み出し） |
 | P-9 | `profile_docs_support.rs` `load_profile_posts_from_author_replica`・`load_profile_reposts_from_author_replica` | `profile/posts/`、`profile/reposts/` | author の投稿・repost の総数 | 対象。T6 |

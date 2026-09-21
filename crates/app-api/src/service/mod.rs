@@ -134,9 +134,7 @@ mod hydration_support;
 use game_projection_support::GameRoomProjectionLocks;
 pub(crate) use hydration_limits::recovery_probe_peer_state;
 #[cfg(test)]
-pub(crate) use hydration_support::{
-    hydrate_game_room_from_key, hydrate_game_rooms_from_replica, hydrate_subscription_event,
-};
+pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_subscription_event};
 mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
@@ -159,6 +157,8 @@ mod social_helpers;
 mod social_runtime_support;
 mod spatial_access_support;
 mod subscription_catch_up;
+#[cfg(test)]
+pub(crate) use subscription_catch_up::catch_up_sessions;
 pub(crate) use subscription_catch_up::{
     CatchUpSchedule, catch_up_replica_window, missed_entry_needs_catch_up,
     snapshot_window_notification_baseline,
@@ -186,8 +186,7 @@ pub(crate) use attachment_support::{
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
     hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_doc_event,
-    hydrate_subscription_hint, hydrate_subscription_state, hydrate_topic_state,
-    profile_timeline_page,
+    hydrate_subscription_hint, profile_timeline_page,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
@@ -221,13 +220,11 @@ pub(crate) use object_persistence_support::{
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
     VerifiedPost, WithdrawalTargetCheck, load_post_with_hint, load_verified_post,
-    object_id_from_post_key, post_envelope_key, select_verified_post,
-    verify_withdrawal_against_records, warn_rejected_post,
+    object_id_from_post_key, post_envelope_key, verify_withdrawal_against_records,
 };
 pub(crate) use post_withdrawal_hydration::{
     PostWithdrawalHydration, WithdrawalReadHints, hydrate_post_withdrawal_for_object,
-    hydrate_post_withdrawal_for_object_with_hints, hydrate_post_withdrawal_from_record,
-    object_id_from_post_withdrawal_key,
+    hydrate_post_withdrawal_for_object_with_hints, object_id_from_post_withdrawal_key,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope_by_id, hydrate_author_state,
@@ -246,10 +243,7 @@ pub(crate) use projection_support::{
     private_channel_is_epoch_aware, private_channel_replica_for_epoch,
     profile_timeline_item_is_hidden,
 };
-pub(crate) use reaction_integrity::{
-    ReactionKey, VerifiedReaction, load_verified_reaction, select_verified_reaction,
-    warn_rejected_reaction,
-};
+pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};
 pub(crate) use session_integrity::{
     VerifiedGameRoom, VerifiedLiveSession, load_verified_game_room, load_verified_live_session,
     owner_bound_id_suffix, verify_game_room_record, verify_live_session_record,
@@ -389,7 +383,6 @@ pub struct ServiceHandles {
     pub(crate) game_room_projections: Arc<GameRoomProjectionLocks>,
     pub(crate) dome_mutations: Arc<Mutex<()>>,
     /// #1225: replica 全件走査の指紋と、欠損した本文 blob の試行台帳。
-    pub(crate) replica_scan_cache: Arc<hydration_limits::ReplicaScanCache>,
     pub(crate) missing_body_ledger: Arc<hydration_limits::MissingBodyLedger>,
     /// #1239: 表示した投稿の取り下げの、背景での確認の台帳。
     pub(crate) withdrawal_checks: Arc<hydration_limits::WithdrawalCheckLedger>,
@@ -417,7 +410,6 @@ impl ServiceHandles {
             keys: Arc::new(keys),
             game_room_projections: Arc::default(),
             dome_mutations: Arc::default(),
-            replica_scan_cache: Arc::default(),
             missing_body_ledger: Arc::default(),
             withdrawal_checks: Arc::default(),
             range_checks: Arc::default(),

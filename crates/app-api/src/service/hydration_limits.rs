@@ -1,15 +1,13 @@
-//! #1225: replica の全件走査と、欠損した本文 blob の取り直しを有限にするための状態。
+//! #1225: 欠損した本文 blob の取り直しを有限にするための状態。
 //!
-//! - `ReplicaScanCache`: 走査した record 群の指紋を prefix ごとに覚え、前回と同じなら projection の
-//!   書き直しを省く。走査の戻り値は「replica にある行数」ではなく「今回反映した行数」になる。
 //! - `MissingBodyLedger`: 取得できない本文 blob の試行を hash 単位で数え、間隔と回数に上限を置く。
+//!
+//! replica の全件走査と、その指紋の cache(`ReplicaScanCache`)は #1239 で削除した。
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use kukuri_core::BlobHash;
-use kukuri_docs_sync::DocRecord;
 use tokio::sync::Semaphore;
 
 use super::*;
@@ -25,62 +23,6 @@ pub(crate) const MISSING_BODY_DISPLAY_GRACE_MS: u64 = 300;
 pub(crate) const MISSING_BODY_MAX_CONCURRENT_FETCHES: usize = 4;
 /// 台帳の上限。超えた分は、取得中でない項目から捨てる。
 pub(crate) const MISSING_BODY_LEDGER_LIMIT: usize = 4_096;
-
-pub(crate) fn scan_fingerprint(records: &[DocRecord]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    records.len().hash(&mut hasher);
-    for record in records {
-        record.key.hash(&mut hasher);
-        record.content_hash.hash(&mut hasher);
-        // LocalOnly で本体が未取得の entry と、取得後の entry を区別する。
-        record.value.len().hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-#[derive(Default)]
-pub(crate) struct ReplicaScanCache {
-    fingerprints: Mutex<HashMap<(String, &'static str), u64>>,
-}
-
-impl ReplicaScanCache {
-    pub(crate) fn is_unchanged(
-        &self,
-        replica: &str,
-        prefix: &'static str,
-        fingerprint: u64,
-    ) -> bool {
-        self.fingerprints
-            .lock()
-            .expect("replica scan cache lock")
-            .get(&(replica.to_string(), prefix))
-            .is_some_and(|known| *known == fingerprint)
-    }
-
-    /// 反映が最後まで終わった走査だけを記録する。途中で取りこぼしがあれば記録せず、次回もやり直す。
-    pub(crate) fn record(&self, replica: &str, prefix: &'static str, fingerprint: u64) {
-        self.fingerprints
-            .lock()
-            .expect("replica scan cache lock")
-            .insert((replica.to_string(), prefix), fingerprint);
-    }
-
-    /// 指紋を記録し、前回から変わったかを返す(省略はせず、変化の有無だけを知りたい走査向け)。
-    pub(crate) fn observe(&self, replica: &str, prefix: &'static str, fingerprint: u64) -> bool {
-        self.fingerprints
-            .lock()
-            .expect("replica scan cache lock")
-            .insert((replica.to_string(), prefix), fingerprint)
-            != Some(fingerprint)
-    }
-
-    pub(crate) fn forget(&self, replica: &str, prefix: &'static str) {
-        self.fingerprints
-            .lock()
-            .expect("replica scan cache lock")
-            .remove(&(replica.to_string(), prefix));
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 struct MissingBodyEntry {
@@ -470,27 +412,5 @@ mod tests {
             "expired entries make room"
         );
         assert!(ledger.len() <= WITHDRAWAL_CHECK_LEDGER_LIMIT);
-    }
-
-    #[test]
-    fn fingerprint_changes_with_keys_hashes_and_resolved_bodies() {
-        let record = |key: &str, hash: &str, value: &[u8]| DocRecord {
-            key: key.into(),
-            value: value.to_vec(),
-            content_hash: hash.into(),
-            content_len: value.len() as u64,
-            docs_author: None,
-        };
-        let base = vec![record("objects/a/state", "h1", b"x")];
-        assert_eq!(scan_fingerprint(&base), scan_fingerprint(&base.clone()));
-        assert_ne!(
-            scan_fingerprint(&base),
-            scan_fingerprint(&[record("objects/a/state", "h2", b"x")])
-        );
-        assert_ne!(
-            scan_fingerprint(&base),
-            scan_fingerprint(&[record("objects/a/state", "h1", b"")])
-        );
-        assert_ne!(scan_fingerprint(&base), scan_fingerprint(&[]));
     }
 }

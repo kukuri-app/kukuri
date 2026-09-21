@@ -121,57 +121,6 @@ async fn apply_verified_post_withdrawal(
     Ok(())
 }
 
-/// 取り下げの record を 1 件、検証して projection へ反映する。全件走査が record ごとに呼ぶ。
-///
-/// 読めない record と検証できない record は `Invalid` を返し、エラーにしない。public topic の replica は
-/// 誰でも書けるので、読めない record を 1 件置くだけで、投稿の反映や topic 全体の操作を止められないようにする
-/// (ADR 0052 §2)。docs と projection の読み書きの失敗はエラーとして返す。
-///
-/// key を指定して読む入口は、これを直接呼ばず `hydrate_post_withdrawal_for_object` を使う(#1250)。
-pub(crate) async fn hydrate_post_withdrawal_from_record(
-    docs_sync: &dyn DocsSync,
-    projection_store: &dyn ProjectionStore,
-    replica: &ReplicaId,
-    record: DocRecord,
-    policy: DocFetchPolicy,
-) -> Result<PostWithdrawalHydration> {
-    let Some((envelope, target_object_id)) = parse_post_withdrawal_record(replica, &record) else {
-        return Ok(PostWithdrawalHydration::Invalid);
-    };
-    // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ず、上限つきで対象を探す(#1248)。
-    let target_records = docs_sync
-        .query_replica_exact_bounded(
-            replica,
-            post_envelope_key(&target_object_id).as_str(),
-            MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            policy,
-        )
-        .await?;
-    let withdrawal =
-        match verify_withdrawal_against_records(&envelope, &target_object_id, &target_records) {
-            WithdrawalTargetCheck::Verified(withdrawal) => *withdrawal,
-            WithdrawalTargetCheck::Mismatch(error) => {
-                warn_invalid_post_withdrawal(
-                    replica,
-                    record.key.as_str(),
-                    "the withdrawal does not match the target",
-                    &error,
-                );
-                return Ok(PostWithdrawalHydration::Invalid);
-            }
-            // 対象として読める envelope がまだ無い。対象が届いたときに反映し直す。
-            WithdrawalTargetCheck::TargetMissing => {
-                return Ok(PostWithdrawalHydration::TargetMissing);
-            }
-        };
-    if !storable_post_withdrawal(replica, record.key.as_str(), &withdrawal) {
-        return Ok(PostWithdrawalHydration::Invalid);
-    }
-    apply_verified_post_withdrawal(projection_store, replica, withdrawal, &target_object_id)
-        .await?;
-    Ok(PostWithdrawalHydration::Applied)
-}
-
 /// 取り下げの読み出しに使う docs author(ADR 0053 §3)。
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct WithdrawalReadHints<'a> {

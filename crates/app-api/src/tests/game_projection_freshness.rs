@@ -1,6 +1,6 @@
 use super::*;
 use crate::service::game_projection_support::hydrate_game_room_from_record;
-use crate::service::{hydrate_game_room_from_key, hydrate_game_rooms_from_replica};
+use crate::service::{catch_up_sessions, hydrate_game_room_from_key};
 use kukuri_docs_sync::{DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord};
 use kukuri_store::GameRoomProjectionRow;
 use std::sync::atomic::AtomicUsize;
@@ -119,6 +119,15 @@ impl DocsSync for ControlledDocs {
             }
         }
         Ok(rows)
+    }
+
+    // 上限つきの key の一覧の既定実装はエラーを返す。session の固定件数の反映が使うので転送する。
+    async fn query_replica_keys(
+        &self,
+        replica: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica, query).await
     }
 
     async fn subscribe_replica(&self, replica: &ReplicaId) -> Result<DocEventStream> {
@@ -372,8 +381,10 @@ async fn late_hydration_keeps_valid_update(sqlite: bool, batch: bool) {
     let hydration = tokio::spawn(async move {
         let replica = topic_replica_id(TOPIC);
         if batch {
-            hydrate_game_rooms_from_replica(&services, TOPIC, &replica, DocFetchPolicy::LocalOnly)
+            // #1239: replica の全件走査は削除した。session の固定件数の反映(購読タスクの追いつきと同じ)を通す。
+            catch_up_sessions(&services, TOPIC, &replica, DocFetchPolicy::LocalOnly)
                 .await
+                .map(|()| 1)
         } else {
             hydrate_game_room_from_key(&services, TOPIC, &replica, &key)
                 .await
@@ -855,17 +866,14 @@ async fn restart_and_missing_cache_resolve_docs_at_the_same_timestamp() {
     services.store = reopened.clone();
     services.projection_store = reopened.clone();
     services.game_room_projections = Arc::default();
-    assert_eq!(
-        hydrate_game_rooms_from_replica(
-            &services,
-            TOPIC,
-            &topic_replica_id(TOPIC),
-            DocFetchPolicy::LocalOnly
-        )
-        .await
-        .unwrap(),
-        1
-    );
+    catch_up_sessions(
+        &services,
+        TOPIC,
+        &topic_replica_id(TOPIC),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .unwrap();
     let row = reopened
         .list_topic_game_rooms(TOPIC)
         .await
@@ -877,17 +885,14 @@ async fn restart_and_missing_cache_resolve_docs_at_the_same_timestamp() {
         .execute(reopened.pool())
         .await
         .unwrap();
-    assert_eq!(
-        hydrate_game_rooms_from_replica(
-            &services,
-            TOPIC,
-            &topic_replica_id(TOPIC),
-            DocFetchPolicy::LocalOnly
-        )
-        .await
-        .unwrap(),
-        1
-    );
+    catch_up_sessions(
+        &services,
+        TOPIC,
+        &topic_replica_id(TOPIC),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .unwrap();
     let rebuilt = reopened
         .list_topic_game_rooms(TOPIC)
         .await

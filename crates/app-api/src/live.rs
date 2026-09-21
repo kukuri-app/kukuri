@@ -37,7 +37,8 @@ impl AppService {
                 .await;
             self.maybe_restart_scope_replica_sync(topic_id, &scope)
                 .await;
-            self.hydrate_scope_projection(topic_id, &scope).await?;
+            // #1239: replica を走査しない。session の固定件数だけを、key の一覧から反映する。
+            self.catch_up_scope_sessions(topic_id, &scope).await?;
             self.services
                 .projection_store
                 .clear_expired_live_presence(Utc::now().timestamp_millis())

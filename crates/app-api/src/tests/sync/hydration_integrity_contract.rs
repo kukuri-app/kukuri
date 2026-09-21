@@ -73,19 +73,37 @@ async fn invalid_records_placed_before_the_signed_envelope_do_not_hide_the_post(
     assert_eq!(row.author_pubkey, author_keys.public_key_hex());
     assert_eq!(row.content.as_deref(), Some("the real words"));
 
-    // 全件走査でも同じ結果になる。#1239 の T5a の後、タイムラインの取得は全件走査をしない(ページの範囲を
-    // 時系列の索引と照合する)ので、購読タスクが使う全件走査を直接呼ぶ。
+    // 購読タスクの窓の追いつきでも同じ結果になる(#1239: replica の全件走査は削除した)。
+    // 追いつきは時系列の索引から読むので、投稿の保存が書く索引の entry も置く。
+    docs_sync
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: stable_key(
+                    "indexes/timeline",
+                    &format!(
+                        "{}/{}",
+                        timeline_sort_key(envelope.created_at, &envelope.id),
+                        envelope.id.as_str()
+                    ),
+                ),
+                value: serde_json::json!({}),
+            },
+        )
+        .await
+        .expect("write the timeline index entry");
     ObjectProjectionStore::rebuild_object_projections(store.as_ref(), Vec::new())
         .await
         .expect("clear projection");
-    hydrate_subscription_state(
+    catch_up_replica_window(
         &app.services,
         topic.as_str(),
         &replica,
         DocFetchPolicy::LocalOnly,
+        true,
     )
     .await
-    .expect("full scan");
+    .expect("window catch-up");
     let view = app
         .list_timeline(topic.as_str(), None, 20)
         .await
@@ -526,11 +544,6 @@ async fn private_posts_of_current_and_archived_epochs_are_projected_from_docs() 
     ObjectProjectionStore::rebuild_object_projections(store.as_ref(), Vec::new())
         .await
         .expect("clear projection");
-    for replica in &epoch_replicas {
-        app.services
-            .replica_scan_cache
-            .forget(replica.as_str(), "objects/");
-    }
     let view = app
         .list_timeline_scoped(
             topic,

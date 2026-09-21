@@ -36,7 +36,8 @@ impl AppService {
         })
         .collect::<Vec<_>>();
         if rows.is_empty() {
-            self.hydrate_scope_projection(topic_id, &scope).await?;
+            // #1239: replica を走査しない。session の固定件数だけを、key の一覧から反映する。
+            self.catch_up_scope_sessions(topic_id, &scope).await?;
             rows = filter_channel_rows(
                 self.services
                     .projection_store

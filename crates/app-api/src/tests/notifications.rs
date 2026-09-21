@@ -335,11 +335,12 @@ async fn repost_notification_survives_hydration_before_live_doc_event() {
     )
     .await
     .expect("persist simple repost");
-    hydrate_subscription_state(
+    catch_up_replica_window(
         &app.services,
         topic.as_str(),
         &replica,
         DocFetchPolicy::LocalThenRemote,
+        true,
     )
     .await
     .expect("hydrate topic state");
@@ -414,11 +415,12 @@ async fn quote_repost_notification_survives_hydration_before_live_doc_event() {
     )
     .await
     .expect("persist quote repost");
-    hydrate_subscription_state(
+    catch_up_replica_window(
         &app.services,
         topic.as_str(),
         &replica,
         DocFetchPolicy::LocalThenRemote,
+        true,
     )
     .await
     .expect("hydrate topic state");
@@ -790,11 +792,12 @@ async fn restart_or_manual_hydration_does_not_backfill_or_duplicate_notification
     let baseline = snapshot_window_notification_baseline(docs_sync.as_ref(), &replica)
         .await
         .expect("snapshot object baseline");
-    hydrate_subscription_state(
+    catch_up_replica_window(
         &app.services,
         topic.as_str(),
         &replica,
         DocFetchPolicy::LocalThenRemote,
+        true,
     )
     .await
     .expect("hydrate topic state");
@@ -859,11 +862,12 @@ async fn restart_or_manual_hydration_does_not_backfill_or_duplicate_notification
         )
         .await
     );
-    hydrate_subscription_state(
+    catch_up_replica_window(
         &app.services,
         topic.as_str(),
         &replica,
         DocFetchPolicy::LocalThenRemote,
+        true,
     )
     .await
     .expect("rehydrate topic state");
