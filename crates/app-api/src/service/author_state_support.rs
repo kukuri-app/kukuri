@@ -61,7 +61,6 @@ pub(crate) struct HexBucketedKeys {
     done_through: Option<String>,
     last_bucket: Option<String>,
     stopped_early: bool,
-    docs_author: Option<String>,
 }
 
 impl HexBucketedKeys {
@@ -79,14 +78,7 @@ impl HexBucketedKeys {
             done_through,
             last_bucket: None,
             stopped_early: false,
-            docs_author: None,
         }
-    }
-
-    /// この docs author が書いた key だけを読む(他の名義の key で query の上限を使わせない。ADR 0053 §6)。
-    pub(crate) fn by_docs_author(mut self, docs_author: Option<String>) -> Self {
-        self.docs_author = docs_author;
-        self
     }
 
     fn split(&mut self, bucket: &str) {
@@ -136,14 +128,7 @@ impl HexBucketedKeys {
                 order: DocKeyOrder::Ascending,
                 limit: self.batch,
             };
-            let page = match self.docs_author.as_deref() {
-                Some(docs_author) => {
-                    docs_sync
-                        .query_replica_keys_by_author(replica, docs_author, query)
-                        .await?
-                }
-                None => docs_sync.query_replica_keys(replica, query).await?,
-            };
+            let page = docs_sync.query_replica_keys(replica, query).await?;
             if page.reached_limit && bucket.len() < self.root_len + 64 {
                 self.split(&bucket);
                 continue;
@@ -346,7 +331,7 @@ pub(crate) async fn sweep_own_author_edges_with(
 ) -> Result<AuthorHydration> {
     let replica = author_replica_id(local_author_pubkey);
     let projection_store = services.projection_store.as_ref();
-    // 自分の docs author が分かれば、自分の名義の key だけを読む(他の名義のごみの key で query の上限を使わせない)。
+    // 自分の docs author。record は組で先に読み、旧名義でしか読めなかった edge を書き直すのに使う。
     let docs_author = services.docs_sync.local_docs_author().await?;
     let mut outcome = AuthorHydration::default();
     for prefix in ["graph/follows/", "graph/blocks/"] {
@@ -361,8 +346,9 @@ pub(crate) async fn sweep_own_author_edges_with(
             .as_deref()
             .and_then(|value| value.strip_prefix(CHECKPOINT_AFTER))
             .map(str::to_string);
-        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through)
-            .by_docs_author(docs_author.clone());
+        // 名義を問わない一覧で読む。自分の edge は、ADR 0053 以前の端末ごとの名義でも書かれている。docs author を指定すると、
+        // それらを 1 件も読まない(独立監査 B-5)。他の名義のごみの key は、読み進めを遅らせるだけで、位置は残る。
+        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through);
         while let Some(entries) = keys
             .next_batch(services.docs_sync.as_ref(), &replica)
             .await?
@@ -373,7 +359,7 @@ pub(crate) async fn sweep_own_author_edges_with(
                     continue;
                 }
                 // 本体がまだ手元に無い key は、相手から取る。1 件の失敗で同じ位置に留まらないよう、飛ばして進む。
-                match hydrate_author_record(
+                match read_author_record(
                     services,
                     local_author_pubkey,
                     &replica,
@@ -383,7 +369,22 @@ pub(crate) async fn sweep_own_author_edges_with(
                 )
                 .await
                 {
-                    Ok(reflected) => outcome.add(reflected),
+                    Ok(read) => {
+                        outcome.add(read.outcome);
+                        // 旧名義でしか読めなかった自分の edge は、自分の docs author で書き直す。
+                        if docs_author.is_some()
+                            && !read.read_by_docs_author
+                            && let Err(error) =
+                                rewrite_own_legacy_edge(services.docs_sync.as_ref(), &read).await
+                        {
+                            warn!(
+                                author_pubkey = %local_author_pubkey,
+                                key = %entry.key,
+                                error = %error,
+                                "failed to rewrite an own edge under the account docs author"
+                            );
+                        }
+                    }
                     Err(error) => {
                         warn!(
                             author_pubkey = %local_author_pubkey,
@@ -535,6 +536,35 @@ async fn hydrate_author_record(
     docs_author: Option<&str>,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
+    Ok(
+        read_author_record(services, author_pubkey, replica, key, docs_author, policy)
+            .await?
+            .outcome,
+    )
+}
+
+/// `hydrate_author_record` の結果に、反映した envelope と、それを docs author と key の組で読めたかを添えたもの。
+struct AuthorRecordRead {
+    outcome: AuthorHydration,
+    envelope: Option<KukuriEnvelope>,
+    kind: Option<AuthorKeyKind>,
+    read_by_docs_author: bool,
+}
+
+async fn read_author_record(
+    services: &ServiceHandles,
+    author_pubkey: &str,
+    replica: &ReplicaId,
+    key: &str,
+    docs_author: Option<&str>,
+    policy: DocFetchPolicy,
+) -> Result<AuthorRecordRead> {
+    let empty = |kind| AuthorRecordRead {
+        outcome: AuthorHydration::default(),
+        envelope: None,
+        kind,
+        read_by_docs_author: false,
+    };
     let kind = if key == stable_key("profile", "latest") {
         AuthorKeyKind::Profile
     } else if key.starts_with("graph/follows/") {
@@ -542,7 +572,7 @@ async fn hydrate_author_record(
     } else if key.starts_with("graph/blocks/") {
         AuthorKeyKind::Block
     } else {
-        return Ok(AuthorHydration::default());
+        return Ok(empty(None));
     };
     let docs_sync = services.docs_sync.as_ref();
     let mut newest: Option<KukuriEnvelope> = None;
@@ -562,6 +592,7 @@ async fn hydrate_author_record(
         )
         .await?;
     }
+    let read_by_docs_author = newest.is_some();
     if newest.is_none() {
         let records = docs_sync
             .query_replica_exact_bounded(replica, key, AUTHOR_RECORDS_PER_KEY, policy)
@@ -587,7 +618,7 @@ async fn hydrate_author_record(
         }
     }
     let Some(envelope) = newest else {
-        return Ok(AuthorHydration::default());
+        return Ok(empty(Some(kind)));
     };
     if let Some(declared) = envelope.docs_author()
         && Some(declared) != docs_author
@@ -611,5 +642,32 @@ async fn hydrate_author_record(
             .upsert_profile_cache(profile)
             .await?;
     }
-    Ok(AuthorHydration::reflected(changed))
+    Ok(AuthorRecordRead {
+        outcome: AuthorHydration::reflected(changed),
+        envelope: Some(envelope),
+        kind: Some(kind),
+        read_by_docs_author,
+    })
+}
+
+/// 自分の replica で、自分の docs author 以外の名義(ADR 0053 以前の端末ごとの名義)で読めた edge を、自分の docs author で
+/// 書き直す(ADR 0053 §6)。書き直すと、同じ key の旧名義の entry は消え、以後はどの端末でも docs author と key の組で読める。
+async fn rewrite_own_legacy_edge(docs_sync: &dyn DocsSync, read: &AuthorRecordRead) -> Result<()> {
+    let Some(envelope) = read.envelope.as_ref() else {
+        return Ok(());
+    };
+    match read.kind {
+        Some(AuthorKeyKind::Follow) => {
+            if let Ok(Some(edge)) = parse_follow_edge(envelope) {
+                persist_follow_edge_doc(docs_sync, &edge, envelope).await?;
+            }
+        }
+        Some(AuthorKeyKind::Block) => {
+            if let Ok(Some(edge)) = parse_block_edge(envelope) {
+                persist_block_edge_doc(docs_sync, &edge, envelope).await?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

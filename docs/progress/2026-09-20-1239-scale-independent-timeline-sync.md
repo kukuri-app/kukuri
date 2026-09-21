@@ -670,3 +670,18 @@ B-3 の解消（実行ごとに位置が進み、読み終えた桶を読み直�
 （main と `ae0621a7` では通る。コミットをたどって特定した）。再起動した端末で、自分の follow の envelope は手元にあるのに follow の行が無く、
 「手元にある envelope は書き直さない」判定のため、行が二度と作られなかった。`put_envelope` は envelope から follow・block・profile の行も作り直すので、
 envelope が手元にあっても毎回書く形に戻した（`changed` は関係の再計算の要否にだけ使う）。
+
+### 独立監査の 4 回目（delta `8b8ac591..cdc45c77`、FAIL）と修正
+
+B-4 の修正（取りこぼしで読み直す）と、docs author の覚え方の安全性（署名を検証した著者の envelope の tag だけから覚え、他人は偽れない。
+分かった後は他の名義で隠す・窓を埋める経路が無い）は確認された。新たな blocker が 1 件あった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-5: 今の利用者の自分の follow・block は ADR 0053 以前の端末ごとの名義（旧名義）で書かれている。自分の edge の背景の読み出しと起動時の窓が、自分の docs author の key だけを一覧するので、取りこぼした旧名義の edge は、その端末では二度と入らない | 背景の読み出しを docs author を指定した一覧にしていた | 自分の edge の背景の読み出しは、名義を問わない一覧で読む（位置を残して小分けに進むので、他の名義のごみの key は読み進めを遅らせるだけ）。旧名義でしか読めなかった自分の edge は、自分の docs author で書き直す（ADR 0053 §4 の規則で旧名義の entry が消え、以後はどの端末でも組で読める）。test `own_legacy_edges_are_read_and_rewritten_under_the_account_docs_author`（旧名義の record と、書き直した key だけを自分の名義として扱う double） |
+
+ADR 0053 §6 に、自分の旧名義の edge の書き直しと、旧版の client との混在期間の扱い（組の record が先に使われる）を追記した。
+
+残した non-blocker: 反映に失敗した自分の edge の event（本体の取得の失敗）で読み出しをやり直さない、`changed` が「envelope が手元に無かった」だけを表す、
+`author_docs_authors` の削除の契機が無い（行は author 購読を開いた著者の数だけ。profile cache と同じ規模）、`Lagged` のときの位置の書き込みの競合（次の `Lagged` で直る）、
+docs author を指定した読み出しに未対応の DocsSync では反映全体が失敗する（本番の実装はすべて対応）。

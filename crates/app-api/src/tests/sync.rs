@@ -370,6 +370,7 @@ fn app_with_hanging_remote_docs(
 
 mod author_docs_author;
 mod author_key_reflection;
+mod author_legacy_edges;
 mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;
