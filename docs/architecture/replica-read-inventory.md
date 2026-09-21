@@ -124,5 +124,5 @@ replica の件数を 1,000 / 10,000 / 100,000 にしても、次の操作が doc
 | author 購読の追いつき（自分を指す follow・block の key） | 定期処理 | 2 |
 | タイムラインの新しい側のページ（購読の起動の後。projection から読む） | 表示 | 0（projection が空で初めて開くときの照合は、`range_reconcile.rs` の `head_page_reads_only_the_newest_entries` が 300 件と 1,500 件で読む量が同じことを示す） |
 | タイムラインの遡ったページ（埋め草の中ほど） | 表示 | 676 |
-| プロフィールのタイムライン | 表示 | 115 |
+| プロフィールのタイムライン | 表示 | 115（測定の author replica には索引の無い旧 record が無い。旧 record のある著者では、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）と、その行の読み出しが 1 ページごとに加わる。この量も件数によらない） |
 | reaction | 利用者の操作 | 3 |

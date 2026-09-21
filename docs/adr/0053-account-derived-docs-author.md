@@ -18,7 +18,7 @@ kukuri は、record の正しさを docs の層ではなく署名つき envelope
 - iroh-docs は、同期で受け取る entry について namespace・entry の署名・timestamp だけを検査する。アプリ側の判定を挟む口は無く、他の docs author の entry は消せない。
   検証に通らない record の伝播を、client が止める手段は無い。
 
-前提として、同期は best effort であり（ADR 0052 §1）、取り下げがネットワーク全体へ伝播することは保証しない。ADR 0032 の取り下げは協力的な client への要請である。
+前提として、同期は利用者が必要とする分だけ行い（ADR 0052 §1）、取り下げがネットワーク全体へ伝播することは保証しない。ADR 0032 の取り下げは協力的な client への要請である。
 本 ADR が扱うのは、record を手元に持っている viewer が、第三者の低コストな操作で、その record を読めなくされることである。
 
 ## Decision

@@ -8,11 +8,10 @@
 use super::*;
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 
-/// author replica の follow・block の edge を、起動時と追いつきで読む key の数の上限。
+/// author replica の follow・block の edge を、購読の開始時に読む key の数の上限。
 ///
 /// author replica は、その author の follow・block の数だけ key を持つ。全件は読まない。上限を超える edge は、
-/// その key の docs の event が届いたときに反映する(best effort)。関係の再計算に要る自分を指す key は、
-/// この上限とは別に必ず読む。
+/// その key の docs の event が届いたときに反映する。関係の再計算に要る自分を指す key は、この上限とは別に必ず読む。
 pub(crate) const AUTHOR_EDGE_KEYS: usize = 512;
 /// 同じ key に docs author ごとの record がありうるので、1 つの key で調べる record の数の上限。
 const AUTHOR_RECORDS_PER_KEY: usize = MAX_ENVELOPE_RECORDS_PER_OBJECT;
@@ -39,7 +38,7 @@ impl AuthorHydration {
     }
 }
 
-/// 起動時と追いつきで読む author replica の key(`profile/latest` は別に先に読む)。自分を指す follow・block の key、
+/// 購読の開始時に読む author replica の key(`profile/latest` は別に先に読む)。自分を指す follow・block の key、
 /// `graph/follows/`・`graph/blocks/` の key の上限つきの一覧(それぞれ `AUTHOR_EDGE_KEYS` 件)。値は読まない。
 /// 同じ key は 1 回だけ返す(一覧は docs author ごとの entry を返す)。
 async fn author_state_keys(

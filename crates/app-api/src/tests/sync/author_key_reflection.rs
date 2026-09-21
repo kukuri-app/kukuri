@@ -19,6 +19,18 @@ async fn put_follow_edges(docs_sync: &dyn DocsSync, author_keys: &KukuriKeys, co
     }
 }
 
+async fn put_block_edge(docs_sync: &dyn DocsSync, author_keys: &KukuriKeys, target: &str) {
+    let envelope =
+        build_block_edge_envelope(author_keys, &Pubkey::from(target), BlockEdgeStatus::Active)
+            .expect("build block edge");
+    let edge = parse_block_edge(&envelope)
+        .expect("parse block edge")
+        .expect("block edge");
+    persist_block_edge_doc(docs_sync, &edge, &envelope)
+        .await
+        .expect("persist block edge doc");
+}
+
 async fn put_follow_edge(docs_sync: &dyn DocsSync, author_keys: &KukuriKeys, target: &str) {
     let envelope =
         build_follow_edge_envelope(author_keys, &Pubkey::from(target), FollowEdgeStatus::Active)
@@ -474,6 +486,12 @@ async fn the_catch_up_reads_only_the_keys_pointing_to_me() {
             local_author_pubkey.as_str(),
         )
         .await;
+        put_block_edge(
+            docs_sync.as_ref(),
+            &remote_keys,
+            local_author_pubkey.as_str(),
+        )
+        .await;
         docs_sync.clear_queries().await;
         docs_sync.reset_records_returned();
 
@@ -486,7 +504,16 @@ async fn the_catch_up_reads_only_the_keys_pointing_to_me() {
         .await
         .expect("catch up");
 
-        assert_eq!(outcome.reflected, 1, "only the follow of me");
+        assert_eq!(outcome.reflected, 2, "only the follow and the block of me");
+        assert_eq!(
+            store
+                .list_block_edges_by_target(local_author_pubkey.as_str())
+                .await
+                .expect("block edges")
+                .len(),
+            1,
+            "the block of me is reflected"
+        );
         let queries = docs_sync.queries().await;
         assert!(
             queries

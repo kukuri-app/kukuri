@@ -850,3 +850,15 @@ reaction の件数の書き方。複数 channel のページの取得の読み�
 | 件数に対する読む量 | `scale_counts`（author 購読の追いつきは 1,536 → 2。棚卸しの「完了の確認」の表を更新） |
 | migration | `migrations`・`migrations_roundtrip`（29 世代）、schema の golden を更新 |
 | INVAR-1〜4 | `cargo xtask rust-test` 1,311 件 |
+
+### 独立監査の 1 回目（PR #1282、head `baba72c5`、PASS）と non-blocker の対応
+
+blocker は無かった。non-blocker のうち、次を直した。
+
+- ADR 0052 §1 と ADR 0053 の前提に残っていた「同期と復旧は best effort」を、改めた原則に合わせた。
+- `author_state_support.rs` の doc コメントの「起動時と追いつき」を「購読の開始時」に直した。
+- 追いつきが自分を指す block を読むことを固定する assert を `the_catch_up_reads_only_the_keys_pointing_to_me` に足した（block の key を外す mutation で失敗することを確かめた）。
+- 棚卸しの表の「プロフィールのタイムライン」に、測定の前提（旧 record が無い）と、旧 record のある著者で 1 ページごとに加わる読み出しを書き添えた。
+
+残した non-blocker: 追いつきは `profile/latest` を読まない（取りこぼした profile の更新は、購読を張り直すまで入らない。利用者の決定 5 のとおり）。
+旧 record の一覧は docs author を指定しない（この PR の前から同じ）。新しい端末の自分の follow・block は、購読の開始時の窓と event の分だけになる（アカウントの取り込みを実装するときの前提）。
