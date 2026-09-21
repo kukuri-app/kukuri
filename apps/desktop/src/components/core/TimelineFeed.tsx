@@ -166,7 +166,10 @@ export function TimelineFeed({
     }
   };
 
-  if (posts.length === 0 && !canApplyPending) {
+  // 行が 0 件でも、続きがある(`hasMore`)あいだは、続きを読む手段(sentinel か button)を描く。
+  // 非表示の著者の投稿が続く範囲では、取得が空のページと `next_cursor` を返す(#1239)。ここで空の文言だけを
+  // 返すと、その先の表示できる投稿へ進めない。
+  if (posts.length === 0 && !canApplyPending && !hasMore) {
     if (emptyState !== undefined) return <>{emptyState}</>;
     return <p className='empty'>{emptyCopy}</p>;
   }

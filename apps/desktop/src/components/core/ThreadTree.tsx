@@ -98,7 +98,8 @@ export function ThreadTree({
     onLoadMore,
   });
 
-  if (nodes.length === 0) {
+  // 行が 0 件でも、続きがある(`hasMore`)あいだは、続きを読む手段を描く(#1239。`TimelineFeed` と同じ)。
+  if (nodes.length === 0 && !hasMore) {
     return <p className='empty'>{emptyCopy}</p>;
   }
 

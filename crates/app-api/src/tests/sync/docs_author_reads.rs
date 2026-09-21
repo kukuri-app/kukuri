@@ -664,6 +664,7 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
         &fixture.replica,
         &[entry(None)],
         DocFetchPolicy::LocalOnly,
+        &mut usize::MAX.clone(),
     )
     .await
     .expect("range check without a hint");
@@ -676,6 +677,7 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
         &fixture.replica,
         &[entry(Some(author_docs_author()))],
         DocFetchPolicy::LocalOnly,
+        &mut usize::MAX.clone(),
     )
     .await
     .expect("range check");

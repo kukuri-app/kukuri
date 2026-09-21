@@ -33,6 +33,103 @@ fn push_timeline_cursor(builder: &mut QueryBuilder<'_, Sqlite>, cursor: Option<&
     }
 }
 
+/// タイムラインの 1 ページを読む SQL を組み立てる。`allowed_channels` が `None` なら channel で絞らない。
+///
+/// `prefix` は SQL の前に置く文字列(取得は空、query plan の test は `EXPLAIN QUERY PLAN `)。test が実装と同じ
+/// SQL の plan を確かめられるように、組み立てをここに 1 つだけ置く。
+pub(crate) fn timeline_page_query<'a>(
+    prefix: &str,
+    topic_id: &'a str,
+    allowed_channels: Option<&'a std::collections::BTreeSet<String>>,
+    cursor: Option<&TimelineCursor>,
+    limit: usize,
+) -> QueryBuilder<'a, Sqlite> {
+    let mut builder = QueryBuilder::<Sqlite>::new(prefix);
+    builder.push(TIMELINE_SELECT);
+    let channels = allowed_channels
+        .map(|channels| channels.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+    match channels.as_slice() {
+        [] => {
+            builder.push(" FROM object_index_cache WHERE topic_id = ");
+            builder.push_bind(topic_id);
+        }
+        // channel が 1 つなら、(topic, channel, 時刻, id) の索引の範囲をそのまま読める。
+        [channel_id] => {
+            builder.push(" FROM object_index_cache WHERE topic_id = ");
+            builder.push_bind(topic_id);
+            builder.push(" AND channel_id = ");
+            builder.push_bind(channel_id.as_str());
+        }
+        // 複数の channel を時刻順に読むときは、(topic, 時刻, id) の索引を時刻順にたどって channel で絞る
+        // (索引を明示して、条件に合う全行を集めて並べ替える plan を選ばせない)。
+        _ => {
+            builder.push(
+                " FROM object_index_cache INDEXED BY idx_object_index_cache_topic_created_all WHERE topic_id = ",
+            );
+            builder.push_bind(topic_id);
+            builder.push(" AND channel_id IN (");
+            let mut separated = builder.separated(", ");
+            for channel_id in channels {
+                separated.push_bind(channel_id.as_str());
+            }
+            separated.push_unseparated(")");
+        }
+    }
+    push_timeline_cursor(&mut builder, cursor);
+    builder.push(" ORDER BY created_at DESC, object_id DESC LIMIT ");
+    builder.push_bind(limit as i64);
+    builder
+}
+
+/// thread の root の行を 1 行引く SQL(`after` が `None`)、または返信の範囲を読む SQL を組み立てる。
+pub(crate) fn thread_page_query<'a>(
+    prefix: &str,
+    topic_id: &'a str,
+    root_id: &'a str,
+    channel_id: Option<&'a str>,
+    part: ThreadPagePart<'_>,
+) -> QueryBuilder<'a, Sqlite> {
+    let mut builder = QueryBuilder::<Sqlite>::new(prefix);
+    builder.push(THREAD_SELECT);
+    builder.push(" WHERE tc.topic_id = ");
+    builder.push_bind(topic_id);
+    builder.push(" AND tc.root_object_id = ");
+    builder.push_bind(root_id);
+    if let Some(channel_id) = channel_id {
+        builder.push(" AND tc.channel_id = ");
+        builder.push_bind(channel_id);
+    }
+    match part {
+        ThreadPagePart::Root => {
+            builder.push(" AND tc.object_id = ");
+            builder.push_bind(root_id);
+        }
+        ThreadPagePart::Replies { after, limit } => {
+            builder.push(" AND tc.object_id != ");
+            builder.push_bind(root_id);
+            if let Some(after) = after {
+                builder.push(" AND (tc.created_at, tc.object_id) > (");
+                builder.push_bind(after.created_at);
+                builder.push(", ");
+                builder.push_bind(after.object_id.as_str().to_string());
+                builder.push(")");
+            }
+            builder.push(" ORDER BY tc.created_at ASC, tc.object_id ASC LIMIT ");
+            builder.push_bind(limit as i64);
+        }
+    }
+    builder
+}
+
+pub(crate) enum ThreadPagePart<'a> {
+    Root,
+    Replies {
+        after: Option<&'a TimelineCursor>,
+        limit: usize,
+    },
+}
+
 impl SqliteStore {
     /// thread の 1 ページ(root が先頭、返信は古い順)。
     ///
@@ -58,40 +155,32 @@ impl SqliteStore {
         // (返信の時刻が root より前でも、時計のずれで飛ばさない)。
         let first_page = cursor.is_none();
         let after = cursor.filter(|cursor| cursor.object_id.as_str() != root_id);
-        let push_scope = |builder: &mut QueryBuilder<'_, Sqlite>| {
-            builder.push(" WHERE tc.topic_id = ");
-            builder.push_bind(topic_id.to_string());
-            builder.push(" AND tc.root_object_id = ");
-            builder.push_bind(root_id.to_string());
-            if let Some(channel_id) = channel_id {
-                builder.push(" AND tc.channel_id = ");
-                builder.push_bind(channel_id.to_string());
-            }
-        };
         let mut rows = Vec::new();
         if first_page {
-            let mut builder = QueryBuilder::<Sqlite>::new(THREAD_SELECT);
-            push_scope(&mut builder);
-            builder.push(" AND tc.object_id = ");
-            builder.push_bind(root_id.to_string());
-            rows.extend(builder.build().fetch_all(&self.pool).await?);
+            rows.extend(
+                thread_page_query("", topic_id, root_id, channel_id, ThreadPagePart::Root)
+                    .build()
+                    .fetch_all(&self.pool)
+                    .await?,
+            );
         }
         let remaining = limit.saturating_sub(rows.len());
         if remaining > 0 {
-            let mut builder = QueryBuilder::<Sqlite>::new(THREAD_SELECT);
-            push_scope(&mut builder);
-            builder.push(" AND tc.object_id != ");
-            builder.push_bind(root_id.to_string());
-            if let Some(after) = after.as_ref() {
-                builder.push(" AND (tc.created_at, tc.object_id) > (");
-                builder.push_bind(after.created_at);
-                builder.push(", ");
-                builder.push_bind(after.object_id.as_str().to_string());
-                builder.push(")");
-            }
-            builder.push(" ORDER BY tc.created_at ASC, tc.object_id ASC LIMIT ");
-            builder.push_bind(remaining as i64);
-            rows.extend(builder.build().fetch_all(&self.pool).await?);
+            rows.extend(
+                thread_page_query(
+                    "",
+                    topic_id,
+                    root_id,
+                    channel_id,
+                    ThreadPagePart::Replies {
+                        after: after.as_ref(),
+                        limit: remaining,
+                    },
+                )
+                .build()
+                .fetch_all(&self.pool)
+                .await?,
+            );
         }
         object_projection_page_from_rows(rows, limit)
     }
@@ -322,13 +411,10 @@ impl ObjectProjectionStore for SqliteStore {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<Page<ObjectProjectionRow>> {
-        let mut builder = QueryBuilder::<Sqlite>::new(TIMELINE_SELECT);
-        builder.push(" FROM object_index_cache WHERE topic_id = ");
-        builder.push_bind(topic_id);
-        push_timeline_cursor(&mut builder, cursor.as_ref());
-        builder.push(" ORDER BY created_at DESC, object_id DESC LIMIT ");
-        builder.push_bind(limit as i64);
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = timeline_page_query("", topic_id, None, cursor.as_ref(), limit)
+            .build()
+            .fetch_all(&self.pool)
+            .await?;
         object_projection_page_from_rows(rows, limit)
     }
 
@@ -345,33 +431,11 @@ impl ObjectProjectionStore for SqliteStore {
                 next_cursor: cursor,
             });
         }
-
-        let mut builder = QueryBuilder::<Sqlite>::new(TIMELINE_SELECT);
-        if let [channel_id] = allowed_channels.iter().collect::<Vec<_>>().as_slice() {
-            // channel が 1 つなら、(topic, channel, 時刻, id) の索引の範囲をそのまま読める。
-            builder.push(" FROM object_index_cache WHERE topic_id = ");
-            builder.push_bind(topic_id);
-            builder.push(" AND channel_id = ");
-            builder.push_bind(channel_id.as_str());
-        } else {
-            // 複数の channel を時刻順に読むときは、(topic, 時刻, id) の索引を時刻順にたどって channel で絞る。
-            // channel の索引を選ばせると、条件に合う全行を集めて並べ替える(行の総数に比例する)。
-            builder.push(
-                " FROM object_index_cache INDEXED BY idx_object_index_cache_topic_created_all WHERE topic_id = ",
-            );
-            builder.push_bind(topic_id);
-            builder.push(" AND channel_id IN (");
-            let mut separated = builder.separated(", ");
-            for channel_id in allowed_channels {
-                separated.push_bind(channel_id);
-            }
-            separated.push_unseparated(")");
-        }
-        push_timeline_cursor(&mut builder, cursor.as_ref());
-        builder.push(" ORDER BY created_at DESC, object_id DESC LIMIT ");
-        builder.push_bind(limit as i64);
-
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows =
+            timeline_page_query("", topic_id, Some(allowed_channels), cursor.as_ref(), limit)
+                .build()
+                .fetch_all(&self.pool)
+                .await?;
         object_projection_page_from_rows(rows, limit)
     }
 

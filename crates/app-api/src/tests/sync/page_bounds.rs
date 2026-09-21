@@ -2,7 +2,9 @@
 
 use super::range_reconcile::{BASE_TIME, project, put_post_at};
 use super::*;
-use crate::service::projection_support::{HIDDEN_AUTHOR_SKIP_PAGES, filtered_timeline_page};
+use crate::service::projection_support::{
+    HIDDEN_AUTHOR_SKIP_PAGES, filtered_thread_page, filtered_timeline_page,
+};
 
 struct Rows {
     store: Arc<MemoryStore>,
@@ -152,4 +154,86 @@ async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
     }
     visible_ids.reverse();
     assert_eq!(listed, visible_ids);
+}
+
+// thread も同じ。非表示の著者の返信が続く範囲では、1 回の取得が読むページ数に上限がある。
+#[tokio::test]
+async fn hidden_author_replies_are_skipped_with_a_bounded_number_of_pages() {
+    let visible = generate_keys();
+    let hidden = generate_keys();
+    let store = Arc::new(MemoryStore::default());
+    let docs_sync = MemoryDocsSync::default();
+    let topic = TopicId::new("kukuri:topic:page-bounds-hidden-thread");
+    let replica = topic_replica_id(topic.as_str());
+    let root = put_post_at(
+        &docs_sync, &replica, &visible, &topic, BASE_TIME, "root", None,
+    )
+    .await;
+    project(store.as_ref(), &root, &replica).await;
+    // 古い側の 200 件は非表示の著者の返信、最後の 1 件だけが表示できる返信。
+    let mut last_visible = None;
+    for index in 0..201usize {
+        let keys = if index < 200 { &hidden } else { &visible };
+        let reply = put_post_at(
+            &docs_sync,
+            &replica,
+            keys,
+            &topic,
+            BASE_TIME + 1 + index as i64,
+            format!("reply {index}").as_str(),
+            Some(&root.envelope),
+        )
+        .await;
+        project(store.as_ref(), &reply, &replica).await;
+        last_visible = Some(reply.object_id.as_str().to_string());
+    }
+    let hidden_authors = BTreeSet::from([hidden.public_key_hex()]);
+
+    let first = filtered_thread_page(
+        store.as_ref(),
+        topic.as_str(),
+        &root.object_id,
+        None,
+        10,
+        None,
+        &hidden_authors,
+    )
+    .await
+    .expect("first page");
+    assert_eq!(first.items.len(), 1, "only the root is visible so far");
+    let position = first
+        .next_cursor
+        .clone()
+        .expect("the page reports where it stopped");
+    assert_eq!(
+        position.created_at,
+        BASE_TIME + (HIDDEN_AUTHOR_SKIP_PAGES as i64 * 20 - 1),
+        "the first call stops after the page cap"
+    );
+
+    let mut listed = Vec::new();
+    let mut cursor = first.next_cursor;
+    let mut calls = 1usize;
+    while let Some(current) = cursor {
+        calls += 1;
+        assert!(calls <= 10, "the listing must reach the end");
+        let page = filtered_thread_page(
+            store.as_ref(),
+            topic.as_str(),
+            &root.object_id,
+            Some(current),
+            10,
+            None,
+            &hidden_authors,
+        )
+        .await
+        .expect("page");
+        listed.extend(
+            page.items
+                .iter()
+                .map(|row| row.object_id.as_str().to_string()),
+        );
+        cursor = page.next_cursor;
+    }
+    assert_eq!(listed, vec![last_visible.expect("visible reply")]);
 }

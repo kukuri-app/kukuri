@@ -507,3 +507,21 @@ T5b-1 は PR #1268（merge commit `7f19158d`）で完了した。独立監査は
   どちらも総件数には依存しない。T7 の統合確認で、Issue の AC との対応を整理する。
 - 追いつきが走っているあいだ購読タスクが event を消費しない点は、1 回の追いつきの量を定数で抑えたうえで残している。
 - 32 件を超える reaction の背景の backfill は入れていない（best effort。ADR 0052 §2）。
+
+### 独立監査の 1 回目（対象 `fd56636d`、FAIL）と修正
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| mute した著者の投稿が新しい側に 80 件（4 ページ × 20 行）以上続くと、タイムラインが空の表示になり、その先の表示できる投稿へ進めない（以前は、上限なく読み飛ばして表示できる投稿を返していた） | 取得は「空の items + `next_cursor`」を返すが、`TimelineFeed` と `ThreadTree` は、行が 0 件のとき空の文言だけを描き、続きを読む手段（sentinel も button も）を描かなかった | 行が 0 件でも `hasMore` のあいだは、続きを読む手段を描く。Vitest `TimelineFeed.emptyWithCursor.test.tsx`（監査の再現 test を恒久化）、`ThreadTree.emptyWithCursor.test.tsx` |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- query plan の test が SQL を書き写していて、実装の SQL を確かめていなかった（thread を `ORDER BY CASE …` へ戻す mutation が生き残った）。SQL の組み立てを関数（`timeline_page_query`・`thread_page_query`）に分け、
+  取得と test が同じ関数を使う形にした。cursor の無い形と root の 1 行引きも対象に入れた。thread の並べ替えを戻す mutation で失敗することを確認した。
+- reaction を読む投稿の数の上限が、照合の batch ごとに効いていた。照合 1 回・追いつき 1 回あたりで数える形にした（取り下げの反映は枠を消費しない）。test `one_catch_up_reads_the_reactions_of_a_bounded_number_of_posts`。
+- thread のページ数の上限の test（`hidden_author_replies_are_skipped_with_a_bounded_number_of_pages`）。
+- `MemoryStore` の thread のページを `SqliteStore` と同じ意味に合わせ、同じ test を両方の store で走らせる。
+- 続きのある空のページ（非表示の著者の範囲の途中）を、購読と再 sync の再起動の理由にしない。
+
+残した non-blocker: `timeline.rs` が `rows_may_be_hidden` を渡すことの結合 test（判定式は単体 test で固定）、root の位置の cursor での thread の照合（`limit` 1 のときだけ）、
+非表示の著者がいる利用者の、同じ呼び出しの中での購読タスクとの競合（次の取得で解消する）。

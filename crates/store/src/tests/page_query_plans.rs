@@ -48,8 +48,11 @@ fn reply(
     reply
 }
 
-async fn plan(store: &SqliteStore, sql: &str) -> String {
-    sqlx::query(format!("EXPLAIN QUERY PLAN {sql}").as_str())
+const EXPLAIN: &str = "EXPLAIN QUERY PLAN ";
+
+async fn plan(store: &SqliteStore, mut builder: sqlx::QueryBuilder<'_, sqlx::Sqlite>) -> String {
+    builder
+        .build()
         .fetch_all(store.pool())
         .await
         .expect("query plan")
@@ -70,44 +73,56 @@ fn assert_range_read(name: &str, plan: &str) {
     );
 }
 
-// ページの取得の SQL の形(`projections.rs` と同じ形)が、索引の範囲の読み出しになること。並べ替えのための
-// 一時的な木を作る形は、条件に合う行の総数に比例する。
+// ページの取得が組み立てる SQL(取得と同じ関数で組み立てたもの)が、索引の範囲の読み出しになること。
+// 並べ替えのための一時的な木を作る plan は、条件に合う行の総数に比例する。
 #[tokio::test]
 async fn page_queries_are_index_range_reads() {
+    use crate::sqlite::projections::{ThreadPagePart, thread_page_query, timeline_page_query};
+
     let store = SqliteStore::connect_memory().await.expect("sqlite store");
-    for (name, sql) in [
-        (
-            "timeline, all channels, with a cursor",
-            "SELECT object_id FROM object_index_cache WHERE topic_id = 't' \
-             AND (created_at, object_id) < (100, 'x') ORDER BY created_at DESC, object_id DESC LIMIT 20",
-        ),
-        (
-            "timeline, one channel, with a cursor",
-            "SELECT object_id FROM object_index_cache WHERE topic_id = 't' AND channel_id = 'public' \
-             AND (created_at, object_id) < (100, 'x') ORDER BY created_at DESC, object_id DESC LIMIT 20",
-        ),
-        (
-            "timeline, several channels, with a cursor",
-            "SELECT object_id FROM object_index_cache INDEXED BY idx_object_index_cache_topic_created_all \
-             WHERE topic_id = 't' AND channel_id IN ('public', 'private:a') \
-             AND (created_at, object_id) < (100, 'x') ORDER BY created_at DESC, object_id DESC LIMIT 20",
-        ),
-        (
-            "thread replies, with a cursor",
-            "SELECT oic.object_id FROM object_thread_cache tc \
-             INNER JOIN object_index_cache oic ON oic.object_id = tc.object_id \
-             WHERE tc.topic_id = 't' AND tc.root_object_id = 'r' AND tc.object_id != 'r' \
-             AND (tc.created_at, tc.object_id) > (100, 'x') ORDER BY tc.created_at ASC, tc.object_id ASC LIMIT 20",
-        ),
-        (
-            "thread replies of one channel, with a cursor",
-            "SELECT oic.object_id FROM object_thread_cache tc \
-             INNER JOIN object_index_cache oic ON oic.object_id = tc.object_id \
-             WHERE tc.topic_id = 't' AND tc.root_object_id = 'r' AND tc.channel_id = 'public' AND tc.object_id != 'r' \
-             AND (tc.created_at, tc.object_id) > (100, 'x') ORDER BY tc.created_at ASC, tc.object_id ASC LIMIT 20",
-        ),
-    ] {
-        assert_range_read(name, plan(&store, sql).await.as_str());
+    let cursor = TimelineCursor {
+        created_at: 100,
+        object_id: EnvelopeId::from("x"),
+    };
+    let one = BTreeSet::from(["public".to_string()]);
+    let several = BTreeSet::from(["public".to_string(), "private:a".to_string()]);
+    for with_cursor in [false, true] {
+        let cursor = with_cursor.then_some(&cursor);
+        for (name, channels) in [
+            ("all channels", None),
+            ("one channel", Some(&one)),
+            ("several channels", Some(&several)),
+        ] {
+            let builder = timeline_page_query(EXPLAIN, "t", channels, cursor, 20);
+            assert_range_read(
+                format!("timeline, {name}, cursor={with_cursor}").as_str(),
+                plan(&store, builder).await.as_str(),
+            );
+        }
+        for channel in [None, Some("public")] {
+            let replies = thread_page_query(
+                EXPLAIN,
+                "t",
+                "r",
+                channel,
+                ThreadPagePart::Replies {
+                    after: cursor,
+                    limit: 20,
+                },
+            );
+            assert_range_read(
+                format!("thread replies, channel={channel:?}, cursor={with_cursor}").as_str(),
+                plan(&store, replies).await.as_str(),
+            );
+        }
+    }
+    for channel in [None, Some("public")] {
+        let root = thread_page_query(EXPLAIN, "t", "r", channel, ThreadPagePart::Root);
+        let plan = plan(&store, root).await;
+        assert!(
+            !plan.contains("SCAN"),
+            "thread root, channel={channel:?}: {plan}"
+        );
     }
 }
 
@@ -115,21 +130,24 @@ async fn page_queries_are_index_range_reads() {
 // 全行を 1 回ずつ読める。channel で絞っても同じ。
 #[tokio::test]
 async fn thread_pages_list_the_root_first_and_every_reply_once() {
-    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    assert_thread_pages(&sqlite).await;
+    // test が使う `MemoryStore` も、同じ意味でページを返す。
+    assert_thread_pages(&MemoryStore::default()).await;
+}
+
+async fn assert_thread_pages(store: &dyn ObjectProjectionStore) {
     let topic = "kukuri:topic:thread-pages";
     let root_id = EnvelopeId::from("thread-root");
     // root の時刻(50)は、最初の返信(10〜)より後。
-    ObjectProjectionStore::put_object_projection(
-        &store,
-        row(topic, "public", root_id.as_str(), 50),
-    )
-    .await
-    .expect("root");
+    ObjectProjectionStore::put_object_projection(store, row(topic, "public", root_id.as_str(), 50))
+        .await
+        .expect("root");
     let mut expected = vec![root_id.as_str().to_string()];
     for index in 0..23_i64 {
         let id = format!("reply-{index:02}");
         ObjectProjectionStore::put_object_projection(
-            &store,
+            store,
             reply(topic, "public", id.as_str(), 10 + index * 5, &root_id),
         )
         .await
@@ -138,7 +156,7 @@ async fn thread_pages_list_the_root_first_and_every_reply_once() {
     }
     // 別の channel の返信は、channel で絞った取得には入らない。
     ObjectProjectionStore::put_object_projection(
-        &store,
+        store,
         reply(topic, "private:a", "reply-private", 12, &root_id),
     )
     .await
@@ -149,7 +167,7 @@ async fn thread_pages_list_the_root_first_and_every_reply_once() {
         let mut cursor = None;
         loop {
             let page = ObjectProjectionStore::list_thread_filtered(
-                &store,
+                store,
                 topic,
                 &root_id,
                 Some("public"),
@@ -172,7 +190,7 @@ async fn thread_pages_list_the_root_first_and_every_reply_once() {
         assert_eq!(listed, expected, "limit={limit}");
     }
 
-    let all = ObjectProjectionStore::list_thread(&store, topic, &root_id, None, 100)
+    let all = ObjectProjectionStore::list_thread(store, topic, &root_id, None, 100)
         .await
         .expect("unfiltered thread");
     assert_eq!(all.items.len(), 25);

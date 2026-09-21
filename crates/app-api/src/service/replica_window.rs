@@ -210,6 +210,7 @@ pub(crate) async fn ensure_index_entries_projected(
     replica: &ReplicaId,
     entries: &[TimeIndexEntry],
     policy: DocFetchPolicy,
+    reaction_targets_left: &mut usize,
 ) -> Result<RangeCheckOutcome> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
@@ -237,9 +238,10 @@ pub(crate) async fn ensure_index_entries_projected(
             {
                 ObjectHydration::Hydrated => {
                     outcome.hydrated += 1;
-                    if outcome.hydrated > RANGE_CHECK_REACTION_TARGETS {
+                    if *reaction_targets_left == 0 {
                         continue;
                     }
+                    *reaction_targets_left -= 1;
                     // 新しく反映した投稿の reaction も、上限つきで反映する。以前は、空ページの全件走査が
                     // reaction も反映していた。docs の event が届かない古い reaction は、ここでしか入らない。
                     hydrate_reaction_cache_for_target_bounded(
@@ -428,6 +430,8 @@ impl AppService {
         let mut total = RangeCheckOutcome::default();
         let mut entries_read = 0usize;
         let mut index_queries = 0usize;
+        // reaction を読む投稿の数の上限は、照合 1 回あたり(読む件数を増やして繰り返す batch の合計)。
+        let mut reaction_targets_left = RANGE_CHECK_REACTION_TARGETS;
         let mut index_exhausted = false;
         // 1 回目は、ページに要る件数だけを読む(欠けが無ければこれで終わる)。反映できない entry があって
         // 届かなかったときは、読む件数を 4 倍ずつ増やす。同じ位置からの読み直しの回数を抑えるため。
@@ -481,6 +485,7 @@ impl AppService {
                         replica,
                         &page.entries,
                         DocFetchPolicy::LocalOnly,
+                        &mut reaction_targets_left,
                     )
                     .await?,
                 );

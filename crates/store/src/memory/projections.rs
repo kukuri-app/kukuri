@@ -1,5 +1,23 @@
 use super::*;
 
+/// thread の 1 ページ(`SqliteStore` と同じ意味)。`items` は root が先頭、返信は古い順に並んでいる。
+///
+/// root を返すのは、cursor の無い最初のページだけ。root の位置の cursor は「返信の先頭から」を表す
+/// (返信の時刻が root より前でも飛ばさない)。それ以外の cursor は、返信の中での位置。
+fn thread_page(
+    mut items: Vec<ObjectProjectionRow>,
+    thread_root_object_id: &EnvelopeId,
+    cursor: Option<TimelineCursor>,
+    limit: usize,
+) -> Page<ObjectProjectionRow> {
+    let Some(cursor) = cursor else {
+        return apply_asc_projection_cursor(items, None, limit);
+    };
+    items.retain(|row| row.object_id != *thread_root_object_id);
+    let after = (cursor.object_id != *thread_root_object_id).then_some(cursor);
+    apply_asc_projection_cursor(items, after, limit)
+}
+
 #[async_trait]
 impl ObjectProjectionStore for MemoryStore {
     async fn put_object_projection(&self, row: ObjectProjectionRow) -> Result<()> {
@@ -149,7 +167,7 @@ impl ObjectProjectionStore for MemoryStore {
                 .then_with(|| left.created_at.cmp(&right.created_at))
                 .then_with(|| left.object_id.cmp(&right.object_id))
         });
-        Ok(apply_asc_projection_cursor(items, cursor, limit))
+        Ok(thread_page(items, thread_root_object_id, cursor, limit))
     }
 
     async fn list_thread_filtered(
@@ -185,7 +203,7 @@ impl ObjectProjectionStore for MemoryStore {
                 .then_with(|| left.created_at.cmp(&right.created_at))
                 .then_with(|| left.object_id.cmp(&right.object_id))
         });
-        Ok(apply_asc_projection_cursor(items, cursor, limit))
+        Ok(thread_page(items, thread_root_object_id, cursor, limit))
     }
 
     async fn rebuild_object_projections(&self, rows: Vec<ObjectProjectionRow>) -> Result<()> {

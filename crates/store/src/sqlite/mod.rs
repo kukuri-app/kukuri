@@ -44,7 +44,7 @@ mod envelopes;
 mod live_game;
 mod notifications;
 mod observations;
-mod projections;
+pub(crate) mod projections;
 mod social;
 mod withdrawals;
 

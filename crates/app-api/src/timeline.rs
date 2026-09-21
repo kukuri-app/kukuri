@@ -767,6 +767,7 @@ impl AppService {
             .await;
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
+            && page.next_cursor.is_none()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
@@ -844,6 +845,7 @@ impl AppService {
         // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は復旧の理由にしない。
         let restart_after_empty = had_topic_subscription
             && page.items.is_empty()
+            && page.next_cursor.is_none()
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;

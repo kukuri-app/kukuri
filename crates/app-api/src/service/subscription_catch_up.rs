@@ -174,12 +174,21 @@ pub(crate) async fn catch_up_replica_window(
             targets.push(entry.clone());
         }
     }
-    let outcome =
-        ensure_index_entries_projected(services, topic_id, replica, &targets, policy).await?;
+    // reaction を読む投稿の数の上限は、追いつき 1 回あたり(新しく反映した投稿と、読み直しの合計)。
+    let mut reaction_targets_left = RANGE_CHECK_REACTION_TARGETS;
+    let outcome = ensure_index_entries_projected(
+        services,
+        topic_id,
+        replica,
+        &targets,
+        policy,
+        &mut reaction_targets_left,
+    )
+    .await?;
     if refresh_all {
         // 取りこぼした event には reaction も含まれる。窓の object の reaction を、上限つきで読み直す
         // (新しく反映した object の reaction は、上の反映が既に読んでいる)。
-        for entry in window.entries.iter().take(RANGE_CHECK_REACTION_TARGETS) {
+        for entry in window.entries.iter().take(reaction_targets_left) {
             hydrate_reaction_cache_for_target_bounded(
                 docs_sync,
                 services.projection_store.as_ref(),
