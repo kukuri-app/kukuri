@@ -30,6 +30,7 @@ import { useNotificationLoaders } from '@/shell/data/loaders/useNotificationLoad
 import { useDesktopShellSectionLoaders } from '@/shell/data/loaders/useDesktopShellSectionLoaders';
 import { useQueuedLoadTopics } from '@/shell/data/useQueuedLoadTopics';
 import {
+  cursorIsBeyondVisiblePosts,
   hasLoadedOlderAuthoritativePosts,
   hasReadPastHeadPage,
   mergeRefreshedVisiblePosts,
@@ -408,14 +409,20 @@ export function useDesktopShellData({
         return false;
       }
       const currentTimelinePosts = currentState.timelinesByKey[key] ?? EMPTY_POSTS;
-      const preserveOlderPages = hasLoadedOlderAuthoritativePosts(currentTimelinePosts, pendingItems);
+      const pendingCursor = currentState.pendingTimelineNextCursorByKey[key] ?? null;
+      // refresh は、読み進めた位置を残すと決めたときだけ、保留の続きの位置に先頭のページより先の位置を入れる
+      // (#1239)。そのときは、表示中の古い行も残す(先頭のページに置き換えると、読み進めた範囲の手前の行が消え、
+      // 続きの読み込みはその先から始まるので、二度と表示されない)。
+      const preserveOlderPages =
+        hasLoadedOlderAuthoritativePosts(currentTimelinePosts, pendingItems) ||
+        cursorIsBeyondVisiblePosts(pendingCursor, pendingItems, 'desc');
       startTransition(() => {
         setTimelinesByKey(updateRecordEntry(key, (prev) => mergeRefreshedVisiblePosts(
             prev ?? EMPTY_POSTS,
             pendingItems,
             preserveOlderPages
           )));
-        setTimelineNextCursorByKey(setRecordEntry(key, currentState.pendingTimelineNextCursorByKey[key] ?? null));
+        setTimelineNextCursorByKey(setRecordEntry(key, pendingCursor));
       });
       clearPendingTimeline(key);
       return true;
