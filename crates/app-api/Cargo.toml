@@ -32,6 +32,7 @@ iroh-integration-tests = []
 
 [dev-dependencies]
 sqlx.workspace = true
+kukuri-store = { path = "../store", features = ["test-support"] }
 kukuri-test-support = { path = "../test-support" }
 kukuri-iroh-node = { path = "../iroh-node" }
 tempfile.workspace = true

@@ -9,6 +9,7 @@ use super::hydration_integrity::{
 };
 use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header};
 use super::*;
+use crate::service::timeline_view_support::reflect_reply_target;
 
 // TR-7 / AC-7: 同じ key に、読めない record と別の投稿の envelope が先に並んでいても、検証に通る record から反映する。
 #[tokio::test]
@@ -381,14 +382,13 @@ async fn reply_preview_row_is_built_from_the_signed_envelope() {
     )
     .await;
 
-    let row = app
-        .hydrate_reply_preview_row(&parent.id, Some((&replica, topic.as_str())))
+    let row = reflect_reply_target(&app.services, &parent.id, &replica, topic.as_str())
         .await
         .expect("reply preview row")
         .expect("the parent has a signed envelope");
     assert_eq!(row.author_pubkey, attacker_keys.public_key_hex());
     assert!(
-        app.hydrate_reply_preview_row(&header_only.id, Some((&replica, topic.as_str())))
+        reflect_reply_target(&app.services, &header_only.id, &replica, topic.as_str())
             .await
             .expect("reply preview row")
             .is_none(),
@@ -410,9 +410,11 @@ async fn reply_preview_row_is_built_from_the_signed_envelope() {
     )
     .await;
     assert!(
-        app.hydrate_reply_preview_row(
+        reflect_reply_target(
+            &app.services,
             &other_parent.id,
-            Some((&replica, "kukuri:topic:integrity-another-topic")),
+            &replica,
+            "kukuri:topic:integrity-another-topic",
         )
         .await
         .expect("reply preview row")

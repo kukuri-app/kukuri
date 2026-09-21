@@ -118,6 +118,9 @@ impl CatchUpSchedule {
 /// 時系列と thread の索引の entry は、個別反映の対象ではないので必ず 0 件になる。投稿 1 件につき 2 件届くので、
 /// そのたびに依頼すると、活発な topic では追いつきが最小間隔で走り続ける。索引が指す object が projection に
 /// 既にあれば(投稿の本体の event が先に反映した)、追いつくものは無い。
+///
+/// 投稿の `objects/<id>/state`・`objects/<id>/envelope` の entry も同じ(#1239 AC-7)。1 件の投稿の entry は続けて届き、
+/// 最初の event で反映した後の event は 0 件になる。そのたびに依頼すると、新着 1 件の受信ごとに窓の追いつきが走る。
 pub(crate) async fn missed_entry_needs_catch_up(
     projection_store: &dyn ProjectionStore,
     key: &str,
@@ -126,12 +129,13 @@ pub(crate) async fn missed_entry_needs_catch_up(
         .iter()
         .find_map(|prefix| key.strip_prefix(prefix))
         .and_then(|rest| rest.rsplit_once('/'))
-        .map(|(_, object_id)| object_id)
-        .filter(|object_id| !object_id.is_empty());
+        .map(|(_, object_id)| EnvelopeId::from(object_id))
+        .filter(|object_id| !object_id.as_str().is_empty())
+        .or_else(|| object_id_from_post_key(key));
     match indexed_object {
         // projection を読めなかったときは、依頼する側へ倒す。
         Some(object_id) => projection_store
-            .get_object_projection(&EnvelopeId::from(object_id))
+            .get_object_projection(&object_id)
             .await
             .map_or(true, |row| row.is_none()),
         None => true,

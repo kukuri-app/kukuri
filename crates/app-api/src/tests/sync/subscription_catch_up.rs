@@ -418,7 +418,7 @@ fn index_event(
 }
 
 // 相手から届いた索引の entry は個別反映の対象ではない(0 件)。指す object が projection に無ければ追いつきを
-// 依頼し、既にあれば依頼しない。自分が書いた entry(`source_peer` なし)も依頼しない。
+// 依頼し、既にあれば依頼しない。反映済みの投稿の envelope の entry と、自分が書いた entry(`source_peer` なし)も依頼しない。
 #[tokio::test]
 async fn a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object() {
     let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
@@ -432,11 +432,22 @@ async fn a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object
     let posts = put_posts(docs_sync.as_ref(), &topic, 2, 0).await;
     super::range_reconcile::project(store.as_ref(), &posts[0], &replica).await;
 
-    // 自分が書いた entry と、反映済みの object を指す索引の entry: 追いつかない。
+    // 自分が書いた entry と、反映済みの object を指す索引の entry・envelope の entry: 追いつかない。
     docs_sync.inner.reset_records_returned();
+    let projected_envelope = ReplicaNotice::Entry(kukuri_docs_sync::DocEvent {
+        replica_id: replica.clone(),
+        key: stable_key(
+            "objects",
+            &format!("{}/envelope", posts[0].object_id.as_str()),
+        ),
+        content_hash: String::new(),
+        source_peer: Some("peer-a".into()),
+        docs_author: None,
+    });
     for notice in [
         index_event(&topic, &posts[1], None),
         index_event(&topic, &posts[0], Some("peer-a")),
+        projected_envelope,
     ] {
         docs_sync
             .notices
@@ -444,11 +455,14 @@ async fn a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object
             .expect("a subscriber is listening");
     }
     sleep(Duration::from_millis(4_500)).await;
-    assert!(!is_projected(store.as_ref(), &posts[1]).await);
-    assert_eq!(
-        docs_sync.inner.records_returned(),
-        0,
-        "neither event may run a catch-up"
+    assert!(
+        !is_projected(store.as_ref(), &posts[1]).await,
+        "no event may run a catch-up"
+    );
+    // 相手の envelope の entry は、通知の判定が envelope を 1 回読む。追いつき(窓の読み出し)は読まない。
+    assert!(
+        docs_sync.inner.records_returned() <= 1,
+        "no event may run a catch-up"
     );
 
     // 相手から届いた、反映されていない object を指す索引の entry: 追いつく。

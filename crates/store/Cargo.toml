@@ -18,6 +18,8 @@ ts-rs = { workspace = true, optional = true }
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効)。
 ts = ["dep:ts-rs", "kukuri-core/ts"]
+# 計測用の store(`SqliteStore::connect_memory_counting_vm_steps`)。test からだけ有効にする。
+test-support = []
 
 [dev-dependencies]
 sha2.workspace = true

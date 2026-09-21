@@ -230,11 +230,11 @@ impl AppService {
         })
     }
 
-    /// 返信先が projection に無ければ、返信と同じ replica から key 指定で反映する(`LocalOnly`)。
+    /// 返信先の行を projection から読む(#1239 AC-6)。view の生成中は docs を読まない。
     ///
-    /// `source` は返信の行の replica と topic。返信先も同じ replica にある投稿として、署名つき envelope と
-    /// replica の scope を確かめてから反映する(#1248)。
-    pub(crate) async fn hydrate_reply_preview_row(
+    /// 返信先が projection に無ければ、返信と同じ replica からの反映を背景へ出し、この回の preview は出さない
+    /// (反映できれば、次の取得で出る)。`source` は返信の行の replica と topic。
+    async fn reply_target_row(
         &self,
         object_id: &EnvelopeId,
         source: Option<(&ReplicaId, &str)>,
@@ -247,43 +247,49 @@ impl AppService {
         {
             return Ok(Some(row));
         }
-        let Some((source_replica_id, source_topic_id)) = source else {
-            return Ok(None);
-        };
-        // 手元の docs が読めないとき(権限を失った private replica など)は、preview を出さずに続ける。
-        let Ok(Some(post)) = load_verified_post(
-            self.services.docs_sync.as_ref(),
-            source_replica_id,
-            source_topic_id,
-            object_id,
-            DocFetchPolicy::LocalOnly,
-        )
-        .await
-        else {
-            return Ok(None);
-        };
-        let is_withdrawn = self
+        if let Some((replica_id, topic_id)) = source {
+            self.schedule_reply_target_reflection(replica_id, topic_id, object_id);
+        }
+        Ok(None)
+    }
+
+    /// projection に無い返信先の反映を、背景で行う(#1239 AC-6)。呼び出し側は待たない。
+    ///
+    /// 確認先(replica と object id の組)ごとに間隔を空け、台帳の件数と同時実行の数に上限を置く。
+    /// 読むのは返信先の key だけで、replica は走査しない。
+    fn schedule_reply_target_reflection(
+        &self,
+        replica_id: &ReplicaId,
+        topic_id: &str,
+        object_id: &EnvelopeId,
+    ) {
+        let ledger_key = format!("{}\n{}", replica_id.as_str(), object_id.as_str());
+        if !self
             .services
-            .projection_store
-            .get_post_withdrawal(object_id)
-            .await?
-            .is_some();
-        let row = if is_withdrawn {
-            projection_row_from_post(&post.withdrawn(), Some(String::new()))
-        } else {
-            let content = match &post.header().payload_ref {
-                PayloadRef::InlineText { text } => Some(text.clone()),
-                PayloadRef::BlobText { hash, .. } => {
-                    fetch_projection_blob_text(self.services.blob_service.as_ref(), hash).await
-                }
+            .reply_target_checks
+            .try_begin(ledger_key.as_str(), Utc::now().timestamp_millis())
+        {
+            return;
+        }
+        let services = self.services.clone();
+        let replica_id = replica_id.clone();
+        let topic_id = topic_id.to_string();
+        let object_id = object_id.clone();
+        tokio::spawn(async move {
+            let permits = services.reply_target_checks.permits();
+            let Ok(_permit) = permits.acquire().await else {
+                return;
             };
-            projection_row_from_post(&post, content)
-        };
-        self.services
-            .projection_store
-            .put_object_projection(row.clone())
-            .await?;
-        Ok(Some(row))
+            if let Err(error) =
+                reflect_reply_target(&services, &object_id, &replica_id, topic_id.as_str()).await
+            {
+                warn!(
+                    object_id = %object_id.as_str(),
+                    error = %error,
+                    "failed to reflect a reply target in the background"
+                );
+            }
+        });
     }
 
     pub(crate) async fn reply_preview_for_object_id(
@@ -301,7 +307,7 @@ impl AppService {
             .get_post_withdrawal(object_id)
             .await?
             .is_some();
-        let Some(row) = self.hydrate_reply_preview_row(object_id, source).await? else {
+        let Some(row) = self.reply_target_row(object_id, source).await? else {
             return Ok(None);
         };
         let provenance = self
@@ -853,4 +859,56 @@ pub(crate) fn content_from_payload_ref(payload_ref: &PayloadRef) -> Option<Strin
         PayloadRef::InlineText { text } => Some(text.clone()),
         PayloadRef::BlobText { .. } => None,
     }
+}
+
+/// 返信先を、返信と同じ replica から key 指定で反映する(`LocalOnly`。#1239 AC-6 の背景の反映)。
+///
+/// 返信先も同じ replica にある投稿として、署名つき envelope と replica の scope を確かめてから反映する(#1248)。
+/// 既に projection にあれば、その行を返す。
+pub(crate) async fn reflect_reply_target(
+    services: &ServiceHandles,
+    object_id: &EnvelopeId,
+    replica_id: &ReplicaId,
+    topic_id: &str,
+) -> Result<Option<ObjectProjectionRow>> {
+    if let Some(row) = services
+        .projection_store
+        .get_object_projection(object_id)
+        .await?
+    {
+        return Ok(Some(row));
+    }
+    // 手元の docs が読めないとき(権限を失った private replica など)は、反映せずに終える。
+    let Ok(Some(post)) = load_verified_post(
+        services.docs_sync.as_ref(),
+        replica_id,
+        topic_id,
+        object_id,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    else {
+        return Ok(None);
+    };
+    let is_withdrawn = services
+        .projection_store
+        .get_post_withdrawal(object_id)
+        .await?
+        .is_some();
+    let row = if is_withdrawn {
+        projection_row_from_post(&post.withdrawn(), Some(String::new()))
+    } else {
+        let content = match &post.header().payload_ref {
+            PayloadRef::InlineText { text } => Some(text.clone()),
+            PayloadRef::BlobText { hash, .. } => {
+                fetch_projection_blob_text(services.blob_service.as_ref(), hash).await
+            }
+        };
+        projection_row_from_post(&post, content)
+    };
+    services
+        .projection_store
+        .put_object_projection(row.clone())
+        .await?;
+    Ok(Some(row))
 }

@@ -1,15 +1,18 @@
-//! #1239(T7、ADR 0052 の完了条件): replica の件数を 1,000 / 10,000 / 100,000 にしても、定期処理・利用者の操作・表示の
-//! 各操作が読む docs の entry 数が増えないことを、docs が返した record と key の数で確かめる。所要時間の閾値は使わない。
+//! #1239(T7・AC-7、ADR 0052 の完了条件): replica と projection の件数を 1,000 / 10,000 / 100,000 にしても、定期処理・
+//! 利用者の操作・表示・新着の受信の各操作が読む docs の entry 数と、projection の読み書きの量が増えないことを確かめる。
+//! docs は返した record と key の数で、projection は SQLite の仮想機械が実行した命令の数で数える(命令の数は読み書きした
+//! 行の数とともに増え、B-tree の深さには依存しない)。所要時間の閾値は使わない。
 //!
 //! 大部分の entry は、実際の key と同じ形の中身の無い entry(時系列の索引・object・follow の edge・プロフィールの索引)で埋める。
-//! 表示や窓に入る新しい側だけに、署名つきの投稿を置く。操作が埋め草の側を読むと、読んだ量が件数とともに増える。
+//! projection にも、同じ数の行(時系列の索引の埋め草と同じ object)を置く。表示や窓に入る新しい側だけに、署名つきの投稿を置く。
+//! 操作が埋め草の側を読むと、読んだ量が件数とともに増える。
 //! docs は key の範囲を索引で読む double(iroh-docs と同じく、読んだ entry の数だけ手間がかかる)を使う。
 
 use super::range_reconcile::{BASE_TIME, TestPost, put_post_at};
 use super::*;
 use crate::service::catch_up_replica_window;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 const SIZES: [usize; 3] = [1_000, 10_000, 100_000];
 /// 新しい側に置く、署名つきの投稿の数。
@@ -21,10 +24,27 @@ const DOCS_AUTHOR: &str = "44444444444444444444444444444444444444444444444444444
 type Replicas = HashMap<String, BTreeMap<String, Vec<u8>>>;
 
 /// key の範囲を索引で読む docs。record は replica ごとの key の順の map に置き、prefix の読み出しは範囲で読む。
-#[derive(Clone, Default)]
+/// `emit` が立っている間の書き込みは、相手の peer から届いた entry として覚え、`flush` で購読へ通知する(新着の受信。
+/// 同期では entry と本体がそろってから通知が届くので、書き終えてからまとめて通知する)。
+#[derive(Clone)]
 struct IndexedDocsSync {
     replicas: Arc<TokioMutex<Replicas>>,
     returned: Arc<AtomicUsize>,
+    emit: Arc<AtomicBool>,
+    pending: Arc<std::sync::Mutex<Vec<kukuri_docs_sync::DocEvent>>>,
+    events: tokio::sync::broadcast::Sender<kukuri_docs_sync::DocEvent>,
+}
+
+impl Default for IndexedDocsSync {
+    fn default() -> Self {
+        Self {
+            replicas: Arc::default(),
+            returned: Arc::default(),
+            emit: Arc::default(),
+            pending: Arc::default(),
+            events: tokio::sync::broadcast::channel(64).0,
+        }
+    }
 }
 
 impl IndexedDocsSync {
@@ -34,6 +54,30 @@ impl IndexedDocsSync {
 
     fn reset(&self) {
         self.returned.store(0, AtomicOrdering::SeqCst);
+    }
+
+    fn notify(&self, replica_id: &ReplicaId, key: &str, value: &[u8]) {
+        if !self.emit.load(AtomicOrdering::SeqCst) {
+            return;
+        }
+        self.pending
+            .lock()
+            .expect("pending events")
+            .push(kukuri_docs_sync::DocEvent {
+                replica_id: replica_id.clone(),
+                key: key.to_string(),
+                content_hash: kukuri_docs_sync::value_hash(value),
+                source_peer: Some("remote-peer".into()),
+                docs_author: Some(DOCS_AUTHOR.to_string()),
+            });
+    }
+
+    /// 覚えた entry を、書いた順に購読へ通知する。
+    fn flush(&self) {
+        for event in std::mem::take(&mut *self.pending.lock().expect("pending events")) {
+            // 購読が無いときの送信の失敗は無視する。
+            let _ = self.events.send(event);
+        }
     }
 
     fn record(key: &str, value: &[u8]) -> kukuri_docs_sync::DocRecord {
@@ -72,9 +116,12 @@ impl DocsSync for IndexedDocsSync {
         let map = replicas.entry(replica_id.as_str().to_string()).or_default();
         match op {
             DocOp::SetJson { key, value } => {
-                map.insert(key, serde_json::to_vec(&value)?);
+                let value = serde_json::to_vec(&value)?;
+                self.notify(replica_id, key.as_str(), value.as_slice());
+                map.insert(key, value);
             }
             DocOp::SetBytes { key, value } => {
+                self.notify(replica_id, key.as_str(), value.as_slice());
                 map.insert(key, value);
             }
             DocOp::DeletePrefix { prefix } => {
@@ -184,9 +231,21 @@ impl DocsSync for IndexedDocsSync {
 
     async fn subscribe_replica(
         &self,
-        _replica_id: &ReplicaId,
+        replica_id: &ReplicaId,
     ) -> Result<kukuri_docs_sync::DocEventStream> {
-        Ok(Box::pin(futures_util::stream::pending()))
+        let replica_id = replica_id.clone();
+        let stream = tokio_stream::wrappers::BroadcastStream::new(self.events.subscribe());
+        Ok(Box::pin(futures_util::StreamExt::filter_map(
+            stream,
+            move |item| {
+                let replica_id = replica_id.clone();
+                async move {
+                    item.ok()
+                        .filter(|event| event.replica_id == replica_id)
+                        .map(Ok)
+                }
+            },
+        )))
     }
 
     async fn import_peer_ticket(&self, _ticket: &str) -> Result<()> {
@@ -206,20 +265,39 @@ fn filler_time(index: usize) -> i64 {
 struct Fixture {
     app: AppService,
     docs_sync: Arc<IndexedDocsSync>,
+    /// projection(SQLite)の仮想機械が実行した命令の数。
+    steps: Arc<AtomicU64>,
     topic: TopicId,
     posts: Vec<TestPost>,
     remote_pubkey: String,
+    author_keys: KukuriKeys,
+}
+
+/// 1 つの操作で数えた量。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Reads {
+    /// docs が返した record と key の数。
+    docs: usize,
+    /// projection の読み書きで SQLite が実行した命令の数。
+    projection: u64,
 }
 
 impl Fixture {
+    fn counted(&self) -> Reads {
+        Reads {
+            docs: self.docs_sync.returned(),
+            projection: self.steps.load(AtomicOrdering::SeqCst),
+        }
+    }
+
     /// 背景の仕事(購読タスクの起動時の追いつきなど)が落ち着くまで待つ。読んだ量が 300ms 変わらなければ落ち着いたとみなす。
     /// 300ms より遅れて始まる背景の読み出し(最小間隔を空けた追いつき、tick ごとの処理)は数えない。double は docs の通知を
     /// 出さないので、測定の間にそうした読み出しは起きない。
     async fn settle(&self) {
-        let mut last = self.docs_sync.returned();
+        let mut last = self.counted();
         for _ in 0..200 {
             sleep(Duration::from_millis(300)).await;
-            let now = self.docs_sync.returned();
+            let now = self.counted();
             if now == last {
                 return;
             }
@@ -228,25 +306,66 @@ impl Fixture {
         panic!("the background work did not settle");
     }
 
-    /// 落ち着いた後に `operation` を実行し、背景の続きが落ち着くまでに docs から読んだ record と key の数を返す。
-    async fn reads_of<F, Fut>(&self, operation: F) -> usize
+    /// 落ち着いた後に `operation` を実行し、背景の続きが落ち着くまでに docs から読んだ record と key の数と、projection の
+    /// 読み書きの命令の数を返す。
+    async fn reads_of<F, Fut>(&self, operation: F) -> Reads
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = ()>,
     {
         self.settle().await;
         self.docs_sync.reset();
+        self.steps.store(0, AtomicOrdering::SeqCst);
         operation().await;
         // 操作が背景で起こす読み出し(対象の key の確認など)も含めて数える。数え終わる前に終わるかどうかで揺れないように。
         self.settle().await;
-        self.docs_sync.returned()
+        self.counted()
     }
 }
 
-/// topic の replica と、ある著者の author replica に、`size` 件ずつの埋め草を置く。
+/// projection の埋め草の行。時系列の索引の埋め草と同じ object を指す。
+fn filler_row(
+    topic: &TopicId,
+    replica: &ReplicaId,
+    author: &str,
+    index: usize,
+) -> ObjectProjectionRow {
+    let id = filler_id(index);
+    ObjectProjectionRow {
+        object_id: EnvelopeId::from(id.as_str()),
+        topic_id: topic.as_str().to_string(),
+        channel_id: "public".into(),
+        author_pubkey: author.to_string(),
+        created_at: filler_time(index),
+        object_kind: "post".into(),
+        root_object_id: None,
+        reply_to_object_id: None,
+        payload_ref: PayloadRef::InlineText {
+            text: "filler".into(),
+        },
+        content: Some("filler".into()),
+        attachments: Vec::new(),
+        repost_of: None,
+        content_labels: Vec::new(),
+        source_replica_id: replica.clone(),
+        source_key: stable_key("objects", &format!("{id}/state")),
+        source_envelope_id: EnvelopeId::from(id.as_str()),
+        source_blob_hash: None,
+        source_docs_author: None,
+        derived_at: 0,
+        projection_version: kukuri_store::VERIFIED_OBJECT_PROJECTION_VERSION,
+    }
+}
+
+/// topic の replica と、ある著者の author replica に、`size` 件ずつの埋め草を置く。projection にも `size` 行を置く。
 async fn fixture(size: usize) -> Fixture {
     let docs_sync = Arc::new(IndexedDocsSync::default());
-    let store = Arc::new(MemoryStore::default());
+    let steps = Arc::new(AtomicU64::new(0));
+    let store = Arc::new(
+        kukuri_store::SqliteStore::connect_memory_counting_vm_steps(steps.clone())
+            .await
+            .expect("counting sqlite store"),
+    );
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
     let topic = TopicId::new(format!("kukuri:topic:scale-counts-{size}").as_str());
     let replica = topic_replica_id(topic.as_str());
@@ -298,6 +417,15 @@ async fn fixture(size: usize) -> Fixture {
         );
     }
     let author_keys = generate_keys();
+    let filler_author = generate_keys().public_key_hex();
+    store
+        .put_object_projections(
+            (0..size)
+                .map(|index| filler_row(&topic, &replica, filler_author.as_str(), index))
+                .collect(),
+        )
+        .await
+        .expect("filler projection rows");
     let mut posts = Vec::new();
     for index in 0..REAL_POSTS {
         posts.push(
@@ -331,15 +459,17 @@ async fn fixture(size: usize) -> Fixture {
     Fixture {
         app,
         docs_sync,
+        steps,
         topic,
         posts,
         remote_pubkey,
+        author_keys,
     }
 }
 
 /// 各操作が 3 つの件数で読んだ量。操作の名前ごとに、件数の順に並ぶ。
-async fn reads_by_size() -> BTreeMap<&'static str, Vec<usize>> {
-    let mut reads: BTreeMap<&'static str, Vec<usize>> = BTreeMap::new();
+async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
+    let mut reads: BTreeMap<&'static str, Vec<Reads>> = BTreeMap::new();
     for size in SIZES {
         let fixture = fixture(size).await;
         let app = &fixture.app;
@@ -389,6 +519,27 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<usize>> {
                 fixture
                     .reads_of(|| async {
                         app.list_timeline(topic, None, 20).await.expect("head page");
+                    })
+                    .await,
+            ),
+            (
+                // 相手の peer から、新しい投稿 1 件の entry(object・envelope・時系列の索引)が届く。
+                "receive a new post",
+                fixture
+                    .reads_of(|| async {
+                        fixture.docs_sync.emit.store(true, AtomicOrdering::SeqCst);
+                        put_post_at(
+                            fixture.docs_sync.as_ref(),
+                            &replica,
+                            &fixture.author_keys,
+                            &fixture.topic,
+                            BASE_TIME + REAL_POSTS as i64,
+                            "a new post",
+                            None,
+                        )
+                        .await;
+                        fixture.docs_sync.emit.store(false, AtomicOrdering::SeqCst);
+                        fixture.docs_sync.flush();
                     })
                     .await,
             ),
@@ -462,23 +613,28 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<usize>> {
 }
 
 // 定期処理(購読タスクの窓の追いつき、author 購読の追いつき)、表示(タイムラインの新しい側・遡ったページ、
-// プロフィールのタイムライン)、利用者の操作(reaction)が読む docs の量は、replica の件数を 1,000 / 10,000 / 100,000 に
-// しても増えない。
+// プロフィールのタイムライン)、利用者の操作(reaction)、新着の受信が読む docs の量と、projection の読み書きの量は、
+// replica と projection の件数を 1,000 / 10,000 / 100,000 にしても増えない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries() {
     let reads = reads_by_size().await;
     // タイムラインの新しい側のページは projection から読み、docs を読まない(0 件)。ほかの操作は docs を読む。
+    // どの操作も projection を読み書きする。
     assert!(
         reads
             .iter()
             .filter(|(operation, _)| **operation != "timeline head page")
-            .all(|(_, counts)| counts[0] > 0),
+            .all(|(_, counts)| counts[0].docs > 0),
+        "{reads:?}"
+    );
+    assert!(
+        reads.values().all(|counts| counts[0].projection > 0),
         "{reads:?}"
     );
     for (operation, counts) in &reads {
         assert!(
             counts.windows(2).all(|pair| pair[0] == pair[1]),
-            "{operation}: docs records read must not grow with the replica size ({SIZES:?} -> {counts:?})"
+            "{operation}: docs records read and projection steps must not grow with the size ({SIZES:?} -> {counts:?})"
         );
     }
 }

@@ -202,33 +202,34 @@ pub(crate) async fn fetch_local_projection_blob_text(
     fetch_projection_blob_text(blob_service, hash).await
 }
 
-/// 購読していない topic の投稿(repost 元、profile の投稿)の取り下げを確認する間隔(#1239)。
-pub(crate) const WITHDRAWAL_CHECK_INTERVAL_MS: i64 = 60_000;
-/// 取り下げの確認の台帳の上限。超えたら、期限の切れた項目を捨て、それでも超えるなら確認を見送る。
-pub(crate) const WITHDRAWAL_CHECK_LEDGER_LIMIT: usize = 4_096;
-/// 背景で同時に行う取り下げの確認の上限。
-pub(crate) const WITHDRAWAL_CHECK_MAX_CONCURRENT: usize = 4;
+/// 背景の確認(取り下げの確認、返信先の反映)を、同じ確認先で繰り返す間隔(#1239)。
+pub(crate) const BACKGROUND_CHECK_INTERVAL_MS: i64 = 60_000;
+/// 背景の確認の台帳の上限(台帳ごと)。超えたら、期限の切れた項目を捨て、それでも超えるなら確認を見送る。
+pub(crate) const BACKGROUND_CHECK_LEDGER_LIMIT: usize = 4_096;
+/// 背景で同時に行う確認の上限(台帳ごと)。
+pub(crate) const BACKGROUND_CHECK_MAX_CONCURRENT: usize = 4;
 
-/// 表示した投稿の取り下げを、確認先(replica と object id の組)ごとに間隔を空けて確認するための台帳(#1239)。
+/// view の生成から背景へ出した確認を、確認先(replica と object id の組)ごとに間隔を空けて行うための台帳(#1239)。
 ///
-/// view の生成中に docs を読まないため、取り下げの確認は背景へ出す。同じ object を表示し続けても、
-/// 確認は間隔ごとに 1 回で、key を指定した読み出しだけを行う(replica は走査しない)。
-pub(crate) struct WithdrawalCheckLedger {
+/// view の生成中に docs を読まないため、表示した投稿の取り下げの確認と、projection に無い返信先の反映は背景へ出す。
+/// 用途ごとに別の台帳を持つ。同じ object を表示し続けても、確認は間隔ごとに 1 回で、key を指定した読み出しだけを行う
+/// (replica は走査しない)。
+pub(crate) struct BackgroundCheckLedger {
     next_check_at_ms: Mutex<HashMap<String, i64>>,
     permits: Arc<Semaphore>,
 }
 
-impl Default for WithdrawalCheckLedger {
+impl Default for BackgroundCheckLedger {
     fn default() -> Self {
         Self {
             next_check_at_ms: Mutex::new(HashMap::new()),
-            permits: Arc::new(Semaphore::new(WITHDRAWAL_CHECK_MAX_CONCURRENT)),
+            permits: Arc::new(Semaphore::new(BACKGROUND_CHECK_MAX_CONCURRENT)),
         }
     }
 }
 
-impl WithdrawalCheckLedger {
-    /// この確認先の取り下げを今確認してよいか。`true` を返したときは、次の確認の時刻を先へ進める。
+impl BackgroundCheckLedger {
+    /// この確認先を今確認してよいか。`true` を返したときは、次の確認の時刻を先へ進める。
     ///
     /// `check_key` は replica と object id の組から作る。object id だけにすると、topic を偽った repost の
     /// snapshot が、正しい topic での確認を見送らせてしまう。
@@ -243,15 +244,15 @@ impl WithdrawalCheckLedger {
         {
             return false;
         }
-        if !entries.contains_key(check_key) && entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
+        if !entries.contains_key(check_key) && entries.len() >= BACKGROUND_CHECK_LEDGER_LIMIT {
             entries.retain(|_, next_check_at| *next_check_at > now_ms);
-            if entries.len() >= WITHDRAWAL_CHECK_LEDGER_LIMIT {
+            if entries.len() >= BACKGROUND_CHECK_LEDGER_LIMIT {
                 return false;
             }
         }
         entries.insert(
             check_key.to_string(),
-            now_ms.saturating_add(WITHDRAWAL_CHECK_INTERVAL_MS),
+            now_ms.saturating_add(BACKGROUND_CHECK_INTERVAL_MS),
         );
         true
     }
@@ -389,28 +390,28 @@ mod tests {
 
     #[test]
     fn withdrawal_checks_are_spaced_per_object_and_bounded() {
-        let ledger = WithdrawalCheckLedger::default();
+        let ledger = BackgroundCheckLedger::default();
         assert!(ledger.try_begin("object-a", 0));
-        assert!(!ledger.try_begin("object-a", WITHDRAWAL_CHECK_INTERVAL_MS - 1));
+        assert!(!ledger.try_begin("object-a", BACKGROUND_CHECK_INTERVAL_MS - 1));
         assert!(
             ledger.try_begin("object-b", 0),
             "another object is independent"
         );
-        assert!(ledger.try_begin("object-a", WITHDRAWAL_CHECK_INTERVAL_MS));
+        assert!(ledger.try_begin("object-a", BACKGROUND_CHECK_INTERVAL_MS));
 
-        let ledger = WithdrawalCheckLedger::default();
-        for index in 0..WITHDRAWAL_CHECK_LEDGER_LIMIT {
+        let ledger = BackgroundCheckLedger::default();
+        for index in 0..BACKGROUND_CHECK_LEDGER_LIMIT {
             assert!(ledger.try_begin(&format!("object-{index}"), 0));
         }
         assert!(
             !ledger.try_begin("one-too-many", 0),
             "a full ledger defers new checks instead of growing"
         );
-        assert_eq!(ledger.len(), WITHDRAWAL_CHECK_LEDGER_LIMIT);
+        assert_eq!(ledger.len(), BACKGROUND_CHECK_LEDGER_LIMIT);
         assert!(
-            ledger.try_begin("one-too-many", WITHDRAWAL_CHECK_INTERVAL_MS),
+            ledger.try_begin("one-too-many", BACKGROUND_CHECK_INTERVAL_MS),
             "expired entries make room"
         );
-        assert!(ledger.len() <= WITHDRAWAL_CHECK_LEDGER_LIMIT);
+        assert!(ledger.len() <= BACKGROUND_CHECK_LEDGER_LIMIT);
     }
 }

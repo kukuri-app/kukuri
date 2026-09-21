@@ -75,12 +75,12 @@ live session と game room は、state 1 件につき `envelopes/<envelope id>` 
 
 T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る。どちらも key を 1 つ指定した `LocalOnly` の読み出しで、replica の総 entry 数には依存しない
 （T2 の索引化の後）。ただし ADR 0052 §2 の「view の生成中に docs を読まない」に反するので、T5b で外す。
-このうち V-2 は Issue #1248 で削除した（残りは V-1 の 1 か所）。repost 元の解決（`resolve_repost_source`）と bookmark（`bookmark_post_in_channel`）が
+V-2 は Issue #1248 で削除し、V-1 は #1239 の AC-6（#1277）で背景の反映へ移した。view の生成は docs を読まない。repost 元の解決（`resolve_repost_source`）と bookmark（`bookmark_post_in_channel`）が
 `objects/<id>/state` を読み直していた箇所も、#1248 で検証済みの projection の行を使う形にして、docs の読み出しを無くした。
 
 | ID | 箇所 | 読む範囲・契機 | 比例する総数 | 分類 |
 | --- | --- | --- | --- | --- |
-| V-1 | `timeline_view_support.rs` `hydrate_reply_preview_row`（`load_verified_post`） | 返信先が projection に無いときだけ、`objects/<返信先 id>/envelope` を 1 回（`LocalOnly`、最大 8 record）。署名つき envelope と replica の scope を確かめてから反映する（#1248）。反映できれば次回以降は読まない | 依存しない（表示する行ごとに 1 key 以下） | 残す（総件数に依存せず、表示する行ごとに 1 key 以下の `LocalOnly` の読み出し。返信先の反映を取得側と背景へ移すのは #1277） |
+| V-1 | `timeline_view_support.rs` の返信先の preview | 解消済み（#1239 AC-6、#1277）。view の生成は projection だけを読む。返信先が projection に無ければ、`reflect_reply_target` を背景へ出し（確認先ごとに 60 秒の間隔、台帳 4,096 件、同時 4 件）、この回の preview は出さない。反映できれば次の取得で出る。画面は preview が無い行の返信先の枠を描かない | — | 解消済み |
 | V-2 | `timeline_view_support.rs` `attachment_views_for_projection_row` の fallback | 削除済み（#1248）。署名の無い `state` の添付を表示する経路だった。旧い行（`projection_version < 3`）は migration が消し、docs から反映し直す | — | 解消済み |
 
 ## projection 側
@@ -113,16 +113,20 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 設計上残る、総件数に比例する読み出しは無い。T6 で入れた自分の replica の背景の仕事（自分の follow・block をすべて読む `sweep_own_author_edges` と、
 プロフィールの索引の補完 `backfill_own_profile_index`）は、利用者が必要としない全件の読み出しなので外した（AGENTS.md: ユースケース上ユーザーが必要としない
 限り同期・復旧はしない。ADR 0052 §6、ADR 0053 §6）。取りこぼし・同期の区切りの後の author の追いつきは、自分を指す follow・block の key だけを読む。
-replica の件数を 1,000 / 10,000 / 100,000 にしても、次の操作が docs から読む record と key の数が同じであることを、
-`crates/app-api/src/tests/sync/scale_counts.rs` の test が数で確かめる（所要時間の閾値は使わない。上限を外す mutation で、読む量が件数に比例して増えることが検出される）。
+replica と projection の件数を 1,000 / 10,000 / 100,000 にしても、次の操作が docs から読む record と key の数と、projection の読み書きで
+SQLite が実行した命令の数が同じであることを、`crates/app-api/src/tests/sync/scale_counts.rs` の test が数で確かめる（所要時間の閾値は使わない。
+命令の数は読み書きした行の数とともに増え、B-tree の深さには依存しない。上限を外す mutation と、ページの取得の SQL が索引を使わなくなる mutation で、
+量が件数に比例して増えることが検出される）。projection には、時系列の索引の埋め草と同じ object の行を同じ数だけ置く。
 
-| 操作 | 種類 | 読む量（件数によらず） |
-| --- | --- | --- |
-| topic の購読タスクの起動（通知の起点・起動時の窓の追いつきを含む） | 定期処理 | 1,298 |
-| プロフィールを初めて開く（author 購読の起動・通知の起点・起動時の反映を含む） | 表示・定期処理 | 3,192 |
-| 購読タスクの窓の追いつき | 定期処理 | 604 |
-| author 購読の追いつき（自分を指す follow・block の key） | 定期処理 | 2 |
-| タイムラインの新しい側のページ（購読の起動の後。projection から読む） | 表示 | 0（projection が空で初めて開くときの照合は、`range_reconcile.rs` の `head_page_reads_only_the_newest_entries` が 300 件と 1,500 件で読む量が同じことを示す） |
-| タイムラインの遡ったページ（埋め草の中ほど） | 表示 | 676 |
-| プロフィールのタイムライン | 表示 | 115（測定の author replica には索引の無い旧 record が無い。旧 record のある著者では、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）と、その行の読み出しが 1 ページごとに加わる。この量も件数によらない） |
-| reaction | 利用者の操作 | 3 |
+| 操作 | 種類 | docs の読む量 | projection の命令の数 |
+| --- | --- | --- | --- |
+| topic の購読タスクの起動（通知の起点・起動時の窓の追いつきを含む） | 定期処理 | 958 | 17,340 |
+| プロフィールを初めて開く（author 購読の起動・通知の起点・起動時の反映を含む） | 表示・定期処理 | 3,192 | 185 |
+| 購読タスクの窓の追いつき | 定期処理 | 264 | 15,000 |
+| author 購読の追いつき（自分を指す follow・block の key） | 定期処理 | 2 | 13 |
+| 新着 1 件の受信（相手の peer から、投稿の entry と本体が届く） | 定期処理 | 3 | 270 |
+| タイムラインの新しい側のページ（購読の起動の後。projection から読む） | 表示 | 0（projection が空で初めて開くときの照合は、`range_reconcile.rs` の `head_page_reads_only_the_newest_entries` が 300 件と 1,500 件で読む量が同じことを示す） | 1,703 |
+| タイムラインの遡ったページ（埋め草の中ほど） | 表示 | 30 | 3,287 |
+| プロフィールのタイムライン | 表示 | 115（測定の author replica には索引の無い旧 record が無い。旧 record のある著者では、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）と、その行の読み出しが 1 ページごとに加わる。この量も件数によらない） | 45 |
+| reaction | 利用者の操作 | 3 | 444 |
+

@@ -65,6 +65,39 @@ impl SqliteStore {
         Self::connect("sqlite::memory:").await
     }
 
+    /// 計測用(#1239 AC-7): SQLite の仮想機械が実行した命令の数を `counter` に足していく in-memory の store。
+    ///
+    /// 命令の数は、読み書きした行の数とともに増え、B-tree の深さ(表の大きさ)には依存しない。表の件数を変えても
+    /// 操作の命令の数が変わらないことで、件数に比例する読み書き(全件の走査・書き直し)が無いことを確かめる。
+    #[cfg(feature = "test-support")]
+    pub async fn connect_memory_counting_vm_steps(
+        counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<Self> {
+        let pool = sqlite_pool_options(1, false)
+            .after_connect(move |connection, _meta| {
+                let counter = counter.clone();
+                Box::pin(async move {
+                    configure_connection(connection, false).await?;
+                    connection
+                        .lock_handle()
+                        .await?
+                        .set_progress_handler(1, move || {
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            true
+                        });
+                    Ok(())
+                })
+            })
+            .connect("sqlite::memory:")
+            .await
+            .map_err(|source| StoreStartupError::Open {
+                path: "sqlite::memory:".to_string(),
+                source,
+            })?;
+        run_store_migrations(&pool).await?;
+        Ok(Self { pool })
+    }
+
     pub fn pool(&self) -> &Pool<Sqlite> {
         &self.pool
     }
@@ -79,21 +112,26 @@ fn sqlite_pool_options(max_connections: u32, enable_wal: bool) -> SqlitePoolOpti
         .min_connections(1)
         .max_connections(max_connections)
         .after_connect(move |connection, _meta| {
-            Box::pin(async move {
-                sqlx::query("PRAGMA busy_timeout = 5000")
-                    .execute(&mut *connection)
-                    .await?;
-                sqlx::query("PRAGMA synchronous = NORMAL")
-                    .execute(&mut *connection)
-                    .await?;
-                if enable_wal {
-                    sqlx::query("PRAGMA journal_mode = WAL")
-                        .execute(&mut *connection)
-                        .await?;
-                }
-                Ok(())
-            })
+            Box::pin(async move { configure_connection(connection, enable_wal).await })
         })
+}
+
+async fn configure_connection(
+    connection: &mut sqlx::SqliteConnection,
+    enable_wal: bool,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query("PRAGMA busy_timeout = 5000")
+        .execute(&mut *connection)
+        .await?;
+    sqlx::query("PRAGMA synchronous = NORMAL")
+        .execute(&mut *connection)
+        .await?;
+    if enable_wal {
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
 }
 
 // checksum 不一致(CRLF checkout 由来を含む)はここで失敗し、起動 Failed 画面で
