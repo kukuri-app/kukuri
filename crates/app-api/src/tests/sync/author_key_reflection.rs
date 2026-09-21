@@ -4,7 +4,7 @@
 use super::shadowing_docs::ShadowingDocsSync;
 use super::subscription_catch_up::InjectedNoticesDocsSync;
 use super::*;
-use crate::service::author_state_support::AUTHOR_EDGE_KEYS;
+use crate::service::author_state_support::{AUTHOR_EDGE_KEYS, sweep_own_author_edges_with};
 use kukuri_docs_sync::ReplicaNotice;
 
 /// `author_keys` の author replica に、`count` 件の follow edge(相手は毎回新しい author)を書く。
@@ -539,4 +539,271 @@ async fn a_shadowed_custom_reaction_asset_is_still_listed() {
 
     assert_eq!(assets.len(), 1);
     assert_eq!(assets[0].author_pubkey.as_str(), author_pubkey);
+}
+
+async fn put_follow_edge_with_status(
+    docs_sync: &dyn DocsSync,
+    author_keys: &KukuriKeys,
+    target: &str,
+    status: FollowEdgeStatus,
+) -> KukuriEnvelope {
+    let envelope = build_follow_edge_envelope(author_keys, &Pubkey::from(target), status)
+        .expect("build follow edge");
+    let edge = parse_follow_edge(&envelope)
+        .expect("parse follow edge")
+        .expect("follow edge");
+    persist_follow_edge_doc(docs_sync, &edge, &envelope)
+        .await
+        .expect("persist follow edge doc");
+    envelope
+}
+
+async fn record_value(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    key: &str,
+) -> serde_json::Value {
+    let record = docs_sync
+        .query_replica(replica, DocQuery::Exact(key.to_string()))
+        .await
+        .expect("query")
+        .into_iter()
+        .next()
+        .expect("record");
+    serde_json::from_slice(&record.value).expect("json")
+}
+
+// 背景の読み出しは、止まっても続きから読み(読み終えた桶を読み直さない)、読み終えたら何も読まない(独立監査 B-3)。
+#[tokio::test]
+async fn the_own_edge_sweep_resumes_and_stops_after_completion() {
+    let docs_sync = Arc::new(CountingDocsSync::default());
+    let local_keys = generate_keys();
+    let local_author_pubkey = local_keys.public_key_hex();
+    let edges = 600;
+    put_follow_edges(docs_sync.as_ref(), &local_keys, edges).await;
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync.clone(),
+        Arc::new(MemoryBlobService::default()),
+        local_keys,
+    );
+
+    let mut runs = 0;
+    let mut reflected = 0;
+    loop {
+        runs += 1;
+        assert!(runs < 200, "every run makes progress");
+        let outcome =
+            sweep_own_author_edges_with(&app.services, local_author_pubkey.as_str(), 16, 12)
+                .await
+                .expect("sweep");
+        reflected += outcome.reflected;
+        let done = store
+            .get_sync_checkpoint(&format!(
+                "own-author-edges/{local_author_pubkey}/graph/follows/"
+            ))
+            .await
+            .expect("checkpoint");
+        if done.as_deref() == Some("done") {
+            break;
+        }
+    }
+    assert!(runs > 1, "the query limit stops a run before the end");
+    assert_eq!(reflected, edges, "no bucket is read twice across runs");
+    assert_eq!(
+        store
+            .list_follow_edges_by_subject(local_author_pubkey.as_str())
+            .await
+            .expect("own follow edges")
+            .len(),
+        edges
+    );
+
+    docs_sync.reset_records_returned();
+    let after = sweep_own_author_edges_with(&app.services, local_author_pubkey.as_str(), 16, 12)
+        .await
+        .expect("sweep after completion");
+    assert_eq!(after.reflected, 0);
+    assert_eq!(
+        docs_sync.records_returned(),
+        0,
+        "nothing is read after completion"
+    );
+}
+
+// 自分の author 購読が、背景の読み出しを起動する(窓を超える自分の follow も入る)。
+#[tokio::test]
+async fn the_own_author_subscription_runs_the_edge_sweep() {
+    let docs_sync = Arc::new(MemoryDocsSync::default());
+    let local_keys = generate_keys();
+    let local_author_pubkey = local_keys.public_key_hex();
+    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 40).await;
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync.clone(),
+        Arc::new(MemoryBlobService::default()),
+        local_keys,
+    );
+
+    app.spawn_author_subscription(local_author_pubkey.as_str())
+        .await
+        .expect("subscribe myself");
+
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let count = store
+                .list_follow_edges_by_subject(local_author_pubkey.as_str())
+                .await
+                .expect("own follow edges")
+                .len();
+            if count == AUTHOR_EDGE_KEYS + 40 {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the subscription reads every own follow");
+    app.shutdown().await;
+}
+
+// 同じ key に、古い正しい record(別の名義)と新しい正しい record があるとき、新しい状態を反映する
+// (古い envelope を指す record を後から置く再送で、状態を巻き戻せない)。
+#[tokio::test]
+async fn the_newest_valid_edge_wins_over_a_replayed_older_record() {
+    let docs_sync = Arc::new(ShadowingDocsSync::with_account_docs_author("f".repeat(64)));
+    let (app, store) = shadowing_app(docs_sync.clone());
+    let local_author_pubkey = app.current_author_pubkey();
+    let remote_keys = generate_keys();
+    let remote_pubkey = remote_keys.public_key_hex();
+    let replica = author_replica_id(remote_pubkey.as_str());
+    let key = stable_key("graph/follows", local_author_pubkey.as_str());
+    put_follow_edge_with_status(
+        docs_sync.as_ref(),
+        &remote_keys,
+        local_author_pubkey.as_str(),
+        FollowEdgeStatus::Active,
+    )
+    .await;
+    let older = record_value(docs_sync.as_ref(), &replica, key.as_str()).await;
+    sleep(Duration::from_millis(1_100)).await;
+    put_follow_edge_with_status(
+        docs_sync.as_ref(),
+        &remote_keys,
+        local_author_pubkey.as_str(),
+        FollowEdgeStatus::Revoked,
+    )
+    .await;
+    docs_sync.shadow(key.as_str(), older).await;
+
+    hydrate_author_key(
+        &app.services,
+        local_author_pubkey.as_str(),
+        remote_pubkey.as_str(),
+        key.as_str(),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("hydrate");
+
+    let edges = store
+        .list_follow_edges_by_subject(remote_pubkey.as_str())
+        .await
+        .expect("edges");
+    assert_eq!(edges.len(), 1);
+    assert_eq!(
+        edges[0].status,
+        FollowEdgeStatus::Revoked,
+        "the newest state"
+    );
+}
+
+// 別の key の正しい record を、この key に置いても反映しない(key と相手の一致)。
+#[tokio::test]
+async fn a_valid_edge_record_under_another_key_is_ignored() {
+    let docs_sync = Arc::new(ShadowingDocsSync::with_account_docs_author("f".repeat(64)));
+    let (app, store) = shadowing_app(docs_sync.clone());
+    let local_author_pubkey = app.current_author_pubkey();
+    let remote_keys = generate_keys();
+    let remote_pubkey = remote_keys.public_key_hex();
+    let replica = author_replica_id(remote_pubkey.as_str());
+    let other = generate_keys().public_key_hex();
+    put_follow_edge(docs_sync.as_ref(), &remote_keys, other.as_str()).await;
+    let other_record = record_value(
+        docs_sync.as_ref(),
+        &replica,
+        stable_key("graph/follows", other.as_str()).as_str(),
+    )
+    .await;
+    let key = stable_key("graph/follows", local_author_pubkey.as_str());
+    docs_sync.shadow(key.as_str(), other_record).await;
+
+    let outcome = hydrate_author_key(
+        &app.services,
+        local_author_pubkey.as_str(),
+        remote_pubkey.as_str(),
+        key.as_str(),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("hydrate");
+
+    assert_eq!(outcome.reflected, 0);
+    assert!(
+        store
+            .list_follow_edges_by_subject(remote_pubkey.as_str())
+            .await
+            .expect("edges")
+            .is_empty()
+    );
+}
+
+// envelope の key に別の正しい envelope が置かれても、id の一致する envelope を返す。
+#[tokio::test]
+async fn the_envelope_fetch_returns_the_envelope_with_the_requested_id() {
+    let docs_sync = Arc::new(ShadowingDocsSync::with_account_docs_author("f".repeat(64)));
+    let remote_keys = generate_keys();
+    let replica = author_replica_id(remote_keys.public_key_hex().as_str());
+    let wanted = put_follow_edge_with_status(
+        docs_sync.as_ref(),
+        &remote_keys,
+        generate_keys().public_key_hex().as_str(),
+        FollowEdgeStatus::Active,
+    )
+    .await;
+    let other = put_follow_edge_with_status(
+        docs_sync.as_ref(),
+        &remote_keys,
+        generate_keys().public_key_hex().as_str(),
+        FollowEdgeStatus::Active,
+    )
+    .await;
+    docs_sync
+        .shadow(
+            stable_key("envelopes", wanted.id.as_str()).as_str(),
+            serde_json::to_value(&other).expect("envelope json"),
+        )
+        .await;
+
+    let fetched = fetch_author_envelope_by_id(
+        docs_sync.as_ref(),
+        &replica,
+        &wanted.id,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("fetch")
+    .expect("envelope");
+
+    assert_eq!(fetched.id, wanted.id);
 }

@@ -57,6 +57,7 @@ pub struct MemoryStore {
     author_relationship_rows:
         Arc<RwLock<HashMap<(String, String), AuthorRelationshipProjectionRow>>>,
     muted_authors: Arc<RwLock<HashMap<String, MutedAuthorRow>>>,
+    sync_checkpoints: Arc<RwLock<HashMap<String, String>>>,
     live_presence: Arc<RwLock<HashMap<LivePresenceKey, LivePresenceValue>>>,
     blob_statuses: Arc<RwLock<HashMap<String, BlobCacheStatus>>>,
     reaction_projection_rows: Arc<RwLock<MemoryReactionProjectionRows>>,

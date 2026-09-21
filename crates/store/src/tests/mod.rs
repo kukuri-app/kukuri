@@ -29,3 +29,4 @@ mod row_mapping_roundtrip_live_game;
 mod row_mapping_roundtrip_social;
 mod sqlite_projection;
 mod sqlite_store;
+mod sync_checkpoints;

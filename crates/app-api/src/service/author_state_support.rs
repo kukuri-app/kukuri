@@ -18,6 +18,10 @@ const AUTHOR_RECORDS_PER_KEY: usize = MAX_ENVELOPE_RECORDS_PER_OBJECT;
 const OWN_EDGE_BATCH: usize = 256;
 /// 自分の replica の edge を小分けに読むときの、key の一覧の query の数の上限(形の違う key で分割が膨らむのを止める)。
 const OWN_EDGE_MAX_QUERIES: usize = 4_096;
+/// 読み出しを読み終えた印。
+pub(crate) const CHECKPOINT_DONE: &str = "done";
+/// 読み終えた最後の桶の前に付ける印。
+pub(crate) const CHECKPOINT_AFTER: &str = "after:";
 
 /// author replica の反映の結果。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,21 +48,53 @@ impl AuthorHydration {
 
 /// `prefix` の key を、`batch` 件ずつの key の一覧で読む。一覧が上限で打ち切られたら、次の桁(16 進)で分けて読み直す。
 /// key の後ろは 64 桁の 16 進(pubkey・object id)を前提にする。16 進でない key は、分けた後は読まない(best effort)。
+///
+/// 桶(key の prefix)は昇順に読む。読み終えた最後の桶(`last_bucket`)を保存しておき、次に `done_through` として渡すと、
+/// その桶までを読まずに続きから読む(途中で止まっても再開できる)。
 pub(crate) struct HexBucketedKeys {
     root_len: usize,
     pending: Vec<String>,
     batch: usize,
     queries_left: usize,
+    done_through: Option<String>,
+    last_bucket: Option<String>,
+    stopped_early: bool,
 }
 
 impl HexBucketedKeys {
-    pub(crate) fn new(prefix: &str, batch: usize, max_queries: usize) -> Self {
+    pub(crate) fn new(
+        prefix: &str,
+        batch: usize,
+        max_queries: usize,
+        done_through: Option<String>,
+    ) -> Self {
         Self {
             root_len: prefix.len(),
             pending: vec![prefix.to_string()],
             batch,
             queries_left: max_queries,
+            done_through,
+            last_bucket: None,
+            stopped_early: false,
         }
+    }
+
+    fn split(&mut self, bucket: &str) {
+        self.pending.extend(
+            "fedcba9876543210"
+                .chars()
+                .map(|digit| format!("{bucket}{digit}")),
+        );
+    }
+
+    /// query の数の上限で、読み残しを残して止まったか。
+    pub(crate) fn stopped_early(&self) -> bool {
+        self.stopped_early
+    }
+
+    /// 最後に返した batch の桶。
+    pub(crate) fn last_bucket(&self) -> Option<&str> {
+        self.last_bucket.as_deref()
     }
 
     /// 次の batch。尽きたか、query の数の上限に達したら `None`。
@@ -68,7 +104,20 @@ impl HexBucketedKeys {
         replica: &ReplicaId,
     ) -> Result<Option<Vec<DocKeyEntry>>> {
         while let Some(bucket) = self.pending.pop() {
+            if let Some(done) = self.done_through.clone() {
+                if done.len() > bucket.len() && done.starts_with(bucket.as_str()) {
+                    // 前回、読み終えた桶の祖先。前回は分けて読んだので、読まずに分ける。
+                    self.split(&bucket);
+                    continue;
+                }
+                if bucket.as_str() <= done.as_str() {
+                    // 前回までに読み終えた範囲(互いに接頭辞でない桶は、文字列の順が key の範囲の順になる)。
+                    continue;
+                }
+            }
             if self.queries_left == 0 {
+                self.pending.push(bucket);
+                self.stopped_early = true;
                 return Ok(None);
             }
             self.queries_left -= 1;
@@ -83,13 +132,10 @@ impl HexBucketedKeys {
                 )
                 .await?;
             if page.reached_limit && bucket.len() < self.root_len + 64 {
-                self.pending.extend(
-                    "fedcba9876543210"
-                        .chars()
-                        .map(|digit| format!("{bucket}{digit}")),
-                );
+                self.split(&bucket);
                 continue;
             }
+            self.last_bucket = Some(bucket);
             return Ok(Some(page.entries));
         }
         Ok(None)
@@ -204,16 +250,44 @@ pub(crate) async fn hydrate_author_key(
 /// 自分の replica の follow・block の edge を、背景で小分けにすべて読む。新しい端末で、自分の follow が
 /// `AUTHOR_EDGE_KEYS` 件を超えていても、自分の follow の一覧が欠けないようにする。
 ///
-/// 自分の follow の数に比例するが、自分の author 購読の開始時に 1 回だけ、背景で batch ごとに譲りながら進む。
-/// 購読タスクが止まると止まり、次の購読で最初からやり直す(手元にある envelope は書き直さない)。
+/// 読み終えた桶の位置を store に残し(`sync_checkpoints`)、止まっても続きから読む。1 回の実行の query 数には上限があり、
+/// 上限に達したら位置を残して終わる(次の購読で続ける)。読み終えたら印を残し、以後この端末では行わない
+/// (読み終えた後の edge は、docs の event と追いつきの窓で入る)。
 pub(crate) async fn sweep_own_author_edges(
     services: &ServiceHandles,
     local_author_pubkey: &str,
 ) -> Result<AuthorHydration> {
+    sweep_own_author_edges_with(
+        services,
+        local_author_pubkey,
+        OWN_EDGE_BATCH,
+        OWN_EDGE_MAX_QUERIES,
+    )
+    .await
+}
+
+pub(crate) async fn sweep_own_author_edges_with(
+    services: &ServiceHandles,
+    local_author_pubkey: &str,
+    batch: usize,
+    max_queries: usize,
+) -> Result<AuthorHydration> {
     let replica = author_replica_id(local_author_pubkey);
+    let projection_store = services.projection_store.as_ref();
     let mut outcome = AuthorHydration::default();
     for prefix in ["graph/follows/", "graph/blocks/"] {
-        let mut keys = HexBucketedKeys::new(prefix, OWN_EDGE_BATCH, OWN_EDGE_MAX_QUERIES);
+        let checkpoint_key = format!("own-author-edges/{local_author_pubkey}/{prefix}");
+        let checkpoint = projection_store
+            .get_sync_checkpoint(&checkpoint_key)
+            .await?;
+        if checkpoint.as_deref() == Some(CHECKPOINT_DONE) {
+            continue;
+        }
+        let done_through = checkpoint
+            .as_deref()
+            .and_then(|value| value.strip_prefix(CHECKPOINT_AFTER))
+            .map(str::to_string);
+        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through);
         while let Some(entries) = keys
             .next_batch(services.docs_sync.as_ref(), &replica)
             .await?
@@ -233,8 +307,19 @@ pub(crate) async fn sweep_own_author_edges(
                     );
                 }
             }
+            if let Some(bucket) = keys.last_bucket() {
+                projection_store
+                    .put_sync_checkpoint(&checkpoint_key, &format!("{CHECKPOINT_AFTER}{bucket}"))
+                    .await?;
+            }
             tokio::task::yield_now().await;
         }
+        if keys.stopped_early() {
+            break;
+        }
+        projection_store
+            .put_sync_checkpoint(&checkpoint_key, CHECKPOINT_DONE)
+            .await?;
     }
     if outcome.changed > 0 {
         rebuild_relationships(services, local_author_pubkey).await?;
@@ -367,8 +452,11 @@ async fn hydrate_author_record(
         return Ok(AuthorHydration::default());
     };
     let store = services.store.as_ref();
+    // 手元にある envelope は書き直さない。
     let changed = store.get_envelope(&envelope.id).await?.is_none();
-    store.put_envelope(envelope.clone()).await?;
+    if changed {
+        store.put_envelope(envelope.clone()).await?;
+    }
     if kind == AuthorKeyKind::Profile
         && let Ok(Some(profile)) = parse_profile(&envelope)
     {

@@ -618,4 +618,21 @@ test（`crates/app-api/src/tests/sync/author_key_reflection.rs`）:
 
 残した non-blocker: asset の窓が作成順ではない（asset id の昇順）、follow の通知の起点が同じ key の 1 entry だけ、`notification_candidate_from_follow_event` の先頭 1 件（以前から）、
 DM の購読の張り直しの頻度の低下、通知を流さない test 用の DocsSync で追いつきが起きないこと。
-自分の replica の edge を読む背景の処理は、自分の follow の数に比例する（購読の開始時に 1 回、背景で batch ごとに譲る）。
+
+### 独立監査の 2 回目（delta `3dcef92d..ae0621a7`、FAIL）と修正
+
+B-1・B-2 の解消は確認された（修正を戻す mutation でそれぞれの test が失敗する）。新たな blocker が 1 件あった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-3: 自分の edge を背景で読む処理が、購読を張り直すたびに最初から全件を読み直す。張り直しは 5 秒間隔で起こりうるので、自分の follow が多いと一度も終わらず、同じ全件の読み出しを繰り返す。query 数の上限に達すると、後ろの key が黙って落ちる | 読んだ位置も、読み終えた印も残していなかった。手元にある envelope も書き直していた | 読み終えた桶（key の prefix）の位置を store の新しい表 `sync_checkpoints`（migration `20260921030000`）に残し、次の実行は続きから読む（`HexBucketedKeys` の `done_through`。前回の桶の祖先は読まずに分け、それより前の桶は読まない）。1 回の実行は query 数の上限で止まり、位置を残す。読み終えたら印を残し、以後この端末では行わない。手元にある envelope は書き直さない。test `the_own_edge_sweep_resumes_and_stops_after_completion`（query の上限を小さくして複数回に分け、どの桶も 2 回読まないこと、読み終えた後は docs を 1 件も読まないこと） |
+
+同じ監査の non-blocker のうち、この段階で直したもの（test で固定し、それぞれ規則を外す mutation で失敗することを確かめた）。
+
+- 同じ key の正しい record のうち最も新しいものを選ぶ（古い envelope を指す record を後から置く再送で、状態を巻き戻せない）。test `the_newest_valid_edge_wins_over_a_replayed_older_record`。
+- key と相手の一致。test `a_valid_edge_record_under_another_key_is_ignored`。
+- `fetch_author_envelope_by_id` の id の一致。test `the_envelope_fetch_returns_the_envelope_with_the_requested_id`。
+- 自分の author 購読からの背景の読み出しの起動。test `the_own_author_subscription_runs_the_edge_sweep`。
+
+残した non-blocker: 16 進の小文字でない key は、桶を分けた後は読まない。共通の接頭辞を持つごみの key で 1 回の実行の query 上限を使わせられる（位置は進むので、次の実行で先へ進む）。
+反映できない相手の key のたびに追いつきを依頼する（追いつきは間隔と上限つき）。custom reaction の asset の検証が author の文字列一致だけ（以前から）。

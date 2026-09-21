@@ -228,6 +228,23 @@ impl SocialProjectionStore for MemoryStore {
         Ok(items)
     }
 
+    async fn get_sync_checkpoint(&self, checkpoint_key: &str) -> Result<Option<String>> {
+        Ok(self
+            .sync_checkpoints
+            .read()
+            .await
+            .get(checkpoint_key)
+            .cloned())
+    }
+
+    async fn put_sync_checkpoint(&self, checkpoint_key: &str, value: &str) -> Result<()> {
+        self.sync_checkpoints
+            .write()
+            .await
+            .insert(checkpoint_key.to_string(), value.to_string());
+        Ok(())
+    }
+
     async fn remove_muted_author(&self, author_pubkey: &str) -> Result<()> {
         self.muted_authors.write().await.remove(author_pubkey);
         Ok(())
