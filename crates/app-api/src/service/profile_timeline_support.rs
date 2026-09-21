@@ -8,9 +8,14 @@
 //! `profile/reposts/` の key の上限つきの一覧(それぞれ `PROFILE_LEGACY_KEYS` 件)から読んだ行を合わせる(best effort)。
 
 use super::*;
-use crate::service::author_state_support::{CHECKPOINT_AFTER, CHECKPOINT_DONE, HexBucketedKeys};
+use crate::service::author_state_support::{
+    CHECKPOINT_AFTER, CHECKPOINT_DONE, CHECKPOINT_RESTART, HexBucketedKeys,
+};
 use crate::service::projection_support::HIDDEN_AUTHOR_SKIP_PAGES;
-use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery, TimeIndexCursor, query_time_index_desc};
+use kukuri_docs_sync::{
+    DocKeyOrder, DocKeyQuery, TimeIndexCursor, query_time_index_desc,
+    query_time_index_desc_by_author,
+};
 
 const PROFILE_INDEX_PREFIX: &str = "indexes/profile/";
 /// 自分の replica の索引を補い終えた印。
@@ -273,6 +278,33 @@ async fn load_profile_item(
     Ok(None)
 }
 
+/// `key` が、著者の docs author の名義で置かれているか(ADR 0053 §6)。誰でも書ける replica なので、他の名義の key は
+/// 数えない。docs author が分からないときは `false`(印は無いものとして扱い、旧 record を合わせる)。
+async fn authored_key_exists(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    docs_author: Option<&str>,
+    key: &str,
+) -> Result<bool> {
+    let Some(docs_author) = docs_author else {
+        return Ok(false);
+    };
+    Ok(docs_sync
+        .query_replica_keys_by_author(
+            replica,
+            docs_author,
+            DocKeyQuery {
+                prefix: key.to_string(),
+                order: DocKeyOrder::Ascending,
+                limit: 1,
+            },
+        )
+        .await?
+        .entries
+        .iter()
+        .any(|entry| entry.key == key))
+}
+
 async fn has_key(docs_sync: &dyn DocsSync, replica: &ReplicaId, key: &str) -> Result<bool> {
     let page = docs_sync
         .query_replica_keys(
@@ -345,11 +377,14 @@ pub(crate) async fn profile_timeline_page_from_docs(
         });
     }
     let replica = author_replica_id(author_pubkey);
-    let legacy = if has_key(docs_sync, &replica, PROFILE_INDEX_COMPLETE_KEY).await? {
-        Vec::new()
-    } else {
-        load_legacy_profile_items(docs_sync, &replica, author_pubkey, docs_author).await?
-    };
+    // 補い終えた印は、著者の docs author の名義のものだけを見る(他人が置いた印で、旧 record を隠させない)。
+    let legacy =
+        if authored_key_exists(docs_sync, &replica, docs_author, PROFILE_INDEX_COMPLETE_KEY).await?
+        {
+            Vec::new()
+        } else {
+            load_legacy_profile_items(docs_sync, &replica, author_pubkey, docs_author).await?
+        };
     let mut position = cursor.map(|cursor| (cursor.created_at, cursor.object_id.0));
     let mut items: Vec<ProfileTimelineItem> = Vec::new();
     for _ in 0..HIDDEN_AUTHOR_SKIP_PAGES {
@@ -359,14 +394,30 @@ pub(crate) async fn profile_timeline_page_from_docs(
                 created_at: *created_at,
                 object_id: object_id.clone(),
             });
-        let page = query_time_index_desc(
-            docs_sync,
-            &replica,
-            PROFILE_INDEX_PREFIX,
-            index_cursor.as_ref(),
-            limit,
-        )
-        .await?;
+        // 著者の docs author が分かれば、その名義の索引の key だけをたどる(他の名義の key でページを埋めさせない)。
+        let page = match docs_author {
+            Some(docs_author) => {
+                query_time_index_desc_by_author(
+                    docs_sync,
+                    &replica,
+                    PROFILE_INDEX_PREFIX,
+                    docs_author,
+                    index_cursor.as_ref(),
+                    limit,
+                )
+                .await?
+            }
+            None => {
+                query_time_index_desc(
+                    docs_sync,
+                    &replica,
+                    PROFILE_INDEX_PREFIX,
+                    index_cursor.as_ref(),
+                    limit,
+                )
+                .await?
+            }
+        };
         // 索引の、まだ読んでいない側の境界。境界より古い行は、次の回で読む。
         let boundary = match (&page.resume, page.entries.len() >= limit) {
             (Some(resume), _) => Some((resume.created_at, resume.object_id.clone())),
@@ -379,17 +430,22 @@ pub(crate) async fn profile_timeline_page_from_docs(
         let mut candidates = Vec::new();
         let mut seen = BTreeSet::new();
         for entry in &page.entries {
-            if seen.insert(entry.object_id.clone())
-                && let Some(item) = load_profile_item(
-                    docs_sync,
-                    &replica,
-                    author_pubkey,
-                    &entry.object_id,
-                    docs_author,
-                )
-                .await?
+            // 読んだ印は、行の検証と位置の照合に通った後で付ける。先に付けると、同じ object id の偽の索引の entry が
+            // 本物の entry と旧 record を読み飛ばさせる。
+            if seen.contains(&entry.object_id) {
+                continue;
+            }
+            if let Some(item) = load_profile_item(
+                docs_sync,
+                &replica,
+                author_pubkey,
+                &entry.object_id,
+                docs_author,
+            )
+            .await?
                 && item_position(&item) == (entry.created_at, entry.object_id.clone())
             {
+                seen.insert(entry.object_id.clone());
                 candidates.push(item);
             }
         }
@@ -475,9 +531,7 @@ pub(crate) async fn backfill_own_profile_index_with(
     max_queries: usize,
 ) -> Result<usize> {
     let replica = author_replica_id(author_pubkey);
-    if has_key(docs_sync, &replica, PROFILE_INDEX_COMPLETE_KEY).await? {
-        return Ok(0);
-    }
+    // 補うかどうかは、この端末の位置(`sync_checkpoints`)で決める。replica の印は、ほかの端末や同期の前の状態を表さない。
     // 自分の replica なので、自分の docs author で組を先に読む。
     let docs_author = docs_sync.local_docs_author().await?;
     let mut written = 0usize;
@@ -516,7 +570,9 @@ pub(crate) async fn backfill_own_profile_index_with(
                     continue;
                 };
                 let key = profile_index_key(item.created_at(), item.object_id());
-                if has_key(docs_sync, &replica, key.as_str()).await? {
+                if index_entry_exists(docs_sync, &replica, docs_author.as_deref(), key.as_str())
+                    .await?
+                {
                     continue;
                 }
                 persist_profile_index_entry(
@@ -544,14 +600,104 @@ pub(crate) async fn backfill_own_profile_index_with(
             .put_sync_checkpoint(&checkpoint_key, CHECKPOINT_DONE)
             .await?;
     }
-    docs_sync
-        .apply_doc_op(
-            &replica,
-            DocOp::SetJson {
-                key: PROFILE_INDEX_COMPLETE_KEY.to_string(),
-                value: serde_json::json!({ "version": 1 }),
-            },
-        )
-        .await?;
+    if !index_entry_exists(
+        docs_sync,
+        &replica,
+        docs_author.as_deref(),
+        PROFILE_INDEX_COMPLETE_KEY,
+    )
+    .await?
+    {
+        docs_sync
+            .apply_doc_op(
+                &replica,
+                DocOp::SetJson {
+                    key: PROFILE_INDEX_COMPLETE_KEY.to_string(),
+                    value: serde_json::json!({ "version": 1 }),
+                },
+            )
+            .await?;
+    }
     Ok(written)
+}
+
+/// 自分の書き込みの key が既にあるか。自分の docs author が分かれば、その名義の key だけを見る(他人が同じ key を先に
+/// 置いても、自分の名義の entry を書く)。分からなければ、名義を問わずに見る。
+async fn index_entry_exists(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    docs_author: Option<&str>,
+    key: &str,
+) -> Result<bool> {
+    match docs_author {
+        Some(_) => authored_key_exists(docs_sync, replica, docs_author, key).await,
+        None => has_key(docs_sync, replica, key).await,
+    }
+}
+
+/// 自分の索引の補完を最初からやり直す(#1239)。自分の replica の event を取りこぼしたとき(`Lagged`)に使う。
+pub(crate) async fn restart_own_profile_index_backfill(
+    projection_store: &dyn ProjectionStore,
+    author_pubkey: &str,
+) -> Result<()> {
+    for prefix in ["profile/posts/", "profile/reposts/"] {
+        projection_store
+            .put_sync_checkpoint(
+                &format!("profile-index-backfill/{author_pubkey}/{prefix}"),
+                CHECKPOINT_RESTART,
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// 自分の replica に届いた `profile/posts/<id>`・`profile/reposts/<id>` の key に、索引が無ければ足す(#1239)。
+///
+/// 索引を書く前の版の端末が書いた投稿が、補完を読み終えた後に同期で届いても、索引から読めるようにする。
+/// 索引の entry は追記だけで、既存の状態を巻き戻さない。戻り値は索引を足したか。
+pub(crate) async fn index_own_profile_key(
+    docs_sync: &dyn DocsSync,
+    author_pubkey: &str,
+    key: &str,
+) -> Result<bool> {
+    let (object_id, kind) = if let Some(object_id) = key.strip_prefix("profile/posts/") {
+        (object_id, "post")
+    } else if let Some(object_id) = key.strip_prefix("profile/reposts/") {
+        (object_id, "repost")
+    } else {
+        return Ok(false);
+    };
+    let replica = author_replica_id(author_pubkey);
+    let docs_author = docs_sync.local_docs_author().await?;
+    let Some(item) = load_profile_item(
+        docs_sync,
+        &replica,
+        author_pubkey,
+        object_id,
+        docs_author.as_deref(),
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    let index_key = profile_index_key(item.created_at(), item.object_id());
+    if index_entry_exists(
+        docs_sync,
+        &replica,
+        docs_author.as_deref(),
+        index_key.as_str(),
+    )
+    .await?
+    {
+        return Ok(false);
+    }
+    persist_profile_index_entry(
+        docs_sync,
+        &replica,
+        item.created_at(),
+        item.object_id(),
+        kind,
+    )
+    .await?;
+    Ok(true)
 }

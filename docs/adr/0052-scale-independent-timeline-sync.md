@@ -229,8 +229,13 @@ Accepted
   既存の client が書いた entry をそのまま読めるので、この ADR の範囲では docs の key の移行は無い。
 - プロフィールの索引 `indexes/profile/<created_at 20 桁>-<object id>/<object id>` は新しい key で、投稿・repost を書くときに書く。
   自分の replica は、author 購読が背景で、索引の無い投稿・repost に索引を補い（key の一覧は 256 件ずつ、超えたら object id の次の桁で分ける。
-  読み終えた位置を残して再開する）、補い終えたら `indexes/profile-complete` を書く。その key の無い replica（索引を書く前の版の client の replica）では、索引の読み出しに、
-  `profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）から読んだ行を合わせる（best effort。上限を超える投稿は表示されないことがある）。
+  読み終えた位置を残して再開する）、補い終えたら `indexes/profile-complete` を書く。著者の docs author の名義のその印が無い replica（索引を書く前の版の client の replica、
+  docs author が分からない著者）では、索引の読み出しに、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）から読んだ行を合わせる
+  （best effort。上限を超える投稿は表示されないことがある）。印・索引は、著者の docs author が分かれば、その名義のものだけを読む（ADR 0053 §6。他人が置いた印で旧 record を
+  隠させず、他人が置いた索引の key でページを埋めさせない）。
+- 補完は、端末内の位置で続けるかを決める（replica の印は同期の前の状態を表さない）。自分の replica の event を取りこぼしたら最初からやり直し、
+  自分の replica に届いた `profile/posts/<id>`・`profile/reposts/<id>` の key に索引が無ければ、その event で足す（索引を書く前の版の端末の投稿が、補完の後に届いた場合）。
+  索引の entry と印は追記だけで、既存の状態を巻き戻さない。
 - projection の schema の追加（列・索引）は migration で行い、既存の行は反映し直さずに使えるようにする（足した列が空の行は、その行を次に反映したときに埋まる）。
 - `created_at` は投稿者の申告値であり、未来や過去の値を持つ entry がありうる。窓は「索引の新しい側」から読むので、極端に未来の時刻の entry が窓を占有しうる。
   窓を読むときは、現在時刻 + 許容幅（初期値 10 分）より未来の entry を読み飛ばし、読み飛ばす件数にも上限を置く。

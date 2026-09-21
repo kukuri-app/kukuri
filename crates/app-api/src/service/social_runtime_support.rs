@@ -375,28 +375,10 @@ impl AppService {
             let is_own_replica = author_key_for_task == local_author_pubkey;
             let mut own_edge_sweep = is_own_replica
                 .then(|| spawn_own_edge_sweep(&services, author_key_for_task.as_str()));
-            // #1239: 自分の replica の、索引を書く前の版が書いた投稿・repost に、プロフィールの索引を背景で補う。
-            // 購読タスクが止まると、補う task も止まる(次の購読でやり直す)。
-            let _profile_index_backfill = (author_key_for_task == local_author_pubkey).then(|| {
-                let docs_sync = Arc::clone(&services.docs_sync);
-                let projection_store = Arc::clone(&services.projection_store);
-                let author_pubkey = author_key_for_task.clone();
-                AbortOnDrop(tokio::spawn(async move {
-                    if let Err(error) = backfill_own_profile_index(
-                        docs_sync.as_ref(),
-                        projection_store.as_ref(),
-                        author_pubkey.as_str(),
-                    )
-                    .await
-                    {
-                        warn!(
-                            author_pubkey = %author_pubkey,
-                            error = %error,
-                            "failed to backfill the profile index"
-                        );
-                    }
-                }))
-            });
+            // #1239: 自分の replica の、索引を書く前の版が書いた投稿・repost に、プロフィールの索引を背景で補う
+            // (読み終えた位置を残して再開する)。購読タスクが止まると、補う task も止まる。
+            let mut profile_index_backfill = is_own_replica
+                .then(|| spawn_profile_index_backfill(&services, author_key_for_task.as_str()));
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
             // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();
@@ -431,6 +413,24 @@ impl AppService {
                                         );
                                     }
                                     own_edge_sweep.replace(spawn_own_edge_sweep(
+                                        &services,
+                                        author_key_for_task.as_str(),
+                                    ));
+                                    // プロフィールの索引の補完も、取りこぼした投稿を拾うよう最初からやり直す。
+                                    drop(profile_index_backfill.take());
+                                    if let Err(error) = restart_own_profile_index_backfill(
+                                        services.projection_store.as_ref(),
+                                        author_key_for_task.as_str(),
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            author_pubkey = %author_key_for_task,
+                                            error = %error,
+                                            "failed to restart the profile index backfill"
+                                        );
+                                    }
+                                    profile_index_backfill.replace(spawn_profile_index_backfill(
                                         &services,
                                         author_key_for_task.as_str(),
                                     ));
@@ -491,6 +491,23 @@ impl AppService {
                                     "failed to create notification from remote follow event"
                                 );
                             }
+                        }
+                        // 自分の replica に届いた投稿・repost に索引が無ければ足す(索引を書く前の版の端末が書いた投稿が、
+                        // 補完を読み終えた後に届いた場合)。追記だけで、既存の状態を巻き戻さない。
+                        if is_own_replica
+                            && let Err(error) = index_own_profile_key(
+                                services.docs_sync.as_ref(),
+                                author_key_for_task.as_str(),
+                                event.key.as_str(),
+                            )
+                            .await
+                        {
+                            warn!(
+                                author_pubkey = %author_key_for_task,
+                                key = %event.key,
+                                error = %error,
+                                "failed to index an own profile post"
+                            );
                         }
                         match hydrate_author_key(
                             &services,
@@ -594,6 +611,28 @@ fn spawn_own_edge_sweep(services: &ServiceHandles, author_pubkey: &str) -> Abort
                 author_pubkey = %author_pubkey,
                 error = %error,
                 "failed to read the own follow and block edges"
+            );
+        }
+    }))
+}
+
+/// 自分の replica のプロフィールの索引を、背景で補う task を起動する(#1239)。
+fn spawn_profile_index_backfill(services: &ServiceHandles, author_pubkey: &str) -> AbortOnDrop {
+    let docs_sync = Arc::clone(&services.docs_sync);
+    let projection_store = Arc::clone(&services.projection_store);
+    let author_pubkey = author_pubkey.to_string();
+    AbortOnDrop(tokio::spawn(async move {
+        if let Err(error) = backfill_own_profile_index(
+            docs_sync.as_ref(),
+            projection_store.as_ref(),
+            author_pubkey.as_str(),
+        )
+        .await
+        {
+            warn!(
+                author_pubkey = %author_pubkey,
+                error = %error,
+                "failed to backfill the profile index"
             );
         }
     }))

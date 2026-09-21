@@ -188,10 +188,70 @@ enum IndexEdge {
     Empty,
 }
 
+/// key の一覧。`docs_author` があれば、その docs author の entry だけを読む(ADR 0053 §6)。
+async fn list_index_keys(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    docs_author: Option<&str>,
+    query: DocKeyQuery,
+) -> Result<crate::types::DocKeyPage> {
+    match docs_author {
+        Some(docs_author) => {
+            docs_sync
+                .query_replica_keys_by_author(replica_id, docs_author, query)
+                .await
+        }
+        None => docs_sync.query_replica_keys(replica_id, query).await,
+    }
+}
+
+/// `query_time_index_desc` と同じ読み出しを、`docs_author` の entry だけで行う(ADR 0053 §6)。他の名義の key は、
+/// 何件あっても読まず、ページの枠を埋めない。著者だけが書く索引(プロフィールの索引)に使う。
+pub async fn query_time_index_desc_by_author(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    index_prefix: &str,
+    docs_author: &str,
+    before: Option<&TimeIndexCursor>,
+    limit: usize,
+) -> Result<TimeIndexPage> {
+    walk_time_index_as(
+        docs_sync,
+        replica_id,
+        index_prefix,
+        Some(docs_author),
+        DocKeyOrder::Descending,
+        before,
+        limit,
+    )
+    .await
+}
+
 async fn walk_time_index(
     docs_sync: &dyn DocsSync,
     replica_id: &ReplicaId,
     index_prefix: &str,
+    order: DocKeyOrder,
+    cursor: Option<&TimeIndexCursor>,
+    limit: usize,
+) -> Result<TimeIndexPage> {
+    walk_time_index_as(
+        docs_sync,
+        replica_id,
+        index_prefix,
+        None,
+        order,
+        cursor,
+        limit,
+    )
+    .await
+}
+
+async fn walk_time_index_as(
+    docs_sync: &dyn DocsSync,
+    replica_id: &ReplicaId,
+    index_prefix: &str,
+    docs_author: Option<&str>,
     order: DocKeyOrder,
     cursor: Option<&TimeIndexCursor>,
     limit: usize,
@@ -217,16 +277,17 @@ async fn walk_time_index(
             }
             // 同じ秒の中で、cursor より先の object id を持つ entry。
             same_second_queries += 1;
-            let same_second = docs_sync
-                .query_replica_keys(
-                    replica_id,
-                    DocKeyQuery {
-                        prefix: format!("{index_prefix}{digits}-"),
-                        order,
-                        limit: SAME_SECOND_SCAN_LIMIT,
-                    },
-                )
-                .await?;
+            let same_second = list_index_keys(
+                docs_sync,
+                replica_id,
+                docs_author,
+                DocKeyQuery {
+                    prefix: format!("{index_prefix}{digits}-"),
+                    order,
+                    limit: SAME_SECOND_SCAN_LIMIT,
+                },
+            )
+            .await?;
             entries.extend(
                 parse_entries(index_prefix, same_second.entries)
                     .into_iter()
@@ -302,16 +363,17 @@ async fn walk_time_index(
         }
         let needed = limit - entries.len();
         let requested = needed.saturating_add(MALFORMED_KEY_ALLOWANCE);
-        let page = docs_sync
-            .query_replica_keys(
-                replica_id,
-                DocKeyQuery {
-                    prefix: format!("{index_prefix}{time_prefix}"),
-                    order,
-                    limit: requested,
-                },
-            )
-            .await?;
+        let page = list_index_keys(
+            docs_sync,
+            replica_id,
+            docs_author,
+            DocKeyQuery {
+                prefix: format!("{index_prefix}{time_prefix}"),
+                order,
+                limit: requested,
+            },
+        )
+        .await?;
         queries += 1;
         let truncated = page.reached_limit;
         let valid = parse_entries(index_prefix, page.entries);
@@ -343,7 +405,7 @@ async fn walk_time_index(
             // 調べないと、entry が尽きた後も、残りの桁の prefix を空振りで読み続ける。
             edge_checked = true;
             queries += 1;
-            edge = index_edge(docs_sync, replica_id, index_prefix, order).await?;
+            edge = index_edge(docs_sync, replica_id, index_prefix, docs_author, order).await?;
             if edge == IndexEdge::Empty {
                 break;
             }
@@ -367,22 +429,24 @@ async fn index_edge(
     docs_sync: &dyn DocsSync,
     replica_id: &ReplicaId,
     index_prefix: &str,
+    docs_author: Option<&str>,
     order: DocKeyOrder,
 ) -> Result<IndexEdge> {
     let opposite = match order {
         DocKeyOrder::Descending => DocKeyOrder::Ascending,
         DocKeyOrder::Ascending => DocKeyOrder::Descending,
     };
-    let page = docs_sync
-        .query_replica_keys(
-            replica_id,
-            DocKeyQuery {
-                prefix: index_prefix.to_string(),
-                order: opposite,
-                limit: MALFORMED_KEY_ALLOWANCE.saturating_add(1),
-            },
-        )
-        .await?;
+    let page = list_index_keys(
+        docs_sync,
+        replica_id,
+        docs_author,
+        DocKeyQuery {
+            prefix: index_prefix.to_string(),
+            order: opposite,
+            limit: MALFORMED_KEY_ALLOWANCE.saturating_add(1),
+        },
+    )
+    .await?;
     let truncated = page.reached_limit;
     let edge = parse_entries(index_prefix, page.entries)
         .first()

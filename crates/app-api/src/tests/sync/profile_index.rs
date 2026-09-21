@@ -6,6 +6,7 @@ use crate::service::profile_timeline_support::backfill_own_profile_index_with;
 use crate::service::projection_support::HIDDEN_AUTHOR_SKIP_PAGES;
 
 const TOPIC: &str = "kukuri:topic:profile-index";
+const DOCS_AUTHOR: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const BASE_TIME: i64 = 1_700_000_000;
 
 /// `keys` の author replica に、`created_at` の投稿を 1 件書く(投稿の doc・envelope・索引)。
@@ -107,11 +108,17 @@ async fn the_profile_timeline_reads_a_constant_amount_regardless_of_the_post_cou
     // 索引の 1 回の一覧は、`limit` に形の違う key の余裕を足した件数(20 + 32)まで読む。どちらも、読み始める時刻の桁の
     // 範囲に 52 件以上ある件数にする(少ない側は、範囲の件数しか返らないので、比べる量が揃わない)。
     for posts in [100usize, 1_000] {
-        let docs_sync = Arc::new(CountingDocsSync::default());
+        let docs_sync = Arc::new(CountingDocsSync::with_docs_author(DOCS_AUTHOR));
         let app = app_over(docs_sync.clone(), generate_keys());
         let remote_keys = generate_keys();
         let remote_pubkey = remote_keys.public_key_hex();
         let ids = put_profile_posts(docs_sync.as_ref(), &remote_keys, posts, 0).await;
+        // 著者の docs author を知っている閲覧者(profile の tag から覚えた状態)。
+        app.services
+            .projection_store
+            .put_author_docs_author(remote_pubkey.as_str(), DOCS_AUTHOR)
+            .await
+            .expect("learn the docs author");
         assert_eq!(
             backfill_own_profile_index(
                 docs_sync.as_ref(),
@@ -198,11 +205,17 @@ async fn paging_the_profile_timeline_returns_every_post_once_in_order() {
 async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
     let mut counts = Vec::new();
     for posts in [100usize, 400] {
-        let docs_sync = Arc::new(CountingDocsSync::default());
+        let docs_sync = Arc::new(CountingDocsSync::with_docs_author(DOCS_AUTHOR));
         let app = app_over(docs_sync.clone(), generate_keys());
         let remote_keys = generate_keys();
         let remote_pubkey = remote_keys.public_key_hex();
         let ids = put_profile_posts(docs_sync.as_ref(), &remote_keys, posts, 0).await;
+        // 著者の docs author を知っている閲覧者(profile の tag から覚えた状態)。
+        app.services
+            .projection_store
+            .put_author_docs_author(remote_pubkey.as_str(), DOCS_AUTHOR)
+            .await
+            .expect("learn the docs author");
         backfill_own_profile_index(
             docs_sync.as_ref(),
             &MemoryStore::default(),

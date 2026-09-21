@@ -719,3 +719,20 @@ test（`crates/app-api/src/tests/sync/profile_index.rs`）: 取得が読む量�
 非表示の著者の行が続くと 4 ページで止まり読み進めた位置を返し、読む量が投稿の数によらないこと、
 索引の補完が 1 回の一覧の件数を超える投稿（300 件）をすべて補い、2 回目は何もしないこと、query の上限で止まっても読み終えた桶から続けること、
 自分の author 購読が背景で補うこと、著者の docs author が分かれば同じ key のごみの後ろの行を組で読むこと。要点を戻す mutation 5 件（組での読み出し・読み飛ばしの上限・旧 record の合流・補完の再開・索引の書き込み）で、それぞれ test が失敗する。
+
+### 独立監査の 1 回目（PR #1276、head `c1183fa2`、FAIL）と修正
+
+背景の補完の書き込みが追記だけで状態を巻き戻さないこと、ページの境界（同じ秒・索引と旧 record の境界）で重複・欠落・順序の崩れが無いことは確認された。blocker が 4 件あった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-1: 補い終えた印 `indexes/profile-complete` は誰でも置けるので、他人が置くと旧 record の合流が止まり、索引の無い投稿が本人を含む全員から見えなくなる | 印を名義を問わずに見ていた | 印は著者の docs author の名義のものだけを見る。docs author が分からないときは印が無いものとして扱う。test `a_completion_marker_by_another_docs_author_does_not_hide_legacy_posts` |
+| B-2: 補完が同期の前に一巡して印を書くと、後から届いた索引の無い投稿（アカウントの取り込み、旧版の端末の投稿）が永久に見えなくなる | 補完を続けるかを replica の印で決め、後から届く投稿を扱っていなかった | 補完を続けるかは端末内の位置で決める。自分の replica の event を取りこぼしたら補完を最初からやり直す。自分の replica に届いた投稿・repost の key に索引が無ければ、その event で足す（追記だけ）。test `own_legacy_posts_arriving_after_the_backfill_are_indexed` |
+| B-3: 同じ object id の偽の索引の entry（新しい時刻）1 件で、本物の投稿を隠せる | 読んだ印を、行の検証と位置の照合の前に付けていた | 検証と照合に通った後で付ける。test `a_forged_index_entry_for_the_same_object_does_not_hide_the_post`（docs author を知る閲覧者と知らない閲覧者の両方） |
+| B-4: 他の名義が未来の時刻の索引の key を 80 件置くと、最初のページが空になる（desktop はプロフィールの続きを読まない） | 索引を名義を問わずにたどっていた | 著者の docs author が分かれば、その名義の key だけで索引をたどる（`query_time_index_desc_by_author`。時系列の索引の読み出しに名義を渡せるようにした）。test `future_index_keys_by_another_docs_author_do_not_empty_the_first_page` |
+
+4 件の修正をそれぞれ戻す mutation で、対応する test が失敗することを確かめた（`crates/app-api/src/tests/sync/profile_index_attacks.rs`。著者の名義と他の名義の 2 つの docs を 1 つの replica として見せる double）。
+件数の比較の test は、著者の docs author を知る閲覧者で比べる形にした（知らない閲覧者は旧 record の合流を毎回読むので、読む量が件数とともに 128 件まで増える。best effort の経路）。
+
+残した non-blocker: 印の無い replica では取得のたびに最大 256 行を読む、desktop がプロフィールの続き（`next_cursor`）を読まない、空の結果での購読のやり直しの条件の変化、
+索引の値の `kind` を読み手が使っていない、`profile-index-backfill/…` の checkpoint が削除されない。

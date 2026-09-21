@@ -13,6 +13,14 @@ struct CountingDocsSync {
 }
 
 impl CountingDocsSync {
+    /// 書き込みの名義(docs author)を持つ docs(ADR 0053)。
+    fn with_docs_author(docs_author: &str) -> Self {
+        Self {
+            inner: kukuri_docs_sync::MemoryDocsSync::with_docs_author(docs_author),
+            ..Self::default()
+        }
+    }
+
     fn with_assist_peer_ids(peer_ids: Vec<&str>) -> Self {
         Self {
             assist_peer_ids: peer_ids.into_iter().map(str::to_string).collect(),
@@ -117,6 +125,28 @@ impl DocsSync for CountingDocsSync {
         self.records_returned
             .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
         Ok(page)
+    }
+
+    async fn local_docs_author(&self) -> Result<Option<String>> {
+        self.inner.local_docs_author().await
+    }
+
+    async fn query_replica_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        key: &str,
+        policy: kukuri_docs_sync::DocFetchPolicy,
+    ) -> Result<Option<kukuri_docs_sync::DocRecord>> {
+        let record = self
+            .inner
+            .query_replica_by_author(replica_id, docs_author, key, policy)
+            .await?;
+        self.records_returned.fetch_add(
+            usize::from(record.is_some()),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        Ok(record)
     }
 
     async fn subscribe_replica(
@@ -384,6 +414,7 @@ mod hydration_limits;
 mod non_utf8_key;
 mod page_bounds;
 mod profile_index;
+mod profile_index_attacks;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;

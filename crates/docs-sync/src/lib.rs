@@ -21,7 +21,7 @@ pub use replicas::{
 };
 pub use time_index::{
     TimeIndexCursor, TimeIndexEntry, TimeIndexPage, query_time_index_asc, query_time_index_desc,
-    query_time_index_window,
+    query_time_index_desc_by_author, query_time_index_window,
 };
 pub use types::{
     DocEvent, DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery,

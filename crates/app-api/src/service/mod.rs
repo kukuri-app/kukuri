@@ -242,7 +242,8 @@ pub(crate) use profile_docs_support::{
     snapshot_follow_notification_baseline,
 };
 pub(crate) use profile_timeline_support::{
-    backfill_own_profile_index, persist_profile_index_entry, profile_timeline_page_from_docs,
+    backfill_own_profile_index, index_own_profile_key, persist_profile_index_entry,
+    profile_timeline_page_from_docs, restart_own_profile_index_backfill,
 };
 pub(crate) use projection_support::{
     active_private_channel_participants, archive_private_channel_epoch,
