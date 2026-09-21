@@ -353,6 +353,7 @@ fn app_with_hanging_remote_docs(
     )
 }
 
+mod author_key_reflection;
 mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;

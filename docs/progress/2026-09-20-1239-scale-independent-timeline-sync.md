@@ -584,3 +584,20 @@ T5b-1 は PR #1268（merge commit `7f19158d`）で完了した。独立監査は
 判定の各部分を外す mutation はすべて検出される（隙間の判定を外すと 32 通り、新着の適用を行数だけにすると 31 通り、続きの位置の判定を外すと 25 通りで失敗。表示中の行との比較を外すと単体 test が失敗）。
 監査の再現 test `useDesktopShellData.hiddenHeadManyNew.test.tsx` を恒久化した。
 
+## T6-1: author 購読の key 単位の反映（S-10 の購読側、P-8、P-10、P-11 の follow 側）
+
+author 購読（`social_runtime_support.rs` `spawn_author_subscription`）は、doc event のたびに `hydrate_author_state` を呼び、author replica の
+`graph/follows/`・`graph/blocks/` の全 entry を読んでいた。follow の通知の起点も `graph/follows/` の全 entry を読んでいた。
+
+- doc event は、その key だけを反映する（`hydrate_author_key`。`profile/latest`・`graph/follows/<相手>`・`graph/blocks/<相手>` 以外の key は何も読まない）。
+- 起動時と復旧（`hydrate_author_state`）、取りこぼし・本体の到着・同期の区切り（`catch_up_author_state`。`CatchUpSchedule` で間隔を空けて 1 回にまとめる）は、
+  `profile/latest` と、follow・block の key の上限つきの一覧（それぞれ `AUTHOR_EDGE_KEYS` = 512 件）から反映する。上限を超える edge は、その key の event が届いたときに反映する（best effort）。
+- 関係（`rebuild_author_relationships`）の再計算は、手元に無かった envelope が入ったときだけ行う（起動時は従来どおり毎回）。追いつきの間隔も、この「変化」で伸び縮みする。
+  再計算自体は手元の store の follow edge を読む（自分の follow の数に比例する）。replica の読み出しではないので本 Issue の範囲外とし、観察に残す。
+- follow の通知の起点は、通知の対象になる自分を指す follow（`graph/follows/<自分>`）の key 1 件の key と hash だけを読む。
+- 自分の custom reaction の asset（`list_my_custom_reaction_assets`）は、key の上限つきの一覧（asset 512 件ぶん）から `state` の key ごとに読む。
+
+test（`crates/app-api/src/tests/sync/author_key_reflection.rs`）:
+起動時の反映が follow の数（上限 +20 と +300）によらず同じ量を読み、prefix を読まないこと、doc event が key だけを読み（follow 10 件と 400 件で同じ量）、
+同じ edge の再反映は変化 0 件で、対象外の key は何も読まないこと、follow の通知の起点が 1 件だけを読むこと、
+購読タスクが entry の event を取りこぼしても、取りこぼしの通知・同期の区切り・本体の到着のそれぞれで追いつくこと、entry の event がその key を反映して通知を作ること。

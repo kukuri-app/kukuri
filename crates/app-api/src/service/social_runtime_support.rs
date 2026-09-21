@@ -260,7 +260,10 @@ impl AppService {
         let local_author_pubkey = self.current_author_pubkey();
         let replica = author_replica_id(author_key.as_str());
         services.docs_sync.open_replica(&replica).await?;
-        let mut doc_stream = services.docs_sync.subscribe_replica(&replica).await?;
+        let mut doc_stream = services
+            .docs_sync
+            .subscribe_replica_notices(&replica)
+            .await?;
         let author_key_for_task = author_key.clone();
         let handle = tokio::spawn(async move {
             let store = &services.store;
@@ -270,7 +273,7 @@ impl AppService {
             let notification_baseline = match snapshot_follow_notification_baseline(
                 docs_sync.as_ref(),
                 &replica,
-                DocFetchPolicy::LocalOnly,
+                local_author_pubkey.as_str(),
             )
             .await
             {
@@ -357,64 +360,132 @@ impl AppService {
                     }
                 }
             });
+            // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
+            // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
+            let mut catch_up = CatchUpSchedule::default();
+            let mut catch_up_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+            catch_up_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
-                    Some(event) = doc_stream.next() => {
-                        if event.is_err() {
+                    notice = doc_stream.next() => {
+                        let Some(notice) = notice else {
+                            break;
+                        };
+                        let event = match notice {
+                            Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => event,
+                            Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. })
+                            | Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
+                                catch_up.request_now();
+                                continue;
+                            }
+                            Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished) => {
+                                catch_up.request();
+                                continue;
+                            }
+                            Err(_) => continue,
+                        };
+                        let event = &event;
+                        if let Some(source_peer) = event.source_peer.as_deref() {
+                            if let Err(error) = docs_sync.learn_peer(source_peer).await {
+                                warn!(
+                                    author_pubkey = %author_key_for_task,
+                                    source_peer = %source_peer,
+                                    error = %error,
+                                    "failed to learn docs peer from author sync event"
+                                );
+                            }
+                            if let Err(error) = blob_service.learn_peer(source_peer).await {
+                                warn!(
+                                    author_pubkey = %author_key_for_task,
+                                    source_peer = %source_peer,
+                                    error = %error,
+                                    "failed to learn blob peer from author sync event"
+                                );
+                            }
+                        }
+                        match AppService::maybe_create_notification_for_remote_follow_event(
+                            store.as_ref(),
+                            projection_store.as_ref(),
+                            docs_sync.as_ref(),
+                            local_author_pubkey.as_str(),
+                            author_key_for_task.as_str(),
+                            &notification_baseline,
+                            event,
+                        ).await {
+                            Ok(true) => {
+                                *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                                notification_inserted.notify_waiters();
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                warn!(
+                                    author_pubkey = %author_key_for_task,
+                                    key = %event.key,
+                                    error = %error,
+                                    "failed to create notification from remote follow event"
+                                );
+                            }
+                        }
+                        match hydrate_author_key(
+                            &services,
+                            local_author_pubkey.as_str(),
+                            author_key_for_task.as_str(),
+                            event.key.as_str(),
+                            DocFetchPolicy::LocalThenRemote,
+                        ).await {
+                            Ok(outcome) if outcome.reflected > 0 => {
+                                if outcome.changed > 0 {
+                                    catch_up.record_progress();
+                                }
+                                *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                                schedule_direct_message_reconcile(
+                                    services.clone(),
+                                    Arc::clone(&last_sync),
+                                    Arc::clone(&direct_message_subscriptions),
+                                    Arc::clone(&notification_inserted),
+                                    local_author_pubkey.clone(),
+                                    author_key_for_task.clone(),
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                warn!(
+                                    author_pubkey = %author_key_for_task,
+                                    key = %event.key,
+                                    error = %error,
+                                    "failed to hydrate author state from docs event"
+                                );
+                                catch_up.request_now();
+                            }
+                        }
+                    }
+                    _ = catch_up_tick.tick() => {
+                        let Some(run) = catch_up.take_due(Utc::now().timestamp_millis()) else {
                             continue;
-                        }
-                        if let Ok(event) = event.as_ref() {
-                            if let Some(source_peer) = event.source_peer.as_deref() {
-                                if let Err(error) = docs_sync.learn_peer(source_peer).await {
-                                    warn!(
-                                        author_pubkey = %author_key_for_task,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn docs peer from author sync event"
-                                    );
-                                }
-                                if let Err(error) = blob_service.learn_peer(source_peer).await {
-                                    warn!(
-                                        author_pubkey = %author_key_for_task,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn blob peer from author sync event"
-                                    );
-                                }
-                            }
-                            match AppService::maybe_create_notification_for_remote_follow_event(
-                                store.as_ref(),
-                                projection_store.as_ref(),
-                                docs_sync.as_ref(),
-                                local_author_pubkey.as_str(),
-                                author_key_for_task.as_str(),
-                                &notification_baseline,
-                                event,
-                            ).await {
-                                Ok(true) => {
-                                    *last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                                    notification_inserted.notify_waiters();
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    warn!(
-                                        author_pubkey = %author_key_for_task,
-                                        key = %event.key,
-                                        error = %error,
-                                        "failed to create notification from remote follow event"
-                                    );
-                                }
-                            }
-                        }
-                        if let Ok(count) = hydrate_author_state(
+                        };
+                        let changed = match catch_up_author_state(
                             &services,
                             local_author_pubkey.as_str(),
                             author_key_for_task.as_str(),
                             DocFetchPolicy::LocalThenRemote,
-                        ).await
-                        && count > 0
+                        )
+                        .await
                         {
-                            *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                            Ok(outcome) => outcome.changed,
+                            Err(error) => {
+                                warn!(
+                                    author_pubkey = %author_key_for_task,
+                                    error = %error,
+                                    "failed to catch up author state"
+                                );
+                                catch_up.restore(run);
+                                0
+                            }
+                        };
+                        let now = Utc::now().timestamp_millis();
+                        catch_up.record_finished(now, changed);
+                        if changed > 0 {
+                            *last_sync.lock().await = Some(now);
                             schedule_direct_message_reconcile(
                                 services.clone(),
                                 Arc::clone(&last_sync),
@@ -425,7 +496,6 @@ impl AppService {
                             );
                         }
                     }
-                    else => break,
                 }
             }
         });

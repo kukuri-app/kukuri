@@ -227,7 +227,7 @@ pub(crate) use post_withdrawal_hydration::{
     hydrate_post_withdrawal_for_object_with_hints, object_id_from_post_withdrawal_key,
 };
 pub(crate) use profile_docs_support::{
-    fetch_author_envelope_by_id, hydrate_author_state,
+    catch_up_author_state, fetch_author_envelope_by_id, hydrate_author_key, hydrate_author_state,
     load_custom_reaction_assets_from_author_replica, load_profile_posts_from_author_replica,
     load_profile_reposts_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
@@ -540,17 +540,6 @@ pub(crate) struct NotificationDocEventBaseline {
 }
 
 impl NotificationDocEventBaseline {
-    pub(crate) fn from_records(records: &[DocRecord]) -> Self {
-        Self {
-            fingerprints: records
-                .iter()
-                .map(|record| {
-                    notification_doc_event_fingerprint_parts(&record.key, &record.content_hash)
-                })
-                .collect(),
-        }
-    }
-
     /// key だけの読み出しの結果(key と content hash)から作る。値は読まない。
     pub(crate) fn from_key_entries<'a>(
         entries: impl IntoIterator<Item = &'a kukuri_docs_sync::DocKeyEntry>,

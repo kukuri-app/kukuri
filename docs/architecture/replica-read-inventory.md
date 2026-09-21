@@ -30,7 +30,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
 | S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5b-1（解消済み。session の固定件数を key の一覧から反映する `catch_up_scope_sessions`。replica ごとに間隔を空ける） |
-| S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6 |
+| S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6-1（購読は解消済み。doc event はその key だけを反映し、起動時・取りこぼし・同期の区切りは `profile/latest` と、follow・block の key の上限つきの一覧（各 512 件）から反映する）。`list_profile_timeline` は T6-2 |
 
 ## prefix の全件読み（caller ごと）
 
@@ -43,10 +43,10 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-5 | `hydration_support.rs` `hydrate_live_sessions_from_replica` | `sessions/live/` | topic の live session の総数（終了したものも残る） | T5b-1（解消済み。関数を削除した） |
 | P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | T5b-1（解消済み。関数を削除した） |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
-| P-8 | `profile_docs_support.rs` `hydrate_author_state` | `graph/follows/`、`graph/blocks/` | author の follow・block の総数 | 対象。T6（event 駆動と上限つきの読み出し） |
-| P-9 | `profile_docs_support.rs` `load_profile_posts_from_author_replica`・`load_profile_reposts_from_author_replica` | `profile/posts/`、`profile/reposts/` | author の投稿・repost の総数 | 対象。T6 |
-| P-10 | `profile_docs_support.rs` `load_custom_reaction_assets_from_author_replica` | `reactions/assets/` | author のカスタムリアクションの総数 | 対象。T6 で上限つき |
-| P-11 | `profile_docs_support.rs` `snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline` | `objects/`、`graph/follows/` | S-2 と同じ | 対象。T4・T6 |
+| P-8 | `profile_docs_support.rs` `hydrate_author_state` | `graph/follows/`、`graph/blocks/` | author の follow・block の総数 | 対象。T6-1（解消済み。event の key だけを読む `hydrate_author_key` と、上限つきの `hydrate_author_state`・`catch_up_author_state`） |
+| P-9 | `profile_docs_support.rs` `load_profile_posts_from_author_replica`・`load_profile_reposts_from_author_replica` | `profile/posts/`、`profile/reposts/` | author の投稿・repost の総数 | 対象。T6-2 |
+| P-10 | `profile_docs_support.rs` `load_custom_reaction_assets_from_author_replica` | `reactions/assets/` | author のカスタムリアクションの総数 | 対象。T6-1（解消済み。key の上限つきの一覧（asset 512 件ぶん）と、`state` の key ごとの読み出し） |
+| P-11 | `profile_docs_support.rs` `snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline` | `objects/`、`graph/follows/` | S-2 と同じ | 対象。T4・T6（解消済み。投稿の側は T4b-2。follow の側は、通知の対象になる自分を指す follow の key 1 件の key と hash だけを読む） |
 | P-12 | `object_persistence_support.rs` `fetch_private_channel_participants_from_replica` | `channels/participants/` | private channel の参加者数 | Non-goal（本 Issue の固定 AC に含まれない。招待制で件数は小さいが、上限が無い点を #1224 の台帳の上限で扱う） |
 | P-13 | `dome_connections.rs`（4 か所）、`dome_hosting.rs`（3 か所）、`dome_delete.rs`（1 か所） | `metaverse/dome-instances/`・提案・選択・接続・削除・layout commit | topic の Dome と提案の総数 | Non-goal（本 Issue の固定 AC に含まれない。Dome の一覧と接続の読み出しは別 Issue で、同じ原則で見直す） |
 | P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（3 か所。変更通知で対象を特定できないときの fallback と初回） | `objects/`・`withdrawals/` など | scope の投稿総数 | Non-goal（CN 側。`ingest_changed_keys` が通常経路。T2 の索引化は効く。全件走査の廃止は CN 側の Issue で扱う） |

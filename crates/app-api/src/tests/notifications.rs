@@ -570,7 +570,7 @@ async fn follow_notification_survives_hydration_before_live_doc_event() {
     let baseline = snapshot_follow_notification_baseline(
         docs_sync.as_ref(),
         &replica,
-        DocFetchPolicy::LocalThenRemote,
+        local_author_pubkey.as_str(),
     )
     .await
     .expect("snapshot follow baseline");
@@ -646,7 +646,7 @@ async fn initial_follow_baseline_prevents_backfill_notification() {
     let baseline = snapshot_follow_notification_baseline(
         docs_sync.as_ref(),
         &replica,
-        DocFetchPolicy::LocalThenRemote,
+        local_author_pubkey.as_str(),
     )
     .await
     .expect("snapshot follow baseline");
