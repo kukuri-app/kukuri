@@ -7,7 +7,26 @@ use kukuri_docs_sync::{ReplicaNotice, ReplicaNoticeStream};
 use std::collections::HashSet;
 
 const OWNER: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+const LEGACY: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 const BASE_TIME: i64 = 1_700_000_000;
+
+async fn profile_index_keys(docs_sync: &dyn DocsSync, pubkey: &str) -> Vec<String> {
+    docs_sync
+        .query_replica_keys(
+            &author_replica_id(pubkey),
+            kukuri_docs_sync::DocKeyQuery {
+                prefix: "indexes/profile/".into(),
+                order: kukuri_docs_sync::DocKeyOrder::Ascending,
+                limit: 16,
+            },
+        )
+        .await
+        .expect("index keys")
+        .entries
+        .into_iter()
+        .map(|entry| entry.key)
+        .collect()
+}
 
 /// 本体を隠しておける docs。隠した key の record は、手元に本体が無いものとして読めない。
 /// 購読には、test から流した通知だけが届く。
@@ -194,15 +213,15 @@ async fn an_own_legacy_post_whose_content_arrives_later_is_indexed() {
             key: post_key,
             content_hash: String::new(),
             source_peer: Some("remote-peer".into()),
-            docs_author: Some(OWNER.into()),
+            // 旧版の端末(端末ごとの旧名義)が書いた entry。
+            docs_author: Some(LEGACY.into()),
         }))
         .expect("send the entry");
     sleep(Duration::from_millis(300)).await;
+    // ここでは一覧を取得しない(空の結果は購読の張り直しを起こし、本体の到着の通知による試し直しを確かめられない)。
     assert!(
-        app.list_profile_timeline(pubkey.as_str(), None, 20)
+        profile_index_keys(docs_sync.as_ref(), pubkey.as_str())
             .await
-            .expect("profile timeline")
-            .items
             .is_empty(),
         "the post cannot be indexed before its content arrives"
     );
@@ -213,6 +232,16 @@ async fn an_own_legacy_post_whose_content_arrives_later_is_indexed() {
         .notices
         .send(ReplicaNotice::ContentReady)
         .expect("content ready");
+    timeout(Duration::from_secs(10), async {
+        while profile_index_keys(docs_sync.as_ref(), pubkey.as_str())
+            .await
+            .is_empty()
+        {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the content-ready notice indexes the post");
     timeout(Duration::from_secs(10), async {
         loop {
             let page = app
@@ -295,5 +324,144 @@ async fn a_stranger_reads_a_bounded_amount_regardless_of_the_post_count() {
     assert_eq!(
         counts[0], counts[1],
         "a stranger's reads must stop growing past the bounds"
+    );
+}
+
+fn own_app(docs_sync: Arc<MemoryDocsSync>, keys: KukuriKeys) -> (AppService, Arc<MemoryStore>) {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync,
+        Arc::new(MemoryBlobService::default()),
+        keys,
+    );
+    (app, store)
+}
+
+async fn wait_checkpoint(store: &MemoryStore, key: &str, value: &str) {
+    timeout(Duration::from_secs(10), async {
+        while store
+            .get_sync_checkpoint(key)
+            .await
+            .expect("checkpoint")
+            .as_deref()
+            != Some(value)
+        {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{key} becomes {value}"));
+}
+
+// やり直しの依頼は store に残り、購読を張り直しても(仕事を作り直しても)失われない(独立監査 B-5)。
+#[tokio::test]
+async fn a_restart_request_survives_a_resubscription() {
+    let docs_sync = Arc::new(MemoryDocsSync::with_docs_author(OWNER));
+    let keys = generate_keys();
+    let pubkey = keys.public_key_hex();
+    let (app, store) = own_app(docs_sync.clone(), keys.clone());
+    let backfill = format!("profile-index-backfill/{pubkey}/profile/posts/");
+    let mut work = OwnReplicaWork::start(&app.services, pubkey.as_str());
+    wait_checkpoint(store.as_ref(), &backfill, "done").await;
+    // 補完を読み終えた後に、索引の無い投稿が届き、その event を取りこぼした。
+    let object_id = EnvelopeId::from(generate_keys().public_key_hex().as_str());
+    let envelope = build_profile_post_envelope(
+        &keys,
+        &KukuriProfilePostEnvelopeContentV1 {
+            author_pubkey: Pubkey::from(pubkey.as_str()),
+            profile_topic_id: author_profile_topic_id(pubkey.as_str()),
+            published_topic_id: TopicId::new("kukuri:topic:profile-restart"),
+            object_id,
+            created_at: BASE_TIME,
+            object_kind: "post".into(),
+            content: "legacy".into(),
+            attachments: Vec::new(),
+            reply_to_object_id: None,
+            root_id: None,
+            content_labels: Vec::new(),
+        },
+    )
+    .expect("envelope");
+    let post = parse_profile_post(&envelope).expect("parse").expect("post");
+    persist_profile_post_doc(docs_sync.as_ref(), &post, &envelope)
+        .await
+        .expect("persist");
+    docs_sync
+        .apply_doc_op(
+            &author_replica_id(pubkey.as_str()),
+            DocOp::DeletePrefix {
+                prefix: "indexes/profile/".into(),
+            },
+        )
+        .await
+        .expect("remove the index");
+    work.request_restart(&app.services).await;
+    // tick の前に購読が張り直された。
+    drop(work);
+    let mut work = OwnReplicaWork::start(&app.services, pubkey.as_str());
+
+    timeout(Duration::from_secs(10), async {
+        while profile_index_keys(docs_sync.as_ref(), pubkey.as_str())
+            .await
+            .is_empty()
+        {
+            work.on_tick(&app.services).await;
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the restart request is carried over and the backfill indexes the post");
+    wait_checkpoint(
+        store.as_ref(),
+        &format!("own-replica-restart/{pubkey}"),
+        "done",
+    )
+    .await;
+}
+
+// 覚えきれない数の読めない key が届いたら、覚えた分を捨てる前に、やり直しの依頼を store に残す。
+// 自分の docs author が書いた entry(今の版の投稿)は、読めなくても覚えない。
+#[tokio::test]
+async fn overflowing_the_pending_keys_leaves_a_restart_request() {
+    let docs_sync = Arc::new(MemoryDocsSync::with_docs_author(OWNER));
+    let keys = generate_keys();
+    let pubkey = keys.public_key_hex();
+    let (app, store) = own_app(docs_sync, keys);
+    let mut work = OwnReplicaWork::start(&app.services, pubkey.as_str());
+    let pending_key = format!("own-profile-pending/{pubkey}");
+    work.on_entry(
+        &app.services,
+        stable_key("profile/posts", &format!("{:064x}", 9_999)).as_str(),
+        Some(OWNER),
+    )
+    .await;
+    assert_eq!(
+        store
+            .get_sync_checkpoint(&pending_key)
+            .await
+            .expect("pending"),
+        None,
+        "an entry by the own docs author is not remembered"
+    );
+    for index in 0..513 {
+        work.on_entry(
+            &app.services,
+            stable_key("profile/posts", &format!("{index:064x}")).as_str(),
+            Some(LEGACY),
+        )
+        .await;
+    }
+    assert_eq!(
+        store
+            .get_sync_checkpoint(&format!("own-replica-restart/{pubkey}"))
+            .await
+            .expect("restart request")
+            .as_deref(),
+        Some("restart")
     );
 }

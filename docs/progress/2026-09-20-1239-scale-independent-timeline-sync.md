@@ -752,3 +752,20 @@ B-1・B-3・B-4 の解消と、`query_time_index_desc_by_author` の追加が既
 - 索引の値の `kind` を、key の prefix ではなく読んだ行から決める。
 - docs author を知らない閲覧者の読み出し量が、投稿の数が上限を超えると増えないことを test で固定した（`a_stranger_reads_a_bounded_amount_regardless_of_the_post_count`、200 件と 1,000 件）。
 - docs author を知らない閲覧者の限界（他の名義の key でページを埋められうる）を ADR 0052 §6 に書いた。
+
+### 独立監査の 3 回目（delta `e09ebc5a..a0c0fc0c`、FAIL）と修正
+
+B-2' は同じ購読の中では解消していることが確認された。この delta で入れた「やり直しの依頼」が新たな blocker だった。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-5: 取りこぼしによるやり直しの依頼と、上限を超えたときの依頼がメモリにしか無く、購読の張り直し（空の結果、ticket の取り込み、再起動など。頻繁に起きる）で失われる。補完は `done` のまま残り、印のある replica ではその投稿が見えないまま。前の版は依頼の時点で位置を書いていたので失われなかった（自分の edge の読み出しの退行でもある） | 依頼を store に書いていなかった | 依頼を store（`own-replica-restart/<author>`）に書いて残し、張り直した購読の最初の tick で読み込む。位置を戻した後で依頼を消す。上限を超えたときは、覚えた key を捨てる前に依頼を書く。test `a_restart_request_survives_a_resubscription`・`overflowing_the_pending_keys_leaves_a_restart_request` |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 自分の docs author が書いた entry（今の版の投稿。索引も同時に書く）は、読めなくても覚えない（覚える・保存するのは旧名義の entry だけになり、まれになる）。
+- `envelopes/` の event での全件の試し直しをやめた（その時点では本体がまだ無いことが多い）。試し直しは本体の到着と同期の区切りだけ。
+- 補完の `kind` も読んだ行から決める。
+- 本体の到着での試し直しを test で固定した（購読の経路の test は、途中で一覧を取得せず、張り直しを経ない形にした）。
+
+今回の修正を戻す mutation 4 件（本体の到着で試し直さない・依頼を store に書かない・上限の超過で依頼を残さない・自分の名義の entry も覚える）で、それぞれ test が失敗する。

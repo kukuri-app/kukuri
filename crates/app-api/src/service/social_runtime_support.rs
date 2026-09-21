@@ -392,7 +392,7 @@ impl AppService {
                                 // 自分の replica の event を取りこぼした。どの key かは分からないので、背景の仕事の
                                 // 最初からのやり直しを依頼する(走っている仕事が終わってから、1 回にまとめる)。
                                 if let Some(own_work) = own_work.as_mut() {
-                                    own_work.request_restart();
+                                    own_work.request_restart(&services).await;
                                 }
                                 continue;
                             }
@@ -460,7 +460,9 @@ impl AppService {
                         // 自分の replica に届いた投稿・repost に索引が無ければ足す(索引を書く前の版の端末が書いた投稿が、
                         // 補完を読み終えた後に届いた場合)。本体がまだ無ければ覚えて、後で試し直す。
                         if let Some(own_work) = own_work.as_mut() {
-                            own_work.on_entry(&services, event.key.as_str()).await;
+                            own_work
+                                .on_entry(&services, event.key.as_str(), event.docs_author.as_deref())
+                                .await;
                         }
                         match hydrate_author_key(
                             &services,

@@ -6,9 +6,11 @@
 //!
 //! 同期で届いた自分の投稿は、key の event の時点では本体がまだ手元に無いことが多い。索引を足せなかった key は上限つきで覚え、
 //! 本体の到着・同期の区切り・envelope の event のときに試し直す。上限を超えたら、補完のやり直しを依頼する。
-//! 覚えた key は store(`sync_checkpoints`)に置き、購読の張り直しや再起動をまたいで引き継ぐ。
+//! 覚えた key と、やり直しの依頼は store(`sync_checkpoints`)に置き、購読の張り直しや再起動をまたいで引き継ぐ。
+//! 自分の docs author が書いた entry(今の版の投稿。索引も同時に書く)は覚えない。
 
 use super::*;
+use crate::service::author_state_support::{CHECKPOINT_DONE, CHECKPOINT_RESTART};
 use std::collections::VecDeque;
 
 /// 本体が届くのを待つ、索引を足せなかった自分の投稿の key の数の上限。
@@ -63,6 +65,21 @@ impl OwnReplicaWork {
         self.pending_loaded = true;
         match services
             .projection_store
+            .get_sync_checkpoint(&self.restart_checkpoint_key())
+            .await
+        {
+            Ok(Some(value)) if value == CHECKPOINT_RESTART => self.restart_requested = true,
+            Ok(_) => {}
+            Err(error) => {
+                warn!(
+                    author_pubkey = %self.author_pubkey,
+                    error = %error,
+                    "failed to load the restart request of the own replica work"
+                );
+            }
+        }
+        match services
+            .projection_store
             .get_sync_checkpoint(&self.pending_checkpoint_key())
             .await
         {
@@ -98,14 +115,30 @@ impl OwnReplicaWork {
         }
     }
 
+    fn restart_checkpoint_key(&self) -> String {
+        format!("own-replica-restart/{}", self.author_pubkey)
+    }
+
     /// 自分の replica の event を取りこぼした。どの key かは分からないので、最初からのやり直しを依頼する。
-    pub(crate) fn request_restart(&mut self) {
+    /// 依頼は store に書き、購読の張り直しをまたいで残す。
+    pub(crate) async fn request_restart(&mut self, services: &ServiceHandles) {
         self.restart_requested = true;
+        if let Err(error) = services
+            .projection_store
+            .put_sync_checkpoint(&self.restart_checkpoint_key(), CHECKPOINT_RESTART)
+            .await
+        {
+            warn!(
+                author_pubkey = %self.author_pubkey,
+                error = %error,
+                "failed to save the restart request of the own replica work"
+            );
+        }
     }
 
     /// 間隔ごとに呼ぶ。依頼があり、走っている仕事が無ければ、位置を最初に戻して起動し直す。
     pub(crate) async fn on_tick(&mut self, services: &ServiceHandles) {
-        // 前の購読で覚えた key があれば、この購読でも試し直す。
+        // 前の購読で覚えた key とやり直しの依頼があれば、この購読でも引き継ぐ。
         if !self.pending_loaded {
             self.load_pending(services).await;
             self.retry_pending(services).await;
@@ -138,6 +171,17 @@ impl OwnReplicaWork {
                 "failed to restart the profile index backfill"
             );
         }
+        // 位置を戻した後で依頼を消す(先に消すと、その間に張り直されたとき依頼が失われる)。
+        if let Err(error) = projection_store
+            .put_sync_checkpoint(&self.restart_checkpoint_key(), CHECKPOINT_DONE)
+            .await
+        {
+            warn!(
+                author_pubkey = %self.author_pubkey,
+                error = %error,
+                "failed to clear the restart request of the own replica work"
+            );
+        }
         self.edge_sweep = Some(spawn_own_edge_sweep(services, self.author_pubkey.as_str()));
         self.profile_backfill = Some(spawn_profile_index_backfill(
             services,
@@ -146,15 +190,34 @@ impl OwnReplicaWork {
     }
 
     /// 自分の replica の entry の event。投稿・repost の key なら索引を足し、本体がまだ無ければ覚える。
-    /// envelope の key なら、覚えている key を試し直す(本体の envelope が後から届いた)。
-    pub(crate) async fn on_entry(&mut self, services: &ServiceHandles, key: &str) {
+    /// 自分の docs author が書いた entry(今の版の投稿。索引も同時に書く)は覚えない。
+    pub(crate) async fn on_entry(
+        &mut self,
+        services: &ServiceHandles,
+        key: &str,
+        entry_docs_author: Option<&str>,
+    ) {
         self.load_pending(services).await;
-        if key.starts_with("envelopes/") {
-            self.retry_pending(services).await;
+        if self.try_index(services, key).await != OwnProfileIndex::NotReadable {
             return;
         }
-        if self.try_index(services, key).await == OwnProfileIndex::NotReadable && self.remember(key)
+        if let Some(entry_docs_author) = entry_docs_author
+            && services
+                .docs_sync
+                .local_docs_author()
+                .await
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some(entry_docs_author)
         {
+            return;
+        }
+        if self.remember(key) {
+            if self.restart_requested {
+                // 覚えきれずに捨てた。依頼を先に残してから、空になった一覧を保存する。
+                self.request_restart(services).await;
+            }
             self.save_pending(services).await;
         }
     }

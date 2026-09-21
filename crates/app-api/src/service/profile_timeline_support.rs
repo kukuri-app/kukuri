@@ -535,7 +535,7 @@ pub(crate) async fn backfill_own_profile_index_with(
     // 自分の replica なので、自分の docs author で組を先に読む。
     let docs_author = docs_sync.local_docs_author().await?;
     let mut written = 0usize;
-    for (prefix, kind) in [("profile/posts/", "post"), ("profile/reposts/", "repost")] {
+    for prefix in ["profile/posts/", "profile/reposts/"] {
         // 読み終えた桶の位置を残し、止まっても続きから読む。
         let checkpoint_key = format!("profile-index-backfill/{author_pubkey}/{prefix}");
         let checkpoint = projection_store
@@ -580,7 +580,7 @@ pub(crate) async fn backfill_own_profile_index_with(
                     &replica,
                     item.created_at(),
                     item.object_id(),
-                    kind,
+                    item_kind(&item),
                 )
                 .await?;
                 written += 1;
