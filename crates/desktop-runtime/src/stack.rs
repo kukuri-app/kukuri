@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -200,6 +200,9 @@ pub(crate) struct SharedIrohStack {
     pub(crate) dht_options: DhtDiscoveryOptions,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
     docs_author_seed: Mutex<Option<kukuri_core::DocsAuthorSeed>>,
+    /// `current` の stack が shutdown 済みか。作り直しが古い stack の shutdown の後で失敗すると、shutdown 済みの stack が残る。
+    /// その stack の docs actor への要求は、返事が来ないまま時間切れになりうるので、健全性の確認をせず、作り直しが要るとみなす。
+    current_shut_down: AtomicBool,
 }
 
 fn should_rebuild_runtime_connectivity(
@@ -273,6 +276,7 @@ impl SharedIrohStack {
             network_config,
             dht_options,
             docs_author_seed: Mutex::new(None),
+            current_shut_down: AtomicBool::new(false),
         })
     }
 
@@ -320,6 +324,8 @@ impl SharedIrohStack {
             "rebuilding iroh stack after runtime relay connectivity change"
         );
         previous.shutdown().await;
+        // ここから差し替えが済むまでに失敗すると、`current` には shutdown 済みの stack が残る。
+        self.current_shut_down.store(true, Ordering::SeqCst);
         let next = BoundIrohStack::new(
             &self.root,
             self.network_config.clone(),
@@ -345,6 +351,7 @@ impl SharedIrohStack {
         self.docs_sync.replace(next.docs_sync.clone()).await;
         self.blob_service.replace(next.blob_service.clone()).await;
         *current = Some(next);
+        self.current_shut_down.store(false, Ordering::SeqCst);
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         info!(target: "kukuri_connectivity", generation, "iroh stack replacement committed");
         Ok(())
@@ -352,8 +359,17 @@ impl SharedIrohStack {
 
     /// Read-only actor probe. A slow actor is not proof that its store needs
     /// rebuilding: a timeout is an error and the caller retries with backoff.
+    /// ただし、作り直しの失敗で shutdown 済みの stack が残っているときは、確認をせずに使えないとみなす
+    /// (shutdown 済みの actor への要求は、返事が来ないまま時間切れになりうる。時間切れをエラーで返すと、
+    /// 呼び出し側は作り直しへ進まず、再試行しても回復しない)。
     pub(crate) async fn local_docs_available(&self) -> Result<bool> {
         let current = self.current.lock().await;
+        if self.current_shut_down.load(Ordering::SeqCst) {
+            tracing::warn!(target: "kukuri_connectivity",
+                generation = self.generation.load(Ordering::Relaxed),
+                "the active iroh stack was shut down by a failed rebuild; stack repair required");
+            return Ok(false);
+        }
         let node = &current.as_ref().context("missing active iroh stack")?.node;
         let probe = async {
             let mut namespaces = node.docs().list().await?;

@@ -367,20 +367,7 @@ async fn a_restart_request_survives_a_resubscription() {
     let (app, store) = own_app(docs_sync.clone(), keys.clone());
     let backfill = format!("profile-index-backfill/{pubkey}/profile/posts/");
     let mut work = OwnReplicaWork::start(&app.services, pubkey.as_str());
-    timeout(Duration::from_secs(10), async {
-        while store
-            .get_sync_checkpoint(&backfill)
-            .await
-            .expect("checkpoint")
-            .as_deref()
-            != Some("done")
-        {
-            work.on_tick(&app.services).await;
-            sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the backfill over the empty replica finishes");
+    wait_checkpoint(store.as_ref(), &backfill, "done").await;
     // 補完を読み終えた後に、索引の無い投稿が届き、その event を取りこぼした。
     let object_id = EnvelopeId::from(generate_keys().public_key_hex().as_str());
     let envelope = build_profile_post_envelope(

@@ -15,9 +15,6 @@ use std::collections::VecDeque;
 
 /// 本体が届くのを待つ、索引を足せなかった自分の投稿の key の数の上限。
 const PENDING_PROFILE_KEYS: usize = 512;
-/// 購読の開始から、背景の仕事を起動するまでの時間。起動直後は、接続の設定の適用で iroh の stack が作り直されることが多い。
-/// 作り直しと背景の仕事の書き込みが重なると、docs の store が開けず、stack の健全性の確認が時間切れになる。
-const START_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// drop されたときに task を止める。親の task が abort されると、その future と一緒に drop される。
 pub(crate) struct AbortOnDrop(pub(crate) tokio::task::JoinHandle<()>);
@@ -41,24 +38,18 @@ pub(crate) struct OwnReplicaWork {
     restart_requested: bool,
     pending_profile_keys: VecDeque<String>,
     pending_loaded: bool,
-    /// 背景の仕事を起動したか。
-    started: bool,
-    start_at: tokio::time::Instant,
 }
 
 impl OwnReplicaWork {
-    /// 自分の replica の購読の開始時に作る。両方の仕事は、`START_DELAY` の後の最初の tick で起動する
-    /// (読み終えていれば、位置を確かめるだけで終わる)。
-    pub(crate) fn start(_services: &ServiceHandles, author_pubkey: &str) -> Self {
+    /// 自分の replica の購読の開始時に、両方の仕事を起動する(読み終えていれば、位置を確かめるだけで終わる)。
+    pub(crate) fn start(services: &ServiceHandles, author_pubkey: &str) -> Self {
         Self {
             author_pubkey: author_pubkey.to_string(),
-            edge_sweep: None,
-            profile_backfill: None,
+            edge_sweep: Some(spawn_own_edge_sweep(services, author_pubkey)),
+            profile_backfill: Some(spawn_profile_index_backfill(services, author_pubkey)),
             restart_requested: false,
             pending_profile_keys: VecDeque::new(),
             pending_loaded: false,
-            started: false,
-            start_at: tokio::time::Instant::now() + START_DELAY,
         }
     }
 
@@ -147,17 +138,6 @@ impl OwnReplicaWork {
 
     /// 間隔ごとに呼ぶ。依頼があり、走っている仕事が無ければ、位置を最初に戻して起動し直す。
     pub(crate) async fn on_tick(&mut self, services: &ServiceHandles) {
-        if !self.started {
-            if tokio::time::Instant::now() < self.start_at {
-                return;
-            }
-            self.started = true;
-            self.edge_sweep = Some(spawn_own_edge_sweep(services, self.author_pubkey.as_str()));
-            self.profile_backfill = Some(spawn_profile_index_backfill(
-                services,
-                self.author_pubkey.as_str(),
-            ));
-        }
         // 前の購読で覚えた key とやり直しの依頼があれば、この購読でも引き継ぐ。
         if !self.pending_loaded {
             self.load_pending(services).await;
