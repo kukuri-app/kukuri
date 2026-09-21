@@ -176,7 +176,7 @@ export function DesktopShellMessagesSurface({
   return (
     <>
       {surfaceKind !== 'conversation' ? (
-        <Card className='shell-workspace-card'>
+        <section className='shell-column-content'>
         <div className='panel-header'>
           <div>
             <h3>{t('shell:messages.title')}</h3>
@@ -248,7 +248,7 @@ export function DesktopShellMessagesSurface({
             })}
           </ul>
         )}
-        </Card>
+        </section>
       ) : null}
 
       {conversationPeerPubkey && surfaceKind !== 'messages' ? (
@@ -256,7 +256,7 @@ export function DesktopShellMessagesSurface({
           {activeConversation && directMessageError ? (
             <Notice tone='destructive'>{directMessageError}</Notice>
           ) : null}
-          <Card className='shell-workspace-card'>
+          <div className='shell-column-content'>
             {conversationTimeline.length === 0 ? (
               <p className='empty'>{t('shell:messages.noMessages')}</p>
             ) : (
@@ -383,7 +383,7 @@ export function DesktopShellMessagesSurface({
                 })}
               </ul>
             )}
-          </Card>
+          </div>
 
           {activeConversation && showComposer ? <Card className='shell-workspace-card'>
             {conversationStatus && !conversationStatus.send_enabled ? (
@@ -587,7 +587,7 @@ export function DesktopShellNotificationsSurface({
         </Button>
       </div>
 
-      <Card className='shell-workspace-card'>
+      <div className='shell-column-content'>
         {notificationPanelState.status === 'ready' && notificationItems.length === 0 ? (
           <p className='empty-state'>{t('shell:notifications.empty')}</p>
         ) : null}
@@ -633,7 +633,7 @@ export function DesktopShellNotificationsSurface({
             ))}
           </ul>
         ) : null}
-      </Card>
+      </div>
     </>
   );
 }
@@ -926,7 +926,7 @@ export function DesktopShellDetailSurfaceStack({
           />
         }
       />
-      <Card className='shell-workspace-card'>
+      <div className='shell-column-content'>
         <TimelineFeed
           posts={effectiveAuthorTimelinePostViews}
           emptyCopy={t('profile:feed.noAuthorPosts')}
@@ -944,7 +944,7 @@ export function DesktopShellDetailSurfaceStack({
           onFetchNodePolicies={fetchNodePolicies}
           onMuteReportAuthor={(authorPubkey) => handleMuteAction(authorPubkey, false)}
         />
-      </Card>
+      </div>
     </div>
   ) : null;
 

@@ -235,6 +235,14 @@
   min-width: 0;
 }
 
+/* #1271: カラム本文に直接並べる内容の stack。枠(.panel)を持たず、左右の余白は
+   カラム本文の padding だけにする。区画を仕切る枠が要る場合だけ .shell-workspace-card を使う。 */
+.shell-column-content {
+  display: grid;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
 .shell-workspace-header {
   display: flex;
   justify-content: space-between;

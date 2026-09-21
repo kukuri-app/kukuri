@@ -65,7 +65,7 @@ for (const width of [1280, 1024, 390]) {
       const before = await body.boundingBox();
       const summary = profile.locator('.profile-overview-connections');
       const summaryBefore = await summary.boundingBox();
-      const feed = profile.locator('.shell-workspace-card').last();
+      const feed = profile.locator('.shell-column-content').last();
       const feedBefore = await feed.boundingBox();
       await page.screenshot({ path: testInfo.outputPath('profile-before.png') });
       await page.evaluate(() => { window.__profileRefreshTest.hold = true; });

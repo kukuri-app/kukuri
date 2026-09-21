@@ -107,7 +107,7 @@
     align-items: start;
   }
 
-  .shell-phase1 .shell-stream-layout > .shell-workspace-card {
+  .shell-phase1 .shell-stream-layout > .shell-column-content {
     margin: 0;
   }
 }
