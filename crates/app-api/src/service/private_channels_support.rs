@@ -711,8 +711,11 @@ impl AppService {
                                 catch_up.request_after_lag();
                                 continue;
                             }
-                            Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished
-                                | kukuri_docs_sync::ReplicaNotice::ContentReady) => {
+                            Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
+                                catch_up.request_now();
+                                continue;
+                            }
+                            Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished) => {
                                 catch_up.request();
                                 continue;
                             }
@@ -779,11 +782,13 @@ impl AppService {
                                     0
                                 }
                             };
-                            if hydrated == 0 && had_source_peer {
-                                // 相手から届いた、個別反映の対象でない key(索引など)や、本体がまだ届いていない
-                                // entry。走査はせず、追いつきを依頼する(間隔を空けて 1 回にまとまる)。
-                                // 自分が書いた entry は、書き込みの時点で projection に入っている。
-                                catch_up.request();
+                            // 相手から届いた、個別反映の対象でない key や、本体がまだ届いていない entry。走査はせず、
+                            // 追いつきを依頼する(自分が書いた entry と、反映済みの object を指す索引は依頼しない)。
+                            if hydrated == 0
+                                && had_source_peer
+                                && missed_entry_needs_catch_up(projection_store.as_ref(), &event.key).await
+                            {
+                                catch_up.request_now();
                             }
                             if hydrated > 0 {
                                 catch_up.record_progress();
@@ -917,7 +922,7 @@ impl AppService {
                                         if !hint_refers_to_replica_content(&event.hint) {
                                             continue;
                                         }
-                                        catch_up.request();
+                                        catch_up.request_now();
                                     }
                                     if hydrated > 0 {
                                         catch_up.record_progress();
@@ -969,6 +974,7 @@ impl AppService {
                                         error = %error,
                                         "failed to catch up the replica window"
                                     );
+                                    catch_up.restore(run);
                                     0
                                 }
                             };

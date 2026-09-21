@@ -33,6 +33,8 @@ pub(crate) struct CatchUpSchedule {
     /// reaction も読み直す依頼(取りこぼしの後)。
     refresh_reactions: bool,
     next_allowed_at_ms: i64,
+    /// 前回の追いつきが終わった時刻。
+    last_finished_at_ms: i64,
     empty_runs: u32,
 }
 
@@ -43,14 +45,37 @@ pub(crate) struct CatchUpRun {
 }
 
 impl CatchUpSchedule {
+    /// 反映するものがあるとは限らない契機(同期の終わり)。空振りで伸びた間隔はそのまま待つ。
+    /// 静かな replica では、再 sync のたびに同期の終わりが届く。それだけで追いつきを繰り返さないため。
     pub(crate) fn request(&mut self) {
         self.requested = true;
     }
 
-    /// 取りこぼしの後の依頼。窓の object の reaction も読み直す。
-    pub(crate) fn request_after_lag(&mut self) {
+    /// 反映するものがあると分かっている契機(相手から届いた entry や hint の個別反映が 0 件、本体がそろった)。
+    /// 空振りで伸びた間隔を待たず、最小間隔で追いつく。
+    pub(crate) fn request_now(&mut self) {
         self.requested = true;
+        self.shorten_to_the_minimum_interval();
+    }
+
+    /// 取りこぼしの後の依頼。窓の object の取り下げと reaction も読み直す。最小間隔で追いつく。
+    pub(crate) fn request_after_lag(&mut self) {
+        self.request_now();
         self.refresh_reactions = true;
+    }
+
+    /// 失敗した追いつきの依頼を戻す(読み直しの依頼を失わない)。
+    pub(crate) fn restore(&mut self, run: CatchUpRun) {
+        self.requested = true;
+        self.refresh_reactions |= run.refresh_reactions;
+    }
+
+    fn shorten_to_the_minimum_interval(&mut self) {
+        self.empty_runs = 0;
+        self.next_allowed_at_ms = self.next_allowed_at_ms.min(
+            self.last_finished_at_ms
+                .saturating_add(CATCH_UP_MIN_INTERVAL_MS),
+        );
     }
 
     /// 依頼があり、間隔が過ぎていれば、追いつきを 1 回ぶん取り出す。
@@ -78,12 +103,38 @@ impl CatchUpSchedule {
             self.empty_runs = self.empty_runs.saturating_add(1);
             interval
         };
+        self.last_finished_at_ms = now_ms;
         self.next_allowed_at_ms = now_ms.saturating_add(interval);
     }
 
-    /// 個別反映で何かが入った。次の依頼は最小間隔で受ける。
+    /// 個別反映で何かが入った。空振りで伸びた間隔を捨て、次の依頼は最小間隔で受ける。
     pub(crate) fn record_progress(&mut self) {
-        self.empty_runs = 0;
+        self.shorten_to_the_minimum_interval();
+    }
+}
+
+/// 相手から届いた、個別反映が 0 件だった entry が、追いつきの契機になるか。
+///
+/// 時系列と thread の索引の entry は、個別反映の対象ではないので必ず 0 件になる。投稿 1 件につき 2 件届くので、
+/// そのたびに依頼すると、活発な topic では追いつきが最小間隔で走り続ける。索引が指す object が projection に
+/// 既にあれば(投稿の本体の event が先に反映した)、追いつくものは無い。
+pub(crate) async fn missed_entry_needs_catch_up(
+    projection_store: &dyn ProjectionStore,
+    key: &str,
+) -> bool {
+    let indexed_object = ["indexes/timeline/", "indexes/thread/"]
+        .iter()
+        .find_map(|prefix| key.strip_prefix(prefix))
+        .and_then(|rest| rest.rsplit_once('/'))
+        .map(|(_, object_id)| object_id)
+        .filter(|object_id| !object_id.is_empty());
+    match indexed_object {
+        // projection を読めなかったときは、依頼する側へ倒す。
+        Some(object_id) => projection_store
+            .get_object_projection(&EnvelopeId::from(object_id))
+            .await
+            .map_or(true, |row| row.is_none()),
+        None => true,
     }
 }
 
@@ -336,17 +387,52 @@ mod tests {
             CATCH_UP_MAX_INTERVAL_MS
         );
 
+        // 同期の終わりだけでは、伸びた間隔を待つ。
+        schedule.request();
+        assert!(schedule.take_due(now + CATCH_UP_MIN_INTERVAL_MS).is_none());
+        // 個別反映で何かが入ったら、伸びた間隔を捨てる。
         schedule.record_progress();
-        schedule.request();
-        let run_at = now + CATCH_UP_MAX_INTERVAL_MS;
-        assert!(schedule.take_due(run_at).is_some());
-        schedule.record_finished(run_at, 0);
-        schedule.request();
         assert!(
-            schedule
-                .take_due(run_at + CATCH_UP_MIN_INTERVAL_MS)
-                .is_some(),
+            schedule.take_due(now + CATCH_UP_MIN_INTERVAL_MS).is_some(),
             "after progress, the interval starts over from the minimum"
+        );
+    }
+
+    #[test]
+    fn a_failed_run_keeps_its_refresh_request() {
+        let mut schedule = CatchUpSchedule::default();
+        schedule.request_after_lag();
+        let run = schedule.take_due(0).expect("due");
+        schedule.restore(run);
+        schedule.record_finished(0, 0);
+        assert_eq!(
+            schedule.take_due(CATCH_UP_MIN_INTERVAL_MS),
+            Some(CatchUpRun {
+                refresh_reactions: true
+            })
+        );
+    }
+
+    // 静かな topic では、再 sync のたびに `SyncFinished` が届き、何も反映しない追いつきが続く(間隔は 5 分まで伸びる)。
+    // その後に取りこぼし(`Lagged`)が通知されても、既に決まった次の期限は縮まらない。ADR 0052 §2 は
+    // 「個別反映か追いつきで何かが入ったら、最小へ戻す」と定めている。
+    #[test]
+    fn a_lag_after_an_idle_period_is_caught_up_within_the_minimum_interval() {
+        let mut schedule = CatchUpSchedule::default();
+        let mut now = 0_i64;
+        for _ in 0..10 {
+            schedule.request();
+            while schedule.take_due(now).is_none() {
+                now += 1_000;
+            }
+            schedule.record_finished(now, 0);
+        }
+        // 新着が個別反映され、その直後に取りこぼしが通知された。
+        schedule.record_progress();
+        schedule.request_after_lag();
+        assert!(
+            schedule.take_due(now + CATCH_UP_MIN_INTERVAL_MS).is_some(),
+            "a catch-up after a lag must not wait for the interval stretched by empty runs"
         );
     }
 }

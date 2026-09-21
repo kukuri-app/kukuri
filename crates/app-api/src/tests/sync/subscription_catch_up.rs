@@ -272,3 +272,185 @@ async fn idle_subscription_does_not_read_docs() {
     assert!(docs_sync.queries().await.is_empty());
     app.shutdown().await;
 }
+
+// 購読タスクで同じことを確かめる。空振りの追いつきを 3 回重ねた後(次の期限は約 12 秒先)に、取りこぼした投稿と
+// `Lagged` が届く。最小間隔(3 秒)に余裕を足した 6 秒の内に反映されることを期待する。
+#[tokio::test]
+async fn a_lag_after_empty_catch_ups_is_reflected_within_the_minimum_interval() {
+    let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
+    let topic = TopicId::new("kukuri:topic:catch-up-idle-then-lag");
+    let (app, store) = app_over(docs_sync.clone());
+    app.ensure_topic_subscription(topic.as_str())
+        .await
+        .expect("subscribe");
+    sleep(Duration::from_millis(200)).await;
+    // 空振りの追いつきを 3 回(0 秒、約 3 秒後、約 9 秒後)。
+    for wait_ms in [1_500u64, 4_000, 7_000] {
+        docs_sync
+            .notices
+            .send(ReplicaNotice::SyncFinished)
+            .expect("a subscriber is listening");
+        sleep(Duration::from_millis(wait_ms)).await;
+    }
+    let posts = put_posts(docs_sync.as_ref(), &topic, 3, 0).await;
+    docs_sync
+        .notices
+        .send(ReplicaNotice::Lagged { missed: 20 })
+        .expect("a subscriber is listening");
+    timeout(Duration::from_secs(6), async {
+        while !is_projected(store.as_ref(), &posts[2]).await {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("a catch-up after a lag must not wait for the interval stretched by empty runs");
+    app.shutdown().await;
+}
+
+// INVAR-1: 取り下げの event を取りこぼしても、窓の中の投稿なら、`Lagged` の後の追いつきが取り下げを反映する。
+// 起動時の追いつきも、projection に既にある投稿の取り下げを確かめる。
+#[tokio::test]
+async fn missed_withdrawal_in_the_window_is_applied_after_a_lag_and_at_start() {
+    let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
+    let topic = TopicId::new("kukuri:topic:catch-up-withdrawal");
+    let replica = topic_replica_id(topic.as_str());
+    let author = generate_keys();
+    let (app, store) = app_over(docs_sync.clone());
+    app.ensure_topic_subscription(topic.as_str())
+        .await
+        .expect("subscribe");
+    sleep(Duration::from_millis(200)).await;
+    let post = put_post_at(
+        docs_sync.as_ref(),
+        &replica,
+        &author,
+        &topic,
+        BASE_TIME,
+        "to be withdrawn",
+        None,
+    )
+    .await;
+    super::range_reconcile::project(store.as_ref(), &post, &replica).await;
+    let withdrawal = build_post_withdrawal_envelope(
+        &author,
+        &post.envelope,
+        1,
+        None,
+        WithdrawalReasonVisibility::Private,
+        None,
+    )
+    .expect("withdrawal");
+    persist_post_withdrawal(docs_sync.as_ref(), &replica, &post.envelope.id, &withdrawal)
+        .await
+        .expect("persist withdrawal");
+    docs_sync
+        .notices
+        .send(ReplicaNotice::Lagged { missed: 1 })
+        .expect("a subscriber is listening");
+    let projection_store: &dyn ProjectionStore = store.as_ref();
+    timeout(Duration::from_secs(8), async {
+        while projection_store
+            .get_post_withdrawal(&post.envelope.id)
+            .await
+            .expect("withdrawal row")
+            .is_none()
+        {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("a missed withdrawal is applied by the catch-up after a lag");
+    app.shutdown().await;
+
+    // 起動時: 別の store(投稿だけ反映済み)で購読を始める。
+    let (restarted, restarted_store) = app_over(docs_sync.clone());
+    super::range_reconcile::project(restarted_store.as_ref(), &post, &replica).await;
+    restarted
+        .ensure_topic_subscription(topic.as_str())
+        .await
+        .expect("subscribe");
+    let projection_store: &dyn ProjectionStore = restarted_store.as_ref();
+    timeout(Duration::from_secs(8), async {
+        while projection_store
+            .get_post_withdrawal(&post.envelope.id)
+            .await
+            .expect("withdrawal row")
+            .is_none()
+        {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the catch-up at start checks the withdrawal of a projected post");
+    restarted.shutdown().await;
+}
+
+fn index_event(
+    topic: &TopicId,
+    post: &super::range_reconcile::TestPost,
+    source_peer: Option<&str>,
+) -> ReplicaNotice {
+    ReplicaNotice::Entry(kukuri_docs_sync::DocEvent {
+        replica_id: topic_replica_id(topic.as_str()),
+        key: stable_key(
+            "indexes/timeline",
+            &format!(
+                "{}/{}",
+                timeline_sort_key(post.created_at, &post.object_id),
+                post.object_id.as_str()
+            ),
+        ),
+        content_hash: String::new(),
+        source_peer: source_peer.map(str::to_string),
+        docs_author: None,
+    })
+}
+
+// 相手から届いた索引の entry は個別反映の対象ではない(0 件)。指す object が projection に無ければ追いつきを
+// 依頼し、既にあれば依頼しない。自分が書いた entry(`source_peer` なし)も依頼しない。
+#[tokio::test]
+async fn a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object() {
+    let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
+    let topic = TopicId::new("kukuri:topic:catch-up-index-entry");
+    let replica = topic_replica_id(topic.as_str());
+    let (app, store) = app_over(docs_sync.clone());
+    app.ensure_topic_subscription(topic.as_str())
+        .await
+        .expect("subscribe");
+    sleep(Duration::from_millis(200)).await;
+    let posts = put_posts(docs_sync.as_ref(), &topic, 2, 0).await;
+    super::range_reconcile::project(store.as_ref(), &posts[0], &replica).await;
+
+    // 自分が書いた entry と、反映済みの object を指す索引の entry: 追いつかない。
+    docs_sync.inner.reset_records_returned();
+    for notice in [
+        index_event(&topic, &posts[1], None),
+        index_event(&topic, &posts[0], Some("peer-a")),
+    ] {
+        docs_sync
+            .notices
+            .send(notice)
+            .expect("a subscriber is listening");
+    }
+    sleep(Duration::from_millis(4_500)).await;
+    assert!(!is_projected(store.as_ref(), &posts[1]).await);
+    assert_eq!(
+        docs_sync.inner.records_returned(),
+        0,
+        "neither event may run a catch-up"
+    );
+
+    // 相手から届いた、反映されていない object を指す索引の entry: 追いつく。
+    docs_sync
+        .notices
+        .send(index_event(&topic, &posts[1], Some("peer-a")))
+        .expect("a subscriber is listening");
+    timeout(Duration::from_secs(6), async {
+        while !is_projected(store.as_ref(), &posts[1]).await {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("a remote index entry for an unprojected object must be caught up");
+    app.shutdown().await;
+}

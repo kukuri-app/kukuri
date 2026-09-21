@@ -452,3 +452,18 @@ T4b-1 は PR #1266（merge commit `9fe399fa`）で完了した。独立監査は
 - 全件走査の関数（`hydrate_subscription_state` など）は、`list_live_sessions`・`list_game_rooms`（S-9、T5b）と test が使うので残る。削除は T7。
 - author 購読（S-10）と follow の通知の起点は T6。
 - 32 件を超える reaction の背景の backfill は入れていない。1 回の照合・追いつきが読む reaction の総数の上限も入れていない（投稿 1 件あたりの上限だけ）。T5b で扱う。
+
+### 独立監査の 1 回目（対象 `e670b80d`、FAIL）と修正
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| 空振りで伸びた追いつきの間隔（最大 5 分）が、取りこぼしや相手から届いた entry の契機でも縮まらない。静かな public topic では、recovery tick の再 sync のたびに `SyncFinished` が届いて空振りが積み、定常的に間隔が伸びる。その後に取りこぼした新着や取り下げの反映が、数十秒〜5 分遅れる（以前は 3 秒で走査していた） | `CatchUpSchedule` が、契機の種類を区別せずに同じ期限を使っていた。`record_progress` も回数を戻すだけで、決まった期限を縮めなかった | 反映するものがあると分かっている契機（`Lagged`・`ContentReady`・相手から届いた entry と hint の miss）と `record_progress` は、期限を「前回の追いつき + 最小間隔」まで縮める。`SyncFinished` だけは伸びた間隔を待つ。回帰 test `a_lag_after_an_idle_period_is_caught_up_within_the_minimum_interval`（単体）、`a_lag_after_empty_catch_ups_is_reflected_within_the_minimum_interval`（購読タスク。監査の再現 test） |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 相手から届いた索引の entry（個別反映が必ず 0 件）が、投稿 1 件ごとに追いつきを依頼していた。指す object が projection に既にあれば依頼しない（`missed_entry_needs_catch_up`）。
+  test `a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object`（自分が書いた entry で依頼しないことも固定する。`MemoryDocsSync` の event は `source_peer` が無いので、通知を流し込む test double で確かめる）。
+- 追いつきが失敗したとき、読み直しの依頼が失われていた。`CatchUpSchedule::restore` で戻す。
+- 取りこぼした取り下げが、`Lagged` の後と起動時の追いつきで反映されることの test（監査の test を恒久化）。
+
+残した non-blocker: session と reaction の読み直しを直接確かめる test、追いつきが走っているあいだ event を消費しない点と `refresh_all` の最悪の読み出し回数（約 1 万回。T5b の「1 回の追いつきが読む reaction の総数の上限」で扱う）。

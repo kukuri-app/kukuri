@@ -160,7 +160,8 @@ mod social_runtime_support;
 mod spatial_access_support;
 mod subscription_catch_up;
 pub(crate) use subscription_catch_up::{
-    CatchUpSchedule, catch_up_replica_window, snapshot_window_notification_baseline,
+    CatchUpSchedule, catch_up_replica_window, missed_entry_needs_catch_up,
+    snapshot_window_notification_baseline,
 };
 mod subscription_registry;
 mod timeline_subscription_support;
