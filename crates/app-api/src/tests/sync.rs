@@ -383,6 +383,7 @@ mod hydration_limits;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod page_bounds;
+mod profile_index;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;

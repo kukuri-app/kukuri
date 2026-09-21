@@ -62,6 +62,10 @@ Accepted
   - recovery tick は docs を読まない。docs の支援 peer がいるあいだ、再 sync を backoff つきで促すだけで、届いた entry は docs の event が、取りこぼしは通知からの追いつきが反映する。
   - 通知の起点（購読を始める前から手元にあった投稿の entry の event を通知にしない）は、窓の object の `objects/<id>/` の key と content hash だけから作る。窓より古い entry の event が
     再び届いたときは通知の候補になる（通知の id は決定的なので、既にある通知は重複しない）。
+- author replica（profile・follow・block）は、docs の event の key だけを反映する。起動時と、取りこぼし・本体の到着・同期の区切りの追いつきは、`profile/latest` と、
+  follow・block の key の上限つきの一覧（各 512 件）から反映する。follow の通知の起点は、自分を指す follow の key 1 件だけを読む。
+- プロフィールのタイムラインは projection を持たず、author replica の `indexes/profile/<sort key>/<object id>` の索引を cursor から読み、ページの行の key だけを読む
+  （1 回の取得が読む量は、ページの件数と非表示の著者の読み飛ばしの上限で決まり、投稿の総数に依存しない）。
 - reaction の上限つきの読み出し（1 対象あたり 32 件）は、key の一覧が上限で打ち切られたとき、reaction id（16 進）の先頭の 1 文字ごとに少しずつ（8 key）読んで混ぜる。
   先頭に並ぶ key だけを見ていると、正しい reaction より先に並ぶ key を置くだけで、その投稿の reaction を隠せてしまう。読む量は定数（16 回の一覧）で、reaction の総数に依存しない。
   hint の個別反映（対象の reaction）も、同じ上限つきの読み出しを使う。32 件を超える reaction は、docs の event の個別反映でしか入らない（best effort）。
@@ -223,6 +227,10 @@ Accepted
 
 - 時系列の索引は、既存の `indexes/timeline/<created_at 20 桁>-<object id>/<object id>` と `indexes/thread/<root>/<sort key>/<object id>` を正とする。
   既存の client が書いた entry をそのまま読めるので、この ADR の範囲では docs の key の移行は無い。
+- プロフィールの索引 `indexes/profile/<created_at 20 桁>-<object id>/<object id>` は新しい key で、投稿・repost を書くときに書く。
+  自分の replica は、author 購読が背景で、索引の無い投稿・repost に索引を補い（key の一覧は 256 件ずつ、超えたら object id の次の桁で分ける。
+  読み終えた位置を残して再開する）、補い終えたら `indexes/profile-complete` を書く。その key の無い replica（索引を書く前の版の client の replica）では、索引の読み出しに、
+  `profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）から読んだ行を合わせる（best effort。上限を超える投稿は表示されないことがある）。
 - projection の schema の追加（列・索引）は migration で行い、既存の行は反映し直さずに使えるようにする（足した列が空の行は、その行を次に反映したときに埋まる）。
 - `created_at` は投稿者の申告値であり、未来や過去の値を持つ entry がありうる。窓は「索引の新しい側」から読むので、極端に未来の時刻の entry が窓を占有しうる。
   窓を読むときは、現在時刻 + 許容幅（初期値 10 分）より未来の entry を読み飛ばし、読み飛ばす件数にも上限を置く。
@@ -239,7 +247,8 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
 
 ## Consequences
 
-- 全件走査（`hydrate_subscription_state`・`hydrate_topic_state`・`hydrate_scope_projection`・`hydrate_author_state`）と、#1225 の `ReplicaScanCache` は削除する。
+- 全件走査（`hydrate_subscription_state`・`hydrate_topic_state`・`hydrate_scope_projection`）と、#1225 の `ReplicaScanCache` は削除する。
+  `hydrate_author_state` は、key の上限つきの一覧から読む形に置き換える。
   `MissingBodyLedger`（欠損した本文の行単位の取り直し）は残す。
 - 窓より古い範囲は、遡るまで projection に入らない。検索や集計のように「全件を前提にする」機能は、client 単体では成立しない前提で設計する
   （community index は CN が担う。`docs/architecture/p2p-first-community-node-responsibility-boundary.md`）。

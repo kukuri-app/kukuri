@@ -75,6 +75,14 @@ pub(crate) async fn persist_profile_post_doc(
             },
         )
         .await?;
+    persist_profile_index_entry(
+        docs_sync,
+        &replica,
+        profile_post.created_at,
+        &profile_post.object_id,
+        "post",
+    )
+    .await?;
     docs_sync
         .apply_doc_op(
             &replica,
@@ -111,6 +119,14 @@ pub(crate) async fn persist_profile_repost_doc(
             },
         )
         .await?;
+    persist_profile_index_entry(
+        docs_sync,
+        &replica,
+        profile_repost.created_at,
+        &profile_repost.object_id,
+        "repost",
+    )
+    .await?;
     docs_sync
         .apply_doc_op(
             &replica,
@@ -398,161 +414,6 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
             }
         }
     }
-    Ok(items)
-}
-
-pub(crate) async fn load_profile_posts_from_author_replica(
-    docs_sync: &dyn DocsSync,
-    author_pubkey: &str,
-    policy: DocFetchPolicy,
-) -> Result<Vec<ProfilePost>> {
-    let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-    let replica = author_replica_id(author_pubkey.as_str());
-    let expected_profile_topic_id = author_profile_topic_id(author_pubkey.as_str());
-    let mut items = Vec::new();
-    let mut seen_object_ids = BTreeSet::new();
-
-    for record in query_replica_with_fetch_policy(
-        docs_sync,
-        &replica,
-        DocQuery::Prefix("profile/posts/".into()),
-        policy,
-    )
-    .await?
-    {
-        match serde_json::from_slice::<AuthorProfilePostDocV1>(record.value.as_slice()) {
-            Ok(doc)
-                if doc.author_pubkey.as_str() == author_pubkey
-                    && doc.profile_topic_id == expected_profile_topic_id =>
-            {
-                if let Some(envelope) =
-                    fetch_author_envelope_by_id(docs_sync, &replica, &doc.envelope_id, policy)
-                        .await?
-                {
-                    match parse_profile_post(&envelope) {
-                        Ok(Some(profile_post))
-                            if profile_post.author_pubkey == doc.author_pubkey
-                                && profile_post.profile_topic_id == doc.profile_topic_id
-                                && profile_post.published_topic_id == doc.published_topic_id
-                                && profile_post.object_id == doc.object_id
-                                && profile_post.created_at == doc.created_at
-                                && profile_post.object_kind == doc.object_kind
-                                && profile_post.content == doc.content
-                                && profile_post.attachments == doc.attachments
-                                && profile_post.reply_to_object_id == doc.reply_to_object_id
-                                && profile_post.root_id == doc.root_id =>
-                        {
-                            if seen_object_ids.insert(profile_post.object_id.clone()) {
-                                items.push(profile_post);
-                            }
-                        }
-                        Ok(Some(_)) | Ok(None) => {}
-                        Err(error) => {
-                            warn!(
-                                author_pubkey = %author_pubkey,
-                                key = %record.key,
-                                envelope_id = %doc.envelope_id.as_str(),
-                                error = %error,
-                                "ignoring invalid profile post envelope"
-                            );
-                        }
-                    }
-                }
-            }
-            Ok(_) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    "ignoring profile post doc with mismatched author or topic"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    error = %error,
-                    "failed to decode profile post doc"
-                );
-            }
-        }
-    }
-
-    Ok(items)
-}
-
-pub(crate) async fn load_profile_reposts_from_author_replica(
-    docs_sync: &dyn DocsSync,
-    author_pubkey: &str,
-    policy: DocFetchPolicy,
-) -> Result<Vec<ProfileRepost>> {
-    let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-    let replica = author_replica_id(author_pubkey.as_str());
-    let expected_profile_topic_id = author_profile_topic_id(author_pubkey.as_str());
-    let mut items = Vec::new();
-    let mut seen_object_ids = BTreeSet::new();
-
-    for record in query_replica_with_fetch_policy(
-        docs_sync,
-        &replica,
-        DocQuery::Prefix("profile/reposts/".into()),
-        policy,
-    )
-    .await?
-    {
-        match serde_json::from_slice::<AuthorProfileRepostDocV1>(record.value.as_slice()) {
-            Ok(doc)
-                if doc.author_pubkey.as_str() == author_pubkey
-                    && doc.profile_topic_id == expected_profile_topic_id =>
-            {
-                if let Some(envelope) =
-                    fetch_author_envelope_by_id(docs_sync, &replica, &doc.envelope_id, policy)
-                        .await?
-                {
-                    match parse_profile_repost(&envelope) {
-                        Ok(Some(profile_repost))
-                            if profile_repost.author_pubkey == doc.author_pubkey
-                                && profile_repost.profile_topic_id == doc.profile_topic_id
-                                && profile_repost.published_topic_id == doc.published_topic_id
-                                && profile_repost.object_id == doc.object_id
-                                && profile_repost.created_at == doc.created_at
-                                && profile_repost.commentary == doc.commentary
-                                && profile_repost.repost_of == doc.repost_of =>
-                        {
-                            if seen_object_ids.insert(profile_repost.object_id.clone()) {
-                                items.push(profile_repost);
-                            }
-                        }
-                        Ok(Some(_)) | Ok(None) => {}
-                        Err(error) => {
-                            warn!(
-                                author_pubkey = %author_pubkey,
-                                key = %record.key,
-                                envelope_id = %doc.envelope_id.as_str(),
-                                error = %error,
-                                "ignoring invalid profile repost envelope"
-                            );
-                        }
-                    }
-                }
-            }
-            Ok(_) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    "ignoring profile repost doc with mismatched author or topic"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    error = %error,
-                    "failed to decode profile repost doc"
-                );
-            }
-        }
-    }
-
     Ok(items)
 }
 

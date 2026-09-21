@@ -148,6 +148,7 @@ mod post_integrity;
 mod post_withdrawal_hydration;
 mod private_channels_support;
 mod profile_docs_support;
+mod profile_timeline_support;
 mod projection_support;
 mod reaction_hydration;
 pub(crate) use reaction_hydration::{
@@ -193,7 +194,7 @@ pub(crate) use author_state_support::{
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
     hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_doc_event,
-    hydrate_subscription_hint, profile_timeline_page,
+    hydrate_subscription_hint,
 };
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
@@ -235,11 +236,13 @@ pub(crate) use post_withdrawal_hydration::{
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope, fetch_author_envelope_by_id,
-    load_custom_reaction_assets_from_author_replica, load_profile_posts_from_author_replica,
-    load_profile_reposts_from_author_replica, merge_seed_peers, persist_block_edge_doc,
+    load_custom_reaction_assets_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,
     snapshot_follow_notification_baseline,
+};
+pub(crate) use profile_timeline_support::{
+    backfill_own_profile_index, persist_profile_index_entry, profile_timeline_page_from_docs,
 };
 pub(crate) use projection_support::{
     active_private_channel_participants, archive_private_channel_epoch,

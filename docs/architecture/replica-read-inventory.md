@@ -30,7 +30,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | S-7 | repost・bookmark・reply・取り下げ（`timeline.rs`）、reaction（`reactions.rs`）の実行時。利用者の操作が走査の完了を待つ | 同 S-6 | 同 S-6 | T3（解消済み。`ensure_object_projection` が対象の key だけを読む） |
 | S-8 | community index の解決（`community_index.rs`）、repost 元の解決（`resolve_repost_source` → `hydrate_topic_state(LocalThenRemote)`） | 同 S-6 | 同 S-6 | T3（解消済み） |
 | S-9 | `list_game_rooms`（行が空）・`list_live_sessions`（行が空、または live で viewer 0。購読再起動と再 sync も行う） | 同 S-6 | 同 S-6 | T5b-1（解消済み。session の固定件数を key の一覧から反映する `catch_up_scope_sessions`。replica ごとに間隔を空ける） |
-| S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6-1（購読は解消済み。doc event はその key だけを反映し、起動時・取りこぼし・同期の区切りは `profile/latest` と、follow・block の key の上限つきの一覧（各 512 件）から反映する）。`list_profile_timeline` は T6-2 |
+| S-10 | author 購読の起動時と doc event ごと（`social_runtime_support.rs` の `hydrate_author_state(LocalThenRemote)`）、`list_profile_timeline` | author replica の profile・follow・block・投稿・repost の全 entry | author の投稿・repost・follow・block の総数 × 購読中の author 数 | T6-1（購読は解消済み。doc event はその key だけを反映し、起動時・取りこぼし・同期の区切りは `profile/latest` と、follow・block の key の上限つきの一覧（各 512 件）から反映する）。`list_profile_timeline` は T6-2（解消済み。プロフィールの索引からページの範囲と行の key だけを読む） |
 
 ## prefix の全件読み（caller ごと）
 
@@ -44,7 +44,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-6 | `hydration_support.rs` `hydrate_game_rooms_from_replica` | `sessions/game/` | topic の game room の総数 | T5b-1（解消済み。関数を削除した） |
 | P-7 | `service/mod.rs` `find_existing_simple_repost`（repost のたび。全 entry を deserialize） | `objects/` | target topic の投稿総数 | 対象。T3 で projection の索引（`find_author_reposts_of`）に置き換えた |
 | P-8 | `profile_docs_support.rs` `hydrate_author_state` | `graph/follows/`、`graph/blocks/` | author の follow・block の総数 | 対象。T6-1（解消済み。event の key だけを読む `hydrate_author_key` と、上限つきの `hydrate_author_state`・`catch_up_author_state`） |
-| P-9 | `profile_docs_support.rs` `load_profile_posts_from_author_replica`・`load_profile_reposts_from_author_replica` | `profile/posts/`、`profile/reposts/` | author の投稿・repost の総数 | 対象。T6-2 |
+| P-9 | `profile_docs_support.rs` `load_profile_posts_from_author_replica`・`load_profile_reposts_from_author_replica` | `profile/posts/`、`profile/reposts/` | author の投稿・repost の総数 | 対象。T6-2（解消済み。関数を削除した。索引の無い replica は、key の上限つきの一覧（各 128 件）から読む） |
 | P-10 | `profile_docs_support.rs` `load_custom_reaction_assets_from_author_replica` | `reactions/assets/` | author のカスタムリアクションの総数 | 対象。T6-1（解消済み。key の上限つきの一覧（asset 512 件ぶん）と、`state` の key ごとの読み出し） |
 | P-11 | `profile_docs_support.rs` `snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline` | `objects/`、`graph/follows/` | S-2 と同じ | 対象。T4・T6（解消済み。投稿の側は T4b-2。follow の側は、通知の対象になる自分を指す follow の key 1 件の key と hash だけを読む） |
 | P-12 | `object_persistence_support.rs` `fetch_private_channel_participants_from_replica` | `channels/participants/` | private channel の参加者数 | Non-goal（本 Issue の固定 AC に含まれない。招待制で件数は小さいが、上限が無い点を #1224 の台帳の上限で扱う） |
@@ -89,7 +89,7 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 | --- | --- | --- | --- |
 | Q-1 | `crates/store/src/sqlite/projections.rs` のタイムライン・thread の cursor 条件（`created_at < ? OR (created_at = ? AND object_id < ?)`） | OR 形のため、深いページほど索引の読み飛ばしが増える（遡った深さに比例） | T5b-2（解消済み。cursor の条件を行の値の比較にし、cursor の有無で SQL を分けた。thread は root を 1 行引きして、返信を索引の範囲で読む。query plan の test あり） |
 | Q-2 | `projection_support.rs` `filtered_timeline_page` / `filtered_thread_page` | 非表示の著者の行を除いて `limit` 件集まるまで、上限なくページを読み続ける。`limit` が 20 未満のときと非表示の著者があるときは、返す `next_cursor` が行を飛ばす | T5b-2（解消済み。読むページ数の上限 4。`next_cursor` は最後に返した行の位置） |
-| Q-3 | `timeline.rs` `list_profile_timeline` | author の全投稿・全 repost をロードしてソートしてからページを切る | T6 |
+| Q-3 | `timeline.rs` `list_profile_timeline` | author の全投稿・全 repost をロードしてソートしてからページを切る。`next_cursor` がページの次の行の位置で、次のページがその行を飛ばす | T6-2（解消済み。`indexes/profile/` の索引を cursor から読み、`next_cursor` は最後に返した行の位置。非表示の著者の読み飛ばしは 4 ページまで） |
 
 ## 観察（本 Issue では変えない）
 

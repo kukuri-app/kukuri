@@ -11,58 +11,49 @@ impl AppService {
         let empty_recovery_key = author_empty_recovery_key(author_pubkey.as_str());
         self.ensure_author_subscription(author_pubkey.as_str())
             .await?;
-        let load_profile_items = || async {
-            let posts = load_profile_posts_from_author_replica(
+        // #1239: replica は走査しない。プロフィールの索引から、ページの行だけを読む。
+        let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
+        let docs_author = known_docs_author(
+            &self.services,
+            self.current_author_pubkey().as_str(),
+            author_pubkey.as_str(),
+        )
+        .await?;
+        let load_page = || {
+            profile_timeline_page_from_docs(
                 self.services.docs_sync.as_ref(),
                 author_pubkey.as_str(),
-                DocFetchPolicy::LocalOnly,
+                docs_author.as_deref(),
+                cursor.clone(),
+                limit,
+                &hidden_author_pubkeys,
             )
-            .await?;
-            let reposts = load_profile_reposts_from_author_replica(
-                self.services.docs_sync.as_ref(),
-                author_pubkey.as_str(),
-                DocFetchPolicy::LocalOnly,
-            )
-            .await?;
-            Ok::<_, anyhow::Error>((posts, reposts))
         };
-        let (mut posts, mut reposts) = match load_profile_items().await {
-            Ok(items) => items,
+        let mut page = match load_page().await {
+            Ok(page) => page,
             Err(error) => {
                 self.maybe_restart_author_subscription(author_pubkey.as_str())
                     .await;
-                load_profile_items().await.map_err(|retry_error| {
+                load_page().await.map_err(|retry_error| {
                     retry_error.context(format!(
                         "failed to reload profile timeline after author subscription restart: {error}"
                     ))
                 })?
             }
         };
-        if cursor.is_none() && posts.is_empty() && reposts.is_empty() {
+        if cursor.is_none() && page.items.is_empty() && page.next_cursor.is_none() {
             if self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await
             {
                 self.maybe_restart_author_subscription(author_pubkey.as_str())
                     .await;
-                (posts, reposts) = load_profile_items().await?;
+                page = load_page().await?;
             }
         } else {
             self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
                 .await;
         }
-        let mut items = Vec::with_capacity(posts.len() + reposts.len());
-        items.extend(posts.drain(..).map(ProfileTimelineItem::Post));
-        items.extend(reposts.drain(..).map(ProfileTimelineItem::Repost));
-        items.sort_by(|left, right| {
-            right
-                .created_at()
-                .cmp(&left.created_at())
-                .then_with(|| right.object_id().cmp(left.object_id()))
-        });
-        let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
-        items.retain(|item| !profile_timeline_item_is_hidden(item, &hidden_author_pubkeys));
-        let page = profile_timeline_page(items, cursor, limit);
         let mut views = Vec::with_capacity(page.items.len());
         for item in page.items {
             match item {

@@ -693,3 +693,29 @@ docs author を指定した読み出しに未対応の DocsSync では反映全�
 | 指摘 | 原因 | 修正 |
 | --- | --- | --- |
 | B-6: 同期の途中で、ほかの端末が自分の docs author で書いた新しい状態（例: follow の解除）がまだ届いていない key を、旧名義の古い状態で新しい時刻に書き直すと、同期がそろった後に全端末の状態が巻き戻る（follow の解除が follow に戻る） | 読み出しの中で書き直していた。同じ（docs author、key）では新しい時刻が勝つ | 書き直しを外した。B-5 の解消は名義を問わない一覧での読み出しだけで足りる。自分の docs author へ移るのは、利用者がその edge を書いたとき（ADR 0053 §6 に理由を書いた）。test は、読み出しが docs に何も書かないことを確かめる形にした |
+
+## T6-2: プロフィールのタイムライン（S-10 の取得側、P-9、Q-3）
+
+`list_profile_timeline` は、author replica の `profile/posts/`・`profile/reposts/` の全 entry と envelope を読み、並べ替えてからページを切っていた。
+返す `next_cursor` はページの次の行の位置で、次のページは cursor より古い行だけを返すので、ページの境目の行が 1 件ずつ飛んでいた（以前からの不具合）。
+
+- 投稿・repost を書くとき、`indexes/profile/<created_at 20 桁>-<object id>/<object id>` の索引も書く（`persist_profile_index_entry`）。
+- 取得（`profile_timeline_page_from_docs`）は、索引を cursor から新しい順に `limit` 件ずつ読み、ページの行だけを key 指定で読む（投稿、無ければ repost。
+  検証は以前の全件読みと同じ条件）。非表示の著者の行は除き、読むページ数は 4 まで（上限に達したら読み進めた位置を返す）。
+  `next_cursor` は、`limit` 件そろえば最後に返した行の位置、尽きたら `None`。全件読みの関数（`load_profile_posts_from_author_replica`・
+  `load_profile_reposts_from_author_replica`・`profile_timeline_page`）は削除した。
+- 互換: 自分の replica は、author 購読が背景で、索引の無い投稿・repost に索引を補い（key の一覧は 256 件ずつ、超えたら object id の次の桁で分ける）、
+  補い終えたら `indexes/profile-complete` を書く。読み終えた桶の位置を store の `sync_checkpoints` に残し、購読タスクが止まっても続きから補う（索引が既にある行は書かない）。
+  この一度きりの補完は自分の投稿の数に比例するが、背景で小分けに進み、印を書いた後は行わない。索引の entry は追記だけで、既存の状態を巻き戻さない。
+  その key の無い replica（索引を書く前の版の client の replica）では、索引の読み出しに、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧
+  （各 128 件）から読んだ行を合わせる（best effort。上限を超える投稿は表示されないことがある）。
+- 索引の entry があるが本体がまだ手元に無い行は、そのページでは飛ばす（best effort。先頭から読み直すと出る）。
+- 行（`profile/posts/<id>`・`profile/reposts/<id>`）は、著者の docs author が分かっていれば docs author と key の組で先に読む（ADR 0053 §6。T6-1 と同じ規則）。
+- 索引の 1 回の一覧は `limit` に形の違う key の余裕を足した件数まで読むので、読み始める時刻の桁の範囲の件数がそれより少ないと、返る key の数はその件数になる
+  （件数を増やしても、それ以上は増えない）。test はどちらの側でも範囲の件数が上限を超える件数（100 件と 1,000 件）で比べる。
+
+test（`crates/app-api/src/tests/sync/profile_index.rs`）: 取得が読む量が投稿の数（100 件と 1,000 件）によらず同じで prefix を読まないこと、
+続きの位置をたどるとすべての投稿が 1 回ずつ新しい順に出ること（索引のある replica、索引の無い replica、両方が混ざった replica）、
+非表示の著者の行が続くと 4 ページで止まり読み進めた位置を返し、読む量が投稿の数によらないこと、
+索引の補完が 1 回の一覧の件数を超える投稿（300 件）をすべて補い、2 回目は何もしないこと、query の上限で止まっても読み終えた桶から続けること、
+自分の author 購読が背景で補うこと、著者の docs author が分かれば同じ key のごみの後ろの行を組で読むこと。要点を戻す mutation 5 件（組での読み出し・読み飛ばしの上限・旧 record の合流・補完の再開・索引の書き込み）で、それぞれ test が失敗する。

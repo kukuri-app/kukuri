@@ -108,7 +108,8 @@ author replica（`author::<pubkey>`）の profile・follow・block・custom reac
 - 著者の docs author が分かっているとき:
   - profile・follow・block の record と、それが指す `envelopes/<id>` は、docs author と key の組で 1 件読む。
   - follow・block の窓（上限つきの key の一覧）は、docs author を指定した一覧（`query_replica_keys_by_author`）で作る。他の名義の key で窓を埋められない。
-  - follow の通知の起点、自分の edge の背景の読み出し、自分の custom reaction の asset の一覧も、docs author を指定して読む。
+  - follow の通知の起点と自分の custom reaction の asset の一覧も、docs author を指定して読む。プロフィールのタイムラインの行（`profile/posts/`・
+    `profile/reposts/`）も、組で先に読む。自分の edge の背景の読み出しの key の一覧だけは、名義を問わない（下記）。
 - 組の record が無い・検証に通らないとき（tag の無い旧 record、端末ごとの旧名義）と、docs author が分からないときは、§3 と同じく key だけを指定した上限つき（8 件）の読み出しに落とし、
   検証に通ったものから最も新しい envelope を選ぶ（best effort）。旧名義の edge は、docs author を指定した窓には入らない（docs の event と key 指定の読み出しでは入る）。
 - 自分の replica の edge は、背景で名義を問わない一覧で小分けに読む（読み終えた位置を残し、event を取りこぼしたら最初から読み直す）。旧名義でしか読めない edge も入る。

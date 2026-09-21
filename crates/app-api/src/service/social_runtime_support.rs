@@ -375,6 +375,28 @@ impl AppService {
             let is_own_replica = author_key_for_task == local_author_pubkey;
             let mut own_edge_sweep = is_own_replica
                 .then(|| spawn_own_edge_sweep(&services, author_key_for_task.as_str()));
+            // #1239: 自分の replica の、索引を書く前の版が書いた投稿・repost に、プロフィールの索引を背景で補う。
+            // 購読タスクが止まると、補う task も止まる(次の購読でやり直す)。
+            let _profile_index_backfill = (author_key_for_task == local_author_pubkey).then(|| {
+                let docs_sync = Arc::clone(&services.docs_sync);
+                let projection_store = Arc::clone(&services.projection_store);
+                let author_pubkey = author_key_for_task.clone();
+                AbortOnDrop(tokio::spawn(async move {
+                    if let Err(error) = backfill_own_profile_index(
+                        docs_sync.as_ref(),
+                        projection_store.as_ref(),
+                        author_pubkey.as_str(),
+                    )
+                    .await
+                    {
+                        warn!(
+                            author_pubkey = %author_pubkey,
+                            error = %error,
+                            "failed to backfill the profile index"
+                        );
+                    }
+                }))
+            });
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
             // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();

@@ -369,39 +369,3 @@ pub(crate) fn hint_targets_topic(hint: &GossipHint, topic: &str) -> bool {
         GossipHint::ThreadUpdated { .. } | GossipHint::ProfileUpdated { .. } => true,
     }
 }
-
-pub(crate) fn profile_timeline_page(
-    posts: Vec<ProfileTimelineItem>,
-    cursor: Option<TimelineCursor>,
-    limit: usize,
-) -> Page<ProfileTimelineItem> {
-    if limit == 0 {
-        return Page {
-            items: Vec::new(),
-            next_cursor: cursor,
-        };
-    }
-
-    let mut items = Vec::new();
-    let mut next_cursor = None;
-    for post in posts {
-        let include = cursor.as_ref().is_none_or(|current| {
-            post.created_at() < current.created_at
-                || (post.created_at() == current.created_at
-                    && post.object_id() < &current.object_id)
-        });
-        if !include {
-            continue;
-        }
-        if items.len() >= limit {
-            next_cursor = Some(TimelineCursor {
-                created_at: post.created_at(),
-                object_id: post.object_id().clone(),
-            });
-            break;
-        }
-        items.push(post);
-    }
-
-    Page { items, next_cursor }
-}
