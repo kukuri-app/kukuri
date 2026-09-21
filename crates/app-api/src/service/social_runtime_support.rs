@@ -360,6 +360,23 @@ impl AppService {
                     }
                 }
             });
+            // #1239: 自分の replica の follow・block は、起動時の上限つきの一覧に収まらないことがある。背景で小分けに
+            // すべて読む。購読タスクが止まると、この task も止まる(次の購読でやり直す)。
+            let _own_edge_sweep = (author_key_for_task == local_author_pubkey).then(|| {
+                let services = services.clone();
+                let author_pubkey = author_key_for_task.clone();
+                AbortOnDrop(tokio::spawn(async move {
+                    if let Err(error) =
+                        sweep_own_author_edges(&services, author_pubkey.as_str()).await
+                    {
+                        warn!(
+                            author_pubkey = %author_pubkey,
+                            error = %error,
+                            "failed to read the own follow and block edges"
+                        );
+                    }
+                }))
+            });
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
             // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();
@@ -385,6 +402,9 @@ impl AppService {
                             Err(_) => continue,
                         };
                         let event = &event;
+                        if event.source_peer.is_some() {
+                            *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                        }
                         if let Some(source_peer) = event.source_peer.as_deref() {
                             if let Err(error) = docs_sync.learn_peer(source_peer).await {
                                 warn!(
@@ -447,7 +467,17 @@ impl AppService {
                                     author_key_for_task.clone(),
                                 );
                             }
-                            Ok(_) => {}
+                            Ok(_) => {
+                                // 相手から届いた profile・follow・block の key が反映できなかった(本体がまだ届いていない
+                                // など)。走査はせず、追いつきを依頼する。
+                                if event.source_peer.is_some()
+                                    && (event.key == "profile/latest"
+                                        || event.key.starts_with("graph/follows/")
+                                        || event.key.starts_with("graph/blocks/"))
+                                {
+                                    catch_up.request_now();
+                                }
+                            }
                             Err(error) => {
                                 warn!(
                                     author_pubkey = %author_key_for_task,
@@ -505,5 +535,14 @@ impl AppService {
             .await
             .insert(author_key, handle);
         Ok(())
+    }
+}
+
+/// drop されたときに task を止める。親の task が abort されると、その future と一緒に drop される。
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

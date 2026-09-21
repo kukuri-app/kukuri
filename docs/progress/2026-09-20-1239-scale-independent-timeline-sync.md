@@ -601,3 +601,21 @@ test（`crates/app-api/src/tests/sync/author_key_reflection.rs`）:
 起動時の反映が follow の数（上限 +20 と +300）によらず同じ量を読み、prefix を読まないこと、doc event が key だけを読み（follow 10 件と 400 件で同じ量）、
 同じ edge の再反映は変化 0 件で、対象外の key は何も読まないこと、follow の通知の起点が 1 件だけを読むこと、
 購読タスクが entry の event を取りこぼしても、取りこぼしの通知・同期の区切り・本体の到着のそれぞれで追いつくこと、entry の event がその key を反映して通知を作ること。
+
+### 独立監査の 1 回目（PR #1275、head `3dcef92d`、FAIL）と修正
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-1: 同じ key を別の名義（docs author の昇順で先に並ぶ）が書くと、follow・block の edge が反映されない。以前は prefix の全 record を回していたので反映された | key ごとの読み出しで、`Exact` の結果の先頭 1 件しか見なかった。author replica は誰でも書けるので、ごみを置くだけで follow・block を隠せる | 同じ key の record を上限つき（`MAX_ENVELOPE_RECORDS_PER_OBJECT` 件）で調べ、検証（doc の author・envelope の署名と signer・target と status の一致・key と target の一致）に通ったものから最も新しい envelope を選ぶ。`fetch_author_envelope_by_id` と custom reaction の asset も、先頭 1 件だけを見ない形にした。test `a_shadowed_edge_key_still_reflects_the_valid_record`・`a_shadowed_custom_reaction_asset_is_still_listed` |
+| B-2: 相手の follow が 512 件を超えると、相手から自分への follow・block が、起動時にも追いつきでも反映されない（key の昇順の窓の外に落ちる）。新しい端末で自分の follow が 512 件を超えると、自分の follow の一覧も欠ける | 窓は key の昇順の先頭 512 件だけで、関係の再計算に要る key を特別に扱っていなかった | 自分を指す follow・block の key（`graph/follows/<自分>`・`graph/blocks/<自分>`）は、窓とは別に必ず読む。自分の replica の edge は、自分の author 購読の開始時に背景で小分けにすべて読む（`sweep_own_author_edges`。key の一覧は 256 件ずつ、超えたら pubkey の次の桁で分ける。query 数の上限 4,096）。test `the_catch_up_reads_the_follow_of_me_beyond_the_edge_key_window`（自分を指す key の読み出しを外す mutation で失敗する）・`the_own_edge_sweep_reads_every_own_follow_in_batches` |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 起動時と追いつきの key の一覧で、同じ key（docs author ごとの entry）を 1 回だけ読む。
+- 相手から届いた profile・follow・block の key が反映できなかったとき（本体がまだ届いていないなど）は、追いつきを依頼する。
+- 相手から届いた entry の event で、同期の時刻（`last_sync`）を進める（以前の挙動に合わせた）。
+- author の状態の反映を `author_state_support.rs` に分けた。
+
+残した non-blocker: asset の窓が作成順ではない（asset id の昇順）、follow の通知の起点が同じ key の 1 entry だけ、`notification_candidate_from_follow_event` の先頭 1 件（以前から）、
+DM の購読の張り直しの頻度の低下、通知を流さない test 用の DocsSync で追いつきが起きないこと。
+自分の replica の edge を読む背景の処理は、自分の follow の数に比例する（購読の開始時に 1 回、背景で batch ごとに譲る）。

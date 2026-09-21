@@ -274,252 +274,8 @@ pub(crate) async fn persist_reaction_doc(
         .await
 }
 
-/// author replica の follow・block の edge を、起動時と追いつきで読む key の数の上限(#1239)。
-///
-/// author replica は、その author の follow・block の数だけ key を持つ。全件は読まない。上限を超える edge は、
-/// その key の docs の event が届いたときに反映する(best effort)。
-pub(crate) const AUTHOR_EDGE_KEYS: usize = 512;
 /// 自分の custom reaction の asset を読む数の上限(#1239)。
 pub(crate) const AUTHOR_REACTION_ASSETS: usize = 512;
-
-/// author replica の反映の結果。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AuthorHydration {
-    /// 読めて検証に通った record の数。
-    pub(crate) reflected: usize,
-    /// そのうち、手元に無かった envelope の数(関係の再計算と、追いつきの間隔に使う)。
-    pub(crate) changed: usize,
-}
-
-impl AuthorHydration {
-    fn reflected(changed: bool) -> Self {
-        Self {
-            reflected: 1,
-            changed: usize::from(changed),
-        }
-    }
-
-    fn add(&mut self, other: Self) {
-        self.reflected += other.reflected;
-        self.changed += other.changed;
-    }
-}
-
-/// 起動時と追いつきで読む author replica の key。`profile/latest` と、`graph/follows/`・`graph/blocks/` の
-/// key の上限つきの一覧(それぞれ `AUTHOR_EDGE_KEYS` 件)。値は読まない。
-async fn author_state_keys(docs_sync: &dyn DocsSync, replica: &ReplicaId) -> Result<Vec<String>> {
-    let mut keys = vec![stable_key("profile", "latest")];
-    for prefix in ["graph/follows/", "graph/blocks/"] {
-        let page = docs_sync
-            .query_replica_keys(
-                replica,
-                DocKeyQuery {
-                    prefix: prefix.to_string(),
-                    order: DocKeyOrder::Ascending,
-                    limit: AUTHOR_EDGE_KEYS,
-                },
-            )
-            .await?;
-        keys.extend(page.entries.into_iter().map(|entry| entry.key));
-    }
-    Ok(keys)
-}
-
-/// author の状態(profile・follow・block)を、上限つきで反映する(#1239)。replica は走査しない。
-///
-/// 起動時と復旧で使う。読むのは `author_state_keys` の key と、その record だけ。関係は、反映の有無に
-/// かかわらず再計算する(起動時に、手元の edge から関係を作り直す)。戻り値は読めた record の数。
-pub(crate) async fn hydrate_author_state(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    policy: DocFetchPolicy,
-) -> Result<usize> {
-    let replica = author_replica_id(author_pubkey);
-    let mut outcome = AuthorHydration::default();
-    for key in author_state_keys(services.docs_sync.as_ref(), &replica).await? {
-        outcome.add(hydrate_author_record(services, author_pubkey, &replica, &key, policy).await?);
-    }
-    rebuild_author_relationships(
-        services.store.as_ref(),
-        services.projection_store.as_ref(),
-        local_author_pubkey,
-    )
-    .await?;
-    Ok(outcome.reflected)
-}
-
-/// 同期の区切りと取りこぼしの後の追いつき(#1239)。読む範囲は `hydrate_author_state` と同じ。関係の再計算は、
-/// 手元に無かった envelope が入ったときだけ行う。
-pub(crate) async fn catch_up_author_state(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    policy: DocFetchPolicy,
-) -> Result<AuthorHydration> {
-    let replica = author_replica_id(author_pubkey);
-    let mut outcome = AuthorHydration::default();
-    for key in author_state_keys(services.docs_sync.as_ref(), &replica).await? {
-        outcome.add(hydrate_author_record(services, author_pubkey, &replica, &key, policy).await?);
-    }
-    if outcome.changed > 0 {
-        rebuild_author_relationships(
-            services.store.as_ref(),
-            services.projection_store.as_ref(),
-            local_author_pubkey,
-        )
-        .await?;
-    }
-    Ok(outcome)
-}
-
-/// docs の event が指す author replica の key を 1 つ反映する(#1239)。replica は走査しない。
-/// 関係の再計算は、手元に無かった envelope が入ったときだけ行う。
-pub(crate) async fn hydrate_author_key(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    key: &str,
-    policy: DocFetchPolicy,
-) -> Result<AuthorHydration> {
-    let replica = author_replica_id(author_pubkey);
-    let outcome = hydrate_author_record(services, author_pubkey, &replica, key, policy).await?;
-    if outcome.changed > 0 {
-        rebuild_author_relationships(
-            services.store.as_ref(),
-            services.projection_store.as_ref(),
-            local_author_pubkey,
-        )
-        .await?;
-    }
-    Ok(outcome)
-}
-
-/// `profile/latest`・`graph/follows/<target>`・`graph/blocks/<target>` の key を 1 つ読んで反映する。
-/// それ以外の key は何もしない。読めない record と、検証に通らない record は飛ばす(warn)。
-async fn hydrate_author_record(
-    services: &ServiceHandles,
-    author_pubkey: &str,
-    replica: &ReplicaId,
-    key: &str,
-    policy: DocFetchPolicy,
-) -> Result<AuthorHydration> {
-    let docs_sync = services.docs_sync.as_ref();
-    let store = services.store.as_ref();
-    let projection_store = services.projection_store.as_ref();
-    let is_profile = key == stable_key("profile", "latest");
-    let is_follow = key.starts_with("graph/follows/");
-    if !(is_profile || is_follow || key.starts_with("graph/blocks/")) {
-        return Ok(AuthorHydration::default());
-    }
-    let Some(record) = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Exact(key.to_string()),
-        policy,
-    )
-    .await?
-    .into_iter()
-    .next() else {
-        return Ok(AuthorHydration::default());
-    };
-    if is_profile {
-        match serde_json::from_slice::<AuthorProfileDocV1>(record.value.as_slice()) {
-            Ok(doc) if doc.author_pubkey.as_str() == author_pubkey => {
-                if let Some(envelope) =
-                    fetch_author_envelope_by_id(docs_sync, replica, &doc.envelope_id, policy)
-                        .await?
-                {
-                    let changed = store.get_envelope(&envelope.id).await?.is_none();
-                    store.put_envelope(envelope.clone()).await?;
-                    if let Some(profile) = parse_profile(&envelope)? {
-                        projection_store.upsert_profile_cache(profile).await?;
-                    }
-                    return Ok(AuthorHydration::reflected(changed));
-                }
-            }
-            Ok(_) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    "ignoring profile doc with mismatched author"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    error = %error,
-                    "failed to decode author profile doc"
-                );
-            }
-        }
-        return Ok(AuthorHydration::default());
-    }
-    if is_follow {
-        match serde_json::from_slice::<FollowEdgeDocV1>(record.value.as_slice()) {
-            Ok(doc) if doc.subject_pubkey.as_str() == author_pubkey => {
-                if let Some(envelope) =
-                    fetch_author_envelope_by_id(docs_sync, replica, &doc.envelope_id, policy)
-                        .await?
-                    && let Some(edge) = parse_follow_edge(&envelope)?
-                    && edge.target_pubkey == doc.target_pubkey
-                    && edge.status == doc.status
-                {
-                    let changed = store.get_envelope(&envelope.id).await?.is_none();
-                    store.put_envelope(envelope).await?;
-                    return Ok(AuthorHydration::reflected(changed));
-                }
-            }
-            Ok(_) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    "ignoring follow doc with mismatched subject"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    author_pubkey = %author_pubkey,
-                    key = %record.key,
-                    error = %error,
-                    "failed to decode follow edge doc"
-                );
-            }
-        }
-        return Ok(AuthorHydration::default());
-    }
-    match serde_json::from_slice::<BlockEdgeDocV1>(record.value.as_slice()) {
-        Ok(doc) if doc.subject_pubkey.as_str() == author_pubkey => {
-            if let Some(envelope) =
-                fetch_author_envelope_by_id(docs_sync, replica, &doc.envelope_id, policy).await?
-                && let Some(edge) = parse_block_edge(&envelope)?
-                && edge.target_pubkey == doc.target_pubkey
-                && edge.status == doc.status
-            {
-                let changed = store.get_envelope(&envelope.id).await?.is_none();
-                store.put_envelope(envelope).await?;
-                return Ok(AuthorHydration::reflected(changed));
-            }
-        }
-        Ok(_) => {
-            warn!(
-                author_pubkey = %author_pubkey,
-                key = %record.key,
-                "ignoring block doc with mismatched subject"
-            );
-        }
-        Err(error) => {
-            warn!(
-                author_pubkey = %author_pubkey,
-                key = %record.key,
-                error = %error,
-                "failed to decode block edge doc"
-            );
-        }
-    }
-    Ok(AuthorHydration::default())
-}
 
 pub(crate) async fn fetch_author_envelope_by_id(
     docs_sync: &dyn DocsSync,
@@ -527,20 +283,25 @@ pub(crate) async fn fetch_author_envelope_by_id(
     envelope_id: &EnvelopeId,
     policy: DocFetchPolicy,
 ) -> Result<Option<KukuriEnvelope>> {
-    let Some(record) = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Exact(stable_key("envelopes", envelope_id.as_str())),
-        policy,
-    )
-    .await?
-    .into_iter()
-    .next() else {
-        return Ok(None);
-    };
-    let envelope: KukuriEnvelope = serde_json::from_slice(record.value.as_slice())?;
-    envelope.verify()?;
-    Ok(Some(envelope))
+    // 同じ key に docs author ごとの record がありうる(誰でも書ける replica)。先頭の 1 件だけを見ず、上限つきで調べ、
+    // 署名が通り id が一致する最初の envelope を返す(#1239)。
+    let records = docs_sync
+        .query_replica_exact_bounded(
+            replica,
+            stable_key("envelopes", envelope_id.as_str()).as_str(),
+            MAX_ENVELOPE_RECORDS_PER_OBJECT,
+            policy,
+        )
+        .await?;
+    for record in records {
+        let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(record.value.as_slice()) else {
+            continue;
+        };
+        if envelope.id == *envelope_id && envelope.verify().is_ok() {
+            return Ok(Some(envelope));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) async fn load_custom_reaction_assets_from_author_replica(
@@ -562,21 +323,31 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
         )
         .await?;
     let mut items = Vec::new();
+    let mut seen = BTreeSet::new();
     for entry in page.entries {
         if !entry.key.ends_with("/state") {
             continue;
         }
-        let Some(record) = docs_sync
-            .query_replica(&replica, DocQuery::Exact(entry.key))
-            .await?
-            .into_iter()
-            .next()
-        else {
+        if !seen.insert(entry.key.clone()) {
             continue;
-        };
-        let doc: CustomReactionAssetDocV1 = serde_json::from_slice(record.value.as_slice())?;
-        if doc.author_pubkey.as_str() == author_pubkey {
-            items.push(doc);
+        }
+        // 同じ key に docs author ごとの record がありうる。先頭の 1 件だけを見ず、上限つきで調べる。
+        for record in docs_sync
+            .query_replica_exact_bounded(
+                &replica,
+                entry.key.as_str(),
+                MAX_ENVELOPE_RECORDS_PER_OBJECT,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
+        {
+            if let Ok(doc) =
+                serde_json::from_slice::<CustomReactionAssetDocV1>(record.value.as_slice())
+                && doc.author_pubkey.as_str() == author_pubkey
+            {
+                items.push(doc);
+                break;
+            }
         }
     }
     Ok(items)
