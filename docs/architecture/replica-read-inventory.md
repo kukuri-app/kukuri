@@ -67,7 +67,7 @@ key 指定・上限つき（8 件）で読む。読む量は「1 回の照合が
 
 ## 反映の検証が足す読み出し（Issue #1252）
 
-reaction・live session・game room の検証は、prefix の読み出しを足さない。reaction は、上限つきの key の一覧(1 対象あたり 32 件)で見つけた key ごとに、`envelope` の record を読んで行を作る(P-3・P-4 の prefix の読み出しは削除済み)。
+reaction・live session・game room の検証は、prefix の読み出しを足さない。reaction は、上限つきの key の一覧(1 対象あたり reaction 32 件ぶん、key は 64 件まで。上限に達したら reaction id の先頭の文字ごとに 16 回の一覧を足す)で見つけた key ごとに、`envelope` の record を読んで行を作る(P-3・P-4 の prefix の読み出しは削除済み)。
 live session と game room は、state 1 件につき `envelopes/<envelope id>` を key 指定・上限つき（8 件）で 1 回読む。key 指定の個別反映は、`state` の key も上限つきで読む。
 どれも object 1 件あたり定数で、replica の総 entry 数に依存しない。P-5・P-6 の全件走査では、session の総数ぶんの key 指定の読み出しが足されていた（T5b-1 で走査ごと無くなった）。
 
@@ -109,6 +109,7 @@ T3 の後も、view の生成の経路に docs の読み出しが 2 か所残る
 ## 完了の確認（T7）
 
 全件走査の入口（S-1〜S-10）と prefix の全件読み（P-1〜P-11、P-15）は、Non-goal（P-12〜P-14）を除いてすべて解消した。
+複数の private channel をまたぐページの取得が、許可されない channel の行を読み飛ばす点は #1280 で扱う。
 設計上残る、総件数に比例する読み出しは、自分の replica の背景の仕事だけである（自分の follow・block の読み出し `sweep_own_author_edges` と、
 プロフィールの索引の補完 `backfill_own_profile_index`）。どちらも自分の replica の件数に比例するが、背景で小分けに進み、読み終えた位置を残して再開し、
 読み終えたら行わない。自分の replica の event を取りこぼしたとき（`Lagged`）だけ、最初から読み直す（ADR 0052 §6、ADR 0053 §6）。
@@ -121,7 +122,7 @@ replica の件数を 1,000 / 10,000 / 100,000 にしても、次の操作が doc
 | プロフィールを初めて開く（author 購読の起動・通知の起点・起動時の反映を含む。他人のプロフィールなので、自分の replica の背景の仕事は走らない） | 表示・定期処理 | 3,188 |
 | 購読タスクの窓の追いつき | 定期処理 | 604 |
 | author 購読の追いつき（follow・block の窓） | 定期処理 | 1,536 |
-| タイムラインの新しい側のページ | 表示 | 0（projection から読む） |
+| タイムラインの新しい側のページ（購読の起動の後。projection から読む） | 表示 | 0（projection が空で初めて開くときの照合は、`range_reconcile.rs` の `head_page_reads_only_the_newest_entries` が 300 件と 1,500 件で読む量が同じことを示す） |
 | タイムラインの遡ったページ（埋め草の中ほど） | 表示 | 676 |
 | プロフィールのタイムライン | 表示 | 116 |
 | reaction | 利用者の操作 | 3 |
