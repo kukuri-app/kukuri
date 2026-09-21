@@ -789,7 +789,7 @@ impl AppService {
                 .await?;
             }
             unavailable = reconcile.unavailable;
-            continue_past_unavailable(&mut page, &reconcile, PageOrder::NewestFirst);
+            continue_past_unavailable(&mut page, &reconcile, PageOrder::NewestFirst, None);
             if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
                 if had_topic_subscription {
                     self.maybe_restart_scope_subscription(topic_id, &scope)
@@ -895,7 +895,12 @@ impl AppService {
         }
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
-        continue_past_unavailable(&mut page, &reconcile, PageOrder::OldestFirst);
+        continue_past_unavailable(
+            &mut page,
+            &reconcile,
+            PageOrder::OldestFirst,
+            Some(&thread_root),
+        );
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
@@ -939,10 +944,13 @@ enum PageOrder {
 /// projection が尽きたページで、照合が反映できない entry の続く範囲を読み終えていなければ、読み進めた位置を続きの位置にし、
 /// その位置より先(続きの側)の行はこのページから外す(利用者が、取得できない投稿の先へ進めるように)。外した行は次のページが
 /// 返す。外さないと、次のページが同じ行をもう一度返し、そのあいだに届いた投稿が後ろに並んで、画面の並びが崩れる(独立監査 B1)。
+/// 続きの位置の行そのものは残す(次のページはその位置を含まないので、外すと欠ける。delta 監査 N1)。thread の root 行
+/// (最初のページで先頭に 1 行引きする)は、時刻に関わらず外さない。
 fn continue_past_unavailable(
     page: &mut Page<ObjectProjectionRow>,
     reconcile: &RangeReconcile,
     order: PageOrder,
+    thread_root: Option<&EnvelopeId>,
 ) {
     if page.next_cursor.is_some() {
         return;
@@ -952,10 +960,13 @@ fn continue_past_unavailable(
     };
     let edge = (read_past.created_at, read_past.object_id.as_str());
     page.items.retain(|row| {
+        if thread_root.is_some_and(|root| *root == row.object_id) {
+            return true;
+        }
         let position = (row.created_at, row.object_id.as_str());
         match order {
-            PageOrder::NewestFirst => position > edge,
-            PageOrder::OldestFirst => position < edge,
+            PageOrder::NewestFirst => position >= edge,
+            PageOrder::OldestFirst => position <= edge,
         }
     });
     page.next_cursor = Some(TimelineCursor {

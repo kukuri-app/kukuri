@@ -950,3 +950,12 @@ blocker は無かった。non-blocker のうち、次を直した。
 - `UnavailablePostsNotice` 単独の Story（1 件・複数・多数・0 件）を足した。
 
 残した non-blocker: `reply_target_background.rs` の購読の開始を待つ固定の 200ms。
+
+### 独立監査の 2 回目（delta `2b7cd6e9..1422d0a1`、FAIL）と修正
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| N1: 続きの位置 R と同じ位置の行が、どのページにも出ない（照合の 200 件目が本体のある投稿のとき、R はその投稿の位置になる） | ページから外す条件が R を含み、次のページの条件（R より先）も R を含まない | R の行はこのページに残す（タイムラインは `>=`、thread は `<=`）。回帰 test は、順序の test に 197 件の形（照合の 200 件目が投稿になる）を足した。境界を戻す mutation で、タイムラインと thread の両方で失敗する |
+
+同じ監査の non-blocker: thread の root 行（最初のページで先頭に 1 行引きする）は、続きの位置より先にあっても外さない（時計のずれで root より古い返信の entry が続く場合）。
+test `the_thread_root_stays_on_the_first_page_past_unavailable_replies`（除外を外す mutation で失敗）。ADR 0052 §5 の記述も境界に合わせた。
