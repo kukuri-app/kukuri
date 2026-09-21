@@ -3,7 +3,7 @@
 - Status: current
 - Supersedes: None
 - Superseded by: None
-- PR: 未作成（作成後に追記する）
+- PR: [#1273](https://github.com/kukuri-app/kukuri/pull/1273)
 - Issue / Scope revision: [#1271](https://github.com/kukuri-app/kukuri/issues/1271)、Scope revision 1（2026-09-21。対象を同じ枠を使う他のカラムへ拡張し、Metaverse の枠は残すと確定）
 - 対象: カラムで投稿・通知・会話・検索を読む利用者。カラムの外枠の一段内側にある、本文全体を包むだけの枠を外し、一覧をカラム本文へ直接並べる。
 
