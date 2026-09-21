@@ -896,3 +896,16 @@ blocker は無かった。non-blocker のうち、次を直した。
 blocker は無かった。non-blocker のうち、遡ったページの行の preview が出ないままになる後退（上記の取得側の反映で直した）、`scale_counts` の古い comment、
 命令の数で検出できない SQL と埋め草の無い表の限界の記録（inventory）を直した。残した non-blocker: 新着の受信の double は本体がそろってからの受信順だけを測る
 （本体が遅れる順は窓の追いつきに回り、その量は別に測っている）。背景の task は shutdown を待たない（既存の取り下げの確認と同じ形）。
+
+### 独立監査の 2 回目（delta `cb681ed2..01e8898b`、PASS）と non-blocker の対応
+
+blocker は無かった。non-blocker のうち、次を直した。
+
+- 取得側の反映が、返信先の本文の blob を remote から取りにいき、取得の経路で 1 件ごとに timeout まで待ちうる。取得側は手元の blob だけを読み、
+  手元に無ければ反映せずに、remote から取る背景の反映へ回す（`ReplyTargetBody`。返信先の反映は `service/reply_target_support.rs` へ分けた）。test `the_listing_does_not_wait_for_a_remote_body_of_the_reply_target`
+  （取得側で remote から取る mutation で失敗することを確かめた）。
+- `list_thread` の取得側の反映を test が覆っていなかった。`a_thread_page_reflects_the_reply_target_before_building_the_view` を足した。取得側の 2 つの test は、
+  購読タスクの窓の追いつきが返信先を先に反映しないよう、test が流した通知だけが届く double を使う（`list_timeline`・`list_thread` の呼び出しをそれぞれ外す
+  mutation で、3 回とも失敗することを確かめた）。
+
+残した non-blocker: 取得側の反映をしない経路（プロフィール、bookmark、community index）の遡ったページは、背景の反映の後の取り直しまで preview が出ない。

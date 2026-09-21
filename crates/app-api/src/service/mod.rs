@@ -167,6 +167,7 @@ pub(crate) use subscription_catch_up::{
     CatchUpSchedule, catch_up_replica_window, missed_entry_needs_catch_up,
     snapshot_window_notification_baseline,
 };
+mod reply_target_support;
 mod subscription_registry;
 mod timeline_subscription_support;
 mod timeline_view_support;

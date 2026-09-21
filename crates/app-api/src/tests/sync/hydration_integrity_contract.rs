@@ -9,7 +9,7 @@ use super::hydration_integrity::{
 };
 use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header};
 use super::*;
-use crate::service::timeline_view_support::reflect_reply_target;
+use crate::service::reply_target_support::reflect_reply_target;
 
 // TR-7 / AC-7: 同じ key に、読めない record と別の投稿の envelope が先に並んでいても、検証に通る record から反映する。
 #[tokio::test]
