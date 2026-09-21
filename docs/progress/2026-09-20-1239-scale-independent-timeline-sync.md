@@ -3,7 +3,7 @@
 - 対象 Issue: #1239（区分 C、Scope revision 2026-09-20-v2）。統括は #1221。子は #1243（replica の時間分割）。
 - 設計: [ADR 0052](../adr/0052-scale-independent-timeline-sync.md)。inventory: [replica の読み出しの inventory](../architecture/replica-read-inventory.md)。
 - 段階ごとに PR と独立監査を分ける。本書は段階ごとに追記する。
-- 段階の順序: T1 → T2 → T3 → T5a（タイムラインと thread の取得）→ T4（購読タスク）→ T5b → T6 → T7。T5a を T4 より先に行う理由は、inventory の「段階の順序の変更」に書いた。
+- 段階の順序: T1 → T2 → T3 → T5a（タイムラインと thread の取得）→ T4（購読タスク）→ T5b → T6 → T7 → T8。T5a を T4 より先に行う理由は、inventory の「段階の順序の変更」に書いた。
 
 ## T1: ADR と inventory（PR #1244、merge commit `1c70abd3`）
 
@@ -821,3 +821,32 @@ T6-2 で監査済みの形に戻した）。修正後、遅延なしで 30 回�
 
 同じ監査の non-blocker のうち、この段階で直したもの: 棚卸しの表の「新しい側のページ」の注記（projection が空で初めて開くときの照合は `range_reconcile.rs` の test が示す）、
 reaction の件数の書き方。複数 channel のページの取得の読み飛ばしは #1280 に起票した。
+
+## T8: 利用者が必要としない同期・復旧の削除（2026-09-22）
+
+利用者の指摘: 設計原則の「同期・復旧は best effort」という書き方のせいで、同期・復旧を前提にした実装を書き、より重要な原則である全件走査の禁止を
+満たしていなかった。T7 の時点の AC-1 の「未達の候補」（自分の replica の背景の仕事）は、この書き方から生まれた全件の読み出しだった。
+
+- `AGENTS.md` の設計原則を「ユースケース上ユーザーが必要としない限り同期・復旧はしない」に改めた（利用者の指示）。
+- 自分の follow・block をすべて読む背景の仕事（`sweep_own_author_edges`）を外した。自分の follow の全件は、端末間のアカウント同期（未実装）のような
+  限られた状況でしか利用者は必要としない。
+- プロフィールの索引の補完（`backfill_own_profile_index`）、event による索引の追記、読めなかった key を覚えて試し直す仕組み、やり直しの依頼を外した
+  （`own_replica_work.rs` を削除）。索引の無い旧い投稿は、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）に入る分だけ表示する。
+  以前の版が書いた `indexes/profile-complete` の印は読まない。
+- 取りこぼし（`Lagged`）・同期の区切り・本体の到着の後の author の追いつき（`catch_up_author_state`）は、自分を指す follow・block の key
+  （`graph/follows/<自分>`・`graph/blocks/<自分>`）だけを読む。相互 follow の判定と DM に要るため。
+- 購読の開始時（最初の表示）の上限つきの読み出し（`profile/latest`、自分を指す key、follow・block の key の窓 512 件）は残した（利用者の判断: 案 A）。
+  友達の友達の判定は、手元にある record で判定できる範囲とする（全ネットワークの follow を集めない）。
+- 上の仕事だけが使っていた store の `sync_checkpoints` 表を、migration `20260922000000_drop_sync_checkpoints` で消した。`author_docs_authors` 表は残す。
+
+### 証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| 追いつきは自分を指す key だけを読む | `the_catch_up_reads_only_the_keys_pointing_to_me`（相手の follow が 532 件と 812 件で、読むのは key 指定だけ、読む量が同じ） |
+| 自分の replica の取りこぼしで全件を読み直さない | `a_lag_on_the_own_replica_does_not_read_every_own_follow`（`Lagged`・`SyncFinished`・`ContentReady` の後も、自分の follow は購読の開始時の窓の 512 件のまま） |
+| 旧い投稿に索引を補わない | `legacy_posts_beyond_the_bounded_list_are_not_backfilled`（自分の replica でも索引を書かず、表示は 128 件） |
+| 印で旧い投稿を隠せない | `a_completion_marker_does_not_hide_legacy_posts`、`an_index_key_placed_by_another_docs_author_does_not_hide_a_legacy_post` |
+| 件数に対する読む量 | `scale_counts`（author 購読の追いつきは 1,536 → 2。棚卸しの「完了の確認」の表を更新） |
+| migration | `migrations`・`migrations_roundtrip`（29 世代）、schema の golden を更新 |
+| INVAR-1〜4 | `cargo xtask rust-test` 1,311 件 |

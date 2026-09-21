@@ -453,34 +453,6 @@ impl SocialProjectionStore for SqliteStore {
         Ok(())
     }
 
-    async fn get_sync_checkpoint(&self, checkpoint_key: &str) -> Result<Option<String>> {
-        let value = sqlx::query_scalar::<_, String>(
-            "SELECT checkpoint_value FROM sync_checkpoints WHERE checkpoint_key = ?1",
-        )
-        .bind(checkpoint_key)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(value)
-    }
-
-    async fn put_sync_checkpoint(&self, checkpoint_key: &str, value: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO sync_checkpoints (checkpoint_key, checkpoint_value, updated_at)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(checkpoint_key) DO UPDATE SET
-              checkpoint_value = excluded.checkpoint_value,
-              updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(checkpoint_key)
-        .bind(value)
-        .bind(now_millis())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     async fn get_author_docs_author(&self, author_pubkey: &str) -> Result<Option<String>> {
         let value = sqlx::query_scalar::<_, String>(
             "SELECT docs_author FROM author_docs_authors WHERE author_pubkey = ?1",

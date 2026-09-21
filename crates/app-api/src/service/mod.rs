@@ -144,7 +144,6 @@ mod metaverse_room_event_support;
 mod notifications_support;
 mod object_hydration;
 mod object_persistence_support;
-mod own_replica_work;
 mod post_integrity;
 mod post_withdrawal_hydration;
 mod private_channels_support;
@@ -190,7 +189,6 @@ pub(crate) use attachment_support::{
 };
 pub(crate) use author_state_support::{
     catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,
-    restart_own_author_edge_sweep, sweep_own_author_edges,
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{
@@ -226,7 +224,6 @@ pub(crate) use object_persistence_support::{
     search_key_or_asset_id, session_projection_retry_attempts, session_projection_retry_delay,
     store_manifest_blob, wait_for_private_channel_epoch_snapshot,
 };
-pub(crate) use own_replica_work::{AbortOnDrop, OwnReplicaWork};
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
     VerifiedPost, WithdrawalTargetCheck, load_post_with_hint, load_verified_post,
@@ -244,9 +241,7 @@ pub(crate) use profile_docs_support::{
     snapshot_follow_notification_baseline,
 };
 pub(crate) use profile_timeline_support::{
-    OwnProfileIndex, backfill_own_profile_index, index_own_profile_key,
     persist_profile_index_entry, profile_timeline_page_from_docs,
-    restart_own_profile_index_backfill,
 };
 pub(crate) use projection_support::{
     active_private_channel_participants, archive_private_channel_epoch,

@@ -264,10 +264,6 @@ table reaction_cache
 table replica_cursors
   column cid=0 name=replica_id type=TEXT notnull=0 default=None pk=1
   column cid=1 name=cursor type=TEXT notnull=0 default=None pk=0
-table sync_checkpoints
-  column cid=0 name=checkpoint_key type=TEXT notnull=1 default=None pk=1
-  column cid=1 name=checkpoint_value type=TEXT notnull=1 default=None pk=0
-  column cid=2 name=updated_at type=INTEGER notnull=1 default=None pk=0
 table topic_objects
   column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=object_id type=TEXT notnull=1 default=None pk=2
@@ -566,9 +562,6 @@ index sqlite_autoindex_reaction_cache_1 table=reaction_cache unique=1 origin=pk 
   sql=None
 index sqlite_autoindex_replica_cursors_1 table=replica_cursors unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("replica_id")
-  sql=None
-index sqlite_autoindex_sync_checkpoints_1 table=sync_checkpoints unique=1 origin=pk partial=0
-  key seqno=0 cid=0 name=Some("checkpoint_key")
   sql=None
 index sqlite_autoindex_topic_objects_1 table=topic_objects unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("topic_id")

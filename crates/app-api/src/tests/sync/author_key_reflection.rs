@@ -4,7 +4,7 @@
 use super::shadowing_docs::ShadowingDocsSync;
 use super::subscription_catch_up::InjectedNoticesDocsSync;
 use super::*;
-use crate::service::author_state_support::{AUTHOR_EDGE_KEYS, sweep_own_author_edges_with};
+use crate::service::author_state_support::AUTHOR_EDGE_KEYS;
 use kukuri_docs_sync::ReplicaNotice;
 
 /// `author_keys` の author replica に、`count` 件の follow edge(相手は毎回新しい author)を書く。
@@ -456,37 +456,58 @@ async fn the_catch_up_reads_the_follow_of_me_beyond_the_edge_key_window() {
     );
 }
 
-// 自分の replica の follow は、上限を超えていても、背景の読み出しですべて入る(新しい端末で自分の follow の一覧が欠けない)。
+// 追いつきは、自分を指す follow・block の key だけを読む。相手の follow が何件でも、key の一覧も prefix も読まず、
+// 読む量は同じ(AGENTS.md: ユースケース上ユーザーが必要としない限り同期・復旧はしない)。
 #[tokio::test]
-async fn the_own_edge_sweep_reads_every_own_follow_in_batches() {
-    let docs_sync = Arc::new(MemoryDocsSync::default());
-    let local_keys = generate_keys();
-    let local_author_pubkey = local_keys.public_key_hex();
-    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 100).await;
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store.clone(),
-        transport.clone(),
-        transport,
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        local_keys,
-    );
+async fn the_catch_up_reads_only_the_keys_pointing_to_me() {
+    let mut counts = Vec::new();
+    for edges in [AUTHOR_EDGE_KEYS + 20, AUTHOR_EDGE_KEYS + 300] {
+        let docs_sync = Arc::new(CountingDocsSync::default());
+        let (app, store) = counting_app(docs_sync.clone());
+        let local_author_pubkey = app.current_author_pubkey();
+        let remote_keys = generate_keys();
+        let remote_pubkey = remote_keys.public_key_hex();
+        put_follow_edges(docs_sync.as_ref(), &remote_keys, edges).await;
+        put_follow_edge(
+            docs_sync.as_ref(),
+            &remote_keys,
+            local_author_pubkey.as_str(),
+        )
+        .await;
+        docs_sync.clear_queries().await;
+        docs_sync.reset_records_returned();
 
-    let outcome = sweep_own_author_edges(&app.services, local_author_pubkey.as_str())
+        let outcome = catch_up_author_state(
+            &app.services,
+            local_author_pubkey.as_str(),
+            remote_pubkey.as_str(),
+            DocFetchPolicy::LocalOnly,
+        )
         .await
-        .expect("sweep own edges");
+        .expect("catch up");
 
-    assert_eq!(outcome.reflected, AUTHOR_EDGE_KEYS + 100);
+        assert_eq!(outcome.reflected, 1, "only the follow of me");
+        let queries = docs_sync.queries().await;
+        assert!(
+            queries
+                .iter()
+                .all(|(_, query)| matches!(query, DocQuery::Exact(_))),
+            "the catch-up reads keys only by exact match: {queries:?}"
+        );
+        assert_eq!(
+            store
+                .list_follow_edges_by_subject(remote_pubkey.as_str())
+                .await
+                .expect("follow edges")
+                .len(),
+            1,
+            "the other follows are not read"
+        );
+        counts.push(docs_sync.records_returned());
+    }
     assert_eq!(
-        store
-            .list_follow_edges_by_subject(local_author_pubkey.as_str())
-            .await
-            .expect("own follow edges")
-            .len(),
-        AUTHOR_EDGE_KEYS + 100
+        counts[0], counts[1],
+        "docs records read by the catch-up must not depend on the number of follow edges"
     );
 }
 
@@ -575,110 +596,6 @@ async fn record_value(
         .next()
         .expect("record");
     serde_json::from_slice(&record.value).expect("json")
-}
-
-// 背景の読み出しは、止まっても続きから読み(読み終えた桶を読み直さない)、読み終えたら何も読まない(独立監査 B-3)。
-#[tokio::test]
-async fn the_own_edge_sweep_resumes_and_stops_after_completion() {
-    let docs_sync = Arc::new(CountingDocsSync::default());
-    let local_keys = generate_keys();
-    let local_author_pubkey = local_keys.public_key_hex();
-    let edges = 600;
-    put_follow_edges(docs_sync.as_ref(), &local_keys, edges).await;
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store.clone(),
-        transport.clone(),
-        transport,
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        local_keys,
-    );
-
-    let mut runs = 0;
-    let mut reflected = 0;
-    loop {
-        runs += 1;
-        assert!(runs < 200, "every run makes progress");
-        let outcome =
-            sweep_own_author_edges_with(&app.services, local_author_pubkey.as_str(), 16, 12)
-                .await
-                .expect("sweep");
-        reflected += outcome.reflected;
-        let done = store
-            .get_sync_checkpoint(&format!(
-                "own-author-edges/{local_author_pubkey}/graph/follows/"
-            ))
-            .await
-            .expect("checkpoint");
-        if done.as_deref() == Some("done") {
-            break;
-        }
-    }
-    assert!(runs > 1, "the query limit stops a run before the end");
-    assert_eq!(reflected, edges, "no bucket is read twice across runs");
-    assert_eq!(
-        store
-            .list_follow_edges_by_subject(local_author_pubkey.as_str())
-            .await
-            .expect("own follow edges")
-            .len(),
-        edges
-    );
-
-    docs_sync.reset_records_returned();
-    let after = sweep_own_author_edges_with(&app.services, local_author_pubkey.as_str(), 16, 12)
-        .await
-        .expect("sweep after completion");
-    assert_eq!(after.reflected, 0);
-    assert_eq!(
-        docs_sync.records_returned(),
-        0,
-        "nothing is read after completion"
-    );
-}
-
-// 自分の author 購読が、背景の読み出しを起動する(窓を超える自分の follow も入る)。
-#[tokio::test]
-async fn the_own_author_subscription_runs_the_edge_sweep() {
-    let docs_sync = Arc::new(MemoryDocsSync::default());
-    let local_keys = generate_keys();
-    let local_author_pubkey = local_keys.public_key_hex();
-    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 40).await;
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store.clone(),
-        transport.clone(),
-        transport,
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        local_keys,
-    );
-
-    app.spawn_author_subscription(local_author_pubkey.as_str())
-        .await
-        .expect("subscribe myself");
-
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let count = store
-                .list_follow_edges_by_subject(local_author_pubkey.as_str())
-                .await
-                .expect("own follow edges")
-                .len();
-            if count == AUTHOR_EDGE_KEYS + 40 {
-                break;
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the subscription reads every own follow");
-    app.shutdown().await;
 }
 
 // 同じ key に、古い正しい record(別の名義)と新しい正しい record があるとき、新しい状態を反映する
@@ -812,13 +729,14 @@ async fn the_envelope_fetch_returns_the_envelope_with_the_requested_id() {
     assert_eq!(fetched.id, wanted.id);
 }
 
-// 新しい端末で、自分の edge の読み出しが同期より先に読み終えても、その後の同期で取りこぼした edge は、取りこぼしの
-// 通知から最初に戻って読み直す(独立監査 B-4)。取りこぼしの無い同期の区切りでは読み直さない。
+// 自分の replica で event を取りこぼしても、自分の follow をすべて読み直すことはしない。購読の開始時の窓
+// (`AUTHOR_EDGE_KEYS` 件)より多くは入らない(端末間のアカウント同期は未実装で、ユーザーは全件を必要としない)。
 #[tokio::test]
-async fn a_lag_after_the_own_edge_sweep_restarts_it() {
+async fn a_lag_on_the_own_replica_does_not_read_every_own_follow() {
     let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
     let local_keys = generate_keys();
     let local_author_pubkey = local_keys.public_key_hex();
+    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 40).await;
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
     let app = app_service_from_dependencies(
@@ -828,61 +746,38 @@ async fn a_lag_after_the_own_edge_sweep_restarts_it() {
         transport,
         docs_sync.clone(),
         Arc::new(MemoryBlobService::default()),
-        local_keys.clone(),
+        local_keys,
     );
-    let checkpoint_key = format!("own-author-edges/{local_author_pubkey}/graph/follows/");
     app.spawn_author_subscription(local_author_pubkey.as_str())
         .await
         .expect("subscribe myself");
-    timeout(Duration::from_secs(10), async {
-        while store
-            .get_sync_checkpoint(&checkpoint_key)
+    let own_edges = || async {
+        store
+            .list_follow_edges_by_subject(local_author_pubkey.as_str())
             .await
-            .expect("checkpoint")
-            .as_deref()
-            != Some("done")
-        {
+            .expect("own follow edges")
+            .len()
+    };
+    timeout(Duration::from_secs(10), async {
+        while own_edges().await < AUTHOR_EDGE_KEYS {
             sleep(Duration::from_millis(50)).await;
         }
     })
     .await
-    .expect("the sweep over the empty replica finishes");
+    .expect("the subscription start reads the window");
 
-    // 同期で、窓を超える数の自分の follow が届いた。entry の event は購読側へ届かない(取りこぼした)。
-    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 40).await;
-    docs_sync
-        .notices
-        .send(ReplicaNotice::SyncFinished)
-        .expect("sync finished");
-    sleep(Duration::from_millis(300)).await;
+    for notice in [
+        ReplicaNotice::Lagged { missed: 600 },
+        ReplicaNotice::SyncFinished,
+        ReplicaNotice::ContentReady,
+    ] {
+        docs_sync.notices.send(notice).expect("send notice");
+    }
+    sleep(Duration::from_millis(1_500)).await;
     assert_eq!(
-        store
-            .get_sync_checkpoint(&checkpoint_key)
-            .await
-            .expect("checkpoint")
-            .as_deref(),
-        Some("done"),
-        "a sync without a lag does not restart the reading"
+        own_edges().await,
+        AUTHOR_EDGE_KEYS,
+        "only the window of the subscription start is read"
     );
-    docs_sync
-        .notices
-        .send(ReplicaNotice::Lagged { missed: 600 })
-        .expect("lagged");
-
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let count = store
-                .list_follow_edges_by_subject(local_author_pubkey.as_str())
-                .await
-                .expect("own follow edges")
-                .len();
-            if count == AUTHOR_EDGE_KEYS + 40 {
-                break;
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the lag restarts the reading of every own follow");
     app.shutdown().await;
 }

@@ -253,6 +253,7 @@ async fn fixture(size: usize) -> Fixture {
     let remote_keys = generate_keys();
     let remote_pubkey = remote_keys.public_key_hex();
     let author_replica = author_replica_id(remote_pubkey.as_str());
+    let local_keys = generate_keys();
     {
         let mut replicas = docs_sync.replicas.lock().await;
         let topic_map = replicas.entry(replica.as_str().to_string()).or_default();
@@ -290,9 +291,10 @@ async fn fixture(size: usize) -> Fixture {
                 b"{}".to_vec(),
             );
         }
+        // 閲覧者を指す follow の key。author の追いつきは、この key(と block の key)だけを読む。
         author_map.insert(
-            "indexes/profile-complete".into(),
-            br#"{"version":1}"#.to_vec(),
+            stable_key("graph/follows", local_keys.public_key_hex().as_str()),
+            b"{}".to_vec(),
         );
     }
     let author_keys = generate_keys();
@@ -318,7 +320,7 @@ async fn fixture(size: usize) -> Fixture {
         transport,
         docs_sync.clone(),
         Arc::new(MemoryBlobService::default()),
-        generate_keys(),
+        local_keys,
     );
     // 閲覧者は著者の docs author を知っている(profile の tag から覚えた状態)。
     store

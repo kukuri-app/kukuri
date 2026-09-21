@@ -13,6 +13,7 @@ use kukuri_core::{
 };
 use tempfile::tempdir;
 
+mod author_docs_authors;
 mod backend_parity;
 mod content_observations;
 mod direct_messages;
@@ -29,4 +30,3 @@ mod row_mapping_roundtrip_live_game;
 mod row_mapping_roundtrip_social;
 mod sqlite_projection;
 mod sqlite_store;
-mod sync_checkpoints;

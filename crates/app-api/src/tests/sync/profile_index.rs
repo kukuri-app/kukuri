@@ -1,8 +1,8 @@
 //! #1239: プロフィールのタイムラインが、author replica の投稿の総数を読まず、索引からページの行だけを読むことを固定する。
-//! 索引の無い replica(索引を書く前の版が書いた投稿)との互換と、自分の replica の索引の補完も固定する。
+//! 索引の無い投稿(索引を書く前の版が書いた投稿)は、上限つきの一覧の分だけ表示し、後から索引を補わないことも固定する。
 
 use super::*;
-use crate::service::profile_timeline_support::backfill_own_profile_index_with;
+use crate::service::profile_timeline_support::PROFILE_LEGACY_KEYS;
 use crate::service::projection_support::HIDDEN_AUTHOR_SKIP_PAGES;
 
 const TOPIC: &str = "kukuri:topic:profile-index";
@@ -12,7 +12,6 @@ const BASE_TIME: i64 = 1_700_000_000;
 /// `keys` の author replica に、`created_at` の投稿を 1 件書く(投稿の doc・envelope・索引)。
 async fn put_profile_post(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_at: i64) -> String {
     let author = keys.public_key_hex();
-    // object id は、索引の補完が桁で分けて読めるように、64 桁の 16 進にする。
     let object_id = EnvelopeId::from(generate_keys().public_key_hex().as_str());
     let envelope = build_profile_post_envelope(
         keys,
@@ -105,9 +104,10 @@ async fn read_all_pages(app: &AppService, author_pubkey: &str, limit: usize) -> 
 #[tokio::test]
 async fn the_profile_timeline_reads_a_constant_amount_regardless_of_the_post_count() {
     let mut counts = Vec::new();
-    // 索引の 1 回の一覧は、`limit` に形の違う key の余裕を足した件数(20 + 32)まで読む。どちらも、読み始める時刻の桁の
-    // 範囲に 52 件以上ある件数にする(少ない側は、範囲の件数しか返らないので、比べる量が揃わない)。
-    for posts in [100usize, 1_000] {
+    // 索引の 1 回の一覧は、`limit` に形の違う key の余裕を足した件数(20 + 32)まで、旧 record の key の一覧は
+    // `PROFILE_LEGACY_KEYS` 件まで読む。どちらも、その件数を超える件数にする(少ない側は、ある件数しか返らないので、
+    // 比べる量が揃わない)。新しい側の時刻の下 2 桁も揃える(読む範囲が百の位をまたぐかで、索引の key の一覧の回数が変わる)。
+    for posts in [300usize, 1_000] {
         let docs_sync = Arc::new(CountingDocsSync::with_docs_author(DOCS_AUTHOR));
         let app = app_over(docs_sync.clone(), generate_keys());
         let remote_keys = generate_keys();
@@ -119,17 +119,6 @@ async fn the_profile_timeline_reads_a_constant_amount_regardless_of_the_post_cou
             .put_author_docs_author(remote_pubkey.as_str(), DOCS_AUTHOR)
             .await
             .expect("learn the docs author");
-        assert_eq!(
-            backfill_own_profile_index(
-                docs_sync.as_ref(),
-                &MemoryStore::default(),
-                remote_pubkey.as_str()
-            )
-            .await
-            .expect("mark the index complete"),
-            0,
-            "every post already has its index entry"
-        );
         app.list_profile_timeline(remote_pubkey.as_str(), None, 20)
             .await
             .expect("first page");
@@ -182,15 +171,6 @@ async fn paging_the_profile_timeline_returns_every_post_once_in_order() {
             newer.extend(ids);
             ids = newer;
         }
-        if mode == "indexed" {
-            backfill_own_profile_index(
-                docs_sync.as_ref(),
-                &MemoryStore::default(),
-                remote_pubkey.as_str(),
-            )
-            .await
-            .expect("mark the index complete");
-        }
 
         assert_eq!(
             read_all_pages(&app, remote_pubkey.as_str(), 7).await,
@@ -204,7 +184,8 @@ async fn paging_the_profile_timeline_returns_every_post_once_in_order() {
 #[tokio::test]
 async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
     let mut counts = Vec::new();
-    for posts in [100usize, 400] {
+    // 旧 record の一覧の上限(`PROFILE_LEGACY_KEYS`)を超え、新しい側の時刻の下 2 桁が揃う件数。
+    for posts in [300usize, 600] {
         let docs_sync = Arc::new(CountingDocsSync::with_docs_author(DOCS_AUTHOR));
         let app = app_over(docs_sync.clone(), generate_keys());
         let remote_keys = generate_keys();
@@ -216,13 +197,6 @@ async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
             .put_author_docs_author(remote_pubkey.as_str(), DOCS_AUTHOR)
             .await
             .expect("learn the docs author");
-        backfill_own_profile_index(
-            docs_sync.as_ref(),
-            &MemoryStore::default(),
-            remote_pubkey.as_str(),
-        )
-        .await
-        .expect("mark the index complete");
         app.mute_author(remote_pubkey.as_str())
             .await
             .expect("mute the author");
@@ -249,107 +223,35 @@ async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
     assert_eq!(counts[0], counts[1]);
 }
 
-// 自分の replica の、索引の無い投稿に索引を補う。1 回の key の一覧の件数を超えても(桁で分けて読む)、すべて補い、
-// 補い終えた印を書く。2 回目は何もしない。
+// 索引の無い旧い投稿に、後から索引を補わない(全件走査になる)。自分の replica でも、購読は索引を書かない。旧い投稿は、
+// key の上限つきの一覧(`PROFILE_LEGACY_KEYS` 件)に入る分だけ表示し、それを超える分は表示しない。
 #[tokio::test]
-async fn the_backfill_indexes_every_legacy_post_in_bounded_batches() {
+async fn legacy_posts_beyond_the_bounded_list_are_not_backfilled() {
     let docs_sync = Arc::new(MemoryDocsSync::default());
     let keys = generate_keys();
     let author_pubkey = keys.public_key_hex();
-    let app = app_over(docs_sync.clone(), generate_keys());
-    let ids = put_profile_posts(docs_sync.as_ref(), &keys, 300, 0).await;
-    remove_profile_index(docs_sync.as_ref(), author_pubkey.as_str()).await;
-
-    let written = backfill_own_profile_index(
-        docs_sync.as_ref(),
-        &MemoryStore::default(),
-        author_pubkey.as_str(),
-    )
-    .await
-    .expect("backfill");
-
-    assert_eq!(written, 300);
-    assert_eq!(
-        backfill_own_profile_index(
-            docs_sync.as_ref(),
-            &MemoryStore::default(),
-            author_pubkey.as_str()
-        )
-        .await
-        .expect("second backfill"),
-        0
-    );
-    assert_eq!(read_all_pages(&app, author_pubkey.as_str(), 50).await, ids);
-}
-
-// 自分の author 購読が、背景で索引を補う。
-#[tokio::test]
-async fn the_own_author_subscription_backfills_the_profile_index() {
-    let docs_sync = Arc::new(MemoryDocsSync::default());
-    let keys = generate_keys();
-    let author_pubkey = keys.public_key_hex();
-    let ids = put_profile_posts(docs_sync.as_ref(), &keys, 30, 0).await;
+    put_profile_posts(docs_sync.as_ref(), &keys, PROFILE_LEGACY_KEYS + 40, 0).await;
     remove_profile_index(docs_sync.as_ref(), author_pubkey.as_str()).await;
     let app = app_over(docs_sync.clone(), keys);
 
     app.list_profile_timeline(author_pubkey.as_str(), None, 5)
         .await
         .expect("profile timeline");
+    sleep(Duration::from_millis(500)).await;
 
-    let replica = author_replica_id(author_pubkey.as_str());
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let marker = docs_sync
-                .query_replica(&replica, DocQuery::Exact("indexes/profile-complete".into()))
-                .await
-                .expect("marker");
-            if !marker.is_empty() {
-                break;
-            }
-            sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("the subscription backfills the profile index");
-    assert_eq!(read_all_pages(&app, author_pubkey.as_str(), 8).await, ids);
-    app.shutdown().await;
-}
-
-// 索引の補完は、止まっても読み終えた桶の位置から続け、どの行も 2 回補わない。
-#[tokio::test]
-async fn the_backfill_resumes_from_the_last_bucket() {
-    let docs_sync = Arc::new(MemoryDocsSync::default());
-    let store = MemoryStore::default();
-    let keys = generate_keys();
-    let author_pubkey = keys.public_key_hex();
-    put_profile_posts(docs_sync.as_ref(), &keys, 300, 0).await;
-    remove_profile_index(docs_sync.as_ref(), author_pubkey.as_str()).await;
-
-    let mut runs = 0;
-    let mut written = 0;
-    let replica = author_replica_id(author_pubkey.as_str());
-    loop {
-        runs += 1;
-        assert!(runs < 200, "every run makes progress");
-        written += backfill_own_profile_index_with(
-            docs_sync.as_ref(),
-            &store,
-            author_pubkey.as_str(),
-            16,
-            12,
+    let index = docs_sync
+        .query_replica(
+            &author_replica_id(author_pubkey.as_str()),
+            DocQuery::Prefix("indexes/profile/".into()),
         )
         .await
-        .expect("backfill");
-        let marker = docs_sync
-            .query_replica(&replica, DocQuery::Exact("indexes/profile-complete".into()))
-            .await
-            .expect("marker");
-        if !marker.is_empty() {
-            break;
-        }
-    }
-    assert!(runs > 1, "the query limit stops a run before the end");
-    assert_eq!(written, 300);
+        .expect("profile index");
+    assert!(index.is_empty(), "no index entry is written afterwards");
+    assert_eq!(
+        read_all_pages(&app, author_pubkey.as_str(), 50).await.len(),
+        PROFILE_LEGACY_KEYS
+    );
+    app.shutdown().await;
 }
 
 // 著者の docs author が分かれば、プロフィールの行を docs author と key の組で読むので、同じ key に他の名義のごみが何件あっても
@@ -374,9 +276,6 @@ async fn profile_rows_are_read_by_the_docs_author_behind_shadows() {
     let remote_keys = generate_keys();
     let remote_pubkey = remote_keys.public_key_hex();
     let ids = put_profile_posts(docs_sync.as_ref(), &remote_keys, 1, 0).await;
-    backfill_own_profile_index(docs_sync.as_ref(), store.as_ref(), remote_pubkey.as_str())
-        .await
-        .expect("mark the index complete");
     for index in 0..10 {
         docs_sync
             .shadow(

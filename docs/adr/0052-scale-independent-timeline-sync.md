@@ -228,17 +228,10 @@ Accepted
 - 時系列の索引は、既存の `indexes/timeline/<created_at 20 桁>-<object id>/<object id>` と `indexes/thread/<root>/<sort key>/<object id>` を正とする。
   既存の client が書いた entry をそのまま読めるので、この ADR の範囲では docs の key の移行は無い。
 - プロフィールの索引 `indexes/profile/<created_at 20 桁>-<object id>/<object id>` は新しい key で、投稿・repost を書くときに書く。
-  自分の replica は、author 購読が背景で、索引の無い投稿・repost に索引を補い（key の一覧は 256 件ずつ、超えたら object id の次の桁で分ける。
-  読み終えた位置を残して再開する）、補い終えたら `indexes/profile-complete` を書く。著者の docs author の名義のその印が無い replica（索引を書く前の版の client の replica、
-  docs author が分からない著者）では、索引の読み出しに、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）から読んだ行を合わせる
-  （best effort。上限を超える投稿は表示されないことがある）。印・索引は、著者の docs author が分かれば、その名義のものだけを読む（ADR 0053 §6。他人が置いた印で旧 record を
-  隠させず、他人が置いた索引の key でページを埋めさせない）。
-- 補完は、端末内の位置で続けるかを決める（replica の印は同期の前の状態を表さない）。自分の replica の event を取りこぼしたら最初からやり直し、
-  自分の replica に届いた `profile/posts/<id>`・`profile/reposts/<id>` の key に索引が無ければ、その event で足す（索引を書く前の版の端末の投稿が、補完の後に届いた場合）。
-  key の event の時点では本体がまだ無いことが多いので、旧名義の entry で読めなかった key は上限つき（512 件）で端末内に覚え（購読の張り直しをまたぐ）、
-  本体の到着・同期の区切りのときに試し直す（自分の docs author が書いた entry は、索引も同時に書かれるので覚えない）。上限を超えたら補完のやり直しを依頼する。
-  取りこぼしによるやり直しは、依頼を端末内に書いて残し（購読の張り直しをまたぐ）、走っている補完が終わってから 1 回にまとめる。
-  索引の entry と印は追記だけで、既存の状態を巻き戻さない。
+  索引の読み出しには、`profile/posts/`・`profile/reposts/` の key の上限つきの一覧（各 128 件）から読んだ行を合わせる（索引を書く前の版の client の投稿との互換）。
+  上限を超える旧い投稿は表示しない。旧い投稿に後から索引を補うことはしない。補完は自分の投稿の総数に比例する読み出しで、利用者はそれを必要としない
+  （AGENTS.md: ユースケース上ユーザーが必要としない限り同期・復旧はしない。#1239）。以前の版が書いた `indexes/profile-complete` の印は読まない。
+  索引は、著者の docs author が分かれば、その名義のものだけを読む（ADR 0053 §6。他人が置いた索引の key でページを埋めさせない）。
 - 著者の docs author が分からない閲覧者（旧版の著者、tag を覚える前）は、名義を問わずに索引と旧 record をたどる。他の名義が置いた key でページを埋められうる（best effort）。
 - projection の schema の追加（列・索引）は migration で行い、既存の行は反映し直さずに使えるようにする（足した列が空の行は、その行を次に反映したときに埋まる）。
 - `created_at` は投稿者の申告値であり、未来や過去の値を持つ entry がありうる。窓は「索引の新しい側」から読むので、極端に未来の時刻の entry が窓を占有しうる。

@@ -1,11 +1,7 @@
 //! #1239(T6-2 の独立監査 B-1〜B-4): 誰でも書ける author replica に他の名義が置いた key で、プロフィールの投稿を隠せないこと。
-//! 自分の replica に後から届いた、索引の無い投稿が読めること。
+//! 索引の無い投稿(索引を書く前の版の投稿)を、他の名義の key で隠せないこと。
 
 use super::*;
-use crate::service::profile_timeline_support::{
-    OwnProfileIndex, backfill_own_profile_index_with, index_own_profile_key,
-    restart_own_profile_index_backfill,
-};
 
 const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const OTHER: &str = "9999999999999999999999999999999999999999999999999999999999999999";
@@ -142,7 +138,6 @@ impl DocsSync for TwoAuthorDocsSync {
 
 struct Fixture {
     app: AppService,
-    store: Arc<MemoryStore>,
     docs_sync: Arc<TwoAuthorDocsSync>,
     keys: KukuriKeys,
     pubkey: String,
@@ -170,7 +165,6 @@ async fn fixture() -> Fixture {
         .expect("learn the docs author");
     Fixture {
         app,
-        store,
         docs_sync,
         keys,
         pubkey,
@@ -254,9 +248,10 @@ async fn visible(fixture: &Fixture) -> Vec<String> {
     panic!("the profile timeline did not end");
 }
 
-// B-1: 他の名義が置いた「補い終えた」印では、索引の無い投稿を隠せない。
+// B-1: 「補い終えた」印(以前の版が書いた `indexes/profile-complete`)は、どの名義のものでも見ない。索引の無い投稿は、
+// 上限つきの一覧から常に合わせる。
 #[tokio::test]
-async fn a_completion_marker_by_another_docs_author_does_not_hide_legacy_posts() {
+async fn a_completion_marker_does_not_hide_legacy_posts() {
     let fixture = fixture().await;
     let mut ids = Vec::new();
     for index in 0..3 {
@@ -264,56 +259,19 @@ async fn a_completion_marker_by_another_docs_author_does_not_hide_legacy_posts()
     }
     ids.reverse();
     put_other(&fixture, "indexes/profile-complete".into()).await;
-
-    assert_eq!(visible(&fixture).await, ids);
-}
-
-// B-2: 補完を読み終えた後に届いた、索引の無い自分の投稿は、event で索引が足され、取りこぼしの後は補完のやり直しで拾われる。
-#[tokio::test]
-async fn own_legacy_posts_arriving_after_the_backfill_are_indexed() {
-    let fixture = fixture().await;
-    let projection = fixture.store.as_ref();
-    backfill_own_profile_index_with(
-        fixture.docs_sync.as_ref(),
-        projection,
-        fixture.pubkey.as_str(),
-        16,
-        64,
-    )
-    .await
-    .expect("backfill an empty replica");
-    let by_event = put_post(&fixture, BASE_TIME + 10, false).await;
-    let by_restart = put_post(&fixture, BASE_TIME + 20, false).await;
-    // 補い終えた印は著者の名義にあるので、閲覧者は旧 record を合わせない。索引が無い間は見えない。
-    assert!(visible(&fixture).await.is_empty());
-
-    // 1 件は、その key の event で索引が足される。
-    assert_eq!(
-        index_own_profile_key(
-            fixture.docs_sync.as_ref(),
-            fixture.pubkey.as_str(),
-            stable_key("profile/posts", by_event.as_str()).as_str(),
+    fixture
+        .docs_sync
+        .apply_doc_op(
+            &author_replica_id(fixture.pubkey.as_str()),
+            DocOp::SetJson {
+                key: "indexes/profile-complete".into(),
+                value: serde_json::json!({ "version": 1 }),
+            },
         )
         .await
-        .expect("index by event"),
-        OwnProfileIndex::Indexed
-    );
-    // もう 1 件は、event を取りこぼした後の補完のやり直しで拾われる。
-    restart_own_profile_index_backfill(projection, fixture.pubkey.as_str())
-        .await
-        .expect("restart");
-    let written = backfill_own_profile_index_with(
-        fixture.docs_sync.as_ref(),
-        projection,
-        fixture.pubkey.as_str(),
-        16,
-        64,
-    )
-    .await
-    .expect("backfill again");
-    assert_eq!(written, 1);
+        .expect("the own completion marker");
 
-    assert_eq!(visible(&fixture).await, vec![by_restart, by_event]);
+    assert_eq!(visible(&fixture).await, ids);
 }
 
 // B-3: 同じ object id の偽の索引の entry(他の名義、新しい時刻)で、本物の投稿を隠せない。
@@ -353,7 +311,6 @@ async fn a_forged_index_entry_for_the_same_object_does_not_hide_the_post() {
             Arc::new(MemoryBlobService::default()),
             generate_keys(),
         ),
-        store,
         docs_sync: fixture.docs_sync.clone(),
         keys: fixture.keys.clone(),
         pubkey: fixture.pubkey.clone(),
@@ -401,9 +358,10 @@ async fn future_index_keys_by_another_docs_author_do_not_empty_the_first_page() 
     );
 }
 
-// 他人が同じ索引の key を先に置いていても、自分の名義の索引を書く(docs author を知る閲覧者は自分の名義の索引だけを読む)。
+// 他の名義が、索引の無い投稿と同じ索引の key を置いても、その投稿は旧 record の一覧から読める(docs author を知る閲覧者は
+// 自分の名義の索引だけを読む)。
 #[tokio::test]
-async fn an_index_key_placed_by_another_docs_author_does_not_stop_the_own_index() {
+async fn an_index_key_placed_by_another_docs_author_does_not_hide_a_legacy_post() {
     let fixture = fixture().await;
     let created_at = BASE_TIME + 5;
     let id = put_post(&fixture, created_at, false).await;
@@ -420,27 +378,6 @@ async fn an_index_key_placed_by_another_docs_author_does_not_stop_the_own_index(
         ),
     )
     .await;
-    // 補い終えた印が自分の名義にある(閲覧者は旧 record を合わせず、索引だけを読む)状態で、補完する。
-    fixture
-        .docs_sync
-        .apply_doc_op(
-            &author_replica_id(fixture.pubkey.as_str()),
-            DocOp::SetJson {
-                key: "indexes/profile-complete".into(),
-                value: serde_json::json!({ "version": 1 }),
-            },
-        )
-        .await
-        .expect("the own completion marker");
-    backfill_own_profile_index_with(
-        fixture.docs_sync.as_ref(),
-        fixture.store.as_ref(),
-        fixture.pubkey.as_str(),
-        16,
-        64,
-    )
-    .await
-    .expect("backfill");
 
     assert_eq!(visible(&fixture).await, vec![id]);
 }

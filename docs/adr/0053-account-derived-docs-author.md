@@ -109,12 +109,13 @@ author replica（`author::<pubkey>`）の profile・follow・block・custom reac
   - profile・follow・block の record と、それが指す `envelopes/<id>` は、docs author と key の組で 1 件読む。
   - follow・block の窓（上限つきの key の一覧）は、docs author を指定した一覧（`query_replica_keys_by_author`）で作る。他の名義の key で窓を埋められない。
   - follow の通知の起点と自分の custom reaction の asset の一覧も、docs author を指定して読む。プロフィールのタイムラインの行（`profile/posts/`・
-    `profile/reposts/`）も、組で先に読む。自分の edge の背景の読み出しの key の一覧だけは、名義を問わない（下記）。
+    `profile/reposts/`）も、組で先に読む。
 - 組の record が無い・検証に通らないとき（tag の無い旧 record、端末ごとの旧名義）と、docs author が分からないときは、§3 と同じく key だけを指定した上限つき（8 件）の読み出しに落とし、
   検証に通ったものから最も新しい envelope を選ぶ（best effort）。旧名義の edge は、docs author を指定した窓には入らない（docs の event と key 指定の読み出しでは入る）。
-- 自分の replica の edge は、背景で名義を問わない一覧で小分けに読む（読み終えた位置を残し、event を取りこぼしたら最初から読み直す）。旧名義でしか読めない edge も入る。
-  読み出しの中で旧名義の edge を自分の docs author へ書き直すことはしない。同期の途中では、ほかの端末が自分の docs author で書いた新しい状態がまだ届いていないことがあり、
-  古い状態を新しい時刻で書き戻すと、全端末の状態を巻き戻すため。自分の docs author へ移るのは、利用者がその edge を書いた（follow・unfollow・block・unblock した）とき。
+- 自分の replica の edge も、他人の replica と同じく、購読の開始時の上限つきの窓（docs author を指定した一覧）と docs の event で反映する。
+  窓を超える edge と旧名義でしか読めない edge を、後からすべて読むことはしない（自分の replica の件数に比例する読み出しになり、端末間のアカウント同期が
+  実装されるまで利用者はそれを必要としない。#1239）。旧名義の edge を自分の docs author へ書き直すこともしない。自分の docs author へ移るのは、
+  利用者がその edge を書いた（follow・unfollow・block・unblock した）とき。
 - 旧版の client が、新版と同じアカウントで旧名義に後から書いた edge は、組の record が先に使われるので読まれない（旧版との混在期間だけの best effort）。
 
 ## Consequences

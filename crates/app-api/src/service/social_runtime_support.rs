@@ -370,12 +370,8 @@ impl AppService {
                     }
                 }
             }));
-            // #1239: 自分の replica の背景の仕事(自分の follow・block の読み出しと、プロフィールの索引の補完)。
-            // 購読タスクが止まると、仕事の task も止まる。
-            let mut own_work = (author_key_for_task == local_author_pubkey)
-                .then(|| OwnReplicaWork::start(&services, author_key_for_task.as_str()));
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
-            // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
+            // 自分を指す follow・block の key だけを読み直す(`catch_up_author_state`)。間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();
             let mut catch_up_tick = tokio::time::interval(std::time::Duration::from_secs(1));
             catch_up_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -389,25 +385,14 @@ impl AppService {
                             Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => event,
                             Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. }) => {
                                 catch_up.request_now();
-                                // 自分の replica の event を取りこぼした。どの key かは分からないので、背景の仕事の
-                                // 最初からのやり直しを依頼する(走っている仕事が終わってから、1 回にまとめる)。
-                                if let Some(own_work) = own_work.as_mut() {
-                                    own_work.request_restart(&services).await;
-                                }
                                 continue;
                             }
                             Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
                                 catch_up.request_now();
-                                if let Some(own_work) = own_work.as_mut() {
-                                    own_work.retry_pending(&services).await;
-                                }
                                 continue;
                             }
                             Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished) => {
                                 catch_up.request();
-                                if let Some(own_work) = own_work.as_mut() {
-                                    own_work.retry_pending(&services).await;
-                                }
                                 continue;
                             }
                             Err(_) => continue,
@@ -457,13 +442,6 @@ impl AppService {
                                 );
                             }
                         }
-                        // 自分の replica に届いた投稿・repost に索引が無ければ足す(索引を書く前の版の端末が書いた投稿が、
-                        // 補完を読み終えた後に届いた場合)。本体がまだ無ければ覚えて、後で試し直す。
-                        if let Some(own_work) = own_work.as_mut() {
-                            own_work
-                                .on_entry(&services, event.key.as_str(), event.docs_author.as_deref())
-                                .await;
-                        }
                         match hydrate_author_key(
                             &services,
                             local_author_pubkey.as_str(),
@@ -508,9 +486,6 @@ impl AppService {
                         }
                     }
                     _ = catch_up_tick.tick() => {
-                        if let Some(own_work) = own_work.as_mut() {
-                            own_work.on_tick(&services).await;
-                        }
                         let Some(run) = catch_up.take_due(Utc::now().timestamp_millis()) else {
                             continue;
                         };
@@ -556,5 +531,14 @@ impl AppService {
             .await
             .insert(author_key, handle);
         Ok(())
+    }
+}
+
+/// drop されたときに task を止める。親の task が abort されると、その future と一緒に drop される。
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

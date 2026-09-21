@@ -1,10 +1,12 @@
 //! author replica の状態(profile・follow・block)の反映(#1239)。replica は走査しない。
 //!
-//! docs の event はその key だけを反映する。起動時と追いつきは、`profile/latest`、自分を指す follow・block の key、
-//! follow・block の key の上限つきの一覧から反映する。自分の replica の edge は、背景で小分けにすべて読む。
+//! docs の event はその key だけを反映する。購読の開始時(最初の表示)は、`profile/latest`、自分を指す follow・block の key、
+//! follow・block の key の上限つきの一覧から反映する。取りこぼし・同期の区切りの後に読み直すのは、自分を指す follow・block の
+//! key(相互 follow の判定と DM に要る)だけで、それ以外の取りこぼしは埋めない(AGENTS.md: ユースケース上ユーザーが必要としない
+//! 限り同期・復旧はしない)。
 
 use super::*;
-use kukuri_docs_sync::{DocKeyEntry, DocKeyOrder, DocKeyQuery};
+use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 
 /// author replica の follow・block の edge を、起動時と追いつきで読む key の数の上限。
 ///
@@ -14,17 +16,6 @@ use kukuri_docs_sync::{DocKeyEntry, DocKeyOrder, DocKeyQuery};
 pub(crate) const AUTHOR_EDGE_KEYS: usize = 512;
 /// 同じ key に docs author ごとの record がありうるので、1 つの key で調べる record の数の上限。
 const AUTHOR_RECORDS_PER_KEY: usize = MAX_ENVELOPE_RECORDS_PER_OBJECT;
-/// 自分の replica の edge を小分けに読むときの、1 回の key の一覧の件数。
-const OWN_EDGE_BATCH: usize = 256;
-/// 自分の replica の edge を小分けに読むときの、key の一覧の query の数の上限(形の違う key で分割が膨らむのを止める)。
-const OWN_EDGE_MAX_QUERIES: usize = 4_096;
-/// 読み出しを読み終えた印。
-pub(crate) const CHECKPOINT_DONE: &str = "done";
-/// 最初から読み直す印。
-pub(crate) const CHECKPOINT_RESTART: &str = "restart";
-/// 読み終えた最後の桶の前に付ける印。
-pub(crate) const CHECKPOINT_AFTER: &str = "after:";
-
 /// author replica の反映の結果。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AuthorHydration {
@@ -45,98 +36,6 @@ impl AuthorHydration {
     fn add(&mut self, other: Self) {
         self.reflected += other.reflected;
         self.changed += other.changed;
-    }
-}
-
-/// `prefix` の key を、`batch` 件ずつの key の一覧で読む。一覧が上限で打ち切られたら、次の桁(16 進)で分けて読み直す。
-/// key の後ろは 64 桁の 16 進(pubkey・object id)を前提にする。16 進でない key は、分けた後は読まない(best effort)。
-///
-/// 桶(key の prefix)は昇順に読む。読み終えた最後の桶(`last_bucket`)を保存しておき、次に `done_through` として渡すと、
-/// その桶までを読まずに続きから読む(途中で止まっても再開できる)。
-pub(crate) struct HexBucketedKeys {
-    root_len: usize,
-    pending: Vec<String>,
-    batch: usize,
-    queries_left: usize,
-    done_through: Option<String>,
-    last_bucket: Option<String>,
-    stopped_early: bool,
-}
-
-impl HexBucketedKeys {
-    pub(crate) fn new(
-        prefix: &str,
-        batch: usize,
-        max_queries: usize,
-        done_through: Option<String>,
-    ) -> Self {
-        Self {
-            root_len: prefix.len(),
-            pending: vec![prefix.to_string()],
-            batch,
-            queries_left: max_queries,
-            done_through,
-            last_bucket: None,
-            stopped_early: false,
-        }
-    }
-
-    fn split(&mut self, bucket: &str) {
-        self.pending.extend(
-            "fedcba9876543210"
-                .chars()
-                .map(|digit| format!("{bucket}{digit}")),
-        );
-    }
-
-    /// query の数の上限で、読み残しを残して止まったか。
-    pub(crate) fn stopped_early(&self) -> bool {
-        self.stopped_early
-    }
-
-    /// 最後に返した batch の桶。
-    pub(crate) fn last_bucket(&self) -> Option<&str> {
-        self.last_bucket.as_deref()
-    }
-
-    /// 次の batch。尽きたか、query の数の上限に達したら `None`。
-    pub(crate) async fn next_batch(
-        &mut self,
-        docs_sync: &dyn DocsSync,
-        replica: &ReplicaId,
-    ) -> Result<Option<Vec<DocKeyEntry>>> {
-        while let Some(bucket) = self.pending.pop() {
-            if let Some(done) = self.done_through.clone() {
-                if done.len() > bucket.len() && done.starts_with(bucket.as_str()) {
-                    // 前回、読み終えた桶の祖先。前回は分けて読んだので、読まずに分ける。
-                    self.split(&bucket);
-                    continue;
-                }
-                if bucket.as_str() <= done.as_str() {
-                    // 前回までに読み終えた範囲(互いに接頭辞でない桶は、文字列の順が key の範囲の順になる)。
-                    continue;
-                }
-            }
-            if self.queries_left == 0 {
-                self.pending.push(bucket);
-                self.stopped_early = true;
-                return Ok(None);
-            }
-            self.queries_left -= 1;
-            let query = DocKeyQuery {
-                prefix: bucket.clone(),
-                order: DocKeyOrder::Ascending,
-                limit: self.batch,
-            };
-            let page = docs_sync.query_replica_keys(replica, query).await?;
-            if page.reached_limit && bucket.len() < self.root_len + 64 {
-                self.split(&bucket);
-                continue;
-            }
-            self.last_bucket = Some(bucket);
-            return Ok(Some(page.entries));
-        }
-        Ok(None)
     }
 }
 
@@ -250,7 +149,7 @@ async fn rebuild_relationships(services: &ServiceHandles, local_author_pubkey: &
 
 /// author の状態(profile・follow・block)を、上限つきで反映する。replica は走査しない。
 ///
-/// 起動時と復旧で使う。関係は、反映の有無にかかわらず再計算する(起動時に、手元の edge から関係を作り直す)。
+/// 購読の開始時(最初の表示)に使う。関係は、反映の有無にかかわらず再計算する(起動時に、手元の edge から関係を作り直す)。
 /// 戻り値は読めた key の数。
 pub(crate) async fn hydrate_author_state(
     services: &ServiceHandles,
@@ -263,15 +162,34 @@ pub(crate) async fn hydrate_author_state(
     Ok(outcome.reflected)
 }
 
-/// 同期の区切りと取りこぼしの後の追いつき。読む範囲は `hydrate_author_state` と同じ。関係の再計算は、
-/// 手元に無かった envelope が入ったときだけ行う。
+/// 同期の区切りと取りこぼしの後の追いつき。読むのは、自分を指す follow・block の key(`graph/follows/<自分>`・
+/// `graph/blocks/<自分>`)だけ。相互 follow の判定と DM に要るので、取りこぼしても読み直す。それ以外の key の取りこぼしは
+/// 埋めない。関係の再計算は、手元に無かった envelope が入ったときだけ行う。
 pub(crate) async fn catch_up_author_state(
     services: &ServiceHandles,
     local_author_pubkey: &str,
     author_pubkey: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let outcome = hydrate_author_keys(services, local_author_pubkey, author_pubkey, policy).await?;
+    let replica = author_replica_id(author_pubkey);
+    let docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    let mut outcome = AuthorHydration::default();
+    for key in [
+        stable_key("graph/follows", local_author_pubkey),
+        stable_key("graph/blocks", local_author_pubkey),
+    ] {
+        outcome.add(
+            hydrate_author_record(
+                services,
+                author_pubkey,
+                &replica,
+                &key,
+                docs_author.as_deref(),
+                policy,
+            )
+            .await?,
+        );
+    }
     if outcome.changed > 0 {
         rebuild_relationships(services, local_author_pubkey).await?;
     }
@@ -302,126 +220,6 @@ pub(crate) async fn hydrate_author_key(
         rebuild_relationships(services, local_author_pubkey).await?;
     }
     Ok(outcome)
-}
-
-/// 自分の replica の follow・block の edge を、背景で小分けにすべて読む。新しい端末で、自分の follow が
-/// `AUTHOR_EDGE_KEYS` 件を超えていても、自分の follow の一覧が欠けないようにする。
-///
-/// 読み終えた桶の位置を store に残し(`sync_checkpoints`)、止まっても続きから読む。1 回の実行の query 数には上限があり、
-/// 上限に達したら位置を残して終わる(次の購読で続ける)。読み終えたら印を残し、以後は行わない。読み終えた後の edge は、
-/// docs の event(key 単位)で入る。event を取りこぼしたとき(`Lagged`)だけ、`restart_own_author_edge_sweep` で最初から読み直す。
-pub(crate) async fn sweep_own_author_edges(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-) -> Result<AuthorHydration> {
-    sweep_own_author_edges_with(
-        services,
-        local_author_pubkey,
-        OWN_EDGE_BATCH,
-        OWN_EDGE_MAX_QUERIES,
-    )
-    .await
-}
-
-pub(crate) async fn sweep_own_author_edges_with(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    batch: usize,
-    max_queries: usize,
-) -> Result<AuthorHydration> {
-    let replica = author_replica_id(local_author_pubkey);
-    let projection_store = services.projection_store.as_ref();
-    // 自分の docs author。record は組で先に読み、無ければ上限つきの読み出しに落とす(旧名義の edge)。
-    // 旧名義でしか読めない edge を、ここで自分の docs author へ書き直さない。同期の途中では、ほかの端末が自分の
-    // docs author で書いた新しい状態がまだ届いていないことがあり、古い状態を新しい時刻で書き戻して全端末の状態を
-    // 巻き戻す(独立監査 B-6)。自分の docs author へ移るのは、利用者がその edge を書いたとき。
-    let docs_author = services.docs_sync.local_docs_author().await?;
-    let mut outcome = AuthorHydration::default();
-    for prefix in ["graph/follows/", "graph/blocks/"] {
-        let checkpoint_key = own_edge_checkpoint_key(local_author_pubkey, prefix);
-        let checkpoint = projection_store
-            .get_sync_checkpoint(&checkpoint_key)
-            .await?;
-        if checkpoint.as_deref() == Some(CHECKPOINT_DONE) {
-            continue;
-        }
-        let done_through = checkpoint
-            .as_deref()
-            .and_then(|value| value.strip_prefix(CHECKPOINT_AFTER))
-            .map(str::to_string);
-        // 名義を問わない一覧で読む。自分の edge は、ADR 0053 以前の端末ごとの名義でも書かれている。docs author を指定すると、
-        // それらを 1 件も読まない(独立監査 B-5)。他の名義のごみの key は、読み進めを遅らせるだけで、位置は残る。
-        let mut keys = HexBucketedKeys::new(prefix, batch, max_queries, done_through);
-        while let Some(entries) = keys
-            .next_batch(services.docs_sync.as_ref(), &replica)
-            .await?
-        {
-            let mut seen = BTreeSet::new();
-            for entry in entries {
-                if !seen.insert(entry.key.clone()) {
-                    continue;
-                }
-                // 本体がまだ手元に無い key は、相手から取る。1 件の失敗で同じ位置に留まらないよう、飛ばして進む。
-                match hydrate_author_record(
-                    services,
-                    local_author_pubkey,
-                    &replica,
-                    &entry.key,
-                    docs_author.as_deref(),
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await
-                {
-                    Ok(reflected) => outcome.add(reflected),
-                    Err(error) => {
-                        warn!(
-                            author_pubkey = %local_author_pubkey,
-                            key = %entry.key,
-                            error = %error,
-                            "skipping an own edge that could not be read"
-                        );
-                    }
-                }
-            }
-            if let Some(bucket) = keys.last_bucket() {
-                projection_store
-                    .put_sync_checkpoint(&checkpoint_key, &format!("{CHECKPOINT_AFTER}{bucket}"))
-                    .await?;
-            }
-            tokio::task::yield_now().await;
-        }
-        if keys.stopped_early() {
-            break;
-        }
-        projection_store
-            .put_sync_checkpoint(&checkpoint_key, CHECKPOINT_DONE)
-            .await?;
-    }
-    if outcome.changed > 0 {
-        rebuild_relationships(services, local_author_pubkey).await?;
-    }
-    Ok(outcome)
-}
-
-/// 自分の edge の読み出しを、最初からやり直す(#1239)。自分の replica の event を取りこぼしたとき(`Lagged`)に使う。
-/// どの key を取りこぼしたかは分からないので、読み終えた印があっても消す。
-pub(crate) async fn restart_own_author_edge_sweep(
-    projection_store: &dyn ProjectionStore,
-    local_author_pubkey: &str,
-) -> Result<()> {
-    for prefix in ["graph/follows/", "graph/blocks/"] {
-        projection_store
-            .put_sync_checkpoint(
-                &own_edge_checkpoint_key(local_author_pubkey, prefix),
-                CHECKPOINT_RESTART,
-            )
-            .await?;
-    }
-    Ok(())
-}
-
-fn own_edge_checkpoint_key(local_author_pubkey: &str, prefix: &str) -> String {
-    format!("own-author-edges/{local_author_pubkey}/{prefix}")
 }
 
 /// author replica の key の種類。
