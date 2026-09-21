@@ -24,7 +24,6 @@ import type { InternalSmartReference } from '@/lib/internalLinks';
 import { copyTextToClipboard } from '@/lib/utils';
 
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { CommunityNodeConsentDialog } from '@/components/settings/CommunityNodeConsentDialog';
@@ -754,7 +753,7 @@ export function CommunityIndexWorkspace({
   }
 
   return (
-    <Card className='shell-workspace-card shell-community-index-workspace space-y-4' data-testid={`community-index-${mode}`}>
+    <div className='shell-column-content shell-community-index-workspace space-y-4' data-testid={`community-index-${mode}`}>
       {/* #1192: 「見つける」カラムではカラム見出しと重複するため、
           カード内の見出しと説明文を出さない。トピック内カードは従来どおり。 */}
       {mode === 'topic' ? (
@@ -968,6 +967,6 @@ export function CommunityIndexWorkspace({
       ) : null}
 
       {consentFlow.dialog ? <CommunityNodeConsentDialog {...consentFlow.dialog} /> : null}
-    </Card>
+    </div>
   );
 }

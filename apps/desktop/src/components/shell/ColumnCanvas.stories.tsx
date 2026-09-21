@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
-import { Card } from '@/components/ui/card';
-
 import { ColumnCanvas } from './ColumnCanvas';
 import { ColumnSurface } from './ColumnSurface';
 import { TimelineViewIconTabs, type TimelineViewId } from './TimelineViewIconTabs';
@@ -60,11 +58,11 @@ function CanvasStory({ count = 1 }: { count?: number }) {
             }
           >
             <div className='shell-main-stack'>
-              <Card className='shell-workspace-card'>
+              <div className='shell-column-content'>
                 <h3>{column.title} surface</h3>
                 <p className='lede'>Focus this Column to make its active state explicit.</p>
                 <button type='button'>Focusable action</button>
-              </Card>
+              </div>
             </div>
           </ColumnSurface>
         ))}

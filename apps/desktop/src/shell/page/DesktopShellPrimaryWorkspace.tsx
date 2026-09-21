@@ -15,7 +15,6 @@ import { ProfileConnectionsPanel } from '@/components/extended/ProfileConnection
 import { ProfileEditorPanel } from '@/components/extended/ProfileEditorPanel';
 import { ProfileOverviewPanel } from '@/components/extended/ProfileOverviewPanel';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { Notice } from '@/components/ui/notice';
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
@@ -461,7 +460,7 @@ export function DesktopShellPrimarySurface({
       <section className='shell-section'>
         {activeSurfaceSection === 'timeline' ? (
           <>
-            <Card className='shell-workspace-card'>
+            <div className='shell-column-content'>
               {activeTimelineView === 'feed' ? (
                 <TimelineFeed
                   posts={surfaceTimelinePostViews}
@@ -551,7 +550,7 @@ export function DesktopShellPrimarySurface({
                   )}
                 </BookmarksListFrame>
               )}
-            </Card>
+            </div>
           </>
         ) : null}
 
@@ -614,7 +613,7 @@ export function DesktopShellPrimarySurface({
 
         {activeSurfaceSection === 'live' ? (
           <div className='shell-stream-layout'>
-            <Card className='shell-workspace-card'>
+            <section className='shell-column-content'>
               <div className='panel-header'>
                 <div>
                   <h3>{t('live:title')}</h3>
@@ -628,8 +627,8 @@ export function DesktopShellPrimarySurface({
               (liveError ?? surfaceLivePanelState.error) ? (
                 <Notice tone='destructive'>{liveError ?? surfaceLivePanelState.error}</Notice>
               ) : null}
-            </Card>
-            <Card className='shell-workspace-card'>
+            </section>
+            <div className='shell-column-content'>
               {surfaceLiveSessionListItems.length === 0 &&
               surfaceLivePanelState.status === 'ready' ? (
                 <p className='empty-state'>{t('live:empty')}</p>
@@ -737,7 +736,7 @@ export function DesktopShellPrimarySurface({
                   );
                 })}
               </ul>
-            </Card>
+            </div>
           </div>
         ) : null}
 
@@ -872,7 +871,7 @@ export function DesktopShellPrimarySurface({
             ) : null}
             {profileMode !== 'connections' &&
             profileHasLoaded ? (
-              <Card className='shell-workspace-card'>
+              <div className='shell-column-content'>
                 <TimelineFeed
                   posts={viewModels.profileTimelinePostViews}
                   emptyCopy={t('profile:feed.noOwnPosts')}
@@ -885,7 +884,7 @@ export function DesktopShellPrimarySurface({
                   onActivateReference={(reference) => void handleActivateReference(reference)}
                   onCopyPostLink={handleCopyInternalLink}
                 />
-              </Card>
+              </div>
             ) : null}
           </>
         ) : null}
