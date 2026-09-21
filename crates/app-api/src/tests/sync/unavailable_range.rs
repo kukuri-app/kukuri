@@ -175,3 +175,129 @@ async fn a_thread_page_reports_the_replies_whose_body_is_not_here() {
     );
     assert_eq!(page.unavailable_count, 3);
 }
+
+// 読み進めた位置を続きの位置にするとき、その位置より先(古い側)の行はこのページに入れない(独立監査 B1)。
+// 入れると、次のページがその行をもう一度返し、そのあいだに届いた投稿が後ろに並んで、画面の並びが崩れる。
+#[tokio::test]
+async fn continuing_past_unavailable_posts_keeps_the_pages_in_order_without_overlap() {
+    let fixture = range_fixture("unavailable-order", 5, |index| index == 0 || index == 4).await;
+    let replica = topic_replica_id(fixture.topic.as_str());
+    for index in 0..300usize {
+        put_dangling_index_entry(
+            fixture.docs_sync.as_ref(),
+            &replica,
+            fixture.posts[2].created_at,
+            format!("{index:064x}").as_str(),
+        )
+        .await;
+    }
+
+    let mut listed = Vec::new();
+    let mut cursor = Some(cursor_at(&fixture.posts[4]));
+    let mut pages = 0;
+    while let Some(next) = cursor {
+        pages += 1;
+        assert!(pages <= 10, "every page advances");
+        let page = fixture
+            .app
+            .list_timeline(fixture.topic.as_str(), Some(next), 10)
+            .await
+            .expect("page");
+        listed.extend(page.items.iter().map(|item| item.content.clone()));
+        cursor = page.next_cursor;
+    }
+    fixture.app.shutdown().await;
+    assert_eq!(
+        listed,
+        vec!["post 3", "post 2", "post 1", "post 0"],
+        "the pages are in order and do not overlap"
+    );
+}
+
+// thread(古い順)でも、読み進めた位置より先(新しい側)の行はこのページに入れず、並びが崩れない(独立監査 B1)。
+#[tokio::test]
+async fn thread_pages_past_unavailable_replies_stay_in_order_without_overlap() {
+    let docs_sync = Arc::new(MemoryDocsSync::default());
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync.clone(),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let topic = TopicId::new("kukuri:topic:unavailable-thread-order");
+    let replica = topic_replica_id(topic.as_str());
+    let keys = generate_keys();
+    let root = put_post_at(
+        docs_sync.as_ref(),
+        &replica,
+        &keys,
+        &topic,
+        1_700_000_000,
+        "the root",
+        None,
+    )
+    .await;
+    let mut replies = Vec::new();
+    for index in 0..5i64 {
+        replies.push(
+            put_post_at(
+                docs_sync.as_ref(),
+                &replica,
+                &keys,
+                &topic,
+                1_700_000_010 + index * 10,
+                format!("reply {index}").as_str(),
+                Some(&root.envelope),
+            )
+            .await,
+        );
+    }
+    for projected in [&root, &replies[0], &replies[4]] {
+        project(store.as_ref(), projected, &replica).await;
+    }
+    for index in 0..300usize {
+        let id = format!("{index:064x}");
+        docs_sync
+            .apply_doc_op(
+                &replica,
+                DocOp::SetJson {
+                    key: stable_key(
+                        "indexes/thread",
+                        &format!(
+                            "{}/{:020}-{id}/{id}",
+                            root.object_id.as_str(),
+                            replies[2].created_at
+                        ),
+                    ),
+                    value: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("write a thread index entry");
+    }
+
+    let mut listed = Vec::new();
+    let mut cursor = Some(cursor_at(&replies[0]));
+    let mut pages = 0;
+    while let Some(next) = cursor {
+        pages += 1;
+        assert!(pages <= 10, "every page advances");
+        let page = app
+            .list_thread(topic.as_str(), root.object_id.as_str(), Some(next), 10)
+            .await
+            .expect("thread page");
+        listed.extend(page.items.iter().map(|item| item.content.clone()));
+        cursor = page.next_cursor;
+    }
+    app.shutdown().await;
+    assert_eq!(
+        listed,
+        vec!["reply 1", "reply 2", "reply 3", "reply 4"],
+        "the thread pages are in order and do not overlap"
+    );
+}

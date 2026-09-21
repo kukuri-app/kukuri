@@ -789,7 +789,7 @@ impl AppService {
                 .await?;
             }
             unavailable = reconcile.unavailable;
-            continue_past_unavailable(&mut page, &reconcile);
+            continue_past_unavailable(&mut page, &reconcile, PageOrder::NewestFirst);
             if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
                 if had_topic_subscription {
                     self.maybe_restart_scope_subscription(topic_id, &scope)
@@ -895,7 +895,7 @@ impl AppService {
         }
         self.ensure_author_subscriptions_for_rows(&page.items)
             .await?;
-        continue_past_unavailable(&mut page, &reconcile);
+        continue_past_unavailable(&mut page, &reconcile, PageOrder::OldestFirst);
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
@@ -925,19 +925,41 @@ fn thread_empty_recovery_key(topic_id: &str, thread_id: &str) -> String {
     format!("empty-thread:{topic_id}:{thread_id}")
 }
 
+/// ページの並び(続きの位置の向き)。
+#[derive(Clone, Copy)]
+enum PageOrder {
+    /// タイムライン(新しい順)。続きは古い側。
+    NewestFirst,
+    /// thread(古い順)。続きは新しい側。
+    OldestFirst,
+}
+
 /// 照合の結果を、取得したページへ映す(#1239 AC-4)。
 ///
-/// projection が尽きたページで、照合が反映できない entry の続く範囲を読み終えていなければ、読み進めた位置を続きの位置にする
-/// (利用者が、取得できない投稿の先へ進めるように)。読み進めた位置より古い行が既にページにあっても、次のページで
-/// 重なるだけで欠けない(画面は重複を除く)。
-fn continue_past_unavailable(page: &mut Page<ObjectProjectionRow>, reconcile: &RangeReconcile) {
+/// projection が尽きたページで、照合が反映できない entry の続く範囲を読み終えていなければ、読み進めた位置を続きの位置にし、
+/// その位置より先(続きの側)の行はこのページから外す(利用者が、取得できない投稿の先へ進めるように)。外した行は次のページが
+/// 返す。外さないと、次のページが同じ行をもう一度返し、そのあいだに届いた投稿が後ろに並んで、画面の並びが崩れる(独立監査 B1)。
+fn continue_past_unavailable(
+    page: &mut Page<ObjectProjectionRow>,
+    reconcile: &RangeReconcile,
+    order: PageOrder,
+) {
     if page.next_cursor.is_some() {
         return;
     }
-    if let Some(read_past) = reconcile.read_past.as_ref() {
-        page.next_cursor = Some(TimelineCursor {
-            created_at: read_past.created_at,
-            object_id: EnvelopeId::from(read_past.object_id.as_str()),
-        });
-    }
+    let Some(read_past) = reconcile.read_past.as_ref() else {
+        return;
+    };
+    let edge = (read_past.created_at, read_past.object_id.as_str());
+    page.items.retain(|row| {
+        let position = (row.created_at, row.object_id.as_str());
+        match order {
+            PageOrder::NewestFirst => position > edge,
+            PageOrder::OldestFirst => position < edge,
+        }
+    });
+    page.next_cursor = Some(TimelineCursor {
+        created_at: read_past.created_at,
+        object_id: EnvelopeId::from(read_past.object_id.as_str()),
+    });
 }

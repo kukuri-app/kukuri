@@ -916,7 +916,7 @@ blocker は無かった。non-blocker のうち、次を直した。
   envelope の未着は含まない）、台帳に残す（台帳の間隔の内で照合しなかった取得も、前回の数を返す）。反映できない entry が続いて 1 ページぶんに届かず、読み終えていない範囲は、
   読み進めた位置を返す（replica が複数あるときは、最も進んでいない位置）。
 - タイムラインと thread の取得は、その数を `TimelineView.unavailable_count` で返し、projection が尽きたページで照合が範囲を読み終えていなければ、読み進めた位置を
-  `next_cursor` にする（`continue_past_unavailable`）。以前は、反映できない entry が 1 回の上限（200 件）を超えて続く範囲で `next_cursor` が null になり、画面から先へ進めなかった
+  `next_cursor` にし、その位置より先（続きの側）の行はそのページから外して次のページに回す（`continue_past_unavailable`）。以前は、反映できない entry が 1 回の上限（200 件）を超えて続く範囲で `next_cursor` が null になり、画面から先へ進めなかった
   （T5a の申し送り）。
 - 画面: `TimelineFeed` と `ThreadTree`（`ThreadPanel` 経由）は、数が 1 以上なら `UnavailablePostsNotice`（`role='status'`、既存の `empty` の文字の扱い）を、続きを読む手段の前に描く。
   行が 0 件でも、数が 1 以上なら空の文言にしない。store は、読んだ範囲ごとに数を持つ（`timelineUnavailableByKey`・`threadUnavailableById`）。続きの読み込みと、読んだ範囲を
@@ -935,3 +935,18 @@ blocker は無かった。non-blocker のうち、次を直した。
 | 画面（component） | `TimelineFeed.unavailable.test.tsx`（数と続きを読む button、行 0 件で空の文言にしない、0 件で何も描かない、thread） |
 | 画面（store） | `useDesktopShellData.unavailableCount.test.tsx`（続きの読み込みで数を残し、読んだ範囲を残す refresh で消さない。refresh で常に置き換える mutation で失敗） |
 | 見た目 | Storybook `Core/TimelineFeed` の `UnavailablePosts`・`OnlyUnavailablePosts`。`docs/progress/assets/1239/` の画像（ja dark / light の 800px、en dark と zh-CN light の 375px。375px で横の overflow が無いことを確かめた） |
+
+### 独立監査の 1 回目（PR #1285、head `2b7cd6e9`、FAIL）と修正
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B1: 読み進めた位置を続きの位置にしたページに、その位置より古い行が入り、次のページが同じ行をもう一度返す。そのあいだに届いた投稿が後ろに並び、画面の並びが崩れる（画面の続きの読み込みは重複を除いて末尾に足すだけ） | 続きの位置を、ページの行と重ならないように決めていなかった | 続きの位置より先（タイムラインは古い側、thread は新しい側）の行をページから外す。回帰 test `continuing_past_unavailable_posts_keeps_the_pages_in_order_without_overlap`、`thread_pages_past_unavailable_replies_stay_in_order_without_overlap`（監査の再現の形。外さない mutation で失敗） |
+| B2: 1 ページを超える新着を保留して適用し、読んだ範囲を捨てても、捨てた範囲の数が残る | 保留した先頭のページの数を持っていなかった | 保留するときに数も持ち（`pendingTimelineUnavailableByKey`）、適用で読んだ範囲を捨てるときはその数に置き換える。回帰 test は `useDesktopShellData.unavailableCount.test.tsx` に足した（置き換えない mutation で失敗） |
+
+同じ監査の non-blocker のうち、次を直した。
+
+- 文言の「届いたら表示します」は、遡った範囲では成り立たない（周期の refresh は先頭のページだけを読み直す）。「取得できた投稿は、読み込み直すと表示されます」に直し、画像を撮り直した。
+- ADR 0052 §5 に、数の範囲が 1 ページと一致しないことと、本体の無い entry で数を増やせること（操作は止まらない）を書いた。
+- `UnavailablePostsNotice` 単独の Story（1 件・複数・多数・0 件）を足した。
+
+残した non-blocker: `reply_target_background.rs` の購読の開始を待つ固定の 200ms。

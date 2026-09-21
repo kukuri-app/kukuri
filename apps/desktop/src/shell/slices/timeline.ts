@@ -25,6 +25,8 @@ export type TimelineSliceState = {
   pendingTimelineSnapshotsByKey: Record<string, PostView[]>;
   pendingTimelineCountsByKey: Record<string, number>;
   pendingTimelineNextCursorByKey: Record<string, TimelineCursor | null>;
+  /** 保留した先頭のページの、まだ取得できていない投稿の数(#1239 AC-4)。適用で読んだ範囲を捨てるときに使う。 */
+  pendingTimelineUnavailableByKey: Record<string, number>;
   timelineScopeByTopic: Record<string, TimelineScope>;
   composeChannelByTopic: Record<string, ChannelRef>;
   threadsById: Record<string, PostView[]>;
@@ -55,6 +57,7 @@ export function createInitialTimelineSlice(): TimelineSliceState {
     pendingTimelineSnapshotsByKey: {},
     pendingTimelineCountsByKey: {},
     pendingTimelineNextCursorByKey: {},
+    pendingTimelineUnavailableByKey: {},
     timelineScopeByTopic: buildStarterTopicRecord(() => ({ ...PUBLIC_TIMELINE_SCOPE })),
     composeChannelByTopic: buildStarterTopicRecord(() => ({ ...PUBLIC_CHANNEL_REF })),
     threadsById: {},

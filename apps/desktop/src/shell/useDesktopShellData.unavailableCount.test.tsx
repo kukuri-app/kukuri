@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => listenMock(...args),
 }));
 
-import type { DesktopApi, TimelineCursor, TimelineView } from '@/lib/api';
+import type { DesktopApi, PostView, TimelineCursor, TimelineView } from '@/lib/api';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { REFRESH_INTERVAL_MS } from '@/shell/store';
 import { useDesktopShellData } from '@/shell/useDesktopShellData';
@@ -102,5 +102,71 @@ test('thread の続きのページが返した数を残す', async () => {
     await view.result.current.loadMoreThread('kukuri:topic:general', 'thread-root');
   });
   expect(harness.store.getState().threadUnavailableById['thread-root']).toBe(2);
+  view.unmount();
+});
+
+function post(id: string, createdAt: number): PostView {
+  return {
+    object_id: id,
+    envelope_id: `envelope-${id}`,
+    author_pubkey: 'a'.repeat(64),
+    author_name: 'alice',
+    author_display_name: null,
+    following: false,
+    followed_by: false,
+    mutual: false,
+    friend_of_friend: false,
+    object_kind: 'post',
+    is_threadable: true,
+    content: id,
+    content_status: 'Available',
+    attachments: [],
+    created_at: createdAt,
+    reply_to: null,
+    root_id: id,
+    channel_id: null,
+    audience_label: 'Public',
+  } as unknown as PostView;
+}
+
+// 独立監査 B2: 1 ページを超える新着を保留して適用し、読んだ範囲を捨てるときは、数も保留した先頭のページの数に置き換える。
+test('保留した新着の適用で読んだ範囲を捨てるときは、先頭のページの数に置き換える', async () => {
+  const baseApi = createDesktopMockApi();
+  let phase: 'initial' | 'newer' = 'initial';
+  const listTimeline = vi.fn(
+    async (_topic: string, cursor?: TimelineCursor | null): Promise<TimelineView> => {
+      if (cursor) return { items: [], next_cursor: cursorAt(2), unavailable_count: 5 };
+      if (phase === 'initial') {
+        return { items: [post('old-2', 1_000), post('old-1', 990)], next_cursor: cursorAt(1), unavailable_count: 0 };
+      }
+      // 表示中の行と重ならない、新しい側だけのページ(あいだができた)。
+      return { items: [post('new-2', 5_000), post('new-1', 4_990)], next_cursor: cursorAt(9), unavailable_count: 1 };
+    }
+  );
+  const api: DesktopApi = { ...baseApi, listTimeline };
+  const { harness, view } = renderDataHook(api);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(async () => {
+    await view.result.current.loadMoreTimeline('kukuri:topic:general');
+  });
+  expect(harness.store.getState().timelineUnavailableByKey[KEY]).toBe(5);
+
+  phase = 'newer';
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_MS);
+  });
+  expect(harness.store.getState().pendingTimelineCountsByKey[KEY]).toBe(2);
+  expect(harness.store.getState().timelineUnavailableByKey[KEY]).toBe(5);
+
+  await act(async () => {
+    view.result.current.applyPendingTimeline('kukuri:topic:general');
+  });
+  expect(harness.store.getState().timelinesByKey[KEY]?.map((item) => item.object_id)).toEqual([
+    'new-2',
+    'new-1',
+  ]);
+  expect(harness.store.getState().timelineUnavailableByKey[KEY]).toBe(1);
   view.unmount();
 });

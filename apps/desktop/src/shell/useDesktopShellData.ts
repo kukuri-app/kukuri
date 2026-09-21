@@ -146,6 +146,9 @@ export function useDesktopShellData({
   const setPendingTimelineNextCursorByKey = useDesktopShellFieldSetter(
     'pendingTimelineNextCursorByKey'
   );
+  const setPendingTimelineUnavailableByKey = useDesktopShellFieldSetter(
+    'pendingTimelineUnavailableByKey'
+  );
   const setJoinedChannelsByTopic = useDesktopShellFieldSetter('joinedChannelsByTopic');
   const setChannelPanelStateByTopic = useDesktopShellFieldSetter('channelPanelStateByTopic');
   const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
@@ -384,11 +387,13 @@ export function useDesktopShellData({
         return next;
       });
       setPendingTimelineNextCursorByKey(removeRecordEntry(key));
+      setPendingTimelineUnavailableByKey(removeRecordEntry(key));
     },
     [
       setPendingTimelineCountsByKey,
       setPendingTimelineNextCursorByKey,
       setPendingTimelineSnapshotsByKey,
+      setPendingTimelineUnavailableByKey,
     ]
   );
 
@@ -410,6 +415,7 @@ export function useDesktopShellData({
       }
       const currentTimelinePosts = currentState.timelinesByKey[key] ?? EMPTY_POSTS;
       const pendingCursor = currentState.pendingTimelineNextCursorByKey[key] ?? null;
+      const pendingUnavailable = currentState.pendingTimelineUnavailableByKey[key];
       // refresh と同じ判定で、表示中の古い行を残すかを決める(#1239、#1274)。refresh が読み進めた位置を残したとき、
       // 保留の続きの位置は保留中の先頭のページより先にある。判定が refresh と食い違うと、表示と続きの位置が
       // 食い違う(行が消える、または順序が崩れる)。
@@ -428,6 +434,10 @@ export function useDesktopShellData({
             preserveOlderPages
           )));
         setTimelineNextCursorByKey(setRecordEntry(key, pendingCursor));
+        // 読んだ範囲を捨てるときは、保留した先頭のページの数に置き換える(#1239 AC-4、独立監査 B2)。
+        if (!preserveOlderPages) {
+          setTimelineUnavailableByKey(setRecordEntry(key, pendingUnavailable ?? 0));
+        }
       });
       clearPendingTimeline(key);
       return true;
@@ -435,6 +445,7 @@ export function useDesktopShellData({
     [
       clearPendingTimeline,
       setTimelineNextCursorByKey,
+      setTimelineUnavailableByKey,
       setTimelinesByKey,
       storeApi,
     ]
@@ -522,6 +533,9 @@ export function useDesktopShellData({
             setPendingTimelineSnapshotsByKey(setRecordEntry(timelineKey, normalizedTimelineItems));
             setPendingTimelineCountsByKey(setRecordEntry(timelineKey, pendingCount));
             setPendingTimelineNextCursorByKey(setRecordEntry(timelineKey, resolvedTimelineCursor));
+            setPendingTimelineUnavailableByKey(
+              setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
+            );
           } else {
             setTimelinesByKey(updateRecordEntry(timelineKey, (prev) => mergeRefreshedVisiblePosts(
                 prev ?? EMPTY_POSTS,
@@ -639,6 +653,7 @@ export function useDesktopShellData({
       setPendingTimelineCountsByKey,
       setPendingTimelineNextCursorByKey,
       setPendingTimelineSnapshotsByKey,
+      setPendingTimelineUnavailableByKey,
       setThreadsById,
       setThreadNextCursorById,
       setThreadUnavailableById,
