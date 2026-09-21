@@ -20,6 +20,8 @@ const OWN_EDGE_BATCH: usize = 256;
 const OWN_EDGE_MAX_QUERIES: usize = 4_096;
 /// 読み出しを読み終えた印。
 pub(crate) const CHECKPOINT_DONE: &str = "done";
+/// 最初から読み直す印。
+pub(crate) const CHECKPOINT_RESTART: &str = "restart";
 /// 読み終えた最後の桶の前に付ける印。
 pub(crate) const CHECKPOINT_AFTER: &str = "after:";
 
@@ -251,8 +253,8 @@ pub(crate) async fn hydrate_author_key(
 /// `AUTHOR_EDGE_KEYS` 件を超えていても、自分の follow の一覧が欠けないようにする。
 ///
 /// 読み終えた桶の位置を store に残し(`sync_checkpoints`)、止まっても続きから読む。1 回の実行の query 数には上限があり、
-/// 上限に達したら位置を残して終わる(次の購読で続ける)。読み終えたら印を残し、以後この端末では行わない
-/// (読み終えた後の edge は、docs の event と追いつきの窓で入る)。
+/// 上限に達したら位置を残して終わる(次の購読で続ける)。読み終えたら印を残し、以後は行わない。読み終えた後の edge は、
+/// docs の event(key 単位)で入る。event を取りこぼしたとき(`Lagged`)だけ、`restart_own_author_edge_sweep` で最初から読み直す。
 pub(crate) async fn sweep_own_author_edges(
     services: &ServiceHandles,
     local_author_pubkey: &str,
@@ -276,7 +278,7 @@ pub(crate) async fn sweep_own_author_edges_with(
     let projection_store = services.projection_store.as_ref();
     let mut outcome = AuthorHydration::default();
     for prefix in ["graph/follows/", "graph/blocks/"] {
-        let checkpoint_key = format!("own-author-edges/{local_author_pubkey}/{prefix}");
+        let checkpoint_key = own_edge_checkpoint_key(local_author_pubkey, prefix);
         let checkpoint = projection_store
             .get_sync_checkpoint(&checkpoint_key)
             .await?;
@@ -294,17 +296,28 @@ pub(crate) async fn sweep_own_author_edges_with(
         {
             let mut seen = BTreeSet::new();
             for entry in entries {
-                if seen.insert(entry.key.clone()) {
-                    outcome.add(
-                        hydrate_author_record(
-                            services,
-                            local_author_pubkey,
-                            &replica,
-                            &entry.key,
-                            DocFetchPolicy::LocalOnly,
-                        )
-                        .await?,
-                    );
+                if !seen.insert(entry.key.clone()) {
+                    continue;
+                }
+                // 本体がまだ手元に無い key は、相手から取る。1 件の失敗で同じ位置に留まらないよう、飛ばして進む。
+                match hydrate_author_record(
+                    services,
+                    local_author_pubkey,
+                    &replica,
+                    &entry.key,
+                    DocFetchPolicy::LocalThenRemote,
+                )
+                .await
+                {
+                    Ok(reflected) => outcome.add(reflected),
+                    Err(error) => {
+                        warn!(
+                            author_pubkey = %local_author_pubkey,
+                            key = %entry.key,
+                            error = %error,
+                            "skipping an own edge that could not be read"
+                        );
+                    }
                 }
             }
             if let Some(bucket) = keys.last_bucket() {
@@ -325,6 +338,27 @@ pub(crate) async fn sweep_own_author_edges_with(
         rebuild_relationships(services, local_author_pubkey).await?;
     }
     Ok(outcome)
+}
+
+/// 自分の edge の読み出しを、最初からやり直す(#1239)。自分の replica の event を取りこぼしたとき(`Lagged`)に使う。
+/// どの key を取りこぼしたかは分からないので、読み終えた印があっても消す。
+pub(crate) async fn restart_own_author_edge_sweep(
+    projection_store: &dyn ProjectionStore,
+    local_author_pubkey: &str,
+) -> Result<()> {
+    for prefix in ["graph/follows/", "graph/blocks/"] {
+        projection_store
+            .put_sync_checkpoint(
+                &own_edge_checkpoint_key(local_author_pubkey, prefix),
+                CHECKPOINT_RESTART,
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+fn own_edge_checkpoint_key(local_author_pubkey: &str, prefix: &str) -> String {
+    format!("own-author-edges/{local_author_pubkey}/{prefix}")
 }
 
 /// author replica の key の種類。

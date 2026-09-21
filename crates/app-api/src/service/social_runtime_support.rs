@@ -361,22 +361,10 @@ impl AppService {
                 }
             });
             // #1239: 自分の replica の follow・block は、起動時の上限つきの一覧に収まらないことがある。背景で小分けに
-            // すべて読む。購読タスクが止まると、この task も止まる(次の購読でやり直す)。
-            let _own_edge_sweep = (author_key_for_task == local_author_pubkey).then(|| {
-                let services = services.clone();
-                let author_pubkey = author_key_for_task.clone();
-                AbortOnDrop(tokio::spawn(async move {
-                    if let Err(error) =
-                        sweep_own_author_edges(&services, author_pubkey.as_str()).await
-                    {
-                        warn!(
-                            author_pubkey = %author_pubkey,
-                            error = %error,
-                            "failed to read the own follow and block edges"
-                        );
-                    }
-                }))
-            });
+            // すべて読む(読み終えた位置を残し、読み終えたら繰り返さない)。購読タスクが止まると、この task も止まる。
+            let is_own_replica = author_key_for_task == local_author_pubkey;
+            let mut own_edge_sweep = is_own_replica
+                .then(|| spawn_own_edge_sweep(&services, author_key_for_task.as_str()));
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
             // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();
@@ -390,8 +378,34 @@ impl AppService {
                         };
                         let event = match notice {
                             Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => event,
-                            Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. })
-                            | Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
+                            Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. }) => {
+                                catch_up.request_now();
+                                // 自分の replica の event を取りこぼした。どの key かは分からないので、自分の edge の
+                                // 読み出しを最初からやり直す(読み終えた印があっても。新しい端末の最初の同期で、
+                                // 読み終えた後に大量の edge が届いた場合など)。
+                                if is_own_replica {
+                                    // 走っている読み出しを止めてから、位置を戻す(止めないと、古い位置で上書きされる)。
+                                    drop(own_edge_sweep.take());
+                                    if let Err(error) = restart_own_author_edge_sweep(
+                                        services.projection_store.as_ref(),
+                                        author_key_for_task.as_str(),
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            author_pubkey = %author_key_for_task,
+                                            error = %error,
+                                            "failed to restart the own follow and block edge reading"
+                                        );
+                                    }
+                                    own_edge_sweep.replace(spawn_own_edge_sweep(
+                                        &services,
+                                        author_key_for_task.as_str(),
+                                    ));
+                                }
+                                continue;
+                            }
+                            Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
                                 catch_up.request_now();
                                 continue;
                             }
@@ -536,6 +550,21 @@ impl AppService {
             .insert(author_key, handle);
         Ok(())
     }
+}
+
+/// 自分の replica の follow・block の edge を、背景で小分けに読む task を起動する(#1239)。
+fn spawn_own_edge_sweep(services: &ServiceHandles, author_pubkey: &str) -> AbortOnDrop {
+    let services = services.clone();
+    let author_pubkey = author_pubkey.to_string();
+    AbortOnDrop(tokio::spawn(async move {
+        if let Err(error) = sweep_own_author_edges(&services, author_pubkey.as_str()).await {
+            warn!(
+                author_pubkey = %author_pubkey,
+                error = %error,
+                "failed to read the own follow and block edges"
+            );
+        }
+    }))
 }
 
 /// drop されたときに task を止める。親の task が abort されると、その future と一緒に drop される。

@@ -185,7 +185,8 @@ pub(crate) use attachment_support::{
     subscription_replicas_for_topic, validate_game_room_scores, validate_game_room_transition,
 };
 pub(crate) use author_state_support::{
-    catch_up_author_state, hydrate_author_key, hydrate_author_state, sweep_own_author_edges,
+    catch_up_author_state, hydrate_author_key, hydrate_author_state, restart_own_author_edge_sweep,
+    sweep_own_author_edges,
 };
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
 pub(crate) use hydration_support::{

@@ -807,3 +807,78 @@ async fn the_envelope_fetch_returns_the_envelope_with_the_requested_id() {
 
     assert_eq!(fetched.id, wanted.id);
 }
+
+// 新しい端末で、自分の edge の読み出しが同期より先に読み終えても、その後の同期で取りこぼした edge は、取りこぼしの
+// 通知から最初に戻って読み直す(独立監査 B-4)。取りこぼしの無い同期の区切りでは読み直さない。
+#[tokio::test]
+async fn a_lag_after_the_own_edge_sweep_restarts_it() {
+    let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
+    let local_keys = generate_keys();
+    let local_author_pubkey = local_keys.public_key_hex();
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        docs_sync.clone(),
+        Arc::new(MemoryBlobService::default()),
+        local_keys.clone(),
+    );
+    let checkpoint_key = format!("own-author-edges/{local_author_pubkey}/graph/follows/");
+    app.spawn_author_subscription(local_author_pubkey.as_str())
+        .await
+        .expect("subscribe myself");
+    timeout(Duration::from_secs(10), async {
+        while store
+            .get_sync_checkpoint(&checkpoint_key)
+            .await
+            .expect("checkpoint")
+            .as_deref()
+            != Some("done")
+        {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the sweep over the empty replica finishes");
+
+    // 同期で、窓を超える数の自分の follow が届いた。entry の event は購読側へ届かない(取りこぼした)。
+    put_follow_edges(docs_sync.as_ref(), &local_keys, AUTHOR_EDGE_KEYS + 40).await;
+    docs_sync
+        .notices
+        .send(ReplicaNotice::SyncFinished)
+        .expect("sync finished");
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        store
+            .get_sync_checkpoint(&checkpoint_key)
+            .await
+            .expect("checkpoint")
+            .as_deref(),
+        Some("done"),
+        "a sync without a lag does not restart the reading"
+    );
+    docs_sync
+        .notices
+        .send(ReplicaNotice::Lagged { missed: 600 })
+        .expect("lagged");
+
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let count = store
+                .list_follow_edges_by_subject(local_author_pubkey.as_str())
+                .await
+                .expect("own follow edges")
+                .len();
+            if count == AUTHOR_EDGE_KEYS + 40 {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the lag restarts the reading of every own follow");
+    app.shutdown().await;
+}
