@@ -5,7 +5,7 @@
 //! 書き込みが後から着地しうる。また、取りこぼしが続くあいだ毎回やり直すと、進みを捨て続ける)。
 //!
 //! 同期で届いた自分の投稿は、key の event の時点では本体がまだ手元に無いことが多い。索引を足せなかった key は上限つきで覚え、
-//! 本体の到着・同期の区切り・envelope の event のときに試し直す。上限を超えたら、補完のやり直しを依頼する。
+//! 本体の到着・同期の区切りのときに試し直す。上限を超えたら、補完のやり直しを依頼する。
 //! 覚えた key と、やり直しの依頼は store(`sync_checkpoints`)に置き、購読の張り直しや再起動をまたいで引き継ぐ。
 //! 自分の docs author が書いた entry(今の版の投稿。索引も同時に書く)は覚えない。
 
@@ -151,26 +151,27 @@ impl OwnReplicaWork {
         if running(&self.edge_sweep) || running(&self.profile_backfill) {
             return;
         }
-        self.restart_requested = false;
         let projection_store = services.projection_store.as_ref();
-        if let Err(error) =
-            restart_own_author_edge_sweep(projection_store, self.author_pubkey.as_str()).await
-        {
-            warn!(
-                author_pubkey = %self.author_pubkey,
-                error = %error,
-                "failed to restart the own follow and block edge reading"
-            );
+        let restarted = match (
+            restart_own_author_edge_sweep(projection_store, self.author_pubkey.as_str()).await,
+            restart_own_profile_index_backfill(projection_store, self.author_pubkey.as_str()).await,
+        ) {
+            (Ok(()), Ok(())) => true,
+            (edges, profile) => {
+                warn!(
+                    author_pubkey = %self.author_pubkey,
+                    edges_error = ?edges.err(),
+                    profile_error = ?profile.err(),
+                    "failed to restart the own replica work; the request is kept"
+                );
+                false
+            }
+        };
+        if !restarted {
+            // 位置を戻せなかった。依頼は消さず、次の tick で試し直す。
+            return;
         }
-        if let Err(error) =
-            restart_own_profile_index_backfill(projection_store, self.author_pubkey.as_str()).await
-        {
-            warn!(
-                author_pubkey = %self.author_pubkey,
-                error = %error,
-                "failed to restart the profile index backfill"
-            );
-        }
+        self.restart_requested = false;
         // 位置を戻した後で依頼を消す(先に消すと、その間に張り直されたとき依頼が失われる)。
         if let Err(error) = projection_store
             .put_sync_checkpoint(&self.restart_checkpoint_key(), CHECKPOINT_DONE)

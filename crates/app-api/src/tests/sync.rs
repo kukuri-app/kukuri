@@ -422,6 +422,7 @@ mod range_reconcile_faults;
 mod range_reconcile_ledger;
 mod range_reconcile_reactions;
 mod range_reconcile_walk;
+mod scale_counts;
 mod scale_independence;
 mod session_catch_up;
 mod shadowing_docs;
