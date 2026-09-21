@@ -3,7 +3,8 @@
 
 use super::*;
 use crate::service::profile_timeline_support::{
-    backfill_own_profile_index_with, index_own_profile_key, restart_own_profile_index_backfill,
+    OwnProfileIndex, backfill_own_profile_index_with, index_own_profile_key,
+    restart_own_profile_index_backfill,
 };
 
 const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -287,14 +288,15 @@ async fn own_legacy_posts_arriving_after_the_backfill_are_indexed() {
     assert!(visible(&fixture).await.is_empty());
 
     // 1 件は、その key の event で索引が足される。
-    assert!(
+    assert_eq!(
         index_own_profile_key(
             fixture.docs_sync.as_ref(),
             fixture.pubkey.as_str(),
             stable_key("profile/posts", by_event.as_str()).as_str(),
         )
         .await
-        .expect("index by event")
+        .expect("index by event"),
+        OwnProfileIndex::Indexed
     );
     // もう 1 件は、event を取りこぼした後の補完のやり直しで拾われる。
     restart_own_profile_index_backfill(projection, fixture.pubkey.as_str())
@@ -397,4 +399,48 @@ async fn future_index_keys_by_another_docs_author_do_not_empty_the_first_page() 
             .collect::<Vec<_>>(),
         ids
     );
+}
+
+// 他人が同じ索引の key を先に置いていても、自分の名義の索引を書く(docs author を知る閲覧者は自分の名義の索引だけを読む)。
+#[tokio::test]
+async fn an_index_key_placed_by_another_docs_author_does_not_stop_the_own_index() {
+    let fixture = fixture().await;
+    let created_at = BASE_TIME + 5;
+    let id = put_post(&fixture, created_at, false).await;
+    let object_id = EnvelopeId::from(id.as_str());
+    put_other(
+        &fixture,
+        stable_key(
+            "indexes/profile",
+            &format!(
+                "{}/{}",
+                timeline_sort_key(created_at, &object_id),
+                object_id.as_str()
+            ),
+        ),
+    )
+    .await;
+    // 補い終えた印が自分の名義にある(閲覧者は旧 record を合わせず、索引だけを読む)状態で、補完する。
+    fixture
+        .docs_sync
+        .apply_doc_op(
+            &author_replica_id(fixture.pubkey.as_str()),
+            DocOp::SetJson {
+                key: "indexes/profile-complete".into(),
+                value: serde_json::json!({ "version": 1 }),
+            },
+        )
+        .await
+        .expect("the own completion marker");
+    backfill_own_profile_index_with(
+        fixture.docs_sync.as_ref(),
+        fixture.store.as_ref(),
+        fixture.pubkey.as_str(),
+        16,
+        64,
+    )
+    .await
+    .expect("backfill");
+
+    assert_eq!(visible(&fixture).await, vec![id]);
 }

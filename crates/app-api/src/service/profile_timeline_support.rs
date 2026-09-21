@@ -659,13 +659,12 @@ pub(crate) async fn index_own_profile_key(
     docs_sync: &dyn DocsSync,
     author_pubkey: &str,
     key: &str,
-) -> Result<bool> {
-    let (object_id, kind) = if let Some(object_id) = key.strip_prefix("profile/posts/") {
-        (object_id, "post")
-    } else if let Some(object_id) = key.strip_prefix("profile/reposts/") {
-        (object_id, "repost")
-    } else {
-        return Ok(false);
+) -> Result<OwnProfileIndex> {
+    let Some(object_id) = key
+        .strip_prefix("profile/posts/")
+        .or_else(|| key.strip_prefix("profile/reposts/"))
+    else {
+        return Ok(OwnProfileIndex::NotProfileKey);
     };
     let replica = author_replica_id(author_pubkey);
     let docs_author = docs_sync.local_docs_author().await?;
@@ -678,7 +677,8 @@ pub(crate) async fn index_own_profile_key(
     )
     .await?
     else {
-        return Ok(false);
+        // 本体(doc か envelope)がまだ手元に無いか、検証に通らない。
+        return Ok(OwnProfileIndex::NotReadable);
     };
     let index_key = profile_index_key(item.created_at(), item.object_id());
     if index_entry_exists(
@@ -689,15 +689,36 @@ pub(crate) async fn index_own_profile_key(
     )
     .await?
     {
-        return Ok(false);
+        return Ok(OwnProfileIndex::Present);
     }
     persist_profile_index_entry(
         docs_sync,
         &replica,
         item.created_at(),
         item.object_id(),
-        kind,
+        item_kind(&item),
     )
     .await?;
-    Ok(true)
+    Ok(OwnProfileIndex::Indexed)
+}
+
+/// `index_own_profile_key` の結果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OwnProfileIndex {
+    /// 索引を足した。
+    Indexed,
+    /// 自分の名義の索引が既にある。
+    Present,
+    /// 行を読めない(本体がまだ手元に無い、または検証に通らない)。
+    NotReadable,
+    /// 投稿・repost の key ではない。
+    NotProfileKey,
+}
+
+/// 索引の値に入れる行の種類(読んだ行から決める。key の prefix と食い違うことがある)。
+fn item_kind(item: &ProfileTimelineItem) -> &'static str {
+    match item {
+        ProfileTimelineItem::Post(_) => "post",
+        ProfileTimelineItem::Repost(_) => "repost",
+    }
 }

@@ -415,6 +415,7 @@ mod non_utf8_key;
 mod page_bounds;
 mod profile_index;
 mod profile_index_attacks;
+mod profile_index_sync;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;

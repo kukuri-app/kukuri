@@ -370,15 +370,10 @@ impl AppService {
                     }
                 }
             }));
-            // #1239: 自分の replica の follow・block は、起動時の上限つきの一覧に収まらないことがある。背景で小分けに
-            // すべて読む(読み終えた位置を残し、読み終えたら繰り返さない)。購読タスクが止まると、この task も止まる。
-            let is_own_replica = author_key_for_task == local_author_pubkey;
-            let mut own_edge_sweep = is_own_replica
-                .then(|| spawn_own_edge_sweep(&services, author_key_for_task.as_str()));
-            // #1239: 自分の replica の、索引を書く前の版が書いた投稿・repost に、プロフィールの索引を背景で補う
-            // (読み終えた位置を残して再開する)。購読タスクが止まると、補う task も止まる。
-            let mut profile_index_backfill = is_own_replica
-                .then(|| spawn_profile_index_backfill(&services, author_key_for_task.as_str()));
+            // #1239: 自分の replica の背景の仕事(自分の follow・block の読み出しと、プロフィールの索引の補完)。
+            // 購読タスクが止まると、仕事の task も止まる。
+            let mut own_work = (author_key_for_task == local_author_pubkey)
+                .then(|| OwnReplicaWork::start(&services, author_key_for_task.as_str()));
             // #1239: replica は走査しない。docs の event はその key だけを反映する。取りこぼしと同期の区切りでは、
             // 上限つきの追いつき(`catch_up_author_state`)を間隔を空けて 1 回にまとめる。
             let mut catch_up = CatchUpSchedule::default();
@@ -394,55 +389,25 @@ impl AppService {
                             Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => event,
                             Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. }) => {
                                 catch_up.request_now();
-                                // 自分の replica の event を取りこぼした。どの key かは分からないので、自分の edge の
-                                // 読み出しを最初からやり直す(読み終えた印があっても。新しい端末の最初の同期で、
-                                // 読み終えた後に大量の edge が届いた場合など)。
-                                if is_own_replica {
-                                    // 走っている読み出しを止めてから、位置を戻す(止めないと、古い位置で上書きされる)。
-                                    drop(own_edge_sweep.take());
-                                    if let Err(error) = restart_own_author_edge_sweep(
-                                        services.projection_store.as_ref(),
-                                        author_key_for_task.as_str(),
-                                    )
-                                    .await
-                                    {
-                                        warn!(
-                                            author_pubkey = %author_key_for_task,
-                                            error = %error,
-                                            "failed to restart the own follow and block edge reading"
-                                        );
-                                    }
-                                    own_edge_sweep.replace(spawn_own_edge_sweep(
-                                        &services,
-                                        author_key_for_task.as_str(),
-                                    ));
-                                    // プロフィールの索引の補完も、取りこぼした投稿を拾うよう最初からやり直す。
-                                    drop(profile_index_backfill.take());
-                                    if let Err(error) = restart_own_profile_index_backfill(
-                                        services.projection_store.as_ref(),
-                                        author_key_for_task.as_str(),
-                                    )
-                                    .await
-                                    {
-                                        warn!(
-                                            author_pubkey = %author_key_for_task,
-                                            error = %error,
-                                            "failed to restart the profile index backfill"
-                                        );
-                                    }
-                                    profile_index_backfill.replace(spawn_profile_index_backfill(
-                                        &services,
-                                        author_key_for_task.as_str(),
-                                    ));
+                                // 自分の replica の event を取りこぼした。どの key かは分からないので、背景の仕事の
+                                // 最初からのやり直しを依頼する(走っている仕事が終わってから、1 回にまとめる)。
+                                if let Some(own_work) = own_work.as_mut() {
+                                    own_work.request_restart();
                                 }
                                 continue;
                             }
                             Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
                                 catch_up.request_now();
+                                if let Some(own_work) = own_work.as_mut() {
+                                    own_work.retry_pending(&services).await;
+                                }
                                 continue;
                             }
                             Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished) => {
                                 catch_up.request();
+                                if let Some(own_work) = own_work.as_mut() {
+                                    own_work.retry_pending(&services).await;
+                                }
                                 continue;
                             }
                             Err(_) => continue,
@@ -493,21 +458,9 @@ impl AppService {
                             }
                         }
                         // 自分の replica に届いた投稿・repost に索引が無ければ足す(索引を書く前の版の端末が書いた投稿が、
-                        // 補完を読み終えた後に届いた場合)。追記だけで、既存の状態を巻き戻さない。
-                        if is_own_replica
-                            && let Err(error) = index_own_profile_key(
-                                services.docs_sync.as_ref(),
-                                author_key_for_task.as_str(),
-                                event.key.as_str(),
-                            )
-                            .await
-                        {
-                            warn!(
-                                author_pubkey = %author_key_for_task,
-                                key = %event.key,
-                                error = %error,
-                                "failed to index an own profile post"
-                            );
+                        // 補完を読み終えた後に届いた場合)。本体がまだ無ければ覚えて、後で試し直す。
+                        if let Some(own_work) = own_work.as_mut() {
+                            own_work.on_entry(&services, event.key.as_str()).await;
                         }
                         match hydrate_author_key(
                             &services,
@@ -553,6 +506,9 @@ impl AppService {
                         }
                     }
                     _ = catch_up_tick.tick() => {
+                        if let Some(own_work) = own_work.as_mut() {
+                            own_work.on_tick(&services).await;
+                        }
                         let Some(run) = catch_up.take_due(Utc::now().timestamp_millis()) else {
                             continue;
                         };
@@ -598,51 +554,5 @@ impl AppService {
             .await
             .insert(author_key, handle);
         Ok(())
-    }
-}
-
-/// 自分の replica の follow・block の edge を、背景で小分けに読む task を起動する(#1239)。
-fn spawn_own_edge_sweep(services: &ServiceHandles, author_pubkey: &str) -> AbortOnDrop {
-    let services = services.clone();
-    let author_pubkey = author_pubkey.to_string();
-    AbortOnDrop(tokio::spawn(async move {
-        if let Err(error) = sweep_own_author_edges(&services, author_pubkey.as_str()).await {
-            warn!(
-                author_pubkey = %author_pubkey,
-                error = %error,
-                "failed to read the own follow and block edges"
-            );
-        }
-    }))
-}
-
-/// 自分の replica のプロフィールの索引を、背景で補う task を起動する(#1239)。
-fn spawn_profile_index_backfill(services: &ServiceHandles, author_pubkey: &str) -> AbortOnDrop {
-    let docs_sync = Arc::clone(&services.docs_sync);
-    let projection_store = Arc::clone(&services.projection_store);
-    let author_pubkey = author_pubkey.to_string();
-    AbortOnDrop(tokio::spawn(async move {
-        if let Err(error) = backfill_own_profile_index(
-            docs_sync.as_ref(),
-            projection_store.as_ref(),
-            author_pubkey.as_str(),
-        )
-        .await
-        {
-            warn!(
-                author_pubkey = %author_pubkey,
-                error = %error,
-                "failed to backfill the profile index"
-            );
-        }
-    }))
-}
-
-/// drop されたときに task を止める。親の task が abort されると、その future と一緒に drop される。
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
     }
 }

@@ -736,3 +736,19 @@ test（`crates/app-api/src/tests/sync/profile_index.rs`）: 取得が読む量�
 
 残した non-blocker: 印の無い replica では取得のたびに最大 256 行を読む、desktop がプロフィールの続き（`next_cursor`）を読まない、空の結果での購読のやり直しの条件の変化、
 索引の値の `kind` を読み手が使っていない、`profile-index-backfill/…` の checkpoint が削除されない。
+
+### 独立監査の 2 回目（delta `c1183fa2..e09ebc5a`、FAIL）と修正
+
+B-1・B-3・B-4 の解消と、`query_time_index_desc_by_author` の追加が既存の名義を問わない読み出し（タイムライン・thread の照合・窓）を変えないことは確認された。
+
+| 指摘 | 原因 | 修正 |
+| --- | --- | --- |
+| B-2': 同期で届いた自分の投稿は、key の event の時点では本体がまだ無い。event での索引の追記が何もせずに終わり、後から本体がそろっても試し直さないので、印のある replica ではその投稿が見えないまま | 読めなかった key を覚えていなかった | 読めなかった key を上限つき（512 件）で覚え、本体の到着（`ContentReady`）・同期の区切り・envelope の event のときに試し直す。覚えた key は store の `sync_checkpoints` に置き、購読の張り直し（空の結果での張り直しなど）をまたいで引き継ぐ。上限を超えたら補完のやり直しを依頼する（`own_replica_work.rs` の `OwnReplicaWork`）。test `an_own_legacy_post_whose_content_arrives_later_is_indexed`（本体を後から出す double で、購読の経路を通す。覚える処理・購読からの受け渡しを外す mutation で失敗する） |
+
+同じ監査の non-blocker のうち、この段階で直したもの。
+
+- 取りこぼしのたびに補完と自分の edge の読み出しを止めて最初からやり直していた。依頼として覚え、走っている仕事が終わってから 1 回にまとめてやり直す（止めた仕事の位置の書き込みが後から着地する競合も無くなる）。
+- 自分の索引の有無を自分の名義で見ることを test で固定した（`an_index_key_placed_by_another_docs_author_does_not_stop_the_own_index`）。
+- 索引の値の `kind` を、key の prefix ではなく読んだ行から決める。
+- docs author を知らない閲覧者の読み出し量が、投稿の数が上限を超えると増えないことを test で固定した（`a_stranger_reads_a_bounded_amount_regardless_of_the_post_count`、200 件と 1,000 件）。
+- docs author を知らない閲覧者の限界（他の名義の key でページを埋められうる）を ADR 0052 §6 に書いた。
