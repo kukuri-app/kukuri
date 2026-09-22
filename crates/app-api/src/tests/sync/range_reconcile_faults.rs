@@ -370,6 +370,13 @@ impl RemoteOnlyBlobService {
 
 #[async_trait]
 impl BlobService for RemoteOnlyBlobService {
+    async fn fetch_local_blob(
+        &self,
+        _hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         self.inner.put_blob(data, mime).await
     }

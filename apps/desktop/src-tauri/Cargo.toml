@@ -57,3 +57,5 @@ tempfile = "3.27.0"
 
 [patch.crates-io]
 netwatch = { git = "https://github.com/n0-computer/net-tools", rev = "e9afb4dda300dda06193b5046ba7a05e5d176e22" }
+# Keep the standalone Tauri workspace on the same docs error-path fix as the root.
+iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d14853cb4db9966e30050bac1e689cdeec8" }

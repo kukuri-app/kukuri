@@ -470,6 +470,9 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 
 - 公開bucketのentryは、検索・発見・おすすめの`IndexEntryView`へoptionalな`source_replica_id`を付ける。
   legacyとprivateのentryではfieldを省略し、従来の読取り経路を維持する。fieldのない旧応答も受け入れる。
+- source・author・created_atはquery gateで照合した確定済み索引から返す。遅延した検索投影のmetadataを保存先の根拠にしない。
+- 新locatorのLocalOnly読取りは既存namespaceのexact keyに限り、不存在namespaceの登録や常駐handleを増やさない。
+  namespaceが削除されても検証済みの保存projectionは表示でき、既知の取り下げは引き続き本文・添付を隠す。
 - locatorは権限やcanonical本文の証明ではない。clientは要求topic・版・scopeを読取り前に照合し、
   指定先の署名済みenvelopeとbucketの時刻を検証する。未知版・不一致を旧replicaへの自動fallbackにしない。
 - clientの先行readerはLocalOnlyで解決する。保存済みprojectionがあればそのcanonical sourceを使い、

@@ -25,10 +25,15 @@ Issue #1207 の AC-1 / AC-2 として、desktop が blob（画像・動画・本
 | --- | --- | --- |
 | `blob_media_payload`（表示要求） | store から読む。network I/O 0 | 成人向け・advisory の対象でなければ `fetch_blob`（remote から取得して store へ保存）。対象で表示 ON なら `fetch_blob_ephemeral`（保存しない）。対象で表示 OFF なら network I/O も local 読み出しも行わず `None` |
 | 本文・manifest（`fetch_projection_blob_text` / `fetch_manifest_blob`） | 同上 | `fetch_blob` を外側 timeout（Windows 5 秒、その他 2 秒）つきで待つ |
+| LocalOnlyの本文（`fetch_local_projection_blob_text` / `fetch_local_blob`） | local storeのbytesだけを読む | 未取得またはlocal I/O失敗。remoteへfallbackしない |
 | 表示用の状態（`local_blob_status`） | `Available` / `Pinned` | `Missing`。remote 取得しない |
 | `blob_status` | `Available` / `Pinned` | 内部で `fetch_blob` を呼ぶ（remote 取得を伴う） |
 | docs entry の本文 | docs の store から読む | `fetch_bytes_with_cooldown`（docs-sync 側の retry state） |
 | CN の scan 用取得 | store から上限つきで読む | `fetch_blob_ephemeral_bounded`（保存しない、大きさ上限つき） |
+
+状態はbytesの読取り成功を保証しない。`Available`確認後の削除・I/O失敗や、実体の無いpin記録もあるため、
+LocalOnlyの読取りを状態確認とremote可能な`fetch_blob`の組合せで実装しない。既存の`fetch_local_blob`を使い、
+Memory/Iroh/Reloadableの各adapterがlocal sinkを明示する。未対応adapterの既定実装はNoneを返す。取得できなかった本文はviewでもMissingとして扱う（#1243）。
 
 remote 取得の 1 走査は、順位付けした全 peer の接続候補を順に試す。候補ごとに connect 5 秒・転送 15 秒、走査全体で 30 秒を上限とする
 （`crates/iroh-node/src/remote_fetch.rs`）。

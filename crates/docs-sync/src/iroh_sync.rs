@@ -25,6 +25,8 @@ use crate::types::{
 
 #[path = "iroh_sync_lifecycle.rs"]
 mod lifecycle;
+#[path = "iroh_local_source.rs"]
+mod local_source;
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
 struct ReplicaHandle {
@@ -498,6 +500,17 @@ pub(crate) fn bounded_exact_query(key: &str, limit: usize) -> Query {
 
 #[async_trait]
 impl DocsSync for IrohDocsSync {
+    async fn query_local_source(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocRecord>> {
+        self.read_local_source_owned(replica, key, author, limit)
+            .await
+    }
+
     async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         self.close_replica_owned(replica_id, false).await
     }

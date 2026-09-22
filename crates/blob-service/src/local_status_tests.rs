@@ -80,6 +80,30 @@ async fn local_blob_status_does_not_fetch_or_persist_remote_blob() {
             .expect("display does not cache"),
         None
     );
+    // pin記録だけがあり、実体は健全なremote peerにしか無い場合もローカル読取りは取得しない。
+    receiver
+        .pin_blob(&stored.hash)
+        .await
+        .expect("pin missing bytes");
+    assert_eq!(
+        receiver
+            .local_blob_status(&stored.hash)
+            .await
+            .expect("pin state"),
+        BlobStatus::Pinned
+    );
+    assert_eq!(
+        receiver
+            .fetch_local_blob(&stored.hash)
+            .await
+            .expect("local bytes"),
+        None
+    );
+    assert!(receiver_node.blobs().blobs().get_bytes(hash).await.is_err());
+    receiver
+        .unpin_blob(&stored.hash)
+        .await
+        .expect("remove test pin");
 
     assert_eq!(
         sender
@@ -111,6 +135,13 @@ async fn local_blob_status_does_not_fetch_or_persist_remote_blob() {
             .await
             .expect("receiver local status after fetch"),
         BlobStatus::Available
+    );
+    assert_eq!(
+        receiver
+            .fetch_local_blob(&stored.hash)
+            .await
+            .expect("downloaded local bytes"),
+        Some(b"remote-only-attachment".to_vec())
     );
 }
 

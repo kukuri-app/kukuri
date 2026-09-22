@@ -35,6 +35,9 @@ use kukuri_cn_safety_runtime::MemorySafetyArtifactStore;
 pub struct SurfaceableEntry {
     pub scope_id: String,
     pub object_id: String,
+    pub source_replica_id: String,
+    pub author_pubkey: String,
+    pub created_at: i64,
     pub content_advisories: Vec<ContentAdvisory>,
 }
 
@@ -208,7 +211,7 @@ pub async fn filter_surfaceable_objects(
     let scope_ids: Vec<&str> = candidates.iter().map(|(s, _)| s.as_str()).collect();
     let object_ids: Vec<&str> = candidates.iter().map(|(_, o)| o.as_str()).collect();
     let rows = sqlx::query(
-        "SELECT e.scope_id, e.object_id, v.advisory_labels
+        "SELECT e.scope_id, e.object_id, e.source_replica_id, e.author_pubkey, e.created_at, v.advisory_labels
          FROM UNNEST($2::text[], $3::text[]) AS candidate (scope_id, object_id)
          JOIN cn_index.index_entries e
            ON e.scope_kind = $1
@@ -237,6 +240,9 @@ pub async fn filter_surfaceable_objects(
             Ok(SurfaceableEntry {
                 scope_id: row.try_get::<String, _>("scope_id")?,
                 object_id: row.try_get::<String, _>("object_id")?,
+                source_replica_id: row.try_get("source_replica_id")?,
+                author_pubkey: row.try_get("author_pubkey")?,
+                created_at: row.try_get("created_at")?,
                 content_advisories: serde_json::from_value(advisory_labels)?,
             })
         })
@@ -542,6 +548,9 @@ impl IndexEntryStore for MemoryIndexEntryStore {
                     SurfaceableEntry {
                         scope_id: scope_id.clone(),
                         object_id: object_id.clone(),
+                        source_replica_id: entry.source_replica_id.clone(),
+                        author_pubkey: entry.author_pubkey.clone(),
+                        created_at: entry.created_at,
                         content_advisories: stored.advisories.clone(),
                     }
                 })

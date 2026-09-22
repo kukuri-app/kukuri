@@ -3,7 +3,7 @@
 ## 現在状態
 
 - Issue: [#1243](https://github.com/kukuri-app/kukuri/issues/1243)
-- 状態: In progress（基盤#1294は完了。T1の詳細設計とCN#1293を継続）。親の実装・達成監査は未完了。
+- 状態: 作業管理を#1221本文へ統合。旧#1243/#1224/#1294は管理上Close、CNの#1293は例外Open。現在は#1221 P1として#1303を完成中。
 - リスク区分: C。
 - Scope revision: `2026-09-20-v1`（Issue の AC-1〜5、INVAR-1〜4）。
 - CN 側の子 Issue: [#1293](https://github.com/kukuri-app/kukuri/issues/1293)（GitHub の sub-issue 関係も登録済み）。
@@ -12,6 +12,13 @@
 - 2026-09-22: ユーザーが下記の段階計画、Issue 関連作業、コミット、PR 作成、マージを承認。
   マージ条件は必須 CI 成功と対象 PR head の独立監査 PASS。承認は本番デプロイを含まない。
 - `.codegraph/` は存在するが `codegraph explore` が利用可能な index なしと返したため、`rg` と直接読み取りへ切り替えた。index は作成していない。
+- #1224は別タスクでは進めていないとユーザーが回答。新形式writerの前提となる共通ownerの設計を本作業の依存として整理する。
+- #1303のLocalOnly監査指摘と、全体testで再現したdocs actor panicへの対応は
+  [source locator作業記録](./2026-09-22-1243-source-locators.md)に記録する。#1294の過去の完了監査を消さず、
+  同じAC-4に結び付く最小の修正・再検証として扱う。
+- #1224前の既知の手戻り部分の先行整理として、停止操作をtask所有から分離した#1305をmerge。
+  head `e0da6436`の独立delta監査PASS、CI全13件成功、merge `02ab5196`と対象3pathの一致を確認。
+  上限・優先順位・共通owner APIは決めていない。#1243全体とDraft #1303は保留を維持する。
 
 ## 承認済み計画
 

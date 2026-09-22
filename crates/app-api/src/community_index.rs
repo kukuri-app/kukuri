@@ -1,4 +1,7 @@
 use crate::service::*;
+#[path = "community_index_source_reader.rs"]
+mod reader;
+use reader::LocalSourceReader;
 
 impl AppService {
     pub async fn resolve_community_index_posts(
@@ -242,8 +245,12 @@ impl AppService {
                     ),
                 "cached post does not belong to the requested public source"
             );
+            let reader = LocalSourceReader {
+                docs: self.services.docs_sync.clone(),
+                replica: cached.source_replica_id.clone(),
+            };
             hydrate_post_withdrawal_for_object_with_hints(
-                self.services.docs_sync.as_ref(),
+                &reader,
                 self.services.projection_store.as_ref(),
                 &cached.source_replica_id,
                 &object_id,
@@ -256,8 +263,13 @@ impl AppService {
             .await?;
             return Ok(true);
         }
+        let mut services = self.services.clone();
+        services.docs_sync = Arc::new(LocalSourceReader {
+            docs: self.services.docs_sync.clone(),
+            replica: ReplicaId::new(source),
+        });
         Ok(hydrate_object_in_topic_with(
-            &self.services,
+            &services,
             topic,
             &ReplicaId::new(source),
             &object_id,
@@ -306,8 +318,12 @@ impl AppService {
             } else {
                 (fallback, None)
             };
+            let reader = LocalSourceReader {
+                docs: self.services.docs_sync.clone(),
+                replica: replica.clone(),
+            };
             hydrate_post_withdrawal_for_object_with_hints(
-                self.services.docs_sync.as_ref(),
+                &reader,
                 self.services.projection_store.as_ref(),
                 &replica,
                 target,

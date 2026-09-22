@@ -322,6 +322,9 @@ async fn filter_surfaceable_objects_excludes_non_allow_and_unknown() -> Result<(
         assert_eq!(
             surfaceable,
             vec![SurfaceableEntry {
+                source_replica_id: "topic::rust".into(),
+                author_pubkey: "author-pubkey".into(),
+                created_at: 1_700_000_000,
                 scope_id: "rust".to_string(),
                 object_id: "post-kept".to_string(),
                 content_advisories: Vec::new(),
@@ -543,11 +546,17 @@ async fn index_entry_advisories_derive_from_latest_verdict() -> Result<()> {
             surfaceable,
             vec![
                 SurfaceableEntry {
+                    source_replica_id: "topic::rust".into(),
+                    author_pubkey: "author-pubkey".into(),
+                    created_at: 1_700_000_000,
                     scope_id: "rust".to_string(),
                     object_id: "post-adv".to_string(),
                     content_advisories: vec![text_advisory.clone()],
                 },
                 SurfaceableEntry {
+                    source_replica_id: "topic::rust".into(),
+                    author_pubkey: "author-pubkey".into(),
+                    created_at: 1_700_000_000,
                     scope_id: "rust".to_string(),
                     object_id: "post-plain".to_string(),
                     content_advisories: Vec::new(),

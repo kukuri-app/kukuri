@@ -380,3 +380,33 @@ async fn query_limit_is_clamped() -> Result<()> {
     assert_eq!(hits.len(), 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn query_locator_uses_authoritative_source_when_projection_is_stale() -> Result<()> {
+    let f = fixture();
+    let replica = topic_replica_id("rust");
+    persist_post(&f.docs, &replica, &TopicId::new("rust"), "source test").await;
+    f.pipeline
+        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .await?;
+    let mut hit = f
+        .projection
+        .entries_in_scope(IndexScopeKind::PublicTopic, "rust")
+        .await
+        .remove(0);
+    let author = hit.author_pubkey.clone();
+    let created_at = hit.created_at;
+    hit.created_at = 0;
+    hit.source_replica_id = "topic::wrong-source".into();
+    hit.author_pubkey = "wrong-author".into();
+    f.projection.upsert_entry(&hit).await?;
+    let hits = f
+        .query
+        .search_scope(IndexScopeKind::PublicTopic, "rust", "source test", 1)
+        .await?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].source_replica_id, replica.as_str());
+    assert_eq!(hits[0].author_pubkey, author);
+    assert_eq!(hits[0].created_at, created_at);
+    Ok(())
+}

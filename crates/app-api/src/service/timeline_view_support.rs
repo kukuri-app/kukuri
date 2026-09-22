@@ -154,6 +154,8 @@ impl AppService {
         let repost_commentary = normalize_repost_commentary(row.content.clone());
         let content_status = if is_withdrawn || row.object_kind == "repost" {
             BlobViewStatus::Available
+        } else if row.content.is_none() && matches!(row.payload_ref, PayloadRef::BlobText { .. }) {
+            BlobViewStatus::Missing
         } else {
             blob_view_status_for_payload(self.services.blob_service.as_ref(), &row.payload_ref)
                 .await?
@@ -321,6 +323,8 @@ impl AppService {
         inherit_post_observation_for_attachments(&mut attachments, provenance.as_ref());
         let content_status = if is_withdrawn {
             BlobViewStatus::Available
+        } else if row.content.is_none() && matches!(row.payload_ref, PayloadRef::BlobText { .. }) {
+            BlobViewStatus::Missing
         } else {
             blob_view_status_for_payload(self.services.blob_service.as_ref(), &row.payload_ref)
                 .await?

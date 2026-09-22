@@ -429,6 +429,13 @@ impl RemotePeerBlobService {
 
 #[async_trait]
 impl BlobService for RemotePeerBlobService {
+    async fn fetch_local_blob(
+        &self,
+        hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        self.local.fetch_local_blob(hash).await
+    }
+
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         self.local.put_blob(data, mime).await
     }

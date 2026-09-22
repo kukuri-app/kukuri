@@ -159,6 +159,13 @@ impl AssistedBlobService {
 
 #[async_trait]
 impl BlobService for AssistedBlobService {
+    async fn fetch_local_blob(
+        &self,
+        _hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     async fn put_blob(&self, _data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         Ok(StoredBlob {
             hash: kukuri_core::BlobHash::new("test-hash"),

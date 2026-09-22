@@ -108,6 +108,10 @@ impl FailClosedIndexQuery {
                         && entry.object_id == hit.object_id
                 })?;
                 hit.content_advisories = entry.content_advisories.clone();
+                // 保存先と著者は確定済み索引から復元する。遅延した投影を取得先の根拠にしない。
+                hit.source_replica_id = entry.source_replica_id.clone();
+                hit.author_pubkey = entry.author_pubkey.clone();
+                hit.created_at = entry.created_at;
                 Some(hit)
             })
             .collect())

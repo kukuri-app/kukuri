@@ -39,6 +39,35 @@ impl MemoryDocsSync {
 
 #[async_trait]
 impl DocsSync for MemoryDocsSync {
+    async fn query_local_source(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocRecord>> {
+        anyhow::ensure!(
+            crate::replicas::public_replica_secret(replica).is_some(),
+            "local source reader only accepts public replicas"
+        );
+        if limit == 0 || author.is_some_and(|author| self.docs_author.as_deref() != Some(author)) {
+            return Ok(Vec::new());
+        }
+        let records = self.records.lock().await;
+        Ok(records
+            .get(replica.as_str())
+            .and_then(|records| records.get(key))
+            .map(|value| DocRecord {
+                key: key.to_owned(),
+                value: value.clone(),
+                content_hash: value_hash(value),
+                content_len: value.len() as u64,
+                docs_author: self.docs_author.clone(),
+            })
+            .into_iter()
+            .collect())
+    }
+
     async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         self.events.lock().await.remove(replica_id.as_str());
         Ok(())

@@ -9,10 +9,20 @@ struct LocalReadDocs {
     forbidden: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-struct LocalReadBlobs(Arc<std::sync::atomic::AtomicUsize>);
+struct LocalReadBlobs(Arc<std::sync::atomic::AtomicUsize>, BlobStatus);
 
 #[async_trait]
 impl BlobService for LocalReadBlobs {
+    async fn fetch_local_blob(
+        &self,
+        _hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.1 == BlobStatus::Available {
+            anyhow::bail!("injected local read failure after status check");
+        }
+        Ok(None)
+    }
+
     async fn put_blob(&self, _: Vec<u8>, _: &str) -> Result<StoredBlob> {
         anyhow::bail!("read only")
     }
@@ -28,7 +38,7 @@ impl BlobService for LocalReadBlobs {
         Ok(BlobStatus::Missing)
     }
     async fn local_blob_status(&self, _: &BlobHash) -> Result<BlobStatus> {
-        Ok(BlobStatus::Missing)
+        Ok(self.1.clone())
     }
     async fn import_peer_ticket(&self, _: &str) -> Result<()> {
         anyhow::bail!("read only")
@@ -37,6 +47,18 @@ impl BlobService for LocalReadBlobs {
 
 #[async_trait]
 impl DocsSync for LocalReadDocs {
+    async fn query_local_source(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .query_local_source(replica, key, author, limit)
+            .await
+    }
     async fn open_replica(&self, _: &ReplicaId) -> Result<()> {
         self.forbidden.fetch_add(1, Ordering::SeqCst);
         anyhow::bail!("resolver must not start sync")
@@ -93,6 +115,10 @@ impl DocsSync for LocalReadDocs {
 }
 
 fn observed_app() -> (AppService, Arc<LocalReadDocs>) {
+    observed_app_with_blob_status(BlobStatus::Missing)
+}
+
+fn observed_app_with_blob_status(status: BlobStatus) -> (AppService, Arc<LocalReadDocs>) {
     let store = Arc::new(MemoryStore::default());
     let docs = Arc::new(LocalReadDocs::default());
     (
@@ -102,7 +128,7 @@ fn observed_app() -> (AppService, Arc<LocalReadDocs>) {
             Arc::new(StaticTransport::new(PeerSnapshot::default())),
             Arc::new(NoopHintTransport),
             docs.clone(),
-            Arc::new(LocalReadBlobs(docs.forbidden.clone())),
+            Arc::new(LocalReadBlobs(docs.forbidden.clone(), status)),
             generate_keys(),
         ),
         docs,
@@ -480,4 +506,153 @@ async fn one_cached_scope_mismatch_does_not_hide_a_valid_index_result() {
         Some("good body")
     );
     assert_eq!(docs.forbidden.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn stale_available_or_pinned_body_status_never_allows_remote_fallback() {
+    for status in [BlobStatus::Available, BlobStatus::Pinned] {
+        let (app, docs) = observed_app_with_blob_status(status);
+        let post = build_post_envelope_with_payload_in_channel(
+            &generate_keys(),
+            &TopicId::new("topic"),
+            PayloadRef::BlobText {
+                hash: BlobHash::new("a".repeat(64)),
+                mime: "text/plain".into(),
+                bytes: 12,
+            },
+            Vec::new(),
+            Vec::new(),
+            None,
+            ObjectVisibility::Public,
+            None,
+            Vec::new(),
+        )
+        .expect("signed header");
+        let (_, input) = seed_bucket_post(&docs, &post).await;
+        let response = app
+            .resolve_community_index_posts(vec![input])
+            .await
+            .expect("partial result");
+        assert_eq!(
+            docs.forbidden.load(Ordering::SeqCst),
+            0,
+            "status is not authority to use remote-capable fetch"
+        );
+        assert_eq!(
+            response.entries[0]
+                .post
+                .as_ref()
+                .expect("post")
+                .content_status,
+            BlobViewStatus::Missing
+        );
+    }
+}
+
+#[cfg(feature = "iroh-integration-tests")]
+#[tokio::test]
+async fn unknown_index_sources_do_not_create_local_namespaces() -> Result<()> {
+    let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
+    let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::new(node.clone()));
+    let store = Arc::new(MemoryStore::default());
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        docs.clone(),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let before = node.docs().list().await?.count().await;
+    for day in 1..=10 {
+        let replica = BucketReplica::new(
+            BucketScope::Topic {
+                topic_id: "source-missing".into(),
+            },
+            TimeBucket::from_index(day)?,
+        )?
+        .replica_id();
+        let result = app
+            .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
+                key: "missing".into(),
+                topic: "source-missing".into(),
+                object_id: "missing".into(),
+                author_pubkey: "author".into(),
+                channel_ref: ChannelRef::Public,
+                source_replica_id: Some(replica.0),
+            }])
+            .await?;
+        assert!(result.entries[0].post.is_none());
+    }
+    let after = node.docs().list().await?.count().await;
+    app.shutdown().await;
+    docs.shutdown().await;
+    node.shutdown().await?;
+    assert_eq!(
+        after, before,
+        "a missing locator must not import a namespace"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "iroh-integration-tests")]
+#[tokio::test]
+async fn cached_index_post_survives_removed_namespace_without_recreating_it() -> Result<()> {
+    let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
+    let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::new(node.clone()));
+    let store = Arc::new(MemoryStore::default());
+    let keys = generate_keys();
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        docs.clone(),
+        Arc::new(MemoryBlobService::default()),
+        keys.clone(),
+    );
+    let post =
+        kukuri_core::build_post_envelope(&keys, &TopicId::new("source-cached"), "kept", None)?;
+    let header = post.to_post_object()?.expect("post header");
+    let replica = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: "source-cached".into(),
+        },
+        TimeBucket::from_unix_seconds(post.created_at)?,
+    )?
+    .replica_id();
+    persist_post_object(docs.as_ref(), &replica, header, post.clone()).await?;
+    let input = CommunityIndexPostResolveInput {
+        key: "cached".into(),
+        topic: "source-cached".into(),
+        object_id: post.id.0,
+        author_pubkey: post.pubkey.0,
+        channel_ref: ChannelRef::Public,
+        source_replica_id: Some(replica.0.clone()),
+    };
+    let first = app
+        .resolve_community_index_posts(vec![input.clone()])
+        .await?;
+    assert_eq!(
+        first.entries[0].post.as_ref().expect("cached").content,
+        "kept"
+    );
+    docs.close_replica(&replica).await?;
+    let (namespace, _) = node.docs().list().await?.next().await.expect("namespace")?;
+    node.docs().drop_doc(namespace).await?;
+    let restored = app.resolve_community_index_posts(vec![input]).await?;
+    assert_eq!(
+        restored.entries[0]
+            .post
+            .as_ref()
+            .expect("saved projection")
+            .content,
+        "kept"
+    );
+    assert_eq!(node.docs().list().await?.count().await, 0);
+    app.shutdown().await;
+    docs.shutdown().await;
+    node.shutdown().await?;
+    Ok(())
 }

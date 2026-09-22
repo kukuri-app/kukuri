@@ -223,14 +223,15 @@ pub(crate) async fn fetch_local_projection_blob_text(
     blob_service: &dyn BlobService,
     hash: &kukuri_core::BlobHash,
 ) -> Option<String> {
-    let local = matches!(
-        best_effort_blob_cache_status(blob_service, hash).await,
-        BlobCacheStatus::Available | BlobCacheStatus::Pinned
-    );
-    if !local {
-        return None;
+    match tokio::time::timeout(
+        projection_blob_fetch_timeout(),
+        blob_service.fetch_local_blob(hash),
+    )
+    .await
+    {
+        Ok(Ok(Some(bytes))) => Some(String::from_utf8_lossy(&bytes).to_string()),
+        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => None,
     }
-    fetch_projection_blob_text(blob_service, hash).await
 }
 
 /// 背景の確認(取り下げの確認、返信先の反映)を、同じ確認先で繰り返す間隔(#1239)。

@@ -118,6 +118,17 @@ pub enum ReplicaNotice {
 
 #[async_trait]
 pub trait DocsSync: Send + Sync {
+    /// 保存済みpublic replicaのexact keyだけを読む。namespaceの作成、sync、subscribeを行わない。
+    /// author指定は1名の索引、結果は最大8件。未対応adapterは通常queryへfallbackしない。
+    async fn query_local_source(
+        &self,
+        _replica: &ReplicaId,
+        _key: &str,
+        _author: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<DocRecord>> {
+        anyhow::bail!("this DocsSync implementation does not support local source reads")
+    }
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()>;
     /// 同期とevent転送を停止しhandleを解放する。永続entryとcapabilityは削除しない。
     /// 呼出元は利用中のleaseが無いことを保証する。未対応実装を成功扱いにしない。

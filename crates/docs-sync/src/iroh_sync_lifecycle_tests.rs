@@ -13,6 +13,11 @@ async fn bucket_close_retries_leave_failure_without_repolling_the_event_task() -
             .await
             .is_err()
     );
+    assert!(
+        docs.query_local_source(&replica, "key", None, 8)
+            .await
+            .is_err()
+    );
     docs.close_replica(&replica).await?;
     assert!(
         docs.query_replica_with_policy(&replica, DocQuery::All, DocFetchPolicy::LocalOnly)

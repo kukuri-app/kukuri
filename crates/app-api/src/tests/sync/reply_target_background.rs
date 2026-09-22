@@ -351,6 +351,16 @@ struct GatedRemoteBodyBlobService {
 
 #[async_trait]
 impl BlobService for GatedRemoteBodyBlobService {
+    async fn fetch_local_blob(
+        &self,
+        hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        if !self.open.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        self.inner.fetch_local_blob(hash).await
+    }
+
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         self.inner.put_blob(data, mime).await
     }
@@ -587,6 +597,13 @@ async fn a_visible_reply_target_with_a_missing_body_recovers_after_its_provider_
 
 #[async_trait]
 impl BlobService for RemoteBodyBlobService {
+    async fn fetch_local_blob(
+        &self,
+        _hash: &kukuri_core::BlobHash,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         self.inner.put_blob(data, mime).await
     }

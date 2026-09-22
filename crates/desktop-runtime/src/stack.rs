@@ -119,6 +119,9 @@ reloadable_service! {
 
     #[async_trait]
     impl DocsSync {
+        async fn query_local_source(
+            replica: &ReplicaId, key: &str, author: Option<&str>, limit: usize,
+        ) -> Result<Vec<DocRecord>>;
         async fn open_replica(replica_id: &ReplicaId) -> Result<()>;
         async fn close_replica(replica_id: &ReplicaId) -> Result<()>;
         async fn register_private_replica_secret(
