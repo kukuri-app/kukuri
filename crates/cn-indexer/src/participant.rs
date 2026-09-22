@@ -27,6 +27,7 @@ use kukuri_transport::SeedPeer;
 
 use crate::ingest::{IngestPipeline, IngestSummary};
 use crate::projection::IndexProjection;
+use crate::replica_plan::PublicReplicaReadMode;
 
 async fn apply_seed_peers(
     docs_sync: &dyn DocsSync,
@@ -76,6 +77,7 @@ pub struct IndexerParticipant {
     channel_secret_cipher: ChannelSecretCipher,
     configured_seed_peers: Option<Vec<SeedPeer>>,
     blob_service: Option<Arc<dyn BlobService>>,
+    public_replica_mode: PublicReplicaReadMode,
 }
 
 impl IndexerParticipant {
@@ -96,11 +98,18 @@ impl IndexerParticipant {
             channel_secret_cipher,
             configured_seed_peers: None,
             blob_service: None,
+            public_replica_mode: PublicReplicaReadMode::Legacy,
         }
     }
 
     pub fn with_configured_seed_peers(mut self, peers: Vec<SeedPeer>) -> Self {
         self.configured_seed_peers = Some(peers);
+        self
+    }
+
+    /// CNの読取りを先行検証するための選択。runtimeは切替contractの完了まではLegacyを使う。
+    pub fn with_public_replica_mode(mut self, mode: PublicReplicaReadMode) -> Self {
+        self.public_replica_mode = mode;
         self
     }
 
@@ -148,16 +157,25 @@ impl IndexerParticipant {
     /// （[`Self::indexed_scopes`]）の差分から索引解除を決める。open の成否に依存しないため、
     /// 一時的な open 失敗で誤って索引解除することがない。
     pub async fn desired_scopes(&self) -> Result<Vec<ScopeReplica>> {
+        self.desired_scopes_at(chrono::Utc::now().timestamp()).await
+    }
+
+    pub async fn desired_scopes_at(&self, now: i64) -> Result<Vec<ScopeReplica>> {
         let secrets = list_channel_secrets(&self.pool, &self.channel_secret_cipher).await?;
         let mut scopes = Vec::new();
         for supported in list_supported_topics(&self.pool).await? {
-            let scope = ScopeReplica::from_scope(supported.kind, supported.id.as_str());
-            if scope.kind == IndexScopeKind::PrivateChannel
-                && !secrets.iter().any(|secret| secret.channel_id == scope.id)
+            if supported.kind == IndexScopeKind::PrivateChannel
+                && !secrets
+                    .iter()
+                    .any(|secret| secret.channel_id == supported.id)
             {
                 continue;
             }
-            scopes.push(scope);
+            scopes.extend(self.public_replica_mode.scopes(
+                supported.kind,
+                supported.id.as_str(),
+                now,
+            )?);
         }
         Ok(scopes)
     }
@@ -173,6 +191,10 @@ impl IndexerParticipant {
     /// capability（channel secret）を docs へ登録してから open する。secret 未登録の private channel は
     /// open せず warn する（secret 無しでは index しない）。
     pub async fn restore_scopes(&self) -> Result<Vec<ScopeReplica>> {
+        self.restore_scopes_at(chrono::Utc::now().timestamp()).await
+    }
+
+    pub async fn restore_scopes_at(&self, now: i64) -> Result<Vec<ScopeReplica>> {
         self.refresh_seed_peers().await?;
 
         // private channel の capability を先に docs へ登録する。
@@ -186,34 +208,38 @@ impl IndexerParticipant {
 
         let mut opened = Vec::new();
         for supported in list_supported_topics(&self.pool).await? {
-            let scope = ScopeReplica::from_scope(supported.kind, supported.id.as_str());
-            // private channel は capability が登録されていなければ open しない。
-            if scope.kind == IndexScopeKind::PrivateChannel
-                && !secrets.iter().any(|secret| secret.channel_id == scope.id)
-            {
-                warn!(
-                    channel_id = %scope.id,
-                    "private channel is supported but has no registered capability; skipping (no secret, no index)"
-                );
-                continue;
-            }
-            match self.docs_sync.open_replica(&scope.replica_id).await {
-                Ok(()) => {
-                    info!(
-                        kind = scope.kind.as_str(),
-                        scope_id = %scope.id,
-                        replica_id = %scope.replica_id.as_str(),
-                        "opened supported replica for sync"
-                    );
-                    opened.push(scope);
-                }
-                Err(error) => {
+            let scopes =
+                self.public_replica_mode
+                    .scopes(supported.kind, supported.id.as_str(), now)?;
+            for scope in scopes {
+                // private channel は capability が登録されていなければ open しない。
+                if scope.kind == IndexScopeKind::PrivateChannel
+                    && !secrets.iter().any(|secret| secret.channel_id == scope.id)
+                {
                     warn!(
-                        kind = scope.kind.as_str(),
-                        scope_id = %scope.id,
-                        error = %error,
-                        "failed to open supported replica; skipping"
+                        channel_id = %scope.id,
+                        "private channel is supported but has no registered capability; skipping (no secret, no index)"
                     );
+                    continue;
+                }
+                match self.docs_sync.open_replica(&scope.replica_id).await {
+                    Ok(()) => {
+                        info!(
+                            kind = scope.kind.as_str(),
+                            scope_id = %scope.id,
+                            replica_id = %scope.replica_id.as_str(),
+                            "opened supported replica for sync"
+                        );
+                        opened.push(scope);
+                    }
+                    Err(error) => {
+                        warn!(
+                            kind = scope.kind.as_str(),
+                            scope_id = %scope.id,
+                            error = %error,
+                            "failed to open supported replica; skipping"
+                        );
+                    }
                 }
             }
         }
@@ -293,15 +319,13 @@ impl IndexerParticipant {
 
     /// supported topic 除外時の sync 停止 + de-index（E2 / E5）。
     ///
-    /// public topic の replica はここでは docs から secret を外せない（導出 secret のため）が、
-    /// 真実源と投影を de-index することで検索面から消える。private channel は capability も外す。
+    /// public topicも同期を停止する。namespaceの保存値は削除しない。private channelはcapabilityも外す。
     pub async fn stop_and_deindex_scope(&self, kind: IndexScopeKind, id: &str) -> Result<()> {
-        let scope = ScopeReplica::from_scope(kind, id);
-        if kind == IndexScopeKind::PrivateChannel {
-            // capability を外して sync 停止する（remove_private_replica_secret が replica も閉じる）。
-            self.docs_sync
-                .remove_private_replica_secret(&scope.replica_id)
-                .await?;
+        for scope in self
+            .public_replica_mode
+            .scopes(kind, id, chrono::Utc::now().timestamp())?
+        {
+            self.stop_replica(&scope).await?;
         }
         // 真実源 → 投影の順で消す（投影削除が失敗しても query 境界の突合が即座に効く）。
         self.entries.remove_scope(kind, id).await?;
@@ -312,6 +336,17 @@ impl IndexerParticipant {
             "stopped sync and de-indexed scope"
         );
         Ok(())
+    }
+
+    /// bucketが窓から出ただけなら同期だけを止め、論理scopeの索引は残す。
+    pub async fn stop_replica(&self, scope: &ScopeReplica) -> Result<()> {
+        if scope.kind == IndexScopeKind::PrivateChannel {
+            self.docs_sync
+                .remove_private_replica_secret(&scope.replica_id)
+                .await
+        } else {
+            self.docs_sync.close_replica(&scope.replica_id).await
+        }
     }
 
     /// channel secret 失効時の capability 除去 + sync 停止 + de-index（E4）。

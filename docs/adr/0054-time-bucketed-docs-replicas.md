@@ -150,6 +150,12 @@ iroh-docsの受信前filterと同一視しない。
 - private bucket/locator/stateはepoch capabilityの範囲内。鍵の公開導出、公開gossipへのprivate locator送信は禁止。
 - outbox、移行位置、lease、cache予算、保護参照索引は端末内の制御state。CNへ本人の保存一覧を送らない。
 - CNは許可scopeの索引を継続する。全体の権威・private capabilityの配布ownerにはしない。
+- CNの新bucketでは、投稿の値と配置を署名済みenvelopeから確認する。unsigned stateは発見用の印であり、
+  書き換え・破損・別bucketへのコピーを別の保存先で確認済みの索引の削除根拠にしない。
+  新形式のjob revisionと判定再利用鍵は検証済み署名IDとし、印やJSON表記の変更だけでは外部再検査しない。
+  現物envelopeがscan中に取得不能または検証不能になった場合は一時的失敗として再評価する。これはADR 0025の旧形式の
+  state破損時の扱いを新形式へそのまま適用しない決定である。署名済み取り下げ、送信防止、scope除外、
+  safety verdictの優先度は維持する。
 - 通信優先度は Direct P2P → Relay Supported P2P → Relay Fallback のまま。
 
 ## References

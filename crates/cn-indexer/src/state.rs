@@ -337,7 +337,7 @@ mod tests {
         state.record_whole_scope_fallback("unregistered:a");
         state.record_whole_scope_fallback("manifests/media");
         let scheduler = std::sync::Arc::new(PostFetchScheduler::new(2));
-        scheduler.enqueue(
+        let _lease = scheduler.enqueue(
             crate::scheduler::PostFetchJobKey {
                 scope_kind: "public_topic".into(),
                 scope_id: "rust".into(),

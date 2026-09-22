@@ -77,26 +77,37 @@ impl ReferenceGuard<'_> {
                 .map_err(transient)?,
             "post is transmission prevented"
         );
-        let state = self
-            .pipeline
-            .docs_sync
-            .query_replica_with_policy(
-                self.replica,
-                DocQuery::Exact(self.record.key.clone()),
-                DocFetchPolicy::LocalOnly,
-            )
-            .await
-            .map_err(transient)?;
-        ensure!(
-            state
+        // 新bucketのmarkerは発見用。書換えで署名済み投稿の検査を失効させない。
+        if !self.replica.as_str().starts_with("bucket::") {
+            let state = self
+                .pipeline
+                .docs_sync
+                .query_replica_with_policy(
+                    self.replica,
+                    DocQuery::Exact(self.record.key.clone()),
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await
+                .map_err(transient)?;
+            let state_current = state
                 .iter()
-                .any(|current| current.content_hash == self.record.content_hash),
-            "post state changed during scan"
-        );
+                .any(|current| current.content_hash == self.record.content_hash);
+            ensure!(state_current, "post state changed during scan");
+        }
         {
             let original = self.envelope.context("signed post envelope missing")?;
             let envelope: KukuriEnvelope = serde_json::from_slice(&original.value)?;
             envelope.verify()?;
+            if self.replica.as_str().starts_with("bucket::") {
+                let bucket = kukuri_docs_sync::BucketReplica::parse(self.replica)?;
+                ensure!(
+                    bucket.bucket().contains(envelope.created_at)
+                        && self.object.created_at == envelope.created_at
+                        && envelope.created_at
+                            <= chrono::Utc::now().timestamp().saturating_add(600),
+                    "post creation time does not match its bucket or exceeds clock skew allowance"
+                );
+            }
             let content = envelope
                 .post_content()?
                 .context("source is not a signed post")?;
@@ -127,22 +138,46 @@ impl ReferenceGuard<'_> {
                     && envelope.pubkey.as_str() == self.object.author,
                 "post envelope identity changed"
             );
-            let current = self
-                .pipeline
-                .docs_sync
-                .query_replica_with_policy(
-                    self.replica,
-                    DocQuery::Exact(original.key.clone()),
-                    DocFetchPolicy::LocalOnly,
-                )
-                .await
-                .map_err(transient)?;
-            ensure!(
-                current
-                    .iter()
-                    .any(|record| record.content_hash == original.content_hash),
-                "post envelope changed during scan"
-            );
+            let current = if self.replica.as_str().starts_with("bucket::")
+                && let Some(author) = original.docs_author.as_deref()
+            {
+                self.pipeline
+                    .docs_sync
+                    .query_replica_by_author(
+                        self.replica,
+                        author,
+                        &original.key,
+                        DocFetchPolicy::LocalOnly,
+                    )
+                    .await
+                    .map_err(transient)?
+                    .into_iter()
+                    .collect()
+            } else {
+                self.pipeline
+                    .docs_sync
+                    .query_replica_with_policy(
+                        self.replica,
+                        DocQuery::Exact(original.key.clone()),
+                        DocFetchPolicy::LocalOnly,
+                    )
+                    .await
+                    .map_err(transient)?
+            };
+            let envelope_current = current.iter().any(|record| {
+                if self.replica.as_str().starts_with("bucket::") {
+                    super::bucket_post::canonical_post(self.replica, &self.object.object_id, record)
+                        .is_some()
+                } else {
+                    record.content_hash == original.content_hash
+                }
+            });
+            if !envelope_current && self.replica.as_str().starts_with("bucket::") {
+                return Err(transient(anyhow::anyhow!(
+                    "post envelope changed during bucket scan"
+                )));
+            }
+            ensure!(envelope_current, "post envelope changed during scan");
             let withdrawals = self
                 .pipeline
                 .docs_sync

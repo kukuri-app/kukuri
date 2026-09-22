@@ -26,6 +26,7 @@ pub mod projection;
 pub mod query;
 pub mod relation_graph;
 pub mod relation_worker;
+pub mod replica_plan;
 pub mod runtime;
 pub mod scheduler;
 pub mod state;

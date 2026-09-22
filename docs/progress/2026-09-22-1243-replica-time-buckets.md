@@ -3,7 +3,7 @@
 ## 現在状態
 
 - Issue: [#1243](https://github.com/kukuri-app/kukuri/issues/1243)
-- 状態: In progress（T1 の設計と inventory）。実装・達成監査は未完了。
+- 状態: In progress（基盤#1294は完了。T1の詳細設計とCN#1293を継続）。親の実装・達成監査は未完了。
 - リスク区分: C。
 - Scope revision: `2026-09-20-v1`（Issue の AC-1〜5、INVAR-1〜4）。
 - CN 側の子 Issue: [#1293](https://github.com/kukuri-app/kukuri/issues/1293)（GitHub の sub-issue 関係も登録済み）。
@@ -149,7 +149,17 @@ docs-sync全体の途中検証は58成功、計測用1件ignore。追加したli
 - `cargo xtask scenario private_channel_invite_connectivity`: 11 steps / pass、connected=true、peer_count=1。
 - `cargo xtask oversized-files`: 成功。既存baselineの上限を増やしていない。
 - `git diff --check`: 成功。UI/IPC形状変更は無く、desktop-ui-check / tauri-testはこの基盤差分には適用しない。
-  CNのsource変更は無く、cn-check/cn-testは#1293で実施する。PRのCIと対象headの独立監査はこれから行う。
+  基盤差分にはCNのsource変更は無く、cn-check/cn-testは#1293で実施する。CIと監査の確定結果は次節。
+
+### 基盤のマージ・完了
+
+- PR [#1297](https://github.com/kukuri-app/kukuri/pull/1297)、head `b443751bd098a47d420eee9bc2b6d25b472d30d9`。
+- head独立監査: [PASS](https://github.com/kukuri-app/kukuri/pull/1297#issuecomment-5771688041)。BF-1〜7は7適合/不適合0/未分類0。
+  別コンテキストでbucket test 13件と投稿検証1件を独立実行して成功。
+- 全13CI成功後、2026-09-22に `dba0881da72f8bca974f3e9d76c4d13c434894e0` へsquash merge。
+- merge後に#1290/#1296のdeltaを[独立監査してPASS](https://github.com/kukuri-app/kukuri/pull/1297#issuecomment-5771813426)。
+  対象21pathの20pathはblob一致、残るtests/sync.rsは他test helperの可視性/re-exportのみ。関係する新callerもguardを維持。
+- #1294はCompleteへ更新してClose。#1243のAC-3〜5の達成根拠には使わない。
 
 独立コードレビューの所見も実装中に修正した（PR headの最終監査とは別）:
 

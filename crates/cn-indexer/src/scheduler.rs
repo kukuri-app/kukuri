@@ -1,8 +1,8 @@
 //! Bounded post-ingest scheduling and observable per-revision job state.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -36,11 +36,34 @@ struct PostFetchJobRecord {
     attempts: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PostFetchJobLease {
     key: PostFetchJobKey,
     source_revision: String,
     lease: u64,
+    jobs: Weak<Mutex<BTreeMap<PostFetchJobKey, PostFetchJobRecord>>>,
+}
+
+// leaseは実行futureが所有する。await中のcancelでも、同世代の実行中記録を回収可能にする。
+impl Drop for PostFetchJobLease {
+    fn drop(&mut self) {
+        let Some(jobs) = self.jobs.upgrade() else {
+            return;
+        };
+        let mut jobs = jobs.lock().expect("post scheduler jobs poisoned");
+        if let Some(current) = jobs.get_mut(&self.key)
+            && current.lease == self.lease
+            && matches!(
+                current.state,
+                PostFetchJobState::Queued
+                    | PostFetchJobState::Fetching
+                    | PostFetchJobState::Processing
+            )
+        {
+            current.state = PostFetchJobState::Cancelled;
+            current.updated_at = chrono::Utc::now().timestamp();
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -58,15 +81,18 @@ pub struct PostFetchSchedulerSnapshot {
 #[derive(Debug)]
 pub struct PostFetchScheduler {
     permits: Arc<Semaphore>,
-    jobs: Mutex<BTreeMap<PostFetchJobKey, PostFetchJobRecord>>,
+    jobs: Arc<Mutex<BTreeMap<PostFetchJobKey, PostFetchJobRecord>>>,
     next_lease: AtomicU64,
 }
+
+/// 実行中と直近の診断記録を含む固定窓。再試行の正本はdocsであり、この台帳ではない。
+const MAX_RECORDED_JOBS: usize = 1024;
 
 impl PostFetchScheduler {
     pub fn new(max_concurrent_posts: usize) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(max_concurrent_posts.max(1))),
-            jobs: Mutex::new(BTreeMap::new()),
+            jobs: Arc::new(Mutex::new(BTreeMap::new())),
             next_lease: AtomicU64::new(0),
         }
     }
@@ -88,6 +114,22 @@ impl PostFetchScheduler {
         }) {
             return None;
         }
+        if !jobs.contains_key(&key) && jobs.len() >= MAX_RECORDED_JOBS {
+            let oldest = jobs
+                .iter()
+                .filter(|(_, job)| {
+                    !matches!(
+                        job.state,
+                        PostFetchJobState::Queued
+                            | PostFetchJobState::Fetching
+                            | PostFetchJobState::Processing
+                    )
+                })
+                .min_by_key(|(_, job)| job.lease)
+                .map(|(key, _)| key.clone());
+            // 全枠が実行中ならそのleaseを壊さず延期する。次のevent/passで再要求できる。
+            jobs.remove(&oldest?);
+        }
         let lease = self.next_lease.fetch_add(1, Ordering::Relaxed) + 1;
         let now = chrono::Utc::now().timestamp();
         jobs.insert(
@@ -105,6 +147,7 @@ impl PostFetchScheduler {
             key,
             source_revision,
             lease,
+            jobs: Arc::downgrade(&self.jobs),
         })
     }
 
@@ -159,32 +202,6 @@ impl PostFetchScheduler {
         current.state = state;
         current.updated_at = chrono::Utc::now().timestamp();
         true
-    }
-
-    pub fn reconcile_scope(&self, scope_kind: &str, scope_id: &str, current: &BTreeSet<String>) {
-        let now = chrono::Utc::now().timestamp();
-        let mut jobs = self.jobs.lock().expect("post scheduler jobs poisoned");
-        jobs.retain(|key, job| {
-            if key.scope_kind != scope_kind
-                || key.scope_id != scope_id
-                || current.contains(&key.object_id)
-            {
-                return true;
-            }
-            if matches!(
-                job.state,
-                PostFetchJobState::Queued
-                    | PostFetchJobState::Fetching
-                    | PostFetchJobState::Processing
-                    | PostFetchJobState::RetryWait
-            ) {
-                job.state = PostFetchJobState::Cancelled;
-                job.updated_at = now;
-                true
-            } else {
-                false
-            }
-        });
     }
 
     pub fn snapshot(&self) -> PostFetchSchedulerSnapshot {
@@ -255,6 +272,18 @@ mod tests {
         drop((slow_permit, next_permit));
     }
 
+    #[test]
+    fn completed_job_history_does_not_grow_with_rotated_buckets() {
+        let scheduler = PostFetchScheduler::new(2);
+        for index in 0..2048 {
+            let lease = scheduler
+                .enqueue(key(&format!("post-{index}")), "signed-id".into())
+                .unwrap();
+            assert!(scheduler.finish(&lease, PostFetchJobState::Completed));
+        }
+        assert!(scheduler.snapshot().completed <= 1024);
+    }
+
     #[tokio::test]
     async fn stale_completion_cannot_replace_newer_revision() {
         let scheduler = PostFetchScheduler::new(1);
@@ -262,6 +291,67 @@ mod tests {
         let _permit = scheduler.start(&old).await.unwrap();
         let new = scheduler.enqueue(key("post"), "r2".into()).unwrap();
         assert!(!scheduler.finish(&old, PostFetchJobState::Completed));
+        drop(old);
+        assert!(scheduler.is_current(&new));
         assert!(scheduler.finish(&new, PostFetchJobState::Completed));
+    }
+
+    #[tokio::test]
+    async fn capacity_defers_new_jobs_without_cancelling_active_leases() {
+        let scheduler = PostFetchScheduler::new(1);
+        let running = scheduler.enqueue(key("running"), "r1".into()).unwrap();
+        let _permit = scheduler.start(&running).await.unwrap();
+        let mut queued = Vec::new();
+        for index in 1..MAX_RECORDED_JOBS {
+            queued.push(
+                scheduler
+                    .enqueue(key(&format!("queued-{index}")), "r1".into())
+                    .unwrap(),
+            );
+        }
+        assert!(scheduler.enqueue(key("later"), "r1".into()).is_none());
+        assert!(scheduler.is_current(&running));
+        assert!(queued.iter().all(|lease| scheduler.is_current(lease)));
+        assert!(scheduler.finish(&queued[0], PostFetchJobState::Completed));
+        assert!(scheduler.enqueue(key("later"), "r1".into()).is_some());
+        assert!(scheduler.is_current(&running));
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiting_and_fetching_jobs_release_their_records() {
+        for waiting in [false, true] {
+            let scheduler = Arc::new(PostFetchScheduler::new(1));
+            let blocker = scheduler.enqueue(key("blocker"), "r1".into()).unwrap();
+            let held = if waiting {
+                scheduler.start(&blocker).await
+            } else {
+                None
+            };
+            let (ready, observed) = tokio::sync::oneshot::channel();
+            let task_scheduler = scheduler.clone();
+            let task = tokio::spawn(async move {
+                let lease = task_scheduler
+                    .enqueue(key("cancelled"), "r1".into())
+                    .unwrap();
+                if waiting {
+                    let _ = ready.send(());
+                } else {
+                    let _permit = task_scheduler.start(&lease).await.unwrap();
+                    let _ = ready.send(());
+                    std::future::pending::<()>().await;
+                }
+                let _permit = task_scheduler.start(&lease).await;
+                std::future::pending::<()>().await;
+            });
+            observed.await.unwrap();
+            task.abort();
+            let _ = task.await;
+            assert_eq!(scheduler.snapshot().cancelled, 1, "waiting={waiting}");
+            drop(held);
+            let next = scheduler
+                .enqueue(key("another-scope-post"), "r1".into())
+                .unwrap();
+            assert!(scheduler.start(&next).await.is_some());
+        }
     }
 }

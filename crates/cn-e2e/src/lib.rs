@@ -96,10 +96,32 @@ struct FaultInjectingDocsSync {
     fail_queries: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
+mod docs_wrapper_tests;
+
 #[async_trait]
 impl DocsSync for FaultInjectingDocsSync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         self.inner.open_replica(replica_id).await
+    }
+
+    async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
+        self.inner.close_replica(replica_id).await
+    }
+
+    async fn query_replica_by_author(
+        &self,
+        replica_id: &ReplicaId,
+        docs_author: &str,
+        key: &str,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<DocRecord>> {
+        if self.fail_queries.load(Ordering::SeqCst) {
+            anyhow::bail!("injected replica query failure for {}", replica_id.as_str());
+        }
+        self.inner
+            .query_replica_by_author(replica_id, docs_author, key, policy)
+            .await
     }
 
     async fn register_private_replica_secret(

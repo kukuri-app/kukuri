@@ -46,6 +46,7 @@ use kukuri_docs_sync::{DocFetchPolicy, DocQuery, DocRecord, DocsSync, SharedRepl
 use crate::projection::{IndexProjection, IndexedEntry};
 use crate::scheduler::{PostFetchJobKey, PostFetchJobState, PostFetchScheduler};
 
+mod bucket_post;
 mod failure;
 mod reference_guard;
 mod source;
@@ -316,6 +317,7 @@ impl IngestPipeline {
         scope_id: &str,
         replica_id: &ReplicaId,
     ) -> Result<IngestSummary> {
+        crate::replica_plan::validate_scope_replica(scope_kind, scope_id, replica_id)?;
         // scope の replica を open してから走査する（未 open だと sync 対象にならない）。
         if !self.retain_supported_scope(scope_kind, scope_id).await? {
             return Ok(IngestSummary::default());
@@ -351,6 +353,7 @@ impl IngestPipeline {
         replica_id: &ReplicaId,
         keys: &[String],
     ) -> Result<IngestSummary> {
+        crate::replica_plan::validate_scope_replica(scope_kind, scope_id, replica_id)?;
         let object_ids = match classify_changed_keys(keys.iter().map(String::as_str)) {
             ChangedKeys::Objects(ids) => ids,
             ChangedKeys::Ignored => {
@@ -421,6 +424,13 @@ impl IngestPipeline {
         for record in records {
             if let Some(object_id) = record.key.strip_suffix("/envelope") {
                 if let Some(object_id) = object_id.strip_prefix("objects/") {
+                    if replica_id.as_str().starts_with("bucket::") {
+                        // 形の違うコピー・署名不正で、同じkeyの正しいenvelopeを上書きしない。
+                        if bucket_post::canonical_post(replica_id, object_id, &record).is_some() {
+                            envelopes.entry(object_id.to_string()).or_insert(record);
+                        }
+                        continue;
+                    }
                     envelopes.insert(object_id.to_string(), record);
                 }
             } else if record.key.ends_with("/state") {
@@ -476,12 +486,8 @@ impl IngestPipeline {
         state_records: &[DocRecord],
         context: &ScopeContext,
     ) -> Result<IngestSummary> {
-        let current_object_ids = state_records
-            .iter()
-            .filter_map(|record| post_id_from_state_key(&record.key).map(str::to_string))
-            .collect();
-        self.post_scheduler
-            .reconcile_scope(scope_kind.as_str(), scope_id, &current_object_ids);
+        // これは一部keyまたは1bucketの窓。ここに無い投稿をscopeから消えたとは判定しない。
+        // 完了jobの保持上限はschedulerが所有し、別bucketの実行中leaseを失効させない。
         let mut waiting = state_records.iter();
         let mut active = FuturesUnordered::new();
         for _ in 0..self.max_concurrent_posts {
@@ -551,13 +557,30 @@ impl IngestPipeline {
         let object_id = post_id_from_state_key(&record.key)
             .unwrap_or(record.key.as_str())
             .to_string();
+        let source_revision = if replica_id.as_str().starts_with("bucket::") {
+            if context
+                .envelopes
+                .get(&object_id)
+                .and_then(|envelope| bucket_post::canonical_post(replica_id, &object_id, envelope))
+                .is_none()
+            {
+                return (
+                    record.key.clone(),
+                    Ok(IngestOutcome::Ignored),
+                    ScanStats::default(),
+                );
+            }
+            object_id.clone()
+        } else {
+            record.content_hash.clone()
+        };
         let Some(lease) = self.post_scheduler.enqueue(
             PostFetchJobKey {
                 scope_kind: scope_kind.as_str().to_string(),
                 scope_id: scope_id.to_string(),
                 object_id,
             },
-            record.content_hash.clone(),
+            source_revision,
         ) else {
             return (
                 record.key.clone(),
@@ -611,11 +634,21 @@ impl IngestPipeline {
         let replica_id = scope.replica_id;
         // Other key domains are not posts. A corrupt value under a real post identity,
         // however, must reach the error path to remove a previously indexed row.
-        if post_id_from_state_key(&record.key).is_none() {
+        let Some(object_id) = post_id_from_state_key(&record.key) else {
             return Ok(IngestOutcome::Ignored);
-        }
+        };
         let object: PostObjectView =
-            serde_json::from_slice(&record.value).context("invalid post object state")?;
+            if replica_id.as_str().starts_with("bucket::") {
+                let Some(object) = context.envelopes.get(object_id).and_then(|envelope| {
+                    bucket_post::canonical_post(replica_id, object_id, envelope)
+                }) else {
+                    // この候補が正本の配置に属する証拠が無い。別bucketの索引を削除する根拠にしない。
+                    return Ok(IngestOutcome::Ignored);
+                };
+                object
+            } else {
+                serde_json::from_slice(&record.value).context("invalid post object state")?
+            };
         if record.key != format!("objects/{}/state", object.object_id) {
             bail!("post object identity does not match its key");
         }
@@ -695,18 +728,17 @@ impl IngestPipeline {
         // safety scan（fail-closed）。post 本文 text を scan service に渡す。生成された
         // moderation artifact（risk signal / signed event）は service が署名・永続化する（#406）。
         // 永続化失敗は `?` で呼び出し側の per-entry fail-closed（投影しない）に乗る。
-        // 再利用鍵の内容 fingerprint は state record の content hash（本文参照・添付参照・
-        // status を含む）。内容が同じで scan 構成も同じなら provider を呼ばない（#1050）。
+        // v1は検証済み署名のIDを使い、未署名markerやJSONの表記変更で再検査しない。
+        // legacyは従来のstate content hashを維持する。
+        let fingerprint = if replica_id.as_str().starts_with("bucket::") {
+            object.object_id.as_str()
+        } else {
+            record.content_hash.as_str()
+        };
         let request = ProviderScanRequest::for_subject(SubjectKind::Post, object.object_id.clone())
             .with_text(text.clone());
         let outcome = self
-            .scan_or_reuse_with_metrics(
-                &request,
-                &object.author,
-                &record.content_hash,
-                stats,
-                &guard,
-            )
+            .scan_or_reuse_with_metrics(&request, &object.author, fingerprint, stats, &guard)
             .await
             .map_err(|error| guard.classify_scan_error(error))?;
         let report = &outcome.report;
