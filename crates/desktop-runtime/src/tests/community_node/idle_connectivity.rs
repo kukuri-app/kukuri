@@ -173,6 +173,44 @@ async fn idle_peer_repair_preserves_healthy_docs_actor() {
 }
 
 #[tokio::test]
+async fn cancelled_stack_rebuild_marks_the_current_stack_unavailable_before_shutdown() {
+    let dir = tempdir().expect("tempdir");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        dir.path().join("cancel-rebuild.db"),
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("runtime");
+    let config = runtime.discovery_config.lock().await.clone();
+    let (shutdown_reached, _resume_shutdown) = runtime
+        .iroh_stack
+        .pause_next_rebuild_before_shutdown()
+        .await;
+    {
+        let rebuild = runtime.iroh_stack.rebuild(&config, &[], Default::default());
+        tokio::pin!(rebuild);
+        tokio::select! {
+            result = &mut rebuild => panic!("rebuild reached the test gate before completing: {result:?}"),
+            reached = shutdown_reached => reached.expect("rebuild shutdown gate"),
+        }
+    }
+
+    let available = timeout(
+        Duration::from_millis(250),
+        runtime.iroh_stack.local_docs_available(),
+    )
+    .await
+    .expect("stopped-stack probe must return immediately")
+    .expect("stopped-stack availability");
+    assert!(
+        !available,
+        "cancelling rebuild at the shutdown boundary must leave the unavailable marker set"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn failed_stack_rebuild_can_retry_without_losing_local_docs() {
     use kukuri_docs_sync::{DocOp, DocQuery, DocsSync};
     let dir = tempdir().expect("tempdir");
@@ -210,6 +248,17 @@ async fn failed_stack_rebuild_can_retry_without_losing_local_docs() {
             .await
             .is_err()
     );
+    let available_after_failure = timeout(
+        Duration::from_millis(250),
+        runtime.iroh_stack.local_docs_available(),
+    )
+    .await
+    .expect("failed-rebuild probe must return immediately")
+    .expect("failed-rebuild availability");
+    assert!(
+        !available_after_failure,
+        "a failed rebuild must leave the stopped stack marked unavailable"
+    );
     let retried = runtime
         .iroh_stack
         .apply_runtime_connectivity(&config, &[], Default::default())
@@ -217,6 +266,14 @@ async fn failed_stack_rebuild_can_retry_without_losing_local_docs() {
     assert!(
         retried.is_ok(),
         "failed rebuild must remain recoverable: {retried:?}"
+    );
+    assert!(
+        runtime
+            .iroh_stack
+            .local_docs_available()
+            .await
+            .expect("successful-rebuild availability"),
+        "a successful rebuild must clear the marker and probe the replacement docs actor"
     );
     let rows = runtime
         .iroh_stack
@@ -230,6 +287,43 @@ async fn failed_stack_rebuild_can_retry_without_losing_local_docs() {
         .expect("retained docs");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].value, b"retained");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_after_a_failed_rebuild_reports_the_missing_active_stack() {
+    let dir = tempdir().expect("tempdir");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        dir.path().join("failed-rebuild-shutdown.db"),
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("runtime");
+    let config = runtime.discovery_config.lock().await.clone();
+    runtime
+        .iroh_stack
+        .rebuild(
+            &config,
+            &[],
+            kukuri_transport::TransportRelayConfig {
+                iroh_relay_urls: vec!["not a relay URL".into()],
+            },
+        )
+        .await
+        .expect_err("invalid relay URL must fail rebuild");
+    runtime
+        .iroh_stack
+        .shutdown_checked()
+        .await
+        .expect("shutdown stopped stack");
+
+    let error = runtime
+        .iroh_stack
+        .local_docs_available()
+        .await
+        .expect_err("a shut down runtime has no active stack");
+    assert_eq!(error.to_string(), "missing active iroh stack");
     runtime.shutdown().await;
 }
 

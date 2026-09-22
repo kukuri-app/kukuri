@@ -17,6 +17,8 @@ use kukuri_transport::{
     IrohGossipTransport, PeerSnapshot, SeedPeer, Transport, TransportNetworkConfig,
     TransportRelayConfig,
 };
+#[cfg(test)]
+use tokio::sync::oneshot;
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
@@ -203,6 +205,9 @@ pub(crate) struct SharedIrohStack {
     /// `current` の stack が shutdown 済みか。作り直しが古い stack の shutdown の後で失敗すると、shutdown 済みの stack が残る。
     /// その stack の docs actor への要求は、返事が来ないまま時間切れになりうるので、健全性の確認をせず、作り直しが要るとみなす。
     current_shut_down: AtomicBool,
+    /// Test-only cancellation point immediately before rebuild starts shutting down the old stack.
+    #[cfg(test)]
+    rebuild_before_shutdown_gate: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 fn should_rebuild_runtime_connectivity(
@@ -277,6 +282,8 @@ impl SharedIrohStack {
             dht_options,
             docs_author_seed: Mutex::new(None),
             current_shut_down: AtomicBool::new(false),
+            #[cfg(test)]
+            rebuild_before_shutdown_gate: Mutex::new(None),
         })
     }
 
@@ -323,9 +330,16 @@ impl SharedIrohStack {
             discovery_mode = ?discovery_config.mode,
             "rebuilding iroh stack after runtime relay connectivity change"
         );
-        previous.shutdown().await;
-        // ここから差し替えが済むまでに失敗すると、`current` には shutdown 済みの stack が残る。
+        // ここから差し替えが済むまでに失敗または取消されると、`current` には shutdown を
+        // 開始した stack が残る。最初の await より前に印を立て、途中で future が drop
+        // されても停止中または停止済みの actor を probe しない。
         self.current_shut_down.store(true, Ordering::SeqCst);
+        #[cfg(test)]
+        if let Some((reached, resume)) = self.rebuild_before_shutdown_gate.lock().await.take() {
+            let _ = reached.send(());
+            let _ = resume.await;
+        }
+        previous.shutdown().await;
         let next = BoundIrohStack::new(
             &self.root,
             self.network_config.clone(),
@@ -364,13 +378,13 @@ impl SharedIrohStack {
     /// 呼び出し側は作り直しへ進まず、再試行しても回復しない)。
     pub(crate) async fn local_docs_available(&self) -> Result<bool> {
         let current = self.current.lock().await;
+        let node = &current.as_ref().context("missing active iroh stack")?.node;
         if self.current_shut_down.load(Ordering::SeqCst) {
             tracing::warn!(target: "kukuri_connectivity",
                 generation = self.generation.load(Ordering::Relaxed),
                 "the active iroh stack was shut down by a failed rebuild; stack repair required");
             return Ok(false);
         }
-        let node = &current.as_ref().context("missing active iroh stack")?.node;
         let probe = async {
             let mut namespaces = node.docs().list().await?;
             namespaces.try_next().await?;
@@ -471,6 +485,16 @@ impl SharedIrohStack {
             current.node.clone().shutdown().await?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn pause_next_rebuild_before_shutdown(
+        &self,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        *self.rebuild_before_shutdown_gate.lock().await = Some((reached_tx, resume_rx));
+        (reached_rx, resume_tx)
     }
 
     #[cfg(test)]
