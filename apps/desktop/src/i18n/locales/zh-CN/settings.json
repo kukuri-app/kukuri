@@ -722,6 +722,28 @@
     "operationDetails": "操作错误详情",
     "previousLabel": "{{state}}（上次的信息）"
   },
+  "system": {
+    "title": "系统",
+    "summary": "选择关闭主窗口时的行为。",
+    "windowCloseBehavior": "关闭窗口时",
+    "options": {
+      "ask": "每次询问",
+      "quit": "退出 kukuri",
+      "tray": "保留在系统托盘"
+    },
+    "hint": "保留在系统托盘时，窗口关闭后 kukuri 仍会在后台运行。托盘不可用时，kukuri 会正常退出。",
+    "saveError": "无法保存窗口关闭设置。之前的设置仍然有效。"
+  },
+  "windowClosePrompt": {
+    "title": "将 kukuri 保留在系统托盘吗？",
+    "description": "请选择继续在后台运行或退出应用。",
+    "remember": "以后不再询问",
+    "cancel": "取消",
+    "tray": "保留在系统托盘",
+    "quit": "退出 kukuri",
+    "pending": "正在退出…",
+    "error": "无法应用所选操作，请重试。"
+  },
   "notifications": {
     "title": "通知",
     "summary": "系统通知的接收方式",

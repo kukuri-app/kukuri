@@ -198,6 +198,8 @@ export function DesktopShellPage({
     refreshTimelineFeed,
     refreshConnectivityStatus,
     loadProfileSection,
+    loadMoreProfileTimeline,
+    loadMoreAuthorTimeline,
     loadBookmarksSection,
     loadReactionCatalogData,
     loadNotificationsSection,
@@ -556,6 +558,7 @@ export function DesktopShellPage({
       t={t}
       viewModels={viewModels}
       loadMoreThread={loadMoreThread}
+      loadMoreAuthorTimeline={loadMoreAuthorTimeline}
       loadReactionCatalogData={loadReactionCatalogData}
       openAuthorDetail={(authorPubkey, options) =>
         openAuthorDetail(authorPubkey, {
@@ -622,6 +625,7 @@ export function DesktopShellPage({
       loadReactionCatalogData={loadReactionCatalogData}
       refreshTimelineFeed={refreshTimelineFeed}
       refreshProfile={loadProfileSection}
+      loadMoreProfileTimeline={loadMoreProfileTimeline}
       loadMoreTimeline={loadMoreTimeline}
       openAuthorDetail={(authorPubkey, options) =>
         openAuthorDetail(authorPubkey, {

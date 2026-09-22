@@ -14,6 +14,11 @@ import {
 } from '@/shell/presentation';
 import { setRecordEntry } from '@/shell/stateUpdates';
 import {
+  hasReadPastHeadPage,
+  mergeRefreshedVisiblePosts,
+  mergeUniquePosts,
+} from '@/shell/data/timelineMerge';
+import {
   timelineStorageKeyForChannel,
   useDesktopShellFieldSetter,
   type DesktopShellStoreApi,
@@ -48,6 +53,12 @@ export function useDesktopShellSectionLoaders({
   const setAuthorTimelineNextCursorByPubkey = useDesktopShellFieldSetter(
     'authorTimelineNextCursorByPubkey'
   );
+  const setAuthorTimelineLoadingMoreByPubkey = useDesktopShellFieldSetter(
+    'authorTimelineLoadingMoreByPubkey'
+  );
+  const setAuthorTimelineLoadMoreErrorsByPubkey = useDesktopShellFieldSetter(
+    'authorTimelineLoadMoreErrorsByPubkey'
+  );
   const setBookmarkedPosts = useDesktopShellFieldSetter('bookmarkedPosts');
   const setBookmarksPanelState = useDesktopShellFieldSetter('bookmarksPanelState');
   const setCommunityNodeConfig = useDesktopShellFieldSetter('communityNodeConfig');
@@ -79,6 +90,12 @@ export function useDesktopShellSectionLoaders({
   const setProfileTimeline = useDesktopShellFieldSetter('profileTimeline');
   const setProfileTimelineNextCursor = useDesktopShellFieldSetter(
     'profileTimelineNextCursor'
+  );
+  const setProfileTimelineLoadingMore = useDesktopShellFieldSetter(
+    'profileTimelineLoadingMore'
+  );
+  const setProfileTimelineLoadMoreError = useDesktopShellFieldSetter(
+    'profileTimelineLoadMoreError'
   );
   const setReactionPanelState = useDesktopShellFieldSetter('reactionPanelState');
   const setSelectedAuthor = useDesktopShellFieldSetter('selectedAuthor');
@@ -181,8 +198,24 @@ export function useDesktopShellSectionLoaders({
         if (!storeApi.getState().profileDirty) {
           setProfileDraft(profileInputFromProfile(profile));
         }
-        setProfileTimeline(timeline.items);
-        setProfileTimelineNextCursor(timeline.next_cursor ?? null);
+        const current = storeApi.getState();
+        const preserveOlderPages = hasReadPastHeadPage(
+          current.profileTimeline,
+          timeline.items,
+          current.profileTimelineNextCursor,
+          timeline.next_cursor,
+          'desc'
+        );
+        setProfileTimeline(
+          mergeRefreshedVisiblePosts(current.profileTimeline, timeline.items, preserveOlderPages)
+        );
+        setProfileTimelineNextCursor(
+          preserveOlderPages
+            ? current.profileTimelineNextCursor
+            : (timeline.next_cursor ?? null)
+        );
+        setProfileTimelineLoadingMore(false);
+        setProfileTimelineLoadMoreError(null);
         setProfileError(null);
         setProfilePanelState({ status: 'ready', error: null });
         setSocialConnections({ following, followed, muted, blocking });
@@ -201,7 +234,10 @@ export function useDesktopShellSectionLoaders({
       setProfilePanelState({ status: 'error', error: message });
     } finally {
       if (requestId === profileRequestId.current) {
-        storeApi.getState().patchState({ profileRefreshing: false });
+        storeApi.getState().patchState({
+          profileRefreshing: false,
+          profileTimelineLoadingMore: false,
+        });
       }
     }
   }, [
@@ -212,6 +248,8 @@ export function useDesktopShellSectionLoaders({
     setProfileError,
     setProfilePanelState,
     setProfileTimeline,
+    setProfileTimelineLoadMoreError,
+    setProfileTimelineLoadingMore,
     setProfileTimelineNextCursor,
     setSocialConnections,
     setSocialConnectionsPanelState,
@@ -230,16 +268,35 @@ export function useDesktopShellSectionLoaders({
         ]);
         if (requestId !== authorRequestIds.current.get(pubkey)) return;
         startTransition(() => {
-          if (storeApi.getState().selectedAuthorPubkey === pubkey) {
+          const current = storeApi.getState();
+          const currentTimeline = current.authorTimelinesByPubkey[pubkey] ?? [];
+          const preserveOlderPages = hasReadPastHeadPage(
+            currentTimeline,
+            timeline.items,
+            current.authorTimelineNextCursorByPubkey[pubkey],
+            timeline.next_cursor,
+            'desc'
+          );
+          const mergedTimeline = mergeRefreshedVisiblePosts(
+            currentTimeline,
+            timeline.items,
+            preserveOlderPages
+          );
+          const resolvedCursor = preserveOlderPages
+            ? (current.authorTimelineNextCursorByPubkey[pubkey] ?? null)
+            : (timeline.next_cursor ?? null);
+          if (current.selectedAuthorPubkey === pubkey) {
             setSelectedAuthor(author);
-            setSelectedAuthorTimeline(timeline.items);
-            setSelectedAuthorTimelineNextCursor(timeline.next_cursor ?? null);
+            setSelectedAuthorTimeline(mergedTimeline);
+            setSelectedAuthorTimelineNextCursor(resolvedCursor);
             setAuthorError(null);
           }
-          setAuthorTimelinesByPubkey(setRecordEntry(pubkey, timeline.items));
+          setAuthorTimelinesByPubkey(setRecordEntry(pubkey, mergedTimeline));
           setAuthorTimelineNextCursorByPubkey(
-            setRecordEntry(pubkey, timeline.next_cursor ?? null)
+            setRecordEntry(pubkey, resolvedCursor)
           );
+          setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, false));
+          setAuthorTimelineLoadMoreErrorsByPubkey(setRecordEntry(pubkey, null));
           setAuthorErrorsByPubkey(setRecordEntry(pubkey, null));
           if (author) {
             setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, [author]));
@@ -250,6 +307,10 @@ export function useDesktopShellSectionLoaders({
         const message = messageFromError(error, translate('common:errors.failedToLoadAuthor'));
         if (storeApi.getState().selectedAuthorPubkey === pubkey) setAuthorError(message);
         setAuthorErrorsByPubkey(setRecordEntry(pubkey, message));
+      } finally {
+        if (requestId === authorRequestIds.current.get(pubkey)) {
+          setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, false));
+        }
       }
     },
     [
@@ -258,6 +319,8 @@ export function useDesktopShellSectionLoaders({
       setAuthorErrorsByPubkey,
       setAuthorTimelinesByPubkey,
       setAuthorTimelineNextCursorByPubkey,
+      setAuthorTimelineLoadingMoreByPubkey,
+      setAuthorTimelineLoadMoreErrorsByPubkey,
       setKnownAuthorsByPubkey,
       setSelectedAuthor,
       setSelectedAuthorTimeline,
@@ -266,6 +329,93 @@ export function useDesktopShellSectionLoaders({
       translate,
     ]
   );
+
+  const loadMoreProfileTimeline = useCallback(async () => {
+    const state = storeApi.getState();
+    const cursor = state.profileTimelineNextCursor;
+    const pubkey = state.localProfile?.pubkey;
+    if (!cursor || !pubkey || state.profileTimelineLoadingMore) return;
+    const requestId = profileRequestId.current;
+    const saveRevision = state.profileSaveRevision;
+    setProfileTimelineLoadingMore(true);
+    setProfileTimelineLoadMoreError(null);
+    try {
+      const timeline = await api.listProfileTimeline(pubkey, cursor, VISIBLE_TIMELINE_LIMIT);
+      if (
+        requestId !== profileRequestId.current ||
+        saveRevision !== storeApi.getState().profileSaveRevision
+      ) return;
+      startTransition(() => {
+        setProfileTimeline((current) => mergeUniquePosts(current, timeline.items));
+        setProfileTimelineNextCursor(timeline.next_cursor ?? null);
+      });
+    } catch (error) {
+      if (requestId !== profileRequestId.current) return;
+      setProfileTimelineLoadMoreError(
+        messageFromError(error, translate('common:errors.failedToLoadProfile'))
+      );
+    } finally {
+      if (requestId === profileRequestId.current) setProfileTimelineLoadingMore(false);
+    }
+  }, [
+    api,
+    setProfileTimeline,
+    setProfileTimelineLoadMoreError,
+    setProfileTimelineLoadingMore,
+    setProfileTimelineNextCursor,
+    storeApi,
+    translate,
+  ]);
+
+  const loadMoreAuthorTimeline = useCallback(async (pubkey: string) => {
+    const state = storeApi.getState();
+    const cursor = state.authorTimelineNextCursorByPubkey[pubkey] ?? null;
+    if (!cursor || state.authorTimelineLoadingMoreByPubkey[pubkey]) return;
+    const requestId = authorRequestIds.current.get(pubkey) ?? 0;
+    setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, true));
+    setAuthorTimelineLoadMoreErrorsByPubkey(setRecordEntry(pubkey, null));
+    try {
+      const timeline = await api.listProfileTimeline(pubkey, cursor, VISIBLE_TIMELINE_LIMIT);
+      if (requestId !== (authorRequestIds.current.get(pubkey) ?? 0)) return;
+      startTransition(() => {
+        const current = storeApi.getState();
+        const merged = mergeUniquePosts(
+          current.authorTimelinesByPubkey[pubkey] ?? [],
+          timeline.items
+        );
+        setAuthorTimelinesByPubkey(setRecordEntry(pubkey, merged));
+        setAuthorTimelineNextCursorByPubkey(
+          setRecordEntry(pubkey, timeline.next_cursor ?? null)
+        );
+        if (current.selectedAuthorPubkey === pubkey) {
+          setSelectedAuthorTimeline(merged);
+          setSelectedAuthorTimelineNextCursor(timeline.next_cursor ?? null);
+        }
+      });
+    } catch (error) {
+      if (requestId !== (authorRequestIds.current.get(pubkey) ?? 0)) return;
+      setAuthorTimelineLoadMoreErrorsByPubkey(
+        setRecordEntry(
+          pubkey,
+          messageFromError(error, translate('common:errors.failedToLoadAuthor'))
+        )
+      );
+    } finally {
+      if (requestId === (authorRequestIds.current.get(pubkey) ?? 0)) {
+        setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, false));
+      }
+    }
+  }, [
+    api,
+    setAuthorTimelineLoadMoreErrorsByPubkey,
+    setAuthorTimelineLoadingMoreByPubkey,
+    setAuthorTimelineNextCursorByPubkey,
+    setAuthorTimelinesByPubkey,
+    setSelectedAuthorTimeline,
+    setSelectedAuthorTimelineNextCursor,
+    storeApi,
+    translate,
+  ]);
 
   const loadMessagesSection = useCallback(async () => {
     try {
@@ -555,6 +705,8 @@ export function useDesktopShellSectionLoaders({
     loadShellSections,
     loadProfileSection,
     loadAuthorSection,
+    loadMoreProfileTimeline,
+    loadMoreAuthorTimeline,
     loadBookmarksSection,
     loadMessagesSection,
     loadNotificationsSection,

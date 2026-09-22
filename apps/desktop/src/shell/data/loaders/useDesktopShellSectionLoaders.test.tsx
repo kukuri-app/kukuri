@@ -12,7 +12,15 @@ import {
 } from '@/shell/store';
 import { columnIdentityId, openTransientColumn } from '@/shell/slices/workspace';
 import { createDeferred } from '@/shell/DesktopShellPage.testHelpers';
-import type { CommunityNodeManifestFetch, TimelineView } from '@/lib/api';
+import type { CommunityNodeManifestFetch, PostView, TimelineCursor, TimelineView } from '@/lib/api';
+
+function cursor(createdAt: number, objectId: string): TimelineCursor {
+  return { created_at: createdAt, object_id: objectId };
+}
+
+function profilePost(base: PostView, objectId: string, createdAt: number): PostView {
+  return { ...base, object_id: objectId, envelope_id: `envelope-${objectId}`, created_at: createdAt };
+}
 
 function setup() {
   const api = createDesktopMockApi();
@@ -208,6 +216,124 @@ describe('useDesktopShellSectionLoaders', () => {
     await act(async () => hook.result.current.loadProfileSection());
     expect(store.getState().profileTimeline).toEqual(confirmed);
     expect(store.getState().profileError).toBeNull();
+  });
+
+  test('loads profile pages through an empty page while preserving the advanced cursor', async () => {
+    const { api, hook, store } = setup();
+    const profile = await api.getMyProfile();
+    await api.createPost('kukuri:topic:general', 'sample');
+    const base = (await api.listProfileTimeline(profile.pubkey)).items[0];
+    const newest = profilePost(base, 'profile-newest', 30);
+    const oldest = profilePost(base, 'profile-oldest', 10);
+    const firstCursor = cursor(30, newest.object_id);
+    const hiddenCursor = cursor(20, 'hidden-row');
+    const read = vi.spyOn(api, 'listProfileTimeline')
+      .mockResolvedValueOnce({ items: [newest], next_cursor: firstCursor })
+      .mockResolvedValueOnce({ items: [], next_cursor: hiddenCursor })
+      .mockResolvedValueOnce({ items: [oldest], next_cursor: null });
+
+    await act(async () => hook.result.current.loadProfileSection());
+    await act(async () => hook.result.current.loadMoreProfileTimeline());
+    expect(store.getState().profileTimeline).toEqual([newest]);
+    expect(store.getState().profileTimelineNextCursor).toEqual(hiddenCursor);
+    await act(async () => hook.result.current.loadMoreProfileTimeline());
+
+    expect(read).toHaveBeenNthCalledWith(2, profile.pubkey, firstCursor, 20);
+    expect(read).toHaveBeenNthCalledWith(3, profile.pubkey, hiddenCursor, 20);
+    expect(store.getState().profileTimeline).toEqual([newest, oldest]);
+    expect(store.getState().profileTimelineNextCursor).toBeNull();
+  });
+
+  test('keeps the profile cursor after a page failure and retries only when asked', async () => {
+    const { api, hook, store } = setup();
+    const profile = await api.getMyProfile();
+    await api.createPost('kukuri:topic:general', 'sample');
+    const base = (await api.listProfileTimeline(profile.pubkey)).items[0];
+    const nextCursor = cursor(10, base.object_id);
+    const read = vi.spyOn(api, 'listProfileTimeline')
+      .mockResolvedValueOnce({ items: [base], next_cursor: nextCursor })
+      .mockRejectedValueOnce(new Error('older page unavailable'))
+      .mockResolvedValueOnce({ items: [], next_cursor: null });
+
+    await act(async () => hook.result.current.loadProfileSection());
+    await act(async () => hook.result.current.loadMoreProfileTimeline());
+    expect(store.getState()).toMatchObject({
+      profileTimeline: [base],
+      profileTimelineNextCursor: nextCursor,
+      profileTimelineLoadingMore: false,
+      profileTimelineLoadMoreError: 'older page unavailable',
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+
+    await act(async () => hook.result.current.loadMoreProfileTimeline());
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(store.getState().profileTimelineNextCursor).toBeNull();
+    expect(store.getState().profileTimelineLoadMoreError).toBeNull();
+  });
+
+  test('a late profile page cannot overwrite a newer head refresh', async () => {
+    const { api, hook, store } = setup();
+    const profile = await api.getMyProfile();
+    await api.createPost('kukuri:topic:general', 'sample');
+    const base = (await api.listProfileTimeline(profile.pubkey)).items[0];
+    const first = profilePost(base, 'first-page', 30);
+    const stale = profilePost(base, 'stale-page', 10);
+    const refreshed = profilePost(base, 'refreshed-head', 40);
+    const nextCursor = cursor(30, first.object_id);
+    const pending = createDeferred<TimelineView>();
+    const read = vi.spyOn(api, 'listProfileTimeline')
+      .mockResolvedValueOnce({ items: [first], next_cursor: nextCursor })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ items: [refreshed], next_cursor: null });
+
+    await act(async () => hook.result.current.loadProfileSection());
+    let loading!: Promise<void>;
+    act(() => { loading = hook.result.current.loadMoreProfileTimeline(); });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await act(async () => hook.result.current.loadProfileSection());
+    await act(async () => { pending.resolve({ items: [stale], next_cursor: null }); await loading; });
+
+    expect(store.getState().profileTimeline).toEqual([refreshed]);
+    expect(store.getState().profileTimelineLoadingMore).toBe(false);
+  });
+
+  test('keeps author pagination isolated by pubkey', async () => {
+    const { api, hook, store } = setup();
+    const profile = await api.getMyProfile();
+    await api.createPost('kukuri:topic:general', 'sample');
+    const base = (await api.listProfileTimeline(profile.pubkey)).items[0];
+    const alice = 'a'.repeat(64);
+    const bob = 'b'.repeat(64);
+    const aliceFirst = profilePost(base, 'alice-first', 30);
+    const aliceOlder = profilePost(base, 'alice-older', 10);
+    const bobOnly = profilePost(base, 'bob-only', 20);
+    const aliceCursor = cursor(30, aliceFirst.object_id);
+    vi.spyOn(api, 'getAuthorSocialView').mockImplementation(async (pubkey) => ({
+      ...(await api.getMyProfile()),
+      author_pubkey: pubkey,
+      display_name: pubkey === alice ? 'Alice' : 'Bob',
+      following: false,
+      followed_by: false,
+      mutual: false,
+      friend_of_friend: false,
+      friend_of_friend_via_pubkeys: [],
+      muted: false,
+      blocking: false,
+      blocked_by: false,
+    }));
+    vi.spyOn(api, 'listProfileTimeline').mockImplementation(async (pubkey, pageCursor) => {
+      if (pubkey === alice && !pageCursor) return { items: [aliceFirst], next_cursor: aliceCursor };
+      if (pubkey === alice) return { items: [aliceOlder], next_cursor: null };
+      return { items: [bobOnly], next_cursor: null };
+    });
+
+    await act(async () => hook.result.current.loadAuthorSection(alice));
+    await act(async () => hook.result.current.loadAuthorSection(bob));
+    await act(async () => hook.result.current.loadMoreAuthorTimeline(alice));
+
+    expect(store.getState().authorTimelinesByPubkey[alice]).toEqual([aliceFirst, aliceOlder]);
+    expect(store.getState().authorTimelinesByPubkey[bob]).toEqual([bobOnly]);
+    expect(store.getState().authorTimelineNextCursorByPubkey[alice]).toBeNull();
   });
 
   test('refreshing an own-author column does not replace another selected author', async () => {

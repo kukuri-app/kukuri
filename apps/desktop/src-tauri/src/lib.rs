@@ -216,6 +216,9 @@ pub fn run() {
             file_dialog::install(app.handle())?;
             app.manage(app_update::AppUpdateState::default());
             app.manage(desktop_lifecycle::DesktopLifecycle::default());
+            app.manage(desktop_lifecycle::WindowCloseState::new(
+                resolve_app_data_dir(app.handle()).ok(),
+            ));
             // runtimeが無い同意待ちでもrestore activation/account switchと同じlockを使う。
             app.manage(DesktopOperationState::default());
             #[cfg(unix)]
@@ -340,6 +343,10 @@ pub fn run() {
             tauri::generate_handler![
             commands::startup::get_desktop_startup_status,
             commands::system_locale::get_system_locales,
+            desktop_lifecycle::get_window_close_preference,
+            desktop_lifecycle::set_window_close_preference,
+            desktop_lifecycle::get_pending_window_close_request,
+            desktop_lifecycle::respond_window_close_request,
             commands::developer_logs::set_developer_mode_enabled,
             commands::developer_logs::read_desktop_logs,
             desktop_lifecycle::restart_after_update,

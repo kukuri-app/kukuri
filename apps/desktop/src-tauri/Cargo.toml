@@ -36,7 +36,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] 
 
 [target.'cfg(windows)'.dependencies]
 open = { version = "5.4.3", features = ["shellexecute-on-windows"] }
-windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Globalization"] }
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Globalization", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 notify-rust = "4"

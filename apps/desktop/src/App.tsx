@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { HashRouter } from 'react-router-dom';
 
 import { ConsentGateView } from '@/components/ConsentGateView';
+import { WindowClosePrompt } from '@/components/WindowClosePrompt';
 import { normalizeSupportedLocale } from '@/i18n';
 import { changeDesktopLocale } from '@/i18n/changeLocale';
 import { Button } from '@/components/ui/button';
@@ -158,21 +159,32 @@ export function App(props: AppProps) {
   }, [props.api]);
 
   if (startupGate.status === 'checking' || startupGate.status === 'initializing') {
-    return <StartupStatusScreen status='checking' />;
-  }
-
-  if (startupGate.status === 'consent_required') {
     return (
-      <ConsentGate
-        documents={startupGate.documents}
-        ageAttestation={startupGate.age_attestation}
-        onAccepted={setStartupGate}
-      />
+      <>
+        <StartupStatusScreen status='checking' />
+        <WindowClosePrompt />
+      </>
     );
   }
 
+  if (startupGate.status === 'consent_required') {
+    return <>
+      <ConsentGate
+          documents={startupGate.documents}
+          ageAttestation={startupGate.age_attestation}
+          onAccepted={setStartupGate}
+        />
+      <WindowClosePrompt />
+    </>;
+  }
+
   if (startupGate.status === 'failed') {
-    return <StartupStatusScreen status='failed' error={startupGate.error} />;
+    return (
+      <>
+        <StartupStatusScreen status='failed' error={startupGate.error} />
+        <WindowClosePrompt />
+      </>
+    );
   }
 
   return (
@@ -180,6 +192,7 @@ export function App(props: AppProps) {
       <HashRouter>
         <DesktopShellPage {...props} theme={theme} onThemeChange={setTheme} />
       </HashRouter>
+      <WindowClosePrompt />
     </DesktopShellStoreContext.Provider>
   );
 }

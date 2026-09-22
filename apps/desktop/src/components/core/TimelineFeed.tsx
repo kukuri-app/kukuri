@@ -58,6 +58,7 @@ type TimelineFeedProps = {
   focusedPostObjectId?: string | null;
   hasMore?: boolean;
   loadingMore?: boolean;
+  loadMoreError?: string | null;
   onLoadMore?: () => void;
   /** 読んだ範囲にあるが、まだ取得できていない投稿の数(#1239 AC-4)。続きを読む操作は止めない。 */
   unavailableCount?: number;
@@ -107,6 +108,7 @@ export function TimelineFeed({
   focusedPostObjectId,
   hasMore = false,
   loadingMore = false,
+  loadMoreError = null,
   onLoadMore,
   unavailableCount = 0,
   pendingCount = 0,
@@ -119,7 +121,9 @@ export function TimelineFeed({
 }: TimelineFeedProps) {
   const { t } = useTranslation('common');
   const { sentinelRef: loadMoreRef, canAutoLoad } = useInfiniteScrollSentinel({
-    hasMore,
+    // A failed automatic request must not immediately reconnect the observer and retry forever.
+    // Keep the cursor, but require an explicit retry after an error.
+    hasMore: hasMore && !loadMoreError,
     loadingMore,
     onLoadMore,
   });
@@ -243,13 +247,18 @@ export function TimelineFeed({
       ) : null}
       {hasMore ? (
         <li className={itemClassName}>
-          {canAutoLoad ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
-          {!canAutoLoad && onLoadMore ? (
+          {loadMoreError ? <p className='error'>{loadMoreError}</p> : null}
+          {canAutoLoad && !loadMoreError ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
+          {(!canAutoLoad || loadMoreError) && onLoadMore ? (
             <Button variant='secondary' type='button' onClick={() => onLoadMore()}>
-              {loadingMore ? t('fallbacks.loadingMore') : t('fallbacks.loadMore')}
+              {loadingMore
+                ? t('fallbacks.loadingMore')
+                : loadMoreError
+                  ? t('actions.retry')
+                  : t('fallbacks.loadMore')}
             </Button>
           ) : null}
-          {canAutoLoad && loadingMore ? (
+          {canAutoLoad && !loadMoreError && loadingMore ? (
             <p className='empty'>{t('fallbacks.loadingMore')}</p>
           ) : null}
         </li>

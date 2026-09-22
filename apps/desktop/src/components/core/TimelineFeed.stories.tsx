@@ -48,3 +48,12 @@ export const OnlyUnavailablePosts: Story = {
     onLoadMore: () => undefined,
   },
 };
+
+/** #1278: 自動追加取得に失敗した後は、表示済み投稿を保ち、明示的な再試行へ切り替える。 */
+export const LoadMoreError: Story = {
+  args: {
+    hasMore: true,
+    loadMoreError: 'Older posts could not be loaded.',
+    onLoadMore: () => undefined,
+  },
+};
