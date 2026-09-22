@@ -111,6 +111,10 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "app_update::install_app_update"
                 | "commands::external_url::open_external_url"
                 | "commands::system_locale::get_system_locales"
+                | "desktop_lifecycle::get_window_close_preference"
+                | "desktop_lifecycle::set_window_close_preference"
+                | "desktop_lifecycle::get_pending_window_close_request"
+                | "desktop_lifecycle::respond_window_close_request"
         ),
         "frontend_state" => matches!(
             tauri,
@@ -167,8 +171,8 @@ fn baseline_inventory_is_classified_once() {
         manifest.baseline,
         "d372c91bdc963bda07308a359fe3baeca8e06150"
     );
-    assert_eq!(manifest.scope_revision, "2026-09-19-1174-url-ogp-v1");
-    assert_eq!(manifest.entries.len(), 161);
+    assert_eq!(manifest.scope_revision, "2026-09-22-1272-window-close-v1");
+    assert_eq!(manifest.entries.len(), 165);
     check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");
 }
 

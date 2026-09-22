@@ -1,9 +1,13 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-19-1174-url-ogp-v1",
+  "scope_revision": "2026-09-22-1272-window-close-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
+    {"tauri":"desktop_lifecycle::get_window_close_preference","excluded":"os","reason":"#1272: GUI main windowのclose動作を読むLocal Only設定。windowを持たないCLI／daemonの業務commandには追加しない。"},
+    {"tauri":"desktop_lifecycle::set_window_close_preference","excluded":"os","reason":"#1272: GUI main windowのclose動作を保存するLocal Only設定。windowを持たないCLI／daemonの業務commandには追加しない。"},
+    {"tauri":"desktop_lifecycle::get_pending_window_close_request","excluded":"os","reason":"#1272: GUI close確認Dialogへprocess内の保留要求を受け渡すOS window lifecycle。CLI／daemonには確認surfaceがない。"},
+    {"tauri":"desktop_lifecycle::respond_window_close_request","excluded":"os","reason":"#1272: GUI close確認Dialogの応答をOS window lifecycleへ返す。CLI／daemonの明示的終了contractは変更しない。"},
     {"tauri":"commands::developer_logs::set_developer_mode_enabled","excluded":"gui_diagnostics","reason":"#978: GUIの開発者モード(localStorage)をGUI processへ写すin-memoryミラー。CLI／daemonに開発者モードの表示状態はない。"},
     {"tauri":"commands::developer_logs::read_desktop_logs","excluded":"gui_diagnostics","reason":"#978: GUI process内のin-memory tracing ring bufferの読み取り。CLI／daemonは標準出力で同じログを得るため業務commandには追加しない。"},
     {"tauri":"desktop_lifecycle::restart_after_update","excluded":"os","reason":"署名付きGUI更新後にruntimeを停止してアプリを再起動するOS連携。CLI／daemonの更新や再起動は行わない。"},
