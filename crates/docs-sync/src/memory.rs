@@ -39,6 +39,11 @@ impl MemoryDocsSync {
 
 #[async_trait]
 impl DocsSync for MemoryDocsSync {
+    async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
+        self.events.lock().await.remove(replica_id.as_str());
+        Ok(())
+    }
+
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         ensure_private_replica_access(replica_id, &self.private_replica_secrets).await?;
         self.records

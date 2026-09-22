@@ -98,3 +98,34 @@ fn private_channel_replicas_never_get_public_namespace_secret() {
     assert!(public_replica_secret(&ReplicaId::new("channel::chan-1")).is_none());
     assert!(public_replica_secret(&ReplicaId::new("channel::chan-1::epoch::epoch-2")).is_none());
 }
+
+#[test]
+fn bucket_post_scope_is_decoded_before_integrity_validation() {
+    assert_eq!(
+        post_replica_kind(&ReplicaId::new("bucket::v1::topic::64656d6f::20718")),
+        Some(PostReplicaKind::PublicTopic {
+            topic_id: "demo".into(),
+        })
+    );
+    assert_eq!(
+        post_replica_kind(&ReplicaId::new(
+            "bucket::v1::channel::6368616e::6531::20718"
+        )),
+        Some(PostReplicaKind::PrivateChannel {
+            channel_id: "chan".into(),
+        })
+    );
+}
+
+#[test]
+fn private_or_unknown_bucket_cannot_derive_a_public_secret() {
+    for id in [
+        "bucket::v1::channel::6368616e::6531::20718",
+        "bucket::v2::topic::64656d6f::20718",
+        "bucket::v1::channel::6368616e::20718",
+        "bucket::v1::topic::64656d6f::020718",
+        "bucket::v1::topic::ff::20718",
+    ] {
+        assert!(public_replica_secret(&ReplicaId::new(id)).is_none(), "{id}");
+    }
+}

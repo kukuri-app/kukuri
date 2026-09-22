@@ -20,6 +20,9 @@ pub(crate) async fn ensure_private_replica_access(
     replica_id: &ReplicaId,
     private_replica_secrets: &Arc<Mutex<HashMap<String, NamespaceSecret>>>,
 ) -> Result<()> {
+    if replica_id.as_str().starts_with("bucket::") {
+        crate::BucketReplica::parse(replica_id)?;
+    }
     if public_replica_secret(replica_id).is_some() {
         return Ok(());
     }

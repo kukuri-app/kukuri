@@ -119,6 +119,11 @@ pub enum ReplicaNotice {
 #[async_trait]
 pub trait DocsSync: Send + Sync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()>;
+    /// 同期とevent転送を停止しhandleを解放する。永続entryとcapabilityは削除しない。
+    /// 呼出元は利用中のleaseが無いことを保証する。未対応実装を成功扱いにしない。
+    async fn close_replica(&self, _replica_id: &ReplicaId) -> Result<()> {
+        anyhow::bail!("this DocsSync implementation does not support closing replicas")
+    }
     async fn register_private_replica_secret(
         &self,
         _replica_id: &ReplicaId,

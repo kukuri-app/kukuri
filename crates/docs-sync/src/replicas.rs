@@ -1,9 +1,16 @@
+use crate::buckets::{BucketReplica, BucketScope};
 use iroh_docs::NamespaceSecret;
 use kukuri_core::{ReplicaId, TopicId, blob_hash};
 
 pub(crate) fn public_replica_secret(replica_id: &ReplicaId) -> Option<NamespaceSecret> {
     if replica_id.as_str().starts_with("channel::") {
         return None;
+    }
+    if replica_id.as_str().starts_with("bucket::") {
+        let bucket = BucketReplica::parse(replica_id).ok()?;
+        if bucket.is_private() {
+            return None;
+        }
     }
     let digest = blake3::hash(format!("kukuri-docs:{}", replica_id.as_str()).as_bytes());
     Some(NamespaceSecret::from_bytes(digest.as_bytes()))
@@ -40,6 +47,19 @@ pub enum PostReplicaKind {
 /// 受け付けると、`channel::a::epoch::b::epoch::c` のような id が複数の channel として読めてしまう。
 pub fn post_replica_kind(replica_id: &ReplicaId) -> Option<PostReplicaKind> {
     let raw = replica_id.as_str();
+    if raw.starts_with("bucket::") {
+        return match BucketReplica::parse(replica_id).ok()?.scope() {
+            BucketScope::Topic { topic_id } => Some(PostReplicaKind::PublicTopic {
+                topic_id: topic_id.clone(),
+            }),
+            BucketScope::PrivateChannel { channel_id, .. } => {
+                Some(PostReplicaKind::PrivateChannel {
+                    channel_id: channel_id.clone(),
+                })
+            }
+            BucketScope::Author { .. } => None,
+        };
+    }
     if let Some(topic_id) = raw.strip_prefix("topic::") {
         return (!topic_id.is_empty()).then(|| PostReplicaKind::PublicTopic {
             topic_id: topic_id.to_string(),

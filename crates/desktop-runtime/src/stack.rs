@@ -120,6 +120,7 @@ reloadable_service! {
     #[async_trait]
     impl DocsSync {
         async fn open_replica(replica_id: &ReplicaId) -> Result<()>;
+        async fn close_replica(replica_id: &ReplicaId) -> Result<()>;
         async fn register_private_replica_secret(
             replica_id: &ReplicaId,
             namespace_secret_hex: &str,

@@ -1,4 +1,5 @@
 mod access;
+mod buckets;
 mod docs_author;
 mod iroh_sync;
 mod keys;

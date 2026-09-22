@@ -6,7 +6,7 @@
 //! projection の行・通知・repost の snapshot は `VerifiedPost` からしか作れない。
 
 use super::*;
-use kukuri_docs_sync::{PostReplicaKind, post_replica_kind};
+use kukuri_docs_sync::{BucketReplica, PostReplicaKind, TimeBucket, post_replica_kind};
 
 /// 1 つの object の `envelope` の key について調べる record 数の上限。
 ///
@@ -25,21 +25,29 @@ pub(crate) const MAX_WITHDRAWAL_RECORDS_PER_OBJECT: usize = 8;
 pub(crate) struct ReplicaPostScope {
     topic_id: String,
     channel_id: Option<String>,
+    bucket: Option<TimeBucket>,
 }
 
 impl ReplicaPostScope {
     /// `subscription_topic_id` は、その replica を読む文脈の topic。private channel の replica id は topic を
     /// 含まないので、参加状態が持つ topic を呼び出し側が渡す。投稿を置く replica でなければ `None`。
     pub(crate) fn for_replica(replica: &ReplicaId, subscription_topic_id: &str) -> Option<Self> {
+        let bucket = if replica.as_str().starts_with("bucket::") {
+            Some(BucketReplica::parse(replica).ok()?.bucket())
+        } else {
+            None
+        };
         match post_replica_kind(replica)? {
             PostReplicaKind::PublicTopic { topic_id } => (topic_id == subscription_topic_id)
                 .then_some(Self {
                     topic_id,
                     channel_id: None,
+                    bucket,
                 }),
             PostReplicaKind::PrivateChannel { channel_id } => Some(Self {
                 topic_id: subscription_topic_id.to_string(),
                 channel_id: Some(channel_id),
+                bucket,
             }),
         }
     }
@@ -52,6 +60,10 @@ impl ReplicaPostScope {
 
     pub(crate) fn is_private_channel(&self) -> bool {
         self.channel_id.is_some()
+    }
+
+    pub(crate) fn accepts_created_at(&self, created_at: i64) -> bool {
+        self.bucket.is_none_or(|bucket| bucket.contains(created_at))
     }
 }
 
@@ -116,7 +128,10 @@ impl VerifiedPost {
         let docs_author = envelope.docs_author().map(str::to_string);
         let visibility_matches =
             scope.is_private_channel() || header.visibility == ObjectVisibility::Public;
-        if !scope.accepts(&header.topic_id, header.channel_id.as_ref()) || !visibility_matches {
+        if !scope.accepts(&header.topic_id, header.channel_id.as_ref())
+            || !scope.accepts_created_at(header.created_at)
+            || !visibility_matches
+        {
             return Err(PostRejection::ScopeMismatch);
         }
         Ok(Self {

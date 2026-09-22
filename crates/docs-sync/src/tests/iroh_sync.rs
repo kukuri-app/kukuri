@@ -6,6 +6,107 @@ use crate::{
 };
 
 #[tokio::test]
+async fn local_only_bucket_lookup_does_not_start_replica_sync() -> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    // 旧形式も含むLocalOnlyの契約。statusは実iroh-docsの同期状態を読む。
+    let replica = topic_replica_id("kukuri:topic:local-only-bucket-contract");
+    let rows = docs
+        .query_replica_with_policy(
+            &replica,
+            DocQuery::Exact("objects/missing/state".into()),
+            crate::DocFetchPolicy::LocalOnly,
+        )
+        .await?;
+    assert!(rows.is_empty());
+    let namespace = crate::replicas::public_replica_secret(&replica)
+        .unwrap()
+        .id();
+    let doc = node.docs().open(namespace).await?.expect("local namespace");
+    let syncing = doc.status().await?.sync;
+    doc.close().await?;
+    docs.shutdown().await;
+    node.shutdown().await?;
+    assert!(!syncing, "a LocalOnly lookup must not start docs sync");
+    Ok(())
+}
+
+#[tokio::test]
+async fn local_bucket_reads_stay_idle_after_seed_reapply_and_close_preserves_data() -> Result<()> {
+    use crate::{DocFetchPolicy, DocKeyOrder, DocKeyQuery};
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    let replica = topic_replica_id("kukuri:topic:bucket-lifecycle");
+    let namespace = crate::replicas::public_replica_secret(&replica)
+        .unwrap()
+        .id();
+    let author = iroh_docs::Author::from_bytes(&[1; 32]).id().to_string();
+    docs.query_replica_by_author(&replica, &author, "missing", DocFetchPolicy::LocalOnly)
+        .await?;
+    docs.query_replica_exact_bounded(&replica, "missing", 1, DocFetchPolicy::LocalOnly)
+        .await?;
+    docs.query_replica_keys(
+        &replica,
+        DocKeyQuery {
+            prefix: "objects/".into(),
+            order: DocKeyOrder::Ascending,
+            limit: 1,
+        },
+    )
+    .await?;
+    docs.query_replica_keys_by_author(
+        &replica,
+        "invalid author",
+        DocKeyQuery {
+            prefix: "objects/".into(),
+            order: DocKeyOrder::Ascending,
+            limit: 1,
+        },
+    )
+    .await?;
+    docs.set_seed_peers(Vec::new()).await?;
+    let probe = node.docs().open(namespace).await?.unwrap();
+    assert!(
+        !probe.status().await?.sync,
+        "read or peer reapply started idle sync"
+    );
+    probe.close().await?;
+    docs.open_replica(&replica).await?;
+    docs.apply_doc_op(
+        &replica,
+        DocOp::SetBytes {
+            key: "kept".into(),
+            value: b"value".to_vec(),
+        },
+    )
+    .await?;
+    let probe = node.docs().open(namespace).await?.unwrap();
+    assert!(probe.status().await?.sync, "explicit open must enable sync");
+    probe.close().await?;
+    docs.close_replica(&replica).await?;
+    docs.close_replica(&replica).await?;
+    let rows = docs
+        .query_replica_with_policy(
+            &replica,
+            DocQuery::Exact("kept".into()),
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].value, b"value");
+    docs.set_seed_peers(Vec::new()).await?;
+    let probe = node.docs().open(namespace).await?.unwrap();
+    assert!(
+        !probe.status().await?.sync,
+        "reopening a saved local row restarted sync"
+    );
+    probe.close().await?;
+    docs.shutdown().await;
+    node.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn docs_topic_index_roundtrip() -> Result<()> {
     let node = IrohDocsNode::memory().await?;
     let docs = IrohDocsSync::new(node.clone());

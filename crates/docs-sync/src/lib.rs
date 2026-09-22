@@ -1,4 +1,5 @@
 mod access;
+mod buckets;
 mod iroh_sync;
 mod keys;
 mod memory;
@@ -10,6 +11,7 @@ mod tests;
 mod time_index;
 mod types;
 
+pub use buckets::{BUCKET_SECONDS_V1, BucketReplica, BucketScope, TimeBucket};
 pub use iroh_sync::IrohDocsSync;
 pub use keys::SharedReplicaKeyFamily;
 pub use memory::MemoryDocsSync;
