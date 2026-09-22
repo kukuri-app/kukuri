@@ -44,8 +44,14 @@ pub(crate) struct WindowClosePrompt {
 pub(crate) struct WindowCloseState {
     preference: Mutex<WindowClosePreference>,
     preference_path: Option<PathBuf>,
-    pending_request: Mutex<Option<WindowClosePrompt>>,
+    pending_request: Mutex<Option<PendingWindowCloseRequest>>,
     next_request_id: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingWindowCloseRequest {
+    prompt: WindowClosePrompt,
+    claimed: bool,
 }
 
 impl WindowCloseState {
@@ -68,11 +74,23 @@ impl WindowCloseState {
     }
 
     fn set_preference(&self, next: WindowClosePreference) -> Result<(), CommandError> {
+        self.set_preference_with(next, persist_window_close_preference)
+    }
+
+    fn set_preference_with(
+        &self,
+        next: WindowClosePreference,
+        persist: impl FnOnce(&Path, WindowClosePreference) -> anyhow::Result<()>,
+    ) -> Result<(), CommandError> {
         let path = self.preference_path.as_deref().ok_or_else(|| {
             CommandError::from("ウィンドウ終了設定の保存先を利用できません。".to_string())
         })?;
-        persist_window_close_preference(path, next).map_err(CommandError::from)?;
-        *self.preference.lock().expect("window close preference lock poisoned") = next;
+        let mut current = self
+            .preference
+            .lock()
+            .expect("window close preference lock poisoned");
+        persist(path, next).map_err(CommandError::from)?;
+        *current = next;
         Ok(())
     }
 
@@ -87,33 +105,58 @@ impl WindowCloseState {
         let prompt = WindowClosePrompt {
             request_id: self.next_request_id.fetch_add(1, Ordering::SeqCst),
         };
-        *pending = Some(prompt);
+        *pending = Some(PendingWindowCloseRequest {
+            prompt,
+            claimed: false,
+        });
         Some(prompt)
     }
 
     fn pending_prompt(&self) -> Option<WindowClosePrompt> {
-        *self
+        self
             .pending_request
             .lock()
             .expect("window close request lock poisoned")
+            .as_ref()
+            .map(|pending| pending.prompt)
     }
 
-    fn ensure_pending(&self, request_id: u64) -> Result<(), CommandError> {
-        if self.pending_prompt().is_some_and(|pending| pending.request_id == request_id) {
-            Ok(())
-        } else {
-            Err(CommandError::from(
-                "ウィンドウ終了の確認要求は期限切れです。".to_string(),
-            ))
-        }
-    }
-
-    fn consume_pending(&self, request_id: u64) -> Result<(), CommandError> {
+    fn claim_pending(&self, request_id: u64) -> Result<(), CommandError> {
         let mut pending = self
             .pending_request
             .lock()
             .expect("window close request lock poisoned");
-        if pending.is_some_and(|current| current.request_id == request_id) {
+        match pending.as_mut() {
+            Some(current) if current.prompt.request_id == request_id && !current.claimed => {
+                current.claimed = true;
+                Ok(())
+            }
+            _ => Err(CommandError::from(
+                "ウィンドウ終了の確認要求は期限切れです。".to_string(),
+            )),
+        }
+    }
+
+    fn release_pending(&self, request_id: u64) {
+        let mut pending = self
+            .pending_request
+            .lock()
+            .expect("window close request lock poisoned");
+        if let Some(current) = pending.as_mut()
+            && current.prompt.request_id == request_id
+        {
+            current.claimed = false;
+        }
+    }
+
+    fn consume_claimed(&self, request_id: u64) -> Result<(), CommandError> {
+        let mut pending = self
+            .pending_request
+            .lock()
+            .expect("window close request lock poisoned");
+        if pending.as_ref().is_some_and(|current| {
+            current.prompt.request_id == request_id && current.claimed
+        }) {
             *pending = None;
             Ok(())
         } else {
@@ -378,17 +421,20 @@ pub(crate) async fn respond_window_close_request(
     remember: bool,
 ) -> Result<(), CommandError> {
     require_running(&app_handle)?;
-    state.ensure_pending(request_id)?;
+    state.claim_pending(request_id)?;
     let Some(behavior) = behavior else {
-        state.consume_pending(request_id)?;
+        state.consume_claimed(request_id)?;
         return Ok(());
     };
     if remember {
-        state.set_preference(WindowClosePreference {
+        if let Err(error) = state.set_preference(WindowClosePreference {
             behavior: Some(behavior),
-        })?;
+        }) {
+            state.release_pending(request_id);
+            return Err(error);
+        }
     }
-    state.consume_pending(request_id)?;
+    state.consume_claimed(request_id)?;
     perform_window_close(window, behavior).await;
     Ok(())
 }
@@ -530,13 +576,76 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_preference_mutations_are_serialized_across_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(WindowCloseState::new(Some(dir.path().to_path_buf())));
+        let (first_entered_tx, first_entered_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_first_tx, release_first_rx) = std::sync::mpsc::sync_channel(0);
+        let (second_entered_tx, second_entered_rx) = std::sync::mpsc::sync_channel(0);
+
+        let first = {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                state.set_preference_with(
+                    WindowClosePreference {
+                        behavior: Some(WindowCloseBehavior::Quit),
+                    },
+                    move |_, _| {
+                        first_entered_tx.send(()).unwrap();
+                        release_first_rx.recv().unwrap();
+                        Ok(())
+                    },
+                )
+            })
+        };
+        first_entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        let second = {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                state.set_preference_with(
+                    WindowClosePreference {
+                        behavior: Some(WindowCloseBehavior::Tray),
+                    },
+                    move |_, _| {
+                        second_entered_tx.send(()).unwrap();
+                        Ok(())
+                    },
+                )
+            })
+        };
+
+        assert!(
+            second_entered_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "the second persistence must wait for the first mutation"
+        );
+        release_first_tx.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second_entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        second.join().unwrap().unwrap();
+        assert_eq!(state.preference().behavior, Some(WindowCloseBehavior::Tray));
+    }
+
+    #[test]
     fn close_prompt_is_bounded_and_consumed_only_by_the_matching_response() {
         let state = WindowCloseState::new(None);
         let prompt = state.begin_prompt().expect("first close opens the prompt");
         assert!(state.begin_prompt().is_none(), "repeated close is coalesced");
-        assert!(state.consume_pending(prompt.request_id + 1).is_err());
+        assert!(state.claim_pending(prompt.request_id + 1).is_err());
         assert_eq!(state.pending_prompt(), Some(prompt));
-        state.consume_pending(prompt.request_id).unwrap();
+        state.claim_pending(prompt.request_id).unwrap();
+        assert!(
+            state.claim_pending(prompt.request_id).is_err(),
+            "the same request cannot be answered concurrently"
+        );
+        state.release_pending(prompt.request_id);
+        state.claim_pending(prompt.request_id).unwrap();
+        state.consume_claimed(prompt.request_id).unwrap();
         assert!(state.pending_prompt().is_none());
         assert!(state.begin_prompt().is_some());
     }
