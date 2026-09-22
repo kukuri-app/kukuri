@@ -1,6 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
 
-use tauri::{AppHandle, Manager};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     restore_lifecycle::DesktopOperationState,
@@ -12,6 +19,109 @@ pub(crate) struct DesktopLifecycle {
     requested: AtomicBool,
     completed: AtomicBool,
     tray_created: AtomicBool,
+}
+
+const WINDOW_CLOSE_PREFERENCE_FILE: &str = "window-close-preference.json";
+const WINDOW_CLOSE_REQUESTED_EVENT: &str = "kukuri://window-close-requested";
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WindowCloseBehavior {
+    Quit,
+    Tray,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowClosePreference {
+    pub(crate) behavior: Option<WindowCloseBehavior>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowClosePrompt {
+    pub(crate) request_id: u64,
+}
+
+pub(crate) struct WindowCloseState {
+    preference: Mutex<WindowClosePreference>,
+    preference_path: Option<PathBuf>,
+    pending_request: Mutex<Option<WindowClosePrompt>>,
+    next_request_id: AtomicU64,
+}
+
+impl WindowCloseState {
+    pub(crate) fn new(app_data_dir: Option<PathBuf>) -> Self {
+        let preference_path = app_data_dir.map(|dir| dir.join(WINDOW_CLOSE_PREFERENCE_FILE));
+        let preference = preference_path
+            .as_deref()
+            .and_then(read_window_close_preference)
+            .unwrap_or_default();
+        Self {
+            preference: Mutex::new(preference),
+            preference_path,
+            pending_request: Mutex::new(None),
+            next_request_id: AtomicU64::new(1),
+        }
+    }
+
+    fn preference(&self) -> WindowClosePreference {
+        *self.preference.lock().expect("window close preference lock poisoned")
+    }
+
+    fn set_preference(&self, next: WindowClosePreference) -> Result<(), CommandError> {
+        let path = self.preference_path.as_deref().ok_or_else(|| {
+            CommandError::from("ウィンドウ終了設定の保存先を利用できません。".to_string())
+        })?;
+        persist_window_close_preference(path, next).map_err(CommandError::from)?;
+        *self.preference.lock().expect("window close preference lock poisoned") = next;
+        Ok(())
+    }
+
+    fn begin_prompt(&self) -> Option<WindowClosePrompt> {
+        let mut pending = self
+            .pending_request
+            .lock()
+            .expect("window close request lock poisoned");
+        if pending.is_some() {
+            return None;
+        }
+        let prompt = WindowClosePrompt {
+            request_id: self.next_request_id.fetch_add(1, Ordering::SeqCst),
+        };
+        *pending = Some(prompt);
+        Some(prompt)
+    }
+
+    fn pending_prompt(&self) -> Option<WindowClosePrompt> {
+        *self
+            .pending_request
+            .lock()
+            .expect("window close request lock poisoned")
+    }
+
+    fn ensure_pending(&self, request_id: u64) -> Result<(), CommandError> {
+        if self.pending_prompt().is_some_and(|pending| pending.request_id == request_id) {
+            Ok(())
+        } else {
+            Err(CommandError::from(
+                "ウィンドウ終了の確認要求は期限切れです。".to_string(),
+            ))
+        }
+    }
+
+    fn consume_pending(&self, request_id: u64) -> Result<(), CommandError> {
+        let mut pending = self
+            .pending_request
+            .lock()
+            .expect("window close request lock poisoned");
+        if pending.is_some_and(|current| current.request_id == request_id) {
+            *pending = None;
+            Ok(())
+        } else {
+            Err(CommandError::from(
+                "ウィンドウ終了の確認要求は期限切れです。".to_string(),
+            ))
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +164,86 @@ impl DesktopLifecycle {
         shutdown.await;
         self.completed.store(true, Ordering::SeqCst);
     }
+}
+
+fn read_window_close_preference(path: &Path) -> Option<WindowClosePreference> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "failed to read window close preference");
+            return None;
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(preference) => Some(preference),
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "ignored invalid window close preference");
+            None
+        }
+    }
+}
+
+fn persist_window_close_preference(
+    path: &Path,
+    preference: WindowClosePreference,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("invalid preference path `{}`", path.display()))?;
+    let temp_path = path.with_file_name(format!("{file_name}.tmp"));
+    let bytes = serde_json::to_vec(&preference)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temp_path)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    replace_file(&temp_path, path)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        },
+        core::PCWSTR,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(std::io::Error::other)
 }
 
 fn should_hide_on_close(created: bool, registered: bool) -> bool {
@@ -110,6 +300,31 @@ async fn tray_registered() -> bool {
     )
 }
 
+async fn perform_window_close(window: tauri::Window, behavior: WindowCloseBehavior) {
+    let app = window.app_handle();
+    let lifecycle = app.state::<DesktopLifecycle>();
+    if lifecycle.requested() {
+        return;
+    }
+    if behavior == WindowCloseBehavior::Quit {
+        request_exit(app, ExitAction::Quit);
+        return;
+    }
+    let created = lifecycle.tray_created.load(Ordering::SeqCst);
+    #[cfg(target_os = "linux")]
+    let registered = created && tray_registered().await;
+    #[cfg(not(target_os = "linux"))]
+    let registered = created;
+    if lifecycle.requested() {
+        return;
+    }
+    if should_hide_on_close(created, registered) {
+        let _ = window.hide();
+    } else {
+        request_exit(app, ExitAction::Quit);
+    }
+}
+
 pub(crate) fn close_window(window: tauri::Window) {
     tauri::async_runtime::spawn(async move {
         let app = window.app_handle();
@@ -117,20 +332,65 @@ pub(crate) fn close_window(window: tauri::Window) {
         if lifecycle.requested() {
             return;
         }
-        let created = lifecycle.tray_created.load(Ordering::SeqCst);
-        #[cfg(target_os = "linux")]
-        let registered = created && tray_registered().await;
-        #[cfg(not(target_os = "linux"))]
-        let registered = created;
-        if lifecycle.requested() {
+        let state = app.state::<WindowCloseState>();
+        if let Some(behavior) = state.preference().behavior {
+            perform_window_close(window, behavior).await;
             return;
         }
-        if should_hide_on_close(created, registered) {
-            let _ = window.hide();
-        } else {
-            request_exit(app, ExitAction::Quit);
+        if let Some(prompt) = state.begin_prompt()
+            && let Err(error) = window.emit(WINDOW_CLOSE_REQUESTED_EVENT, prompt)
+        {
+            tracing::warn!(%error, "failed to emit window close confirmation request");
         }
     });
+}
+
+#[tauri::command]
+pub(crate) fn get_window_close_preference(
+    state: tauri::State<'_, WindowCloseState>,
+) -> WindowClosePreference {
+    state.preference()
+}
+
+#[tauri::command]
+pub(crate) fn set_window_close_preference(
+    state: tauri::State<'_, WindowCloseState>,
+    preference: WindowClosePreference,
+) -> Result<WindowClosePreference, CommandError> {
+    state.set_preference(preference)?;
+    Ok(preference)
+}
+
+#[tauri::command]
+pub(crate) fn get_pending_window_close_request(
+    state: tauri::State<'_, WindowCloseState>,
+) -> Option<WindowClosePrompt> {
+    state.pending_prompt()
+}
+
+#[tauri::command]
+pub(crate) async fn respond_window_close_request(
+    app_handle: AppHandle,
+    window: tauri::Window,
+    state: tauri::State<'_, WindowCloseState>,
+    request_id: u64,
+    behavior: Option<WindowCloseBehavior>,
+    remember: bool,
+) -> Result<(), CommandError> {
+    require_running(&app_handle)?;
+    state.ensure_pending(request_id)?;
+    let Some(behavior) = behavior else {
+        state.consume_pending(request_id)?;
+        return Ok(());
+    };
+    if remember {
+        state.set_preference(WindowClosePreference {
+            behavior: Some(behavior),
+        })?;
+    }
+    state.consume_pending(request_id)?;
+    perform_window_close(window, behavior).await;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -221,6 +481,64 @@ mod tests {
         assert!(!should_hide_on_close(false, true));
         assert!(!should_hide_on_close(true, false));
         assert!(!should_hide_on_close(false, false));
+    }
+
+    #[test]
+    fn missing_or_corrupt_preference_remains_an_explicit_question() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = WindowCloseState::new(Some(dir.path().to_path_buf()));
+        assert_eq!(state.preference().behavior, None);
+
+        std::fs::write(
+            dir.path().join(WINDOW_CLOSE_PREFERENCE_FILE),
+            b"not valid json",
+        )
+        .unwrap();
+        let reloaded = WindowCloseState::new(Some(dir.path().to_path_buf()));
+        assert_eq!(reloaded.preference().behavior, None);
+    }
+
+    #[test]
+    fn preference_is_persisted_and_reloaded_for_each_close_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = WindowCloseState::new(Some(dir.path().to_path_buf()));
+        for behavior in [WindowCloseBehavior::Quit, WindowCloseBehavior::Tray] {
+            state
+                .set_preference(WindowClosePreference {
+                    behavior: Some(behavior),
+                })
+                .unwrap();
+            let reloaded = WindowCloseState::new(Some(dir.path().to_path_buf()));
+            assert_eq!(reloaded.preference().behavior, Some(behavior));
+        }
+    }
+
+    #[test]
+    fn failed_persistence_does_not_change_the_effective_preference() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked_parent = dir.path().join("blocked");
+        std::fs::write(&blocked_parent, b"file, not directory").unwrap();
+        let state = WindowCloseState::new(Some(blocked_parent));
+        assert!(
+            state
+                .set_preference(WindowClosePreference {
+                    behavior: Some(WindowCloseBehavior::Tray),
+                })
+                .is_err()
+        );
+        assert_eq!(state.preference().behavior, None);
+    }
+
+    #[test]
+    fn close_prompt_is_bounded_and_consumed_only_by_the_matching_response() {
+        let state = WindowCloseState::new(None);
+        let prompt = state.begin_prompt().expect("first close opens the prompt");
+        assert!(state.begin_prompt().is_none(), "repeated close is coalesced");
+        assert!(state.consume_pending(prompt.request_id + 1).is_err());
+        assert_eq!(state.pending_prompt(), Some(prompt));
+        state.consume_pending(prompt.request_id).unwrap();
+        assert!(state.pending_prompt().is_none());
+        assert!(state.begin_prompt().is_some());
     }
 
     #[test]

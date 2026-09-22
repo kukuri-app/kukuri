@@ -210,6 +210,10 @@
       "description": "本地亮色、暗色与语言选择。",
       "label": "外观与语言"
     },
+    "system": {
+      "description": "窗口关闭行为与桌面集成。",
+      "label": "系统"
+    },
     "keyboard": {
       "description": "已分配的按键，以及每个按键生效的界面与焦点条件。",
       "label": "键盘操作"

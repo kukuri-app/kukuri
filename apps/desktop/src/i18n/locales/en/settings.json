@@ -722,6 +722,28 @@
     "operationDetails": "Operation error details",
     "previousLabel": "{{state}} (previous snapshot)"
   },
+  "system": {
+    "title": "System",
+    "summary": "Choose what happens when you close the main window.",
+    "windowCloseBehavior": "When closing the window",
+    "options": {
+      "ask": "Ask every time",
+      "quit": "Quit kukuri",
+      "tray": "Keep kukuri in the task tray"
+    },
+    "hint": "Task tray mode keeps kukuri running after the window closes. If the tray is unavailable, kukuri quits normally.",
+    "saveError": "The window close setting could not be saved. The previous setting is still active."
+  },
+  "windowClosePrompt": {
+    "title": "Keep kukuri in the task tray?",
+    "description": "You can keep kukuri running in the background or quit the application.",
+    "remember": "Do not ask again",
+    "cancel": "Cancel",
+    "tray": "Keep in task tray",
+    "quit": "Quit kukuri",
+    "pending": "Quitting…",
+    "error": "The choice could not be applied. Please try again."
+  },
   "notifications": {
     "title": "Notifications",
     "summary": "How OS notifications arrive",

@@ -11,6 +11,7 @@ import { ReleasePanel } from '@/components/settings/ReleasePanel';
 import { ReactionsPanel } from '@/components/settings/ReactionsPanel';
 import { KeyboardPanel } from '@/components/settings/KeyboardPanel';
 import { SafetyPanel } from '@/components/settings/SafetyPanel';
+import { SystemPanel } from '@/components/settings/SystemPanel';
 import { SettingsDrawer } from '@/components/shell/SettingsDrawer';
 import { DesktopShellDeveloperLogs } from '@/shell/page/DesktopShellDeveloperLogs';
 import type { PrimarySection, ProfileConnectionsView, SettingsSection } from '@/components/shell/types';
@@ -210,6 +211,10 @@ export function DesktopShellSettingsDrawer({
           localeSaveFailed={localeSaveFailed}
         />
       ),
+    },
+    {
+      ...sectionCopy('system'),
+      content: <SystemPanel />,
     },
     {
       ...sectionCopy('keyboard'),

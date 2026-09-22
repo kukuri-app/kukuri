@@ -84,6 +84,24 @@ test('settings drawer can open the release section', async () => {
   );
 });
 
+test('settings drawer exposes the window close behavior under System', async () => {
+  const user = userEvent.setup();
+  render(<App api={createDesktopMockApi()} />);
+
+  await user.click(await screen.findByTestId('control-center-trigger'));
+  await user.click(
+    within(screen.getByRole('complementary', { name: 'Control Center' })).getByRole('button', {
+      name: 'Settings',
+    })
+  );
+  await user.click(screen.getByRole('button', { name: 'System' }));
+
+  expect(screen.getByRole('heading', { name: 'System' })).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'When closing the window' })).toHaveValue('ask');
+  expect(screen.getByRole('option', { name: 'Quit kukuri' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'Keep kukuri in the task tray' })).toBeInTheDocument();
+});
+
 // #857: startup gate は文書単位の同意状態を受け取る。
 function consentDocuments(acceptedVersion: number | null) {
   return ['terms', 'privacy'].map((slug) => ({

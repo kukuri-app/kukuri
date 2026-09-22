@@ -210,6 +210,10 @@
       "description": "Local light, dark, and language selection.",
       "label": "Language & theme"
     },
+    "system": {
+      "description": "Window close behavior and desktop integration.",
+      "label": "System"
+    },
     "keyboard": {
       "description": "Assigned keys and the screen or focus each one needs.",
       "label": "Keyboard"

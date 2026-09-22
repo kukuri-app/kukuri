@@ -8,6 +8,8 @@ const NON_READY_COMMAND_ALLOWLIST: &[&str] = &[
     "get_app_consent_status",
     "accept_app_consents",
     "cancel_device_backup",
+    "get_pending_window_close_request",
+    "respond_window_close_request",
 ];
 
 fn command_allowed(command: &str, status: &DesktopStartupStatus) -> bool {
@@ -209,6 +211,10 @@ mod tests {
                 "get_app_consent_status",
                 "accept_app_consents",
                 "cancel_device_backup",
+                // Window close confirmation is owned by the app shell and must remain
+                // answerable while runtime startup or consent is still pending.
+                "get_pending_window_close_request",
+                "respond_window_close_request",
             ]
         );
         for command in NON_READY_COMMAND_ALLOWLIST {

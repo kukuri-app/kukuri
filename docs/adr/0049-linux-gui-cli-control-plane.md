@@ -130,12 +130,27 @@ DebにCLIは同梱しない。Deb payloadはfirst-party ELF、desktop／iconとn
 
 ## Linux GUIの終了と更新
 
+- main window の close 動作は端末ローカルの `null` / `quit` / `tray` 設定で決める。未設定または破損値は `null` として、windowを表示したまま「終了／タスクトレイへ格納／キャンセル」を確認する。確認時の「以降同じ質問をしない」を選んだ場合だけ、選択した `quit` / `tray` を保存する。Control Centerのシステム設定では `null` を「毎回確認する」としていつでも再選択できる。
+- close確認要求はprocess内で上限1件の保留状態とし、要求IDが一致する応答だけを一度適用する。frontendの購読前に発生した要求は読み戻せるようにする。設定保存に失敗した場合はclose副作用を開始せず、同じ確認から再試行できる状態を維持する。
 - トレイのオブジェクト生成成功だけでclose-to-trayを有効にしない。Linuxでは表示先と当該processの登録を確認し、利用不能・確認不能なら正常終了へ進む。非表示中に表示先を失った場合はwindowへ復帰させる。
 - Quit、ウィンドウ終了、SIGTERM／SIGINT／SIGHUP、更新後の再起動はGUIの終了処理へ集約する。終了要求後は新しいアプリ操作を受け付けず、既存の起動・復元・アカウント切替の排他処理を待ってから現在のhostを停止する。進行中バックアップの取消入口は維持する。
 - Linux AppImageの更新は署名検証済みのdownload結果だけをinstallし、成功後にhost停止と再起動を要求する。install失敗時は再起動せず、失敗を表示する。GUIの再起動はCLI／daemonの操作として公開しない。
 - downloadと署名検証後の再起動待ちは、定期／手動checkや重複downloadで破棄しない。「あとで」は案内だけを閉じ、検証済み更新と明示適用の操作を維持する。asset取得の404はfile欠落として案内し、manifest取得失敗や接続障害と区別する。
-- 終了要求・終了完了・トレイ確認結果はprocess内だけのTransient／Local Only状態である。SQLite、backup、gossip、peerへの複製対象にしない。既存のprofile・同意・鍵の分類と保存形式は変更しない。
+- 終了要求・終了完了・close確認の保留要求・トレイ確認結果はprocess内だけのTransient／Local Only状態である。close設定だけをapp data directoryのJSONへDurable／Local Onlyとして原子的に保存する。SQLite、backup、gossip、peerへの複製対象にせず、既存のprofile・同意・鍵の分類と保存形式は変更しない。
 - 二重起動の受付ログにargvやdeep-link本文を記録しない。
+
+### Feature Data Classification
+- Feature 名: main window close preference
+- Durable / Transient: 選択済み設定はDurable。確認要求、要求ID、終了処理、tray可用性はTransient
+- Canonical Source: app data directoryの`window-close-preference.json`。process内ではTauri `WindowCloseState`が読み込み済みsnapshotを所有
+- Replicated?: No
+- Rebuildable From: 設定file欠落・破損時は`null`（毎回確認）へ安全に戻る。利用者の過去選択自体は再構築しない
+- Public Replica / Private Replica / Local Only: Local Only
+- Gossip Hint 必要有無: 不要
+- Blob 必要有無: 不要
+- SQLite projection 必要有無: 不要
+- 必須 contract: `null`で副作用前に確認、記憶指定時だけ保存、保存失敗時はhide／shutdownなし、`quit`は正常終了、`tray`は利用可能時だけhide、要求IDの単発consume
+- 必須 scenario: Tauri unit／IPC testとfrontend component test。外部peerを使うscenarioは不要
 
 ## LinuxのOS通知利用可否
 
