@@ -268,7 +268,7 @@ export type ChannelId = string;
 
 export type ChannelRef = { "kind": "public" } | { "kind": "private_channel", channel_id: ChannelId, };
 
-export type TimelineScope = { "kind": "public" } | { "kind": "all_joined" } | { "kind": "channel", channel_id: ChannelId, };
+export type TimelineScope = { "kind": "public" } | { "kind": "channel", channel_id: ChannelId, };
 
 export type SeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 

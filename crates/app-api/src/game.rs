@@ -16,7 +16,7 @@ impl AppService {
     ) -> Result<Vec<GameRoomView>> {
         self.ensure_scope_subscriptions(topic_id, &scope).await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
-        let allowed = self.allowed_channel_ids_for_scope(topic_id, &scope).await?;
+        let allowed = BTreeSet::from([self.allowed_channel_id_for_scope(topic_id, &scope).await?]);
         let mut rows = filter_channel_rows(
             self.services
                 .projection_store

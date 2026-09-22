@@ -136,10 +136,10 @@ async fn left_private_channel_is_not_read_by_the_thread_or_the_timeline_reconcil
     let channel_timeline = app
         .list_timeline_scoped(topic, TimelineScope::Channel { channel_id }, None, 20)
         .await;
-    let all_joined = app
-        .list_timeline_scoped(topic, TimelineScope::AllJoined, None, 20)
+    let public = app
+        .list_timeline_scoped(topic, TimelineScope::Public, None, 20)
         .await
-        .expect("all joined");
+        .expect("public");
     sleep(Duration::from_millis(200)).await;
     let channel_reads = docs_sync
         .reads
@@ -159,7 +159,7 @@ async fn left_private_channel_is_not_read_by_the_thread_or_the_timeline_reconcil
         channel_timeline.is_err(),
         "the channel scope must be refused"
     );
-    assert!(all_joined.items.is_empty());
+    assert!(public.items.is_empty());
 }
 
 // 空の索引を 1 回見た先頭の範囲は、間隔を空けずに次の取得でも読む。投稿が docs に入った直後のページを、

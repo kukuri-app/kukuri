@@ -1,5 +1,4 @@
 use super::*;
-use std::collections::BTreeSet;
 
 fn projection_row(
     topic: &str,
@@ -378,11 +377,10 @@ async fn filtered_timeline_query_preserves_cursor_across_channel_pages() {
         .await
         .expect("put projections");
 
-    let allowed_channels = BTreeSet::from(["private:friends".to_string()]);
-    let first_page = ObjectProjectionStore::list_topic_timeline_filtered(
+    let first_page = ObjectProjectionStore::list_topic_timeline_in_channel(
         &store,
         topic,
-        &allowed_channels,
+        "private:friends",
         None,
         2,
     )
@@ -398,10 +396,10 @@ async fn filtered_timeline_query_preserves_cursor_across_channel_pages() {
     );
     assert!(first_page.next_cursor.is_some());
 
-    let second_page = ObjectProjectionStore::list_topic_timeline_filtered(
+    let second_page = ObjectProjectionStore::list_topic_timeline_in_channel(
         &store,
         topic,
-        &allowed_channels,
+        "private:friends",
         first_page.next_cursor.clone(),
         2,
     )

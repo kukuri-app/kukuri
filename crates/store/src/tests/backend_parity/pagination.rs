@@ -5,8 +5,6 @@
 
 use super::*;
 
-use std::collections::BTreeSet;
-
 fn envelope_page_ids(pages: &[Page<KukuriEnvelope>]) -> Vec<Vec<String>> {
     pages
         .iter()
@@ -111,21 +109,21 @@ async fn walk_projection_timeline<S: Store + ProjectionStore>(
 async fn walk_projection_timeline_filtered<S: Store + ProjectionStore>(
     store: &S,
     topic_id: &str,
-    allowed_channels: &BTreeSet<String>,
+    channel_id: &str,
     limit: usize,
 ) -> Vec<Page<ObjectProjectionRow>> {
     let mut pages = Vec::new();
     let mut cursor: Option<TimelineCursor> = None;
     loop {
-        let page = ObjectProjectionStore::list_topic_timeline_filtered(
+        let page = ObjectProjectionStore::list_topic_timeline_in_channel(
             store,
             topic_id,
-            allowed_channels,
+            channel_id,
             cursor.clone(),
             limit,
         )
         .await
-        .expect("ObjectProjectionStore::list_topic_timeline_filtered");
+        .expect("ObjectProjectionStore::list_topic_timeline_in_channel");
         cursor = page.next_cursor.clone();
         pages.push(page);
         if cursor.is_none() {
@@ -298,7 +296,7 @@ async fn store_envelope_pagination_matches_between_backends() {
 struct ProjectionTimelineScenarioResult {
     timeline_pages: Vec<Page<ObjectProjectionRow>>,
     filtered_pages: Vec<Page<ObjectProjectionRow>>,
-    filtered_all_channels: Page<ObjectProjectionRow>,
+    filtered_public: Page<ObjectProjectionRow>,
     projection_hit: Option<ObjectProjectionRow>,
     projection_miss: Option<ObjectProjectionRow>,
 }
@@ -328,20 +326,14 @@ async fn projection_timeline_scenario<S: Store + ProjectionStore>(
         .await
         .expect("ObjectProjectionStore::put_object_projection update");
 
-    let private_only = BTreeSet::from(["private:friends".to_string()]);
-    let both_channels = BTreeSet::from(["public".to_string(), "private:friends".to_string()]);
     ProjectionTimelineScenarioResult {
         timeline_pages: walk_projection_timeline(store, topic, 2).await,
-        filtered_pages: walk_projection_timeline_filtered(store, topic, &private_only, 2).await,
-        filtered_all_channels: ObjectProjectionStore::list_topic_timeline_filtered(
-            store,
-            topic,
-            &both_channels,
-            None,
-            10,
+        filtered_pages: walk_projection_timeline_filtered(store, topic, "private:friends", 2).await,
+        filtered_public: ObjectProjectionStore::list_topic_timeline_in_channel(
+            store, topic, "public", None, 10,
         )
         .await
-        .expect("ObjectProjectionStore::list_topic_timeline_filtered all"),
+        .expect("ObjectProjectionStore::list_topic_timeline_in_channel public"),
         projection_hit: ObjectProjectionStore::get_object_projection(
             store,
             &EnvelopeId::from("proj-a"),
@@ -382,7 +374,7 @@ async fn projection_timeline_pagination_matches_between_backends() {
             vec!["proj-e".to_string()],
         ],
     );
-    assert_eq!(from_sqlite.filtered_all_channels.items.len(), 6);
+    assert_eq!(from_sqlite.filtered_public.items.len(), 3);
     assert_eq!(
         from_sqlite
             .projection_hit

@@ -330,14 +330,13 @@ export function CommunityIndexWorkspace({
   const authorSequence = useRef(0);
 
   const effectiveOperation: IndexOperation = mode === 'topic' ? 'search' : operation;
-  const isAllJoined = mode === 'topic' && activeTimelineScope.kind === 'all_joined';
   // 選択値が適格一覧(認証・同意・通信・提供中能力)に含まれない間は、再調整が追いつくまで
   // 古いノードへ要求を送らない(#698)。文脈も無効化するので古い結果・通報対象は失効する。
   const activeNodeBaseUrl =
     selectedNodeBaseUrl !== null && eligibleNodeBaseUrls.includes(selectedNodeBaseUrl)
       ? selectedNodeBaseUrl
       : null;
-  const disabled = activeNodeBaseUrl === null || isAllJoined ||
+  const disabled = activeNodeBaseUrl === null ||
     (availability !== undefined && availability.reason !== 'ready');
   const retryDeadline = activeNodeBaseUrl ? queryRetryDeadlines[activeNodeBaseUrl] ?? 0 : 0;
   const queryRetrySeconds = Math.max(0, Math.ceil((retryDeadline - queryClock) / 1000));
@@ -839,8 +838,6 @@ export function CommunityIndexWorkspace({
             </Button>
           </div>
         </Notice>
-      ) : isAllJoined ? (
-        <Notice className='shell-community-index-notice' tone='warning'>{t('shell:communityIndex.allJoinedDisabled')}</Notice>
       ) : (
         <form className='shell-community-index-form' onSubmit={(event) => void runQuery(event)}>
           {effectiveOperation === 'search' ? (

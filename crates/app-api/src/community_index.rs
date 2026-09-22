@@ -95,7 +95,7 @@ impl AppService {
                     .private_channel_write_state(topic.as_str(), channel_id)
                     .await
                     .is_ok(),
-                TimelineScope::Public | TimelineScope::AllJoined => true,
+                TimelineScope::Public => true,
             };
             for input in entries {
                 let unresolved = || CommunityIndexResolvedPostView {

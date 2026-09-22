@@ -256,9 +256,6 @@ export function audienceLabelForTimelineScope(
   scope: TimelineScope,
   joinedChannels: JoinedPrivateChannelView[]
 ): string {
-  if (scope.kind === 'all_joined') {
-    return translate('common:audience.allJoined');
-  }
   if (scope.kind === 'channel') {
     return (
       joinedChannels.find((channel) => channel.channel_id === scope.channel_id)?.label ??
@@ -556,9 +553,6 @@ export function formatCount(value: number): string {
 export function localizeAudienceLabel(label: string): string {
   if (label === 'Public') {
     return translate('common:audience.public');
-  }
-  if (label === 'All joined') {
-    return translate('common:audience.allJoined');
   }
   if (label === 'Private channel') {
     return translate('common:audience.privateChannel');

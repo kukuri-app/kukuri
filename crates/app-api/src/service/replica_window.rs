@@ -656,11 +656,11 @@ impl AppService {
             .await?
             .map(|row| row.channel_id);
         let scope = match root_channel.as_deref() {
-            Some(PUBLIC_CHANNEL_ID) => TimelineScope::Public,
-            Some(channel_id) => TimelineScope::Channel {
+            Some(PUBLIC_CHANNEL_ID) => ReplicaScope::Public,
+            Some(channel_id) => ReplicaScope::Channel {
                 channel_id: ChannelId::new(channel_id),
             },
-            None => TimelineScope::AllJoined,
+            None => ReplicaScope::AllJoined,
         };
         // 参加していない private channel の thread は照合しない(replica を読まない)。表示は従来どおり
         // projection の行だけで組み立てる。

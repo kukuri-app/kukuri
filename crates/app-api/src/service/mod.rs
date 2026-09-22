@@ -171,6 +171,7 @@ pub(crate) use subscription_catch_up::{
 mod reply_target_support;
 mod subscription_registry;
 mod timeline_subscription_support;
+pub(crate) use timeline_subscription_support::ReplicaScope;
 mod timeline_view_support;
 
 pub(crate) use errors::{

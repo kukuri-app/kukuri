@@ -749,7 +749,7 @@ impl AppService {
             topic_id,
             cursor.clone(),
             limit,
-            &self.allowed_channel_ids_for_scope(topic_id, &scope).await?,
+            &self.allowed_channel_id_for_scope(topic_id, &scope).await?,
             &hidden_author_pubkeys,
         )
         .await?;
@@ -783,7 +783,7 @@ impl AppService {
                     topic_id,
                     cursor,
                     limit,
-                    &self.allowed_channel_ids_for_scope(topic_id, &scope).await?,
+                    &self.allowed_channel_id_for_scope(topic_id, &scope).await?,
                     &hidden_author_pubkeys,
                 )
                 .await?;
@@ -825,7 +825,7 @@ impl AppService {
     ) -> Result<TimelineView> {
         let had_topic_subscription = self.has_topic_subscription(topic_id).await;
         let empty_recovery_key = thread_empty_recovery_key(topic_id, thread_id);
-        self.ensure_scope_subscriptions(topic_id, &TimelineScope::AllJoined)
+        self.ensure_replica_scope_subscriptions(topic_id, &ReplicaScope::AllJoined)
             .await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let thread_root = EnvelopeId::from(thread_id);
@@ -881,10 +881,10 @@ impl AppService {
             }
             if page.items.is_empty() && restart_after_empty {
                 if had_topic_subscription {
-                    self.maybe_restart_scope_subscription(topic_id, &TimelineScope::AllJoined)
+                    self.maybe_restart_scope_subscription(topic_id, &ReplicaScope::AllJoined)
                         .await;
                 }
-                self.maybe_restart_scope_replica_sync(topic_id, &TimelineScope::AllJoined)
+                self.maybe_restart_scope_replica_sync(topic_id, &ReplicaScope::AllJoined)
                     .await;
             }
         }
@@ -919,7 +919,6 @@ fn author_empty_recovery_key(author_pubkey: &str) -> String {
 fn scope_empty_recovery_key(topic_id: &str, scope: &TimelineScope) -> String {
     match scope {
         TimelineScope::Public => format!("empty-scope:{topic_id}:public"),
-        TimelineScope::AllJoined => format!("empty-scope:{topic_id}:all-joined"),
         TimelineScope::Channel { channel_id } => {
             format!("empty-scope:{topic_id}:channel:{}", channel_id.as_str())
         }

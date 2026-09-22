@@ -452,7 +452,6 @@
     },
     "results": "社区索引结果",
     "noEligibleNode": "当前没有已认证、已同意且提供可用社区索引的社区节点。",
-    "allJoinedDisabled": "请一次搜索一个公开主题或私密频道。不会把全部已加入范围发送给节点。",
     "errors": {
       "authRequired": "需要对所选社区节点进行身份验证。",
       "consentRequired": "需要同意所选社区节点的必选条款。",

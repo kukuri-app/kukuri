@@ -37,10 +37,6 @@ async fn rows(name: &str, count: usize, authors: &[KukuriKeys]) -> Rows {
     Rows { store, topic, ids }
 }
 
-fn public_channel() -> BTreeSet<String> {
-    BTreeSet::from([PUBLIC_CHANNEL_ID.to_string()])
-}
-
 // `limit` が内部のページの大きさ(20)より小さいとき、以前は `next_cursor` がページの末尾を指していて、
 // 同じページの残りの行を次の取得が飛ばしていた。ページを継いで、全行を 1 回ずつ読めること。
 #[tokio::test]
@@ -55,7 +51,7 @@ async fn next_cursor_points_at_the_last_returned_row() {
             fixture.topic.as_str(),
             cursor,
             5,
-            &public_channel(),
+            PUBLIC_CHANNEL_ID,
             &BTreeSet::new(),
         )
         .await
@@ -112,7 +108,7 @@ async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
         topic.as_str(),
         None,
         10,
-        &public_channel(),
+        PUBLIC_CHANNEL_ID,
         &hidden_authors,
     )
     .await
@@ -140,7 +136,7 @@ async fn hidden_author_rows_are_skipped_with_a_bounded_number_of_pages() {
             topic.as_str(),
             Some(current),
             10,
-            &public_channel(),
+            PUBLIC_CHANNEL_ID,
             &hidden_authors,
         )
         .await

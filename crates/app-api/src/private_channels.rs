@@ -1025,7 +1025,7 @@ impl AppService {
         self.ensure_topic_subscription(topic_id).await?;
         self.ensure_joined_private_channel_subscriptions(topic_id)
             .await?;
-        self.maybe_restart_scope_replica_sync(topic_id, &TimelineScope::AllJoined)
+        self.maybe_restart_scope_replica_sync(topic_id, &ReplicaScope::AllJoined)
             .await;
         for state in self.joined_private_channel_states_for_topic(topic_id).await {
             self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, state.channel_id.as_str())

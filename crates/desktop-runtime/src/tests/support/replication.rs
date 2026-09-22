@@ -354,7 +354,7 @@ pub(crate) async fn replicate_private_post_with_retry(
         public_replication_retry_schedule(runtime_replication_timeout(), false);
     let channel_id = match scope {
         TimelineScope::Channel { channel_id } => channel_id.as_str().to_string(),
-        TimelineScope::Public | TimelineScope::AllJoined => {
+        TimelineScope::Public => {
             panic!("replicate_private_post_with_retry requires a private channel scope")
         }
     };

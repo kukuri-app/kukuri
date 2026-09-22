@@ -942,13 +942,12 @@ describe('audienceLabelForChannelRef', () => {
 });
 
 describe('audienceLabelForTimelineScope', () => {
-  it('uses the joined channel label, falling back to All joined / Private channel / Public', () => {
+  it('uses the joined channel label, falling back to Private channel / Public', () => {
     const joined = [buildJoinedChannel({ channel_id: 'channel-1', label: 'Ops Room' })];
 
     expect(
       audienceLabelForTimelineScope({ kind: 'channel', channel_id: 'channel-1' }, joined)
     ).toBe('Ops Room');
-    expect(audienceLabelForTimelineScope({ kind: 'all_joined' }, [])).toBe('All joined');
     expect(audienceLabelForTimelineScope({ kind: 'channel', channel_id: 'channel-x' }, [])).toBe(
       'Private channel'
     );
@@ -1011,7 +1010,6 @@ describe('localizeAudienceLabel', () => {
   it('routes the three known labels through translations, passing others through', () => {
     // en では訳文が入力と同値(キー経由で解決される)
     expect(localizeAudienceLabel('Public')).toBe('Public');
-    expect(localizeAudienceLabel('All joined')).toBe('All joined');
     expect(localizeAudienceLabel('Private channel')).toBe('Private channel');
     expect(localizeAudienceLabel('Ops Room')).toBe('Ops Room');
   });

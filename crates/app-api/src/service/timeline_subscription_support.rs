@@ -3,6 +3,35 @@
 
 use super::*;
 
+/// 購読と replica の読み書きの対象(#1280)。app-api の内部だけで使う。
+///
+/// `AllJoined` は、thread を開いたときの購読、root の channel が分からない thread の照合、private channel の一覧での
+/// 同期の再開など、参加中の全 channel を対象にする内部の処理のためのもの。API の `TimelineScope` からは指定できない
+/// (複数の channel をまたぐタイムラインのページは、許可されない channel の行を件数に比例して読み飛ばすので閉じた)。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReplicaScope {
+    Public,
+    AllJoined,
+    Channel { channel_id: ChannelId },
+}
+
+impl From<&TimelineScope> for ReplicaScope {
+    fn from(scope: &TimelineScope) -> Self {
+        match scope {
+            TimelineScope::Public => Self::Public,
+            TimelineScope::Channel { channel_id } => Self::Channel {
+                channel_id: channel_id.clone(),
+            },
+        }
+    }
+}
+
+impl From<&ReplicaScope> for ReplicaScope {
+    fn from(scope: &ReplicaScope) -> Self {
+        scope.clone()
+    }
+}
+
 impl AppService {
     pub(crate) async fn ensure_topic_subscription(&self, topic_id: &str) -> Result<()> {
         if self.is_topic_gossip_disabled(topic_id).await {
@@ -232,14 +261,23 @@ impl AppService {
         topic_id: &str,
         scope: &TimelineScope,
     ) -> Result<()> {
+        self.ensure_replica_scope_subscriptions(topic_id, &ReplicaScope::from(scope))
+            .await
+    }
+
+    pub(crate) async fn ensure_replica_scope_subscriptions(
+        &self,
+        topic_id: &str,
+        scope: &ReplicaScope,
+    ) -> Result<()> {
         self.ensure_topic_subscription(topic_id).await?;
         match scope {
-            TimelineScope::Public => Ok(()),
-            TimelineScope::AllJoined => {
+            ReplicaScope::Public => Ok(()),
+            ReplicaScope::AllJoined => {
                 self.ensure_joined_private_channel_subscriptions(topic_id)
                     .await
             }
-            TimelineScope::Channel { channel_id } => {
+            ReplicaScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
                 self.ensure_private_channel_subscription(topic_id, channel_id.as_str())
@@ -273,29 +311,20 @@ impl AppService {
             .any(|item| item.source_replica_id == current_replica)
     }
 
-    pub(crate) async fn allowed_channel_ids_for_scope(
+    /// scope が指す 1 つの channel(#1280)。private channel は、参加状態の確認を通ったものだけを返す。
+    pub(crate) async fn allowed_channel_id_for_scope(
         &self,
         topic_id: &str,
         scope: &TimelineScope,
-    ) -> Result<BTreeSet<String>> {
-        let mut allowed = BTreeSet::new();
+    ) -> Result<String> {
         match scope {
-            TimelineScope::Public => {
-                allowed.insert(PUBLIC_CHANNEL_ID.to_string());
-            }
-            TimelineScope::AllJoined => {
-                allowed.insert(PUBLIC_CHANNEL_ID.to_string());
-                for state in self.joined_private_channel_states_for_topic(topic_id).await {
-                    allowed.insert(state.channel_id.as_str().to_string());
-                }
-            }
+            TimelineScope::Public => Ok(PUBLIC_CHANNEL_ID.to_string()),
             TimelineScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
-                allowed.insert(channel_id.as_str().to_string());
+                Ok(channel_id.as_str().to_string())
             }
         }
-        Ok(allowed)
     }
 
     /// #1225: ページに出ている行のうち、本文 blob が欠けているものを行単位で取り直す。
@@ -532,19 +561,20 @@ impl AppService {
     pub(crate) async fn scope_replicas(
         &self,
         topic_id: &str,
-        scope: &TimelineScope,
+        scope: impl Into<ReplicaScope>,
     ) -> Result<Vec<ReplicaId>> {
+        let scope = scope.into();
         let mut replicas = Vec::new();
-        let states = match scope {
-            TimelineScope::Public => {
+        let states = match &scope {
+            ReplicaScope::Public => {
                 replicas.push(topic_replica_id(topic_id));
                 Vec::new()
             }
-            TimelineScope::AllJoined => {
+            ReplicaScope::AllJoined => {
                 replicas.push(topic_replica_id(topic_id));
                 self.joined_private_channel_states_for_topic(topic_id).await
             }
-            TimelineScope::Channel { channel_id } => {
+            ReplicaScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
                 self.joined_private_channel_state(topic_id, channel_id.as_str())
@@ -567,13 +597,14 @@ impl AppService {
     pub(crate) async fn maybe_restart_scope_replica_sync(
         &self,
         topic_id: &str,
-        scope: &TimelineScope,
+        scope: impl Into<ReplicaScope>,
     ) {
+        let scope = scope.into();
         self.maybe_restart_replica_sync(topic_id, &topic_replica_id(topic_id))
             .await;
-        match scope {
-            TimelineScope::Public => {}
-            TimelineScope::AllJoined => {
+        match &scope {
+            ReplicaScope::Public => {}
+            ReplicaScope::AllJoined => {
                 for state in self.joined_private_channel_states_for_topic(topic_id).await {
                     self.maybe_restart_private_channel_subscription(
                         topic_id,
@@ -594,7 +625,7 @@ impl AppService {
                     }
                 }
             }
-            TimelineScope::Channel { channel_id } => {
+            ReplicaScope::Channel { channel_id } => {
                 if let Some(state) = self
                     .joined_private_channel_state(topic_id, channel_id.as_str())
                     .await
@@ -687,12 +718,13 @@ impl AppService {
     pub(crate) async fn maybe_restart_scope_subscription(
         &self,
         topic_id: &str,
-        scope: &TimelineScope,
+        scope: impl Into<ReplicaScope>,
     ) {
+        let scope = scope.into();
         self.maybe_restart_topic_subscription(topic_id).await;
-        match scope {
-            TimelineScope::Public => {}
-            TimelineScope::AllJoined => {
+        match &scope {
+            ReplicaScope::Public => {}
+            ReplicaScope::AllJoined => {
                 for state in self.joined_private_channel_states_for_topic(topic_id).await {
                     self.maybe_restart_private_channel_subscription(
                         topic_id,
@@ -701,7 +733,7 @@ impl AppService {
                     .await;
                 }
             }
-            TimelineScope::Channel { channel_id } => {
+            ReplicaScope::Channel { channel_id } => {
                 self.maybe_restart_private_channel_subscription(topic_id, channel_id.as_str())
                     .await;
             }

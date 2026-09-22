@@ -17,7 +17,7 @@ impl AppService {
             .projection_store
             .clear_expired_live_presence(Utc::now().timestamp_millis())
             .await?;
-        let allowed = self.allowed_channel_ids_for_scope(topic_id, &scope).await?;
+        let allowed = BTreeSet::from([self.allowed_channel_id_for_scope(topic_id, &scope).await?]);
         let mut rows = filter_channel_rows(
             self.services
                 .projection_store

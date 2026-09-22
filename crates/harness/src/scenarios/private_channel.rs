@@ -72,7 +72,9 @@ pub(crate) async fn run_private_channel_invite_connectivity(
 
         let started_at = Instant::now();
         let public_scope = TimelineScope::Public;
-        let all_joined_scope = TimelineScope::AllJoined;
+        // 参加していない利用者(desktop c)は public の scope で確かめる。複数の channel をまたぐ scope は、
+        // API から閉じた(#1280)。参加していない利用者にとっては、どちらも public だけを指す。
+        let outsider_scope = TimelineScope::Public;
         let _ = runtime_a
             .list_timeline(ListTimelineRequest {
                 topic: topic.to_string(),
@@ -777,12 +779,12 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let _ = runtime_c
             .list_timeline(ListTimelineRequest {
                 topic: topic.to_string(),
-                scope: all_joined_scope.clone(),
+                scope: outsider_scope.clone(),
                 cursor: None,
                 limit: Some(20),
             })
             .await
-            .context("failed to subscribe desktop c to all-joined topic")?;
+            .context("failed to subscribe desktop c to public topic")?;
         wait_for_topic_peer_count(&runtime_c, topic, 1, step_timeout)
             .await
             .context("desktop c did not connect as outsider")?;
@@ -809,25 +811,25 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         assert_timeline_scope_excludes_object(
             &runtime_c,
             topic,
-            all_joined_scope.clone(),
+            outsider_scope.clone(),
             private_post_id.as_str(),
             Duration::from_millis(500),
         )
         .await
-        .context("desktop c all-joined scope leaked private post")?;
+        .context("desktop c public scope leaked private post")?;
         assert_timeline_scope_excludes_object(
             &runtime_c,
             topic,
-            all_joined_scope.clone(),
+            outsider_scope.clone(),
             private_reply_id.as_str(),
             Duration::from_millis(500),
         )
         .await
-        .context("desktop c all-joined scope leaked private reply")?;
+        .context("desktop c public scope leaked private reply")?;
         assert_live_session_absent_in_scope(
             &runtime_c,
             topic,
-            all_joined_scope.clone(),
+            outsider_scope.clone(),
             session_id.as_str(),
             Duration::from_millis(500),
         )
@@ -836,7 +838,7 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         assert_game_room_absent_in_scope(
             &runtime_c,
             topic,
-            all_joined_scope.clone(),
+            outsider_scope.clone(),
             room_id.as_str(),
             Duration::from_millis(500),
         )

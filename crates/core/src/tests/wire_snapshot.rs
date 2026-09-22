@@ -279,7 +279,8 @@ fn channel_ref_and_timeline_scope_snapshot_internally_tagged() {
         r#"{"kind":"private_channel","channel_id":"chan-1"}"#,
     );
     assert_wire(&TimelineScope::Public, r#"{"kind":"public"}"#);
-    assert_wire(&TimelineScope::AllJoined, r#"{"kind":"all_joined"}"#);
+    // #1280: 複数の channel をまたぐ scope は API から閉じた。渡されたら読み込みで失敗する。
+    assert!(serde_json::from_str::<TimelineScope>(r#"{"kind":"all_joined"}"#).is_err());
     assert_wire(
         &TimelineScope::Channel {
             channel_id: ChannelId::new("chan-1"),

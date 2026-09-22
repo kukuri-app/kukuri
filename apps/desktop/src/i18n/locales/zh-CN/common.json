@@ -74,7 +74,6 @@
     "keyboardHelp": "键盘操作"
   },
   "audience": {
-    "allJoined": "全部已加入",
     "posting": "正在发布到 {{audience}}",
     "privateChannel": "私密频道",
     "public": "公开",

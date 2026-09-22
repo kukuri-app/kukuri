@@ -306,6 +306,26 @@ mod tests {
         assert_eq!(response.error_code(), Some(error_code::NOT_FOUND));
     }
 
+    // #1280: 複数の channel をまたぐ scope(`all_joined`)は API から閉じた。渡されたら入力の検証で失敗する。
+    #[tokio::test]
+    async fn all_joined_timeline_scope_is_rejected_by_the_input_schema() {
+        let dispatcher = Dispatcher::builtin();
+        for command in ["list_timeline", "list_live_sessions", "list_game_rooms"] {
+            let mut rejected = request(command);
+            rejected.payload = json!({"topic": "kukuri:topic:t", "scope": {"kind": "all_joined"}});
+            let DispatchReply::Unary(response, _) =
+                dispatcher.dispatch(rejected, None, "test", None).await
+            else {
+                panic!("expected unary response")
+            };
+            assert_eq!(
+                response.error_code(),
+                Some(error_code::VALIDATION_FAILED),
+                "{command}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn status_is_available_before_consent_but_events_are_guarded() {
         let dispatcher = Dispatcher::builtin();

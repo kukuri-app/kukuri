@@ -109,7 +109,7 @@ V-2 は Issue #1248 で削除し、V-1 は #1239 の AC-6（#1277）で背景の
 ## 完了の確認（T7）
 
 全件走査の入口（S-1〜S-10）と prefix の全件読み（P-1〜P-11、P-15）は、Non-goal（P-12〜P-14）を除いてすべて解消した。
-複数の private channel をまたぐページの取得が、許可されない channel の行を読み飛ばす点は #1280 で扱う。
+複数の private channel をまたぐページの取得（許可されない channel の行を読み飛ばす）は、#1280 で API・CLI から閉じ（`TimelineScope::AllJoined` の削除）、store から削除した。
 設計上残る、総件数に比例する読み出しは無い。T6 で入れた自分の replica の背景の仕事（自分の follow・block をすべて読む `sweep_own_author_edges` と、
 プロフィールの索引の補完 `backfill_own_profile_index`）は、利用者が必要としない全件の読み出しなので外した（AGENTS.md: ユースケース上ユーザーが必要としない
 限り同期・復旧はしない。ADR 0052 §6、ADR 0053 §6）。取りこぼし・同期の区切りの後の author の追いつきは、自分を指す follow・block の key だけを読む。

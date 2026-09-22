@@ -959,3 +959,25 @@ blocker は無かった。non-blocker のうち、次を直した。
 
 同じ監査の non-blocker: thread の root 行（最初のページで先頭に 1 行引きする）は、続きの位置より先にあっても外さない（時計のずれで root より古い返信の entry が続く場合）。
 test `the_thread_root_stays_on_the_first_page_past_unavailable_replies`（除外を外す mutation で失敗）。ADR 0052 §5 の記述も境界に合わせた。
+
+## T11: 複数の channel をまたぐタイムラインを API から閉じる（#1280、AC-7 の blocker）（2026-09-22）
+
+2026-09-22 の Issue 全体の独立監査は、`TimelineScope::AllJoined` の複数 channel のページ取得を AC-7 の Close blocker と判定した。
+このページは、許可されない channel の行（退出した channel の残った行を含む）を件数に比例して読み飛ばす。
+desktop の画面はこの scope を選ばず、届くのは CLI・harness・IPC を直接呼ぶ利用者だけだった。利用者の決定で、読み飛ばしを直すのではなく、経路を閉じた。
+
+- 公開の `TimelineScope`（`crates/core/src/posts.rs`）から `AllJoined` を削除した。IPC の型（`types.generated.ts`）と CLI の schema（`timeline_scope`）からも `all_joined` を無くし、
+  渡されたら serde と入力の検証で失敗する。
+- app-api の内部で「参加中の全 channel」を使う処理（thread を開いたときの購読、root の channel が分からない thread の照合、private channel の一覧での同期の再開）は、
+  app-api の内部だけの `ReplicaScope` へ移した。
+- store のタイムラインのページ取得は channel を 1 つだけ受け取る（`list_topic_timeline_in_channel`）。`INDEXED BY idx_object_index_cache_topic_created_all` + `channel_id IN (...)` の SQL は削除した。
+- desktop に残っていた `all_joined` の表示・警告・文言（`audience.allJoined`、`communityIndex.allJoinedDisabled`）と mock を削除した。
+- harness の private channel の scenario は、参加していない利用者の確認を Public scope で行う（参加していない利用者にとっては同じ結果）。
+
+### 証跡
+
+| 条件 | 証跡 |
+| --- | --- |
+| API から閉じた | `crates/core/src/tests/wire_snapshot.rs`（`all_joined` の読み込みが失敗する）、`all_joined_timeline_scope_is_rejected_by_the_input_schema`（CLI の `list_timeline`・`list_live_sessions`・`list_game_rooms`。schema に戻す mutation で失敗） |
+| 1 つの channel のページ | `page_query_plans.rs`（timeline のページは channel を 1 つだけ受け取り、索引の範囲を読む）、`timeline_pages_list_every_row_once_for_each_channel_filter`（channel ごとに全行を 1 回ずつ） |
+| 内部の全 channel の処理 | 既存の thread・private channel の test（`range_reconcile_access.rs` ほか）が成功のまま |

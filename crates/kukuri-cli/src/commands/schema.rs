@@ -22,7 +22,7 @@ pub(super) fn channel_ref() -> Value {
 
 pub(super) fn timeline_scope() -> Value {
     let mut schema = object(
-        json!({"kind": {"enum": ["public", "all_joined", "channel"]},
+        json!({"kind": {"enum": ["public", "channel"]},
         "channel_id": {"type": "string"}}),
         &["kind"],
     );

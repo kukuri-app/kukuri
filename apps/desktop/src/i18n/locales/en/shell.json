@@ -452,7 +452,6 @@
     },
     "results": "Community Index results",
     "noEligibleNode": "No authenticated and consented Community Node currently advertises an available Community Index.",
-    "allJoinedDisabled": "Search one public topic or private channel at a time. All joined scopes are not sent to a node.",
     "errors": {
       "authRequired": "Authentication is required for the selected Community Node.",
       "consentRequired": "Consent is required for the selected Community Node.",

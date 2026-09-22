@@ -74,7 +74,6 @@
     "keyboardHelp": "キーボード操作"
   },
   "audience": {
-    "allJoined": "参加済みすべて",
     "posting": "{{audience}} に投稿中",
     "privateChannel": "プライベートチャンネル",
     "public": "公開",

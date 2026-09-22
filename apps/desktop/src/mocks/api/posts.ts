@@ -32,7 +32,6 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
     postsByTopic,
     authorProfileTimelines,
     syncStatus,
-    joinedChannelsByTopic,
     bookmarkedPosts,
     visibleTimelineItems,
     isVisiblePost,
@@ -301,7 +300,7 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
       }
       return {
         items: visibleTimelineItems(
-          filterChannelScopedItems(postsByTopic[topic] ?? [], scope, joinedChannelsByTopic[topic] ?? [])
+          filterChannelScopedItems(postsByTopic[topic] ?? [], scope)
         ),
         next_cursor: null,
       };

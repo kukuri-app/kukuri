@@ -110,10 +110,10 @@ impl ObjectProjectionStore for MemoryStore {
         Ok(apply_desc_projection_cursor(items, cursor, limit))
     }
 
-    async fn list_topic_timeline_filtered(
+    async fn list_topic_timeline_in_channel(
         &self,
         topic_id: &str,
-        allowed_channels: &BTreeSet<String>,
+        channel_id: &str,
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<Page<ObjectProjectionRow>> {
@@ -122,9 +122,7 @@ impl ObjectProjectionStore for MemoryStore {
             .read()
             .await
             .values()
-            .filter(|row| {
-                row.topic_id == topic_id && allowed_channels.contains(row.channel_id.as_str())
-            })
+            .filter(|row| row.topic_id == topic_id && row.channel_id == channel_id)
             .cloned()
             .collect::<Vec<_>>();
         items.sort_by(|left, right| {

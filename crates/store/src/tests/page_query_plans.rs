@@ -2,7 +2,6 @@
 
 use super::*;
 use sqlx::Row;
-use std::collections::BTreeSet;
 
 fn row(topic: &str, channel_id: &str, object_id: &str, created_at: i64) -> ObjectProjectionRow {
     let hash = BlobHash::new(format!("{created_at:064x}"));
@@ -84,16 +83,10 @@ async fn page_queries_are_index_range_reads() {
         created_at: 100,
         object_id: EnvelopeId::from("x"),
     };
-    let one = BTreeSet::from(["public".to_string()]);
-    let several = BTreeSet::from(["public".to_string(), "private:a".to_string()]);
     for with_cursor in [false, true] {
         let cursor = with_cursor.then_some(&cursor);
-        for (name, channels) in [
-            ("all channels", None),
-            ("one channel", Some(&one)),
-            ("several channels", Some(&several)),
-        ] {
-            let builder = timeline_page_query(EXPLAIN, "t", channels, cursor, 20);
+        for (name, channel) in [("all channels", None), ("one channel", Some("public"))] {
+            let builder = timeline_page_query(EXPLAIN, "t", channel, cursor, 20);
             let plan = plan(&store, builder).await;
             let name = format!("timeline, {name}, cursor={with_cursor}");
             assert_range_read(name.as_str(), plan.as_str());
@@ -135,32 +128,6 @@ async fn page_queries_are_index_range_reads() {
             "thread root, channel={channel:?}: {plan}"
         );
     }
-}
-
-// 許可された channel が 1 つも無いときは、何も読まない(channel で絞らない、にしない)。
-#[tokio::test]
-async fn an_empty_channel_set_reads_nothing() {
-    use crate::sqlite::projections::timeline_page_query;
-    use sqlx::Row;
-
-    let store = SqliteStore::connect_memory().await.expect("sqlite store");
-    ObjectProjectionStore::put_object_projection(&store, row("t", "public", "post-1", 1))
-        .await
-        .expect("row");
-    let empty = BTreeSet::new();
-    let rows = timeline_page_query("", "t", Some(&empty), None, 20)
-        .build()
-        .fetch_all(store.pool())
-        .await
-        .expect("query");
-    assert!(rows.is_empty());
-    let all = timeline_page_query("", "t", None, None, 20)
-        .build()
-        .fetch_all(store.pool())
-        .await
-        .expect("query");
-    assert_eq!(all.len(), 1);
-    assert_eq!(all[0].get::<String, _>("object_id"), "post-1");
 }
 
 // thread のページは、root が先頭、返信は古い順。root の時刻が返信より後でも(時計のずれ)、ページを継いで
@@ -234,7 +201,7 @@ async fn assert_thread_pages(store: &dyn ObjectProjectionStore) {
     assert_eq!(all.items[0].object_id, root_id);
 }
 
-// タイムラインのページを、channel の絞り方ごとに継いで読む。全行を新しい順に 1 回ずつ読める。
+// タイムラインのページを、channel ごとに継いで読む。その channel の全行を新しい順に 1 回ずつ読める。
 #[tokio::test]
 async fn timeline_pages_list_every_row_once_for_each_channel_filter() {
     let store = SqliteStore::connect_memory().await.expect("sqlite store");
@@ -254,18 +221,10 @@ async fn timeline_pages_list_every_row_once_for_each_channel_filter() {
         .expect("row");
         rows.push((created_at, id, channel));
     }
-    for allowed in [
-        vec!["public"],
-        vec!["public", "private:a"],
-        vec!["public", "private:a", "private:b"],
-    ] {
-        let allowed_set = allowed
-            .iter()
-            .map(|value| value.to_string())
-            .collect::<BTreeSet<_>>();
+    for allowed in channels {
         let mut expected = rows
             .iter()
-            .filter(|(_, _, channel)| allowed.contains(channel))
+            .filter(|(_, _, channel)| *channel == allowed)
             .map(|(created_at, id, _)| (*created_at, id.clone()))
             .collect::<Vec<_>>();
         expected.sort();
@@ -273,12 +232,8 @@ async fn timeline_pages_list_every_row_once_for_each_channel_filter() {
         let mut listed = Vec::new();
         let mut cursor = None;
         loop {
-            let page = ObjectProjectionStore::list_topic_timeline_filtered(
-                &store,
-                topic,
-                &allowed_set,
-                cursor,
-                7,
+            let page = ObjectProjectionStore::list_topic_timeline_in_channel(
+                &store, topic, allowed, cursor, 7,
             )
             .await
             .expect("page");

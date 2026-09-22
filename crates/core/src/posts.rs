@@ -67,10 +67,11 @@ impl ChannelRef {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// タイムライン・live・game の一覧の scope。1 つの channel だけを指す(#1280。複数の channel をまたぐ
+/// `all_joined` は、許可されない channel の行を件数に比例して読み飛ばすので、API から閉じた)。
 pub enum TimelineScope {
     #[default]
     Public,
-    AllJoined,
     Channel {
         channel_id: ChannelId,
     },

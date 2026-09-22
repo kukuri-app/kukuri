@@ -74,7 +74,6 @@
     "keyboardHelp": "Keyboard shortcuts"
   },
   "audience": {
-    "allJoined": "All joined",
     "posting": "Posting {{audience}}",
     "privateChannel": "Private channel",
     "public": "Public",

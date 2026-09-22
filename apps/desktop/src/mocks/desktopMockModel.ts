@@ -353,15 +353,10 @@ export function cloneSyncStatus(syncStatus: SyncStatus): SyncStatus {
 
 export function filterChannelScopedItems<T extends { channel_id?: string | null }>(
   items: T[],
-  scope: TimelineScope,
-  joinedChannels: JoinedPrivateChannelView[]
+  scope: TimelineScope
 ) {
-  const joinedIds = new Set(joinedChannels.map((channel) => channel.channel_id));
   if (scope.kind === 'channel') {
     return items.filter((item) => item.channel_id === scope.channel_id);
-  }
-  if (scope.kind === 'all_joined') {
-    return items.filter((item) => !item.channel_id || joinedIds.has(item.channel_id));
   }
   return items.filter((item) => !item.channel_id);
 }

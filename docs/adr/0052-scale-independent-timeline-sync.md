@@ -91,7 +91,8 @@ Accepted
     まだ反映できない entry が残ったまま、何も反映できない照合が続く範囲は、間隔を 5 秒から 2 倍ずつ伸ばす（上限 5 分）。何かを反映できたら 5 秒へ戻す。
     索引から 1 件も読めず、読み出しが key の一覧 1 回で済んだ先頭の範囲（索引がまだ空の replica）は、間隔を空けない（参加した直後に投稿が同期されたとき、docs の event に頼らずに
     ページを組み立てられる）。索引の新しい側が未来の時刻の entry や形の違う key で埋まっていて、読み出しが何回もの query になったときは、1 件も読めなくても間隔を空ける。
-    AllJoined の scope で投稿の無い channel・epoch が多いときは、取得のたびに replica 数ぶんの key の読み出しが走る（replica 数の上限は #1224 が扱う）。
+    thread の照合で root の channel が分からないとき（参加中の全 channel を読む内部の scope）、投稿の無い channel・epoch が多いと、取得のたびに replica 数ぶんの key の
+    読み出しが走る（replica 数の上限は #1224 が扱う）。
   - 先頭ページ（cursor なし）は、projection が尽きていなければ照合しない。先頭の範囲の追いつきは、窓の追いつきが担う。
   - 照合の後で projection のページを読み直すのは、照合した範囲に、最初に読んだページの行数より多くの object が projection に在ると分かったときだけとする
     （今回反映した、または、最初にページを読んでから照合するまでのあいだに購読タスクが同じ範囲を反映していた）。欠けの無い定常状態では読み直さない。
@@ -228,7 +229,8 @@ Accepted
   数は、その照合が読んだ entry のうち本体が手元に無いものの数で、1 ページの範囲とは一致しないことがある（読み足しで次のページの範囲も読む。読み進めた位置から続けた
   照合は、その位置より後だけを数える）。索引の entry は replica に書ける誰もが置けるので、本体の無い entry を並べて数を増やせる。操作は止まらない（best effort の範囲）。
 - projection のページの取得は、索引の範囲の読み出しにする。cursor の条件は行の値の比較（`(created_at, object_id) < (?, ?)`）で書き、cursor の有無で SQL を分ける
-  （`created_at < ? OR (…)` や `? IS NULL OR …` の形は、遡った深さに比例して行を読み飛ばす）。複数の channel を時刻順に読むときは (topic, 時刻, id) の索引をたどって channel で絞る。
+  （`created_at < ? OR (…)` や `? IS NULL OR …` の形は、遡った深さに比例して行を読み飛ばす）。タイムラインのページは 1 つの channel だけを読み、(topic, channel, 時刻, id)
+  の索引の範囲を読む。複数の channel をまたぐページ（以前の `TimelineScope::AllJoined`）は、許可されない channel の行を件数に比例して読み飛ばすので、API・CLI から閉じた（#1280）。
   thread は、root を先頭に置くために全行を並べ替えない。root は最初のページでだけ 1 行引きし、返信は (topic, root, 時刻, id) の索引の範囲を cursor の位置から読む。
 - 1 回の照合・追いつきが reaction を読む投稿の数に上限を置く（初期値 64。replica 1 つの照合 1 回、または追いつき 1 回あたりで、読む件数を増やして繰り返す batch の合計と、追いつきの読み直しを含む。scope の replica ごとに数えるので、AllJoined の照合 1 回では replica 数 × 64 が上限になる。1 投稿あたりの reaction の上限 32 と合わせて、1 回の読み出しの最悪の量を抑える）。
 
@@ -267,8 +269,8 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
 - 完了条件は、replica の件数を 1,000 / 10,000 / 100,000 にしても、定期処理・利用者の操作・表示の各操作が読む docs の entry 数と projection の行数が増えないことを、
   回数で assert する test で示す。所要時間の閾値は使わない。
   docs の entry 数は `crates/app-api/src/tests/sync/scale_counts.rs` で、回数で示した（T7）。projection の行数は回数では示していない。代わりに、ページの取得が
-  索引の範囲の読み出しであることを query plan の test（`crates/store/src/tests/page_query_plans.rs`、T5b-2）で構造として確かめた。ただし、複数の channel の
-  ページの取得は、許可されない channel の行を読み飛ばすので、読む行の数は範囲内にある許可されない行の数に依存する。
+  索引の範囲の読み出しであることを query plan の test（`crates/store/src/tests/page_query_plans.rs`、T5b-2）で構造として確かめた。T9 で、projection の読み書きも
+  SQLite の命令の数で示した。複数の channel をまたぐページの取得（許可されない channel の行を読み飛ばす）は、#1280 で API から閉じ、store から削除した。
 
 ## References
 

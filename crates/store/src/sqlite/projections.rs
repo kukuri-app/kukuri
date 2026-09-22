@@ -33,53 +33,27 @@ fn push_timeline_cursor(builder: &mut QueryBuilder<'_, Sqlite>, cursor: Option<&
     }
 }
 
-/// タイムラインの 1 ページを読む SQL を組み立てる。`allowed_channels` が `None` なら channel で絞らない。
+/// タイムラインの 1 ページを読む SQL を組み立てる。`channel_id` が `None` なら channel で絞らない。
+///
+/// channel で絞るときは 1 つだけ(#1280)。(topic, channel, 時刻, id) の索引の範囲をそのまま読み、許可されない
+/// channel の行を読み飛ばさない。複数の channel をまたぐページは作らない。
 ///
 /// `prefix` は SQL の前に置く文字列(取得は空、query plan の test は `EXPLAIN QUERY PLAN `)。test が実装と同じ
 /// SQL の plan を確かめられるように、組み立てをここに 1 つだけ置く。
 pub(crate) fn timeline_page_query<'a>(
     prefix: &str,
     topic_id: &'a str,
-    allowed_channels: Option<&'a std::collections::BTreeSet<String>>,
+    channel_id: Option<&'a str>,
     cursor: Option<&TimelineCursor>,
     limit: usize,
 ) -> QueryBuilder<'a, Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(TIMELINE_SELECT);
-    let channels = allowed_channels
-        .map(|channels| channels.iter().collect::<Vec<_>>())
-        .unwrap_or_default();
-    match channels.as_slice() {
-        // 空の集合を渡されたら、何も読まない(channel で絞らない、にしない)。
-        [] if allowed_channels.is_some() => {
-            builder.push(" FROM object_index_cache WHERE 0 AND topic_id = ");
-            builder.push_bind(topic_id);
-        }
-        [] => {
-            builder.push(" FROM object_index_cache WHERE topic_id = ");
-            builder.push_bind(topic_id);
-        }
-        // channel が 1 つなら、(topic, channel, 時刻, id) の索引の範囲をそのまま読める。
-        [channel_id] => {
-            builder.push(" FROM object_index_cache WHERE topic_id = ");
-            builder.push_bind(topic_id);
-            builder.push(" AND channel_id = ");
-            builder.push_bind(channel_id.as_str());
-        }
-        // 複数の channel を時刻順に読むときは、(topic, 時刻, id) の索引を時刻順にたどって channel で絞る
-        // (索引を明示して、条件に合う全行を集めて並べ替える plan を選ばせない)。
-        _ => {
-            builder.push(
-                " FROM object_index_cache INDEXED BY idx_object_index_cache_topic_created_all WHERE topic_id = ",
-            );
-            builder.push_bind(topic_id);
-            builder.push(" AND channel_id IN (");
-            let mut separated = builder.separated(", ");
-            for channel_id in channels {
-                separated.push_bind(channel_id.as_str());
-            }
-            separated.push_unseparated(")");
-        }
+    builder.push(" FROM object_index_cache WHERE topic_id = ");
+    builder.push_bind(topic_id);
+    if let Some(channel_id) = channel_id {
+        builder.push(" AND channel_id = ");
+        builder.push_bind(channel_id);
     }
     push_timeline_cursor(&mut builder, cursor);
     builder.push(" ORDER BY created_at DESC, object_id DESC LIMIT ");
@@ -423,24 +397,23 @@ impl ObjectProjectionStore for SqliteStore {
         object_projection_page_from_rows(rows, limit)
     }
 
-    async fn list_topic_timeline_filtered(
+    async fn list_topic_timeline_in_channel(
         &self,
         topic_id: &str,
-        allowed_channels: &std::collections::BTreeSet<String>,
+        channel_id: &str,
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<Page<ObjectProjectionRow>> {
-        if limit == 0 || allowed_channels.is_empty() {
+        if limit == 0 {
             return Ok(Page {
                 items: Vec::new(),
                 next_cursor: cursor,
             });
         }
-        let rows =
-            timeline_page_query("", topic_id, Some(allowed_channels), cursor.as_ref(), limit)
-                .build()
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = timeline_page_query("", topic_id, Some(channel_id), cursor.as_ref(), limit)
+            .build()
+            .fetch_all(&self.pool)
+            .await?;
         object_projection_page_from_rows(rows, limit)
     }
 

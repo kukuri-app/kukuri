@@ -403,17 +403,6 @@ test('index results hide identifiers and copy their complete values from context
   expect(clipboardWriteText).toHaveBeenLastCalledWith(entry.object_id);
 });
 
-test('all joined topic scope is disabled without sending a query', () => {
-  const api = { searchCommunityNodeIndex: vi.fn() } as unknown as DesktopApi;
-  render(
-    <CommunityIndexWorkspace
-      {...workspaceProps(api, { activeTimelineScope: { kind: 'all_joined' } })}
-    />
-  );
-  expect(screen.getByText(/Search one public topic or private channel at a time/)).toBeInTheDocument();
-  expect(screen.queryByLabelText('Search query')).not.toBeInTheDocument();
-});
-
 test('changing the selected node clears results and prevents reporting them to the new node', async () => {
   const api = {
     searchCommunityNodeIndex: vi.fn().mockResolvedValue({

@@ -48,7 +48,7 @@ pub(crate) async fn filtered_timeline_page(
     topic_id: &str,
     cursor: Option<TimelineCursor>,
     limit: usize,
-    allowed_channels: &BTreeSet<String>,
+    channel_id: &str,
     hidden_author_pubkeys: &BTreeSet<String>,
 ) -> Result<Page<ObjectProjectionRow>> {
     if limit == 0 {
@@ -61,10 +61,10 @@ pub(crate) async fn filtered_timeline_page(
     let mut items = Vec::new();
     let page_size = limit.max(20);
     for _ in 0..HIDDEN_AUTHOR_SKIP_PAGES {
-        let page = ObjectProjectionStore::list_topic_timeline_filtered(
+        let page = ObjectProjectionStore::list_topic_timeline_in_channel(
             projection_store,
             topic_id,
-            allowed_channels,
+            channel_id,
             current_cursor.clone(),
             page_size,
         )
