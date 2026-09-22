@@ -37,7 +37,7 @@ caller の列挙は `rg -n "local_docs_available|\.rebuild\(" crates/desktop-run
 
 ## 修正前の再現
 
-shutdown 直前に同期点を置き、rebuild future をそこで drop する `cancelled_stack_rebuild_marks_the_current_stack_unavailable_before_shutdown` を追加した。修正前は `local_docs_available()` が 250ms で timeout して失敗した。時刻や actor の終了タイミングに依存せず、印が shutdown の後にある順序を再現する。
+shutdown 直前に同期点を置き、rebuild future をそこで drop する `cancelled_stack_rebuild_marks_the_current_stack_unavailable_before_shutdown` を追加した。修正前の順序へ戻す mutation では、健全な旧 stack の probe が `Ok(true)` を返して `cancelling rebuild at the shutdown boundary must leave the unavailable marker set` で失敗した。時刻や actor の終了タイミングに依存せず、印が shutdown の後にある順序を再現する。
 
 ## 実装
 
@@ -58,7 +58,7 @@ shutdown 直前に同期点を置き、rebuild future をそこで drop する `
 
 ## Validation
 
-- 修正前: cancellation test は `stopped-stack probe must return immediately: Elapsed(())` で失敗。
+- 修正前 mutation: cancellation test は旧 stack を利用可能と判定して assertion で失敗。
 - 修正後の targeted test: cancellation、failed rebuild retry、failed rebuild 後の shutdown の 3 件が成功。
 - `cargo xtask rust-test`: 1,324 tests passed、5 skipped。doctest 成功。
 - `cargo xtask scenario community_node_public_connectivity`: `status=pass`、15 steps、`connected=true`、`peer_count=1`。
