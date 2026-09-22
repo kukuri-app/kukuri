@@ -90,6 +90,16 @@ async fn page_queries_are_index_range_reads() {
             let plan = plan(&store, builder).await;
             let name = format!("timeline, {name}, cursor={with_cursor}");
             assert_range_read(name.as_str(), plan.as_str());
+            if channel.is_some() {
+                // 1 つの channel のページは (topic, channel, 時刻, id) の索引の範囲を読み、他の channel の行を読み飛ばさない
+                // (#1280。channel を区別しない (topic, 時刻, id) の索引をたどると、他の channel の行に比例して読む)。
+                assert!(
+                    plan.contains(
+                        "idx_object_index_cache_topic_created (topic_id=? AND channel_id=?"
+                    ),
+                    "{name}: the page must read the index range of the channel: {plan}"
+                );
+            }
             if with_cursor {
                 // cursor の位置は、索引の範囲の読み出しの条件になる(行を読み飛ばす絞り込みではない)。
                 assert!(

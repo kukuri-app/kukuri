@@ -485,13 +485,13 @@ cd apps/desktop && npx pnpm@10.16.1 test
 4. 端末 A で `View Scope` と `Compose Target` が新しい channel に切り替わったことを確認する。
 5. 端末 A で `Create Invite` を押し、invite token が表示されることを確認する。
 6. 端末 B で `Join via Invite` に token を貼り付けて import し、topic が tracked state に入り、対象 channel が選択されることを確認する。
-7. 端末 A でその private channel に post し、端末 B の `All joined` または当該 channel view にだけ表示され、`Public` には出ないことを確認する。
+7. 端末 A でその private channel に post し、端末 B の当該 channel view にだけ表示され、`Public` には出ないことを確認する。
 8. 端末 B でその private post に reply し、thread が同じ private channel 内でのみ見えることを確認する。
 9. 端末 A でその private channel 上に live session を作成し、端末 B が `join -> leave -> end` を追従できることを確認する。
 10. 端末 A でその private channel 上に game room を作成し、score / status 更新が端末 B に反映されることを確認する。
 11. 両端末を再起動し、invite 再入力なしで joined private channel が復元され、private post / thread / live / game が再表示されることを確認する。
 12. 端末 B でも `Create Invite` が可能で、fresh invite を再発行できることを確認する。
-13. 3 台目の未招待端末 C を使う場合は、同じ topic の `Public` / `All joined` から private channel content が見えないことを確認する。
+13. 3 台目の未招待端末 C を使う場合は、同じ topic の `Public` から private channel content が見えないことを確認する。
 
 ### `friend_only` lane
 
