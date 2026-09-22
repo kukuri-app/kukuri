@@ -126,7 +126,7 @@ for (const { locale, theme, width, height, status, toggle } of [
   { locale: 'en', theme: 'light', width: 390, height: 844,
     status: 'Developer mode is on.', toggle: 'Enable developer mode' },
 ] as const) {
-  test(`developer settings ${locale} ${theme}`, async ({ page }) => {
+  const openDeveloperSettings = async (page: Page) => {
     await page.addInitScript(({ locale, theme }) => {
       localStorage.setItem('kukuri.desktop.locale', locale);
       localStorage.setItem('kukuri.desktop.theme', theme);
@@ -134,10 +134,17 @@ for (const { locale, theme, width, height, status, toggle } of [
     }, { locale, theme });
     await page.setViewportSize({ width, height });
     await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral&settings=developer');
-    const drawer = page.getByRole('dialog');
+    return page.getByRole('dialog');
+  };
+  test(`developer settings disabled ${locale} ${theme}`, async ({ page }) => {
+    const drawer = await openDeveloperSettings(page);
     await expect(drawer.getByRole('status')).toBeVisible();
     await settleForShot(page, theme);
     await expect(drawer).toHaveScreenshot(`developer-disabled-${locale}-${theme}.png`, { maxDiffPixelRatio: 0.001 });
+  });
+  test(`developer settings enabled ${locale} ${theme}`, async ({ page }) => {
+    const drawer = await openDeveloperSettings(page);
+    await expect(drawer.getByRole('status')).toBeVisible();
     await drawer.getByRole('checkbox', { name: toggle }).check();
     await expect(drawer.getByRole('status')).toHaveText(status);
     await settleForShot(page, theme);
