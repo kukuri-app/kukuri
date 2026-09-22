@@ -32,7 +32,9 @@ BF-2のkey一覧の直接callerは次のgroup。これらは値の取得policy�
 BF-2のpolicy付きqueryは同じtraitの全callerに適用する。queryから同期へ到達する逆方向は
 `doc_start_sync <- ensure_replica_with_sync / reapply_sync_peers / restart_replica_sync`。
 namespace importは `ensure_replica_with_sync` に集約し、ticket importによる暗黙syncを除く。
-閉じるsinkは `close_replica_owned -> Doc::leave / Doc::close`。秘密の削除も同じ所有task内にある。
+閉じるsinkは `close_replica_owned -> close_replica_under_guard -> Doc::leave / Doc::close`。
+秘密の削除も同じ所有task内にある。task台帳・registry guard・結果通知の所有と、停止操作の実体を分ける。
+この分離の範囲と検証は[先行整理の記録](../progress/2026-09-22-1243-lifecycle-preparation.md)を参照する。
 
 再列挙:
 
