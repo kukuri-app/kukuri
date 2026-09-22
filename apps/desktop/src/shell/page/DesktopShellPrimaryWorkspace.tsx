@@ -111,6 +111,7 @@ export type DesktopShellPrimarySurfaceProps = {
   onRetryCommunityNode: (availability: CommunityNodeAvailability) => Promise<void>;
   loadReactionCatalogData: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  loadMoreProfileTimeline: () => Promise<void>;
   refreshTimelineFeed: (
     topic: string,
     currentThread: string | null,
@@ -176,6 +177,7 @@ export function DesktopShellPrimarySurface({
   loadReactionCatalogData,
   refreshTimelineFeed,
   refreshProfile,
+  loadMoreProfileTimeline,
   loadMoreTimeline,
   openAuthorDetail,
   openThread,
@@ -241,6 +243,9 @@ export function DesktopShellPrimarySurface({
     profileError,
     profilePanelState,
     profileHasLoaded,
+    profileTimelineNextCursor,
+    profileTimelineLoadingMore,
+    profileTimelineLoadMoreError,
     profileSaving,
     recentReactions,
     selectedLiveSessionId,
@@ -294,6 +299,9 @@ export function DesktopShellPrimarySurface({
       profileError: s.profileError,
       profilePanelState: s.profilePanelState,
       profileHasLoaded: s.profileHasLoaded,
+      profileTimelineNextCursor: s.profileTimelineNextCursor,
+      profileTimelineLoadingMore: s.profileTimelineLoadingMore,
+      profileTimelineLoadMoreError: s.profileTimelineLoadMoreError,
       profileSaving: s.profileSaving,
       recentReactions: s.recentReactions,
       selectedLiveSessionId: s.selectedLiveSessionId,
@@ -879,6 +887,10 @@ export function DesktopShellPrimarySurface({
                 <TimelineFeed
                   posts={viewModels.profileTimelinePostViews}
                   emptyCopy={t('profile:feed.noOwnPosts')}
+                  hasMore={Boolean(profileTimelineNextCursor)}
+                  loadingMore={profileTimelineLoadingMore}
+                  loadMoreError={profileTimelineLoadMoreError}
+                  onLoadMore={() => void loadMoreProfileTimeline()}
                   onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
                   onOpenThread={openThreadInSurfaceScope}
                   onOpenThreadInTopic={openThreadInTopicFromSurface}

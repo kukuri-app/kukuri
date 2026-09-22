@@ -19,6 +19,7 @@ export type ProfileSocialSliceState = {
   profileTimeline: PostView[];
   profileTimelineNextCursor: TimelineCursor | null;
   profileTimelineLoadingMore: boolean;
+  profileTimelineLoadMoreError: string | null;
   knownAuthorsByPubkey: KnownAuthorsByPubkey;
   socialConnections: SocialConnectionsState;
   socialConnectionsPanelState: AsyncPanelState;
@@ -35,6 +36,8 @@ export type ProfileSocialSliceState = {
   selectedAuthorTimeline: PostView[];
   authorTimelinesByPubkey: Record<string, PostView[]>;
   authorTimelineNextCursorByPubkey: Record<string, TimelineCursor | null>;
+  authorTimelineLoadingMoreByPubkey: Record<string, boolean>;
+  authorTimelineLoadMoreErrorsByPubkey: Record<string, string | null>;
   authorErrorsByPubkey: Record<string, string | null>;
   selectedAuthorTimelineNextCursor: TimelineCursor | null;
   selectedAuthorTimelineLoadingMore: boolean;
@@ -54,6 +57,7 @@ export function createInitialProfileSocialSlice(): ProfileSocialSliceState {
     profileTimeline: [],
     profileTimelineNextCursor: null,
     profileTimelineLoadingMore: false,
+    profileTimelineLoadMoreError: null,
     knownAuthorsByPubkey: {},
     socialConnections: DEFAULT_SOCIAL_CONNECTIONS,
     socialConnectionsPanelState: DEFAULT_ASYNC_PANEL_STATE,
@@ -70,6 +74,8 @@ export function createInitialProfileSocialSlice(): ProfileSocialSliceState {
     selectedAuthorTimeline: [],
     authorTimelinesByPubkey: {},
     authorTimelineNextCursorByPubkey: {},
+    authorTimelineLoadingMoreByPubkey: {},
+    authorTimelineLoadMoreErrorsByPubkey: {},
     authorErrorsByPubkey: {},
     selectedAuthorTimelineNextCursor: null,
     selectedAuthorTimelineLoadingMore: false,

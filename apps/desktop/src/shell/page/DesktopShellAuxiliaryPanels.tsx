@@ -654,6 +654,7 @@ export type DesktopShellDetailSurfaceStackProps = {
     | 'threadPostViews'
   >;
   loadMoreThread: (topic: string, threadId: string) => Promise<void>;
+  loadMoreAuthorTimeline: (pubkey: string) => Promise<void>;
   loadReactionCatalogData: () => Promise<void>;
   openAuthorDetail: OpenAuthorDetail;
   openDirectMessagePane: OpenDirectMessagePane;
@@ -685,6 +686,7 @@ export function DesktopShellDetailSurfaceStack({
   t,
   viewModels,
   loadMoreThread,
+  loadMoreAuthorTimeline,
   loadReactionCatalogData,
   openAuthorDetail,
   openDirectMessagePane,
@@ -717,6 +719,9 @@ export function DesktopShellDetailSurfaceStack({
     focusedObjectId,
     authorErrorsByPubkey,
     authorTimelinesByPubkey,
+    authorTimelineNextCursorByPubkey,
+    authorTimelineLoadingMoreByPubkey,
+    authorTimelineLoadMoreErrorsByPubkey,
     knownAuthorsByPubkey,
     mediaObjectUrls,
     ownedReactionAssets,
@@ -739,6 +744,9 @@ export function DesktopShellDetailSurfaceStack({
       focusedObjectId: s.focusedObjectId,
       authorErrorsByPubkey: s.authorErrorsByPubkey,
       authorTimelinesByPubkey: s.authorTimelinesByPubkey,
+      authorTimelineNextCursorByPubkey: s.authorTimelineNextCursorByPubkey,
+      authorTimelineLoadingMoreByPubkey: s.authorTimelineLoadingMoreByPubkey,
+      authorTimelineLoadMoreErrorsByPubkey: s.authorTimelineLoadMoreErrorsByPubkey,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       mediaObjectUrls: s.mediaObjectUrls,
       ownedReactionAssets: s.ownedReactionAssets,
@@ -933,6 +941,22 @@ export function DesktopShellDetailSurfaceStack({
         <TimelineFeed
           posts={effectiveAuthorTimelinePostViews}
           emptyCopy={t('profile:feed.noAuthorPosts')}
+          hasMore={Boolean(
+            effectiveAuthorPubkey && authorTimelineNextCursorByPubkey[effectiveAuthorPubkey]
+          )}
+          loadingMore={Boolean(
+            effectiveAuthorPubkey && authorTimelineLoadingMoreByPubkey[effectiveAuthorPubkey]
+          )}
+          loadMoreError={
+            effectiveAuthorPubkey
+              ? (authorTimelineLoadMoreErrorsByPubkey[effectiveAuthorPubkey] ?? null)
+              : null
+          }
+          onLoadMore={
+            effectiveAuthorPubkey
+              ? () => void loadMoreAuthorTimeline(effectiveAuthorPubkey)
+              : undefined
+          }
           onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
           onOpenThread={(threadId) => void openThread(threadId)}
           onOpenThreadInTopic={(threadId, topicId) => void openThread(threadId, { topic: topicId })}

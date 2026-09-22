@@ -75,6 +75,44 @@ test('a failed profile read offers retry instead of an empty public feed', async
   expect(within(column).queryByText('profile unavailable')).not.toBeInTheDocument();
 });
 
+test('profile feed loads the next page from its cursor', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  for (let index = 1; index <= 21; index += 1) {
+    await api.createPost('kukuri:topic:general', `profile page post ${index}`);
+  }
+  const profile = await api.getMyProfile();
+  const allPosts = (await api.listProfileTimeline(profile.pubkey)).items;
+  const headContent = allPosts[0].content;
+  const tailContent = allPosts.at(-1)?.content;
+  if (!tailContent) throw new Error('profile fixture is empty');
+  vi.spyOn(api, 'listProfileTimeline').mockImplementation(async (_pubkey, cursor, limit = 20) => {
+    const start = cursor
+      ? allPosts.findIndex((post) => post.object_id === cursor.object_id) + 1
+      : 0;
+    const items = allPosts.slice(start, start + limit);
+    const last = items.at(-1);
+    return {
+      items,
+      next_cursor: start + limit < allPosts.length && last
+        ? { created_at: last.created_at, object_id: last.object_id }
+        : null,
+    };
+  });
+
+  render(<App api={api} />);
+  const column = await screen.findByRole('region', { name: /^Profile Column,/ });
+  await within(column).findByText(headContent);
+  expect(within(column).queryByText(tailContent)).not.toBeInTheDocument();
+
+  await user.click(within(column).getByRole('button', { name: 'Load more' }));
+
+  await waitFor(() => {
+    expect(within(column).getByText(tailContent)).toBeInTheDocument();
+  });
+  expect(within(column).queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+});
+
 // #1165: 1 本の長い操作列だと、負荷時に full App の再描画が積み重なって timeout するため、
 // private channel 投稿の除外と複数 topic の集約を別 test に分けている。
 // 入力は paste で渡す(打鍵ごとに App 全体が再描画され、入力操作はこれらの test の検証対象ではない)。

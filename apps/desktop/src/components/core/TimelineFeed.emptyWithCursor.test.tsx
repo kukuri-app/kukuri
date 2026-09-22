@@ -48,3 +48,31 @@ test('空のページでも next_cursor があれば、sentinel を観測して�
   render(<TimelineFeed {...baseProps} hasMore onLoadMore={onLoadMore} />);
   expect(onLoadMore).toHaveBeenCalled();
 });
+
+test('自動取得が失敗した後は observer を再接続せず、明示的な再試行を表示する', () => {
+  const observe = vi.fn();
+  class FakeObserver {
+    observe = observe;
+    disconnect() {}
+    unobserve() {}
+    takeRecords() { return []; }
+    root = null;
+    rootMargin = '';
+    thresholds = [];
+  }
+  vi.stubGlobal('IntersectionObserver', FakeObserver);
+  const onLoadMore = vi.fn();
+  render(
+    <TimelineFeed
+      {...baseProps}
+      hasMore
+      loadMoreError='Older posts could not be loaded.'
+      onLoadMore={onLoadMore}
+    />
+  );
+
+  expect(observe).not.toHaveBeenCalled();
+  expect(screen.getByText('Older posts could not be loaded.')).toBeInTheDocument();
+  screen.getByRole('button', { name: 'Retry' }).click();
+  expect(onLoadMore).toHaveBeenCalledTimes(1);
+});
