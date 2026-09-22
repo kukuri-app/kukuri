@@ -102,14 +102,14 @@ fn session_id_from_key<'a>(key: &'a str, prefix: &str) -> Option<&'a str> {
     (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
-/// `envelopes/<envelope id>` の record から、署名と id と kind が正しい envelope を探し、署名者と content を返す。
+/// 署名と id と kind が正しい envelope の署名者、manifest、署名された生 bytes の hash。
 async fn load_signed_manifest<T: DeserializeOwned>(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     envelope_id: &EnvelopeId,
     expected_kind: &str,
     policy: DocFetchPolicy,
-) -> Result<Option<(Pubkey, T)>> {
+) -> Result<Option<(Pubkey, T, kukuri_core::BlobHash)>> {
     let records = docs_sync
         .query_replica_exact_bounded(
             replica,
@@ -125,7 +125,8 @@ async fn load_signed_manifest<T: DeserializeOwned>(
             && envelope.kind == expected_kind)
             .then_some(())?;
         let manifest = serde_json::from_str::<T>(envelope.content.as_str()).ok()?;
-        Some((envelope.pubkey, manifest))
+        let hash = kukuri_core::blob_hash(envelope.content.as_bytes());
+        Some((envelope.pubkey, manifest, hash))
     }))
 }
 
@@ -227,7 +228,7 @@ pub(crate) async fn verify_live_session_record(
     {
         return rejected(SessionRejection::KeyMismatch);
     }
-    let Some((signer, manifest)) = load_signed_manifest::<LiveSessionManifestBlobV1>(
+    let Some((signer, manifest, signed_hash)) = load_signed_manifest::<LiveSessionManifestBlobV1>(
         docs_sync,
         replica,
         &state.last_envelope_id,
@@ -245,6 +246,9 @@ pub(crate) async fn verify_live_session_record(
             Ok(verified) => verified,
             Err(reason) => return rejected(reason),
         };
+    if current_manifest.hash != signed_hash {
+        return rejected(SessionRejection::ManifestMismatch);
+    }
     match fetch_manifest_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest).await {
         Ok(Some(blob)) if blob == verified.manifest => Ok(Some(verified)),
         Ok(Some(_)) | Err(_) => rejected(SessionRejection::ManifestMismatch),
@@ -395,7 +399,7 @@ impl VerifiedGameRoom {
 /// `sessions/game/<id>/state` の record を 1 件検証する。
 ///
 /// 署名つきの manifest があれば、それを確かめてから manifest blob を読む。署名つきの manifest が無い state は、
-/// Dome の id(`dome-`)を持つものだけ manifest blob から確かめる(修正前の client が書いた Dome を読めるようにする)。
+/// state の scope と owner に結び付いた Dome の id のみ manifest blob から確かめる(旧 client の互換例外)。
 pub(crate) async fn verify_game_room_record(
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
@@ -424,7 +428,7 @@ pub(crate) async fn verify_game_room_record(
     .await?;
     let current_manifest = state.current_manifest.clone();
     match signed {
-        Some((signer, manifest)) => {
+        Some((signer, manifest, signed_hash)) => {
             let verified = match VerifiedGameRoom::verify(
                 state,
                 Some(&signer),
@@ -435,6 +439,9 @@ pub(crate) async fn verify_game_room_record(
                 Ok(verified) => verified,
                 Err(reason) => return rejected(reason),
             };
+            if current_manifest.hash != signed_hash {
+                return rejected(SessionRejection::ManifestMismatch);
+            }
             match fetch_manifest_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest)
                 .await
             {
@@ -444,6 +451,26 @@ pub(crate) async fn verify_game_room_record(
             }
         }
         None if state.room_id.starts_with("dome-") => {
+            // 未署名 hash の取得を許す旧 Dome 互換例外。ID の整合は認証ではないが、
+            // prefix だけ・別 scope の state を契機に remote 取得へ進めない(#1261)。
+            let Some(scope) = ReplicaPostScope::for_replica(replica, subscription_topic_id) else {
+                return rejected(SessionRejection::UnsupportedReplica);
+            };
+            if !scope.accepts(&state.topic_id, state.channel_id.as_ref()) {
+                return rejected(SessionRejection::ScopeMismatch);
+            }
+            let context = match &state.channel_id {
+                Some(channel_id) => SpatialContextV1::Channel {
+                    topic_id: state.topic_id.clone(),
+                    channel_id: channel_id.clone(),
+                },
+                None => SpatialContextV1::Topic {
+                    topic_id: state.topic_id.clone(),
+                },
+            };
+            if state.room_id != dome_instance_id(&context, &state.owner_pubkey) {
+                return rejected(SessionRejection::IdNotBoundToOwner);
+            }
             match fetch_manifest_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest)
                 .await
             {

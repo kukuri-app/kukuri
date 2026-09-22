@@ -426,6 +426,7 @@ mod reply_target_background;
 mod scale_counts;
 mod scale_independence;
 mod session_catch_up;
+mod session_manifest_fetch;
 mod shadowing_docs;
 pub(super) use shadowing_docs::ShadowingDocsSync;
 mod subscription_catch_up;

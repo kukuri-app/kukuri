@@ -157,8 +157,15 @@ Accepted
   - metaverse room: 訪問者も chat で room の manifest を書く設計なので、owner の署名は要求しない。topic / channel と Spatial Context が読んだ replica と一致し、
     id が Spatial Context と owner から決まる値（`dome-<hash>` の 24 桁）と一致することを確かめる。owner であることは、これまでどおり一覧の時点で
     署名つきの Dome Instance で確かめる（ADR 0036）。title などの表示内容は、その topic に書ける者が変えられる（Dome の authority の対象外）。
-  - 署名された manifest を確かめる前に、未検証の state が指す manifest blob を取りに行かない。例外は、署名つきの envelope を持たない `dome-` の id の state
-    （修正前の client が書いた Dome）で、manifest blob から上の metaverse room の規則で確かめる。
+  - 署名された manifest を確かめる前に、未検証の state が指す manifest blob を取りに行かない。署名つき manifest が得られた場合は、検証済み envelope の
+    `content` の UTF-8 bytes から `blob_hash` を計算し、`state.current_manifest.hash` と一致するときだけ取得する（#1261）。deserialize 後の再 serialize は
+    field 順序・未知 field を失うので hash の入力にしない。不一致時は BlobService を一度も呼ばず、行と cache status を更新しない。
+    一致後も blob の内容と署名された manifest を比較し、blob が無ければ反映せず、既存の上限つき retry / 再反映で後着を受け入れる。
+  - 互換例外は、検証可能な署名つき manifest が得られない旧 Dome の state。取得前に key の room id と state が一致し、state の topic / channel が replica の
+    scope と一致し、その topic / channel から作る Spatial Context と state.owner_pubkey から導出した Dome ID が state.room_id と一致することを要求する。
+    その場合に限り未署名 hash の local / remote 取得を許可し、取得後も上の metaverse room の規則で確かめる。これは hash や owner の認証ではなく、未署名 hash
+    による取得が残る互換例外である。local のみにすると別端末で旧 Dome を初めて読めないため、この例外を維持する。署名つき manifest の hash 不一致や検証拒否から
+    互換分岐へ fallback しない。verifier の 1 record あたりの blob 取得は最大 1 回、1 key の候補は最大 8 件、既存 retry の回数と各取得の timeout（2〜5 秒）を維持する。
   - 利用者の操作（終了・参加・更新・Dome の移動と削除）が読む state と manifest も、同じ検証を通す。
   - 互換: #1260 時点で live session と ScoreGame の本番 record は無い。revision を持たない旧形式の移行・後方互換は行わず、表示・操作の対象にしない。
     未検証の state や旧形式へ owner が署名を付け直す経路は作らない。Metaverse room は revision の対象外で、既存の互換経路と lifecycle を維持する。
