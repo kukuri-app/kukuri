@@ -74,6 +74,7 @@ fn index_query_params_preserve_scope_pair_and_optional_fields() {
 fn index_query_response_wire_shape_is_stable() {
     let response = IndexQueryResponse {
         entries: vec![IndexEntryView {
+            source_replica_id: None,
             scope_kind: IndexScopeKind::PublicTopic,
             scope_id: "rust".to_string(),
             object_id: "post-1".to_string(),
@@ -97,6 +98,22 @@ fn index_query_response_wire_shape_is_stable() {
                 "content_advisories": []
             }]
         })
+    );
+}
+
+#[test]
+fn index_locator_is_optional_and_preserved_when_supplied() {
+    let mut wire = serde_json::json!({
+        "scope_kind":"public_topic", "scope_id":"rust", "object_id":"post",
+        "author_pubkey":"author", "text":"body", "created_at":86400,
+    });
+    let old: IndexEntryView = serde_json::from_value(wire.clone()).unwrap();
+    assert!(old.source_replica_id.is_none());
+    wire["source_replica_id"] = "bucket::v1::topic::72757374::1".into();
+    let new: IndexEntryView = serde_json::from_value(wire).unwrap();
+    assert_eq!(
+        new.source_replica_id.as_deref(),
+        Some("bucket::v1::topic::72757374::1")
     );
 }
 

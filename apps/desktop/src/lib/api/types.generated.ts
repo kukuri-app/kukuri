@@ -426,7 +426,7 @@ signal_id: string,
  */
 basis: Basis, };
 
-export type IndexEntryView = { scope_kind: IndexScopeKind, scope_id: string, object_id: string, author_pubkey: string, text: string, created_at: number, content_advisories: Array<ContentAdvisory>, };
+export type IndexEntryView = { scope_kind: IndexScopeKind, scope_id: string, object_id: string, author_pubkey: string, text: string, created_at: number, source_replica_id?: string, content_advisories: Array<ContentAdvisory>, };
 
 export type IndexQueryResponse = { entries: Array<IndexEntryView>, };
 
@@ -454,7 +454,7 @@ export type CommunityNodeContentAdvisoryLookupResult = {
  */
 nodes: Array<CommunityNodeContentAdvisoryNodeResult>, };
 
-export type CommunityIndexPostResolveInput = { key: string, topic: string, object_id: string, author_pubkey: string, channel_ref: ChannelRef, };
+export type CommunityIndexPostResolveInput = { key: string, topic: string, object_id: string, author_pubkey: string, channel_ref: ChannelRef, source_replica_id?: string, };
 
 export type CommunityIndexPostActionCapabilitiesView = { open_thread: boolean, reply: boolean, repost: boolean, quote_repost: boolean, react: boolean, copy_link: boolean, bookmark: boolean, withdraw: boolean, };
 

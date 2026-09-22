@@ -87,7 +87,10 @@ test('Explore results expose the same post actions as the timeline', async () =>
   const onRepost = vi.fn();
   const onToggleBookmark = vi.fn();
   const searchCommunityNodeIndex = vi.fn().mockResolvedValue({
-    entries: [indexEntry('explore-actions', 'actionable result')],
+    entries: [{
+      ...indexEntry('explore-actions', 'actionable result'),
+      source_replica_id: 'bucket::v1::topic::72757374::1',
+    }],
   });
   const resolveCommunityIndexPosts = vi.fn().mockResolvedValue({
     entries: [resolvedIndexEntry('explore-actions')],
@@ -118,6 +121,9 @@ test('Explore results expose the same post actions as the timeline', async () =>
   if (!(card instanceof HTMLElement)) throw new Error('Explore result card not found');
 
   await waitFor(() => expect(resolveCommunityIndexPosts).toHaveBeenCalledTimes(1));
+  expect(resolveCommunityIndexPosts).toHaveBeenCalledWith([
+    expect.objectContaining({ source_replica_id: 'bucket::v1::topic::72757374::1' }),
+  ]);
 
   expect(within(card).getByRole('button', { name: 'React' })).toBeEnabled();
   expect(within(card).getByRole('button', { name: 'Repost' })).toBeInTheDocument();

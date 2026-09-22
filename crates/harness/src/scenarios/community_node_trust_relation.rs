@@ -227,6 +227,7 @@ async fn index_search(State(state): State<ServerState>, headers: HeaderMap) -> R
         Vec::new()
     } else {
         vec![IndexEntryView {
+            source_replica_id: None,
             scope_kind: IndexScopeKind::PublicTopic,
             scope_id: "trust-relation".to_string(),
             object_id: "distant-post-1".to_string(),

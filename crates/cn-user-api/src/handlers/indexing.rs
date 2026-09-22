@@ -196,11 +196,58 @@ fn index_query_response(entries: Vec<kukuri_cn_indexer::IndexedEntry>) -> IndexQ
                 author_pubkey: entry.author_pubkey,
                 text: entry.text,
                 created_at: entry.created_at,
+                source_replica_id: (entry.scope_kind
+                    == kukuri_cn_core::IndexScopeKind::PublicTopic
+                    && entry.source_replica_id.starts_with("bucket::"))
+                .then_some(entry.source_replica_id),
                 // 真実源の最新 verdict 由来（query gate が充填）。署名済み content_labels は
                 // 生成・改変しない（`content_advisories_are_separate_from_signed_content_labels`）。
                 content_advisories: entry.content_advisories,
             })
             .collect(),
+    }
+}
+
+#[test]
+fn index_query_retains_the_public_source_replica_locator() {
+    let result = index_query_response(vec![kukuri_cn_indexer::IndexedEntry {
+        scope_kind: kukuri_cn_core::IndexScopeKind::PublicTopic,
+        scope_id: "rust".into(),
+        object_id: "post-id".into(),
+        author_pubkey: "author".into(),
+        text: "derived text".into(),
+        created_at: 86_400,
+        source_replica_id: "bucket::v1::topic::72757374::1".into(),
+        content_advisories: Vec::new(),
+    }]);
+    let wire = serde_json::to_value(result).expect("index response");
+    assert_eq!(
+        wire["entries"][0]["source_replica_id"],
+        "bucket::v1::topic::72757374::1"
+    );
+}
+
+#[test]
+fn index_query_keeps_legacy_and_private_locator_fields_absent() {
+    for (kind, source) in [
+        (kukuri_cn_core::IndexScopeKind::PublicTopic, "topic::rust"),
+        (
+            kukuri_cn_core::IndexScopeKind::PrivateChannel,
+            "bucket::v1::channel::63::65::1",
+        ),
+    ] {
+        let result = index_query_response(vec![kukuri_cn_indexer::IndexedEntry {
+            scope_kind: kind,
+            scope_id: "rust".into(),
+            object_id: "post".into(),
+            author_pubkey: "author".into(),
+            text: "body".into(),
+            created_at: 42,
+            source_replica_id: source.into(),
+            content_advisories: Vec::new(),
+        }]);
+        let wire = serde_json::to_value(result).expect("wire");
+        assert!(wire["entries"][0].get("source_replica_id").is_none());
     }
 }
 

@@ -510,6 +510,7 @@ async fn community_index_resolution_shows_the_body_of_an_unprojected_post() {
     let response = fixture
         .app
         .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
+            source_replica_id: None,
             key: "entry".into(),
             topic: fixture.topic.as_str().to_string(),
             object_id: fixture.object.object_id.as_str().to_string(),

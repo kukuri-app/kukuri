@@ -241,6 +241,7 @@ async fn mock_index_query(
     }
     Json(IndexQueryResponse {
         entries: vec![IndexEntryView {
+            source_replica_id: None,
             scope_kind: IndexScopeKind::PublicTopic,
             scope_id: "rust".to_string(),
             object_id: state.response_object_id.lock().await.clone(),

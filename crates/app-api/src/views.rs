@@ -92,6 +92,10 @@ pub struct CommunityIndexPostResolveInput {
     pub object_id: String,
     pub author_pubkey: String,
     pub channel_ref: ChannelRef,
+    // CNが返した公開投稿の保存先。権限や正本の証明としては使わない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub source_replica_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

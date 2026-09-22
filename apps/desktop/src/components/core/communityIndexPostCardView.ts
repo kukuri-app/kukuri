@@ -92,7 +92,7 @@ export function communityIndexPostCardView(
         // Node index text is never a canonical content source. Render only the
         // locally resolved, signed post after its labels are available (#858).
         content: resolvedPost.content,
-        content_status: 'Available' as const,
+        content_status: resolvedPost.content_status,
         // #1052: 添付はローカル解決済みの署名付き envelope 由来であり、node の index
         // メタデータからの推測ではない。タイムラインと同じ表示経路へそのまま渡す。
         attachments: resolvedPost.attachments,

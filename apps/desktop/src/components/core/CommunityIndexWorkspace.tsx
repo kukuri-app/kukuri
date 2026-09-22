@@ -156,6 +156,7 @@ function resolveInputForEntry(
     topic,
     object_id: entry.object_id,
     author_pubkey: entry.author_pubkey,
+    ...(entry.source_replica_id == null ? {} : { source_replica_id: entry.source_replica_id }),
     channel_ref:
       entry.scope_kind === 'public_topic'
         ? { kind: 'public' }

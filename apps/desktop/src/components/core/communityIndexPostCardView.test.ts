@@ -234,6 +234,26 @@ describe('communityIndexPostCardView', () => {
     });
   });
 
+  test('preserves missing local body status for a resolved bucket result', () => {
+    const resolved = resolvedEntry('[blob pending]');
+    if (!resolved.post) throw new Error('resolved post fixture missing');
+    resolved.post.content_status = 'Missing';
+    const view = communityIndexPostCardView({
+      ...entry,
+      source_replica_id: 'bucket::v1::topic::72757374::1',
+    }, {
+      nodeBaseUrl: 'https://node.example',
+      operation: 'search',
+      topicId: null,
+      knownAuthor,
+      resolutionStatus: 'resolved',
+      resolvedEntry: resolved,
+      mediaObjectUrls: {},
+    });
+    expect(view.post.content_status).toBe('Missing');
+    expect(view.post.content).not.toContain(entry.text);
+  });
+
   test('gates an adult-labeled canonical result until adult display is enabled', () => {
     const resolved = resolvedEntry('canonical adult content');
     if (!resolved.post) throw new Error('resolved post fixture missing');

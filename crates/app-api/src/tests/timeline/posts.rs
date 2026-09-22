@@ -43,6 +43,7 @@ async fn community_index_resolution_is_canonical_and_fail_closed() {
     let response = app
         .resolve_community_index_posts(vec![
             CommunityIndexPostResolveInput {
+                source_replica_id: None,
                 key: "resolved".into(),
                 topic: topic.into(),
                 object_id: object_id.clone(),
@@ -50,6 +51,7 @@ async fn community_index_resolution_is_canonical_and_fail_closed() {
                 channel_ref: ChannelRef::Public,
             },
             CommunityIndexPostResolveInput {
+                source_replica_id: None,
                 key: "wrong-author".into(),
                 topic: topic.into(),
                 object_id: object_id.clone(),
@@ -57,6 +59,7 @@ async fn community_index_resolution_is_canonical_and_fail_closed() {
                 channel_ref: ChannelRef::Public,
             },
             CommunityIndexPostResolveInput {
+                source_replica_id: None,
                 key: "missing".into(),
                 topic: topic.into(),
                 object_id: "missing-object".into(),
@@ -122,6 +125,7 @@ async fn community_index_resolution_preserves_private_scope_capabilities() {
 
     let response = app
         .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
+            source_replica_id: None,
             key: "private".into(),
             topic: topic.into(),
             object_id,

@@ -365,8 +365,8 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 
 ### 7.6 保存済み verdict の再利用と risk signal の集約（#1050、2026-09-15）
 
-- indexer は pass ごとに scope 全件を走査するが、subject の**内容 fingerprint**（post =
-  `objects/<id>/state` レコードの content hash、blob = blob hash）と **scan 構成 fingerprint**
+- indexer は pass ごとに scope 全件を走査するが、subject の**内容 fingerprint**（旧形式post =
+  `objects/<id>/state` レコードの content hash、v1 bucket post = 検証済み署名ID、blob = blob hash）と **scan 構成 fingerprint**
   （`SafetyPolicy` の serde 表現 + provider の `config_fingerprint()` の sha256）が保存済み verdict
   （`cn_safety.scan_verdicts.source_fingerprint` / `scan_config_fingerprint`）と一致する限り provider を
   呼ばず、保存済み verdict と `derived_tags` を再利用する。再利用時は moderation artifact
@@ -408,6 +408,10 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 
 ### 7.7 取り込みの一時的な失敗と de-index の区別（#1090、2026-09-17）
 
+- v1 bucketの候補選別は[ADR0054](0054-time-bucketed-docs-replicas.md)のデータ分類に従う。
+  配置・署名を確認できない候補は、別sourceで確認済みの索引を消す根拠にしない。未署名markerの
+  書換えは署名IDの判定再利用を失効させず、走査中の現物envelopeの取得不能・検証不能は一時的失敗とする。
+  以下のstate破損・state再読不一致の扱いは旧形式に適用する。
 - 1 件の取り込みの失敗は、確定した理由と一時的な失敗に分ける（cn-indexer `ingest::failure`）。
   印の無い失敗は確定した理由として扱う。
 
@@ -446,7 +450,10 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
   一つのscope内では設定値（既定4）を上限として投稿を並列処理する。新revisionは旧leaseを失効させ、
   stale completionを反映しない。再起動後はraw bytesを復元せず、authoritative replicaの全件照合から
   jobを再構築する。
-- schedulerは実行順と並列上限だけを所有する。署名、scope、withdrawal、transmission prevention、
+- schedulerの診断台帳は実行中を含め1,024件以内とし、完了等の古い記録を回収する。全枠が実行中なら
+  新規jobを延期する。実行futureが所有するleaseのDropは同世代の実行中記録だけをCancelledへ移し、
+  cancelによる永久占有を防ぐ。部分key/1bucketの欠落をlogical scope全体の削除とは解釈しない（#1293）。
+- schedulerは実行順・並列上限・診断記録の保持を所有する。署名、scope、withdrawal、transmission prevention、
   source revision、moderation verdictのguardと、真実源→投影のmutation順は既存pipelineが所有する。
   一時的な失敗では既存entryを保持し、確定した理由と非allowだけが既存規則でde-indexする。
 - `/v1/status`は投稿schedulerの状態別件数と最古pending時刻を出す。本文、hash、peer ID、addressは
@@ -458,3 +465,16 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
   `bounded_scheduler_allows_healthy_job_while_slow_job_is_waiting`、
   `stale_completion_cannot_replace_newer_revision`、
   `independent_posts_are_ingested_concurrently_within_the_configured_bound`。
+
+## 8. 公開bucketの検索結果の保存先（#1243 / #1293）
+
+- 公開bucketのentryは、検索・発見・おすすめの`IndexEntryView`へoptionalな`source_replica_id`を付ける。
+  legacyとprivateのentryではfieldを省略し、従来の読取り経路を維持する。fieldのない旧応答も受け入れる。
+- locatorは権限やcanonical本文の証明ではない。clientは要求topic・版・scopeを読取り前に照合し、
+  指定先の署名済みenvelopeとbucketの時刻を検証する。未知版・不一致を旧replicaへの自動fallbackにしない。
+- clientの先行readerはLocalOnlyで解決する。保存済みprojectionがあればそのcanonical sourceを使い、
+  投稿と、返信先/repost元の高々2参照の取り下げをLocalOnlyで再確認する。view生成も背景remoteを起動しない。
+  本文blobの欠落はその状態を表示へ渡し、index textをcanonical本文の代わりにしない。
+- 不正・取得不能な結果1件で、他の正常な結果を隠さない。全bucketの探索や未許可private取得を追加しない。
+- これは[ADR0054](0054-time-bucketed-docs-replicas.md)の読取り準備であり、writer/private epoch/同期owner/GCの
+  切替完了を意味しない。既存の認証・同意・安全性・readiness gateを通った結果にだけmetadataを付ける。

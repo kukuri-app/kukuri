@@ -133,6 +133,7 @@ async fn index_query(
         overridden.unwrap_or_else(|| (format!("{operation}-object"), "harness-author".to_string()));
     Json(IndexQueryResponse {
         entries: vec![IndexEntryView {
+            source_replica_id: None,
             scope_kind,
             scope_id,
             object_id,

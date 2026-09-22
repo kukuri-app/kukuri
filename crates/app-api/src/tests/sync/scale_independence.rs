@@ -294,6 +294,7 @@ async fn community_index_resolution_reads_a_constant_number_of_docs_records() {
         let response = fixture
             .app
             .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
+                source_replica_id: None,
                 key: "entry".into(),
                 topic: fixture.topic.as_str().to_string(),
                 object_id: fixture.target.id.as_str().to_string(),
