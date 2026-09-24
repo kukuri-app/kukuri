@@ -16,8 +16,8 @@ use crate::models::{
     DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
     DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
     DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
-    LiveSessionProjectionRow, MutedAuthorRow, NotificationRow, ObjectProjectionRow, Page,
-    PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
+    LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationRow,
+    ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
 };
 use crate::pagination::{
     apply_asc_cursor, apply_asc_projection_cursor, apply_desc_cursor,
@@ -25,8 +25,8 @@ use crate::pagination::{
 };
 use crate::traits::{
     BlobCacheStore, ContentObservationStore, DirectMessageStore, LiveGameProjectionStore,
-    NotificationStore, ObjectProjectionStore, PostWithdrawalStore, ReactionBookmarkStore,
-    SocialProjectionStore, Store,
+    NOTIFICATION_PAGE_SIZE, NotificationStore, ObjectProjectionStore, PostWithdrawalStore,
+    ReactionBookmarkStore, SocialProjectionStore, Store,
 };
 
 /// sqlite の live_presence_cache 主キー ON CONFLICT(topic_id, channel_id, session_id,
@@ -57,8 +57,13 @@ type MemoryDirectMessageTombstones = HashMap<(String, String), DirectMessageTomb
 #[derive(Default)]
 struct MemoryNotificationRows {
     rows: HashMap<String, NotificationRow>,
+    by_received_at: BTreeSet<(i64, String)>,
     by_sequence: BTreeMap<i64, String>,
+    sequence_by_id: HashMap<String, i64>,
     last_sequence: i64,
+    read_through_sequence: i64,
+    read_through_at: Option<i64>,
+    unread_count: usize,
 }
 type MemoryContentObservationRows =
     HashMap<(String, String, String, String), ContentObservationRow>;

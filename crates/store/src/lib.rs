@@ -15,14 +15,15 @@ pub use models::{
     DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
     DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
     DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
-    LiveSessionProjectionRow, MutedAuthorRow, NotificationKind, NotificationRow,
-    ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
-    VERIFIED_OBJECT_PROJECTION_VERSION, VERIFIED_REACTION_PROJECTION_VERSION,
+    LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationKind,
+    NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow,
+    TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION, VERIFIED_REACTION_PROJECTION_VERSION,
     VERIFIED_SESSION_PROJECTION_VERSION, adult_media_hashes_for_row,
 };
 pub use sqlite::{SqliteStore, StoreStartupError};
 pub use traits::{
     BlobCacheStore, ContentObservationStore, DirectMessageStore, LiveGameProjectionStore,
-    NOTIFICATION_DISPATCH_PAGE_SIZE, NotificationStore, ObjectProjectionStore, PostWithdrawalStore,
-    ProjectionStore, ReactionBookmarkStore, SocialProjectionStore, Store,
+    NOTIFICATION_DISPATCH_PAGE_SIZE, NOTIFICATION_PAGE_SIZE, NotificationStore,
+    ObjectProjectionStore, PostWithdrawalStore, ProjectionStore, ReactionBookmarkStore,
+    SocialProjectionStore, Store,
 };

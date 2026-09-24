@@ -11,6 +11,8 @@ export type TimelineCursor = { created_at: number, object_id: string, };
 
 export type BookmarkCursor = { bookmarked_at: number, source_object_id: string, };
 
+export type NotificationCursor = { received_at: number, notification_id: string, };
+
 export type ChannelAudienceKind = "invite_only" | "friend_only" | "friend_plus";
 
 export type ChannelSharingState = "open" | "frozen";
@@ -78,6 +80,8 @@ export type DirectMessageMessageView = { dm_id: string, message_id: string, send
 export type DirectMessageConversationView = { dm_id: string, peer_pubkey: string, peer_name?: string | null, peer_display_name?: string | null, peer_picture_asset?: ProfileAssetView | null, updated_at: number, last_message_at?: number | null, last_message_id?: string | null, last_message_preview?: string | null, status: DirectMessageStatusView, };
 
 export type NotificationView = { notification_id: string, kind: NotificationKind, actor_pubkey: string, actor_name?: string | null, actor_display_name?: string | null, actor_picture_asset?: ProfileAssetView | null, source_envelope_id?: string | null, source_replica_id?: string | null, topic_id?: string | null, channel_id?: string | null, object_id?: string | null, thread_root_object_id?: string | null, dm_id?: string | null, message_id?: string | null, preview_text?: string | null, content_labels?: Array<string> | null, created_at: number, received_at: number, read_at?: number | null, };
+
+export type NotificationPageView = { items: Array<NotificationView>, newer_cursor: NotificationCursor | null, older_cursor: NotificationCursor | null, };
 
 export type NotificationStatusView = { unread_count: number, };
 
@@ -787,6 +791,8 @@ export type ListSocialConnectionsRequest = { kind: SocialConnectionKind, };
 export type DirectMessageRequest = { pubkey: string, };
 
 export type NotificationIdRequest = { notification_id: string, };
+
+export type ListNotificationsPageRequest = { cursor?: NotificationCursor | null, before: boolean, };
 
 export type ListDirectMessageMessagesRequest = { pubkey: string, cursor?: TimelineCursor | null, limit?: number | null, };
 

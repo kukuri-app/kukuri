@@ -67,7 +67,8 @@ import type {
   CommunityNodeObservationSharingStatus,
   EnableCommunityNodeObservationSharingRequest,
   NotificationStatusView,
-  NotificationView,
+  NotificationPageView,
+  NotificationCursor,
   PostView as WirePostView,
   PostWithdrawalReasonRequest,
   PrivateChannelInvitePreview,
@@ -337,7 +338,7 @@ export interface DesktopApi {
   blockAuthor(pubkey: string): Promise<AuthorSocialView>;
   unblockAuthor(pubkey: string): Promise<AuthorSocialView>;
   listSocialConnections(kind: SocialConnectionKind): Promise<AuthorSocialView[]>;
-  listNotifications(): Promise<NotificationView[]>;
+  listNotificationsPage(cursor?: NotificationCursor | null, before?: boolean): Promise<NotificationPageView>;
   markNotificationRead(notificationId: string): Promise<NotificationStatusView>;
   markAllNotificationsRead(): Promise<NotificationStatusView>;
   getNotificationStatus(): Promise<NotificationStatusView>;

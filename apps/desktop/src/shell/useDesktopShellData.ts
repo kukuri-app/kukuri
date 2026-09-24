@@ -825,7 +825,8 @@ export function useDesktopShellData({
     translate,
   ]);
 
-  const { refreshNotificationStatus, loadNotificationsSection } = useNotificationLoaders({
+  const { refreshNotificationStatus, refreshNotificationsFromEvent, loadNotificationsSection,
+    navigateNotificationPage } = useNotificationLoaders({
     api, activePrimarySection: shellChromeState.activePrimarySection, translate,
   });
   const {
@@ -972,6 +973,7 @@ export function useDesktopShellData({
     refreshVisibleShellData,
     refreshConnectivityStatus,
     refreshNotificationStatus,
+    refreshNotificationsFromEvent,
     setCommunityNodeStatuses,
     setSyncStatus,
     setLocalProfile,
@@ -1065,6 +1067,7 @@ export function useDesktopShellData({
     applyPendingTimeline,
     loadReactionCatalogData,
     loadNotificationsSection,
+    navigateNotificationPage,
     loadMoreTimeline,
     loadMoreThread,
     rememberDraftPreview,

@@ -176,7 +176,7 @@ fn baseline_inventory_is_classified_once() {
     );
     assert_eq!(
         manifest.scope_revision,
-        "2026-09-24-1221-r1-a-bookmark-page-v1"
+        "2026-09-24-1221-r1-d-notification-page-v1"
     );
     assert_eq!(manifest.entries.len(), 169);
     check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");

@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-24-1221-r1-a-bookmark-page-v1",
+  "scope_revision": "2026-09-24-1221-r1-d-notification-page-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -78,7 +78,7 @@
     {"tauri":"commands::profile::block_author","cli":"block_author","inventory":"INV-2"},
     {"tauri":"commands::profile::unblock_author","cli":"unblock_author","inventory":"INV-2"},
     {"tauri":"commands::profile::list_social_connections","cli":"list_social_connections","inventory":"INV-2"},
-    {"tauri":"commands::profile::list_notifications","cli":"list_notifications","inventory":"INV-2"},
+    {"tauri":"commands::profile::list_notifications_page","cli":"list_notifications","inventory":"INV-2"},
     {"tauri":"commands::profile::mark_notification_read","cli":"mark_notification_read","inventory":"INV-2"},
     {"tauri":"commands::profile::mark_all_notifications_read","cli":"mark_all_notifications_read","inventory":"INV-2"},
     {"tauri":"commands::profile::get_notification_status","cli":"get_notification_status","inventory":"INV-2"},

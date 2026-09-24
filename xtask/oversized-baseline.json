@@ -41,7 +41,7 @@
       "path": "crates/app-api/src/private_channels.rs"
     },
     {
-      "lines": 1099,
+      "lines": 1103,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -49,7 +49,7 @@
       "path": "crates/app-api/src/service/private_channels_support.rs"
     },
     {
-      "lines": 1079,
+      "lines": 1082,
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
@@ -77,12 +77,16 @@
       "path": "crates/app-api/src/dome_connections.rs"
     },
     {
-      "lines": 1022,
+      "lines": 1024,
       "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
       "lines": 1016,
       "path": "apps/desktop/src/shell/presentation.test.ts"
+    },
+    {
+      "lines": 1012,
+      "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
       "lines": 1004,

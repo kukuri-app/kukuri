@@ -95,7 +95,7 @@ describe('notification badge contract (#919 TR-1/2/3/8)', () => {
     });
     const api = createDesktopMockApi({ notifications: [unread] });
     const status = vi.spyOn(api, 'getNotificationStatus');
-    const list = vi.spyOn(api, 'listNotifications');
+    const list = vi.spyOn(api, 'listNotificationsPage');
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     const { hook, store } = mountData(api);
     await flush(60_000);
@@ -109,40 +109,39 @@ describe('notification badge contract (#919 TR-1/2/3/8)', () => {
     hook.unmount();
   });
 
-  test.each([0, 1])('outside inbox, badge count %i controls list fetch without marking read', async count => {
+  test.each([0, 1])('outside inbox, badge count %i refreshes without reading the inbox', async count => {
     const api = createDesktopMockApi();
     vi.spyOn(api, 'getNotificationStatus').mockResolvedValue({ unread_count: count });
-    const list = vi.spyOn(api, 'listNotifications').mockResolvedValue([unread, read]);
+    const list = vi.spyOn(api, 'listNotificationsPage');
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     const { hook, store } = mountData(api);
     const panel = store.getState().notificationPanelState;
     await flush();
-    expect(list).toHaveBeenCalledTimes(count ? 1 : 0);
-    expect(store.getState().notifications).toEqual(count ? [unread, read] : [read]);
+    expect(list).not.toHaveBeenCalled();
+    expect(store.getState().notifications).toEqual([read]);
     expect(store.getState().notificationStatus).toEqual({ unread_count: count });
     expect(store.getState().notificationPanelState).toEqual(panel);
     expect(mark).not.toHaveBeenCalled();
     hook.unmount();
   });
 
-  test.each(['status', 'list'])('badge %s failure keeps previous rows and does not set inbox error', async failure => {
+  test('badge status failure keeps previous rows and does not set inbox error', async () => {
     const api = createDesktopMockApi();
-    const status = vi.spyOn(api, 'getNotificationStatus').mockResolvedValue({ unread_count: 2 });
-    const list = vi.spyOn(api, 'listNotifications').mockResolvedValue([unread]);
-    (failure === 'status' ? status : list).mockRejectedValue(new Error('offline'));
+    vi.spyOn(api, 'getNotificationStatus').mockRejectedValue(new Error('offline'));
+    const list = vi.spyOn(api, 'listNotificationsPage');
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     const { hook, store } = mountData(api);
     const panel = store.getState().notificationPanelState;
     await flush();
-    expect(store.getState().notificationStatus).toEqual({ unread_count: failure === 'status' ? 9 : 2 });
+    expect(store.getState().notificationStatus).toEqual({ unread_count: 9 });
     expect(store.getState().notifications).toEqual([read]);
     expect(store.getState().notificationPanelState).toEqual(panel);
-    expect(list).toHaveBeenCalledTimes(failure === 'status' ? 0 : 1);
+    expect(list).not.toHaveBeenCalled();
     expect(mark).not.toHaveBeenCalled();
     hook.unmount();
   });
 
-  test.each([0, 1])('active inbox badge count %i skips list; section change resets timer and event callback', async count => {
+  test.each([0, 1])('active inbox badge count %i refreshes one page on event without marking read', async count => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     let receive: ((event: { payload: RuntimeEvent }) => void) | undefined;
     const unsubscribe = vi.fn();
@@ -152,7 +151,9 @@ describe('notification badge contract (#919 TR-1/2/3/8)', () => {
     });
     const api = createDesktopMockApi();
     const status = vi.spyOn(api, 'getNotificationStatus').mockResolvedValue({ unread_count: count });
-    const list = vi.spyOn(api, 'listNotifications').mockResolvedValue([read]);
+    const list = vi.spyOn(api, 'listNotificationsPage').mockResolvedValue({
+      items: [read], newer_cursor: null, older_cursor: null,
+    });
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     const { hook, store } = mountData(api);
     await flush(30_000);
@@ -163,16 +164,15 @@ describe('notification badge contract (#919 TR-1/2/3/8)', () => {
       }) });
     });
     await flush();
-    // 新sectionのinbox取得とは別にbadgeの即時refreshも行う。
-    expect(status).toHaveBeenCalledTimes(2);
+    expect(status).toHaveBeenCalledTimes(1);
     status.mockClear(); list.mockClear(); mark.mockClear();
     await flush(30_000);
-    expect(status).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledTimes(1);
     await flush(30_000);
     expect(status).toHaveBeenCalledTimes(1);
     await act(async () => { receive?.({ payload: { type: 'notification_status_changed' } }); });
     expect(status).toHaveBeenCalledTimes(2);
-    expect(list).not.toHaveBeenCalled();
+    expect(list).toHaveBeenCalledTimes(1);
     expect(mark).not.toHaveBeenCalled();
     expect(store.getState().notifications).toEqual([read]);
     expect(listenMock).toHaveBeenCalledTimes(1);
@@ -190,13 +190,71 @@ describe('notification badge contract (#919 TR-1/2/3/8)', () => {
 });
 
 describe('notification inbox contract (#919 TR-4/5/6/7)', () => {
+  test('an account switch rejects an older notification page response', async () => {
+    const api = createDesktopMockApi();
+    let resolvePage!: (page: Awaited<ReturnType<DesktopApi['listNotificationsPage']>>) => void;
+    const readPage = vi.spyOn(api, 'listNotificationsPage').mockReturnValue(
+      new Promise((resolve) => { resolvePage = resolve; })
+    );
+    const harness = createShellHookHarness();
+    harness.store.getState().patchState({ syncStatus: {
+      ...harness.store.getState().syncStatus, local_author_pubkey: 'account-a',
+    } });
+    const hook = renderHook(() => useNotificationLoaders({ api, translate, activePrimarySection: 'notifications' }),
+      { wrapper: harness.wrapper });
+    let loading!: Promise<void>;
+    act(() => { loading = hook.result.current.loadNotificationsSection({ markAsRead: false }); });
+    expect(readPage).toHaveBeenCalledTimes(1);
+    act(() => harness.store.getState().patchState({ syncStatus: {
+      ...harness.store.getState().syncStatus, local_author_pubkey: 'account-b',
+    } }));
+    await act(async () => {
+      resolvePage({ items: [unread], newer_cursor: null, older_cursor: null });
+      await loading;
+    });
+    expect(harness.store.getState().notifications).toEqual([]);
+    hook.unmount();
+  });
+
+  test('an unchanged notification event leaves the displayed store snapshot untouched', async () => {
+    const api = createDesktopMockApi({ notifications: [read] });
+    const harness = createShellHookHarness();
+    const hook = renderHook(() => useNotificationLoaders({ api, translate, activePrimarySection: 'notifications' }),
+      { wrapper: harness.wrapper });
+    await act(async () => hook.result.current.loadNotificationsSection({ markAsRead: false }));
+    const snapshot = harness.store.getState();
+    await act(async () => hook.result.current.refreshNotificationsFromEvent());
+    expect(harness.store.getState()).toBe(snapshot);
+    hook.unmount();
+  });
+
+  test('replaces notification pages in both directions without reading the full inbox', async () => {
+    const api = createDesktopMockApi({ notifications: Array.from({ length: 25 }, (_, index) => ({
+      ...read, notification_id: `page-${index}`, received_at: 100 - index,
+    })) });
+    const pageRead = vi.spyOn(api, 'listNotificationsPage');
+    const harness = createShellHookHarness();
+    const hook = renderHook(() => useNotificationLoaders({ api, translate, activePrimarySection: 'notifications' }),
+      { wrapper: harness.wrapper });
+    await act(async () => hook.result.current.loadNotificationsSection({ markAsRead: false }));
+    expect(harness.store.getState().notifications).toHaveLength(20);
+    expect(harness.store.getState().notificationsOlderCursor).not.toBeNull();
+    await act(async () => hook.result.current.navigateNotificationPage(false));
+    expect(harness.store.getState().notifications).toHaveLength(5);
+    expect(harness.store.getState().notificationsNewerCursor).not.toBeNull();
+    await act(async () => hook.result.current.navigateNotificationPage(true));
+    expect(harness.store.getState().notifications).toHaveLength(20);
+    expect(pageRead).toHaveBeenCalledTimes(3);
+    hook.unmount();
+  });
+
   test('background refresh preserves mixed private/adult/read payloads without read mutation', async () => {
     const { api, hook, store } = mountInbox();
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     await act(async () => { await hook.result.current.loadNotificationsSection({ markAsRead: false }); });
     expect(mark).not.toHaveBeenCalled();
     expect(store.getState().notifications).toEqual([unread, read]);
-    expect(await api.listNotifications()).toEqual([unread, read]);
+    expect((await api.listNotificationsPage()).items).toEqual([unread, read]);
     expect(store.getState().notificationStatus).toEqual({ unread_count: 1 });
     expect(store.getState().notificationPanelState).toEqual({ status: 'ready', error: null });
     hook.unmount();
@@ -226,7 +284,7 @@ describe('notification inbox contract (#919 TR-4/5/6/7)', () => {
 
   test.each(['status', 'list'])('inbox %s failure keeps both previous results and forbids marking read', async failure => {
     const { api, hook, store } = mountInbox();
-    vi.spyOn(api, failure === 'status' ? 'getNotificationStatus' : 'listNotifications')
+    vi.spyOn(api, failure === 'status' ? 'getNotificationStatus' : 'listNotificationsPage')
       .mockRejectedValue(new Error('offline'));
     const mark = vi.spyOn(api, 'markAllNotificationsRead');
     await act(async () => { await hook.result.current.loadNotificationsSection(); });
@@ -243,7 +301,7 @@ describe('notification inbox contract (#919 TR-4/5/6/7)', () => {
     await act(async () => { await hook.result.current.loadNotificationsSection(); });
     expect(mark).toHaveBeenCalledTimes(1);
     expect(store.getState().notifications).toEqual([unread, read]);
-    expect(await api.listNotifications()).toEqual([unread, read]);
+    expect((await api.listNotificationsPage()).items).toEqual([unread, read]);
     expect(store.getState().notificationStatus).toEqual({ unread_count: 1 });
     expect(store.getState().notificationPanelState).toEqual({ status: 'ready', error: null });
     expect(store.getState().notificationAutoReadError).toBe('read failed');

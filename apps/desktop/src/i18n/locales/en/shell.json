@@ -184,8 +184,9 @@
       "noContent": "Open the source event.",
       "noMessage": "Open the conversation."
     },
-    "summary_one": "{{count}} notification / {{unread}} unread",
-    "summary_other": "{{count}} notifications / {{unread}} unread",
+    "summary_one": "Showing {{visibleCount}} notification / {{unread}} unread",
+    "summary_other": "Showing {{visibleCount}} notifications / {{unread}} unread",
+    "pages": "Notification pages",
     "title": "Notifications",
     "unread": "Unread"
   },

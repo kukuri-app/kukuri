@@ -78,6 +78,7 @@ type UseDesktopShellDataEffectsArgs = {
   loadMessagesSection: () => Promise<void>;
   loadNotificationsSection: (options?: { markAsRead?: boolean }) => Promise<void>;
   refreshNotificationStatus: () => Promise<void>;
+  refreshNotificationsFromEvent: () => Promise<void>;
   loadCommunityIndexCapability: () => Promise<void>;
   refreshVisibleShellData: (
     topic: string,
@@ -127,6 +128,7 @@ export function useDesktopShellDataEffects({
   loadMessagesSection,
   loadNotificationsSection,
   refreshNotificationStatus,
+  refreshNotificationsFromEvent,
   loadCommunityIndexCapability,
   refreshVisibleShellData,
   refreshConnectivityStatus,
@@ -218,6 +220,7 @@ export function useDesktopShellDataEffects({
         column.kind === 'notifications' && column.id !== state.workspaceState.activeColumnId
     )
   );
+  const notificationAccount = useDesktopShellStore((state) => state.syncStatus.local_author_pubkey);
   useEffect(() => {
     let disposed = false;
 
@@ -317,7 +320,7 @@ export function useDesktopShellDataEffects({
     [setCommunityNodeStatuses, setSyncStatus, storeApi]
   );
 
-  useRuntimeEventBridge(refreshNotificationStatus, applySyncStatusChange);
+  useRuntimeEventBridge(refreshNotificationsFromEvent, applySyncStatusChange);
 
   useEffect(() => {
     void refreshConnectivityStatus()
@@ -479,13 +482,14 @@ export function useDesktopShellDataEffects({
 
   useEffect(() => {
     const active = shellChromeState.activePrimarySection === 'notifications';
-    if (!active && !hasBackgroundNotificationsColumn) {
+    if (!notificationAccount || (!active && !hasBackgroundNotificationsColumn)) {
       return;
     }
     void loadNotificationsSection({ markAsRead: active }).catch(() => undefined);
   }, [
     hasBackgroundNotificationsColumn,
     loadNotificationsSection,
+    notificationAccount,
     shellChromeState.activePrimarySection,
   ]);
 

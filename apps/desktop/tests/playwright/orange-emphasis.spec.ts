@@ -12,8 +12,11 @@ for (const theme of ['dark', 'light'] as const) {
         set: (value: NonNullable<typeof api>) => {
           value.getNotificationStatus = async () => ({ unread_count: 2 });
           value.markAllNotificationsRead = async () => { throw new Error('Preview unread state'); };
-          const list = value.listNotifications.bind(value);
-          value.listNotifications = async () => (await list()).map(row => ({ ...row, read_at: null }));
+          const list = value.listNotificationsPage.bind(value);
+          value.listNotificationsPage = async () => {
+            const page = await list();
+            return { ...page, items: page.items.map(row => ({ ...row, read_at: null })) };
+          };
           api = value;
         },
       });

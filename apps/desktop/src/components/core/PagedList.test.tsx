@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 
-import { BookmarkPage } from './BookmarkPage';
+import { PagedList } from './PagedList';
 
 const BOOKMARK_PAGE_SIZE = 20;
 
@@ -13,15 +13,16 @@ test('bookmark pagination replaces the bounded page instead of accumulating card
   function PageHarness() {
     const [older, setOlder] = useState(false);
     return (
-      <BookmarkPage
+      <PagedList
         items={older ? items.slice(BOOKMARK_PAGE_SIZE) : items.slice(0, BOOKMARK_PAGE_SIZE)}
+        ariaLabel='Bookmark pages'
         hasPrevious={older}
         hasNext={!older}
         onPrevious={() => setOlder(false)}
         onNext={() => setOlder(true)}
       >
         {(page) => page.map((item) => <div key={item}>{item}</div>)}
-      </BookmarkPage>
+      </PagedList>
     );
   }
   render(

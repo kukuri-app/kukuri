@@ -1,6 +1,46 @@
+use crate::NotificationPageView;
 use crate::service::*;
 
 impl AppService {
+    pub async fn list_notifications_page(
+        &self,
+        cursor: Option<&kukuri_store::NotificationCursor>,
+        before: bool,
+    ) -> Result<NotificationPageView> {
+        let mut rows = self
+            .services
+            .projection_store
+            .list_notifications_page(cursor, before)
+            .await?;
+        let has_more = rows.len() > kukuri_store::NOTIFICATION_PAGE_SIZE;
+        rows.truncate(kukuri_store::NOTIFICATION_PAGE_SIZE);
+        if before {
+            rows.reverse();
+        }
+        let first = rows.first().map(kukuri_store::NotificationCursor::from);
+        let last = rows.last().map(kukuri_store::NotificationCursor::from);
+        let (newer_cursor, older_cursor) = if before {
+            (
+                has_more.then_some(first).flatten(),
+                cursor.is_some().then_some(last).flatten(),
+            )
+        } else {
+            (
+                cursor.is_some().then_some(first).flatten(),
+                has_more.then_some(last).flatten(),
+            )
+        };
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            items.push(self.notification_view_from_row(row).await?);
+        }
+        Ok(NotificationPageView {
+            items,
+            newer_cursor,
+            older_cursor,
+        })
+    }
+
     pub async fn list_notifications(&self) -> Result<Vec<NotificationView>> {
         let mut items = Vec::new();
         for row in self.services.projection_store.list_notifications().await? {

@@ -4,6 +4,7 @@ import { Settings } from 'lucide-react';
 import { AuthorAvatar } from '@/components/core/AuthorAvatar';
 import { AuthorDetailCard } from '@/components/core/AuthorDetailCard';
 import { MediaFetchFailure } from '@/components/core/MediaFetchFailure';
+import { PagedList } from '@/components/core/PagedList';
 import { AuthorTrustDisplayExceptionField } from '@/components/core/AuthorTrustDisplayExceptionField';
 import { CommunityNodeAdvisoryPanel } from '@/components/core/CommunityNodeAdvisoryPanel';
 import { AuthorIdentityButton } from '@/components/core/AuthorIdentityButton';
@@ -467,6 +468,7 @@ export type DesktopShellNotificationsSurfaceProps = {
   t: Translate;
   locale: SupportedLocale;
   handleOpenNotification: (notification: NotificationView) => Promise<void>;
+  onNavigatePage: (before: boolean) => Promise<void>;
   /** #962: 通知の受信設定(設定 > 通知)を開く。一覧の状態や既読は変えない。 */
   onOpenNotificationSettings: () => void;
 };
@@ -475,12 +477,16 @@ export function DesktopShellNotificationsSurface({
   t,
   locale,
   handleOpenNotification,
+  onNavigatePage,
   onOpenNotificationSettings,
 }: DesktopShellNotificationsSurfaceProps) {
   const {
     knownAuthorsByPubkey,
     mediaObjectUrls,
     notifications,
+    notificationsNewerCursor,
+    notificationsOlderCursor,
+    notificationsLoadingPage,
     notificationAutoReadError,
     notificationPanelState,
     adultContentEnabled,
@@ -490,6 +496,9 @@ export function DesktopShellNotificationsSurface({
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       mediaObjectUrls: s.mediaObjectUrls,
       notifications: s.notifications,
+      notificationsNewerCursor: s.notificationsNewerCursor,
+      notificationsOlderCursor: s.notificationsOlderCursor,
+      notificationsLoadingPage: s.notificationsLoadingPage,
       notificationAutoReadError: s.notificationAutoReadError,
       notificationPanelState: s.notificationPanelState,
       adultContentEnabled: s.adultContentEnabled,
@@ -591,9 +600,18 @@ export function DesktopShellNotificationsSurface({
         {notificationPanelState.status === 'ready' && notificationItems.length === 0 ? (
           <p className='empty-state'>{t('shell:notifications.empty')}</p>
         ) : null}
-        {notificationItems.length > 0 ? (
+        <PagedList
+          items={notificationItems}
+          ariaLabel={t('shell:notifications.pages')}
+          hasPrevious={Boolean(notificationsNewerCursor)}
+          hasNext={Boolean(notificationsOlderCursor)}
+          loading={notificationsLoadingPage}
+          onPrevious={() => void onNavigatePage(true)}
+          onNext={() => void onNavigatePage(false)}
+        >
+          {(page) => page.length > 0 ? (
           <ul className='notification-list' aria-label={t('shell:notifications.title')}>
-            {notificationItems.map((notification) => (
+            {page.map((notification) => (
               <li key={notification.notification_id}>
                 <button
                   className='notification-item'
@@ -632,7 +650,8 @@ export function DesktopShellNotificationsSurface({
               </li>
             ))}
           </ul>
-        ) : null}
+          ) : null}
+        </PagedList>
       </div>
     </>
   );

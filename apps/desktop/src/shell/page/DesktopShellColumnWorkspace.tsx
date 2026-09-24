@@ -152,6 +152,7 @@ export function DesktopShellColumnWorkspace({
     (state) => state.directMessageTimelineByPeer
   );
   const notifications = useDesktopShellStore((state) => state.notifications);
+  const hasMoreNotifications = useDesktopShellStore((state) => Boolean(state.notificationsOlderCursor));
   const profileRefreshing = useDesktopShellStore((state) => state.profileRefreshing);
   const profileSaving = useDesktopShellStore((state) => state.profileSaving);
   const notificationStatus = useDesktopShellStore((state) => state.notificationStatus);
@@ -478,6 +479,7 @@ export function DesktopShellColumnWorkspace({
           <span className='shell-column-header-summary'>
             {t('notifications.summary', {
               count: notifications.length,
+              visibleCount: `${notifications.length}${hasMoreNotifications ? '+' : ''}`,
               unread: notificationStatus.unread_count,
             })}
           </span>

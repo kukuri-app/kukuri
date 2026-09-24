@@ -89,3 +89,10 @@ Accepted
 - `followed` は observed-only なので、未知 follower を完全には捕捉しない。
 - v1 は過去イベントの一括 backfill を行わないため、feature 有効化時の inbox は空開始になる。
 - reaction / live / game / private-channel moderation などの通知は v1 scope に含めない。
+
+## 2026-09-24 改訂: #1221 R1-D の有界な一覧と既読
+
+- GUI の `list_notifications` 全件取得は廃止し、既存の `(received_at, notification_id)` 索引で20件ずつ前後へ読む。CLI の明示的な全件一覧は同じページを順に読む入口として維持する。通知kind、対象範囲、端末ローカル正本は変えない。
+- 未読数はSQLiteの単一状態行と挿入・個別既読・削除の差分で保持し、毎回の `COUNT(*)` をやめる。既存行の初期数はこのmigrationで一度算出する。画面イベントでは表示中のページだけを更新し、定期badge確認は状態行だけを読む。
+- 「すべて既読」はdispatch挿入順のwatermarkを進め、履歴全行を書き換えずに即時反映する。旧dispatch連番のない行にも同じ既読時刻を適用する。後から届いた古い時刻の通知は新しい連番なので未読のまま残る。個別に保存済みの `read_at` は維持し、watermarkで既読になった行の `read_at` は直近の一括既読時刻として返す。
+- dismiss / archive は引き続き対象外。旧GUI全件コマンドと通知イベント後の全件再取得は撤去対象とする。

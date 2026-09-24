@@ -55,7 +55,8 @@ import type {
   MetaverseRoomEventView,
   SpatialContextV1,
   NotificationStatusView,
-  NotificationView,
+  NotificationPageView,
+  NotificationCursor,
   PrivateChannelInvitePreview,
   Profile,
   ReactionStateView,
@@ -122,6 +123,7 @@ import type {
   LiveSessionCommandRequest,
   MoveDomeRequest,
   NotificationIdRequest,
+  ListNotificationsPageRequest,
   PreviewChannelAccessTokenRequest,
   PublishMetaverseRoomEventRequest,
   RemoveBookmarkedCustomReactionRequest,
@@ -355,8 +357,10 @@ export const runtimeApi: DesktopApi = {
       request: { kind } satisfies ListSocialConnectionsRequest,
     });
   }),
-  listNotifications: command('listNotifications', async () => {
-    return invokeDesktop<NotificationView[]>('list_notifications');
+  listNotificationsPage: command('listNotificationsPage', async (cursor?: NotificationCursor | null, before = false) => {
+    return invokeDesktop<NotificationPageView>('list_notifications_page', {
+      request: { cursor: cursor ?? null, before } satisfies ListNotificationsPageRequest,
+    });
   }),
   markNotificationRead: command('markNotificationRead', async (notificationId) => {
     return invokeDesktop<NotificationStatusView>('mark_notification_read', {

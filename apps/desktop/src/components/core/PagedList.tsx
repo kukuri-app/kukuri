@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 
-export function BookmarkPage<T>({
+export function PagedList<T>({
   items,
+  ariaLabel,
   hasPrevious,
   hasNext,
   loading = false,
@@ -13,6 +14,7 @@ export function BookmarkPage<T>({
   children,
 }: {
   items: T[];
+  ariaLabel: string;
   hasPrevious: boolean;
   hasNext: boolean;
   loading?: boolean;
@@ -26,7 +28,7 @@ export function BookmarkPage<T>({
     <>
       {children(items)}
       {hasPrevious || hasNext ? (
-        <nav className='bookmark-pagination' aria-label={t('fallbacks.bookmarkPages')}>
+        <nav className='bookmark-pagination' aria-label={ariaLabel}>
           <Button
             variant='secondary'
             type='button'

@@ -168,6 +168,12 @@ table muted_authors
 table notification_dispatch_clock
   column cid=0 name=singleton type=INTEGER notnull=0 default=None pk=1
   column cid=1 name=last_seq type=INTEGER notnull=1 default=None pk=0
+table notification_inbox_state
+  column cid=0 name=singleton type=INTEGER notnull=0 default=None pk=1
+  column cid=1 name=unread_count type=INTEGER notnull=1 default=None pk=0
+  column cid=2 name=read_through_seq type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=3 name=read_through_at type=INTEGER notnull=0 default=None pk=0
+  column cid=4 name=legacy_read_at type=INTEGER notnull=0 default=None pk=0
 table notifications
   column cid=0 name=notification_id type=TEXT notnull=0 default=None pk=1
   column cid=1 name=recipient_pubkey type=TEXT notnull=1 default=None pk=0
@@ -604,3 +610,7 @@ index sqlite_autoindex_ui_state_1 table=ui_state unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("state_key")
   sql=None
 trigger notifications_assign_dispatch_seq table=notifications sql="CREATE TRIGGER notifications_assign_dispatch_seq AFTER INSERT ON notifications BEGIN UPDATE notification_dispatch_clock SET last_seq = last_seq + 1 WHERE singleton = 1; UPDATE notifications SET dispatch_seq = (SELECT last_seq FROM notification_dispatch_clock WHERE singleton = 1) WHERE notification_id = NEW.notification_id; END"
+trigger notifications_unread_delete table=notifications sql="CREATE TRIGGER notifications_unread_delete AFTER DELETE ON notifications WHEN OLD.read_at IS NULL AND (OLD.dispatch_seq IS NULL AND (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL OR OLD.dispatch_seq > (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1)) BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
+trigger notifications_unread_insert table=notifications sql="CREATE TRIGGER notifications_unread_insert AFTER INSERT ON notifications WHEN NEW.read_at IS NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count + 1 WHERE singleton = 1; END"
+trigger notifications_unread_read table=notifications sql="CREATE TRIGGER notifications_unread_read AFTER UPDATE OF read_at ON notifications WHEN OLD.read_at IS NULL AND NEW.read_at IS NOT NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
+view notification_inbox_rows sql="CREATE VIEW notification_inbox_rows AS SELECT n.notification_id, n.recipient_pubkey, n.kind, n.actor_pubkey, n.source_envelope_id, n.source_replica_id, n.topic_id, n.channel_id, n.object_id, n.dm_id, n.message_id, n.preview_text, n.content_labels_json, n.created_at, n.received_at, n.dispatch_seq, CASE WHEN n.read_at IS NOT NULL THEN n.read_at WHEN n.dispatch_seq IS NULL THEN s.legacy_read_at WHEN n.dispatch_seq <= s.read_through_seq THEN s.read_through_at ELSE NULL END AS read_at FROM notifications AS n CROSS JOIN notification_inbox_state AS s"

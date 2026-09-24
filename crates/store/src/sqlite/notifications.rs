@@ -52,8 +52,18 @@ impl NotificationStore for SqliteStore {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn list_notifications(&self) -> Result<Vec<NotificationRow>> {
-        let rows = sqlx::query(
+    async fn list_notifications_page(
+        &self,
+        cursor: Option<&NotificationCursor>,
+        before: bool,
+    ) -> Result<Vec<NotificationRow>> {
+        anyhow::ensure!(
+            !before || cursor.is_some(),
+            "newer notification page requires cursor"
+        );
+        let comparison = if before { ">" } else { "<" };
+        let order = if before { "ASC" } else { "DESC" };
+        let sql = format!(
             r#"
             SELECT
               notification_id,
@@ -72,12 +82,24 @@ impl NotificationStore for SqliteStore {
               created_at,
               received_at,
               read_at
-            FROM notifications
-            ORDER BY received_at DESC, notification_id DESC
+            FROM notification_inbox_rows {}
+            ORDER BY received_at {order}, notification_id {order}
+            LIMIT {}
             "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+            if cursor.is_some() {
+                format!("WHERE (received_at, notification_id) {comparison} (?1, ?2)")
+            } else {
+                String::new()
+            },
+            NOTIFICATION_PAGE_SIZE + 1,
+        );
+        let mut query = sqlx::query(&sql);
+        if let Some(cursor) = cursor {
+            query = query
+                .bind(cursor.received_at)
+                .bind(cursor.notification_id.as_str());
+        }
+        let rows = query.fetch_all(&self.pool).await?;
         rows.into_iter().map(row_to_notification).collect()
     }
 
@@ -105,7 +127,7 @@ impl NotificationStore for SqliteStore {
               created_at,
               received_at,
               read_at
-            FROM notifications
+            FROM notification_inbox_rows
             WHERE dispatch_seq > ?1
             ORDER BY dispatch_seq ASC
             LIMIT ?2
@@ -132,8 +154,12 @@ impl NotificationStore for SqliteStore {
         sqlx::query(
             r#"
             UPDATE notifications
-            SET read_at = COALESCE(read_at, ?2)
-            WHERE notification_id = ?1
+            SET read_at = ?2
+            WHERE notification_id = ?1 AND read_at IS NULL AND
+              (dispatch_seq IS NULL AND
+                (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL
+               OR dispatch_seq >
+                (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1))
             "#,
         )
         .bind(notification_id)
@@ -146,9 +172,12 @@ impl NotificationStore for SqliteStore {
     async fn mark_all_notifications_read(&self, read_at: i64) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE notifications
-            SET read_at = COALESCE(read_at, ?1)
-            WHERE read_at IS NULL
+            UPDATE notification_inbox_state
+            SET unread_count = 0,
+                read_through_seq = (SELECT last_seq FROM notification_dispatch_clock WHERE singleton = 1),
+                read_through_at = ?1,
+                legacy_read_at = ?1
+            WHERE singleton = 1 AND unread_count > 0
             "#,
         )
         .bind(read_at)
@@ -160,9 +189,7 @@ impl NotificationStore for SqliteStore {
     async fn count_unread_notifications(&self) -> Result<usize> {
         let count = sqlx::query_scalar::<_, i64>(
             r#"
-            SELECT COUNT(*)
-            FROM notifications
-            WHERE read_at IS NULL
+            SELECT unread_count FROM notification_inbox_state WHERE singleton = 1
             "#,
         )
         .fetch_one(&self.pool)

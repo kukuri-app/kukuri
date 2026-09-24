@@ -191,7 +191,7 @@ test.each(['os', 'in-app'])('%s notification keeps its private channel while foc
     object_id: 'private-target', thread_root_object_id: 'private-root',
     channel_id: channel.channel_id, preview_text: 'Private notification target',
   });
-  api.listNotifications = async () => [target];
+  api.listNotificationsPage = async () => ({ items: [target], newer_cursor: null, older_cursor: null });
   api.listThread = vi.fn(async () => ({
     items: [buildPaginatedPost(1, {
       object_id: 'private-target', root_id: 'private-root', channel_id: channel.channel_id,

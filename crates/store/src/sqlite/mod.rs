@@ -17,8 +17,8 @@ use crate::models::{
     DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
     DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
     DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
-    LiveSessionProjectionRow, MutedAuthorRow, NotificationRow, ObjectProjectionRow, Page,
-    PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
+    LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationRow,
+    ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
 };
 use crate::pagination::{
     direct_message_page_from_rows, envelope_page_from_rows, object_projection_page_from_rows,
@@ -34,8 +34,8 @@ use crate::row_mapping::{
 };
 use crate::traits::{
     BlobCacheStore, ContentObservationStore, DirectMessageStore, LiveGameProjectionStore,
-    NotificationStore, ObjectProjectionStore, PostWithdrawalStore, ReactionBookmarkStore,
-    SocialProjectionStore, Store,
+    NOTIFICATION_PAGE_SIZE, NotificationStore, ObjectProjectionStore, PostWithdrawalStore,
+    ReactionBookmarkStore, SocialProjectionStore, Store,
 };
 
 mod bookmarks;

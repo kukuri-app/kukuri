@@ -625,9 +625,9 @@ describe('useDesktopShellData characterization', () => {
     const baseApi = createDesktopMockApi({
       notifications: [readNotification, unreadNotification],
     });
-    const listNotifications = vi.fn(baseApi.listNotifications);
+    const listNotifications = vi.fn(baseApi.listNotificationsPage);
     const markAllNotificationsRead = vi.fn(baseApi.markAllNotificationsRead);
-    const api: DesktopApi = { ...baseApi, listNotifications, markAllNotificationsRead };
+    const api: DesktopApi = { ...baseApi, listNotificationsPage: listNotifications, markAllNotificationsRead };
 
     const harness = createShellHookHarness();
     harness.store.getState().patchState({
@@ -651,12 +651,12 @@ describe('useDesktopShellData characterization', () => {
 
     let state = harness.store.getState();
     expect(state.notifications.map((notification) => notification.notification_id)).toEqual([
-      'notification-read',
       'notification-unread',
+      'notification-read',
     ]);
     // 既読分は元の read_at を保持し、未読分は read_at が数値で補完される。
-    expect(state.notifications[0]?.read_at).toBe(111);
-    expect(state.notifications[1]?.read_at).toEqual(expect.any(Number));
+    expect(state.notifications[0]?.read_at).toEqual(expect.any(Number));
+    expect(state.notifications[1]?.read_at).toBe(111);
     expect(state.notificationStatus).toEqual({ unread_count: 0 });
     expect(state.notificationPanelState).toEqual({ status: 'ready', error: null });
     expect(state.notificationAutoReadError).toBeNull();
@@ -671,8 +671,8 @@ describe('useDesktopShellData characterization', () => {
 
     state = harness.store.getState();
     expect(state.notificationStatus).toEqual({ unread_count: 0 });
-    expect(state.notifications[0]?.read_at).toBe(111);
-    expect(state.notifications[1]?.read_at).toEqual(expect.any(Number));
+    expect(state.notifications[0]?.read_at).toEqual(expect.any(Number));
+    expect(state.notifications[1]?.read_at).toBe(111);
 
     view.unmount();
   });

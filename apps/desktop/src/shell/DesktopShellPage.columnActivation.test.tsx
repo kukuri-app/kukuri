@@ -109,8 +109,8 @@ test('a body button in another Column moves the route to that Column', async () 
 
 test('a header button in another Column runs once and focuses that Column', async () => {
   const api = createDesktopMockApi();
-  const listNotifications = vi.fn(api.listNotifications);
-  api.listNotifications = listNotifications;
+  const listNotifications = vi.fn(api.listNotificationsPage);
+  api.listNotificationsPage = listNotifications;
   const user = userEvent.setup();
   await renderWorkspace(api);
   await switchTimelineTopicToDev(user);

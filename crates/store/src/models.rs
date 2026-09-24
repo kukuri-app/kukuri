@@ -337,6 +337,22 @@ pub struct NotificationRow {
     pub read_at: Option<i64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct NotificationCursor {
+    pub received_at: i64,
+    pub notification_id: String,
+}
+
+impl From<&NotificationRow> for NotificationCursor {
+    fn from(row: &NotificationRow) -> Self {
+        Self {
+            received_at: row.received_at,
+            notification_id: row.notification_id.clone(),
+        }
+    }
+}
+
 /// #858: projection 行から、成人向けラベル付き投稿(引用 snapshot 含む)が参照する
 /// 添付 blob hash を列挙する。blob 取得ゲート(`is_adult_media_hash`)の記録元。
 pub fn adult_media_hashes_for_row(row: &ObjectProjectionRow) -> Vec<&str> {

@@ -184,8 +184,9 @@
       "noContent": "打开来源事件。",
       "noMessage": "打开会话。"
     },
-    "summary_one": "{{count}} 条通知 / {{unread}} 条未读",
-    "summary_other": "{{count}} 条通知 / {{unread}} 条未读",
+    "summary_one": "显示 {{visibleCount}} 条通知 / {{unread}} 条未读",
+    "summary_other": "显示 {{visibleCount}} 条通知 / {{unread}} 条未读",
+    "pages": "通知页面",
     "title": "通知",
     "unread": "未读"
   },

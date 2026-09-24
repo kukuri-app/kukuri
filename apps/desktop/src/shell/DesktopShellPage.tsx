@@ -209,6 +209,7 @@ export function DesktopShellPage({
     navigateBookmarkPage,
     loadReactionCatalogData,
     loadNotificationsSection,
+    navigateNotificationPage,
     loadMoreTimeline,
     loadMoreThread,
     rememberDraftPreview,
@@ -559,6 +560,7 @@ export function DesktopShellPage({
         shellActions.handleOpenNotification(notification, column.id)
       }
       onOpenNotificationSettings={() => handleOpenSettingsSection('notifications')}
+      onNavigatePage={navigateNotificationPage}
     />
   );
   const renderDetailSurface = (

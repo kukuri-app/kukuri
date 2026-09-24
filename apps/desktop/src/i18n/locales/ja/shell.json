@@ -184,8 +184,9 @@
       "noContent": "元のイベントを開きます。",
       "noMessage": "会話を開きます。"
     },
-    "summary_one": "通知 {{count}}件 / 未読 {{unread}}件",
-    "summary_other": "通知 {{count}}件 / 未読 {{unread}}件",
+    "summary_one": "表示中の通知 {{visibleCount}}件 / 未読 {{unread}}件",
+    "summary_other": "表示中の通知 {{visibleCount}}件 / 未読 {{unread}}件",
+    "pages": "通知のページ",
     "title": "通知",
     "unread": "未読"
   },

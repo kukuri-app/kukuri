@@ -46,7 +46,7 @@ async function seed(page: Page, locale: keyof typeof COPY, theme: 'dark' | 'ligh
         configurable: true,
         get: () => api,
         set: (value: NonNullable<typeof window.__KUKURI_DESKTOP__>) => {
-          value.listNotifications = async () => [];
+          value.listNotificationsPage = async () => ({ items: [], newer_cursor: null, older_cursor: null });
           api = value;
         },
       });

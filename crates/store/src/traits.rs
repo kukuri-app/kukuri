@@ -13,8 +13,8 @@ use crate::models::{
     DirectMessageMessageRow, DirectMessageOutboxCursor, DirectMessageOutboxPage,
     DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
-    NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow,
-    TimelineCursor,
+    NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
+    ReactionProjectionRow, TimelineCursor,
 };
 
 pub(crate) const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
@@ -495,11 +495,30 @@ pub trait DirectMessageStore: Send + Sync {
 
 /// 通知(実装: sqlite/notifications.rs)。
 pub const NOTIFICATION_DISPATCH_PAGE_SIZE: usize = 64;
+pub const NOTIFICATION_PAGE_SIZE: usize = 20;
 
 #[async_trait]
 pub trait NotificationStore: Send + Sync {
     async fn put_notification_if_absent(&self, row: NotificationRow) -> Result<bool>;
-    async fn list_notifications(&self) -> Result<Vec<NotificationRow>>;
+    async fn list_notifications_page(
+        &self,
+        cursor: Option<&NotificationCursor>,
+        before: bool,
+    ) -> Result<Vec<NotificationRow>>;
+    async fn list_notifications(&self) -> Result<Vec<NotificationRow>> {
+        let mut all = Vec::new();
+        let mut cursor = None;
+        loop {
+            let mut page = self.list_notifications_page(cursor.as_ref(), false).await?;
+            let more = page.len() > NOTIFICATION_PAGE_SIZE;
+            page.truncate(NOTIFICATION_PAGE_SIZE);
+            cursor = page.last().map(NotificationCursor::from);
+            all.extend(page);
+            if !more {
+                return Ok(all);
+            }
+        }
+    }
     /// Only newly inserted notifications receive a dispatch sequence. Read a
     /// fixed-size insertion-order page without scanning the existing inbox.
     async fn list_notification_dispatch_after(

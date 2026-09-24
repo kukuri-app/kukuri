@@ -1,5 +1,5 @@
 use kukuri_desktop_runtime::{
-    AuthorRequest, ListSocialConnectionsRequest, NotificationIdRequest, SetMyProfileRequest,
+    AuthorRequest, ListNotificationsPageRequest, ListSocialConnectionsRequest, NotificationIdRequest, SetMyProfileRequest,
 };
 
 use crate::state::{CommandError, DesktopState, map_error};
@@ -120,14 +120,11 @@ pub async fn list_social_connections(
 }
 
 #[tauri::command]
-pub async fn list_notifications(
+pub async fn list_notifications_page(
     state: tauri::State<'_, DesktopState>,
-) -> Result<Vec<kukuri_app_api::NotificationView>, CommandError> {
-    state
-        .runtime()
-        .list_notifications()
-        .await
-        .map_err(map_error)
+    request: ListNotificationsPageRequest,
+) -> Result<kukuri_app_api::NotificationPageView, CommandError> {
+    state.runtime().list_notifications_page(request).await.map_err(map_error)
 }
 
 #[tauri::command]

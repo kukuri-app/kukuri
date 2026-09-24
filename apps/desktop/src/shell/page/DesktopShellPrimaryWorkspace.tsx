@@ -2,7 +2,7 @@ import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
 import { Link2 } from 'lucide-react';
 
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
-import { BookmarkPage } from '@/components/core/BookmarkPage';
+import { PagedList } from '@/components/core/PagedList';
 import { TimelineFeed } from '@/components/core/TimelineFeed';
 import { CommunityIndexWorkspace } from '@/components/core/CommunityIndexWorkspace';
 import type { CommunityIndexingTarget } from '@/components/core/CommunityIndexingRequestDialog';
@@ -540,8 +540,9 @@ export function DesktopShellPrimarySurface({
                   onRetry={() => retryBookmarks?.()}
                 >
                   {(bookmarksDisplayedStatus) => (
-                    <BookmarkPage
+                    <PagedList
                       key={column.id}
+                      ariaLabel={t('common:fallbacks.bookmarkPages')}
                       items={viewModels.bookmarkedTimelinePostViews}
                       hasPrevious={Boolean(bookmarksNewerCursor)}
                       hasNext={Boolean(bookmarksOlderCursor)}
@@ -599,7 +600,7 @@ export function DesktopShellPrimarySurface({
                           onMuteReportAuthor={muteReportAuthor}
                         />
                       )}
-                    </BookmarkPage>
+                    </PagedList>
                   )}
                 </BookmarksListFrame>
               )}

@@ -450,6 +450,14 @@ pub struct NotificationStatusView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct NotificationPageView {
+    pub items: Vec<NotificationView>,
+    pub newer_cursor: Option<kukuri_store::NotificationCursor>,
+    pub older_cursor: Option<kukuri_store::NotificationCursor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct LiveSessionView {
     pub session_id: String,

@@ -86,9 +86,9 @@ test('desktop shell loads unread notification rows outside the inbox for OS noti
       }),
     ],
   });
-  const listNotifications = vi.fn(api.listNotifications);
+  const listNotifications = vi.fn(api.listNotificationsPage);
   const markAllNotificationsRead = vi.fn(api.markAllNotificationsRead);
-  api.listNotifications = listNotifications;
+  api.listNotificationsPage = listNotifications;
   api.markAllNotificationsRead = markAllNotificationsRead;
 
   renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral', api);
@@ -133,9 +133,9 @@ test('refreshing a background notifications column focuses it, refetches it, and
     ],
   });
   const user = userEvent.setup();
-  const listNotifications = vi.fn(api.listNotifications);
+  const listNotifications = vi.fn(api.listNotificationsPage);
   const markAllNotificationsRead = vi.fn(api.markAllNotificationsRead);
-  api.listNotifications = listNotifications;
+  api.listNotificationsPage = listNotifications;
   api.markAllNotificationsRead = markAllNotificationsRead;
 
   renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral', api);
@@ -215,8 +215,8 @@ test('notifications exposes summary and refresh in the column header', async () 
     ],
   });
   const user = userEvent.setup();
-  const listNotifications = vi.fn(api.listNotifications);
-  api.listNotifications = listNotifications;
+  const listNotifications = vi.fn(api.listNotificationsPage);
+  api.listNotificationsPage = listNotifications;
 
   renderAtHash('#/notifications?topic=kukuri%3Atopic%3Ageneral', api);
 
@@ -244,7 +244,7 @@ test('notifications route renders an empty state when the inbox has no items', a
 
 test('notifications route surfaces a load error when the inbox request fails', async () => {
   const api = createDesktopMockApi();
-  api.listNotifications = vi.fn().mockRejectedValue(new Error('load notifications exploded'));
+  api.listNotificationsPage = vi.fn().mockRejectedValue(new Error('load notifications exploded'));
 
   renderAtHash('#/notifications?topic=kukuri%3Atopic%3Ageneral', api);
 

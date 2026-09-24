@@ -416,7 +416,7 @@ pub fn run() {
             commands::profile::block_author,
             commands::profile::unblock_author,
             commands::profile::list_social_connections,
-            commands::profile::list_notifications,
+            commands::profile::list_notifications_page,
             commands::profile::mark_notification_read,
             commands::profile::mark_all_notifications_read,
             commands::profile::get_notification_status,

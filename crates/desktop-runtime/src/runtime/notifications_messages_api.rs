@@ -1,6 +1,15 @@
 use super::*;
 
 impl DesktopRuntime {
+    pub async fn list_notifications_page(
+        &self,
+        request: ListNotificationsPageRequest,
+    ) -> Result<NotificationPageView> {
+        self.app_service
+            .list_notifications_page(request.cursor.as_ref(), request.before)
+            .await
+    }
+
     pub async fn list_notifications(&self) -> Result<Vec<NotificationView>> {
         self.app_service.list_notifications().await
     }

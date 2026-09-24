@@ -18,7 +18,7 @@ for (const options of [
         get: () => api,
         set: (value: NonNullable<typeof window.__KUKURI_DESKTOP__>) => {
           const originalThread = value.listThread.bind(value);
-          const originalNotifications = value.listNotifications.bind(value);
+          const originalNotifications = value.listNotificationsPage.bind(value);
           const rows = originalThread('kukuri:topic:general', 'browser-seed-post').then((view) =>
             Array.from({ length: 60 }, (_, index) => ({
               ...view.items[0], object_id: `focus-post-${index + 1}`,
@@ -35,10 +35,13 @@ for (const options of [
               ? { created_at: last.created_at, object_id: last.object_id } : null };
           };
           value.listTimeline = async () => ({ items: await rows, next_cursor: null });
-          value.listNotifications = async () => (await originalNotifications()).map((notification) => ({
-            ...notification, object_id: `focus-post-${target}`, thread_root_object_id: 'focus-post-1',
-            preview_text: 'Jump to notification reply',
-          }));
+          value.listNotificationsPage = async () => {
+            const result = await originalNotifications();
+            return { ...result, items: result.items.map((notification) => ({
+              ...notification, object_id: `focus-post-${target}`, thread_root_object_id: 'focus-post-1',
+              preview_text: 'Jump to notification reply',
+            })) };
+          };
           api = value;
         },
       });
