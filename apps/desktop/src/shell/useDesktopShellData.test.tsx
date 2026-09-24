@@ -785,4 +785,34 @@ describe('useDesktopShellData characterization', () => {
     expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual(pubkeys.slice(3, 10));
     view.unmount();
   });
+
+  test('a visible metaverse room retains its host detail without repeated lookups', async () => {
+    const host = 'b'.repeat(64);
+    const topic = 'kukuri:topic:general';
+    const baseApi = createDesktopMockApi({
+      seedGameRooms: { [topic]: [{
+        room_id: 'room-1', host_pubkey: host, title: 'Room', description: '',
+        status: 'Waiting', phase_label: '', scores: [], updated_at: 1,
+        channel_id: null, audience_label: 'Public',
+      }] },
+      authorSocialViews: { [host]: { name: 'host' } },
+    });
+    const getAuthorSocialView = vi.fn(baseApi.getAuthorSocialView);
+    const api: DesktopApi = { ...baseApi, getAuthorSocialView };
+    const harness = createShellHookHarness();
+    const workspaceState = openTransientColumn(harness.store.getState().workspaceState, {
+      id: 'metaverse-room-1', kind: 'metaverse',
+      scope: { topicId: topic, channelId: null }, pinned: false,
+    });
+    harness.store.getState().patchState({
+      workspaceState, visibleListColumnIds: [workspaceState.activeColumnId],
+    });
+
+    const { view } = renderDataHook(api, harness);
+    await flushAsyncWork();
+    expect(getAuthorSocialView).toHaveBeenCalledWith(host);
+    expect(harness.store.getState().knownAuthorsByPubkey[host]?.name).toBe('host');
+    expect(getAuthorSocialView).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
 });

@@ -197,51 +197,6 @@ export function useDesktopShellData({
   const setReactionPanelState = useDesktopShellFieldSetter('reactionPanelState');
   const setError = useDesktopShellFieldSetter('error');
 
-  useEffect(() => {
-    if (shellChromeState.activePrimarySection !== 'game') {
-      return;
-    }
-    const missingHostPubkeys = Array.from(
-      new Set(
-        activeGameRooms
-          .map((room) => room.host_pubkey)
-          .filter(
-            (pubkey) =>
-              pubkey &&
-              pubkey !== localProfile?.pubkey &&
-              pubkey !== state.syncStatus.local_author_pubkey &&
-              !knownAuthorsByPubkey[pubkey]
-          )
-      )
-    );
-    if (missingHostPubkeys.length === 0) {
-      return;
-    }
-    let disposed = false;
-    void Promise.all(
-      missingHostPubkeys.map((pubkey) => api.getAuthorSocialView(pubkey).catch(() => null))
-    ).then((authors) => {
-      if (disposed) {
-        return;
-      }
-      const resolvedAuthors = authors.filter((author) => author !== null);
-      if (resolvedAuthors.length > 0) {
-        setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, resolvedAuthors));
-      }
-    });
-    return () => {
-      disposed = true;
-    };
-  }, [
-    activeGameRooms,
-    api,
-    knownAuthorsByPubkey,
-    localProfile?.pubkey,
-    setKnownAuthorsByPubkey,
-    shellChromeState.activePrimarySection,
-    state.syncStatus.local_author_pubkey,
-  ]);
-
   // #1056: 開いている Timeline Column と各表示経路の投稿を、採用 node へ一括照会する対象にする。
   // 「見つける」の解決済み投稿は index 応答の advisory(#1055)で扱うため対象外。
   // `buildPostCardView` を通る投稿源(Timeline / Thread / Profile Column、ブックマーク等)は
@@ -344,7 +299,8 @@ export function useDesktopShellData({
     const hosts = new Set<string>();
     const scopeKeys = new Set(
       visibleColumns
-        .filter((column) => (column.kind === 'stream' || column.kind === 'game') && column.scope)
+        .filter((column) =>
+          (column.kind === 'stream' || column.kind === 'game' || column.kind === 'metaverse') && column.scope)
         .map((column) => timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId))
     );
     for (const key of scopeKeys) {
@@ -382,6 +338,33 @@ export function useDesktopShellData({
     const activeAuthors = new Set(referencedAuthorKeys ? referencedAuthorKeys.split(',') : []);
     setKnownAuthorsByPubkey((current) => retainRecordEntries(current, activeAuthors));
   }, [knownAuthorsByPubkey, referencedAuthorKeys, setKnownAuthorsByPubkey]);
+  const hostDemandRef = useRef<ReadonlySet<string>>(new Set());
+  const pendingHostPubkeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    hostDemandRef.current = new Set(trustGateHostPubkeys);
+    return () => { hostDemandRef.current = new Set(); };
+  }, [trustGateHostPubkeys]);
+  useEffect(() => {
+    if (shellChromeState.activePrimarySection !== 'game') return;
+    const missing = [...new Set(activeGameRooms.map((room) => room.host_pubkey))].filter((pubkey) =>
+      pubkey && pubkey !== localProfile?.pubkey &&
+      pubkey !== state.syncStatus.local_author_pubkey &&
+      !knownAuthorsByPubkey[pubkey] && !pendingHostPubkeysRef.current.has(pubkey));
+    if (missing.length === 0) return;
+    for (const pubkey of missing) pendingHostPubkeysRef.current.add(pubkey);
+    void Promise.all(missing.map((pubkey) => api.getAuthorSocialView(pubkey).catch(() => null)))
+      .then((authors) => {
+        const resolved = authors.filter((author) =>
+          author !== null && hostDemandRef.current.has(author.author_pubkey));
+        if (resolved.length > 0) {
+          setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, resolved));
+        }
+      })
+      .finally(() => {
+        for (const pubkey of missing) pendingHostPubkeysRef.current.delete(pubkey);
+      });
+  }, [activeGameRooms, api, knownAuthorsByPubkey, localProfile?.pubkey,
+    setKnownAuthorsByPubkey, shellChromeState.activePrimarySection, state.syncStatus.local_author_pubkey]);
   // #1061: 表示中の著者を採用 CN へ一括照会し、折りたたみ判断を state へ置く。
   useAuthorTrustGateLookup({
     api,
