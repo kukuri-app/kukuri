@@ -43,7 +43,6 @@ pub type DisplayBlobFetch = std::pin::Pin<Box<dyn Future<Output = Result<Option<
 pub async fn prepare_display_fetch(
     node: &Arc<IrohDocsNode>,
     peers: &Arc<PeerAddrBook>,
-    retries: &Mutex<RemoteFetchRetryState>,
     hash: iroh_blobs::Hash,
 ) -> Result<DisplayBlobFetch> {
     let deadline = Instant::now() + REMOTE_FETCH_TOTAL_TIMEOUT;
@@ -51,25 +50,9 @@ pub async fn prepare_display_fetch(
         .network_work
         .acquire(*hash.as_bytes(), deadline)
         .await?;
-    // Keep the legacy shared-walk bound during staged migration. Successful
-    // preparation still means both permits are held before app-api spends an
-    // attempt; queueing alone must not consume its display retry budget.
-    let permit = tokio::select! {
-        biased;
-        _ = lease.cancelled() => return Err(if Instant::now() >= deadline {
-            crate::DisplayAdmissionError::Expired
-        } else {
-            crate::DisplayAdmissionError::Closed
-        }.into()),
-        permit = tokio::time::timeout_at(deadline, async {
-            let permits = retries.lock().await.walk_permits();
-            permits.acquire_owned().await
-        }) => permit.map_err(|_| crate::DisplayAdmissionError::Expired)??,
-    };
     let node = node.clone();
     let peers = peers.clone();
     Ok(Box::pin(async move {
-        let _permit = permit;
         let hash_text = hash.to_string();
         let walk = run_display_fetch(fetch_bytes_from_remote(
             &node,
@@ -478,6 +461,7 @@ where
     let admitted = admission.submit_fetch(
         FetchRequest {
             identity,
+            protocol: kukuri_transport::work_admission::WorkProtocol::Blob,
             object: *iroh_blobs::Hash::new(flight_key.as_bytes()).as_bytes(),
             persistence,
             byte_limit,

@@ -298,6 +298,9 @@ impl SessionProjections {
                 else {
                     continue;
                 };
+                let Ok(permit) = registry.permits.clone().try_acquire_owned() else {
+                    continue;
+                };
                 entry.requested.remove(hash.as_str());
                 let token = registry.tokens.fetch_add(1, Ordering::Relaxed);
                 let (topic, replica, key) = (
@@ -308,12 +311,10 @@ impl SessionProjections {
                 let registry = registry.clone();
                 let services = services.clone();
                 let task_hash = hash.clone();
+                let deadline =
+                    tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
                 let task = tokio::spawn(async move {
-                    let Ok(permit) = registry.permits.clone().acquire_owned().await else {
-                        return;
-                    };
-                    let deadline =
-                        tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
+                    let _permit = permit;
                     let prepared = tokio::time::timeout_at(
                         deadline,
                         services.blob_service.prepare_display_fetch(&task_hash),
@@ -369,7 +370,7 @@ impl SessionProjections {
                         }
                     }
                     drop(access);
-                    drop(permit);
+                    drop(_permit);
                     registry.schedule(&services).await;
                 });
                 entry.running = Some(Running { token, hash, task });

@@ -40,19 +40,30 @@ async fn bounded_blob_and_docs_work_share_the_display_slot_and_stop_on_close() {
     let deadline = Instant::now() + Duration::from_secs(30);
     let display = owner.acquire([1; 32], deadline).await.unwrap();
     let mut offer = Box::pin(owner.acquire_bounded_blob([2; 32], 65_536, deadline));
-    let mut docs = Box::pin(owner.acquire_docs([3; 32], deadline));
     assert!(futures_util::poll!(&mut offer).is_pending());
-    assert!(futures_util::poll!(&mut docs).is_pending());
+    let mut docs_request = request(3, false);
+    docs_request.protocol = WorkProtocol::Docs;
+    docs_request.persistence = WorkPersistence::Ephemeral;
+    docs_request.byte_limit = 1024 * 1024;
+    let docs = owner
+        .submit_fetch(
+            docs_request,
+            Box::pin(async { Ok(Some(vec![3])) }),
+            Box::new(|_| Box::pin(async {})),
+        )
+        .unwrap();
+    let mut docs = Box::pin(docs.result());
+    let docs_poll = futures_util::poll!(&mut docs);
+    assert!(
+        docs_poll.is_pending(),
+        "docs completed before slot: {docs_poll:?}"
+    );
     assert!(display.finish());
+    assert_eq!(docs.await.unwrap().as_deref(), Some(&vec![3]));
     let offer = offer.await.unwrap();
     assert_eq!(owner.state.lock().unwrap().policy.usage().running, 1);
-    assert!(futures_util::poll!(&mut docs).is_pending());
     assert!(offer.finish());
-    let docs = docs.await.unwrap();
-    assert_eq!(owner.state.lock().unwrap().policy.usage().running, 1);
     owner.close();
-    docs.cancelled().await;
-    assert!(!docs.finish());
     assert_eq!(
         owner.state.lock().unwrap().policy.usage(),
         Default::default()
@@ -112,11 +123,24 @@ fn request(id: u8, cooling_down: bool) -> FetchRequest {
             service: 1,
             key: format!("store:{id}"),
         },
+        protocol: WorkProtocol::Blob,
         object: [id; 32],
         persistence: WorkPersistence::Store,
         byte_limit: u64::MAX,
         cooling_down,
     }
+}
+
+fn docs_request(scope: u8) -> FetchRequest {
+    let mut request = request(7, false);
+    request.identity = FetchIdentity {
+        service: 0,
+        key: format!("docs:scope-{scope}"),
+    };
+    request.protocol = WorkProtocol::Docs;
+    request.persistence = WorkPersistence::Ephemeral;
+    request.byte_limit = 1024 * 1024;
+    request
 }
 
 fn finished(counter: &Arc<AtomicUsize>) -> fetch::FetchFinished {
@@ -155,6 +179,47 @@ async fn ordinary_fetch_waits_for_the_same_capacity_as_display_work() {
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(completed.load(Ordering::SeqCst), 1);
     assert_eq!(owner.fetch_count(), 0);
+}
+
+#[tokio::test]
+async fn docs_reads_join_only_with_the_same_scope_identity() {
+    let owner = owner();
+    let started = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(Notify::new());
+    let first_started = started.clone();
+    let first_release = release.clone();
+    let first = owner
+        .submit_fetch(
+            docs_request(1),
+            Box::pin(async move {
+                first_started.fetch_add(1, Ordering::SeqCst);
+                first_release.notified().await;
+                Ok(Some(vec![1]))
+            }),
+            Box::new(|_| Box::pin(async {})),
+        )
+        .unwrap();
+    let joined = owner
+        .submit_fetch(
+            docs_request(1),
+            Box::pin(async { panic!("joined docs read must not run twice") }),
+            Box::new(|_| Box::pin(async {})),
+        )
+        .unwrap();
+    let other = owner
+        .submit_fetch(
+            docs_request(2),
+            Box::pin(async { Ok(Some(vec![2])) }),
+            Box::new(|_| Box::pin(async {})),
+        )
+        .unwrap();
+    assert_eq!(owner.fetch_count(), 2);
+    tokio::task::yield_now().await;
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    release.notify_one();
+    assert_eq!(first.result().await.unwrap().as_deref(), Some(&vec![1]));
+    assert_eq!(joined.result().await.unwrap().as_deref(), Some(&vec![1]));
+    assert_eq!(other.result().await.unwrap().as_deref(), Some(&vec![2]));
 }
 
 #[tokio::test(start_paused = true)]

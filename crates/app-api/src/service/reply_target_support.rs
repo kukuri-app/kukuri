@@ -109,6 +109,14 @@ impl AppService {
                 missing_body_targets.push(target_row);
                 continue;
             }
+            let Ok(permit) = self
+                .services
+                .reply_target_checks
+                .permits()
+                .try_acquire_owned()
+            else {
+                continue;
+            };
             if !self
                 .services
                 .reply_target_checks
@@ -130,6 +138,7 @@ impl AppService {
                     &source.source_replica_id,
                     source.topic_id.as_str(),
                     target,
+                    permit,
                 ),
                 Ok(_) => {}
                 Err(error) => warn!(
@@ -177,6 +186,14 @@ impl AppService {
         topic_id: &str,
         object_id: &EnvelopeId,
     ) {
+        let Ok(permit) = self
+            .services
+            .reply_target_checks
+            .permits()
+            .try_acquire_owned()
+        else {
+            return;
+        };
         let ledger_key = format!("{}\n{}", replica_id.as_str(), object_id.as_str());
         if !self
             .services
@@ -185,7 +202,7 @@ impl AppService {
         {
             return;
         }
-        spawn_reply_target_reflection(&self.services, replica_id, topic_id, object_id);
+        spawn_reply_target_reflection(&self.services, replica_id, topic_id, object_id, permit);
     }
 
     /// #1284: 投稿カードの明示再読み込み。対象投稿自身か直前の返信先にある欠損本文だけを
@@ -292,16 +309,14 @@ fn spawn_reply_target_reflection(
     replica_id: &ReplicaId,
     topic_id: &str,
     object_id: &EnvelopeId,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) {
     let services = services.clone();
     let replica_id = replica_id.clone();
     let topic_id = topic_id.to_string();
     let object_id = object_id.clone();
     tokio::spawn(async move {
-        let permits = services.reply_target_checks.permits();
-        let Ok(_permit) = permits.acquire().await else {
-            return;
-        };
+        let _permit = permit;
         if let Err(error) =
             reflect_reply_target(&services, &object_id, &replica_id, topic_id.as_str()).await
         {

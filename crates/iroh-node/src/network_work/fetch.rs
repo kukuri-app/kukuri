@@ -23,6 +23,7 @@ pub(crate) struct FetchIdentity {
 
 pub(crate) struct FetchRequest {
     pub identity: FetchIdentity,
+    pub protocol: WorkProtocol,
     pub object: [u8; 32],
     pub persistence: WorkPersistence,
     pub byte_limit: u64,
@@ -67,6 +68,7 @@ impl NetworkWorkRuntime {
     ) -> Result<FetchWaiter, NetworkAdmissionError> {
         let FetchRequest {
             identity,
+            protocol,
             object,
             persistence,
             byte_limit,
@@ -87,7 +89,8 @@ impl NetworkWorkRuntime {
             if let Some(id) = state.identities.get(&identity).copied() {
                 let entry = &state.fetches[&id];
                 let key = entry.key;
-                if key.object != object
+                if key.protocol != protocol
+                    || key.object != object
                     || key.persistence != persistence
                     || key.byte_limit != byte_limit
                 {
@@ -115,7 +118,7 @@ impl NetworkWorkRuntime {
                 let key = WorkKey {
                     scope,
                     object,
-                    protocol: WorkProtocol::Blob,
+                    protocol,
                     mode: WorkMode::Fetch,
                     persistence,
                     byte_limit,

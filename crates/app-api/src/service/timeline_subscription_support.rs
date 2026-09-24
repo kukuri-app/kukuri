@@ -373,6 +373,14 @@ impl AppService {
                 }
                 continue;
             }
+            let Ok(permit) = self
+                .services
+                .missing_body_ledger
+                .fetch_permits()
+                .try_acquire_owned()
+            else {
+                continue;
+            };
             // `attempt` は task と一緒に破棄されても失敗として記録される(panic・runtime の終了を含む)。
             let Some(attempt) = self.services.missing_body_ledger.try_begin(hash, now) else {
                 continue;
@@ -381,11 +389,7 @@ impl AppService {
             let object_id = row.object_id.clone();
             let hash = hash.clone();
             let task = tokio::spawn(async move {
-                let permits = services.missing_body_ledger.fetch_permits();
-                let Ok(_permit) = permits.acquire().await else {
-                    attempt.fail();
-                    return;
-                };
+                let _permit = permit;
                 let Some(text) =
                     fetch_projection_blob_text(services.blob_service.as_ref(), &hash).await
                 else {
@@ -507,6 +511,14 @@ impl AppService {
     /// 既にあれば何もしない。確認は確認先(replica と object id の組)ごとに間隔を空け、
     /// `withdrawals/<object id>/state` を key 指定で読むだけで、replica は走査しない。
     pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
+        let Ok(permit) = self
+            .services
+            .withdrawal_checks
+            .permits()
+            .try_acquire_owned()
+        else {
+            return;
+        };
         let replica = topic_replica_id(topic_id);
         // 台帳の key は replica と object id の組にする。topic を偽った repost の snapshot が、
         // 正しい topic での確認を見送らせないようにする。
@@ -521,10 +533,7 @@ impl AppService {
         let services = self.services.clone();
         let object_id = object_id.clone();
         tokio::spawn(async move {
-            let permits = services.withdrawal_checks.permits();
-            let Ok(_permit) = permits.acquire().await else {
-                return;
-            };
+            let _permit = permit;
             let checked = async {
                 let projection_store = services.projection_store.as_ref();
                 if projection_store

@@ -113,16 +113,22 @@ fn queued_fetch_diagnostic_labels_are_bounded_utf8() {
 async fn display_admission_wait_is_included_in_total_budget() {
     let node = IrohDocsNode::memory().await.unwrap();
     let peers = Arc::new(PeerAddrBook::new(node.endpoint().clone(), node.discovery()));
-    let retries = Mutex::new(RemoteFetchRetryState::default());
-    let permits = retries.lock().await.walk_permits();
-    let occupied = permits
-        .acquire_many_owned(kukuri_transport::REMOTE_FETCH_MAX_CONCURRENT_WALKS as u32)
-        .await
-        .unwrap();
+    let mut occupied = Vec::new();
+    for index in 0..kukuri_transport::work_admission::WorkLimits::default().running {
+        occupied.push(
+            node.network_work
+                .acquire(
+                    [index as u8; 32],
+                    Instant::now() + REMOTE_FETCH_TOTAL_TIMEOUT,
+                )
+                .await
+                .unwrap(),
+        );
+    }
     tokio::time::pause();
     let prepared = timeout(
         REMOTE_FETCH_TOTAL_TIMEOUT + Duration::from_secs(1),
-        prepare_display_fetch(&node, &peers, &retries, iroh_blobs::Hash::new(b"waiting")),
+        prepare_display_fetch(&node, &peers, iroh_blobs::Hash::new(b"waiting")),
     )
     .await;
     tokio::time::resume();
@@ -140,25 +146,17 @@ async fn display_admission_is_shared_across_services_using_one_node() {
     let peers = Arc::new(PeerAddrBook::new(node.endpoint().clone(), node.discovery()));
     let mut prepared = Vec::new();
     for _ in 0..kukuri_transport::work_admission::WorkLimits::default().running {
-        // Different services have different legacy retry ledgers. Their
-        // combined display work must nevertheless share the node budget.
-        let retries = Mutex::new(RemoteFetchRetryState::default());
+        // Independent display consumers share the same node budget.
         prepared.push(
-            prepare_display_fetch(
-                &node,
-                &peers,
-                &retries,
-                iroh_blobs::Hash::new(b"shared-node"),
-            )
-            .await
-            .unwrap(),
+            prepare_display_fetch(&node, &peers, iroh_blobs::Hash::new(b"shared-node"))
+                .await
+                .unwrap(),
         );
     }
-    let retries = Mutex::new(RemoteFetchRetryState::default());
     tokio::time::pause();
     let next = timeout(
         REMOTE_FETCH_TOTAL_TIMEOUT + Duration::from_secs(1),
-        prepare_display_fetch(&node, &peers, &retries, iroh_blobs::Hash::new(b"next")),
+        prepare_display_fetch(&node, &peers, iroh_blobs::Hash::new(b"next")),
     )
     .await;
     tokio::time::resume();
@@ -167,14 +165,9 @@ async fn display_admission_is_shared_across_services_using_one_node() {
         "per-service ledgers must not multiply display slots"
     );
     drop(prepared);
-    let next = prepare_display_fetch(
-        &node,
-        &peers,
-        &retries,
-        iroh_blobs::Hash::new(b"new-demand"),
-    )
-    .await
-    .unwrap();
+    let next = prepare_display_fetch(&node, &peers, iroh_blobs::Hash::new(b"new-demand"))
+        .await
+        .unwrap();
     drop(next);
     node.shutdown().await.unwrap();
 }
@@ -191,7 +184,7 @@ async fn total_budget_cancels_a_fetch_that_never_completes() {
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use kukuri_transport::REMOTE_FETCH_MAX_CONCURRENT_WALKS;
+use kukuri_transport::work_admission::WorkLimits;
 
 struct FetchFixture {
     retries: Arc<Mutex<RemoteFetchRetryState>>,
@@ -446,7 +439,8 @@ async fn store_and_ephemeral_walks_do_not_join() {
 async fn concurrent_walks_are_bounded() {
     let retries = retries();
     let started = Arc::new(AtomicUsize::new(0));
-    let total = REMOTE_FETCH_MAX_CONCURRENT_WALKS + 3;
+    let running = WorkLimits::default().running;
+    let total = running + 3;
     for index in 0..total {
         let key = format!("hash-{index}");
         let flight_key = format!("store:{key}");
@@ -464,16 +458,13 @@ async fn concurrent_walks_are_bounded() {
         .await;
         assert!(attempt.is_err());
     }
-    assert_eq!(
-        started.load(Ordering::SeqCst),
-        REMOTE_FETCH_MAX_CONCURRENT_WALKS
-    );
+    assert_eq!(started.load(Ordering::SeqCst), running);
 
     tokio::time::sleep(REMOTE_FETCH_TOTAL_TIMEOUT).await;
     tokio::task::yield_now().await;
     assert_eq!(
         started.load(Ordering::SeqCst),
-        REMOTE_FETCH_MAX_CONCURRENT_WALKS,
+        running,
         "cancelled queued callers must not start later I/O"
     );
 }

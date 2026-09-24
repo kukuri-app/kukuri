@@ -58,6 +58,10 @@ async fn a_missing_reply_target_is_reflected_in_the_background_without_docs_read
     );
     assert_eq!(docs_sync.records_returned(), 0);
     drop(held);
+    let _ = app
+        .reply_preview_for_object_id(Some(&parent.id), source, &profiles)
+        .await
+        .expect("retry after capacity returns");
 
     timeout(Duration::from_secs(10), async {
         while store
@@ -724,7 +728,18 @@ async fn the_listing_does_not_wait_for_a_remote_body_of_the_reply_target() {
     assert!(page.items.iter().all(|item| item.reply_preview.is_none()));
     drop(held);
 
-    // 取得が起こした背景の反映が、remote から本文を取って返信先を反映する(購読の窓の追いつきは走らない)。
+    // 容量が戻った後の次の需要だけが、remote 本文の背景取得を開始する。
+    let _ = app
+        .list_timeline(
+            topic.as_str(),
+            Some(TimelineCursor {
+                created_at: reply.created_at + 1,
+                object_id: EnvelopeId::from("f".repeat(64).as_str()),
+            }),
+            1,
+        )
+        .await
+        .expect("older page after capacity returns");
     timeout(Duration::from_secs(10), async {
         loop {
             let row = store

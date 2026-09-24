@@ -27,27 +27,36 @@ impl IrohDocsNode {
         secret: &iroh_docs::NamespaceSecret,
         query: DocReadQuery,
     ) -> anyhow::Result<DocReadResponse> {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-        let lease = self
-            .network_work
-            .acquire_docs(
-                *blake3::hash(replica.as_str().as_bytes()).as_bytes(),
-                deadline,
-            )
-            .await?;
-        let result = tokio::select! {
-            biased;
-            _ = lease.cancelled() => anyhow::bail!("docs read was cancelled"),
-            result = tokio::time::timeout_at(
-                deadline,
-                page_read::fetch(self.endpoint(), peer, replica.as_str(), secret, query),
-            ) => result.map_err(|_| anyhow::anyhow!("docs read deadline exceeded"))?,
-        };
-        if lease.finish() {
-            result
-        } else {
-            anyhow::bail!("docs read scope expired")
-        }
+        use kukuri_transport::work_admission::{WorkPersistence, WorkProtocol};
+
+        let request = page_read::Request::new(replica.as_str(), secret, query)?;
+        let digest = blake3::hash(&serde_json::to_vec(&(&peer, &request))?);
+        let endpoint = self.endpoint().clone();
+        let waiter = self.network_work.submit_fetch(
+            network_work::FetchRequest {
+                identity: network_work::FetchIdentity {
+                    // Blob retry services start at 1; zero belongs to this node's docs reads.
+                    service: 0,
+                    key: format!("docs:{digest}"),
+                },
+                protocol: WorkProtocol::Docs,
+                object: *digest.as_bytes(),
+                persistence: WorkPersistence::Ephemeral,
+                byte_limit: 1024 * 1024,
+                cooling_down: false,
+            },
+            Box::pin(async move {
+                let response = page_read::fetch(&endpoint, peer, request).await?;
+                Ok(Some(serde_json::to_vec(&response)?))
+            }),
+            Box::new(|_| Box::pin(async {})),
+        )?;
+        let bytes = waiter
+            .result()
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .ok_or_else(|| anyhow::anyhow!("docs read was cancelled"))?;
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
     pub async fn read_local_blob(&self, hash: &str) -> anyhow::Result<Option<Vec<u8>>> {

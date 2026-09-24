@@ -120,22 +120,6 @@ impl NetworkWorkRuntime {
         .await
     }
 
-    pub(crate) async fn acquire_docs(
-        self: &Arc<Self>,
-        replica_hash: [u8; 32],
-        deadline: Instant,
-    ) -> Result<DisplayWorkLease, NetworkAdmissionError> {
-        self.acquire_blob_work(
-            WorkProtocol::Docs,
-            replica_hash,
-            1024 * 1024,
-            WorkMode::Fetch,
-            WorkLane::Background,
-            deadline,
-        )
-        .await
-    }
-
     async fn acquire_blob_work(
         self: &Arc<Self>,
         protocol: WorkProtocol,

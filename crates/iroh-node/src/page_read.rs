@@ -87,7 +87,7 @@ pub enum DocReadResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Request {
+pub(crate) struct Request {
     version: u8,
     replica: String,
     namespace: String,
@@ -95,7 +95,11 @@ struct Request {
 }
 
 impl Request {
-    fn new(replica: &str, secret: &NamespaceSecret, query: DocReadQuery) -> Result<Self> {
+    pub(crate) fn new(
+        replica: &str,
+        secret: &NamespaceSecret,
+        query: DocReadQuery,
+    ) -> Result<Self> {
         let request = Self {
             version: 1,
             replica: replica.to_string(),
@@ -292,25 +296,18 @@ impl ProtocolHandler for DocReadProtocol {
 pub(crate) async fn fetch(
     endpoint: &Endpoint,
     peer: EndpointAddr,
-    replica: &str,
-    secret: &NamespaceSecret,
-    query: DocReadQuery,
+    request: Request,
 ) -> Result<DocReadResponse> {
-    let request = Request::new(replica, secret, query)?;
-    timeout(DEADLINE, async {
-        let connection = endpoint.connect(peer, DOC_READ_ALPN).await?;
-        let (mut send, mut recv) = connection.open_bi().await?;
-        let bytes = serde_json::to_vec(&request)?;
-        ensure!(
-            bytes.len() <= MAX_REQUEST_BYTES,
-            "docs request budget exceeded"
-        );
-        send.write_all(&bytes).await?;
-        send.finish()?;
-        let bytes = recv.read_to_end(MAX_RESPONSE_BYTES).await?;
-        connection.close(0u32.into(), b"docs read complete");
-        Ok(serde_json::from_slice(&bytes)?)
-    })
-    .await
-    .context("docs read deadline exceeded")?
+    let connection = endpoint.connect(peer, DOC_READ_ALPN).await?;
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let bytes = serde_json::to_vec(&request)?;
+    ensure!(
+        bytes.len() <= MAX_REQUEST_BYTES,
+        "docs request budget exceeded"
+    );
+    send.write_all(&bytes).await?;
+    send.finish()?;
+    let bytes = recv.read_to_end(MAX_RESPONSE_BYTES).await?;
+    connection.close(0u32.into(), b"docs read complete");
+    Ok(serde_json::from_slice(&bytes)?)
 }

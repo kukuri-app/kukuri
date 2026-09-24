@@ -15,7 +15,7 @@ intervalは現行値であり新設計の推奨値ではない。
 | ID / memberと場所 | trigger・間隔・対象 | 現行の停止 / 連鎖 | 総数への依存 / 配置 | guard・検証 |
 | --- | --- | --- | --- | --- |
 | N01 `PeerAddrBook::{ranked_peers,set_seed_peers,record_learned_peer}`、`transport/src/peers.rs` | ticket/learn/seed/取得。account DBの索引窓 | learnedはaccount別30日/64MiBで回収。docs側はreapplyへ進む | 1選択4peer、source各4件。旧全件`merged_peers`を撤去。legacy sync内のpeer保持はR5-H | scope別候補、NW-5/6 |
-| N02 `RemoteFetchRetryState::{begin,finish}`、`iroh-node/src/remote_fetch.rs` の取得入口 | local miss、retry。全候補。30秒は実行時、接続5秒/転送15秒 | 通常walkは待機者cancel後も継続。in-flight task→permit待機→接続 | 実行8の外に無制限の待機とcooldown走査。P3受付 | NW-2/3/4、LocalOnly |
+| N02 `NetworkWorkRuntime` と `RemoteFetchRetryState`、`iroh-node/src/remote_fetch.rs` | local miss、retry。選択4候補。受付から30秒、接続5秒/転送15秒 | node共通の64scope/256要求/64waiter/4MiB/8実行。取得中の同一identityだけ合流し、結果後にcooldown記録 | 旧walk semaphoreを撤去。LocalOnlyはremote受付に入らない | R3-A、NW-2/3/4 |
 | N03 `TopicWarmupCoordinator::warmup_peers_once/warmup_peer`、`transport/src/iroh/topics.rs` | topic join/peer追加。direct 250ms〜5秒、relay 1〜10秒 | deadline/neighbor成立。移動する4候補窓だけを走査し、同時2future・共有2dial枠を超える試行は待機せず延期 | peerごとのspawn/permit待機を撤去。topicごとのretry taskと初回bootstrap全件materializeはN04残件 | NW-2/5/6 |
 | N04 `ensure_hint_topic/extend_active_topic_peers/remove_topic_state`、同上 | hint subscribe/publish、peer変化。選択窓だけをtopicへ追加 | 初回warmupはreceiverのDrop guard、更新warmupはtopic stateの単一handleが所有。topic解除/置換/shutdownで先に全taskをabortし、終了を待つ。世代closed/通知と登録前lockで旧task復活を防ぐ | 初回bootstrapは最大4候補のcursor読取り。topic数に比例するreceiver/retry taskとSDK内部peer保持は後続条件 | NW-5/7 |
 | N05 docs `reapply_sync_peers` とopen/start/subscribe、`docs-sync/src/iroh_sync.rs` | seed/学習/restore。cached replica集合 | local-onlyはsync昇格しない。registry guard内で再適用 | replica×peer、同期requested全体。P3差分/P4bucket | NW-3/5、LIFE契約 |
@@ -25,7 +25,7 @@ intervalは現行値であり新設計の推奨値ではない。
 | N09 `ensure_author_subscriptions_for_rows/spawn_author_subscription`、`service/social_runtime_support.rs` | row表示、author操作、1秒catchup、bootstrap recovery | docs/hint receiverとbootstrap task。著者購読registry | 著者登録累積/各author周期。P3/P4 | NW-1/5、author署名/権限 |
 | N10 `rebuild_author_relationships/current_mutual_direct_message_peers/schedule_direct_message_reconcile`、`social_runtime_support.rs/social_helpers.rs` | social変更/startup/DM操作 | 全following/followerとFoF確認→DM reconcile | graph全体の列挙と全subscription差分。P3対象別索引 | NW-8、mutual未確認時拒否 |
 | N11 `reconcile_direct_message_subscriptions/spawn_direct_message_subscription/direct_message_topic_snapshot`、`service/direct_messages_subscription_support.rs` | mutual peer単位、旧pairwise hint受信 | 受信taskはregistryで停止。peer別2秒outbox timerはN69で撤去し、再送をaccount共通ownerへ移管 | N64のpeer別pageはDM statusにも利用。DM相手数×旧pairwise受信task、起動時の全件読取りと全peers snapshotはP3残件 | NW-8/9、ACK/tombstone |
-| N12 `session_projection.rs`、`session_display.rs`、UI `SessionVisibility/useSessionDisplay` | 表示observer、window/columnの非表示 | 対象64/observer64、表示futureをcancel、保存前再guard | 既存の有界需要をP3へ接続。参加sessionの寿命とは別 | NW-4/7、既存session manifest tests |
+| N12 `session_projection.rs`、`session_display.rs`、UI `SessionVisibility/useSessionDisplay` | 表示observer、window/columnの非表示 | 対象64/observer64。permit取得後だけtaskを起動し、受付からdeadlineを計る。表示futureの取消と保存前再guardを維持 | 参加sessionの寿命とは別。legacy retry回数の統合はR3-B | R3-A、NW-4/7、session manifest tests |
 | N13 `run_community_node_session_maintenance_once/start_community_node_session_scheduler`、`cn-runtime/scheduler_support.rs` | runtime起動、15秒、設定node全体 | `MaintenanceTasks`がjobごとのfutureを所有、Skip、shutdown停止 | 所有は既存。node全体再列挙とstatusからselfheal。P3due索引 | NW-6、mixed認証/同意 |
 | N14 `maybe_self_heal_community_node_connectivity/repair_community_node_connectivity`、`cn-runtime/reconnect_support.rs` | sync status不健全、期限付きbackoff | reconnect成功でreset、seed/購読再適用へ連鎖 | 全active/全ready nodeへ波及。P3差分と観測 | NW-5/6/7 |
 | N15 `observe_sync_status_once/start_sync_status_observer`、`runtime/sync_status_observer.rs` | 3秒、全体snapshot | runtime shutdown。変更snapshotだけemit | 全peers/topic/nodeの再集計。P3増減集計 | NW-1/6 |
@@ -211,13 +211,15 @@ N01/U03/U04/U07のadapter前提として、`iroh::tests::controlled_gossip`の2 
 | N45 | 準備済み表示future → `lease.cancelled`と実fetchのselect → 検証済み一時bytes返却 | deadline/closeを優先、finishで世代/期限判定。caller dropでleaseと取得future/旧permitを解放。app-api保存前のscope/token guardを維持 | DISPLAY-2/3、既存caller取消と新node終了の実QUIC tests、adapter queue/close tests |
 | N46 | node `shutdown/shutdown_owned/Drop` → `NetworkWorkRuntime::close` → active scope失効と通知 | 受付を先に閉じ、queued/準備済み/実行中を取消。停止応答までは枠を保持し別nodeは独立。nodeの既存Router/endpoint停止は維持 | DISPLAY-3、`node_shutdown_cancels_display_fetch_without_returning_or_caching_bytes` / `display_node_close_does_not_stop_another_nodes_work` |
 
-N44の全callerは `rg -n 'prepare_display_fetch' crates`、型の実装とstackのproxyを含む。remote helperへのproduction callerはIrohBlobServiceだけ。新台帳に秘密値/本文を保持せず、bytesの保存sinkは従来の`cache_and_project_displayed_manifest`でscope/tokenを再確認する。通常fetch・docs・gossipはこのadapterへ未移行なので、全networkの合計8枠達成とは扱わない。
+N44の全callerは `rg -n 'prepare_display_fetch' crates`、型の実装とstackのproxyを含む。remote helperへのproduction callerはIrohBlobServiceだけ。新台帳に秘密値/本文を保持せず、bytesの保存sinkは従来の`cache_and_project_displayed_manifest`でscope/tokenを再確認する。通常blobと公開docsページ取得はR3-Aで同じnode ownerへ接続した。旧SDKの定常docs syncとgossip/購読はR5-H/R2-Cの担当であり、R3-Aだけで全networkの合計8枠達成とは扱わない。
 
 ## 明示的な通常取得の共通受付（P3）
 
 | ID | 入口 → helper → sink | guard / 上限 / 停止 | 対応contract |
 | --- | --- | --- | --- |
 | N47 | BlobService/DocsSyncのremote helper（通常/一時/上限付き一時）→ `run_single_flight` → retry guard → `NetworkWorkRuntime::submit_fetch` | 非再利用のservice世代＋flight key、persistence/byte limit一致、最初のdeadline、64scope/64waiters。LocalOnly fast pathは入らない | FETCH-1/2、既存singleflight/result/取消/保存方針tests、waiter上限/cooldown-join test |
+| N48 | 公開docsページの`query_remote_docs` → validated request＋peerのdigest → `submit_fetch(Docs)` → 実QUIC page read | 同一peer/replica/namespace/queryだけ合流。受理前にrequestのscope/件数/bytesを確認。1MiB応答、受付から30秒。LocalOnlyは通らない | R3-A、docs join/実peer page test |
+| N49 | app-apiの欠損本文・返信先/取り下げ確認・session表示 → permitの即時取得 → task → 各docs/blob helper | 満杯ではtaskをspawnせず次の需要へ延期。sessionのdeadlineはtask起動前に固定し、保存前の既存scope/世代guardを維持。旧namespace syncそのものはR5-Hの担当 | R3-A、hydration/reply/session表示tests |
 | N48 | 単一driverの期限/ready/task完了 → 実行枠取得済みfutureだけspawn → 成否callback → flight退役/結果通知 | 表示と通常の合計8。待機時spawn0、期限/cancel/panic/closeの精算、callbackとfuture Dropはlock外、結果反映は現在世代だけ | FETCH-1〜3、`ordinary_fetch_waits_for_the_same_capacity_as_display_work`、node close/panic/reentrant Drop tests |
 | N49 | `RemoteFetchRetryState::finish/is_cooling_down` → retry_after/期限索引 | 3秒cache、1,024件、key256byte、容量時は近い期限から回収。全件retainなし。未送信outboxは対象外 | FETCH-4、`remote_fetch_failure_history_has_a_fixed_capacity`（修正前10,240件FAIL）、既存cooldown tests |
 

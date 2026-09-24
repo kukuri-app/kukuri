@@ -256,7 +256,6 @@ impl BlobService for IrohBlobService {
         remote_fetch::prepare_display_fetch(
             &self.node,
             &self.peers,
-            &self.remote_fetch_retries,
             iroh_blobs::Hash::from_str(hash.as_str())?,
         )
         .await

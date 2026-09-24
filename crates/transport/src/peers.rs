@@ -15,7 +15,7 @@ use chrono::Utc;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use kukuri_store::SqliteStore;
-use tokio::sync::{Mutex, Semaphore, watch};
+use tokio::sync::{Mutex, watch};
 // 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
 use tokio::time::Instant;
 
@@ -29,8 +29,6 @@ pub const REMOTE_FETCH_RETRY_COOLDOWN: Duration = Duration::from_secs(3);
 pub const REMOTE_FETCH_MAX_COOLDOWNS: usize = 1_024;
 const REMOTE_FETCH_MAX_COOLDOWN_KEY_BYTES: usize = 256;
 static REMOTE_FETCH_STATE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-/// 1 つの retry state が同時に実行する remote 走査の上限(#1207)。超過分は順番を待つ。
-pub const REMOTE_FETCH_MAX_CONCURRENT_WALKS: usize = 8;
 const PEER_FETCH_BACKOFF_BASE: Duration = Duration::from_secs(2);
 const PEER_FETCH_BACKOFF_MAX: Duration = Duration::from_secs(60);
 const PEER_CONNECTION_STATE_TTL: Duration = Duration::from_secs(300);
@@ -211,7 +209,6 @@ pub struct RemoteFetchRetryState {
     retry_after: BTreeMap<String, Instant>,
     retry_deadlines: BTreeSet<(Instant, String)>,
     in_flight: BTreeMap<String, RemoteFetchResultReceiver>,
-    walk_permits: Arc<Semaphore>,
 }
 
 impl Default for RemoteFetchRetryState {
@@ -223,7 +220,6 @@ impl Default for RemoteFetchRetryState {
             retry_after: BTreeMap::new(),
             retry_deadlines: BTreeSet::new(),
             in_flight: BTreeMap::new(),
-            walk_permits: Arc::new(Semaphore::new(REMOTE_FETCH_MAX_CONCURRENT_WALKS)),
         }
     }
 }
@@ -299,10 +295,6 @@ impl RemoteFetchRetryState {
         if let Some(deadline) = self.retry_after.remove(key) {
             self.retry_deadlines.remove(&(deadline, key.to_owned()));
         }
-    }
-
-    pub fn walk_permits(&self) -> Arc<Semaphore> {
-        Arc::clone(&self.walk_permits)
     }
 
     pub fn in_flight_len(&self) -> usize {
