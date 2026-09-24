@@ -47,6 +47,8 @@ struct CachedDestination {
     expires_at: Instant,
 }
 
+type DestinationCandidate = (EndpointAddr, Option<String>, Option<usize>);
+
 impl DestinationWindow {
     fn touch(&mut self, recipient: &Pubkey) -> &mut DestinationEntry {
         self.tick = self.tick.wrapping_add(1);
@@ -95,7 +97,7 @@ impl DestinationWindow {
         &mut self,
         recipient: &Pubkey,
         sources: [&BTreeMap<String, EndpointAddr>; N],
-    ) -> (Vec<(EndpointAddr, Option<String>)>, u64) {
+    ) -> (Vec<DestinationCandidate>, u64) {
         let entry = self.touch(recipient);
         let mut selected = Vec::with_capacity(CANDIDATES_PER_LOOKUP);
         let mut seen = BTreeSet::new();
@@ -113,9 +115,11 @@ impl DestinationWindow {
                     .map(|address| (address, Some(key.clone())))
             })
             .collect::<Vec<_>>();
+        let mut rendezvous_cursor = entry.rendezvous_cursor;
         if entry.source.is_multiple_of(2) {
             for _ in 0..rendezvous_candidates.len().min(2) {
-                let candidate = next_rendezvous_candidate(entry, &rendezvous_candidates);
+                let candidate =
+                    next_rendezvous_candidate(&mut rendezvous_cursor, &rendezvous_candidates);
                 if seen.insert(candidate.0.id) {
                     selected.push(candidate);
                 }
@@ -131,14 +135,15 @@ impl DestinationWindow {
             if let Some(candidate) = next_peer(sources[source], &mut entry.cursors[source])
                 && seen.insert(candidate.id)
             {
-                selected.push((candidate, None));
+                selected.push((candidate, None, None));
             }
         }
         for _ in 0..rendezvous_candidates.len().min(CANDIDATES_PER_LOOKUP) {
             if selected.len() == CANDIDATES_PER_LOOKUP {
                 break;
             }
-            let candidate = next_rendezvous_candidate(entry, &rendezvous_candidates);
+            let candidate =
+                next_rendezvous_candidate(&mut rendezvous_cursor, &rendezvous_candidates);
             if seen.insert(candidate.0.id) {
                 selected.push(candidate);
             }
@@ -146,13 +151,17 @@ impl DestinationWindow {
         (selected, entry.revision)
     }
 
-    fn attempted_learned(
+    fn attempted_candidate(
         &mut self,
         recipient: &Pubkey,
         endpoint_id: EndpointId,
         pages: &[Option<(i64, String)>; 3],
+        rendezvous_cursor: Option<usize>,
     ) {
         let entry = self.touch(recipient);
+        if let Some(cursor) = rendezvous_cursor {
+            entry.rendezvous_cursor = cursor;
+        }
         let id = endpoint_id.to_string();
         for (cursor, page) in entry.learned_cursors.iter_mut().zip(pages) {
             if page.as_ref().is_some_and(|(_, candidate)| candidate == &id) {
@@ -274,12 +283,13 @@ impl DestinationWindow {
 }
 
 fn next_rendezvous_candidate(
-    entry: &mut DestinationEntry,
+    cursor: &mut usize,
     candidates: &[(EndpointAddr, Option<String>)],
-) -> (EndpointAddr, Option<String>) {
-    let index = entry.rendezvous_cursor % candidates.len();
-    entry.rendezvous_cursor = entry.rendezvous_cursor.wrapping_add(1);
-    candidates[index].clone()
+) -> (EndpointAddr, Option<String>, Option<usize>) {
+    let index = *cursor % candidates.len();
+    *cursor = (*cursor).wrapping_add(1);
+    let (address, source) = candidates[index].clone();
+    (address, source, Some(*cursor))
 }
 
 fn next_peer(
@@ -450,14 +460,15 @@ impl IrohGossipTransport {
             ],
         );
         drop((configured, bootstrap, imported));
-        for (candidate, source) in candidates {
+        for (candidate, source, rendezvous_cursor) in candidates {
             if self.offer_closed.load(Ordering::Acquire) {
                 return Ok(None);
             }
-            self.receive_destinations.lock().await.attempted_learned(
+            self.receive_destinations.lock().await.attempted_candidate(
                 recipient,
                 candidate.id,
                 &learned_pages,
+                rendezvous_cursor,
             );
             let deadline = Instant::now() + BINDING_PROBE_TIMEOUT;
             let result = tokio::select! {

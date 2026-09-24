@@ -185,12 +185,12 @@ fn learned_cursor_waits_for_a_probe_with_full_cn_and_known_windows() {
             [&configured, &bootstrap, &imported, &gossip, &docs, &blob],
         );
         assert!(selected.len() <= CANDIDATES_PER_LOOKUP);
-        known_first |= selected.first().is_some_and(|(candidate, _)| {
+        known_first |= selected.first().is_some_and(|(candidate, _, _)| {
             candidate.id != address(25).id && candidate.id != address(26).id
         });
         let page = [Some((0, peer.id.to_string())), None, None];
-        for (candidate, _) in selected {
-            window.attempted_learned(&recipient, candidate.id, &page);
+        for (candidate, _, rendezvous_cursor) in selected {
+            window.attempted_candidate(&recipient, candidate.id, &page, rendezvous_cursor);
             if candidate.id == peer.id {
                 attempted.insert(candidate.id);
             }
@@ -201,6 +201,25 @@ fn learned_cursor_waits_for_a_probe_with_full_cn_and_known_windows() {
         known_first,
         "known devices must get a first probe despite active CNs"
     );
+}
+
+#[test]
+fn rendezvous_cursor_reaches_all_devices_when_first_binding_succeeds() {
+    let recipient = Pubkey::from("account-cn-eight-devices");
+    let peers = (30..38)
+        .map(|seed| EndpointAddr::new(SecretKey::from_bytes(&[seed; 32]).public()))
+        .collect::<Vec<_>>();
+    let mut window = DestinationWindow::default();
+    window.observe_rendezvous("cn", &recipient, peers);
+    let empty = BTreeMap::new();
+    let mut reached = BTreeSet::new();
+    for _ in 0..8 {
+        let (candidates, _) = window.select(&recipient, [&empty; 6]);
+        let (first, _, cursor) = candidates.into_iter().next().unwrap();
+        reached.insert(first.id);
+        window.attempted_candidate(&recipient, first.id, &[None, None, None], cursor);
+    }
+    assert_eq!(reached.len(), 8);
 }
 
 #[test]
