@@ -41,16 +41,16 @@
       "path": "crates/app-api/src/private_channels.rs"
     },
     {
+      "lines": 1111,
+      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
+    },
+    {
       "lines": 1103,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
       "lines": 1096,
       "path": "crates/app-api/src/service/private_channels_support.rs"
-    },
-    {
-      "lines": 1082,
-      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1056,
