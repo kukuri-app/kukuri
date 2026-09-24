@@ -47,7 +47,12 @@ struct CachedDestination {
     expires_at: Instant,
 }
 
-type DestinationCandidate = (EndpointAddr, Option<String>, Option<usize>);
+type DestinationCandidate = (
+    EndpointAddr,
+    Option<String>,
+    Option<usize>,
+    Option<(usize, String)>,
+);
 
 impl DestinationWindow {
     fn touch(&mut self, recipient: &Pubkey) -> &mut DestinationEntry {
@@ -116,12 +121,13 @@ impl DestinationWindow {
             })
             .collect::<Vec<_>>();
         let mut rendezvous_cursor = entry.rendezvous_cursor;
+        let mut known_cursors = entry.cursors.clone();
         if entry.source.is_multiple_of(2) {
             for _ in 0..rendezvous_candidates.len().min(2) {
                 let candidate =
                     next_rendezvous_candidate(&mut rendezvous_cursor, &rendezvous_candidates);
                 if seen.insert(candidate.0.id) {
-                    selected.push(candidate);
+                    selected.push((candidate.0, candidate.1, candidate.2, None));
                 }
             }
         }
@@ -132,10 +138,15 @@ impl DestinationWindow {
                 break;
             }
             let source = (first_source + offset) % N;
-            if let Some(candidate) = next_peer(sources[source], &mut entry.cursors[source])
+            if let Some(candidate) = next_peer(sources[source], &mut known_cursors[source])
                 && seen.insert(candidate.id)
             {
-                selected.push((candidate, None, None));
+                selected.push((
+                    candidate,
+                    None,
+                    None,
+                    known_cursors[source].clone().map(|cursor| (source, cursor)),
+                ));
             }
         }
         for _ in 0..rendezvous_candidates.len().min(CANDIDATES_PER_LOOKUP) {
@@ -145,7 +156,7 @@ impl DestinationWindow {
             let candidate =
                 next_rendezvous_candidate(&mut rendezvous_cursor, &rendezvous_candidates);
             if seen.insert(candidate.0.id) {
-                selected.push(candidate);
+                selected.push((candidate.0, candidate.1, candidate.2, None));
             }
         }
         (selected, entry.revision)
@@ -157,10 +168,14 @@ impl DestinationWindow {
         endpoint_id: EndpointId,
         pages: &[Option<(i64, String)>; 3],
         rendezvous_cursor: Option<usize>,
+        known_cursor: Option<(usize, String)>,
     ) {
         let entry = self.touch(recipient);
         if let Some(cursor) = rendezvous_cursor {
             entry.rendezvous_cursor = cursor;
+        }
+        if let Some((source, cursor)) = known_cursor {
+            entry.cursors[source] = Some(cursor);
         }
         let id = endpoint_id.to_string();
         for (cursor, page) in entry.learned_cursors.iter_mut().zip(pages) {
@@ -460,7 +475,7 @@ impl IrohGossipTransport {
             ],
         );
         drop((configured, bootstrap, imported));
-        for (candidate, source, rendezvous_cursor) in candidates {
+        for (candidate, source, rendezvous_cursor, known_cursor) in candidates {
             if self.offer_closed.load(Ordering::Acquire) {
                 return Ok(None);
             }
@@ -469,6 +484,7 @@ impl IrohGossipTransport {
                 candidate.id,
                 &learned_pages,
                 rendezvous_cursor,
+                known_cursor,
             );
             let deadline = Instant::now() + BINDING_PROBE_TIMEOUT;
             let result = tokio::select! {

@@ -10,6 +10,26 @@ struct StalledDestinationBinding {
     closed: Arc<Notify>,
 }
 
+fn attempt_all(
+    window: &mut DestinationWindow,
+    recipient: &Pubkey,
+    candidates: Vec<DestinationCandidate>,
+) -> Vec<EndpointId> {
+    candidates
+        .into_iter()
+        .map(|(candidate, _, rendezvous_cursor, known_cursor)| {
+            window.attempted_candidate(
+                recipient,
+                candidate.id,
+                &[None, None, None],
+                rendezvous_cursor,
+                known_cursor,
+            );
+            candidate.id
+        })
+        .collect()
+}
+
 impl ProtocolHandler for StalledDestinationBinding {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
         let (_send, mut recv) = connection.accept_bi().await?;
@@ -37,7 +57,7 @@ fn destination_window_rotates_through_large_peer_history_in_four_candidate_steps
         let (candidates, _) =
             state.select(&recipient, [&peers, &BTreeMap::new(), &BTreeMap::new()]);
         assert!(candidates.len() <= CANDIDATES_PER_LOOKUP);
-        observed.extend(candidates.into_iter().map(|candidate| candidate.0.id));
+        observed.extend(attempt_all(&mut state, &recipient, candidates));
     }
     assert_eq!(observed.len(), 1_000);
 }
@@ -91,7 +111,7 @@ fn destination_cursor_reaches_old_peer_during_new_inserts_and_deletes() {
         peers.insert(id.to_string(), EndpointAddr::new(id));
         let (candidates, _) =
             state.select(&recipient, [&peers, &BTreeMap::new(), &BTreeMap::new()]);
-        reached |= candidates.iter().any(|candidate| candidate.0.id == target);
+        reached |= attempt_all(&mut state, &recipient, candidates).contains(&target);
         let first = peers.keys().next().unwrap().clone();
         if first != target.to_string() {
             peers.remove(&first);
@@ -125,10 +145,9 @@ fn rendezvous_window_does_not_starve_known_peer_cursor() {
             state.select(&recipient, [&peers, &BTreeMap::new(), &BTreeMap::new()]);
         assert!(candidates.len() <= CANDIDATES_PER_LOOKUP);
         observed_known.extend(
-            candidates
+            attempt_all(&mut state, &recipient, candidates)
                 .into_iter()
-                .filter(|item| peers.contains_key(&item.0.id.to_string()))
-                .map(|item| item.0.id),
+                .filter(|id| peers.contains_key(&id.to_string())),
         );
     }
     assert_eq!(observed_known.len(), 1_000);
@@ -185,12 +204,18 @@ fn learned_cursor_waits_for_a_probe_with_full_cn_and_known_windows() {
             [&configured, &bootstrap, &imported, &gossip, &docs, &blob],
         );
         assert!(selected.len() <= CANDIDATES_PER_LOOKUP);
-        known_first |= selected.first().is_some_and(|(candidate, _, _)| {
+        known_first |= selected.first().is_some_and(|(candidate, _, _, _)| {
             candidate.id != address(25).id && candidate.id != address(26).id
         });
         let page = [Some((0, peer.id.to_string())), None, None];
-        for (candidate, _, rendezvous_cursor) in selected {
-            window.attempted_candidate(&recipient, candidate.id, &page, rendezvous_cursor);
+        for (candidate, _, rendezvous_cursor, known_cursor) in selected {
+            window.attempted_candidate(
+                &recipient,
+                candidate.id,
+                &page,
+                rendezvous_cursor,
+                known_cursor,
+            );
             if candidate.id == peer.id {
                 attempted.insert(candidate.id);
             }
@@ -215,11 +240,43 @@ fn rendezvous_cursor_reaches_all_devices_when_first_binding_succeeds() {
     let mut reached = BTreeSet::new();
     for _ in 0..8 {
         let (candidates, _) = window.select(&recipient, [&empty; 6]);
-        let (first, _, cursor) = candidates.into_iter().next().unwrap();
+        let (first, _, cursor, known_cursor) = candidates.into_iter().next().unwrap();
         reached.insert(first.id);
-        window.attempted_candidate(&recipient, first.id, &[None, None, None], cursor);
+        window.attempted_candidate(
+            &recipient,
+            first.id,
+            &[None, None, None],
+            cursor,
+            known_cursor,
+        );
     }
     assert_eq!(reached.len(), 8);
+}
+
+#[test]
+fn seed_cursor_reaches_all_devices_when_first_binding_succeeds() {
+    let recipient = Pubkey::from("account-seed-six-devices");
+    let peers = (40..46)
+        .map(|seed| EndpointAddr::new(SecretKey::from_bytes(&[seed; 32]).public()))
+        .map(|peer| (peer.id.to_string(), peer))
+        .collect::<BTreeMap<_, _>>();
+    let mut window = DestinationWindow::default();
+    let empty = BTreeMap::new();
+    let mut reached = BTreeSet::new();
+    for _ in 0..6 {
+        let (candidates, _) =
+            window.select(&recipient, [&peers, &empty, &empty, &empty, &empty, &empty]);
+        let (first, _, rendezvous_cursor, known_cursor) = candidates.into_iter().next().unwrap();
+        reached.insert(first.id);
+        window.attempted_candidate(
+            &recipient,
+            first.id,
+            &[None, None, None],
+            rendezvous_cursor,
+            known_cursor,
+        );
+    }
+    assert_eq!(reached.len(), 6);
 }
 
 #[test]
