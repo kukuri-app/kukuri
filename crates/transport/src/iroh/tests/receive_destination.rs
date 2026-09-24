@@ -154,6 +154,56 @@ fn destination_window_rotates_across_known_device_sources() {
 }
 
 #[test]
+fn learned_cursor_waits_for_a_probe_with_full_cn_and_known_windows() {
+    let recipient = Pubkey::from("account-six-known-devices");
+    let address = |seed| EndpointAddr::new(SecretKey::from_bytes(&[seed; 32]).public());
+    let mut devices = (1..=6).map(address).collect::<Vec<_>>();
+    devices.sort_by_key(|peer| peer.id.to_string());
+    let source = |seed| {
+        let peer = address(seed);
+        BTreeMap::from([(peer.id.to_string(), peer)])
+    };
+    let configured = source(20);
+    let bootstrap = source(21);
+    let imported = source(22);
+    let docs = source(23);
+    let blob = source(24);
+    let mut window = DestinationWindow::default();
+    window.observe_rendezvous("cn", &recipient, vec![address(25), address(26)]);
+    let mut attempted = BTreeSet::new();
+    let mut known_first = false;
+    for _ in 0..36 {
+        let next = window.touch(&recipient).learned_cursors[0]
+            .as_ref()
+            .and_then(|(_, id)| devices.iter().position(|peer| peer.id.to_string() == *id))
+            .map(|index| (index + 1) % devices.len())
+            .unwrap_or(0);
+        let peer = devices[next].clone();
+        let gossip = BTreeMap::from([(peer.id.to_string(), peer.clone())]);
+        let (selected, _) = window.select(
+            &recipient,
+            [&configured, &bootstrap, &imported, &gossip, &docs, &blob],
+        );
+        assert!(selected.len() <= CANDIDATES_PER_LOOKUP);
+        known_first |= selected.first().is_some_and(|(candidate, _)| {
+            candidate.id != address(25).id && candidate.id != address(26).id
+        });
+        let page = [Some((0, peer.id.to_string())), None, None];
+        for (candidate, _) in selected {
+            window.attempted_learned(&recipient, candidate.id, &page);
+            if candidate.id == peer.id {
+                attempted.insert(candidate.id);
+            }
+        }
+    }
+    assert_eq!(attempted.len(), devices.len());
+    assert!(
+        known_first,
+        "known devices must get a first probe despite active CNs"
+    );
+}
+
+#[test]
 fn cache_expires_and_invalidating_another_endpoint_preserves_current_binding() {
     let recipient = Pubkey::from("account-c");
     let id = SecretKey::from_bytes(&[8; 32]).public();

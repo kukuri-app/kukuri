@@ -113,10 +113,12 @@ impl DestinationWindow {
                     .map(|address| (address, Some(key.clone())))
             })
             .collect::<Vec<_>>();
-        for _ in 0..rendezvous_candidates.len().min(2) {
-            let candidate = next_rendezvous_candidate(entry, &rendezvous_candidates);
-            if seen.insert(candidate.0.id) {
-                selected.push(candidate);
+        if entry.source.is_multiple_of(2) {
+            for _ in 0..rendezvous_candidates.len().min(2) {
+                let candidate = next_rendezvous_candidate(entry, &rendezvous_candidates);
+                if seen.insert(candidate.0.id) {
+                    selected.push(candidate);
+                }
             }
         }
         let first_source = entry.source;
@@ -142,6 +144,21 @@ impl DestinationWindow {
             }
         }
         (selected, entry.revision)
+    }
+
+    fn attempted_learned(
+        &mut self,
+        recipient: &Pubkey,
+        endpoint_id: EndpointId,
+        pages: &[Option<(i64, String)>; 3],
+    ) {
+        let entry = self.touch(recipient);
+        let id = endpoint_id.to_string();
+        for (cursor, page) in entry.learned_cursors.iter_mut().zip(pages) {
+            if page.as_ref().is_some_and(|(_, candidate)| candidate == &id) {
+                *cursor = page.clone();
+            }
+        }
     }
 
     fn observe_rendezvous(
@@ -394,6 +411,7 @@ impl IrohGossipTransport {
             BTreeMap::new()
         };
         let mut learned = [BTreeMap::new(), BTreeMap::new(), BTreeMap::new()];
+        let mut learned_pages: [Option<(i64, String)>; 3] = Default::default();
         if let Some(store) = &self.account_store {
             let cursors = self
                 .receive_destinations
@@ -408,11 +426,7 @@ impl IrohGossipTransport {
                     .await?;
                 if let Some((id, bytes, seen_ms)) = page.into_iter().next() {
                     learned[index].insert(id.clone(), serde_json::from_slice(&bytes)?);
-                    self.receive_destinations
-                        .lock()
-                        .await
-                        .touch(recipient)
-                        .learned_cursors[index] = Some((seen_ms, id));
+                    learned_pages[index] = Some((seen_ms, id));
                 }
             }
         }
@@ -440,6 +454,11 @@ impl IrohGossipTransport {
             if self.offer_closed.load(Ordering::Acquire) {
                 return Ok(None);
             }
+            self.receive_destinations.lock().await.attempted_learned(
+                recipient,
+                candidate.id,
+                &learned_pages,
+            );
             let deadline = Instant::now() + BINDING_PROBE_TIMEOUT;
             let result = tokio::select! {
                 _ = &mut shutdown => return Ok(None),
