@@ -69,7 +69,7 @@ impl SqliteStore {
     ///
     /// 命令の数は、読み書きした行の数とともに増え、B-tree の深さ(表の大きさ)には依存しない。表の件数を変えても
     /// 操作の命令の数が変わらないことで、件数に比例する読み書き(全件の走査・書き直し)が無いことを確かめる。
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn connect_memory_counting_vm_steps(
         counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<Self> {

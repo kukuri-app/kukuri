@@ -374,14 +374,36 @@ impl IrohGossipTransport {
         let Ok(_permit) = self.receive_destination_probes.try_acquire() else {
             return Ok(None);
         };
+        let imported_page = if let Some(store) = &self.account_store {
+            let after = self
+                .receive_destinations
+                .lock()
+                .await
+                .touch(recipient)
+                .cursors[2]
+                .clone();
+            store
+                .imported_peer_candidate_window("gossip", after.as_deref(), CANDIDATES_PER_LOOKUP)
+                .await?
+                .into_iter()
+                .map(|(id, bytes)| Ok((id, serde_json::from_slice::<EndpointAddr>(&bytes)?)))
+                .collect::<Result<BTreeMap<_, _>>>()?
+        } else {
+            BTreeMap::new()
+        };
         let configured = self.configured_seed_peers.lock().await;
         let bootstrap = self.bootstrap_seed_peers.lock().await;
         let imported = self.imported_peers.lock().await;
+        let imported_source = if self.account_store.is_some() {
+            &imported_page
+        } else {
+            &*imported
+        };
         let (candidates, revision) = self
             .receive_destinations
             .lock()
             .await
-            .select(recipient, [&configured, &bootstrap, &imported]);
+            .select(recipient, [&configured, &bootstrap, imported_source]);
         drop((configured, bootstrap, imported));
         for (candidate, source) in candidates {
             if self.offer_closed.load(Ordering::Acquire) {

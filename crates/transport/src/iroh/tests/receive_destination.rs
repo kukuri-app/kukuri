@@ -456,6 +456,50 @@ async fn seed_destination_requires_live_binding_for_the_exact_account_and_invali
 }
 
 #[tokio::test]
+async fn account_ticket_candidate_reaches_live_receive_binding() {
+    let store = Arc::new(kukuri_store::SqliteStore::connect_memory().await.unwrap());
+    let mut transport = IrohGossipTransport::bind_local()
+        .await
+        .unwrap()
+        .with_account_store(store);
+    let receiver = Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let recipient = KukuriKeys::generate();
+    let now = Utc::now().timestamp_millis();
+    let binding =
+        ReceiveEndpointBindingV1::sign(&recipient, &receiver.id().to_string(), now, now + 60_000)
+            .unwrap();
+    let router = Router::builder(receiver.clone())
+        .accept(
+            RECEIVE_BINDING_ALPN,
+            ReceiveBindingProtocol::new(receiver.id(), binding).unwrap(),
+        )
+        .spawn();
+    transport
+        .insert_imported_peer_addr(receiver.addr())
+        .await
+        .unwrap();
+    assert!(transport.imported_peers.lock().await.is_empty());
+    assert_eq!(
+        transport
+            .resolve_receive_destination(&recipient.public_key())
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        receiver.id()
+    );
+    router.shutdown().await.unwrap();
+    transport.shutdown().await;
+    transport._router.take().unwrap().shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn saturated_probe_budget_defers_without_queuing() {
     let mut transport = IrohGossipTransport::bind_local().await.unwrap();
     let permits = transport

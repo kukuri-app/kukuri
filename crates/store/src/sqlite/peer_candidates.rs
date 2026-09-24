@@ -137,17 +137,17 @@ impl SqliteStore {
         } else {
             i64::MIN
         };
-        let (after_ms, after_id) = after.clone().unwrap_or((i64::MIN, String::new()));
+        let (after_ms, after_id) = after
+            .clone()
+            .filter(|(seen_ms, _)| *seen_ms >= cutoff)
+            .unwrap_or((cutoff, String::new()));
         let mut rows = sqlx::query(
             "SELECT endpoint_id, endpoint_addr, seen_ms FROM peer_candidates \
-             WHERE scope = ? AND source = ? AND seen_ms >= ? \
-             AND (seen_ms > ? OR (seen_ms = ? AND endpoint_id > ?)) \
+             WHERE scope = ? AND source = ? AND (seen_ms, endpoint_id) > (?, ?) \
              ORDER BY seen_ms, endpoint_id LIMIT ?",
         )
         .bind(scope)
         .bind(source)
-        .bind(cutoff)
-        .bind(after_ms)
         .bind(after_ms)
         .bind(after_id)
         .bind(limit as i64)
@@ -160,13 +160,12 @@ impl SqliteStore {
                 sqlx::query(
                     "SELECT endpoint_id, endpoint_addr, seen_ms FROM peer_candidates \
                      WHERE scope = ? AND source = ? AND seen_ms >= ? \
-                     AND (seen_ms < ? OR (seen_ms = ? AND endpoint_id <= ?)) \
+                     AND (seen_ms, endpoint_id) <= (?, ?) \
                      ORDER BY seen_ms, endpoint_id LIMIT ?",
                 )
                 .bind(scope)
                 .bind(source)
                 .bind(cutoff)
-                .bind(after_ms)
                 .bind(after_ms)
                 .bind(after_id)
                 .bind((limit - rows.len()) as i64)
@@ -208,6 +207,47 @@ impl SqliteStore {
         .bind(cutoff)
         .fetch_optional(&self.pool)
         .await?)
+    }
+
+    /// The receive-destination selector keeps an endpoint-ID cursor per account.
+    /// The primary key serves this page without reading earlier tickets.
+    pub async fn imported_peer_candidate_window(
+        &self,
+        scope: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        let limit = limit.min(4);
+        let mut rows = sqlx::query(
+            "SELECT endpoint_id, endpoint_addr FROM peer_candidates \
+             WHERE scope = ? AND source = 'imported' AND endpoint_id > ? \
+             ORDER BY endpoint_id LIMIT ?",
+        )
+        .bind(scope)
+        .bind(after.unwrap_or(""))
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        if rows.len() < limit
+            && let Some(after) = after
+        {
+            rows.extend(
+                sqlx::query(
+                    "SELECT endpoint_id, endpoint_addr FROM peer_candidates \
+                     WHERE scope = ? AND source = 'imported' AND endpoint_id <= ? \
+                     ORDER BY endpoint_id LIMIT ?",
+                )
+                .bind(scope)
+                .bind(after)
+                .bind((limit - rows.len()) as i64)
+                .fetch_all(&self.pool)
+                .await?,
+            );
+        }
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get("endpoint_id"), row.get("endpoint_addr")))
+            .collect())
     }
 
     pub async fn replace_seed_candidates(
@@ -403,6 +443,67 @@ mod tests {
                 .await?
                 .is_some()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn candidate_cursor_vm_work_does_not_grow_with_history() -> Result<()> {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        async fn measured_steps(history: usize) -> Result<u64> {
+            let counter = Arc::new(AtomicU64::new(0));
+            let store = SqliteStore::connect_memory_counting_vm_steps(counter.clone()).await?;
+            for index in 0..history {
+                store
+                    .put_peer_candidate(
+                        "docs",
+                        "learned",
+                        &format!("peer-{index:05}"),
+                        b"address",
+                        index as i64,
+                    )
+                    .await?;
+            }
+            counter.store(0, Ordering::Relaxed);
+            let after = history - 5;
+            let page = store
+                .peer_candidate_window(
+                    "docs",
+                    "learned",
+                    Some((after as i64, format!("peer-{after:05}"))),
+                    4,
+                    history as i64,
+                )
+                .await?;
+            assert_eq!(page.len(), 4);
+            Ok(counter.load(Ordering::Relaxed))
+        }
+
+        let short = measured_steps(100).await?;
+        let long = measured_steps(1_000).await?;
+        assert!(
+            long <= short * 2,
+            "cursor query grew with history: {short} -> {long}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn imported_id_window_wraps_for_receive_destination() -> Result<()> {
+        let store = SqliteStore::connect_memory().await?;
+        for id in ["a", "b", "c"] {
+            store
+                .put_peer_candidate("gossip", "imported", id, id.as_bytes(), 0)
+                .await?;
+        }
+        let ids = store
+            .imported_peer_candidate_window("gossip", Some("b"), 2)
+            .await?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["c", "a"]);
         Ok(())
     }
 }
