@@ -168,35 +168,67 @@ impl ReactionBookmarkStore for MemoryStore {
     }
 
     async fn put_bookmarked_post(&self, row: BookmarkedPostRow) -> Result<()> {
-        self.bookmarked_posts
-            .write()
-            .await
-            .insert(row.source_object_id.as_str().to_string(), row);
+        let mut bookmarks = self.bookmarked_posts.write().await;
+        let id = row.source_object_id.as_str().to_string();
+        if let Some(old) = bookmarks.rows.insert(id.clone(), row.clone()) {
+            bookmarks
+                .by_bookmarked_at
+                .remove(&(old.bookmarked_at, id.clone()));
+        }
+        bookmarks.by_bookmarked_at.insert((row.bookmarked_at, id));
         Ok(())
     }
 
-    async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostRow>> {
-        let mut items = self
-            .bookmarked_posts
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        items.sort_by(|left, right| {
-            right
-                .bookmarked_at
-                .cmp(&left.bookmarked_at)
-                .then_with(|| right.source_object_id.cmp(&left.source_object_id))
+    async fn list_bookmarked_posts_page(
+        &self,
+        cursor: Option<&BookmarkCursor>,
+        before: bool,
+    ) -> Result<Vec<BookmarkedPostRow>> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let bookmarks = self.bookmarked_posts.read().await;
+        let key = cursor.map(|cursor| {
+            (
+                cursor.bookmarked_at,
+                cursor.source_object_id.as_str().to_string(),
+            )
         });
-        Ok(items)
+        let ids: Vec<_> = if before {
+            let key = key.ok_or_else(|| anyhow::anyhow!("newer bookmark page requires cursor"))?;
+            bookmarks
+                .by_bookmarked_at
+                .range((Excluded(key), Unbounded))
+                .take(21)
+                .collect()
+        } else {
+            bookmarks
+                .by_bookmarked_at
+                .range((Unbounded, key.map(Excluded).unwrap_or(Unbounded)))
+                .rev()
+                .take(21)
+                .collect()
+        };
+        Ok(ids
+            .into_iter()
+            .map(|(_, id)| bookmarks.rows[id].clone())
+            .collect())
+    }
+
+    async fn bookmarked_post_ids(&self, ids: &[EnvelopeId]) -> Result<Vec<EnvelopeId>> {
+        let bookmarks = self.bookmarked_posts.read().await;
+        Ok(ids
+            .iter()
+            .filter(|id| bookmarks.rows.contains_key(id.as_str()))
+            .cloned()
+            .collect())
     }
 
     async fn remove_bookmarked_post(&self, source_object_id: &EnvelopeId) -> Result<()> {
-        self.bookmarked_posts
-            .write()
-            .await
-            .remove(source_object_id.as_str());
+        let mut bookmarks = self.bookmarked_posts.write().await;
+        if let Some(old) = bookmarks.rows.remove(source_object_id.as_str()) {
+            bookmarks
+                .by_bookmarked_at
+                .remove(&(old.bookmarked_at, source_object_id.as_str().to_string()));
+        }
         Ok(())
     }
 }

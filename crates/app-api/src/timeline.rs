@@ -1,4 +1,5 @@
 use crate::service::*;
+use anyhow::ensure;
 
 impl AppService {
     pub async fn list_profile_timeline(
@@ -164,21 +165,88 @@ impl AppService {
         Ok(envelope.id.0)
     }
 
+    /// Explicit CLI/export listing; desktop display uses the fixed-size page below.
     pub async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostView>> {
-        let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
-        let rows = self
+        let mut items = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = self
+                .list_bookmarked_posts_page(cursor.as_ref(), false)
+                .await?;
+            items.extend(page.items);
+            cursor = page.older_cursor;
+            if cursor.is_none() {
+                return Ok(items);
+            }
+        }
+    }
+
+    pub async fn list_bookmarked_posts_page(
+        &self,
+        cursor: Option<&kukuri_store::BookmarkCursor>,
+        before: bool,
+    ) -> Result<BookmarkedPostPageView> {
+        let mut rows = self
             .services
             .projection_store
-            .list_bookmarked_posts()
-            .await?
-            .into_iter()
-            .filter(|row| !bookmarked_post_row_is_hidden(row, &hidden_author_pubkeys))
-            .collect::<Vec<_>>();
+            .list_bookmarked_posts_page(cursor, before)
+            .await?;
+        let has_more = rows.len() > 20;
+        rows.truncate(20);
+        if before {
+            rows.reverse();
+        }
+        let first = rows.first().map(kukuri_store::BookmarkCursor::from);
+        let last = rows.last().map(kukuri_store::BookmarkCursor::from);
+        let bookmark_at_cursor_exists = if before {
+            if let Some(cursor) = cursor {
+                !self
+                    .services
+                    .projection_store
+                    .bookmarked_post_ids(std::slice::from_ref(&cursor.source_object_id))
+                    .await?
+                    .is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let (newer_cursor, older_cursor) = if before {
+            (
+                has_more.then_some(first).flatten(),
+                bookmark_at_cursor_exists.then_some(last).flatten(),
+            )
+        } else {
+            (
+                cursor.is_some().then_some(first).flatten(),
+                has_more.then_some(last).flatten(),
+            )
+        };
+        let hidden_authors = self.current_hidden_author_pubkeys().await?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            items.push(self.bookmarked_post_view_from_row(row).await?);
+            if !bookmarked_post_row_is_hidden(&row, &hidden_authors) {
+                items.push(self.bookmarked_post_view_from_row(row).await?);
+            }
         }
-        Ok(items)
+        Ok(BookmarkedPostPageView {
+            items,
+            newer_cursor,
+            older_cursor,
+        })
+    }
+
+    pub async fn bookmarked_post_ids(&self, ids: &[EnvelopeId]) -> Result<Vec<String>> {
+        ensure!(ids.len() <= 200, "bookmark status page exceeds 200 objects");
+        Ok(self
+            .services
+            .projection_store
+            .bookmarked_post_ids(ids)
+            .await?
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect())
     }
 
     pub async fn bookmark_post(

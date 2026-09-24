@@ -1,6 +1,6 @@
 import { startTransition, useCallback, useRef } from 'react';
 
-import type { DesktopApi } from '@/lib/api';
+import type { BookmarkCursor, DesktopApi } from '@/lib/api';
 import type { LoadNotificationsSection } from '@/shell/data/loaders/useNotificationLoaders';
 import { VISIBLE_TIMELINE_LIMIT } from '@/shell/pagination';
 import {
@@ -12,11 +12,12 @@ import {
   profileInputFromProfile,
   seedPeersToEditorValue,
 } from '@/shell/presentation';
-import { setRecordEntry } from '@/shell/stateUpdates';
+import { sameTimelineCursor, setRecordEntry, setTimelineCursorEntry } from '@/shell/stateUpdates';
 import {
   hasReadPastHeadPage,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
+  windowHeadCursor,
 } from '@/shell/data/timelineMerge';
 import {
   timelineStorageKeyForChannel,
@@ -45,6 +46,7 @@ export function useDesktopShellSectionLoaders({
   translate,
 }: UseDesktopShellSectionLoadersArgs) {
   const profileRequestId = useRef(0);
+  const bookmarkRequestId = useRef(0);
   const communityNodeRequestId = useRef(0);
   const authorRequestIds = useRef(new Map<string, number>());
   const setAuthorError = useDesktopShellFieldSetter('authorError');
@@ -53,6 +55,7 @@ export function useDesktopShellSectionLoaders({
   const setAuthorTimelineNextCursorByPubkey = useDesktopShellFieldSetter(
     'authorTimelineNextCursorByPubkey'
   );
+  const setAuthorTimelineWindowHeadCursorByPubkey = useDesktopShellFieldSetter('authorTimelineWindowHeadCursorByPubkey');
   const setAuthorTimelineLoadingMoreByPubkey = useDesktopShellFieldSetter(
     'authorTimelineLoadingMoreByPubkey'
   );
@@ -60,6 +63,11 @@ export function useDesktopShellSectionLoaders({
     'authorTimelineLoadMoreErrorsByPubkey'
   );
   const setBookmarkedPosts = useDesktopShellFieldSetter('bookmarkedPosts');
+  const setBookmarksNewerCursor = useDesktopShellFieldSetter('bookmarksNewerCursor');
+  const setBookmarksOlderCursor = useDesktopShellFieldSetter('bookmarksOlderCursor');
+  const setBookmarksLoadingPage = useDesktopShellFieldSetter('bookmarksLoadingPage');
+  const setBookmarksPageRequestCursor = useDesktopShellFieldSetter('bookmarksPageRequestCursor');
+  const setBookmarksPageRequestBefore = useDesktopShellFieldSetter('bookmarksPageRequestBefore');
   const setBookmarksPanelState = useDesktopShellFieldSetter('bookmarksPanelState');
   const setCommunityNodeConfig = useDesktopShellFieldSetter('communityNodeConfig');
   const setCommunityNodeError = useDesktopShellFieldSetter('communityNodeError');
@@ -91,6 +99,7 @@ export function useDesktopShellSectionLoaders({
   const setProfileTimelineNextCursor = useDesktopShellFieldSetter(
     'profileTimelineNextCursor'
   );
+  const setProfileTimelineWindowHeadCursor = useDesktopShellFieldSetter('profileTimelineWindowHeadCursor');
   const setProfileTimelineLoadingMore = useDesktopShellFieldSetter(
     'profileTimelineLoadingMore'
   );
@@ -168,7 +177,7 @@ export function useDesktopShellSectionLoaders({
     ]
   );
 
-  const loadProfileSection = useCallback(async () => {
+  const loadProfileSection = useCallback(async (options: { resetToLatest?: boolean } = {}) => {
     const state = storeApi.getState();
     if (!state.workspaceState.columns.some((column) => column.kind === 'profile' && !column.entityId)) return;
     const requestId = ++profileRequestId.current;
@@ -186,9 +195,11 @@ export function useDesktopShellSectionLoaders({
         api.listSocialConnections('muted'),
         api.listSocialConnections('blocking'),
       ]);
+      const savedHead = !options.resetToLatest && storeApi.getState().profileTimeline.length === 0
+        ? storeApi.getState().profileTimelineWindowHeadCursor : null;
       const timeline = await api.listProfileTimeline(
         profile.pubkey,
-        null,
+        savedHead,
         VISIBLE_TIMELINE_LIMIT
       );
       if (!isCurrent()) return;
@@ -199,7 +210,7 @@ export function useDesktopShellSectionLoaders({
           setProfileDraft(profileInputFromProfile(profile));
         }
         const current = storeApi.getState();
-        const preserveOlderPages = hasReadPastHeadPage(
+        const preserveOlderPages = !options.resetToLatest && hasReadPastHeadPage(
           current.profileTimeline,
           timeline.items,
           current.profileTimelineNextCursor,
@@ -209,11 +220,9 @@ export function useDesktopShellSectionLoaders({
         setProfileTimeline(
           mergeRefreshedVisiblePosts(current.profileTimeline, timeline.items, preserveOlderPages)
         );
-        setProfileTimelineNextCursor(
-          preserveOlderPages
-            ? current.profileTimelineNextCursor
-            : (timeline.next_cursor ?? null)
-        );
+        const nextCursor = preserveOlderPages ? current.profileTimelineNextCursor : timeline.next_cursor ?? null;
+        setProfileTimelineNextCursor((stored) => sameTimelineCursor(stored, nextCursor) ? stored : nextCursor);
+        if (!preserveOlderPages) setProfileTimelineWindowHeadCursor(savedHead);
         setProfileTimelineLoadingMore(false);
         setProfileTimelineLoadMoreError(null);
         setProfileError(null);
@@ -251,6 +260,7 @@ export function useDesktopShellSectionLoaders({
     setProfileTimelineLoadMoreError,
     setProfileTimelineLoadingMore,
     setProfileTimelineNextCursor,
+    setProfileTimelineWindowHeadCursor,
     setSocialConnections,
     setSocialConnectionsPanelState,
     storeApi,
@@ -258,19 +268,21 @@ export function useDesktopShellSectionLoaders({
   ]);
 
   const loadAuthorSection = useCallback(
-    async (pubkey: string) => {
+    async (pubkey: string, options: { resetToLatest?: boolean } = {}) => {
       const requestId = (authorRequestIds.current.get(pubkey) ?? 0) + 1;
       authorRequestIds.current.set(pubkey, requestId);
+      const savedHead = !options.resetToLatest && (storeApi.getState().authorTimelinesByPubkey[pubkey]?.length ?? 0) === 0
+        ? storeApi.getState().authorTimelineWindowHeadCursorByPubkey[pubkey] ?? null : null;
       try {
         const [author, timeline] = await Promise.all([
           api.getAuthorSocialView(pubkey),
-          api.listProfileTimeline(pubkey, null, VISIBLE_TIMELINE_LIMIT),
+          api.listProfileTimeline(pubkey, savedHead, VISIBLE_TIMELINE_LIMIT),
         ]);
         if (requestId !== authorRequestIds.current.get(pubkey)) return;
         startTransition(() => {
           const current = storeApi.getState();
           const currentTimeline = current.authorTimelinesByPubkey[pubkey] ?? [];
-          const preserveOlderPages = hasReadPastHeadPage(
+          const preserveOlderPages = !options.resetToLatest && hasReadPastHeadPage(
             currentTimeline,
             timeline.items,
             current.authorTimelineNextCursorByPubkey[pubkey],
@@ -288,13 +300,17 @@ export function useDesktopShellSectionLoaders({
           if (current.selectedAuthorPubkey === pubkey) {
             setSelectedAuthor(author);
             setSelectedAuthorTimeline(mergedTimeline);
-            setSelectedAuthorTimelineNextCursor(resolvedCursor);
+            setSelectedAuthorTimelineNextCursor((stored) =>
+              sameTimelineCursor(stored, resolvedCursor) ? stored : resolvedCursor);
             setAuthorError(null);
           }
           setAuthorTimelinesByPubkey(setRecordEntry(pubkey, mergedTimeline));
           setAuthorTimelineNextCursorByPubkey(
-            setRecordEntry(pubkey, resolvedCursor)
+            setTimelineCursorEntry(pubkey, resolvedCursor)
           );
+          if (!preserveOlderPages) {
+            setAuthorTimelineWindowHeadCursorByPubkey(setRecordEntry(pubkey, savedHead));
+          }
           setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, false));
           setAuthorTimelineLoadMoreErrorsByPubkey(setRecordEntry(pubkey, null));
           setAuthorErrorsByPubkey(setRecordEntry(pubkey, null));
@@ -319,6 +335,7 @@ export function useDesktopShellSectionLoaders({
       setAuthorErrorsByPubkey,
       setAuthorTimelinesByPubkey,
       setAuthorTimelineNextCursorByPubkey,
+      setAuthorTimelineWindowHeadCursorByPubkey,
       setAuthorTimelineLoadingMoreByPubkey,
       setAuthorTimelineLoadMoreErrorsByPubkey,
       setKnownAuthorsByPubkey,
@@ -346,8 +363,13 @@ export function useDesktopShellSectionLoaders({
         saveRevision !== storeApi.getState().profileSaveRevision
       ) return;
       startTransition(() => {
-        setProfileTimeline((current) => mergeUniquePosts(current, timeline.items));
-        setProfileTimelineNextCursor(timeline.next_cursor ?? null);
+        const latest = storeApi.getState();
+        const merged = mergeUniquePosts(latest.profileTimeline, timeline.items);
+        setProfileTimeline(merged);
+        setProfileTimelineWindowHeadCursor(windowHeadCursor(latest.profileTimeline, merged,
+          latest.profileTimelineWindowHeadCursor));
+        setProfileTimelineNextCursor((stored) => sameTimelineCursor(stored, timeline.next_cursor)
+          ? stored : timeline.next_cursor ?? null);
       });
     } catch (error) {
       if (requestId !== profileRequestId.current) return;
@@ -363,6 +385,7 @@ export function useDesktopShellSectionLoaders({
     setProfileTimelineLoadMoreError,
     setProfileTimelineLoadingMore,
     setProfileTimelineNextCursor,
+    setProfileTimelineWindowHeadCursor,
     storeApi,
     translate,
   ]);
@@ -384,12 +407,16 @@ export function useDesktopShellSectionLoaders({
           timeline.items
         );
         setAuthorTimelinesByPubkey(setRecordEntry(pubkey, merged));
+        setAuthorTimelineWindowHeadCursorByPubkey(setRecordEntry(pubkey,
+          windowHeadCursor(current.authorTimelinesByPubkey[pubkey] ?? [], merged,
+            current.authorTimelineWindowHeadCursorByPubkey[pubkey] ?? null)));
         setAuthorTimelineNextCursorByPubkey(
-          setRecordEntry(pubkey, timeline.next_cursor ?? null)
+          setTimelineCursorEntry(pubkey, timeline.next_cursor ?? null)
         );
         if (current.selectedAuthorPubkey === pubkey) {
           setSelectedAuthorTimeline(merged);
-          setSelectedAuthorTimelineNextCursor(timeline.next_cursor ?? null);
+          setSelectedAuthorTimelineNextCursor((stored) => sameTimelineCursor(stored, timeline.next_cursor)
+            ? stored : timeline.next_cursor ?? null);
         }
       });
     } catch (error) {
@@ -410,6 +437,7 @@ export function useDesktopShellSectionLoaders({
     setAuthorTimelineLoadMoreErrorsByPubkey,
     setAuthorTimelineLoadingMoreByPubkey,
     setAuthorTimelineNextCursorByPubkey,
+    setAuthorTimelineWindowHeadCursorByPubkey,
     setAuthorTimelinesByPubkey,
     setSelectedAuthorTimeline,
     setSelectedAuthorTimelineNextCursor,
@@ -482,25 +510,48 @@ export function useDesktopShellSectionLoaders({
     translate,
   ]);
 
-  const loadBookmarksSection = useCallback(async () => {
+  const loadBookmarksSection = useCallback(async (
+    options: { cursor?: BookmarkCursor | null; before?: boolean; preserveCurrent?: boolean } = {}
+  ) => {
     // #994: 一覧をまだ出せない(初回 / 初回失敗後)ときだけ loading / error を示す。
     // 値がある再取得は一覧を保持し、成功時に差し替える(失敗は best effort のまま)。
-    const showsProgress = storeApi.getState().bookmarksPanelState.status !== 'ready';
+    const current = storeApi.getState();
+    const account = current.syncStatus.local_author_pubkey;
+    const showsProgress = current.bookmarksPanelState.status !== 'ready';
+    const cursor = options.preserveCurrent ? current.bookmarksPageRequestCursor : options.cursor ?? null;
+    const before = options.preserveCurrent ? current.bookmarksPageRequestBefore : options.before ?? false;
+    const requestId = ++bookmarkRequestId.current;
     if (showsProgress) setBookmarksPanelState({ status: 'loading', error: null });
+    setBookmarksLoadingPage(true);
     try {
-      const bookmarkedPosts = await api.listBookmarkedPosts();
+      const page = await api.listBookmarkedPostsPage(cursor, before);
+      if (requestId !== bookmarkRequestId.current ||
+        storeApi.getState().syncStatus.local_author_pubkey !== account) return;
       startTransition(() => {
-        setBookmarkedPosts(bookmarkedPosts);
+        setBookmarkedPosts(page.items);
+        setBookmarksNewerCursor(page.newer_cursor);
+        setBookmarksOlderCursor(page.older_cursor);
+        setBookmarksPageRequestCursor(cursor);
+        setBookmarksPageRequestBefore(before);
         setBookmarksPanelState({ status: 'ready', error: null });
       });
     } catch (error) {
-      if (!showsProgress) return;
+      if (!showsProgress || storeApi.getState().syncStatus.local_author_pubkey !== account) return;
       setBookmarksPanelState({
         status: 'error',
         error: messageFromError(error, translate('common:errors.failedToLoadBookmarks')),
       });
+    } finally {
+      if (requestId === bookmarkRequestId.current) setBookmarksLoadingPage(false);
     }
-  }, [api, setBookmarkedPosts, setBookmarksPanelState, storeApi, translate]);
+  }, [api, setBookmarkedPosts, setBookmarksLoadingPage, setBookmarksNewerCursor, setBookmarksOlderCursor, setBookmarksPageRequestCursor, setBookmarksPageRequestBefore, setBookmarksPanelState, storeApi, translate]);
+
+  const navigateBookmarkPage = useCallback(async (before: boolean) => {
+    const current = storeApi.getState();
+    const cursor = before ? current.bookmarksNewerCursor : current.bookmarksOlderCursor;
+    if (!cursor || current.bookmarksLoadingPage) return;
+    await loadBookmarksSection({ cursor, before });
+  }, [loadBookmarksSection, storeApi]);
 
   const loadCommunityIndexCapability = useCallback(async () => {
     const requestId = ++communityNodeRequestId.current;
@@ -610,14 +661,10 @@ export function useDesktopShellSectionLoaders({
     }
     if (activeSettingsSection === 'reactions') {
       try {
-        const [bookmarkedPosts] = await Promise.all([
-          api.listBookmarkedPosts(),
+        await Promise.all([
+          loadBookmarksSection({ preserveCurrent: true }),
           loadReactionCatalogData(),
         ]);
-        startTransition(() => {
-          setBookmarkedPosts(bookmarkedPosts);
-          setBookmarksPanelState({ status: 'ready', error: null });
-        });
       } catch (error) {
         setReactionPanelState({
           status: 'error',
@@ -628,8 +675,7 @@ export function useDesktopShellSectionLoaders({
   }, [
     api,
     loadReactionCatalogData,
-    setBookmarkedPosts,
-    setBookmarksPanelState,
+    loadBookmarksSection,
     loadCommunityIndexCapability,
     setDiscoveryConfig,
     setDiscoveryError,
@@ -678,7 +724,7 @@ export function useDesktopShellSectionLoaders({
         // 非 active な Timeline Column が Bookmarks を表示している場合もロードする(Issue #765)。
         state.workspaceState.columns.some((column) => column.timelineView === 'bookmarks')
       ) {
-        tasks.push(loadBookmarksSection());
+        tasks.push(loadBookmarksSection({ preserveCurrent: true }));
       }
       if (settingsOpen) {
         tasks.push(loadSettingsSection());
@@ -710,6 +756,7 @@ export function useDesktopShellSectionLoaders({
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
+    navigateBookmarkPage,
     loadMessagesSection,
     loadNotificationsSection,
     loadCommunityIndexCapability,

@@ -203,8 +203,30 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn list_bookmarked_posts_page(
+        &self,
+        request: ListBookmarkedPostsRequest,
+    ) -> Result<BookmarkedPostPageView> {
+        self.app_service
+            .list_bookmarked_posts_page(request.cursor.as_ref(), request.before)
+            .await
+    }
+
+    /// Explicit CLI/export listing; UI uses `list_bookmarked_posts_page`.
     pub async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostView>> {
         self.app_service.list_bookmarked_posts().await
+    }
+
+    pub async fn bookmarked_post_ids(
+        &self,
+        request: BookmarkedPostIdsRequest,
+    ) -> Result<Vec<String>> {
+        let ids = request
+            .object_ids
+            .into_iter()
+            .map(EnvelopeId::from)
+            .collect::<Vec<_>>();
+        self.app_service.bookmarked_post_ids(&ids).await
     }
 
     pub async fn resolve_community_index_posts(

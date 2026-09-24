@@ -11,7 +11,7 @@ use kukuri_core::{
 use tokio::sync::RwLock;
 
 use crate::models::{
-    AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkedCustomReactionRow,
+    AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkCursor, BookmarkedCustomReactionRow,
     BookmarkedPostRow, ContentObservationRow, DIRECT_MESSAGE_OUTBOX_PAGE_LIMIT,
     DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
     DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
@@ -35,6 +35,11 @@ type LivePresenceKey = (String, String, String, String);
 /// (expires_at, updated_at)
 type LivePresenceValue = (i64, i64);
 type MemoryReactionProjectionRows = HashMap<(String, String, String), ReactionProjectionRow>;
+#[derive(Default)]
+struct MemoryBookmarkedPosts {
+    rows: HashMap<String, BookmarkedPostRow>,
+    by_bookmarked_at: BTreeSet<(i64, String)>,
+}
 type MemoryDirectMessageRows = HashMap<(String, String), DirectMessageMessageRow>;
 type DirectMessageOutboxPeerKey = (String, i64, String, String);
 type DirectMessageOutboxNewKey = (i64, String, String, String);
@@ -85,7 +90,7 @@ pub struct MemoryStore {
     blob_statuses: Arc<RwLock<HashMap<String, BlobCacheStatus>>>,
     reaction_projection_rows: Arc<RwLock<MemoryReactionProjectionRows>>,
     bookmarked_custom_reactions: Arc<RwLock<HashMap<String, BookmarkedCustomReactionRow>>>,
-    bookmarked_posts: Arc<RwLock<HashMap<String, BookmarkedPostRow>>>,
+    bookmarked_posts: Arc<RwLock<MemoryBookmarkedPosts>>,
     direct_message_conversations: Arc<RwLock<HashMap<String, DirectMessageConversationRow>>>,
     direct_message_rows: Arc<RwLock<MemoryDirectMessageRows>>,
     direct_message_outbox_rows: Arc<RwLock<MemoryDirectMessageOutboxRows>>,

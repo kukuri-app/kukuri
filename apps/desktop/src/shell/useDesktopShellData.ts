@@ -16,7 +16,7 @@ import type {
   PostView,
 } from '@/lib/api';
 
-import { removeRecordEntry, setRecordEntry, updateRecordEntry } from '@/shell/stateUpdates';
+import { removeRecordEntry, setRecordEntry, setTimelineCursorEntry, updateRecordEntry } from '@/shell/stateUpdates';
 import { useConnectivityStatusRefresh } from '@/shell/data/useConnectivityStatusRefresh';
 import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes';
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
@@ -36,6 +36,7 @@ import {
   mergeUniquePosts,
   postIdentityKey,
   uniquePostsByIdentity,
+  windowHeadCursor,
 } from '@/shell/data/timelineMerge';
 import { usePreviewableMediaAttachments } from '@/shell/data/usePreviewableMediaAttachments';
 import {
@@ -138,6 +139,7 @@ export function useDesktopShellData({
 
   const setTimelinesByKey = useDesktopShellFieldSetter('timelinesByKey');
   const setTimelineNextCursorByKey = useDesktopShellFieldSetter('timelineNextCursorByKey');
+  const setTimelineWindowHeadCursorByKey = useDesktopShellFieldSetter('timelineWindowHeadCursorByKey');
   const setTimelineLoadingMoreByKey = useDesktopShellFieldSetter('timelineLoadingMoreByKey');
   const setTimelineUnavailableByKey = useDesktopShellFieldSetter('timelineUnavailableByKey');
   const setPendingTimelineSnapshotsByKey = useDesktopShellFieldSetter(
@@ -177,7 +179,9 @@ export function useDesktopShellData({
   const setTimelineScopeByTopic = useDesktopShellFieldSetter('timelineScopeByTopic');
   const setComposeChannelByTopic = useDesktopShellFieldSetter('composeChannelByTopic');
   const setThreadsById = useDesktopShellFieldSetter('threadsById');
+  const setBookmarkMembershipById = useDesktopShellFieldSetter('bookmarkMembershipById');
   const setThreadNextCursorById = useDesktopShellFieldSetter('threadNextCursorById');
+  const setThreadWindowHeadCursorById = useDesktopShellFieldSetter('threadWindowHeadCursorById');
   const setThreadLoadingMoreById = useDesktopShellFieldSetter('threadLoadingMoreById');
   const setThreadUnavailableById = useDesktopShellFieldSetter('threadUnavailableById');
   const setCommunityNodeStatuses = useDesktopShellFieldSetter('communityNodeStatuses');
@@ -283,6 +287,29 @@ export function useDesktopShellData({
     timelinesByKey,
     workspaceColumns,
   ]);
+  const visibleBookmarkIds = useMemo(() => [
+    ...new Set([...advisoryLookupPosts, ...communityIndexResolvedPosts].map((post) => post.object_id)),
+  ].slice(0, 1600), [advisoryLookupPosts, communityIndexResolvedPosts]);
+  const bookmarkAccountRef = useRef(state.syncStatus.local_author_pubkey);
+  useEffect(() => {
+    let cancelled = false;
+    if (bookmarkAccountRef.current !== state.syncStatus.local_author_pubkey) {
+      bookmarkAccountRef.current = state.syncStatus.local_author_pubkey;
+      setBookmarkMembershipById({});
+    }
+    const pages = Array.from(
+      { length: Math.ceil(visibleBookmarkIds.length / 200) },
+      (_, index) => visibleBookmarkIds.slice(index * 200, (index + 1) * 200)
+    );
+    void Promise.all(pages.map((ids) => api.bookmarkedPostIds(ids))).then((results) => {
+      if (cancelled) return;
+      const found = new Set(results.flat());
+      setBookmarkMembershipById(Object.fromEntries(
+        visibleBookmarkIds.map((id) => [id, found.has(id)])
+      ));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [api, visibleBookmarkIds, setBookmarkMembershipById, state.syncStatus.local_author_pubkey]);
   // 設定・状態の取得に失敗した場合も、手元の状態で確定させる(照会中のまま止めない)。
   const communityNodeConfigLoaded =
     state.communityNodeConfigLoaded || Boolean(state.communityNodeConfigError);
@@ -434,7 +461,8 @@ export function useDesktopShellData({
             pendingItems,
             preserveOlderPages
           )));
-        setTimelineNextCursorByKey(setRecordEntry(key, pendingCursor));
+        setTimelineNextCursorByKey(setTimelineCursorEntry(key, pendingCursor));
+        setTimelineWindowHeadCursorByKey(setRecordEntry(key, null));
         // 読んだ範囲を捨てるときは、保留した先頭のページの数に置き換える(#1239 AC-4、独立監査 B2)。
         if (!preserveOlderPages) {
           setTimelineUnavailableByKey(setRecordEntry(key, pendingUnavailable ?? 0));
@@ -446,6 +474,7 @@ export function useDesktopShellData({
     [
       clearPendingTimeline,
       setTimelineNextCursorByKey,
+      setTimelineWindowHeadCursorByKey,
       setTimelineUnavailableByKey,
       setTimelinesByKey,
       storeApi,
@@ -468,6 +497,13 @@ export function useDesktopShellData({
           : scopeChannelId;
       const timelineScope = privateTimelineScope(selectedChannelId);
       const timelineKey = timelineScopeStorageKey(topic, timelineScope);
+      const timelineHeadCursor = !(requestState.timelinesByKey[timelineKey]?.length)
+        ? requestState.timelineWindowHeadCursorByKey[timelineKey] ?? null : null;
+      const publicTimelineKey = timelineScopeStorageKey(topic, PUBLIC_TIMELINE_SCOPE);
+      const publicHeadCursor = !(requestState.timelinesByKey[publicTimelineKey]?.length)
+        ? requestState.timelineWindowHeadCursorByKey[publicTimelineKey] ?? null : null;
+      const threadHeadCursor = currentThread && !(requestState.threadsById[currentThread]?.length)
+        ? requestState.threadWindowHeadCursorById[currentThread] ?? null : null;
       const requestId = (loadTopicsRequestRef.current.get(timelineKey) ?? 0) + 1;
       loadTopicsRequestRef.current.set(timelineKey, requestId);
 
@@ -477,13 +513,13 @@ export function useDesktopShellData({
         joinedChannelsResult,
         threadViewResult,
       ] = await Promise.allSettled([
-        api.listTimeline(topic, null, VISIBLE_TIMELINE_LIMIT, timelineScope),
+        api.listTimeline(topic, timelineHeadCursor, VISIBLE_TIMELINE_LIMIT, timelineScope),
         selectedChannelId === null
           ? Promise.resolve(null)
-          : api.listTimeline(topic, null, VISIBLE_TIMELINE_LIMIT, PUBLIC_TIMELINE_SCOPE),
+          : api.listTimeline(topic, publicHeadCursor, VISIBLE_TIMELINE_LIMIT, PUBLIC_TIMELINE_SCOPE),
         api.listJoinedPrivateChannels(topic),
         currentThread
-          ? api.listThread(topic, currentThread, null, THREAD_TIMELINE_LIMIT)
+          ? api.listThread(topic, currentThread, threadHeadCursor, THREAD_TIMELINE_LIMIT)
           : Promise.resolve(null),
       ]);
 
@@ -543,7 +579,10 @@ export function useDesktopShellData({
                 normalizedTimelineItems,
                 preserveTimelinePages
               )));
-            setTimelineNextCursorByKey(setRecordEntry(timelineKey, resolvedTimelineCursor));
+            setTimelineNextCursorByKey(setTimelineCursorEntry(timelineKey, resolvedTimelineCursor));
+            if (!preserveTimelinePages) {
+              setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey, timelineHeadCursor));
+            }
             // 読んだ範囲を残すときは、その範囲の数も残す(#1239 AC-4)。
             if (!preserveTimelinePages) {
               setTimelineUnavailableByKey(
@@ -556,7 +595,6 @@ export function useDesktopShellData({
 
         if (publicTimelineResult.status === 'fulfilled' && publicTimelineResult.value) {
           const publicTimeline = publicTimelineResult.value;
-          const publicTimelineKey = timelineScopeStorageKey(topic, PUBLIC_TIMELINE_SCOPE);
           const baselinePublicTimeline =
             currentState.timelinesByKey[publicTimelineKey] ?? EMPTY_POSTS;
           // 公開の scope の列も、選択中の scope と同じ判定で古い行と続きの位置を残す(#1239、#1274)。
@@ -578,8 +616,11 @@ export function useDesktopShellData({
               preservePublicTimelinePages
             )));
           setTimelineNextCursorByKey(
-            setRecordEntry(publicTimelineKey, resolvedPublicTimelineCursor)
+            setTimelineCursorEntry(publicTimelineKey, resolvedPublicTimelineCursor)
           );
+          if (!preservePublicTimelinePages) {
+            setTimelineWindowHeadCursorByKey(setRecordEntry(publicTimelineKey, publicHeadCursor));
+          }
           if (!preservePublicTimelinePages) {
             setTimelineUnavailableByKey(
               setRecordEntry(publicTimelineKey, publicTimeline.unavailable_count ?? 0)
@@ -603,7 +644,9 @@ export function useDesktopShellData({
             }));
         }
 
-        if (currentThread) {
+        if (currentThread && !(mode === 'buffer' &&
+          currentState.threadWindowHeadCursorById[currentThread] &&
+          (currentState.threadsById[currentThread]?.length ?? 0) > 0)) {
           if (threadViewResult.status === 'fulfilled') {
             const threadView = threadViewResult.value;
             const incomingThreadItems = threadView?.items ?? [];
@@ -628,7 +671,10 @@ export function useDesktopShellData({
                 preserveThreadPages
               ),
             }));
-            setThreadNextCursorById(setRecordEntry(currentThread, resolvedThreadCursor));
+            setThreadNextCursorById(setTimelineCursorEntry(currentThread, resolvedThreadCursor));
+            if (!preserveThreadPages) {
+              setThreadWindowHeadCursorById(setRecordEntry(currentThread, threadHeadCursor));
+            }
             if (!preserveThreadPages) {
               setThreadUnavailableById(
                 setRecordEntry(currentThread, threadView?.unavailable_count ?? 0)
@@ -657,8 +703,10 @@ export function useDesktopShellData({
       setPendingTimelineUnavailableByKey,
       setThreadsById,
       setThreadNextCursorById,
+      setThreadWindowHeadCursorById,
       setThreadUnavailableById,
       setTimelineNextCursorByKey,
+      setTimelineWindowHeadCursorByKey,
       setTimelineUnavailableByKey,
       setTimelinesByKey,
       storeApi,
@@ -690,8 +738,13 @@ export function useDesktopShellData({
           timelineScope
         );
         startTransition(() => {
-          setTimelinesByKey(updateRecordEntry(timelineKey, (prev) => mergeUniquePosts(prev ?? EMPTY_POSTS, timeline.items)));
-          setTimelineNextCursorByKey(setRecordEntry(timelineKey, timeline.next_cursor ?? null));
+          const latest = storeApi.getState();
+          const current = latest.timelinesByKey[timelineKey] ?? EMPTY_POSTS;
+          const merged = mergeUniquePosts(current, timeline.items);
+          setTimelinesByKey(setRecordEntry(timelineKey, merged));
+          setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey,
+            windowHeadCursor(current, merged, latest.timelineWindowHeadCursorByKey[timelineKey] ?? null)));
+          setTimelineNextCursorByKey(setTimelineCursorEntry(timelineKey, timeline.next_cursor ?? null));
           setTimelineUnavailableByKey(setRecordEntry(timelineKey, timeline.unavailable_count ?? 0));
         });
       } finally {
@@ -704,6 +757,7 @@ export function useDesktopShellData({
       setTimelineNextCursorByKey,
       setTimelineUnavailableByKey,
       setTimelinesByKey,
+      setTimelineWindowHeadCursorByKey,
       storeApi,
     ]
   );
@@ -719,11 +773,13 @@ export function useDesktopShellData({
       try {
         const threadView = await api.listThread(topic, threadId, cursor, THREAD_TIMELINE_LIMIT);
         startTransition(() => {
-          setThreadsById((current) => ({
-            ...current,
-            [threadId]: mergeUniquePosts(current[threadId] ?? [], threadView.items),
-          }));
-          setThreadNextCursorById(setRecordEntry(threadId, threadView.next_cursor ?? null));
+          const latest = storeApi.getState();
+          const current = latest.threadsById[threadId] ?? EMPTY_POSTS;
+          const merged = mergeUniquePosts(current, threadView.items);
+          setThreadsById(setRecordEntry(threadId, merged));
+          setThreadWindowHeadCursorById(setRecordEntry(threadId,
+            windowHeadCursor(current, merged, latest.threadWindowHeadCursorById[threadId] ?? null)));
+          setThreadNextCursorById(setTimelineCursorEntry(threadId, threadView.next_cursor ?? null));
           setThreadUnavailableById(setRecordEntry(threadId, threadView.unavailable_count ?? 0));
         });
       } finally {
@@ -735,6 +791,7 @@ export function useDesktopShellData({
       setThreadsById,
       setThreadLoadingMoreById,
       setThreadNextCursorById,
+      setThreadWindowHeadCursorById,
       setThreadUnavailableById,
       storeApi,
     ]
@@ -780,6 +837,7 @@ export function useDesktopShellData({
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
+    navigateBookmarkPage,
     loadMessagesSection,
     loadCommunityIndexCapability,
   } = useDesktopShellSectionLoaders({
@@ -789,6 +847,39 @@ export function useDesktopShellData({
     storeApi,
     translate,
   });
+  const visibleListLoads = useRef(new Set<string>());
+  useEffect(() => {
+    const visible = new Set(state.visibleListColumnIds);
+    for (const id of visibleListLoads.current) {
+      if (!visible.has(id)) visibleListLoads.current.delete(id);
+    }
+    for (const column of state.workspaceState.columns) {
+      if (!visible.has(column.id) || visibleListLoads.current.has(column.id)) continue;
+      visibleListLoads.current.add(column.id);
+      if (column.id === state.workspaceState.activeColumnId) continue;
+      if (column.kind === 'timeline' && column.timelineView === 'bookmarks') {
+        if (!storeApi.getState().bookmarkedPosts.length) void loadBookmarksSection({ preserveCurrent: true });
+      } else if (column.kind === 'timeline' && column.scope) {
+        const key = timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId);
+        if (!storeApi.getState().timelinesByKey[key]?.length) {
+          void refreshVisibleShellData(column.scope.topicId, null, 'apply', column.scope.channelId);
+        }
+      } else if (column.kind === 'thread' && column.entityId && column.scope) {
+        if (!storeApi.getState().threadsById[column.entityId]?.length) {
+          void refreshVisibleShellData(column.scope.topicId, column.entityId, 'apply', column.scope.channelId);
+        }
+      } else if (column.kind === 'profile') {
+        if (column.entityId) {
+          if (!storeApi.getState().authorTimelinesByPubkey[column.entityId]?.length) {
+            void loadAuthorSection(column.entityId);
+          }
+        } else if (!storeApi.getState().profileHasLoaded || storeApi.getState().profileTimelineEvicted) {
+          void loadProfileSection();
+        }
+      }
+    }
+  }, [state.visibleListColumnIds, state.workspaceState.columns, state.workspaceState.activeColumnId, storeApi,
+    loadBookmarksSection, loadAuthorSection, loadProfileSection, refreshVisibleShellData]);
   useSessionProjectionRefresh(storeApi, loadLiveSection, loadGameSection, visibleColumnIdsRef);
 
   const runLoadTopics = useCallback(
@@ -966,9 +1057,11 @@ export function useDesktopShellData({
     refreshVisibleTimelineAfterPublish,
     refreshTimelineFeed,
     loadProfileSection,
+    loadAuthorSection,
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
+    navigateBookmarkPage,
     applyPendingTimeline,
     loadReactionCatalogData,
     loadNotificationsSection,

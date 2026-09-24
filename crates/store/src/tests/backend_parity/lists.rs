@@ -176,7 +176,7 @@ async fn bookmark_scenario<S: Store + ProjectionStore>(store: &S) -> BookmarkSce
     .await
     .expect("put custom reaction update");
 
-    let posts_initial = ReactionBookmarkStore::list_bookmarked_posts(store)
+    let posts_initial = ReactionBookmarkStore::list_bookmarked_posts_page(store, None, false)
         .await
         .expect("list bookmarked posts initial");
     let reactions_initial = ReactionBookmarkStore::list_bookmarked_custom_reactions(store)
@@ -195,7 +195,7 @@ async fn bookmark_scenario<S: Store + ProjectionStore>(store: &S) -> BookmarkSce
 
     BookmarkScenarioResult {
         posts_initial,
-        posts_after_remove: ReactionBookmarkStore::list_bookmarked_posts(store)
+        posts_after_remove: ReactionBookmarkStore::list_bookmarked_posts_page(store, None, false)
             .await
             .expect("list bookmarked posts after remove"),
         reactions_initial,
@@ -252,6 +252,74 @@ async fn bookmarks_match_between_backends() {
             .collect::<Vec<_>>(),
         vec!["asset-normal".to_string(), "asset-blank".to_string()],
     );
+}
+
+async fn bookmark_cursor_scenario<S: Store + ProjectionStore>(
+    store: &S,
+) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    for index in 0..30 {
+        ReactionBookmarkStore::put_bookmarked_post(
+            store,
+            parity_bookmarked_post(&format!("bp-{index:02}"), index),
+        )
+        .await
+        .expect("put bookmark");
+    }
+    let first = ReactionBookmarkStore::list_bookmarked_posts_page(store, None, false)
+        .await
+        .expect("first bookmark page");
+    let older = ReactionBookmarkStore::list_bookmarked_posts_page(
+        store,
+        Some(&BookmarkCursor::from(&first[19])),
+        false,
+    )
+    .await
+    .expect("older bookmark page");
+    let newer = ReactionBookmarkStore::list_bookmarked_posts_page(
+        store,
+        Some(&BookmarkCursor::from(&older[0])),
+        true,
+    )
+    .await
+    .expect("newer bookmark page");
+    let selected = ReactionBookmarkStore::bookmarked_post_ids(
+        store,
+        &[EnvelopeId::from("bp-00"), EnvelopeId::from("missing")],
+    )
+    .await
+    .expect("bounded bookmark membership");
+    let ids = |rows: &[BookmarkedPostRow]| {
+        rows.iter()
+            .map(|row| row.source_object_id.as_str().to_owned())
+            .collect()
+    };
+    (
+        ids(&first),
+        ids(&older),
+        ids(&newer),
+        selected.iter().map(|id| id.as_str().to_owned()).collect(),
+    )
+}
+
+#[tokio::test]
+async fn bookmarked_posts_seek_both_directions_without_loading_the_history() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let memory = MemoryStore::default();
+    let expected = bookmark_cursor_scenario(&sqlite).await;
+    assert_eq!(bookmark_cursor_scenario(&memory).await, expected);
+    assert_eq!(expected.0.len(), 21);
+    assert_eq!(expected.0[0], "bp-29");
+    assert_eq!(expected.0[19], "bp-10");
+    assert_eq!(
+        expected.1,
+        (0..10)
+            .rev()
+            .map(|index| format!("bp-{index:02}"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(expected.2.len(), 20);
+    assert_eq!(expected.2[0], "bp-10");
+    assert_eq!(expected.3, vec!["bp-00"]);
 }
 
 #[derive(Debug, PartialEq)]

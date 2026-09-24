@@ -9,6 +9,8 @@ import type {
   BlobMediaPayload,
   ContentDisplaySettings,
   BookmarkedPostView,
+  BookmarkedPostPageView,
+  BookmarkCursor,
   ChannelAccessTokenExport,
   ChannelAccessTokenPreview,
   ChannelAudienceKind,
@@ -292,7 +294,8 @@ export interface DesktopApi {
   listBookmarkedCustomReactions(): Promise<BookmarkedCustomReactionView[]>;
   bookmarkCustomReaction(asset: CustomReactionAssetView): Promise<BookmarkedCustomReactionView>;
   removeBookmarkedCustomReaction(assetId: string): Promise<void>;
-  listBookmarkedPosts(): Promise<BookmarkedPostView[]>;
+  listBookmarkedPostsPage(cursor?: BookmarkCursor | null, before?: boolean): Promise<BookmarkedPostPageView>;
+  bookmarkedPostIds(objectIds: string[]): Promise<string[]>;
   bookmarkPost(
     topic: string,
     objectId: string,

@@ -1,7 +1,9 @@
 use ::tracing::{info, warn};
 use kukuri_desktop_runtime::{
-    BookmarkPostRequest, CreatePostRequest, CreateRepostRequest, GetBlobMediaRequest,
-    GetBlobPreviewRequest, ListProfileTimelineRequest, ListThreadRequest, ListTimelineRequest,
+    BookmarkedPostIdsRequest, BookmarkPostRequest, CreatePostRequest, CreateRepostRequest,
+    GetBlobMediaRequest,
+    GetBlobPreviewRequest, ListBookmarkedPostsRequest, ListProfileTimelineRequest,
+    ListThreadRequest, ListTimelineRequest,
     RemoveBookmarkedPostRequest, ResolveCommunityIndexPostsRequest, WithdrawPostRequest,
     RetryPostElementsRequest,
 };
@@ -45,14 +47,19 @@ pub async fn create_repost(
 }
 
 #[tauri::command]
-pub async fn list_bookmarked_posts(
+pub async fn list_bookmarked_posts_page(
     state: tauri::State<'_, DesktopState>,
-) -> Result<Vec<kukuri_app_api::BookmarkedPostView>, CommandError> {
-    state
-        .runtime()
-        .list_bookmarked_posts()
-        .await
-        .map_err(map_error)
+    request: ListBookmarkedPostsRequest,
+) -> Result<kukuri_app_api::BookmarkedPostPageView, CommandError> {
+    state.runtime().list_bookmarked_posts_page(request).await.map_err(map_error)
+}
+
+#[tauri::command]
+pub async fn bookmarked_post_ids(
+    state: tauri::State<'_, DesktopState>,
+    request: BookmarkedPostIdsRequest,
+) -> Result<Vec<String>, CommandError> {
+    state.runtime().bookmarked_post_ids(request).await.map_err(map_error)
 }
 
 #[tauri::command]

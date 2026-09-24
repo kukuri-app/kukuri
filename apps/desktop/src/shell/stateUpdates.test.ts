@@ -6,10 +6,18 @@ import {
   panelReady,
   removeRecordEntry,
   setRecordEntry,
+  setTimelineCursorEntry,
   updateRecordEntry,
 } from '@/shell/stateUpdates';
 
 describe('stateUpdates', () => {
+  it('内容が同じcursorなら表示状態を更新しない', () => {
+    const stored = { created_at: 10, object_id: 'post-1' };
+    const current = { topic: stored };
+    expect(setTimelineCursorEntry('topic', { ...stored })(current)).toBe(current);
+    expect(setTimelineCursorEntry('topic', { created_at: 9, object_id: 'post-0' })(current))
+      .not.toBe(current);
+  });
   it('setRecordEntry は変更時だけ新オブジェクトを返す', () => {
     const current = { a: 1, b: 2 };
     expect(setRecordEntry('a', 1)(current)).toBe(current);

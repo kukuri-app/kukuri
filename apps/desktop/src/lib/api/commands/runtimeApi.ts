@@ -5,6 +5,8 @@ import type {
   BlobMediaPayload,
   BookmarkedCustomReactionView,
   BookmarkedPostView,
+  BookmarkedPostPageView,
+  BookmarkCursor,
   ChannelAccessTokenExport,
   ChannelAccessTokenPreview,
   CommunityNodeConfig,
@@ -73,6 +75,8 @@ import type {
   AuthorRequest,
   BookmarkCustomReactionRequest,
   BookmarkPostRequest,
+  BookmarkedPostIdsRequest,
+  ListBookmarkedPostsRequest,
   CommunityNodeTargetRequest,
   FetchCommunityNodePoliciesRequest,
   CloseDomeHostingRequest,
@@ -258,8 +262,15 @@ export const runtimeApi: DesktopApi = {
       } satisfies RemoveBookmarkedCustomReactionRequest,
     });
   }),
-  listBookmarkedPosts: command('listBookmarkedPosts', async () => {
-    return invokeDesktop<BookmarkedPostView[]>('list_bookmarked_posts');
+  listBookmarkedPostsPage: command('listBookmarkedPostsPage', async (cursor?: BookmarkCursor | null, before = false) => {
+    return invokeDesktop<BookmarkedPostPageView>('list_bookmarked_posts_page', {
+      request: { cursor: cursor ?? null, before } satisfies ListBookmarkedPostsRequest,
+    });
+  }),
+  bookmarkedPostIds: command('bookmarkedPostIds', async (objectIds: string[]) => {
+    return invokeDesktop<string[]>('bookmarked_post_ids', {
+      request: { object_ids: objectIds } satisfies BookmarkedPostIdsRequest,
+    });
   }),
   bookmarkPost: command('bookmarkPost', async (topic, objectId, channelRef = { kind: 'public' }) => {
     return invokeDesktop<BookmarkedPostView>('bookmark_post', {

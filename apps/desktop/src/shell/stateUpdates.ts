@@ -1,4 +1,16 @@
 import type { AsyncPanelState } from '@/shell/store';
+import type { TimelineCursor } from '@/lib/api';
+
+export function sameTimelineCursor(left: TimelineCursor | null | undefined,
+  right: TimelineCursor | null | undefined): boolean {
+  return left?.created_at === right?.created_at && left?.object_id === right?.object_id;
+}
+
+export function setTimelineCursorEntry(key: string, value: TimelineCursor | null) {
+  return (current: Record<string, TimelineCursor | null>) =>
+    Object.prototype.hasOwnProperty.call(current, key) && sameTimelineCursor(current[key], value)
+      ? current : { ...current, [key]: value };
+}
 
 // Record 状態(`Record<string, V>`)の 1 キー更新・削除の定型(WP-H6 PR1)。
 // shell の状態更新はこの形が大半で、各所で spread / delete を手書きしていた。

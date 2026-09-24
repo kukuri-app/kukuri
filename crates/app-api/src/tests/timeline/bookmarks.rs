@@ -1,6 +1,85 @@
 use super::super::*;
 
 #[tokio::test]
+async fn bookmark_pages_can_seek_back_without_loading_every_saved_post() {
+    let (app, _, _, _) = local_app_with_memory_services();
+    let topic = "kukuri:topic:bookmark-pages";
+    let mut ids = Vec::new();
+    for index in 0..30 {
+        let id = app
+            .create_post(topic, &format!("saved post {index}"), None)
+            .await
+            .expect("create post");
+        app.bookmark_post(topic, id.as_str())
+            .await
+            .expect("bookmark post");
+        ids.push(id);
+    }
+    let first = app
+        .list_bookmarked_posts_page(None, false)
+        .await
+        .expect("first page");
+    assert_eq!(first.items.len(), 20);
+    assert!(first.newer_cursor.is_none());
+    let older = app
+        .list_bookmarked_posts_page(first.older_cursor.as_ref(), false)
+        .await
+        .expect("older page");
+    assert_eq!(older.items.len(), 10);
+    assert!(older.older_cursor.is_none());
+    let newer = app
+        .list_bookmarked_posts_page(older.newer_cursor.as_ref(), true)
+        .await
+        .expect("newer page");
+    assert_eq!(newer.items.len(), 20);
+    assert_eq!(newer.items, first.items);
+    assert_eq!(
+        app.bookmarked_post_ids(&[
+            EnvelopeId::from(ids[0].clone()),
+            EnvelopeId::from("missing")
+        ])
+        .await
+        .expect("membership"),
+        vec![ids[0].clone()],
+    );
+}
+
+#[tokio::test]
+async fn removing_the_last_bookmark_does_not_reopen_an_empty_page_on_refresh() {
+    let (app, _, _, _) = local_app_with_memory_services();
+    let topic = "kukuri:topic:bookmark-last-page";
+    for index in 0..21 {
+        let id = app
+            .create_post(topic, &format!("saved post {index}"), None)
+            .await
+            .expect("create post");
+        app.bookmark_post(topic, id.as_str())
+            .await
+            .expect("bookmark post");
+    }
+    let first = app
+        .list_bookmarked_posts_page(None, false)
+        .await
+        .expect("first page");
+    let last = app
+        .list_bookmarked_posts_page(first.older_cursor.as_ref(), false)
+        .await
+        .expect("last page");
+    assert_eq!(last.items.len(), 1);
+    app.remove_bookmarked_post(last.items[0].post.object_id.as_str())
+        .await
+        .expect("remove last bookmark");
+    for _ in 0..2 {
+        let previous = app
+            .list_bookmarked_posts_page(last.newer_cursor.as_ref(), true)
+            .await
+            .expect("previous page after removal");
+        assert_eq!(previous.items.len(), 20);
+        assert!(previous.older_cursor.is_none());
+    }
+}
+
+#[tokio::test]
 async fn bookmark_hydrates_a_missing_target_projection() {
     let (app, store, _, _) = local_app_with_memory_services();
     let topic = "kukuri:topic:bookmark-hydration";
@@ -72,9 +151,10 @@ async fn local_bookmarked_posts_restore_after_restart() {
         generate_keys(),
     );
     let bookmarks = reopened_app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("list bookmarked posts after restart");
+        .expect("list bookmarked posts after restart")
+        .items;
 
     assert_eq!(bookmarks.len(), 1);
     assert_eq!(bookmarks[0].post.object_id, object_id);
@@ -111,9 +191,10 @@ async fn bookmark_private_post_remains_local_only_and_readable_after_access_loss
         .expect("clear object projections");
 
     let bookmarks = app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("list bookmarked private posts");
+        .expect("list bookmarked private posts")
+        .items;
 
     assert_eq!(bookmarks.len(), 1);
     assert_eq!(bookmarks[0].post.object_id, object_id);
@@ -141,7 +222,11 @@ async fn unbookmark_removes_only_local_bookmark_record() {
         .await
         .expect("remove bookmark");
 
-    let bookmarks = app.list_bookmarked_posts().await.expect("list bookmarks");
+    let bookmarks = app
+        .list_bookmarked_posts_page(None, false)
+        .await
+        .expect("list bookmarks")
+        .items;
     let timeline = app
         .list_timeline(topic, None, 20)
         .await
@@ -183,7 +268,11 @@ async fn bookmarked_posts_are_sorted_by_bookmarked_at_desc() {
         .await
         .expect("bookmark second post");
 
-    let bookmarks = app.list_bookmarked_posts().await.expect("list bookmarks");
+    let bookmarks = app
+        .list_bookmarked_posts_page(None, false)
+        .await
+        .expect("list bookmarks")
+        .items;
 
     assert_eq!(bookmarks.len(), 2);
     assert_eq!(bookmarks[0].post.object_id, second_id);
@@ -218,9 +307,10 @@ async fn bookmarked_repost_renders_from_saved_snapshot_without_source_timeline_h
         .expect("clear projections");
 
     let bookmarks = app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("list bookmarked reposts");
+        .expect("list bookmarked reposts")
+        .items;
 
     assert_eq!(bookmarks.len(), 1);
     assert_eq!(bookmarks[0].post.object_id, repost_id);
@@ -302,13 +392,15 @@ async fn bookmarks_do_not_sync_between_apps() {
         .expect("bookmark post on app a");
 
     let bookmarks_a = app_a
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("list bookmarks on app a");
+        .expect("list bookmarks on app a")
+        .items;
     let bookmarks_b = app_b
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("list bookmarks on app b");
+        .expect("list bookmarks on app b")
+        .items;
 
     assert_eq!(bookmarks_a.len(), 1);
     assert_eq!(bookmarks_a[0].post.object_id, object_id);

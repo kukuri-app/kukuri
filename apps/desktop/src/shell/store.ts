@@ -37,6 +37,8 @@ import {
   createInitialReactionsBookmarksSlice,
 } from '@/shell/slices/reactionsBookmarks';
 import { type TimelineSliceState, createInitialTimelineSlice } from '@/shell/slices/timeline';
+import { MAX_VISIBLE_POSTS } from '@/shell/pagination';
+import { timelineStorageKeyForChannel } from '@/shell/slices/shared';
 import {
   type WorkspaceSliceState,
   createInitialWorkspaceSlice,
@@ -151,6 +153,98 @@ function withCommunityIndexSelection(
   };
 }
 
+function boundVisibleLists(
+  current: DesktopShellStore,
+  patch: Partial<DesktopShellState>
+): Partial<DesktopShellState> {
+  const fields = ['timelinesByKey', 'threadsById', 'authorTimelinesByPubkey',
+    'profileTimeline', 'selectedAuthorTimeline', 'bookmarkedPosts'] as const;
+  if (!('workspaceState' in patch) && !('visibleListColumnIds' in patch) &&
+    !fields.some((field) => field in patch)) return patch;
+  const next = { ...current, ...patch };
+  const columns = next.workspaceState.columns;
+  const active = columns.find((column) => column.id === next.workspaceState.activeColumnId);
+  const visible = new Set(next.visibleListColumnIds.slice(0, 8));
+  visible.add(next.workspaceState.activeColumnId);
+  const eligible = new Set<string>();
+  const preferred = new Set<string>();
+  const include = (id: string, columnId: string) => {
+    eligible.add(id);
+    if (visible.has(columnId)) preferred.add(id);
+  };
+  for (const column of columns) {
+    if (column.kind === 'timeline' && column.scope) {
+      include(`timeline:${timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId)}`, column.id);
+      include(`timeline:${timelineStorageKeyForChannel(column.scope.topicId, null)}`, column.id);
+      if (column.timelineView === 'bookmarks') include('bookmarks', column.id);
+    }
+    if (column.kind === 'thread' && column.entityId) include(`thread:${column.entityId}`, column.id);
+    if (column.kind === 'profile') {
+      include(column.entityId ? `author:${column.entityId}` : 'profile', column.id);
+    }
+  }
+  if (next.selectedThread) eligible.add(`thread:${next.selectedThread}`);
+  if (next.selectedAuthorPubkey) eligible.add(`author:${next.selectedAuthorPubkey}`);
+  if (next.shellChromeState.settingsOpen && next.shellChromeState.activeSettingsSection === 'reactions') {
+    eligible.add('bookmarks');
+  }
+  const activeId = active?.kind === 'timeline'
+    ? active.timelineView === 'bookmarks' ? 'bookmarks'
+      : active.scope ? `timeline:${timelineStorageKeyForChannel(active.scope.topicId, active.scope.channelId)}` : null
+    : active?.kind === 'thread' ? `thread:${active.entityId}`
+      : active?.kind === 'profile' ? active.entityId ? `author:${active.entityId}` : 'profile'
+        : null;
+  type Window = { id: string; rows: unknown[]; priority: number };
+  const windows: Window[] = [];
+  const add = (id: string, rows: unknown[], changed: boolean) => {
+    if (rows.length && (!('workspaceState' in patch) && !('visibleListColumnIds' in patch) || eligible.has(id))) {
+      windows.push({ id, rows, priority: (id === activeId ? 4 : preferred.has(id) ? 2 : 0) + (changed ? 1 : 0) });
+    }
+  };
+  for (const [key, rows] of Object.entries(next.timelinesByKey)) {
+    add(`timeline:${key}`, rows, next.timelinesByKey[key] !== current.timelinesByKey[key]);
+  }
+  for (const [key, rows] of Object.entries(next.threadsById)) {
+    add(`thread:${key}`, rows, next.threadsById[key] !== current.threadsById[key]);
+  }
+  for (const [key, rows] of Object.entries(next.authorTimelinesByPubkey)) {
+    add(`author:${key}`, rows, next.authorTimelinesByPubkey[key] !== current.authorTimelinesByPubkey[key]);
+  }
+  if (next.selectedAuthorPubkey && !next.authorTimelinesByPubkey[next.selectedAuthorPubkey]) {
+    add(`author:${next.selectedAuthorPubkey}`, next.selectedAuthorTimeline,
+      next.selectedAuthorTimeline !== current.selectedAuthorTimeline);
+  }
+  add('profile', next.profileTimeline, next.profileTimeline !== current.profileTimeline);
+  add('bookmarks', next.bookmarkedPosts, next.bookmarkedPosts !== current.bookmarkedPosts);
+  windows.sort((left, right) => right.priority - left.priority);
+  const kept = new Set(windows.slice(0, 8).map((window) => window.id));
+  const trim = <T,>(rows: T[]) => rows.length > MAX_VISIBLE_POSTS ? rows.slice(0, MAX_VISIBLE_POSTS) : rows;
+  const record = <T,>(rows: Record<string, T[]>, prefix: string) => Object.fromEntries(
+    Object.entries(rows).filter(([key, value]) => !value.length || kept.has(`${prefix}:${key}`))
+      .map(([key, value]) => [key, trim(value)])
+  ) as Record<string, T[]>;
+  const authors = record(next.authorTimelinesByPubkey, 'author');
+  const pendingTimelineSnapshotsByKey = Object.fromEntries(
+    Object.entries(next.pendingTimelineSnapshotsByKey)
+      .filter(([key]) => kept.has(`timeline:${key}`))
+      .map(([key, rows]) => [key, trim(rows)])
+  );
+  return {
+    ...patch,
+    timelinesByKey: record(next.timelinesByKey, 'timeline'),
+    pendingTimelineSnapshotsByKey,
+    threadsById: record(next.threadsById, 'thread'),
+    authorTimelinesByPubkey: authors,
+    profileTimeline: kept.has('profile') ? trim(next.profileTimeline) : [],
+    profileTimelineEvicted: !kept.has('profile') && next.profileTimeline.length > 0
+      ? true : 'profileTimeline' in patch ? false : next.profileTimelineEvicted,
+    selectedAuthorTimeline: next.selectedAuthorPubkey
+      ? authors[next.selectedAuthorPubkey] ?? (kept.has(`author:${next.selectedAuthorPubkey}`)
+        ? trim(next.selectedAuthorTimeline) : []) : [],
+    bookmarkedPosts: kept.has('bookmarks') ? next.bookmarkedPosts.slice(0, 20) : [],
+  };
+}
+
 export function createDesktopShellStore(options: CreateDesktopShellStoreOptions = {}) {
   const initialState = createInitialShellState();
   const workspaceState = options.workspaceStorage
@@ -176,7 +270,7 @@ export function createDesktopShellStore(options: CreateDesktopShellStoreOptions 
     savedWorkspaceLayouts,
     columnDraftsByKey,
     communityIndexNodePreference,
-    patchState: (patch) => set((current) => withCommunityIndexSelection(current, patch)),
+    patchState: (patch) => set((current) => boundVisibleLists(current, withCommunityIndexSelection(current, patch))),
     resetState: () => set(createInitialShellState()),
     setField: (key, value) =>
       set((current) => {
@@ -189,9 +283,9 @@ export function createDesktopShellStore(options: CreateDesktopShellStoreOptions 
         if (Object.is(current[key], nextValue)) {
           return current;
         }
-        return withCommunityIndexSelection(current, {
+        return boundVisibleLists(current, withCommunityIndexSelection(current, {
           [key]: nextValue,
-        });
+        }));
       }),
   }));
 }

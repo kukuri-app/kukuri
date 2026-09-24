@@ -33,10 +33,10 @@ fn export_ipc_types() {
         AcceptDomeConnectionProposalRequest, AccountKeyExport, AccountKeyImportPreview,
         AccountRecord, AccountsSnapshot, AuthorRequest, AuthorTrustGate, AuthorTrustGateRequest,
         AuthorTrustGateResult, BookmarkCustomReactionRequest, BookmarkPostRequest,
-        CloseDomeHostingRequest, CommitDomeLayoutRequest, CommitDomeTransitionRequest,
-        CommunityNodeAdmissionRejection, CommunityNodeAdmissionRejectionCode,
-        CommunityNodeAuthState, CommunityNodeAuthorityScope, CommunityNodeCapabilityScope,
-        CommunityNodeConfig, CommunityNodeConsentDocumentRef,
+        BookmarkedPostIdsRequest, CloseDomeHostingRequest, CommitDomeLayoutRequest,
+        CommitDomeTransitionRequest, CommunityNodeAdmissionRejection,
+        CommunityNodeAdmissionRejectionCode, CommunityNodeAuthState, CommunityNodeAuthorityScope,
+        CommunityNodeCapabilityScope, CommunityNodeConfig, CommunityNodeConsentDocumentRef,
         CommunityNodeContentAdvisoryLookupError, CommunityNodeContentAdvisoryLookupRequest,
         CommunityNodeContentAdvisoryLookupResult, CommunityNodeContentAdvisoryNodeResult,
         CommunityNodeIndexQueryError, CommunityNodeIndexQueryRequest, CommunityNodeIndexingRequest,
@@ -64,7 +64,7 @@ fn export_ipc_types() {
         ImportFriendPlusShareRequest, ImportMetaverseRoomAssetRequest, ImportPeerTicketRequest,
         ImportPrivateChannelInviteRequest, IndexEntryView, IndexQueryResponse, IndexScopeKind,
         IndexingRequestView, IndexingStatusResponse, IndexingTargetStatus,
-        LeavePrivateChannelRequest, ListDirectMessageMessagesRequest,
+        LeavePrivateChannelRequest, ListBookmarkedPostsRequest, ListDirectMessageMessagesRequest,
         ListDomeConnectionTopologyRequest, ListGameRoomsRequest, ListJoinedPrivateChannelsRequest,
         ListLiveSessionsRequest, ListMetaverseRoomEventsRequest, ListProfileTimelineRequest,
         ListRecentReactionsRequest, ListSocialConnectionsRequest, ListThreadRequest,
@@ -121,7 +121,7 @@ fn export_ipc_types() {
         PlayerResourceBudget, PrivateChannelInvitePreview, Profile, Pubkey, SharedRoomObjectV1,
         SpatialContextV1, TimelineScope, TopicId,
     };
-    use kukuri_store::TimelineCursor;
+    use kukuri_store::{BookmarkCursor, TimelineCursor};
     use kukuri_transport::{ConnectMode, ConnectionPath, DiscoveryMode, SeedPeer};
 
     let cfg = ts_rs::Config::from_env();
@@ -136,6 +136,7 @@ fn export_ipc_types() {
         kukuri_app_api::PendingDomeDeletionView,
         kukuri_app_api::DeleteDomeView,
         TimelineCursor,
+        BookmarkCursor,
         ChannelAudienceKind,
         ChannelSharingState,
         DiscoveryMode,
@@ -163,6 +164,7 @@ fn export_ipc_types() {
         PostWithdrawalView,
         PostView,
         BookmarkedPostView,
+        BookmarkedPostPageView,
         AuthorSocialView,
         DirectMessageStatusView,
         DirectMessageTopicStatusView,
@@ -369,6 +371,8 @@ fn export_ipc_types() {
         BookmarkCustomReactionRequest,
         RemoveBookmarkedCustomReactionRequest,
         BookmarkPostRequest,
+        BookmarkedPostIdsRequest,
+        ListBookmarkedPostsRequest,
         ResolveCommunityIndexPostsRequest,
         RemoveBookmarkedPostRequest,
         ListRecentReactionsRequest,

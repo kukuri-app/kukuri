@@ -102,6 +102,7 @@ export type DesktopShellPrimarySurfaceProps = {
   openExploreSection?: () => void;
   selectTimelineView?: (column: ColumnState, view: ColumnTimelineView) => void;
   retryBookmarks?: () => void;
+  navigateBookmarkPage?: (before: boolean) => Promise<void>;
   requestIndexing?: (target: CommunityIndexingTarget) => void;
   communityNodePanelView?: CommunityNodePanelView;
   onFetchCommunityNodeConsents?: FetchCommunityNodePolicyView;
@@ -171,6 +172,7 @@ export function DesktopShellPrimarySurface({
   openExploreSection,
   selectTimelineView,
   retryBookmarks,
+  navigateBookmarkPage,
   requestIndexing,
   communityNodePanelView,
   onFetchCommunityNodeConsents,
@@ -215,7 +217,11 @@ export function DesktopShellPrimarySurface({
 }: DesktopShellPrimarySurfaceProps) {
   const {
     bookmarkedPosts,
+    bookmarkMembershipById,
     bookmarksPanelState,
+    bookmarksNewerCursor,
+    bookmarksOlderCursor,
+    bookmarksLoadingPage,
     bookmarkedReactionAssets,
     knownAuthorsByPubkey,
     gameCreatePending,
@@ -246,6 +252,7 @@ export function DesktopShellPrimarySurface({
     profilePanelState,
     profileHasLoaded,
     profileTimelineNextCursor,
+    profileTimelineWindowHeadCursor,
     profileTimelineLoadingMore,
     profileTimelineLoadMoreError,
     profileSaving,
@@ -258,6 +265,7 @@ export function DesktopShellPrimarySurface({
     syncStatus,
     timelineLoadingMoreByKey,
     timelineNextCursorByKey,
+    timelineWindowHeadCursorByKey,
     timelineUnavailableByKey,
     timelinesByKey,
     joinedChannelsByTopic,
@@ -271,7 +279,11 @@ export function DesktopShellPrimarySurface({
   } = useDesktopShellStore(
     useShallow((s) => ({
       bookmarkedPosts: s.bookmarkedPosts,
+      bookmarkMembershipById: s.bookmarkMembershipById,
       bookmarksPanelState: s.bookmarksPanelState,
+      bookmarksNewerCursor: s.bookmarksNewerCursor,
+      bookmarksOlderCursor: s.bookmarksOlderCursor,
+      bookmarksLoadingPage: s.bookmarksLoadingPage,
       bookmarkedReactionAssets: s.bookmarkedReactionAssets,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       gameCreatePending: s.gameCreatePending,
@@ -302,6 +314,7 @@ export function DesktopShellPrimarySurface({
       profilePanelState: s.profilePanelState,
       profileHasLoaded: s.profileHasLoaded,
       profileTimelineNextCursor: s.profileTimelineNextCursor,
+      profileTimelineWindowHeadCursor: s.profileTimelineWindowHeadCursor,
       profileTimelineLoadingMore: s.profileTimelineLoadingMore,
       profileTimelineLoadMoreError: s.profileTimelineLoadMoreError,
       profileSaving: s.profileSaving,
@@ -314,6 +327,7 @@ export function DesktopShellPrimarySurface({
       syncStatus: s.syncStatus,
       timelineLoadingMoreByKey: s.timelineLoadingMoreByKey,
       timelineNextCursorByKey: s.timelineNextCursorByKey,
+      timelineWindowHeadCursorByKey: s.timelineWindowHeadCursorByKey,
       timelineUnavailableByKey: s.timelineUnavailableByKey,
       timelinesByKey: s.timelinesByKey,
       joinedChannelsByTopic: s.joinedChannelsByTopic,
@@ -337,8 +351,11 @@ export function DesktopShellPrimarySurface({
     localProfile?.name
   );
   const bookmarkedPostIds = useMemo(
-    () => new Set(bookmarkedPosts.map((item) => item.post.object_id)),
-    [bookmarkedPosts]
+    () => new Set([
+      ...Object.entries(bookmarkMembershipById).filter(([, value]) => value).map(([id]) => id),
+      ...bookmarkedPosts.map((item) => item.post.object_id),
+    ]),
+    [bookmarkMembershipById, bookmarkedPosts]
   );
   const submitReport = (request: SubmitCommunityNodeReportRequest) =>
     api.submitCommunityNodeReport(request);
@@ -506,6 +523,7 @@ export function DesktopShellPrimarySurface({
                   unavailableCount={activeTimelineUnavailable}
                   onLoadMore={() => void loadMoreTimeline(surfaceTopic, surfaceChannelId)}
                   pendingCount={activeTimelinePendingCount}
+                  returnToLatest={Boolean(timelineWindowHeadCursorByKey[activeTimelineKey])}
                   onApplyPending={() =>
                     void refreshTimelineFeed(surfaceTopic, selectedThread, surfaceChannelId)
                   }
@@ -522,13 +540,21 @@ export function DesktopShellPrimarySurface({
                   onRetry={() => retryBookmarks?.()}
                 >
                   {(bookmarksDisplayedStatus) => (
-                    <BookmarkPage key={column.id} items={viewModels.bookmarkedTimelinePostViews}>
+                    <BookmarkPage
+                      key={column.id}
+                      items={viewModels.bookmarkedTimelinePostViews}
+                      hasPrevious={Boolean(bookmarksNewerCursor)}
+                      hasNext={Boolean(bookmarksOlderCursor)}
+                      loading={bookmarksLoadingPage}
+                      onPrevious={() => void navigateBookmarkPage?.(true)}
+                      onNext={() => void navigateBookmarkPage?.(false)}
+                    >
                       {(bookmarkPage) => (
                         <TimelineFeed
                           posts={bookmarkPage}
                           emptyCopy={t('shell:workspace.noBookmarks')}
                           emptyState={
-                            bookmarksDisplayedStatus === 'ready' ? (
+                            bookmarksDisplayedStatus === 'ready' && !bookmarksNewerCursor && !bookmarksOlderCursor ? (
                               <BookmarksEmptyState
                                 onShowTimeline={
                                   selectTimelineView
@@ -908,6 +934,8 @@ export function DesktopShellPrimarySurface({
                   posts={viewModels.profileTimelinePostViews}
                   emptyCopy={t('profile:feed.noOwnPosts')}
                   hasMore={Boolean(profileTimelineNextCursor)}
+                  returnToLatest={Boolean(profileTimelineWindowHeadCursor)}
+                  onApplyPending={() => void refreshProfile()}
                   loadingMore={profileTimelineLoadingMore}
                   loadMoreError={profileTimelineLoadMoreError}
                   onLoadMore={() => void loadMoreProfileTimeline()}

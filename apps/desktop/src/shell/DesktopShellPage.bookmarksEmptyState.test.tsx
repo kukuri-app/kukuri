@@ -29,8 +29,8 @@ test('shows loading first, then the guidance with the Bookmark chip, and the CTA
   const user = userEvent.setup();
   const api = createDesktopMockApi();
   // 取得を test 側で保留し、loading の観測を取得完了のタイミングに依存させない(#1165)。
-  const pending = createDeferred<BookmarkedPostView[]>();
-  const listSpy = vi.spyOn(api, 'listBookmarkedPosts').mockReturnValue(pending.promise);
+  const pending = createDeferred<{ items: BookmarkedPostView[]; newer_cursor: null; older_cursor: null }>();
+  const listSpy = vi.spyOn(api, 'listBookmarkedPostsPage').mockReturnValue(pending.promise);
   const bookmarkSpy = vi.spyOn(api, 'bookmarkPost');
   render(<App api={api} />);
   await waitFor(() => {
@@ -41,7 +41,7 @@ test('shows loading first, then the guidance with the Bookmark chip, and the CTA
   // 初回取得中: 空文言を出さず loading を示す(false empty の禁止)。
   expect(within(timelineColumn()).getByRole('status', { name: 'Loading bookmarks…' })).toBeInTheDocument();
   expect(within(timelineColumn()).queryByText('No bookmarked posts yet.')).not.toBeInTheDocument();
-  await act(async () => pending.resolve([]));
+  await act(async () => pending.resolve({ items: [], newer_cursor: null, older_cursor: null }));
 
   const guidance = await within(timelineColumn()).findByTestId('bookmarks-empty-state');
   expect(guidance).toHaveAttribute('role', 'status');
@@ -67,7 +67,7 @@ test('a failed fetch shows the error with retry instead of the empty guidance, a
   const user = userEvent.setup();
   const api = createDesktopMockApi();
   const listSpy = vi
-    .spyOn(api, 'listBookmarkedPosts')
+    .spyOn(api, 'listBookmarkedPostsPage')
     .mockRejectedValueOnce(new Error('bookmarks unavailable'));
   render(<App api={api} />);
   await waitFor(() => {

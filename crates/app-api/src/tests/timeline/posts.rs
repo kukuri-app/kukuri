@@ -188,7 +188,11 @@ async fn author_withdrawal_scrubs_timeline_bookmark_and_durable_docs_state() {
     assert!(withdrawn.attachments.is_empty());
     assert!(withdrawn.withdrawal.is_some());
 
-    let bookmarks = app.list_bookmarked_posts().await.expect("bookmarks");
+    let bookmarks = app
+        .list_bookmarked_posts_page(None, false)
+        .await
+        .expect("bookmarks")
+        .items;
     assert_eq!(bookmarks[0].post.content, "");
     assert!(bookmarks[0].post.attachments.is_empty());
     assert!(bookmarks[0].post.withdrawal.is_some());

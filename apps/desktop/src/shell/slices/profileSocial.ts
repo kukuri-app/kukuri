@@ -18,6 +18,7 @@ export type ProfileSocialSliceState = {
   localProfile: Profile | null;
   profileTimeline: PostView[];
   profileTimelineNextCursor: TimelineCursor | null;
+  profileTimelineWindowHeadCursor: TimelineCursor | null;
   profileTimelineLoadingMore: boolean;
   profileTimelineLoadMoreError: string | null;
   knownAuthorsByPubkey: KnownAuthorsByPubkey;
@@ -28,6 +29,7 @@ export type ProfileSocialSliceState = {
   profileError: string | null;
   profilePanelState: AsyncPanelState;
   profileHasLoaded: boolean;
+  profileTimelineEvicted: boolean;
   profileRefreshing: boolean;
   profileSaveRevision: number;
   profileSaving: boolean;
@@ -36,6 +38,7 @@ export type ProfileSocialSliceState = {
   selectedAuthorTimeline: PostView[];
   authorTimelinesByPubkey: Record<string, PostView[]>;
   authorTimelineNextCursorByPubkey: Record<string, TimelineCursor | null>;
+  authorTimelineWindowHeadCursorByPubkey: Record<string, TimelineCursor | null>;
   authorTimelineLoadingMoreByPubkey: Record<string, boolean>;
   authorTimelineLoadMoreErrorsByPubkey: Record<string, string | null>;
   authorErrorsByPubkey: Record<string, string | null>;
@@ -56,6 +59,7 @@ export function createInitialProfileSocialSlice(): ProfileSocialSliceState {
     localProfile: null,
     profileTimeline: [],
     profileTimelineNextCursor: null,
+    profileTimelineWindowHeadCursor: null,
     profileTimelineLoadingMore: false,
     profileTimelineLoadMoreError: null,
     knownAuthorsByPubkey: {},
@@ -66,6 +70,7 @@ export function createInitialProfileSocialSlice(): ProfileSocialSliceState {
     profileError: null,
     profilePanelState: DEFAULT_ASYNC_PANEL_STATE,
     profileHasLoaded: false,
+    profileTimelineEvicted: false,
     profileRefreshing: false,
     profileSaveRevision: 0,
     profileSaving: false,
@@ -74,6 +79,7 @@ export function createInitialProfileSocialSlice(): ProfileSocialSliceState {
     selectedAuthorTimeline: [],
     authorTimelinesByPubkey: {},
     authorTimelineNextCursorByPubkey: {},
+    authorTimelineWindowHeadCursorByPubkey: {},
     authorTimelineLoadingMoreByPubkey: {},
     authorTimelineLoadMoreErrorsByPubkey: {},
     authorErrorsByPubkey: {},

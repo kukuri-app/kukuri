@@ -1,2 +1,3 @@
 export const VISIBLE_TIMELINE_LIMIT = 20;
 export const THREAD_TIMELINE_LIMIT = 30;
+export const MAX_VISIBLE_POSTS = 200;

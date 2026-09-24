@@ -9,6 +9,8 @@ export type DeleteDomeView = { instance_id: string, generation: number, deleted:
 
 export type TimelineCursor = { created_at: number, object_id: string, };
 
+export type BookmarkCursor = { bookmarked_at: number, source_object_id: string, };
+
 export type ChannelAudienceKind = "invite_only" | "friend_only" | "friend_plus";
 
 export type ChannelSharingState = "open" | "frozen";
@@ -62,6 +64,8 @@ export type PostWithdrawalView = { withdrawn_at: number, replacement_object_id?:
 export type PostView = { object_id: string, envelope_id: string, author_pubkey: string, author_name?: string | null, author_display_name?: string | null, author_picture_asset?: ProfileAssetView | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, provenance?: ContentProvenanceView | null, withdrawal?: PostWithdrawalView | null, content: string, content_status: BlobViewStatus, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, created_at: number, reply_to?: string | null, reply_preview?: ReplyPreviewView | null, root_id?: string | null, object_kind: string, published_topic_id?: string | null, origin_topic_id?: string | null, repost_of?: RepostSourceView | null, repost_commentary?: string | null, is_threadable: boolean, channel_id?: string | null, audience_label: string, reaction_summary?: Array<ReactionSummaryView> | null, my_reactions?: Array<ReactionKeyView> | null, };
 
 export type BookmarkedPostView = { bookmarked_at: number, post: PostView, };
+
+export type BookmarkedPostPageView = { items: Array<BookmarkedPostView>, newer_cursor: BookmarkCursor | null, older_cursor: BookmarkCursor | null, };
 
 export type AuthorSocialView = { author_pubkey: string, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at?: number | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, friend_of_friend_via_pubkeys: Array<string>, provenance?: ContentProvenanceView | null, muted: boolean, blocking: boolean, blocked_by: boolean, };
 
@@ -745,6 +749,10 @@ export type BookmarkCustomReactionRequest = { asset_id: string, owner_pubkey: st
 export type RemoveBookmarkedCustomReactionRequest = { asset_id: string, };
 
 export type BookmarkPostRequest = { topic: string, object_id: string, channel_ref: ChannelRef, };
+
+export type BookmarkedPostIdsRequest = { object_ids: Array<string>, };
+
+export type ListBookmarkedPostsRequest = { cursor?: BookmarkCursor | null, before: boolean, };
 
 export type ResolveCommunityIndexPostsRequest = { entries: Array<CommunityIndexPostResolveInput>, };
 

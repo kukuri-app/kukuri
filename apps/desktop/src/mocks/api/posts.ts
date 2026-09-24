@@ -20,7 +20,8 @@ type PostsMock = Pick<
   | 'listTimeline'
   | 'listThread'
   | 'listProfileTimeline'
-  | 'listBookmarkedPosts'
+  | 'listBookmarkedPostsPage'
+  | 'bookmarkedPostIds'
   | 'bookmarkPost'
   | 'removeBookmarkedPost'
   | 'resolveCommunityIndexPosts'
@@ -328,15 +329,32 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
       }
       return null;
     },
-    async listBookmarkedPosts() {
-      return bookmarkedPosts
-        .filter((item) => isVisiblePost(item.post))
-        .map((item) =>
-          cloneBookmarkedPost({
-            ...item,
-            post: withCurrentRelationship(item.post),
-          })
-        );
+    async listBookmarkedPostsPage(cursor, before = false) {
+      const rows = bookmarkedPosts.filter((item) => isVisiblePost(item.post));
+      const compare = (item: BookmarkedPostView) =>
+        cursor
+          ? item.bookmarked_at - cursor.bookmarked_at ||
+            item.post.object_id.localeCompare(cursor.source_object_id)
+          : -1;
+      const candidates = cursor
+        ? rows.filter((item) => before ? compare(item) > 0 : compare(item) < 0)
+        : rows;
+      const selected = before ? candidates.slice(-21) : candidates.slice(0, 21);
+      const more = selected.length > 20;
+      const page = before ? selected.slice(-20) : selected.slice(0, 20);
+      const cursorFor = (item: BookmarkedPostView) => ({
+        bookmarked_at: item.bookmarked_at,
+        source_object_id: item.post.object_id,
+      });
+      return {
+        items: page.map((item) => cloneBookmarkedPost({ ...item, post: withCurrentRelationship(item.post) })),
+        newer_cursor: before ? more && page[0] ? cursorFor(page[0]) : null : cursor && page[0] ? cursorFor(page[0]) : null,
+        older_cursor: before ? cursor && page.at(-1) ? cursorFor(page.at(-1)!) : null : more && page.at(-1) ? cursorFor(page.at(-1)!) : null,
+      };
+    },
+    async bookmarkedPostIds(objectIds) {
+      const ids = new Set(objectIds);
+      return bookmarkedPosts.filter((item) => ids.has(item.post.object_id)).map((item) => item.post.object_id);
     },
     async bookmarkPost(topic, objectId) {
       const existing = bookmarkedPosts.find((item) => item.post.object_id === objectId);

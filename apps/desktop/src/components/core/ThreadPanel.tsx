@@ -41,6 +41,8 @@ type ThreadPanelProps = {
   unavailableCount?: number;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  returnToLatest?: boolean;
+  onReturnToLatest?: () => void;
   onSubmitReport?: (
     request: SubmitCommunityNodeReportRequest
   ) => Promise<SubmitCommunityNodeReportResult>;
@@ -78,6 +80,8 @@ export function ThreadPanel({
   unavailableCount = 0,
   loadingMore = false,
   onLoadMore,
+  returnToLatest,
+  onReturnToLatest,
   onSubmitReport,
   onCopyReportContact,
   onFetchReportManifest,
@@ -113,6 +117,8 @@ export function ThreadPanel({
         unavailableCount={unavailableCount}
         loadingMore={loadingMore}
         onLoadMore={onLoadMore}
+        returnToLatest={returnToLatest}
+        onReturnToLatest={onReturnToLatest}
         onSubmitReport={onSubmitReport}
         onCopyReportContact={onCopyReportContact}
         onFetchReportManifest={onFetchReportManifest}

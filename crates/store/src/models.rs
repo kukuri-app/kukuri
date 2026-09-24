@@ -144,6 +144,23 @@ pub struct BookmarkedPostRow {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct BookmarkCursor {
+    pub bookmarked_at: i64,
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub source_object_id: EnvelopeId,
+}
+
+impl From<&BookmarkedPostRow> for BookmarkCursor {
+    fn from(row: &BookmarkedPostRow) -> Self {
+        Self {
+            bookmarked_at: row.bookmarked_at,
+            source_object_id: row.source_object_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveSessionProjectionRow {
     pub session_id: String,
     pub revision: i64,

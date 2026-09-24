@@ -390,7 +390,7 @@ async fn bookmarked_post_blank_root_and_reply_map_to_none() {
         .await
         .expect("insert null root/reply");
 
-    let rows = ReactionBookmarkStore::list_bookmarked_posts(&store)
+    let rows = ReactionBookmarkStore::list_bookmarked_posts_page(&store, None, false)
         .await
         .expect("list bookmarked posts");
     assert_eq!(rows.len(), 2);

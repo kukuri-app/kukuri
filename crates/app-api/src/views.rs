@@ -7,7 +7,7 @@ use kukuri_core::{
     MetaverseResourceBudgetConfig, MetaverseResourceMetricsV1, MetaverseRoomEventEnvelopeContentV1,
     MetaverseRoomEventV1, MetaverseRoomStateV1, SpatialContextV1,
 };
-use kukuri_store::{NotificationKind, TimelineCursor};
+use kukuri_store::{BookmarkCursor, NotificationKind, TimelineCursor};
 use kukuri_transport::{ConnectMode, ConnectionPath, DiscoveryMode};
 use serde::{Deserialize, Serialize};
 
@@ -217,6 +217,14 @@ pub type BookmarkedCustomReactionView = CustomReactionAssetView;
 pub struct BookmarkedPostView {
     pub bookmarked_at: i64,
     pub post: PostView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct BookmarkedPostPageView {
+    pub items: Vec<BookmarkedPostView>,
+    pub newer_cursor: Option<BookmarkCursor>,
+    pub older_cursor: Option<BookmarkCursor>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

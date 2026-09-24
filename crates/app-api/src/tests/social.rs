@@ -96,9 +96,10 @@ async fn muted_author_is_filtered_from_timeline_thread_profile_and_bookmarks() {
         .await
         .expect("bookmark muted author post");
     let bookmarks_before = local_app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("bookmarks before mute");
+        .expect("bookmarks before mute")
+        .items;
 
     assert!(
         timeline_before
@@ -151,9 +152,10 @@ async fn muted_author_is_filtered_from_timeline_thread_profile_and_bookmarks() {
         .await
         .expect("profile after mute");
     let bookmarks_after = local_app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .expect("bookmarks after mute");
+        .expect("bookmarks after mute")
+        .items;
 
     assert!(timeline_after.items.is_empty());
     assert!(thread_after.items.is_empty());
@@ -536,9 +538,10 @@ async fn assert_remote_content_visibility(
         .await
         .unwrap_or_else(|_| panic!("profile {label}"));
     let bookmarks = local_app
-        .list_bookmarked_posts()
+        .list_bookmarked_posts_page(None, false)
         .await
-        .unwrap_or_else(|_| panic!("bookmarks {label}"));
+        .unwrap_or_else(|_| panic!("bookmarks {label}"))
+        .items;
     assert_eq!(
         timeline.items.iter().any(|post| post.object_id == root_id),
         visible,

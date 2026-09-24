@@ -476,7 +476,7 @@ async fn bookmarked_post_roundtrip_preserves_all_15_columns() {
     // (副キー source_object_id DESC の tie-break はここでは未行使 —
     // T6 の pagination テストと T8 の backend_parity が担保)。
     assert_eq!(
-        ReactionBookmarkStore::list_bookmarked_posts(&store)
+        ReactionBookmarkStore::list_bookmarked_posts_page(&store, None, false)
             .await
             .expect("list bookmarked posts"),
         vec![max, min]

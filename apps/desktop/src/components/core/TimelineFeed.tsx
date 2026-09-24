@@ -20,6 +20,7 @@ import { PostCard } from './PostCard';
 import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
+import { useWindowScrollAnchor } from './useWindowScrollAnchor';
 
 type TimelineFeedProps = {
   posts: PostCardView[];
@@ -63,6 +64,7 @@ type TimelineFeedProps = {
   /** 読んだ範囲にあるが、まだ取得できていない投稿の数(#1239 AC-4)。続きを読む操作は止めない。 */
   unavailableCount?: number;
   pendingCount?: number;
+  returnToLatest?: boolean;
   onApplyPending?: () => void;
   // 分散通報ルーティング（#310）。取得済み community node manifest（ok のみ）と送信導線。
   onSubmitReport?: (
@@ -112,6 +114,7 @@ export function TimelineFeed({
   onLoadMore,
   unavailableCount = 0,
   pendingCount = 0,
+  returnToLatest = false,
   onApplyPending,
   onSubmitReport,
   onCopyReportContact,
@@ -120,17 +123,18 @@ export function TimelineFeed({
   onMuteReportAuthor,
 }: TimelineFeedProps) {
   const { t } = useTranslation('common');
-  const { sentinelRef: loadMoreRef, canAutoLoad } = useInfiniteScrollSentinel({
+  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore);
+  const { sentinelRef: loadMoreRef, canAutoLoad, manualFallback } = useInfiniteScrollSentinel({
     // A failed automatic request must not immediately reconnect the observer and retry forever.
     // Keep the cursor, but require an explicit retry after an error.
     hasMore: hasMore && !loadMoreError,
     loadingMore,
-    onLoadMore,
+    onLoadMore: loadMore,
   });
   const overscrollAccumulationRef = useRef(0);
   const touchStartYRef = useRef<number | null>(null);
 
-  const canApplyPending = pendingCount > 0 && typeof onApplyPending === 'function';
+  const canApplyPending = (pendingCount > 0 || returnToLatest) && typeof onApplyPending === 'function';
 
   const handleOverscrollIntent = () => {
     if (!onApplyPending) {
@@ -185,6 +189,7 @@ export function TimelineFeed({
 
   return (
     <ul
+      ref={listRef}
       className={listClassName}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
@@ -198,12 +203,12 @@ export function TimelineFeed({
             className='timeline-feed-refresh-banner'
             onClick={() => onApplyPending()}
           >
-            {t('feed.pendingPosts', { count: pendingCount })}
+            {returnToLatest ? t('feed.backToLatest') : t('feed.pendingPosts', { count: pendingCount })}
           </Button>
         </li>
       ) : null}
       {posts.map((view) => (
-        <li key={view.post.object_id} className={itemClassName}>
+        <li key={view.post.object_id} className={itemClassName} data-post-id={view.post.object_id}>
         <PostCard
           enableLinkPreview
             view={view}
@@ -249,8 +254,8 @@ export function TimelineFeed({
         <li className={itemClassName}>
           {loadMoreError ? <p className='error'>{loadMoreError}</p> : null}
           {canAutoLoad && !loadMoreError ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
-          {(!canAutoLoad || loadMoreError) && onLoadMore ? (
-            <Button variant='secondary' type='button' onClick={() => onLoadMore()}>
+          {(!canAutoLoad || manualFallback || loadMoreError) && onLoadMore ? (
+            <Button variant='secondary' type='button' disabled={loadingMore} onClick={loadMore}>
               {loadingMore
                 ? t('fallbacks.loadingMore')
                 : loadMoreError

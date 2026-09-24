@@ -8,7 +8,7 @@ use kukuri_core::{
 };
 
 use crate::models::{
-    AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkedCustomReactionRow,
+    AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkCursor, BookmarkedCustomReactionRow,
     BookmarkedPostRow, ContentObservationRow, DirectMessageConversationRow,
     DirectMessageMessageRow, DirectMessageOutboxCursor, DirectMessageOutboxPage,
     DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
@@ -378,7 +378,13 @@ pub trait ReactionBookmarkStore: Send + Sync {
     async fn list_bookmarked_custom_reactions(&self) -> Result<Vec<BookmarkedCustomReactionRow>>;
     async fn remove_bookmarked_custom_reaction(&self, asset_id: &str) -> Result<()>;
     async fn put_bookmarked_post(&self, row: BookmarkedPostRow) -> Result<()>;
-    async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostRow>>;
+    /// A fixed-size seek from the indexed bookmark order. `before` walks toward newer rows.
+    async fn list_bookmarked_posts_page(
+        &self,
+        cursor: Option<&BookmarkCursor>,
+        before: bool,
+    ) -> Result<Vec<BookmarkedPostRow>>;
+    async fn bookmarked_post_ids(&self, ids: &[EnvelopeId]) -> Result<Vec<EnvelopeId>>;
     async fn remove_bookmarked_post(&self, source_object_id: &EnvelopeId) -> Result<()>;
 }
 

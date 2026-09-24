@@ -49,6 +49,98 @@ function setup() {
 }
 
 describe('useDesktopShellSectionLoaders', () => {
+  test('reopens an evicted profile from its saved window head', async () => {
+    const { api, hook, store } = setup();
+    const head = { created_at: 20, object_id: 'before-window' };
+    store.getState().patchState({ profileTimelineWindowHeadCursor: head });
+    const read = vi.spyOn(api, 'listProfileTimeline');
+    const profile = await api.getMyProfile();
+
+    await act(async () => hook.result.current.loadProfileSection());
+
+    expect(read).toHaveBeenCalledWith(profile.pubkey, head, 20);
+  });
+
+  test('profile refresh returns an older window to the latest page', async () => {
+    const { api, hook, store } = setup();
+    const profile = await api.getMyProfile();
+    store.getState().patchState({
+      profileTimeline: [profilePost({ object_id: 'old-window' } as PostView, 'old-window', 1)],
+      profileTimelineWindowHeadCursor: { created_at: 20, object_id: 'before-window' },
+    });
+    const read = vi.spyOn(api, 'listProfileTimeline');
+
+    await act(async () => hook.result.current.loadProfileSection({ resetToLatest: true }));
+
+    expect(read).toHaveBeenCalledWith(profile.pubkey, null, 20);
+    expect(store.getState().profileTimelineWindowHeadCursor).toBeNull();
+  });
+  test('author refresh returns an older window to the latest page', async () => {
+    const { api, hook, store } = setup();
+    const pubkey = (await api.getMyProfile()).pubkey;
+    store.getState().patchState({
+      selectedAuthorPubkey: pubkey,
+      authorTimelinesByPubkey: {
+        [pubkey]: [profilePost({ object_id: 'old-window' } as PostView, 'old-window', 1)],
+      },
+      authorTimelineWindowHeadCursorByPubkey: {
+        [pubkey]: { created_at: 20, object_id: 'before-window' },
+      },
+    });
+    const read = vi.spyOn(api, 'listProfileTimeline');
+
+    await act(async () => hook.result.current.loadAuthorSection(pubkey, { resetToLatest: true }));
+
+    expect(read).toHaveBeenCalledWith(pubkey, null, 20);
+    expect(store.getState().authorTimelineWindowHeadCursorByPubkey[pubkey]).toBeNull();
+  });
+  test('replaces bookmark pages and passes both seek cursors to the API', async () => {
+    const { api, hook, store } = setup();
+    const firstCursor = { bookmarked_at: 100, source_object_id: 'post-20' };
+    const newerCursor = { bookmarked_at: 80, source_object_id: 'post-21' };
+    const items = (start: number, count: number) => Array.from({ length: count }, (_, index) => ({
+      bookmarked_at: 100 - start - index,
+      post: { object_id: `post-${start + index}` } as PostView,
+    }));
+    const read = vi.spyOn(api, 'listBookmarkedPostsPage').mockImplementation(async (cursor, before) => {
+      if (!cursor) return { items: items(0, 20), newer_cursor: null, older_cursor: firstCursor };
+      if (!before) return { items: items(20, 5), newer_cursor: newerCursor, older_cursor: null };
+      return { items: items(0, 20), newer_cursor: null, older_cursor: firstCursor };
+    });
+
+    await act(async () => hook.result.current.loadBookmarksSection());
+    expect(store.getState().bookmarkedPosts).toHaveLength(20);
+    await act(async () => hook.result.current.navigateBookmarkPage(false));
+    expect(read).toHaveBeenLastCalledWith(firstCursor, false);
+    expect(store.getState().bookmarkedPosts.map((item) => item.post.object_id)).toEqual(
+      Array.from({ length: 5 }, (_, index) => `post-${index + 20}`)
+    );
+    await act(async () => hook.result.current.loadBookmarksSection({ preserveCurrent: true }));
+    expect(read).toHaveBeenLastCalledWith(firstCursor, false);
+    await act(async () => hook.result.current.navigateBookmarkPage(true));
+    expect(read).toHaveBeenLastCalledWith(newerCursor, true);
+    expect(store.getState().bookmarkedPosts).toHaveLength(20);
+  });
+  test('an empty bookmark page uses one read and keeps its navigation cursor', async () => {
+    const { api, hook, store } = setup();
+    const nextCursor = { bookmarked_at: 81, source_object_id: 'post-19' };
+    const hiddenCursor = { bookmarked_at: 80, source_object_id: 'post-20' };
+    const first = Array.from({ length: 20 }, (_, index) => ({
+      bookmarked_at: 100 - index,
+      post: { object_id: `post-${index}` } as PostView,
+    }));
+    const read = vi.spyOn(api, 'listBookmarkedPostsPage').mockImplementation(async (cursor, before) => {
+      if (!cursor) return { items: first, newer_cursor: null, older_cursor: nextCursor };
+      if (!before) return { items: [], newer_cursor: hiddenCursor, older_cursor: null };
+      return { items: first, newer_cursor: null, older_cursor: nextCursor };
+    });
+    await act(async () => hook.result.current.loadBookmarksSection());
+    await act(async () => hook.result.current.navigateBookmarkPage(false));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(store.getState().bookmarkedPosts).toEqual([]);
+    expect(store.getState().bookmarksNewerCursor).toEqual(hiddenCursor);
+    expect(store.getState().bookmarksPageRequestCursor).toEqual(nextCursor);
+  });
   test('section navigation does not refetch a confirmed profile', async () => {
     const { api, hook } = setup();
     await act(async () => hook.result.current.loadProfileSection());

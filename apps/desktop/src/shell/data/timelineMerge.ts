@@ -1,4 +1,5 @@
 import type { PostView, TimelineCursor } from '@/lib/api';
+import { MAX_VISIBLE_POSTS } from '@/shell/pagination';
 
 export function postIdentityKey(post: Pick<PostView, 'object_id' | 'server_object_id'>): string {
   return post.server_object_id ?? post.object_id;
@@ -21,8 +22,26 @@ export function uniquePostsByIdentity(posts: PostView[]): PostView[] {
 }
 
 export function mergeUniquePosts(current: PostView[], incoming: PostView[]): PostView[] {
-  const seen = new Set(current.map((post) => post.object_id));
-  return [...current, ...incoming.filter((post) => !seen.has(post.object_id))];
+  const merged = uniquePostsByIdentity([...current, ...incoming]);
+  if (merged.length <= MAX_VISIBLE_POSTS) return merged;
+  const local = merged.filter((post) => post.local_state).slice(0, MAX_VISIBLE_POSTS);
+  if (local.length === MAX_VISIBLE_POSTS) return local;
+  const authoritative = merged.filter((post) => !post.local_state)
+    .slice(-(MAX_VISIBLE_POSTS - local.length));
+  return [...local, ...authoritative];
+}
+
+export function windowHeadCursor(
+  current: PostView[],
+  next: PostView[],
+  previous: TimelineCursor | null
+): TimelineCursor | null {
+  const first = next.find((post) => !post.local_state);
+  if (!first) return previous;
+  const index = current.findIndex((post) => postIdentityKey(post) === postIdentityKey(first));
+  if (index <= 0) return previous;
+  const preceding = current.slice(0, index).reverse().find((post) => !post.local_state);
+  return preceding ? { created_at: preceding.created_at, object_id: preceding.object_id } : previous;
 }
 
 /**
@@ -144,21 +163,6 @@ export function mergeRefreshedVisiblePosts(
   incoming: PostView[],
   preserveOlderPages: boolean
 ): PostView[] {
-  if (
-    current.length === incoming.length &&
-    new Set(incoming.map(postIdentityKey)).size === incoming.length &&
-    incoming.every((post, index) => {
-      const existing = current[index];
-      return (
-        !existing.local_state &&
-        !post.local_state &&
-        postIdentityKey(existing) === postIdentityKey(post) &&
-        JSON.stringify(existing) === JSON.stringify(post)
-      );
-    })
-  ) {
-    return current;
-  }
   const authoritativeIds = new Set(incoming.map((post) => postIdentityKey(post)));
   const localPosts = current.filter((post) => {
     if (!post.local_state) {
@@ -179,21 +183,22 @@ export function mergeRefreshedVisiblePosts(
     seenPostIds.add(postId);
   }
 
-  if (!preserveOlderPages) {
-    return nextPosts;
-  }
-
-  for (const post of current) {
-    if (post.local_state) {
-      continue;
+  if (preserveOlderPages) {
+    for (const post of current) {
+      if (post.local_state) {
+        continue;
+      }
+      const authoritativeId = postIdentityKey(post);
+      if (authoritativeIds.has(authoritativeId) || seenPostIds.has(authoritativeId)) {
+        continue;
+      }
+      nextPosts.push(post);
+      seenPostIds.add(authoritativeId);
     }
-    const authoritativeId = postIdentityKey(post);
-    if (authoritativeIds.has(authoritativeId) || seenPostIds.has(authoritativeId)) {
-      continue;
-    }
-    nextPosts.push(post);
-    seenPostIds.add(authoritativeId);
   }
-
-  return nextPosts;
+  const visible = nextPosts.slice(0, MAX_VISIBLE_POSTS);
+  return visible.length === current.length &&
+    visible.every((post, index) => JSON.stringify(post) === JSON.stringify(current[index]))
+    ? current
+    : visible;
 }

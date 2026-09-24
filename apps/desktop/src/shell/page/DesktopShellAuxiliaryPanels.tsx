@@ -654,7 +654,9 @@ export type DesktopShellDetailSurfaceStackProps = {
     | 'threadPostViews'
   >;
   loadMoreThread: (topic: string, threadId: string) => Promise<void>;
+  refreshThread: (topic: string, threadId: string) => Promise<void>;
   loadMoreAuthorTimeline: (pubkey: string) => Promise<void>;
+  refreshAuthor: (pubkey: string) => Promise<void>;
   loadReactionCatalogData: () => Promise<void>;
   openAuthorDetail: OpenAuthorDetail;
   openDirectMessagePane: OpenDirectMessagePane;
@@ -686,7 +688,9 @@ export function DesktopShellDetailSurfaceStack({
   t,
   viewModels,
   loadMoreThread,
+  refreshThread,
   loadMoreAuthorTimeline,
+  refreshAuthor,
   loadReactionCatalogData,
   openAuthorDetail,
   openDirectMessagePane,
@@ -720,6 +724,7 @@ export function DesktopShellDetailSurfaceStack({
     authorErrorsByPubkey,
     authorTimelinesByPubkey,
     authorTimelineNextCursorByPubkey,
+    authorTimelineWindowHeadCursorByPubkey,
     authorTimelineLoadingMoreByPubkey,
     authorTimelineLoadMoreErrorsByPubkey,
     knownAuthorsByPubkey,
@@ -732,6 +737,7 @@ export function DesktopShellDetailSurfaceStack({
     syncStatus,
     threadLoadingMoreById,
     threadNextCursorById,
+    threadWindowHeadCursorById,
     threadUnavailableById,
     threadsById,
   } = useDesktopShellStore(
@@ -745,6 +751,7 @@ export function DesktopShellDetailSurfaceStack({
       authorErrorsByPubkey: s.authorErrorsByPubkey,
       authorTimelinesByPubkey: s.authorTimelinesByPubkey,
       authorTimelineNextCursorByPubkey: s.authorTimelineNextCursorByPubkey,
+      authorTimelineWindowHeadCursorByPubkey: s.authorTimelineWindowHeadCursorByPubkey,
       authorTimelineLoadingMoreByPubkey: s.authorTimelineLoadingMoreByPubkey,
       authorTimelineLoadMoreErrorsByPubkey: s.authorTimelineLoadMoreErrorsByPubkey,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
@@ -757,6 +764,7 @@ export function DesktopShellDetailSurfaceStack({
       syncStatus: s.syncStatus,
       threadLoadingMoreById: s.threadLoadingMoreById,
       threadNextCursorById: s.threadNextCursorById,
+      threadWindowHeadCursorById: s.threadWindowHeadCursorById,
       threadUnavailableById: s.threadUnavailableById,
       threadsById: s.threadsById,
     }))
@@ -865,6 +873,8 @@ export function DesktopShellDetailSurfaceStack({
       unavailableCount={effectiveThreadId ? (threadUnavailableById[effectiveThreadId] ?? 0) : 0}
       loadingMore={selectedThreadLoadingMore}
       onLoadMore={() => void loadMoreThread(effectiveTopicId, effectiveThreadId)}
+      returnToLatest={Boolean(threadWindowHeadCursorById[effectiveThreadId])}
+      onReturnToLatest={() => void refreshThread(effectiveTopicId, effectiveThreadId)}
       onOpenAuthor={(authorPubkey) =>
         void openAuthorDetail(authorPubkey, {
           fromThread: true,
@@ -957,6 +967,10 @@ export function DesktopShellDetailSurfaceStack({
               ? () => void loadMoreAuthorTimeline(effectiveAuthorPubkey)
               : undefined
           }
+          returnToLatest={Boolean(effectiveAuthorPubkey &&
+            authorTimelineWindowHeadCursorByPubkey[effectiveAuthorPubkey])}
+          onApplyPending={effectiveAuthorPubkey
+            ? () => void refreshAuthor(effectiveAuthorPubkey) : undefined}
           onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
           onOpenThread={(threadId) => void openThread(threadId)}
           onOpenThreadInTopic={(threadId, topicId) => void openThread(threadId, { topic: topicId })}

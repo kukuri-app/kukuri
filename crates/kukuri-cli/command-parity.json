@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-22-1262-session-display-v1",
+  "scope_revision": "2026-09-24-1221-r1-a-bookmark-page-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -44,7 +44,8 @@
     {"tauri":"commands::reactions::list_bookmarked_custom_reactions","cli":"list_bookmarked_custom_reactions","inventory":"INV-2"},
     {"tauri":"commands::reactions::bookmark_custom_reaction","cli":"bookmark_custom_reaction","inventory":"INV-2"},
     {"tauri":"commands::reactions::remove_bookmarked_custom_reaction","cli":"remove_bookmarked_custom_reaction","inventory":"INV-2"},
-    {"tauri":"commands::posts::list_bookmarked_posts","cli":"list_bookmarked_posts","inventory":"INV-2"},
+    {"tauri":"commands::posts::list_bookmarked_posts_page","cli":"list_bookmarked_posts","inventory":"INV-2"},
+    {"tauri":"commands::posts::bookmarked_post_ids","excluded":"gui_visible_membership","reason":"#1221 R1-A: GUIの表示中IDだけを判定する有界なbookmark照会。CLIの明示的な全件一覧はlist_bookmarked_postsで維持する。"},
     {"tauri":"commands::posts::bookmark_post","cli":"bookmark_post","inventory":"INV-2"},
     {"tauri":"commands::posts::remove_bookmarked_post","cli":"remove_bookmarked_post","inventory":"INV-2"},
     {"tauri":"commands::community_node::create_private_channel","cli":"create_private_channel","inventory":"INV-4"},

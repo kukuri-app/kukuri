@@ -1,5 +1,5 @@
 // #1239: thread も、行が 0 件でも続きがあれば、続きを読む手段を描く(`TimelineFeed` と同じ)。
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ThreadTree } from './ThreadTree';
@@ -37,4 +37,20 @@ test('続きが無ければ、空の文言を描く', () => {
     />
   );
   expect(screen.getByText('No replies yet.')).toBeInTheDocument();
+});
+
+test('an older thread window can return to latest without reverse paging', () => {
+  const onReturnToLatest = vi.fn();
+  render(<ThreadTree
+    posts={[]}
+    emptyCopy='No replies yet.'
+    onOpenAuthor={vi.fn()}
+    onOpenThread={vi.fn()}
+    onReply={vi.fn()}
+    returnToLatest
+    onReturnToLatest={onReturnToLatest}
+  />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Return to latest' }));
+  expect(onReturnToLatest).toHaveBeenCalledTimes(1);
 });

@@ -13,12 +13,12 @@
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1193,
-      "path": "crates/app-api/src/dome_hosting.rs"
-    },
-    {
       "lines": 1206,
       "path": "crates/app-api/src/tests/sync/hydration_integrity_sessions_contract.rs"
+    },
+    {
+      "lines": 1193,
+      "path": "crates/app-api/src/dome_hosting.rs"
     },
     {
       "lines": 1191,
@@ -33,7 +33,7 @@
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
-      "lines": 1134,
+      "lines": 1131,
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
@@ -41,16 +41,28 @@
       "path": "crates/app-api/src/private_channels.rs"
     },
     {
+      "lines": 1099,
+      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
+    },
+    {
       "lines": 1096,
       "path": "crates/app-api/src/service/private_channels_support.rs"
     },
     {
-      "lines": 1088,
-      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
+      "lines": 1079,
+      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1056,
       "path": "crates/metaverse-host/src/tests.rs"
+    },
+    {
+      "lines": 1048,
+      "path": "crates/store/src/tests/backend_parity/lists.rs"
+    },
+    {
+      "lines": 1045,
+      "path": "crates/app-api/src/timeline.rs"
     },
     {
       "lines": 1042,
@@ -65,12 +77,12 @@
       "path": "crates/app-api/src/dome_connections.rs"
     },
     {
-      "lines": 1016,
-      "path": "apps/desktop/src/shell/presentation.test.ts"
+      "lines": 1022,
+      "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
-      "lines": 1007,
-      "path": "crates/app-api/src/service/mod.rs"
+      "lines": 1016,
+      "path": "apps/desktop/src/shell/presentation.test.ts"
     },
     {
       "lines": 1004,

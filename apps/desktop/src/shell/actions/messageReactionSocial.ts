@@ -27,6 +27,7 @@ import type {
 type MessageReactionSocialParams = ActionsBaseParams &
   NavigationActions & {
     refreshProfile: () => Promise<void>;
+    refreshBookmarks: (removedPostId?: string) => Promise<void>;
     activeTopic: string;
     bookmarkedPostIds: ReadonlySet<string>;
     selectedAuthorPubkey: string | null;
@@ -45,7 +46,7 @@ type MessageReactionSocialParams = ActionsBaseParams &
     setKnownAuthorsByPubkey: Setter<'knownAuthorsByPubkey'>;
     setOwnedReactionAssets: Setter<'ownedReactionAssets'>;
     setBookmarkedReactionAssets: Setter<'bookmarkedReactionAssets'>;
-    setBookmarkedPosts: Setter<'bookmarkedPosts'>;
+    setBookmarkMembershipById: Setter<'bookmarkMembershipById'>;
     setRecentReactions: Setter<'recentReactions'>;
     setSelectedAuthor: Setter<'selectedAuthor'>;
     setAuthorError: Setter<'authorError'>;
@@ -61,6 +62,7 @@ export function createMessageReactionSocialActions({
   translate,
   loadTopics,
   refreshProfile,
+  refreshBookmarks,
   syncRoute,
   openDirectMessagePane,
   openAuthorDetail,
@@ -83,7 +85,7 @@ export function createMessageReactionSocialActions({
   setKnownAuthorsByPubkey,
   setOwnedReactionAssets,
   setBookmarkedReactionAssets,
-  setBookmarkedPosts,
+  setBookmarkMembershipById,
   setRecentReactions,
   setSelectedAuthor,
   setAuthorError,
@@ -307,11 +309,10 @@ export function createMessageReactionSocialActions({
       return;
     }
     try {
-      if (bookmarkedPostIds.has(post.object_id)) {
+      const removing = bookmarkedPostIds.has(post.object_id);
+      if (removing) {
         await api.removeBookmarkedPost(post.object_id);
-        setBookmarkedPosts((current) =>
-          current.filter((item) => item.post.object_id !== post.object_id)
-        );
+        setBookmarkMembershipById((current) => ({ ...current, [post.object_id]: false }));
       } else {
         const bookmarked = await api.bookmarkPost(
           topicId,
@@ -320,11 +321,9 @@ export function createMessageReactionSocialActions({
             ? { kind: 'private_channel', channel_id: post.channel_id }
             : { kind: 'public' }
         );
-        setBookmarkedPosts((current) => [
-          bookmarked,
-          ...current.filter((item) => item.post.object_id !== bookmarked.post.object_id),
-        ]);
+        setBookmarkMembershipById((current) => ({ ...current, [bookmarked.post.object_id]: true }));
       }
+      await refreshBookmarks(removing ? post.object_id : undefined).catch(() => undefined);
       setError(null);
     } catch (bookmarkError) {
       setError(messageFromError(bookmarkError, translate('common:errors.failedToUpdateBookmark')));

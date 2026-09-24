@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * Shared infinite-scroll sentinel used by the timeline and thread-tree feeds.
@@ -12,21 +12,32 @@ export function useInfiniteScrollSentinel(options: {
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore?: () => void;
-}): { sentinelRef: React.RefObject<HTMLDivElement | null>; canAutoLoad: boolean } {
+}): { sentinelRef: React.RefObject<HTMLDivElement | null>; canAutoLoad: boolean; manualFallback: boolean } {
   const { hasMore, loadingMore, onLoadMore } = options;
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const intersectingRef = useRef(false);
+  const [manualFallback, setManualFallback] = useState(false);
   const canAutoLoad =
     typeof window !== 'undefined' &&
     'IntersectionObserver' in window &&
     typeof onLoadMore === 'function';
 
   useEffect(() => {
+    if (!hasMore) {
+      intersectingRef.current = false;
+      setManualFallback(false);
+    }
     if (!canAutoLoad || !hasMore || loadingMore || !sentinelRef.current) {
       return;
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
+        if (entries.some((entry) => !entry.isIntersecting)) {
+          intersectingRef.current = false;
+          setManualFallback(false);
+        } else if (!intersectingRef.current) {
+          intersectingRef.current = true;
+          setManualFallback(true);
           onLoadMore?.();
         }
       },
@@ -36,5 +47,5 @@ export function useInfiniteScrollSentinel(options: {
     return () => observer.disconnect();
   }, [canAutoLoad, hasMore, loadingMore, onLoadMore]);
 
-  return { sentinelRef, canAutoLoad };
+  return { sentinelRef, canAutoLoad, manualFallback };
 }

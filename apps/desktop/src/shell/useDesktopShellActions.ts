@@ -54,6 +54,7 @@ type UseDesktopShellActionsArgs = {
   translate: Translate;
   loadTopics: (topics: string[], activeTopic: string, currentThread: string | null) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  refreshBookmarks: (removedPostId?: string) => Promise<void>;
   refreshVisibleTimelineAfterPublish: (
     topic: string,
     currentThread: string | null,
@@ -119,6 +120,7 @@ export function useDesktopShellActions({
   translate,
   loadTopics,
   refreshProfile,
+  refreshBookmarks,
   refreshVisibleTimelineAfterPublish,
   syncRoute,
   openDirectMessagePane,
@@ -169,7 +171,10 @@ export function useDesktopShellActions({
   } = state;
   const activePrivateChannel =
     nextJoinedChannels.find((channel) => channel.channel_id === nextSelectedChannelId) ?? null;
-  const bookmarkedPostIds = new Set(state.bookmarkedPosts.map((item) => item.post.object_id));
+  const bookmarkedPostIds = new Set([
+    ...Object.entries(state.bookmarkMembershipById).filter(([, value]) => value).map(([id]) => id),
+    ...state.bookmarkedPosts.map((item) => item.post.object_id),
+  ]);
   const activeScope = activeWorkspaceScope(state.workspaceState);
   const activeGameRooms =
     state.gameRoomsByScopeKey[
@@ -209,7 +214,7 @@ export function useDesktopShellActions({
   const setKnownAuthorsByPubkey = useDesktopShellFieldSetter('knownAuthorsByPubkey');
   const setOwnedReactionAssets = useDesktopShellFieldSetter('ownedReactionAssets');
   const setBookmarkedReactionAssets = useDesktopShellFieldSetter('bookmarkedReactionAssets');
-  const setBookmarkedPosts = useDesktopShellFieldSetter('bookmarkedPosts');
+  const setBookmarkMembershipById = useDesktopShellFieldSetter('bookmarkMembershipById');
   const setRecentReactions = useDesktopShellFieldSetter('recentReactions');
   const setProfileDraft = useDesktopShellFieldSetter('profileDraft');
   const setProfileDirty = useDesktopShellFieldSetter('profileDirty');
@@ -440,6 +445,7 @@ export function useDesktopShellActions({
     translate,
     loadTopics,
     refreshProfile,
+    refreshBookmarks,
     syncRoute,
     openDirectMessagePane,
     openAuthorDetail,
@@ -462,7 +468,7 @@ export function useDesktopShellActions({
     setKnownAuthorsByPubkey,
     setOwnedReactionAssets,
     setBookmarkedReactionAssets,
-    setBookmarkedPosts,
+    setBookmarkMembershipById,
     setRecentReactions,
     setSelectedAuthor,
     setAuthorError,

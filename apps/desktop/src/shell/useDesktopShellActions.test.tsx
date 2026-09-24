@@ -239,12 +239,10 @@ describe('useDesktopShellActions', () => {
       kind: 'public',
     });
     expect(removeBookmarkedPost).not.toHaveBeenCalled();
-    expect(view.store.getState().bookmarkedPosts).toHaveLength(1);
-    expect(view.store.getState().bookmarkedPosts[0]?.bookmarked_at).toBe(1111);
-    expect(view.store.getState().bookmarkedPosts[0]?.post.object_id).toBe('bookmark-post-1');
+    expect(view.store.getState().bookmarkMembershipById['bookmark-post-1']).toBe(true);
     expect(view.store.getState().error).toBeNull();
 
-    // bookmarkedPosts 更新でフックが再レンダーされ、同じ post の 2 回目は解除になる
+    // 一覧ページ外のbookmarkでも判定を保持し、同じpostの2回目は解除する。
     await act(async () => {
       await view.result.current.handleToggleBookmarkedPost(post);
     });
@@ -252,7 +250,7 @@ describe('useDesktopShellActions', () => {
     expect(removeBookmarkedPost).toHaveBeenCalledTimes(1);
     expect(removeBookmarkedPost).toHaveBeenCalledWith('bookmark-post-1');
     expect(bookmarkPost).toHaveBeenCalledTimes(1);
-    expect(view.store.getState().bookmarkedPosts).toEqual([]);
+    expect(view.store.getState().bookmarkMembershipById['bookmark-post-1']).toBe(false);
 
     view.unmount();
   });

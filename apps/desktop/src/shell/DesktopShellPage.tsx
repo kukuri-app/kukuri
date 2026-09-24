@@ -33,6 +33,7 @@ import {
   PUBLIC_TIMELINE_SCOPE,
   useDesktopShellFieldSetter,
   useDesktopShellStore,
+  useDesktopShellStoreApi,
 } from '@/shell/store';
 import {
   messageFromError,
@@ -86,6 +87,7 @@ export function DesktopShellPage({
   theme,
   onThemeChange,
 }: DesktopShellPageProps) {
+  const storeApi = useDesktopShellStoreApi();
   const { t, i18n: i18nInstance } = useTranslation([
     'common',
     'shell',
@@ -172,6 +174,7 @@ export function DesktopShellPage({
   const setDirectMessageStatusByPeer = useDesktopShellFieldSetter('directMessageStatusByPeer');
   const setDirectMessageError = useDesktopShellFieldSetter('directMessageError');
   const setShellChromeState = useDesktopShellFieldSetter('shellChromeState');
+  const setVisibleListColumnIds = useDesktopShellFieldSetter('visibleListColumnIds');
   const updateAvailable = useAppUpdateStore(selectUpdateAvailable);
   const checkForUpdate = useAppUpdateStore((state) => state.checkForUpdate);
   const setComposeChannelByTopic = useDesktopShellFieldSetter('composeChannelByTopic');
@@ -196,11 +199,14 @@ export function DesktopShellPage({
     retryCommunityNode,
     refreshVisibleTimelineAfterPublish,
     refreshTimelineFeed,
+    refreshVisibleShellData,
     refreshConnectivityStatus,
     loadProfileSection,
+    loadAuthorSection,
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
+    navigateBookmarkPage,
     loadReactionCatalogData,
     loadNotificationsSection,
     loadMoreTimeline,
@@ -252,6 +258,14 @@ export function DesktopShellPage({
     translate,
     loadTopics,
     refreshProfile: loadProfileSection,
+    refreshBookmarks: (removedPostId) => {
+      const current = storeApi.getState();
+      if (removedPostId && current.bookmarkedPosts.length === 1 &&
+        current.bookmarkedPosts[0]?.post.object_id === removedPostId && current.bookmarksNewerCursor) {
+        return loadBookmarksSection({ cursor: current.bookmarksNewerCursor, before: true });
+      }
+      return loadBookmarksSection({ preserveCurrent: true });
+    },
     refreshVisibleTimelineAfterPublish,
     syncRoute,
     openDirectMessagePane,
@@ -559,7 +573,9 @@ export function DesktopShellPage({
       t={t}
       viewModels={viewModels}
       loadMoreThread={loadMoreThread}
+      refreshThread={(topic, threadId) => refreshVisibleShellData(topic, threadId, 'apply')}
       loadMoreAuthorTimeline={loadMoreAuthorTimeline}
+      refreshAuthor={(pubkey) => loadAuthorSection(pubkey, { resetToLatest: true })}
       loadReactionCatalogData={loadReactionCatalogData}
       openAuthorDetail={(authorPubkey, options) =>
         openAuthorDetail(authorPubkey, {
@@ -617,7 +633,8 @@ export function DesktopShellPage({
       openTimelineSection={handleOpenTimelineSection}
       openExploreSection={handleOpenExploreSection}
       selectTimelineView={selectColumnTimelineView}
-      retryBookmarks={() => void loadBookmarksSection()}
+      retryBookmarks={() => void loadBookmarksSection({ preserveCurrent: true })}
+      navigateBookmarkPage={navigateBookmarkPage}
       requestIndexing={setIndexingTarget}
       communityNodePanelView={viewModels.communityNodePanelView}
       onFetchCommunityNodeConsents={shellActions.handleFetchCommunityNodeConsents}
@@ -625,7 +642,7 @@ export function DesktopShellPage({
       onRetryCommunityNode={retryCommunityNode}
       loadReactionCatalogData={loadReactionCatalogData}
       refreshTimelineFeed={refreshTimelineFeed}
-      refreshProfile={loadProfileSection}
+      refreshProfile={() => loadProfileSection({ resetToLatest: true })}
       loadMoreProfileTimeline={loadMoreProfileTimeline}
       loadMoreTimeline={loadMoreTimeline}
       openAuthorDetail={(authorPubkey, options) =>
@@ -821,6 +838,12 @@ export function DesktopShellPage({
       locale={locale}
       onVisibleColumnsChange={(columnIds) => {
         visibleColumnIdsRef.current = columnIds;
+        const visible = [workspaceState.activeColumnId,
+          ...columnIds.filter((id) => id !== workspaceState.activeColumnId)].slice(0, 8);
+        setVisibleListColumnIds((current) =>
+          current.length === visible.length && current.every((id, index) => id === visible[index])
+            ? current : visible
+        );
       }}
       mentionCandidates={viewModels.mentionCandidates}
       onColumnAttachmentSelection={shellActions.handleColumnDraftAttachmentSelection}
@@ -841,7 +864,7 @@ export function DesktopShellPage({
       onOpenChannelManager={channelEntries.openChannelManagerForColumn}
       onOpenChannelSettings={channelEntries.openChannelSettingsForColumn}
       onRefreshNotifications={refreshNotificationsColumn}
-      onRefreshProfile={loadProfileSection}
+      onRefreshProfile={() => loadProfileSection({ resetToLatest: true })}
       onRefreshConversation={(peerPubkey) => void refreshConversationColumn(peerPubkey)}
       onClearConversation={(peerPubkey) => void clearConversationColumn(peerPubkey)}
       onOpenConversationAuthor={(peerPubkey, parentColumnId) =>

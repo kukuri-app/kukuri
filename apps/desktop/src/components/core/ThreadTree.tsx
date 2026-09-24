@@ -20,6 +20,7 @@ import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { PostCard } from './PostCard';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
+import { useWindowScrollAnchor } from './useWindowScrollAnchor';
 
 const MAX_VISUAL_DEPTH = 6;
 
@@ -51,6 +52,8 @@ type ThreadTreeProps = {
   unavailableCount?: number;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  returnToLatest?: boolean;
+  onReturnToLatest?: () => void;
   onSubmitReport?: (
     request: SubmitCommunityNodeReportRequest
   ) => Promise<SubmitCommunityNodeReportResult>;
@@ -88,6 +91,8 @@ export function ThreadTree({
   unavailableCount = 0,
   loadingMore = false,
   onLoadMore,
+  returnToLatest = false,
+  onReturnToLatest,
   onSubmitReport,
   onCopyReportContact,
   onFetchReportManifest,
@@ -96,24 +101,32 @@ export function ThreadTree({
 }: ThreadTreeProps) {
   const { t } = useTranslation('common');
   const nodes = useMemo(() => buildThreadTree(posts), [posts]);
-  const { sentinelRef: loadMoreRef, canAutoLoad } = useInfiniteScrollSentinel({
+  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore);
+  const { sentinelRef: loadMoreRef, canAutoLoad, manualFallback } = useInfiniteScrollSentinel({
     hasMore,
     loadingMore,
-    onLoadMore,
+    onLoadMore: loadMore,
   });
 
   // 行が 0 件でも、続きがある(`hasMore`)あいだは、続きを読む手段を描く(#1239。`TimelineFeed` と同じ)。
-  if (nodes.length === 0 && !hasMore && unavailableCount <= 0) {
+  if (nodes.length === 0 && !hasMore && unavailableCount <= 0 && !returnToLatest) {
     return <p className='empty'>{emptyCopy}</p>;
   }
 
   return (
-    <ul className='thread-tree'>
+    <ul ref={listRef} className='thread-tree'>
+      {returnToLatest && onReturnToLatest ? (
+        <li className='thread-tree-item'>
+          <Button variant='secondary' type='button' onClick={onReturnToLatest}>
+            {t('feed.backToLatest')}
+          </Button>
+        </li>
+      ) : null}
       {nodes.map(({ view, depth, rails, isLast }) => {
         const visualDepth = Math.min(depth, MAX_VISUAL_DEPTH);
         const visibleRails = rails.slice(0, Math.max(0, visualDepth - 1));
         return (
-          <li key={view.post.object_id} className='thread-tree-item' data-depth={visualDepth}>
+          <li key={view.post.object_id} className='thread-tree-item' data-post-id={view.post.object_id} data-depth={visualDepth}>
             {visualDepth > 0 ? (
               <span className='thread-tree-rails' aria-hidden='true'>
                 {visibleRails.map((continues, railIndex) => (
@@ -170,8 +183,8 @@ export function ThreadTree({
       {hasMore ? (
         <li className='thread-tree-item' data-depth={0}>
           {canAutoLoad ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
-          {!canAutoLoad && onLoadMore ? (
-            <Button variant='secondary' type='button' onClick={() => onLoadMore()}>
+          {(!canAutoLoad || manualFallback) && onLoadMore ? (
+            <Button variant='secondary' type='button' disabled={loadingMore} onClick={loadMore}>
               {loadingMore ? t('fallbacks.loadingMore') : t('fallbacks.loadMore')}
             </Button>
           ) : null}

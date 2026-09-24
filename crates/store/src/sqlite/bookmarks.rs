@@ -1,4 +1,5 @@
 use super::*;
+use crate::BookmarkCursor;
 
 #[async_trait]
 impl BlobCacheStore for SqliteStore {
@@ -334,32 +335,61 @@ impl ReactionBookmarkStore for SqliteStore {
         Ok(())
     }
 
-    async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostRow>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              source_object_id,
-              source_envelope_id,
-              source_replica_id,
-              topic_id,
-              channel_id,
-              author_pubkey,
-              created_at,
-              object_kind,
-              payload_ref_json,
-              content,
-              attachments_json,
-              reply_to_object_id,
-              root_object_id,
-              repost_of_json,
-              bookmarked_at
-            FROM bookmarked_posts
-            ORDER BY bookmarked_at DESC, source_object_id DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter().map(row_to_bookmarked_post).collect()
+    async fn list_bookmarked_posts_page(
+        &self,
+        cursor: Option<&BookmarkCursor>,
+        before: bool,
+    ) -> Result<Vec<BookmarkedPostRow>> {
+        anyhow::ensure!(
+            !before || cursor.is_some(),
+            "newer bookmark page requires cursor"
+        );
+        let comparison = if before { ">" } else { "<" };
+        let order = if before { "ASC" } else { "DESC" };
+        let sql = format!(
+            "SELECT source_object_id, source_envelope_id, source_replica_id, topic_id, \
+             channel_id, author_pubkey, created_at, object_kind, payload_ref_json, \
+             content, attachments_json, reply_to_object_id, root_object_id, repost_of_json, \
+             bookmarked_at FROM bookmarked_posts {} \
+             ORDER BY bookmarked_at {order}, source_object_id {order} LIMIT 21",
+            if cursor.is_some() {
+                format!("WHERE (bookmarked_at, source_object_id) {comparison} (?1, ?2)")
+            } else {
+                String::new()
+            }
+        );
+        let mut query = sqlx::query(&sql);
+        if let Some(cursor) = cursor {
+            query = query
+                .bind(cursor.bookmarked_at)
+                .bind(cursor.source_object_id.as_str());
+        }
+        query
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(row_to_bookmarked_post)
+            .collect()
+    }
+
+    async fn bookmarked_post_ids(&self, ids: &[EnvelopeId]) -> Result<Vec<EnvelopeId>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        anyhow::ensure!(ids.len() <= 200, "bookmark status page exceeds 200 objects");
+        let mut query = sqlx::QueryBuilder::new(
+            "SELECT source_object_id FROM bookmarked_posts WHERE source_object_id IN (",
+        );
+        let mut separated = query.separated(", ");
+        for id in ids {
+            separated.push_bind(id.as_str());
+        }
+        separated.push_unseparated(")");
+        let found = query
+            .build_query_scalar::<String>()
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(found.into_iter().map(EnvelopeId::from).collect())
     }
 
     async fn remove_bookmarked_post(&self, source_object_id: &EnvelopeId) -> Result<()> {

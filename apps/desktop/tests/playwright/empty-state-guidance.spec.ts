@@ -51,13 +51,13 @@ async function seedEmptyLists(
             calls.push('listSocialConnections');
             return [];
           };
-          const originalBookmarks = api.listBookmarkedPosts.bind(api);
-          api.listBookmarkedPosts = async () => {
-            calls.push('listBookmarkedPosts');
+          const originalBookmarks = api.listBookmarkedPostsPage.bind(api);
+          api.listBookmarkedPostsPage = async (cursor, before) => {
+            calls.push('listBookmarkedPostsPage');
             if (bookmarkDelayMs > 0) {
               await new Promise<void>((resolve) => setTimeout(resolve, bookmarkDelayMs));
             }
-            return originalBookmarks();
+            return originalBookmarks(cursor, before);
           };
           const mutable = api as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
           for (const method of mutations) {

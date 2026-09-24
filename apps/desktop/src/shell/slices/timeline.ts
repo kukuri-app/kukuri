@@ -19,6 +19,7 @@ export type TimelineSliceState = {
   topicInput: string;
   timelinesByKey: Record<string, PostView[]>;
   timelineNextCursorByKey: Record<string, TimelineCursor | null>;
+  timelineWindowHeadCursorByKey: Record<string, TimelineCursor | null>;
   timelineLoadingMoreByKey: Record<string, boolean>;
   /** 直近に読んだページの範囲で、まだ取得できていない投稿の数(#1239 AC-4)。 */
   timelineUnavailableByKey: Record<string, number>;
@@ -31,6 +32,7 @@ export type TimelineSliceState = {
   composeChannelByTopic: Record<string, ChannelRef>;
   threadsById: Record<string, PostView[]>;
   threadNextCursorById: Record<string, TimelineCursor | null>;
+  threadWindowHeadCursorById: Record<string, TimelineCursor | null>;
   threadLoadingMoreById: Record<string, boolean>;
   /** 直近に読んだページの範囲で、まだ取得できていない返信の数(#1239 AC-4)。 */
   threadUnavailableById: Record<string, number>;
@@ -50,6 +52,7 @@ export function createInitialTimelineSlice(): TimelineSliceState {
     timelineNextCursorByKey: Object.fromEntries(
       STARTER_TOPICS.map((topic) => [timelineScopeStorageKey(topic, PUBLIC_TIMELINE_SCOPE), null])
     ),
+    timelineWindowHeadCursorByKey: {},
     timelineLoadingMoreByKey: Object.fromEntries(
       STARTER_TOPICS.map((topic) => [timelineScopeStorageKey(topic, PUBLIC_TIMELINE_SCOPE), false])
     ),
@@ -62,6 +65,7 @@ export function createInitialTimelineSlice(): TimelineSliceState {
     composeChannelByTopic: buildStarterTopicRecord(() => ({ ...PUBLIC_CHANNEL_REF })),
     threadsById: {},
     threadNextCursorById: {},
+    threadWindowHeadCursorById: {},
     threadLoadingMoreById: {},
     threadUnavailableById: {},
     selectedThread: null,

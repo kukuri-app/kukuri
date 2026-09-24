@@ -192,6 +192,53 @@ beforeEach(() => {
 });
 
 describe('useDesktopShellData characterization', () => {
+  test('reopens an evicted timeline from its saved window head', async () => {
+    const api = createDesktopMockApi();
+    const harness = createShellHookHarness();
+    const key = 'kukuri:topic:general::public';
+    const head = { created_at: 20, object_id: 'post-before-window' };
+    harness.store.getState().patchState({ timelineWindowHeadCursorByKey: { [key]: head } });
+    const read = vi.spyOn(api, 'listTimeline');
+    const { view } = renderDataHook(api, harness);
+    await flushAsyncWork();
+
+    expect(read).toHaveBeenCalledWith('kukuri:topic:general', head, 20, { kind: 'public' });
+    view.unmount();
+  });
+
+  test('the existing timeline refresh returns an older window to the latest page', async () => {
+    const api = createDesktopMockApi();
+    const { harness, view } = renderDataHook(api);
+    await flushAsyncWork();
+    const key = 'kukuri:topic:general::public';
+    actPatchState(harness.store, {
+      timelinesByKey: { [key]: [buildPost({ object_id: 'old-window' })] },
+      timelineWindowHeadCursorByKey: { [key]: { created_at: 20, object_id: 'before-window' } },
+      pendingTimelineSnapshotsByKey: {},
+    });
+    const read = vi.spyOn(api, 'listTimeline');
+
+    await act(async () => view.result.current.refreshTimelineFeed('kukuri:topic:general', null));
+
+    expect(read).toHaveBeenCalledWith('kukuri:topic:general', null, 20, { kind: 'public' });
+    expect(harness.store.getState().timelineWindowHeadCursorByKey[key]).toBeNull();
+    view.unmount();
+  });
+  test('checks visible post IDs without needing the entire bookmark list', async () => {
+    const api = createDesktopMockApi();
+    const saved = buildPost({ object_id: 'saved-older-than-bookmark-page' });
+    vi.spyOn(api, 'listTimeline').mockResolvedValue({
+      items: [saved], next_cursor: null, unavailable_count: 0,
+    });
+    const lookup = vi.spyOn(api, 'bookmarkedPostIds').mockResolvedValue([saved.object_id]);
+    const { harness, view } = renderDataHook(api);
+    await flushAsyncWork();
+
+    expect(lookup).toHaveBeenCalledWith([saved.object_id]);
+    expect(harness.store.getState().bookmarkMembershipById[saved.object_id]).toBe(true);
+    expect(harness.store.getState().bookmarkedPosts).toEqual([]);
+    view.unmount();
+  });
   test('a consent-ready runtime event selects the index node without waiting for polling', async () => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     const api = createDesktopMockApi();

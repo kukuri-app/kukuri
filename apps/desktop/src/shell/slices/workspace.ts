@@ -48,6 +48,7 @@ export type WorkspaceState = {
 
 export type WorkspaceSliceState = {
   workspaceState: WorkspaceState;
+  visibleListColumnIds: string[];
   savedWorkspaceLayouts: import('@/shell/savedWorkspaceLayouts').SavedWorkspaceLayout[];
 };
 
@@ -165,7 +166,7 @@ export function createInitialWorkspaceState(
 }
 
 export function createInitialWorkspaceSlice(scope?: ColumnScope): WorkspaceSliceState {
-  return { workspaceState: createInitialWorkspaceState(scope), savedWorkspaceLayouts: [] };
+  return { workspaceState: createInitialWorkspaceState(scope), visibleListColumnIds: [], savedWorkspaceLayouts: [] };
 }
 
 export function activeWorkspaceColumn(state: WorkspaceState): ColumnState {

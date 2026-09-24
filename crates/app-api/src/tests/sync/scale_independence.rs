@@ -722,9 +722,10 @@ async fn left_private_channel_post_cannot_be_bookmarked_from_a_leftover_projecti
         "a left private channel post must not be bookmarked from a leftover projection row"
     );
     assert!(
-        app.list_bookmarked_posts()
+        app.list_bookmarked_posts_page(None, false)
             .await
             .expect("bookmarks")
+            .items
             .is_empty(),
         "no bookmark may be stored"
     );

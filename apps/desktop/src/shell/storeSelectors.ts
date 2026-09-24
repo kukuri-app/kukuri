@@ -46,6 +46,7 @@ function projectedChromeState(s: DesktopShellStore) {
 export const selectShellActionsSlice = (s: DesktopShellStore) => ({
   activeTopic: activeTopic(s),
   bookmarkedPosts: s.bookmarkedPosts,
+  bookmarkMembershipById: s.bookmarkMembershipById,
   channelAudienceInput: s.channelAudienceInput,
   channelLabelInput: s.channelLabelInput,
   communityNodeInput: s.communityNodeInput,
@@ -114,6 +115,7 @@ export const selectShellDataSlice = (s: DesktopShellStore) => ({
   timelinesByKey: s.timelinesByKey,
   trackedTopics: s.trackedTopics,
   workspaceState: s.workspaceState,
+  visibleListColumnIds: s.visibleListColumnIds,
 });
 
 /// useDesktopShellRouting.ts が読むフィールド(購読スライス。WP-H6 PR2)。

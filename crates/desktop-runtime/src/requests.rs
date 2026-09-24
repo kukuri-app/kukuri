@@ -5,7 +5,7 @@ use kukuri_core::{
     DomeTransitionAdmissionRequestV1, DomeTransitionAdmissionTicketV1, GameRoomStatus,
     MetaverseAssetKind, MetaverseRoomEventV1, SpatialContextV1, TimelineScope,
 };
-use kukuri_store::TimelineCursor;
+use kukuri_store::{BookmarkCursor, TimelineCursor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +154,21 @@ pub struct BookmarkPostRequest {
     pub object_id: String,
     #[serde(default)]
     pub channel_ref: ChannelRef,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct ListBookmarkedPostsRequest {
+    pub cursor: Option<BookmarkCursor>,
+    #[serde(default)]
+    pub before: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct BookmarkedPostIdsRequest {
+    pub object_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

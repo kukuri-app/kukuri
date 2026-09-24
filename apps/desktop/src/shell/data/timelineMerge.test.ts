@@ -22,7 +22,38 @@ import {
   mergeUniquePosts,
   postIdentityKey,
   uniquePostsByIdentity,
+  windowHeadCursor,
 } from './timelineMerge';
+
+test('older pagination retains a 200-row window instead of every loaded page', () => {
+  const current = Array.from({ length: 200 }, (_, index) => post(`post-${index}`));
+  const older = Array.from({ length: 20 }, (_, index) => post(`post-${index + 200}`));
+
+  const merged = mergeUniquePosts(current, older);
+
+  expect(merged).toHaveLength(200);
+  expect(merged[0]?.object_id).toBe('post-20');
+  expect(merged.at(-1)?.object_id).toBe('post-219');
+});
+
+test('window rollover keeps an unsent optimistic post visible', () => {
+  const current = [post('local-pending', { local_state: 'pending' }),
+    ...Array.from({ length: 199 }, (_, index) => post(`post-${index}`))];
+  const older = Array.from({ length: 20 }, (_, index) => post(`post-${index + 199}`));
+
+  const merged = mergeUniquePosts(current, older);
+
+  expect(merged).toHaveLength(200);
+  expect(merged[0]?.object_id).toBe('local-pending');
+  expect(merged.at(-1)?.object_id).toBe('post-218');
+});
+
+test('window rollover retains the cursor needed to reload the same range', () => {
+  const current = Array.from({ length: 200 }, (_, index) => post(`post-${index}`, { created_at: index }));
+  const next = mergeUniquePosts(current, Array.from({ length: 20 }, (_, index) =>
+    post(`post-${index + 200}`, { created_at: index + 200 })));
+  expect(windowHeadCursor(current, next, null)).toEqual({ created_at: 19, object_id: 'post-19' });
+});
 
 // 各テストを独立させる(setup.ts は hash を掃除しない)。
 beforeEach(() => {
@@ -112,8 +143,7 @@ describe('mergeUniquePosts', () => {
     expect(result[1]?.created_at).toBe(111);
   });
 
-  test('dedupes by object_id only and ignores server_object_id', () => {
-    // 現挙動の固定: postIdentityKey による同一視はせず object_id のみで比較する。
+  test('dedupes a server echo against the optimistic identity', () => {
     const localPost = post('local-1', {
       local_state: 'syncing',
       server_object_id: 'server-1',
@@ -121,17 +151,16 @@ describe('mergeUniquePosts', () => {
 
     const result = mergeUniquePosts([localPost], [post('server-1')]);
 
-    expect(ids(result)).toEqual(['local-1', 'server-1']);
+    expect(ids(result)).toEqual(['local-1']);
   });
 
-  test('keeps duplicates that appear only within incoming', () => {
-    // 現挙動の固定: seen は current 側からのみ構築され incoming 内の重複は除去されない。
+  test('dedupes repeated rows inside one incoming page', () => {
     const result = mergeUniquePosts(
       [post('post-a')],
       [post('post-b', { created_at: 111 }), post('post-b', { created_at: 222 })]
     );
 
-    expect(ids(result)).toEqual(['post-a', 'post-b', 'post-b']);
+    expect(ids(result)).toEqual(['post-a', 'post-b']);
   });
 });
 
@@ -223,6 +252,15 @@ describe('mergeRefreshedVisiblePosts', () => {
     expect(changed).not.toBe(snapshot);
     expect(ids(changed.topic)).toEqual(['new-1', 'new-2']);
     expect(changed.topic[0]?.created_at).toBe(999);
+  });
+
+  test('unchanged head refresh retains the same snapshot after loading older pages', () => {
+    const current = Array.from({ length: 40 }, (_, index) => post(`post-${index}`));
+    const snapshot = { topic: current };
+    const refreshedHead = Array.from({ length: 20 }, (_, index) => post(`post-${index}`));
+    expect(updateRecordEntry<PostView[]>('topic', (visible) =>
+      mergeRefreshedVisiblePosts(visible ?? [], refreshedHead, true)
+    )(snapshot)).toBe(snapshot);
   });
 
   test('refresh removes an optimistic echo after an unchanged head row', () => {
