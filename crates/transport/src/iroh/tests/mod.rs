@@ -38,6 +38,27 @@ fn seed_peer_from_ticket(ticket: &str) -> SeedPeer {
     }
 }
 
+#[tokio::test]
+async fn bootstrap_candidates_read_four_peers_from_large_history() {
+    let transport = IrohGossipTransport::bind_local().await.expect("transport");
+    for index in 0_u64..1_000 {
+        let mut bytes = [0; 32];
+        bytes[..8].copy_from_slice(&index.to_be_bytes());
+        let id = iroh::SecretKey::from_bytes(&bytes).public();
+        transport
+            .configured_seed_peers
+            .lock()
+            .await
+            .insert(id.to_string(), EndpointAddr::new(id));
+    }
+    let first = transport.bootstrap_peers().await;
+    assert!(
+        first.len() <= 4,
+        "one topic join should not materialize all known peers"
+    );
+    transport.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transport_two_process_hint_roundtrip_static_peer() {
     if std::env::var_os("GITHUB_ACTIONS").is_some() {
