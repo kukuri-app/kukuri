@@ -1,5 +1,22 @@
 use super::*;
 
+async fn remember_connected_peer(
+    store: &kukuri_store::SqliteStore,
+    peer_id: EndpointId,
+) -> Result<()> {
+    let address = EndpointAddr::new(peer_id);
+    store
+        .put_peer_candidate(
+            "gossip",
+            "learned",
+            &peer_id.to_string(),
+            &serde_json::to_vec(&address)?,
+            Utc::now().timestamp_millis(),
+        )
+        .await?;
+    Ok(())
+}
+
 pub(crate) fn initial_topic_join_timeout() -> Duration {
     if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
         Duration::from_secs(180)
@@ -427,6 +444,7 @@ impl IrohGossipTransport {
         let warm_endpoint = self.endpoint.clone();
         let warm_bootstrap_peers = bootstrap_peers.clone();
         let gossip_health = Arc::clone(&self.gossip_health);
+        let candidate_store = self.account_store.clone();
         let warm_gossip = self.gossip.clone();
         let warmups = Arc::clone(&self.topic_warmups);
 
@@ -560,6 +578,12 @@ impl IrohGossipTransport {
                         }
                         *last_error_task.lock().await = None;
                         *transport_last_error.lock().await = None;
+                        drop(guard);
+                        if let Some(store) = &candidate_store
+                            && let Err(error) = remember_connected_peer(store, peer_id).await
+                        {
+                            debug!(%error, "failed to remember connected peer for account receive");
+                        }
                     }
                     Ok(GossipEvent::NeighborDown(peer_id)) => {
                         let mut guard = neighbors_task.write().await;

@@ -236,9 +236,11 @@ async fn transport_two_process_hint_roundtrip_static_peer() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transport_import_ticket_updates_existing_topic_subscription() {
+    let candidate_store = Arc::new(kukuri_store::SqliteStore::connect_memory().await.unwrap());
     let transport_a = IrohGossipTransport::bind_local()
         .await
-        .expect("transport a");
+        .expect("transport a")
+        .with_account_store(candidate_store.clone());
     let transport_b = IrohGossipTransport::bind_local()
         .await
         .expect("transport b");
@@ -306,6 +308,14 @@ async fn transport_import_ticket_updates_existing_topic_subscription() {
     })
     .await
     .expect("direct topic update timeout");
+    let learned = candidate_store
+        .peer_candidate_window("gossip", "learned", None, 4, Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    assert!(
+        learned.iter().any(|(id, _, _)| id == &peer_id_b),
+        "an established connection becomes a bounded known account candidate"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

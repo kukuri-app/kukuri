@@ -189,7 +189,8 @@ bucketへの追加とTTL設定は[Valkey互換の`MULTI/EXEC` transaction](https
 CN不使用時は、ticket・seed・既存接続・既知peerの到達情報から候補を選んでbindingを交換する。
 account公開鍵しかなく、到達情報がない相手のendpointは新たに探索しない。全author/全peerを探索しない。
 binding未取得/期限切れ/宛先不在は未解決として延期し、接続成功や配送成功を捏造しない。
-既知manual ticket/seedのbinding交換はaccount別cursorで候補を進め、1試行は最大4候補・同時2照合までとする。
+実際に成立したgossip接続は既存のaccount別learned台帳へ記録し、docs/blobで学習したpeerも宛先候補に再利用する。
+manual ticket、seed、3種のlearned候補はaccount別cursorで巡回し、1試行は最大4候補・同時2照合までとする。
 候補全体を複製・整列せず、照合済み宛先はaccount別に最大1,024件、署名の期限を超えず最長10秒保持する。
 未認証候補を配送先へ渡さない。配送失敗時は該当account/endpointのcacheを失効させ、次の試行で再照合する。
 この窓はCNからの候補取得とoutbox再試行を代替しない。

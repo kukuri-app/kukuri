@@ -135,6 +135,25 @@ fn rendezvous_window_does_not_starve_known_peer_cursor() {
 }
 
 #[test]
+fn destination_window_rotates_across_known_device_sources() {
+    let recipient = Pubkey::from("account-multiple-devices");
+    let first = EndpointAddr::new(SecretKey::from_bytes(&[51; 32]).public());
+    let second = EndpointAddr::new(SecretKey::from_bytes(&[52; 32]).public());
+    let gossip = BTreeMap::from([(first.id.to_string(), first.clone())]);
+    let docs = BTreeMap::from([(second.id.to_string(), second.clone())]);
+    let empty = BTreeMap::new();
+    let mut window = DestinationWindow::default();
+    let mut first_choices = BTreeSet::new();
+    for _ in 0..6 {
+        let (candidates, _) =
+            window.select(&recipient, [&empty, &empty, &empty, &gossip, &docs, &empty]);
+        assert!(candidates.len() <= CANDIDATES_PER_LOOKUP);
+        first_choices.insert(candidates[0].0.id);
+    }
+    assert_eq!(first_choices, BTreeSet::from([first.id, second.id]));
+}
+
+#[test]
 fn cache_expires_and_invalidating_another_endpoint_preserves_current_binding() {
     let recipient = Pubkey::from("account-c");
     let id = SecretKey::from_bytes(&[8; 32]).public();
@@ -494,6 +513,78 @@ async fn account_ticket_candidate_reaches_live_receive_binding() {
             .id,
         receiver.id()
     );
+    let learned_store = Arc::new(kukuri_store::SqliteStore::connect_memory().await.unwrap());
+    let other_device = Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let other_binding = ReceiveEndpointBindingV1::sign(
+        &recipient,
+        &other_device.id().to_string(),
+        now,
+        now + 60_000,
+    )
+    .unwrap();
+    let other_router = Router::builder(other_device.clone())
+        .accept(
+            RECEIVE_BINDING_ALPN,
+            ReceiveBindingProtocol::new(other_device.id(), other_binding).unwrap(),
+        )
+        .spawn();
+    learned_store
+        .put_peer_candidate(
+            "docs",
+            "learned",
+            &receiver.id().to_string(),
+            &serde_json::to_vec(&receiver.addr()).unwrap(),
+            now,
+        )
+        .await
+        .unwrap();
+    learned_store
+        .put_peer_candidate(
+            "blob",
+            "learned",
+            &other_device.id().to_string(),
+            &serde_json::to_vec(&other_device.addr()).unwrap(),
+            now,
+        )
+        .await
+        .unwrap();
+    let mut learned_transport = IrohGossipTransport::bind_local()
+        .await
+        .unwrap()
+        .with_account_store(learned_store);
+    let mut reached = BTreeSet::new();
+    for _ in 0..6 {
+        let destination = learned_transport
+            .resolve_receive_destination(&recipient.public_key())
+            .await
+            .unwrap()
+            .unwrap();
+        reached.insert(destination.id);
+        learned_transport
+            .invalidate_receive_destination(&recipient.public_key(), &destination.id.to_string())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        reached,
+        BTreeSet::from([receiver.id(), other_device.id()]),
+        "CN-less known peers must rotate across two live devices"
+    );
+    learned_transport.shutdown().await;
+    learned_transport
+        ._router
+        .take()
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+    other_router.shutdown().await.unwrap();
     router.shutdown().await.unwrap();
     transport.shutdown().await;
     transport._router.take().unwrap().shutdown().await.unwrap();
@@ -522,7 +613,11 @@ async fn saturated_probe_budget_defers_without_queuing() {
 
 #[tokio::test]
 async fn untrusted_rendezvous_candidate_requires_live_account_binding() {
-    let mut transport = IrohGossipTransport::bind_local().await.unwrap();
+    let store = Arc::new(kukuri_store::SqliteStore::connect_memory().await.unwrap());
+    let mut transport = IrohGossipTransport::bind_local()
+        .await
+        .unwrap()
+        .with_account_store(store.clone());
     let receiver = Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(RelayMode::Disabled)
         .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
@@ -629,6 +724,26 @@ async fn untrusted_rendezvous_candidate_requires_live_account_binding() {
             .unwrap()
             .is_none(),
         "CN consent removal must also clear a previously verified destination"
+    );
+    store
+        .put_peer_candidate(
+            "gossip",
+            "learned",
+            &receiver.id().to_string(),
+            &serde_json::to_vec(&receiver.addr()).unwrap(),
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        transport
+            .resolve_receive_destination(&recipient.public_key())
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        receiver.id(),
+        "clearing one CN must preserve an independently known direct peer"
     );
     let mut replacement = IrohGossipTransport::bind_local().await.unwrap();
     assert!(

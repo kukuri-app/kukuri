@@ -10,7 +10,6 @@ use kukuri_core::receive_route_for_account;
 
 const MAX_DESTINATION_ACCOUNTS: usize = 1_024;
 const CANDIDATES_PER_LOOKUP: usize = 4;
-const MAX_SELECTION_STEPS: usize = 12;
 const BINDING_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_CACHED_BINDING_MS: i64 = 10_000;
 const MAX_RENDEZVOUS_CANDIDATES: usize = 8;
@@ -28,7 +27,8 @@ struct DestinationEntry {
     last_used: u64,
     revision: u64,
     source: usize,
-    cursors: [Option<String>; 3],
+    cursors: [Option<String>; 6],
+    learned_cursors: [Option<(i64, String)>; 3],
     verified: Option<CachedDestination>,
     rendezvous_sources: BTreeMap<String, RendezvousSource>,
     rendezvous_cursor: usize,
@@ -69,6 +69,7 @@ impl DestinationWindow {
                 revision: tick,
                 source: 0,
                 cursors: Default::default(),
+                learned_cursors: Default::default(),
                 verified: None,
                 rendezvous_sources: BTreeMap::new(),
                 rendezvous_cursor: 0,
@@ -90,10 +91,10 @@ impl DestinationWindow {
         None
     }
 
-    fn select(
+    fn select<const N: usize>(
         &mut self,
         recipient: &Pubkey,
-        sources: [&BTreeMap<String, EndpointAddr>; 3],
+        sources: [&BTreeMap<String, EndpointAddr>; N],
     ) -> (Vec<(EndpointAddr, Option<String>)>, u64) {
         let entry = self.touch(recipient);
         let mut selected = Vec::with_capacity(CANDIDATES_PER_LOOKUP);
@@ -118,12 +119,13 @@ impl DestinationWindow {
                 selected.push(candidate);
             }
         }
-        for _ in 0..MAX_SELECTION_STEPS {
+        let first_source = entry.source;
+        entry.source = (entry.source + 1) % N;
+        for offset in 0..N * CANDIDATES_PER_LOOKUP {
             if selected.len() == CANDIDATES_PER_LOOKUP {
                 break;
             }
-            let source = entry.source;
-            entry.source = (entry.source + 1) % sources.len();
+            let source = (first_source + offset) % N;
             if let Some(candidate) = next_peer(sources[source], &mut entry.cursors[source])
                 && seen.insert(candidate.id)
             {
@@ -391,6 +393,29 @@ impl IrohGossipTransport {
         } else {
             BTreeMap::new()
         };
+        let mut learned = [BTreeMap::new(), BTreeMap::new(), BTreeMap::new()];
+        if let Some(store) = &self.account_store {
+            let cursors = self
+                .receive_destinations
+                .lock()
+                .await
+                .touch(recipient)
+                .learned_cursors
+                .clone();
+            for (index, scope) in ["gossip", "docs", "blob"].into_iter().enumerate() {
+                let page = store
+                    .peer_candidate_window(scope, "learned", cursors[index].clone(), 1, now_ms)
+                    .await?;
+                if let Some((id, bytes, seen_ms)) = page.into_iter().next() {
+                    learned[index].insert(id.clone(), serde_json::from_slice(&bytes)?);
+                    self.receive_destinations
+                        .lock()
+                        .await
+                        .touch(recipient)
+                        .learned_cursors[index] = Some((seen_ms, id));
+                }
+            }
+        }
         let configured = self.configured_seed_peers.lock().await;
         let bootstrap = self.bootstrap_seed_peers.lock().await;
         let imported = self.imported_peers.lock().await;
@@ -399,11 +424,17 @@ impl IrohGossipTransport {
         } else {
             &*imported
         };
-        let (candidates, revision) = self
-            .receive_destinations
-            .lock()
-            .await
-            .select(recipient, [&configured, &bootstrap, imported_source]);
+        let (candidates, revision) = self.receive_destinations.lock().await.select(
+            recipient,
+            [
+                &configured,
+                &bootstrap,
+                imported_source,
+                &learned[0],
+                &learned[1],
+                &learned[2],
+            ],
+        );
         drop((configured, bootstrap, imported));
         for (candidate, source) in candidates {
             if self.offer_closed.load(Ordering::Acquire) {

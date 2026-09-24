@@ -315,10 +315,10 @@ N66のDM manifestは既存`GossipHint::DirectMessageFrame`のJSONをprovider限�
 
 | ID | 入口 → helper → sink | guard / 停止 | 対応contract |
 | --- | --- | --- | --- |
-| N67 | 送信側のaccount宛先要求 → `resolve_receive_destination` → configured/bootstrap/importedのaccount別cursor → 実QUICで署名binding照合 → 検証済み`EndpointAddr` | 1試行最大4候補・12選択step、同時2照合、候補2秒。cache最大1,024account・署名期限内/最長10秒。shutdown後は返却/次probeを止め、進行中接続を取消。失効は旧結果の世代を止め、別endpointの成功cacheは保持。未解決は`None` | `destination_window_rotates_through_large_peer_history_in_four_candidate_steps`、`destination_cursor_reaches_old_peer_during_new_inserts_and_deletes`、`destination_requires_live_binding_for_the_exact_account_and_invalidates_cache`、shutdown/cache/旧probeの負例 |
+| N67 | 送信側のaccount宛先要求 → `resolve_receive_destination` → configured/bootstrap/importedとgossip/docs/blob learnedのaccount別cursor → 実QUICで署名binding照合 → 検証済み`EndpointAddr` | 1試行最大4候補・各source最大4選択step、同時2照合、候補2秒。cache最大1,024account・署名期限内/最長10秒。成立したgossip接続は既存のlearned台帳へ記録する。shutdown後は返却/次probeを止め、進行中接続を取消。失効は旧結果の世代を止め、別endpointの成功cacheは保持。未解決は`None` | `destination_window_rotates_through_large_peer_history_in_four_candidate_steps`、`destination_cursor_reaches_old_peer_during_new_inserts_and_deletes`、`destination_window_rotates_across_known_device_sources`、実QUICのticket/learned二端末、shutdown/cache/旧probeの負例 |
 | N68 | peer別DM outboxの64行ページ → N67宛先照合1回 → frame hash/message IDをrecipient account sealed offerへinline記録。recipientは実QUICのprovider binding照合後に既存暗号frameを取得し、provider endpointへ署名ACKをinline offerで返す。sender account ACK受信 → outbox解除 | mutualと同一outbox rowを宛先照合後・offer前に再確認。新規manifest blob書込み0。offer/ACK offerは各2秒・account runtime同時4件で取消/延期し、待機列を作らない。未解決・失敗で保護rowは残す。ACKは署名sender/recipient/conversation/messageを確認し、重複時は最初の配達時刻を保持。旧pairwiseを維持し、追加の周期timer/taskは作らない | `dm_outbox_page_sends_sealed_account_offer_without_consuming_protected_row`、`revoked_mutual_after_destination_lookup_sends_no_account_dm_offer`、`inline_dm_frame_requires_sender_bound_provider_before_blob_io`、`signed_account_route_ack_clears_only_matching_dm_outbox`、`direct_message_acked_at_keeps_first_signed_ack`、実Iroh `real_account_route_fetches_bound_provider_manifest_and_reflects_dm` |
 
-N67の既知peer窓はCN/著者制御stateからのaccount候補探索をまだ代替しない。N68時点のpeer別tickはN69で置換するが、旧pairwise購読を残すためNET-AC-2/6やD2の全達成ではない。旧経路撤去、全相手数に比例する購読task/起動処理の除去、公開通知/private epochの送受信は後続。
+N67の既知peer窓はCN候補探索を代替しない。著者制御locator案は失効済み。N68時点のpeer別tickはN69で置換したが、旧pairwise購読を残すためNET-AC-2/6やD2の全達成ではない。旧経路撤去、全相手数に比例する購読task/起動処理の除去、公開通知/private epochの送受信は後続。
 
 ## DM保護outboxのaccount共通due owner（P3）
 
