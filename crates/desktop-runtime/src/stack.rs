@@ -35,6 +35,11 @@ pub(crate) struct BoundIrohStack {
     pub(crate) blob_service: Arc<IrohBlobService>,
 }
 
+enum StackOpen {
+    Initial(Arc<SqliteStore>),
+    Reopen(Arc<SqliteStore>),
+}
+
 /// ホットスワップ可能なサービスラッパーを 1 つ生成する。
 ///
 /// `SharedIrohStack::rebuild` は iroh ノードを作り直すたびに transport / docs-sync /
@@ -301,8 +306,7 @@ impl SharedIrohStack {
             bootstrap_seed_peers,
             dht_options.clone(),
             relay_config,
-            false,
-            candidate_store.clone(),
+            StackOpen::Initial(candidate_store.clone()),
         )
         .await?;
         let transport = Arc::new(ReloadableTransport::new(current.transport.clone()));
@@ -396,8 +400,7 @@ impl SharedIrohStack {
             bootstrap_seed_peers,
             dht_options,
             relay_config,
-            true,
-            self.candidate_store.clone(),
+            StackOpen::Reopen(self.candidate_store.clone()),
         )
         .await?;
         // 差し替える前に設定する。設定の無い stack が、端末ごとの docs author で書くことが無いようにする。
@@ -557,16 +560,19 @@ impl SharedIrohStack {
 }
 
 impl BoundIrohStack {
-    pub(crate) async fn new(
+    async fn new(
         root: &Path,
         network_config: TransportNetworkConfig,
         discovery_config: &DiscoveryConfig,
         bootstrap_seed_peers: &[SeedPeer],
         dht_options: DhtDiscoveryOptions,
         relay_config: TransportRelayConfig,
-        reopening: bool,
-        candidate_store: Arc<SqliteStore>,
+        open: StackOpen,
     ) -> Result<Self> {
+        let (reopening, candidate_store) = match open {
+            StackOpen::Initial(store) => (false, store),
+            StackOpen::Reopen(store) => (true, store),
+        };
         let relay_config = relay_config.normalized();
         let node = if reopening {
             IrohDocsNode::reopen_with_discovery_config(

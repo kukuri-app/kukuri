@@ -44,7 +44,7 @@ impl SqliteStore {
             "peer address exceeds candidate budget"
         );
         let bytes = (addr.len() + scope.len() + source.len() + endpoint_id.len() + 64) as i64;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let previous = sqlx::query(
             "SELECT endpoint_addr, accounted_bytes FROM peer_candidates \
              WHERE scope = ? AND source = ? AND endpoint_id = ?",
@@ -127,7 +127,7 @@ impl SqliteStore {
             .fetch_optional(&self.pool)
             .await?;
             if oldest.is_some_and(|seen| seen < now_ms.saturating_sub(LEARNED_RETENTION_MS)) {
-                let mut tx = self.pool.begin().await?;
+                let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
                 prune_learned(&mut tx, now_ms).await?;
                 tx.commit().await?;
             }
@@ -257,7 +257,7 @@ impl SqliteStore {
         now_ms: i64,
     ) -> Result<()> {
         let digest = blake3::hash(&serde_json::to_vec(&seeds)?);
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let previous: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT digest FROM peer_seed_state WHERE scope = ?")
                 .bind(scope)
