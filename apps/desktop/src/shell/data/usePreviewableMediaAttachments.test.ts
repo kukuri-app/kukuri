@@ -68,6 +68,7 @@ function renderAttachments(
       selectedAuthorTimeline: [],
       thread: [],
       selectedDirectMessageTimeline: [],
+      directMessages: [],
       ownedReactionAssets: [],
       bookmarkedReactionAssets: [],
       recentReactions: [],

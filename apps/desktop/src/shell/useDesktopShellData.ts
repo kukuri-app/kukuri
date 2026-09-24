@@ -416,6 +416,7 @@ export function useDesktopShellData({
     selectedAuthorTimeline,
     thread,
     selectedDirectMessageTimeline,
+    directMessages: state.directMessages,
     ownedReactionAssets,
     bookmarkedReactionAssets,
     recentReactions,

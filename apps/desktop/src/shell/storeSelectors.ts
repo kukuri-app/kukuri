@@ -93,6 +93,7 @@ export const selectShellDataSlice = (s: DesktopShellStore) => ({
   timelineContentAdvisories: s.timelineContentAdvisories,
   authorTrustGates: s.authorTrustGates,
   directMessageTimelineByPeer: s.directMessageTimelineByPeer,
+  directMessages: s.directMessages,
   gameRoomsByScopeKey: s.gameRoomsByScopeKey,
   liveSessionsByScopeKey: s.liveSessionsByScopeKey,
   joinedChannelsByTopic: s.joinedChannelsByTopic,

@@ -49,6 +49,7 @@ type UsePreviewableMediaAttachmentsArgs = {
   selectedAuthorTimeline: PostView[];
   thread: PostView[];
   selectedDirectMessageTimeline: DirectMessageMessageView[];
+  directMessages: DesktopShellState['directMessages'];
   ownedReactionAssets: DesktopShellState['ownedReactionAssets'];
   bookmarkedReactionAssets: BookmarkedCustomReactionView[];
   recentReactions: RecentReactionView[];
@@ -74,6 +75,7 @@ export function usePreviewableMediaAttachments({
   selectedAuthorTimeline,
   thread,
   selectedDirectMessageTimeline,
+  directMessages,
   ownedReactionAssets,
   bookmarkedReactionAssets,
   recentReactions,
@@ -199,6 +201,7 @@ export function usePreviewableMediaAttachments({
     for (const pictureAsset of [
       localProfile?.picture_asset ?? null,
       ...Object.values(knownAuthorsByPubkey).map((author) => author.picture_asset ?? null),
+      ...directMessages.map((conversation) => conversation.peer_picture_asset ?? null),
       ...notifications.map((notification) => notification.actor_picture_asset ?? null),
     ]) {
       tryAddAttachment(
@@ -225,6 +228,7 @@ export function usePreviewableMediaAttachments({
     timelineAdvisoryLookup,
     timelineContentAdvisories,
     communityIndexResolvedPosts,
+    directMessages,
     knownAuthorsByPubkey,
     localProfile?.picture_asset,
     notifications,
