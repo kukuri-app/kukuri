@@ -786,7 +786,7 @@ describe('useDesktopShellData characterization', () => {
     view.unmount();
   });
 
-  test('a visible metaverse room retains its host detail without repeated lookups', async () => {
+  test('a visible metaverse room coalesces host lookup and ignores a previous visit', async () => {
     const host = 'b'.repeat(64);
     const topic = 'kukuri:topic:general';
     const baseApi = createDesktopMockApi({
@@ -797,7 +797,12 @@ describe('useDesktopShellData characterization', () => {
       }] },
       authorSocialViews: { [host]: { name: 'host' } },
     });
-    const getAuthorSocialView = vi.fn(baseApi.getAuthorSocialView);
+    const authorView = await baseApi.getAuthorSocialView(host);
+    const first = createDeferred<typeof authorView>();
+    const second = createDeferred<typeof authorView>();
+    const pending = [first.promise, second.promise];
+    const getAuthorSocialView = vi.fn(() =>
+      pending.shift() ?? Promise.resolve(authorView));
     const api: DesktopApi = { ...baseApi, getAuthorSocialView };
     const harness = createShellHookHarness();
     const workspaceState = openTransientColumn(harness.store.getState().workspaceState, {
@@ -811,8 +816,16 @@ describe('useDesktopShellData characterization', () => {
     const { view } = renderDataHook(api, harness);
     await flushAsyncWork();
     expect(getAuthorSocialView).toHaveBeenCalledWith(host);
-    expect(harness.store.getState().knownAuthorsByPubkey[host]?.name).toBe('host');
     expect(getAuthorSocialView).toHaveBeenCalledTimes(1);
+    const key = `${topic}::public`;
+    const room = harness.store.getState().gameRoomsByScopeKey[key][0];
+    actPatchState(harness.store, { gameRoomsByScopeKey: { [key]: [] } });
+    actPatchState(harness.store, { gameRoomsByScopeKey: { [key]: [room] } });
+    expect(getAuthorSocialView).toHaveBeenCalledTimes(2);
+    await act(async () => { first.resolve(authorView); });
+    expect(harness.store.getState().knownAuthorsByPubkey[host]).toBeUndefined();
+    await act(async () => { second.resolve(authorView); });
+    expect(harness.store.getState().knownAuthorsByPubkey[host]?.name).toBe('host');
     view.unmount();
   });
 });

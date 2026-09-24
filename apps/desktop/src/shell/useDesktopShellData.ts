@@ -339,11 +339,17 @@ export function useDesktopShellData({
     setKnownAuthorsByPubkey((current) => retainRecordEntries(current, activeAuthors));
   }, [knownAuthorsByPubkey, referencedAuthorKeys, setKnownAuthorsByPubkey]);
   const hostDemandRef = useRef<ReadonlySet<string>>(new Set());
-  const pendingHostPubkeysRef = useRef<Set<string>>(new Set());
+  const pendingHostPubkeysRef = useRef<Map<string, number>>(new Map());
+  const nextHostRequestTokenRef = useRef(0);
   useEffect(() => {
-    hostDemandRef.current = new Set(trustGateHostPubkeys);
+    const demand = new Set(trustGateHostPubkeys);
+    hostDemandRef.current = demand;
+    for (const pubkey of pendingHostPubkeysRef.current.keys()) {
+      if (!demand.has(pubkey)) pendingHostPubkeysRef.current.delete(pubkey);
+    }
     return () => { hostDemandRef.current = new Set(); };
   }, [trustGateHostPubkeys]);
+  useEffect(() => () => { pendingHostPubkeysRef.current.clear(); }, []);
   useEffect(() => {
     if (shellChromeState.activePrimarySection !== 'game') return;
     const missing = [...new Set(activeGameRooms.map((room) => room.host_pubkey))].filter((pubkey) =>
@@ -351,17 +357,26 @@ export function useDesktopShellData({
       pubkey !== state.syncStatus.local_author_pubkey &&
       !knownAuthorsByPubkey[pubkey] && !pendingHostPubkeysRef.current.has(pubkey));
     if (missing.length === 0) return;
-    for (const pubkey of missing) pendingHostPubkeysRef.current.add(pubkey);
+    const tokens = new Map(missing.map((pubkey) => {
+      const token = ++nextHostRequestTokenRef.current;
+      pendingHostPubkeysRef.current.set(pubkey, token);
+      return [pubkey, token] as const;
+    }));
     void Promise.all(missing.map((pubkey) => api.getAuthorSocialView(pubkey).catch(() => null)))
       .then((authors) => {
         const resolved = authors.filter((author) =>
-          author !== null && hostDemandRef.current.has(author.author_pubkey));
+          author !== null && hostDemandRef.current.has(author.author_pubkey) &&
+          tokens.get(author.author_pubkey) === pendingHostPubkeysRef.current.get(author.author_pubkey));
         if (resolved.length > 0) {
           setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, resolved));
         }
       })
       .finally(() => {
-        for (const pubkey of missing) pendingHostPubkeysRef.current.delete(pubkey);
+        for (const pubkey of missing) {
+          if (tokens.get(pubkey) === pendingHostPubkeysRef.current.get(pubkey)) {
+            pendingHostPubkeysRef.current.delete(pubkey);
+          }
+        }
       });
   }, [activeGameRooms, api, knownAuthorsByPubkey, localProfile?.pubkey,
     setKnownAuthorsByPubkey, shellChromeState.activePrimarySection, state.syncStatus.local_author_pubkey]);
