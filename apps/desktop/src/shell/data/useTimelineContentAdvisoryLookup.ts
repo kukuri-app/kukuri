@@ -93,6 +93,8 @@ export function useTimelineContentAdvisoryLookup({
     : [...adoptingNodes.baseUrls].sort().join('|');
   const requestedRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<Map<string, AdvisorySubjectRef>>(new Map());
+  const requestTokensRef = useRef<Map<string, number>>(new Map());
+  const nextRequestTokenRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generationRef = useRef(0);
   const apiRef = useRef(api);
@@ -127,6 +129,7 @@ export function useTimelineContentAdvisoryLookup({
     generationRef.current += 1;
     requestedRef.current = new Set();
     queueRef.current = new Map();
+    requestTokensRef.current = new Map();
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -146,6 +149,9 @@ export function useTimelineContentAdvisoryLookup({
     for (const key of queueRef.current.keys()) {
       if (!activeKeys.has(key)) queueRef.current.delete(key);
     }
+    for (const key of requestTokensRef.current.keys()) {
+      if (!activeKeys.has(key)) requestTokensRef.current.delete(key);
+    }
     storeApi.getState().setField('timelineContentAdvisories', (current) =>
       retainRecordEntries(current, activeKeys));
     storeApi.getState().setField('timelineAdvisoryLookup', (current) => {
@@ -158,6 +164,7 @@ export function useTimelineContentAdvisoryLookup({
     for (const [key, subject] of subjects) {
       if (requestedRef.current.has(key)) continue;
       requestedRef.current.add(key);
+      requestTokensRef.current.set(key, ++nextRequestTokenRef.current);
       queueRef.current.set(key, subject);
       fresh.push(subject);
     }
@@ -178,12 +185,15 @@ export function useTimelineContentAdvisoryLookup({
     async function lookupBatch(batch: [string, AdvisorySubjectRef][], generation: number) {
       const keys = batch.map(([key]) => key);
       const requested = new Set(keys);
+      const tokens = new Map(keys.map((key) => [key, requestTokensRef.current.get(key)]));
+      const isCurrent = (key: string) =>
+        activeKeysRef.current.has(key) && tokens.get(key) === requestTokensRef.current.get(key);
       let settled = false;
       const settle = () => {
         if (settled || generation !== generationRef.current) return;
         settled = true;
         storeApi.getState().setField('timelineAdvisoryLookup', (current) => {
-          const fresh = keys.filter((key) => activeKeysRef.current.has(key) && !current.settled[key]);
+          const fresh = keys.filter((key) => isCurrent(key) && !current.settled[key]);
           if (fresh.length === 0) return current;
           const next = { ...current.settled };
           for (const key of fresh) next[key] = true;
@@ -205,7 +215,7 @@ export function useTimelineContentAdvisoryLookup({
         for (const node of result.nodes) {
           for (const advisory of node.advisories) {
             const key = advisorySubjectKey(advisory.subject_kind, advisory.subject_id);
-            if (!activeKeysRef.current.has(key) || !requested.has(key)) continue;
+            if (!isCurrent(key) || !requested.has(key)) continue;
             (additions[key] ??= []).push({ advisory, nodeBaseUrl: node.base_url });
           }
         }

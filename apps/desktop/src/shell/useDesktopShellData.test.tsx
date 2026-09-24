@@ -755,4 +755,34 @@ describe('useDesktopShellData characterization', () => {
     expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual([nextAuthor]);
     view.unmount();
   });
+
+  test('author details from open profile columns stay within the eight visible lists', async () => {
+    const { harness, view } = renderDataHook(createDesktopMockApi());
+    await flushAsyncWork();
+    const initial = harness.store.getState().workspaceState;
+    const pubkeys = Array.from({ length: 10 }, (_, index) => (index + 1).toString(16).padStart(64, '0'));
+    const ids = pubkeys.map((_, index) => `profile-${index}`);
+    let workspace = initial;
+    for (const [index, pubkey] of pubkeys.entries()) {
+      workspace = openTransientColumn(workspace, {
+        id: ids[index], kind: 'profile', entityId: pubkey, pinned: false,
+      });
+    }
+    const authors = Object.fromEntries(pubkeys.map((pubkey) => [
+      pubkey, mergeAuthorView(null, { author_pubkey: pubkey }),
+    ]));
+    actPatchState(harness.store, {
+      workspaceState: { ...workspace, activeColumnId: initial.activeColumnId },
+      visibleListColumnIds: [initial.activeColumnId, ...ids.slice(0, 7)],
+      knownAuthorsByPubkey: authors,
+    });
+    expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual(pubkeys.slice(0, 7));
+
+    actPatchState(harness.store, {
+      visibleListColumnIds: [initial.activeColumnId, ...ids.slice(3, 10)],
+      knownAuthorsByPubkey: authors,
+    });
+    expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual(pubkeys.slice(3, 10));
+    view.unmount();
+  });
 });

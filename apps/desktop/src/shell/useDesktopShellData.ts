@@ -247,10 +247,15 @@ export function useDesktopShellData({
   // `buildPostCardView` を通る投稿源(Timeline / Thread / Profile Column、ブックマーク等)は
   // すべて照会対象に含める。含めない投稿は照会済みにならず、スケルトンのまま残るため。
   const workspaceColumns = state.workspaceState.columns;
+  const visibleColumns = useMemo(() => {
+    const activeId = state.workspaceState.activeColumnId;
+    const ids = new Set([activeId, ...state.visibleListColumnIds.filter((id) => id !== activeId).slice(0, 7)]);
+    return workspaceColumns.filter((column) => ids.has(column.id));
+  }, [state.visibleListColumnIds, state.workspaceState.activeColumnId, workspaceColumns]);
   const timelinesByKey = state.timelinesByKey;
   const authorTimelinesByPubkey = state.authorTimelinesByPubkey;
   const advisoryLookupPosts = useMemo(() => {
-    const columnPosts = workspaceColumns.flatMap((column) => {
+    const columnPosts = visibleColumns.flatMap((column) => {
       if (column.kind === 'timeline' && column.scope) {
         return (
           timelinesByKey[
@@ -285,7 +290,7 @@ export function useDesktopShellData({
     thread,
     threadsById,
     timelinesByKey,
-    workspaceColumns,
+    visibleColumns,
   ]);
   const visibleBookmarkIds = useMemo(() => [
     ...new Set([...advisoryLookupPosts, ...communityIndexResolvedPosts].map((post) => post.object_id)),
@@ -337,12 +342,11 @@ export function useDesktopShellData({
   // #1061: live / game 一覧の主催者も折りたたみ判断の対象にする。
   const trustGateHostPubkeys = useMemo(() => {
     const hosts = new Set<string>();
-    const scopeKeys = new Set([
-      timelineStorageKeyForChannel(activeScope.topicId, activeScope.channelId),
-      ...workspaceColumns
+    const scopeKeys = new Set(
+      visibleColumns
         .filter((column) => (column.kind === 'stream' || column.kind === 'game') && column.scope)
-        .map((column) => timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId)),
-    ]);
+        .map((column) => timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId))
+    );
     for (const key of scopeKeys) {
       for (const session of state.liveSessionsByScopeKey[key] ?? []) {
         const pubkey = session.host_pubkey?.trim();
@@ -354,7 +358,7 @@ export function useDesktopShellData({
       }
     }
     return [...hosts];
-  }, [activeScope.channelId, activeScope.topicId, gameRoomsByScopeKey, state.liveSessionsByScopeKey, workspaceColumns]);
+  }, [gameRoomsByScopeKey, state.liveSessionsByScopeKey, visibleColumns]);
   const referencedAuthorKeys = useMemo(() => {
     const keys = new Set<string>(trustGateHostPubkeys);
     for (const post of [...advisoryLookupPosts, ...communityIndexResolvedPosts]) {
@@ -364,7 +368,7 @@ export function useDesktopShellData({
     for (const notification of notifications) {
       if (notification.actor_pubkey) keys.add(notification.actor_pubkey);
     }
-    for (const column of workspaceColumns) {
+    for (const column of visibleColumns) {
       if ((column.kind === 'profile' || column.kind === 'conversation') && column.entityId) {
         keys.add(column.entityId);
       }
@@ -373,7 +377,7 @@ export function useDesktopShellData({
     if (state.selectedDirectMessagePeerPubkey) keys.add(state.selectedDirectMessagePeerPubkey);
     return [...keys].sort().join(',');
   }, [advisoryLookupPosts, communityIndexResolvedPosts, notifications, selectedAuthorPubkey,
-    state.selectedDirectMessagePeerPubkey, trustGateHostPubkeys, workspaceColumns]);
+    state.selectedDirectMessagePeerPubkey, trustGateHostPubkeys, visibleColumns]);
   useEffect(() => {
     const activeAuthors = new Set(referencedAuthorKeys ? referencedAuthorKeys.split(',') : []);
     setKnownAuthorsByPubkey((current) => retainRecordEntries(current, activeAuthors));
