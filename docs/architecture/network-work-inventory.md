@@ -14,10 +14,10 @@ intervalは現行値であり新設計の推奨値ではない。
 
 | ID / memberと場所 | trigger・間隔・対象 | 現行の停止 / 連鎖 | 総数への依存 / 配置 | guard・検証 |
 | --- | --- | --- | --- | --- |
-| N01 `PeerAddrBook::{merged_peers,ranked_peers,set_seed_peers,record_learned_peer}`、`transport/src/peers.rs` | ticket/learn/seed/取得。各serviceのpeer全体 | 各service寿命。docs側はreapplyへ進む | merge/clone/sortが全peer、mapに件数上限なし。P3共通owner | scope別候補、NW-5/6 |
+| N01 `PeerAddrBook::{ranked_peers,set_seed_peers,record_learned_peer}`、`transport/src/peers.rs` | ticket/learn/seed/取得。account DBの索引窓 | learnedはaccount別30日/64MiBで回収。docs側はreapplyへ進む | 1選択4peer、source各4件。旧全件`merged_peers`を撤去。legacy sync内のpeer保持はR5-H | scope別候補、NW-5/6 |
 | N02 `RemoteFetchRetryState::{begin,finish}`、`iroh-node/src/remote_fetch.rs` の取得入口 | local miss、retry。全候補。30秒は実行時、接続5秒/転送15秒 | 通常walkは待機者cancel後も継続。in-flight task→permit待機→接続 | 実行8の外に無制限の待機とcooldown走査。P3受付 | NW-2/3/4、LocalOnly |
 | N03 `TopicWarmupCoordinator::warmup_peers_once/warmup_peer`、`transport/src/iroh/topics.rs` | topic join/peer追加。direct 250ms〜5秒、relay 1〜10秒 | deadline/neighbor成立。移動する4候補窓だけを走査し、同時2future・共有2dial枠を超える試行は待機せず延期 | peerごとのspawn/permit待機を撤去。topicごとのretry taskと初回bootstrap全件materializeはN04残件 | NW-2/5/6 |
-| N04 `ensure_hint_topic/extend_active_topic_peers/remove_topic_state`、同上 | hint subscribe/publish、peer変化。全topicへ追加 | 初回warmupはreceiverのDrop guard、更新warmupはtopic stateの単一handleが所有。topic解除/置換/shutdownで先に全taskをabortし、終了を待つ。世代closed/通知と登録前lockで旧task復活を防ぐ | 全topic×peerの初回bootstrap合成、再購読、topic数に比例するreceiver/retry taskはP3残件 | NW-5/7 |
+| N04 `ensure_hint_topic/extend_active_topic_peers/remove_topic_state`、同上 | hint subscribe/publish、peer変化。選択窓だけをtopicへ追加 | 初回warmupはreceiverのDrop guard、更新warmupはtopic stateの単一handleが所有。topic解除/置換/shutdownで先に全taskをabortし、終了を待つ。世代closed/通知と登録前lockで旧task復活を防ぐ | 初回bootstrapは最大4候補のcursor読取り。topic数に比例するreceiver/retry taskとSDK内部peer保持は後続条件 | NW-5/7 |
 | N05 docs `reapply_sync_peers` とopen/start/subscribe、`docs-sync/src/iroh_sync.rs` | seed/学習/restore。cached replica集合 | local-onlyはsync昇格しない。registry guard内で再適用 | replica×peer、同期requested全体。P3差分/P4bucket | NW-3/5、LIFE契約 |
 | N06 `close_replica_owned/close_replica_under_guard`、`iroh_sync_lifecycle.rs`、`iroh_local_source.rs` | close/revoke/既存source読取り。最大32所有task | caller cancel後も所有。leave失敗隔離、停止task完了 | P1で有界な停止基盤。再監査し直さずP3接続 | NW-7、P1監査/CI |
 | N07 `ensure_topic_subscription/spawn_topic_subscription/maybe_restart_*`、`service/timeline_subscription_support.rs` | timeline操作、empty/recovery、欠損本文 | subscription registryのtask終了/明示再起動。docs/blob/withdrawal取得を起動 | topic登録、期限map、背景spawnの累積。P3 | NW-1/3/4/5 |
@@ -227,11 +227,11 @@ N44の全callerは `rg -n 'prepare_display_fetch' crates`、型の実装とstack
 
 | ID | 入口 → helper → sink | guard / 上限 / 停止 | 対応contract |
 | --- | --- | --- | --- |
-| N50 | node生成 → docs/blobの独立`PeerAddrBook` → node共有`BlobPeerHealth` | 観測/要求頻度だけ共有。source台帳の変更bool・docs reapplyは維持。healthだけで別bookのpeerを取得先に追加しない | PEER-2、source book独立/共有health・request quota tests |
+| N50 | account DB → docs/blob/gossipの独立候補scope → protocol別`BlobPeerHealth` | learnedは30日/64MiB、ticket/seedは保持。docsは実sync、blobは実転送、gossipは実neighbor成立のみ成功。別protocolのhealthで候補を追加しない | R2-A、account再open/候補cursor/実neighbor tests |
 | N51 | remote blobのhash → `ranked_peers`のsource別cursorとrecent/success → 4peerのconnect候補 | source各4 ID、recent4/success2、address materialize最大12、選択最大4。新manual ticketも選択。`connect_candidates`のdirect/relay順は既存 | PEER-4、100/1,000履歴の読取り数・fresh ticketの連続取得・foreign health除外 |
 | N52 | QUIC connect / blob転送 → 型付き欠損・stream応答・local故障 → health/cache | blob ALPNだけ。health/rate各1,024件、稼働attempt pinと世代照合、request window満杯は延期。型付き欠損/ERR_INTERNAL(3)/local errorを接続不良へ混ぜない | PEER-1/3、実Iroh欠損3mode・local store故障、2,048履歴/1,024 pin/rate tests |
 
-N50〜52のsensitive sinkは選択された既存`PeerAddrBook`内のendpointへのblob hash送信と一時観測cache。新候補はsource台帳に存在するIDへ限定し、scope/capabilityの検証をhealthや直近成功で代替しない。旧`merged_peers`と`available_peer_ids`、source snapshot、SDK内部のaddress/watch集合はなお全件経路であり、P3残作業とする。
+N50〜52のsensitive sinkは選択された既存候補へのblob hash送信と一時観測cache。新候補はsource台帳に存在するIDへ限定し、scope/capabilityの検証をhealthや直近成功で代替しない。旧`merged_peers`は撤去、`available_peer_ids`は4件の窓に限定した。account再構築でdocs/blob/gossipの全候補snapshotを作らない。SDK内部のaddress/watch集合と旧docs syncはR5-Hで扱い、R2-Aだけで総通信の上限達成とはしない。
 
 ## N16のlocal OS通知dispatch差分（P3）
 

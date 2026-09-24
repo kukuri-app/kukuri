@@ -10,7 +10,10 @@ use iroh_docs::api::Doc;
 use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::{Author, AuthorId, Capability, NamespaceSecret};
 use kukuri_core::{DocsAuthorSeed, ReplicaId};
-use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket};
+use kukuri_store::SqliteStore;
+use kukuri_transport::{
+    BlobPeerHealth, PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket,
+};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
@@ -40,12 +43,6 @@ struct ReplicaHandle {
     live_task: Option<JoinHandle<()>>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct DocsPeerState {
-    pub learned_peers: Vec<EndpointAddr>,
-    pub imported_peers: Vec<EndpointAddr>,
-}
-
 #[derive(Clone)]
 pub struct IrohDocsSync {
     node: Arc<IrohDocsNode>,
@@ -71,11 +68,7 @@ struct AccountDocsAuthor {
 
 impl IrohDocsSync {
     pub fn new(node: Arc<IrohDocsNode>) -> Self {
-        let peers = Arc::new(PeerAddrBook::with_fetch_health(
-            node.endpoint().clone(),
-            node.discovery(),
-            node.fetch_peer_health(),
-        ));
+        let peers = Arc::new(PeerAddrBook::new(node.endpoint().clone(), node.discovery()));
         Self {
             node,
             replicas: Arc::new(Mutex::new(HashMap::new())),
@@ -87,6 +80,18 @@ impl IrohDocsSync {
             remote_fetch_retries: Arc::new(Mutex::new(RemoteFetchRetryState::default())),
             account_docs_author: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn with_account_store(node: Arc<IrohDocsNode>, store: Arc<SqliteStore>) -> Self {
+        let mut docs = Self::new(node.clone());
+        docs.peers = Arc::new(PeerAddrBook::with_account_store(
+            node.endpoint().clone(),
+            node.discovery(),
+            Arc::new(BlobPeerHealth::default()),
+            store,
+            "docs",
+        ));
+        docs
     }
 
     /// アカウントの署名鍵から導出した docs author を import し、既定の docs author にする(ADR 0053 §1)。戻り値はその id。
@@ -161,25 +166,7 @@ impl IrohDocsSync {
     }
 
     async fn sync_peers(&self) -> Vec<EndpointAddr> {
-        self.peers.merged_peers().await
-    }
-
-    pub async fn peer_state(&self) -> DocsPeerState {
-        DocsPeerState {
-            learned_peers: self.peers.learned_peers_snapshot().await,
-            imported_peers: self.peers.imported_peers_snapshot().await,
-        }
-    }
-
-    pub async fn restore_peer_state(&self, state: DocsPeerState) -> Result<()> {
-        for endpoint_addr in state.learned_peers {
-            let _ = self.peers.insert_learned_peer_addr(endpoint_addr).await;
-        }
-        for endpoint_addr in state.imported_peers {
-            self.peers.insert_imported_peer_addr(endpoint_addr).await;
-        }
-        // 復元後の reapply は docs-sync 側の責務(共通台帳は行わない)。
-        self.reapply_sync_peers().await
+        self.peers.ranked_peers().await
     }
 
     // 本体ループは remote_fetch(WP-B14)へ移設。characterization テスト専用に残す。
@@ -240,6 +227,24 @@ impl IrohDocsSync {
     }
 
     async fn ensure_replica_with_sync(&self, replica_id: &ReplicaId, sync: bool) -> Result<Doc> {
+        // openの競合で同じnamespaceのtaskを複数作らない。ローカルreadはsyncを昇格しない。
+        let mut replicas = self.replicas.lock().await;
+        // revokeとopenを直列化する。mapのlock前にsecretをコピーすると、revoke完了後に再openできてしまう。
+        let secret = self.replica_secret(replica_id).await?;
+        if let Some(handle) = replicas.get_mut(replica_id.as_str()) {
+            if handle.closing {
+                anyhow::bail!("replica close is pending; retry close before reopening");
+            }
+            if sync && !handle.sync_requested {
+                let peers = self.sync_peers().await;
+                let peer_ids = peers.iter().map(|peer| peer.id.to_string()).collect();
+                doc_start_sync(&handle.doc, peers).await?;
+                handle.sync_peer_ids = peer_ids;
+                handle.sync_requested = true;
+            }
+            return Ok(handle.doc.clone());
+        }
+
         let imported = if sync {
             self.sync_peers().await
         } else {
@@ -249,22 +254,6 @@ impl IrohDocsSync {
             .iter()
             .map(|peer| peer.id.to_string())
             .collect::<BTreeSet<_>>();
-
-        // openの競合で同じnamespaceのtaskを複数作らない。ローカルreadはsyncを昇格しない。
-        let mut replicas = self.replicas.lock().await;
-        // revokeとopenを直列化する。mapのlock前にsecretをコピーすると、revoke完了後に再openできてしまう。
-        let secret = self.replica_secret(replica_id).await?;
-        if let Some(handle) = replicas.get_mut(replica_id.as_str()) {
-            if handle.closing {
-                anyhow::bail!("replica close is pending; retry close before reopening");
-            }
-            if sync && (!handle.sync_requested || handle.sync_peer_ids != imported_ids) {
-                doc_start_sync(&handle.doc, imported.clone()).await?;
-                handle.sync_peer_ids = imported_ids;
-                handle.sync_requested = true;
-            }
-            return Ok(handle.doc.clone());
-        }
 
         let doc = self
             .node
@@ -278,6 +267,7 @@ impl IrohDocsSync {
         }
         let live_replica = replica_id.clone();
         let live_events = tx.clone();
+        let peer_observations = self.peers.clone();
         let task = tokio::spawn(async move {
             while let Some(item) = live.next().await {
                 if let Ok(event) = item {
@@ -300,7 +290,24 @@ impl IrohDocsSync {
                                 docs_author: Some(entry.author().to_string()),
                             }));
                         }
-                        iroh_docs::engine::LiveEvent::SyncFinished(_) => {
+                        iroh_docs::engine::LiveEvent::SyncFinished(sync) => {
+                            if sync.result.is_ok() {
+                                peer_observations
+                                    .record_fetch_success(
+                                        sync.peer,
+                                        sync.finished
+                                            .duration_since(sync.started)
+                                            .unwrap_or_default(),
+                                    )
+                                    .await;
+                            } else {
+                                peer_observations
+                                    .record_fetch_failure(
+                                        sync.peer,
+                                        kukuri_transport::PeerFetchFailure::TransferFailed,
+                                    )
+                                    .await;
+                            }
                             let _ = live_events.send(ReplicaNotice::SyncFinished);
                         }
                         iroh_docs::engine::LiveEvent::PendingContentReady => {
@@ -693,7 +700,7 @@ impl DocsSync for IrohDocsSync {
 
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
         let endpoint_addr = parse_endpoint_ticket(ticket)?;
-        self.peers.insert_imported_peer_addr(endpoint_addr).await;
+        self.peers.insert_imported_peer_addr(endpoint_addr).await?;
         self.reapply_sync_peers().await?;
         Ok(())
     }

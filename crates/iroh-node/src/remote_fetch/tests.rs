@@ -10,7 +10,8 @@ async fn missing_blob_does_not_penalize_a_reachable_peer() {
     ));
     peers
         .insert_imported_peer_addr(provider.endpoint().addr())
-        .await;
+        .await
+        .unwrap();
     for (index, mode) in [
         FetchMode::Store,
         FetchMode::Ephemeral,
@@ -70,7 +71,8 @@ async fn local_blob_store_failure_does_not_penalize_the_provider() {
     ));
     peers
         .insert_imported_peer_addr(provider.endpoint().addr())
-        .await;
+        .await
+        .unwrap();
     client.blobs().shutdown().await.unwrap();
     let retries = Arc::new(Mutex::new(RemoteFetchRetryState::default()));
     let result = fetch_bytes_with_cooldown_mode(

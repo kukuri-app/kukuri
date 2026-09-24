@@ -232,7 +232,13 @@ impl IrohGossipTransport {
                 let mut join_endpoint_addrs = Vec::new();
                 for endpoint_addr in &endpoint_addrs {
                     let peer_id = endpoint_addr.id.to_string();
-                    if state.bootstrap_peer_ids.insert(peer_id.clone()) {
+                    if !state.bootstrap_peer_ids.contains(&peer_id) {
+                        if state.bootstrap_peer_ids.len() == 16
+                            && let Some(oldest) = state.bootstrap_peer_ids.first().cloned()
+                        {
+                            state.bootstrap_peer_ids.remove(&oldest);
+                        }
+                        state.bootstrap_peer_ids.insert(peer_id.clone());
                         join_peer_ids.push(endpoint_addr.id);
                         added_peer_ids.push(peer_id);
                         join_endpoint_addrs.push(endpoint_addr.clone());
@@ -334,18 +340,11 @@ impl IrohGossipTransport {
             !self.hint_closed.load(Ordering::Acquire),
             "hint transport is closed"
         );
-        let bootstrap_peers = self.bootstrap_peers().await;
-        let bootstrap_peer_ids = bootstrap_peers
-            .iter()
-            .map(|peer| peer.id.to_string())
-            .collect::<BTreeSet<_>>();
-
         let existing = {
             let topics = self.topic_states.lock().await;
             topics.get(topic.as_str()).map(|state| {
                 (
                     state.broadcaster.clone(),
-                    state.bootstrap_peer_ids.clone(),
                     Arc::clone(&state.neighbors),
                     Arc::clone(&state.last_error),
                     Arc::clone(&state.closed),
@@ -357,23 +356,14 @@ impl IrohGossipTransport {
             self.hint_existing_snapshot_observed.notify_one();
         }
 
-        if let Some((
-            _broadcaster,
-            existing_bootstrap_peer_ids,
-            neighbors,
-            last_error,
-            expected_generation,
-        )) = existing
-        {
+        if let Some((_broadcaster, neighbors, last_error, expected_generation)) = existing {
             let has_neighbors = !neighbors.read().await.is_empty();
             let timed_out_join = last_error
                 .lock()
                 .await
                 .as_deref()
                 .is_some_and(|message| message.contains("initial topic join"));
-            if existing_bootstrap_peer_ids == bootstrap_peer_ids
-                && (!timed_out_join || has_neighbors)
-            {
+            if !timed_out_join || has_neighbors {
                 let topics = self.topic_states.lock().await;
                 let mut subscribed = self.subscribed_topics.lock().await;
                 anyhow::ensure!(
@@ -390,14 +380,17 @@ impl IrohGossipTransport {
                 .await;
         }
 
+        let bootstrap_peers = self.bootstrap_peers().await?;
+        let bootstrap_peer_ids = bootstrap_peers
+            .iter()
+            .map(|peer| peer.id.to_string())
+            .collect::<BTreeSet<_>>();
+
         let bootstrap = bootstrap_peers
             .iter()
             .map(|peer| peer.id)
             .collect::<Vec<_>>();
-
-        for peer in &bootstrap_peers {
-            self.discovery.add_endpoint_info(peer.clone());
-        }
+        let attempted_peers = bootstrap.clone();
 
         let topic_handle = match self
             .gossip
@@ -433,6 +426,7 @@ impl IrohGossipTransport {
         let imported_count = bootstrap_peers.len();
         let warm_endpoint = self.endpoint.clone();
         let warm_bootstrap_peers = bootstrap_peers.clone();
+        let gossip_health = Arc::clone(&self.gossip_health);
         let warm_gossip = self.gossip.clone();
         let warmups = Arc::clone(&self.topic_warmups);
 
@@ -488,6 +482,11 @@ impl IrohGossipTransport {
                         .collect::<BTreeSet<_>>();
                     *neighbors_task.write().await = current_neighbors;
                 } else {
+                    for peer in &attempted_peers {
+                        gossip_health
+                            .failure(*peer, crate::peers::PeerFetchFailure::ConnectTimeout)
+                            .await;
+                    }
                     let message = "timed out waiting for initial topic join".to_string();
                     *last_error_task.lock().await = Some(message.clone());
                     *transport_last_error.lock().await =
@@ -546,6 +545,7 @@ impl IrohGossipTransport {
                         }
                     }
                     Ok(GossipEvent::NeighborUp(peer_id)) => {
+                        gossip_health.success(peer_id, Duration::ZERO).await;
                         joined_task_state.store(true, Ordering::SeqCst);
                         joined_task_notify.notify_waiters();
                         let mut guard = neighbors_task.write().await;

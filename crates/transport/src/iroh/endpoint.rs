@@ -78,6 +78,11 @@ impl IrohGossipTransport {
             configured_seed_peers: Arc::new(Mutex::new(BTreeMap::new())),
             bootstrap_seed_peers: Arc::new(Mutex::new(BTreeMap::new())),
             imported_peers: Arc::new(Mutex::new(BTreeMap::new())),
+            account_store: None,
+            imported_cursor: Mutex::new(None),
+            hot_peer_ids: Mutex::new(VecDeque::new()),
+            gossip_health: Arc::new(crate::peers::BlobPeerHealth::default()),
+            bootstrap_cursor: Mutex::new((0, [None, None, None])),
             receive_destinations: Mutex::new(receive_destination::DestinationWindow::default()),
             receive_destination_probes: Semaphore::new(2),
             subscribed_topics: Arc::new(Mutex::new(BTreeSet::new())),
@@ -134,6 +139,11 @@ impl IrohGossipTransport {
             configured_seed_peers: Arc::new(Mutex::new(BTreeMap::new())),
             bootstrap_seed_peers: Arc::new(Mutex::new(BTreeMap::new())),
             imported_peers: Arc::new(Mutex::new(BTreeMap::new())),
+            account_store: None,
+            imported_cursor: Mutex::new(None),
+            hot_peer_ids: Mutex::new(VecDeque::new()),
+            gossip_health: Arc::new(crate::peers::BlobPeerHealth::default()),
+            bootstrap_cursor: Mutex::new((0, [None, None, None])),
             receive_destinations: Mutex::new(receive_destination::DestinationWindow::default()),
             receive_destination_probes: Semaphore::new(2),
             subscribed_topics: Arc::new(Mutex::new(BTreeSet::new())),
@@ -164,6 +174,11 @@ impl IrohGossipTransport {
 
     pub async fn bind_local() -> Result<Self> {
         Self::bind(TransportNetworkConfig::loopback()).await
+    }
+
+    pub fn with_account_store(mut self, store: Arc<kukuri_store::SqliteStore>) -> Self {
+        self.account_store = Some(store);
+        self
     }
 }
 

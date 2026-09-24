@@ -16,6 +16,7 @@ tracing.workspace = true
 kukuri-core = { path = "../core" }
 kukuri-iroh-node = { path = "../iroh-node" }
 kukuri-transport = { path = "../transport" }
+kukuri-store = { path = "../store" }
 
 [dev-dependencies]
 tempfile.workspace = true

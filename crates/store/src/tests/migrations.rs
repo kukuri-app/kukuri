@@ -500,7 +500,7 @@ async fn connect_file_migrates_pre_metaverse_game_room_fixture() {
 // 後続 WP-H1(ProjectionStore 分割)の安全網として、
 // (1) 全世代に up/down が embed で揃うこと、
 // (2) 全適用 → undo(0) → 再適用でスキーマと migration 記録が完全復元されること
-// を固定する。期待値は観測した現挙動の生リテラル(世代数 35 など)。
+// を固定する。期待値は観測した現挙動の生リテラル(世代数 36 など)。
 // ---------------------------------------------------------------------------
 
 /// 全世代に ReversibleUp / ReversibleDown が揃っていることを固定する(DB 不要)。
@@ -529,8 +529,8 @@ async fn all_generations_have_paired_down() {
 
     assert_eq!(
         generations.len(),
-        35,
-        "store migrations must cover exactly 35 generations, found versions: {:?}",
+        36,
+        "store migrations must cover exactly 36 generations, found versions: {:?}",
         generations.keys().collect::<Vec<_>>()
     );
 
@@ -622,8 +622,8 @@ async fn full_migration_round_trip() {
     expected_versions.dedup();
     assert_eq!(
         applied_versions.len(),
-        35,
-        "round trip must restore all 35 migration generations"
+        36,
+        "round trip must restore all 36 migration generations"
     );
     assert_eq!(applied_versions, expected_versions);
 }

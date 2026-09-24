@@ -14,7 +14,8 @@ async fn unsubscribing_during_initial_join_stops_its_warmup_task() {
     let peer = iroh::SecretKey::from_bytes(&[47; 32]).public();
     transport
         .insert_imported_peer_addr(EndpointAddr::new(peer))
-        .await;
+        .await
+        .unwrap();
     let topic = TopicId::new("kukuri:topic:owned-initial-warmup");
     let _stream = transport.subscribe_hints(&topic).await.unwrap();
     timeout(Duration::from_secs(2), async {

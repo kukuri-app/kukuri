@@ -177,7 +177,7 @@ impl BlobPeerHealth {
         records.preferred.truncate(2);
     }
 
-    pub(super) async fn rank(&self, peers: &mut [EndpointAddr]) {
+    pub(crate) async fn rank(&self, peers: &mut [EndpointAddr]) {
         let records = self.records.lock().await;
         let now = Instant::now();
         peers.sort_by_key(|peer| {
@@ -275,7 +275,7 @@ impl BlobPeerHealth {
         }
     }
 
-    pub(super) async fn success(self: &Arc<Self>, peer: EndpointId, latency: Duration) {
+    pub(crate) async fn success(self: &Arc<Self>, peer: EndpointId, latency: Duration) {
         if let Some(record) = self.entry(peer).await {
             let generation = record
                 .lock()
@@ -292,7 +292,7 @@ impl BlobPeerHealth {
         }
     }
 
-    pub(super) async fn failure(self: &Arc<Self>, peer: EndpointId, failure: PeerFetchFailure) {
+    pub(crate) async fn failure(self: &Arc<Self>, peer: EndpointId, failure: PeerFetchFailure) {
         if let Some(record) = self.entry(peer).await {
             let generation = record
                 .lock()

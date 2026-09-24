@@ -45,6 +45,7 @@ mod envelopes;
 pub(crate) mod live_game;
 mod notifications;
 mod observations;
+mod peer_candidates;
 pub(crate) mod projections;
 mod social;
 mod withdrawals;

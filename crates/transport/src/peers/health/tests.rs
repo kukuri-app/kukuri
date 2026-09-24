@@ -111,11 +111,13 @@ async fn source_books_keep_change_notifications_but_share_blob_observations() {
         first
             .insert_learned_peer_addr(EndpointAddr::new(target))
             .await
+            .unwrap()
     );
     assert!(
         second
             .insert_learned_peer_addr(EndpointAddr::new(target))
             .await
+            .unwrap()
     );
     let attempt = first.begin_fetch_attempt(target).await.unwrap();
     attempt.success(Duration::from_millis(1)).await;

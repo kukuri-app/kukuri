@@ -379,6 +379,7 @@ impl DesktopRuntime {
             &community_node_seed_peers,
             dht_options,
             relay_config.clone(),
+            Some(store.clone()),
         )
         .await?;
         let keys = load_or_create_keys(&db_path, identity_mode)?;

@@ -21,6 +21,7 @@ tokio-stream.workspace = true
 tracing.workspace = true
 kukuri-core = { path = "../core" }
 kukuri-transport = { path = "../transport" }
+kukuri-store = { path = "../store" }
 kukuri-iroh-node = { path = "../iroh-node" }
 
 [dev-dependencies]

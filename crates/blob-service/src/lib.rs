@@ -102,12 +102,6 @@ pub struct IrohBlobService {
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct BlobPeerState {
-    pub learned_peers: Vec<iroh::EndpointAddr>,
-    pub imported_peers: Vec<iroh::EndpointAddr>,
-}
-
 #[derive(Clone, Default)]
 pub struct MemoryBlobService {
     blobs: Arc<RwLock<HashMap<String, Vec<u8>>>>,
@@ -140,24 +134,22 @@ impl IrohBlobService {
 
     #[cfg(test)]
     async fn fetch_peers(&self) -> Vec<iroh::EndpointAddr> {
-        self.peers.merged_peers().await
+        self.peers.ranked_peers().await
     }
 
-    pub async fn peer_state(&self) -> BlobPeerState {
-        BlobPeerState {
-            learned_peers: self.peers.learned_peers_snapshot().await,
-            imported_peers: self.peers.imported_peers_snapshot().await,
-        }
-    }
-
-    pub async fn restore_peer_state(&self, state: BlobPeerState) -> Result<()> {
-        for endpoint_addr in state.learned_peers {
-            let _ = self.peers.insert_learned_peer_addr(endpoint_addr).await;
-        }
-        for endpoint_addr in state.imported_peers {
-            self.peers.insert_imported_peer_addr(endpoint_addr).await;
-        }
-        Ok(())
+    pub fn with_account_store(
+        node: Arc<IrohDocsNode>,
+        store: Arc<kukuri_store::SqliteStore>,
+    ) -> Self {
+        let mut blobs = Self::new(node.clone());
+        blobs.peers = Arc::new(PeerAddrBook::with_account_store(
+            node.endpoint().clone(),
+            node.discovery(),
+            node.fetch_peer_health(),
+            store,
+            "blob",
+        ));
+        blobs
     }
 
     async fn is_pinned(&self, hash: &BlobHash) -> Result<bool> {
@@ -424,7 +416,7 @@ impl BlobService for IrohBlobService {
 
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
         let endpoint_addr = parse_endpoint_ticket(ticket)?;
-        self.peers.insert_imported_peer_addr(endpoint_addr).await;
+        self.peers.insert_imported_peer_addr(endpoint_addr).await?;
         Ok(())
     }
 

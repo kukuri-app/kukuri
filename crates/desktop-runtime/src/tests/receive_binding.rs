@@ -45,6 +45,7 @@ async fn account_binding_is_live_only_after_identity_load_and_survives_stack_reb
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .unwrap();

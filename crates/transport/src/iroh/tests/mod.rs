@@ -51,10 +51,93 @@ async fn bootstrap_candidates_read_four_peers_from_large_history() {
             .await
             .insert(id.to_string(), EndpointAddr::new(id));
     }
-    let first = transport.bootstrap_peers().await;
+    let first = transport.bootstrap_peers().await.expect("bootstrap peers");
     assert!(
         first.len() <= 4,
         "one topic join should not materialize all known peers"
+    );
+    transport.shutdown().await;
+}
+
+#[tokio::test]
+async fn bootstrap_candidates_revisit_old_peers_and_include_imported_ticket() {
+    let transport = IrohGossipTransport::bind_local().await.expect("transport");
+    let mut configured = BTreeSet::new();
+    for index in 0_u64..16 {
+        let mut bytes = [0; 32];
+        bytes[..8].copy_from_slice(&index.to_be_bytes());
+        let id = iroh::SecretKey::from_bytes(&bytes).public();
+        configured.insert(id.to_string());
+        transport
+            .configured_seed_peers
+            .lock()
+            .await
+            .insert(id.to_string(), EndpointAddr::new(id));
+    }
+    let ticket_id = iroh::SecretKey::from_bytes(&[99; 32]).public();
+    transport
+        .imported_peers
+        .lock()
+        .await
+        .insert(ticket_id.to_string(), EndpointAddr::new(ticket_id));
+    let mut seen = BTreeSet::new();
+    for _ in 0..12 {
+        let peers = transport.bootstrap_peers().await.expect("bootstrap peers");
+        assert!(peers.len() <= 4);
+        seen.extend(peers.into_iter().map(|peer| peer.id.to_string()));
+    }
+    assert!(seen.contains(&ticket_id.to_string()));
+    assert!(
+        configured.is_subset(&seen),
+        "old configured peers must be revisited"
+    );
+    transport.shutdown().await;
+}
+
+#[tokio::test]
+async fn account_tickets_outlive_the_bounded_hot_lookup() {
+    let store = Arc::new(kukuri_store::SqliteStore::connect_memory().await.unwrap());
+    let transport = IrohGossipTransport::bind_local()
+        .await
+        .unwrap()
+        .with_account_store(store.clone());
+    let topic = TopicId::new("kukuri:topic:bounded-ticket-window");
+    let _stream = transport.subscribe_hints(&topic).await.unwrap();
+    for index in 0_u64..20 {
+        let mut key = [0; 32];
+        key[..8].copy_from_slice(&index.to_be_bytes());
+        let peer = iroh::SecretKey::from_bytes(&key).public();
+        transport
+            .insert_imported_peer_addr(EndpointAddr::new(peer))
+            .await
+            .unwrap();
+    }
+    assert_eq!(transport.hot_peer_ids.lock().await.len(), 16);
+    let hint_topic = kukuri_core::wire::hint_topic_id(&topic);
+    assert!(
+        transport
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .unwrap()
+            .bootstrap_peer_ids
+            .len()
+            <= 16
+    );
+    assert_eq!(
+        store
+            .peer_candidate_window(
+                "gossip",
+                "imported",
+                None,
+                32,
+                Utc::now().timestamp_millis()
+            )
+            .await
+            .unwrap()
+            .len(),
+        20
     );
     transport.shutdown().await;
 }
@@ -307,6 +390,14 @@ async fn transport_seed_update_updates_existing_topic_subscription() {
     })
     .await
     .expect("direct seed update timeout");
+    assert!(
+        transport_a
+            .gossip_health
+            .snapshot(transport_b.endpoint.id())
+            .await
+            .is_some_and(|state| state.fetch_successes > 0),
+        "only an observed gossip neighbor records gossip success"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

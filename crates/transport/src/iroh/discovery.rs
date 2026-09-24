@@ -1,14 +1,30 @@
 use super::*;
 
 impl IrohGossipTransport {
-    pub(crate) async fn insert_imported_peer_addr(&self, endpoint_addr: EndpointAddr) {
-        self.discovery.add_endpoint_info(endpoint_addr.clone());
-        self.imported_peers
-            .lock()
-            .await
-            .insert(endpoint_addr.id.to_string(), endpoint_addr.clone());
+    pub(crate) async fn insert_imported_peer_addr(
+        &self,
+        endpoint_addr: EndpointAddr,
+    ) -> Result<()> {
+        if let Some(store) = &self.account_store {
+            store
+                .put_peer_candidate(
+                    "gossip",
+                    "imported",
+                    &endpoint_addr.id.to_string(),
+                    &serde_json::to_vec(&endpoint_addr)?,
+                    Utc::now().timestamp_millis(),
+                )
+                .await?;
+        } else {
+            self.imported_peers
+                .lock()
+                .await
+                .insert(endpoint_addr.id.to_string(), endpoint_addr.clone());
+        }
+        self.remember_hot_endpoint(endpoint_addr.clone()).await;
         self.extend_active_topic_peers(vec![endpoint_addr], "imported-peer")
             .await;
+        Ok(())
     }
 
     pub(crate) async fn transport_import_ticket_impl(&self, ticket: &str) -> Result<()> {
@@ -20,7 +36,7 @@ impl IrohGossipTransport {
                 return Err(anyhow!(message));
             }
         };
-        self.insert_imported_peer_addr(endpoint_addr).await;
+        self.insert_imported_peer_addr(endpoint_addr).await?;
         *self.last_error.lock().await = None;
         Ok(())
     }
@@ -46,26 +62,25 @@ impl IrohGossipTransport {
         let mut configured = BTreeMap::new();
         for seed in configured_seed_peers {
             let endpoint_addr = seed.to_endpoint_addr_with_relays(&relay_urls)?;
-            self.discovery.add_endpoint_info(endpoint_addr.clone());
+            if self.account_store.is_none() {
+                self.discovery.add_endpoint_info(endpoint_addr.clone());
+            }
             configured.insert(endpoint_addr.id.to_string(), endpoint_addr);
         }
         let mut bootstrap = BTreeMap::new();
         for seed in bootstrap_seed_peers {
             let endpoint_addr = seed.to_endpoint_addr_with_relays(&relay_urls)?;
-            self.discovery.add_endpoint_info(endpoint_addr.clone());
+            if self.account_store.is_none() {
+                self.discovery.add_endpoint_info(endpoint_addr.clone());
+            }
             bootstrap.insert(endpoint_addr.id.to_string(), endpoint_addr);
         }
-        let updated_topic_peers = configured
-            .values()
-            .chain(bootstrap.values())
-            .cloned()
-            .collect::<Vec<_>>();
         *self.discovery_mode.lock().await = mode;
         *self.env_locked.lock().await = env_locked;
         *self.configured_seed_peers.lock().await = configured;
         *self.bootstrap_seed_peers.lock().await = bootstrap;
         *self.last_error.lock().await = None;
-        self.extend_active_topic_peers(updated_topic_peers, "seed-update")
+        self.extend_active_topic_peers(self.bootstrap_peers().await?, "seed-update")
             .await;
         Ok(())
     }
@@ -73,13 +88,16 @@ impl IrohGossipTransport {
     pub(crate) async fn transport_discovery_impl(&self) -> Result<DiscoverySnapshot> {
         let configured_seed_peer_ids = self.configured_seed_peer_ids().await;
         let bootstrap_seed_peer_ids = self.bootstrap_seed_peer_ids().await;
-        let manual_ticket_peer_ids = self
-            .imported_peers
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
+        let manual_ticket_peer_ids = if let Some(store) = &self.account_store {
+            store
+                .peer_candidate_window("gossip", "imported", None, 4, Utc::now().timestamp_millis())
+                .await?
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect()
+        } else {
+            self.imported_peers.lock().await.keys().cloned().collect()
+        };
         Ok(DiscoverySnapshot {
             mode: self.discovery_mode.lock().await.clone(),
             connect_mode: self.connect_mode.lock().await.clone(),

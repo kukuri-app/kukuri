@@ -109,11 +109,6 @@ impl Default for TopicWarmupCoordinator {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct TransportPeerState {
-    pub imported_peers: Vec<EndpointAddr>,
-}
-
 pub struct IrohGossipTransport {
     receive_offer_instance: u64,
     endpoint: Endpoint,
@@ -124,6 +119,11 @@ pub struct IrohGossipTransport {
     configured_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     bootstrap_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     imported_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
+    account_store: Option<Arc<kukuri_store::SqliteStore>>,
+    imported_cursor: Mutex<Option<(i64, String)>>,
+    hot_peer_ids: Mutex<VecDeque<EndpointId>>,
+    gossip_health: Arc<crate::peers::BlobPeerHealth>,
+    bootstrap_cursor: Mutex<(usize, [Option<String>; 3])>,
     receive_destinations: Mutex<receive_destination::DestinationWindow>,
     receive_destination_probes: Semaphore,
     subscribed_topics: Arc<Mutex<BTreeSet<String>>>,

@@ -13,6 +13,7 @@ async fn account_docs_author_survives_a_stack_rebuild() {
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .expect("stack");

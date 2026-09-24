@@ -2,6 +2,50 @@ use super::*;
 use iroh::endpoint::presets;
 
 #[tokio::test]
+async fn account_candidate_history_is_indexed_and_survives_book_rebuild() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("account.db");
+    let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+    let store = Arc::new(SqliteStore::connect_file(&path).await.unwrap());
+    let book = PeerAddrBook::with_account_store(
+        endpoint.clone(),
+        Arc::new(MemoryLookup::new()),
+        Arc::new(BlobPeerHealth::default()),
+        store,
+        "blob",
+    );
+    for index in 0_u64..1_000 {
+        let mut key = [0; 32];
+        key[..8].copy_from_slice(&index.to_be_bytes());
+        book.insert_learned_peer_addr(EndpointAddr::new(
+            iroh::SecretKey::from_bytes(&key).public(),
+        ))
+        .await
+        .unwrap();
+    }
+    book.recent_peers.lock().await.clear();
+    let mut seen = BTreeSet::new();
+    for _ in 0..250 {
+        let selected = book.ranked_peers().await;
+        assert_eq!(selected.len(), 4);
+        seen.extend(selected.into_iter().map(|peer| peer.id));
+    }
+    assert_eq!(seen.len(), 1_000, "old retained peers must be revisited");
+    assert!(book.sampled_peer_count.load(Ordering::Relaxed) <= 12);
+    drop(book);
+    let reopened = PeerAddrBook::with_account_store(
+        endpoint.clone(),
+        Arc::new(MemoryLookup::new()),
+        Arc::new(BlobPeerHealth::default()),
+        Arc::new(SqliteStore::connect_file(&path).await.unwrap()),
+        "blob",
+    );
+    assert_eq!(reopened.ranked_peers().await.len(), 4);
+    drop(reopened);
+    endpoint.close().await;
+}
+
+#[tokio::test]
 async fn successful_peer_is_ranked_before_recently_timed_out_peer() {
     let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
     let discovery = Arc::new(MemoryLookup::new());
@@ -227,7 +271,9 @@ async fn fetch_candidates_read_a_fixed_window_instead_of_all_peer_history() {
             let mut secret = [0; 32];
             secret[..8].copy_from_slice(&index.to_be_bytes());
             let peer = iroh::SecretKey::from_bytes(&secret).public();
-            book.insert_learned_peer_addr(EndpointAddr::new(peer)).await;
+            book.insert_learned_peer_addr(EndpointAddr::new(peer))
+                .await
+                .unwrap();
         }
         book.recent_peers.lock().await.clear(); // Historical rows, not fresh hint/import demand.
         let first = book.ranked_peers().await;
@@ -258,7 +304,8 @@ async fn bounded_selection_keeps_recent_success_and_new_import_without_expanding
     };
     for index in 0..100 {
         book.insert_learned_peer_addr(EndpointAddr::new(make_peer(index)))
-            .await;
+            .await
+            .unwrap();
     }
     book.recent_peers.lock().await.clear();
     let known = book
@@ -275,7 +322,8 @@ async fn bounded_selection_keeps_recent_success_and_new_import_without_expanding
     book.health.success(foreign, Duration::from_millis(1)).await;
     let fresh = make_peer(10_000);
     book.insert_imported_peer_addr(EndpointAddr::new(fresh))
-        .await;
+        .await
+        .unwrap();
     let selected = book.ranked_peers().await;
     assert!(selected.iter().any(|peer| peer.id == known));
     assert!(selected.iter().any(|peer| peer.id == fresh));
@@ -299,12 +347,14 @@ async fn new_import_remains_a_candidate_for_follow_up_blob_requests() {
     };
     for index in 0..100 {
         book.insert_learned_peer_addr(EndpointAddr::new(make_peer(index)))
-            .await;
+            .await
+            .unwrap();
     }
     book.recent_peers.lock().await.clear();
     let newly_imported = make_peer(10_000);
     book.insert_imported_peer_addr(EndpointAddr::new(newly_imported))
-        .await;
+        .await
+        .unwrap();
     for _ in 0..2 {
         let candidates = book.ranked_peers().await;
         assert!(
@@ -326,14 +376,17 @@ async fn new_import_gets_a_slot_when_older_healthy_peers_fill_the_window() {
     };
     for index in 0..4 {
         let peer = make_peer(index);
-        book.insert_learned_peer_addr(EndpointAddr::new(peer)).await;
+        book.insert_learned_peer_addr(EndpointAddr::new(peer))
+            .await
+            .unwrap();
         book.record_fetch_success(peer, Duration::from_millis(1))
             .await;
     }
     book.recent_peers.lock().await.clear();
     let fresh = make_peer(10_000);
     book.insert_imported_peer_addr(EndpointAddr::new(fresh))
-        .await;
+        .await
+        .unwrap();
     assert!(
         book.ranked_peers()
             .await

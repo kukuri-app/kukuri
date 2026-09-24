@@ -124,6 +124,11 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
         .expect("relay server");
     let dir = tempdir().expect("tempdir");
     let discovery_config = DiscoveryConfig::static_peer_default();
+    let candidate_store = Arc::new(
+        SqliteStore::connect_file(dir.path().join("account.db"))
+            .await
+            .expect("account store"),
+    );
     let stack_a = SharedIrohStack::new(
         &dir.path().join("stack-a"),
         TransportNetworkConfig::loopback(),
@@ -131,6 +136,7 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        Some(candidate_store),
     )
     .await
     .expect("stack a");
@@ -141,6 +147,7 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .expect("stack b");
@@ -175,15 +182,6 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
         .await
         .expect("import blob ticket");
 
-    let current_guard = stack_a.current.lock().await;
-    let current = current_guard
-        .as_ref()
-        .expect("current stack before rebuild");
-    let transport_before = current.transport.peer_state().await;
-    let docs_before = current.docs_sync.peer_state().await;
-    let blob_before = current.blob_service.peer_state().await;
-    drop(current_guard);
-
     timeout(
         Duration::from_secs(30),
         stack_a.rebuild(
@@ -198,19 +196,47 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
     .expect("stack rebuild timeout")
     .expect("stack rebuild");
 
-    let current_guard = stack_a.current.lock().await;
-    let current = current_guard.as_ref().expect("current stack after rebuild");
-    let transport_after = current.transport.peer_state().await;
-    let docs_after = current.docs_sync.peer_state().await;
-    let blob_after = current.blob_service.peer_state().await;
-    drop(current_guard);
-
-    assert_eq!(
-        transport_after.imported_peers,
-        transport_before.imported_peers
+    let peer_id_b = stack_b
+        .current
+        .lock()
+        .await
+        .as_ref()
+        .expect("stack b")
+        .node
+        .endpoint()
+        .id();
+    assert!(
+        stack_a
+            .transport
+            .discovery()
+            .await
+            .expect("discovery")
+            .manual_ticket_peer_ids
+            .contains(&peer_id_b.to_string())
     );
-    assert_eq!(docs_after.imported_peers, docs_before.imported_peers);
-    assert_eq!(blob_after.imported_peers, blob_before.imported_peers);
+    assert!(
+        stack_a
+            .docs_sync
+            .current()
+            .await
+            .remote_read_candidates()
+            .await
+            .iter()
+            .any(|peer| peer.id == peer_id_b)
+    );
+    let stored = stack_b
+        .blob_service
+        .put_blob(b"candidate-ledger".to_vec(), "text/plain")
+        .await
+        .expect("remote blob");
+    assert_eq!(
+        stack_a
+            .blob_service
+            .fetch_blob(&stored.hash)
+            .await
+            .expect("remote fetch"),
+        Some(b"candidate-ledger".to_vec())
+    );
 
     timeout(Duration::from_secs(30), stack_a.shutdown_checked())
         .await
@@ -233,6 +259,7 @@ async fn reloadable_account_offer_route_recovers_only_when_new_stack_is_vacant()
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .expect("stack");
@@ -322,6 +349,7 @@ async fn app_account_listener_reclaims_vacant_route_after_stack_rebuild() {
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .expect("stack");
@@ -369,6 +397,7 @@ async fn reloadable_blob_service_forwards_unpin_to_inner_service() {
         &[],
         DhtDiscoveryOptions::disabled(),
         TransportRelayConfig::default(),
+        None,
     )
     .await
     .expect("stack");
@@ -460,6 +489,7 @@ async fn shared_stack_initializes_with_configured_relay_on_first_bind() {
         &[],
         DhtDiscoveryOptions::disabled(),
         relay_config,
+        None,
     )
     .await
     .expect("stack");

@@ -457,7 +457,9 @@ native docsの自動downloader、gossip、peer台帳、意味上のscope世代/�
 
 ## blob protocolのpeer観測と候補選択
 
-`IrohDocsNode`はblob ALPN専用の`BlobPeerHealth`を一つ持つ。docs-sync/blob-serviceは接続観測、検証済み転送、要求頻度を共有するが、learned/seed/importedの入口台帳は別に保持する。これによりdocs側の変更検知とscopeを保ち、他serviceのhealthだけでpeerを候補へ追加しない。
+2026-09-24のR2-A判断では、learnedの到達候補をaccount DBに30日・論理使用量64MiBまで保存し、期限/容量を超えた古い候補を回収する。保存中は索引cursorから有限窓で再訪する。明示ticketと設定済みseedはこの回収の対象外とし、再発見が必要な期限切れ候補はDHT/CNまたは再ticketに委ねる。候補台帳はdocs/blob/gossipの入口を区別し、account切替時は別DBを使う。現在のhot健康履歴はprotocolごとに分け、blobは実転送、docsは`SyncFinished`の結果、gossipは実neighbor成立だけを成功として記録する。旧記述の「docs-syncとblob-serviceがblob観測を共有する」は失効する。
+
+`IrohDocsNode`の`BlobPeerHealth`はblob ALPN専用とし、docsとgossipは別の有界な観測履歴を持つ。docs/blobの候補入口も別にし、他protocolの成功だけで候補へ追加しない。gossipの明示候補はaccount DBから最大4件を巡回し、`MemoryLookup`への手動登録は有限窓に留める。SDK内部の既存peer保持と旧`start_sync`の撤去は後続のR5-Hで確認するため、R2-Aだけで総通信経路の有界化達成とはしない。
 
 実行/待機のnode予算とは別に、観測とP2P頻度subjectを各1,024件にする。実行中のattemptは観測をpinして期限まで保持し、遅い旧世代の結果で新世代のstatus/backoffを上書きしない。頻度窓を途中でevictして制限を迂回させず、満杯は延期する。3秒のhash別cooldownは前節のまま。
 

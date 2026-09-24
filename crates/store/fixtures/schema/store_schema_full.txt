@@ -226,6 +226,19 @@ table object_threads
   column cid=3 name=reply_to_object_id type=TEXT notnull=0 default=None pk=0
   column cid=4 name=created_at type=INTEGER notnull=1 default=None pk=0
   fk id=0 seq=0 table=envelopes from=object_id to=Some("envelope_id") on_update=NO ACTION on_delete=NO ACTION match=NONE
+table peer_candidate_budget
+  column cid=0 name=id type=INTEGER notnull=0 default=None pk=1
+  column cid=1 name=learned_bytes type=INTEGER notnull=1 default=Some("0") pk=0
+table peer_candidates
+  column cid=0 name=scope type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=source type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=endpoint_id type=TEXT notnull=1 default=None pk=3
+  column cid=3 name=endpoint_addr type=BLOB notnull=1 default=None pk=0
+  column cid=4 name=accounted_bytes type=INTEGER notnull=1 default=None pk=0
+  column cid=5 name=seen_ms type=INTEGER notnull=1 default=None pk=0
+table peer_seed_state
+  column cid=0 name=scope type=TEXT notnull=0 default=None pk=1
+  column cid=1 name=digest type=BLOB notnull=1 default=None pk=0
 table post_withdrawals
   column cid=0 name=target_object_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_author_pubkey type=TEXT notnull=1 default=None pk=0
@@ -496,6 +509,16 @@ index idx_topic_objects_timeline table=topic_objects unique=0 origin=c partial=0
   key seqno=1 cid=2 name=Some("created_at")
   key seqno=2 cid=1 name=Some("object_id")
   sql=Some("CREATE INDEX idx_topic_objects_timeline ON topic_objects (topic_id, created_at DESC, object_id DESC)")
+index peer_candidates_learned_age table=peer_candidates unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("source")
+  key seqno=1 cid=5 name=Some("seen_ms")
+  sql=Some("CREATE INDEX peer_candidates_learned_age ON peer_candidates (source, seen_ms)")
+index peer_candidates_window table=peer_candidates unique=0 origin=c partial=0
+  key seqno=0 cid=0 name=Some("scope")
+  key seqno=1 cid=1 name=Some("source")
+  key seqno=2 cid=5 name=Some("seen_ms")
+  key seqno=3 cid=2 name=Some("endpoint_id")
+  sql=Some("CREATE INDEX peer_candidates_window ON peer_candidates (scope, source, seen_ms, endpoint_id)")
 index sqlite_autoindex_adult_media_hashes_1 table=adult_media_hashes unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("blob_hash")
   sql=None
@@ -584,6 +607,14 @@ index sqlite_autoindex_object_thread_cache_1 table=object_thread_cache unique=1 
   sql=None
 index sqlite_autoindex_object_threads_1 table=object_threads unique=1 origin=pk partial=0
   key seqno=0 cid=1 name=Some("object_id")
+  sql=None
+index sqlite_autoindex_peer_candidates_1 table=peer_candidates unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("scope")
+  key seqno=1 cid=1 name=Some("source")
+  key seqno=2 cid=2 name=Some("endpoint_id")
+  sql=None
+index sqlite_autoindex_peer_seed_state_1 table=peer_seed_state unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("scope")
   sql=None
 index sqlite_autoindex_post_withdrawals_1 table=post_withdrawals unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("target_object_id")

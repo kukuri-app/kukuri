@@ -1,12 +1,8 @@
 //! docs-sync / blob-service で共有するピア台帳とリモートフェッチのリトライ状態(WP-H2)。
 //!
-//! かつて両 crate にほぼ写しで存在したピア管理(learned / seed / imported の 3 台帳、
-//! 合成順序、接続候補の優先順位、失敗クールダウン)の単一実装。
-//!
-//! **挙動差分は呼び出し側に残す**(REFACTORING.md / WP-H2 プランの決定):
-//! - `insert_learned_peer_addr` は「台帳に変化があったか」の bool を返す。docs-sync は
-//!   これを見て全レプリカへ同期先を配り直す(reapply)。blob-service は無視する。
-//! - 状態復元(peer_state / restore)後の reapply も docs-sync 呼び出し側の責務。
+//! docs/blob の候補選択と取得観測を共有する。production の候補履歴はaccount DB、
+//! memory nodeの候補はメモリ台帳に置き、どちらも選択時には有限cursorだけを読む。
+//! docsとblobの健康観測はprotocolごとに分ける。
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::str::FromStr;
@@ -15,8 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::Utc;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
+use kukuri_store::SqliteStore;
 use tokio::sync::{Mutex, Semaphore, watch};
 // 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
 use tokio::time::Instant;
@@ -337,6 +335,8 @@ pub struct PeerAddrBook {
     learned_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     seed_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     imported_peers: Mutex<BTreeMap<String, EndpointAddr>>,
+    account_store: Option<(Arc<SqliteStore>, &'static str)>,
+    account_cursor: Mutex<[Option<(i64, String)>; 3]>,
     health: Arc<BlobPeerHealth>,
     fetch_cursor: Mutex<[Option<String>; 3]>,
     recent_peers: Mutex<VecDeque<RecentPeer>>,
@@ -366,6 +366,8 @@ impl PeerAddrBook {
             learned_peers: Mutex::new(BTreeMap::new()),
             seed_peers: Mutex::new(BTreeMap::new()),
             imported_peers: Mutex::new(BTreeMap::new()),
+            account_store: None,
+            account_cursor: Mutex::new([None, None, None]),
             health,
             fetch_cursor: Mutex::new([None, None, None]),
             recent_peers: Mutex::new(VecDeque::new()),
@@ -374,31 +376,30 @@ impl PeerAddrBook {
         }
     }
 
-    /// 3 台帳の合成(learned → seed → imported の順、id 重複排除)。
-    pub async fn merged_peers(&self) -> Vec<EndpointAddr> {
-        let mut peers = self
-            .learned_peers
-            .lock()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for peer in self.seed_peers.lock().await.values() {
-            if !peers.iter().any(|existing| existing.id == peer.id) {
-                peers.push(peer.clone());
-            }
-        }
-        for peer in self.imported_peers.lock().await.values() {
-            if !peers.iter().any(|existing| existing.id == peer.id) {
-                peers.push(peer.clone());
-            }
-        }
-        peers
+    pub fn with_account_store(
+        endpoint: Endpoint,
+        discovery: Arc<MemoryLookup>,
+        health: Arc<BlobPeerHealth>,
+        store: Arc<SqliteStore>,
+        scope: &'static str,
+    ) -> Self {
+        let mut book = Self::with_fetch_health(endpoint, discovery, health);
+        book.account_store = Some((store, scope));
+        book
     }
 
     /// Sample a moving, bounded window before ranking. Source precedence for
     /// every sampled identity remains learned -> seed -> imported.
     pub async fn ranked_peers(&self) -> Vec<EndpointAddr> {
+        if let Some((store, scope)) = &self.account_store {
+            return match self.ranked_account_peers(store, scope).await {
+                Ok(peers) => peers,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to read peer candidates");
+                    Vec::new()
+                }
+            };
+        }
         let preferred = self.health.preferred().await;
         let (recent, newest_import) = {
             let mut recent = self.recent_peers.lock().await;
@@ -422,7 +423,7 @@ impl PeerAddrBook {
             let imported = self.imported_peers.lock().await;
             let mut sampled = Vec::new();
             for (index, source) in [&*learned, &*seeds, &*imported].into_iter().enumerate() {
-                sampled.extend(fetch_source_window(source, &mut cursors[index]));
+                sampled.extend(fetch_source_window(source, &mut cursors[index], 4));
             }
             #[cfg(test)]
             self.sampled_peer_count
@@ -455,6 +456,84 @@ impl PeerAddrBook {
         }
         peers.truncate(4);
         peers
+    }
+
+    async fn ranked_account_peers(
+        &self,
+        store: &SqliteStore,
+        scope: &str,
+    ) -> Result<Vec<EndpointAddr>> {
+        let now = Utc::now().timestamp_millis();
+        let preferred = self.health.preferred().await;
+        let (recent, newest_import) = {
+            let mut recent = self.recent_peers.lock().await;
+            recent.retain(|peer| peer.expires_at > Instant::now());
+            (
+                recent
+                    .iter()
+                    .map(|peer| peer.id.clone())
+                    .collect::<Vec<_>>(),
+                recent
+                    .iter()
+                    .find(|peer| peer.imported)
+                    .map(|peer| peer.id.clone()),
+            )
+        };
+        let mut cursors = self.account_cursor.lock().await;
+        let mut sampled = Vec::new();
+        for (index, source) in ["learned", "seed", "imported"].into_iter().enumerate() {
+            let page = store
+                .peer_candidate_window(scope, source, cursors[index].clone(), 4, now)
+                .await?;
+            if let Some((id, _, seen_ms)) = page.last() {
+                cursors[index] = Some((*seen_ms, id.clone()));
+            }
+            for (_, bytes, _) in page {
+                sampled.push(serde_json::from_slice::<EndpointAddr>(&bytes)?);
+            }
+        }
+        #[cfg(test)]
+        self.sampled_peer_count
+            .store(sampled.len(), Ordering::Relaxed);
+        let mut peers = Vec::new();
+        let mut seen = BTreeSet::new();
+        for id in preferred
+            .into_iter()
+            .map(|peer| peer.to_string())
+            .chain(recent)
+        {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            for source in ["learned", "seed", "imported"] {
+                if let Some(bytes) = store.peer_candidate_by_id(scope, source, &id, now).await? {
+                    peers.push(serde_json::from_slice(&bytes)?);
+                    break;
+                }
+            }
+            if peers.len() == 12 {
+                break;
+            }
+        }
+        for peer in sampled {
+            if seen.insert(peer.id.to_string()) {
+                peers.push(peer);
+                if peers.len() == 12 {
+                    break;
+                }
+            }
+        }
+        self.health.rank(&mut peers).await;
+        if let Some(imported) = newest_import
+            && let Some(position) = peers
+                .iter()
+                .position(|peer| peer.id.to_string() == imported)
+            && position >= 4
+        {
+            peers.swap(3, position);
+        }
+        peers.truncate(4);
+        Ok(peers)
     }
 
     pub async fn begin_fetch_attempt(&self, peer: EndpointId) -> Option<BlobPeerAttempt> {
@@ -495,11 +574,24 @@ impl PeerAddrBook {
     }
 
     /// learned 台帳へ挿入し、台帳に変化があったかを返す(同値なら false)。
-    pub async fn insert_learned_peer_addr(&self, endpoint_addr: EndpointAddr) -> bool {
-        if !endpoint_addr.is_empty() {
+    pub async fn insert_learned_peer_addr(&self, endpoint_addr: EndpointAddr) -> Result<bool> {
+        if self.account_store.is_none() && !endpoint_addr.is_empty() {
             self.discovery.add_endpoint_info(endpoint_addr.clone());
         }
         let key = endpoint_addr.id.to_string();
+        if let Some((store, scope)) = &self.account_store {
+            let changed = store
+                .put_peer_candidate(
+                    scope,
+                    "learned",
+                    &key,
+                    &serde_json::to_vec(&endpoint_addr)?,
+                    Utc::now().timestamp_millis(),
+                )
+                .await?;
+            self.note_recent_peer(key, false).await;
+            return Ok(changed);
+        }
         let changed = {
             let mut learned_peers = self.learned_peers.lock().await;
             if learned_peers.get(key.as_str()) == Some(&endpoint_addr) {
@@ -510,17 +602,33 @@ impl PeerAddrBook {
             }
         };
         self.note_recent_peer(key, false).await;
-        changed
+        Ok(changed)
     }
 
-    pub async fn insert_imported_peer_addr(&self, endpoint_addr: EndpointAddr) {
-        self.discovery.add_endpoint_info(endpoint_addr.clone());
+    pub async fn insert_imported_peer_addr(&self, endpoint_addr: EndpointAddr) -> Result<()> {
+        if self.account_store.is_none() {
+            self.discovery.add_endpoint_info(endpoint_addr.clone());
+        }
         let key = endpoint_addr.id.to_string();
+        if let Some((store, scope)) = &self.account_store {
+            store
+                .put_peer_candidate(
+                    scope,
+                    "imported",
+                    &key,
+                    &serde_json::to_vec(&endpoint_addr)?,
+                    Utc::now().timestamp_millis(),
+                )
+                .await?;
+            self.note_recent_peer(key, true).await;
+            return Ok(());
+        }
         self.imported_peers
             .lock()
             .await
             .insert(key.clone(), endpoint_addr);
         self.note_recent_peer(key, true).await;
+        Ok(())
     }
 
     async fn note_recent_peer(&self, peer: String, imported: bool) {
@@ -556,7 +664,7 @@ impl PeerAddrBook {
         for relay_url in relay_urls {
             endpoint_addr = endpoint_addr.with_relay_url(relay_url.clone());
         }
-        Ok(self.insert_learned_peer_addr(endpoint_addr).await)
+        self.insert_learned_peer_addr(endpoint_addr).await
     }
 
     /// seed 台帳を丸ごと差し替える(SeedPeer → EndpointAddr 変換 + discovery 登録)。
@@ -568,8 +676,19 @@ impl PeerAddrBook {
         let mut parsed = BTreeMap::new();
         for peer in peers {
             let endpoint_addr = peer.to_endpoint_addr_with_relays(relay_urls)?;
-            self.discovery.add_endpoint_info(endpoint_addr.clone());
+            if self.account_store.is_none() {
+                self.discovery.add_endpoint_info(endpoint_addr.clone());
+            }
             parsed.insert(endpoint_addr.id.to_string(), endpoint_addr);
+        }
+        if let Some((store, scope)) = &self.account_store {
+            let seeds = parsed
+                .into_iter()
+                .map(|(id, addr)| Ok((id, serde_json::to_vec(&addr)?)))
+                .collect::<Result<Vec<_>>>()?;
+            return store
+                .replace_seed_candidates(scope, seeds, Utc::now().timestamp_millis())
+                .await;
         }
         *self.seed_peers.lock().await = parsed;
         Ok(())
@@ -610,7 +729,7 @@ impl PeerAddrBook {
 
     /// 合成台帳のうち、endpoint がアクティブなアドレスを持つピア id を返す。
     pub async fn available_peer_ids(&self) -> Vec<String> {
-        let peers = self.merged_peers().await;
+        let peers = self.ranked_peers().await;
         let mut available = BTreeSet::new();
         for peer in peers {
             if self
@@ -628,40 +747,32 @@ impl PeerAddrBook {
         }
         available.into_iter().collect()
     }
-
-    /// 状態保存用のスナップショット(learned / imported。seed は設定から再構築される)。
-    pub async fn learned_peers_snapshot(&self) -> Vec<EndpointAddr> {
-        self.learned_peers.lock().await.values().cloned().collect()
-    }
-
-    pub async fn imported_peers_snapshot(&self) -> Vec<EndpointAddr> {
-        self.imported_peers.lock().await.values().cloned().collect()
-    }
 }
 
-fn fetch_source_window(
+pub(crate) fn fetch_source_window(
     source: &BTreeMap<String, EndpointAddr>,
     cursor: &mut Option<String>,
+    limit: usize,
 ) -> Vec<String> {
     use std::ops::Bound::{Excluded, Unbounded};
-    let mut keys = Vec::with_capacity(4);
+    let mut keys = Vec::with_capacity(limit);
     if let Some(after) = cursor.as_ref() {
         keys.extend(
             source
                 .range((Excluded(after.clone()), Unbounded))
-                .take(4)
+                .take(limit)
                 .map(|(key, _)| key.clone()),
         );
-        if keys.len() < 4 {
+        if keys.len() < limit {
             keys.extend(
                 source
                     .range(..=after.clone())
-                    .take(4 - keys.len())
+                    .take(limit - keys.len())
                     .map(|(key, _)| key.clone()),
             );
         }
     } else {
-        keys.extend(source.keys().take(4).cloned());
+        keys.extend(source.keys().take(limit).cloned());
     }
     if let Some(last) = keys.last() {
         *cursor = Some(last.clone());

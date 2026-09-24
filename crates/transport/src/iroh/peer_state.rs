@@ -76,39 +76,77 @@ fn aggregate_fallback_peer_ids(topic_diagnostics: &[TopicPeerSnapshot]) -> Vec<S
 }
 
 impl IrohGossipTransport {
-    pub async fn peer_state(&self) -> TransportPeerState {
-        TransportPeerState {
-            imported_peers: self.imported_peers.lock().await.values().cloned().collect(),
-        }
-    }
-
-    pub async fn restore_peer_state(&self, state: TransportPeerState) -> Result<()> {
-        for endpoint_addr in state.imported_peers {
-            self.insert_imported_peer_addr(endpoint_addr).await;
-        }
-        *self.last_error.lock().await = None;
-        Ok(())
-    }
-
-    pub(crate) async fn bootstrap_peers(&self) -> Vec<EndpointAddr> {
-        let mut peers = self
-            .configured_seed_peers
-            .lock()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for peer in self.bootstrap_seed_peers.lock().await.values() {
-            if !peers.iter().any(|existing| existing.id == peer.id) {
-                peers.push(peer.clone());
+    pub(crate) async fn bootstrap_peers(&self) -> Result<Vec<EndpointAddr>> {
+        let mut cursor = self.bootstrap_cursor.lock().await;
+        let mut peers = Vec::with_capacity(4);
+        let mut seen = BTreeSet::new();
+        // Rotate the starting source as well as each source's key. A large seed
+        // list must not hide a later ticket, and old candidates get revisited.
+        for offset in 0..12 {
+            let source = (cursor.0 + offset) % 3;
+            let next = if source == 2
+                && let Some(store) = &self.account_store
+            {
+                let mut imported_cursor = self.imported_cursor.lock().await;
+                let page = store
+                    .peer_candidate_window(
+                        "gossip",
+                        "imported",
+                        imported_cursor.clone(),
+                        1,
+                        Utc::now().timestamp_millis(),
+                    )
+                    .await?;
+                page.into_iter()
+                    .next()
+                    .map(|(key, bytes, seen_ms)| {
+                        *imported_cursor = Some((seen_ms, key.clone()));
+                        serde_json::from_slice(&bytes).map(|peer| (key, peer))
+                    })
+                    .transpose()?
+            } else {
+                let entries = match source {
+                    0 => self.configured_seed_peers.lock().await,
+                    1 => self.bootstrap_seed_peers.lock().await,
+                    _ => self.imported_peers.lock().await,
+                };
+                crate::peers::fetch_source_window(&entries, &mut cursor.1[source], 1)
+                    .into_iter()
+                    .next()
+                    .and_then(|key| entries.get(&key).cloned().map(|peer| (key, peer)))
+            };
+            if let Some((key, peer)) = next {
+                cursor.1[source] = Some(key.clone());
+                if seen.insert(key) {
+                    peers.push(peer);
+                    if peers.len() == 4 {
+                        break;
+                    }
+                }
             }
         }
-        for peer in self.imported_peers.lock().await.values() {
-            if !peers.iter().any(|existing| existing.id == peer.id) {
-                peers.push(peer.clone());
+        cursor.0 = (cursor.0 + 1) % 3;
+        self.gossip_health.rank(&mut peers).await;
+        for peer in &peers {
+            self.remember_hot_endpoint(peer.clone()).await;
+        }
+        Ok(peers)
+    }
+
+    pub(crate) async fn remember_hot_endpoint(&self, peer: EndpointAddr) {
+        if self.account_store.is_none() {
+            self.discovery.add_endpoint_info(peer);
+            return;
+        }
+        let mut hot = self.hot_peer_ids.lock().await;
+        hot.retain(|id| id != &peer.id);
+        self.discovery.add_endpoint_info(peer.clone());
+        hot.push_back(peer.id);
+        while hot.len() > 16 {
+            if let Some(id) = hot.pop_front() {
+                self.discovery.remove_endpoint_info(id);
             }
         }
-        peers
     }
 
     pub(crate) async fn configured_seed_peer_ids(&self) -> Vec<String> {
@@ -129,12 +167,33 @@ impl IrohGossipTransport {
             .collect::<Vec<_>>()
     }
 
-    async fn configured_peer_ids(&self) -> Vec<String> {
-        self.bootstrap_peers()
+    async fn configured_peer_ids(&self) -> Result<Vec<String>> {
+        let mut ids = self
+            .configured_seed_peers
+            .lock()
             .await
-            .into_iter()
-            .map(|peer| peer.id.to_string())
-            .collect::<Vec<_>>()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        ids.extend(self.bootstrap_seed_peers.lock().await.keys().cloned());
+        if let Some(store) = &self.account_store {
+            ids.extend(
+                store
+                    .peer_candidate_window(
+                        "gossip",
+                        "imported",
+                        None,
+                        4,
+                        Utc::now().timestamp_millis(),
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|(id, _, _)| id),
+            );
+        } else {
+            ids.extend(self.imported_peers.lock().await.keys().cloned());
+        }
+        Ok(ids.into_iter().collect())
     }
 
     pub(crate) async fn connected_peer_ids(&self) -> Vec<String> {
@@ -164,7 +223,7 @@ impl IrohGossipTransport {
             })
             .collect::<Vec<_>>();
         let mut connected = BTreeSet::new();
-        let configured_peers = self.configured_peer_ids().await;
+        let configured_peers = self.configured_peer_ids().await?;
         let bootstrap_seed_peer_ids = self.bootstrap_seed_peer_ids().await;
         let mut topic_entries = Vec::with_capacity(topic_states.len());
         for (topic, configured_peer_ids, neighbors, last_received_at, last_error) in topic_states {
