@@ -236,3 +236,20 @@ test('a re-render during the debounce does not drop the queued lookup', async ()
 
   expect(api.evaluateAuthorTrustGates).toHaveBeenCalledTimes(1);
 });
+
+test('leaving the display window releases the gate and ignores a late response', async () => {
+  let resolve!: (value: AuthorTrustGateResult) => void;
+  const response = new Promise<AuthorTrustGateResult>((done) => { resolve = done; });
+  const { harness, api, hook } = mount(() => hiddenGate(null));
+  api.evaluateAuthorTrustGates.mockImplementation(() => response);
+  await advance(AUTHOR_TRUST_GATE_LOOKUP_DEBOUNCE_MS);
+
+  hook.rerender({ config: config(), posts: [], statuses: [status()], statusesLoaded: true });
+  expect(harness.store.getState().authorTrustGates).toEqual({});
+  await act(async () => { resolve(hiddenGate(null)); });
+  expect(harness.store.getState().authorTrustGates).toEqual({});
+
+  hook.rerender({ config: config(), posts: [post()], statuses: [status()], statusesLoaded: true });
+  await advance(AUTHOR_TRUST_GATE_LOOKUP_DEBOUNCE_MS);
+  expect(api.evaluateAuthorTrustGates).toHaveBeenCalledTimes(2);
+});

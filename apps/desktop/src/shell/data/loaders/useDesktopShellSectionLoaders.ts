@@ -4,7 +4,6 @@ import type { BookmarkCursor, DesktopApi } from '@/lib/api';
 import type { LoadNotificationsSection } from '@/shell/data/loaders/useNotificationLoaders';
 import { VISIBLE_TIMELINE_LIMIT } from '@/shell/pagination';
 import {
-  authorViewFromDirectMessageConversation,
   communityNodesToDraftNodes,
   mergeKnownAuthors,
   messageFromError,
@@ -228,9 +227,6 @@ export function useDesktopShellSectionLoaders({
         setProfileError(null);
         setProfilePanelState({ status: 'ready', error: null });
         setSocialConnections({ following, followed, muted, blocking });
-        setKnownAuthorsByPubkey((current) =>
-          mergeKnownAuthors(current, [...following, ...followed, ...muted, ...blocking])
-        );
         setSocialConnectionsPanelState({ status: 'ready', error: null });
       });
     } catch (error) {
@@ -251,7 +247,6 @@ export function useDesktopShellSectionLoaders({
     }
   }, [
     api,
-    setKnownAuthorsByPubkey,
     setLocalProfile,
     setProfileDraft,
     setProfileError,
@@ -450,12 +445,6 @@ export function useDesktopShellSectionLoaders({
       const directMessages = await api.listDirectMessages();
       startTransition(() => {
         setDirectMessages(directMessages);
-        setKnownAuthorsByPubkey((current) =>
-          mergeKnownAuthors(
-            current,
-            directMessages.map(authorViewFromDirectMessageConversation)
-          )
-        );
       });
       const selectedPeerPubkey = storeApi.getState().selectedDirectMessagePeerPubkey;
       if (!selectedPeerPubkey) {
@@ -505,7 +494,6 @@ export function useDesktopShellSectionLoaders({
     setDirectMessageStatusByPeer,
     setDirectMessageTimelineByPeer,
     setDirectMessageTimelineNextCursorByPeer,
-    setKnownAuthorsByPubkey,
     storeApi,
     translate,
   ]);

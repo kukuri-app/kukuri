@@ -16,7 +16,7 @@ import type {
   PostView,
 } from '@/lib/api';
 
-import { removeRecordEntry, setRecordEntry, setTimelineCursorEntry, updateRecordEntry } from '@/shell/stateUpdates';
+import { removeRecordEntry, retainRecordEntries, setRecordEntry, setTimelineCursorEntry, updateRecordEntry } from '@/shell/stateUpdates';
 import { useConnectivityStatusRefresh } from '@/shell/data/useConnectivityStatusRefresh';
 import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes';
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
@@ -337,20 +337,47 @@ export function useDesktopShellData({
   // #1061: live / game 一覧の主催者も折りたたみ判断の対象にする。
   const trustGateHostPubkeys = useMemo(() => {
     const hosts = new Set<string>();
-    for (const sessions of Object.values(state.liveSessionsByScopeKey)) {
-      for (const session of sessions) {
+    const scopeKeys = new Set([
+      timelineStorageKeyForChannel(activeScope.topicId, activeScope.channelId),
+      ...workspaceColumns
+        .filter((column) => (column.kind === 'stream' || column.kind === 'game') && column.scope)
+        .map((column) => timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId)),
+    ]);
+    for (const key of scopeKeys) {
+      for (const session of state.liveSessionsByScopeKey[key] ?? []) {
         const pubkey = session.host_pubkey?.trim();
         if (pubkey) hosts.add(pubkey);
       }
-    }
-    for (const rooms of Object.values(gameRoomsByScopeKey)) {
-      for (const room of rooms) {
+      for (const room of gameRoomsByScopeKey[key] ?? []) {
         const pubkey = room.host_pubkey?.trim();
         if (pubkey) hosts.add(pubkey);
       }
     }
     return [...hosts];
-  }, [gameRoomsByScopeKey, state.liveSessionsByScopeKey]);
+  }, [activeScope.channelId, activeScope.topicId, gameRoomsByScopeKey, state.liveSessionsByScopeKey, workspaceColumns]);
+  const referencedAuthorKeys = useMemo(() => {
+    const keys = new Set<string>(trustGateHostPubkeys);
+    for (const post of [...advisoryLookupPosts, ...communityIndexResolvedPosts]) {
+      if (post.author_pubkey) keys.add(post.author_pubkey);
+      if (post.repost_of?.source_author_pubkey) keys.add(post.repost_of.source_author_pubkey);
+    }
+    for (const notification of notifications) {
+      if (notification.actor_pubkey) keys.add(notification.actor_pubkey);
+    }
+    for (const column of workspaceColumns) {
+      if ((column.kind === 'profile' || column.kind === 'conversation') && column.entityId) {
+        keys.add(column.entityId);
+      }
+    }
+    if (selectedAuthorPubkey) keys.add(selectedAuthorPubkey);
+    if (state.selectedDirectMessagePeerPubkey) keys.add(state.selectedDirectMessagePeerPubkey);
+    return [...keys].sort().join(',');
+  }, [advisoryLookupPosts, communityIndexResolvedPosts, notifications, selectedAuthorPubkey,
+    state.selectedDirectMessagePeerPubkey, trustGateHostPubkeys, workspaceColumns]);
+  useEffect(() => {
+    const activeAuthors = new Set(referencedAuthorKeys ? referencedAuthorKeys.split(',') : []);
+    setKnownAuthorsByPubkey((current) => retainRecordEntries(current, activeAuthors));
+  }, [knownAuthorsByPubkey, referencedAuthorKeys, setKnownAuthorsByPubkey]);
   // #1061: 表示中の著者を採用 CN へ一括照会し、折りたたみ判断を state へ置く。
   useAuthorTrustGateLookup({
     api,

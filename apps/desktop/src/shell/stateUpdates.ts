@@ -62,6 +62,15 @@ export function removeRecordEntry<V>(
   };
 }
 
+/** 表示中の参照だけを残す。変更がなければ元の record を返す。 */
+export function retainRecordEntries<V>(current: Record<string, V>, keys: ReadonlySet<string>): Record<string, V> {
+  const stale = Object.keys(current).filter((key) => !keys.has(key));
+  if (stale.length === 0) return current;
+  const next = { ...current };
+  for (const key of stale) delete next[key];
+  return next;
+}
+
 // AsyncPanelState({ status, error })の定型コンストラクタ。
 // 「loading にするとき error を消し忘れる」类のずれを防ぐ。
 

@@ -50,6 +50,7 @@ import {
   type ShellHookHarness,
 } from '@/shell/testSupport/renderShellHook';
 import { columnIdentityId, openTransientColumn } from '@/shell/slices/workspace';
+import { mergeAuthorView } from '@/shell/presentation';
 
 const AUTHOR_PUBKEY = 'a'.repeat(64);
 
@@ -715,6 +716,43 @@ describe('useDesktopShellData characterization', () => {
 
     expect(harness.store.getState().error).toBe('common:errors.failedToLoadTopic');
 
+    view.unmount();
+  });
+
+  test('known author details follow the visible post window and release late additions', async () => {
+    const { harness, view } = renderDataHook(createDesktopMockApi());
+    await flushAsyncWork();
+    const nextAuthor = 'b'.repeat(64);
+    const staleAuthor = 'c'.repeat(64);
+    const author = (pubkey: string) => mergeAuthorView(null, { author_pubkey: pubkey });
+
+    actPatchState(harness.store, {
+      timelinesByKey: { 'kukuri:topic:general::public': [buildPost()] },
+      knownAuthorsByPubkey: {
+        [AUTHOR_PUBKEY]: author(AUTHOR_PUBKEY),
+        [staleAuthor]: author(staleAuthor),
+      },
+    });
+    expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual([AUTHOR_PUBKEY]);
+
+    actPatchState(harness.store, {
+      timelinesByKey: {
+        'kukuri:topic:general::public': [buildPost({ object_id: 'post-2', author_pubkey: nextAuthor })],
+      },
+      knownAuthorsByPubkey: {
+        ...harness.store.getState().knownAuthorsByPubkey,
+        [nextAuthor]: author(nextAuthor),
+      },
+    });
+    expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual([nextAuthor]);
+
+    actPatchState(harness.store, {
+      knownAuthorsByPubkey: {
+        ...harness.store.getState().knownAuthorsByPubkey,
+        [staleAuthor]: author(staleAuthor),
+      },
+    });
+    expect(Object.keys(harness.store.getState().knownAuthorsByPubkey)).toEqual([nextAuthor]);
     view.unmount();
   });
 });

@@ -227,4 +227,33 @@ describe('useTimelineContentAdvisoryLookup', () => {
     expect(api.lookupCommunityNodeContentAdvisories).toHaveBeenCalledTimes(2);
     expect(harness.store.getState().timelineAdvisoryLookup.settled['post_id:post-1']).toBe(true);
   });
+
+  test('releases subjects outside the display window and ignores their late response', async () => {
+    let resolve!: (value: CommunityNodeContentAdvisoryLookupResult) => void;
+    const response = new Promise<CommunityNodeContentAdvisoryLookupResult>((done) => { resolve = done; });
+    const { harness, api, hook } = mount(ADOPTING, () => response);
+    await advance(TIMELINE_ADVISORY_LOOKUP_DEBOUNCE_MS);
+
+    hook.rerender({ nodes: ADOPTING, posts: [] });
+    expect(harness.store.getState().timelineAdvisoryLookup.settled).toEqual({});
+    await act(async () => {
+      resolve({ nodes: [{
+        base_url: NODE,
+        node_id: 'd'.repeat(64),
+        error: null,
+        advisories: [{
+          issuer_node_id: 'd'.repeat(64), subject_kind: 'blob_cid', subject_id: HASH,
+          category: 'nsfw', label: 'adult', confidence: 84,
+          signal_id: 'signal-1', basis: 'classifier_score',
+        }],
+      }] });
+    });
+    expect(harness.store.getState().timelineContentAdvisories).toEqual({});
+    expect(harness.store.getState().timelineAdvisoryLookup.settled).toEqual({});
+
+    hook.rerender({ nodes: ADOPTING, posts: [post('post-1')] });
+    await advance(TIMELINE_ADVISORY_LOOKUP_DEBOUNCE_MS);
+    expect(api.lookupCommunityNodeContentAdvisories).toHaveBeenCalledTimes(2);
+    expect(harness.store.getState().timelineContentAdvisories[`blob_cid:${HASH}`]).toHaveLength(1);
+  });
 });
