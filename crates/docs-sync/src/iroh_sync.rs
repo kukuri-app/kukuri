@@ -50,8 +50,6 @@ pub struct IrohDocsSync {
     close_tasks: Arc<Mutex<JoinSet<()>>>,
     #[cfg(test)]
     close_hook: Arc<Mutex<Option<lifecycle::TestHook>>>,
-    // ピア台帳・接続候補・リトライ状態は kukuri-transport の共通実装(WP-H2)。
-    // 台帳変化(bool)を見て reapply_sync_peers を呼ぶのはこちら側の責務。
     peers: Arc<PeerAddrBook>,
     private_replica_secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
