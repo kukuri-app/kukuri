@@ -621,10 +621,11 @@ async fn reflect_reply_target_with(
     // 手元の docs が読めないとき(権限を失った private replica など)は、反映せずに終える。
     // A missing public source is an existing-namespace read only. Never let a
     // reply preview import a bucket merely to check whether its parent exists.
-    let local_reader = (kukuri_docs_sync::post_replica_kind(replica_id)
-        == Some(kukuri_docs_sync::PostReplicaKind::PublicTopic {
-            topic_id: topic_id.to_owned(),
-        }))
+    let local_reader = (replica_id.as_str().starts_with("bucket::")
+        && kukuri_docs_sync::post_replica_kind(replica_id)
+            == Some(kukuri_docs_sync::PostReplicaKind::PublicTopic {
+                topic_id: topic_id.to_owned(),
+            }))
     .then(|| LocalSourceReader {
         docs: services.docs_sync.clone(),
         replica: replica_id.clone(),
