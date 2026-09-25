@@ -490,7 +490,7 @@ fn safety_provider_entry(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -532,7 +532,7 @@ mod tests {
         STATUS_ADDR_ENV,
     ];
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()

@@ -184,6 +184,11 @@ impl SqliteStore {
                     .load(std::sync::atomic::Ordering::Acquire),
             )?);
         let mut tx = self.pool.begin().await?;
+        // 読取で始めたtransactionの書込昇格はbusy_timeoutを待たずSQLITE_BUSYになる。
+        // 他のremote cache書込と同じく、最初の文で書込lockを待って取る。
+        sqlx::query("UPDATE remote_content_cache_usage SET used_bytes = used_bytes WHERE id = 1")
+            .execute(&mut *tx)
+            .await?;
         let mut label_evictions = Vec::new();
         let mut removed_files = Vec::new();
         for row in rows {

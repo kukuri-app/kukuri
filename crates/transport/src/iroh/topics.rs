@@ -94,20 +94,28 @@ impl TopicWarmupCoordinator {
     }
 
     async fn warmup_peer(&self, endpoint: Endpoint, gossip: Gossip, peer: EndpointAddr) {
-        let Ok(_permit) = self.permits.try_acquire() else {
+        let Ok(permit) = Arc::clone(&self.permits).try_acquire_owned() else {
             return;
         };
         let peer_key = peer.id.to_string();
-        let Some(_in_flight_guard) = self.try_mark_peer_in_flight(peer_key) else {
+        let Some(in_flight_guard) = self.try_mark_peer_in_flight(peer_key) else {
             return;
         };
         // Active endpoint paths can belong to docs/blob connections. They do not
         // prove that gossip has a connection, especially after a peer restart.
         // Keep gossip dialing behind the shared concurrency and retry limits.
+        // The peer's gossip sends on the connection it accepted last. Dropping the
+        // connection before our gossip owns it closes the peer's send connection,
+        // so the peer forgets us while we keep it. Finish the dial and the handover
+        // even when the warmup is stopped on join or unsubscribe.
         let warmup_addr = direct_warmup_addr(&peer);
-        if let Ok(connection) = endpoint.connect(warmup_addr, GOSSIP_ALPN).await {
-            let _ = gossip.handle_connection(connection).await;
-        }
+        let _ = tokio::spawn(async move {
+            let _owned = (permit, in_flight_guard);
+            if let Ok(connection) = endpoint.connect(warmup_addr, GOSSIP_ALPN).await {
+                let _ = gossip.handle_connection(connection).await;
+            }
+        })
+        .await;
     }
 
     fn try_mark_peer_in_flight(&self, peer_key: String) -> Option<TopicWarmupInFlightGuard> {
@@ -247,8 +255,14 @@ impl IrohGossipTransport {
                 let mut join_peer_ids = Vec::new();
                 let mut added_peer_ids = Vec::new();
                 let mut join_endpoint_addrs = Vec::new();
+                let neighbors = state.neighbors.read().await;
                 for endpoint_addr in &endpoint_addrs {
                     let peer_id = endpoint_addr.id.to_string();
+                    // A known peer that is no longer a neighbor is joined again. join_peers
+                    // only adds, so the topic is kept instead of being left and rejoined.
+                    if neighbors.contains(&peer_id) {
+                        continue;
+                    }
                     if !state.bootstrap_peer_ids.contains(&peer_id) {
                         if state.bootstrap_peer_ids.len() == 16
                             && let Some(oldest) = state.bootstrap_peer_ids.first().cloned()
@@ -256,11 +270,12 @@ impl IrohGossipTransport {
                             state.bootstrap_peer_ids.remove(&oldest);
                         }
                         state.bootstrap_peer_ids.insert(peer_id.clone());
-                        join_peer_ids.push(endpoint_addr.id);
                         added_peer_ids.push(peer_id);
-                        join_endpoint_addrs.push(endpoint_addr.clone());
                     }
+                    join_peer_ids.push(endpoint_addr.id);
+                    join_endpoint_addrs.push(endpoint_addr.clone());
                 }
+                drop(neighbors);
                 if !join_peer_ids.is_empty() {
                     updates.push((
                         topic.clone(),

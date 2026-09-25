@@ -358,3 +358,43 @@ async fn blocked_author_is_filtered_from_live_and_game_lists_in_both_directions(
         .expect("host revokes block");
     assert_visible(true, "after revoke").await;
 }
+
+// 視聴者 0 人の配信は正常な状態。一覧の取得で topic の購読 task を張り直さない
+// (張り直す間に届いた LivePresence を落とし、5 秒ごとに繰り返すと host の視聴者数が 0 のまま戻らない)。
+#[tokio::test]
+async fn listing_live_session_without_viewers_keeps_topic_subscription() {
+    let store = Arc::new(MemoryStore::default());
+    let hint_transport = Arc::new(TrackingHintTransport::default());
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        hint_transport.clone(),
+        Arc::new(MemoryDocsSync::default()),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let topic = "kukuri:topic:live-no-viewers";
+    let session_id = app
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "no viewers".into(),
+                description: "host only".into(),
+            },
+        )
+        .await
+        .expect("create live session");
+    let subscribed = *hint_transport.subscribe_count.lock().await;
+
+    let sessions = app
+        .list_live_sessions(topic)
+        .await
+        .expect("list live sessions");
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.session_id == session_id && session.viewer_count == 0)
+    );
+    assert_eq!(*hint_transport.subscribe_count.lock().await, subscribed);
+}

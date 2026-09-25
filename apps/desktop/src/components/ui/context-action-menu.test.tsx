@@ -74,8 +74,8 @@ test('pointer context menu focuses the first action and restores focus after sel
   expect(trigger).toHaveFocus();
 });
 
-test('keyboard context menu skips disabled actions and Escape restores focus', () => {
-  render(<MenuHarness />);
+test('keyboard context menu skips disabled actions, keeps focus across owner re-renders and Escape restores focus', () => {
+  const { rerender } = render(<MenuHarness />);
   const trigger = screen.getByRole('button', { name: 'Open actions' });
   trigger.focus();
 
@@ -85,6 +85,9 @@ test('keyboard context menu skips disabled actions and Escape restores focus', (
   expect(first).toHaveFocus();
 
   fireEvent.keyDown(first, { key: 'ArrowDown' });
+  expect(last).toHaveFocus();
+  // 開いている間の再描画で items が作り直されても、移した focus を先頭へ戻さない。
+  rerender(<MenuHarness />);
   expect(last).toHaveFocus();
   fireEvent.keyDown(last, { key: 'Home' });
   expect(first).toHaveFocus();

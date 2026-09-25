@@ -275,7 +275,7 @@ N61はprovider bindingを公開accountへ結ぶだけで、public source参加�
 
 | ID | 入口 → helper → sink | guard / 停止 | 対応contract |
 | --- | --- | --- | --- |
-| N62 | topic join/retry → `TopicWarmupCoordinator::warmup_peers_once` → gossip ALPN dial | peer履歴100/1,000でも4候補だけを巡回してclone。`for_each_concurrent(2)`はtaskをspawnせず、共有dial slot2件が満杯ならin-flight台帳を増やさず即時延期。既存direct優先とrelay fallbackはwarmup先のaddress構築を維持 | `warmup_samples_a_moving_four_peer_window_from_large_history`、`warmup_does_not_queue_peer_state_when_shared_dial_slots_are_full`、`transport_import_ticket_updates_existing_topic_subscription`、`transport_seed_update_updates_existing_topic_subscription` |
+| N62 | topic join/retry → `TopicWarmupCoordinator::warmup_peers_once` → gossip ALPN dial | peer履歴100/1,000でも4候補だけを巡回してclone。`for_each_concurrent(2)`はpeerごとの待機taskをspawnせず、共有dial slot2件が満杯ならin-flight台帳を増やさず即時延期。slotを得たdialだけがgossipへの引渡しまでtaskで続く（N63）。既存direct優先とrelay fallbackはwarmup先のaddress構築を維持 | `warmup_samples_a_moving_four_peer_window_from_large_history`、`warmup_does_not_queue_peer_state_when_shared_dial_slots_are_full`、`transport_import_ticket_updates_existing_topic_subscription`、`transport_seed_update_updates_existing_topic_subscription` |
 
 N62はper-peer warmupの増幅だけを除く。`ensure_hint_topic`の初回bootstrap合成とtopic全体のretry task、`extend_active_topic_peers`の全topic更新、SDK内部のgossip viewはN04/U07のまま残る。D2の現在の受信対象を減らすために購読を切り捨てない。
 
@@ -283,7 +283,7 @@ N62はper-peer warmupの増幅だけを除く。`ensure_hint_topic`の初回boot
 
 | ID | 入口 → helper → sink | guard / 停止 | 対応contract |
 | --- | --- | --- | --- |
-| N63 | 初回join/peer追加 → receiverまたはtopic stateのwarmup task → gossip dial | 初回warmupはreceiver取消時にDropでabort。更新は同一topic世代で最大1taskを登録し、旧taskをabort/awaitしてから置換。解除/shutdownではclosed通知と全task abortを先に発行し、終了を待つ。join待ちの旧世代は通知で取消し、古いtimeout判定はsnapshot世代が現stateと一致するときだけ置換する。shutdown後のsubscribe登録を拒否 | `unsubscribing_during_initial_join_stops_its_warmup_task`、`unsubscribing_stops_a_registered_peer_update_warmup`、`hint_subscribe_waiting_for_registration_cannot_revive_after_shutdown`、`cancelled_hint_shutdown_aborts_all_topic_tasks_before_waiting`、`stale_rejoin_decision_cannot_remove_a_new_topic_generation`、既存ticket/seed更新・timed-out再購読 |
+| N63 | 初回join/peer追加 → receiverまたはtopic stateのwarmup task → gossip dial | 初回warmupはreceiver取消時にDropでabort。更新は同一topic世代で最大1taskを登録し、旧taskをabort/awaitしてから置換。解除/shutdownではclosed通知と全task abortを先に発行し、終了を待つ。開始済みのgossip dialは、取消後もgossipへの引渡しまで完了させる（相手のgossipは受け入れた接続で送るため、引渡し前に落とすと相手だけがneighborを失う）。同時dialは共通permit 2件に収まる。join待ちの旧世代は通知で取消し、古いtimeout判定はsnapshot世代が現stateと一致するときだけ置換する。shutdown後のsubscribe登録を拒否 | `unsubscribing_during_initial_join_stops_its_warmup_task`、`unsubscribing_stops_a_registered_peer_update_warmup`、`hint_subscribe_waiting_for_registration_cannot_revive_after_shutdown`、`cancelled_hint_shutdown_aborts_all_topic_tasks_before_waiting`、`stale_rejoin_decision_cannot_remove_a_new_topic_generation`、既存ticket/seed更新・timed-out再購読 |
 
 N63はwarmup taskの停止所有を対象とし、topic全体やpeer全体の走査量を削減したと主張しない。`ensure_hint_topic`のbootstrap全件materializeと `extend_active_topic_peers` の全topic更新は残る。D2の現在の受信対象を維持するため、active topic数を暗黙に切り捨てない。
 

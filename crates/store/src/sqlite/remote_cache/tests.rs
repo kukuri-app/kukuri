@@ -205,6 +205,27 @@ async fn fresh_cache_reads_do_not_take_the_sqlite_writer_lock() {
 }
 
 #[tokio::test]
+async fn local_projection_write_waits_for_a_concurrent_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SqliteStore::connect_file(dir.path().join("remote-cache.db"))
+        .await
+        .unwrap();
+    let mut writer = store.pool().begin().await.unwrap();
+    sqlx::query("UPDATE remote_content_cache_usage SET used_bytes = used_bytes WHERE id = 1")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let (written, ()) = tokio::join!(
+        store.put_object_projection(remote_post("local-with-writer")),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            writer.rollback().await.unwrap();
+        }
+    );
+    written.expect("a local write waits for the writer");
+}
+
+#[tokio::test]
 async fn adult_hash_marker_follows_cached_projection_refs() {
     let store = SqliteStore::connect_memory().await.unwrap();
     let mut evictions = store.subscribe_adult_label_evictions();

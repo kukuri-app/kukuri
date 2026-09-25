@@ -17,7 +17,8 @@ export function MediaDemandObserver({ hash }: { hash: string | null }) {
       setVisible(true);
       return () => setVisible(false);
     }
-    const observer = new IntersectionObserver(([entry]) => setVisible(Boolean(entry?.isIntersecting)));
+    // 1 回の callback に複数の entry が届いたときは、最後の entry が現在の状態を表す。
+    const observer = new IntersectionObserver((entries) => setVisible(Boolean(entries.at(-1)?.isIntersecting)));
     observer.observe(marker.current.parentElement);
     return () => {
       observer.disconnect();

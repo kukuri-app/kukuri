@@ -546,17 +546,14 @@ mod tests {
     };
 
     fn integration_admin_url() -> Option<String> {
-        if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_INTEGRATION_TESTS") {
-            return None;
-        }
-        // Config unit tests temporarily replace COMMUNITY_NODE_DATABASE_URL in
-        // this same test binary. The compose port is stable across that test.
-        let port = std::env::var("CN_POSTGRES_PORT")
-            .ok()
-            .and_then(|value| value.parse::<u16>().ok())
-            .filter(|port| *port > 0)
-            .unwrap_or(15432);
-        Some(format!("postgres://cn:cn_password@127.0.0.1:{port}/cn"))
+        // config::tests temporarily rewrites this environment variable in the
+        // same process. The shared lock keeps the caller's URL intact.
+        let _env = crate::config::tests::env_lock();
+        kukuri_test_support::gated_env_url(
+            "KUKURI_CN_RUN_INTEGRATION_TESTS",
+            "COMMUNITY_NODE_DATABASE_URL",
+            "postgres://cn:cn_password@127.0.0.1:15432/cn",
+        )
     }
 
     #[tokio::test]

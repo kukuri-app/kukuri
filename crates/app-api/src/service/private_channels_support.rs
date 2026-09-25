@@ -606,9 +606,7 @@ impl AppService {
                 handle.abort();
             }
         }
-        self.hint_transport()
-            .unsubscribe_hints(&private_channel_hint_topic(channel_id))
-            .await?;
+        // restart_topic_subscription と同じ理由で gossip topic は抜けない。
         let Some(state) = self
             .joined_private_channel_state(topic_id, channel_id)
             .await

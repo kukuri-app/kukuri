@@ -8,6 +8,9 @@ for (const options of [
   { width: 390, target: 10, theme: 'light', reducedMotion: 'no-preference' },
 ] as const) {
   test(`notification scroll targets its reply at ${options.width}px, post ${options.target}`, async ({ page }) => {
+    // Two notification -> thread navigations over a 60-row thread and timeline are bounded but
+    // CPU-heavy (~14s on the standard runner); slower CI runners take ~2.1-2.4x as long.
+    test.slow();
     await page.setViewportSize({ width: options.width, height: 850 });
     await page.emulateMedia({ reducedMotion: options.reducedMotion });
     await page.addInitScript(({ target, theme, themeKey }) => {
