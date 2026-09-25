@@ -134,6 +134,12 @@ pub trait HintTransport: Send + Sync {
     async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()>;
     async fn publish_hint(&self, topic: &TopicId, hint: GossipHint) -> Result<()>;
 
+    /// Return only a small rotating window of peers joined to this gossip
+    /// scope. Private docs readers must not sample unrelated account peers.
+    async fn topic_read_candidates(&self, _topic: &TopicId) -> Result<Vec<SeedPeer>> {
+        Ok(Vec::new())
+    }
+
     /// Resolve only an endpoint whose current binding proves `recipient`.
     /// None means deferred; callers must keep durable outbox rows pending.
     async fn resolve_receive_destination(

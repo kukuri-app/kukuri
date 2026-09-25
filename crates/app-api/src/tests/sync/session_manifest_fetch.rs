@@ -2,7 +2,7 @@
 use super::*;
 use crate::service::{verify_game_room_record, verify_live_session_record};
 use kukuri_core::{GameRoomStateDocV1, LiveSessionStateDocV1};
-use kukuri_docs_sync::{DocFetchPolicy, DocRecord};
+use kukuri_docs_sync::{BucketReplica, BucketScope, DocFetchPolicy, DocRecord, TimeBucket};
 
 #[derive(Default)]
 struct ObservedBlobs {
@@ -195,6 +195,76 @@ async fn valid_sessions_accept_late_blobs_without_changing_the_requested_hash() 
             *blobs.calls.lock().await,
             vec![fixture.hash(), fixture.hash(), fixture.hash()]
         );
+        fixture.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn signed_session_update_cannot_be_moved_to_another_bucket() {
+    for kind in ["live", "score"] {
+        let fixture = Fixture::new(kind).await;
+        let state: serde_json::Value = serde_json::from_slice(&fixture.record.value).unwrap();
+        let envelope_id: EnvelopeId =
+            serde_json::from_value(state["last_envelope_id"].clone()).unwrap();
+        let envelope_key = format!("envelopes/{}", envelope_id.as_str());
+        let signed = fixture
+            .docs
+            .query_replica(&fixture.replica, DocQuery::Exact(envelope_key.clone()))
+            .await
+            .unwrap()
+            .remove(0);
+        let envelope: KukuriEnvelope = serde_json::from_slice(&signed.value).unwrap();
+        let day = TimeBucket::from_unix_seconds(envelope.created_at).unwrap();
+        let wrong = BucketReplica::new(
+            BucketScope::Topic {
+                topic_id: fixture.topic.as_str().into(),
+            },
+            TimeBucket::from_index(day.index() + 1).unwrap(),
+        )
+        .unwrap()
+        .replica_id();
+        fixture
+            .docs
+            .apply_doc_op(
+                &wrong,
+                DocOp::SetBytes {
+                    key: envelope_key,
+                    value: signed.value,
+                },
+            )
+            .await
+            .unwrap();
+        let blobs = ObservedBlobs {
+            inner: fixture.source.as_ref().clone(),
+            ..Default::default()
+        };
+        let accepted = if fixture.live {
+            verify_live_session_record(
+                fixture.docs.as_ref(),
+                &blobs,
+                &wrong,
+                fixture.topic.as_str(),
+                &fixture.record,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            .unwrap()
+            .is_some()
+        } else {
+            verify_game_room_record(
+                fixture.docs.as_ref(),
+                &blobs,
+                &wrong,
+                fixture.topic.as_str(),
+                &fixture.record,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            .unwrap()
+            .is_some()
+        };
+        assert!(!accepted, "{kind}");
+        assert!(blobs.calls.lock().await.is_empty(), "{kind} read a blob");
         fixture.finish().await;
     }
 }

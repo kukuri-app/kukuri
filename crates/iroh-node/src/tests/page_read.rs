@@ -51,6 +51,78 @@ async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
 }
 
 #[tokio::test]
+async fn legacy_topic_and_private_epoch_use_the_same_bounded_reader() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let public = ReplicaId::new("topic::kukuri:topic:rust");
+    let public_secret = NamespaceSecret::from_bytes(
+        blake3::hash(format!("kukuri-docs:{}", public.as_str()).as_bytes()).as_bytes(),
+    );
+    let private = ReplicaId::new("channel::room::epoch::e1");
+    let private_secret = NamespaceSecret::from_bytes(&[42; 32]);
+    let mut docs = Vec::new();
+    for (secret, body) in [
+        (&public_secret, b"public".as_slice()),
+        (&private_secret, b"private".as_slice()),
+    ] {
+        let doc = provider
+            .docs()
+            .import_namespace(Capability::Write(secret.clone()))
+            .await?;
+        doc.set_bytes(
+            provider.docs().author_default().await?,
+            b"objects/post/envelope".to_vec(),
+            body.to_vec(),
+        )
+        .await?;
+        docs.push(doc);
+    }
+    let before = docs[0].status().await?;
+    for (replica, secret, body) in [
+        (&public, &public_secret, b"public".as_slice()),
+        (&private, &private_secret, b"private".as_slice()),
+    ] {
+        let response = requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                replica,
+                secret,
+                DocReadQuery::Exact {
+                    key: "objects/post/envelope".into(),
+                    limit: 1,
+                    author: None,
+                },
+            )
+            .await?;
+        let DocReadResponse::Records(records) = response else {
+            anyhow::bail!("expected record")
+        };
+        assert_eq!(records[0].value, body);
+    }
+    assert!(
+        requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                &private,
+                &NamespaceSecret::from_bytes(&[41; 32]),
+                DocReadQuery::Exact {
+                    key: "objects/post/envelope".into(),
+                    limit: 1,
+                    author: None
+                },
+            )
+            .await
+            .is_err()
+    );
+    let after = docs[0].status().await?;
+    assert_eq!(after.handles, before.handles);
+    assert_eq!(after.sync, before.sync);
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn cached_remote_record_is_reprovided_without_local_namespace() -> Result<()> {
     let provider = IrohDocsNode::memory().await?;
     let requester = IrohDocsNode::memory().await?;
@@ -222,7 +294,7 @@ async fn real_peer_returns_only_requested_local_keys_and_records() -> Result<()>
             .query_remote_docs(
                 peer.clone(),
                 &ReplicaId::new("channel::private"),
-                &secret,
+                &NamespaceSecret::from_bytes(&[8; 32]),
                 DocReadQuery::Exact {
                     key: "bulk/key".into(),
                     limit: 1,
@@ -231,7 +303,7 @@ async fn real_peer_returns_only_requested_local_keys_and_records() -> Result<()>
             )
             .await
             .is_err(),
-        "the page protocol must not serve private replicas without their audience gate"
+        "the page protocol must not serve a private replica without its capability"
     );
     assert!(
         requester

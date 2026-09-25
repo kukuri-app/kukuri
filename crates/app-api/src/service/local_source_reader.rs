@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use kukuri_core::ReplicaId;
 use kukuri_docs_sync::{DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync};
 
-pub(super) struct LocalSourceReader {
+pub(crate) struct LocalSourceReader {
     pub docs: std::sync::Arc<dyn DocsSync>,
     pub replica: ReplicaId,
 }

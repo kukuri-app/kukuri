@@ -219,8 +219,8 @@ pub struct IndexEntryView {
     pub author_pubkey: String,
     pub text: String,
     pub created_at: i64,
-    // 公開bucket投稿の保存先の手がかり。clientはscopeと署名を検証し、権限の証明にはしない。
-    // 旧形式とprivate epoch未対応の応答では省略し、既存の解決経路を維持する。
+    // 投稿の保存先の手がかり。privateは所属証明つきのscope検索だけで返す。
+    // clientはscope・epoch・署名を再検証し、これ自体を権限証明にはしない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub source_replica_id: Option<String>,

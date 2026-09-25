@@ -3857,6 +3857,7 @@ dependencies = [
  "blake3",
  "chrono",
  "futures-util",
+ "hex",
  "kukuri-blob-service",
  "kukuri-core",
  "kukuri-docs-sync",

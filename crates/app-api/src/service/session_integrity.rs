@@ -67,6 +67,8 @@ pub(crate) enum SessionRejection {
     InvalidRevision,
     /// manifest が申告する topic・channel が、読んだ replica と合わない。
     ScopeMismatch,
+    /// 署名された更新時刻が、読んだ bucket と合わない。
+    BucketTimeMismatch,
 }
 
 impl SessionRejection {
@@ -81,6 +83,7 @@ impl SessionRejection {
             Self::ManifestMismatch => "the state or manifest blob differs from the signed manifest",
             Self::InvalidRevision => "the signed session revision is missing or invalid",
             Self::ScopeMismatch => "the session does not belong to the replica it was read from",
+            Self::BucketTimeMismatch => "the signed session update is outside its bucket",
         }
     }
 }
@@ -136,7 +139,7 @@ async fn load_signed_manifest<T: DeserializeOwned>(
     envelope_id: &EnvelopeId,
     expected_kind: &str,
     policy: DocFetchPolicy,
-) -> Result<SessionRead<(Pubkey, T, kukuri_core::BlobHash)>> {
+) -> Result<SessionRead<(Pubkey, T, kukuri_core::BlobHash, i64)>> {
     let records = docs_sync
         .query_replica_exact_bounded(
             replica,
@@ -153,7 +156,7 @@ async fn load_signed_manifest<T: DeserializeOwned>(
             .then_some(())?;
         let manifest = serde_json::from_str::<T>(envelope.content.as_str()).ok()?;
         let hash = kukuri_core::blob_hash(envelope.content.as_bytes());
-        Some((envelope.pubkey, manifest, hash))
+        Some((envelope.pubkey, manifest, hash, envelope.created_at))
     });
     Ok(match verified {
         Some(value) => SessionRead::Ready(value),
@@ -288,7 +291,7 @@ pub(crate) async fn inspect_live_session_record(
         policy,
     )
     .await?;
-    let (signer, manifest, signed_hash) = match signed {
+    let (signer, manifest, signed_hash, signed_at) = match signed {
         SessionRead::Ready(value) => value,
         SessionRead::MissingDocs => return Ok(SessionRead::MissingDocs),
         _ => return rejected(SessionRejection::SignedManifestUnavailable),
@@ -300,6 +303,11 @@ pub(crate) async fn inspect_live_session_record(
             Ok(verified) => verified,
             Err(reason) => return rejected(reason),
         };
+    if !ReplicaPostScope::for_replica(replica, subscription_topic_id)
+        .is_some_and(|scope| scope.accepts_created_at(signed_at))
+    {
+        return rejected(SessionRejection::BucketTimeMismatch);
+    }
     if current_manifest.hash != signed_hash {
         return rejected(SessionRejection::ManifestMismatch);
     }
@@ -502,7 +510,7 @@ pub(crate) async fn inspect_game_room_record(
     .await?;
     let current_manifest = state.current_manifest.clone();
     match signed {
-        SessionRead::Ready((signer, manifest, signed_hash)) => {
+        SessionRead::Ready((signer, manifest, signed_hash, signed_at)) => {
             let verified = match VerifiedGameRoom::verify(
                 state,
                 Some(&signer),
@@ -515,6 +523,11 @@ pub(crate) async fn inspect_game_room_record(
             };
             if current_manifest.hash != signed_hash {
                 return rejected(SessionRejection::ManifestMismatch);
+            }
+            if !ReplicaPostScope::for_replica(replica, subscription_topic_id)
+                .is_some_and(|scope| scope.accepts_created_at(signed_at))
+            {
+                return rejected(SessionRejection::BucketTimeMismatch);
             }
             match read_session_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest).await
             {

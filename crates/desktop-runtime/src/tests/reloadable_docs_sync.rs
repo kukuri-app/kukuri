@@ -97,7 +97,7 @@ async fn reloadable_docs_sync_forwards_bounded_key_queries() {
 }
 
 #[tokio::test]
-async fn reloadable_docs_sync_forwards_public_bucket_readers() {
+async fn reloadable_docs_sync_forwards_remote_readers() {
     let provider = IrohDocsNode::memory().await.expect("provider");
     let client = IrohDocsNode::memory().await.expect("client");
     let docs = ReloadableDocsSync::new(Arc::new(IrohDocsSync::new(client.clone())));
@@ -119,7 +119,7 @@ async fn reloadable_docs_sync_forwards_public_bucket_readers() {
     .expect("replica")
     .replica_id();
     assert_eq!(
-        docs.public_bucket_readers(&replica)
+        docs.remote_readers(&replica, None, Vec::new())
             .await
             .expect("public readers")
             .len(),

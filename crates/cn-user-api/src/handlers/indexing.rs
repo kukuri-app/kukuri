@@ -251,7 +251,10 @@ pub(crate) async fn indexing_status(
     Ok(Json(IndexingStatusResponse { requests, target }))
 }
 
-fn index_query_response(entries: Vec<kukuri_cn_indexer::IndexedEntry>) -> IndexQueryResponse {
+fn index_query_response(
+    entries: Vec<kukuri_cn_indexer::IndexedEntry>,
+    private_scoped: bool,
+) -> IndexQueryResponse {
     IndexQueryResponse {
         entries: entries
             .into_iter()
@@ -262,10 +265,17 @@ fn index_query_response(entries: Vec<kukuri_cn_indexer::IndexedEntry>) -> IndexQ
                 author_pubkey: entry.author_pubkey,
                 text: entry.text,
                 created_at: entry.created_at,
-                source_replica_id: (entry.scope_kind
-                    == kukuri_cn_core::IndexScopeKind::PublicTopic
-                    && entry.source_replica_id.starts_with("bucket::"))
-                .then_some(entry.source_replica_id),
+                source_replica_id: match entry.scope_kind {
+                    IndexScopeKind::PublicTopic => {
+                        (entry.source_replica_id.starts_with("bucket::v1::topic::")
+                            || entry.source_replica_id.starts_with("topic::"))
+                        .then_some(entry.source_replica_id)
+                    }
+                    IndexScopeKind::PrivateChannel => (private_scoped
+                        && (entry.source_replica_id.starts_with("bucket::v1::channel::")
+                            || entry.source_replica_id.starts_with("channel::")))
+                    .then_some(entry.source_replica_id),
+                },
                 // 真実源の最新 verdict 由来（query gate が充填）。署名済み content_labels は
                 // 生成・改変しない（`content_advisories_are_separate_from_signed_content_labels`）。
                 content_advisories: entry.content_advisories,
@@ -276,16 +286,19 @@ fn index_query_response(entries: Vec<kukuri_cn_indexer::IndexedEntry>) -> IndexQ
 
 #[test]
 fn index_query_retains_the_public_source_replica_locator() {
-    let result = index_query_response(vec![kukuri_cn_indexer::IndexedEntry {
-        scope_kind: kukuri_cn_core::IndexScopeKind::PublicTopic,
-        scope_id: "rust".into(),
-        object_id: "post-id".into(),
-        author_pubkey: "author".into(),
-        text: "derived text".into(),
-        created_at: 86_400,
-        source_replica_id: "bucket::v1::topic::72757374::1".into(),
-        content_advisories: Vec::new(),
-    }]);
+    let result = index_query_response(
+        vec![kukuri_cn_indexer::IndexedEntry {
+            scope_kind: kukuri_cn_core::IndexScopeKind::PublicTopic,
+            scope_id: "rust".into(),
+            object_id: "post-id".into(),
+            author_pubkey: "author".into(),
+            text: "derived text".into(),
+            created_at: 86_400,
+            source_replica_id: "bucket::v1::topic::72757374::1".into(),
+            content_advisories: Vec::new(),
+        }],
+        false,
+    );
     let wire = serde_json::to_value(result).expect("index response");
     assert_eq!(
         wire["entries"][0]["source_replica_id"],
@@ -294,26 +307,38 @@ fn index_query_retains_the_public_source_replica_locator() {
 }
 
 #[test]
-fn index_query_keeps_legacy_and_private_locator_fields_absent() {
-    for (kind, source) in [
-        (kukuri_cn_core::IndexScopeKind::PublicTopic, "topic::rust"),
+fn index_query_private_locator_requires_a_scoped_membership_check() {
+    for (kind, source, scoped) in [
+        (IndexScopeKind::PublicTopic, "topic::rust", false),
         (
-            kukuri_cn_core::IndexScopeKind::PrivateChannel,
+            IndexScopeKind::PrivateChannel,
             "bucket::v1::channel::63::65::1",
+            false,
+        ),
+        (
+            IndexScopeKind::PrivateChannel,
+            "bucket::v1::channel::63::65::1",
+            true,
         ),
     ] {
-        let result = index_query_response(vec![kukuri_cn_indexer::IndexedEntry {
-            scope_kind: kind,
-            scope_id: "rust".into(),
-            object_id: "post".into(),
-            author_pubkey: "author".into(),
-            text: "body".into(),
-            created_at: 42,
-            source_replica_id: source.into(),
-            content_advisories: Vec::new(),
-        }]);
+        let result = index_query_response(
+            vec![kukuri_cn_indexer::IndexedEntry {
+                scope_kind: kind,
+                scope_id: "rust".into(),
+                object_id: "post".into(),
+                author_pubkey: "author".into(),
+                text: "body".into(),
+                created_at: 42,
+                source_replica_id: source.into(),
+                content_advisories: Vec::new(),
+            }],
+            scoped,
+        );
         let wire = serde_json::to_value(result).expect("wire");
-        assert!(wire["entries"][0].get("source_replica_id").is_none());
+        assert_eq!(
+            wire["entries"][0].get("source_replica_id").is_some(),
+            kind == IndexScopeKind::PublicTopic || scoped
+        );
     }
 }
 
@@ -549,7 +574,9 @@ pub(crate) async fn index_search(
         })?;
     let limit = index_query_limit(&params);
     let mut private_epoch = None;
-    let entries = match parse_index_scope_params(&params)? {
+    let scope = parse_index_scope_params(&params)?;
+    let private_scoped = matches!(scope.as_ref(), Some((IndexScopeKind::PrivateChannel, _)));
+    let entries = match scope {
         Some((scope_kind, scope_id)) => {
             if scope_kind == IndexScopeKind::PrivateChannel {
                 private_epoch = require_channel_membership(&state, &headers, scope_id.as_str())
@@ -586,7 +613,7 @@ pub(crate) async fn index_search(
         entries,
     )
     .await?;
-    Ok(Json(index_query_response(entries)))
+    Ok(Json(index_query_response(entries, private_scoped)))
 }
 
 /// discovery(新着列挙。#404)。scope 指定で topic 内、無指定で supported set 横断。
@@ -602,6 +629,7 @@ pub(crate) async fn index_discovery(
         require_index_query(&state, &headers).await?;
     let limit = index_query_limit(&params);
     let scope = parse_index_scope_params(&params)?;
+    let private_scoped = matches!(scope.as_ref(), Some((IndexScopeKind::PrivateChannel, _)));
     let private_epoch = if let Some((IndexScopeKind::PrivateChannel, scope_id)) = scope.as_ref() {
         require_channel_membership(&state, &headers, scope_id.as_str())
             .await?
@@ -632,7 +660,7 @@ pub(crate) async fn index_discovery(
         entries,
     )
     .await?;
-    Ok(Json(index_query_response(entries)))
+    Ok(Json(index_query_response(entries, private_scoped)))
 }
 
 /// recommendation(#404)。supported set 横断の新着列挙を最小 surface として返す。
@@ -659,7 +687,7 @@ pub(crate) async fn index_recommendations(
         entries,
     )
     .await?;
-    Ok(Json(index_query_response(entries)))
+    Ok(Json(index_query_response(entries, false)))
 }
 
 /// channel secret 登録失敗を HTTP 応答へマップする。

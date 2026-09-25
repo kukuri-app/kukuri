@@ -109,6 +109,10 @@ impl MemoryIndex {
         author_pubkey: &str,
         text: &str,
     ) -> Result<()> {
+        let source_replica_id = match scope_kind {
+            IndexScopeKind::PublicTopic => format!("topic::{scope_id}"),
+            IndexScopeKind::PrivateChannel => format!("channel::{scope_id}::epoch::e1"),
+        };
         let verdict_id = self
             .store
             .persist_verdict(
@@ -125,7 +129,7 @@ impl MemoryIndex {
                 object_id: object_id.to_string(),
                 author_pubkey: author_pubkey.to_string(),
                 created_at: 1_700_000_000,
-                source_replica_id: format!("topic::{scope_id}"),
+                source_replica_id: source_replica_id.clone(),
                 verdict_id,
                 verdict_action: "allow".to_string(),
                 critical: false,
@@ -139,7 +143,7 @@ impl MemoryIndex {
                 author_pubkey: author_pubkey.to_string(),
                 text: text.to_string(),
                 created_at: 1_700_000_000,
-                source_replica_id: format!("topic::{scope_id}"),
+                source_replica_id,
                 content_advisories: Vec::new(),
             })
             .await?;
@@ -806,6 +810,10 @@ async fn private_channel_reads_are_limited_to_members_with_secret_proof() -> Res
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         let body = response.json::<serde_json::Value>().await?;
         assert_eq!(entry_ids(&body), vec!["post-private".to_string()], "{path}");
+        assert_eq!(
+            body["entries"][0]["source_replica_id"],
+            "channel::secret-room::epoch::e1"
+        );
     }
     let authorized_demand: Option<String> = sqlx::query_scalar(
         "SELECT last_index_demand_at::text FROM cn_index.supported_topics

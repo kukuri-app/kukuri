@@ -218,24 +218,114 @@ impl AppService {
         else {
             return Ok(None);
         };
-        let key = stable_key("objects", &format!("{}/envelope", object_id.as_str()));
-        let Some(record) = self
+        let channel = projection.channel_id.as_str();
+        let Some(generation) = self
             .services
-            .docs_sync
-            .query_replica(&projection.source_replica_id, DocQuery::Exact(key))
-            .await?
-            .into_iter()
-            .next()
+            .active_content_scope_generation(projection.topic_id.as_str(), channel)
+            .await
         else {
             return Ok(None);
         };
-        let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
-        envelope.verify()?;
-        if envelope.id != *object_id {
-            anyhow::bail!("signed post envelope object id does not match");
+        let replica = &projection.source_replica_id;
+        let mut readers: Vec<(Arc<dyn DocsSync>, DocFetchPolicy)> = Vec::new();
+        if channel == PUBLIC_CHANNEL_ID {
+            readers.push((
+                Arc::new(LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: replica.clone(),
+                }),
+                DocFetchPolicy::LocalOnly,
+            ));
+        } else if !replica.as_str().starts_with("bucket::") {
+            readers.push((self.services.docs_sync.clone(), DocFetchPolicy::LocalOnly));
         }
-        self.services.store.put_envelope(envelope.clone()).await?;
-        Ok(Some(envelope))
+        let epoch = if channel == PUBLIC_CHANNEL_ID {
+            None
+        } else {
+            self.private_epoch_for_source(projection.topic_id.as_str(), channel, replica)
+                .await?
+        };
+        if channel != PUBLIC_CHANNEL_ID && epoch.is_none() {
+            return Ok(None);
+        }
+        for reader in self
+            .remote_post_readers(
+                projection.topic_id.as_str(),
+                (channel != PUBLIC_CHANNEL_ID).then_some(channel),
+                replica,
+                epoch
+                    .as_ref()
+                    .map(|(id, secret)| (id.as_str(), secret.as_str())),
+            )
+            .await?
+        {
+            readers.push((reader, DocFetchPolicy::LocalThenRemote));
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        for (reader, policy) in readers {
+            let read = async {
+                if load_verified_post(
+                    reader.as_ref(),
+                    replica,
+                    projection.topic_id.as_str(),
+                    object_id,
+                    policy,
+                )
+                .await?
+                .is_none()
+                {
+                    return Ok::<_, anyhow::Error>(None);
+                }
+                let key = stable_key("objects", &format!("{}/envelope", object_id.as_str()));
+                let scope = ReplicaPostScope::for_replica(replica, projection.topic_id.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("post source is not a post replica"))?;
+                let records = reader
+                    .query_replica_exact_bounded(
+                        replica,
+                        &key,
+                        MAX_ENVELOPE_RECORDS_PER_OBJECT,
+                        DocFetchPolicy::LocalOnly,
+                    )
+                    .await?;
+                Ok(records
+                    .into_iter()
+                    .filter_map(|record| {
+                        let envelope: KukuriEnvelope =
+                            serde_json::from_slice(&record.value).ok()?;
+                        VerifiedPost::verify(envelope.clone(), object_id, replica, &scope)
+                            .ok()
+                            .map(|_| envelope)
+                    })
+                    .next())
+            };
+            let result = self
+                .services
+                .until_content_invalid(
+                    projection.topic_id.as_str(),
+                    channel,
+                    generation,
+                    tokio::time::timeout_at(deadline, read),
+                )
+                .await;
+            match result {
+                Some(Ok(Ok(Some(envelope)))) => {
+                    let _save = self.services.content_save_access.lock().await;
+                    if !self
+                        .services
+                        .content_scope_is_current(projection.topic_id.as_str(), channel, generation)
+                        .await
+                    {
+                        return Ok(None);
+                    }
+                    self.services.store.put_envelope(envelope.clone()).await?;
+                    return Ok(Some(envelope));
+                }
+                Some(Ok(Ok(None))) => {}
+                Some(Ok(Err(error))) => warn!(%error, "post envelope source read failed"),
+                Some(Err(_)) | None => break,
+            }
+        }
+        Ok(None)
     }
 
     pub async fn ensure_scope_subscriptions(
@@ -277,16 +367,18 @@ impl AppService {
         let TimelineScope::Channel { channel_id } = scope else {
             return false;
         };
-        let Some(state) = self
-            .joined_private_channel_state(topic_id, channel_id.as_str())
-            .await
-        else {
-            return false;
+        let current_replica = {
+            let joined = self.joined_private_channels.lock().await;
+            let Some(state) =
+                joined.get(&joined_private_channel_key(topic_id, channel_id.as_str()))
+            else {
+                return false;
+            };
+            if state.archived_epochs.is_empty() {
+                return false;
+            }
+            current_private_channel_replica_id(state)
         };
-        if state.archived_epochs.is_empty() {
-            return false;
-        }
-        let current_replica = current_private_channel_replica_id(&state);
         !page
             .items
             .iter()
@@ -530,11 +622,74 @@ impl AppService {
         {
             return Ok(true);
         }
-        for replica in self.scope_replicas(topic_id, scope).await? {
-            if hydrate_object_in_topic(&self.services, topic_id, &replica, object_id, policy)
-                .await?
+        for replica in self
+            .local_page_replicas(topic_id, scope, None, false)
+            .await?
+        {
+            if hydrate_object_in_topic(
+                &self.services,
+                topic_id,
+                &replica,
+                object_id,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
             {
                 return Ok(true);
+            }
+        }
+        if policy == DocFetchPolicy::LocalOnly {
+            return Ok(false);
+        }
+        let channel = match scope {
+            TimelineScope::Public => PUBLIC_CHANNEL_ID,
+            TimelineScope::Channel { channel_id } => channel_id.as_str(),
+        };
+        let Some(generation) = self
+            .services
+            .active_content_scope_generation(topic_id, channel)
+            .await
+        else {
+            return Ok(false);
+        };
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        for (replica, epoch) in self
+            .remote_page_replicas(topic_id, scope, None, false, false)
+            .await?
+        {
+            let readers = self
+                .remote_post_readers(
+                    topic_id,
+                    (channel != PUBLIC_CHANNEL_ID).then_some(channel),
+                    &replica,
+                    epoch
+                        .as_ref()
+                        .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                )
+                .await?;
+            for reader in readers {
+                let mut services = self.services.clone();
+                services.docs_sync = reader;
+                let read = tokio::time::timeout_at(
+                    deadline,
+                    hydrate_object_in_topic(
+                        &services,
+                        topic_id,
+                        &replica,
+                        object_id,
+                        DocFetchPolicy::LocalThenRemote,
+                    ),
+                );
+                match self
+                    .services
+                    .until_content_invalid(topic_id, channel, generation, read)
+                    .await
+                {
+                    Some(Ok(Ok(true))) => return Ok(true),
+                    Some(Ok(Ok(false))) => {}
+                    Some(Ok(Err(error))) => warn!(%error, "post target source read failed"),
+                    Some(Err(_)) | None => return Ok(false),
+                }
             }
         }
         Ok(false)

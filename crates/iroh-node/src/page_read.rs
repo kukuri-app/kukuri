@@ -22,6 +22,14 @@ use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
+
+fn private_replica(replica: &str) -> bool {
+    replica.starts_with("bucket::v1::channel::") || replica.starts_with("channel::")
+}
+
+fn public_replica(replica: &str) -> bool {
+    replica.starts_with("bucket::v1::topic::") || replica.starts_with("topic::")
+}
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_REQUEST_BYTES: usize = 4 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -116,8 +124,7 @@ impl Request {
         query: DocReadQuery,
     ) -> Result<Self> {
         let namespace = secret.id().to_string();
-        let capability_proof = replica
-            .starts_with("bucket::v1::channel::")
+        let capability_proof = private_replica(replica)
             .then(|| private_capability_proof(secret, replica, &namespace, &query))
             .transpose()?;
         let request = Self {
@@ -133,10 +140,9 @@ impl Request {
 
     fn check_budget(&self) -> Result<()> {
         ensure!(self.version == 1, "unsupported docs read version");
-        let private = self.replica.starts_with("bucket::v1::channel::");
+        let private = private_replica(&self.replica);
         ensure!(
-            (private || self.replica.starts_with("bucket::v1::topic::"))
-                && self.replica.len() <= MAX_KEY_BYTES,
+            (private || public_replica(&self.replica)) && self.replica.len() <= MAX_KEY_BYTES,
             "only topic and private channel buckets are readable"
         );
         ensure!(
@@ -214,7 +220,7 @@ impl DocReadProtocol {
         let request: Request = serde_json::from_slice(&bytes)?;
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
-        if request.replica.starts_with("bucket::v1::channel::") {
+        if private_replica(&request.replica) {
             let secret = self.sync.export_secret_key(namespace).await?;
             let expected = private_capability_proof(
                 &secret,

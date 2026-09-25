@@ -200,7 +200,68 @@ impl Drop for TopicWarmupInFlightGuard {
     }
 }
 
+fn topic_read_window(neighbors: &BTreeSet<String>, cursor: &mut Option<String>) -> Vec<String> {
+    let mut ids = Vec::with_capacity(4);
+    if let Some(after) = cursor.as_ref() {
+        use std::ops::Bound::{Excluded, Unbounded};
+        ids.extend(
+            neighbors
+                .range((Excluded(after.clone()), Unbounded))
+                .take(4)
+                .cloned(),
+        );
+        if ids.len() < 4 {
+            ids.extend(
+                neighbors
+                    .range(..=after.clone())
+                    .take(4 - ids.len())
+                    .cloned(),
+            );
+        }
+    } else {
+        ids.extend(neighbors.iter().take(4).cloned());
+    }
+    if let Some(last) = ids.last() {
+        *cursor = Some(last.clone());
+    }
+    ids
+}
+
 impl IrohGossipTransport {
+    pub(crate) async fn topic_read_candidates_impl(
+        &self,
+        topic: &TopicId,
+    ) -> Result<Vec<SeedPeer>> {
+        let Some((neighbors, cursor, closed)) = self
+            .topic_states
+            .lock()
+            .await
+            .get(topic.as_str())
+            .map(|state| {
+                (
+                    Arc::clone(&state.neighbors),
+                    Arc::clone(&state.read_cursor),
+                    Arc::clone(&state.closed),
+                )
+            })
+        else {
+            return Ok(Vec::new());
+        };
+        if closed.load(Ordering::Acquire) {
+            return Ok(Vec::new());
+        }
+        let neighbors = neighbors.read().await;
+        let mut cursor = cursor.lock().await;
+        let ids = topic_read_window(&neighbors, &mut cursor);
+        Ok(ids
+            .into_iter()
+            .map(|endpoint_id| SeedPeer {
+                endpoint_id,
+                addr_hint: None,
+            })
+            .collect())
+    }
+
     async fn remove_topic_state(&self, topic: &str) {
         let _ = self.remove_topic_state_if_generation(topic, None).await;
     }
@@ -623,6 +684,7 @@ impl IrohGossipTransport {
                 broadcaster: broadcaster.clone(),
                 bootstrap_peer_ids,
                 neighbors,
+                read_cursor: Arc::new(Mutex::new(None)),
                 last_received_at,
                 last_error,
                 invalid_hint_count,

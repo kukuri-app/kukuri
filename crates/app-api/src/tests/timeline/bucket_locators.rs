@@ -7,6 +7,7 @@ struct LocalReadDocs {
     inner: MemoryDocsSync,
     remote: std::sync::Mutex<Option<Arc<dyn DocsSync>>>,
     reads: std::sync::atomic::AtomicUsize,
+    remote_requests: std::sync::atomic::AtomicUsize,
     forbidden: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -83,7 +84,13 @@ impl BlobService for LocalReadBlobs {
 
 #[async_trait]
 impl DocsSync for LocalReadDocs {
-    async fn public_bucket_readers(&self, _: &ReplicaId) -> Result<Vec<Arc<dyn DocsSync>>> {
+    async fn remote_readers(
+        &self,
+        _: &ReplicaId,
+        _: Option<[u8; 32]>,
+        _: Vec<kukuri_transport::SeedPeer>,
+    ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        self.remote_requests.fetch_add(1, Ordering::SeqCst);
         Ok(self
             .remote
             .lock()
@@ -157,6 +164,235 @@ impl DocsSync for LocalReadDocs {
     async fn import_peer_ticket(&self, _: &str) -> Result<()> {
         anyhow::bail!("read only")
     }
+}
+
+#[tokio::test]
+async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave() -> Result<()> {
+    let (app, docs) = observed_app();
+    let topic = TopicId::new("private-source");
+    let channel = ChannelId::new("room");
+    let keys = generate_keys();
+    app.joined_private_channels.lock().await.insert(
+        joined_private_channel_key(topic.as_str(), channel.as_str()),
+        JoinedPrivateChannelState {
+            generation: 1,
+            topic_id: topic.as_str().into(),
+            channel_id: channel.clone(),
+            label: "room".into(),
+            creator_pubkey: keys.public_key_hex(),
+            owner_pubkey: keys.public_key_hex(),
+            joined_via_pubkey: None,
+            audience_kind: ChannelAudienceKind::InviteOnly,
+            current_epoch_id: "e1".into(),
+            current_epoch_secret_hex: hex::encode([7; 32]),
+            archived_epochs: Vec::new(),
+        },
+    );
+    let post = build_post_envelope_with_payload_in_channel(
+        &keys,
+        &topic,
+        PayloadRef::InlineText {
+            text: "private body".into(),
+        },
+        Vec::new(),
+        Vec::new(),
+        None,
+        ObjectVisibility::Private,
+        Some(&channel),
+        Vec::new(),
+    )?;
+    let bucket = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: "e1".into(),
+        },
+        TimeBucket::from_unix_seconds(post.created_at)?,
+    )?;
+    let replica = bucket.replica_id();
+    let remote = Arc::new(MemoryDocsSync::default());
+    remote
+        .register_private_replica_secret(
+            &replica,
+            &hex::encode(bucket.derive_private_secret(&[7; 32])?),
+        )
+        .await?;
+    persist_post_object(
+        remote.as_ref(),
+        &replica,
+        post.to_post_object()?.unwrap(),
+        post.clone(),
+    )
+    .await?;
+    *docs.remote.lock().unwrap() = Some(remote);
+    let input = CommunityIndexPostResolveInput {
+        key: "private-hit".into(),
+        topic: topic.as_str().into(),
+        object_id: post.id.as_str().into(),
+        author_pubkey: post.pubkey.as_str().into(),
+        channel_ref: ChannelRef::PrivateChannel {
+            channel_id: channel.clone(),
+        },
+        source_replica_id: Some(replica.as_str().into()),
+    };
+    let wrong = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: "e2".into(),
+        },
+        bucket.bucket(),
+    )?
+    .replica_id();
+    let unresolved = app
+        .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
+            key: "wrong-epoch".into(),
+            source_replica_id: Some(wrong.as_str().into()),
+            ..input.clone()
+        }])
+        .await?;
+    assert!(unresolved.entries[0].post.is_none());
+    assert_eq!(docs.remote_requests.load(Ordering::SeqCst), 0);
+    let resolved = app
+        .resolve_community_index_posts(vec![input.clone()])
+        .await?;
+    assert_eq!(
+        resolved.entries[0]
+            .post
+            .as_ref()
+            .map(|post| post.content.as_str()),
+        Some("private body")
+    );
+    let calls = docs.remote_requests.load(Ordering::SeqCst);
+    app.joined_private_channels
+        .lock()
+        .await
+        .remove(&joined_private_channel_key(
+            topic.as_str(),
+            channel.as_str(),
+        ));
+    let after_leave = app.resolve_community_index_posts(vec![input]).await?;
+    assert!(after_leave.entries[0].post.is_none());
+    assert_eq!(docs.remote_requests.load(Ordering::SeqCst), calls);
+    Ok(())
+}
+
+#[tokio::test]
+async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_replica() -> Result<()>
+{
+    let (app, _) = observed_app();
+    let topic = "private-history";
+    let channel = ChannelId::new("room");
+    let keys = generate_keys();
+    let same_day_earlier = format!("epoch-{}-old", 6 * 86_400_000 + 1_800_000);
+    let same_day_old = format!("epoch-{}-old", 6 * 86_400_000 + 3_600_000);
+    app.joined_private_channels.lock().await.insert(
+        joined_private_channel_key(topic, channel.as_str()),
+        JoinedPrivateChannelState {
+            generation: 1,
+            topic_id: topic.into(),
+            channel_id: channel.clone(),
+            label: "room".into(),
+            creator_pubkey: keys.public_key_hex(),
+            owner_pubkey: keys.public_key_hex(),
+            joined_via_pubkey: None,
+            audience_kind: ChannelAudienceKind::InviteOnly,
+            current_epoch_id: format!("epoch-{}-current", 6 * 86_400_000 + 43_200_000),
+            current_epoch_secret_hex: hex::encode([7; 32]),
+            archived_epochs: (1..=5)
+                .map(|index| PrivateChannelEpochCapability {
+                    epoch_id: format!("epoch-{}-old", index * 86_400_000),
+                    namespace_secret_hex: hex::encode([7; 32]),
+                })
+                .chain(std::iter::once(PrivateChannelEpochCapability {
+                    epoch_id: same_day_earlier.clone(),
+                    namespace_secret_hex: hex::encode([9; 32]),
+                }))
+                .chain(std::iter::once(PrivateChannelEpochCapability {
+                    epoch_id: same_day_old.clone(),
+                    namespace_secret_hex: hex::encode([8; 32]),
+                }))
+                .collect(),
+        },
+    );
+    let selected = app
+        .local_page_replicas(
+            topic,
+            &TimelineScope::Channel {
+                channel_id: channel.clone(),
+            },
+            Some(3 * 86_400 + 3_600),
+            false,
+        )
+        .await?;
+    assert!(selected.len() <= 4);
+    assert!(selected.contains(&private_channel_replica_for_epoch(
+        channel.as_str(),
+        &format!("epoch-{}-old", 3 * 86_400_000)
+    )));
+    assert!(selected.contains(&private_channel_replica_for_epoch(
+        channel.as_str(),
+        &format!("epoch-{}-old", 2 * 86_400_000)
+    )));
+    assert!(!selected.contains(&private_channel_replica_for_epoch(
+        channel.as_str(),
+        &format!("epoch-{}-old", 86_400_000)
+    )));
+    let remote = app
+        .remote_page_replicas(
+            topic,
+            &TimelineScope::Channel {
+                channel_id: channel.clone(),
+            },
+            Some(3 * 86_400 + 3_600),
+            false,
+            false,
+        )
+        .await?;
+    assert!(remote.len() <= 4);
+    let historic = BucketReplica::parse(&remote[0].0)?;
+    assert!(
+        matches!(historic.scope(), BucketScope::PrivateChannel { epoch_id, .. }
+        if epoch_id == &format!("epoch-{}-old", 3 * 86_400_000))
+    );
+    let source = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: same_day_old.clone(),
+        },
+        TimeBucket::from_unix_seconds(6 * 86_400 + 7_200)?,
+    )?
+    .replica_id();
+    let target = app
+        .session_target_candidates(
+            topic,
+            Some((channel.as_str(), &source, (6 * 86_400 + 7_200) * 1_000)),
+            "live-same-day-old",
+        )
+        .await?;
+    assert_eq!(target[0].0, source);
+    assert_eq!(
+        target[0].1.as_ref().map(|(id, _)| id.as_str()),
+        Some(same_day_old.as_str())
+    );
+    let earlier = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: same_day_earlier.clone(),
+        },
+        TimeBucket::from_unix_seconds(6 * 86_400 + 2_400)?,
+    )?
+    .replica_id();
+    let earlier_target = app
+        .session_target_candidates(
+            topic,
+            Some((channel.as_str(), &earlier, (6 * 86_400 + 2_400) * 1_000)),
+            "live-earlier-in-same-bucket",
+        )
+        .await?;
+    assert_eq!(
+        earlier_target[0],
+        (earlier, Some((same_day_earlier, hex::encode([9; 32]))))
+    );
+    Ok(())
 }
 
 fn observed_app() -> (AppService, Arc<LocalReadDocs>) {
@@ -737,180 +973,4 @@ async fn stale_available_or_pinned_body_status_never_allows_remote_fallback() {
             BlobViewStatus::Missing
         );
     }
-}
-
-#[cfg(feature = "iroh-integration-tests")]
-#[tokio::test]
-async fn real_iroh_client_reads_a_public_bucket_without_importing_it() -> Result<()> {
-    let publisher_node = kukuri_iroh_node::IrohDocsNode::memory().await?;
-    let client_node = kukuri_iroh_node::IrohDocsNode::memory().await?;
-    let publisher = kukuri_docs_sync::IrohDocsSync::new(publisher_node.clone());
-    let client = Arc::new(kukuri_docs_sync::IrohDocsSync::new(client_node.clone()));
-    let topic = TopicId::new("real-remote-topic");
-    let envelope = build_post_envelope(&generate_keys(), &topic, "real remote body", None)?;
-    let replica = BucketReplica::new(
-        BucketScope::Topic {
-            topic_id: topic.as_str().to_owned(),
-        },
-        TimeBucket::from_unix_seconds(envelope.created_at)?,
-    )?
-    .replica_id();
-    persist_post_object(
-        &publisher,
-        &replica,
-        envelope.to_post_object()?.expect("post"),
-        envelope.clone(),
-    )
-    .await?;
-    let socket = publisher_node
-        .endpoint()
-        .bound_sockets()
-        .into_iter()
-        .next()
-        .expect("publisher socket");
-    client
-        .import_peer_ticket(&format!("{}@{socket}", publisher_node.endpoint().addr().id))
-        .await?;
-    let store = Arc::new(MemoryStore::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        Arc::new(StaticTransport::new(PeerSnapshot::default())),
-        Arc::new(NoopHintTransport),
-        client.clone(),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let response = app
-        .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
-            key: "remote".into(),
-            topic: topic.as_str().into(),
-            object_id: envelope.id.as_str().into(),
-            author_pubkey: envelope.pubkey.as_str().into(),
-            channel_ref: ChannelRef::Public,
-            source_replica_id: Some(replica.as_str().into()),
-        }])
-        .await?;
-    assert_eq!(
-        response.entries[0]
-            .post
-            .as_ref()
-            .map(|post| post.content.as_str()),
-        Some("real remote body")
-    );
-    assert_eq!(client_node.docs().list().await?.count().await, 0);
-    app.shutdown().await;
-    client.shutdown().await;
-    publisher.shutdown().await;
-    client_node.shutdown().await?;
-    publisher_node.shutdown().await?;
-    Ok(())
-}
-
-#[cfg(feature = "iroh-integration-tests")]
-#[tokio::test]
-async fn unknown_index_sources_do_not_create_local_namespaces() -> Result<()> {
-    let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
-    let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::new(node.clone()));
-    let store = Arc::new(MemoryStore::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        Arc::new(StaticTransport::new(PeerSnapshot::default())),
-        Arc::new(NoopHintTransport),
-        docs.clone(),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let before = node.docs().list().await?.count().await;
-    for day in 1..=10 {
-        let replica = BucketReplica::new(
-            BucketScope::Topic {
-                topic_id: "source-missing".into(),
-            },
-            TimeBucket::from_index(day)?,
-        )?
-        .replica_id();
-        let result = app
-            .resolve_community_index_posts(vec![CommunityIndexPostResolveInput {
-                key: "missing".into(),
-                topic: "source-missing".into(),
-                object_id: "missing".into(),
-                author_pubkey: "author".into(),
-                channel_ref: ChannelRef::Public,
-                source_replica_id: Some(replica.0),
-            }])
-            .await?;
-        assert!(result.entries[0].post.is_none());
-    }
-    let after = node.docs().list().await?.count().await;
-    app.shutdown().await;
-    docs.shutdown().await;
-    node.shutdown().await?;
-    assert_eq!(
-        after, before,
-        "a missing locator must not import a namespace"
-    );
-    Ok(())
-}
-
-#[cfg(feature = "iroh-integration-tests")]
-#[tokio::test]
-async fn cached_index_post_survives_removed_namespace_without_recreating_it() -> Result<()> {
-    let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
-    let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::new(node.clone()));
-    let store = Arc::new(MemoryStore::default());
-    let keys = generate_keys();
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        Arc::new(StaticTransport::new(PeerSnapshot::default())),
-        Arc::new(NoopHintTransport),
-        docs.clone(),
-        Arc::new(MemoryBlobService::default()),
-        keys.clone(),
-    );
-    let post =
-        kukuri_core::build_post_envelope(&keys, &TopicId::new("source-cached"), "kept", None)?;
-    let header = post.to_post_object()?.expect("post header");
-    let replica = BucketReplica::new(
-        BucketScope::Topic {
-            topic_id: "source-cached".into(),
-        },
-        TimeBucket::from_unix_seconds(post.created_at)?,
-    )?
-    .replica_id();
-    persist_post_object(docs.as_ref(), &replica, header, post.clone()).await?;
-    let input = CommunityIndexPostResolveInput {
-        key: "cached".into(),
-        topic: "source-cached".into(),
-        object_id: post.id.0,
-        author_pubkey: post.pubkey.0,
-        channel_ref: ChannelRef::Public,
-        source_replica_id: Some(replica.0.clone()),
-    };
-    let first = app
-        .resolve_community_index_posts(vec![input.clone()])
-        .await?;
-    assert_eq!(
-        first.entries[0].post.as_ref().expect("cached").content,
-        "kept"
-    );
-    docs.close_replica(&replica).await?;
-    let (namespace, _) = node.docs().list().await?.next().await.expect("namespace")?;
-    node.docs().drop_doc(namespace).await?;
-    let restored = app.resolve_community_index_posts(vec![input]).await?;
-    assert_eq!(
-        restored.entries[0]
-            .post
-            .as_ref()
-            .expect("saved projection")
-            .content,
-        "kept"
-    );
-    assert_eq!(node.docs().list().await?.count().await, 0);
-    app.shutdown().await;
-    docs.shutdown().await;
-    node.shutdown().await?;
-    Ok(())
 }

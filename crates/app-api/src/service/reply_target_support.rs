@@ -146,9 +146,45 @@ impl AppService {
                     attempt,
                 ),
                 Ok(ReplyTargetReflection::Reflected(_)) => attempt.succeed(),
-                Ok(ReplyTargetReflection::Unavailable | ReplyTargetReflection::Deferred) => {
-                    attempt.fail()
+                Ok(ReplyTargetReflection::Unavailable) => {
+                    let epoch = if source.channel_id == PUBLIC_CHANNEL_ID {
+                        None
+                    } else {
+                        self.private_epoch_for_source(
+                            source.topic_id.as_str(),
+                            source.channel_id.as_str(),
+                            &source.source_replica_id,
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                    };
+                    let readers = self
+                        .remote_post_readers(
+                            source.topic_id.as_str(),
+                            (source.channel_id != PUBLIC_CHANNEL_ID)
+                                .then_some(source.channel_id.as_str()),
+                            &source.source_replica_id,
+                            epoch
+                                .as_ref()
+                                .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                        )
+                        .await
+                        .unwrap_or_default();
+                    if readers.is_empty() {
+                        attempt.fail();
+                    } else {
+                        spawn_remote_reply_target_reflection(
+                            &self.services,
+                            source,
+                            target,
+                            readers,
+                            permit,
+                            attempt,
+                        );
+                    }
                 }
+                Ok(ReplyTargetReflection::Deferred) => attempt.defer(),
                 Err(error) => {
                     warn!(object_id = %target.as_str(), error = %error, "failed to reflect a reply target of a listed row");
                     attempt.fail();
@@ -394,6 +430,65 @@ impl AppService {
     }
 }
 
+fn spawn_remote_reply_target_reflection(
+    services: &ServiceHandles,
+    source: &ReplyTargetSource,
+    target: &EnvelopeId,
+    readers: Vec<Arc<dyn DocsSync>>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    attempt: hydration_limits::MissingBodyAttempt,
+) {
+    let services = services.clone();
+    let source = source.clone();
+    let target = target.clone();
+    tokio::spawn(async move {
+        let _permit = permit;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let Some(generation) = services
+            .active_content_scope_generation(&source.topic_id, &source.channel_id)
+            .await
+        else {
+            attempt.defer();
+            return;
+        };
+        for reader in readers {
+            let mut view = services.clone();
+            view.docs_sync = reader;
+            let read = services.until_content_invalid(
+                &source.topic_id,
+                &source.channel_id,
+                generation,
+                hydrate_object_in_topic_with(
+                    &view,
+                    &source.topic_id,
+                    &source.source_replica_id,
+                    &target,
+                    None,
+                    DocFetchPolicy::LocalThenRemote,
+                    BodyFetch::LocalOnly,
+                ),
+            );
+            let result = match tokio::time::timeout_at(deadline, read).await {
+                Ok(result) => result,
+                Err(_) => break,
+            };
+            match result {
+                Some(Ok(ObjectHydration::Hydrated)) => {
+                    attempt.succeed();
+                    return;
+                }
+                Some(Ok(ObjectHydration::Missing | ObjectHydration::Invalid)) => {}
+                Some(Err(error)) => warn!(%error, "remote reply target read failed"),
+                None => {
+                    attempt.defer();
+                    return;
+                }
+            }
+        }
+        attempt.fail();
+    });
+}
+
 async fn attempt_reply_target_reflection(
     services: &ServiceHandles,
     replica_id: &ReplicaId,
@@ -524,8 +619,27 @@ async fn reflect_reply_target_with(
         return Ok(ReplyTargetReflection::Reflected(Box::new(row)));
     }
     // 手元の docs が読めないとき(権限を失った private replica など)は、反映せずに終える。
+    // A missing public source is an existing-namespace read only. Never let a
+    // reply preview import a bucket merely to check whether its parent exists.
+    let local_reader = (replica_id.as_str().starts_with("bucket::")
+        && kukuri_docs_sync::post_replica_kind(replica_id)
+            == Some(kukuri_docs_sync::PostReplicaKind::PublicTopic {
+                topic_id: topic_id.to_owned(),
+            }))
+    .then(|| LocalSourceReader {
+        docs: services.docs_sync.clone(),
+        replica: replica_id.clone(),
+    });
+    if replica_id.as_str().starts_with("bucket::") && local_reader.is_none() {
+        return Ok(ReplyTargetReflection::Unavailable);
+    }
+    let docs = local_reader
+        .as_ref()
+        .map_or(services.docs_sync.as_ref(), |reader| {
+            reader as &dyn DocsSync
+        });
     let Ok(Some(post)) = load_verified_post(
-        services.docs_sync.as_ref(),
+        docs,
         replica_id,
         topic_id,
         object_id,
