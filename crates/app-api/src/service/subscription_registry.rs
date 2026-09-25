@@ -44,7 +44,8 @@ pub(crate) struct SubscriptionRegistry {
 pub(crate) struct AbortOnDropTask(Option<JoinHandle<()>>);
 
 pub(crate) struct PublicNotificationOfferQueue {
-    pub(crate) sender: tokio::sync::mpsc::Sender<(Vec<u8>, BTreeSet<String>)>,
+    pub(crate) sender:
+        tokio::sync::mpsc::Sender<(Vec<u8>, BTreeSet<String>, kukuri_core::ReceiveOfferScopeV1)>,
     pub(crate) task: AbortOnDropTask,
 }
 

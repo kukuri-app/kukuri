@@ -466,3 +466,106 @@ async fn real_account_route_fetches_bound_provider_manifest_and_reflects_dm() {
     recipient_app.shutdown().await;
     sender_app.shutdown().await;
 }
+
+// #1221 R4-C: private の投稿の mention は、channel の docs を同期していない参加者へも account の受信 route で届く。
+// 参照は epoch の鍵で暗号化され、同じ channel に参加していない account へは通知にならない。
+#[cfg(feature = "iroh-integration-tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_private_offer_reaches_a_member_without_channel_sync() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().unwrap();
+    let sender_stack = TestIrohStack::new(&dir.path().join("private-offer-sender")).await;
+    let member_stack = TestIrohStack::new(&dir.path().join("private-offer-member")).await;
+    let outsider_stack = TestIrohStack::new(&dir.path().join("private-offer-outsider")).await;
+    let sender_store = Arc::new(
+        SqliteStore::connect_file(dir.path().join("private-offer-sender.db"))
+            .await
+            .unwrap(),
+    );
+    sender_stack
+        ._node
+        .install_remote_cache(sender_store.clone())
+        .unwrap();
+    let sender_app = app_service_from_dependencies(
+        sender_store.clone(),
+        sender_store.clone(),
+        sender_stack.transport.clone(),
+        sender_stack.transport.clone(),
+        sender_stack.docs_sync.clone(),
+        Arc::new(IrohBlobService::with_account_store(
+            sender_stack._node.clone(),
+            sender_store.clone(),
+        )),
+        generate_keys(),
+    );
+    let member_app = app_with_iroh_services(Arc::new(MemoryStore::default()), &member_stack);
+    let outsider_app = app_with_iroh_services(Arc::new(MemoryStore::default()), &outsider_stack);
+    sender_stack.bind_account(&sender_app).await;
+    member_stack.bind_account(&member_app).await;
+    outsider_stack.bind_account(&outsider_app).await;
+    for app in [&member_app, &outsider_app] {
+        let ticket = app.peer_ticket().await.unwrap().unwrap();
+        sender_app.import_peer_ticket(&ticket).await.unwrap();
+        app.start_account_receive_offers().await.unwrap();
+    }
+    let topic = "kukuri:topic:offscreen-private-offer";
+    let channel = sender_app
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "room".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .unwrap();
+    let state = sender_app
+        .joined_private_channel_state(topic, channel.channel_id.as_str())
+        .await
+        .unwrap();
+    // 参加者は channel を購読しない(docs を同期しない)。account の受信 route だけが届く経路になる。
+    member_app.joined_private_channels.lock().await.insert(
+        joined_private_channel_key(topic, channel.channel_id.as_str()),
+        state,
+    );
+    let member = member_app.current_author_pubkey();
+    let outsider = outsider_app.current_author_pubkey();
+    let object_id = sender_app
+        .create_post_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: ChannelId::new(channel.channel_id.clone()),
+            },
+            &format!("private hello @{member} @{outsider}"),
+            None,
+        )
+        .await
+        .unwrap();
+    let notification = timeout(Duration::from_secs(20), async {
+        loop {
+            if let Some(entry) = member_app
+                .list_notifications()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.kind == NotificationKind::Mention)
+            {
+                break entry;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("private offer reached the member without channel sync");
+    assert_eq!(notification.object_id.as_deref(), Some(object_id.as_str()));
+    assert_eq!(
+        notification.channel_id.as_deref(),
+        Some(channel.channel_id.as_str())
+    );
+    sleep(Duration::from_secs(2)).await;
+    assert!(
+        outsider_app.list_notifications().await.unwrap().is_empty(),
+        "an account outside the channel cannot open the epoch payload"
+    );
+    sender_app.shutdown().await;
+    member_app.shutdown().await;
+    outsider_app.shutdown().await;
+}

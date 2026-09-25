@@ -233,6 +233,10 @@ impl AppService {
             ReceiveOfferScopeV1::PublicSource => {
                 return Self::ingest_public_notification_offer(services, &verified).await;
             }
+            ReceiveOfferScopeV1::PrivateSource { epoch_key_id } => {
+                return Self::ingest_private_notification_offer(services, &verified, epoch_key_id)
+                    .await;
+            }
             ReceiveOfferScopeV1::DirectMessageAck {
                 dm_id,
                 message_id,

@@ -762,10 +762,14 @@ impl AppService {
                 }
             }
         }
-        if effective_channel_id.is_none() {
-            self.queue_public_post_offer(&write_replica, &envelope, content, parent.as_ref())
-                .await;
-        }
+        self.queue_post_offer(
+            &write_replica,
+            &envelope,
+            content,
+            parent.as_ref(),
+            private_state.as_ref(),
+        )
+        .await;
         Ok(envelope.id.0)
     }
 
