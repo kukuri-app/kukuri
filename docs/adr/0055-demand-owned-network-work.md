@@ -342,6 +342,12 @@ post/repostには書込みreplica・本文（署名済みpayload refとのhash/�
 送信はaccount所有の1 worker・最大64件の待機窓で進め、表示・投稿操作を宛先数や接続待ちで止めない。
 manifestは1GiB/非利用7日のapp所有cacheから再提供し、受信側は署名・public scope・対象を確認して既存の通知IDと保存sinkへ合流する。
 
+R4-Cでprivate channelの投稿・返信も同じworkerで明示宛先（本文のmention、返信先の著者）へ送る。manifestは公開と同じ形で、
+投稿したepochの鍵で`PrivateReceivePayloadV1`へ暗号化し、offerのscopeは`PrivateSource { epoch_key_id }`とする。
+受信側は参加中channelの現在epochの識別子と照合できたときだけ送信元providerから取得し、その参加の世代が続く間に
+署名・送信者・channel/epochのreplica・本文hash・返信先（自分の投稿で同じchannel）を確かめて既存の通知IDへ保存する。
+照合できないoffer（未参加・epoch不一致・退出後）はprovider I/Oも保存もしない。平文16,384byteを超える投稿のofferは送らない。
+
 private manifestはさらに `PrivateReceivePayloadV1` としてepoch内で暗号化する。
 元の参照manifest平文は最大16,384byte、JSON wireは最大65,536byte。
 key IDはBLAKE3 keyed hashの用途 `b"kukuri:receive-epoch-key-id:v1\0"`、暗号keyは別用途

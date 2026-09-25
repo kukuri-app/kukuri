@@ -85,16 +85,16 @@
       "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
+      "lines": 1019,
+      "path": "crates/app-api/src/timeline.rs"
+    },
+    {
       "lines": 1016,
       "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
       "lines": 1016,
       "path": "apps/desktop/src/shell/presentation.test.ts"
-    },
-    {
-      "lines": 1015,
-      "path": "crates/app-api/src/timeline.rs"
     },
     {
       "lines": 1004,
