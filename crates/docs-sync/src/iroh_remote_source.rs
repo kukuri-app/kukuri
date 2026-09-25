@@ -1,6 +1,6 @@
 use super::*;
-use crate::buckets::{BucketReplica, BucketScope};
 use crate::remote_source::RemoteDocsSource;
+use crate::replicas::{PostReplicaKind, post_replica_kind};
 use kukuri_iroh_node::{DocReadQuery, DocReadResponse};
 
 impl IrohDocsSync {
@@ -57,22 +57,34 @@ impl IrohDocsSync {
         RemoteDocsSource::with_private_secret(self.clone(), peer, replica, secret)
     }
 
-    pub(crate) async fn public_bucket_readers_owned(
+    pub(crate) async fn remote_readers_owned(
         &self,
         replica: &ReplicaId,
+        private_secret: Option<[u8; 32]>,
+        scope_peers: Vec<SeedPeer>,
     ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        let kind = post_replica_kind(replica)
+            .ok_or_else(|| anyhow::anyhow!("remote reader requires a post replica"))?;
+        let private = matches!(kind, PostReplicaKind::PrivateChannel { .. });
         anyhow::ensure!(
-            matches!(
-                BucketReplica::parse(replica)?.scope(),
-                BucketScope::Topic { .. }
-            ),
-            "remote bucket reader requires a public topic"
+            private == private_secret.is_some(),
+            "remote reader capability does not match scope"
         );
-        Ok(self
-            .remote_read_candidates()
-            .await
+        let peers = if private || !scope_peers.is_empty() {
+            self.remote_read_candidates_for_seeds(scope_peers.into_iter().take(4).collect())
+                .await?
+        } else {
+            self.remote_read_candidates().await
+        };
+        Ok(peers
             .into_iter()
-            .map(|peer| Arc::new(self.remote_source(peer)) as Arc<dyn DocsSync>)
+            .map(|peer| match private_secret {
+                Some(secret) => {
+                    Arc::new(self.remote_source_with_private_secret(peer, replica.clone(), secret))
+                        as Arc<dyn DocsSync>
+                }
+                None => Arc::new(self.remote_source(peer)) as Arc<dyn DocsSync>,
+            })
             .collect())
     }
 

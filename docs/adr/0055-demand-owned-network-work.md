@@ -87,9 +87,14 @@ app側の欠損本文・返信先・session表示はpermitを取った後だけt
 
 #1221 G3-3の2026-09-24決定により、下記の低水準namespace同期案は新bucketのreaderへは採用しない。
 CN readerは公開と登録済みprivate epochを同じ対象key/件数/bytes指定のQUIC読取りへ移し、
-private providerはepoch capabilityの証明を要求する。clientのprivate/author読取りと保護cache回収は
+private providerはepoch capabilityの証明を要求する。clientのauthor/private制御参照と保護cache回収は
 同じB案で後続接続する。旧`start_sync`はlegacy writerとの移行期間に限る。既存の停止所有権と
 LocalOnlyの禁止I/O境界は方式変更後も維持する。
+
+R5-Bでclientの通常public/private投稿ページ、CN source、対象ID・session参照を同じ有界QUIC readerへ
+接続する。1操作は最大4 bucket・局所200行・30秒、1応答1MiB・1record64KiBとし、privateは
+当該channelの有限peer候補と保持中epoch capabilityだけを使う。旧writer形式は同じpage/exact
+読取りで扱い、author/private制御参照はR5-C、writer切替と旧sync撤去はR5-Hへ残す。
 
 - `peer -> 使用中lease` と `scope -> resource` の逆引きを持つ。peerの追加・削除・アドレス変更は
   そのpeerを利用する有界な対象だけへ適用し、全登録topic/replicaを再走査しない。

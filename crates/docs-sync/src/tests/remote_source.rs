@@ -1,6 +1,7 @@
 use anyhow::Result;
 use kukuri_iroh_node::IrohDocsNode;
 use kukuri_store::SqliteStore;
+use kukuri_transport::SeedPeer;
 use std::sync::Arc;
 
 use crate::{
@@ -75,6 +76,51 @@ async fn private_bucket_lease_uses_only_its_explicit_epoch_secret() -> Result<()
     reader.shutdown().await;
     provider.shutdown().await?;
     requester.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn private_readers_use_only_the_selected_scope_peer() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(requester.clone());
+    let replica = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: "room".into(),
+            epoch_id: "e1".into(),
+        },
+        TimeBucket::from_index(1)?,
+    )?
+    .replica_id();
+    assert!(
+        docs.remote_readers(&replica, Some([7; 32]), Vec::new())
+            .await?
+            .is_empty()
+    );
+    let readers = docs
+        .remote_readers(
+            &replica,
+            Some([7; 32]),
+            vec![SeedPeer {
+                endpoint_id: provider.endpoint().addr().id.to_string(),
+                addr_hint: None,
+            }],
+        )
+        .await?;
+    assert_eq!(readers.len(), 1);
+    assert!(
+        docs.remote_readers(&replica, None, Vec::new())
+            .await
+            .is_err()
+    );
+    assert!(
+        docs.remote_readers(&crate::topic_replica_id("rust"), Some([7; 32]), Vec::new())
+            .await
+            .is_err()
+    );
+    docs.shutdown().await;
+    requester.shutdown().await?;
+    provider.shutdown().await?;
     Ok(())
 }
 

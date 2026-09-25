@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn topic_reader_rotates_four_peers_without_using_another_scope() {
+    let neighbors = (0..6).map(|i| format!("peer-{i}")).collect::<BTreeSet<_>>();
+    let mut cursor = None;
+    let first = topic_read_window(&neighbors, &mut cursor);
+    let second = topic_read_window(&neighbors, &mut cursor);
+    assert_eq!(first, vec!["peer-0", "peer-1", "peer-2", "peer-3"]);
+    assert_eq!(second, vec!["peer-4", "peer-5", "peer-0", "peer-1"]);
+    assert_eq!(
+        topic_read_window(&BTreeSet::new(), &mut cursor),
+        Vec::<String>::new()
+    );
+}
+
 struct NotifyOnDrop(Arc<Notify>);
 
 impl Drop for NotifyOnDrop {

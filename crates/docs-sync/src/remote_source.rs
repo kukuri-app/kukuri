@@ -170,6 +170,9 @@ fn filter_records(records: &[DocRecord], author: Option<&str>, limit: usize) -> 
 
 #[async_trait]
 impl DocsSync for RemoteDocsSource {
+    async fn finish_remote_object(&self) {
+        *self.cache.lock().await = LeaseCache::default();
+    }
     async fn persist_verified_record(
         &self,
         replica: &ReplicaId,

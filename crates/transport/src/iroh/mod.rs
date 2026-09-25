@@ -59,6 +59,7 @@ struct HintTopicState {
     broadcaster: broadcast::Sender<HintEnvelope>,
     bootstrap_peer_ids: BTreeSet<String>,
     neighbors: Arc<RwLock<BTreeSet<String>>>,
+    read_cursor: Arc<Mutex<Option<String>>>,
     last_received_at: Arc<Mutex<Option<i64>>>,
     last_error: Arc<Mutex<Option<String>>>,
     // parse 失敗した受信 hint の累計(wire 非互換の観測用。WP-C4)。プロセス生存中は単調増加。
@@ -236,6 +237,9 @@ impl HintTransport for IrohGossipTransport {
     }
     async fn publish_hint(&self, topic: &TopicId, hint: GossipHint) -> Result<()> {
         self.hint_publish_hint_impl(topic, hint).await
+    }
+    async fn topic_read_candidates(&self, topic: &TopicId) -> Result<Vec<SeedPeer>> {
+        self.topic_read_candidates_impl(topic).await
     }
 
     async fn resolve_receive_destination(

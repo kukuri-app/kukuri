@@ -191,7 +191,11 @@ reloadable_service! {
         async fn restart_replica_sync(replica_id: &ReplicaId) -> Result<()>;
         async fn set_seed_peers(peers: Vec<SeedPeer>) -> Result<()>;
         async fn assist_peer_ids() -> Result<Vec<String>>;
-        async fn public_bucket_readers(replica: &ReplicaId) -> Result<Vec<Arc<dyn DocsSync>>>;
+        async fn remote_readers(
+            replica: &ReplicaId,
+            private_secret: Option<[u8; 32]>,
+            scope_peers: Vec<SeedPeer>,
+        ) -> Result<Vec<Arc<dyn DocsSync>>>;
     }
 }
 

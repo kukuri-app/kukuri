@@ -124,6 +124,8 @@ pub(crate) use crate::views::{
 };
 
 mod attachment_support;
+mod local_source_reader;
+pub(crate) use local_source_reader::LocalSourceReader;
 mod author_state_support;
 mod direct_messages_delivery_support;
 mod direct_messages_subscription_support;
@@ -159,6 +161,7 @@ pub(crate) use reaction_hydration::{
     hydrate_reaction_cache_for_target_bounded, hydrate_reaction_cache_from_key,
 };
 mod reaction_integrity;
+mod remote_read_support;
 mod replica_window;
 pub(crate) use replica_window::RangeReconcile;
 mod session_integrity;
@@ -193,7 +196,7 @@ pub(crate) use attachment_support::{
     live_presence_task_key, materialize_direct_message_manifest, merge_optional_timestamp,
     normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
     register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
-    subscription_replicas_for_topic, validate_game_room_scores, validate_game_room_transition,
+    validate_game_room_scores, validate_game_room_transition,
 };
 pub(crate) use author_state_support::{
     catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,

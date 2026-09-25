@@ -1,7 +1,4 @@
 use crate::service::*;
-#[path = "community_index_source_reader.rs"]
-mod reader;
-use reader::LocalSourceReader;
 use std::time::Duration;
 use tokio::time::{Instant, timeout_at};
 
@@ -34,9 +31,10 @@ impl AppService {
                 || topic.is_empty()
                 || object_id.is_empty()
                 || author_pubkey.is_empty()
-                || input.source_replica_id.as_deref().is_some_and(|source| {
-                    !valid_public_index_source(&topic, &input.channel_ref, source)
-                })
+                || input
+                    .source_replica_id
+                    .as_deref()
+                    .is_some_and(|source| !valid_index_source(&topic, &input.channel_ref, source))
             {
                 results.insert(
                     input.key.clone(),
@@ -74,6 +72,7 @@ impl AppService {
                     .is_ok();
             if scope_ready && let Some(source) = source.as_deref() {
                 let topic_ref = topic.as_str();
+                let scope_ref = &scope;
                 let mut unverified = entries
                     .iter()
                     .map(|input| input.key.clone())
@@ -86,7 +85,7 @@ impl AppService {
                     |(key, object_id)| async move {
                         (
                             key,
-                            self.resolve_public_index_source(topic_ref, source, &object_id)
+                            self.resolve_index_source(topic_ref, scope_ref, source, &object_id)
                                 .await,
                         )
                     },
@@ -96,7 +95,7 @@ impl AppService {
                     timeout_at(remote_deadline, reads.next()).await
                 {
                     unverified.remove(&key);
-                    if resolved.is_err() {
+                    if !matches!(resolved, Ok(true)) {
                         // A bad locator does not hide another result from the same bucket.
                         failed_entries.insert(key);
                     }
@@ -180,6 +179,7 @@ impl AppService {
                     continue;
                 }
                 if source.is_some()
+                    && matches!(input.channel_ref, ChannelRef::Public)
                     && self
                         .refresh_local_index_reference_withdrawals(&projection)
                         .await
@@ -247,13 +247,30 @@ impl AppService {
         })
     }
 
-    async fn resolve_public_index_source(
+    async fn resolve_index_source(
         &self,
         topic: &str,
+        scope: &TimelineScope,
         source: &str,
         object_id: &str,
     ) -> Result<bool> {
         let object_id = EnvelopeId::from(object_id.to_string());
+        let (channel, channel_ref) = match scope {
+            TimelineScope::Public => (PUBLIC_CHANNEL_ID, ChannelRef::Public),
+            TimelineScope::Channel { channel_id } => (
+                channel_id.as_str(),
+                ChannelRef::PrivateChannel {
+                    channel_id: channel_id.clone(),
+                },
+            ),
+        };
+        let Some(scope_generation) = self
+            .services
+            .active_content_scope_generation(topic, channel)
+            .await
+        else {
+            return Ok(false);
+        };
         if let Some(cached) = self
             .services
             .projection_store
@@ -262,76 +279,104 @@ impl AppService {
         {
             anyhow::ensure!(
                 cached.topic_id == topic
-                    && cached.channel_id == PUBLIC_CHANNEL_ID
-                    && valid_public_index_source(
-                        topic,
-                        &ChannelRef::Public,
-                        cached.source_replica_id.as_str()
-                    ),
-                "cached post does not belong to the requested public source"
+                    && cached.channel_id == channel
+                    && valid_index_source(topic, &channel_ref, cached.source_replica_id.as_str()),
+                "cached post does not belong to the requested source"
             );
-            let reader = LocalSourceReader {
-                docs: self.services.docs_sync.clone(),
-                replica: cached.source_replica_id.clone(),
-            };
-            hydrate_post_withdrawal_for_object_with_hints(
-                &reader,
-                self.services.projection_store.as_ref(),
-                &cached.source_replica_id,
-                &object_id,
-                WithdrawalReadHints {
-                    target_docs_author: cached.source_docs_author.as_deref(),
-                    writer_docs_author: None,
-                },
-                DocFetchPolicy::LocalOnly,
-            )
-            .await?;
+            if matches!(scope, TimelineScope::Public) {
+                let reader = LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: cached.source_replica_id.clone(),
+                };
+                hydrate_post_withdrawal_for_object_with_hints(
+                    &reader,
+                    self.services.projection_store.as_ref(),
+                    &cached.source_replica_id,
+                    &object_id,
+                    WithdrawalReadHints {
+                        target_docs_author: cached.source_docs_author.as_deref(),
+                        writer_docs_author: None,
+                    },
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await?;
+            }
             return Ok(true);
         }
         let replica = ReplicaId::new(source);
         let mut services = self.services.clone();
-        services.docs_sync = Arc::new(LocalSourceReader {
-            docs: self.services.docs_sync.clone(),
-            replica: replica.clone(),
-        });
-        if hydrate_object_in_topic_with(
-            &services,
-            topic,
-            &replica,
-            &object_id,
-            None,
-            DocFetchPolicy::LocalOnly,
-            BodyFetch::LocalOnly,
-        )
-        .await?
-            == ObjectHydration::Hydrated
-        {
-            return Ok(true);
-        }
-        if kukuri_docs_sync::BucketReplica::parse(&replica).is_err() {
-            return Ok(false);
-        }
-        for reader in self
-            .services
-            .docs_sync
-            .public_bucket_readers(&replica)
-            .await?
-        {
-            services.docs_sync = reader;
-            match hydrate_object_in_topic_with(
+        if matches!(scope, TimelineScope::Public) {
+            services.docs_sync = Arc::new(LocalSourceReader {
+                docs: self.services.docs_sync.clone(),
+                replica: replica.clone(),
+            });
+            if hydrate_object_in_topic_with(
                 &services,
                 topic,
                 &replica,
                 &object_id,
                 None,
-                DocFetchPolicy::LocalThenRemote,
+                DocFetchPolicy::LocalOnly,
                 BodyFetch::LocalOnly,
             )
-            .await
+            .await?
+                == ObjectHydration::Hydrated
             {
+                return Ok(true);
+            }
+        }
+        let private_epoch = match scope {
+            TimelineScope::Public => None,
+            TimelineScope::Channel { channel_id } => Some(
+                self.private_channel_indexing_capability_known(topic, channel_id.as_str())
+                    .await?,
+            ),
+        };
+        let Some(readers) = self
+            .services
+            .until_content_invalid(
+                topic,
+                channel,
+                scope_generation,
+                self.remote_post_readers(
+                    topic,
+                    (channel != PUBLIC_CHANNEL_ID).then_some(channel),
+                    &replica,
+                    private_epoch
+                        .as_ref()
+                        .map(|(epoch, secret)| (epoch.as_str(), secret.as_str())),
+                ),
+            )
+            .await
+        else {
+            return Ok(false);
+        };
+        for reader in readers? {
+            services.docs_sync = reader;
+            let Some(result) = self
+                .services
+                .until_content_invalid(
+                    topic,
+                    channel,
+                    scope_generation,
+                    hydrate_object_in_topic_with(
+                        &services,
+                        topic,
+                        &replica,
+                        &object_id,
+                        None,
+                        DocFetchPolicy::LocalThenRemote,
+                        BodyFetch::LocalOnly,
+                    ),
+                )
+                .await
+            else {
+                return Ok(false);
+            };
+            match result {
                 Ok(ObjectHydration::Hydrated) => return Ok(true),
                 Ok(ObjectHydration::Missing | ObjectHydration::Invalid) => {}
-                Err(error) => warn!(%error, "public bucket provider read failed"),
+                Err(error) => warn!(%error, "source provider read failed"),
             }
         }
         Ok(false)
@@ -362,7 +407,7 @@ impl AppService {
             let (replica, author) = if let Some(cached) = cached {
                 if cached.topic_id != topic
                     || cached.channel_id != PUBLIC_CHANNEL_ID
-                    || !valid_public_index_source(
+                    || !valid_index_source(
                         topic,
                         &ChannelRef::Public,
                         cached.source_replica_id.as_str(),
@@ -395,14 +440,21 @@ impl AppService {
     }
 }
 
-fn valid_public_index_source(topic: &str, channel: &ChannelRef, source: &str) -> bool {
-    if !matches!(channel, ChannelRef::Public) {
-        return false;
+fn valid_index_source(topic: &str, channel: &ChannelRef, source: &str) -> bool {
+    let replica = ReplicaId::new(source);
+    match channel {
+        ChannelRef::Public => {
+            source == topic_replica_id(topic).as_str()
+                || kukuri_docs_sync::BucketReplica::parse(&replica).is_ok_and(|bucket| {
+                    matches!(bucket.scope(), kukuri_docs_sync::BucketScope::Topic { topic_id } if topic_id == topic)
+                })
+        }
+        ChannelRef::PrivateChannel { channel_id } => {
+            matches!(
+                kukuri_docs_sync::post_replica_kind(&replica),
+                Some(kukuri_docs_sync::PostReplicaKind::PrivateChannel { channel_id: source })
+                    if source == channel_id.as_str()
+            )
+        }
     }
-    if source == topic_replica_id(topic).as_str() {
-        return true;
-    }
-    kukuri_docs_sync::BucketReplica::parse(&ReplicaId::new(source)).is_ok_and(|bucket| {
-        matches!(bucket.scope(), kukuri_docs_sync::BucketScope::Topic { topic_id } if topic_id == topic)
-    })
 }

@@ -34,13 +34,16 @@ impl AppService {
         topic_id: &str,
         channel_id: &str,
     ) -> Result<(String, String)> {
-        let state = self
-            .joined_private_channel_state(topic_id, channel_id)
-            .await
+        let joined = self.joined_private_channels.lock().await;
+        let state = joined
+            .get(&joined_private_channel_key(topic_id, channel_id))
             .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
         if state.current_epoch_secret_hex.trim().is_empty() {
             anyhow::bail!("private channel current epoch secret is unavailable");
         }
-        Ok((state.current_epoch_id, state.current_epoch_secret_hex))
+        Ok((
+            state.current_epoch_id.clone(),
+            state.current_epoch_secret_hex.clone(),
+        ))
     }
 }

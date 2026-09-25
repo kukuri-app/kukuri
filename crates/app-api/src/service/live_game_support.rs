@@ -744,20 +744,50 @@ impl AppService {
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
-        for replica in subscription_replicas_for_topic(
-            topic_id,
-            self.joined_private_channel_states_for_topic(topic_id).await,
-        ) {
-            if let Some(verified) = load_verified_live_session(
-                self.services.docs_sync.as_ref(),
-                self.services.blob_service.as_ref(),
-                &replica,
-                topic_id,
-                session_id,
-                DocFetchPolicy::LocalThenRemote,
+        let projected = self
+            .services
+            .projection_store
+            .get_live_session(topic_id, session_id)
+            .await?;
+        let source = projected.as_ref().map(|row| {
+            (
+                row.channel_id.as_str(),
+                &row.source_replica_id,
+                row.updated_at,
             )
-            .await?
-            {
+        });
+        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let Some(generation) = self
+            .services
+            .active_content_scope_generation(topic_id, channel)
+            .await
+        else {
+            return Ok(None);
+        };
+        let readers = self
+            .session_target_readers(topic_id, source, session_id)
+            .await?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        for (replica, docs, policy) in readers {
+            let read = tokio::time::timeout_at(
+                deadline,
+                load_verified_live_session(
+                    docs.as_ref(),
+                    self.services.blob_service.as_ref(),
+                    &replica,
+                    topic_id,
+                    session_id,
+                    policy,
+                ),
+            );
+            let Some(result) = self
+                .services
+                .until_content_invalid(topic_id, channel, generation, read)
+                .await
+            else {
+                return Ok(None);
+            };
+            if let Ok(Ok(Some(verified))) = result {
                 if self
                     .services
                     .projection_store
@@ -769,6 +799,9 @@ impl AppService {
                 }
                 return Ok(Some(verified.into_parts()));
             }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
         }
         Ok(None)
     }
@@ -779,20 +812,50 @@ impl AppService {
         topic_id: &str,
         room_id: &str,
     ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
-        for replica in subscription_replicas_for_topic(
-            topic_id,
-            self.joined_private_channel_states_for_topic(topic_id).await,
-        ) {
-            if let Some(verified) = load_verified_game_room(
-                self.services.docs_sync.as_ref(),
-                self.services.blob_service.as_ref(),
-                &replica,
-                topic_id,
-                room_id,
-                DocFetchPolicy::LocalThenRemote,
+        let projected = self
+            .services
+            .projection_store
+            .get_game_room(topic_id, room_id)
+            .await?;
+        let source = projected.as_ref().map(|row| {
+            (
+                row.channel_id.as_str(),
+                &row.source_replica_id,
+                row.updated_at,
             )
-            .await?
-            {
+        });
+        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let Some(generation) = self
+            .services
+            .active_content_scope_generation(topic_id, channel)
+            .await
+        else {
+            return Ok(None);
+        };
+        let readers = self
+            .session_target_readers(topic_id, source, room_id)
+            .await?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        for (replica, docs, policy) in readers {
+            let read = tokio::time::timeout_at(
+                deadline,
+                load_verified_game_room(
+                    docs.as_ref(),
+                    self.services.blob_service.as_ref(),
+                    &replica,
+                    topic_id,
+                    room_id,
+                    policy,
+                ),
+            );
+            let Some(result) = self
+                .services
+                .until_content_invalid(topic_id, channel, generation, read)
+                .await
+            else {
+                return Ok(None);
+            };
+            if let Ok(Ok(Some(verified))) = result {
                 if let Some(revision) = verified.score_revision()
                     && self
                         .services
@@ -805,6 +868,9 @@ impl AppService {
                     continue;
                 }
                 return Ok(Some(verified.into_parts()));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
             }
         }
         Ok(None)

@@ -119,6 +119,8 @@ pub enum ReplicaNotice {
 
 #[async_trait]
 pub trait DocsSync: Send + Sync {
+    /// End one remote object's read lease before advancing a bounded page.
+    async fn finish_remote_object(&self) {}
     /// Commit the exact record already read by a demand lease after the caller
     /// verifies its signed content and scope under its save guard.
     async fn persist_verified_record(
@@ -260,9 +262,14 @@ pub trait DocsSync: Send + Sync {
     async fn assist_peer_ids(&self) -> Result<Vec<String>> {
         Ok(Vec::new())
     }
-    /// A fresh, bounded read lease per peer for one public bucket object.
-    /// Implementations without the public QUIC reader return no candidates.
-    async fn public_bucket_readers(&self, _replica: &ReplicaId) -> Result<Vec<Arc<dyn DocsSync>>> {
+    /// A fresh bounded read lease per selected provider. Private callers pass
+    /// the namespace secret and peers for this scope; no global peer fallback.
+    async fn remote_readers(
+        &self,
+        _replica: &ReplicaId,
+        _private_secret: Option<[u8; 32]>,
+        _scope_peers: Vec<SeedPeer>,
+    ) -> Result<Vec<Arc<dyn DocsSync>>> {
         Ok(Vec::new())
     }
 }

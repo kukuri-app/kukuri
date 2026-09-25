@@ -72,6 +72,7 @@ iroh-docsの受信前filterと同一視しない。
   旧refは既存ローカルprojection/保存envelopeから解決し、分からなければ取得不能として返す。全bucketを探さない。
 - timeline/profile/thread cursorはbucketとbucket内の既存cursor、方向、版を持つ。
   1回で読むbucketは最大4、各bucketの読みはADR 0052の既存上限内。空bucketにも同じ上限を適用し、続き位置を返す。
+  R5-Bの移行中は既存の`created_at`/`object_id` cursorから対象bucketを選ぶ。新writer後の版付きcursorはR5-Hで切り替える。
   空ページを履歴の終端と誤認しない。epochの一覧も全件展開せず、許可された範囲をcursorで進む。
 - 古いbucketの取得は明示的な遡り・対象参照・取り下げ照会に限り要求する。表示側は保存済みprojectionを先に返す。
   peer不在/期限切れは取得不能として表示し、taskのcancelや次ページ操作を妨げない。
@@ -95,6 +96,12 @@ iroh-docsの受信前filterと同一視しない。
 署名済みrecordを既存gateへ渡す。readerはnamespaceをimport/open/start_syncせず、1対象の読取りだけを
 保持する。legacy writerが使う旧namespace同期はwriter切替まで残すが、新形式定常経路へ持ち越さない。
 R5-Dでは同じ有界readerが公開bucketとCNへ明示開示されたprivate epoch bucketを扱う。
+R5-Bではclientのtimeline/thread、CN source、返信先・投稿・sessionの対象参照を同じQUIC readerへ接続する。
+表示範囲と署名済み時刻から最大4 bucketを選び、局所照合は1操作200行、remote要求は30秒で止める。
+旧 `topic::` / `channel::` のwriter形式も同じ有界page/exact読取りで扱う。privateの候補peerは
+参加中のchannelのgossip scopeに限り、過去epochは保持するcapabilityと時刻から選ぶ。
+remote recordは既存の署名・scope・bucket時刻・取り下げ検証を通した後に対象別cacheへ保存する。
+旧writerのsyncはR5-Hまで移行用に残し、author/private制御参照はR5-Cへ残す。
 private申請はepoch IDをsecretと同じ明示同意のHTTP requestに含め、CNは登録済みcapabilityを
 暗号化保存する。privateのQUICページ要求はepoch secret由来の証明を要し、CNは有効な申請者の
 bootstrap端末を最大4件だけ選び、direct addressと構成済みrelay候補へchannel/epoch IDを送る。
@@ -110,7 +117,7 @@ readerはnamespaceをimport/open/start_syncせず、
 PostgreSQLから選び、全bootstrap peerをreader内へmaterializeしない。公開・privateは同じ
 scope需要優先と永続cursorで巡回し、
 移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とする。旧selectorと旧namespaceの
-最終撤去はR5-H、clientのprivate/author readerと保護cache/移行は後続条件の担当である。
+最終撤去はR5-H、clientのauthor/private制御参照と保護cache/移行は後続条件の担当である。
 旧公開replicaで対象不明の変更通知が来た場合も、現在timeline索引窓の最大100 IDだけを
 対象別に再確認する。同じ通知batchに既知object IDがあれば窓外でも対象別に先に処理する。
 media manifestの遅着を契機に過去全件を読み直さず、窓外の既存索引を消さない。

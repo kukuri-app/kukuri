@@ -833,12 +833,10 @@ impl AppService {
             && self
                 .should_restart_after_empty_result(empty_recovery_key.as_str())
                 .await;
-        // #1239: replica を走査しない。利用者が遡ったページ(cursor つき)と、projection が尽きたページ
-        // (空を含む)は、その 1 ページぶんの範囲を時系列の索引と照合して、欠けている object だけを key 指定で
-        // 反映する。先頭の範囲の追いつきは購読タスクが行う。
-        let projection_exhausted = page.next_cursor.is_none();
-        let mut unavailable = 0usize;
-        if cursor.is_some() || projection_exhausted || needs_epoch_hydration {
+        // The visible page (including its first page) checks only its bounded
+        // index range; this also sees new buckets before local sync exists.
+        let unavailable;
+        {
             let reconcile = self
                 .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
                 .await?;

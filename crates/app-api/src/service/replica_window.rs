@@ -240,9 +240,37 @@ pub(crate) async fn ensure_index_entries_projected(
     reaction_targets_left: &mut usize,
 ) -> Result<RangeCheckOutcome> {
     let docs_sync = services.docs_sync.as_ref();
-    let projection_store = services.projection_store.as_ref();
     let mut outcome = RangeCheckOutcome::default();
     for entry in entries {
+        // A remote source keeps only this object's exact records. Releasing the
+        // lease here lets one bounded page contain more than 32 objects.
+        let result = ensure_index_entry_projected(
+            services,
+            topic_id,
+            replica,
+            entry,
+            policy,
+            reaction_targets_left,
+        )
+        .await;
+        docs_sync.finish_remote_object().await;
+        outcome.merge(result?);
+    }
+    Ok(outcome)
+}
+
+async fn ensure_index_entry_projected(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    entry: &TimeIndexEntry,
+    policy: DocFetchPolicy,
+    reaction_targets_left: &mut usize,
+) -> Result<RangeCheckOutcome> {
+    let docs_sync = services.docs_sync.as_ref();
+    let projection_store = services.projection_store.as_ref();
+    let mut outcome = RangeCheckOutcome::default();
+    {
         let object_id = EnvelopeId::from(entry.object_id.as_str());
         if projection_store
             .get_object_projection(&object_id)
@@ -265,22 +293,20 @@ pub(crate) async fn ensure_index_entries_projected(
             {
                 ObjectHydration::Hydrated => {
                     outcome.hydrated += 1;
-                    if *reaction_targets_left == 0 {
-                        continue;
+                    if *reaction_targets_left > 0 {
+                        *reaction_targets_left -= 1;
+                        // Newly projected objects can bring a bounded reaction window.
+                        hydrate_reaction_cache_for_target_bounded(
+                            docs_sync,
+                            projection_store,
+                            topic_id,
+                            replica,
+                            &object_id,
+                            policy,
+                            RANGE_CHECK_REACTIONS_PER_OBJECT,
+                        )
+                        .await?;
                     }
-                    *reaction_targets_left -= 1;
-                    // 新しく反映した投稿の reaction も、上限つきで反映する。以前は、空ページの全件走査が
-                    // reaction も反映していた。docs の event が届かない古い reaction は、ここでしか入らない。
-                    hydrate_reaction_cache_for_target_bounded(
-                        docs_sync,
-                        projection_store,
-                        topic_id,
-                        replica,
-                        &object_id,
-                        policy,
-                        RANGE_CHECK_REACTIONS_PER_OBJECT,
-                    )
-                    .await?;
                 }
                 ObjectHydration::Missing => {
                     outcome.unresolved += 1;
@@ -288,7 +314,7 @@ pub(crate) async fn ensure_index_entries_projected(
                 }
                 ObjectHydration::Invalid => outcome.invalid += 1,
             }
-            continue;
+            return Ok(outcome);
         }
         outcome.present += 1;
         if projection_store
@@ -296,7 +322,7 @@ pub(crate) async fn ensure_index_entries_projected(
             .await?
             .is_some()
         {
-            continue;
+            return Ok(outcome);
         }
         // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ると、検証に通らない record を
         // 先に置くだけで、著者の正しい取り下げを無効にできてしまうので、上限つきで複数を調べる helper を通す(#1250)。
@@ -320,6 +346,8 @@ pub(crate) async fn ensure_index_entries_projected(
 /// 取得側へ返す照合の結果。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RangeReconcile {
+    /// Key rows inspected in this operation, across local and remote replicas.
+    pub(super) checked: usize,
     /// 今回 projection へ反映した件数。
     pub(crate) hydrated: usize,
     /// 照合した索引の範囲のうち、projection に在る object の件数(今回反映したものと、既にあったもの)。
@@ -336,6 +364,7 @@ pub(crate) struct RangeReconcile {
 
 /// replica 1 つの照合の結果。
 struct ReplicaRangeCheck {
+    checked: usize,
     /// 台帳の間隔の内で照合しなかったときは `None`。
     outcome: Option<RangeCheckOutcome>,
     /// 本体が手元に無い投稿の数(照合しなかったときは前回の数)。
@@ -372,15 +401,15 @@ fn time_index_cursor(cursor: &TimelineCursor) -> TimeIndexCursor {
 }
 
 /// 照合する索引の範囲(1 ページぶん)。
-struct IndexRange<'a> {
+pub(super) struct IndexRange<'a> {
     /// 索引の prefix(末尾が `/`)。
-    index_prefix: &'a str,
+    pub(super) index_prefix: &'a str,
     /// ページの並び。タイムラインは新しい順、thread は古い順。
-    order: DocKeyOrder,
+    pub(super) order: DocKeyOrder,
     /// ページの cursor。無ければ、その並びの先頭から。
-    start: Option<&'a TimeIndexCursor>,
+    pub(super) start: Option<&'a TimeIndexCursor>,
     /// ページの件数。
-    limit: usize,
+    pub(super) limit: usize,
 }
 
 impl AppService {
@@ -420,9 +449,32 @@ impl AppService {
             start: before.as_ref(),
             limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
         };
-        let replicas = self.scope_replicas(topic_id, scope).await?;
-        self.reconcile_index_range(topic_id, &replicas, &range)
-            .await
+        let replicas = self
+            .local_page_replicas(
+                topic_id,
+                scope,
+                before.as_ref().map(|cursor| cursor.created_at),
+                false,
+            )
+            .await?;
+        let mut result = self
+            .reconcile_index_range(topic_id, &replicas, &range)
+            .await?;
+        let remote = self
+            .reconcile_remote_index_range(
+                topic_id,
+                scope,
+                before.as_ref().map(|c| c.created_at),
+                &range,
+                RANGE_CHECK_ENTRY_LIMIT.saturating_sub(result.checked),
+            )
+            .await?;
+        result.checked += remote.checked;
+        result.hydrated += remote.hydrated;
+        result.projected += remote.projected;
+        result.unavailable += remote.unavailable;
+        result.read_past = result.read_past.or(remote.read_past);
+        Ok(result)
     }
 
     async fn reconcile_index_range(
@@ -433,9 +485,18 @@ impl AppService {
     ) -> Result<RangeReconcile> {
         let mut reconcile = RangeReconcile::default();
         for replica in replicas {
+            let remaining = RANGE_CHECK_ENTRY_LIMIT.saturating_sub(reconcile.checked);
+            if remaining == 0 {
+                break;
+            }
+            let bounded = IndexRange {
+                limit: range.limit.min(remaining),
+                ..*range
+            };
             let check = self
-                .reconcile_replica_index_range(topic_id, replica, range)
+                .reconcile_replica_index_range(topic_id, replica, &bounded)
                 .await?;
+            reconcile.checked += check.checked;
             if let Some(outcome) = check.outcome {
                 reconcile.hydrated += outcome.hydrated;
                 reconcile.projected += outcome.hydrated + outcome.present;
@@ -496,6 +557,7 @@ impl AppService {
                 .last_result(range_key.as_str())
                 .await;
             return Ok(ReplicaRangeCheck {
+                checked: 0,
                 outcome: None,
                 missing,
                 read_past,
@@ -585,6 +647,7 @@ impl AppService {
             // 形の違う key が先頭を埋めていて読み出しが何回にもなったときは、間隔を空ける。
             ledger.forget(range_key.as_str()).await;
             return Ok(ReplicaRangeCheck {
+                checked: 0,
                 outcome: Some(total),
                 missing: 0,
                 read_past: None,
@@ -611,6 +674,7 @@ impl AppService {
             }
         };
         Ok(ReplicaRangeCheck {
+            checked: entries_read,
             outcome: Some(total),
             missing: total.missing,
             read_past,
@@ -649,22 +713,32 @@ impl AppService {
         if limit == 0 {
             return Ok(RangeReconcile::default());
         }
-        let root_channel = self
+        let root_projection = self
             .services
             .projection_store
             .get_object_projection(thread_root)
-            .await?
-            .map(|row| row.channel_id);
-        let scope = match root_channel.as_deref() {
+            .await?;
+        let scope = match root_projection.as_ref().map(|row| row.channel_id.as_str()) {
             Some(PUBLIC_CHANNEL_ID) => ReplicaScope::Public,
             Some(channel_id) => ReplicaScope::Channel {
                 channel_id: ChannelId::new(channel_id),
             },
             None => ReplicaScope::AllJoined,
         };
-        // 参加していない private channel の thread は照合しない(replica を読まない)。表示は従来どおり
-        // projection の行だけで組み立てる。
-        let Ok(replicas) = self.scope_replicas(topic_id, &scope).await else {
+        let remote_scope = match scope {
+            ReplicaScope::Public => TimelineScope::Public,
+            ReplicaScope::Channel { channel_id } => TimelineScope::Channel { channel_id },
+            ReplicaScope::AllJoined => TimelineScope::Public,
+        };
+        // Without a known root channel, an opaque object ID cannot authorize
+        // probing every joined private channel.
+        let anchor = after
+            .map(|cursor| cursor.created_at)
+            .or_else(|| root_projection.as_ref().map(|row| row.created_at));
+        let Ok(replicas) = self
+            .local_page_replicas(topic_id, &remote_scope, anchor, true)
+            .await
+        else {
             return Ok(RangeReconcile::default());
         };
         let index_prefix = stable_key("indexes/thread", &format!("{}/", thread_root.as_str()));
@@ -675,8 +749,24 @@ impl AppService {
             start: after.as_ref(),
             limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
         };
-        self.reconcile_index_range(topic_id, &replicas, &range)
-            .await
+        let mut result = self
+            .reconcile_index_range(topic_id, &replicas, &range)
+            .await?;
+        let remote = self
+            .reconcile_remote_index_range(
+                topic_id,
+                &remote_scope,
+                anchor,
+                &range,
+                RANGE_CHECK_ENTRY_LIMIT.saturating_sub(result.checked),
+            )
+            .await?;
+        result.checked += remote.checked;
+        result.hydrated += remote.hydrated;
+        result.projected += remote.projected;
+        result.unavailable += remote.unavailable;
+        result.read_past = result.read_past.or(remote.read_past);
+        Ok(result)
     }
 }
 

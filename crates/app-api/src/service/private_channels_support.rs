@@ -320,10 +320,11 @@ impl AppService {
         topic_id: &str,
         channel_id: &ChannelId,
     ) -> Result<()> {
-        if self
-            .joined_private_channel_state(topic_id, channel_id.as_str())
+        if !self
+            .joined_private_channels
+            .lock()
             .await
-            .is_none()
+            .contains_key(&joined_private_channel_key(topic_id, channel_id.as_str()))
         {
             anyhow::bail!("private channel is not joined");
         }

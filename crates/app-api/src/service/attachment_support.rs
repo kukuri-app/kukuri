@@ -29,24 +29,6 @@ pub(crate) fn joined_private_channel_subscription_key(
     format!("{topic_id}::{channel_id}::{}", replica.as_str())
 }
 
-pub(crate) fn subscription_replicas_for_topic(
-    topic_id: &str,
-    joined_channels: Vec<JoinedPrivateChannelState>,
-) -> Vec<ReplicaId> {
-    let mut replicas = vec![topic_replica_id(topic_id)];
-    replicas.extend(joined_channels.into_iter().flat_map(|state| {
-        private_channel_epoch_capabilities(&state)
-            .into_iter()
-            .map(move |epoch| {
-                private_channel_replica_for_epoch(
-                    state.channel_id.as_str(),
-                    epoch.epoch_id.as_str(),
-                )
-            })
-    }));
-    replicas
-}
-
 pub(crate) async fn blob_view_status_for_payload(
     blob_service: &dyn BlobService,
     payload_ref: &PayloadRef,

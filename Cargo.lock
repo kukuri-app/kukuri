@@ -3135,6 +3135,7 @@ dependencies = [
  "blake3",
  "chrono",
  "futures-util",
+ "hex",
  "iroh",
  "iroh-mainline-address-lookup",
  "kukuri-blob-service",
