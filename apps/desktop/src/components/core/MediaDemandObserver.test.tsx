@@ -25,6 +25,12 @@ test('video demand follows visibility of the whole containing card', () => {
   expect(demand).toHaveBeenCalledWith('video-hash', true);
   act(() => notify?.([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
   expect(demand).toHaveBeenCalledWith('video-hash', false);
+  // 1 回の callback に複数の entry が届いたときは、最後の entry が現在の状態を表す。
+  act(() => notify?.(
+    [{ isIntersecting: false }, { isIntersecting: true }] as IntersectionObserverEntry[],
+    {} as IntersectionObserver
+  ));
+  expect(demand).toHaveBeenLastCalledWith('video-hash', true);
   view.unmount();
   expect(disconnect).toHaveBeenCalledOnce();
 });

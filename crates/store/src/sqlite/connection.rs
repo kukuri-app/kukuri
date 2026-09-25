@@ -116,6 +116,11 @@ impl SqliteStore {
     }
 
     pub async fn close(&self) {
+        // sqlx 0.8 の Pool::close は、最後の permit を待つ間に return_to_pool が idle へ戻した
+        // 接続を閉じずに返る。その接続は後で別 thread が閉じ、WAL の checkpoint と -wal/-shm の
+        // 削除が呼出元の file 操作と競合する。1 回目が返った時点でその接続は idle にあるため、
+        // 2 回目で閉じる。
+        self.pool.close().await;
         self.pool.close().await;
     }
 }

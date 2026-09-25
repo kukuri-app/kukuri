@@ -5,6 +5,7 @@
 use super::range_reconcile::{BASE_TIME, put_post_at};
 use super::range_reconcile_access::{RecordingDocsSync, recording_app_with_blobs};
 use super::*;
+use crate::service::reaction_hydration::REACTION_KEYS_PER_LEAD;
 use crate::service::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
 
 /// 投稿 1 件に reaction を `reactions` 個付けた docs を作る。戻り値は投稿の object id。
@@ -174,8 +175,8 @@ async fn reconcile_does_not_wait_for_a_remote_reaction_envelope() {
 #[tokio::test]
 async fn reaction_key_listing_returns_a_bounded_number_of_keys() {
     let mut returned = Vec::new();
-    // どちらも、reaction id の先頭の 1 文字ごとの一覧が上限まで埋まる件数にする(埋まらない件数同士では、
-    // 返る key の数が reaction の数で変わる。上限があることは変わらない)。
+    // reaction id は無作為なので、先頭の 1 文字ごとの一覧が上限まで埋まるかは回ごとに違う(240 件でも、16 文字の
+    // どれかが 4 件未満の回がある)。返る数どうしではなく、reaction の数に依存しない上限と比べる。
     for reactions in [240usize, 480] {
         let topic = format!("kukuri:topic:range-reaction-keys-{reactions}");
         let docs_sync = Arc::new(CountingDocsSync::default());
@@ -206,9 +207,12 @@ async fn reaction_key_listing_returns_a_bounded_number_of_keys() {
         assert_eq!(hydrated, 1);
         returned.push(docs_sync.records_returned());
     }
-    assert_eq!(
-        returned[0], returned[1],
-        "the keys and records returned by docs must not grow with the number of reactions: {returned:?}"
+    // 先頭の一覧(上限ぶんの reaction の `state` と `envelope`)、先頭の 1 文字ごとの 16 回の一覧、反映する reaction の
+    // envelope、投稿の索引の entry と envelope。reaction の総数ぶんの key を一覧すれば、240 件でもこれを超える。
+    let bound = RANGE_CHECK_REACTIONS_PER_OBJECT * 3 + 16 * REACTION_KEYS_PER_LEAD + 2;
+    assert!(
+        returned.iter().all(|count| *count <= bound),
+        "the keys and records returned by docs must not grow with the number of reactions: {returned:?} > {bound}"
     );
 }
 

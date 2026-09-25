@@ -4,6 +4,9 @@ import { DEVELOPER_MODE_STORAGE_KEY } from '../../src/lib/developerMode';
 type CameraProbe = { cameraMoves: { position: number[]; animation: string }[]; cameraModelViewMatrix?: number[] };
 
 test('camera capture, real wheel and keyboard UI round trips preserve the Column and draft', async ({ page }) => {
+  // A cold 3D startup plus capture, wheel, keyboard, chat and camera-button round trips
+  // exceeds the default 30s on the shared CI runner; each assertion keeps its deadline.
+  test.slow();
   // Cover the primitive fallback and avoid asynchronous VRM bounds changes in the matrix probe.
   await page.route('**/*.vrm', route => route.abort());
   await page.addInitScript(key => localStorage.setItem(key, 'true'), DEVELOPER_MODE_STORAGE_KEY);

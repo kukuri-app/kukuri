@@ -149,3 +149,21 @@ async fn store_follow_edge_latest_wins() {
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].status, FollowEdgeStatus::Revoked);
 }
+
+#[tokio::test]
+async fn close_leaves_no_open_connection_after_connect_file() {
+    let dir = tempdir().expect("tempdir");
+    // connect_file の migration が返却中の接続を残したまま close へ進む競合は、1 回では起きないことがある。
+    // 修正前は 100 回中 7-52 回、close 後も WAL を開いた接続が残った。
+    for attempt in 0..30 {
+        let db_path = dir.path().join(format!("store-{attempt}.db"));
+        let store = SqliteStore::connect_file(&db_path)
+            .await
+            .expect("sqlite store");
+        store.close().await;
+        assert!(
+            !db_path.with_extension("db-shm").exists(),
+            "close must not leave an open WAL connection (attempt {attempt})"
+        );
+    }
+}

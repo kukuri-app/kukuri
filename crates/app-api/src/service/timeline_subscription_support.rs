@@ -87,10 +87,10 @@ impl AppService {
         {
             handle.abort();
         }
-        self.services
-            .hint_transport
-            .unsubscribe_hints(&TopicId::new(topic_id))
-            .await?;
+        // gossip topic は抜けない。抜けてすぐ入り直すと、相手が古い Disconnect を新しい Join より
+        // 後に処理した場合に片側だけが neighbor を失い、戻す経路が無い。新しい peer と neighbor で
+        // なくなった既知の peer は transport が既存の topic へ join させ、初回 join に失敗した topic は
+        // subscribe_hints が作り直す。
         self.spawn_topic_subscription(topic_id).await
     }
 

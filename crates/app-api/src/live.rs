@@ -41,12 +41,7 @@ impl AppService {
                         .collect())
                 }
             },
-            |rows| {
-                rows.is_empty()
-                    || rows
-                        .iter()
-                        .any(|row| row.status == LiveSessionStatus::Live && row.viewer_count == 0)
-            },
+            |rows| rows.is_empty(),
             || async {
                 self.maybe_restart_scope_subscription(topic_id, &scope)
                     .await;

@@ -75,10 +75,7 @@ async fn list_timeline_restarts_topic_subscription_with_cooldown_when_projection
     assert!(third_timeline.items.is_empty());
 
     assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-    assert_eq!(
-        hint_transport.unsubscribed_topics.lock().await.clone(),
-        vec![topic.to_string()]
-    );
+    assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
 }
 
 #[tokio::test]
@@ -161,10 +158,7 @@ async fn set_discovery_seeds_restarts_existing_topic_hint_subscription() {
     .expect("set discovery seeds");
 
     assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-    assert_eq!(
-        hint_transport.unsubscribed_topics.lock().await.clone(),
-        vec![topic.to_string()]
-    );
+    assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
 }
 
 #[tokio::test]
@@ -194,10 +188,7 @@ async fn import_peer_ticket_restarts_existing_topic_hint_subscription() {
         .expect("import peer ticket");
 
     assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-    assert_eq!(
-        hint_transport.unsubscribed_topics.lock().await.clone(),
-        vec![topic.to_string()]
-    );
+    assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
     assert_eq!(docs_sync.subscribe_replicas.lock().await.len(), 2);
 }
 

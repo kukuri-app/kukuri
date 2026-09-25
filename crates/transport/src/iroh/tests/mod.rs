@@ -411,6 +411,64 @@ async fn transport_seed_update_updates_existing_topic_subscription() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reimporting_a_lost_neighbor_joins_it_again_without_leaving_the_topic() {
+    let transport_a = IrohGossipTransport::bind_local()
+        .await
+        .expect("transport a");
+    let transport_b = IrohGossipTransport::bind_local()
+        .await
+        .expect("transport b");
+    let ticket_b = transport_b
+        .export_ticket()
+        .await
+        .expect("ticket b")
+        .expect("ticket b value");
+    transport_a
+        .import_ticket(&ticket_b)
+        .await
+        .expect("import b");
+    let topic = TopicId::new("kukuri:topic:rejoin-lost-neighbor");
+    let _stream_b = transport_b.subscribe_hints(&topic).await.expect("b");
+    let _stream_a = transport_a.subscribe_hints(&topic).await.expect("a");
+    let a = &transport_a;
+    let a_has_b = move |expected: bool| async move {
+        timeout(Duration::from_secs(10), async {
+            while a
+                .peers()
+                .await
+                .expect("peers a")
+                .topic_diagnostics
+                .iter()
+                .any(|diag| {
+                    diag.topic == "hint/kukuri:topic:rejoin-lost-neighbor"
+                        && !diag.connected_peers.is_empty()
+                })
+                != expected
+            {
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+    };
+    a_has_b(true).await.expect("a joins b");
+    // B does not know A. Once A has lost B, B subscribes again without a peer,
+    // so only A can restore the neighbor: A keeps its topic and joins B again.
+    transport_b
+        .unsubscribe_hints(&topic)
+        .await
+        .expect("leave b");
+    a_has_b(false).await.expect("a loses b");
+    let _stream_b = transport_b.subscribe_hints(&topic).await.expect("b again");
+    transport_a
+        .import_ticket(&ticket_b)
+        .await
+        .expect("reimport b");
+    a_has_b(true)
+        .await
+        .expect("reimport joins the lost neighbor again");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transport_resubscribe_recreates_timed_out_topic_state() {
     let transport_a = IrohGossipTransport::bind_local()
         .await

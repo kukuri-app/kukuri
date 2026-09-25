@@ -10,18 +10,14 @@ const MAX_ADDR_BYTES: usize = 4 * 1024;
 
 impl SqliteStore {
     async fn begin_candidate_write(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
-        // A cancelled writer can return its pooled connection before SQLx finishes its
-        // queued rollback. A custom BEGIN cannot nest; give that rollback a finite turn.
-        for delay_ms in [5, 20, 75] {
-            match self.pool.begin_with("BEGIN IMMEDIATE").await {
-                Ok(transaction) => return Ok(transaction),
-                Err(sqlx::Error::InvalidSavePointStatement) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(self.pool.begin_with("BEGIN IMMEDIATE").await?)
+        // Take the write lock with the first statement so the writer waits for busy_timeout.
+        // A custom BEGIN is not used: when its caller is cancelled after the BEGIN ran, SQLx
+        // returns the connection to the pool still inside that transaction.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("UPDATE peer_candidate_budget SET learned_bytes = learned_bytes WHERE id = 1")
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
     }
 
     /// The account database owns the candidate history. Only learned rows are

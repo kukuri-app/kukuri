@@ -46,7 +46,7 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
 }
 
 /// reaction id の先頭の 1 文字ごとの一覧で読む key の数(reaction 4 件ぶん)。
-const REACTION_KEYS_PER_LEAD: usize = 8;
+pub(crate) const REACTION_KEYS_PER_LEAD: usize = 8;
 
 /// 対象の投稿 1 件の reaction を、上限つきで反映する(#1239)。replica は走査しない。
 ///

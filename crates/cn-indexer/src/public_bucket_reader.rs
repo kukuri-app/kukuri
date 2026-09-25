@@ -183,11 +183,16 @@ mod tests {
 
     #[tokio::test]
     async fn recent_demand_wins_while_the_fair_cursor_reaches_every_other_topic() -> Result<()> {
-        let Some(admin) = kukuri_test_support::gated_env_url(
-            "KUKURI_CN_RUN_INTEGRATION_TESTS",
-            "COMMUNITY_NODE_DATABASE_URL",
-            "postgres://cn:cn_password@127.0.0.1:15432/cn",
-        ) else {
+        // config::tests rewrites COMMUNITY_NODE_DATABASE_URL in this process under this lock.
+        let admin = {
+            let _env = crate::config::tests::env_lock();
+            kukuri_test_support::gated_env_url(
+                "KUKURI_CN_RUN_INTEGRATION_TESTS",
+                "COMMUNITY_NODE_DATABASE_URL",
+                "postgres://cn:cn_password@127.0.0.1:15432/cn",
+            )
+        };
+        let Some(admin) = admin else {
             return Ok(());
         };
         let database = TestDatabase::create(&admin, "cn_bucket_fair_window").await?;
