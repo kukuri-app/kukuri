@@ -281,12 +281,20 @@ async fn private_channel_request_with_secret_is_accepted() -> Result<()> {
             "kind": "private_channel",
             "target_id": "secret-room",
             "channel_secret_hex": secret_hex,
+            "epoch_id": "epoch-1",
         }))
         .send()
         .await?;
     assert_eq!(accepted.status(), StatusCode::OK);
     let body = accepted.json::<serde_json::Value>().await?;
     assert_eq!(body["status"], "pending");
+    let pool = connect_postgres(server.database.database_url.as_str()).await?;
+    let epoch: Option<String> = sqlx::query_scalar(
+        "SELECT epoch_id FROM cn_index.channel_secrets WHERE channel_id = 'secret-room'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(epoch.as_deref(), Some("epoch-1"));
 
     server.shutdown().await
 }

@@ -11,8 +11,8 @@ use kukuri_cn_core::{
     TestDatabase, add_supported_topic, approve_indexing_request, connect_postgres,
     get_channel_secret, initialize_database, insert_indexing_request, is_topic_supported,
     list_channel_secrets, list_indexing_requests, list_indexing_requests_for_requester,
-    list_supported_topics, register_channel_secret, reject_indexing_request, remove_channel_secret,
-    remove_supported_topic, upsert_channel_secret,
+    list_supported_topics, register_channel_secret, register_channel_secret_with_epoch,
+    reject_indexing_request, remove_channel_secret, remove_supported_topic, upsert_channel_secret,
 };
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
@@ -207,6 +207,41 @@ async fn register_channel_secret_is_first_writer_wins() -> Result<()> {
         .await?
         .expect("secret registered");
     assert_eq!(stored.namespace_secret_hex, first_secret);
+
+    register_channel_secret_with_epoch(
+        &pool,
+        &cipher,
+        "secret-room",
+        "epoch-1",
+        first_secret.as_str(),
+    )
+    .await?;
+    let epoch: Option<String> = sqlx::query_scalar(
+        "SELECT epoch_id FROM cn_index.channel_secrets WHERE channel_id = 'secret-room'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(epoch.as_deref(), Some("epoch-1"));
+    let err = register_channel_secret_with_epoch(
+        &pool,
+        &cipher,
+        "secret-room",
+        "epoch-2",
+        first_secret.as_str(),
+    )
+    .await
+    .expect_err("another epoch must not replace the registered one");
+    assert!(err.downcast_ref::<ChannelSecretConflict>().is_some());
+    upsert_channel_secret(&pool, &cipher, "secret-room", attacker_secret.as_str()).await?;
+    let epoch: Option<String> = sqlx::query_scalar(
+        "SELECT epoch_id FROM cn_index.channel_secrets WHERE channel_id = 'secret-room'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        epoch, None,
+        "operator replacement invalidates the old epoch reader"
+    );
 
     database.cleanup().await
 }

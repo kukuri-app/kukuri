@@ -9,7 +9,8 @@ use axum::http::{HeaderMap, StatusCode};
 use kukuri_cn_core::{
     ApiError, ApiResult, IndexScopeKind, filter_relation_visible, get_channel_secret,
     insert_indexing_request, is_topic_supported, list_indexing_requests_for_requester,
-    mark_index_demand, register_channel_secret, require_bearer_identity, require_consents,
+    mark_index_demand, register_channel_secret, register_channel_secret_with_epoch,
+    require_bearer_identity, require_consents,
 };
 use kukuri_cn_indexer::IndexQuery;
 use kukuri_cn_protocol::{
@@ -88,10 +89,21 @@ pub(crate) async fn submit_indexing_request(
         };
         // first-writer-wins: 別 requester が別 secret で既存 capability を上書きできないようにする。
         // 同一 secret の再提示は冪等。別 secret による乗っ取りは 409 で拒否する。
-        register_channel_secret(&state.pool, cipher, target_id, secret_hex)
-            .await
+        let register = if let Some(epoch_id) = request.epoch_id.as_deref() {
+            register_channel_secret_with_epoch(&state.pool, cipher, target_id, epoch_id, secret_hex)
+                .await
+        } else {
+            register_channel_secret(&state.pool, cipher, target_id, secret_hex).await
+        };
+        register
             .map_err(IndexingError::channel_secret)
             .map_err(indexing_error)?;
+    } else if request.epoch_id.is_some() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDEXING_REQUEST",
+            "epoch_id is only valid for private channels",
+        ));
     }
 
     let stored = insert_indexing_request(&state.pool, identity.pubkey.as_str(), kind, target_id)

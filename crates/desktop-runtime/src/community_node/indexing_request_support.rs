@@ -128,7 +128,7 @@ impl DesktopRuntime {
                 ));
             }
         }
-        let (target_id, channel_secret_hex) = match request.scope_kind {
+        let (target_id, epoch_id, channel_secret_hex) = match request.scope_kind {
             IndexScopeKind::PublicTopic => {
                 if request
                     .channel_id
@@ -140,7 +140,7 @@ impl DesktopRuntime {
                         "channel_id must not be specified for public topics",
                     ));
                 }
-                (topic_id.to_string(), None)
+                (topic_id.to_string(), None, None)
             }
             IndexScopeKind::PrivateChannel => {
                 if !request.confirm_private_channel_secret_disclosure {
@@ -160,9 +160,9 @@ impl DesktopRuntime {
                             "channel_id is required for private channels",
                         )
                     })?;
-                let secret = self
+                let (epoch_id, secret) = self
                     .app_service
-                    .private_channel_indexing_secret(topic_id, channel_id)
+                    .private_channel_indexing_capability(topic_id, channel_id)
                     .await
                     .map_err(|error| {
                         CommunityNodeIndexingRequestError::new(
@@ -170,7 +170,7 @@ impl DesktopRuntime {
                             error.to_string(),
                         )
                     })?;
-                (channel_id.to_string(), Some(secret))
+                (channel_id.to_string(), Some(epoch_id), Some(secret))
             }
         };
 
@@ -188,6 +188,7 @@ impl DesktopRuntime {
             kind: request.scope_kind.as_str().to_string(),
             target_id,
             channel_secret_hex,
+            epoch_id,
         };
 
         match self

@@ -678,6 +678,10 @@ async fn community_node_indexing_request_preserves_public_and_private_contracts(
     assert_eq!(requests[0].channel_secret_hex, None);
     assert_eq!(requests[1].kind, "private_channel");
     assert_eq!(requests[1].target_id, channel.channel_id);
+    assert_eq!(
+        requests[1].epoch_id.as_deref(),
+        Some(channel.current_epoch_id.as_str())
+    );
     assert!(
         requests[1]
             .channel_secret_hex

@@ -10,6 +10,17 @@ impl AppService {
         topic_id: &str,
         channel_id: &str,
     ) -> Result<String> {
+        Ok(self
+            .private_channel_indexing_capability(topic_id, channel_id)
+            .await?
+            .1)
+    }
+
+    pub async fn private_channel_indexing_capability(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<(String, String)> {
         self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, channel_id)
             .await?;
         let state = self
@@ -19,6 +30,6 @@ impl AppService {
         if state.current_epoch_secret_hex.trim().is_empty() {
             anyhow::bail!("private channel current epoch secret is unavailable");
         }
-        Ok(state.current_epoch_secret_hex)
+        Ok((state.current_epoch_id, state.current_epoch_secret_hex))
     }
 }

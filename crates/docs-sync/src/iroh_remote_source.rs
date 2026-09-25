@@ -26,8 +26,35 @@ impl IrohDocsSync {
         self.peers.ranked_peers().await
     }
 
+    /// Explicit provider IDs avoid sampling the global peer window for a private scope.
+    pub async fn remote_read_candidates_for_seeds(
+        &self,
+        seeds: Vec<SeedPeer>,
+    ) -> Result<Vec<EndpointAddr>> {
+        let relay_urls = self
+            .node
+            .relay_urls()
+            .await
+            .into_iter()
+            .map(|url| url.to_string())
+            .collect::<Vec<_>>();
+        seeds
+            .into_iter()
+            .map(|seed| seed.to_endpoint_addr_with_relay_url_strings(&relay_urls))
+            .collect()
+    }
+
     pub fn remote_source(&self, peer: EndpointAddr) -> RemoteDocsSource {
         RemoteDocsSource::new(self.clone(), peer)
+    }
+
+    pub fn remote_source_with_private_secret(
+        &self,
+        peer: EndpointAddr,
+        replica: ReplicaId,
+        secret: [u8; 32],
+    ) -> RemoteDocsSource {
+        RemoteDocsSource::with_private_secret(self.clone(), peer, replica, secret)
     }
 
     pub(crate) async fn public_bucket_readers_owned(
@@ -49,13 +76,17 @@ impl IrohDocsSync {
             .collect())
     }
 
-    pub(crate) async fn query_remote_docs(
+    pub(crate) async fn query_remote_docs_with_secret(
         &self,
         replica: &ReplicaId,
         peer: EndpointAddr,
         query: DocReadQuery,
+        private_secret: Option<&iroh_docs::NamespaceSecret>,
     ) -> Result<DocReadResponse> {
-        let secret = self.replica_secret(replica).await?;
+        let secret = match private_secret {
+            Some(secret) => secret.clone(),
+            None => self.replica_secret(replica).await?,
+        };
         self.node
             .query_remote_docs(peer, replica, &secret, query)
             .await

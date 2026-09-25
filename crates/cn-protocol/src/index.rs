@@ -58,6 +58,8 @@ pub struct SubmitIndexingRequestRequest {
     pub target_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_secret_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_id: Option<String>,
 }
 
 impl std::fmt::Debug for SubmitIndexingRequestRequest {
@@ -70,6 +72,7 @@ impl std::fmt::Debug for SubmitIndexingRequestRequest {
                 "channel_secret_hex",
                 &self.channel_secret_hex.as_ref().map(|_| "<redacted>"),
             )
+            .field("epoch_id", &self.epoch_id)
             .finish()
     }
 }

@@ -66,6 +66,7 @@ pub struct IndexingRequest {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ChannelSecret {
     pub channel_id: String,
+    pub epoch_id: Option<String>,
     pub namespace_secret_hex: String,
 }
 
@@ -422,6 +423,7 @@ pub async fn upsert_channel_secret(
          ON CONFLICT (channel_id) DO UPDATE
             SET nonce = EXCLUDED.nonce,
                 ciphertext = EXCLUDED.ciphertext,
+                epoch_id = NULL,
                 updated_at = NOW()",
     )
     .bind(channel_id)
@@ -486,6 +488,34 @@ pub async fn register_channel_secret(
     Ok(())
 }
 
+/// Attach one explicitly disclosed epoch to the existing first-writer-wins capability.
+/// A different secret or epoch cannot replace another requester's channel registration.
+pub async fn register_channel_secret_with_epoch(
+    pool: &PgPool,
+    cipher: &ChannelSecretCipher,
+    channel_id: &str,
+    epoch_id: &str,
+    namespace_secret_hex: &str,
+) -> Result<()> {
+    let epoch_id = epoch_id.trim();
+    if epoch_id.is_empty() || epoch_id.len() > 1024 {
+        bail!("channel epoch id must contain 1..=1024 bytes");
+    }
+    register_channel_secret(pool, cipher, channel_id, namespace_secret_hex).await?;
+    let updated = sqlx::query(
+        "UPDATE cn_index.channel_secrets SET epoch_id = $2
+         WHERE channel_id = $1 AND (epoch_id IS NULL OR epoch_id = $2)",
+    )
+    .bind(channel_id.trim())
+    .bind(epoch_id)
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(ChannelSecretConflict::AlreadyRegistered.into());
+    }
+    Ok(())
+}
+
 /// 登録済み channel capability を復号して取得する。未登録なら None。
 pub async fn get_channel_secret(
     pool: &PgPool,
@@ -493,7 +523,7 @@ pub async fn get_channel_secret(
     channel_id: &str,
 ) -> Result<Option<ChannelSecret>> {
     let row = sqlx::query(
-        "SELECT channel_id, nonce, ciphertext
+        "SELECT channel_id, epoch_id, nonce, ciphertext
          FROM cn_index.channel_secrets
          WHERE channel_id = $1",
     )
@@ -504,11 +534,13 @@ pub async fn get_channel_secret(
         return Ok(None);
     };
     let channel_id: String = row.try_get("channel_id")?;
+    let epoch_id: Option<String> = row.try_get("epoch_id")?;
     let nonce: Vec<u8> = row.try_get("nonce")?;
     let ciphertext: Vec<u8> = row.try_get("ciphertext")?;
     let namespace_secret_hex = cipher.decrypt(channel_id.as_str(), &nonce, &ciphertext)?;
     Ok(Some(ChannelSecret {
         channel_id,
+        epoch_id,
         namespace_secret_hex,
     }))
 }
@@ -519,7 +551,7 @@ pub async fn list_channel_secrets(
     cipher: &ChannelSecretCipher,
 ) -> Result<Vec<ChannelSecret>> {
     let rows = sqlx::query(
-        "SELECT channel_id, nonce, ciphertext
+        "SELECT channel_id, epoch_id, nonce, ciphertext
          FROM cn_index.channel_secrets
          ORDER BY channel_id",
     )
@@ -528,11 +560,13 @@ pub async fn list_channel_secrets(
     let mut secrets = Vec::with_capacity(rows.len());
     for row in &rows {
         let channel_id: String = row.try_get("channel_id")?;
+        let epoch_id: Option<String> = row.try_get("epoch_id")?;
         let nonce: Vec<u8> = row.try_get("nonce")?;
         let ciphertext: Vec<u8> = row.try_get("ciphertext")?;
         let namespace_secret_hex = cipher.decrypt(channel_id.as_str(), &nonce, &ciphertext)?;
         secrets.push(ChannelSecret {
             channel_id,
+            epoch_id,
             namespace_secret_hex,
         });
     }

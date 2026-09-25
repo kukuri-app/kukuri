@@ -94,7 +94,16 @@ iroh-docsの受信前filterと同一視しない。
 #1221の新しい公開bucket readerは、稼働中providerのローカルkey索引をQUICで件数/bytes/期限付きで読み、
 署名済みrecordを既存gateへ渡す。readerはnamespaceをimport/open/start_syncせず、1対象の読取りだけを
 保持する。legacy writerが使う旧namespace同期はwriter切替まで残すが、新形式定常経路へ持ち越さない。
-private/authorのreaderと保護cache/移行は未完了であり、この公開経路だけをR5全体の達成としない。
+R5-Dでは同じ有界readerが公開bucketとCNへ明示開示されたprivate epoch bucketを扱う。
+private申請はepoch IDをsecretと同じ明示同意のHTTP requestに含め、CNは登録済みcapabilityを
+暗号化保存する。privateのQUICページ要求はepoch secret由来の証明を要し、CNは有効な申請者の
+bootstrap端末を最大4件だけ選び、direct addressと構成済みrelay候補へchannel/epoch IDを送る。
+readerはnamespaceをimport/open/start_syncせず、
+現行scope/secretを要求前と対象反映前に確認する。公開providerも直近2＋永続cursorの巡回2端末を
+PostgreSQLから選び、全bootstrap peerをreader内へmaterializeしない。公開・privateは同じ
+scope需要優先と永続cursorで巡回し、
+移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とする。旧selectorと旧namespaceの
+最終撤去はR5-H、clientのprivate/author readerと保護cache/移行は後続条件の担当である。
 旧公開replicaで対象不明の変更通知が来た場合も、現在timeline索引窓の最大100 IDだけを
 対象別に再確認する。同じ通知batchに既知object IDがあれば窓外でも対象別に先に処理する。
 media manifestの遅着を契機に過去全件を読み直さず、窓外の既存索引を消さない。
