@@ -381,7 +381,7 @@ fn protocol_status_registry_and_errors_are_machine_readable() {
     let last_page = registry.page(Some(cursor), 100).expect("last page");
     assert_eq!(second["data"], serde_json::to_value(&last_page).unwrap());
     assert!(last_page.next_cursor.is_none());
-    assert_eq!(first_page.items.len() + last_page.items.len(), 150);
+    assert_eq!(first_page.items.len() + last_page.items.len(), 151);
 
     let schema = call(root.path(), "alpha", &["protocol.schema"]);
     assert!(schema.status.success());
