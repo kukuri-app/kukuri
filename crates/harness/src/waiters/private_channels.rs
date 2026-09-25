@@ -4,7 +4,6 @@
 fn is_retryable_friend_only_grant_import_error(message: &str) -> bool {
     message.contains("mutual relationship")
         || message.contains("friend-only grant epoch does not match the current policy")
-        || message.contains("friend-only grant owner is not an active participant")
         || message.contains("timed out waiting for friend-only channel replica sync")
 }
 

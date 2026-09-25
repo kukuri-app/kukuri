@@ -139,16 +139,21 @@ impl AppService {
                         reason: DomeTransitionDenialReasonV1::AccessDenied,
                     });
                 };
-                let replica = current_private_channel_replica_id(&state);
-                let participants = fetch_private_channel_participants_from_replica(
-                    self.docs_sync(),
-                    &replica,
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await?;
-                active_private_channel_participants(&participants, state.current_epoch_id.as_str())
-                    .iter()
-                    .any(|participant| participant.participant_pubkey == *participant_pubkey)
+                // #1221 R5-C: 入場する参加者の record だけを key 指定で読む(参加者の全件は読まない)。
+                let replica = &current_private_channel_replica_id(&state);
+                self.read_joined_private_control(&state, |docs, policy| async move {
+                    fetch_private_channel_participant_from_replica(
+                        docs.as_ref(),
+                        replica,
+                        participant_pubkey.as_str(),
+                        policy,
+                    )
+                    .await
+                })
+                .await?
+                .is_some_and(|participant| {
+                    participant.epoch_id == state.current_epoch_id && participant.left_at.is_none()
+                })
             }
         };
         Ok(if allowed {

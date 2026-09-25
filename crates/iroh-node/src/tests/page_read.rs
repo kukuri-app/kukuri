@@ -26,6 +26,7 @@ async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
         prefix: "indexes/timeline/".into(),
         descending: true,
         limit: 1,
+        author: None,
     };
     let response = requester
         .query_remote_docs(provider.endpoint().addr(), &replica, &secret, query.clone())
@@ -210,6 +211,7 @@ async fn real_peer_returns_only_requested_local_keys_and_records() -> Result<()>
                 prefix: "indexes/timeline/".into(),
                 descending: true,
                 limit: 1,
+                author: None,
             },
         )
         .await?;
@@ -252,6 +254,7 @@ async fn real_peer_returns_only_requested_local_keys_and_records() -> Result<()>
                 prefix: "indexes/timeline/".into(),
                 descending: true,
                 limit: 1,
+                author: None,
             },
         )
         .await?;
@@ -330,6 +333,65 @@ async fn real_peer_returns_only_requested_local_keys_and_records() -> Result<()>
         "remote reads must not start docs sync"
     );
 
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
+// #1221 R5-C: author replica も同じ有界な reader で読め、docs author を指定した key の一覧は他の名義の entry を返さない。
+#[tokio::test]
+async fn author_replica_keys_are_read_by_the_requested_docs_author() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let replica = ReplicaId::new(format!("author::{}", "a".repeat(64)));
+    let secret = NamespaceSecret::from_bytes(
+        blake3::hash(format!("kukuri-docs:{}", replica.as_str()).as_bytes()).as_bytes(),
+    );
+    let doc = provider
+        .docs()
+        .import_namespace(Capability::Write(secret.clone()))
+        .await?;
+    let writer = provider.docs().author_create().await?;
+    let other = provider.docs().author_create().await?;
+    doc.set_bytes(
+        writer,
+        b"indexes/profile/0002/mine".to_vec(),
+        b"mine".to_vec(),
+    )
+    .await?;
+    doc.set_bytes(
+        other,
+        b"indexes/profile/0003/other".to_vec(),
+        b"other".to_vec(),
+    )
+    .await?;
+    let page = |author: Option<String>| DocReadQuery::Keys {
+        prefix: "indexes/profile/".into(),
+        descending: true,
+        limit: 1,
+        author,
+    };
+    let DocReadResponse::Keys { entries, .. } = requester
+        .query_remote_docs(provider.endpoint().addr(), &replica, &secret, page(None))
+        .await?
+    else {
+        anyhow::bail!("expected a key page")
+    };
+    assert_eq!(entries[0].key, "indexes/profile/0003/other");
+    let DocReadResponse::Keys { entries, .. } = requester
+        .query_remote_docs(
+            provider.endpoint().addr(),
+            &replica,
+            &secret,
+            page(Some(writer.to_string())),
+        )
+        .await?
+    else {
+        anyhow::bail!("expected a key page")
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].key, "indexes/profile/0002/mine");
+    assert_eq!(entries[0].docs_author, writer.to_string());
     requester.shutdown().await?;
     provider.shutdown().await?;
     Ok(())

@@ -131,6 +131,60 @@ impl RemoteDocsSource {
     }
 }
 
+impl RemoteDocsSource {
+    async fn keys(
+        &self,
+        replica: &ReplicaId,
+        query: DocKeyQuery,
+        author: Option<&str>,
+    ) -> Result<DocKeyPage> {
+        if query.limit == 0 {
+            return Ok(DocKeyPage::default());
+        }
+        let response = self
+            .inner
+            .query_remote_docs_with_secret(
+                replica,
+                self.peer.clone(),
+                DocReadQuery::Keys {
+                    prefix: query.prefix.clone(),
+                    descending: query.order == DocKeyOrder::Descending,
+                    limit: query.limit,
+                    author: author.map(str::to_owned),
+                },
+                self.private_secret(replica)?,
+            )
+            .await?;
+        let DocReadResponse::Keys {
+            entries,
+            reached_limit,
+        } = response
+        else {
+            bail!("remote docs provider returned the wrong response type")
+        };
+        ensure!(
+            entries.len() <= query.limit
+                && entries.iter().all(|entry| {
+                    entry.key.starts_with(&query.prefix)
+                        && author.is_none_or(|author| entry.docs_author == author)
+                }),
+            "remote docs key page exceeded its query"
+        );
+        Ok(DocKeyPage {
+            entries: entries
+                .into_iter()
+                .map(|entry| DocKeyEntry {
+                    key: entry.key,
+                    content_hash: entry.content_hash,
+                    content_len: entry.content_len,
+                    docs_author: Some(entry.docs_author),
+                })
+                .collect(),
+            reached_limit,
+        })
+    }
+}
+
 pub(crate) fn checked_record(
     entry: DocReadRecord,
     key: &str,
@@ -284,45 +338,16 @@ impl DocsSync for RemoteDocsSource {
         replica: &ReplicaId,
         query: DocKeyQuery,
     ) -> Result<DocKeyPage> {
-        if query.limit == 0 {
-            return Ok(DocKeyPage::default());
-        }
-        let response = self
-            .inner
-            .query_remote_docs_with_secret(
-                replica,
-                self.peer.clone(),
-                DocReadQuery::Keys {
-                    prefix: query.prefix.clone(),
-                    descending: query.order == DocKeyOrder::Descending,
-                    limit: query.limit,
-                },
-                self.private_secret(replica)?,
-            )
-            .await?;
-        let DocReadResponse::Keys {
-            entries,
-            reached_limit,
-        } = response
-        else {
-            bail!("remote docs provider returned the wrong response type")
-        };
-        ensure!(
-            entries.len() <= query.limit,
-            "remote docs key page exceeded limit"
-        );
-        Ok(DocKeyPage {
-            entries: entries
-                .into_iter()
-                .map(|entry| DocKeyEntry {
-                    key: entry.key,
-                    content_hash: entry.content_hash,
-                    content_len: entry.content_len,
-                    docs_author: Some(entry.docs_author),
-                })
-                .collect(),
-            reached_limit,
-        })
+        self.keys(replica, query, None).await
+    }
+
+    async fn query_replica_keys_by_author(
+        &self,
+        replica: &ReplicaId,
+        docs_author: &str,
+        query: DocKeyQuery,
+    ) -> Result<DocKeyPage> {
+        self.keys(replica, query, Some(docs_author)).await
     }
 
     async fn subscribe_replica(&self, _replica: &ReplicaId) -> Result<DocEventStream> {

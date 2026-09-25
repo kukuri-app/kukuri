@@ -4,7 +4,12 @@
 //! follow・block の key の上限つきの一覧から反映する。取りこぼし・同期の区切りの後に読み直すのは、自分を指す follow・block の
 //! key(相互 follow の判定と DM に要る)だけで、それ以外の取りこぼしは埋めない(AGENTS.md: ユースケース上ユーザーが必要としない
 //! 限り同期・復旧はしない)。
+//!
+//! #1221 R5-C: 手元に無い現在値の key(profile と自分を指す follow・block、event の key)は、author 本人を含む
+//! 有界な provider から key 指定で読む。remote の読取りのために namespace を import・sync しない。他の相手を指す edge の
+//! 窓は手元だけを読む。
 
+use super::remote_read_support::{REMOTE_READ_DEADLINE, writer_readers};
 use super::*;
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 
@@ -38,8 +43,8 @@ impl AuthorHydration {
     }
 }
 
-/// 購読の開始時に読む author replica の key(`profile/latest` は別に先に読む)。自分を指す follow・block の key、
-/// `graph/follows/`・`graph/blocks/` の key の上限つきの一覧(それぞれ `AUTHOR_EDGE_KEYS` 件)。値は読まない。
+/// 購読の開始時に手元から読む author replica の key。`graph/follows/`・`graph/blocks/` の key の上限つきの一覧
+/// (それぞれ `AUTHOR_EDGE_KEYS` 件)で、自分を指す 2 key は除く(別に先に読む)。値は読まない。
 /// 同じ key は 1 回だけ返す(一覧は docs author ごとの entry を返す)。
 async fn author_state_keys(
     docs_sync: &dyn DocsSync,
@@ -47,11 +52,10 @@ async fn author_state_keys(
     local_author_pubkey: &str,
     docs_author: Option<&str>,
 ) -> Result<Vec<String>> {
-    let mut keys = vec![
-        stable_key("graph/follows", local_author_pubkey),
-        stable_key("graph/blocks", local_author_pubkey),
-    ];
-    let mut seen = keys.iter().cloned().collect::<BTreeSet<_>>();
+    let mut keys = Vec::new();
+    let mut seen = self_edge_keys(local_author_pubkey)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     for prefix in ["graph/follows/", "graph/blocks/"] {
         let query = DocKeyQuery {
             prefix: prefix.to_string(),
@@ -76,33 +80,127 @@ async fn author_state_keys(
     Ok(keys)
 }
 
+fn self_edge_keys(local_author_pubkey: &str) -> [String; 2] {
+    [
+        stable_key("graph/follows", local_author_pubkey),
+        stable_key("graph/blocks", local_author_pubkey),
+    ]
+}
+
+/// author replica の現在値の key を、手元の次に author 本人を含む有界な provider から読む(#1221 R5-C)。
+///
+/// 手元で読めない key だけを remote から読む。provider はその最初の key で一度だけ選び、同じ操作の後続の key で使い回す。
+/// `LocalOnly` と自分の replica は手元だけを読む。remote の読取りは namespace を import・sync しない。
+struct AuthorKeyReader<'a> {
+    services: &'a ServiceHandles,
+    local_author_pubkey: &'a str,
+    author_pubkey: &'a str,
+    replica: ReplicaId,
+    docs_author: Option<String>,
+    remote: Option<Vec<Arc<dyn DocsSync>>>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl<'a> AuthorKeyReader<'a> {
+    async fn new(
+        services: &'a ServiceHandles,
+        local_author_pubkey: &'a str,
+        author_pubkey: &'a str,
+        policy: DocFetchPolicy,
+    ) -> Result<Self> {
+        let remote =
+            policy == DocFetchPolicy::LocalThenRemote && author_pubkey != local_author_pubkey;
+        Ok(Self {
+            services,
+            local_author_pubkey,
+            author_pubkey,
+            replica: author_replica_id(author_pubkey),
+            docs_author: known_docs_author(services, local_author_pubkey, author_pubkey).await?,
+            remote: (!remote).then(Vec::new),
+            deadline: None,
+        })
+    }
+
+    /// profile の envelope の tag から覚えた docs author を、同じ回の残りの key の読み出しに使う。
+    async fn refresh_docs_author(&mut self) -> Result<()> {
+        if self.docs_author.is_none() {
+            self.docs_author =
+                known_docs_author(self.services, self.local_author_pubkey, self.author_pubkey)
+                    .await?;
+        }
+        Ok(())
+    }
+
+    async fn read(&mut self, key: &str) -> Result<AuthorHydration> {
+        let local = hydrate_author_record(
+            self.services,
+            self.author_pubkey,
+            &self.replica,
+            key,
+            self.docs_author.as_deref(),
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?;
+        if local.reflected > 0 || AuthorKeyKind::of(key).is_none() {
+            return Ok(local);
+        }
+        if self.remote.is_none() {
+            self.deadline = Some(tokio::time::Instant::now() + REMOTE_READ_DEADLINE);
+            self.remote = Some(
+                writer_readers(self.services, &self.replica, &[self.author_pubkey], None).await,
+            );
+        }
+        let deadline = self.deadline.unwrap_or_else(tokio::time::Instant::now);
+        for reader in self.remote.iter().flatten() {
+            let mut services = self.services.clone();
+            services.docs_sync = reader.clone();
+            let read = tokio::time::timeout_at(
+                deadline,
+                hydrate_author_record(
+                    &services,
+                    self.author_pubkey,
+                    &self.replica,
+                    key,
+                    self.docs_author.as_deref(),
+                    DocFetchPolicy::LocalThenRemote,
+                ),
+            )
+            .await;
+            reader.finish_remote_object().await;
+            match read {
+                Ok(Ok(outcome)) if outcome.reflected > 0 => return Ok(outcome),
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => warn!(%error, key, "author record read from a provider failed"),
+                Err(_) => break,
+            }
+        }
+        Ok(AuthorHydration::default())
+    }
+}
+
 async fn hydrate_author_keys(
     services: &ServiceHandles,
     local_author_pubkey: &str,
     author_pubkey: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let replica = author_replica_id(author_pubkey);
-    let mut docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    let mut reader =
+        AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy).await?;
     // profile を先に読む。docs author がまだ分からない著者でも、profile の envelope の tag から覚えれば、
     // 同じ回の follow・block の窓と読み出しから docs author と key の組で読める。
-    let mut outcome = hydrate_author_record(
-        services,
-        author_pubkey,
-        &replica,
-        stable_key("profile", "latest").as_str(),
-        docs_author.as_deref(),
-        policy,
-    )
-    .await?;
-    if docs_author.is_none() {
-        docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    let mut outcome = reader
+        .read(stable_key("profile", "latest").as_str())
+        .await?;
+    reader.refresh_docs_author().await?;
+    for key in self_edge_keys(local_author_pubkey) {
+        outcome.add(reader.read(&key).await?);
     }
+    // 他の相手を指す edge の窓は手元だけを読む。remote の全 edge の復元はしない(グラフの全件復元を要求しない)。
     for key in author_state_keys(
         services.docs_sync.as_ref(),
-        &replica,
+        &reader.replica,
         local_author_pubkey,
-        docs_author.as_deref(),
+        reader.docs_author.as_deref(),
     )
     .await?
     {
@@ -110,10 +208,10 @@ async fn hydrate_author_keys(
             hydrate_author_record(
                 services,
                 author_pubkey,
-                &replica,
+                &reader.replica,
                 &key,
-                docs_author.as_deref(),
-                policy,
+                reader.docs_author.as_deref(),
+                DocFetchPolicy::LocalOnly,
             )
             .await?,
         );
@@ -170,24 +268,11 @@ pub(crate) async fn catch_up_author_state(
     author_pubkey: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let replica = author_replica_id(author_pubkey);
-    let docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
+    let mut reader =
+        AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy).await?;
     let mut outcome = AuthorHydration::default();
-    for key in [
-        stable_key("graph/follows", local_author_pubkey),
-        stable_key("graph/blocks", local_author_pubkey),
-    ] {
-        outcome.add(
-            hydrate_author_record(
-                services,
-                author_pubkey,
-                &replica,
-                &key,
-                docs_author.as_deref(),
-                policy,
-            )
-            .await?,
-        );
+    for key in self_edge_keys(local_author_pubkey) {
+        outcome.add(reader.read(&key).await?);
     }
     if outcome.changed > 0 {
         rebuild_relationships(services, local_author_pubkey).await?;
@@ -204,17 +289,10 @@ pub(crate) async fn hydrate_author_key(
     key: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let replica = author_replica_id(author_pubkey);
-    let docs_author = known_docs_author(services, local_author_pubkey, author_pubkey).await?;
-    let outcome = hydrate_author_record(
-        services,
-        author_pubkey,
-        &replica,
-        key,
-        docs_author.as_deref(),
-        policy,
-    )
-    .await?;
+    let outcome = AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy)
+        .await?
+        .read(key)
+        .await?;
     if outcome.changed > 0 {
         rebuild_relationships(services, local_author_pubkey).await?;
     }
@@ -227,6 +305,20 @@ enum AuthorKeyKind {
     Profile,
     Follow,
     Block,
+}
+
+impl AuthorKeyKind {
+    fn of(key: &str) -> Option<Self> {
+        if key == stable_key("profile", "latest") {
+            Some(Self::Profile)
+        } else if key.starts_with("graph/follows/") {
+            Some(Self::Follow)
+        } else if key.starts_with("graph/blocks/") {
+            Some(Self::Block)
+        } else {
+            None
+        }
+    }
 }
 
 /// record 1 件を検証し、通れば、その record が指す envelope を返す。
@@ -321,13 +413,7 @@ async fn hydrate_author_record(
     docs_author: Option<&str>,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let kind = if key == stable_key("profile", "latest") {
-        AuthorKeyKind::Profile
-    } else if key.starts_with("graph/follows/") {
-        AuthorKeyKind::Follow
-    } else if key.starts_with("graph/blocks/") {
-        AuthorKeyKind::Block
-    } else {
+    let Some(kind) = AuthorKeyKind::of(key) else {
         return Ok(AuthorHydration::default());
     };
     let docs_sync = services.docs_sync.as_ref();

@@ -56,6 +56,14 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         stack_d.blob_service.clone(),
         keys_d.clone(),
     );
+    for (stack, app) in [
+        (&stack_a, &app_a),
+        (&stack_b, &app_b),
+        (&stack_c, &app_c),
+        (&stack_d, &app_d),
+    ] {
+        stack.bind_account(app).await;
+    }
     app_a.warm_social_graph().await.expect("warm a");
     app_b.warm_social_graph().await.expect("warm b");
     app_c.warm_social_graph().await.expect("warm c");
@@ -507,20 +515,26 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         wait_for_friend_plus_share_import(&app_d, fresh_share.as_str(), rotation_timeout).await;
     assert_eq!(preview_d.epoch_id, rotated.current_epoch_id);
 
-    let d_private = app_d
-        .list_timeline_scoped(topic, private_scope.clone(), None, 20)
-        .await
-        .expect("d private timeline");
+    // #1221 R5-C: 取込みは参加に要る制御 record だけを読み、epoch の全体 sync を待たない。新しい epoch の投稿は
+    // 通常のページの読取りと購読で表示へ届く。
+    let d_private = timeout(replication_timeout, async {
+        loop {
+            let page = app_d
+                .list_timeline_scoped(topic, private_scope.clone(), None, 20)
+                .await
+                .expect("d private timeline");
+            if page.items.iter().any(|post| post.object_id == new_post_id) {
+                break page;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("d sees the new epoch post");
     assert!(
         d_private
             .items
             .iter()
             .all(|post| post.object_id != old_post_id)
-    );
-    assert!(
-        d_private
-            .items
-            .iter()
-            .any(|post| post.object_id == new_post_id)
     );
 }

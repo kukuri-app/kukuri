@@ -96,6 +96,13 @@ R5-Bでclientの通常public/private投稿ページ、CN source、対象ID・ses
 当該channelの有限peer候補と保持中epoch capabilityだけを使う。旧writer形式は同じpage/exact
 読取りで扱い、author/private制御参照はR5-C、writer切替と旧sync撤去はR5-Hへ残す。
 
+R5-Cでauthorの現在値（profile/latest、自分を指すfollow/block、docs eventのkey、Dome preset/move）と
+プロフィールの履歴ページ、private参加の制御record（metadata・policy・ownerと自分の参加record・自分宛grant）を
+同じreaderへ接続する。手元に無いkeyだけを読み、providerは書き手（author本人、channel owner、tokenの発行者）の
+R4-A検証済み宛先を先頭に、公開は全体の候補窓、privateは当該channelのgossip scopeで埋めて最大4件とする。
+参加前の取込みは書き手だけへcapabilityの証明つきで要求する。他の相手を指すedgeの窓は手元だけを読み、
+全参加者の読取り・sync再開による待機は行わない。
+
 - `peer -> 使用中lease` と `scope -> resource` の逆引きを持つ。peerの追加・削除・アドレス変更は
   そのpeerを利用する有界な対象だけへ適用し、全登録topic/replicaを再走査しない。
 - gossipの追加は現行 `join_peers` を利用する。削除APIがない場合は**影響するtopicだけ**を

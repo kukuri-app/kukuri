@@ -374,9 +374,6 @@ mod error_contract_tests {
             PrivateChannelImportError::EpochMismatch {
                 kind: PrivateChannelImportKind::FriendOnly,
             },
-            PrivateChannelImportError::OwnerInactive {
-                kind: PrivateChannelImportKind::FriendOnly,
-            },
             PrivateChannelImportError::SnapshotTimeout {
                 kind: PrivateChannelImportKind::FriendOnly,
             },

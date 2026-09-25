@@ -160,22 +160,21 @@ impl AppService {
             .register_private_replica_secret(&replica, spec.namespace_secret_hex.as_str())
             .await?;
         let import_result = async {
-            let (metadata, policy, participants) = wait_for_private_channel_epoch_snapshot(
-                self.docs_sync(),
-                &replica,
-                PrivateChannelSnapshotWaitContext::Import(spec.kind),
-            )
-            .await?;
-            let participants = if spec.refetch_participants {
-                fetch_private_channel_participants_from_replica(
-                    self.docs_sync(),
+            // #1221 R5-C: token の発行者と owner の端末から、参加に要る制御 record だけを key 指定で読む。
+            let PrivateEpochSnapshot {
+                metadata,
+                policy,
+                local_participant,
+            } = self
+                .load_private_epoch_snapshot(
+                    spec.topic_id.as_str(),
+                    spec.channel_id.as_str(),
                     &replica,
-                    LocalThenRemote,
+                    spec.namespace_secret_hex.as_str(),
+                    &[spec.joined_via_pubkey.as_str(), spec.owner_pubkey.as_str()],
+                    PrivateChannelSnapshotWaitContext::Import(spec.kind),
                 )
-                .await?
-            } else {
-                participants
-            };
+                .await?;
             if policy.audience_kind != spec.audience {
                 return Err(PrivateChannelImportError::AudienceMismatch { kind: spec.kind }.into());
             }
@@ -185,22 +184,9 @@ impl AppService {
             if policy.epoch_id != spec.epoch_id {
                 return Err(PrivateChannelImportError::EpochMismatch { kind: spec.kind }.into());
             }
-            if spec.check_owner_active
-                && !participants.iter().any(|participant| {
-                    participant.participant_pubkey == policy.owner_pubkey
-                        && participant.epoch_id == policy.epoch_id
-                        && participant.is_owner
-                        && participant.left_at.is_none()
-                })
-            {
-                return Err(PrivateChannelImportError::OwnerInactive { kind: spec.kind }.into());
-            }
             let local_pubkey = Pubkey::from(self.current_author_pubkey());
-            let already_participant = participants.iter().any(|participant| {
-                participant.participant_pubkey == local_pubkey
-                    && participant.epoch_id == policy.epoch_id
-                    && participant.left_at.is_none()
-            });
+            let already_participant =
+                local_participant.is_some_and(|participant| participant.left_at.is_none());
             if !(spec.skip_persist_if_participant && already_participant) {
                 let sponsor_pubkey = match &spec.sponsor {
                     ImportSponsor::Pubkey(value) => value.clone(),
@@ -268,9 +254,7 @@ impl AppService {
             mutual_with: None,
             // 招待だけは epoch なし時代の channel を legacy replica で読む(互換パス)。
             use_legacy_aware_replica: true,
-            refetch_participants: false,
             audience: ChannelAudienceKind::InviteOnly,
-            check_owner_active: true,
             join_mode: PrivateChannelJoinMode::InviteToken,
             sponsor: ImportSponsor::Pubkey(preview.inviter_pubkey.clone()),
             share_token_id: None,
@@ -451,9 +435,7 @@ impl AppService {
             kind: PrivateChannelImportKind::FriendOnly,
             mutual_with: Some(preview.owner_pubkey.as_str().to_string()),
             use_legacy_aware_replica: false,
-            refetch_participants: false,
             audience: ChannelAudienceKind::FriendOnly,
-            check_owner_active: true,
             join_mode: PrivateChannelJoinMode::FriendOnlyGrant,
             // 参加ドキュメントの sponsor は snapshot 取得後の policy.owner_pubkey(統合前と同じ)。
             sponsor: ImportSponsor::PolicyOwner,
@@ -481,28 +463,34 @@ impl AppService {
         if state.audience_kind != ChannelAudienceKind::FriendPlus {
             anyhow::bail!("friend-plus share export is only available for friends+ channels");
         }
-        let replica = current_private_channel_replica_id(&state);
-        let Some(policy) =
-            fetch_private_channel_policy_from_replica(self.docs_sync(), &replica, LocalThenRemote)
-                .await?
+        let replica = &current_private_channel_replica_id(&state);
+        let Some(policy) = self
+            .read_joined_private_control(&state, |docs, policy| async move {
+                fetch_private_channel_policy_from_replica(docs.as_ref(), replica, policy).await
+            })
+            .await?
         else {
             anyhow::bail!("friend-plus channel policy is missing");
         };
         if policy.sharing_state != ChannelSharingState::Open {
             anyhow::bail!("friend-plus share export is disabled while sharing is frozen");
         }
-        let participants = fetch_private_channel_participants_from_replica(
-            self.docs_sync(),
-            &replica,
-            LocalThenRemote,
-        )
-        .await?;
-        let local_author = self.current_author_pubkey();
-        if !participants.iter().any(|participant| {
-            participant.epoch_id == state.current_epoch_id
-                && participant.participant_pubkey.as_str() == local_author
-                && participant.left_at.is_none()
-        }) {
+        let local_author = &self.current_author_pubkey();
+        if !self
+            .read_joined_private_control(&state, |docs, policy| async move {
+                fetch_private_channel_participant_from_replica(
+                    docs.as_ref(),
+                    replica,
+                    local_author,
+                    policy,
+                )
+                .await
+            })
+            .await?
+            .is_some_and(|participant| {
+                participant.epoch_id == state.current_epoch_id && participant.left_at.is_none()
+            })
+        {
             anyhow::bail!("only active participants can create friend-plus shares");
         }
         let effective_expires_at =
@@ -532,11 +520,7 @@ impl AppService {
             kind: PrivateChannelImportKind::FriendPlus,
             mutual_with: Some(preview.sponsor_pubkey.as_str().to_string()),
             use_legacy_aware_replica: false,
-            // friend-plus のみ snapshot 後に participants を取り直す(統合前と同じ)。
-            refetch_participants: true,
             audience: ChannelAudienceKind::FriendPlus,
-            // friend-plus は owner の active 参加検査を行わない(統合前と同じ)。
-            check_owner_active: false,
             join_mode: PrivateChannelJoinMode::FriendPlusShare,
             sponsor: ImportSponsor::Pubkey(preview.sponsor_pubkey.clone()),
             share_token_id: Some(preview.share_token_id.clone()),
@@ -935,17 +919,14 @@ impl AppService {
         let local_author = self.current_author_pubkey();
         let local_pubkey = Pubkey::from(local_author.clone());
         let now = Utc::now().timestamp_millis();
-        let existing_participant = fetch_private_channel_participants_from_replica(
+        let existing_participant = fetch_private_channel_participant_from_replica(
             self.docs_sync(),
             &replica,
+            local_author.as_str(),
             DocFetchPolicy::LocalOnly,
         )
         .await?
-        .into_iter()
-        .find(|participant| {
-            participant.epoch_id == state.current_epoch_id
-                && participant.participant_pubkey == local_pubkey
-        });
+        .filter(|participant| participant.epoch_id == state.current_epoch_id);
         persist_private_channel_participant(
             self.docs_sync(),
             self.keys(),
@@ -1074,11 +1055,7 @@ struct PrivateChannelImportSpec {
     mutual_with: Option<String>,
     /// epoch なし時代の channel を legacy replica で読むか(招待のみ true。互換パス)。
     use_legacy_aware_replica: bool,
-    /// snapshot 後に participants を取り直すか(friend-plus のみ true)。
-    refetch_participants: bool,
     audience: ChannelAudienceKind,
-    /// owner が active 参加者であることを検査するか。
-    check_owner_active: bool,
     join_mode: PrivateChannelJoinMode,
     sponsor: ImportSponsor,
     share_token_id: Option<String>,

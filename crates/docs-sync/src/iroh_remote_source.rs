@@ -1,4 +1,5 @@
 use super::*;
+use crate::buckets::{BucketReplica, BucketScope};
 use crate::remote_source::RemoteDocsSource;
 use crate::replicas::{PostReplicaKind, post_replica_kind};
 use kukuri_iroh_node::{DocReadQuery, DocReadResponse};
@@ -63,9 +64,11 @@ impl IrohDocsSync {
         private_secret: Option<[u8; 32]>,
         scope_peers: Vec<SeedPeer>,
     ) -> Result<Vec<Arc<dyn DocsSync>>> {
-        let kind = post_replica_kind(replica)
-            .ok_or_else(|| anyhow::anyhow!("remote reader requires a post replica"))?;
-        let private = matches!(kind, PostReplicaKind::PrivateChannel { .. });
+        let private = match post_replica_kind(replica) {
+            Some(kind) => matches!(kind, PostReplicaKind::PrivateChannel { .. }),
+            None if author_replica(replica) => false,
+            None => anyhow::bail!("remote reader requires a post or author replica"),
+        };
         anyhow::ensure!(
             private == private_secret.is_some(),
             "remote reader capability does not match scope"
@@ -87,7 +90,18 @@ impl IrohDocsSync {
             })
             .collect())
     }
+}
 
+/// The author control replica or one of its history buckets; both are public.
+fn author_replica(replica: &ReplicaId) -> bool {
+    match replica.as_str().strip_prefix("author::") {
+        Some(pubkey) => !pubkey.is_empty() && !pubkey.contains("::"),
+        None => BucketReplica::parse(replica)
+            .is_ok_and(|bucket| matches!(bucket.scope(), BucketScope::Author { .. })),
+    }
+}
+
+impl IrohDocsSync {
     pub(crate) async fn query_remote_docs_with_secret(
         &self,
         replica: &ReplicaId,

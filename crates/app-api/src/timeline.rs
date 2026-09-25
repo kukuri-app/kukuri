@@ -9,52 +9,28 @@ impl AppService {
         limit: usize,
     ) -> Result<TimelineView> {
         let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-        let empty_recovery_key = author_empty_recovery_key(author_pubkey.as_str());
         self.ensure_author_subscription(author_pubkey.as_str())
             .await?;
         // #1239: replica は走査しない。プロフィールの索引から、ページの行だけを読む。
+        // #1221 R5-C: 手元で埋まらないページだけを、author 本人を含む有界な provider から読む。
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
+        let local_author = self.current_author_pubkey();
         let docs_author = known_docs_author(
             &self.services,
-            self.current_author_pubkey().as_str(),
+            local_author.as_str(),
             author_pubkey.as_str(),
         )
         .await?;
-        let load_page = || {
-            profile_timeline_page_from_docs(
-                self.services.docs_sync.as_ref(),
-                author_pubkey.as_str(),
-                docs_author.as_deref(),
-                cursor.clone(),
-                limit,
-                &hidden_author_pubkeys,
-            )
-        };
-        let mut page = match load_page().await {
-            Ok(page) => page,
-            Err(error) => {
-                self.maybe_restart_author_subscription(author_pubkey.as_str())
-                    .await;
-                load_page().await.map_err(|retry_error| {
-                    retry_error.context(format!(
-                        "failed to reload profile timeline after author subscription restart: {error}"
-                    ))
-                })?
-            }
-        };
-        if cursor.is_none() && page.items.is_empty() && page.next_cursor.is_none() {
-            if self
-                .should_restart_after_empty_result(empty_recovery_key.as_str())
-                .await
-            {
-                self.maybe_restart_author_subscription(author_pubkey.as_str())
-                    .await;
-                page = load_page().await?;
-            }
-        } else {
-            self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
-                .await;
-        }
+        let page = profile_timeline_page(
+            &self.services,
+            local_author.as_str(),
+            author_pubkey.as_str(),
+            docs_author.as_deref(),
+            cursor,
+            limit,
+            &hidden_author_pubkeys,
+        )
+        .await?;
         self.reflect_reply_targets_for_profile_items(&page.items)
             .await;
         let mut views = Vec::with_capacity(page.items.len());
@@ -978,10 +954,6 @@ impl AppService {
         }
         Ok(view)
     }
-}
-
-fn author_empty_recovery_key(author_pubkey: &str) -> String {
-    format!("empty-author:{author_pubkey}")
 }
 
 fn scope_empty_recovery_key(topic_id: &str, scope: &TimelineScope) -> String {

@@ -152,6 +152,7 @@ mod object_persistence_support;
 mod post_integrity;
 mod post_withdrawal_hydration;
 mod private_channels_support;
+mod private_control_support;
 mod profile_docs_support;
 mod profile_timeline_support;
 mod projection_support;
@@ -221,19 +222,19 @@ pub(crate) use object_hydration::{
     hydrate_object_in_topic_with_hint,
 };
 pub(crate) use object_persistence_support::{
-    best_effort_blob_cache_status, best_effort_blob_view_status,
+    PrivateEpochSnapshot, best_effort_blob_cache_status, best_effort_blob_view_status,
     bookmarked_custom_reaction_view_from_row, custom_reaction_asset_view_from_doc,
     fetch_manifest_blob, fetch_private_channel_epoch_handoff_grant_from_replica,
+    fetch_private_channel_participant_from_replica,
     fetch_private_channel_participants_from_replica, fetch_private_channel_policy_from_replica,
     fetch_projection_blob_text, game_projection_row, live_projection_row, persist_game_room_state,
     persist_live_session_state, persist_media_manifest, persist_post_object,
     persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
     persist_private_channel_metadata, persist_private_channel_participant,
     persist_private_channel_policy, persist_session_envelope, post_withdrawal_row,
-    private_channel_rotation_is_pending, projection_blob_fetch_timeout, projection_row_from_post,
-    reaction_cache_key, reaction_projection_row, reaction_state_view_from_rows,
+    projection_blob_fetch_timeout, projection_row_from_post, reaction_cache_key,
+    reaction_projection_row, reaction_state_view_from_rows, read_private_epoch_snapshot,
     recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
-    wait_for_private_channel_epoch_snapshot,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
@@ -251,9 +252,7 @@ pub(crate) use profile_docs_support::{
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,
     snapshot_follow_notification_baseline,
 };
-pub(crate) use profile_timeline_support::{
-    persist_profile_index_entry, profile_timeline_page_from_docs,
-};
+pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
     LIVE_GAME_LIST_LIMIT, active_private_channel_participants, archive_private_channel_epoch,
     bookmarked_post_row_is_hidden, current_private_channel_replica_id, filtered_thread_page,

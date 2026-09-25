@@ -1,3 +1,5 @@
+#[cfg(feature = "iroh-integration-tests")]
+mod author_reader_integration;
 mod bookmarks;
 mod bucket_locators;
 mod posts;

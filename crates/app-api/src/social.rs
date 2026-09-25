@@ -193,8 +193,6 @@ impl AppService {
         let author_pubkey = normalize_author_pubkey(pubkey)?;
         self.ensure_author_subscription(author_pubkey.as_str())
             .await?;
-        self.maybe_restart_author_subscription(author_pubkey.as_str())
-            .await;
         self.rebuild_author_relationships().await?;
         if self
             .authors_blocked_either_direction(
