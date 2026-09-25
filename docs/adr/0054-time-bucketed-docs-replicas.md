@@ -98,6 +98,7 @@ R5-Dでは同じ有界readerが公開bucketとCNへ明示開示されたprivate 
 private申請はepoch IDをsecretと同じ明示同意のHTTP requestに含め、CNは登録済みcapabilityを
 暗号化保存する。privateのQUICページ要求はepoch secret由来の証明を要し、CNは有効な申請者の
 bootstrap端末を最大4件だけ選び、direct addressと構成済みrelay候補へchannel/epoch IDを送る。
+端末候補が4件を超える場合はchannel別の永続cursorで巡回し、直近の固定4件だけに留めない。
 初回の開示同意は同じaccount/channel/CNの後続epochにも継続し、端末は既存CN維持tickで一度に
 1件だけ既知の現行epochを照合する。変化がある場合だけ旧capabilityと既存申請を証明して新secretを
 送信する。再承認を要求しない。退出・本人の申請撤回・CN同意撤回で以後の送信を止める。

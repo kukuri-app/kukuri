@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures_util::{StreamExt, stream};
-use sqlx::{Row, postgres::PgPool};
+use sqlx::{
+    Row,
+    postgres::{PgPool, PgRow},
+};
 use tokio::sync::Semaphore;
 use tracing::warn;
 
@@ -37,6 +40,20 @@ pub struct BucketReader {
 }
 
 impl BucketReader {
+    fn selected_scope_row(row: PgRow, priority: bool) -> Result<Option<SelectedScope>> {
+        let kind = IndexScopeKind::parse(&row.try_get::<String, _>("kind")?)?;
+        let epoch_id: Option<String> = row.try_get("epoch_id")?;
+        if kind == IndexScopeKind::PrivateChannel && epoch_id.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(SelectedScope {
+            kind,
+            id: row.try_get("id")?,
+            epoch_id,
+            priority,
+        }))
+    }
+
     pub fn new(
         pool: PgPool,
         docs: Arc<IrohDocsSync>,
@@ -65,28 +82,31 @@ impl BucketReader {
         pool: &PgPool,
         physical_budget: usize,
     ) -> Result<(Vec<SelectedScope>, (String, String))> {
-        let eligible = "FROM cn_index.supported_topics s
-            LEFT JOIN cn_index.channel_secrets c
-              ON s.kind = 'private_channel' AND c.channel_id = s.id
-            WHERE (s.kind = 'public_topic' OR (s.kind = 'private_channel' AND c.epoch_id IS NOT NULL))";
-        let priority = sqlx::query(&format!(
-            "SELECT s.kind, s.id, c.epoch_id {eligible}
-             AND s.last_index_demand_at >= NOW() - INTERVAL '10 minutes'
-             ORDER BY s.last_index_demand_at DESC, s.kind, s.id LIMIT $1"
-        ))
-        .bind(PRIORITY_SCOPES as i64)
+        let priority_rows = sqlx::query(
+            "WITH candidates AS MATERIALIZED (
+                SELECT kind, id, last_index_demand_at FROM cn_index.supported_topics
+                WHERE last_index_demand_at >= NOW() - INTERVAL '10 minutes'
+                ORDER BY last_index_demand_at DESC, kind, id LIMIT $1
+             )
+             SELECT s.kind, s.id, c.epoch_id FROM candidates s
+             LEFT JOIN LATERAL (
+               SELECT epoch_id FROM cn_index.channel_secrets
+               WHERE s.kind='private_channel' AND channel_id=s.id LIMIT 1
+             ) c ON TRUE
+             ORDER BY s.last_index_demand_at DESC, s.kind, s.id",
+        )
+        .bind((PRIORITY_SCOPES * 2) as i64)
         .fetch_all(pool)
-        .await?
-        .iter()
-        .map(|row| -> Result<SelectedScope> {
-            Ok(SelectedScope {
-                kind: IndexScopeKind::parse(&row.try_get::<String, _>("kind")?)?,
-                id: row.try_get("id")?,
-                epoch_id: row.try_get("epoch_id")?,
-                priority: true,
-            })
-        })
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .await?;
+        let mut priority = Vec::new();
+        for row in priority_rows {
+            if let Some(scope) = Self::selected_scope_row(row, true)? {
+                priority.push(scope);
+                if priority.len() == PRIORITY_SCOPES {
+                    break;
+                }
+            }
+        }
         let cursor = sqlx::query(
             "SELECT last_kind, last_scope_id FROM cn_index.bucket_reader_cursor WHERE id = TRUE",
         )
@@ -101,32 +121,37 @@ impl BucketReader {
             cursor.try_get("last_kind")?,
             cursor.try_get("last_scope_id")?,
         );
-        for (after_kind, after_id) in [next_cursor.clone(), (String::new(), String::new())] {
-            if selected.len() >= physical_budget / 2 {
-                break;
-            }
-            let page = sqlx::query(&format!(
-                "SELECT s.kind, s.id, c.epoch_id {eligible}
-                 AND (s.kind, s.id) > ($1, $2)
-                 ORDER BY s.kind, s.id LIMIT 64"
-            ))
-            .bind(after_kind)
-            .bind(after_id)
+        let page_sql = "WITH candidates AS MATERIALIZED (
+                SELECT kind, id FROM cn_index.supported_topics
+                WHERE (kind, id) > ($1, $2)
+                ORDER BY kind, id LIMIT 64
+             )
+             SELECT s.kind, s.id, c.epoch_id FROM candidates s
+             LEFT JOIN LATERAL (
+               SELECT epoch_id FROM cn_index.channel_secrets
+               WHERE s.kind='private_channel' AND channel_id=s.id LIMIT 1
+             ) c ON TRUE
+             ORDER BY s.kind, s.id";
+        let mut page = sqlx::query(page_sql)
+            .bind(&next_cursor.0)
+            .bind(&next_cursor.1)
             .fetch_all(pool)
             .await?;
-            for row in page {
-                let kind = IndexScopeKind::parse(&row.try_get::<String, _>("kind")?)?;
-                let id: String = row.try_get("id")?;
-                next_cursor = (kind.as_str().to_string(), id.clone());
-                if !seen.insert((kind, id.clone())) {
-                    continue;
-                }
-                selected.push(SelectedScope {
-                    kind,
-                    id,
-                    epoch_id: row.try_get("epoch_id")?,
-                    priority: false,
-                });
+        if page.is_empty() {
+            page = sqlx::query(page_sql)
+                .bind("")
+                .bind("")
+                .fetch_all(pool)
+                .await?;
+        }
+        for row in page {
+            let kind: String = row.try_get("kind")?;
+            let id: String = row.try_get("id")?;
+            next_cursor = (kind, id);
+            if let Some(scope) = Self::selected_scope_row(row, false)?
+                && seen.insert((scope.kind, scope.id.clone()))
+            {
+                selected.push(scope);
                 if selected.len() >= physical_budget / 2 {
                     break;
                 }
@@ -136,25 +161,36 @@ impl BucketReader {
     }
 
     async fn selected_public_providers(pool: &PgPool) -> Result<(Vec<SeedPeer>, (String, String))> {
-        let eligible = "FROM cn_bootstrap.peer_registrations p
-            JOIN cn_user.subscriber_accounts a
-              ON a.subscriber_pubkey = p.subscriber_pubkey
-            WHERE a.status = 'active' AND p.expires_at > NOW()";
         let mut selected = Vec::new();
         let mut seen = HashSet::new();
-        for row in sqlx::query(&format!(
-            "SELECT p.subscriber_pubkey, p.endpoint_id, p.addr_hint {eligible}
-             ORDER BY p.last_seen_at DESC, p.subscriber_pubkey, p.endpoint_id LIMIT 2"
-        ))
+        for row in sqlx::query(
+            "WITH candidates AS MATERIALIZED (
+                SELECT subscriber_pubkey, endpoint_id, addr_hint, expires_at, last_seen_at
+                FROM cn_bootstrap.peer_registrations ORDER BY last_seen_at DESC LIMIT 8
+             )
+             SELECT p.endpoint_id, p.addr_hint,
+                    (a.status='active' AND p.expires_at>NOW()) AS eligible
+             FROM candidates p LEFT JOIN LATERAL (
+               SELECT status FROM cn_user.subscriber_accounts
+               WHERE subscriber_pubkey=p.subscriber_pubkey LIMIT 1
+             ) a ON TRUE
+             ORDER BY p.last_seen_at DESC",
+        )
         .fetch_all(pool)
         .await?
         {
+            if !row.try_get::<Option<bool>, _>("eligible")?.unwrap_or(false) {
+                continue;
+            }
             let endpoint_id: String = row.try_get("endpoint_id")?;
             seen.insert(endpoint_id.clone());
             selected.push(SeedPeer {
                 endpoint_id,
                 addr_hint: row.try_get("addr_hint")?,
             });
+            if selected.len() == 2 {
+                break;
+            }
         }
         let cursor = sqlx::query(
             "SELECT last_peer_pubkey, last_peer_endpoint_id
@@ -166,36 +202,182 @@ impl BucketReader {
             cursor.try_get("last_peer_pubkey")?,
             cursor.try_get("last_peer_endpoint_id")?,
         );
-        for (after_pubkey, after_id) in [next_cursor.clone(), (String::new(), String::new())] {
+        let page_sql = "WITH candidates AS MATERIALIZED (
+                SELECT subscriber_pubkey, endpoint_id, addr_hint, expires_at
+                FROM cn_bootstrap.peer_registrations
+                WHERE (subscriber_pubkey, endpoint_id)>($1, $2)
+                ORDER BY subscriber_pubkey, endpoint_id LIMIT 8
+             )
+             SELECT p.subscriber_pubkey, p.endpoint_id, p.addr_hint,
+                    (a.status='active' AND p.expires_at>NOW()) AS eligible
+             FROM candidates p LEFT JOIN LATERAL (
+               SELECT status FROM cn_user.subscriber_accounts
+               WHERE subscriber_pubkey=p.subscriber_pubkey LIMIT 1
+             ) a ON TRUE
+             ORDER BY p.subscriber_pubkey, p.endpoint_id";
+        let mut page = sqlx::query(page_sql)
+            .bind(&next_cursor.0)
+            .bind(&next_cursor.1)
+            .fetch_all(pool)
+            .await?;
+        if page.is_empty() {
+            page = sqlx::query(page_sql)
+                .bind("")
+                .bind("")
+                .fetch_all(pool)
+                .await?;
+        }
+        for row in page {
+            let pubkey: String = row.try_get("subscriber_pubkey")?;
+            let endpoint_id: String = row.try_get("endpoint_id")?;
+            next_cursor = (pubkey, endpoint_id.clone());
+            if !row.try_get::<Option<bool>, _>("eligible")?.unwrap_or(false)
+                || !seen.insert(endpoint_id.clone())
+            {
+                continue;
+            }
+            selected.push(SeedPeer {
+                endpoint_id,
+                addr_hint: row.try_get("addr_hint")?,
+            });
             if selected.len() >= 4 {
                 break;
             }
-            let page = sqlx::query(&format!(
-                "SELECT p.subscriber_pubkey, p.endpoint_id, p.addr_hint {eligible}
-                 AND (p.subscriber_pubkey, p.endpoint_id) > ($1, $2)
-                 ORDER BY p.subscriber_pubkey, p.endpoint_id LIMIT 8"
-            ))
-            .bind(after_pubkey)
-            .bind(after_id)
-            .fetch_all(pool)
-            .await?;
-            for row in page {
-                let pubkey: String = row.try_get("subscriber_pubkey")?;
-                let endpoint_id: String = row.try_get("endpoint_id")?;
-                next_cursor = (pubkey, endpoint_id.clone());
-                if !seen.insert(endpoint_id.clone()) {
-                    continue;
-                }
-                selected.push(SeedPeer {
-                    endpoint_id,
+        }
+        Ok((selected, next_cursor))
+    }
+
+    async fn selected_private_providers(pool: &PgPool, channel_id: &str) -> Result<Vec<SeedPeer>> {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO cn_index.private_bucket_provider_cursor(channel_id)
+             VALUES ($1) ON CONFLICT DO NOTHING",
+        )
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await?;
+        let cursor = sqlx::query(
+            "SELECT last_pubkey, last_endpoint_id
+             FROM cn_index.private_bucket_provider_cursor WHERE channel_id=$1 FOR UPDATE",
+        )
+        .bind(channel_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let old: (String, String) = (
+            cursor.try_get("last_pubkey")?,
+            cursor.try_get("last_endpoint_id")?,
+        );
+        let mut next = old.clone();
+        let mut seeds = Vec::new();
+        let mut seen = HashSet::new();
+        // Continue the current requester's endpoint page before moving to the
+        // next approved requester. A requester with many devices cannot hide
+        // its later endpoints behind the first four.
+        let endpoint_page = sqlx::query(
+            "WITH candidates AS MATERIALIZED (
+                SELECT endpoint_id, addr_hint, expires_at
+                FROM cn_bootstrap.peer_registrations
+                WHERE subscriber_pubkey=$2 AND endpoint_id>$3
+                ORDER BY endpoint_id LIMIT 8
+             )
+             SELECT p.endpoint_id, p.addr_hint,
+                    (a.status='active' AND r.id IS NOT NULL AND p.expires_at>NOW()) AS eligible
+             FROM candidates p
+             LEFT JOIN LATERAL (
+               SELECT status FROM cn_user.subscriber_accounts
+               WHERE subscriber_pubkey=$2 LIMIT 1
+             ) a ON TRUE
+             LEFT JOIN LATERAL (
+               SELECT id FROM cn_index.indexing_requests
+               WHERE kind='private_channel' AND target_id=$1
+                 AND requester_pubkey=$2 AND status='approved' LIMIT 1
+             ) r ON TRUE ORDER BY p.endpoint_id",
+        )
+        .bind(channel_id)
+        .bind(&old.0)
+        .bind(&old.1)
+        .fetch_all(&mut *tx)
+        .await?;
+        let endpoint_page_full = endpoint_page.len() == 8;
+        for row in endpoint_page {
+            next = (old.0.clone(), row.try_get("endpoint_id")?);
+            if row.try_get::<Option<bool>, _>("eligible")?.unwrap_or(false)
+                && seen.insert(next.1.clone())
+            {
+                seeds.push(SeedPeer {
+                    endpoint_id: next.1.clone(),
                     addr_hint: row.try_get("addr_hint")?,
                 });
-                if selected.len() >= 4 {
+                if seeds.len() == 4 {
                     break;
                 }
             }
         }
-        Ok((selected, next_cursor))
+        if !endpoint_page_full && seeds.len() < 4 {
+            // The request index is the mother set, not every CN peer. Each
+            // selected requester gets one indexed endpoint lookup; absent or
+            // expired endpoints still advance the requester cursor.
+            let page_sql = "WITH requesters AS MATERIALIZED (
+                    SELECT requester_pubkey FROM cn_index.indexing_requests
+                    WHERE kind='private_channel' AND target_id=$1
+                      AND status='approved' AND requester_pubkey>$2
+                    ORDER BY requester_pubkey LIMIT 64
+                 )
+                 SELECT r.requester_pubkey, p.endpoint_id, p.addr_hint,
+                        (a.status='active' AND p.expires_at>NOW()) AS eligible
+                 FROM requesters r
+                 LEFT JOIN LATERAL (
+                   SELECT endpoint_id, addr_hint, expires_at
+                   FROM cn_bootstrap.peer_registrations
+                   WHERE subscriber_pubkey=r.requester_pubkey
+                   ORDER BY endpoint_id LIMIT 1
+                 ) p ON TRUE
+                 LEFT JOIN LATERAL (
+                   SELECT status FROM cn_user.subscriber_accounts
+                   WHERE subscriber_pubkey=r.requester_pubkey LIMIT 1
+                 ) a ON TRUE
+                 ORDER BY r.requester_pubkey";
+            let mut page = sqlx::query(page_sql)
+                .bind(channel_id)
+                .bind(&old.0)
+                .fetch_all(&mut *tx)
+                .await?;
+            if page.is_empty() {
+                page = sqlx::query(page_sql)
+                    .bind(channel_id)
+                    .bind("")
+                    .fetch_all(&mut *tx)
+                    .await?;
+            }
+            for row in page {
+                let pubkey: String = row.try_get("requester_pubkey")?;
+                let endpoint_id: Option<String> = row.try_get("endpoint_id")?;
+                next = (pubkey, endpoint_id.clone().unwrap_or_default());
+                if let Some(endpoint_id) = endpoint_id
+                    && row.try_get::<Option<bool>, _>("eligible")?.unwrap_or(false)
+                    && seen.insert(endpoint_id.clone())
+                {
+                    seeds.push(SeedPeer {
+                        endpoint_id,
+                        addr_hint: row.try_get("addr_hint")?,
+                    });
+                    if seeds.len() == 4 {
+                        break;
+                    }
+                }
+            }
+        }
+        sqlx::query(
+            "UPDATE cn_index.private_bucket_provider_cursor
+             SET last_pubkey=$2, last_endpoint_id=$3 WHERE channel_id=$1",
+        )
+        .bind(channel_id)
+        .bind(&next.0)
+        .bind(&next.1)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(seeds)
     }
 
     pub async fn poll_once(&self, now: i64) -> Result<IngestSummary> {
@@ -284,29 +466,7 @@ impl BucketReader {
             None
         };
         let peers = if private_secret.is_some() {
-            let rows = sqlx::query(
-                "SELECT p.endpoint_id, p.addr_hint FROM cn_index.indexing_requests r
-                 JOIN cn_bootstrap.peer_registrations p
-                   ON p.subscriber_pubkey = r.requester_pubkey
-                 JOIN cn_user.subscriber_accounts a
-                   ON a.subscriber_pubkey = p.subscriber_pubkey
-                 WHERE r.kind = 'private_channel' AND r.target_id = $1
-                   AND r.status = 'approved' AND a.status = 'active'
-                   AND p.expires_at > NOW()
-                 ORDER BY p.last_seen_at DESC, p.endpoint_id LIMIT 4",
-            )
-            .bind(&scope.id)
-            .fetch_all(&self.pool)
-            .await?;
-            let seeds = rows
-                .into_iter()
-                .map(|row| -> Result<SeedPeer> {
-                    Ok(SeedPeer {
-                        endpoint_id: row.try_get("endpoint_id")?,
-                        addr_hint: row.try_get("addr_hint")?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let seeds = Self::selected_private_providers(&self.pool, &scope.id).await?;
             self.docs.remote_read_candidates_for_seeds(seeds).await?
         } else {
             self.docs
@@ -385,13 +545,23 @@ mod tests {
         remove_supported_topic,
     };
 
+    fn integration_admin_url() -> Option<String> {
+        if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_INTEGRATION_TESTS") {
+            return None;
+        }
+        // Config unit tests temporarily replace COMMUNITY_NODE_DATABASE_URL in
+        // this same test binary. The compose port is stable across that test.
+        let port = std::env::var("CN_POSTGRES_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|port| *port > 0)
+            .unwrap_or(15432);
+        Some(format!("postgres://cn:cn_password@127.0.0.1:{port}/cn"))
+    }
+
     #[tokio::test]
     async fn recent_demand_wins_while_the_fair_cursor_reaches_every_other_topic() -> Result<()> {
-        let Some(admin) = kukuri_test_support::gated_env_url(
-            "KUKURI_CN_RUN_INTEGRATION_TESTS",
-            "COMMUNITY_NODE_DATABASE_URL",
-            "postgres://cn:cn_password@127.0.0.1:15432/cn",
-        ) else {
+        let Some(admin) = integration_admin_url() else {
             return Ok(());
         };
         for total in [80, 800] {
@@ -445,12 +615,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unopened_private_scopes_do_not_block_a_later_public_scope() -> Result<()> {
+        let Some(admin) = integration_admin_url() else {
+            return Ok(());
+        };
+        let database = TestDatabase::create(&admin, "cn_bucket_unopened_private").await?;
+        let pool = connect_postgres(&database.database_url).await?;
+        initialize_database(&pool).await?;
+        sqlx::query(
+            "INSERT INTO cn_index.supported_topics(kind, id)
+             SELECT 'private_channel', 'room-' || lpad(i::text, 4, '0')
+             FROM generate_series(0, 799) AS i",
+        )
+        .execute(&pool)
+        .await?;
+        add_supported_topic(&pool, IndexScopeKind::PublicTopic, "later-public").await?;
+        let mut reached = false;
+        for _ in 0..14 {
+            let (scopes, cursor) = BucketReader::selected_scopes(&pool, 32).await?;
+            reached |= scopes.iter().any(|scope| scope.id == "later-public");
+            sqlx::query(
+                "UPDATE cn_index.bucket_reader_cursor
+                 SET last_kind=$1, last_scope_id=$2 WHERE id=TRUE",
+            )
+            .bind(cursor.0)
+            .bind(cursor.1)
+            .execute(&pool)
+            .await?;
+            if reached {
+                break;
+            }
+        }
+        assert!(reached, "the fair cursor must pass unopened private scopes");
+        pool.close().await;
+        database.cleanup().await
+    }
+
+    #[tokio::test]
     async fn private_epoch_requires_both_support_and_registered_secret() -> Result<()> {
-        let Some(admin) = kukuri_test_support::gated_env_url(
-            "KUKURI_CN_RUN_INTEGRATION_TESTS",
-            "COMMUNITY_NODE_DATABASE_URL",
-            "postgres://cn:cn_password@127.0.0.1:15432/cn",
-        ) else {
+        let Some(admin) = integration_admin_url() else {
             return Ok(());
         };
         let database = TestDatabase::create(&admin, "cn_bucket_private_gate").await?;
@@ -477,12 +680,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn private_provider_window_reaches_the_fifth_approved_device() -> Result<()> {
+        let Some(admin) = integration_admin_url() else {
+            return Ok(());
+        };
+        let database = TestDatabase::create(&admin, "cn_bucket_private_peers").await?;
+        let pool = connect_postgres(&database.database_url).await?;
+        initialize_database(&pool).await?;
+        let cipher =
+            ChannelSecretCipher::from_key_material("cn-bucket-private-test-key-0123456789")?;
+        register_channel_secret_with_epoch(&pool, &cipher, "room", "e1", &hex::encode([7; 32]))
+            .await?;
+        sqlx::query("INSERT INTO cn_user.subscriber_accounts(subscriber_pubkey) VALUES ('subscriber-owner')")
+            .execute(&pool).await?;
+        sqlx::query(
+            "INSERT INTO cn_index.indexing_requests(id, requester_pubkey, kind, target_id, status)
+             VALUES ('request-owner', 'subscriber-owner', 'private_channel', 'room', 'approved')",
+        )
+        .execute(&pool)
+        .await?;
+        for i in 0..6 {
+            sqlx::query(
+                "INSERT INTO cn_bootstrap.peer_registrations(subscriber_pubkey, endpoint_id, expires_at)
+                 VALUES ('subscriber-owner', $1, NOW()+INTERVAL '90 seconds')",
+            )
+            .bind(format!("endpoint-{i}"))
+            .execute(&pool).await?;
+        }
+        for i in 0..20 {
+            let pubkey = format!("subscriber-u{i:02}");
+            sqlx::query("INSERT INTO cn_user.subscriber_accounts(subscriber_pubkey) VALUES ($1)")
+                .bind(&pubkey)
+                .execute(&pool)
+                .await?;
+            sqlx::query(
+                "INSERT INTO cn_bootstrap.peer_registrations(subscriber_pubkey, endpoint_id, expires_at)
+                 VALUES ($1, $2, NOW()+INTERVAL '90 seconds')",
+            )
+            .bind(&pubkey)
+            .bind(format!("endpoint-u{i:02}"))
+            .execute(&pool)
+            .await?;
+        }
+        let first = BucketReader::selected_private_providers(&pool, "room").await?;
+        let second = BucketReader::selected_private_providers(&pool, "room").await?;
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 4);
+        assert_eq!(first[0].endpoint_id, "endpoint-0");
+        assert!(second.iter().any(|peer| peer.endpoint_id == "endpoint-4"));
+        let third = BucketReader::selected_private_providers(&pool, "room").await?;
+        assert!(third.iter().any(|peer| peer.endpoint_id == "endpoint-5"));
+        pool.close().await;
+        database.cleanup().await
+    }
+
+    #[tokio::test]
     async fn public_provider_window_keeps_recent_peers_and_rotates_the_rest() -> Result<()> {
-        let Some(admin) = kukuri_test_support::gated_env_url(
-            "KUKURI_CN_RUN_INTEGRATION_TESTS",
-            "COMMUNITY_NODE_DATABASE_URL",
-            "postgres://cn:cn_password@127.0.0.1:15432/cn",
-        ) else {
+        let Some(admin) = integration_admin_url() else {
             return Ok(());
         };
         let database = TestDatabase::create(&admin, "cn_bucket_peer_fair").await?;
