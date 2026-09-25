@@ -147,13 +147,10 @@ export function ContextActionMenu({
       width: rect.width || FALLBACK_MENU_WIDTH_PX,
       height: rect.height || FALLBACK_MENU_HEIGHT_PX,
     });
-    const firstEnabledIndex = items.findIndex((item) => !item.disabled);
-    if (firstEnabledIndex >= 0) {
-      itemRefs.current[firstEnabledIndex]?.focus();
-    } else {
-      menuRef.current.focus();
-    }
-  }, [items, open, position?.x, position?.y]);
+    // 最初の focus は開いた時と位置が変わった時だけ移す。持ち主の再描画で items が作り直されても、
+    // keyboard で移した focus を先頭へ戻さない。
+    (itemRefs.current.find((item) => item && !item.disabled) ?? menuRef.current).focus();
+  }, [open, position?.x, position?.y]);
 
   const menuStyle = useMemo(() => {
     if (!position || typeof window === 'undefined') {
