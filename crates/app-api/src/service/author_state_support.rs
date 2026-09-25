@@ -235,18 +235,9 @@ pub(crate) async fn known_docs_author(
         .await
 }
 
-async fn rebuild_relationships(services: &ServiceHandles, local_author_pubkey: &str) -> Result<()> {
-    rebuild_author_relationships(
-        services.store.as_ref(),
-        services.projection_store.as_ref(),
-        local_author_pubkey,
-    )
-    .await
-}
-
 /// author の状態(profile・follow・block)を、上限つきで反映する。replica は走査しない。
 ///
-/// 購読の開始時(最初の表示)に使う。関係は、反映の有無にかかわらず再計算する(起動時に、手元の edge から関係を作り直す)。
+/// 購読の開始時(最初の表示)に使う。関係は読むときに edge から求める(#1221 R4-D)ので、ここでは再計算しない。
 /// 戻り値は読めた key の数。
 pub(crate) async fn hydrate_author_state(
     services: &ServiceHandles,
@@ -254,14 +245,16 @@ pub(crate) async fn hydrate_author_state(
     author_pubkey: &str,
     policy: DocFetchPolicy,
 ) -> Result<usize> {
-    let outcome = hydrate_author_keys(services, local_author_pubkey, author_pubkey, policy).await?;
-    rebuild_relationships(services, local_author_pubkey).await?;
-    Ok(outcome.reflected)
+    Ok(
+        hydrate_author_keys(services, local_author_pubkey, author_pubkey, policy)
+            .await?
+            .reflected,
+    )
 }
 
 /// 同期の区切りと取りこぼしの後の追いつき。読むのは、自分を指す follow・block の key(`graph/follows/<自分>`・
 /// `graph/blocks/<自分>`)だけ。相互 follow の判定と DM に要るので、取りこぼしても読み直す。それ以外の key の取りこぼしは
-/// 埋めない。関係の再計算は、手元に無かった envelope が入ったときだけ行う。
+/// 埋めない。
 pub(crate) async fn catch_up_author_state(
     services: &ServiceHandles,
     local_author_pubkey: &str,
@@ -274,14 +267,10 @@ pub(crate) async fn catch_up_author_state(
     for key in self_edge_keys(local_author_pubkey) {
         outcome.add(reader.read(&key).await?);
     }
-    if outcome.changed > 0 {
-        rebuild_relationships(services, local_author_pubkey).await?;
-    }
     Ok(outcome)
 }
 
-/// docs の event が指す author replica の key を 1 つ反映する。関係の再計算は、手元に無かった envelope が
-/// 入ったときだけ行う。
+/// docs の event が指す author replica の key を 1 つ反映する。
 pub(crate) async fn hydrate_author_key(
     services: &ServiceHandles,
     local_author_pubkey: &str,
@@ -289,14 +278,10 @@ pub(crate) async fn hydrate_author_key(
     key: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let outcome = AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy)
+    AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy)
         .await?
         .read(key)
-        .await?;
-    if outcome.changed > 0 {
-        rebuild_relationships(services, local_author_pubkey).await?;
-    }
-    Ok(outcome)
+        .await
 }
 
 /// author replica の key の種類。

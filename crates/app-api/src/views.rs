@@ -366,21 +366,8 @@ pub struct DirectMessageStatusView {
     pub dm_id: String,
     pub mutual: bool,
     pub send_enabled: bool,
-    pub peer_count: usize,
     pub pending_outbox_count: usize,
     pub pending_outbox_has_more: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
-pub struct DirectMessageTopicStatusView {
-    pub topic: String,
-    pub joined: bool,
-    pub peer_count: usize,
-    pub connected_peers: Vec<String>,
-    pub status_detail: String,
-    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

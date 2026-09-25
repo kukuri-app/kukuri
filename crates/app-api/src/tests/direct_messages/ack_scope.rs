@@ -69,7 +69,6 @@ async fn signed_ack_for_another_conversation_cannot_remove_protected_outbox() {
             services: &app.services,
             local_author_pubkey: &local,
             peer_pubkey: &peer,
-            topic: &topic,
             ack_destination: None,
         },
         &GossipHint::DirectMessageAck {
@@ -113,7 +112,6 @@ async fn signed_ack_for_another_conversation_cannot_remove_protected_outbox() {
                 services: &app.services,
                 local_author_pubkey: &local,
                 peer_pubkey: &other,
-                topic: &valid_topic,
                 ack_destination: None,
             },
             &GossipHint::DirectMessageAck {
@@ -151,7 +149,6 @@ async fn signed_ack_for_another_conversation_cannot_remove_protected_outbox() {
             services: &app.services,
             local_author_pubkey: &local,
             peer_pubkey: &other,
-            topic: &valid_topic,
             ack_destination: None,
         },
         &GossipHint::DirectMessageAck {

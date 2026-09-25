@@ -22,8 +22,9 @@ Accepted
 
 2026-09-23の輸送追補: 暗号frame・署名ACK・mutual・保護outboxの契約は本ADRを維持する。
 輸送routeは[ADR 0055 §4](0055-demand-owned-network-work.md)に従い、署名済みaccount受信先へ
-sealed参照とACKを段階移行する。旧pairwise hintも撤去条件を満たすまで併用し、重複した有効ACKは
-最初に保存した配達時刻を維持する。以下のpairwise輸送表は元のv1設計であり、移行中の追加経路は追補が定める。
+sealed参照とACKを移行した。2026-09-26のR4-Dで旧pairwise topicの購読・hint送信・ACKを撤去し、
+DMの輸送はaccount routeだけになった。重複した有効ACKは最初に保存した配達時刻を維持する。
+以下のpairwise輸送表は元のv1設計であり、現行の輸送は追補が定める（暗号鍵の導出は維持）。
 
 ## Feature Data Classification
 

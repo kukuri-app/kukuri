@@ -55,22 +55,13 @@ async fn signed_account_route_ack_clears_only_matching_dm_outbox() {
     let store = Arc::new(MemoryStore::default());
     let local = sender.public_key_hex();
     let peer = recipient.public_key_hex();
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &local,
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: local.clone(),
-            author_pubkey: peer.clone(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [peer.as_str()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let dm_id = direct_message_id_for_participants(&sender.public_key(), &recipient.public_key());
     let row = DirectMessageOutboxRow {
         dm_id: dm_id.clone(),
@@ -176,22 +167,13 @@ async fn inline_dm_frame_requires_sender_bound_provider_before_blob_io() {
     let sender = generate_keys();
     let recipient = generate_keys();
     let store = Arc::new(MemoryStore::default());
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let network = FakeNetwork::default();
     let transport = Arc::new(FakeTransport::new("recipient", network.clone()));
     let blob = Arc::new(OfferBlobService::new(
@@ -282,22 +264,13 @@ async fn account_receive_offer_rejects_unmutual_dm_and_private_scope_before_prov
         .unwrap()
     );
 
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let (_, private) = offer_for(
         &sender,
         &recipient,
@@ -346,22 +319,13 @@ async fn account_route_ingests_verified_mutual_dm_and_stops_on_shutdown() {
         receiver_transport,
         blob.clone(),
     );
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let dm_id = direct_message_id_for_participants(&sender.public_key(), &recipient.public_key());
     let message_id = "account-route-dm-1";
     let frame = encrypt_direct_message_frame(
@@ -475,22 +439,13 @@ async fn account_offer_rechecks_mutual_after_provider_io_before_reflection() {
     let blob = Arc::new(offer_blob);
     let transport = Arc::new(FakeTransport::new("recipient", FakeNetwork::default()));
     let app = offer_app(recipient.clone(), store.clone(), transport, blob.clone());
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let dm_id = direct_message_id_for_participants(&sender.public_key(), &recipient.public_key());
     let message_id = "revoked-before-reflection";
     let frame = encrypt_direct_message_frame(
@@ -549,13 +504,13 @@ async fn account_offer_rechecks_mutual_after_provider_io_before_reflection() {
     timeout(Duration::from_secs(2), barrier.wait())
         .await
         .expect("provider fetch started");
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        Vec::new(),
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Revoked,
     )
-    .await
-    .unwrap();
+    .await;
     barrier.wait().await;
     assert!(!ingest.await.unwrap().unwrap());
     assert_eq!(blob.fetches.load(Ordering::SeqCst), 1);
@@ -632,23 +587,13 @@ async fn revoked_mutual_during_attachment_fetch_never_persists_plaintext() {
         Arc::new(FakeTransport::new("recipient", FakeNetwork::default())),
         blob.clone(),
     );
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
-    let topic = derive_direct_message_topic(&recipient, &sender.public_key()).unwrap();
+    .await;
     let recipient_pubkey = recipient.public_key_hex();
     let sender_pubkey = sender.public_key_hex();
     let dm_id_for_task = dm_id.clone();
@@ -659,7 +604,6 @@ async fn revoked_mutual_during_attachment_fetch_never_persists_plaintext() {
             &services,
             &recipient_pubkey,
             &sender_pubkey,
-            &topic,
             &dm_id_for_task,
             message_id,
             &frame_hash,
@@ -670,13 +614,13 @@ async fn revoked_mutual_during_attachment_fetch_never_persists_plaintext() {
     timeout(Duration::from_secs(2), barrier.wait())
         .await
         .expect("attachment fetch started");
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        Vec::new(),
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Revoked,
     )
-    .await
-    .unwrap();
+    .await;
     barrier.wait().await;
     assert!(!ingest.await.unwrap().unwrap());
     assert_eq!(blob.writes.load(Ordering::SeqCst), 0);
@@ -810,22 +754,13 @@ async fn shutdown_cancels_an_in_flight_account_offer_provider_fetch() {
     let receiver = Arc::new(FakeTransport::new("recipient", network.clone()));
     let publisher = FakeTransport::new("sender", network);
     let app = offer_app(recipient.clone(), store.clone(), receiver, blob.clone());
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let (provider, offer) = offer_for(
         &sender,
         &recipient,
@@ -864,22 +799,13 @@ async fn old_account_owner_shutdown_cannot_stop_new_same_account_receiver() {
     let old_store = Arc::new(MemoryStore::default());
     let new_store = Arc::new(MemoryStore::default());
     for store in [&old_store, &new_store] {
-        SocialProjectionStore::rebuild_author_relationships(
+        seed_follow_edges(
             store.as_ref(),
             &recipient.public_key_hex(),
-            vec![AuthorRelationshipProjectionRow {
-                local_author_pubkey: recipient.public_key_hex(),
-                author_pubkey: sender.public_key_hex(),
-                following: true,
-                followed_by: true,
-                mutual: true,
-                friend_of_friend: false,
-                friend_of_friend_via_pubkeys: Vec::new(),
-                derived_at: 1,
-            }],
+            [sender.public_key_hex()],
+            FollowEdgeStatus::Active,
         )
-        .await
-        .unwrap();
+        .await;
     }
     let old_app = offer_app(
         recipient.clone(),
@@ -925,22 +851,13 @@ async fn superseding_account_owner_cancels_old_in_flight_provider_fetch() {
     let sender = generate_keys();
     let recipient = generate_keys();
     let store = Arc::new(MemoryStore::default());
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let mut old_blob = OfferBlobService::new(Arc::new(MemoryBlobService::default()));
     old_blob.barrier = Some(barrier.clone());

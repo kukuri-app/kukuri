@@ -290,38 +290,20 @@ async fn real_account_route_fetches_bound_provider_manifest_and_reflects_dm() {
         .import_peer_ticket(&recipient_ticket)
         .await
         .unwrap();
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         recipient_store.as_ref(),
         &recipient.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: recipient.public_key_hex(),
-            author_pubkey: sender.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [sender.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
-    SocialProjectionStore::rebuild_author_relationships(
+    .await;
+    seed_follow_edges(
         sender_store.as_ref(),
         &sender.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: sender.public_key_hex(),
-            author_pubkey: recipient.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [recipient.public_key_hex()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .unwrap();
+    .await;
     sender_app.start_account_receive_offers().await.unwrap();
     let dm_id = direct_message_id_for_participants(&sender.public_key(), &recipient.public_key());
     let message_id = "real-account-offer-1";

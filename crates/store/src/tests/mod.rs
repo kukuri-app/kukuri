@@ -4,9 +4,6 @@ use sqlx::sqlite::SqlitePoolOptions;
 use crate::sqlite::STORE_MIGRATOR;
 use kukuri_core::{EnvelopeId, ObjectStatus, Profile, ReactionKeyKind};
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use kukuri_core::{
     BlobHash, FollowEdgeStatus, PayloadRef, ReplicaId, TopicId, build_follow_edge_envelope,
     build_post_envelope, generate_keys,

@@ -222,20 +222,14 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
     .await
     .unwrap();
     app.services
-        .projection_store
-        .rebuild_author_relationships(
-            &app.current_author_pubkey(),
-            vec![kukuri_store::AuthorRelationshipProjectionRow {
-                local_author_pubkey: app.current_author_pubkey(),
-                author_pubkey: peer.public_key_hex(),
-                following: false,
-                followed_by: true,
-                mutual: false,
-                friend_of_friend: false,
-                friend_of_friend_via_pubkeys: vec![],
-                derived_at: 1,
-            }],
-        )
+        .store
+        .upsert_follow_edge(FollowEdge {
+            subject_pubkey: peer.public_key(),
+            target_pubkey: Pubkey::from(app.current_author_pubkey().as_str()),
+            status: FollowEdgeStatus::Active,
+            updated_at: 1,
+            envelope_id: EnvelopeId::from("follow-peer-local".to_string()),
+        })
         .await
         .unwrap();
     assert!(

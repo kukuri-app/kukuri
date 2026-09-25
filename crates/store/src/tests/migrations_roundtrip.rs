@@ -40,7 +40,7 @@ use super::migrations::materialize_sqlite_fixture;
 
 /// 全世代の up migration version(migrations/ ディレクトリのファイル名から
 /// 観測した生リテラル、昇順)。世代の追加・削除はここと golden の両方に現れる。
-const EXPECTED_VERSIONS: [i64; 39] = [
+const EXPECTED_VERSIONS: [i64; 40] = [
     20260310000000,
     20260312000000,
     20260315000000,
@@ -80,6 +80,7 @@ const EXPECTED_VERSIONS: [i64; 39] = [
     20260925000000,
     20260925000001,
     20260925000002,
+    20260926000000,
 ];
 
 /// 各世代 k について「全適用 → undo(V[k-1]) → 中間世代スキーマと一致 →
@@ -96,7 +97,7 @@ async fn per_generation_stepwise_round_trip() {
     let versions = migrator_up_versions();
     assert_eq!(
         versions, EXPECTED_VERSIONS,
-        "embedded store migration generations drifted from the observed 39 versions"
+        "embedded store migration generations drifted from the observed 40 versions"
     );
 
     let full_snapshot = schema_snapshot(store.pool())

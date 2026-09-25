@@ -142,6 +142,8 @@ SQLite projection は少なくとも次を持つ。
 
 `author_relationship_cache` は canonical source ではなく local query のための materialized cache であり、author replica から rebuild 可能でなければならない。
 
+2026-09-26 追補（#1221 R4-D、[ADR 0055](0055-demand-owned-network-work.md) §4）: `author_relationship_cache` と全件 rebuild は撤去した。関係は読むときに対象 author の follow edge（`follow_edges`）を主キーで点読して導出する。friend_of_friend の意味は変えない。
+
 導出 query は次を引ければよい。
 
 - `following`

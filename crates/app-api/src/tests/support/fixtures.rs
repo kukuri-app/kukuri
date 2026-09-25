@@ -381,3 +381,27 @@ pub(crate) async fn create_remote_follow_notification_with_baseline(
     .await
     .expect("create remote follow notification")
 }
+
+/// 関係は follow edge から読むときに求める(#1221 R4-D)。test は双方向の edge を置いて mutual にする。
+pub(crate) async fn seed_follow_edges(
+    store: &dyn Store,
+    local: &str,
+    peers: impl IntoIterator<Item = impl AsRef<str>>,
+    status: FollowEdgeStatus,
+) {
+    for peer in peers {
+        let peer = peer.as_ref();
+        for (subject, target) in [(local, peer), (peer, local)] {
+            store
+                .upsert_follow_edge(FollowEdge {
+                    subject_pubkey: Pubkey::from(subject),
+                    target_pubkey: Pubkey::from(target),
+                    status: status.clone(),
+                    updated_at: 1,
+                    envelope_id: EnvelopeId::from(format!("follow-{subject}-{target}")),
+                })
+                .await
+                .expect("seed follow edge");
+        }
+    }
+}

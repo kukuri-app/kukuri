@@ -503,9 +503,7 @@ export function DesktopShellColumnWorkspace({
         <div className='shell-column-context-actions'>
           {status ? (
             <span className='shell-column-header-summary'>
-              {status.send_enabled
-                ? t('messages.peerCount', { count: status.peer_count })
-                : t('messages.sendDisabled')}
+              {status.send_enabled ? t('messages.sendEnabled') : t('messages.sendDisabled')}
             </span>
           ) : null}
           <IconButton

@@ -112,44 +112,6 @@ async fn recent_reaction_cache_query_returns_latest_rows_for_author() {
     assert_eq!(recent[1].normalized_reaction_key, "emoji:🔥");
 }
 #[tokio::test]
-async fn author_relationship_projection_rebuild_roundtrip() {
-    let store = SqliteStore::connect_memory().await.expect("sqlite store");
-    let local_author = "a".repeat(64);
-    let target_author = "b".repeat(64);
-
-    SocialProjectionStore::rebuild_author_relationships(
-        &store,
-        local_author.as_str(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: local_author.clone(),
-            author_pubkey: target_author.clone(),
-            following: false,
-            followed_by: true,
-            mutual: false,
-            friend_of_friend: true,
-            friend_of_friend_via_pubkeys: vec!["c".repeat(64)],
-            derived_at: 12,
-        }],
-    )
-    .await
-    .expect("rebuild relationships");
-
-    let relationship = SocialProjectionStore::get_author_relationship(
-        &store,
-        local_author.as_str(),
-        target_author.as_str(),
-    )
-    .await
-    .expect("get relationship")
-    .expect("relationship");
-    assert!(relationship.friend_of_friend);
-    assert_eq!(
-        relationship.friend_of_friend_via_pubkeys,
-        vec!["c".repeat(64)]
-    );
-    assert!(relationship.followed_by);
-}
-#[tokio::test]
 async fn muted_authors_restore_after_restart() {
     let tempdir = tempdir().expect("tempdir");
     let db_path = tempdir.path().join("store.db");
@@ -195,94 +157,6 @@ async fn muted_authors_restore_after_restart() {
             .await
             .expect("get muted author after delete")
             .is_none()
-    );
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn author_relationship_rebuild_stays_visible_to_concurrent_readers() {
-    let tempdir = tempdir().expect("tempdir");
-    let db_path = tempdir.path().join("relationship-cache.db");
-    let writer = SqliteStore::connect_file(&db_path)
-        .await
-        .expect("writer store");
-    let reader = SqliteStore::connect_file(&db_path)
-        .await
-        .expect("reader store");
-    let local_author = "a".repeat(64);
-    let target_author = "b".repeat(64);
-
-    let mut rows = (0..512)
-        .map(|index| AuthorRelationshipProjectionRow {
-            local_author_pubkey: local_author.clone(),
-            author_pubkey: format!("{index:064x}"),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: index,
-        })
-        .collect::<Vec<_>>();
-    rows.push(AuthorRelationshipProjectionRow {
-        local_author_pubkey: local_author.clone(),
-        author_pubkey: target_author.clone(),
-        following: true,
-        followed_by: true,
-        mutual: true,
-        friend_of_friend: false,
-        friend_of_friend_via_pubkeys: Vec::new(),
-        derived_at: 999,
-    });
-
-    SocialProjectionStore::rebuild_author_relationships(
-        &writer,
-        local_author.as_str(),
-        rows.clone(),
-    )
-    .await
-    .expect("seed relationships");
-
-    let keep_running = Arc::new(AtomicBool::new(true));
-    let saw_gap = Arc::new(AtomicBool::new(false));
-    let keep_running_for_task = Arc::clone(&keep_running);
-    let saw_gap_for_task = Arc::clone(&saw_gap);
-    let local_author_for_task = local_author.clone();
-    let target_author_for_task = target_author.clone();
-
-    let reader_task = tokio::spawn(async move {
-        while keep_running_for_task.load(Ordering::SeqCst) {
-            let relationship = SocialProjectionStore::get_author_relationship(
-                &reader,
-                local_author_for_task.as_str(),
-                target_author_for_task.as_str(),
-            )
-            .await
-            .expect("read relationship");
-            if relationship.is_none() {
-                saw_gap_for_task.store(true, Ordering::SeqCst);
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    });
-
-    for _ in 0..32 {
-        SocialProjectionStore::rebuild_author_relationships(
-            &writer,
-            local_author.as_str(),
-            rows.clone(),
-        )
-        .await
-        .expect("rebuild relationships");
-        if saw_gap.load(Ordering::SeqCst) {
-            break;
-        }
-    }
-
-    keep_running.store(false, Ordering::SeqCst);
-    reader_task.await.expect("reader task");
-    assert!(
-        !saw_gap.load(Ordering::SeqCst),
-        "concurrent readers should never observe a missing relationship during rebuild",
     );
 }
 #[tokio::test]

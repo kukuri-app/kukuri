@@ -65,37 +65,6 @@ impl AppService {
                 .unsubscribe_hints(&TopicId::new(topic_id))
                 .await;
         }
-        let dm_peers_to_unsubscribe = self
-            .subscription_registry
-            .direct_message_subscriptions
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        let dm_handles = {
-            let mut subscriptions = self
-                .subscription_registry
-                .direct_message_subscriptions
-                .lock()
-                .await;
-            subscriptions
-                .drain()
-                .map(|(_, handle)| handle)
-                .collect::<Vec<_>>()
-        };
-        for handle in dm_handles {
-            handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
-        for peer_pubkey in dm_peers_to_unsubscribe {
-            if let Ok(topic) = derive_direct_message_topic(
-                self.services.keys.as_ref(),
-                &Pubkey::from(peer_pubkey.as_str()),
-            ) {
-                let _ = self.services.hint_transport.unsubscribe_hints(&topic).await;
-            }
-        }
         let author_handles = {
             let mut subscriptions = self.subscription_registry.author_subscriptions.lock().await;
             subscriptions

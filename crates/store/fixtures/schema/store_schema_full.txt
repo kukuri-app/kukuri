@@ -6,15 +6,6 @@ table author_docs_authors
   column cid=0 name=author_pubkey type=TEXT notnull=1 default=None pk=1
   column cid=1 name=docs_author type=TEXT notnull=1 default=None pk=0
   column cid=2 name=updated_at type=INTEGER notnull=1 default=None pk=0
-table author_relationship_cache
-  column cid=0 name=local_author_pubkey type=TEXT notnull=1 default=None pk=1
-  column cid=1 name=author_pubkey type=TEXT notnull=1 default=None pk=2
-  column cid=2 name=following type=INTEGER notnull=1 default=None pk=0
-  column cid=3 name=followed_by type=INTEGER notnull=1 default=None pk=0
-  column cid=4 name=mutual type=INTEGER notnull=1 default=None pk=0
-  column cid=5 name=friend_of_friend type=INTEGER notnull=1 default=None pk=0
-  column cid=6 name=friend_of_friend_via_pubkeys_json type=TEXT notnull=1 default=None pk=0
-  column cid=7 name=derived_at type=INTEGER notnull=1 default=None pk=0
 table block_edges
   column cid=0 name=subject_pubkey type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_pubkey type=TEXT notnull=1 default=None pk=2
@@ -336,10 +327,6 @@ index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=
   key seqno=3 cid=1 name=Some("topic_id")
   key seqno=4 cid=2 name=Some("channel_id")
   sql=Some("CREATE INDEX cn_private_index_grants_due ON cn_private_index_grants (base_url, active, last_checked_at_ms, topic_id, channel_id)")
-index idx_author_relationship_cache_local_author table=author_relationship_cache unique=0 origin=c partial=0
-  key seqno=0 cid=0 name=Some("local_author_pubkey")
-  key seqno=1 cid=1 name=Some("author_pubkey")
-  sql=Some("CREATE INDEX idx_author_relationship_cache_local_author ON author_relationship_cache(local_author_pubkey, author_pubkey)")
 index idx_block_edges_subject table=block_edges unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("subject_pubkey")
   key seqno=1 cid=3 name=Some("updated_at")
@@ -583,10 +570,6 @@ index sqlite_autoindex_adult_media_hashes_1 table=adult_media_hashes unique=1 or
   sql=None
 index sqlite_autoindex_author_docs_authors_1 table=author_docs_authors unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("author_pubkey")
-  sql=None
-index sqlite_autoindex_author_relationship_cache_1 table=author_relationship_cache unique=1 origin=pk partial=0
-  key seqno=0 cid=0 name=Some("local_author_pubkey")
-  key seqno=1 cid=1 name=Some("author_pubkey")
   sql=None
 index sqlite_autoindex_block_edges_1 table=block_edges unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("subject_pubkey")

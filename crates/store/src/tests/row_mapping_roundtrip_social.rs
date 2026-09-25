@@ -373,150 +373,118 @@ async fn muted_author_roundtrip_preserves_all_columns_and_ordering() {
 }
 
 // ---------------------------------------------------------------------------
-// author_relationship_cache(row_to_author_relationship_projection)
-// bool 4 列 + friend_of_friend_via_pubkeys_json + rebuild の局所置換を固定。
+// #1221 R4-D: 関係は対象の author の follow edge から読むときに求める(cache と全件の再計算を持たない)。
+// sqlite と memory で同じ結果になることを固定する。
 // ---------------------------------------------------------------------------
 
-/// max fixture: bool 4 列すべて true・via_pubkeys 2 要素。
-fn relationship_max(local: &str) -> AuthorRelationshipProjectionRow {
-    AuthorRelationshipProjectionRow {
-        local_author_pubkey: local.to_string(),
-        author_pubkey: "1".repeat(64),
-        following: true,
-        followed_by: true,
-        mutual: true,
-        friend_of_friend: true,
-        friend_of_friend_via_pubkeys: vec!["2".repeat(64), "3".repeat(64)],
-        derived_at: 1_700_000_005_000,
-    }
-}
-
-/// min fixture: bool 4 列すべて false・via_pubkeys 空 Vec。
-fn relationship_min(local: &str) -> AuthorRelationshipProjectionRow {
-    AuthorRelationshipProjectionRow {
-        local_author_pubkey: local.to_string(),
-        author_pubkey: "4".repeat(64),
-        following: false,
-        followed_by: false,
-        mutual: false,
-        friend_of_friend: false,
-        friend_of_friend_via_pubkeys: Vec::new(),
-        derived_at: 0,
-    }
-}
-
-#[tokio::test]
-async fn author_relationship_roundtrip_preserves_all_columns() {
-    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+async fn relationships_derived_from_edges<S: Store + SocialProjectionStore>(store: &S) {
     let local = "a".repeat(64);
-    let max = relationship_max(&local);
-    let min = relationship_min(&local);
-    SocialProjectionStore::rebuild_author_relationships(
-        &store,
-        local.as_str(),
-        vec![max.clone(), min.clone()],
-    )
-    .await
-    .expect("rebuild relationships");
+    let (friend_one, friend_two, target, mutual) = (
+        "2".repeat(64),
+        "1".repeat(64),
+        "3".repeat(64),
+        "4".repeat(64),
+    );
+    let edge =
+        |subject: &str, target: &str, status: FollowEdgeStatus, updated_at: i64| FollowEdge {
+            subject_pubkey: kukuri_core::Pubkey::from(subject),
+            target_pubkey: kukuri_core::Pubkey::from(target),
+            status,
+            updated_at,
+            envelope_id: EnvelopeId::from(format!("follow-{subject}-{target}-{updated_at}")),
+        };
+    for (subject, to) in [
+        (&local, &friend_one),
+        (&local, &friend_two),
+        (&friend_one, &target),
+        (&friend_two, &target),
+        (&target, &local),
+        (&local, &mutual),
+        (&mutual, &local),
+    ] {
+        store
+            .upsert_follow_edge(edge(subject, to, FollowEdgeStatus::Active, 1))
+            .await
+            .expect("edge");
+    }
+    let get = |author: String| {
+        let local = local.clone();
+        async move {
+            SocialProjectionStore::get_author_relationship(store, &local, &author)
+                .await
+                .expect("relationship")
+        }
+    };
+    let followed = get(target.clone()).await.expect("followed by target");
+    assert!(followed.followed_by && !followed.following && !followed.mutual);
+    assert!(followed.friend_of_friend);
+    assert_eq!(
+        followed.friend_of_friend_via_pubkeys,
+        vec![friend_two.clone(), friend_one.clone()]
+    );
+    assert!(get(mutual.clone()).await.expect("mutual").mutual);
+    assert_eq!(get("9".repeat(64)).await, None, "no edge, no relationship");
+    assert_eq!(
+        get(local.clone()).await,
+        None,
+        "no relationship with oneself"
+    );
 
-    assert_eq!(
-        SocialProjectionStore::get_author_relationship(
-            &store,
-            local.as_str(),
-            max.author_pubkey.as_str()
-        )
+    store
+        .upsert_follow_edge(edge(&local, &target, FollowEdgeStatus::Active, 2))
         .await
-        .expect("get max relationship"),
-        Some(max.clone())
-    );
-    assert_eq!(
-        SocialProjectionStore::get_author_relationship(
-            &store,
-            local.as_str(),
-            min.author_pubkey.as_str()
-        )
+        .expect("follow back");
+    let now_mutual = get(target.clone()).await.expect("mutual after follow back");
+    assert!(now_mutual.mutual && !now_mutual.friend_of_friend);
+    assert!(now_mutual.friend_of_friend_via_pubkeys.is_empty());
+
+    store
+        .upsert_follow_edge(edge(&mutual, &local, FollowEdgeStatus::Revoked, 2))
         .await
-        .expect("get min relationship"),
-        Some(min.clone())
-    );
+        .expect("unfollow");
+    let revoked = get(mutual.clone()).await.expect("still following");
+    assert!(revoked.following && !revoked.followed_by && !revoked.mutual);
 
     let listed = SocialProjectionStore::list_author_relationships(
-        &store,
-        local.as_str(),
-        &[
-            max.author_pubkey.clone(),
-            min.author_pubkey.clone(),
-            "f".repeat(64),
-        ],
+        store,
+        &local,
+        &[target.clone(), "9".repeat(64)],
     )
     .await
-    .expect("list relationships");
-    assert_eq!(listed.len(), 2);
-    assert_eq!(listed.get(max.author_pubkey.as_str()), Some(&max));
-    assert_eq!(listed.get(min.author_pubkey.as_str()), Some(&min));
+    .expect("list");
+    assert_eq!(listed.len(), 1);
+    assert!(listed[&target].mutual);
 }
 
 #[tokio::test]
-async fn author_relationship_rebuild_replaces_only_given_local_author() {
+async fn author_relationships_are_derived_from_follow_edges() {
+    relationships_derived_from_edges(&SqliteStore::connect_memory().await.expect("sqlite store"))
+        .await;
+    relationships_derived_from_edges(&crate::MemoryStore::default()).await;
+}
+
+// 関係を読む join は、自分の follow を主 key の前方一致で読み、対象への edge を主 key で引く(対象の follower の総数を走査しない)。
+#[tokio::test]
+async fn author_relationship_join_reads_by_primary_keys() {
+    use sqlx::Row;
     let store = SqliteStore::connect_memory().await.expect("sqlite store");
-    let local_a = "a".repeat(64);
-    let local_b = "b".repeat(64);
-    let a_before = relationship_max(&local_a);
-    let b_row = relationship_max(&local_b);
-    SocialProjectionStore::rebuild_author_relationships(
-        &store,
-        local_a.as_str(),
-        vec![a_before.clone()],
+    let plan = sqlx::query(
+        "EXPLAIN QUERY PLAN SELECT mine.target_pubkey FROM follow_edges AS mine \
+         JOIN follow_edges AS theirs ON theirs.subject_pubkey = mine.target_pubkey \
+         AND theirs.target_pubkey = ?2 AND theirs.status = 'active' \
+         WHERE mine.subject_pubkey = ?1 AND mine.status = 'active' ORDER BY mine.target_pubkey",
     )
+    .bind("a".repeat(64))
+    .bind("b".repeat(64))
+    .fetch_all(store.pool())
     .await
-    .expect("seed local_a");
-    SocialProjectionStore::rebuild_author_relationships(
-        &store,
-        local_b.as_str(),
-        vec![b_row.clone()],
-    )
-    .await
-    .expect("seed local_b");
-
-    let mut a_after = relationship_min(&local_a);
-    a_after.author_pubkey = "5".repeat(64);
-    SocialProjectionStore::rebuild_author_relationships(
-        &store,
-        local_a.as_str(),
-        vec![a_after.clone()],
-    )
-    .await
-    .expect("rebuild local_a");
-
-    // local_a は丸ごと差し替え(旧行は消える)、local_b の行は無傷。
-    assert_eq!(
-        SocialProjectionStore::get_author_relationship(
-            &store,
-            local_a.as_str(),
-            a_before.author_pubkey.as_str(),
-        )
-        .await
-        .expect("get replaced row"),
-        None
-    );
-    assert_eq!(
-        SocialProjectionStore::get_author_relationship(
-            &store,
-            local_a.as_str(),
-            a_after.author_pubkey.as_str(),
-        )
-        .await
-        .expect("get new row"),
-        Some(a_after)
-    );
-    assert_eq!(
-        SocialProjectionStore::get_author_relationship(
-            &store,
-            local_b.as_str(),
-            b_row.author_pubkey.as_str(),
-        )
-        .await
-        .expect("get local_b row"),
-        Some(b_row)
+    .expect("plan");
+    let details = plan
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>();
+    assert!(
+        details.iter().all(|detail| !detail.starts_with("SCAN")),
+        "relationship join must not scan follow_edges: {details:?}"
     );
 }

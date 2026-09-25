@@ -292,11 +292,6 @@ pub trait SocialProjectionStore: Send + Sync {
     ) -> Result<HashMap<String, AuthorRelationshipProjectionRow>> {
         list_author_relationships_one_by_one(self, local_author_pubkey, author_pubkeys).await
     }
-    async fn rebuild_author_relationships(
-        &self,
-        local_author_pubkey: &str,
-        rows: Vec<AuthorRelationshipProjectionRow>,
-    ) -> Result<()>;
     async fn put_muted_author(&self, row: MutedAuthorRow) -> Result<()>;
     async fn get_muted_author(&self, author_pubkey: &str) -> Result<Option<MutedAuthorRow>>;
     async fn list_muted_authors(&self) -> Result<Vec<MutedAuthorRow>>;

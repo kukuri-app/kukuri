@@ -440,10 +440,7 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
         BlobHash, FollowEdgeStatus, build_follow_edge_envelope, direct_message_id_for_participants,
         parse_follow_edge,
     };
-    use kukuri_store::{
-        AuthorRelationshipProjectionRow, DirectMessageOutboxRow, DirectMessageStore,
-        SocialProjectionStore, Store,
-    };
+    use kukuri_store::{DirectMessageOutboxRow, DirectMessageStore, Store};
     use kukuri_transport::HintTransport;
 
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
@@ -475,22 +472,6 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             .await
             .unwrap();
     }
-    SocialProjectionStore::rebuild_author_relationships(
-        runtime.store.as_ref(),
-        &runtime.author_keys.public_key_hex(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: runtime.author_keys.public_key_hex(),
-            author_pubkey: recipient.public_key_hex(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
-    )
-    .await
-    .unwrap();
     DirectMessageStore::put_direct_message_outbox(
         runtime.store.as_ref(),
         DirectMessageOutboxRow {

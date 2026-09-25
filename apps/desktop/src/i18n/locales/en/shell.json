@@ -149,11 +149,10 @@
     "mutualRequired": "Direct message sending is disabled until the relationship is mutual again.",
     "noMessages": "No messages yet.",
     "open": "Open",
-    "peerCount_one": "{{count}} connected user",
-    "peerCount_other": "{{count}} connected users",
     "pending": "Pending",
     "pendingOutbox": "Pending outbox: {{count}}",
     "sendDisabled": "Sending disabled",
+    "sendEnabled": "Can send",
     "sending": "Sending…",
     "title": "Messages"
   },

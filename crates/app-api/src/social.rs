@@ -5,7 +5,6 @@ impl AppService {
         let local_author = self.current_author_pubkey();
         self.ensure_author_subscription(local_author.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         for edge in self
             .services
             .store
@@ -136,7 +135,6 @@ impl AppService {
             .upsert_profile_cache(profile.clone())
             .await?;
         persist_profile_doc(self.services.docs_sync.as_ref(), &profile, &envelope).await?;
-        self.rebuild_author_relationships().await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         Ok(profile)
     }
@@ -156,7 +154,6 @@ impl AppService {
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
         self.ensure_author_subscription(target_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         let view = self
             .build_author_social_view(target_pubkey.as_str())
@@ -184,16 +181,23 @@ impl AppService {
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
         self.ensure_author_subscription(target_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
-        self.build_author_social_view(target_pubkey.as_str()).await
+        let view = self
+            .build_author_social_view(target_pubkey.as_str())
+            .await?;
+        // #1221 R4-D: 相手の手元の edge を更新する(mutual の解除)。通知は作られない。
+        self.queue_public_notification_offer(
+            PublicNotificationSource::Follow { envelope },
+            BTreeSet::from([target_pubkey.as_str().to_string()]),
+        )
+        .await;
+        Ok(view)
     }
 
     pub async fn get_author_social_view(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let author_pubkey = normalize_author_pubkey(pubkey)?;
         self.ensure_author_subscription(author_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         if self
             .authors_blocked_either_direction(
                 self.current_author_pubkey().as_str(),

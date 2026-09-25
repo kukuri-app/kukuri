@@ -259,7 +259,7 @@ test('conversation status and actions live in the column header and focus the co
   const header = conversationColumn.querySelector('.shell-column-header');
   if (!(header instanceof HTMLElement)) throw new Error('conversation column header not found');
 
-  expect(within(header).getByText('1 connected user')).toBeInTheDocument();
+  expect(within(header).getByText('Can send')).toBeInTheDocument();
   expect(within(header).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   expect(within(header).getByRole('button', { name: 'Clear' })).toBeInTheDocument();
   expect(conversationColumn.querySelector('.shell-workspace-header')).not.toBeInTheDocument();

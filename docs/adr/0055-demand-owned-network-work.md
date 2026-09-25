@@ -236,12 +236,12 @@ ACK未確認のDMを短期通知queueの期限で捨てない。相互follow失�
 旧DM outboxはbody/message ID/暗号frameを変更せず、**輸送先だけaccount routeへ再解決する**。
 これは投稿のdocs書込み先を変更しない規則の例外である。ACKも送信者account routeへ返し、
 既存署名ACKのsender/recipient/message照合を保つ。再起動/途中中断は同じmessageで再開し、
-旧pairwise受信と新route受信が重なっても既存message IDとtombstoneへ収束する。
+再送が重なっても既存message IDとtombstoneへ収束する。
 送信側の既知peer候補はpeer別outboxページ（最大64行）で1回だけbindingを照合する。
 未解決なら保護rowを残し、照合済み宛先には同じ暗号frame hashとmessage IDをsealed offer内で直接知らせる。
 初回の画面操作はこの宛先照合を待たず、既存のbackground再送がaccount routeへ進める。
 受信側はbinding照合済みprovider endpointへ署名ACKをsealed offer内に直接収めて返し、送信側account routeでも既存の
-sender/recipient/conversation/message照合を通す。旧pairwise ACKも移行中は維持し、両routeの重複ACKは
+sender/recipient/conversation/message照合を通す。重複ACKは
 最初に記録した配達時刻を保持する。ACKのofferにはACKを返さず、未ACKのDM outboxは受信確認まで消さない。
 送信offerとACK offerの1回の待機は各2秒で打ち切り、失敗は保護outboxの次回再送へ委ねる。
 同一account runtimeが同時に発行するDM/ACK offerは最大4件とし、満杯時は待機列を作らず延期する。
@@ -251,9 +251,17 @@ DM outboxの周期再送は相手ごとの購読taskから分離し、account ru
 これにより継続する新規送信が古い再試行を押し出さず、古い失敗が新規送信を塞がない。
 索引の先頭4行以外や全peer/全outboxの読取り、相手ごとのretry timerは通常tickで行わない。
 ownerは再起動時のprojection復元後に取得し、shutdown/予期しないowner dropで処理中の照合・送信を取消す。
-旧pairwise hint送信も1回2秒で打ち切る。保留したpeerのためにaccount ownerの残りのlaneや
-同じ行のaccount offerが無期限に止まらないようにし、失敗しても保護outboxを維持する。
 更新済み端末同士の未完了DMを保全するための移行であり、旧版との互換期間は設けない。
+
+R4-D（2026-09-26）でDMの送信・受信・ACKをaccount routeだけにし、相手ごとのpairwise topicの購読task、
+pairwise hintの送信・ACK、送信直後の二重送信を撤去した。送信は保存したoutboxを上記の再送ownerが送る。
+起動時の再開は会話・outbox・mutualを列挙せず、再送ownerを起動するだけにする。
+関係（following / followed_by / mutual / friend_of_friend）は読むときに対象authorのfollow edgeを主キーで点読して求め、
+関係のcache table（`author_relationship_cache`）と全件再計算を撤去した。1つのedgeの変化で全関係の再計算・
+全authorの購読・DM購読の再構築をしない。相手のfollow / unfollowは§4の公開通知と同じfollowのofferで署名済みedgeとして届け、
+自分を指すedgeを手元へ保存する（unfollowは通知を作らない）。mutualの解除は次の送信・受信の判定へ反映し、
+保護outboxはACKまで残す。DM状態viewの接続peer数（`peer_count`）は撤去し、画面は送信可能／送信不可だけを示す
+（2026-09-26 ユーザー決定）。
 
 private rotation/freeze/失効には投稿通知と別の制御capsuleを使う。
 現在のhandoff grant作成時に、旧epochの受信者別grantをaccount宛に配送待ちへ登録する。

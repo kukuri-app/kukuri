@@ -52,39 +52,6 @@ impl AppService {
         Ok(view)
     }
 
-    pub(crate) async fn rebuild_author_relationships(&self) -> Result<()> {
-        rebuild_author_relationships(
-            self.services.store.as_ref(),
-            self.services.projection_store.as_ref(),
-            self.current_author_pubkey().as_str(),
-        )
-        .await?;
-        self.reconcile_direct_message_subscriptions().await?;
-        self.start_direct_message_outbox_retry().await
-    }
-
-    pub(crate) async fn restart_direct_message_subscriptions(&self) -> Result<()> {
-        let existing_peers = self
-            .subscription_registry
-            .direct_message_subscriptions
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for peer_pubkey in existing_peers {
-            stop_direct_message_subscription(
-                self.subscription_registry
-                    .direct_message_subscriptions
-                    .as_ref(),
-                &self.services,
-                peer_pubkey.as_str(),
-            )
-            .await?;
-        }
-        self.reconcile_direct_message_subscriptions().await
-    }
-
     pub(crate) async fn current_muted_author_pubkeys(&self) -> Result<BTreeSet<String>> {
         Ok(self
             .services
@@ -225,8 +192,6 @@ impl AppService {
         let services = self.services.clone();
         let last_sync = Arc::clone(&self.last_sync_ts);
         let notification_inserted = Arc::clone(&self.notification_inserted_notify);
-        let direct_message_subscriptions =
-            Arc::clone(&self.subscription_registry.direct_message_subscriptions);
         let author_key = normalize_author_pubkey(author_pubkey)?;
         let local_author_pubkey = self.current_author_pubkey();
         let replica = author_replica_id(author_key.as_str());
@@ -269,8 +234,6 @@ impl AppService {
             };
             let bootstrap_services = services.clone();
             let bootstrap_last_sync = Arc::clone(&last_sync);
-            let bootstrap_notification_inserted = Arc::clone(&notification_inserted);
-            let bootstrap_direct_message_subscriptions = Arc::clone(&direct_message_subscriptions);
             let bootstrap_local_author_pubkey = local_author_pubkey.clone();
             let bootstrap_author_pubkey = author_key_for_task.clone();
             // 購読タスクが止まると、この task も止まる(#1239。切り離すと、購読の後にも読み出しが続く)。
@@ -286,14 +249,6 @@ impl AppService {
                 {
                     Ok(initial_count) if initial_count > 0 => {
                         *bootstrap_last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                        schedule_direct_message_reconcile(
-                            bootstrap_services,
-                            Arc::clone(&bootstrap_last_sync),
-                            Arc::clone(&bootstrap_direct_message_subscriptions),
-                            Arc::clone(&bootstrap_notification_inserted),
-                            bootstrap_local_author_pubkey,
-                            bootstrap_author_pubkey,
-                        );
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -389,14 +344,6 @@ impl AppService {
                                     catch_up.record_progress();
                                 }
                                 *last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                                schedule_direct_message_reconcile(
-                                    services.clone(),
-                                    Arc::clone(&last_sync),
-                                    Arc::clone(&direct_message_subscriptions),
-                                    Arc::clone(&notification_inserted),
-                                    local_author_pubkey.clone(),
-                                    author_key_for_task.clone(),
-                                );
                             }
                             Ok(_) => {
                                 // 相手から届いた profile・follow・block の key が反映できなかった(本体がまだ届いていない
@@ -447,14 +394,6 @@ impl AppService {
                         catch_up.record_finished(now, changed);
                         if changed > 0 {
                             *last_sync.lock().await = Some(now);
-                            schedule_direct_message_reconcile(
-                                services.clone(),
-                                Arc::clone(&last_sync),
-                                Arc::clone(&direct_message_subscriptions),
-                                Arc::clone(&notification_inserted),
-                                local_author_pubkey.clone(),
-                                author_key_for_task.clone(),
-                            );
                         }
                     }
                 }

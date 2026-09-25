@@ -158,45 +158,28 @@ impl SocialProjectionStore for MemoryStore {
         local_author_pubkey: &str,
         author_pubkey: &str,
     ) -> Result<Option<AuthorRelationshipProjectionRow>> {
-        Ok(self
-            .author_relationship_rows
-            .read()
-            .await
-            .get(&(local_author_pubkey.to_string(), author_pubkey.to_string()))
-            .cloned())
-    }
-
-    async fn list_author_relationships(
-        &self,
-        local_author_pubkey: &str,
-        author_pubkeys: &[String],
-    ) -> Result<HashMap<String, AuthorRelationshipProjectionRow>> {
-        let relationships = self.author_relationship_rows.read().await;
-        Ok(author_pubkeys
-            .iter()
-            .filter_map(|author_pubkey| {
-                relationships
-                    .get(&(local_author_pubkey.to_string(), author_pubkey.clone()))
-                    .cloned()
-                    .map(|relationship| (author_pubkey.clone(), relationship))
+        let edges = self.follow_edges.read().await;
+        let active = |subject: &str, target: &str| {
+            edges
+                .get(&(subject.to_string(), target.to_string()))
+                .is_some_and(|edge| edge.status == kukuri_core::FollowEdgeStatus::Active)
+        };
+        let via = edges
+            .values()
+            .filter(|edge| {
+                edge.subject_pubkey.as_str() == local_author_pubkey
+                    && edge.status == kukuri_core::FollowEdgeStatus::Active
+                    && active(edge.target_pubkey.as_str(), author_pubkey)
             })
-            .collect())
-    }
-
-    async fn rebuild_author_relationships(
-        &self,
-        local_author_pubkey: &str,
-        rows: Vec<AuthorRelationshipProjectionRow>,
-    ) -> Result<()> {
-        let mut guard = self.author_relationship_rows.write().await;
-        guard.retain(|(local_author, _), _| local_author != local_author_pubkey);
-        for row in rows {
-            guard.insert(
-                (row.local_author_pubkey.clone(), row.author_pubkey.clone()),
-                row,
-            );
-        }
-        Ok(())
+            .map(|edge| edge.target_pubkey.as_str().to_string())
+            .collect();
+        Ok(AuthorRelationshipProjectionRow::derive(
+            local_author_pubkey,
+            author_pubkey,
+            active(local_author_pubkey, author_pubkey),
+            active(author_pubkey, local_author_pubkey),
+            via,
+        ))
     }
 
     async fn put_muted_author(&self, row: MutedAuthorRow) -> Result<()> {

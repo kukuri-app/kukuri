@@ -25,8 +25,6 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) dm_outbox_retry_starts: Arc<std::sync::atomic::AtomicUsize>,
     /// 公開 topic の購読 task(key = topic_id)。
     pub(crate) subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    /// DM の購読 task(key = dm topic)。
-    pub(crate) direct_message_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     /// private channel の購読 task(key = channel 購読キー)。
     pub(crate) private_channel_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     /// 作者(プロフィール)購読 task(key = author pubkey)。
@@ -35,8 +33,6 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) live_presence_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     /// 購読の世代番号(key = topic_id)。
     pub(crate) subscription_generations: Arc<Mutex<HashMap<String, u64>>>,
-    /// DM 購読の再起動クールダウン(key = dm topic、値 = 次回可能時刻)。
-    pub(crate) direct_message_subscription_restart_deadlines: Arc<Mutex<HashMap<String, i64>>>,
     /// replica sync の再起動クールダウン(key = replica id、値 = 次回可能時刻)。
     pub(crate) replica_sync_restart_deadlines: Arc<Mutex<HashMap<String, i64>>>,
 }

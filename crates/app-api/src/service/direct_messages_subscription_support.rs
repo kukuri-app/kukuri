@@ -1,4 +1,3 @@
-use super::direct_messages_delivery_support::DirectMessageHintServices;
 use super::*;
 
 impl AppService {
@@ -12,17 +11,6 @@ impl AppService {
             .is_some_and(|relationship| relationship.mutual))
     }
 
-    pub(crate) async fn reconcile_direct_message_subscriptions(&self) -> Result<()> {
-        reconcile_direct_message_subscriptions(
-            self.services.clone(),
-            Arc::clone(&self.last_sync_ts),
-            Arc::clone(&self.subscription_registry.direct_message_subscriptions),
-            Arc::clone(&self.notification_inserted_notify),
-            self.current_author_pubkey().as_str(),
-        )
-        .await
-    }
-
     pub(crate) async fn direct_message_status_view(
         &self,
         peer_pubkey: &str,
@@ -32,11 +20,6 @@ impl AppService {
             &Pubkey::from(peer_pubkey),
         );
         let send_enabled = self.direct_message_send_enabled(peer_pubkey).await?;
-        let peer_count = if send_enabled {
-            self.direct_message_topic_peer_count(peer_pubkey).await?
-        } else {
-            0
-        };
         let pending_outbox_page = self
             .services
             .projection_store
@@ -52,7 +35,6 @@ impl AppService {
             dm_id,
             mutual: send_enabled,
             send_enabled,
-            peer_count,
             pending_outbox_count: pending_outbox_page.items.len(),
             pending_outbox_has_more: pending_outbox_page.next_cursor.is_some(),
         })
@@ -278,232 +260,5 @@ impl AppService {
                 .count_unread_notifications()
                 .await?,
         })
-    }
-
-    pub(crate) async fn ensure_direct_message_subscription(&self, peer_pubkey: &str) -> Result<()> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        if !self
-            .direct_message_send_enabled(peer_pubkey.as_str())
-            .await?
-        {
-            return Ok(());
-        }
-        let has_active_handle = self
-            .subscription_registry
-            .direct_message_subscriptions
-            .lock()
-            .await
-            .get(peer_pubkey.as_str())
-            .is_some_and(|handle| !handle.is_finished());
-        if has_active_handle {
-            if self
-                .should_restart_stale_direct_message_subscription(peer_pubkey.as_str())
-                .await?
-            {
-                self.restart_direct_message_subscription(peer_pubkey.as_str())
-                    .await?;
-            }
-            return Ok(());
-        }
-        Self::spawn_direct_message_subscription(
-            Arc::clone(&self.subscription_registry.direct_message_subscriptions),
-            self.services.clone(),
-            Arc::clone(&self.last_sync_ts),
-            Arc::clone(&self.notification_inserted_notify),
-            self.current_author_pubkey().as_str(),
-            peer_pubkey.as_str(),
-        )
-        .await
-    }
-
-    pub(crate) async fn restart_direct_message_subscription(
-        &self,
-        peer_pubkey: &str,
-    ) -> Result<()> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        stop_direct_message_subscription(
-            self.subscription_registry
-                .direct_message_subscriptions
-                .as_ref(),
-            &self.services,
-            peer_pubkey.as_str(),
-        )
-        .await?;
-        Self::spawn_direct_message_subscription(
-            Arc::clone(&self.subscription_registry.direct_message_subscriptions),
-            self.services.clone(),
-            Arc::clone(&self.last_sync_ts),
-            Arc::clone(&self.notification_inserted_notify),
-            self.current_author_pubkey().as_str(),
-            peer_pubkey.as_str(),
-        )
-        .await
-    }
-
-    pub(crate) async fn direct_message_topic_snapshot(
-        &self,
-        peer_pubkey: &str,
-    ) -> Result<Option<TopicPeerSnapshot>> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        let topic = derive_direct_message_topic(
-            self.services.keys.as_ref(),
-            &Pubkey::from(peer_pubkey.as_str()),
-        )?;
-        let hint_topic = kukuri_core::wire::hint_topic_id(&topic).0;
-        Ok(self
-            .services
-            .transport
-            .peers()
-            .await?
-            .topic_diagnostics
-            .into_iter()
-            .find(|diagnostic| {
-                diagnostic.topic == hint_topic || diagnostic.topic == topic.as_str()
-            }))
-    }
-
-    pub(crate) async fn should_restart_stale_direct_message_subscription(
-        &self,
-        peer_pubkey: &str,
-    ) -> Result<bool> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        let Some(snapshot) = self
-            .direct_message_topic_snapshot(peer_pubkey.as_str())
-            .await?
-        else {
-            return Ok(false);
-        };
-        if snapshot.joined || snapshot.peer_count > 0 || snapshot.configured_peer_ids.is_empty() {
-            self.subscription_registry
-                .direct_message_subscription_restart_deadlines
-                .lock()
-                .await
-                .remove(peer_pubkey.as_str());
-            return Ok(false);
-        }
-        let now = Utc::now().timestamp();
-        let mut deadlines = self
-            .subscription_registry
-            .direct_message_subscription_restart_deadlines
-            .lock()
-            .await;
-        let next_due_at = deadlines
-            .get(peer_pubkey.as_str())
-            .copied()
-            .unwrap_or_default();
-        if now < next_due_at {
-            return Ok(false);
-        }
-        deadlines.insert(
-            peer_pubkey,
-            now.saturating_add(DIRECT_MESSAGE_SUBSCRIPTION_RESTART_RETRY_SECONDS),
-        );
-        Ok(true)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn spawn_direct_message_subscription(
-        direct_message_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-        services: ServiceHandles,
-        last_sync: Arc<Mutex<Option<i64>>>,
-        notification_inserted: Arc<tokio::sync::Notify>,
-        local_author_pubkey: &str,
-        peer_pubkey: &str,
-    ) -> Result<()> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        {
-            let mut subscriptions = direct_message_subscriptions.lock().await;
-            if subscriptions
-                .get(peer_pubkey.as_str())
-                .is_some_and(|handle| !handle.is_finished())
-            {
-                return Ok(());
-            }
-            subscriptions.remove(peer_pubkey.as_str());
-        }
-        let topic = derive_direct_message_topic(
-            services.keys.as_ref(),
-            &Pubkey::from(peer_pubkey.as_str()),
-        )?;
-        let mut hint_stream = services.hint_transport.subscribe_hints(&topic).await?;
-        let topic_for_task = topic.clone();
-        let peer_for_task = peer_pubkey.clone();
-        let local_author_pubkey = local_author_pubkey.to_string();
-        let cleanup_hint_transport = Arc::clone(&services.hint_transport);
-        let handle = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    Some(event) = hint_stream.next() => {
-                        if !matches!(
-                            &event.hint,
-                            GossipHint::DirectMessageFrame { topic_id, .. } | GossipHint::DirectMessageAck { topic_id, .. }
-                            if topic_id.as_str() == topic_for_task.as_str()
-                        ) {
-                            continue;
-                        }
-                        if let Err(error) = services.blob_service.learn_peer(event.source_peer.as_str()).await {
-                            warn!(
-                                peer_pubkey = %peer_for_task,
-                                source_peer = %event.source_peer,
-                                error = %error,
-                                "failed to learn direct message blob peer"
-                            );
-                        }
-                        match AppService::handle_direct_message_hint(
-                            DirectMessageHintServices {
-                                services: &services,
-                                local_author_pubkey: local_author_pubkey.as_str(),
-                                peer_pubkey: peer_for_task.as_str(),
-                                topic: &topic_for_task,
-                                ack_destination: None,
-                            },
-                            &event.hint,
-                        ).await {
-                            Ok(true) => {
-                                *last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                                notification_inserted.notify_waiters();
-                            }
-                            Ok(false) => {}
-                            Err(error) => {
-                                warn!(
-                                    peer_pubkey = %peer_for_task,
-                                    error = %error,
-                                    "failed to handle direct message hint"
-                                );
-                            }
-                        }
-                    }
-                    else => {
-                        let _ = services.hint_transport.unsubscribe_hints(&topic_for_task).await;
-                        break;
-                    }
-                }
-            }
-        });
-        let mut pending_handle = Some(handle);
-        let should_abort_new_handle = {
-            let mut subscriptions = direct_message_subscriptions.lock().await;
-            if subscriptions
-                .get(peer_pubkey.as_str())
-                .is_some_and(|existing| !existing.is_finished())
-            {
-                true
-            } else {
-                subscriptions.insert(
-                    peer_pubkey.clone(),
-                    pending_handle
-                        .take()
-                        .expect("direct message subscription handle must be pending"),
-                );
-                false
-            }
-        };
-        if should_abort_new_handle {
-            pending_handle
-                .expect("direct message subscription handle must remain pending")
-                .abort();
-            cleanup_hint_transport.unsubscribe_hints(&topic).await?;
-        }
-        Ok(())
     }
 }

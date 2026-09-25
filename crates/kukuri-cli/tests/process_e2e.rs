@@ -75,11 +75,7 @@ fn connect_dm_pair(
     loop {
         let left = a.call("get_direct_message_status", json!({"pubkey": b_pubkey}));
         let right = b.call("get_direct_message_status", json!({"pubkey": a_pubkey}));
-        if left["peer_count"].as_u64().unwrap_or(0) > 0
-            && right["peer_count"].as_u64().unwrap_or(0) > 0
-            && left["send_enabled"] == true
-            && right["send_enabled"] == true
-        {
+        if left["send_enabled"] == true && right["send_enabled"] == true {
             return;
         }
         assert!(

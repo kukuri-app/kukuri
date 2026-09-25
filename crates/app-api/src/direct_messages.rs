@@ -44,36 +44,10 @@ impl AppService {
         })
     }
 
+    /// 起動時の DM の再開(#1221 R4-D)。会話・outbox・mutual を列挙せず、account の再送 owner を起動するだけ。
+    /// 未 ACK の outbox は owner が due 索引から読み、受信は account の受信 route が担う。
     pub async fn resume_direct_message_state(&self) -> Result<()> {
-        let mut peers = self
-            .services
-            .projection_store
-            .list_direct_message_conversations()
-            .await?
-            .into_iter()
-            .map(|row| row.peer_pubkey)
-            .collect::<BTreeSet<_>>();
-        for row in self
-            .services
-            .projection_store
-            .list_direct_message_outbox()
-            .await?
-        {
-            peers.insert(row.peer_pubkey);
-        }
-        peers.extend(
-            current_mutual_direct_message_peers(
-                self.services.store.as_ref(),
-                self.current_author_pubkey().as_str(),
-            )
-            .await?,
-        );
-        for peer_pubkey in peers {
-            self.ensure_author_subscription(peer_pubkey.as_str())
-                .await?;
-        }
-        self.rebuild_author_relationships().await?;
-        Ok(())
+        self.start_direct_message_outbox_retry().await
     }
 
     pub async fn open_direct_message(
@@ -81,9 +55,9 @@ impl AppService {
         peer_pubkey: &str,
     ) -> Result<DirectMessageConversationView> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
+        // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
         self.ensure_author_subscription(peer_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         let existing = self
             .services
             .projection_store
@@ -94,10 +68,6 @@ impl AppService {
             .await?;
         if existing.is_none() && !can_send {
             anyhow::bail!("direct message requires a mutual relationship");
-        }
-        if can_send {
-            self.ensure_direct_message_subscription(peer_pubkey.as_str())
-                .await?;
         }
         self.ensure_direct_message_conversation_row(peer_pubkey.as_str())
             .await?;
@@ -139,10 +109,6 @@ impl AppService {
         if existing.is_none() && !can_send {
             anyhow::bail!("direct message requires a mutual relationship");
         }
-        if can_send {
-            self.ensure_direct_message_subscription(peer_pubkey.as_str())
-                .await?;
-        }
         self.ensure_direct_message_conversation_row(peer_pubkey.as_str())
             .await?;
         let dm_id = direct_message_id_for_participants(
@@ -172,17 +138,15 @@ impl AppService {
         attachments: Vec<PendingAttachment>,
     ) -> Result<String> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
+        // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
         self.ensure_author_subscription(peer_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
         if !self
             .direct_message_send_enabled(peer_pubkey.as_str())
             .await?
         {
             anyhow::bail!("direct message requires a mutual relationship");
         }
-        self.ensure_direct_message_subscription(peer_pubkey.as_str())
-            .await?;
         self.send_direct_message_internal(
             peer_pubkey.as_str(),
             text,
@@ -264,44 +228,9 @@ impl AppService {
         peer_pubkey: &str,
     ) -> Result<DirectMessageStatusView> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
+        // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
         self.ensure_author_subscription(peer_pubkey.as_str())
             .await?;
-        self.rebuild_author_relationships().await?;
-        if self
-            .direct_message_send_enabled(peer_pubkey.as_str())
-            .await?
-        {
-            self.ensure_direct_message_subscription(peer_pubkey.as_str())
-                .await?;
-        }
         self.direct_message_status_view(peer_pubkey.as_str()).await
-    }
-
-    pub async fn get_direct_message_topic_status(
-        &self,
-        peer_pubkey: &str,
-    ) -> Result<Option<DirectMessageTopicStatusView>> {
-        let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
-        self.ensure_author_subscription(peer_pubkey.as_str())
-            .await?;
-        self.rebuild_author_relationships().await?;
-        if self
-            .direct_message_send_enabled(peer_pubkey.as_str())
-            .await?
-        {
-            self.ensure_direct_message_subscription(peer_pubkey.as_str())
-                .await?;
-        }
-        Ok(self
-            .direct_message_topic_snapshot(peer_pubkey.as_str())
-            .await?
-            .map(|diagnostic| DirectMessageTopicStatusView {
-                topic: diagnostic.topic,
-                joined: diagnostic.joined,
-                peer_count: diagnostic.peer_count,
-                connected_peers: diagnostic.connected_peers,
-                status_detail: diagnostic.status_detail,
-                last_error: diagnostic.last_error,
-            }))
     }
 }
