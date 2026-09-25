@@ -13,6 +13,117 @@ use std::time::Duration;
 pub(super) type RemotePostReplica = (ReplicaId, Option<(String, String)>);
 pub(super) type SessionTargetReader = (ReplicaId, Arc<dyn DocsSync>, DocFetchPolicy);
 
+/// 1 操作の remote 読取りの期限(R5-B と同じ)。
+pub(crate) const REMOTE_READ_DEADLINE: Duration = Duration::from_secs(30);
+const WRITER_PROVIDERS: usize = 4;
+const WRITER_DESTINATION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 1 対象を手元(`LocalOnly`)から読み、無ければ `readers` の provider を順に読む(#1221 R5-C)。
+///
+/// provider は手元で読めなかったときだけ選ぶ。provider の失敗は次の provider へ進み、手元の読取りの失敗は返す。
+/// 全体の期限は `REMOTE_READ_DEADLINE`。`read` には source を所有して渡し、借用の lifetime を future へ持ち込まない
+/// (呼び出し側の future が `Send` のまま spawn できるように)。
+pub(crate) async fn read_local_then_remote<T, Fut>(
+    local: Arc<dyn DocsSync>,
+    readers: impl Future<Output = Vec<Arc<dyn DocsSync>>>,
+    read: impl Fn(Arc<dyn DocsSync>, DocFetchPolicy) -> Fut,
+) -> Result<Option<T>>
+where
+    Fut: Future<Output = Result<Option<T>>>,
+{
+    if let Some(value) = read(local, DocFetchPolicy::LocalOnly).await? {
+        return Ok(Some(value));
+    }
+    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    for reader in readers.await {
+        let result = tokio::time::timeout_at(
+            deadline,
+            read(reader.clone(), DocFetchPolicy::LocalThenRemote),
+        )
+        .await;
+        reader.finish_remote_object().await;
+        match result {
+            Ok(Ok(Some(value))) => return Ok(Some(value)),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => warn!(%error, "object read from a provider failed"),
+            Err(_) => break,
+        }
+    }
+    Ok(None)
+}
+
+/// author と private の制御参照を読む provider(#1221 R5-C)。最大 4 件。
+///
+/// 書き手(author 本人、channel owner、token の発行者)の検証済み宛先(R4-A の account 宛先解決)を先に置き、
+/// 公開は全体の候補窓、private は呼び出し側が渡す当該 channel の gossip scope で残りを埋める。
+/// private の要求は capability の証明つきで、書き手と scope の peer だけへ送る。
+pub(crate) async fn writer_readers(
+    services: &ServiceHandles,
+    replica: &ReplicaId,
+    writers: &[&str],
+    private: Option<([u8; 32], Vec<SeedPeer>)>,
+) -> Vec<Arc<dyn DocsSync>> {
+    let mut peers: Vec<SeedPeer> = Vec::new();
+    for writer in writers {
+        let resolved = tokio::time::timeout(
+            WRITER_DESTINATION_TIMEOUT,
+            services
+                .hint_transport
+                .resolve_receive_destination(&Pubkey::from(*writer)),
+        )
+        .await;
+        if let Ok(Ok(Some(address))) = resolved {
+            peers.push(SeedPeer {
+                endpoint_id: address.id.to_string(),
+                addr_hint: address.ip_addrs().next().map(ToString::to_string),
+            });
+        }
+    }
+    let (secret, scope) =
+        private.map_or((None, Vec::new()), |(secret, scope)| (Some(secret), scope));
+    for peer in scope {
+        if !peers
+            .iter()
+            .any(|known| known.endpoint_id == peer.endpoint_id)
+        {
+            peers.push(peer);
+        }
+    }
+    peers.truncate(WRITER_PROVIDERS);
+    let mut readers = Vec::new();
+    if !peers.is_empty() {
+        match services
+            .docs_sync
+            .remote_readers(replica, secret, peers)
+            .await
+        {
+            Ok(selected) => readers.extend(selected),
+            Err(error) => warn!(%error, "writer provider selection failed"),
+        }
+    }
+    if secret.is_none() && readers.len() < WRITER_PROVIDERS {
+        match services
+            .docs_sync
+            .remote_readers(replica, None, Vec::new())
+            .await
+        {
+            Ok(window) => {
+                for reader in window {
+                    if readers.len() < WRITER_PROVIDERS
+                        && !readers.iter().any(|known: &Arc<dyn DocsSync>| {
+                            known.remote_reader_id() == reader.remote_reader_id()
+                        })
+                    {
+                        readers.push(reader);
+                    }
+                }
+            }
+            Err(error) => warn!(%error, "public provider window selection failed"),
+        }
+    }
+    readers
+}
+
 impl AppService {
     /// Read the selected bucket page from one provider at a time. It shares
     /// the signed post/withdrawal projector with the local range check.

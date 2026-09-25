@@ -684,6 +684,7 @@ impl AppService {
             &state.proposal_envelope_id,
             "dome-connection-proposal",
             &state.proposal.proposer.owner_pubkey,
+            DocFetchPolicy::LocalThenRemote,
         )
         .await?;
         if proposal != state.proposal {
@@ -695,6 +696,7 @@ impl AppService {
             &state.proposer_agreement_envelope_id,
             "dome-connection-agreement",
             &state.proposal.proposer.owner_pubkey,
+            DocFetchPolicy::LocalThenRemote,
         )
         .await?;
         if agreement
@@ -760,6 +762,7 @@ impl AppService {
                 &state.envelope_id,
                 "dome-connection-selection",
                 &state.selection.receiver.owner_pubkey,
+                DocFetchPolicy::LocalThenRemote,
             )
             .await?;
             if signed != state.selection {

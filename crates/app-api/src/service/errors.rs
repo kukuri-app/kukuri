@@ -50,14 +50,6 @@ impl PrivateChannelImportKind {
         }
     }
 
-    fn owner_inactive_message(self) -> &'static str {
-        match self {
-            Self::InviteOnly => "invite-only channel owner is not an active participant",
-            Self::FriendOnly => "friend-only grant owner is not an active participant",
-            Self::FriendPlus => "friend-plus channel owner is not an active participant",
-        }
-    }
-
     fn snapshot_timeout_message(self) -> &'static str {
         match self {
             Self::InviteOnly => "timed out waiting for invite-only channel replica sync",
@@ -79,8 +71,6 @@ pub(crate) enum PrivateChannelImportError {
     SharingClosed { kind: PrivateChannelImportKind },
     #[error("{}", .kind.epoch_mismatch_message())]
     EpochMismatch { kind: PrivateChannelImportKind },
-    #[error("{}", .kind.owner_inactive_message())]
-    OwnerInactive { kind: PrivateChannelImportKind },
     #[error("{}", .kind.snapshot_timeout_message())]
     SnapshotTimeout { kind: PrivateChannelImportKind },
     #[cfg(test)]
@@ -100,8 +90,6 @@ impl PrivateChannelImportError {
             Self::MutualRelationshipRequired {
                 kind: PrivateChannelImportKind::FriendOnly
             } | Self::EpochMismatch {
-                kind: PrivateChannelImportKind::FriendOnly
-            } | Self::OwnerInactive {
                 kind: PrivateChannelImportKind::FriendOnly
             } | Self::SnapshotTimeout {
                 kind: PrivateChannelImportKind::FriendOnly

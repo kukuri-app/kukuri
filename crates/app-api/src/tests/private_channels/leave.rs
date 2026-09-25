@@ -8,6 +8,8 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     let stack_b = TestIrohStack::new(&dir.path().join("leave-b")).await;
     let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
     let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
     let topic = "kukuri:topic:private-channel-leave";
 
     let ticket_a = app_a

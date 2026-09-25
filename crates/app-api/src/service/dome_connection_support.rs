@@ -98,9 +98,7 @@ impl AppService {
                     .joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
                     .await
                     .context("private channel is not joined")?;
-                if private_channel_rotation_is_pending(self.docs_sync(), self.keys(), &state)
-                    .await?
-                {
+                if self.private_channel_rotation_is_pending(&state).await? {
                     anyhow::bail!(
                         "private channel epoch handoff is pending; wait for automatic redemption or use a fresh access token"
                     );

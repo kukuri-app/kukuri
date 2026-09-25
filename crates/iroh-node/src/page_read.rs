@@ -28,7 +28,10 @@ fn private_replica(replica: &str) -> bool {
 }
 
 fn public_replica(replica: &str) -> bool {
-    replica.starts_with("bucket::v1::topic::") || replica.starts_with("topic::")
+    replica.starts_with("bucket::v1::topic::")
+        || replica.starts_with("topic::")
+        || replica.starts_with("bucket::v1::author::")
+        || replica.starts_with("author::")
 }
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_REQUEST_BYTES: usize = 4 * 1024;
@@ -44,6 +47,9 @@ pub enum DocReadQuery {
         prefix: String,
         descending: bool,
         limit: usize,
+        /// Only this docs author's entries fill and count toward the page.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        author: Option<String>,
     },
     Exact {
         key: String,
@@ -143,19 +149,28 @@ impl Request {
         let private = private_replica(&self.replica);
         ensure!(
             (private || public_replica(&self.replica)) && self.replica.len() <= MAX_KEY_BYTES,
-            "only topic and private channel buckets are readable"
+            "only topic, author and private channel replicas are readable"
         );
         ensure!(
             self.capability_proof.is_some() == private,
             "private bucket capability proof is required"
         );
         match &self.query {
-            DocReadQuery::Keys { prefix, limit, .. } => {
+            DocReadQuery::Keys {
+                prefix,
+                limit,
+                author,
+                ..
+            } => {
                 ensure!(
                     (1..=MAX_KEYS).contains(limit),
                     "docs key page limit exceeded"
                 );
                 ensure!(prefix.len() <= MAX_KEY_BYTES, "docs key prefix too long");
+                ensure!(
+                    author.as_ref().is_none_or(|author| author.len() <= 128),
+                    "docs author id too long"
+                );
             }
             DocReadQuery::Exact { key, limit, author } => {
                 ensure!(
@@ -163,9 +178,10 @@ impl Request {
                     "docs exact limit exceeded"
                 );
                 ensure!(key.len() <= MAX_KEY_BYTES, "docs exact key too long");
-                if let Some(author) = author {
-                    ensure!(author.len() <= 128, "docs author id too long");
-                }
+                ensure!(
+                    author.as_ref().is_none_or(|author| author.len() <= 128),
+                    "docs author id too long"
+                );
             }
         }
         Ok(())
@@ -246,16 +262,21 @@ impl DocReadProtocol {
                 prefix,
                 descending,
                 limit,
+                author,
             } => {
                 let direction = if descending {
                     SortDirection::Desc
                 } else {
                     SortDirection::Asc
                 };
+                let builder = match author.as_deref() {
+                    Some(author) => Query::author(author.parse()?).key_prefix(prefix),
+                    None => Query::key_prefix(prefix),
+                };
                 let stream = self
                     .local_entries(
                         namespace,
-                        Query::key_prefix(prefix)
+                        builder
                             .sort_by(SortBy::KeyAuthor, direction)
                             .limit((limit + 1) as u64)
                             .build(),

@@ -101,7 +101,14 @@ R5-Bではclientのtimeline/thread、CN source、返信先・投稿・sessionの
 旧 `topic::` / `channel::` のwriter形式も同じ有界page/exact読取りで扱う。privateの候補peerは
 参加中のchannelのgossip scopeに限り、過去epochは保持するcapabilityと時刻から選ぶ。
 remote recordは既存の署名・scope・bucket時刻・取り下げ検証を通した後に対象別cacheへ保存する。
-旧writerのsyncはR5-Hまで移行用に残し、author/private制御参照はR5-Cへ残す。
+旧writerのsyncはR5-Hまで移行用に残す。
+R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
+`author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
+author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。
+author bucketのkeyは旧replicaのプロフィールと同じ（`indexes/profile/`・`profile/posts/`・`profile/reposts/`・
+`envelopes/`）で、行の時刻はそのbucketの日に属する。R5-Hのwriterはこの配置で書く。
+手元のページが埋まるとき、自分のプロフィールのときはremoteを読まない。複数sourceの合流は、どのsourceの
+読み残しより新しい行だけを返し、次のcursorが別sourceの行を飛ばさない。
 private申請はepoch IDをsecretと同じ明示同意のHTTP requestに含め、CNは登録済みcapabilityを
 暗号化保存する。privateのQUICページ要求はepoch secret由来の証明を要し、CNは有効な申請者の
 bootstrap端末を最大4件だけ選び、direct addressと構成済みrelay候補へchannel/epoch IDを送る。

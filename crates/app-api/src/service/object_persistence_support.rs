@@ -384,86 +384,93 @@ pub(crate) async fn fetch_private_channel_epoch_handoff_grant_from_replica(
     parse_private_channel_epoch_handoff_grant(&envelope)
 }
 
-pub(crate) async fn wait_for_private_channel_epoch_snapshot(
+/// 参加 record を 1 件、key 指定で読む(#1221 R5-C)。署名者と record の参加者が一致するものだけを返す。
+pub(crate) async fn fetch_private_channel_participant_from_replica(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
-    context: PrivateChannelSnapshotWaitContext,
-) -> Result<(
-    PrivateChannelMetadataDocV1,
-    PrivateChannelPolicyDocV1,
-    Vec<PrivateChannelParticipantDocV1>,
-)> {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let metadata = fetch_private_channel_metadata_from_replica(
-                docs_sync,
-                replica,
-                DocFetchPolicy::LocalThenRemote,
+    participant_pubkey: &str,
+    policy: DocFetchPolicy,
+) -> Result<Option<PrivateChannelParticipantDocV1>> {
+    let records = docs_sync
+        .query_replica_exact_bounded(
+            replica,
+            stable_key(
+                "channels/participants",
+                &format!("{participant_pubkey}/envelope"),
             )
-            .await?;
-            let policy = fetch_private_channel_policy_from_replica(
-                docs_sync,
-                replica,
-                DocFetchPolicy::LocalThenRemote,
-            )
-            .await?;
-            let participants = fetch_private_channel_participants_from_replica(
-                docs_sync,
-                replica,
-                DocFetchPolicy::LocalThenRemote,
-            )
-            .await?;
-            let owner_participant_visible = policy.as_ref().is_some_and(|policy| {
-                participants.iter().any(|participant| {
-                    participant.participant_pubkey == policy.owner_pubkey
-                        && participant.epoch_id == policy.epoch_id
-                        && participant.is_owner
-                        && participant.left_at.is_none()
-                })
-            });
-            if let (Some(metadata), Some(policy)) = (metadata, policy)
-                && owner_participant_visible
-            {
-                return Ok::<_, anyhow::Error>((metadata, policy, participants));
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            .as_str(),
+            MAX_ENVELOPE_RECORDS_PER_OBJECT,
+            policy,
+        )
+        .await?;
+    for record in records {
+        let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(&record.value) else {
+            continue;
+        };
+        if envelope.verify().is_err() {
+            continue;
         }
-    })
-    .await
-    .map_err(|_| context.timeout_error())?
+        if let Ok(Some(participant)) = parse_private_channel_participant(&envelope)
+            && participant.participant_pubkey.as_str() == participant_pubkey
+        {
+            return Ok(Some(participant));
+        }
+    }
+    Ok(None)
 }
 
-pub(crate) async fn private_channel_rotation_is_pending(
+/// epoch の参加に要る制御 record(#1221 R5-C)。
+pub(crate) struct PrivateEpochSnapshot {
+    pub(crate) metadata: PrivateChannelMetadataDocV1,
+    pub(crate) policy: PrivateChannelPolicyDocV1,
+    /// 自分の参加 record(同じ epoch のもの)。
+    pub(crate) local_participant: Option<PrivateChannelParticipantDocV1>,
+}
+
+/// 1 つの source から、metadata・policy・owner と自分の参加 record を key 指定で読む。
+/// owner が同じ epoch の有効な参加者として見えなければ `None`(参加者の全件は読まない)。
+pub(crate) async fn read_private_epoch_snapshot(
     docs_sync: &dyn DocsSync,
-    keys: &KukuriKeys,
-    state: &JoinedPrivateChannelState,
-) -> Result<bool> {
-    let replica = current_private_channel_replica_id(state);
-    let Some(policy) = fetch_private_channel_policy_from_replica(
-        docs_sync,
-        &replica,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await?
+    replica: &ReplicaId,
+    local_pubkey: &str,
+    policy: DocFetchPolicy,
+) -> Result<Option<PrivateEpochSnapshot>> {
+    let Some(metadata) =
+        fetch_private_channel_metadata_from_replica(docs_sync, replica, policy).await?
     else {
-        return Ok(false);
+        return Ok(None);
     };
-    if policy.sharing_state != ChannelSharingState::Frozen || policy.rotated_at.is_none() {
-        return Ok(false);
+    let Some(channel_policy) =
+        fetch_private_channel_policy_from_replica(docs_sync, replica, policy).await?
+    else {
+        return Ok(None);
+    };
+    let in_epoch = |participant: &PrivateChannelParticipantDocV1| {
+        participant.epoch_id == channel_policy.epoch_id
+            && participant.channel_id == channel_policy.channel_id
+    };
+    let owner = fetch_private_channel_participant_from_replica(
+        docs_sync,
+        replica,
+        channel_policy.owner_pubkey.as_str(),
+        policy,
+    )
+    .await?;
+    if !owner
+        .as_ref()
+        .is_some_and(|owner| in_epoch(owner) && owner.is_owner && owner.left_at.is_none())
+    {
+        return Ok(None);
     }
-    let local_author = keys.public_key_hex();
-    let Some(grant) = fetch_private_channel_epoch_handoff_grant_from_replica(
-        docs_sync,
-        &replica,
-        local_author.as_str(),
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await?
-    else {
-        return Ok(false);
-    };
-    let payload = decrypt_private_channel_epoch_handoff_grant(keys, &grant)?;
-    Ok(payload.new_epoch_id != state.current_epoch_id)
+    let local_participant =
+        fetch_private_channel_participant_from_replica(docs_sync, replica, local_pubkey, policy)
+            .await?
+            .filter(in_epoch);
+    Ok(Some(PrivateEpochSnapshot {
+        metadata,
+        policy: channel_policy,
+        local_participant,
+    }))
 }
 
 pub(crate) async fn store_manifest_blob<T: Serialize>(

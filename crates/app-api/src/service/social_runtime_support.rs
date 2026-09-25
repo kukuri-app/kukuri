@@ -221,36 +221,6 @@ impl AppService {
         self.spawn_author_subscription(author_pubkey.as_str()).await
     }
 
-    pub(crate) async fn maybe_restart_author_subscription(&self, author_pubkey: &str) {
-        let Ok(author_pubkey) = normalize_author_pubkey(author_pubkey) else {
-            return;
-        };
-        let key = format!("author-subscription:{author_pubkey}");
-        let now = Utc::now().timestamp();
-        {
-            let mut deadlines = self
-                .subscription_registry
-                .replica_sync_restart_deadlines
-                .lock()
-                .await;
-            let next_due_at = deadlines.get(key.as_str()).copied().unwrap_or_default();
-            if next_due_at > now {
-                return;
-            }
-            deadlines.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
-        }
-        if let Err(error) = self
-            .restart_author_subscription(author_pubkey.as_str())
-            .await
-        {
-            warn!(
-                author_pubkey = %author_pubkey,
-                error = %error,
-                "failed to restart author subscription"
-            );
-        }
-    }
-
     pub(crate) async fn spawn_author_subscription(&self, author_pubkey: &str) -> Result<()> {
         let services = self.services.clone();
         let last_sync = Arc::clone(&self.last_sync_ts);
@@ -297,76 +267,40 @@ impl AppService {
                     NotificationDocEventBaseline::default()
                 }
             };
-            match hydrate_author_state(
-                &services,
-                local_author_pubkey.as_str(),
-                author_key_for_task.as_str(),
-                DocFetchPolicy::LocalOnly,
-            )
-            .await
-            {
-                Ok(initial_count) if initial_count > 0 => {
-                    *last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                    schedule_direct_message_reconcile(
-                        services.clone(),
-                        Arc::clone(&last_sync),
-                        Arc::clone(&direct_message_subscriptions),
-                        Arc::clone(&notification_inserted),
-                        local_author_pubkey.clone(),
-                        author_key_for_task.clone(),
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    warn!(
-                        author_pubkey = %author_key_for_task,
-                        error = %error,
-                        "failed to hydrate local author cache during bootstrap"
-                    );
-                }
-            }
-            let recovery_services = services.clone();
-            let recovery_last_sync = Arc::clone(&last_sync);
-            let recovery_notification_inserted = Arc::clone(&notification_inserted);
-            let recovery_direct_message_subscriptions = Arc::clone(&direct_message_subscriptions);
-            let recovery_local_author_pubkey = local_author_pubkey.clone();
-            let recovery_author_pubkey = author_key_for_task.clone();
+            let bootstrap_services = services.clone();
+            let bootstrap_last_sync = Arc::clone(&last_sync);
+            let bootstrap_notification_inserted = Arc::clone(&notification_inserted);
+            let bootstrap_direct_message_subscriptions = Arc::clone(&direct_message_subscriptions);
+            let bootstrap_local_author_pubkey = local_author_pubkey.clone();
+            let bootstrap_author_pubkey = author_key_for_task.clone();
             // 購読タスクが止まると、この task も止まる(#1239。切り離すと、購読の後にも読み出しが続く)。
-            let _bootstrap_recovery = AbortOnDrop(tokio::spawn(async move {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    hydrate_author_state(
-                        &recovery_services,
-                        recovery_local_author_pubkey.as_str(),
-                        recovery_author_pubkey.as_str(),
-                        DocFetchPolicy::LocalThenRemote,
-                    ),
+            // 手元の状態を先に反映し、手元に無い現在値の key だけを有界な provider から読む(#1221 R5-C)。
+            let _bootstrap = AbortOnDrop(tokio::spawn(async move {
+                match hydrate_author_state(
+                    &bootstrap_services,
+                    bootstrap_local_author_pubkey.as_str(),
+                    bootstrap_author_pubkey.as_str(),
+                    DocFetchPolicy::LocalThenRemote,
                 )
                 .await
                 {
-                    Ok(Ok(initial_count)) if initial_count > 0 => {
-                        *recovery_last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                    Ok(initial_count) if initial_count > 0 => {
+                        *bootstrap_last_sync.lock().await = Some(Utc::now().timestamp_millis());
                         schedule_direct_message_reconcile(
-                            recovery_services,
-                            Arc::clone(&recovery_last_sync),
-                            Arc::clone(&recovery_direct_message_subscriptions),
-                            Arc::clone(&recovery_notification_inserted),
-                            recovery_local_author_pubkey,
-                            recovery_author_pubkey,
+                            bootstrap_services,
+                            Arc::clone(&bootstrap_last_sync),
+                            Arc::clone(&bootstrap_direct_message_subscriptions),
+                            Arc::clone(&bootstrap_notification_inserted),
+                            bootstrap_local_author_pubkey,
+                            bootstrap_author_pubkey,
                         );
                     }
-                    Ok(Ok(_)) => {}
-                    Ok(Err(error)) => {
+                    Ok(_) => {}
+                    Err(error) => {
                         warn!(
-                            author_pubkey = %recovery_author_pubkey,
+                            author_pubkey = %bootstrap_author_pubkey,
                             error = %error,
-                            "failed to hydrate remote author cache during bootstrap recovery"
-                        );
-                    }
-                    Err(_) => {
-                        warn!(
-                            author_pubkey = %recovery_author_pubkey,
-                            "timed out hydrating remote author cache during bootstrap recovery"
+                            "failed to hydrate author state during bootstrap"
                         );
                     }
                 }

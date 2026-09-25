@@ -14,44 +14,7 @@ impl AppService {
                 return Ok(redeemed_any);
             };
             let local_author = self.current_author_pubkey();
-            let replica = current_private_channel_replica_id(&state);
-            let grant_doc = fetch_private_channel_epoch_handoff_grant_from_replica(
-                self.docs_sync(),
-                &replica,
-                local_author.as_str(),
-                DocFetchPolicy::LocalOnly,
-            )
-            .await?;
-            let grant_doc = if let Some(grant_doc) = grant_doc {
-                Some(grant_doc)
-            } else {
-                let has_peers = self
-                    .services
-                    .transport
-                    .peers()
-                    .await
-                    .is_ok_and(|peers| peers.peer_count > 0);
-                if !has_peers {
-                    return Ok(redeemed_any);
-                }
-                if let Err(error) = self.docs_sync().restart_replica_sync(&replica).await {
-                    warn!(
-                        topic = %topic_id,
-                        channel_id = %channel_id,
-                        epoch_id = %state.current_epoch_id,
-                        error = %error,
-                        "failed to restart private channel replica sync while polling epoch handoff"
-                    );
-                }
-                fetch_private_channel_epoch_handoff_grant_from_replica(
-                    self.docs_sync(),
-                    &replica,
-                    local_author.as_str(),
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await?
-            };
-            let Some(grant_doc) = grant_doc else {
+            let Some(grant_doc) = self.own_epoch_handoff_grant(&state).await? else {
                 return Ok(redeemed_any);
             };
             let payload = match decrypt_private_channel_epoch_handoff_grant(self.keys(), &grant_doc)
@@ -83,26 +46,16 @@ impl AppService {
                     payload.new_namespace_secret_hex.as_str(),
                 )
                 .await?;
-            if let Err(error) = self
-                .services
-                .docs_sync
-                .restart_replica_sync(&next_replica)
+            let snapshot = match self
+                .load_private_epoch_snapshot(
+                    topic_id,
+                    channel_id,
+                    &next_replica,
+                    payload.new_namespace_secret_hex.as_str(),
+                    &[state.owner_pubkey.as_str()],
+                    PrivateChannelSnapshotWaitContext::EpochHandoff,
+                )
                 .await
-            {
-                warn!(
-                    topic = %topic_id,
-                    channel_id = %channel_id,
-                    epoch_id = %payload.new_epoch_id,
-                    error = %error,
-                    "failed to restart rotated private channel replica sync"
-                );
-            }
-            let (metadata, policy, participants) = match wait_for_private_channel_epoch_snapshot(
-                self.docs_sync(),
-                &next_replica,
-                PrivateChannelSnapshotWaitContext::EpochHandoff,
-            )
-            .await
             {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
@@ -116,6 +69,11 @@ impl AppService {
                     return Ok(redeemed_any);
                 }
             };
+            let PrivateEpochSnapshot {
+                metadata,
+                policy,
+                local_participant,
+            } = snapshot;
             if policy.audience_kind != state.audience_kind
                 || policy.epoch_id != payload.new_epoch_id
                 || policy.previous_epoch_id.as_deref() != Some(payload.old_epoch_id.as_str())
@@ -130,11 +88,7 @@ impl AppService {
                 return Ok(redeemed_any);
             }
             let local_pubkey = Pubkey::from(local_author.clone());
-            if !participants.iter().any(|participant| {
-                participant.participant_pubkey == local_pubkey
-                    && participant.epoch_id == policy.epoch_id
-                    && participant.left_at.is_none()
-            }) {
+            if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
                 persist_private_channel_participant(
                     self.docs_sync(),
                     self.keys(),
@@ -388,7 +342,7 @@ impl AppService {
             .joined_private_channel_state(topic_id, channel_id.as_str())
             .await
             .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
-        if private_channel_rotation_is_pending(self.docs_sync(), self.keys(), &state).await? {
+        if self.private_channel_rotation_is_pending(&state).await? {
             anyhow::bail!(
                 "private channel epoch handoff is pending; wait for automatic redemption or use a fresh access token"
             );

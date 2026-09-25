@@ -52,6 +52,14 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
         stack_d.blob_service.clone(),
         keys_d.clone(),
     );
+    for (stack, app) in [
+        (&stack_a, &app_a),
+        (&stack_b, &app_b),
+        (&stack_c, &app_c),
+        (&stack_d, &app_d),
+    ] {
+        stack.bind_account(app).await;
+    }
     app_a.warm_social_graph().await.expect("warm a");
     app_b.warm_social_graph().await.expect("warm b");
     app_c.warm_social_graph().await.expect("warm c");

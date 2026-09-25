@@ -10,9 +10,19 @@ pub(super) struct CountingDocsSync {
     /// query が返した record(または key)の総数。replica の大きさに比例する読み出しを検出する。
     records_returned: Arc<std::sync::atomic::AtomicUsize>,
     assist_peer_ids: Vec<String>,
+    /// `remote_readers` が返す provider(#1221 R5-C)。無ければ remote の provider は無い。
+    remote: Option<Arc<dyn DocsSync>>,
 }
 
 impl CountingDocsSync {
+    /// 手元は空で、`remote` を provider として返す docs(#1221 R5-C)。
+    pub(super) fn reading_from(remote: Arc<dyn DocsSync>) -> Self {
+        Self {
+            remote: Some(remote),
+            ..Self::default()
+        }
+    }
+
     /// 書き込みの名義(docs author)を持つ docs(ADR 0053)。
     fn with_docs_author(docs_author: &str) -> Self {
         Self {
@@ -170,6 +180,15 @@ impl DocsSync for CountingDocsSync {
             .await
             .push(replica_id.as_str().to_string());
         Ok(())
+    }
+
+    async fn remote_readers(
+        &self,
+        _replica: &ReplicaId,
+        _private_secret: Option<[u8; 32]>,
+        _scope_peers: Vec<kukuri_transport::SeedPeer>,
+    ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        Ok(self.remote.iter().cloned().collect())
     }
 }
 
@@ -420,6 +439,7 @@ fn app_with_hanging_remote_docs(
 
 mod author_docs_author;
 mod author_key_reflection;
+mod author_remote_reads;
 mod bucket_integrity;
 mod diagnostics;
 mod docs_author_reads;
@@ -433,9 +453,11 @@ mod hydration_limits;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod page_bounds;
+mod private_epoch_reads;
 mod profile_index;
 mod profile_index_attacks;
 mod profile_index_stranger;
+mod profile_merge;
 mod range_reconcile;
 mod range_reconcile_access;
 mod range_reconcile_faults;

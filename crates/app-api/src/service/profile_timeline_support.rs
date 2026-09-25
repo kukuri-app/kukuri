@@ -7,11 +7,17 @@
 //! key の上限つきの一覧(それぞれ `PROFILE_LEGACY_KEYS` 件)から読んだ行を合わせる。上限を超える旧い投稿は表示しない。
 //! 旧い投稿に後から索引を補うことはしない(全件走査になる。AGENTS.md: ユースケース上ユーザーが必要としない限り同期・復旧はしない)。
 
+//!
+//! #1221 R5-C: 手元のページが埋まらないとき、author bucket と旧 replica の索引を有界な provider から読んで合わせる。
+//! author bucket の key は旧 replica のプロフィールの key(`indexes/profile/`・`profile/posts/`・`profile/reposts/`・
+//! `envelopes/`)と同じで、行の時刻はその bucket の日に属する。
+
+use super::remote_read_support::{REMOTE_READ_DEADLINE, writer_readers};
 use super::*;
 use crate::service::projection_support::HIDDEN_AUTHOR_SKIP_PAGES;
 use kukuri_docs_sync::{
-    DocKeyOrder, DocKeyQuery, TimeIndexCursor, query_time_index_desc,
-    query_time_index_desc_by_author,
+    BucketReplica, BucketScope, DocKeyOrder, DocKeyQuery, TimeBucket, TimeIndexCursor,
+    query_time_index_desc, query_time_index_desc_by_author,
 };
 
 const PROFILE_INDEX_PREFIX: &str = "indexes/profile/";
@@ -61,6 +67,7 @@ async fn profile_post_from_record(
     replica: &ReplicaId,
     author_pubkey: &str,
     record: &DocRecord,
+    policy: DocFetchPolicy,
 ) -> Result<Option<ProfilePost>> {
     let expected_profile_topic_id = author_profile_topic_id(author_pubkey);
     let doc = match serde_json::from_slice::<AuthorProfilePostDocV1>(record.value.as_slice()) {
@@ -88,13 +95,8 @@ async fn profile_post_from_record(
             return Ok(None);
         }
     };
-    let Some(envelope) = fetch_author_envelope_by_id(
-        docs_sync,
-        replica,
-        &doc.envelope_id,
-        DocFetchPolicy::LocalOnly,
-    )
-    .await?
+    let Some(envelope) =
+        fetch_author_envelope_by_id(docs_sync, replica, &doc.envelope_id, policy).await?
     else {
         return Ok(None);
     };
@@ -133,6 +135,7 @@ async fn profile_repost_from_record(
     replica: &ReplicaId,
     author_pubkey: &str,
     record: &DocRecord,
+    policy: DocFetchPolicy,
 ) -> Result<Option<ProfileRepost>> {
     let expected_profile_topic_id = author_profile_topic_id(author_pubkey);
     let doc = match serde_json::from_slice::<AuthorProfileRepostDocV1>(record.value.as_slice()) {
@@ -160,13 +163,8 @@ async fn profile_repost_from_record(
             return Ok(None);
         }
     };
-    let Some(envelope) = fetch_author_envelope_by_id(
-        docs_sync,
-        replica,
-        &doc.envelope_id,
-        DocFetchPolicy::LocalOnly,
-    )
-    .await?
+    let Some(envelope) =
+        fetch_author_envelope_by_id(docs_sync, replica, &doc.envelope_id, policy).await?
     else {
         return Ok(None);
     };
@@ -206,6 +204,7 @@ async fn load_profile_item(
     author_pubkey: &str,
     object_id: &str,
     docs_author: Option<&str>,
+    policy: DocFetchPolicy,
 ) -> Result<Option<ProfileTimelineItem>> {
     // 著者の docs author が分かれば、docs author と key の組で 1 件読む(ADR 0053 §6。他の名義の record は何件あっても
     // 読まない)。無い・検証に通らないときは、下の上限つきの読み出しに落とす(旧 record)。
@@ -216,7 +215,7 @@ async fn load_profile_item(
                     replica,
                     docs_author,
                     stable_key(prefix, object_id).as_str(),
-                    DocFetchPolicy::LocalOnly,
+                    policy,
                 )
                 .await?
             else {
@@ -224,12 +223,14 @@ async fn load_profile_item(
             };
             if is_post {
                 if let Some(post) =
-                    profile_post_from_record(docs_sync, replica, author_pubkey, &record).await?
+                    profile_post_from_record(docs_sync, replica, author_pubkey, &record, policy)
+                        .await?
                 {
                     return Ok(Some(ProfileTimelineItem::Post(post)));
                 }
             } else if let Some(repost) =
-                profile_repost_from_record(docs_sync, replica, author_pubkey, &record).await?
+                profile_repost_from_record(docs_sync, replica, author_pubkey, &record, policy)
+                    .await?
             {
                 return Ok(Some(ProfileTimelineItem::Repost(repost)));
             }
@@ -240,12 +241,12 @@ async fn load_profile_item(
             replica,
             stable_key("profile/posts", object_id).as_str(),
             MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            DocFetchPolicy::LocalOnly,
+            policy,
         )
         .await?
     {
         if let Some(post) =
-            profile_post_from_record(docs_sync, replica, author_pubkey, &record).await?
+            profile_post_from_record(docs_sync, replica, author_pubkey, &record, policy).await?
         {
             return Ok(Some(ProfileTimelineItem::Post(post)));
         }
@@ -255,12 +256,12 @@ async fn load_profile_item(
             replica,
             stable_key("profile/reposts", object_id).as_str(),
             MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            DocFetchPolicy::LocalOnly,
+            policy,
         )
         .await?
     {
         if let Some(repost) =
-            profile_repost_from_record(docs_sync, replica, author_pubkey, &record).await?
+            profile_repost_from_record(docs_sync, replica, author_pubkey, &record, policy).await?
         {
             return Ok(Some(ProfileTimelineItem::Repost(repost)));
         }
@@ -295,8 +296,15 @@ async fn load_legacy_profile_items(
             if !seen.insert(object_id.to_string()) {
                 continue;
             }
-            if let Some(item) =
-                load_profile_item(docs_sync, replica, author_pubkey, object_id, docs_author).await?
+            if let Some(item) = load_profile_item(
+                docs_sync,
+                replica,
+                author_pubkey,
+                object_id,
+                docs_author,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
             {
                 items.push(item);
             }
@@ -383,6 +391,7 @@ pub(crate) async fn profile_timeline_page_from_docs(
                 author_pubkey,
                 &entry.object_id,
                 docs_author,
+                DocFetchPolicy::LocalOnly,
             )
             .await?
                 && item_position(&item) == (entry.created_at, entry.object_id.clone())
@@ -443,4 +452,257 @@ pub(crate) async fn profile_timeline_page_from_docs(
         object_id: EnvelopeId::from(object_id.as_str()),
     });
     Ok(Page { items, next_cursor })
+}
+
+/// 1 操作で remote の索引から照合する行の上限(#1221 R5-C。R5-B の局所照合 200 行)。
+const PROFILE_REMOTE_ROWS: usize = 200;
+/// 1 回に読む author の replica の数の上限(旧 replica と author bucket 3 つ)。
+const PROFILE_REMOTE_REPLICAS: usize = 4;
+
+/// 1 つの source(手元のページ、または 1 provider の 1 replica の索引)から読んだ行と、読み残しの境界。
+/// 境界(`frontier`)は、その source がまだ読んでいない側で最も新しい位置。`None` はその source が尽きたこと。
+pub(crate) struct ProfileSourceRows<T> {
+    pub(crate) rows: Vec<((i64, String), T)>,
+    pub(crate) frontier: Option<(i64, String)>,
+}
+
+/// 複数の source の行を新しい順に合わせて 1 ページにする。
+///
+/// どの source の読み残しの境界よりも新しい行だけを返す。境界より古い行を先に返すと、次のページの cursor が、
+/// 別の source のまだ読んでいない行を飛ばす。同じ object は最初の source の行を使う。`load` が `None` を返した行
+/// (検証に通らない、非表示)は返さずに読み進める。次の cursor は最後に返した行の位置、ページが埋まらなければ境界。
+pub(crate) async fn assemble_profile_page<T, U, Fut>(
+    sources: Vec<ProfileSourceRows<T>>,
+    limit: usize,
+    mut load: impl FnMut(T) -> Fut,
+) -> Result<(Vec<U>, Option<(i64, String)>)>
+where
+    Fut: Future<Output = Result<Option<U>>>,
+{
+    let horizon = sources
+        .iter()
+        .filter_map(|source| source.frontier.clone())
+        .max();
+    let mut seen = BTreeSet::new();
+    let mut rows = sources
+        .into_iter()
+        .flat_map(|source| source.rows)
+        .filter(|(position, _)| horizon.as_ref().is_none_or(|edge| position >= edge))
+        .filter(|(position, _)| seen.insert(position.1.clone()))
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut items = Vec::new();
+    let mut rows = rows.into_iter().peekable();
+    while let Some((position, row)) = rows.next() {
+        if let Some(item) = load(row).await? {
+            items.push(item);
+        }
+        if items.len() >= limit {
+            let more = rows.peek().is_some() || horizon.is_some();
+            return Ok((items, more.then_some(position)));
+        }
+    }
+    Ok((items, horizon))
+}
+
+/// プロフィールの 1 ページ(#1221 R5-C)。手元のページが埋まらないときだけ、author 本人を含む有界な provider から
+/// 旧 `author::<pubkey>` と author bucket(cursor の bucket、その前の bucket、現在の bucket)の索引を読み、手元と合わせる。
+///
+/// remote の読取りは namespace を import・sync しない。1 操作は索引 200 行・30 秒まで。署名・author・索引の位置・bucket の
+/// 時刻を確かめた行だけを返す。読めない provider・replica は欠けたまま進む。
+pub(crate) async fn profile_timeline_page(
+    services: &ServiceHandles,
+    local_author_pubkey: &str,
+    author_pubkey: &str,
+    docs_author: Option<&str>,
+    cursor: Option<TimelineCursor>,
+    limit: usize,
+    hidden_author_pubkeys: &BTreeSet<String>,
+) -> Result<Page<ProfileTimelineItem>> {
+    let local = profile_timeline_page_from_docs(
+        services.docs_sync.as_ref(),
+        author_pubkey,
+        docs_author,
+        cursor.clone(),
+        limit,
+        hidden_author_pubkeys,
+    )
+    .await?;
+    if local.items.len() >= limit || author_pubkey == local_author_pubkey {
+        return Ok(local);
+    }
+    let legacy = author_replica_id(author_pubkey);
+    let readers = writer_readers(services, &legacy, &[author_pubkey], None).await;
+    if readers.is_empty() {
+        return Ok(local);
+    }
+    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let before = cursor.as_ref().map(|cursor| TimeIndexCursor {
+        created_at: cursor.created_at,
+        object_id: cursor.object_id.as_str().to_owned(),
+    });
+    let anchor = TimeBucket::from_unix_seconds(
+        before
+            .as_ref()
+            .map_or_else(|| Utc::now().timestamp(), |cursor| cursor.created_at),
+    )?;
+    let mut replicas = vec![legacy];
+    for bucket in [
+        Some(anchor),
+        anchor.previous(),
+        TimeBucket::from_unix_seconds(Utc::now().timestamp()).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let replica = BucketReplica::new(
+            BucketScope::Author {
+                author_pubkey: author_pubkey.to_owned(),
+            },
+            bucket,
+        )?
+        .replica_id();
+        if !replicas.contains(&replica) {
+            replicas.push(replica);
+        }
+    }
+    replicas.truncate(PROFILE_REMOTE_REPLICAS);
+    let rows_per_source = limit.min(PROFILE_REMOTE_ROWS / PROFILE_REMOTE_REPLICAS);
+    let mut sources = vec![ProfileSourceRows {
+        frontier: local
+            .next_cursor
+            .as_ref()
+            .map(|cursor| (cursor.created_at, cursor.object_id.as_str().to_owned())),
+        rows: local
+            .items
+            .into_iter()
+            .map(|item| (item_position(&item), ProfileRow::Local(Box::new(item))))
+            .collect(),
+    }];
+    'replicas: for replica in replicas {
+        for reader in &readers {
+            let read = tokio::time::timeout_at(
+                deadline,
+                remote_profile_index(
+                    reader.as_ref(),
+                    &replica,
+                    docs_author,
+                    before.as_ref(),
+                    rows_per_source,
+                ),
+            )
+            .await;
+            match read {
+                Ok(Ok((entries, frontier))) => {
+                    sources.push(ProfileSourceRows {
+                        rows: entries
+                            .into_iter()
+                            .map(|position| {
+                                (
+                                    position.clone(),
+                                    ProfileRow::Remote(reader.clone(), replica.clone(), position),
+                                )
+                            })
+                            .collect(),
+                        frontier,
+                    });
+                    continue 'replicas;
+                }
+                Ok(Err(error)) => warn!(%error, "remote profile index read failed"),
+                Err(_) => break 'replicas,
+            }
+        }
+    }
+    let (items, next) = assemble_profile_page(sources, limit, |row| async move {
+        let (reader, replica, position) = match row {
+            ProfileRow::Local(item) => return Ok(Some(*item)),
+            ProfileRow::Remote(reader, replica, position) => (reader, replica, position),
+        };
+        let read = tokio::time::timeout_at(
+            deadline,
+            load_profile_item(
+                reader.as_ref(),
+                &replica,
+                author_pubkey,
+                &position.1,
+                docs_author,
+                DocFetchPolicy::LocalThenRemote,
+            ),
+        )
+        .await;
+        reader.finish_remote_object().await;
+        let item = match read {
+            Ok(Ok(item)) => item,
+            Ok(Err(error)) => {
+                warn!(%error, "remote profile row read failed");
+                None
+            }
+            Err(_) => None,
+        };
+        Ok(item.filter(|item| {
+            item_position(item) == position
+                && !profile_timeline_item_is_hidden(item, hidden_author_pubkeys)
+        }))
+    })
+    .await?;
+    Ok(Page {
+        items,
+        next_cursor: next.map(|(created_at, object_id)| TimelineCursor {
+            created_at,
+            object_id: EnvelopeId::from(object_id.as_str()),
+        }),
+    })
+}
+
+enum ProfileRow {
+    Local(Box<ProfileTimelineItem>),
+    Remote(Arc<dyn DocsSync>, ReplicaId, (i64, String)),
+}
+
+/// 1 provider の 1 replica の索引を cursor から新しい順に読む。bucket の時刻の外の行は捨てる。
+async fn remote_profile_index(
+    reader: &dyn DocsSync,
+    replica: &ReplicaId,
+    docs_author: Option<&str>,
+    before: Option<&TimeIndexCursor>,
+    limit: usize,
+) -> Result<(Vec<(i64, String)>, Option<(i64, String)>)> {
+    let page = match docs_author {
+        Some(docs_author) => {
+            query_time_index_desc_by_author(
+                reader,
+                replica,
+                PROFILE_INDEX_PREFIX,
+                docs_author,
+                before,
+                limit,
+            )
+            .await?
+        }
+        None => query_time_index_desc(reader, replica, PROFILE_INDEX_PREFIX, before, limit).await?,
+    };
+    let frontier = match (&page.resume, page.entries.len() >= limit) {
+        (Some(resume), _) => Some((resume.created_at, resume.object_id.clone())),
+        (None, true) => page
+            .entries
+            .last()
+            .map(|entry| (entry.created_at, entry.object_id.clone())),
+        (None, false) => None,
+    };
+    let bucket = replica
+        .as_str()
+        .starts_with("bucket::")
+        .then(|| BucketReplica::parse(replica))
+        .transpose()?;
+    let rows = page
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            bucket
+                .as_ref()
+                .is_none_or(|bucket| bucket.bucket().contains(entry.created_at))
+        })
+        .map(|entry| (entry.created_at, entry.object_id))
+        .collect();
+    Ok((rows, frontier))
 }

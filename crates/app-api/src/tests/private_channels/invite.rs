@@ -10,6 +10,8 @@ async fn private_channel_invite_scopes_posts_and_replies() {
     let store_b = Arc::new(MemoryStore::default());
     let app_a = app_with_iroh_services(store_a.clone(), &stack_a);
     let app_b = app_with_iroh_services(store_b, &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
     let topic = "kukuri:topic:private-channel";
 
     let ticket_a = app_a
@@ -170,6 +172,8 @@ async fn channel_access_preview_is_non_mutating_and_rejects_invalid_tokens() {
     let store_b = Arc::new(MemoryStore::default());
     let app_a = app_with_iroh_services(store_a, &stack_a);
     let app_b = app_with_iroh_services(store_b, &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
     let topic = "kukuri:topic:preview-channel";
 
     let channel = app_a

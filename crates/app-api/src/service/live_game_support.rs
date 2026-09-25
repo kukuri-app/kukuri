@@ -1,3 +1,4 @@
+use super::remote_read_support::{read_local_then_remote, writer_readers};
 use super::*;
 use kukuri_core::SpatialContextV1;
 
@@ -205,15 +206,50 @@ impl AppService {
         })
     }
 
+    /// author replica の対象を、手元の次に author 本人を含む有界な provider から読む(#1221 R5-C)。
+    /// remote の読取りは namespace を import・sync しない。自分の replica は手元だけを読む。
+    pub(crate) async fn read_author_object<T, Fut>(
+        &self,
+        author_pubkey: &str,
+        read: impl Fn(Arc<dyn DocsSync>, DocFetchPolicy) -> Fut,
+    ) -> Result<Option<T>>
+    where
+        Fut: Future<Output = Result<Option<T>>>,
+    {
+        let replica = author_replica_id(author_pubkey);
+        let own = author_pubkey == self.current_author_pubkey();
+        let readers = async {
+            if own {
+                return Vec::new();
+            }
+            writer_readers(&self.services, &replica, &[author_pubkey], None).await
+        };
+        read_local_then_remote(self.services.docs_sync.clone(), readers, read).await
+    }
+
     pub(crate) async fn fetch_dome_preset_manifest(
         &self,
         preset_ref: &DomePresetRefV1,
     ) -> Result<Option<DomePresetManifestV1>> {
+        self.read_author_object(
+            preset_ref.owner_pubkey.as_str(),
+            |docs, policy| async move {
+                self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref)
+                    .await
+            },
+        )
+        .await
+    }
+
+    async fn read_dome_preset_manifest(
+        &self,
+        docs: &dyn DocsSync,
+        policy: DocFetchPolicy,
+        preset_ref: &DomePresetRefV1,
+    ) -> Result<Option<DomePresetManifestV1>> {
         let replica = author_replica_id(preset_ref.owner_pubkey.as_str());
-        let state_records = self
-            .services
-            .docs_sync
-            .query_replica(
+        let state_records = docs
+            .query_replica_with_policy(
                 &replica,
                 DocQuery::Exact(stable_key(
                     "metaverse/dome-presets",
@@ -222,6 +258,7 @@ impl AppService {
                         preset_ref.preset_id, preset_ref.revision
                     ),
                 )),
+                policy,
             )
             .await?;
         let Some(state_record) = state_records.into_iter().next() else {
@@ -257,11 +294,12 @@ impl AppService {
             anyhow::bail!("Dome Preset reference does not match its manifest");
         }
         let signed: DomePresetManifestV1 = match fetch_verified_dome_envelope(
-            self.services.docs_sync.as_ref(),
+            docs,
             &replica,
             &state.last_envelope_id,
             "dome-preset",
             &manifest.owner_pubkey,
+            policy,
         )
         .await
         {
@@ -540,33 +578,50 @@ impl AppService {
         owner_pubkey: &str,
         move_id: &str,
     ) -> Result<Option<DomeMoveRecordV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(
-                &author_replica_id(owner_pubkey),
-                DocQuery::Exact(stable_key(
-                    "metaverse/dome-moves",
-                    &format!("{move_id}/state"),
-                )),
+        let replica = &author_replica_id(owner_pubkey);
+        self.read_author_object(owner_pubkey, |docs, policy| async move {
+            let docs = docs.as_ref();
+            let records = docs
+                .query_replica_with_policy(
+                    replica,
+                    DocQuery::Exact(stable_key(
+                        "metaverse/dome-moves",
+                        &format!("{move_id}/state"),
+                    )),
+                    policy,
+                )
+                .await?;
+            let Some(state_record) = records.into_iter().next() else {
+                return Ok(None);
+            };
+            let state: DomeMoveStateDocV1 = serde_json::from_slice(&state_record.value)?;
+            let signed: DomeMoveRecordV1 = match fetch_verified_dome_envelope(
+                docs,
+                replica,
+                &state.last_envelope_id,
+                "dome-move",
+                &state.record.owner_pubkey,
+                policy,
             )
-            .await?;
-        let Some(state_record) = records.into_iter().next() else {
-            return Ok(None);
-        };
-        let state: DomeMoveStateDocV1 = serde_json::from_slice(&state_record.value)?;
-        let signed: DomeMoveRecordV1 = fetch_verified_dome_envelope(
-            self.services.docs_sync.as_ref(),
-            &author_replica_id(owner_pubkey),
-            &state.last_envelope_id,
-            "dome-move",
-            &state.record.owner_pubkey,
-        )
-        .await?;
-        if signed != state.record {
-            anyhow::bail!("signed Dome move content does not match its state record");
-        }
-        Ok(Some(state.record))
+            .await
+            {
+                Ok(signed) => signed,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<DomeReadUnavailable>(),
+                        Some(DomeReadUnavailable::Envelope)
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            if signed != state.record {
+                anyhow::bail!("signed Dome move content does not match its state record");
+            }
+            Ok(Some(state.record))
+        })
+        .await
     }
 
     pub(crate) async fn stop_live_presence_task(
@@ -887,11 +942,13 @@ pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
     envelope_id: &EnvelopeId,
     expected_kind: &str,
     expected_owner: &Pubkey,
+    policy: DocFetchPolicy,
 ) -> Result<T> {
     let records = docs_sync
-        .query_replica(
+        .query_replica_with_policy(
             replica,
             DocQuery::Exact(stable_key("envelopes", envelope_id.as_str())),
+            policy,
         )
         .await?;
     let envelope: KukuriEnvelope = records

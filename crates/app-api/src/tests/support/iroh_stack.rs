@@ -78,6 +78,17 @@ impl TestIrohStack {
     }
 }
 
+impl TestIrohStack {
+    /// desktop の起動と同じく、この端末で app の account の受信 binding に答える(#1221 R5-C。private の参加は
+    /// token の発行者の検証済み宛先から制御 record を読む)。
+    pub(crate) async fn bind_account(&self, app: &AppService) {
+        self._node
+            .install_receive_binding(app.services.keys.clone())
+            .await
+            .expect("install receive binding");
+    }
+}
+
 pub(crate) async fn wait_for_endpoint_in_testnet(endpoint: &iroh::Endpoint, testnet: &Testnet) {
     let mut builder = DhtBuilder::default();
     builder.bootstrap(&testnet.bootstrap);

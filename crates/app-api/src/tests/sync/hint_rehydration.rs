@@ -1,7 +1,8 @@
 use super::*;
 
+// #1221 R5-C: 空のプロフィールは、author の購読を再起動して sync で埋めることをしない(remote のページを有界に読む)。
 #[tokio::test]
-async fn list_profile_timeline_restarts_author_subscription_with_cooldown_when_profile_is_empty() {
+async fn an_empty_profile_timeline_does_not_restart_the_author_subscription() {
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
     let docs_sync = Arc::new(TrackingDocsSync::default());
@@ -33,9 +34,6 @@ async fn list_profile_timeline_restarts_author_subscription_with_cooldown_when_p
     assert_eq!(
         subscribed,
         vec![
-            author_replica_id(author_pubkey.as_str())
-                .as_str()
-                .to_string(),
             author_replica_id(author_pubkey.as_str())
                 .as_str()
                 .to_string()
