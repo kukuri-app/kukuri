@@ -23,6 +23,17 @@ impl AppService {
     ) -> Result<(String, String)> {
         self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, channel_id)
             .await?;
+        self.private_channel_indexing_capability_known(topic_id, channel_id)
+            .await
+    }
+
+    /// Read the account's accepted epoch without starting a sync or probing
+    /// remote peers from the CN maintenance tick.
+    pub async fn private_channel_indexing_capability_known(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<(String, String)> {
         let state = self
             .joined_private_channel_state(topic_id, channel_id)
             .await

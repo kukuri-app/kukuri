@@ -67,6 +67,7 @@ pub struct IndexingRequest {
 pub struct ChannelSecret {
     pub channel_id: String,
     pub epoch_id: Option<String>,
+    pub rotated: bool,
     pub namespace_secret_hex: String,
 }
 
@@ -424,6 +425,8 @@ pub async fn upsert_channel_secret(
             SET nonce = EXCLUDED.nonce,
                 ciphertext = EXCLUDED.ciphertext,
                 epoch_id = NULL,
+                rotated = FALSE,
+                request_managed = FALSE,
                 updated_at = NOW()",
     )
     .bind(channel_id)
@@ -467,8 +470,8 @@ pub async fn register_channel_secret(
     let (nonce, ciphertext) = cipher.encrypt(channel_id, namespace_secret_hex)?;
     // INSERT ... ON CONFLICT DO NOTHING で TOCTOU（並行登録）でも既存を保護する。
     let result = sqlx::query(
-        "INSERT INTO cn_index.channel_secrets (channel_id, nonce, ciphertext)
-         VALUES ($1, $2, $3)
+        "INSERT INTO cn_index.channel_secrets (channel_id, nonce, ciphertext, request_managed)
+         VALUES ($1, $2, $3, TRUE)
          ON CONFLICT (channel_id) DO NOTHING",
     )
     .bind(channel_id)
@@ -516,6 +519,129 @@ pub async fn register_channel_secret_with_epoch(
     Ok(())
 }
 
+/// An existing requester can follow a channel into a new epoch by proving the
+/// capability currently held by this node. The row lock serializes rotations;
+/// an operator removal or replacement cannot be undone by a stale retry.
+pub async fn rotate_channel_secret_epoch(
+    pool: &PgPool,
+    cipher: &ChannelSecretCipher,
+    requester_pubkey: &str,
+    channel_id: &str,
+    previous: (&str, &str),
+    next: (&str, &str),
+) -> Result<()> {
+    let (previous_epoch_id, previous_secret_hex) = previous;
+    let (epoch_id, secret_hex) = next;
+    let channel_id = channel_id.trim();
+    let previous_epoch_id = previous_epoch_id.trim();
+    let epoch_id = epoch_id.trim();
+    if channel_id.is_empty()
+        || previous_epoch_id.is_empty()
+        || epoch_id.is_empty()
+        || epoch_id.len() > 1024
+        || previous_epoch_id.len() > 1024
+        || previous_epoch_id == epoch_id
+    {
+        bail!("invalid channel epoch transition");
+    }
+    validate_namespace_secret_hex(previous_secret_hex)?;
+    validate_namespace_secret_hex(secret_hex)?;
+    let mut tx = pool.begin().await?;
+    let eligible: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM cn_index.indexing_requests
+         WHERE kind='private_channel' AND target_id=$1 AND requester_pubkey=$2
+           AND status IN ('pending','approved'))",
+    )
+    .bind(channel_id)
+    .bind(requester_pubkey)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !eligible {
+        return Err(ChannelSecretConflict::AlreadyRegistered.into());
+    }
+    let row = sqlx::query(
+        "SELECT epoch_id, nonce, ciphertext FROM cn_index.channel_secrets
+         WHERE channel_id=$1 FOR UPDATE",
+    )
+    .bind(channel_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = row else {
+        return Err(ChannelSecretConflict::AlreadyRegistered.into());
+    };
+    let stored_epoch: Option<String> = row.try_get("epoch_id")?;
+    let old_secret = cipher.decrypt(
+        channel_id,
+        &row.try_get::<Vec<u8>, _>("nonce")?,
+        &row.try_get::<Vec<u8>, _>("ciphertext")?,
+    )?;
+    if stored_epoch.as_deref() == Some(epoch_id) && old_secret == secret_hex {
+        tx.commit().await?;
+        return Ok(());
+    }
+    if stored_epoch.as_deref() != Some(previous_epoch_id)
+        || old_secret.len() != previous_secret_hex.len()
+        || old_secret
+            .bytes()
+            .zip(previous_secret_hex.bytes())
+            .fold(0_u8, |diff, (left, right)| diff | (left ^ right))
+            != 0
+    {
+        return Err(ChannelSecretConflict::AlreadyRegistered.into());
+    }
+    let (nonce, ciphertext) = cipher.encrypt(channel_id, secret_hex)?;
+    sqlx::query(
+        "UPDATE cn_index.channel_secrets
+         SET epoch_id=$2, nonce=$3, ciphertext=$4, rotated=TRUE, updated_at=NOW()
+         WHERE channel_id=$1",
+    )
+    .bind(channel_id)
+    .bind(epoch_id)
+    .bind(nonce)
+    .bind(ciphertext)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Remove only this account's grant. An operator-owned capability or another
+/// requester's grant keeps the channel available. Derived rows are gated by
+/// the missing capability immediately and reclaimed by the index cache owner.
+pub async fn revoke_indexing_request(
+    pool: &PgPool,
+    requester_pubkey: &str,
+    kind: IndexScopeKind,
+    target_id: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let removed = sqlx::query(
+        "DELETE FROM cn_index.indexing_requests
+         WHERE requester_pubkey=$1 AND kind=$2 AND target_id=$3",
+    )
+    .bind(requester_pubkey)
+    .bind(kind.as_str())
+    .bind(target_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
+    if removed && kind == IndexScopeKind::PrivateChannel {
+        sqlx::query(
+            "DELETE FROM cn_index.channel_secrets c
+             WHERE c.channel_id=$1 AND c.request_managed=TRUE
+               AND NOT EXISTS (
+                 SELECT 1 FROM cn_index.indexing_requests r
+                 WHERE r.kind='private_channel' AND r.target_id=c.channel_id)",
+        )
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(removed)
+}
+
 /// 登録済み channel capability を復号して取得する。未登録なら None。
 pub async fn get_channel_secret(
     pool: &PgPool,
@@ -523,7 +649,7 @@ pub async fn get_channel_secret(
     channel_id: &str,
 ) -> Result<Option<ChannelSecret>> {
     let row = sqlx::query(
-        "SELECT channel_id, epoch_id, nonce, ciphertext
+        "SELECT channel_id, epoch_id, rotated, nonce, ciphertext
          FROM cn_index.channel_secrets
          WHERE channel_id = $1",
     )
@@ -535,12 +661,14 @@ pub async fn get_channel_secret(
     };
     let channel_id: String = row.try_get("channel_id")?;
     let epoch_id: Option<String> = row.try_get("epoch_id")?;
+    let rotated: bool = row.try_get("rotated")?;
     let nonce: Vec<u8> = row.try_get("nonce")?;
     let ciphertext: Vec<u8> = row.try_get("ciphertext")?;
     let namespace_secret_hex = cipher.decrypt(channel_id.as_str(), &nonce, &ciphertext)?;
     Ok(Some(ChannelSecret {
         channel_id,
         epoch_id,
+        rotated,
         namespace_secret_hex,
     }))
 }
@@ -551,7 +679,7 @@ pub async fn list_channel_secrets(
     cipher: &ChannelSecretCipher,
 ) -> Result<Vec<ChannelSecret>> {
     let rows = sqlx::query(
-        "SELECT channel_id, epoch_id, nonce, ciphertext
+        "SELECT channel_id, epoch_id, rotated, nonce, ciphertext
          FROM cn_index.channel_secrets
          ORDER BY channel_id",
     )
@@ -561,12 +689,14 @@ pub async fn list_channel_secrets(
     for row in &rows {
         let channel_id: String = row.try_get("channel_id")?;
         let epoch_id: Option<String> = row.try_get("epoch_id")?;
+        let rotated: bool = row.try_get("rotated")?;
         let nonce: Vec<u8> = row.try_get("nonce")?;
         let ciphertext: Vec<u8> = row.try_get("ciphertext")?;
         let namespace_secret_hex = cipher.decrypt(channel_id.as_str(), &nonce, &ciphertext)?;
         secrets.push(ChannelSecret {
             channel_id,
             epoch_id,
+            rotated,
             namespace_secret_hex,
         });
     }

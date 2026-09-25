@@ -12,7 +12,8 @@ use kukuri_cn_core::{
     get_channel_secret, initialize_database, insert_indexing_request, is_topic_supported,
     list_channel_secrets, list_indexing_requests, list_indexing_requests_for_requester,
     list_supported_topics, register_channel_secret, register_channel_secret_with_epoch,
-    reject_indexing_request, remove_channel_secret, remove_supported_topic, upsert_channel_secret,
+    reject_indexing_request, remove_channel_secret, remove_supported_topic,
+    revoke_indexing_request, rotate_channel_secret_epoch, upsert_channel_secret,
 };
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
@@ -243,6 +244,53 @@ async fn register_channel_secret_is_first_writer_wins() -> Result<()> {
         "operator replacement invalidates the old epoch reader"
     );
 
+    database.cleanup().await
+}
+
+#[tokio::test]
+async fn epoch_rollover_requires_the_existing_request_and_capability() -> Result<()> {
+    let Some(admin_url) = integration_test_admin_database_url() else {
+        return Ok(());
+    };
+    let database = TestDatabase::create(admin_url.as_str(), "cn_epoch_rollover").await?;
+    let pool = connect_postgres(database.database_url.as_str()).await?;
+    initialize_database(&pool).await?;
+    let cipher = cipher();
+    let old = hex::encode([1_u8; 32]);
+    let next = hex::encode([2_u8; 32]);
+    register_channel_secret_with_epoch(&pool, &cipher, "room", "e1", &old).await?;
+    assert!(
+        rotate_channel_secret_epoch(&pool, &cipher, "owner", "room", ("e1", &old), ("e2", &next))
+            .await
+            .is_err()
+    );
+    insert_indexing_request(&pool, "owner", IndexScopeKind::PrivateChannel, "room").await?;
+    assert!(
+        rotate_channel_secret_epoch(
+            &pool,
+            &cipher,
+            "owner",
+            "room",
+            ("e1", &next),
+            ("e2", &next)
+        )
+        .await
+        .is_err()
+    );
+    rotate_channel_secret_epoch(&pool, &cipher, "owner", "room", ("e1", &old), ("e2", &next))
+        .await?;
+    rotate_channel_secret_epoch(&pool, &cipher, "owner", "room", ("e1", &old), ("e2", &next))
+        .await?;
+    let stored = get_channel_secret(&pool, &cipher, "room").await?.unwrap();
+    assert_eq!(stored.epoch_id.as_deref(), Some("e2"));
+    assert_eq!(stored.namespace_secret_hex, next);
+    assert!(
+        rotate_channel_secret_epoch(&pool, &cipher, "owner", "room", ("e1", &old), ("e3", &old))
+            .await
+            .is_err()
+    );
+    assert!(revoke_indexing_request(&pool, "owner", IndexScopeKind::PrivateChannel, "room").await?);
+    assert!(get_channel_secret(&pool, &cipher, "room").await?.is_none());
     database.cleanup().await
 }
 

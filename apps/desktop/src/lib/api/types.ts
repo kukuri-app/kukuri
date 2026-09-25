@@ -613,6 +613,7 @@ export interface DesktopApi {
   submitCommunityNodeIndexingRequest(
     request: CommunityNodeIndexingRequest
   ): Promise<SubmitIndexingRequestResponse>;
+  revokeCommunityNodeIndexingRequest(request: CommunityNodeIndexingRequest): Promise<void>;
   readCommunityNodeIndexingStatus(
     request: CommunityNodeIndexingStatusRequest
   ): Promise<IndexingStatusResponse>;

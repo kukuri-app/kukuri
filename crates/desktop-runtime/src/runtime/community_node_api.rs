@@ -69,6 +69,13 @@ impl DesktopRuntime {
         self.request_community_node_indexing(request).await
     }
 
+    pub async fn revoke_community_node_indexing_request(
+        &self,
+        request: CommunityNodeIndexingRequest,
+    ) -> std::result::Result<(), CommunityNodeIndexingRequestError> {
+        self.revoke_community_node_indexing(request).await
+    }
+
     /// 自分の索引申請の状態と、任意の対象の supported 判定を読む(#975)。読取り専用で、
     /// 応答を永続化しない。
     pub async fn read_community_node_indexing_status(
@@ -143,6 +150,7 @@ impl DesktopRuntime {
         &self,
         request: SetCommunityNodeConfigRequest,
     ) -> Result<CommunityNodeConfig> {
+        let grant_guard = self.private_index_grant_guard.lock().await;
         let current_config = self.community_node_config.lock().await.clone();
         let nodes = request
             .nodes
@@ -201,6 +209,9 @@ impl DesktopRuntime {
                 .iter()
                 .all(|next| next.base_url != current.base_url)
         }) {
+            self.store
+                .stop_private_index_grants_for_node(&removed_node.base_url)
+                .await?;
             delete_community_node_invite_code(
                 &self.db_path,
                 self.identity_mode,
@@ -226,13 +237,18 @@ impl DesktopRuntime {
         // getter を読取専用化した(WP-Q2)ため、config 変更直後の登録はここで 1 tick 即時実行する。
         // これが無いと新規 Node の bootstrap がスケジューラ次 tick(最大 15 秒)まで
         // 遅延する。tick は deadline ゲート済みの冪等設計で、直後の scheduler tick と二重でも安全。
+        drop(grant_guard);
         self.run_community_node_session_maintenance_once().await;
         Ok(next_config)
     }
 
     pub async fn clear_community_node_config(&self) -> Result<()> {
+        let _grant_guard = self.private_index_grant_guard.lock().await;
         let existing = self.community_node_config.lock().await.clone();
         for node in existing.nodes {
+            self.store
+                .stop_private_index_grants_for_node(&node.base_url)
+                .await?;
             // #1061: token を消す前に、保存済み観測の削除を要求する。
             if let Err(error) = self
                 .forget_community_node_trust_observations(node.base_url.as_str())
@@ -502,6 +518,7 @@ impl DesktopRuntime {
         &self,
         request: CommunityNodeTargetRequest,
     ) -> Result<CommunityNodeNodeStatus> {
+        let _grant_guard = self.private_index_grant_guard.lock().await;
         let base_url = normalize_http_url(request.base_url.as_str())?;
         self.require_community_node(base_url.as_str()).await?;
         let mut state = load_community_node_local_consents(
@@ -511,6 +528,9 @@ impl DesktopRuntime {
         )?;
         // #1061: token を消す前に、観測提供を止めて保存済み観測の削除を要求する。
         self.revoke_community_node_trust_observations(base_url.as_str())
+            .await?;
+        self.store
+            .stop_private_index_grants_for_node(&base_url)
             .await?;
         state.withdrawn_at = Some(Utc::now().timestamp());
         persist_community_node_local_consents(

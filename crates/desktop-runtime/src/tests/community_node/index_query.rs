@@ -4,8 +4,9 @@ use axum::http::{Uri, header::RETRY_AFTER};
 use kukuri_cn_protocol::{
     AdvisorySubjectKind, ApiErrorBody, Basis, ContentAdvisory, IndexEntryView, IndexQueryParams,
     IndexQueryResponse, IndexScopeKind, IndexingRequestStatus, IndexingRequestView,
-    IndexingStatusParams, IndexingStatusResponse, IndexingTargetStatus, SafetyCategory,
-    SubmitIndexingRequestRequest, SubmitIndexingRequestResponse,
+    IndexingStatusParams, IndexingStatusResponse, IndexingTargetStatus,
+    RevokeIndexingRequestRequest, SafetyCategory, SubmitIndexingRequestRequest,
+    SubmitIndexingRequestResponse,
 };
 
 mod advisory_lookup;
@@ -21,6 +22,7 @@ pub(super) struct MockIndexQueryState {
     pub(super) requests: Arc<Mutex<Vec<(String, IndexQueryParams)>>>,
     pub(super) channel_secret_headers: Arc<Mutex<Vec<Option<String>>>>,
     pub(super) indexing_requests: Arc<Mutex<Vec<SubmitIndexingRequestRequest>>>,
+    pub(super) indexing_revocations: Arc<Mutex<Vec<RevokeIndexingRequestRequest>>>,
     pub(super) indexing_status_calls: Arc<Mutex<Vec<IndexingStatusCall>>>,
     pub(super) forced_error: Arc<Mutex<Option<ForcedIndexError>>>,
     pub(super) unauthorized_remaining: Arc<AtomicUsize>,
@@ -104,6 +106,14 @@ async fn mock_indexing_request(
         status: IndexingRequestStatus::Pending,
     })
     .into_response()
+}
+
+async fn mock_indexing_revoke(
+    State(state): State<MockIndexQueryState>,
+    Json(request): Json<RevokeIndexingRequestRequest>,
+) -> StatusCode {
+    state.indexing_revocations.lock().await.push(request);
+    StatusCode::NO_CONTENT
 }
 
 async fn mock_indexing_status(
@@ -287,6 +297,7 @@ pub(super) async fn index_runtime(
         requests: Arc::new(Mutex::new(Vec::new())),
         channel_secret_headers: Arc::new(Mutex::new(Vec::new())),
         indexing_requests: Arc::new(Mutex::new(Vec::new())),
+        indexing_revocations: Arc::new(Mutex::new(Vec::new())),
         indexing_status_calls: Arc::new(Mutex::new(Vec::new())),
         forced_error: Arc::new(Mutex::new(forced_error)),
         unauthorized_remaining: Arc::new(AtomicUsize::new(0)),
@@ -314,7 +325,10 @@ pub(super) async fn index_runtime(
         .route("/v1/index/search", get(mock_index_query))
         .route("/v1/index/discovery", get(mock_index_query))
         .route("/v1/index/recommendations", get(mock_index_query))
-        .route("/v1/indexing/requests", post(mock_indexing_request))
+        .route(
+            "/v1/indexing/requests",
+            post(mock_indexing_request).delete(mock_indexing_revoke),
+        )
         .route("/v1/indexing/status", get(mock_indexing_status))
         .route("/v1/node/manifest", get(mock_index_manifest))
         .route(
@@ -661,7 +675,7 @@ async fn community_node_indexing_request_preserves_public_and_private_contracts(
         .expect("create private channel");
     let private_response = runtime
         .submit_community_node_indexing_request(CommunityNodeIndexingRequest {
-            base_url,
+            base_url: base_url.clone(),
             scope_kind: IndexScopeKind::PrivateChannel,
             topic_id: topic.to_string(),
             channel_id: Some(channel.channel_id.clone()),
@@ -689,6 +703,48 @@ async fn community_node_indexing_request_preserves_public_and_private_contracts(
             .is_some_and(|secret| !secret.is_empty())
     );
     drop(requests);
+    let rotated = runtime
+        .rotate_private_channel(RotatePrivateChannelRequest {
+            topic: topic.to_string(),
+            channel_id: channel.channel_id.clone(),
+        })
+        .await
+        .expect("rotate private channel");
+    runtime
+        .refresh_private_index_grant_once(&base_url)
+        .await
+        .expect("follow consent into new epoch");
+    let requests = state.indexing_requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[2].epoch_id.as_deref(),
+        Some(rotated.current_epoch_id.as_str())
+    );
+    assert_eq!(
+        requests[2].previous_epoch_id.as_deref(),
+        Some(channel.current_epoch_id.as_str())
+    );
+    assert_eq!(
+        requests[2].previous_channel_secret_hex,
+        requests[1].channel_secret_hex
+    );
+    drop(requests);
+    runtime
+        .revoke_community_node_indexing_request(CommunityNodeIndexingRequest {
+            base_url: base_url.clone(),
+            scope_kind: IndexScopeKind::PrivateChannel,
+            topic_id: topic.to_string(),
+            channel_id: Some(channel.channel_id.clone()),
+            confirm_private_channel_secret_disclosure: false,
+        })
+        .await
+        .expect("revoke private index grant");
+    assert_eq!(state.indexing_revocations.lock().await.len(), 1);
+    runtime
+        .refresh_private_index_grant_once(&base_url)
+        .await
+        .expect("stopped grant stays stopped");
+    assert_eq!(state.indexing_requests.lock().await.len(), 3);
     runtime.shutdown().await;
     server.abort();
 }

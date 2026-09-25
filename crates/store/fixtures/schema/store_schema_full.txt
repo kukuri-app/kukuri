@@ -47,6 +47,19 @@ table bookmarked_posts
   column cid=12 name=root_object_id type=TEXT notnull=0 default=None pk=0
   column cid=13 name=repost_of_json type=TEXT notnull=0 default=None pk=0
   column cid=14 name=bookmarked_at type=INTEGER notnull=1 default=None pk=0
+table cn_private_index_grants
+  column cid=0 name=base_url type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=channel_id type=TEXT notnull=1 default=None pk=3
+  column cid=3 name=applied_epoch_id type=TEXT notnull=1 default=None pk=0
+  column cid=4 name=node_revision type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=5 name=channel_revision type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=6 name=last_checked_at_ms type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=7 name=active type=INTEGER notnull=1 default=Some("1") pk=0
+table cn_private_index_stops
+  column cid=0 name=kind type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=revision type=INTEGER notnull=1 default=Some("1") pk=0
 table content_observations
   column cid=0 name=subject_kind type=TEXT notnull=1 default=None pk=1
   column cid=1 name=subject_id type=TEXT notnull=1 default=None pk=2
@@ -316,6 +329,13 @@ table topic_objects
 table ui_state
   column cid=0 name=state_key type=TEXT notnull=0 default=None pk=1
   column cid=1 name=value_json type=TEXT notnull=1 default=None pk=0
+index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=c partial=0
+  key seqno=0 cid=0 name=Some("base_url")
+  key seqno=1 cid=7 name=Some("active")
+  key seqno=2 cid=6 name=Some("last_checked_at_ms")
+  key seqno=3 cid=1 name=Some("topic_id")
+  key seqno=4 cid=2 name=Some("channel_id")
+  sql=Some("CREATE INDEX cn_private_index_grants_due ON cn_private_index_grants (base_url, active, last_checked_at_ms, topic_id, channel_id)")
 index idx_author_relationship_cache_local_author table=author_relationship_cache unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("local_author_pubkey")
   key seqno=1 cid=1 name=Some("author_pubkey")
@@ -577,6 +597,15 @@ index sqlite_autoindex_bookmarked_custom_reactions_1 table=bookmarked_custom_rea
   sql=None
 index sqlite_autoindex_bookmarked_posts_1 table=bookmarked_posts unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_object_id")
+  sql=None
+index sqlite_autoindex_cn_private_index_grants_1 table=cn_private_index_grants unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("base_url")
+  key seqno=1 cid=1 name=Some("topic_id")
+  key seqno=2 cid=2 name=Some("channel_id")
+  sql=None
+index sqlite_autoindex_cn_private_index_stops_1 table=cn_private_index_stops unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("kind")
+  key seqno=1 cid=1 name=Some("id")
   sql=None
 index sqlite_autoindex_content_observations_1 table=content_observations unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("subject_kind")

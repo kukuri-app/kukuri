@@ -19,6 +19,8 @@ fn indexing_request_wire_shape_and_redaction_are_stable() {
         target_id: "channel-1".to_string(),
         channel_secret_hex: Some("ab".repeat(32)),
         epoch_id: Some("epoch-1".to_string()),
+        previous_epoch_id: None,
+        previous_channel_secret_hex: None,
     };
     assert_eq!(
         serde_json::to_value(&request).unwrap(),

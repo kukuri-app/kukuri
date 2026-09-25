@@ -37,6 +37,9 @@ impl DesktopRuntime {
                 {
                     warn!(base_url, %error, "failed to refresh community-node registration from session scheduler");
                 }
+                if let Err(error) = self.refresh_private_index_grant_once(&base_url).await {
+                    warn!(base_url, %error, "failed to refresh private channel indexing grant");
+                }
             }
             MaintenanceJob::Observations => {
                 self.flush_community_node_trust_observations_once().await

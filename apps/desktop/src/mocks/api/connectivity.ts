@@ -44,6 +44,7 @@ type ConnectivityMock = Pick<
   | 'discoverCommunityNodeIndex'
   | 'recommendCommunityNodeIndex'
   | 'submitCommunityNodeIndexingRequest'
+  | 'revokeCommunityNodeIndexingRequest'
   | 'readCommunityNodeIndexingStatus'
   | 'submitCommunityNodeReport'
   | 'submitCommunityNodeTesterFeedback'
@@ -502,6 +503,13 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
         request_id: created.request_id,
         status: created.status,
       } satisfies SubmitIndexingRequestResponse;
+    },
+    async revokeCommunityNodeIndexingRequest(request) {
+      const targetId = request.channel_id ?? request.topic_id;
+      const requests = indexingRequestsByNode.get(request.base_url) ?? [];
+      indexingRequestsByNode.set(request.base_url, requests.filter(
+        (entry) => entry.scope_kind !== request.scope_kind || entry.target_id !== targetId
+      ));
     },
     async readCommunityNodeIndexingStatus(request) {
       const requests = indexingRequestsByNode.get(request.base_url) ?? [];

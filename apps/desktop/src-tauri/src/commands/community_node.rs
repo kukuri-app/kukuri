@@ -554,6 +554,17 @@ pub async fn submit_community_node_indexing_request(
 }
 
 #[tauri::command]
+pub async fn revoke_community_node_indexing_request(
+    state: tauri::State<'_, DesktopState>,
+    request: CommunityNodeIndexingRequest,
+) -> Result<(), CommandError> {
+    state.runtime()
+        .revoke_community_node_indexing_request(request)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn read_community_node_indexing_status(
     state: tauri::State<'_, DesktopState>,
     request: CommunityNodeIndexingStatusRequest,

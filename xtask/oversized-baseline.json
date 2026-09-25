@@ -25,7 +25,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1159,
+      "lines": 1166,
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
@@ -45,7 +45,7 @@
       "path": "crates/app-api/src/service/private_channels_support.rs"
     },
     {
-      "lines": 1114,
+      "lines": 1118,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -79,6 +79,10 @@
     {
       "lines": 1025,
       "path": "crates/app-api/src/dome_connections.rs"
+    },
+    {
+      "lines": 1024,
+      "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
       "lines": 1021,

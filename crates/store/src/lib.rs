@@ -21,8 +21,8 @@ pub use models::{
     VERIFIED_SESSION_PROJECTION_VERSION, adult_media_hashes_for_row,
 };
 pub use sqlite::{
-    REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, SqliteStore,
-    StoreStartupError,
+    PrivateIndexGrant, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
+    RemoteCacheReservation, SqliteStore, StoreStartupError,
 };
 pub use traits::{
     ContentObservationStore, DirectMessageStore, LiveGameProjectionStore,

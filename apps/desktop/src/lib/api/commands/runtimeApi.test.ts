@@ -96,6 +96,22 @@ test('submitCommunityNodeIndexingRequest invokes the typed indexing request comm
       confirm_private_channel_secret_disclosure: true,
     },
   });
+  await runtimeApi.revokeCommunityNodeIndexingRequest({
+    base_url: 'https://node.example',
+    scope_kind: 'private_channel',
+    topic_id: 'kukuri:topic:demo',
+    channel_id: 'channel-1',
+    confirm_private_channel_secret_disclosure: false,
+  });
+  expect(invokeMock).toHaveBeenLastCalledWith('revoke_community_node_indexing_request', {
+    request: {
+      base_url: 'https://node.example',
+      scope_kind: 'private_channel',
+      topic_id: 'kukuri:topic:demo',
+      channel_id: 'channel-1',
+      confirm_private_channel_secret_disclosure: false,
+    },
+  });
 });
 
 test('trust and relation reads invoke viewer-bound desktop commands', async () => {

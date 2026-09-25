@@ -296,6 +296,50 @@ async fn private_channel_request_with_secret_is_accepted() -> Result<()> {
     .await?;
     assert_eq!(epoch.as_deref(), Some("epoch-1"));
 
+    let next_secret = hex::encode([6_u8; 32]);
+    let rotated = client
+        .post(format!("{}/v1/indexing/requests", server.base_url))
+        .bearer_auth(token.as_str())
+        .json(&serde_json::json!({
+            "kind": "private_channel",
+            "target_id": "secret-room",
+            "channel_secret_hex": next_secret,
+            "epoch_id": "epoch-2",
+            "previous_epoch_id": "epoch-1",
+            "previous_channel_secret_hex": secret_hex,
+        }))
+        .send()
+        .await?;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    let stored = kukuri_cn_core::get_channel_secret(
+        &pool,
+        &kukuri_cn_core::ChannelSecretCipher::from_key_material(TEST_CHANNEL_SECRET_KEY)?,
+        "secret-room",
+    )
+    .await?
+    .unwrap();
+    assert_eq!(stored.epoch_id.as_deref(), Some("epoch-2"));
+    assert_eq!(stored.namespace_secret_hex, next_secret);
+
+    let revoked = client
+        .delete(format!("{}/v1/indexing/requests", server.base_url))
+        .bearer_auth(token.as_str())
+        .json(&serde_json::json!({
+            "kind": "private_channel", "target_id": "secret-room"
+        }))
+        .send()
+        .await?;
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    assert!(
+        kukuri_cn_core::get_channel_secret(
+            &pool,
+            &kukuri_cn_core::ChannelSecretCipher::from_key_material(TEST_CHANNEL_SECRET_KEY)?,
+            "secret-room",
+        )
+        .await?
+        .is_none()
+    );
+
     server.shutdown().await
 }
 
