@@ -1,11 +1,12 @@
+use super::projection_support::legacy_epoch_id;
 use super::replica_window::{
     IndexRange, RangeCheckResult, RangeReconcile, TIME_INDEX_FUTURE_ALLOWANCE_SECS,
     ensure_index_entries_projected,
 };
 use super::*;
 use kukuri_docs_sync::{
-    BucketReplica, BucketScope, DocKeyOrder, PostReplicaKind, TimeBucket, post_replica_kind,
-    query_time_index_asc, query_time_index_desc, query_time_index_window,
+    BucketReplica, BucketScope, DocKeyOrder, PostReplicaKind, TimeBucket, TimeIndexCursor,
+    post_replica_kind, query_time_index_asc, query_time_index_desc, query_time_index_window,
 };
 use std::time::Duration;
 
@@ -37,31 +38,6 @@ impl AppService {
         else {
             return Ok(RangeReconcile::default());
         };
-        let ledger_key = format!(
-            "remote-page:{topic_id}:{channel}:{}:{}:{}:{}",
-            range.index_prefix,
-            range.order == DocKeyOrder::Ascending,
-            range
-                .start
-                .map(|cursor| format!("{}:{}", cursor.created_at, cursor.object_id))
-                .unwrap_or_default(),
-            anchor_seconds.unwrap_or_default(),
-        );
-        let now_ms = Utc::now().timestamp_millis();
-        if self
-            .services
-            .range_checks
-            .try_begin(&ledger_key, now_ms)
-            .await
-            .is_none()
-        {
-            let (missing, read_past) = self.services.range_checks.last_result(&ledger_key).await;
-            return Ok(RangeReconcile {
-                unavailable: missing,
-                read_past,
-                ..RangeReconcile::default()
-            });
-        }
         let candidates = self
             .remote_page_replicas(
                 topic_id,
@@ -71,17 +47,9 @@ impl AppService {
                 range.order == DocKeyOrder::Ascending,
             )
             .await?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let mut result = RangeReconcile::default();
-        let mut remaining = max_entries;
+        let mut sources = Vec::new();
         for (replica, epoch) in candidates {
-            if remaining == 0
-                || result.projected >= range.limit
-                || tokio::time::Instant::now() >= deadline
-            {
-                break;
-            }
-            let readers = match self
+            let selection = self
                 .services
                 .until_content_invalid(
                     topic_id,
@@ -96,23 +64,86 @@ impl AppService {
                             .map(|(id, secret)| (id.as_str(), secret.as_str())),
                     ),
                 )
+                .await;
+            match selection {
+                Some(Ok(readers)) => sources.extend(
+                    readers
+                        .into_iter()
+                        .enumerate()
+                        .map(|(slot, reader)| (replica.clone(), reader, slot)),
+                ),
+                Some(Err(error)) => warn!(%error, "remote page reader selection failed"),
+                None => return Ok(RangeReconcile::default()),
+            }
+        }
+        let count_sources = sources.len();
+        if count_sources == 0 {
+            return Ok(RangeReconcile::default());
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut total = RangeReconcile::default();
+        for (source_index, (replica, reader, provider_slot)) in sources.into_iter().enumerate() {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            let budget = max_entries
+                .saturating_sub(total.checked)
+                .div_ceil(count_sources - source_index);
+            if budget == 0 {
+                break;
+            }
+            let provider = reader
+                .remote_reader_id()
+                .unwrap_or_else(|| format!("slot-{provider_slot}"));
+            let ledger_key = format!(
+                "remote-page:{topic_id}:{channel}:{}:{}:{}:{}:{}:{provider}",
+                replica.as_str(),
+                range.index_prefix,
+                range.order == DocKeyOrder::Ascending,
+                range
+                    .start
+                    .map(|cursor| format!("{}:{}", cursor.created_at, cursor.object_id))
+                    .unwrap_or_default(),
+                anchor_seconds.unwrap_or_default(),
+            );
+            let now_ms = Utc::now().timestamp_millis();
+            let Some(resume_from) = self
+                .services
+                .range_checks
+                .try_begin(&ledger_key, now_ms)
                 .await
-            {
-                Some(Ok(readers)) => readers,
-                Some(Err(error)) => {
-                    warn!(%error, "remote page reader selection failed");
-                    continue;
-                }
-                None => break,
+            else {
+                let (missing, read_past) =
+                    self.services.range_checks.last_result(&ledger_key).await;
+                total.merge_from(
+                    RangeReconcile {
+                        unavailable: missing,
+                        read_past,
+                        ..RangeReconcile::default()
+                    },
+                    range.order,
+                );
+                continue;
             };
-            for reader in readers {
-                if remaining == 0 || tokio::time::Instant::now() >= deadline {
-                    break;
-                }
-                let mut services = self.services.clone();
-                services.docs_sync = reader;
-                let read = async {
-                    let page = match (range.order, range.start) {
+            let mut services = self.services.clone();
+            services.docs_sync = reader;
+            let read = async {
+                let mut count = 0;
+                let mut position = resume_from.or_else(|| range.start.cloned());
+                let mut outcome = super::replica_window::RangeCheckOutcome::default();
+                let mut read_past = None;
+                let mut reaction_targets_left = 0;
+                loop {
+                    let wanted = range
+                        .limit
+                        .saturating_sub(outcome.hydrated + outcome.present)
+                        .max(1)
+                        .min(budget.saturating_sub(count));
+                    if wanted == 0 {
+                        read_past = position;
+                        break;
+                    }
+                    let page = match (range.order, position.as_ref()) {
                         (DocKeyOrder::Descending, None) => {
                             query_time_index_window(
                                 services.docs_sync.as_ref(),
@@ -121,86 +152,113 @@ impl AppService {
                                 Utc::now()
                                     .timestamp()
                                     .saturating_add(TIME_INDEX_FUTURE_ALLOWANCE_SECS),
-                                range.limit.min(remaining),
+                                wanted,
                             )
                             .await?
                         }
-                        (DocKeyOrder::Descending, before) => {
+                        (DocKeyOrder::Descending, cursor) => {
                             query_time_index_desc(
                                 services.docs_sync.as_ref(),
                                 &replica,
                                 range.index_prefix,
-                                before,
-                                range.limit.min(remaining),
+                                cursor,
+                                wanted,
                             )
                             .await?
                         }
-                        (DocKeyOrder::Ascending, after) => {
+                        (DocKeyOrder::Ascending, cursor) => {
                             query_time_index_asc(
                                 services.docs_sync.as_ref(),
                                 &replica,
                                 range.index_prefix,
-                                after,
-                                range.limit.min(remaining),
+                                cursor,
+                                wanted,
                             )
                             .await?
                         }
                     };
-                    let count = page.entries.len();
-                    let mut reaction_targets_left = 0;
-                    let outcome = ensure_index_entries_projected(
-                        &services,
-                        topic_id,
-                        &replica,
-                        &page.entries,
-                        DocFetchPolicy::LocalThenRemote,
-                        &mut reaction_targets_left,
-                    )
-                    .await?;
-                    Ok::<_, anyhow::Error>((count, outcome, page.resume))
-                };
-                match self
-                    .services
-                    .until_content_invalid(
-                        topic_id,
-                        channel,
-                        generation,
-                        tokio::time::timeout_at(deadline, read),
-                    )
-                    .await
-                {
-                    Some(Ok(Ok((count, outcome, resume)))) => {
-                        remaining = remaining.saturating_sub(count);
-                        result.checked += count;
-                        result.hydrated += outcome.hydrated;
-                        result.projected += outcome.hydrated + outcome.present;
-                        result.unavailable += outcome.missing;
-                        result.read_past = result.read_past.or(resume);
-                        if count > 0 {
-                            break;
-                        }
+                    let page_count = page.entries.len();
+                    count += page_count;
+                    if let Some(last) = page.entries.last() {
+                        position = Some(TimeIndexCursor {
+                            created_at: last.created_at,
+                            object_id: last.object_id.clone(),
+                        });
                     }
-                    Some(Ok(Err(error))) => warn!(%error, "remote page read failed"),
-                    Some(Err(_)) | None => break,
+                    if page_count > 0 {
+                        outcome.merge(
+                            ensure_index_entries_projected(
+                                &services,
+                                topic_id,
+                                &replica,
+                                &page.entries,
+                                DocFetchPolicy::LocalThenRemote,
+                                &mut reaction_targets_left,
+                            )
+                            .await?,
+                        );
+                    }
+                    if outcome.hydrated + outcome.present >= range.limit {
+                        break;
+                    }
+                    if let Some(resume) = page.resume {
+                        read_past = Some(resume);
+                        break;
+                    }
+                    if page_count < wanted {
+                        break;
+                    }
+                    if count >= budget {
+                        read_past = position;
+                        break;
+                    }
                 }
+                Ok::<_, anyhow::Error>((count, outcome, read_past))
+            };
+            match self
+                .services
+                .until_content_invalid(
+                    topic_id,
+                    channel,
+                    generation,
+                    tokio::time::timeout_at(deadline, read),
+                )
+                .await
+            {
+                Some(Ok(Ok((count, outcome, read_past)))) => {
+                    total.merge_from(
+                        RangeReconcile {
+                            checked: count,
+                            hydrated: outcome.hydrated,
+                            projected: outcome.hydrated + outcome.present,
+                            unavailable: outcome.missing,
+                            read_past: read_past.clone(),
+                        },
+                        range.order,
+                    );
+                    if let Some(cursor) = read_past {
+                        self.services
+                            .range_checks
+                            .record_resume(&ledger_key, cursor, outcome.missing)
+                            .await;
+                    } else {
+                        self.services
+                            .range_checks
+                            .record_finished(&ledger_key, now_ms, outcome.result(), outcome.missing)
+                            .await;
+                    }
+                }
+                Some(Ok(Err(error))) => {
+                    warn!(%error, "remote page read failed");
+                    self.services
+                        .range_checks
+                        .record_finished(&ledger_key, now_ms, RangeCheckResult::Stalled, 0)
+                        .await;
+                }
+                Some(Err(_)) | None => break,
             }
         }
-        self.services
-            .range_checks
-            .record_finished(
-                &ledger_key,
-                now_ms,
-                if result.unavailable == 0 {
-                    RangeCheckResult::Complete
-                } else if result.hydrated > 0 {
-                    RangeCheckResult::Progressed
-                } else {
-                    RangeCheckResult::Stalled
-                },
-                result.unavailable,
-            )
-            .await;
-        Ok(result)
+        Ok(total)
     }
 
     pub(crate) async fn private_epoch_for_source(
@@ -208,22 +266,48 @@ impl AppService {
         topic_id: &str,
         channel_id: &str,
         replica: &ReplicaId,
-        created_at: i64,
     ) -> Result<Option<(String, String)>> {
-        Ok(self
-            .remote_page_replicas(
-                topic_id,
-                &TimelineScope::Channel {
-                    channel_id: ChannelId::new(channel_id),
-                },
-                Some(created_at),
-                false,
-                false,
-            )
-            .await?
-            .into_iter()
-            .find(|(source, _)| source == replica)
-            .and_then(|(_, epoch)| epoch))
+        let epoch_id = if replica.as_str().starts_with("bucket::") {
+            let bucket = BucketReplica::parse(replica)?;
+            let BucketScope::PrivateChannel {
+                channel_id: source,
+                epoch_id,
+            } = bucket.scope()
+            else {
+                return Ok(None);
+            };
+            if source != channel_id {
+                return Ok(None);
+            }
+            epoch_id.clone()
+        } else if replica == &private_channel_replica_id(channel_id) {
+            legacy_epoch_id().to_owned()
+        } else {
+            let prefix = format!("channel::{channel_id}::epoch::");
+            let Some(epoch) = replica.as_str().strip_prefix(&prefix) else {
+                return Ok(None);
+            };
+            if epoch.is_empty() || epoch.contains("::") {
+                return Ok(None);
+            }
+            epoch.to_owned()
+        };
+        let joined = self.joined_private_channels.lock().await;
+        let state = joined
+            .get(&joined_private_channel_key(topic_id, channel_id))
+            .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
+        if epoch_id == state.current_epoch_id {
+            return Ok(Some((epoch_id, state.current_epoch_secret_hex.clone())));
+        }
+        let start = epoch_start_millis(&epoch_id).unwrap_or(i64::MIN);
+        let index = state
+            .archived_epochs
+            .partition_point(|item| epoch_start_millis(&item.epoch_id).unwrap_or(i64::MIN) < start);
+        Ok(state
+            .archived_epochs
+            .get(index)
+            .filter(|item| item.epoch_id == epoch_id)
+            .map(|item| (item.epoch_id.clone(), item.namespace_secret_hex.clone())))
     }
     /// Legacy writer namespaces still supply local projections during the
     /// transition. Select a fixed window without cloning the epoch history.
@@ -308,14 +392,18 @@ impl AppService {
             .remote_page_replicas(topic_id, &scope, anchor, false, false)
             .await?;
         if let Some((_, replica, _)) = source {
-            candidates.retain(|(item, _)| item != replica);
-            candidates.insert(
-                0,
-                (
-                    replica.clone(),
-                    candidates.first().and_then(|(_, epoch)| epoch.clone()),
-                ),
-            );
+            if let Some(index) = candidates.iter().position(|(item, _)| item == replica) {
+                let selected = candidates.remove(index);
+                candidates.insert(0, selected);
+            } else if matches!(scope, TimelineScope::Public) {
+                candidates.insert(0, (replica.clone(), None));
+            } else if let TimelineScope::Channel { channel_id } = &scope
+                && let Some(epoch) = self
+                    .private_epoch_for_source(topic_id, channel_id.as_str(), replica)
+                    .await?
+            {
+                candidates.insert(0, (replica.clone(), Some(epoch)));
+            }
             candidates.truncate(4);
         }
         Ok(candidates)

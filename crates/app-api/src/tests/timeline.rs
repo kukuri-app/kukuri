@@ -6,3 +6,5 @@ mod profile;
 mod remote_reader_integration;
 mod replies;
 mod reposts;
+#[cfg(feature = "iroh-integration-tests")]
+mod session_reader_integration;

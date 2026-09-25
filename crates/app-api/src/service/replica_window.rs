@@ -204,7 +204,7 @@ pub(crate) struct RangeCheckOutcome {
 }
 
 impl RangeCheckOutcome {
-    fn result(&self) -> RangeCheckResult {
+    pub(super) fn result(&self) -> RangeCheckResult {
         if self.unresolved == 0 {
             RangeCheckResult::Complete
         } else if self.hydrated > 0 {
@@ -214,7 +214,7 @@ impl RangeCheckOutcome {
         }
     }
 
-    fn merge(&mut self, other: Self) {
+    pub(super) fn merge(&mut self, other: Self) {
         self.hydrated += other.hydrated;
         self.present += other.present;
         self.unresolved += other.unresolved;
@@ -378,6 +378,26 @@ fn cursor_key(cursor: &TimeIndexCursor) -> (i64, &str) {
 }
 
 impl RangeReconcile {
+    pub(super) fn merge_from(&mut self, other: Self, order: DocKeyOrder) {
+        self.checked += other.checked;
+        self.hydrated += other.hydrated;
+        self.projected += other.projected;
+        self.unavailable += other.unavailable;
+        if let Some(position) = other.read_past {
+            let less_advanced = match (&self.read_past, order) {
+                (None, _) => true,
+                (Some(current), DocKeyOrder::Descending) => {
+                    cursor_key(&position) > cursor_key(current)
+                }
+                (Some(current), DocKeyOrder::Ascending) => {
+                    cursor_key(&position) < cursor_key(current)
+                }
+            };
+            if less_advanced {
+                self.read_past = Some(position);
+            }
+        }
+    }
     /// 取得側が最初に読んだページ(`page_rows` 行)を読み直すべきか。
     ///
     /// 読み直すのは、照合した範囲に、最初のページの行数より多くの object が projection に在ると分かったときだけ。
@@ -458,22 +478,23 @@ impl AppService {
             )
             .await?;
         let mut result = self
-            .reconcile_index_range(topic_id, &replicas, &range)
-            .await?;
-        let remote = self
             .reconcile_remote_index_range(
                 topic_id,
                 scope,
                 before.as_ref().map(|c| c.created_at),
                 &range,
+                RANGE_CHECK_ENTRY_LIMIT / 2,
+            )
+            .await?;
+        let local = self
+            .reconcile_index_range(
+                topic_id,
+                &replicas,
+                &range,
                 RANGE_CHECK_ENTRY_LIMIT.saturating_sub(result.checked),
             )
             .await?;
-        result.checked += remote.checked;
-        result.hydrated += remote.hydrated;
-        result.projected += remote.projected;
-        result.unavailable += remote.unavailable;
-        result.read_past = result.read_past.or(remote.read_past);
+        result.merge_from(local, range.order);
         Ok(result)
     }
 
@@ -482,10 +503,11 @@ impl AppService {
         topic_id: &str,
         replicas: &[ReplicaId],
         range: &IndexRange<'_>,
+        max_entries: usize,
     ) -> Result<RangeReconcile> {
         let mut reconcile = RangeReconcile::default();
         for replica in replicas {
-            let remaining = RANGE_CHECK_ENTRY_LIMIT.saturating_sub(reconcile.checked);
+            let remaining = max_entries.saturating_sub(reconcile.checked);
             if remaining == 0 {
                 break;
             }
@@ -494,7 +516,7 @@ impl AppService {
                 ..*range
             };
             let check = self
-                .reconcile_replica_index_range(topic_id, replica, &bounded)
+                .reconcile_replica_index_range(topic_id, replica, &bounded, remaining)
                 .await?;
             reconcile.checked += check.checked;
             if let Some(outcome) = check.outcome {
@@ -533,6 +555,7 @@ impl AppService {
         topic_id: &str,
         replica: &ReplicaId,
         range: &IndexRange<'_>,
+        max_entries: usize,
     ) -> Result<ReplicaRangeCheck> {
         let limit = range.limit;
         let range_key = format!(
@@ -579,9 +602,7 @@ impl AppService {
             if resolved >= limit {
                 break;
             }
-            let wanted = batch
-                .max(limit - resolved)
-                .min(RANGE_CHECK_ENTRY_LIMIT - entries_read);
+            let wanted = batch.max(limit - resolved).min(max_entries - entries_read);
             if wanted == 0 {
                 break;
             }
@@ -750,22 +771,23 @@ impl AppService {
             limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
         };
         let mut result = self
-            .reconcile_index_range(topic_id, &replicas, &range)
-            .await?;
-        let remote = self
             .reconcile_remote_index_range(
                 topic_id,
                 &remote_scope,
                 anchor,
                 &range,
+                RANGE_CHECK_ENTRY_LIMIT / 2,
+            )
+            .await?;
+        let local = self
+            .reconcile_index_range(
+                topic_id,
+                &replicas,
+                &range,
                 RANGE_CHECK_ENTRY_LIMIT.saturating_sub(result.checked),
             )
             .await?;
-        result.checked += remote.checked;
-        result.hydrated += remote.hydrated;
-        result.projected += remote.projected;
-        result.unavailable += remote.unavailable;
-        result.read_past = result.read_past.or(remote.read_past);
+        result.merge_from(local, range.order);
         Ok(result)
     }
 }

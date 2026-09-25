@@ -276,35 +276,14 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
 }
 
 #[tokio::test]
-async fn remote_page_candidates_are_bounded_and_cursor_selects_history() -> Result<()> {
-    let (app, _) = observed_app();
-    let topic = "page-candidates";
-    let anchor = 1_500_000_000;
-    let bucket = TimeBucket::from_unix_seconds(anchor)?;
-    let candidates = app
-        .remote_page_replicas(topic, &TimelineScope::Public, Some(anchor), false, true)
-        .await?;
-    assert_eq!(candidates.len(), 4);
-    assert_eq!(BucketReplica::parse(&candidates[0].0)?.bucket(), bucket);
-    assert_eq!(
-        BucketReplica::parse(&candidates[1].0)?.bucket(),
-        bucket.previous().expect("previous")
-    );
-    assert_eq!(candidates[3].0, topic_replica_id(topic));
-    let session = app
-        .session_target_candidates(topic, None, &format!("live-{}-owner", anchor * 1_000))
-        .await?;
-    assert_eq!(BucketReplica::parse(&session[0].0)?.bucket(), bucket);
-    Ok(())
-}
-
-#[tokio::test]
 async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_replica() -> Result<()>
 {
     let (app, _) = observed_app();
     let topic = "private-history";
     let channel = ChannelId::new("room");
     let keys = generate_keys();
+    let same_day_earlier = format!("epoch-{}-old", 6 * 86_400_000 + 1_800_000);
+    let same_day_old = format!("epoch-{}-old", 6 * 86_400_000 + 3_600_000);
     app.joined_private_channels.lock().await.insert(
         joined_private_channel_key(topic, channel.as_str()),
         JoinedPrivateChannelState {
@@ -316,13 +295,21 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
             owner_pubkey: keys.public_key_hex(),
             joined_via_pubkey: None,
             audience_kind: ChannelAudienceKind::InviteOnly,
-            current_epoch_id: format!("epoch-{}-current", 6 * 86_400_000),
+            current_epoch_id: format!("epoch-{}-current", 6 * 86_400_000 + 43_200_000),
             current_epoch_secret_hex: hex::encode([7; 32]),
             archived_epochs: (1..=5)
                 .map(|index| PrivateChannelEpochCapability {
                     epoch_id: format!("epoch-{}-old", index * 86_400_000),
                     namespace_secret_hex: hex::encode([7; 32]),
                 })
+                .chain(std::iter::once(PrivateChannelEpochCapability {
+                    epoch_id: same_day_earlier.clone(),
+                    namespace_secret_hex: hex::encode([9; 32]),
+                }))
+                .chain(std::iter::once(PrivateChannelEpochCapability {
+                    epoch_id: same_day_old.clone(),
+                    namespace_secret_hex: hex::encode([8; 32]),
+                }))
                 .collect(),
         },
     );
@@ -365,6 +352,45 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
     assert!(
         matches!(historic.scope(), BucketScope::PrivateChannel { epoch_id, .. }
         if epoch_id == &format!("epoch-{}-old", 3 * 86_400_000))
+    );
+    let source = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: same_day_old.clone(),
+        },
+        TimeBucket::from_unix_seconds(6 * 86_400 + 7_200)?,
+    )?
+    .replica_id();
+    let target = app
+        .session_target_candidates(
+            topic,
+            Some((channel.as_str(), &source, (6 * 86_400 + 7_200) * 1_000)),
+            "live-same-day-old",
+        )
+        .await?;
+    assert_eq!(target[0].0, source);
+    assert_eq!(
+        target[0].1.as_ref().map(|(id, _)| id.as_str()),
+        Some(same_day_old.as_str())
+    );
+    let earlier = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: channel.as_str().into(),
+            epoch_id: same_day_earlier.clone(),
+        },
+        TimeBucket::from_unix_seconds(6 * 86_400 + 2_400)?,
+    )?
+    .replica_id();
+    let earlier_target = app
+        .session_target_candidates(
+            topic,
+            Some((channel.as_str(), &earlier, (6 * 86_400 + 2_400) * 1_000)),
+            "live-earlier-in-same-bucket",
+        )
+        .await?;
+    assert_eq!(
+        earlier_target[0],
+        (earlier, Some((same_day_earlier, hex::encode([9; 32]))))
     );
     Ok(())
 }

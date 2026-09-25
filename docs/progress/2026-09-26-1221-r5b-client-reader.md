@@ -43,11 +43,14 @@ R5-H、CN の手動取込と保存回収は R5-E/F の担当。未取得は未�
 - timeline/threadはcursorから現行・隣接・指定過去bucketを最大4候補で選び、局所とremoteを
   合計200行の照合予算と30秒期限に収める。旧writerのローカル窓を維持し、privateの
   archived epochは全履歴の複製をせず時刻で選ぶ。1 objectの検証後にremote leaseを解放する。
+  remoteはbucket/providerごとの有限配分と個別cursorで巡回し、欠損した旧形式または
+  先行providerが別sourceを塞がない。未取得providerは次の需要で再試行する。
 - CN source、返信先、投稿の署名済み対象、live/game sessionの対象を同じremote readerへ接続。
   既存の署名・scope・bucket時刻・取り下げgateを通してからprojectionへ保存し、private退出後は
   要求・保存を中止する。bookmark/reaction等の操作は既存の対象projectionを使う。
 - 実Irohのclient/providerでpublic current/previous/historic、private current/archived、
   旧形式、thread返信先、bookmark/取り下げ、session対象、退出とnamespace非importを確認。
+  1bucketの2provider、旧形式200欠損と新bucket、remote欠損窓のcursor保持/再開も確認。
   欠損・署名・時刻・scopeの負例は関連する単体testで確認する。最終判定は固定head監査とPR CI後。
 
 R5-Cのauthor/private制御参照、R5-Hの新writer・旧定常sync撤去は既定の所有者に残る。

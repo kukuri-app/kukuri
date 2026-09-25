@@ -242,13 +242,8 @@ impl AppService {
         let epoch = if channel == PUBLIC_CHANNEL_ID {
             None
         } else {
-            self.private_epoch_for_source(
-                projection.topic_id.as_str(),
-                channel,
-                replica,
-                projection.created_at,
-            )
-            .await?
+            self.private_epoch_for_source(projection.topic_id.as_str(), channel, replica)
+                .await?
         };
         if channel != PUBLIC_CHANNEL_ID && epoch.is_none() {
             return Ok(None);

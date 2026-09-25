@@ -9,7 +9,6 @@ struct ReplyTargetSource {
     source_replica_id: ReplicaId,
     topic_id: String,
     channel_id: String,
-    source_created_at: i64,
 }
 
 impl AppService {
@@ -32,7 +31,6 @@ impl AppService {
                         source_replica_id: row.source_replica_id.clone(),
                         topic_id: row.topic_id.clone(),
                         channel_id: row.channel_id.clone(),
-                        source_created_at: row.created_at,
                     })
             })
             .collect::<Vec<_>>();
@@ -54,7 +52,6 @@ impl AppService {
                             source_replica_id: topic_replica_id(post.published_topic_id.as_str()),
                             topic_id: post.published_topic_id.as_str().to_string(),
                             channel_id: PUBLIC_CHANNEL_ID.to_string(),
-                            source_created_at: post.created_at,
                         })
                 }
                 ProfileTimelineItem::Repost(_) => None,
@@ -157,7 +154,6 @@ impl AppService {
                             source.topic_id.as_str(),
                             source.channel_id.as_str(),
                             &source.source_replica_id,
-                            source.source_created_at,
                         )
                         .await
                         .ok()

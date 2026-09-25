@@ -119,6 +119,10 @@ pub enum ReplicaNotice {
 
 #[async_trait]
 pub trait DocsSync: Send + Sync {
+    /// Stable provider identity for a bounded read lease; absent for local adapters.
+    fn remote_reader_id(&self) -> Option<String> {
+        None
+    }
     /// End one remote object's read lease before advancing a bounded page.
     async fn finish_remote_object(&self) {}
     /// Commit the exact record already read by a demand lease after the caller
