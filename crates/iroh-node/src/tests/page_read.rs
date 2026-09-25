@@ -7,6 +7,50 @@ use std::sync::Arc;
 use crate::{DocReadQuery, DocReadRecord, DocReadResponse, IrohDocsNode};
 
 #[tokio::test]
+async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let replica = ReplicaId::new("bucket::v1::channel::6368::6570::1");
+    let secret = NamespaceSecret::from_bytes(&[9; 32]);
+    let doc = provider
+        .docs()
+        .import_namespace(Capability::Write(secret.clone()))
+        .await?;
+    doc.set_bytes(
+        provider.docs().author_default().await?,
+        b"indexes/timeline/0001/private".to_vec(),
+        b"private".to_vec(),
+    )
+    .await?;
+    let query = DocReadQuery::Keys {
+        prefix: "indexes/timeline/".into(),
+        descending: true,
+        limit: 1,
+    };
+    let response = requester
+        .query_remote_docs(provider.endpoint().addr(), &replica, &secret, query.clone())
+        .await?;
+    let DocReadResponse::Keys { entries, .. } = response else {
+        anyhow::bail!("expected private page")
+    };
+    assert_eq!(entries[0].key, "indexes/timeline/0001/private");
+    assert!(
+        requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                &replica,
+                &NamespaceSecret::from_bytes(&[8; 32]),
+                query,
+            )
+            .await
+            .is_err()
+    );
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn cached_remote_record_is_reprovided_without_local_namespace() -> Result<()> {
     let provider = IrohDocsNode::memory().await?;
     let requester = IrohDocsNode::memory().await?;

@@ -146,6 +146,7 @@ pub struct DesktopRuntime {
     pub(crate) content_advisory_issuer_cache: Arc<Mutex<HashMap<String, String>>>,
     /// #1061: ブロック / ミュート観測の提供状態ファイルの読み書きを直列化する。
     pub(crate) trust_observation_guard: Arc<Mutex<()>>,
+    pub(crate) private_index_grant_guard: Mutex<()>,
     /// #1061: 著者表示例外ファイルの読み書きを直列化する。
     pub(crate) trust_display_guard: Arc<Mutex<()>>,
     /// #1061: 採用 CN から採った評価の cache（key = (base_url, target)）。
@@ -503,6 +504,7 @@ impl DesktopRuntime {
             )),
             content_advisory_issuer_cache: Arc::new(Mutex::new(HashMap::new())),
             trust_observation_guard: Arc::new(Mutex::new(())),
+            private_index_grant_guard: Mutex::new(()),
             trust_display_guard: Arc::new(Mutex::new(())),
             author_trust_gate_cache: Arc::new(Mutex::new(HashMap::new())),
             author_trust_gate_generation: Arc::new(AtomicU64::new(0)),

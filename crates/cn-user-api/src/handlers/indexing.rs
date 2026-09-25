@@ -9,7 +9,9 @@ use axum::http::{HeaderMap, StatusCode};
 use kukuri_cn_core::{
     ApiError, ApiResult, IndexScopeKind, filter_relation_visible, get_channel_secret,
     insert_indexing_request, is_topic_supported, list_indexing_requests_for_requester,
-    mark_index_demand, register_channel_secret, require_bearer_identity, require_consents,
+    mark_index_demand, register_channel_secret, register_channel_secret_with_epoch,
+    require_bearer_identity, require_consents, revoke_indexing_request,
+    rotate_channel_secret_epoch,
 };
 use kukuri_cn_indexer::IndexQuery;
 use kukuri_cn_protocol::{
@@ -18,7 +20,7 @@ use kukuri_cn_protocol::{
     INDEXING_REQUEST_NOT_ACTIVATED_CODE, INDEXING_REQUEST_NOT_CONFIGURED_CODE, IndexEntryView,
     IndexQueryParams, IndexQueryResponse, IndexingRequestView, IndexingStatusParams,
     IndexingStatusResponse, IndexingTargetStatus, RELATION_VISIBILITY_NOT_CONFIGURED_CODE,
-    SubmitIndexingRequestRequest, SubmitIndexingRequestResponse,
+    RevokeIndexingRequestRequest, SubmitIndexingRequestRequest, SubmitIndexingRequestResponse,
 };
 
 use crate::errors::{IndexingError, IndexingOperation, indexing_error};
@@ -88,10 +90,46 @@ pub(crate) async fn submit_indexing_request(
         };
         // first-writer-wins: 別 requester が別 secret で既存 capability を上書きできないようにする。
         // 同一 secret の再提示は冪等。別 secret による乗っ取りは 409 で拒否する。
-        register_channel_secret(&state.pool, cipher, target_id, secret_hex)
+        let register = if let (Some(previous_epoch), Some(previous_secret), Some(epoch_id)) = (
+            request.previous_epoch_id.as_deref(),
+            request.previous_channel_secret_hex.as_deref(),
+            request.epoch_id.as_deref(),
+        ) {
+            rotate_channel_secret_epoch(
+                &state.pool,
+                cipher,
+                identity.pubkey.as_str(),
+                target_id,
+                (previous_epoch, previous_secret),
+                (epoch_id, secret_hex),
+            )
             .await
+        } else if request.previous_epoch_id.is_some()
+            || request.previous_channel_secret_hex.is_some()
+        {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "INVALID_INDEXING_REQUEST",
+                "epoch rollover requires both previous capability fields and a new epoch",
+            ));
+        } else if let Some(epoch_id) = request.epoch_id.as_deref() {
+            register_channel_secret_with_epoch(&state.pool, cipher, target_id, epoch_id, secret_hex)
+                .await
+        } else {
+            register_channel_secret(&state.pool, cipher, target_id, secret_hex).await
+        };
+        register
             .map_err(IndexingError::channel_secret)
             .map_err(indexing_error)?;
+    } else if request.epoch_id.is_some()
+        || request.previous_epoch_id.is_some()
+        || request.previous_channel_secret_hex.is_some()
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDEXING_REQUEST",
+            "epoch_id is only valid for private channels",
+        ));
     }
 
     let stored = insert_indexing_request(&state.pool, identity.pubkey.as_str(), kind, target_id)
@@ -102,6 +140,34 @@ pub(crate) async fn submit_indexing_request(
         request_id: stored.id,
         status: stored.status,
     }))
+}
+
+pub(crate) async fn revoke_own_indexing_request(
+    State(state): State<UserApiState>,
+    headers: HeaderMap,
+    Json(request): Json<RevokeIndexingRequestRequest>,
+) -> ApiResult<StatusCode> {
+    // Deletion remains possible after policy consent withdrawal or index
+    // deactivation; authentication still binds it to one account.
+    let identity = require_bearer_identity(&state.pool, &state.jwt_config, &headers).await?;
+    let target_id = request.target_id.trim();
+    if target_id.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDEXING_REQUEST",
+            "target_id is required",
+        ));
+    }
+    revoke_indexing_request(
+        &state.pool,
+        identity.pubkey.as_str(),
+        request.kind,
+        target_id,
+    )
+    .await
+    .map_err(|source| IndexingError::infrastructure(IndexingOperation::RegisterRequest, source))
+    .map_err(indexing_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 索引申請面(登録 / 状態読取り)の共通の門(#713 / #975)。
@@ -325,7 +391,7 @@ async fn require_channel_membership(
     state: &UserApiState,
     headers: &HeaderMap,
     channel_id: &str,
-) -> ApiResult<()> {
+) -> ApiResult<Option<String>> {
     let denied = || {
         ApiError::new(
             StatusCode::FORBIDDEN,
@@ -356,7 +422,52 @@ async fn require_channel_membership(
     if !constant_time_str_eq(stored.namespace_secret_hex.as_str(), presented) {
         return Err(denied());
     }
-    Ok(())
+    Ok(stored.rotated.then_some(stored.epoch_id).flatten())
+}
+
+fn retain_current_private_epoch(
+    entries: Vec<kukuri_cn_indexer::IndexedEntry>,
+    scope: Option<(&str, &str)>,
+) -> Vec<kukuri_cn_indexer::IndexedEntry> {
+    let Some((channel_id, epoch_id)) = scope else {
+        return entries;
+    };
+    let legacy = format!("channel::{channel_id}::epoch::{epoch_id}");
+    let bucket = format!(
+        "bucket::v1::channel::{}::{}::",
+        hex::encode(channel_id),
+        hex::encode(epoch_id)
+    );
+    entries
+        .into_iter()
+        .filter(|entry| {
+            entry.source_replica_id == legacy || entry.source_replica_id.starts_with(&bucket)
+        })
+        .collect()
+}
+
+#[test]
+fn rotated_capability_never_surfaces_an_old_epoch_hit() {
+    let entry = |source: &str| kukuri_cn_indexer::IndexedEntry {
+        scope_kind: IndexScopeKind::PrivateChannel,
+        scope_id: "room".into(),
+        object_id: source.into(),
+        author_pubkey: "author".into(),
+        text: "body".into(),
+        created_at: 1,
+        source_replica_id: source.into(),
+        content_advisories: Vec::new(),
+    };
+    let old = "channel::room::epoch::e1";
+    let current = "channel::room::epoch::e2";
+    let bucket = "bucket::v1::channel::726f6f6d::6532::1";
+    let hits = retain_current_private_epoch(
+        vec![entry(old), entry(current), entry(bucket)],
+        Some(("room", "e2")),
+    );
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].source_replica_id, current);
+    assert_eq!(hits[1].source_replica_id, bucket);
 }
 
 fn constant_time_str_eq(expected: &str, supplied: &str) -> bool {
@@ -437,10 +548,13 @@ pub(crate) async fn index_search(
             )
         })?;
     let limit = index_query_limit(&params);
+    let mut private_epoch = None;
     let entries = match parse_index_scope_params(&params)? {
         Some((scope_kind, scope_id)) => {
             if scope_kind == IndexScopeKind::PrivateChannel {
-                require_channel_membership(&state, &headers, scope_id.as_str()).await?;
+                private_epoch = require_channel_membership(&state, &headers, scope_id.as_str())
+                    .await?
+                    .map(|epoch| (scope_id.clone(), epoch));
             }
             if let Err(error) = mark_index_demand(&state.pool, scope_kind, &scope_id).await {
                 tracing::warn!(scope_id = %scope_id, %error, "failed to mark index demand");
@@ -459,6 +573,12 @@ pub(crate) async fn index_search(
             .map_err(|source| IndexingError::infrastructure(IndexingOperation::SearchAll, source))
             .map_err(indexing_error)?,
     };
+    let entries = retain_current_private_epoch(
+        entries,
+        private_epoch
+            .as_ref()
+            .map(|(channel, epoch)| (channel.as_str(), epoch.as_str())),
+    );
     let entries = filter_index_entries(
         &state,
         relation_visibility.as_ref(),
@@ -482,9 +602,13 @@ pub(crate) async fn index_discovery(
         require_index_query(&state, &headers).await?;
     let limit = index_query_limit(&params);
     let scope = parse_index_scope_params(&params)?;
-    if let Some((IndexScopeKind::PrivateChannel, scope_id)) = scope.as_ref() {
-        require_channel_membership(&state, &headers, scope_id.as_str()).await?;
-    }
+    let private_epoch = if let Some((IndexScopeKind::PrivateChannel, scope_id)) = scope.as_ref() {
+        require_channel_membership(&state, &headers, scope_id.as_str())
+            .await?
+            .map(|epoch| (scope_id.clone(), epoch))
+    } else {
+        None
+    };
     if let Some((kind, scope_id)) = scope.as_ref()
         && let Err(error) = mark_index_demand(&state.pool, *kind, scope_id).await
     {
@@ -495,6 +619,12 @@ pub(crate) async fn index_discovery(
         .await
         .map_err(|source| IndexingError::infrastructure(IndexingOperation::Discovery, source))
         .map_err(indexing_error)?;
+    let entries = retain_current_private_epoch(
+        entries,
+        private_epoch
+            .as_ref()
+            .map(|(channel, epoch)| (channel.as_str(), epoch.as_str())),
+    );
     let entries = filter_index_entries(
         &state,
         relation_visibility.as_ref(),

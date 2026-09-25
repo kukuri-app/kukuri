@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-25-1221-r1-c-media-display-v1",
+  "scope_revision": "2026-09-25-1221-r5-d-private-index-grant-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -152,6 +152,7 @@
     {"tauri":"commands::community_node::submit_community_node_report","cli":"submit_community_node_report","inventory":"INV-7"},
     {"tauri":"commands::community_node::submit_community_node_tester_feedback","cli":"submit_community_node_tester_feedback","inventory":"INV-7"},
     {"tauri":"commands::community_node::submit_community_node_indexing_request","cli":"submit_community_node_indexing_request","inventory":"INV-7"},
+    {"tauri":"commands::community_node::revoke_community_node_indexing_request","cli":"revoke_community_node_indexing_request","inventory":"INV-7"},
     {"tauri":"commands::community_node::read_community_node_indexing_status","cli":"read_community_node_indexing_status","inventory":"INV-7"},
     {"tauri":"commands::community_node::search_community_node_index","cli":"search_community_node_index","inventory":"INV-7"},
     {"tauri":"commands::community_node::discover_community_node_index","cli":"discover_community_node_index","inventory":"INV-7"},

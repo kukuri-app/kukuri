@@ -58,6 +58,12 @@ pub struct SubmitIndexingRequestRequest {
     pub target_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_secret_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_epoch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_channel_secret_hex: Option<String>,
 }
 
 impl std::fmt::Debug for SubmitIndexingRequestRequest {
@@ -70,6 +76,15 @@ impl std::fmt::Debug for SubmitIndexingRequestRequest {
                 "channel_secret_hex",
                 &self.channel_secret_hex.as_ref().map(|_| "<redacted>"),
             )
+            .field("epoch_id", &self.epoch_id)
+            .field("previous_epoch_id", &self.previous_epoch_id)
+            .field(
+                "previous_channel_secret_hex",
+                &self
+                    .previous_channel_secret_hex
+                    .as_ref()
+                    .map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -79,6 +94,12 @@ impl std::fmt::Debug for SubmitIndexingRequestRequest {
 pub struct SubmitIndexingRequestResponse {
     pub request_id: String,
     pub status: IndexingRequestStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevokeIndexingRequestRequest {
+    pub kind: IndexScopeKind,
+    pub target_id: String,
 }
 
 /// `GET /v1/indexing/status` の query(#975)。

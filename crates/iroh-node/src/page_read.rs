@@ -1,5 +1,5 @@
 //! Demand-owned, bounded reads from an already local docs namespace.
-//! Only deterministic public topic buckets are served; this protocol never starts docs sync.
+//! Bounded bucket pages are served without starting docs sync. Private reads prove the epoch capability.
 
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -87,12 +87,26 @@ pub enum DocReadResponse {
     Records(Vec<DocReadRecord>),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Request {
     version: u8,
     replica: String,
     namespace: String,
     query: DocReadQuery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    capability_proof: Option<String>,
+}
+
+fn private_capability_proof(
+    secret: &NamespaceSecret,
+    replica: &str,
+    namespace: &str,
+    query: &DocReadQuery,
+) -> Result<String> {
+    let mut hasher = blake3::Hasher::new_keyed(&secret.to_bytes());
+    hasher.update(b"kukuri:private-doc-read:v1\0");
+    hasher.update(&serde_json::to_vec(&(replica, namespace, query))?);
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 impl Request {
@@ -101,11 +115,17 @@ impl Request {
         secret: &NamespaceSecret,
         query: DocReadQuery,
     ) -> Result<Self> {
+        let namespace = secret.id().to_string();
+        let capability_proof = replica
+            .starts_with("bucket::v1::channel::")
+            .then(|| private_capability_proof(secret, replica, &namespace, &query))
+            .transpose()?;
         let request = Self {
             version: 1,
             replica: replica.to_string(),
-            namespace: secret.id().to_string(),
+            namespace,
             query,
+            capability_proof,
         };
         request.check_budget()?;
         Ok(request)
@@ -113,9 +133,15 @@ impl Request {
 
     fn check_budget(&self) -> Result<()> {
         ensure!(self.version == 1, "unsupported docs read version");
+        let private = self.replica.starts_with("bucket::v1::channel::");
         ensure!(
-            self.replica.starts_with("bucket::v1::topic::") && self.replica.len() <= MAX_KEY_BYTES,
-            "only public topic buckets are readable"
+            (private || self.replica.starts_with("bucket::v1::topic::"))
+                && self.replica.len() <= MAX_KEY_BYTES,
+            "only topic and private channel buckets are readable"
+        );
+        ensure!(
+            self.capability_proof.is_some() == private,
+            "private bucket capability proof is required"
         );
         match &self.query {
             DocReadQuery::Keys { prefix, limit, .. } => {
@@ -188,13 +214,27 @@ impl DocReadProtocol {
         let request: Request = serde_json::from_slice(&bytes)?;
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
-        let public_secret = NamespaceSecret::from_bytes(
-            blake3::hash(format!("kukuri-docs:{}", request.replica).as_bytes()).as_bytes(),
-        );
-        ensure!(
-            public_secret.id() == namespace,
-            "docs namespace is not the requested public bucket"
-        );
+        if request.replica.starts_with("bucket::v1::channel::") {
+            let secret = self.sync.export_secret_key(namespace).await?;
+            let expected = private_capability_proof(
+                &secret,
+                &request.replica,
+                &request.namespace,
+                &request.query,
+            )?;
+            ensure!(
+                request.capability_proof.as_deref() == Some(expected.as_str()),
+                "private bucket capability proof did not match"
+            );
+        } else {
+            let public_secret = NamespaceSecret::from_bytes(
+                blake3::hash(format!("kukuri-docs:{}", request.replica).as_bytes()).as_bytes(),
+            );
+            ensure!(
+                public_secret.id() == namespace,
+                "docs namespace is not the requested public bucket"
+            );
+        }
         let response = match request.query {
             DocReadQuery::Keys {
                 prefix,

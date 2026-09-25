@@ -86,7 +86,8 @@ app側の欠損本文・返信先・session表示はpermitを取った後だけt
 ## 3. 差分・停止・回復（D6・D7・D9）
 
 #1221 G3-3の2026-09-24決定により、下記の低水準namespace同期案は新bucketのreaderへは採用しない。
-公開CN readerは対象key/件数/bytesを指定したQUIC読取りへ移し、private/authorの認可とcache回収を
+CN readerは公開と登録済みprivate epochを同じ対象key/件数/bytes指定のQUIC読取りへ移し、
+private providerはepoch capabilityの証明を要求する。clientのprivate/author読取りと保護cache回収は
 同じB案で後続接続する。旧`start_sync`はlegacy writerとの移行期間に限る。既存の停止所有権と
 LocalOnlyの禁止I/O境界は方式変更後も維持する。
 

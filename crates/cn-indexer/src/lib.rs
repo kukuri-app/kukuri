@@ -18,12 +18,12 @@
 //! - `docs/adr/0025-community-node-indexing-foundation.md`（§2.2 scope / §2.5 fail-closed / §2.7 検索 UX / §6 Model C）
 
 pub mod arcadedb;
+pub mod bucket_reader;
 pub mod config;
 pub mod ingest;
 pub mod media_fetcher;
 pub mod participant;
 pub mod projection;
-pub mod public_bucket_reader;
 pub mod query;
 pub mod relation_graph;
 pub mod relation_worker;

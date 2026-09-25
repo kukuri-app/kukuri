@@ -256,6 +256,13 @@ index する content（post 本文・media タグ・room メタデータ）を c
 
 ### 6.3 課題 1 の解決: private channel indexing = secret 送信
 
+**#1221 R5-Dの後継判断:** 下記の`channel::`定常syncは移行中の旧経路であり、完成形は
+[ADR 0054](0054-time-bucketed-docs-replicas.md)の有界なprivate epoch bucket readerとする。
+初回に選んだ同じaccount/channel/CNへの開示同意はepoch更新に継続し、更新ごとの再承認を
+要求しない。CNは旧capabilityと既存申請が一致する場合だけ新epoch secretへ更新し、
+新secretで旧epochの索引を開示しない。退出・本人の申請撤回・CN同意撤回は以後の自動送信を
+停止する。本人の申請はCNで撤回でき、他の申請またはoperator管理の索引は別所有のまま残る。
+
 - 招待制（身内向け）CN（ADR 0024 admission）では private channel への indexing request も想定する。private channel replica（`channel::`）は namespace 秘密が導出できず capability（登録済み secret）が必要（`access.rs`）。
 - **解決**: **indexing リクエスト＝secret 送信**とする。リクエスト時に channel secret（capability）を CN に渡し、CN はそれを登録して **Model C と同じ仕組みで `channel::` replica を sync** する。private channel 専用の別 ingestion 経路は新設せず、C に capability を注入するだけで解決する。
 - **リクエスト権限**: indexing をリクエストできる権限は **channel の既存権限モデルをそのまま応用**する（channel の secret にアクセスできる権限者が、その secret を提示して indexing をリクエストできる）。CN は新しい権限体系を作らない。

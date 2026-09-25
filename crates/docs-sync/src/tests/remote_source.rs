@@ -9,6 +9,76 @@ use crate::{
 };
 
 #[tokio::test]
+async fn private_bucket_lease_uses_only_its_explicit_epoch_secret() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let writer = IrohDocsSync::new(provider.clone());
+    let reader = IrohDocsSync::new(requester.clone());
+    let bucket = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: "private-room".into(),
+            epoch_id: "epoch-1".into(),
+        },
+        TimeBucket::from_index(1)?,
+    )?;
+    let replica = bucket.replica_id();
+    let secret = bucket.derive_private_secret(&[7; 32])?;
+    writer
+        .register_private_replica_secret(&replica, &hex::encode(secret))
+        .await?;
+    writer
+        .apply_doc_op(
+            &replica,
+            DocOp::SetBytes {
+                key: "indexes/timeline/0001/post".into(),
+                value: b"private index".to_vec(),
+            },
+        )
+        .await?;
+    let lease = reader.remote_source_with_private_secret(
+        provider.endpoint().addr(),
+        replica.clone(),
+        secret,
+    );
+    let page = lease
+        .query_replica_keys(
+            &replica,
+            DocKeyQuery {
+                prefix: "indexes/timeline/".into(),
+                order: DocKeyOrder::Descending,
+                limit: 1,
+            },
+        )
+        .await?;
+    assert_eq!(page.entries.len(), 1);
+    assert!(
+        lease
+            .query_replica_keys(
+                &BucketReplica::new(
+                    BucketScope::PrivateChannel {
+                        channel_id: "other-room".into(),
+                        epoch_id: "epoch-1".into(),
+                    },
+                    TimeBucket::from_index(1)?,
+                )?
+                .replica_id(),
+                DocKeyQuery {
+                    prefix: "indexes/timeline/".into(),
+                    order: DocKeyOrder::Descending,
+                    limit: 1
+                },
+            )
+            .await
+            .is_err()
+    );
+    writer.shutdown().await;
+    reader.shutdown().await;
+    provider.shutdown().await?;
+    requester.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn remote_object_lease_reads_provider_keys_and_keeps_local_snapshot() -> Result<()> {
     let provider = IrohDocsNode::memory().await?;
     let requester = IrohDocsNode::memory().await?;

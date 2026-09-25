@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use anyhow::{Result, bail, ensure};
 use async_trait::async_trait;
 use iroh::EndpointAddr;
+use iroh_docs::NamespaceSecret;
 use kukuri_core::ReplicaId;
 use kukuri_iroh_node::{DocReadQuery, DocReadRecord, DocReadResponse};
 use tokio::sync::Mutex;
@@ -28,6 +29,7 @@ struct LeaseCache {
 pub struct RemoteDocsSource {
     inner: IrohDocsSync,
     peer: EndpointAddr,
+    private: Option<(ReplicaId, NamespaceSecret)>,
     cache: Mutex<LeaseCache>,
 }
 
@@ -36,7 +38,29 @@ impl RemoteDocsSource {
         Self {
             inner,
             peer,
+            private: None,
             cache: Mutex::new(LeaseCache::default()),
+        }
+    }
+
+    pub(crate) fn with_private_secret(
+        inner: IrohDocsSync,
+        peer: EndpointAddr,
+        replica: ReplicaId,
+        secret: [u8; 32],
+    ) -> Self {
+        let mut source = Self::new(inner, peer);
+        source.private = Some((replica, NamespaceSecret::from_bytes(&secret)));
+        source
+    }
+
+    fn private_secret(&self, replica: &ReplicaId) -> Result<Option<&NamespaceSecret>> {
+        match &self.private {
+            Some((expected, secret)) => {
+                ensure!(expected == replica, "private reader changed replica");
+                Ok(Some(secret))
+            }
+            None => Ok(None),
         }
     }
 
@@ -69,7 +93,7 @@ impl RemoteDocsSource {
         }
         let response = self
             .inner
-            .query_remote_docs(
+            .query_remote_docs_with_secret(
                 replica,
                 self.peer.clone(),
                 DocReadQuery::Exact {
@@ -77,6 +101,7 @@ impl RemoteDocsSource {
                     limit,
                     author: author.map(str::to_owned),
                 },
+                self.private_secret(replica)?,
             )
             .await?;
         let DocReadResponse::Records(entries) = response else {
@@ -200,7 +225,9 @@ impl DocsSync for RemoteDocsSource {
         Ok(())
     }
     async fn open_replica(&self, replica: &ReplicaId) -> Result<()> {
-        let _ = self.inner.replica_secret(replica).await?;
+        if self.private_secret(replica)?.is_none() {
+            let _ = self.inner.replica_secret(replica).await?;
+        }
         Ok(())
     }
 
@@ -256,7 +283,7 @@ impl DocsSync for RemoteDocsSource {
         }
         let response = self
             .inner
-            .query_remote_docs(
+            .query_remote_docs_with_secret(
                 replica,
                 self.peer.clone(),
                 DocReadQuery::Keys {
@@ -264,6 +291,7 @@ impl DocsSync for RemoteDocsSource {
                     descending: query.order == DocKeyOrder::Descending,
                     limit: query.limit,
                 },
+                self.private_secret(replica)?,
             )
             .await?;
         let DocReadResponse::Keys {

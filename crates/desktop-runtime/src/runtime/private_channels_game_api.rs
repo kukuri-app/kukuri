@@ -186,8 +186,15 @@ impl DesktopRuntime {
     }
 
     pub async fn leave_private_channel(&self, request: LeavePrivateChannelRequest) -> Result<()> {
+        let _grant_guard = self.private_index_grant_guard.lock().await;
         self.app_service
             .leave_private_channel(request.topic.as_str(), request.channel_id.as_str())
+            .await?;
+        self.store
+            .stop_private_index_grants_for_channel(
+                request.topic.as_str(),
+                request.channel_id.as_str(),
+            )
             .await
     }
 

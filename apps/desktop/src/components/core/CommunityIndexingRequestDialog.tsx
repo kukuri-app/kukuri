@@ -194,6 +194,31 @@ export function CommunityIndexingRequestDialog({
     }
   }
 
+  async function revoke() {
+    if (!target || !selectedNodeEligible || target.kind !== 'private_channel' || pending) return;
+    const requestVersion = requestVersionRef.current + 1;
+    requestVersionRef.current = requestVersion;
+    setPending(true);
+    setErrorKey(null);
+    try {
+      await api.revokeCommunityNodeIndexingRequest({
+        base_url: selectedNode,
+        scope_kind: target.kind,
+        topic_id: target.topicId,
+        channel_id: target.channelId,
+        confirm_private_channel_secret_disclosure: false,
+      });
+      if (requestVersionRef.current !== requestVersion) return;
+      statusVersionRef.current += 1;
+      setIndexStatus({ kind: 'known', summary: { ownRequest: null, supported: null } });
+    } catch (error) {
+      if (requestVersionRef.current !== requestVersion) return;
+      setErrorKey(communityIndexingErrorKey(error, 'requestFailed'));
+    } finally {
+      if (requestVersionRef.current === requestVersion) setPending(false);
+    }
+  }
+
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -256,6 +281,15 @@ export function CommunityIndexingRequestDialog({
                     ) : null}
                     {submitBlockedKey ? (
                       <p className='muted'>{t(`shell:indexingRequest.indexStatus.${submitBlockedKey}`)}</p>
+                    ) : null}
+                    {privateTarget && indexStatus.summary.ownRequest ? (
+                      <div>
+                        <p className='muted'>{t('shell:indexingRequest.privateStopHint')}</p>
+                        <Button type='button' variant='secondary' disabled={pending || !selectedNodeEligible}
+                          onClick={() => void revoke()}>
+                          {t('shell:indexingRequest.privateStop')}
+                        </Button>
+                      </div>
                     ) : null}
                   </>
                 ) : null}

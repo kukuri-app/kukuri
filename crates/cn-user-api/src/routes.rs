@@ -47,7 +47,8 @@ use crate::handlers::consents::{
     public_policy_revisions, public_policy_snapshot_revision,
 };
 use crate::handlers::indexing::{
-    index_discovery, index_recommendations, index_search, indexing_status, submit_indexing_request,
+    index_discovery, index_recommendations, index_search, indexing_status,
+    revoke_own_indexing_request, submit_indexing_request,
 };
 use crate::handlers::reports::submit_report;
 use crate::handlers::rights_requests::{
@@ -137,7 +138,10 @@ pub fn app_router(state: UserApiState) -> Router {
             "/rights-requests/withdraw",
             post(withdraw_rights_request_form_submit),
         )
-        .route(INDEXING_REQUESTS_PATH, post(submit_indexing_request))
+        .route(
+            INDEXING_REQUESTS_PATH,
+            post(submit_indexing_request).delete(revoke_own_indexing_request),
+        )
         .route(INDEXING_STATUS_PATH, get(indexing_status))
         .route(INDEX_SEARCH_PATH, get(index_search))
         .route(INDEX_DISCOVERY_PATH, get(index_discovery))

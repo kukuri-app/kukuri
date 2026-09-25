@@ -87,6 +87,33 @@ test('private channel request stays disabled until explicit disclosure confirmat
   expect(submit).toBeDisabled();
 });
 
+test('private indexing grant can be withdrawn without disclosing the secret again', async () => {
+  const submit = vi.fn().mockResolvedValue({ request_id: 'request-2', status: 'approved' });
+  const revoke = vi.fn().mockResolvedValue(undefined);
+  const api = {
+    ...dialogApi(submit),
+    revokeCommunityNodeIndexingRequest: revoke,
+  };
+  render(
+    <CommunityIndexingRequestDialog
+      api={api}
+      target={{ kind: 'private_channel', topicId: 'kukuri:topic:demo',
+        channelId: 'channel-1', channelLabel: 'Core' }}
+      eligibleNodeBaseUrls={['https://index.example']}
+      onOpenChange={vi.fn()}
+      onOpenCommunityNodeSettings={vi.fn()}
+    />
+  );
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit request' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Withdraw my indexing request' }));
+  await waitFor(() => expect(revoke).toHaveBeenCalledWith(expect.objectContaining({
+    base_url: 'https://index.example', scope_kind: 'private_channel',
+    channel_id: 'channel-1', confirm_private_channel_secret_disclosure: false,
+  })));
+  expect(screen.queryByRole('button', { name: 'Withdraw my indexing request' })).not.toBeInTheDocument();
+});
+
 test('private confirmation and status reset when the selected node changes', async () => {
   const submitCommunityNodeIndexingRequest = vi.fn().mockResolvedValue({
     request_id: 'request-3',

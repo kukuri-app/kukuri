@@ -10,8 +10,30 @@ impl AppService {
         topic_id: &str,
         channel_id: &str,
     ) -> Result<String> {
+        Ok(self
+            .private_channel_indexing_capability(topic_id, channel_id)
+            .await?
+            .1)
+    }
+
+    pub async fn private_channel_indexing_capability(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<(String, String)> {
         self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, channel_id)
             .await?;
+        self.private_channel_indexing_capability_known(topic_id, channel_id)
+            .await
+    }
+
+    /// Read the account's accepted epoch without starting a sync or probing
+    /// remote peers from the CN maintenance tick.
+    pub async fn private_channel_indexing_capability_known(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<(String, String)> {
         let state = self
             .joined_private_channel_state(topic_id, channel_id)
             .await
@@ -19,6 +41,6 @@ impl AppService {
         if state.current_epoch_secret_hex.trim().is_empty() {
             anyhow::bail!("private channel current epoch secret is unavailable");
         }
-        Ok(state.current_epoch_secret_hex)
+        Ok((state.current_epoch_id, state.current_epoch_secret_hex))
     }
 }

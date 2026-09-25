@@ -1014,6 +1014,10 @@ export const runtimeApi: DesktopApi = {
       );
     }
   ),
+  revokeCommunityNodeIndexingRequest: command('revokeCommunityNodeIndexingRequest', (request) =>
+    invokeDesktop<void>('revoke_community_node_indexing_request', {
+      request: request satisfies CommunityNodeIndexingRequest,
+    })),
   readCommunityNodeIndexingStatus: command('readCommunityNodeIndexingStatus', (request) =>
     invokeDesktop<IndexingStatusResponse>('read_community_node_indexing_status', {
       request: request satisfies CommunityNodeIndexingStatusRequest,

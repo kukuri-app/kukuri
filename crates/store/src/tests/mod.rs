@@ -23,6 +23,7 @@ mod notifications_dispatch;
 mod page_query_plans;
 mod pagination;
 mod post_withdrawals;
+mod private_index_grants;
 mod row_mapping_edge;
 mod row_mapping_enums;
 mod row_mapping_roundtrip;

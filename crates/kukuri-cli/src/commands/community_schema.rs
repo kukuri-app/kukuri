@@ -64,10 +64,12 @@ pub(super) fn input(name: &str) -> Value {
                 "what_seemed_wrong",
             ],
         ),
-        "submit_community_node_indexing_request" => object(
-            json!({"base_url": string(), "scope_kind": scope(), "topic_id": string(), "channel_id": nullable(string()), "confirm_private_channel_secret_disclosure": boolean()}),
-            &["base_url", "scope_kind", "topic_id"],
-        ),
+        "submit_community_node_indexing_request" | "revoke_community_node_indexing_request" => {
+            object(
+                json!({"base_url": string(), "scope_kind": scope(), "topic_id": string(), "channel_id": nullable(string()), "confirm_private_channel_secret_disclosure": boolean()}),
+                &["base_url", "scope_kind", "topic_id"],
+            )
+        }
         "read_community_node_indexing_status" => object(
             json!({"base_url": string(), "scope_kind": {"enum": ["public_topic", "private_channel", null]}, "topic_id": nullable(string()), "channel_id": nullable(string()), "confirm_private_channel_secret_disclosure": boolean()}),
             &["base_url"],
@@ -168,6 +170,7 @@ pub(super) fn output(name: &str) -> Value {
             json!({"request_id": string(), "status": {"enum": ["pending", "approved", "rejected"]}}),
             &[],
         ),
+        "revoke_community_node_indexing_request" => json!({"type": "null"}),
         "read_community_node_indexing_status" => view(
             json!({
                 "requests": array(view(json!({"request_id": string(), "scope_kind": scope(), "target_id": string(), "status": {"enum": ["pending", "approved", "rejected"]}, "created_at": integer(), "decided_at": nullable(integer())}), &[])),

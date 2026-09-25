@@ -113,8 +113,9 @@ pub use index_scope::{
     IndexingRequestStatus, SupportedTopic, add_supported_topic, approve_indexing_request,
     get_channel_secret, insert_indexing_request, is_topic_supported, list_channel_secrets,
     list_indexing_requests, list_indexing_requests_for_requester, list_supported_topics,
-    mark_index_demand, register_channel_secret, reject_indexing_request, remove_channel_secret,
-    remove_supported_topic, upsert_channel_secret,
+    mark_index_demand, register_channel_secret, register_channel_secret_with_epoch,
+    reject_indexing_request, remove_channel_secret, remove_supported_topic,
+    revoke_indexing_request, rotate_channel_secret_epoch, upsert_channel_secret,
 };
 pub use legal_data::{
     LegalDataCipher, SensitiveDataCategory, load_sensitive_json, upsert_sensitive_json_in_tx,

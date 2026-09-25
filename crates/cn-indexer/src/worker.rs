@@ -17,14 +17,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use kukuri_docs_sync::DocsSync;
 
+use crate::bucket_reader::BucketReader;
 use crate::participant::{IndexerParticipant, ScopeReplica};
-use crate::public_bucket_reader::PublicBucketReader;
 use crate::state::IndexerRuntimeState;
 
 /// ワーカーの動作設定。テストから各間隔を注入して短縮できる。
@@ -74,7 +74,8 @@ pub struct IndexerWorker {
     docs_sync: Arc<dyn DocsSync>,
     state: Arc<IndexerRuntimeState>,
     config: WorkerConfig,
-    public_bucket_reader: Option<Arc<PublicBucketReader>>,
+    bucket_reader: Option<Arc<BucketReader>>,
+    scope_permits: Arc<Semaphore>,
 }
 
 /// ワーカーの停止用の持ち手。
@@ -124,12 +125,14 @@ impl IndexerWorker {
             docs_sync,
             state,
             config,
-            public_bucket_reader: None,
+            bucket_reader: None,
+            scope_permits: Arc::new(Semaphore::new(8)),
         }
     }
 
-    pub fn with_public_bucket_reader(mut self, reader: Arc<PublicBucketReader>) -> Self {
-        self.public_bucket_reader = Some(reader);
+    pub fn with_bucket_reader(mut self, reader: Arc<BucketReader>) -> Self {
+        self.scope_permits = reader.scope_permits();
+        self.bucket_reader = Some(reader);
         self
     }
 
@@ -138,7 +141,7 @@ impl IndexerWorker {
         let (stop_tx, stop_rx) = watch::channel(false);
         let (initial_pass_tx, initial_pass_rx) = oneshot::channel();
         let state = Arc::clone(&self.state);
-        let remote_join = self.public_bucket_reader.as_ref().map(|reader| {
+        let remote_join = self.bucket_reader.as_ref().map(|reader| {
             let reader = Arc::clone(reader);
             let state = Arc::clone(&state);
             let interval = self.config.poll_interval;
@@ -157,7 +160,7 @@ impl IndexerWorker {
                             state.record_ingest_success(chrono::Utc::now().timestamp(), &summary)
                         }
                         Err(error) => {
-                            warn!(error = %format!("{error:#}"), "public bucket reader failed");
+                            warn!(error = %format!("{error:#}"), "bucket reader failed");
                             state.record_error(None, &format!("{error:#}"));
                         }
                     }
@@ -452,6 +455,11 @@ impl IndexerWorker {
             debug!(replica_id = %key, "scope is backing off; skipping this round");
             return false;
         }
+        let _permit = self
+            .scope_permits
+            .acquire()
+            .await
+            .expect("scope permits remain open");
         let result = match target {
             IngestTarget::Scope => self.participant.ingest_recent_scope(scope).await,
             IngestTarget::Keys(keys) => self.participant.ingest_changed_keys(scope, keys).await,
