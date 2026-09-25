@@ -43,16 +43,36 @@ async fn fixture(name: &str, posts: usize) -> Fixture {
         store.clone(),
         store.clone(),
         transport.clone(),
-        transport,
+        transport.clone(),
         docs_sync.clone(),
         Arc::new(MemoryBlobService::default()),
         keys,
     );
-    // 購読タスクの起動時の処理を済ませてから数える。
+    // 購読タスクの起動時の処理(通知の起点の作成と窓の追いつき)を済ませてから数える。購読タスクは起動時の処理を終えてから
+    // hint を受け取るので、docs を読まない hint が受け取られるまで待つ。固定の時間では、負荷が高いと起動時の読み出しが数に混ざる。
     app.list_timeline(topic.as_str(), None, 5)
         .await
         .expect("initial timeline");
-    sleep(Duration::from_millis(150)).await;
+    let hints = transport.hint_sender(&topic).await;
+    hints
+        .send(HintEnvelope {
+            hint: GossipHint::LivePresence {
+                topic_id: topic.clone(),
+                session_id: "start-barrier".into(),
+                author: Pubkey::from("a".repeat(64)),
+                ttl_ms: 1,
+            },
+            received_at: 0,
+            source_peer: String::new(),
+        })
+        .expect("the topic subscription listens for hints");
+    timeout(Duration::from_secs(30), async {
+        while !hints.is_empty() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the topic subscription must finish its start");
     Fixture {
         app,
         store,
