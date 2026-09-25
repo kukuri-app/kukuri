@@ -757,13 +757,10 @@ impl AppService {
             )
         });
         let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
-        let Some(generation) = self
+        let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
-            .await
-        else {
-            return Ok(None);
-        };
+            .await;
         let readers = self
             .session_target_readers(topic_id, source, session_id)
             .await?;
@@ -780,11 +777,16 @@ impl AppService {
                     policy,
                 ),
             );
-            let Some(result) = self
-                .services
-                .until_content_invalid(topic_id, channel, generation, read)
-                .await
-            else {
+            let result = if policy == DocFetchPolicy::LocalOnly {
+                Some(read.await)
+            } else if let Some(generation) = generation {
+                self.services
+                    .until_content_invalid(topic_id, channel, generation, read)
+                    .await
+            } else {
+                None
+            };
+            let Some(result) = result else {
                 return Ok(None);
             };
             if let Ok(Ok(Some(verified))) = result {
@@ -825,13 +827,10 @@ impl AppService {
             )
         });
         let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
-        let Some(generation) = self
+        let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
-            .await
-        else {
-            return Ok(None);
-        };
+            .await;
         let readers = self
             .session_target_readers(topic_id, source, room_id)
             .await?;
@@ -848,11 +847,16 @@ impl AppService {
                     policy,
                 ),
             );
-            let Some(result) = self
-                .services
-                .until_content_invalid(topic_id, channel, generation, read)
-                .await
-            else {
+            let result = if policy == DocFetchPolicy::LocalOnly {
+                Some(read.await)
+            } else if let Some(generation) = generation {
+                self.services
+                    .until_content_invalid(topic_id, channel, generation, read)
+                    .await
+            } else {
+                None
+            };
+            let Some(result) = result else {
                 return Ok(None);
             };
             if let Ok(Ok(Some(verified))) = result {
