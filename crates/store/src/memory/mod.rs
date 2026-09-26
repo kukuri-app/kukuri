@@ -69,6 +69,8 @@ struct MemoryNotificationRows {
 type MemoryContentObservationRows =
     HashMap<(String, String, String, String), ContentObservationRow>;
 type ProjectionScope = (String, String);
+type MemoryPrivateChannelParticipants =
+    BTreeMap<(String, String, String), PrivateChannelParticipantRow>;
 type DescendingProjectionKey = (Reverse<i64>, Reverse<String>);
 type ProjectionIndex = HashMap<ProjectionScope, BTreeSet<DescendingProjectionKey>>;
 
@@ -102,8 +104,7 @@ pub struct MemoryStore {
     content_observation_rows: Arc<RwLock<MemoryContentObservationRows>>,
     post_withdrawal_rows: Arc<RwLock<HashMap<EnvelopeId, PostWithdrawalRow>>>,
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
-    private_channel_participants:
-        Arc<RwLock<BTreeMap<(String, String, String), PrivateChannelParticipantRow>>>,
+    private_channel_participants: Arc<RwLock<MemoryPrivateChannelParticipants>>,
 }
 
 mod bookmarks;
