@@ -2,6 +2,7 @@
 mod author_reader_integration;
 mod bookmarks;
 mod bucket_locators;
+mod bucket_writer;
 mod posts;
 mod profile;
 #[cfg(feature = "iroh-integration-tests")]

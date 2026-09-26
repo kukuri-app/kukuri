@@ -14,7 +14,7 @@ use crate::models::{
     DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
-    ReactionProjectionRow, TimelineCursor,
+    ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 
 pub(crate) const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
@@ -167,6 +167,15 @@ pub trait PostWithdrawalStore: Send + Sync {
         &self,
         target_object_id: &EnvelopeId,
     ) -> Result<Option<PostWithdrawalRow>>;
+    /// 取り下げの docs への書込みを積む(R5-H の永続 outbox)。同じ宛先の行は置き換える。
+    async fn queue_withdrawal_writes(&self, rows: Vec<WithdrawalWriteRow>) -> Result<()>;
+    /// 積んだ順に `limit` 件まで。
+    async fn pending_withdrawal_writes(&self, limit: usize) -> Result<Vec<WithdrawalWriteRow>>;
+    async fn finish_withdrawal_write(
+        &self,
+        withdrawal_envelope_id: &EnvelopeId,
+        replica_id: &ReplicaId,
+    ) -> Result<()>;
 }
 
 /// `put_object_projections` の既定動作: 1 件ずつ `put_object_projection` を呼ぶ。

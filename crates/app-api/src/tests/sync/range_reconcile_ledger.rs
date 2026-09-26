@@ -354,9 +354,18 @@ async fn withdrawal_with_an_oversized_generation_does_not_fail_a_non_empty_head_
         None,
     )
     .expect("a correctly signed withdrawal");
-    persist_post_withdrawal(docs_sync.as_ref(), &replica, &envelopes[0].id, &withdrawal)
-        .await
-        .expect("persist withdrawal");
+    persist_post_withdrawal(
+        docs_sync.as_ref(),
+        &WithdrawalWriteRow {
+            withdrawal_envelope_id: withdrawal.id.clone(),
+            replica_id: (&replica).clone(),
+            target_object_id: envelopes[0].id.clone(),
+            envelope: withdrawal.clone(),
+            target_replica_id: None,
+        },
+    )
+    .await
+    .expect("persist withdrawal");
     let app = app_service_from_dependencies(
         store.clone(),
         store.clone(),

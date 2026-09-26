@@ -324,6 +324,15 @@ table topic_objects
 table ui_state
   column cid=0 name=state_key type=TEXT notnull=0 default=None pk=1
   column cid=1 name=value_json type=TEXT notnull=1 default=None pk=0
+table withdrawal_write_outbox
+  column cid=0 name=withdrawal_envelope_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=replica_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=target_object_id type=TEXT notnull=1 default=None pk=0
+  column cid=3 name=envelope_json type=TEXT notnull=1 default=None pk=0
+  column cid=4 name=target_replica_id type=TEXT notnull=0 default=None pk=0
+table writer_cutover
+  column cid=0 name=id type=INTEGER notnull=0 default=None pk=1
+  column cid=1 name=switched_at type=INTEGER notnull=1 default=None pk=0
 index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("base_url")
   key seqno=1 cid=7 name=Some("active")
@@ -715,6 +724,10 @@ index sqlite_autoindex_topic_objects_1 table=topic_objects unique=1 origin=pk pa
   sql=None
 index sqlite_autoindex_ui_state_1 table=ui_state unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("state_key")
+  sql=None
+index sqlite_autoindex_withdrawal_write_outbox_1 table=withdrawal_write_outbox unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("withdrawal_envelope_id")
+  key seqno=1 cid=1 name=Some("replica_id")
   sql=None
 trigger notifications_assign_dispatch_seq table=notifications sql="CREATE TRIGGER notifications_assign_dispatch_seq AFTER INSERT ON notifications BEGIN UPDATE notification_dispatch_clock SET last_seq = last_seq + 1 WHERE singleton = 1; UPDATE notifications SET dispatch_seq = (SELECT last_seq FROM notification_dispatch_clock WHERE singleton = 1) WHERE notification_id = NEW.notification_id; END"
 trigger notifications_unread_delete table=notifications sql="CREATE TRIGGER notifications_unread_delete AFTER DELETE ON notifications WHEN OLD.read_at IS NULL AND (OLD.dispatch_seq IS NULL AND (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL OR OLD.dispatch_seq > (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1)) BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"

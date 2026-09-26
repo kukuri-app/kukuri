@@ -82,6 +82,9 @@ pub(crate) struct VerifiedReaction {
 
 impl VerifiedReaction {
     /// envelope を検証する。docs は読まない。
+    ///
+    /// `replica` は reaction の識別に使う対象の replica(対象の投稿を置いた replica)。`scope` は読んだ replica の範囲で、
+    /// bucket(R5-H)なら envelope の作成時刻がその bucket に入ることも確かめる。
     pub(crate) fn verify(
         envelope: &KukuriEnvelope,
         key: &ReactionKey,
@@ -107,7 +110,10 @@ impl VerifiedReaction {
         {
             return Err(ReactionRejection::IdentityMismatch);
         }
-        if !scope.accepts(&doc.target_topic_id, doc.channel_id.as_ref()) {
+        if !scope.accepts(&doc.target_topic_id, doc.channel_id.as_ref())
+            // reaction の envelope の時刻はミリ秒。
+            || !scope.accepts_created_at(envelope.created_at / 1_000)
+        {
             return Err(ReactionRejection::ScopeMismatch);
         }
         Ok(Self {
@@ -116,15 +122,16 @@ impl VerifiedReaction {
         })
     }
 
-    /// 自分で署名した reaction を、書き込む replica に照らして確かめる。docs は読まない。
+    /// 自分で署名した reaction を、書き込む replica(`write_replica`)に照らして確かめる。docs は読まない。
     pub(crate) fn verify_local(
         envelope: &KukuriEnvelope,
         replica: &ReplicaId,
+        write_replica: &ReplicaId,
     ) -> std::result::Result<Self, ReactionRejection> {
         let Ok(Some(doc)) = parse_reaction(envelope) else {
             return Err(ReactionRejection::NotAReaction);
         };
-        let scope = ReplicaPostScope::for_replica(replica, doc.target_topic_id.as_str())
+        let scope = ReplicaPostScope::for_replica(write_replica, doc.target_topic_id.as_str())
             .ok_or(ReactionRejection::UnsupportedReplica)?;
         let key = ReactionKey {
             target_object_id: doc.target_object_id.clone(),
@@ -183,6 +190,7 @@ pub(crate) fn select_verified_reaction<'a>(
 pub(crate) async fn load_verified_reaction(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
+    identity: &ReplicaId,
     subscription_topic_id: &str,
     key: &ReactionKey,
     policy: DocFetchPolicy,
@@ -199,7 +207,7 @@ pub(crate) async fn load_verified_reaction(
             policy,
         )
         .await?;
-    match select_verified_reaction(records.iter(), key, replica, &scope) {
+    match select_verified_reaction(records.iter(), key, identity, &scope) {
         Ok(reaction) => Ok(reaction),
         Err(reason) => {
             warn_rejected_reaction(replica, key, reason);

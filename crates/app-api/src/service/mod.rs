@@ -78,6 +78,7 @@ pub(crate) use kukuri_store::{
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationKind, NotificationRow, ObjectProjectionRow, ObjectProjectionStore, Page,
     PostWithdrawalRow, ProjectionStore, ReactionProjectionRow, Store, TimelineCursor,
+    WithdrawalWriteRow,
 };
 pub(crate) use kukuri_transport::{
     ConnectionPath, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerSnapshot,
@@ -123,6 +124,7 @@ pub(crate) use crate::views::{
 };
 
 mod attachment_support;
+mod bucket_writer;
 mod local_source_reader;
 pub(crate) use local_source_reader::LocalSourceReader;
 mod author_state_support;
@@ -232,12 +234,12 @@ pub(crate) use object_persistence_support::{
     fetch_private_channel_participants_from_replica, fetch_private_channel_policy_from_replica,
     fetch_projection_blob_text, game_projection_row, live_projection_row, persist_game_room_state,
     persist_live_session_state, persist_media_manifest, persist_post_object,
-    persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
-    persist_private_channel_metadata, persist_private_channel_participant,
-    persist_private_channel_policy, persist_session_envelope, post_withdrawal_row,
-    projection_blob_fetch_timeout, projection_row_from_post, reaction_cache_key,
-    reaction_projection_row, reaction_state_view_from_rows, read_private_epoch_snapshot,
-    recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
+    persist_private_channel_epoch_handoff_grant, persist_private_channel_metadata,
+    persist_private_channel_participant, persist_private_channel_policy, persist_session_envelope,
+    post_withdrawal_row, projection_blob_fetch_timeout, projection_row_from_post,
+    reaction_cache_key, reaction_projection_row, reaction_state_view_from_rows,
+    read_private_epoch_snapshot, recent_reaction_view_from_projection, search_key_or_asset_id,
+    store_manifest_blob,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
@@ -287,6 +289,8 @@ pub(crate) use timeline_view_support::{
 pub(crate) use kukuri_core::{build_post_envelope_with_payload_in_channel, build_repost_envelope};
 #[cfg(test)]
 pub(crate) use object_persistence_support::custom_reaction_asset_view_from_snapshot;
+#[cfg(test)]
+pub(crate) use object_persistence_support::persist_post_withdrawal;
 
 pub(crate) async fn maybe_restart_replica_sync_with_cooldown(
     docs_sync: &dyn DocsSync,
@@ -418,6 +422,8 @@ pub struct ServiceHandles {
     pub(crate) withdrawal_checks: Arc<hydration_limits::BackgroundCheckLedger>,
     /// #1239: ページの範囲と時系列の索引の照合の台帳。
     pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
+    /// #1221 R5-H: 新形式の writer へ切り替えた時刻。切替前は空。
+    pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
 }
 
 impl ServiceHandles {
@@ -528,6 +534,7 @@ impl ServiceHandles {
             missing_body_ledger,
             withdrawal_checks: Arc::default(),
             range_checks: Arc::default(),
+            writer_switched_at: Arc::default(),
         }
     }
 }

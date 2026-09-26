@@ -46,16 +46,17 @@ pub(crate) async fn persist_profile_doc(
     Ok(())
 }
 
+/// プロフィールの行を置く。`replica` は旧 `author::<pubkey>` か、作成時の author bucket(R5-H)。
 pub(crate) async fn persist_profile_post_doc(
     docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
     profile_post: &ProfilePost,
     envelope: &KukuriEnvelope,
 ) -> Result<()> {
-    let replica = author_replica_id(profile_post.author_pubkey.as_str());
-    docs_sync.open_replica(&replica).await?;
+    docs_sync.open_replica(replica).await?;
     docs_sync
         .apply_doc_op(
-            &replica,
+            replica,
             DocOp::SetJson {
                 key: stable_key("profile/posts", profile_post.object_id.as_str()),
                 value: serde_json::to_value(AuthorProfilePostDocV1 {
@@ -77,7 +78,7 @@ pub(crate) async fn persist_profile_post_doc(
         .await?;
     persist_profile_index_entry(
         docs_sync,
-        &replica,
+        replica,
         profile_post.created_at,
         &profile_post.object_id,
         "post",
@@ -85,7 +86,7 @@ pub(crate) async fn persist_profile_post_doc(
     .await?;
     docs_sync
         .apply_doc_op(
-            &replica,
+            replica,
             DocOp::SetJson {
                 key: stable_key("envelopes", envelope.id.as_str()),
                 value: serde_json::to_value(envelope)?,
@@ -96,14 +97,14 @@ pub(crate) async fn persist_profile_post_doc(
 
 pub(crate) async fn persist_profile_repost_doc(
     docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
     profile_repost: &ProfileRepost,
     envelope: &KukuriEnvelope,
 ) -> Result<()> {
-    let replica = author_replica_id(profile_repost.author_pubkey.as_str());
-    docs_sync.open_replica(&replica).await?;
+    docs_sync.open_replica(replica).await?;
     docs_sync
         .apply_doc_op(
-            &replica,
+            replica,
             DocOp::SetJson {
                 key: stable_key("profile/reposts", profile_repost.object_id.as_str()),
                 value: serde_json::to_value(AuthorProfileRepostDocV1 {
@@ -121,7 +122,7 @@ pub(crate) async fn persist_profile_repost_doc(
         .await?;
     persist_profile_index_entry(
         docs_sync,
-        &replica,
+        replica,
         profile_repost.created_at,
         &profile_repost.object_id,
         "repost",
@@ -129,7 +130,7 @@ pub(crate) async fn persist_profile_repost_doc(
     .await?;
     docs_sync
         .apply_doc_op(
-            &replica,
+            replica,
             DocOp::SetJson {
                 key: stable_key("envelopes", envelope.id.as_str()),
                 value: serde_json::to_value(envelope)?,

@@ -157,6 +157,9 @@ impl AppService {
             last_envelope_id: envelope.id.clone(),
         };
         let replica = author_replica_id(manifest.owner_pubkey.as_str());
+        self.services
+            .persist_author_event(manifest.owner_pubkey.as_str(), &envelope)
+            .await?;
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
@@ -547,6 +550,9 @@ impl AppService {
     pub(crate) async fn persist_dome_move_record(&self, record: &DomeMoveRecordV1) -> Result<()> {
         let envelope = build_dome_move_envelope(self.services.keys.as_ref(), record)?;
         let replica = author_replica_id(record.owner_pubkey.as_str());
+        self.services
+            .persist_author_event(record.owner_pubkey.as_str(), &envelope)
+            .await?;
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
@@ -744,6 +750,9 @@ impl AppService {
                     anyhow::anyhow!("live session was rejected: {}", reason.as_str())
                 })?;
         persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        if let Some(locator) = super::bucket_writer::update_locator_replica(replica, now / 1_000)? {
+            persist_session_envelope(self.services.docs_sync.as_ref(), &locator, &envelope).await?;
+        }
         persist_live_session_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)
@@ -789,6 +798,9 @@ impl AppService {
             VerifiedGameRoom::verify(state, Some(&envelope.pubkey), manifest, replica, topic_id)
                 .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
         persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        if let Some(locator) = super::bucket_writer::update_locator_replica(replica, now / 1_000)? {
+            persist_session_envelope(self.services.docs_sync.as_ref(), &locator, &envelope).await?;
+        }
         persist_game_room_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)

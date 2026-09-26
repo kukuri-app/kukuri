@@ -20,8 +20,9 @@ pub use remote_source::RemoteDocsSource;
 
 pub use replicas::{
     PostReplicaKind, author_replica_id, device_replica_id, post_replica_kind,
-    private_channel_epoch_replica_id, private_channel_hint_topic, private_channel_replica_id,
-    stable_key, topic_replica_id, value_hash,
+    private_channel_epoch_replica_id, private_channel_hint_topic,
+    private_channel_replica_for_epoch, private_channel_replica_id, stable_key, topic_replica_id,
+    value_hash,
 };
 pub use time_index::{
     TimeIndexCursor, TimeIndexEntry, TimeIndexPage, query_time_index_asc, query_time_index_desc,

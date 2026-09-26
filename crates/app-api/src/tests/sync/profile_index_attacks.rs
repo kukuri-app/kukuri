@@ -192,9 +192,14 @@ async fn put_post(fixture: &Fixture, created_at: i64, indexed: bool) -> String {
     )
     .expect("envelope");
     let post = parse_profile_post(&envelope).expect("parse").expect("post");
-    persist_profile_post_doc(fixture.docs_sync.as_ref(), &post, &envelope)
-        .await
-        .expect("persist");
+    persist_profile_post_doc(
+        fixture.docs_sync.as_ref(),
+        &author_replica_id(post.author_pubkey.as_str()),
+        &post,
+        &envelope,
+    )
+    .await
+    .expect("persist");
     if !indexed {
         fixture
             .docs_sync

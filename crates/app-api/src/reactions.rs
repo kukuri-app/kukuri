@@ -101,13 +101,32 @@ impl AppService {
             &reaction_id,
             next_status.clone(),
         )?;
+        // 切替後は作成時の bucket へ書く(元投稿の bucket へは追記しない、ADR 0054 §2)。
+        let write_replica = if self.services.writes_buckets() {
+            let private = match target_channel_id.as_ref() {
+                Some(channel_id) => Some(
+                    self.private_channel_write_state(target_topic_id.as_str(), channel_id)
+                        .await?,
+                ),
+                None => None,
+            };
+            self.services.scope_write_replica(
+                target_topic_id.as_str(),
+                private.as_ref(),
+                // reaction の envelope の時刻はミリ秒。
+                envelope.created_at / 1_000,
+            )?
+        } else {
+            target.source_replica_id.clone()
+        };
         // 自分の reaction も、docs から反映するときと同じ検証を通す(#1252)。docs は読まない。
-        let verified = VerifiedReaction::verify_local(&envelope, &target.source_replica_id)
-            .map_err(|reason| anyhow::anyhow!("reaction was rejected: {}", reason.as_str()))?;
+        let verified =
+            VerifiedReaction::verify_local(&envelope, &target.source_replica_id, &write_replica)
+                .map_err(|reason| anyhow::anyhow!("reaction was rejected: {}", reason.as_str()))?;
         let reaction = verified.doc().clone();
         persist_reaction_doc(
             self.services.docs_sync.as_ref(),
-            &target.source_replica_id,
+            &write_replica,
             &reaction,
             &envelope,
         )
@@ -168,6 +187,9 @@ impl AppService {
         let asset = parse_custom_reaction_asset(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse custom reaction asset envelope"))?;
         persist_custom_reaction_asset_doc(self.services.docs_sync.as_ref(), &asset, &envelope)
+            .await?;
+        self.services
+            .persist_author_event(asset.author_pubkey.as_str(), &envelope)
             .await?;
         self.services.store.put_envelope(envelope).await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());

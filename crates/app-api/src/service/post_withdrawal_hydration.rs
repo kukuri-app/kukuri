@@ -335,8 +335,31 @@ async fn apply_first_verified_withdrawal(
         return Ok(PostWithdrawalHydration::Invalid);
     }
     let target_records = target.load(docs_sync, replica, object_id, policy).await?;
+    // bucket(R5-H)の取り下げは、元投稿の bucket か、取り下げを書いた時の bucket にだけ置かれる。
+    let bucket = replica
+        .as_str()
+        .starts_with("bucket::")
+        .then(|| kukuri_docs_sync::BucketReplica::parse(replica).map(|replica| replica.bucket()))
+        .transpose()
+        .ok()
+        .flatten();
+    let target_in_bucket = bucket.is_some_and(|bucket| {
+        target_records.iter().any(|record| {
+            serde_json::from_slice::<KukuriEnvelope>(&record.value)
+                .is_ok_and(|target| target.id == *object_id && bucket.contains(target.created_at))
+        })
+    });
     let mut outcome = PostWithdrawalHydration::Invalid;
     for envelope in &candidates {
+        if bucket.is_some_and(|bucket| !target_in_bucket && !bucket.contains(envelope.created_at)) {
+            warn_invalid_post_withdrawal(
+                replica,
+                key.as_str(),
+                "the withdrawal does not belong to this bucket",
+                &envelope.created_at,
+            );
+            continue;
+        }
         match verify_withdrawal_against_records(envelope, object_id, target_records) {
             WithdrawalTargetCheck::Verified(withdrawal) => {
                 // 保存できない取り下げは飛ばして、残りの候補を調べる。

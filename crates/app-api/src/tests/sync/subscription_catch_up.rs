@@ -351,9 +351,18 @@ async fn missed_withdrawal_in_the_window_is_applied_after_a_lag_and_at_start() {
         None,
     )
     .expect("withdrawal");
-    persist_post_withdrawal(docs_sync.as_ref(), &replica, &post.envelope.id, &withdrawal)
-        .await
-        .expect("persist withdrawal");
+    persist_post_withdrawal(
+        docs_sync.as_ref(),
+        &WithdrawalWriteRow {
+            withdrawal_envelope_id: withdrawal.id.clone(),
+            replica_id: (&replica).clone(),
+            target_object_id: post.envelope.id.clone(),
+            envelope: withdrawal.clone(),
+            target_replica_id: None,
+        },
+    )
+    .await
+    .expect("persist withdrawal");
     docs_sync
         .notices
         .send(ReplicaNotice::Lagged { missed: 1 })

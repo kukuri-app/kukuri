@@ -188,13 +188,10 @@ impl IrohDocsSync {
         if replica_id.as_str().starts_with("bucket::") {
             crate::BucketReplica::parse(replica_id)?;
         }
-        if let Some(secret) = self
-            .private_replica_secrets
-            .lock()
-            .await
-            .get(replica_id.as_str())
-            .cloned()
-        {
+        if let Some(secret) = crate::access::registered_private_secret(
+            replica_id,
+            &*self.private_replica_secrets.lock().await,
+        ) {
             return Ok(secret);
         }
         public_replica_secret(replica_id)

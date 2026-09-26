@@ -280,9 +280,18 @@ async fn reconcile_applies_a_withdrawal_that_was_never_delivered_as_an_event() {
         None,
     )
     .expect("withdrawal");
-    persist_post_withdrawal(docs_sync.as_ref(), &replica, &envelope.id, &withdrawal)
-        .await
-        .expect("persist withdrawal");
+    persist_post_withdrawal(
+        docs_sync.as_ref(),
+        &WithdrawalWriteRow {
+            withdrawal_envelope_id: withdrawal.id.clone(),
+            replica_id: (&replica).clone(),
+            target_object_id: envelope.id.clone(),
+            envelope: withdrawal.clone(),
+            target_replica_id: None,
+        },
+    )
+    .await
+    .expect("persist withdrawal");
 
     let hydrated = app
         .reconcile_timeline_range(topic.as_str(), &TimelineScope::Public, None, 20)

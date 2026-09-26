@@ -684,3 +684,28 @@ async fn own_envelope_waits_for_its_docs_records() {
     assert_eq!(refs, 0, "the row is not treated as migrated");
     runtime.shutdown().await;
 }
+
+/// #1221 R5-H AC-1: 移行が終端へ達するまで旧 writer のまま。達したら 1 回だけ切り替わり、再起動しても同じ時刻を保つ。
+#[tokio::test]
+async fn the_writer_switches_once_after_the_migration_and_keeps_it_across_restarts() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().expect("dir");
+    let db =
+        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let runtime = open_runtime(&db).await;
+    assert_eq!(runtime.app_service.writer_switched_at(), None);
+    runtime
+        .finish_protected_migration()
+        .await
+        .expect("finish migration");
+    let switched = runtime
+        .app_service
+        .writer_switched_at()
+        .expect("switched after the migration");
+    runtime.shutdown().await;
+    drop(runtime);
+
+    let runtime = open_runtime(&db).await;
+    assert_eq!(runtime.app_service.writer_switched_at(), Some(switched));
+    runtime.shutdown().await;
+}

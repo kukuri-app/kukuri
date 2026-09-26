@@ -170,6 +170,10 @@ impl DesktopRuntime {
                 .await?;
             caught_up &= done;
         }
+        // #1221 R5-H: 移行が全 kind で終端へ達したら、新形式の writer へ 1 回だけ切り替える。
+        if caught_up && let Some(switched_at) = self.store.switch_writer_if_migrated().await? {
+            self.app_service.switch_writer(switched_at);
+        }
         Ok(caught_up)
     }
 

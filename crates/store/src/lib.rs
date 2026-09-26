@@ -18,7 +18,7 @@ pub use models::{
     LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationKind,
     NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow,
     TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION, VERIFIED_REACTION_PROJECTION_VERSION,
-    VERIFIED_SESSION_PROJECTION_VERSION, adult_media_hashes_for_row,
+    VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow, adult_media_hashes_for_row,
 };
 pub use sqlite::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, PrivateIndexGrant, ProtectedCandidate,

@@ -90,8 +90,10 @@ impl AppService {
         let repost_object = envelope
             .to_post_object()?
             .ok_or_else(|| anyhow::anyhow!("failed to parse repost object"))?;
-        self.ingest_event(&topic_replica_id(target_topic_id), envelope.clone())
-            .await?;
+        let write_replica =
+            self.services
+                .scope_write_replica(target_topic_id, None, envelope.created_at)?;
+        self.ingest_event(&write_replica, envelope.clone()).await?;
 
         let local_author_pubkey = self.current_author_pubkey();
         let profile_repost_envelope = build_profile_repost_envelope(
@@ -110,6 +112,9 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse profile repost envelope"))?;
         persist_profile_repost_doc(
             self.services.docs_sync.as_ref(),
+            &self
+                .services
+                .author_index_replica(&local_author_pubkey, profile_repost.created_at)?,
             &profile_repost,
             &profile_repost_envelope,
         )
@@ -408,10 +413,6 @@ impl AppService {
                 None
             }
         };
-        let replica = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let generation = self
             .services
             .projection_store
@@ -428,17 +429,41 @@ impl AppService {
             reason,
         )?;
         let withdrawal = verify_post_withdrawal(&envelope, &target)?;
-        persist_post_withdrawal(
-            self.services.docs_sync.as_ref(),
-            &replica,
-            &target_object_id,
-            &envelope,
-        )
-        .await?;
+        // 操作時の位置と、切替後は元投稿の位置(private は元 epoch)の 2 か所を outbox へ積んでから書く(ADR 0054 §2)。
+        let replica = self.services.scope_write_replica(
+            topic_id,
+            private_state.as_ref(),
+            envelope.created_at,
+        )?;
+        let target_replica = match self.services.writes_buckets() {
+            true => self
+                .services
+                .projection_store
+                .get_object_projection(&target_object_id)
+                .await?
+                .map(|row| row.source_replica_id)
+                .filter(|source| source != &replica),
+            false => None,
+        };
+        let row =
+            |replica_id: &ReplicaId, target_replica_id: Option<ReplicaId>| WithdrawalWriteRow {
+                withdrawal_envelope_id: envelope.id.clone(),
+                replica_id: replica_id.clone(),
+                target_object_id: target_object_id.clone(),
+                envelope: envelope.clone(),
+                target_replica_id,
+            };
+        let mut writes = vec![row(&replica, target_replica.clone())];
+        writes.extend(target_replica.iter().map(|source| row(source, None)));
+        self.services
+            .projection_store
+            .queue_withdrawal_writes(writes)
+            .await?;
         self.services
             .projection_store
             .put_post_withdrawal(post_withdrawal_row(withdrawal, &replica))
             .await?;
+        self.resume_withdrawal_writes().await?;
 
         let hint_topic = channel_hint_topic_for(topic_id, target_content.channel_id.as_ref());
         if let Err(error) = self
@@ -547,10 +572,6 @@ impl AppService {
             }
         };
         let effective_channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
-        let write_replica = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let now = Utc::now().timestamp_millis();
         let stored_blob = self
             .services
@@ -568,8 +589,8 @@ impl AppService {
             },
         ))
         .await?;
-        let manifest_ids = if stored_attachments.is_empty() {
-            Vec::new()
+        let manifest = if stored_attachments.is_empty() {
+            None
         } else {
             let manifest_id = format!(
                 "media-{}-{}",
@@ -599,14 +620,7 @@ impl AppService {
             };
             let envelope =
                 build_media_manifest_envelope(self.services.keys.as_ref(), &topic, &manifest)?;
-            persist_media_manifest(
-                &write_replica,
-                &envelope,
-                &manifest,
-                self.services.docs_sync.as_ref(),
-            )
-            .await?;
-            vec![manifest_id]
+            Some((manifest, envelope))
         };
         // ADR 0053 §2: docs へ書く docs author を、署名の対象の tag と hint に入れる。
         let docs_author = self.services.docs_sync.local_docs_author().await?;
@@ -627,7 +641,10 @@ impl AppService {
                     role: role.clone(),
                 })
                 .collect(),
-            manifest_ids,
+            manifest
+                .iter()
+                .map(|(manifest, _)| manifest.manifest_id.clone())
+                .collect(),
             parent.as_ref(),
             if effective_channel_id.is_some() {
                 ObjectVisibility::Private
@@ -641,6 +658,21 @@ impl AppService {
         let post_object = envelope
             .to_post_object()?
             .ok_or_else(|| anyhow::anyhow!("failed to parse post object for profile topic"))?;
+        // manifest は投稿と同じ bucket(署名した `created_at` から決める)へ置く。
+        let write_replica = self.services.scope_write_replica(
+            topic_id,
+            private_state.as_ref(),
+            envelope.created_at,
+        )?;
+        if let Some((manifest, manifest_envelope)) = &manifest {
+            persist_media_manifest(
+                &write_replica,
+                manifest_envelope,
+                manifest,
+                self.services.docs_sync.as_ref(),
+            )
+            .await?;
+        }
         self.ingest_event(&write_replica, envelope.clone()).await?;
         if effective_channel_id.is_none() {
             let local_author_pubkey = self.current_author_pubkey();
@@ -664,6 +696,9 @@ impl AppService {
                 .ok_or_else(|| anyhow::anyhow!("failed to parse profile post envelope"))?;
             persist_profile_post_doc(
                 self.services.docs_sync.as_ref(),
+                &self
+                    .services
+                    .author_index_replica(&local_author_pubkey, profile_post.created_at)?,
                 &profile_post,
                 &profile_post_envelope,
             )

@@ -33,9 +33,14 @@ async fn put_profile_post(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_a
     let post = parse_profile_post(&envelope)
         .expect("parse profile post")
         .expect("profile post");
-    persist_profile_post_doc(docs_sync, &post, &envelope)
-        .await
-        .expect("persist profile post");
+    persist_profile_post_doc(
+        docs_sync,
+        &author_replica_id(post.author_pubkey.as_str()),
+        &post,
+        &envelope,
+    )
+    .await
+    .expect("persist profile post");
     object_id.as_str().to_string()
 }
 
