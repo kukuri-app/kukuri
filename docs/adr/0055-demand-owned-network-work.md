@@ -93,8 +93,8 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   決まるので読み直しで重ならない）。followの通知は§4のaccount経路と、authorのleaseの読み直しが自分を指すActiveの
   follow edgeを新しく保存したときに作る（同じ候補関数で、idはenvelopeから決まるので二重にならない）。
   画面外の通知は§4の受信入口が担う。
-- DomeHostHeartbeatのhintは、hostとleaseのcontextからinstance idを導けるとき、hostをownerとしてownerの制御領域の
-  Dome instanceを一覧で読む手がかりにする（ADR 0054 §6）。
+- DomeHostHeartbeatのhintは、hostとleaseのcontextからinstance idを導けるとき、hostをownerとしてDome instanceを
+  一覧で読む手がかりにする（公開はownerの制御領域、privateはchannelのbucketのlocatorが指すanchor。ADR 0054 §6）。
 - 公開topicのDome操作と入場の権限は購読の有無ではなく、そのtopicのgossipを止めていないことで判定する（R2-C以前の実効的な判定と同じ）。
   blockによるDome接続の解除は、leaseのあるtopicと参加中のchannelのcontextを対象にする。
 

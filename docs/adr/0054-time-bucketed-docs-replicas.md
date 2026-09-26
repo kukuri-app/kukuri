@@ -51,7 +51,8 @@ replica の識別、取得理由、解放、保存の回収を定める。
 | reaction | reaction作成時のbucket。元投稿のbucketへ無期限追記しない | 現在bucketのeventと対象locator |
 | 取り下げ | 元投稿bucketの `withdrawals/<id>/state`（署名済みenvelopeを同じkeyへ上書き） | 操作時bucketにも同じ取り下げとtarget locatorを置く |
 | live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない | 更新時bucketへ署名済みlocatorを置く |
-| Dome instance・hosting記録 | ownerの制御領域（`author::<owner>`）の、contextとownerから決まるinstance idのkey（R5-H、2026-09-27ユーザー決定） | owner端末のhostingのheartbeat hintとownerの制御領域のexact読取り |
+| Domeのsession・接続の提案/選択/合意 | Domeのanchor（Dome作成時のcontextのscope bucket。privateは作成時の現epoch）。接続は提案したDomeのanchor（R5-H） | session・接続のhintと、知っているDomeのanchorの読取り |
+| Dome instance・hosting・layout/削除の記録 | 公開contextはownerの制御領域（`author::<owner>`）のinstance idのkey、private contextはDomeのanchor（R5-H、2026-09-27決定） | owner端末のhostingのheartbeat hint。privateはchannelのbucketのlocator |
 | author profile/latest | author別の固定数の最新state/envelopeの制御領域 | 更新時author bucketのevent |
 | follow/block | author/target/種別から決定できる対象別最新state | 更新時author bucketのevent。全edgeのコピー/再生はしない |
 | author asset/preset | IDから引ける対象別stateとcontent-addressed blob | 作成/更新時author bucketの索引 |
@@ -210,16 +211,24 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
   （2026-09-27ユーザー決定。新しい配送は作らない）。更新前からの参加者は、ownerの端末が手元の旧docs（現epochの
   replica）の参加recordを、pubkeyのhexの接頭辞で切ったkeyの窓（128件まで）ずつ参加者の表へ1回だけ移す。位置は
   R5-Gの保護移行の台帳（kind `owner_participants`）に永続し、移し終える前のrotationも移した分と表の分を宛先にする。
-- Dome（R5-H、2026-09-27ユーザー決定）: instance（stateと署名済みenvelope）とhostingの記録は、ownerの制御領域の
-  instance idのkey（`metaverse/dome-instances/<id>/state`・`metaverse/dome-hosting/<id>/state`）へ置き、旧topic/channel
-  replicaへは書かない。idは時刻を持たずcontextとownerから決まるので、bucketではなくownerの制御領域でexactに引く。
-  instanceの更新は更新時のauthor bucketへもeventとして置く。hostingの記録は最後のepochの分だけを1keyに置き、
-  epochごとのkeyのprefix全件読みをやめた。読取りは制御領域を手元→ownerを含む有界なproviderの順にexactに読み、
-  無ければ更新前に旧context replicaへ置いた分を手元から読む。訪問者は、手元の一覧の行のownerと、owner端末の
-  hostingのheartbeat hint（hostとcontextからinstance idを導けるとき、hostをownerとみなす）からownerを知って読む。
-  ownerがofflineでhintも無いDomeは、手元に行があってもinstanceを読めなければ一覧に出ない。全bucketの走査はしない。
-  CNのhostingのheartbeatはhostがCNなのでownerを導けず、行の無いDomeはhintだけでは見つからない。
-  Domeのsession（訪問者もchatで書く）・接続の提案と合意・削除とlayoutの操作記録は、引き続き旧context replicaにある。
+- Dome（R5-H、2026-09-27ユーザー決定）: 切替後はDomeの記録を旧topic/channel replicaへ1件も書かない。
+  - anchor: Domeのsession（訪問者もchatで書くmetaverse roomのmanifest）を置くreplica。Dome作成時刻のcontextの
+    scope bucket（privateは作成時の現epoch）で、最新stateはここに置き、日が変わった更新は更新時のbucketへ署名済み
+    envelopeを置く（live/gameと同じ）。切替前に旧replicaへ置いたDomeは、切替後の最初の書込みで作成時刻のbucketへ移す。
+  - 接続の提案・選択・合意（複数の書き手）は、提案したDomeのanchorに置く。idに時刻が無く、作成時のbucketを読み手が
+    導けないため、Domeの継続状態として置く。読むのは、contextで知っているDome（一覧の行・heartbeat・自分）のanchorと
+    旧context replica（手元）。
+  - instance（stateと署名済みenvelope）・hosting（最後のepochの分を1key）・owner だけが書く記録（layoutのcommit、
+    削除の操作記録）: 公開contextはownerの制御領域のinstance idのkey（`metaverse/dome-instances/<id>/state`・
+    `metaverse/dome-hosting/<id>/state`）、private contextはDomeのanchor（公開の領域へ置かない。private audienceの維持）。
+    idは時刻を持たずcontextとownerから決まるので、公開はownerの制御領域でexactに引く。
+  - 読取り: 公開は制御領域を手元→ownerを含む有界なprovider、privateはanchorを手元→epochのcapabilityを持つchannelの
+    providerの順にexactに読み、無ければ更新前に旧context replicaへ置いた分を手元から読む。
+  - 発見: 訪問者は手元の一覧の行と、owner端末のhostingのheartbeat hint（hostとcontextからinstance idを導けるとき、
+    hostをownerとみなす）から見つける。privateのanchorは、行が無ければowner端末のhostingが1日1回channelの現epochの
+    その日のbucketに置くlocator（`metaverse/dome-locators/<id>`）を、現在と直前のbucketからexactに読んで知る。
+    ownerがofflineでhintも無いDomeは一覧に出ない（手元に既にある分は出る）。全bucketの走査はしない。
+    CNのhostingのheartbeatはhostがCNなのでownerを導けず、行の無いDomeはhintだけでは見つからない。
 
 - CNの新旧readiness、clientの読取り、#1224の作業集合、保存/回収、対応する移行testの成立後にwriterを切り替える。
   本番での実施日とデプロイは本実装作業とは別に扱う。新形式のwriterを旧CNへ先行配布しない。
