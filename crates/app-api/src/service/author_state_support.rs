@@ -436,5 +436,25 @@ async fn hydrate_author_record(
             .upsert_profile_cache(profile)
             .await?;
     }
+    // #1221 R5-H: 自分を指す Active の follow edge を新しく保存したら、followed の通知を作る。通知の id は
+    // envelope から決まるので、account 経路(follow の offer)で届いた通知と二重にならない。
+    let local = services.keys.public_key_hex();
+    if changed
+        && kind == AuthorKeyKind::Follow
+        && let Ok(Some(edge)) = parse_follow_edge(&envelope)
+        && let Some(candidate) =
+            super::notifications_support::notification_candidate_from_verified_follow(
+                &local,
+                &author_replica_id(author_pubkey),
+                &edge,
+            )
+    {
+        AppService::put_notification_candidate(
+            services.projection_store.as_ref(),
+            &local,
+            candidate,
+        )
+        .await?;
+    }
     Ok(AuthorHydration::reflected(changed))
 }

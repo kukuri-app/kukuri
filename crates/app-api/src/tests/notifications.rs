@@ -431,3 +431,45 @@ async fn notification_overlap_uses_precedence_and_does_not_double_insert() {
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications[0].kind, NotificationKind::Reply);
 }
+
+/// #1221 R5-H 判断 4: follow の offer を受け取れなかった相手でも、その author を開いた lease の開始の読み直しで
+/// 自分を指す follow edge を保存し、followed の通知を作る(通知の id は envelope から決まる)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn author_lease_start_restores_a_followed_notification() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("followed-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("followed-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    let a_pubkey = app_a.current_author_pubkey();
+    let b_pubkey = app_b.current_author_pubkey();
+    // a は account の受信 route を始めていないので、follow の offer は届かない。
+    app_b.follow_author(&a_pubkey).await.expect("b follows a");
+    sleep(Duration::from_secs(1)).await;
+    assert!(app_a.list_notifications().await.unwrap().is_empty());
+
+    display_author(&app_a, &b_pubkey)
+        .await
+        .expect("open the profile of b");
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let notifications = app_a.list_notifications().await.unwrap();
+            if notifications.iter().any(|notification| {
+                notification.kind == NotificationKind::Followed
+                    && notification.actor_pubkey == b_pubkey
+            }) {
+                assert_eq!(notifications.len(), 1);
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the author lease restores the followed notification");
+}
