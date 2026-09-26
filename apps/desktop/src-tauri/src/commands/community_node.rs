@@ -249,6 +249,19 @@ pub async fn set_discovery_seeds(
         .map_err(map_error)
 }
 
+/// 開いている列の購読の需要(#1221 R2-C)。上限なら `SCOPE_LIMIT_REACHED` を返す。
+#[tauri::command]
+pub async fn set_scope_display(
+    state: tauri::State<'_, DesktopState>,
+    request: kukuri_desktop_runtime::ScopeDisplayRequest,
+) -> Result<(), CommandError> {
+    state
+        .runtime()
+        .set_scope_display(request)
+        .await
+        .map_err(map_error)
+}
+
 #[tauri::command]
 pub async fn unsubscribe_topic(
     state: tauri::State<'_, DesktopState>,

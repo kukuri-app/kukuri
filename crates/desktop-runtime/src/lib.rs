@@ -85,6 +85,9 @@ pub use host::{
     require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
 };
 pub use kukuri_app_api::SessionDisplayRequest;
+pub use kukuri_app_api::{
+    MAX_ACTIVE_SCOPES, ScopeDisplayRequest, ScopeDisplayTarget, ScopeLimitReached,
+};
 pub use requests::CreateAccountRequest;
 // 起動エラーの typed 分類(WP-Q2)。src-tauri は downcast で DatabaseOpen/Migration を判定する。
 pub use kukuri_store::StoreStartupError;

@@ -527,8 +527,6 @@ impl AppService {
                 current_private_channel_replica_id(&state)
             }
         };
-        self.ensure_topic_subscription(context.topic_id().as_str())
-            .await?;
         self.services.docs_sync.open_replica(&replica).await?;
         Ok(replica)
     }

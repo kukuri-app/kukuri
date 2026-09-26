@@ -3,10 +3,42 @@ use std::cell::Cell;
 use super::super::*;
 use kukuri_test_support::{PollError, PollState, poll_until};
 
+/// topic の列を開いて購読する(#1221 R2-C。読み込みは購読を開始しない)。
+pub(crate) async fn open_topic_column(
+    runtime: &DesktopRuntime,
+    topic: &str,
+    scope: TimelineScope,
+) -> Result<()> {
+    runtime
+        .set_scope_display(crate::ScopeDisplayRequest {
+            observer: format!("test-column:{topic}:{scope:?}"),
+            target: crate::ScopeDisplayTarget::Timeline {
+                topic: topic.to_string(),
+                scope,
+            },
+            visible: true,
+        })
+        .await
+}
+
+/// author の profile の列を開いて購読する(#1221 R2-C)。
+pub(crate) async fn open_profile_column(runtime: &DesktopRuntime, pubkey: &str) -> Result<()> {
+    runtime
+        .set_scope_display(crate::ScopeDisplayRequest {
+            observer: format!("test-profile:{pubkey}"),
+            target: crate::ScopeDisplayTarget::Author {
+                pubkey: pubkey.to_string(),
+            },
+            visible: true,
+        })
+        .await
+}
+
 pub(crate) async fn refresh_public_runtime_for_retry(
     runtime: &DesktopRuntime,
     topic: &str,
 ) -> Result<()> {
+    open_topic_column(runtime, topic, TimelineScope::Public).await?;
     let _ = runtime
         .list_timeline(ListTimelineRequest {
             topic: topic.to_string(),

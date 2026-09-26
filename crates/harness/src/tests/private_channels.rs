@@ -138,31 +138,13 @@ async fn friend_only_rotate_requires_fresh_grant() {
 
     let topic = "kukuri:topic:harness-friend-only";
     let public_scope = TimelineScope::Public;
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, &public_scope)
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, &public_scope)
         .await
         .expect("subscribe b");
-    let _ = runtime_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_c, topic, &public_scope)
         .await
         .expect("subscribe c");
     let topic_timeout = social_graph_propagation_timeout();
@@ -302,22 +284,10 @@ async fn friend_only_rotate_requires_fresh_grant() {
         })
         .await
         .expect("export fresh grant");
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, &public_scope)
         .await
         .expect("resubscribe a before fresh grant");
-    let _ = runtime_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_c, topic, &public_scope)
         .await
         .expect("resubscribe c before fresh grant");
     wait_for_topic_delivery(&runtime_a, topic, 1, topic_timeout)
@@ -522,13 +492,7 @@ async fn friend_plus_share_freeze_rotate_connectivity() {
 
     let public_scope = TimelineScope::Public;
     for runtime in [&runtime_a, &runtime_b, &runtime_c, &runtime_d] {
-        let _ = runtime
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
+        open_topic_column(runtime, topic, &public_scope)
             .await
             .expect("subscribe runtime");
     }
@@ -779,6 +743,16 @@ async fn friend_plus_share_freeze_rotate_connectivity() {
     wait_for_friend_plus_share_import(&runtime_d, fresh_share, social_graph_propagation_timeout())
         .await
         .expect("d imports fresh share");
+    // 参加した channel の投稿は、参加で始まる購読の同期で届く(#1221 R2-C)。
+    wait_for_timeline_object_in_scope(
+        &runtime_d,
+        topic,
+        private_scope.clone(),
+        new_post_id.as_str(),
+        Duration::from_secs(10),
+    )
+    .await
+    .expect("d receives new epoch post");
     let d_private_timeline = runtime_d
         .list_timeline(ListTimelineRequest {
             topic: topic.to_string(),

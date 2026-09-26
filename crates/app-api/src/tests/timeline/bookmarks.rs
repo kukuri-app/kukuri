@@ -357,8 +357,7 @@ async fn bookmarks_do_not_sync_between_apps() {
         .expect("import a into b");
 
     let topic = "kukuri:topic:bookmark-local-only";
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("app b should subscribe to topic");
 

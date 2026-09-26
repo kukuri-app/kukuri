@@ -16,6 +16,9 @@ async fn list_timeline_restarts_topic_replica_sync_with_cooldown_when_projection
         generate_keys(),
     );
 
+    display_topic(&app, "kukuri:topic:replica-restart")
+        .await
+        .expect("display topic");
     let timeline = app
         .list_timeline("kukuri:topic:replica-restart", None, 20)
         .await
@@ -60,6 +63,7 @@ async fn list_timeline_restarts_topic_subscription_with_cooldown_when_projection
     );
     let topic = "kukuri:topic:subscription-restart";
 
+    display_topic(&app, topic).await.expect("display topic");
     let timeline = app.list_timeline(topic, None, 20).await.expect("timeline");
     assert!(timeline.items.is_empty());
 
@@ -76,120 +80,6 @@ async fn list_timeline_restarts_topic_subscription_with_cooldown_when_projection
 
     assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
     assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
-}
-
-#[tokio::test]
-async fn ensure_topic_subscription_recreates_finished_handle() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let hint_transport = Arc::new(TrackingHintTransport::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        transport,
-        hint_transport.clone(),
-        Arc::new(TrackingDocsSync::default()),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let topic = "kukuri:topic:stale-subscription";
-
-    let timeline = app.list_timeline(topic, None, 20).await.expect("timeline");
-    assert!(timeline.items.is_empty());
-    assert_eq!(*hint_transport.subscribe_count.lock().await, 1);
-
-    {
-        let subscriptions = app.subscription_registry.subscriptions.lock().await;
-        subscriptions
-            .get(topic)
-            .expect("topic subscription handle")
-            .abort();
-    }
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if !app.has_topic_subscription(topic).await {
-                break;
-            }
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("subscription should finish after abort");
-
-    let second_timeline = app
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("second timeline");
-    assert!(second_timeline.items.is_empty());
-    assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-}
-
-#[tokio::test]
-async fn set_discovery_seeds_restarts_existing_topic_hint_subscription() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let hint_transport = Arc::new(TrackingHintTransport::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        transport.clone(),
-        hint_transport.clone(),
-        Arc::new(MemoryDocsSync::default()),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let topic = "kukuri:topic:hint-restart";
-
-    let _ = app
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe timeline");
-
-    app.set_discovery_seeds(
-        DiscoveryMode::StaticPeer,
-        false,
-        vec![SeedPeer {
-            endpoint_id: "peer-a".into(),
-            addr_hint: None,
-        }],
-        Vec::new(),
-    )
-    .await
-    .expect("set discovery seeds");
-
-    assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-    assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
-}
-
-#[tokio::test]
-async fn import_peer_ticket_restarts_existing_topic_hint_subscription() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let hint_transport = Arc::new(TrackingHintTransport::default());
-    let docs_sync = Arc::new(TrackingDocsSync::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        transport,
-        hint_transport.clone(),
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let topic = "kukuri:topic:hint-import";
-
-    let _ = app
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe timeline");
-
-    app.import_peer_ticket("peer-ticket")
-        .await
-        .expect("import peer ticket");
-
-    assert_eq!(*hint_transport.subscribe_count.lock().await, 2);
-    assert!(hint_transport.unsubscribed_topics.lock().await.is_empty());
-    assert_eq!(docs_sync.subscribe_replicas.lock().await.len(), 2);
 }
 
 #[tokio::test]
@@ -248,10 +138,7 @@ async fn hint_miss_coalesces_replica_sync_restarts() {
     );
     let topic = "kukuri:topic:hint-miss-cooldown";
 
-    let _ = app
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe timeline");
+    display_topic(&app, topic).await.expect("display topic");
 
     let hint_topic = TopicId::new(topic);
     for suffix in ["one", "two"] {
@@ -304,10 +191,7 @@ async fn shutdown_unsubscribes_active_hint_topics() {
     );
     let topic = "kukuri:topic:shutdown";
 
-    let _ = app
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe timeline");
+    display_topic(&app, topic).await.expect("display topic");
 
     app.shutdown().await;
 
@@ -388,14 +272,12 @@ async fn unsubscribe_topic_removes_subscription_from_sync_status() {
     let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
     let app = AppService::new(store, transport);
 
-    let _ = app
-        .list_timeline("kukuri:topic:one", None, 10)
+    display_topic(&app, "kukuri:topic:one")
         .await
-        .expect("timeline one");
-    let _ = app
-        .list_timeline("kukuri:topic:two", None, 10)
+        .expect("display one");
+    display_topic(&app, "kukuri:topic:two")
         .await
-        .expect("timeline two");
+        .expect("display two");
     app.unsubscribe_topic("kukuri:topic:two")
         .await
         .expect("unsubscribe topic");

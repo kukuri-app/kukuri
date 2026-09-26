@@ -21,13 +21,7 @@ async fn owner_invite_export_auto_rotate_survives_restart() {
     .expect("runtime");
     let topic = "kukuri:topic:desktop-export-persist-invite";
 
-    let _ = runtime
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime, topic, TimelineScope::Public)
         .await
         .expect("subscribe");
 
@@ -108,13 +102,7 @@ async fn owner_access_token_export_auto_rotate_survives_restart() {
     .expect("runtime");
     let topic = "kukuri:topic:desktop-export-persist-access-token";
 
-    let _ = runtime
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime, topic, TimelineScope::Public)
         .await
         .expect("subscribe");
 

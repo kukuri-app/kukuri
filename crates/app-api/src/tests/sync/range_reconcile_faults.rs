@@ -540,6 +540,9 @@ async fn community_index_resolution_shows_the_body_of_an_unprojected_post() {
 async fn event_hydration_and_the_following_listing_share_the_missing_body_schedule() {
     let fixture = blob_body_fixture("event-ledger").await;
     // 購読を始めてから投稿を書く(docs の event で反映される)。
+    display_topic(&fixture.app, fixture.topic.as_str())
+        .await
+        .expect("open the topic column");
     fixture
         .app
         .list_timeline(fixture.topic.as_str(), None, 20)

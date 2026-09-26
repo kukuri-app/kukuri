@@ -387,3 +387,30 @@ fn warmup_in_flight_guard_clears_on_drop() {
     drop(guard);
     assert!(coordinator.try_mark_peer_in_flight_for_test("peer"));
 }
+
+#[tokio::test]
+async fn publishing_to_unsubscribed_topics_keeps_at_most_16_short_term_topics() {
+    let transport = IrohGossipTransport::bind_local().await.unwrap();
+    let subscribed = TopicId::new("kukuri:topic:leased");
+    let _stream = transport.subscribe_hints(&subscribed).await.unwrap();
+    let hint = |topic: &TopicId| GossipHint::TopicObjectsChanged {
+        topic_id: topic.clone(),
+        objects: Vec::new(),
+    };
+    transport
+        .publish_hint(&subscribed, hint(&subscribed))
+        .await
+        .unwrap();
+    for index in 0..MAX_SHORT_TERM_HINT_TOPICS * 2 {
+        let topic = TopicId::new(format!("kukuri:topic:short-term-{index}"));
+        transport.publish_hint(&topic, hint(&topic)).await.unwrap();
+    }
+    let topics = transport.topic_states.lock().await;
+    // lease の購読 1 と短期送信先 16。購読している topic は抜けず、古い送信先から抜ける。
+    assert_eq!(topics.len(), MAX_SHORT_TERM_HINT_TOPICS + 1);
+    assert!(topics.contains_key(kukuri_core::wire::hint_topic_id(&subscribed).as_str()));
+    let oldest = TopicId::new("kukuri:topic:short-term-0");
+    assert!(!topics.contains_key(kukuri_core::wire::hint_topic_id(&oldest).as_str()));
+    drop(topics);
+    transport.shutdown().await;
+}

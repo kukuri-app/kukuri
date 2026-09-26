@@ -168,6 +168,8 @@ async fn real_iroh_author_profile_is_read_from_the_author_device_without_sync() 
         local.clone(),
     );
 
+    // profile の列を開く。author の状態(profile・follow)は、開いている間の購読が反映する(#1221 R2-C)。
+    display_author(&app, author_pubkey.as_str()).await?;
     let first = app
         .list_profile_timeline(author_pubkey.as_str(), None, 20)
         .await?;

@@ -39,6 +39,7 @@ import type {
   NumberStateDispatch,
   Setter,
 } from './shared';
+import { explainScopeLimit } from '@/shell/columnScopeLeases';
 
 type ProfileTopicChannelParams = ActionsBaseParams & {
   refreshProfile: () => Promise<void>;
@@ -424,10 +425,8 @@ export function createProfileTopicChannelActions({
     setChannelActionPending('create');
     setInviteOutput(null);
     try {
-      const channel = await api.createPrivateChannel(
-        activeTopic,
-        channelLabelInput.trim(),
-        channelAudienceInput
+      const channel = await explainScopeLimit(
+        api.createPrivateChannel(activeTopic, channelLabelInput.trim(), channelAudienceInput)
       );
       let nextChannelError: string | null = null;
       try {
@@ -594,7 +593,7 @@ export function createProfileTopicChannelActions({
   async function handleImportChannelAccessToken(token: string) {
     setChannelActionPending('join');
     try {
-      const preview = await api.importChannelAccessToken(token.trim());
+      const preview = await explainScopeLimit(api.importChannelAccessToken(token.trim()));
       await activateImportedPrivateChannel(
         preview.topic_id,
         preview.channel_id,

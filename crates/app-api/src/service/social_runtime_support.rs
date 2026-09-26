@@ -135,60 +135,7 @@ impl AppService {
             }))
     }
 
-    pub(crate) async fn ensure_author_subscriptions_for_rows(
-        &self,
-        rows: &[ObjectProjectionRow],
-    ) -> Result<()> {
-        let mut author_pubkeys = BTreeSet::new();
-        for row in rows {
-            author_pubkeys.insert(row.author_pubkey.clone());
-            if let Some(repost_of) = row.repost_of.as_ref() {
-                author_pubkeys.insert(repost_of.source_author_pubkey.as_str().to_string());
-            }
-        }
-        for author_pubkey in author_pubkeys {
-            self.ensure_author_subscription(author_pubkey.as_str())
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn ensure_author_subscription(&self, author_pubkey: &str) -> Result<()> {
-        let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-        let stale_key = {
-            let subscriptions = self.subscription_registry.author_subscriptions.lock().await;
-            match subscriptions.get(author_pubkey.as_str()) {
-                Some(handle) if !handle.is_finished() => return Ok(()),
-                Some(_) => Some(author_pubkey.to_string()),
-                None => None,
-            }
-        };
-        if let Some(stale_key) = stale_key {
-            self.subscription_registry
-                .author_subscriptions
-                .lock()
-                .await
-                .remove(stale_key.as_str());
-        }
-
-        self.spawn_author_subscription(author_pubkey.as_str()).await
-    }
-
-    pub(crate) async fn restart_author_subscription(&self, author_pubkey: &str) -> Result<()> {
-        let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-        if let Some(handle) = self
-            .subscription_registry
-            .author_subscriptions
-            .lock()
-            .await
-            .remove(author_pubkey.as_str())
-        {
-            handle.abort();
-        }
-        self.spawn_author_subscription(author_pubkey.as_str()).await
-    }
-
-    pub(crate) async fn spawn_author_subscription(&self, author_pubkey: &str) -> Result<()> {
+    pub(crate) async fn spawn_author_subscription(&self, author_pubkey: &str) -> Result<ScopeTask> {
         let services = self.services.clone();
         let last_sync = Arc::clone(&self.last_sync_ts);
         let notification_inserted = Arc::clone(&self.notification_inserted_notify);
@@ -201,6 +148,7 @@ impl AppService {
             .subscribe_replica_notices(&replica)
             .await?;
         let author_key_for_task = author_key.clone();
+        let replica_for_owner = replica.clone();
         let handle = tokio::spawn(async move {
             let store = &services.store;
             let projection_store = &services.projection_store;
@@ -399,12 +347,11 @@ impl AppService {
                 }
             }
         });
-        self.subscription_registry
-            .author_subscriptions
-            .lock()
-            .await
-            .insert(author_key, handle);
-        Ok(())
+        Ok(ScopeTask {
+            handle: AbortOnDropTask::new(handle),
+            replica: replica_for_owner,
+            hint_topic: None,
+        })
     }
 }
 

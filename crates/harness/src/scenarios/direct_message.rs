@@ -61,24 +61,8 @@ pub(crate) async fn run_pairwise_direct_message_connectivity(
             })
             .await
             .context("failed to import desktop a ticket into desktop b")?;
-        let _ = runtime_a
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop a to public topic")?;
-        let _ = runtime_b
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop b to public topic")?;
+        open_topic_column(&runtime_a, topic, &public_scope).await.context("failed to subscribe desktop a to public topic")?;
+        open_topic_column(&runtime_b, topic, &public_scope).await.context("failed to subscribe desktop b to public topic")?;
         wait_for_topic_delivery(&runtime_a, topic, 1, step_timeout)
             .await
             .context("desktop a did not observe public topic connectivity")?;
@@ -267,24 +251,8 @@ pub(crate) async fn run_pairwise_direct_message_connectivity(
             })
             .await
             .context("failed to import desktop a ticket into restarted desktop b")?;
-        let _ = runtime_a
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to refresh desktop a public topic after restart")?;
-        let _ = runtime_b
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to refresh desktop b public topic after restart")?;
+        open_topic_column(&runtime_a, topic, &public_scope).await.context("failed to refresh desktop a public topic after restart")?;
+        open_topic_column(&runtime_b, topic, &public_scope).await.context("failed to refresh desktop b public topic after restart")?;
         wait_for_topic_delivery(&runtime_a, topic, 1, step_timeout)
             .await
             .context("desktop a did not reconnect to public topic after restart")?;

@@ -17,6 +17,9 @@ async fn an_empty_profile_timeline_does_not_restart_the_author_subscription() {
         generate_keys(),
     );
     let author_pubkey = "b".repeat(64);
+    display_author(&app, author_pubkey.as_str())
+        .await
+        .expect("open the profile column");
 
     let timeline = app
         .list_profile_timeline(author_pubkey.as_str(), None, 20)
@@ -59,6 +62,9 @@ async fn topic_doc_events_do_not_rehydrate_whole_replica() {
     );
     let topic = TopicId::new("kukuri:topic:incremental-doc-event");
 
+    display_topic(&app, topic.as_str())
+        .await
+        .expect("open the topic column");
     let _ = app
         .list_timeline(topic.as_str(), None, 20)
         .await
@@ -152,6 +158,9 @@ async fn topic_object_hints_do_not_rehydrate_whole_replica() {
     )
     .await;
 
+    display_topic(&app, topic.as_str())
+        .await
+        .expect("open the topic column");
     let _ = app
         .list_timeline(topic.as_str(), None, 20)
         .await
@@ -273,6 +282,9 @@ async fn topic_reaction_hints_rehydrate_only_target_reactions() {
         .await
         .expect("persist reaction doc");
 
+    display_topic(&app, topic.as_str())
+        .await
+        .expect("open the topic column");
     let _ = app
         .list_timeline(topic.as_str(), None, 20)
         .await
@@ -368,6 +380,9 @@ async fn public_topic_recovery_keeps_prompting_a_resync_without_scanning_the_rep
         generate_keys(),
     );
 
+    display_topic(&app, topic.as_str())
+        .await
+        .expect("open the topic column");
     let _ = app
         .list_timeline(topic.as_str(), None, 20)
         .await

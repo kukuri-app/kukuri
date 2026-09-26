@@ -60,10 +60,6 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
     ] {
         stack.bind_account(app).await;
     }
-    app_a.warm_social_graph().await.expect("warm a");
-    app_b.warm_social_graph().await.expect("warm b");
-    app_c.warm_social_graph().await.expect("warm c");
-    app_d.warm_social_graph().await.expect("warm d");
 
     let ticket_a = stack_a
         .transport
@@ -112,8 +108,7 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
     let topic = "kukuri:topic:friend-only";
 
     for app in [&app_a, &app_b, &app_d] {
-        let _ = app
-            .list_timeline(topic, None, 20)
+        display_topic(app, topic)
             .await
             .expect("subscribe public timeline");
     }
@@ -174,8 +169,7 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
         .import_peer_ticket(&ticket_a)
         .await
         .expect("c imports a");
-    let _ = app_c
-        .list_timeline(topic, None, 20)
+    display_topic(&app_c, topic)
         .await
         .expect("subscribe public timeline c");
     wait_for_topic_delivery(&app_c, topic, 1).await;
@@ -256,12 +250,10 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
         .export_friend_only_grant(topic, channel.channel_id.as_str(), None)
         .await
         .expect("export fresh friend-only grant");
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("resubscribe a before fresh grant");
-    let _ = app_d
-        .list_timeline(topic, None, 20)
+    display_topic(&app_d, topic)
         .await
         .expect("resubscribe d before fresh grant");
     wait_for_topic_delivery(&app_a, topic, 1).await;

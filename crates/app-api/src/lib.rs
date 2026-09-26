@@ -27,6 +27,7 @@ mod game;
 mod live;
 mod session_display;
 pub use session_display::{SessionCandidateView, SessionDisplayRequest};
+pub use sync::{ScopeDisplayRequest, ScopeDisplayTarget};
 mod media;
 mod notifications;
 mod private_channel_indexing;
@@ -43,5 +44,5 @@ pub use kukuri_store::{NOTIFICATION_DISPATCH_PAGE_SIZE, NotificationKind};
 pub use private_channels::{
     is_retryable_friend_only_grant_import_error, is_retryable_friend_plus_share_import_error,
 };
-pub use service::{AppService, ServiceHandles};
+pub use service::{AppService, MAX_ACTIVE_SCOPES, ScopeLimitReached, ServiceHandles};
 pub use views::*;

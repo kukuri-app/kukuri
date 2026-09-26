@@ -44,6 +44,10 @@ pub(crate) fn format_sync_snapshot(status: &SyncStatus, topic: &str) -> String {
 }
 
 pub(crate) async fn wait_for_topic_delivery(app: &AppService, topic: &str, expected: usize) {
+    // 届くのは購読している topic だけ。待つ topic の列を開く(#1221 R2-C)。
+    display_topic(app, topic)
+        .await
+        .expect("open the topic column");
     let result = poll_until(
         social_graph_propagation_timeout(),
         Duration::from_millis(50),
@@ -84,6 +88,10 @@ pub(crate) async fn wait_for_topic_delivery(app: &AppService, topic: &str, expec
 }
 
 pub(crate) async fn warm_author_social_view(app: &AppService, author_pubkey: &str, topic: &str) {
+    // 相手の follow は、相手の profile を開いている間の購読が反映する(#1221 R2-C)。
+    display_author(app, author_pubkey)
+        .await
+        .expect("open the author profile");
     match timeout(social_graph_propagation_timeout(), async {
         loop {
             if app.get_author_social_view(author_pubkey).await.is_ok() {

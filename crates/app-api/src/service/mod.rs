@@ -130,6 +130,7 @@ mod direct_messages_delivery_support;
 mod direct_messages_subscription_support;
 mod dm_outbox_retry_support;
 mod dome_connection_support;
+mod dome_host_ownership;
 mod receive_offer_support;
 pub(crate) use dome_connection_support::*;
 mod errors;
@@ -175,6 +176,12 @@ pub(crate) use subscription_catch_up::{
     snapshot_window_notification_baseline,
 };
 mod reply_target_support;
+mod scope_leases;
+pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
+pub(crate) use scope_leases::{
+    ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
+    participation_keys, private_channel_holder, release_scope_holder, stop_scope_task,
+};
 mod shutdown_support;
 mod subscription_registry;
 mod timeline_subscription_support;
@@ -190,12 +197,10 @@ pub(crate) use attachment_support::{
     channel_hint_topic_for, channel_id_for_view, channel_id_from_storage, channel_storage_id,
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
-    joined_private_channel_key, joined_private_channel_subscription_key,
-    joined_private_channel_subscription_prefix, live_presence_task_key,
-    materialize_direct_message_manifest, merge_optional_timestamp, normalize_topic_diagnostics,
-    normalize_topic_name, normalize_topics, register_private_channel_replica_secrets,
-    sanitize_game_participants, short_id_suffix, validate_game_room_scores,
-    validate_game_room_transition,
+    joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
+    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
+    register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
+    validate_game_room_scores, validate_game_room_transition,
 };
 pub(crate) use author_state_support::{
     catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,
@@ -909,50 +914,6 @@ impl AppService {
             .await
             .get(topic_id)
             .copied()
-    }
-
-    pub(crate) async fn restart_active_subscriptions(&self) -> Result<()> {
-        let topics = self
-            .subscription_registry
-            .subscriptions
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for topic in topics {
-            self.restart_topic_subscription(topic.as_str()).await?;
-        }
-
-        let private_channels = self
-            .joined_private_channels
-            .lock()
-            .await
-            .values()
-            .map(|state| {
-                (
-                    state.topic_id.clone(),
-                    state.channel_id.as_str().to_string(),
-                )
-            })
-            .collect::<Vec<_>>();
-        for (topic_id, channel_id) in private_channels {
-            self.restart_private_channel_subscription(topic_id.as_str(), channel_id.as_str())
-                .await?;
-        }
-
-        let authors = self
-            .subscription_registry
-            .author_subscriptions
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for author in authors {
-            self.restart_author_subscription(author.as_str()).await?;
-        }
-        Ok(())
     }
 
     pub(crate) fn current_author_pubkey(&self) -> String {

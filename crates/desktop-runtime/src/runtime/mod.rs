@@ -453,7 +453,9 @@ impl DesktopRuntime {
         app_service.set_adult_content_display_enabled(
             load_content_display_settings(&db_path).adult_content_enabled,
         );
-        app_service.warm_social_graph().await?;
+        app_service
+            .reconcile_blocked_dome_connections_at_start()
+            .await?;
         if let Err(error) = app_service.start_account_receive_offers().await {
             tracing::warn!(%error, "account receive route could not start; legacy receivers remain active");
         }

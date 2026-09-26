@@ -129,6 +129,8 @@ pub struct IrohGossipTransport {
     receive_destination_probes: Semaphore,
     subscribed_topics: Arc<Mutex<BTreeSet<String>>>,
     topic_states: Arc<Mutex<HashMap<String, HintTopicState>>>,
+    /// 購読していない topic への publish で入った topic(古い順、最大 [`MAX_SHORT_TERM_HINT_TOPICS`])。
+    short_term_topics: Mutex<VecDeque<String>>,
     receive_offer_topic: Mutex<Option<ReceiveOfferTopicState>>,
     outbound_offer_holds: Mutex<VecDeque<OutboundOfferHold>>,
     offer_closed: AtomicBool,

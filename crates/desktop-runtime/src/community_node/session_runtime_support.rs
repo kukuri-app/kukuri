@@ -388,9 +388,10 @@ impl DesktopRuntime {
             )
             .await?;
         if self.iroh_stack.generation() != generation {
-            // Even unchanged peer inputs must recreate subscriptions/capabilities
-            // against the new docs actor, not keep streams from the old stack.
+            // 新しい stack へ seed を設定し直す(入力が同じでも)。
             *self.last_effective_seed_peer_apply_state.lock().await = None;
+            // 旧 stack の stream は終わっている。lease のある key の task だけを作り直す(#1221 R2-C)。
+            self.app_service.rebuild_scope_subscriptions().await?;
         }
         debug!(
             relay_url_count = relay_config.iroh_relay_urls.len(),
@@ -439,6 +440,7 @@ impl DesktopRuntime {
                 relay_config.clone(),
             )
             .await?;
+        self.app_service.rebuild_scope_subscriptions().await?;
         debug!(
             relay_url_count = relay_config.iroh_relay_urls.len(),
             bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),

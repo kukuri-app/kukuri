@@ -402,6 +402,8 @@ fn export_ipc_types() {
         CreateLiveSessionRequest,
         LiveSessionCommandRequest,
         kukuri_app_api::SessionDisplayRequest,
+        kukuri_app_api::ScopeDisplayRequest,
+        kukuri_app_api::ScopeDisplayTarget,
         kukuri_app_api::SessionCandidateView,
         ListGameRoomsRequest,
         CreateGameRoomRequest,

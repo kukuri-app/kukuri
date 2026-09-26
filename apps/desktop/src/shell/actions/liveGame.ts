@@ -11,6 +11,7 @@ import type {
   BoolStateDispatch,
   Setter,
 } from './shared';
+import { explainScopeLimit } from '@/shell/columnScopeLeases';
 
 type LiveGameParams = ActionsBaseParams & {
   activeComposeChannel: ChannelRef;
@@ -131,7 +132,7 @@ export function createLiveGameActions({
   async function handleJoinLiveSession(sessionId: string, topic: string = activeTopic) {
     setLivePendingBySessionId(setRecordEntry(sessionId, true));
     try {
-      await api.joinLiveSession(topic, sessionId);
+      await explainScopeLimit(api.joinLiveSession(topic, sessionId));
       setLiveError(null);
       await loadTopics(trackedTopics, topic, selectedThread);
     } catch (joinError) {

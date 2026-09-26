@@ -67,7 +67,7 @@ impl AppService {
             // #1239: scope を走査しない。解決対象の object だけを、projection に無いときに key 指定で反映する。
             let mut scope_ready = source.is_some()
                 || self
-                    .ensure_scope_subscriptions(topic.as_str(), &scope)
+                    .allowed_channel_id_for_scope(topic.as_str(), &scope)
                     .await
                     .is_ok();
             if scope_ready && let Some(source) = source.as_deref() {

@@ -75,24 +75,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         // 参加していない利用者(desktop c)は public の scope で確かめる。複数の channel をまたぐ scope は、
         // API から閉じた(#1280)。参加していない利用者にとっては、どちらも public だけを指す。
         let outsider_scope = TimelineScope::Public;
-        let _ = runtime_a
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop a to public topic")?;
-        let _ = runtime_b
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop b to public topic")?;
+        open_topic_column(&runtime_a, topic, &public_scope).await.context("failed to subscribe desktop a to public topic")?;
+        open_topic_column(&runtime_b, topic, &public_scope).await.context("failed to subscribe desktop b to public topic")?;
         runtime_a
             .import_peer_ticket(ImportPeerTicketRequest {
                 ticket: ticket_b.clone(),
@@ -151,22 +135,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                         })
                         .await
                         .context("failed to refresh desktop a ticket into desktop b after public sync timeout")?;
-                    let _ = runtime_a
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: public_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
-                    let _ = runtime_b
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: public_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
+                    let _ = open_topic_column(&runtime_a, topic, &public_scope).await;
+                    let _ = open_topic_column(&runtime_b, topic, &public_scope).await;
                     sleep(Duration::from_millis(250)).await;
                 }
                 Err(error) => {
@@ -251,24 +221,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let private_ref = ChannelRef::PrivateChannel {
             channel_id: private_channel_id.clone(),
         };
-        let _ = runtime_a
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: private_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop a to private channel")?;
-        let _ = runtime_b
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: private_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop b to private channel")?;
+        open_topic_column(&runtime_a, topic, &private_scope).await.context("failed to subscribe desktop a to private channel")?;
+        open_topic_column(&runtime_b, topic, &private_scope).await.context("failed to subscribe desktop b to private channel")?;
         runtime_a
             .import_peer_ticket(ImportPeerTicketRequest {
                 ticket: ticket_b.clone(),
@@ -338,22 +292,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                         })
                         .await
                         .context("failed to refresh desktop a ticket into desktop b after private post timeout")?;
-                    let _ = runtime_a
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: private_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
-                    let _ = runtime_b
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: private_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
+                    let _ = open_topic_column(&runtime_a, topic, &private_scope).await;
+                    let _ = open_topic_column(&runtime_b, topic, &private_scope).await;
                     sleep(Duration::from_millis(250)).await;
                 }
                 Err(error) => {
@@ -459,22 +399,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                         })
                         .await
                         .context("failed to refresh desktop a ticket into desktop b after private reply timeout")?;
-                    let _ = runtime_a
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: private_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
-                    let _ = runtime_b
-                        .list_timeline(ListTimelineRequest {
-                            topic: topic.to_string(),
-                            scope: private_scope.clone(),
-                            cursor: None,
-                            limit: Some(20),
-                        })
-                        .await;
+                    let _ = open_topic_column(&runtime_a, topic, &private_scope).await;
+                    let _ = open_topic_column(&runtime_b, topic, &private_scope).await;
                     let _ = runtime_a
                         .list_thread(ListThreadRequest {
                             topic: topic.to_string(),
@@ -767,24 +693,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
             })
             .await
             .context("failed to import restarted desktop b ticket into desktop c")?;
-        let _ = runtime_c
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: public_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop c to public topic")?;
-        let _ = runtime_c
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: outsider_scope.clone(),
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to subscribe desktop c to public topic")?;
+        open_topic_column(&runtime_c, topic, &public_scope).await.context("failed to subscribe desktop c to public topic")?;
+        open_topic_column(&runtime_c, topic, &outsider_scope).await.context("failed to subscribe desktop c to public topic")?;
         wait_for_topic_peer_count(&runtime_c, topic, 1, step_timeout)
             .await
             .context("desktop c did not connect as outsider")?;

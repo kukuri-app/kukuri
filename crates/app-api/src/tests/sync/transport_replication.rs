@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use kukuri_test_support::{PollState, poll_until};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -32,8 +32,7 @@ async fn iroh_transport_syncs_post_between_apps() {
         .expect("import a into b");
 
     let topic = "kukuri:topic:app-api-iroh";
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("app b should subscribe to topic");
 
@@ -84,12 +83,10 @@ async fn import_peer_ticket_restarts_existing_topic_subscription_and_resumes_del
     let app_b = app_with_iroh_services(store_b, &stack_b);
     let topic = "kukuri:topic:rebind-after-import";
 
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a before import");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b before import");
 
@@ -168,12 +165,10 @@ async fn seeded_dht_syncs_post_between_apps_without_ticket_import() {
     configure_seeded_dht(&app_a, endpoint_b.clone()).await;
     configure_seeded_dht(&app_b, endpoint_a.clone()).await;
     let topic = "kukuri:topic:seeded-dht-app";
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a timeline");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
     timeout(Duration::from_secs(90), async {
@@ -284,14 +279,8 @@ async fn relay_seeded_syncs_post_between_apps_without_ticket_import() {
         .expect("set relay seeds b");
 
     let topic = "kukuri:topic:relay-seeded";
-    let _ = app_a
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe a");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe b");
+    display_topic(&app_a, topic).await.expect("subscribe a");
+    display_topic(&app_b, topic).await.expect("subscribe b");
 
     let object_id = app_a
         .create_post(topic, "relay seeded app sync", None)
@@ -396,14 +385,8 @@ async fn external_relay_endpoint_only_seeds_sync_post_between_apps() {
         .expect("set seed b");
 
     let topic = "kukuri:topic:external-relay-endpoint-only";
-    let _ = app_a
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe a");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
-        .await
-        .expect("subscribe b");
+    display_topic(&app_a, topic).await.expect("subscribe a");
+    display_topic(&app_b, topic).await.expect("subscribe b");
     wait_for_topic_delivery(&app_a, topic, 1).await;
     wait_for_topic_delivery(&app_b, topic, 1).await;
 
@@ -453,12 +436,10 @@ async fn seeded_dht_updates_existing_topic_subscription_after_seed_update() {
     let app_b = app_with_iroh_services(store_b, &stack_b);
     let topic = "kukuri:topic:seeded-rebind";
 
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a before seed update");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b before seed update");
 
@@ -555,12 +536,10 @@ async fn seeded_dht_backfills_docs_and_blobs_with_id_only_seed() {
     configure_seeded_dht(&app_a, endpoint_b.clone()).await;
     configure_seeded_dht(&app_b, endpoint_a.clone()).await;
     let topic = "kukuri:topic:seeded-image";
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a timeline");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
     timeout(Duration::from_secs(20), async {
@@ -661,12 +640,10 @@ async fn iroh_transport_syncs_repost_and_notification() {
         .await
         .expect("import a into b");
 
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a timeline");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
     wait_for_topic_delivery(&app_a, topic, 1).await;
@@ -773,12 +750,10 @@ async fn iroh_transport_syncs_reply_into_thread() {
         .import_peer_ticket(&ticket_a)
         .await
         .expect("import a into b");
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a timeline");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
     wait_for_topic_delivery(&app_a, topic, 1).await;
@@ -884,20 +859,16 @@ async fn iroh_transport_syncs_multiple_topics_bidirectionally() {
         .await
         .expect("import a into b");
 
-    let _ = app_a
-        .list_timeline(topic_one, None, 20)
+    display_topic(&app_a, topic_one)
         .await
         .expect("subscribe a topic one");
-    let _ = app_a
-        .list_timeline(topic_two, None, 20)
+    display_topic(&app_a, topic_two)
         .await
         .expect("subscribe a topic two");
-    let _ = app_b
-        .list_timeline(topic_one, None, 20)
+    display_topic(&app_b, topic_one)
         .await
         .expect("subscribe b topic one");
-    let _ = app_b
-        .list_timeline(topic_two, None, 20)
+    display_topic(&app_b, topic_two)
         .await
         .expect("subscribe b topic two");
 

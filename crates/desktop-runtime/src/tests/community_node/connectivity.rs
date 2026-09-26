@@ -407,13 +407,7 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
 
     let topic = "kukuri:topic:external-relay-desktop";
     let scope = TimelineScope::Public;
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, scope.clone())
         .await
         .expect("subscribe a");
     let _ = runtime_b
@@ -797,22 +791,10 @@ async fn runtime_starts_with_unreachable_community_node_and_recovers_via_manual_
 
     let topic = "kukuri:topic:community-node-unreachable-direct";
     let scope = TimelineScope::Public;
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, scope.clone())
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, scope.clone())
         .await
         .expect("subscribe b");
     wait_for_public_runtime_delivery_with_refresh(&runtime_a, topic, 1, Duration::from_secs(30))

@@ -135,7 +135,7 @@ async fn subscription_start_reads_a_bounded_window_regardless_of_the_replica_siz
         let (app, store) = app_over(docs_sync.clone());
         docs_sync.reset_records_returned();
         docs_sync.clear_queries().await;
-        app.ensure_topic_subscription(topic.as_str())
+        display_topic(&app, topic.as_str())
             .await
             .expect("subscribe");
         // 起動時の追いつきが終わる(窓の最後の object が反映される)まで待つ。
@@ -180,7 +180,7 @@ async fn lagged_notice_makes_the_window_catch_up_without_a_scan() {
     let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
     let topic = TopicId::new("kukuri:topic:catch-up-lagged");
     let (app, store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(200)).await;
@@ -219,7 +219,7 @@ async fn sync_finished_notices_are_coalesced_into_one_catch_up() {
     let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
     let topic = TopicId::new("kukuri:topic:catch-up-sync-finished");
     let (app, store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(200)).await;
@@ -263,7 +263,7 @@ async fn idle_subscription_does_not_read_docs() {
     let topic = TopicId::new("kukuri:topic:catch-up-idle");
     put_posts(docs_sync.as_ref(), &topic, 30, 0).await;
     let (app, _store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(500)).await;
@@ -291,7 +291,7 @@ async fn a_lag_after_empty_catch_ups_is_reflected_within_the_minimum_interval() 
     let docs_sync = Arc::new(InjectedNoticesDocsSync::default());
     let topic = TopicId::new("kukuri:topic:catch-up-idle-then-lag");
     let (app, store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(200)).await;
@@ -327,7 +327,7 @@ async fn missed_withdrawal_in_the_window_is_applied_after_a_lag_and_at_start() {
     let replica = topic_replica_id(topic.as_str());
     let author = generate_keys();
     let (app, store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(200)).await;
@@ -376,8 +376,7 @@ async fn missed_withdrawal_in_the_window_is_applied_after_a_lag_and_at_start() {
     // 起動時: 別の store(投稿だけ反映済み)で購読を始める。
     let (restarted, restarted_store) = app_over(docs_sync.clone());
     super::range_reconcile::project(restarted_store.as_ref(), &post, &replica).await;
-    restarted
-        .ensure_topic_subscription(topic.as_str())
+    display_topic(&restarted, topic.as_str())
         .await
         .expect("subscribe");
     let projection_store: &dyn ProjectionStore = restarted_store.as_ref();
@@ -425,7 +424,7 @@ async fn a_remote_index_entry_requests_a_catch_up_only_for_an_unprojected_object
     let topic = TopicId::new("kukuri:topic:catch-up-index-entry");
     let replica = topic_replica_id(topic.as_str());
     let (app, store) = app_over(docs_sync.clone());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(200)).await;

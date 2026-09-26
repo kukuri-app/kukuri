@@ -140,7 +140,6 @@ impl AppService {
             .blob_service
             .import_peer_ticket(ticket)
             .await?;
-        self.restart_active_subscriptions().await?;
         Ok(())
     }
 
@@ -170,89 +169,79 @@ impl AppService {
             .blob_service
             .set_seed_peers(effective_seed_peers)
             .await?;
-        self.restart_active_subscriptions().await?;
         Ok(())
     }
 
+    /// 表示中の列と CLI の desired のうち、この topic を持つ holder を外す。live・Dome・private channel の
+    /// 参加は止めない(#1221 R2-C)。
     pub async fn unsubscribe_topic(&self, topic_id: &str) -> Result<()> {
-        if let Some(handle) = self
+        let holders = self
             .subscription_registry
-            .subscriptions
+            .scope_leases
             .lock()
             .await
-            .remove(topic_id)
-        {
-            handle.abort();
+            .holders_with(&["display:", "desired:"], |key| match key {
+                ScopeKey::Topic(topic) | ScopeKey::Channel(topic, _) => topic == topic_id,
+                ScopeKey::Author(_) => false,
+            });
+        for holder in holders {
+            self.release_scope_holder(&holder).await;
         }
         self.clear_public_topic_delivery(topic_id).await;
-        let private_keys = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.starts_with(&format!("{topic_id}::")))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in private_keys {
-            if let Some(handle) = self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .remove(key.as_str())
-            {
-                handle.abort();
-            }
-            let mut parts = key.splitn(3, "::");
-            let _ = parts.next();
-            if let Some(channel_id) = parts.next() {
-                self.services
-                    .hint_transport
-                    .unsubscribe_hints(&private_channel_hint_topic(channel_id))
-                    .await?;
-            }
+        Ok(())
+    }
+
+    /// 開いている列の需要(#1221 R2-C)。observer は列。`visible: false` でその列の holder を外す。
+    pub async fn set_scope_display(&self, request: ScopeDisplayRequest) -> Result<()> {
+        let holder = display_holder(&request.observer);
+        if !request.visible {
+            self.release_scope_holder(&holder).await;
+            return Ok(());
         }
-        let keys_to_remove = self
-            .subscription_registry
-            .live_presence_tasks
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.starts_with(&format!("{topic_id}::")))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in keys_to_remove {
-            let mut parts = key.splitn(3, "::");
-            let _ = parts.next();
-            let channel_id = parts.next().unwrap_or(PUBLIC_CHANNEL_ID).to_string();
-            let session_id = parts.next().unwrap_or_default().to_string();
-            self.stop_live_presence_task(topic_id, channel_id.as_str(), session_id.as_str())
-                .await;
+        let keys = match &request.target {
+            ScopeDisplayTarget::Timeline { topic, scope } => {
+                self.timeline_scope_keys(topic, scope).await?
+            }
+            ScopeDisplayTarget::Author { pubkey } => {
+                vec![ScopeKey::Author(normalize_author_pubkey(pubkey)?)]
+            }
+        };
+        self.set_scope_holder(&holder, keys).await
+    }
+
+    /// CLI daemon の desired(#1221 R2-C)。上限は表示・参加の lease と共通。
+    pub async fn set_desired_scope(
+        &self,
+        topic: &str,
+        scope: &TimelineScope,
+        desired: bool,
+    ) -> Result<()> {
+        let holder = desired_holder(topic, scope);
+        if desired {
+            let keys = self.timeline_scope_keys(topic, scope).await?;
+            self.set_scope_holder(&holder, keys).await
+        } else {
+            self.release_scope_holder(&holder).await;
+            Ok(())
         }
-        self.services
-            .hint_transport
-            .unsubscribe_hints(&TopicId::new(topic_id))
-            .await
     }
 
     pub async fn peer_ticket(&self) -> Result<Option<String>> {
         self.services.transport.export_ticket().await
     }
 
+    /// gossip の停止・再開。lease は残し、task だけを止める・起こす。
     pub async fn set_topic_gossip_enabled(&self, topic_id: &str, enabled: bool) -> Result<()> {
         if enabled {
             self.gossip_disabled_topics.lock().await.remove(topic_id);
-            self.ensure_topic_subscription(topic_id).await?;
-            self.ensure_joined_private_channel_subscriptions(topic_id)
-                .await
         } else {
             self.gossip_disabled_topics
                 .lock()
                 .await
                 .insert(topic_id.to_string());
-            self.unsubscribe_topic(topic_id).await
         }
+        self.restart_topic_scope_subscriptions(topic_id).await;
+        Ok(())
     }
 
     pub async fn set_channel_gossip_enabled(
@@ -264,19 +253,32 @@ impl AppService {
         let key = gossip_disabled_channel_key(topic_id, channel_id);
         if enabled {
             self.gossip_disabled_channels.lock().await.remove(&key);
-            if self
-                .joined_private_channel_state(topic_id, channel_id)
-                .await
-                .is_some()
-            {
-                self.ensure_private_channel_subscription(topic_id, channel_id)
-                    .await
-            } else {
-                Ok(())
-            }
         } else {
             self.gossip_disabled_channels.lock().await.insert(key);
-            self.unsubscribe_private_channel(topic_id, channel_id).await
         }
+        self.restart_scope_subscription(&ScopeKey::Channel(
+            topic_id.to_string(),
+            channel_id.to_string(),
+        ))
+        .await;
+        Ok(())
     }
+}
+
+/// 開いている列の需要。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ScopeDisplayRequest {
+    pub observer: String,
+    pub target: ScopeDisplayTarget,
+    pub visible: bool,
+}
+
+/// 列が購読する対象。timeline の channel scope は、topic と channel の 2 key を取る。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScopeDisplayTarget {
+    Timeline { topic: String, scope: TimelineScope },
+    Author { pubkey: String },
 }

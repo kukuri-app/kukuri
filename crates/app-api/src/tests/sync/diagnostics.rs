@@ -6,14 +6,11 @@ async fn tracking_multiple_topics_updates_sync_status() {
     let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
     let app = AppService::new(store, transport);
 
-    let _ = app
-        .list_timeline("kukuri:topic:one", None, 10)
-        .await
-        .expect("timeline one");
-    let _ = app
-        .list_timeline("kukuri:topic:two", None, 10)
-        .await
-        .expect("timeline two");
+    for topic in ["kukuri:topic:one", "kukuri:topic:two"] {
+        display_topic(&app, topic)
+            .await
+            .expect("open the topic column");
+    }
     let status = app.get_sync_status().await.expect("sync status");
 
     assert!(
@@ -90,10 +87,13 @@ async fn local_only_bootstrap_reads_return_empty_without_remote_docs() {
     .expect("joined channels");
     assert!(joined.is_empty());
 
-    timeout(Duration::from_secs(2), app.warm_social_graph())
-        .await
-        .expect("warm social graph should not wait for remote docs")
-        .expect("warm social graph");
+    timeout(
+        Duration::from_secs(2),
+        app.reconcile_blocked_dome_connections_at_start(),
+    )
+    .await
+    .expect("startup reconcile should not wait for remote docs")
+    .expect("startup reconcile");
 
     app.shutdown().await;
 }
@@ -178,10 +178,14 @@ async fn local_only_bootstrap_reads_return_cached_content_without_remote_docs() 
     assert_eq!(joined.len(), 1);
     assert_eq!(joined[0].channel_id, channel.channel_id);
 
-    timeout(Duration::from_secs(2), reader.warm_social_graph())
-        .await
-        .expect("warm social graph should use cached local docs")
-        .expect("warm social graph");
+    // 自分の profile の列を開くと、自分の author replica の follow が手元の docs から反映される。
+    timeout(
+        Duration::from_secs(2),
+        display_author(&reader, reader.current_author_pubkey().as_str()),
+    )
+    .await
+    .expect("profile display should use cached local docs")
+    .expect("profile display");
     timeout(Duration::from_secs(2), async {
         loop {
             let view = reader

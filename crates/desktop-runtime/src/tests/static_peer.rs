@@ -176,22 +176,10 @@ async fn profile_timeline_reads_author_public_posts_across_untracked_topics() {
     let untracked_topic = "kukuri:topic:desktop-profile-relay";
     let public_scope = TimelineScope::Public;
 
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: tracked_topic.into(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, tracked_topic, public_scope.clone())
         .await
         .expect("subscribe a tracked topic");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: tracked_topic.into(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, tracked_topic, public_scope.clone())
         .await
         .expect("subscribe b tracked topic");
     wait_for_topic_delivery(
@@ -285,13 +273,7 @@ async fn profile_timeline_reads_author_public_posts_across_untracked_topics() {
                 })
                 .await
                 .expect("import a after restart");
-            let _ = restarted_b
-                .list_timeline(ListTimelineRequest {
-                    topic: tracked_topic.into(),
-                    scope: public_scope.clone(),
-                    cursor: None,
-                    limit: Some(20),
-                })
+            open_topic_column(&restarted_b, tracked_topic, public_scope.clone())
                 .await
                 .expect("resubscribe restarted b tracked topic");
             wait_for_topic_delivery(
@@ -342,13 +324,7 @@ async fn profile_timeline_reads_author_public_posts_across_untracked_topics() {
             .all(|topic| topic != untracked_topic)
     );
 
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: untracked_topic.into(),
-            scope: public_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, untracked_topic, public_scope.clone())
         .await
         .expect("open original topic");
     wait_for_timeline_post(

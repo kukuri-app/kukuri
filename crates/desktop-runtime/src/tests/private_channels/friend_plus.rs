@@ -66,13 +66,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let c_pubkey = status_c.local_author_pubkey;
     let topic = "kukuri:topic:desktop-friend-plus-restart";
     for runtime in [&runtime_a, &runtime_b] {
-        let _ = runtime
-            .list_timeline(ListTimelineRequest {
-                topic: topic.into(),
-                scope: TimelineScope::Public,
-                cursor: None,
-                limit: Some(20),
-            })
+        open_topic_column(runtime, topic, TimelineScope::Public)
             .await
             .expect("subscribe runtime");
     }
@@ -163,13 +157,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         })
         .await
         .expect("c imports b");
-    let _ = runtime_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_c, topic, TimelineScope::Public)
         .await
         .expect("subscribe runtime c");
     // C joins after A and B have already subscribed, so re-import the peer tickets to
@@ -301,22 +289,10 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let private_ref = ChannelRef::PrivateChannel {
         channel_id: kukuri_core::ChannelId::new(channel.channel_id.clone()),
     };
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, private_scope.clone())
         .await
         .expect("subscribe friend-plus private b");
-    let _ = runtime_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_c, topic, private_scope.clone())
         .await
         .expect("subscribe friend-plus private c");
     let joined_a_before_history = wait_for_joined_private_channel_epoch(
@@ -442,22 +418,10 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         })
         .await
         .expect("b imports restarted c");
-    let _ = restarted_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&restarted_c, topic, TimelineScope::Public)
         .await
         .expect("subscribe restarted c public");
-    let _ = restarted_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&restarted_c, topic, private_scope.clone())
         .await
         .expect("subscribe restarted c private");
     // Re-importing tickets forces existing topic subscriptions to rebuild against C's new endpoint.
@@ -602,6 +566,13 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         })
         .await
         .expect("export fresh friend-plus share after restart");
+    // 手元の DB を消した C は、自分と sponsor の profile を開いて関係を docs から戻す
+    // (起動時に follow 全員を購読しない。#1221 R2-C)。
+    for pubkey in [c_pubkey.as_str(), b_pubkey.as_str()] {
+        open_profile_column(&restarted_c, pubkey)
+            .await
+            .expect("open the profile column");
+    }
     let preview_after_restart = wait_for_friend_plus_share_import(
         &restarted_c,
         fresh_share.as_str(),
@@ -665,13 +636,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         })
         .await
         .expect("b refreshes restarted c after rotate");
-    let _ = restarted_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&restarted_c, topic, private_scope.clone())
         .await
         .expect("resubscribe restarted c private after fresh share");
 

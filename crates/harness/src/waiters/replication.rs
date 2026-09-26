@@ -62,24 +62,12 @@ pub(crate) async fn replicate_public_post_with_retry(
 
     for attempt in 1..=attempts {
         let attempt_result = async {
-            let _ = publisher
-                .list_timeline(ListTimelineRequest {
-                    topic: topic.to_string(),
-                    scope: TimelineScope::Public,
-                    cursor: None,
-                    limit: Some(20),
-                })
+            open_topic_column(publisher, topic, &TimelineScope::Public)
                 .await
-                .context("failed to resubscribe publisher to public topic")?;
-            let _ = subscriber
-                .list_timeline(ListTimelineRequest {
-                    topic: topic.to_string(),
-                    scope: TimelineScope::Public,
-                    cursor: None,
-                    limit: Some(20),
-                })
+                .context("failed to subscribe publisher to public topic")?;
+            open_topic_column(subscriber, topic, &TimelineScope::Public)
                 .await
-                .context("failed to resubscribe subscriber to public topic")?;
+                .context("failed to subscribe subscriber to public topic")?;
             wait_for_topic_delivery(publisher, topic, 1, attempt_timeout)
                 .await
                 .context("publisher did not observe public topic delivery readiness")?;
@@ -200,14 +188,7 @@ pub(crate) async fn refresh_public_pair(
     step_timeout: Duration,
 ) -> Result<()> {
     async fn refresh_public_runtime(runtime: &DesktopRuntime, topic: &str) {
-        let _ = runtime
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: TimelineScope::Public,
-                cursor: None,
-                limit: Some(20),
-            })
-            .await;
+        let _ = open_topic_column(runtime, topic, &TimelineScope::Public).await;
         let _ = runtime
             .list_live_sessions(ListLiveSessionsRequest {
                 topic: topic.to_string(),

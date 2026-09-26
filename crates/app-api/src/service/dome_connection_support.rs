@@ -191,13 +191,11 @@ impl AppService {
         target_pubkey: &Pubkey,
     ) -> Result<()> {
         let mut contexts = self
-            .subscription_registry
-            .subscriptions
-            .lock()
+            .leased_topics()
             .await
-            .keys()
+            .into_iter()
             .map(|topic_id| SpatialContextV1::Topic {
-                topic_id: TopicId::new(topic_id.clone()),
+                topic_id: TopicId::new(topic_id),
             })
             .collect::<Vec<_>>();
         contexts.extend(

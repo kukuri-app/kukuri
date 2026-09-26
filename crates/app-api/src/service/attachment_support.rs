@@ -14,21 +14,6 @@ pub(crate) async fn register_private_channel_replica_secrets(
     Ok(())
 }
 
-pub(crate) fn joined_private_channel_subscription_prefix(
-    topic_id: &str,
-    channel_id: &str,
-) -> String {
-    format!("{topic_id}::{channel_id}::")
-}
-
-pub(crate) fn joined_private_channel_subscription_key(
-    topic_id: &str,
-    channel_id: &str,
-    replica: &ReplicaId,
-) -> String {
-    format!("{topic_id}::{channel_id}::{}", replica.as_str())
-}
-
 pub(crate) async fn blob_view_status_for_payload(
     blob_service: &dyn BlobService,
     payload_ref: &PayloadRef,
@@ -530,24 +515,11 @@ pub(crate) fn effective_topic_status_detail(
 
 impl Drop for AppService {
     fn drop(&mut self) {
-        if let Ok(mut subscriptions) = self.subscription_registry.subscriptions.try_lock() {
-            for (_, handle) in subscriptions.drain() {
-                handle.abort();
-            }
+        if let Ok(mut leases) = self.subscription_registry.scope_leases.try_lock() {
+            drop(leases.clear());
         }
-        if let Ok(mut subscriptions) = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .try_lock()
-        {
-            for (_, handle) in subscriptions.drain() {
-                handle.abort();
-            }
-        }
-        if let Ok(mut subscriptions) = self.subscription_registry.author_subscriptions.try_lock() {
-            for (_, handle) in subscriptions.drain() {
-                handle.abort();
-            }
+        if let Ok(mut heartbeats) = self.subscription_registry.dome_heartbeats.try_lock() {
+            heartbeats.clear();
         }
         if let Ok(mut tasks) = self.subscription_registry.live_presence_tasks.try_lock() {
             for (_, handle) in tasks.drain() {

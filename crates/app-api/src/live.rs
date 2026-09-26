@@ -11,7 +11,6 @@ impl AppService {
         topic_id: &str,
         scope: TimelineScope,
     ) -> Result<Vec<LiveSessionView>> {
-        self.ensure_scope_subscriptions(topic_id, &scope).await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         self.services
             .projection_store
@@ -101,7 +100,6 @@ impl AppService {
         channel_ref: ChannelRef,
         input: CreateLiveSessionInput,
     ) -> Result<String> {
-        self.ensure_topic_subscription(topic_id).await?;
         let now = Utc::now().timestamp_millis();
         let title = input.title.trim();
         if title.is_empty() {
@@ -165,7 +163,6 @@ impl AppService {
             .live_session_projections
             .lock(session_id)
             .await;
-        self.ensure_topic_subscription(topic_id).await?;
         let (source_replica_id, state, mut manifest) = self
             .fetch_live_session_state_and_manifest(topic_id, session_id)
             .await?
@@ -218,7 +215,6 @@ impl AppService {
     }
 
     pub async fn join_live_session(&self, topic_id: &str, session_id: &str) -> Result<()> {
-        self.ensure_topic_subscription(topic_id).await?;
         let Some((_, state, manifest)) = self
             .fetch_live_session_state_and_manifest(topic_id, session_id)
             .await?
@@ -239,8 +235,22 @@ impl AppService {
         {
             return Ok(());
         }
-        self.apply_live_presence(topic_id, state.channel_id.as_ref(), session_id, 30_000)
-            .await?;
+        // 参加は topic(channel なら channel も)を参加の holder で取る。上限なら参加しない(#1221 R2-C)。
+        let holder = live_holder(&task_key);
+        self.set_scope_holder(
+            &holder,
+            participation_keys(topic_id, state.channel_id.as_ref()),
+        )
+        .await?;
+        if let Err(error) = self
+            .apply_live_presence(topic_id, state.channel_id.as_ref(), session_id, 30_000)
+            .await
+        {
+            self.release_scope_holder(&holder).await;
+            return Err(error);
+        }
+        let services = self.services.clone();
+        let scope_leases = Arc::clone(&self.subscription_registry.scope_leases);
         let hint_transport = Arc::clone(&self.services.hint_transport);
         let projection_store = Arc::clone(&self.services.projection_store);
         let live_presence_tasks = Arc::clone(&self.subscription_registry.live_presence_tasks);
@@ -264,6 +274,7 @@ impl AppService {
                         .lock()
                         .await
                         .remove(task_key_for_task.as_str());
+                    release_scope_holder(&services, &scope_leases, &holder).await;
                     return;
                 }
                 let now = Utc::now().timestamp_millis();
@@ -300,7 +311,6 @@ impl AppService {
     }
 
     pub async fn leave_live_session(&self, topic_id: &str, session_id: &str) -> Result<()> {
-        self.ensure_topic_subscription(topic_id).await?;
         let (_, state, _) = self
             .fetch_live_session_state_and_manifest(topic_id, session_id)
             .await?

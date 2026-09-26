@@ -1,6 +1,7 @@
 use kukuri_desktop_runtime::{
     CommunityNodeIndexQueryError, CommunityNodeIndexingRequestError, CommunityNodeReportError,
     CommunityNodeTesterFeedbackError, CommunityNodeTrustRelationError, DomeHostingRequestError,
+    ScopeLimitReached, SubscriptionStateError, SubscriptionStateErrorKind,
 };
 use serde_json::json;
 
@@ -24,6 +25,17 @@ pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
     }
     if let Some(error) = error.downcast_ref::<DomeHostingRequestError>() {
         return node_error(&error.code, Some(error.status), None);
+    }
+    // #1221 R2-C: 購読・参加の上限(desired と参加の lease で共通の 64)。
+    if error.downcast_ref::<ScopeLimitReached>().is_some()
+        || error
+            .downcast_ref::<SubscriptionStateError>()
+            .is_some_and(|error| error.kind == SubscriptionStateErrorKind::LimitReached)
+    {
+        return ProtocolError::new(
+            error_code::VALIDATION_FAILED,
+            "購読と参加の合計が上限(64)に達しています",
+        );
     }
     // 既存serviceの固定エラーだけを分類する。生のmessage/contextや、
     // 相手の本文・識別子を含み得るHTTP/serdeエラーは診断へ転記しない。
@@ -96,6 +108,13 @@ mod tests {
             "invite-only access token epoch does not match the current policy"
         ));
         assert_eq!(rejected.code, error_code::AUTHORIZATION_FAILED);
+    }
+
+    #[test]
+    fn the_scope_limit_is_a_validation_failure() {
+        let error = command_error(ScopeLimitReached.into());
+        assert_eq!(error.code, error_code::VALIDATION_FAILED);
+        assert!(!error.message.contains("SCOPE_LIMIT_REACHED"));
     }
 
     #[test]

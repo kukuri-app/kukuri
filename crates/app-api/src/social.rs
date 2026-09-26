@@ -1,21 +1,9 @@
 use crate::service::*;
 
 impl AppService {
-    pub async fn warm_social_graph(&self) -> Result<()> {
+    /// 起動時に、block の関係にある相手との Dome 接続を解く。author は購読しない(#1221 R2-C)。
+    pub async fn reconcile_blocked_dome_connections_at_start(&self) -> Result<()> {
         let local_author = self.current_author_pubkey();
-        self.ensure_author_subscription(local_author.as_str())
-            .await?;
-        for edge in self
-            .services
-            .store
-            .list_follow_edges_by_subject(local_author.as_str())
-            .await?
-        {
-            if edge.status == FollowEdgeStatus::Active {
-                self.ensure_author_subscription(edge.target_pubkey.as_str())
-                    .await?;
-            }
-        }
         for edge in self
             .services
             .store
@@ -23,8 +11,6 @@ impl AppService {
             .await?
         {
             if edge.status == BlockEdgeStatus::Active {
-                self.ensure_author_subscription(edge.target_pubkey.as_str())
-                    .await?;
                 self.reconcile_blocked_dome_connections(&edge.target_pubkey)
                     .await?;
             }
@@ -36,8 +22,6 @@ impl AppService {
             .await?
         {
             if edge.status == BlockEdgeStatus::Active {
-                self.ensure_author_subscription(edge.subject_pubkey.as_str())
-                    .await?;
                 self.reconcile_blocked_dome_connections(&edge.subject_pubkey)
                     .await?;
             }
@@ -47,8 +31,6 @@ impl AppService {
 
     pub async fn get_my_profile(&self) -> Result<Profile> {
         let local_author = self.current_author_pubkey();
-        self.ensure_author_subscription(local_author.as_str())
-            .await?;
         Ok(self
             .services
             .store
@@ -152,8 +134,6 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
-        self.ensure_author_subscription(target_pubkey.as_str())
-            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         let view = self
             .build_author_social_view(target_pubkey.as_str())
@@ -179,8 +159,6 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
-        self.ensure_author_subscription(target_pubkey.as_str())
-            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         let view = self
             .build_author_social_view(target_pubkey.as_str())
@@ -196,8 +174,6 @@ impl AppService {
 
     pub async fn get_author_social_view(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let author_pubkey = normalize_author_pubkey(pubkey)?;
-        self.ensure_author_subscription(author_pubkey.as_str())
-            .await?;
         if self
             .authors_blocked_either_direction(
                 self.current_author_pubkey().as_str(),
@@ -213,8 +189,6 @@ impl AppService {
 
     pub async fn mute_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let author_pubkey = normalize_author_pubkey(pubkey)?;
-        self.ensure_author_subscription(author_pubkey.as_str())
-            .await?;
         self.services
             .projection_store
             .put_muted_author(MutedAuthorRow {
@@ -227,8 +201,6 @@ impl AppService {
 
     pub async fn unmute_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
         let author_pubkey = normalize_author_pubkey(pubkey)?;
-        self.ensure_author_subscription(author_pubkey.as_str())
-            .await?;
         self.services
             .projection_store
             .remove_muted_author(author_pubkey.as_str())
@@ -261,8 +233,6 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse block edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_block_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
-        self.ensure_author_subscription(target_pubkey.as_str())
-            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         if edge.status == BlockEdgeStatus::Active {
             self.reconcile_blocked_dome_connections(&target_pubkey)
