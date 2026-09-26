@@ -213,6 +213,10 @@ async fn worker_ingests_on_startup_and_reacts_to_replica_events() -> Result<()> 
     initialize_database(&pool).await?;
 
     add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+    // 追加は需要として登録される（#1221 R5-E）。ここでは定期の見直しが需要を作らないことを確かめる。
+    sqlx::query("UPDATE cn_index.supported_topics SET last_index_demand_at = NULL")
+        .execute(&pool)
+        .await?;
     let topic = TopicId::new("rust".to_string());
     let replica = kukuri_docs_sync::topic_replica_id("rust");
     let docs = Arc::new(MemoryDocsSync::default());

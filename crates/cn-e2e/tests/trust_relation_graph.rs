@@ -5,20 +5,21 @@
 //! - 申し立ての係争中は寄与が据え置かれ、認容で寄与が戻り、訂正信号が読み取り面に反映される
 //!   （申し立て受理の HTTP 経路は cn-user-api の contract test が固定済みのため、ここでは
 //!   handler と同じ遷移関数で状態を進める）
-//! - 関係: 公開トピックの共参加 → 解析後に近接度と近傍が更新される。プライベート
-//!   チャンネル由来の共参加はグラフへ入らない。distance opt-out は近距離の関係を維持し、解除可能
+//! - 関係: 公開トピックの投稿どうしの双方向のアクション → 解析後に近接度と近傍が更新される。プライベート
+//!   チャンネルだけの参加はグラフへ入らない。distance opt-out は近距離の関係を維持し、解除可能
 //!
-//! 関係解析は `cn-cli relation analyze` と同じ経路（`PgCoParticipationSource` +
-//! `ArcadeDbRelationGraph` + `analyze_relations`）を同一プロセスで実行する。
+//! 関係解析は `cn-cli relation analyze` と同じ経路（`relation_actions` の差分 +
+//! `ArcadeDbRelationGraph` + `analyze_relations`）を同一プロセスで実行する。取込みがアクションを保存する経路は
+//! cn-indexer の `relation_ingest_contracts` が固定する（#1221 R5-E）。
 
 use std::time::Duration;
 
 use anyhow::Result;
 use kukuri_cn_core::{IndexEntryStore, RiskSignalCorrection};
 use kukuri_cn_core::{
-    IndexScopeKind, NewIndexEntry, PgCoParticipationSource, dispute_risk_signal,
-    list_risk_signals_for_target, persist_risk_signal, reissue_corrected_risk_signal,
-    update_risk_signal_appeal_status, upsert_scan_verdict,
+    IndexScopeKind, NewIndexEntry, RelationAction, RelationActionKind, dispute_risk_signal,
+    list_risk_signals_for_target, persist_risk_signal, record_relation_action,
+    reissue_corrected_risk_signal, update_risk_signal_appeal_status, upsert_scan_verdict,
 };
 use kukuri_cn_e2e::E2eStack;
 use kukuri_cn_indexer::{ArcadeDbConfig, ArcadeDbRelationGraph, analyze_relations};
@@ -75,30 +76,56 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
     };
     let client = Client::new();
 
-    // --- 関係: 公開トピックの共参加 → 解析 → 近接度・近傍 ---
+    // --- 関係: 公開トピックの双方向のアクション → 解析 → 近接度・近傍 ---
     let author_a = stack.author.keys.clone();
     let author_b = generate_keys();
-    let post_a = stack.publish_text_post("共参加の投稿（著者 A）").await?;
+    let post_a = stack.publish_text_post("関係の投稿（著者 A）").await?;
     let post_b = stack
-        .publish_text_post_as(&author_b, "共参加の投稿（著者 B）")
+        .publish_text_post_as(&author_b, "関係の投稿（著者 B）")
         .await?;
     for object_id in [post_a.as_str(), post_b.as_str()] {
         assert!(
             stack
                 .wait_for_projection(object_id, PROJECTION_TIMEOUT)
                 .await?,
-            "co-participation post {object_id} did not reach the projection"
+            "relation post {object_id} did not reach the projection"
         );
+    }
+
+    // A と B が互いの投稿へ反応した（取込みが保存するのと同じ行。起点は各自の投稿）。
+    for (source, actor, target) in [
+        (
+            post_a.as_str(),
+            author_a.public_key_hex(),
+            author_b.public_key_hex(),
+        ),
+        (
+            post_b.as_str(),
+            author_b.public_key_hex(),
+            author_a.public_key_hex(),
+        ),
+    ] {
+        record_relation_action(
+            &stack.pool,
+            &RelationAction {
+                kind: RelationActionKind::Reply,
+                source_id: source.to_string(),
+                actor_pubkey: actor,
+                target_pubkey: target,
+                scope_id: Some(stack.topic_id.clone()),
+                anchor_object_id: Some(source.to_string()),
+            },
+        )
+        .await?;
     }
 
     // `cn-cli relation analyze` と同じ経路で解析する（定期解析の 1 回分）。
     let graph = ArcadeDbRelationGraph::new(ArcadeDbConfig::from_env())?;
     graph.ensure_schema().await?;
-    let source = PgCoParticipationSource::new(stack.pool.clone());
-    let report = analyze_relations(&source, &graph, 100).await?;
+    let report = analyze_relations(&stack.pool, &graph, 100).await?;
     assert!(
         report.edges_upserted >= 1,
-        "co-participation must produce at least one edge: {report:?}"
+        "mutual actions must produce at least one edge: {report:?}"
     );
 
     let token_a = stack.authenticate_as(&client, &author_a).await?;
@@ -132,7 +159,7 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
         "author B must appear in author A's neighbors: {neighbors}"
     );
 
-    // --- 関係: プライベートチャンネル由来の共参加はグラフへ入らない ---
+    // --- 関係: プライベートチャンネルだけの参加はグラフへ入らない ---
     let author_c = generate_keys();
     let pubkey_c = author_c.public_key_hex();
     for (author, object_id) in [
@@ -162,8 +189,7 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
             })
             .await?;
     }
-    let report = analyze_relations(&source, &graph, 100).await?;
-    let _ = report;
+    analyze_relations(&stack.pool, &graph, 100).await?;
     let private_pair = client
         .get(format!(
             "{}/v1/relation/users/{pubkey_c}",
@@ -175,7 +201,7 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
     assert_eq!(
         private_pair.status(),
         StatusCode::NOT_FOUND,
-        "private-channel co-participation must not enter the public relation graph"
+        "private-channel participation must not enter the public relation graph"
     );
 
     // --- 関係: distance opt-out は近距離の関係を維持し、解除可能 ---

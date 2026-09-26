@@ -167,7 +167,7 @@ async fn second_pass_with_unchanged_content_performs_no_provider_calls() -> Resu
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, store.clone()));
 
     let first = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(
         (first.indexed, first.scans_fresh, first.scans_reused),
@@ -176,7 +176,7 @@ async fn second_pass_with_unchanged_content_performs_no_provider_calls() -> Resu
     assert_eq!(provider.subjects(), vec![object_id.clone()]);
 
     let second = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(
         (second.indexed, second.scans_fresh, second.scans_reused),
@@ -209,7 +209,7 @@ async fn reingest_deindexes_when_verdict_flips_after_policy_change() -> Result<(
     let (allow, store) = allow_service();
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (allow, store.clone()));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
 
@@ -241,7 +241,7 @@ async fn reingest_deindexes_when_verdict_flips_after_policy_change() -> Result<(
         entries.clone(),
         projection.clone(),
     )
-    .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+    .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
     .await?;
     assert_eq!(summary.scans_reused, 1);
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
@@ -272,7 +272,7 @@ async fn reingest_deindexes_when_verdict_flips_after_policy_change() -> Result<(
         entries.clone(),
         projection.clone(),
     )
-    .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+    .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
     .await?;
     assert_eq!(summary.scans_fresh, 1);
     assert!(!entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
@@ -296,7 +296,7 @@ async fn held_verdict_is_retried_and_indexed_when_provider_recovers() -> Result<
     let (unavailable, store) = provider_unavailable_service();
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (unavailable, store.clone()));
     let first = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!((first.indexed, first.skipped_non_allow), (0, 1));
     assert!(!entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
@@ -320,7 +320,7 @@ async fn held_verdict_is_retried_and_indexed_when_provider_recovers() -> Result<
             .expect("service"),
     );
     let second = IngestPipeline::new(docs.clone(), recovered, entries.clone(), projection.clone())
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(
         (second.indexed, second.scans_fresh, second.scans_reused),
@@ -343,10 +343,10 @@ async fn state_content_change_triggers_rescan() -> Result<()> {
     let (service, provider) = recording_service(store.clone());
     let (pipeline, _entries, _) = pipeline_with(&docs, &projection, (service, store));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(provider.subjects().len(), 1);
 
@@ -361,7 +361,7 @@ async fn state_content_change_triggers_rescan() -> Result<()> {
     )
     .await?;
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!((summary.scans_fresh, summary.scans_reused), (1, 0));
     assert_eq!(provider.subjects().len(), 2);
@@ -380,10 +380,10 @@ async fn withdrawal_after_reuse_still_deindexes() -> Result<()> {
     let (allow, store) = allow_service();
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (allow, store));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     let reused = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(reused.scans_reused, 1);
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
@@ -566,7 +566,7 @@ async fn ingest_changed_keys_processes_only_the_changed_object() -> Result<()> {
     let (service, provider) = recording_service(store.clone());
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, store));
     let full = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(full.scanned, 2);
     assert_eq!(provider.subjects().len(), 2);
@@ -628,7 +628,7 @@ async fn client_post_change_keys_ingest_only_that_object() -> Result<()> {
     let (service, provider) = recording_service(store.clone());
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, store));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(provider.subjects().len(), 2);
 
@@ -666,7 +666,7 @@ async fn non_indexing_change_keys_do_not_ingest() -> Result<()> {
     let (service, provider) = recording_service(store.clone());
     let (pipeline, _, _) = pipeline_with(&docs, &projection, (service, store));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(provider.subjects().len(), 1);
 
@@ -714,7 +714,7 @@ async fn withdrawal_with_manifest_still_deindexes_outside_the_current_window() -
     let (allow, store) = allow_service();
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (allow, store));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
     for index in 0..101 {
@@ -787,7 +787,7 @@ async fn unregistered_public_key_rechecks_only_the_current_window() -> Result<()
     let (pipeline, _, _) = pipeline_with(&docs, &projection, (service, store));
     let pipeline = pipeline.with_metrics(metrics.clone());
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(provider.subjects().len(), 2);
 

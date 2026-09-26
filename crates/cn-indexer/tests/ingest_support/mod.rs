@@ -139,6 +139,24 @@ pub fn client_post_keys(object: &KukuriPostObjectV1) -> Vec<String> {
     ]
 }
 
+/// 現在の索引窓から読まれるように、投稿の timeline 索引 key を書く（#1221 R5-E。全件取込は撤去済み）。
+pub async fn write_timeline_index(
+    docs: &MemoryDocsSync,
+    replica: &ReplicaId,
+    object: &KukuriPostObjectV1,
+) {
+    let key = client_post_keys(object)[2].clone();
+    docs.apply_doc_op(
+        replica,
+        DocOp::SetJson {
+            key,
+            value: serde_json::json!({ "object_id": object.object_id.as_str() }),
+        },
+    )
+    .await
+    .expect("timeline index op");
+}
+
 /// `persist_post` に加えて署名鍵 / envelope / state JSON も返す（撤回・state 変更の再現用）。
 pub async fn persist_post_with_source(
     docs: &MemoryDocsSync,
@@ -318,6 +336,7 @@ pub async fn persist_media_post(
     )
     .await
     .expect("envelope op");
+    write_timeline_index(docs, replica, &object).await;
 
     if persist_manifest {
         let manifest = KukuriMediaManifestV1 {

@@ -16,7 +16,6 @@ mod advisory_lookup;
 mod appeal_reviews;
 mod auth;
 mod bootstrap;
-mod co_participation;
 mod config;
 mod consents;
 mod content_scan;
@@ -34,6 +33,7 @@ mod operator_actions;
 mod readiness_activation;
 mod readiness_probe;
 mod readiness_runtime;
+mod relation_actions;
 mod relation_optouts;
 mod rendezvous;
 mod reports;
@@ -70,9 +70,6 @@ pub use auth::{
 pub use bootstrap::{
     load_bootstrap_nodes, load_bootstrap_seed_peers, refresh_bootstrap_peer_registration,
     upsert_bootstrap_node,
-};
-pub use co_participation::{
-    AuthorDominantTopic, CoParticipationPair, CoParticipationSource, PgCoParticipationSource,
 };
 pub use config::{
     AUTH_CHALLENGE_TTL_SECONDS, AUTH_EVENT_MAX_SKEW_SECONDS, AuthMode, AuthRolloutConfig,
@@ -138,6 +135,11 @@ pub use readiness_probe::{ReadinessProbeRecord, list_readiness_probes, upsert_re
 pub use readiness_runtime::{
     IndexIntegrityFindings, RelationAnalyzeRun, inspect_index_integrity,
     latest_relation_analyze_run, record_relation_analyze_run,
+};
+pub use relation_actions::{
+    RelationAction, RelationActionKind, RelationAuthorChange, RelationPairChange,
+    dirty_relation_authors, dirty_relation_pairs, indexed_public_author, record_relation_action,
+    relation_action_exists, remove_relation_action, settle_relation_author, settle_relation_pair,
 };
 pub use relation_optouts::{
     clear_relation_optout, filter_relation_visible, get_relation_optout, is_relation_opted_out,

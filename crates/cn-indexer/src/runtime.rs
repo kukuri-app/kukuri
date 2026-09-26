@@ -332,7 +332,8 @@ async fn compose_ingest_stack(
     )
     .with_metrics(state)
     .with_blob_service(blob_service.clone())
-    .with_post_scheduler(post_scheduler, config.max_concurrent_posts);
+    .with_post_scheduler(post_scheduler, config.max_concurrent_posts)
+    .with_relation_pool(pool.clone());
     let bucket_reader = Arc::new(BucketReader::new(
         pool.clone(),
         docs_sync.clone(),

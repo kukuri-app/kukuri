@@ -43,6 +43,12 @@ impl RelationStore for MemoryRelationStore {
         Ok(())
     }
 
+    async fn remove_edge(&self, from: &str, to: &str) -> Result<()> {
+        let mut edges = self.edges.write().expect("edges lock poisoned");
+        edges.remove(&edge_key(from, to));
+        Ok(())
+    }
+
     async fn pairwise_proximity(&self, viewer: &str, target: &str) -> Result<Option<Proximity>> {
         let edges = self.edges.read().expect("edges lock poisoned");
         Ok(edges
@@ -82,6 +88,12 @@ impl RelationStore for MemoryRelationStore {
     async fn set_cluster(&self, pubkey: &str, cluster: &ClusterRef) -> Result<()> {
         let mut clusters = self.clusters.write().expect("clusters lock poisoned");
         clusters.insert(pubkey.to_string(), cluster.clone());
+        Ok(())
+    }
+
+    async fn clear_cluster(&self, pubkey: &str) -> Result<()> {
+        let mut clusters = self.clusters.write().expect("clusters lock poisoned");
+        clusters.remove(pubkey);
         Ok(())
     }
 }

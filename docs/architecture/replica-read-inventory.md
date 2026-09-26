@@ -49,7 +49,7 @@ Issue #1239 の inventory。docs の replica を prefix で全件読みしてい
 | P-11 | `profile_docs_support.rs` `snapshot_object_notification_baseline`・`snapshot_follow_notification_baseline` | `objects/`、`graph/follows/` | S-2 と同じ | 対象。T4・T6（解消済み。投稿の側は T4b-2。follow の側は、通知の対象になる自分を指す follow の key 1 件の key と hash だけを読む） |
 | P-12 | `object_persistence_support.rs` `fetch_private_channel_participants_from_replica` | `channels/participants/` | private channel の参加者数 | Non-goal（本 Issue の固定 AC に含まれない）。#1221 R5-C で、取込み・handoff の受取り・friend-plus の共有・退出・Dome の入場判定は参加 record 1 件の key 読取り（`fetch_private_channel_participant_from_replica`）へ移した。残る caller は owner の rotation の受信者の列挙と参加者数の表示 |
 | P-13 | `dome_connections.rs`（4 か所）、`dome_hosting.rs`（2 か所）、`dome_delete.rs`（1 か所） | `metaverse/dome-instances/`・提案・選択・接続・hosting record・削除・layout commit | topic の Dome、提案、hosting record、削除、layout commit の総数 | 一部解消（#1263: `hosting_instance` の Instance 探索は owner slot と署名 envelope の key を各8件まで読む方式へ変更し、一覧の行ごとの二重解決も除去した。接続 topology の Instance 一覧、提案・選択・接続、hosting record、削除、layout commit は対象外として残る） |
-| P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（対象不明keyのfallback、private、手動全scope取込） | `objects/`・`withdrawals/` など | scope の投稿総数 | #1221で公開scopeの周期取込は最大100件の索引窓と対象IDのexact読取りへ変更。fallback/private/手動経路、namespace同期は残る |
+| P-14 | `crates/cn-indexer/src/ingest.rs` `ingest_scope`（#1221 R5-Eで撤去） | — | — | 周期取込・対象不明keyの見直し・privateは最大100件の索引窓と対象IDのexact読取り（撤回も対象IDのexact）。手動全scope取込は撤去し、topicの追加・申請の承認は需要としてbucket readerの優先枠へ登録する。namespace同期は残る |
 | P-15 | `desktop-runtime/src/runtime/sync_live_api.rs` `has_topic_timeline_doc_index_entry`（test と harness 用） | `indexes/timeline/` | topic の投稿総数 | 対象。T2 で key 指定の読み出し 2 回へ置き換えた |
 
 ## 段階の順序の変更（T5a を T4 より先に行う）

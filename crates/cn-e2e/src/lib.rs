@@ -525,7 +525,7 @@ impl E2eStack {
             .await
     }
 
-    /// 指定した鍵の著者として本文だけの投稿を置く（共参加の再現用。ノードは共有）。
+    /// 指定した鍵の著者として本文だけの投稿を置く（複数著者の再現用。ノードは共有）。
     pub async fn publish_text_post_as(&self, keys: &KukuriKeys, body: &str) -> Result<String> {
         self.publish_post(keys, body, Vec::new()).await
     }

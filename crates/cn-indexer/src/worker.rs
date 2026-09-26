@@ -284,7 +284,7 @@ impl IndexerWorker {
     /// scope見直し 1 巡（冪等）:
     /// 1. 今回openするscopeを選ぶ。
     /// 2. 索引済みscopeの最大32件を点照合し、support/秘密鍵失効だけを索引解除する。
-    /// 3. 秘密鍵の登録とレプリカ open（`restore_scopes`）、購読の起動。
+    /// 3. 秘密鍵の登録とレプリカ open（`restore_selected_scopes`）、購読の起動。
     /// 4. 各 scope を取り込む（再試行間隔中の scope は飛ばす）。
     async fn refresh_pass(
         &self,

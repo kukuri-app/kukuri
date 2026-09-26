@@ -504,7 +504,7 @@ readinessの鮮度やfail-closed判定を緩めない。remote blob取得は1件
 
 旧workerのopen/購読は最大32物理replica、新公開readerの受付は最大32scopeであり、`opened_scopes`は
 全support件数ではなくその時点の旧workerの予約枠（途中失敗でopen状態が不明な枠を含む）を表す。
-定常の失効scope照合は最大32件の永続cursorで進む。手動全scope取込と旧namespace同期は残るため、
+定常の失効scope照合は最大32件の永続cursorで進む。手動全scope取込は#1221 R5-Eで撤去したが、旧namespace同期は残るため、
 この有限な運用確認の成功を、保持量・失敗回数への依存を含む#1221全体の解消と読み替えない。
 
 ### 5.7 content advisory 付き索引と trust 不変の確認（#1054）

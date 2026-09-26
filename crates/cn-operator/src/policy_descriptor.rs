@@ -126,7 +126,9 @@ impl PolicyDataClass {
             Self::PushDelivery => "device token と通知 payload",
             Self::PublicContentAndMetadata => "公開 topic の本文・metadata・再構築可能な索引",
             Self::SafetyAssessment => "scan verdict・moderation event・risk signal・異議状態",
-            Self::CommunityRelation => "公開 topic 共参加由来の関係・node-local trust",
+            Self::CommunityRelation => {
+                "公開 topic での 2 者間のアクション由来の関係・node-local trust"
+            }
             Self::UserReport => "通報対象・理由・補足・任意の連絡先",
             Self::RightsClaim => "申出人情報・権利根拠・対象・証拠参照",
             Self::TesterFeedback => "自由記述 feedback・client version・OS",

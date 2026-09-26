@@ -41,7 +41,7 @@ use kukuri_cn_safety::ReasonCode;
 use kukuri_cn_safety::provider::{ProviderScanRequest, ScanReferenceGuard, SubjectKind};
 use kukuri_cn_safety_runtime::{SafetyScanOutcome, SafetyScanService, ScanDisposition};
 use kukuri_core::{KukuriEnvelope, ObjectStatus, ReplicaId, verify_post_withdrawal};
-use kukuri_docs_sync::{DocFetchPolicy, DocQuery, DocRecord, DocsSync, SharedReplicaKeyFamily};
+use kukuri_docs_sync::{DocFetchPolicy, DocRecord, DocsSync, SharedReplicaKeyFamily};
 
 use crate::projection::{IndexProjection, IndexedEntry};
 use crate::scheduler::{PostFetchJobKey, PostFetchJobState, PostFetchScheduler};
@@ -51,6 +51,8 @@ mod failure;
 mod targeted;
 pub(crate) use targeted::recent_object_keys;
 mod reference_guard;
+mod relation;
+pub use relation::changed_reactions;
 mod source;
 mod summary;
 pub use summary::IngestSummary;
@@ -67,6 +69,8 @@ pub enum KeyDisposition {
     Object,
     /// 対象 object を特定できず、scope別の有界な見直しが必要。
     ScopeReview,
+    /// 索引には影響せず、関係の観測（リアクション）だけに使う（#1221 R5-E。[`changed_reactions`]）。
+    Relation,
     /// 索引に影響しないため取り込みの契機にしない。
     Ignore,
 }
@@ -82,9 +86,9 @@ pub const fn key_disposition(family: SharedReplicaKeyFamily) -> KeyDisposition {
             KeyDisposition::Object
         }
         SharedReplicaKeyFamily::MediaManifest => KeyDisposition::ScopeReview,
+        SharedReplicaKeyFamily::Reaction => KeyDisposition::Relation,
         SharedReplicaKeyFamily::TimelineIndex
         | SharedReplicaKeyFamily::ThreadIndex
-        | SharedReplicaKeyFamily::Reaction
         | SharedReplicaKeyFamily::Envelope
         | SharedReplicaKeyFamily::Session
         | SharedReplicaKeyFamily::Channel
@@ -93,10 +97,11 @@ pub const fn key_disposition(family: SharedReplicaKeyFamily) -> KeyDisposition {
 }
 
 /// indexer が共有 replica から読む key 種別（#1065 INVAR-3）。読み取りの prefix もここの種別から作る。
-pub const INDEXER_READ_FAMILIES: [SharedReplicaKeyFamily; 3] = [
+pub const INDEXER_READ_FAMILIES: [SharedReplicaKeyFamily; 4] = [
     SharedReplicaKeyFamily::PostObject,
     SharedReplicaKeyFamily::PostWithdrawal,
     SharedReplicaKeyFamily::MediaManifest,
+    SharedReplicaKeyFamily::Reaction,
 ];
 
 /// 変更通知から取り込み対象を決める鍵の分類（#1050 / #1065）。
@@ -132,7 +137,7 @@ pub fn classify_changed_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Cha
         };
         let prefix = family.prefix().trim_end_matches('/');
         match key_disposition(family) {
-            KeyDisposition::Ignore => {}
+            KeyDisposition::Ignore | KeyDisposition::Relation => {}
             KeyDisposition::ScopeReview => {
                 review.get_or_insert_with(|| prefix.to_string());
             }
@@ -203,6 +208,8 @@ pub struct IngestPipeline {
     metrics: Option<Arc<crate::state::IndexerRuntimeState>>,
     post_scheduler: Arc<PostFetchScheduler>,
     max_concurrent_posts: usize,
+    /// 2 者間のアクションの保存先（#1221 R5-E）。未構成なら関係を観測しない。
+    relation_pool: Option<sqlx::PgPool>,
 }
 
 impl IngestPipeline {
@@ -221,6 +228,7 @@ impl IngestPipeline {
             metrics: None,
             post_scheduler: Arc::new(PostFetchScheduler::new(4)),
             max_concurrent_posts: 4,
+            relation_pool: None,
         }
     }
 
@@ -238,6 +246,12 @@ impl IngestPipeline {
     /// 観測状態を接続する（#613 T3。常駐ワーカーの組み立て時に使う）。
     pub fn with_metrics(mut self, metrics: Arc<crate::state::IndexerRuntimeState>) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    /// 2 者間のアクションを保存する DB を接続する（#1221 R5-E）。
+    pub fn with_relation_pool(mut self, pool: sqlx::PgPool) -> Self {
+        self.relation_pool = Some(pool);
         self
     }
 
@@ -307,39 +321,6 @@ impl IngestPipeline {
         Ok(outcome)
     }
 
-    /// scope の共有 replica を走査し、実在する post entry のみを scan→allow 判定して投影へ反映する。
-    ///
-    /// replica id は scope から導出される共有 replica（public は `topic::<id>`、private は
-    /// `channel::<id>`）。この関数は「共有 replica に実在する entry のみ」を対象にするため、CN へ
-    /// 直接渡された（replica に存在しない）content を index する経路を持たない。
-    pub async fn ingest_scope(
-        &self,
-        scope_kind: IndexScopeKind,
-        scope_id: &str,
-        replica_id: &ReplicaId,
-    ) -> Result<IngestSummary> {
-        crate::replica_plan::validate_scope_replica(scope_kind, scope_id, replica_id)?;
-        // scope の replica を open してから走査する（未 open だと sync 対象にならない）。
-        if !self.retain_supported_scope(scope_kind, scope_id).await? {
-            return Ok(IngestSummary::default());
-        }
-        self.docs_sync.open_replica(replica_id).await?;
-
-        // post object の state entry を prefix 走査する（`objects/<id>/state`）。
-        let records = self
-            .docs_sync
-            .query_replica_with_policy(
-                replica_id,
-                DocQuery::Prefix(SharedReplicaKeyFamily::PostObject.prefix().to_string()),
-                DocFetchPolicy::LocalThenRemote,
-            )
-            .await
-            .with_context(|| format!("failed to query replica {}", replica_id.as_str()))?;
-        let (state_records, context) = self.scope_context(replica_id, records, None).await?;
-        self.ingest_records(scope_kind, scope_id, replica_id, &state_records, &context)
-            .await
-    }
-
     /// 変更通知で届いた鍵に対応する object だけを取り込む（#1050 AC-4）。
     ///
     /// `objects/<id>/…` と `withdrawals/<id>/state` は対象 object を特定できるため、その object の
@@ -354,6 +335,11 @@ impl IngestPipeline {
         keys: &[String],
     ) -> Result<IngestSummary> {
         crate::replica_plan::validate_scope_replica(scope_kind, scope_id, replica_id)?;
+        let reactions = changed_reactions(keys.iter().map(String::as_str));
+        if !reactions.is_empty() {
+            self.observe_reactions(scope_kind, scope_id, replica_id, &[], Some(&reactions))
+                .await;
+        }
         match classify_changed_keys(keys.iter().map(String::as_str)) {
             ChangedKeys::Objects(ids) => {
                 self.ingest_object_ids(scope_kind, scope_id, replica_id, &ids)
@@ -401,7 +387,7 @@ impl IngestPipeline {
         &self,
         replica_id: &ReplicaId,
         records: Vec<DocRecord>,
-        changed_object_ids: Option<&[String]>,
+        changed_object_ids: &[String],
     ) -> Result<(Vec<DocRecord>, ScopeContext)> {
         // 同一 prefix scan の envelope entry を object_id -> envelope record で index 化し、
         // blob text の本文取得で追加クエリ（N+1）を発生させないようにする。
@@ -424,9 +410,9 @@ impl IngestPipeline {
             }
         }
 
-        let withdrawal_records = if let Some(object_ids) = changed_object_ids {
+        let withdrawal_records = {
             let mut records = Vec::new();
-            for object_id in object_ids {
+            for object_id in changed_object_ids {
                 let key = format!(
                     "{}{object_id}/state",
                     SharedReplicaKeyFamily::PostWithdrawal.prefix()
@@ -444,17 +430,6 @@ impl IngestPipeline {
                 );
             }
             records
-        } else {
-            self.docs_sync
-                .query_replica_with_policy(
-                    replica_id,
-                    DocQuery::Prefix(SharedReplicaKeyFamily::PostWithdrawal.prefix().to_string()),
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await
-                .with_context(|| {
-                    format!("failed to query withdrawals in {}", replica_id.as_str())
-                })?
         };
         let mut withdrawn_object_ids = HashSet::new();
         for record in withdrawal_records {
@@ -897,6 +872,9 @@ impl IngestPipeline {
         {
             // 新規に判定して索引に入った投稿の、作成から索引までの遅れ（著者時刻由来の近似値）。
             metrics.record_index_lag(chrono::Utc::now().timestamp() - object.created_at);
+        }
+        if scope_kind == IndexScopeKind::PublicTopic {
+            self.observe_post_actions(scope_id, &object).await;
         }
         Ok(IngestOutcome::Indexed)
     }

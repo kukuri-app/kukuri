@@ -272,7 +272,7 @@ fn gen_network_diagram(config: &ResolvedConfig) -> String {
         );
         let _ = writeln!(
             s,
-            "  └─ 関係解析の定期実行 … 公開トピックの共参加から relation graph を更新"
+            "  └─ 関係解析の定期実行 … 公開トピックでの 2 者間のアクションから relation graph を差分で更新"
         );
         let _ = writeln!(s);
         let _ = writeln!(s, "外部 / 運営者基盤（ノードからの outbound のみ）");
@@ -866,7 +866,7 @@ fn gen_data_retention(config: &ResolvedConfig) -> String {
         );
         let _ = writeln!(
             s,
-            "| relation graph | ArcadeDB | 公開トピック共参加から定期解析で再構築可能な node-local advisory（バックアップ対象外） |"
+            "| relation graph | ArcadeDB | 公開トピックでの 2 者間のアクションから定期解析で再構築可能な node-local advisory（バックアップ対象外） |"
         );
         let _ = writeln!(
             s,

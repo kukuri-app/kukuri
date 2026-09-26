@@ -396,6 +396,10 @@ async fn index_query_requires_auth_and_consent() -> Result<()> {
 
     let pool = connect_postgres(&server.database.database_url).await?;
     add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+    // topic の追加は需要を登録する（#1221 R5-E）。ここでは読取りが需要を作るかだけを確かめる。
+    sqlx::query("UPDATE cn_index.supported_topics SET last_index_demand_at = NULL")
+        .execute(&pool)
+        .await?;
 
     let unauthenticated = client
         .get(format!(
@@ -732,6 +736,10 @@ async fn private_channel_reads_are_limited_to_members_with_secret_proof() -> Res
         let pool = connect_postgres(server.database.database_url.as_str()).await?;
         let cipher = ChannelSecretCipher::from_key_material(key_material)?;
         add_supported_topic(&pool, IndexScopeKind::PrivateChannel, "secret-room").await?;
+        // topic の追加は需要を登録する（#1221 R5-E）。ここでは読取りが需要を作るかだけを確かめる。
+        sqlx::query("UPDATE cn_index.supported_topics SET last_index_demand_at = NULL")
+            .execute(&pool)
+            .await?;
         register_channel_secret(&pool, &cipher, "secret-room", namespace_secret.as_str()).await?;
     }
     let client = Client::new();

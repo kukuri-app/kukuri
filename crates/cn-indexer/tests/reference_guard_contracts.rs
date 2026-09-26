@@ -36,7 +36,7 @@ async fn cached_verdict_does_not_authorize_forged_materialized_body() -> Result<
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, artifacts));
     assert_eq!(
         pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await?
             .indexed,
         1
@@ -54,7 +54,7 @@ async fn cached_verdict_does_not_authorize_forged_materialized_body() -> Result<
     .await?;
     assert_eq!(
         pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await?
             .indexed,
         0
@@ -75,7 +75,7 @@ async fn cached_verdict_does_not_authorize_forged_materialized_body() -> Result<
     )
     .await?;
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &id));
     docs.apply_doc_op(
@@ -87,7 +87,7 @@ async fn cached_verdict_does_not_authorize_forged_materialized_body() -> Result<
     )
     .await?;
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert!(!entries.contains(IndexScopeKind::PublicTopic, "rust", &id));
     Ok(())
@@ -109,12 +109,12 @@ async fn unsupported_scope_cannot_reuse_or_scan_content() -> Result<()> {
     );
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, artifacts));
     pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     entries.set_scope_supported(IndexScopeKind::PublicTopic, "rust", false);
     assert_eq!(
         pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await?
             .indexed,
         0
@@ -124,7 +124,7 @@ async fn unsupported_scope_cannot_reuse_or_scan_content() -> Result<()> {
     entries.set_scope_supported(IndexScopeKind::PublicTopic, "rust", true);
     assert_eq!(
         pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await?
             .indexed,
         1
@@ -181,7 +181,7 @@ async fn revocation_while_scanning_blocks_association_but_keeps_valid_other_refe
     policy.require_known_csam = false;
     let service = service_with_store(artifacts.clone(), policy, vec![provider.clone()]);
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (service, artifacts.clone()));
-    let ingest = pipeline.ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica);
+    let ingest = pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica);
     let revoke = async {
         provider.started.notified().await;
         entries.prevent_subject(&first);
@@ -198,7 +198,7 @@ async fn revocation_while_scanning_blocks_association_but_keeps_valid_other_refe
     let second = persist_post(&docs, &replica, &topic, "same body").await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        pipeline.ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica),
+        pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica),
     )
     .await??;
     assert_eq!(result.indexed, 1);

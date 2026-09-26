@@ -384,11 +384,6 @@ async fn mixed_scope_reingest_never_fetches_withdrawn_prevented_deleted_or_inval
     f.entries.inner.prevent_subject(prevented.id.clone());
     invalid.envelope.content = "tampered".into();
     f.persist(&invalid).await?;
-    f.set(
-        "objects/not-a-post/state",
-        serde_json::json!({"room_id": "other-domain"}),
-    )
-    .await?;
     let mut removed = vec![
         withdrawn.id,
         deleted.id,
@@ -407,7 +402,7 @@ async fn mixed_scope_reingest_never_fetches_withdrawn_prevented_deleted_or_inval
                 summary.skipped_non_allow,
                 summary.deindexed
             ),
-            (7, 1, 1, 4)
+            (6, 1, 1, 4)
         );
         let mut io = f.observed();
         assert_no_durable_blob_io(&io);

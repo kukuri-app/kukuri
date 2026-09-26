@@ -85,6 +85,9 @@ pub struct RelationAnalyzeRun {
     pub error: Option<String>,
 }
 
+/// 残す実行記録の件数（最新の成功は件数外でも残す）。
+const RELATION_ANALYZE_RUNS_KEPT: i64 = 100;
+
 /// 関係解析の実行結果を記録する。
 pub async fn record_relation_analyze_run(pool: &PgPool, run: &RelationAnalyzeRun) -> Result<()> {
     sqlx::query(
@@ -101,6 +104,20 @@ pub async fn record_relation_analyze_run(pool: &PgPool, run: &RelationAnalyzeRun
     .execute(pool)
     .await
     .context("failed to record the relation analyze run")?;
+    // 記録は直近の上限件数と最新の成功だけを残す（#1221 R5-E。台帳を無期限に増やさない）。
+    sqlx::query(
+        "DELETE FROM cn_admin.relation_analyze_runs
+         WHERE id < (SELECT MIN(id) FROM (
+                 SELECT id FROM cn_admin.relation_analyze_runs ORDER BY id DESC LIMIT $1
+             ) AS recent)
+           AND id IS DISTINCT FROM (
+                 SELECT MAX(id) FROM cn_admin.relation_analyze_runs WHERE success
+             )",
+    )
+    .bind(RELATION_ANALYZE_RUNS_KEPT)
+    .execute(pool)
+    .await
+    .context("failed to prune relation analyze runs")?;
     Ok(())
 }
 

@@ -159,6 +159,36 @@ pub async fn assert_cluster_roundtrip(store: &dyn RelationStore, prefix: &str) -
     Ok(())
 }
 
+/// 成立しなくなったペアの edge と、参加 0 の author の cluster を消せる（#1221 R5-E）。どちらの向きで消しても同じ。
+pub async fn assert_edge_and_cluster_removal(
+    store: &dyn RelationStore,
+    prefix: &str,
+) -> Result<()> {
+    let (a, b) = (pk(prefix, "ra"), pk(prefix, "rb"));
+    store
+        .upsert_edge(
+            &a,
+            &b,
+            &EdgeFeatures::new().with(FEATURE_SHARED_TOPICS, 1.0),
+        )
+        .await?;
+    store.remove_edge(&b, &a).await?;
+    ensure!(
+        store.pairwise_proximity(&a, &b).await?.is_none()
+            && store.neighbors(&a, 8).await?.is_empty(),
+        "a removed edge must not be readable"
+    );
+    store
+        .set_cluster(&a, &ClusterRef(format!("{prefix}-topic:gone")))
+        .await?;
+    store.clear_cluster(&a).await?;
+    ensure!(
+        store.cluster_of(&a).await?.is_none(),
+        "a cleared cluster must not be readable"
+    );
+    Ok(())
+}
+
 /// `proximity_scores` は `pairwise_proximity` と同じ score を返し、edge の無い candidate を含めない
 /// （relation 値 R の重み。ADR 0026 §8.2）。
 pub async fn assert_proximity_scores(store: &dyn RelationStore, prefix: &str) -> Result<()> {
@@ -219,5 +249,6 @@ pub async fn assert_relation_store_contracts(
     assert_neighbors_ranked(store, prefix).await?;
     assert_cluster_roundtrip(store, prefix).await?;
     assert_proximity_scores(store, prefix).await?;
+    assert_edge_and_cluster_removal(store, prefix).await?;
     Ok(())
 }

@@ -175,33 +175,6 @@ impl IndexerParticipant {
         Ok(())
     }
 
-    /// いま index 対象であるべき scope を返す（#613 T2。読み取りのみ、副作用なし）。
-    ///
-    /// 手動の全scope取込に使う。private channel は登録済みcapabilityがあるものだけを含める。
-    /// 定常workerはこの全件列挙を使わず、選択・失効照合をそれぞれ有限ページで行う。
-    pub async fn desired_scopes(&self) -> Result<Vec<ScopeReplica>> {
-        self.desired_scopes_at(chrono::Utc::now().timestamp()).await
-    }
-
-    pub async fn desired_scopes_at(&self, now: i64) -> Result<Vec<ScopeReplica>> {
-        let rows = sqlx::query(
-            "SELECT s.kind, s.id FROM cn_index.supported_topics s
-             LEFT JOIN cn_index.channel_secrets c
-               ON s.kind = 'private_channel' AND c.channel_id = s.id
-             WHERE s.kind = 'public_topic' OR c.channel_id IS NOT NULL
-             ORDER BY s.kind, s.id",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let mut scopes = Vec::new();
-        for row in rows {
-            let kind = IndexScopeKind::parse(&row.try_get::<String, _>("kind")?)?;
-            let id: String = row.try_get("id")?;
-            scopes.extend(self.public_replica_mode.scopes(kind, id.as_str(), now)?);
-        }
-        Ok(scopes)
-    }
-
     /// Select at most 32 physical legacy replicas. Recent authorized demand leads; a durable
     /// cursor gives every other eligible scope a finite turn without reading the supported set.
     pub async fn selected_scopes_at(&self, now: i64) -> Result<Vec<ScopeReplica>> {
@@ -342,20 +315,6 @@ impl IndexerParticipant {
         mark_index_demand(&self.pool, scope.kind, &scope.id).await
     }
 
-    /// 起動時 / 再起動時に scope 管理 state から replica を open して sync 復元する（E13）。
-    ///
-    /// supported topic（public / private channel）の replica を open し、private channel は登録済み
-    /// capability（channel secret）を docs へ登録してから open する。secret 未登録の private channel は
-    /// open せず warn する（secret 無しでは index しない）。
-    pub async fn restore_scopes(&self) -> Result<Vec<ScopeReplica>> {
-        self.restore_scopes_at(chrono::Utc::now().timestamp()).await
-    }
-
-    pub async fn restore_scopes_at(&self, now: i64) -> Result<Vec<ScopeReplica>> {
-        let scopes = self.desired_scopes_at(now).await?;
-        self.restore_selected_scopes(&scopes).await
-    }
-
     pub async fn restore_selected_scopes(
         &self,
         scopes: &[ScopeReplica],
@@ -404,13 +363,6 @@ impl IndexerParticipant {
         Ok(opened)
     }
 
-    /// 単一 scope を ingest する（scan→allow→投影）。
-    pub async fn ingest_scope(&self, scope: &ScopeReplica) -> Result<IngestSummary> {
-        self.pipeline
-            .ingest_scope(scope.kind, scope.id.as_str(), &scope.replica_id)
-            .await
-    }
-
     /// Periodic public refresh reads the bounded current window, never all `objects/` entries.
     pub async fn ingest_recent_scope(&self, scope: &ScopeReplica) -> Result<IngestSummary> {
         self.pipeline
@@ -455,26 +407,6 @@ impl IndexerParticipant {
         reason: &str,
     ) -> Result<TransmissionPreventionMutation> {
         release_transmission_prevention(&self.pool, actor, subject_kind, subject_id, reason).await
-    }
-
-    /// supported set 全体を 1 巡 ingest する。
-    pub async fn ingest_all_supported(&self) -> Result<IngestSummary> {
-        let scopes = self.restore_scopes().await?;
-        let mut total = IngestSummary::default();
-        for scope in scopes {
-            match self.ingest_scope(&scope).await {
-                Ok(summary) => {
-                    total.merge(summary);
-                }
-                Err(error) => warn!(
-                    kind = scope.kind.as_str(),
-                    scope_id = %scope.id,
-                    error = %error,
-                    "failed to ingest scope; continuing"
-                ),
-            }
-        }
-        Ok(total)
     }
 
     /// supported topic 除外時の sync 停止 + de-index（E2 / E5）。

@@ -114,6 +114,21 @@ async fn persist_post_in_channel(
     )
     .await
     .expect("envelope op");
+    docs.apply_doc_op(
+        replica,
+        DocOp::SetJson {
+            key: stable_key(
+                "indexes/timeline",
+                &format!(
+                    "{}/{object_id}",
+                    kukuri_core::timeline_sort_key(object.created_at, &object.object_id)
+                ),
+            ),
+            value: serde_json::json!({ "object_id": object_id }),
+        },
+    )
+    .await
+    .expect("timeline op");
     object_id
 }
 
@@ -171,10 +186,10 @@ async fn topic_scoped_search_returns_allow_entries_in_scope_only() -> Result<()>
     let go_post = persist_post(&f.docs, &go_replica, &go_topic, "goroutine async runtime").await;
 
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &rust_replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &rust_replica)
         .await?;
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "golang", &go_replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "golang", &go_replica)
         .await?;
 
     // topic 内検索は scope に閉じる（ADR 0025 §2.7: トピック毎の検索窓が基本 UX）。
@@ -202,7 +217,7 @@ async fn search_discovery_recommendation_excludes_non_allow() -> Result<()> {
     let flipped = persist_post(&f.docs, &replica, &topic, "flips to excluded post").await;
 
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
 
     // index 後に verdict が exclude / critical へ変わる（de-index はまだ走っていない）。
@@ -280,7 +295,7 @@ async fn deindexed_scope_disappears_from_all_read_surfaces() -> Result<()> {
     let replica = topic_replica_id("rust");
     persist_post(&f.docs, &replica, &topic, "soon to be unsupported").await;
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(f.query.list_recent(None, 10).await?.len(), 1);
 
@@ -324,10 +339,10 @@ async fn cross_scope_reads_exclude_private_channel_entries() -> Result<()> {
     .await;
 
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &topic_replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &topic_replica)
         .await?;
     f.pipeline
-        .ingest_scope(
+        .ingest_recent_scope(
             IndexScopeKind::PrivateChannel,
             "secret-room",
             &channel_replica,
@@ -369,7 +384,7 @@ async fn query_limit_is_clamped() -> Result<()> {
     let replica = topic_replica_id("rust");
     persist_post(&f.docs, &replica, &topic, "clamp me").await;
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
 
     // limit 0 でも 1 に丸められてクエリ自体は成立する（呼び出し側の誤用で全量を引かない）。
@@ -387,7 +402,7 @@ async fn query_locator_uses_authoritative_source_when_projection_is_stale() -> R
     let replica = topic_replica_id("rust");
     persist_post(&f.docs, &replica, &TopicId::new("rust"), "source test").await;
     f.pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     let mut hit = f
         .projection

@@ -84,6 +84,7 @@ async fn worker_admits_at_most_32_legacy_scopes_from_a_larger_supported_set() ->
     add_supported_topic(&pool, IndexScopeKind::PrivateChannel, "secret-room").await?;
     register_channel_secret(&pool, &cipher(), "secret-room", TEST_NAMESPACE_SECRET).await?;
     add_supported_topic(&pool, IndexScopeKind::PrivateChannel, "no-secret").await?;
+    clear_added_demand(&pool).await?;
     let docs = Arc::new(MemoryDocsSync::default());
     let state = Arc::new(IndexerRuntimeState::default());
     let projection = Arc::new(MemoryIndexProjection::default());
@@ -145,6 +146,7 @@ async fn rotating_out_a_supported_scope_keeps_its_indexed_post() -> Result<()> {
         )
         .await?;
     }
+    clear_added_demand(&pool).await?;
     let docs = Arc::new(MemoryDocsSync::default());
     let post = persist_post(
         docs.as_ref(),
@@ -215,6 +217,7 @@ async fn partial_open_error_keeps_reservations_within_the_legacy_limit() -> Resu
     }
     add_supported_topic(&pool, IndexScopeKind::PrivateChannel, "secret-room").await?;
     register_channel_secret(&pool, &cipher(), "secret-room", TEST_NAMESPACE_SECRET).await?;
+    clear_added_demand(&pool).await?;
     mark_index_demand(&pool, IndexScopeKind::PublicTopic, "topic-00").await?;
     let docs = Arc::new(FailingPrivateRegistrationDocs {
         inner: Arc::new(MemoryDocsSync::default()),
@@ -281,7 +284,7 @@ async fn unsupported_indexed_scopes_are_deindexed_in_bounded_pages() -> Result<(
         let post = persist_post(docs.as_ref(), &replica, &TopicId::new(&topic), "indexed").await;
         posts.push((topic.clone(), post));
         participant
-            .ingest_scope(&ScopeReplica::from_scope(
+            .ingest_recent_scope(&ScopeReplica::from_scope(
                 IndexScopeKind::PublicTopic,
                 &topic,
             ))
@@ -357,5 +360,13 @@ async fn unsupported_indexed_scopes_are_deindexed_in_bounded_pages() -> Result<(
     .await;
     assert!(entries.contains(IndexScopeKind::PublicTopic, "topic-00", &posts[0].1));
     resumed_handle.shutdown().await;
+    Ok(())
+}
+
+/// topic の追加は需要を登録する（#1221 R5-E）。公平な巡回だけを確かめる test では、追加による需要を外す。
+async fn clear_added_demand(pool: &sqlx::PgPool) -> Result<()> {
+    sqlx::query("UPDATE cn_index.supported_topics SET last_index_demand_at = NULL")
+        .execute(pool)
+        .await?;
     Ok(())
 }

@@ -42,5 +42,7 @@ pub(super) fn canonical_post(
         attachments: header.attachments,
         media_manifest_refs: header.media_manifest_refs,
         status: header.status,
+        reply_to: header.reply_to,
+        repost_of: header.repost_of,
     })
 }

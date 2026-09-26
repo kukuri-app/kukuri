@@ -402,3 +402,29 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 - 追加 scenario（`trust_read_sums_absolute_and_viewer_relation` で固定）: A→U の relation が高く C→U が低いとき、
   U が B をブロックすると A から見た B の S が C より大きく下がり、T は共通で、U が解除すると元に戻る。
   提供同意を取り消した U の観測は評価に使わない。
+
+## 9. 改訂追補（#1221 R5-E、2026-09-26）: relation の観測を 2 者間のアクションの差分へ移す
+
+2026-09-26 のユーザー決定により、§2.4・§6.1 の relation の観測元（index の co-participation の全件集計）を置き換える。
+旧案（supported topic ごとの共起、全体の上位 limit 件だけを upsert、dominant topic は author の辞書順で先頭 limit 人）は
+失効し、件数に依存しない差分処理へ移す。
+
+- 観測: 取込みが public topic の投稿・リアクションから 2 者間のアクション（返信・repost・引用・リアクション・フォロー）を
+  `cn_index.relation_actions` に 1 行ずつ保存する。返信先・リアクション先の著者は index 真実源から点読で求め、索引に無ければ
+  数えない。自分自身へのアクションと private channel 由来は保存しない。起点の投稿の索引行が消えると（撤回・送信防止・
+  scope 解除）trigger が行を消す。取り消したリアクションは変更通知で読み直して消す。
+- フォロー: 新しいアクション actor→target を保存したときだけ、target の author replica の `graph/follows/<actor>` を
+  remote の reader から 1 key（doc と署名つき envelope）読み、有効なら target→actor の行を置き、取り消しなら消す。
+  相互フォローだけのペアは作らない。§2.4 の follow projection（ADR 0013）はこの形で relation に入る。
+- ペア: 双方向（方向ごとに種類は異なってよい）にアクションがあり、フォロー以外のアクション（public topic のアクション）が
+  1 件以上あるときだけ edge を作る（相互フォローだけのペアは作らない）。値は key を維持して意味を置換し、
+  `shared_topics`＝その 2 者間のアクションがあった public topic の数、`co_participation_events`＝アクションの件数とする。
+  proximity の計算式・重み・API は変えない。成立しなくなったペアの edge は消す（`RelationStore::remove_edge`）。
+- cluster: author の dominant topic（最多の索引件数の public topic、同数は scope_id の辞書順）。参加が 0 になった author の
+  帰属は外す（`RelationStore::clear_cluster`）。
+- 解析: 行の追加・削除を trigger がペアの方向別件数・共有 topic 数と author の参加数へ差分反映し、印（`dirty_seq`）を付ける。
+  `cn-cli relation analyze` は印の付いたペアと author を古い順に最大 limit 件ずつ反映し、反映した印だけを外す。
+  途中で止まっても残った印から続き、変化の無いペアは読まない。実行記録は直近 100 件と最新の成功だけを残す。
+- 移行: 既存 index からの参加数だけを移行時に 1 回作り、全 author の cluster を印の対象にする。過去の投稿のアクションは
+  遡って作らない（取込みの窓から先の観測で増える）。旧定義の graph（`TrustUser` / `RelatesTo`）は意味が違うため読まず、
+  `ensure_schema` が型ごと削除し、新しい型（`RelationUser` / `InteractsWith`）へ作り直す。
