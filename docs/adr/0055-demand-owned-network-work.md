@@ -66,7 +66,11 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   投稿・返信はobject id、reactionは現在と直前のbucketの対象ごとの上限つき一覧、取り下げは元投稿の位置、live/gameは
   idの時刻のbucket。leaseの開始・endpointの世代の変化（taskの作り直し）・日の境界（UTC）で、現在と直前のbucketと
   旧形式の保存済みデータを1ページ（最大200行）だけ読み直し、続きを全件読みに行かない。照合の間隔の台帳はtaskごと。
-  authorのleaseは開始時と日の境界でR5-Cの制御領域・author bucketの有界な読みを行う。
+  authorのleaseは開始時と日の境界でR5-Cの制御領域・author bucketの有界な読みを行う。友達の友達の判定のため、
+  他の相手を指すfollowの窓もproviderから1ページ（ADR 0054 §3のroster上限と同じ512 key、手元の窓と同じ昇順・
+  docs author指定）読み、手元に無いkeyをproviderから反映する（2026-09-27ユーザー決定。全edgeは列挙しない。blockの
+  窓は手元だけ）。profileの列は、自分のprofileも手元のページが埋まらないときだけ他人と同じくremoteのauthor bucketを
+  有界に読み、同じaccountの別端末の投稿を出す（同）。
   読み直しには、現在と直前のbucketと旧形式のsessionの索引（`sessions/{live,game}/<id>/state`）をproviderから種類ごとに
   64件まで含め、hintと同じ読取りで反映する。表示したsession（`set_session_display`）は手元に無ければexactに読む。
   remoteから読んだsessionのmanifestはproviderから取得する。
@@ -75,6 +79,7 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   に積み、DMのaccount再送ownerがACK（`DirectMessageAck`）まで送り直す。制御recordの宛先はmutualを求めない。
   ownerは届いたrecordを参加者の表（channel・epoch・pubkeyが主キー、退出時刻と更新時刻。退出はchannelの全epochに及ぶ）
   へ置き、rotationの宛先（いずれかのepochで参加中のpubkey）と参加者数（現epoch）をpubkeyの順に128件ずつ読む。
+  参加者数はownerの端末だけが返す（owner以外は`None`で表示しない）。更新前からの参加者の移し方はADR 0054 §6。
   参加者は届いたgrantを手元の旧epochのreplicaへ置き、redeemは手元のgrantだけを読む（旧syncによるFrozenの
   policyの受取りに依らない）。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
@@ -88,6 +93,8 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   決まるので読み直しで重ならない）。followの通知は§4のaccount経路と、authorのleaseの読み直しが自分を指すActiveの
   follow edgeを新しく保存したときに作る（同じ候補関数で、idはenvelopeから決まるので二重にならない）。
   画面外の通知は§4の受信入口が担う。
+- DomeHostHeartbeatのhintは、hostとleaseのcontextからinstance idを導けるとき、hostをownerとしてownerの制御領域の
+  Dome instanceを一覧で読む手がかりにする（ADR 0054 §6）。
 - 公開topicのDome操作と入場の権限は購読の有無ではなく、そのtopicのgossipを止めていないことで判定する（R2-C以前の実効的な判定と同じ）。
   blockによるDome接続の解除は、leaseのあるtopicと参加中のchannelのcontextを対象にする。
 
@@ -151,7 +158,8 @@ R5-Cでauthorの現在値（profile/latest、自分を指すfollow/block、docs 
 同じreaderへ接続する。手元に無いkeyだけを読み、providerは書き手（author本人、channel owner、tokenの発行者）の
 R4-A検証済み宛先を先頭に、公開は全体の候補窓、privateは当該channelのgossip scopeで埋めて最大4件とする。
 参加前の取込みは書き手だけへcapabilityの証明つきで要求する。他の相手を指すedgeの窓は手元だけを読み、
-全参加者の読取り・sync再開による待機は行わない。
+全参加者の読取り・sync再開による待機は行わない（R5-Hでfollowの窓はauthorのleaseの読み直しに限りproviderからも
+1ページ読むよう改めた。§1.1）。
 
 - `peer -> 使用中lease` と `scope -> resource` の逆引きを持つ。peerの追加・削除・アドレス変更は
   そのpeerを利用する有界な対象だけへ適用し、全登録topic/replicaを再走査しない。

@@ -3,7 +3,7 @@
 ## 完了境界
 
 正本は [#1221](https://github.com/kukuri-app/kukuri/issues/1221) の R5-H と、2026-09-26 のユーザー決定「R5-H 旧sync撤去後の受信・配送・索引・案内」
-「R5-H 参加recordのowner配送」。基準は #1374 merge `051e1bfb`。依存の R2-C・R4-D・R5-D・R5-F・R5-G は完了済み。
+「R5-H 参加recordのowner配送」、2026-09-27 のユーザー決定「R5-H 旧sync撤去後の発見と表示」。基準は #1374 merge `051e1bfb`。依存の R2-C・R4-D・R5-D・R5-F・R5-G は完了済み。
 
 - 保護移行(R5-G)が全 kind で終端へ達した端末で、新形式(ADR 0054 §1・§2 の時間 bucket)の writer へ自動で 1 回だけ切り替える。
 - 切替後は新形式だけへ書く。旧形式の保存済みデータは手元から従来どおり読む。旧版が旧形式へ書いた新着を自動で回復する経路は作らない。
@@ -18,10 +18,10 @@
 | ID | 対象・期待結果 | 状態・試験 |
 | --- | --- | --- |
 | AC-1 | 切替状態 1 行。移行完了で 1 回だけ保存し、再起動・restore で戻らない | 実装済み。store `the_writer_switches_once_after_the_migration_and_stays_switched`、desktop-runtime `the_writer_switches_once_after_the_migration_and_keeps_it_across_restarts` |
-| AC-2 | 各 record を §2 の replica と key へ。日の境界・再試行で宛先が変わらない | 実装済み(Dome を除く)。app-api `bucket_writer` の 3 件。版つき cursor は作らない(既存 cursor の `created_at` から bucket が一意。ADR 0054 §3) |
-| AC-3 | 切替後は旧 replica へ書かない | 実装済み(Dome を除く。未決)。同上。切替後の本人投稿は保護所有先へ入る(desktop-runtime `own_posts_written_after_the_switch_are_protected_and_restored`) |
+| AC-2 | 各 record を §2 の replica と key へ。日の境界・再試行で宛先が変わらない | 実装済み。app-api `bucket_writer` の 3 件。版つき cursor は作らない(既存 cursor の `created_at` から bucket が一意。ADR 0054 §3)。Dome の instance と hosting の記録は owner の制御領域の instance id の key(決定 1。app-api `instance_lookup_reads_a_constant_number_of_docs_records`) |
+| AC-3 | 切替後は旧 replica へ書かない | 実装済み(Dome の session・接続・削除と layout の操作記録を除く。下記「未決」)。切替後の本人投稿は保護所有先へ入る(desktop-runtime `own_posts_written_after_the_switch_are_protected_and_restored`) |
 | AC-4 | 旧 sync なしの受信(hint の exact 読取り、lease の開始・再接続・日の境界の 1 ページの読み直し、通知) | 実装済み。実 Iroh `real_iroh_hint_exact_read_and_bounded_rereads_receive_new_posts_without_sync`、`the_day_boundary_reread_waits_until_the_next_bucket`、規模 `reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries`(新着の受信を hint の読取りで数える) |
-| AC-5 | 参加・退出 record と handoff grant の account 経路の配送、owner の SQLite 保存 | 実装済み(非 owner の参加者数は未決)。app-api `participant_leave_while_the_owner_is_offline_arrives_after_the_owner_restarts`、private_channels の friend_only・friend_plus・invite・leave、store `private_channel_participants_keep_the_newest_record_and_page_by_pubkey` |
+| AC-5 | 参加・退出 record と handoff grant の account 経路の配送、owner の SQLite 保存 | 実装済み。app-api `participant_leave_while_the_owner_is_offline_arrives_after_the_owner_restarts`、private_channels の friend_only・friend_plus・invite・leave、store `private_channel_participants_keep_the_newest_record_and_page_by_pubkey`。参加者数は owner だけ(決定 2。desktop-runtime friend-only・friend-plus の restore、frontend `settings panel shows the participant count only on the owner device`)。更新前からの参加者の移行(決定 3。app-api `legacy_participants_move_to_the_table_one_bounded_window_at_a_time`・`a_participant_from_before_the_update_receives_the_first_rotation_grant`) |
 | AC-6 | client の旧 sync の撤去 | 実装済み。docs-sync `local_bucket_reads_stay_idle_after_seed_reapply_and_close_preserves_data`、開いた handle は 128 まで(`writes_across_many_day_buckets_keep_open_handles_at_the_limit`)。sync status の docs の活動時刻は hint の取込みで記録する |
 | AC-7 | CN の撤去と bucket reader の周期 | 実装済み。cn-indexer `demanded_scope_is_read_each_demand_interval_and_others_each_poll` ほか |
 | AC-8 | 新側は 64 scope / 256 要求の内側 | lease(R2-C)と CN の 64 枠 |
@@ -45,6 +45,12 @@
 | session の hint | `GossipHint::SessionChanged { sent_at }` | 送った時刻を載せ、同じ session の続く更新を gossip が重複として落とさない(旧版は無視する) |
 | private channel の参加・退出 | `record_private_channel_participant` → `queue_epoch_control` | 手元の docs と参加者の表へ置き、owner でなければ epoch の鍵で封じて dm_outbox(`epoch-control:`)へ。DM の再送 owner が `EpochControl` で送り、ACK で消す |
 | 回転 | `distribute_epoch_handoff_grants` | 参加者の表を 128 件ずつ読み、grant を旧 replica に置いて各参加者へ届ける |
+| 参加者数の表示 | `private_channel_diagnostics` | owner の端末だけが参加者の表の現 epoch の人数を返す。owner 以外は `None`(CLI は null、画面は出さない) |
+| 保護移行 kind `owner_participants` | `migrate_legacy_private_channel_participants` | owner の channel の現 epoch の旧 docs の参加 record を、pubkey の hex の接頭辞の窓(128 件まで。埋まれば 1 桁細かく)ずつ参加者の表へ移す。位置は保護移行の台帳 |
+| Dome instance・hosting の記録 | `persist_dome_instance_manifest`・`persist_dome_hosting_records`・`fetch_dome_instance_manifest`・`list_dome_hosting_records` | owner の制御領域の instance id の key に置く(hosting は最後の epoch の分を 1 key)。読取りは手元→owner を含む provider の exact、無ければ旧 context replica の手元 |
+| Dome の一覧・接続の Instance | `append_context_domes`・`heartbeat_dome_owners`・`list_context_dome_instances` | 手元の行の owner・自分・heartbeat の host(context と合わせて instance id を導けるとき)・接続の端点の owner について exact に読む。replica を走査しない |
+| author の lease の follow の窓 | `hydrate_author_keys`(`AuthorKeyReader::remote_follow_keys`) | provider の follow の窓(512 key、手元と同じ昇順・docs author 指定)を 1 ページ読み、手元に無い key を provider から反映 |
+| プロフィールの列 | `profile_timeline_page` | 自分も含め、手元のページが埋まらないときだけ remote の旧 author replica と author bucket を読む |
 | 制御 record の受信 | `ingest_epoch_control_offer` | owner は参加者の表へ、参加者は grant を手元の旧 epoch の replica へ置いて ACK |
 | author の lease の読み直し | `hydrate_author_record` | 自分を指す Active の follow を新しく保存したら followed の通知(id は envelope から) |
 | 保護移行(切替後) | `own_envelope_plan` | bucket へ書いた投稿のプロフィールの行を作成時の author bucket から写す |
@@ -75,41 +81,66 @@
 
 ## 検証(局所)
 
-- store: `protected_migration`・`migrations`・参加者の表の試験、schema golden を再生成(世代数 43)。169 件成功。
-- app-api(`iroh-integration-tests`): lib 489 件成功・2 件失敗(下記「未決」の Dome と友達の友達)。
-  mutation check(外すと失敗することを確認して戻した): 参加 record の送信、受け取った grant の保存、ACK での outbox の削除、
-  transport の読み手の候補の hint topic、session の読み直し、followed の通知、session の scope、session の hint の送った時刻
-  (旧担当の分は前任の記録)。
-- docs-sync 66 件、iroh-node 47 件、transport 136 件、blob-service 12 件、core 145 件、kukuri-cli 全件成功。
-  handle の上限と閉じた bucket の提供は、上限の処理・読む間の open を外すと失敗する。
-- desktop-runtime: lib 316 件成功・3 件失敗(下記「未決」の非 owner の参加者数 2 件と自分の別端末のプロフィール 1 件)。
-  切替後の本人投稿の保護の試験は、修正前に移行が止まって失敗した。1 回だけ IdentityStorage の試験群が止まったまま
-  進まない実行があった(再実行と単独の実行では再現しない)。
-- harness: 23 件成功(`private_channel_invite_connectivity` は session の scope の修正で成功)。
-- scenario: `community_node_public_connectivity`(session の hint の送った時刻の修正で成功)・
-  `community_node_index_query_client`・`community_node_report_routing`・`community_node_trust_relation_client`・
-  `e2e-smoke` 成功。
-- CN: cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の rendezvous の 3 件は Valkey が無いため
-  時間切れ(本 branch の変更の外)。
-- clippy(`cargo xtask rust-check`・`cn-check`、app-api は `iroh-integration-tests` つきでも)・fmt・oversized-files・
-  ipc-types・iroh resource contract は成功。
+2026-09-27(決定 1〜5 の実装後、`999a135e` の時点)。
+
+- app-api(`iroh-integration-tests`): lib 494 件成功。desktop-runtime: lib 319 件成功。
+- harness(`RUST_MIN_STACK=67108864`、`--test-threads=1`): 23 件成功。kukuri-cli: 全件成功。store: 169 件成功。
+- scenario: `community_node_public_connectivity`・`community_node_index_query_client`・`community_node_report_routing`・
+  `community_node_trust_relation_client`・`e2e-smoke` 成功。
+- frontend: tsc、vitest(components/extended・lib/api・shell の channels・presentation・data・privateChannelEntry)
+  49 file 433 件成功。
+- `cargo xtask rust-check`(clippy)・fmt・`ipc-types --check`・oversized-files(baseline を更新)成功。
+- mutation check(外すと失敗することを確認して戻した): 決定 1 は heartbeat の owner の導出(単体の一覧の試験が失敗)と
+  制御領域の remote 読取り(`metaverse_room_events_replicate_between_iroh_peers` と単体の試験が失敗)。決定 2 は owner
+  だけの人数(desktop-runtime の 2 件が失敗)と画面の条件(frontend の試験が失敗)。決定 3 は参加者の表への保存(実 Iroh の
+  試験が失敗)と接頭辞の細分(単体の試験が失敗)。決定 4 は provider の follow の窓(実 Iroh と単体の試験が失敗)。決定 5 は
+  自分の分岐(単体と `static_peer::profile_timeline_reads_author_public_posts_across_untracked_topics` が失敗)。
+- CN の crate は変更していないため、CN の結合試験と cn-e2e は前回(引継ぎ前)の結果のまま。
+
+以前の記録(引継ぎ前): docs-sync 66 件、iroh-node 47 件、transport 136 件、blob-service 12 件、core 145 件成功。
+cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の rendezvous の 3 件は Valkey が無いため時間切れ
+(本 branch の変更の外)。
+
+## 2026-09-27 の決定の実装(2 回目の引継ぎ)
+
+- 決定 1 Dome: instance と hosting の記録を owner の制御領域の instance id の key へ置き、旧 context replica へは
+  書かない。hosting は最後の epoch の分を 1 key(epoch ごとの key の prefix 全件読みを撤去)。読取りは制御領域の
+  exact、無ければ旧 context replica の手元。訪問者は手元の行の owner と heartbeat の host(context と合わせて instance
+  id を導けるとき)から owner を知る。Dome の接続の Instance も context の replica の prefix 全件読みをやめた
+  (`service/dome_instance_support.rs`)。
+- 決定 2 参加者数: `JoinedPrivateChannelView.participant_count` を `Option` にし、owner だけが返す。CLI の schema は
+  nullable、IPC 型・views の golden・viewsContract を再生成、画面は値があるときだけ出す。
+- 決定 3 更新前からの参加者: 保護移行の kind `owner_participants`(`migrate_legacy_private_channel_participants`)。
+- 決定 4 友達の友達: author の lease の読み直しで provider の follow の窓(512 key)を 1 ページ読む。
+- 決定 5 自分の別端末の投稿: `profile_timeline_page` の自分の分岐を撤去。
 
 ## 未決(ユーザーの判断を待つ)
 
-- Dome instance の配置と参照: id は context と owner から決まり時刻を持たない。切替後も旧 topic/channel replica へ書き、
-  instance manifest・hosting record の読取りは手元だけで、remote の Dome は一覧に出ない
-  (`metaverse_room_events_replicate_between_iroh_peers`)。bucket へ移すと発見が有界にならない。
-- 非 owner の参加者数: 参加・退出 record は owner にだけ届く。非 owner の表には自分の record しか無く、参加者数は 1 と表示
-  される(desktop-runtime の friend-only・friend-plus の restore の試験が非 owner に 2・3 を求める)。
-- 更新前からの参加者: owner の参加者の表は、更新後に届いた record だけを持つ。更新前に参加した相手は、次の参加・退出・
-  redeem まで rotation の宛先に入らない。
-- 友達の友達: profile を開いても、相手が他の相手を指す follow は手元だけを読む(R5-C)。旧 sync が無いので導けない
-  (`social_graph_derives_friend_of_friend_and_clears_after_unfollow`)。
-- 自分の別端末の投稿: 自分のプロフィールは手元だけを読む(R5-C)。同じ account の別端末の投稿は出ない
-  (desktop-runtime `profile_timeline_reads_author_public_posts_across_untracked_topics`)。
+- Dome の残りの旧 context replica への書込み: 決定 1 の対象(instance・hosting)の外にある、Dome の session
+  (metaverse room の manifest。訪問者も chat で書く)、接続の提案・合意・選択、削除の操作記録、layout の commit は、
+  切替後も旧 topic/channel replica へ書く(AC-3 の例外として残る)。session と接続は複数の書き手があり owner の
+  制御領域に置けない。削除と layout は owner だけが書く記録で、制御領域へ移せる。R5-I の回収の対象から外すか、
+  置き場所を決める必要がある。
+- private channel の Dome の記録の公開: 決定 1 のとおり owner の制御領域(公開 replica)へ置くため、private
+  channel の Dome の instance と hosting の記録(channel id を含む spatial context・title 等)を誰でも読める。
+  既存の Dome の移動の記録と Preset も同じ扱い。private の context だけ channel の replica と private の reader に
+  残すか、このまま受け入れるかの判断が要る。
 
 ## 既知の制約
 
 - rotation は参加者の表を 128 件ずつ読み、宛先ごとに grant を作って outbox へ積む。操作の中で参加者数に比例する。
 - friend-only の関係の確認(`stale_participant_count`)は、現 epoch の参加者を 128 件ずつ読む。
 - 判断 4 の契機の「author の hint」は wire に無い。author の lease の開始と日の境界で読む。
+- follow の窓は author の lease の開始と日の境界ごとに最大 512 key を provider から読む(手元の docs に無い key は毎回
+  読む。30 秒の期限で打ち切る)。block の窓は手元だけ。
+- 更新前からの参加者の移行は、接頭辞の窓 1 つを 1 ステップで読む。空の接頭辞も 1 ステップを使う(窓が埋まった
+  接頭辞ごとに最大 16)。
+- CN が hosting する Dome の heartbeat は host が CN で owner を導けない。行の無い Dome は heartbeat だけでは見つからない
+  (手元の行がある Dome は owner の制御領域から読む)。「owner の profile から」は、行と heartbeat の host の owner として
+  実装した(owner の profile の key から Dome を列挙する経路は作っていない)。
+- 更新前に作った Dome の instance は旧 context replica にだけあり、owner が instance を更新(customize・asset の追加・
+  移動・削除)するまで訪問者の一覧に出ない。
+- 切替の前も Dome の instance と hosting の記録は owner の制御領域にだけ書くため、旧版の端末は新しい Dome を切替の
+  前から一覧に出せない。
+- 他人の Dome の一覧は、一覧の表示の中で owner の制御領域を provider から読む(Preset と同じ。一覧の上限と 30 秒の
+  期限で有界)。

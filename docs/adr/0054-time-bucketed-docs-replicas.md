@@ -50,7 +50,8 @@ replica の識別、取得理由、解放、保存の回収を定める。
 | 投稿のmedia manifest | 投稿と同じbucket。refはsource locatorを持つ | 投稿と同じ |
 | reaction | reaction作成時のbucket。元投稿のbucketへ無期限追記しない | 現在bucketのeventと対象locator |
 | 取り下げ | 元投稿bucketの `withdrawals/<id>/state`（署名済みenvelopeを同じkeyへ上書き） | 操作時bucketにも同じ取り下げとtarget locatorを置く |
-| live/game/Dome等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない | 更新時bucketへ署名済みlocatorを置く |
+| live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない | 更新時bucketへ署名済みlocatorを置く |
+| Dome instance・hosting記録 | ownerの制御領域（`author::<owner>`）の、contextとownerから決まるinstance idのkey（R5-H、2026-09-27ユーザー決定） | owner端末のhostingのheartbeat hintとownerの制御領域のexact読取り |
 | author profile/latest | author別の固定数の最新state/envelopeの制御領域 | 更新時author bucketのevent |
 | follow/block | author/target/種別から決定できる対象別最新state | 更新時author bucketのevent。全edgeのコピー/再生はしない |
 | author asset/preset | IDから引ける対象別stateとcontent-addressed blob | 作成/更新時author bucketの索引 |
@@ -205,9 +206,20 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
 - 開いたnamespaceのhandleはADR 0055のdocs handle 128までに保ち、超えたら使用中でない最も古いものから閉じる。
   提供側（`DocReadProtocol`）は読む間だけnamespaceを開くので、閉じたbucketも提供できる。
 - private channelの参加・退出recordとhandoff grantはaccount経路（ADR 0055 §4）で届け、ownerは参加者の表から
-  rotationの宛先と参加者数をページで読む（ADR 0055 §1.1）。
-- 未決（R5-H）: Dome instanceの配置。idに時刻を持たず（contextとownerから決まる）、切替後も旧topic/channel replicaへ
-  書いている。参照側がbucketを有界に引けないため、配置の判断を待つ。
+  rotationの宛先と参加者数をページで読む（ADR 0055 §1.1）。参加者数はownerの端末だけが返し、owner以外は表示しない
+  （2026-09-27ユーザー決定。新しい配送は作らない）。更新前からの参加者は、ownerの端末が手元の旧docs（現epochの
+  replica）の参加recordを、pubkeyのhexの接頭辞で切ったkeyの窓（128件まで）ずつ参加者の表へ1回だけ移す。位置は
+  R5-Gの保護移行の台帳（kind `owner_participants`）に永続し、移し終える前のrotationも移した分と表の分を宛先にする。
+- Dome（R5-H、2026-09-27ユーザー決定）: instance（stateと署名済みenvelope）とhostingの記録は、ownerの制御領域の
+  instance idのkey（`metaverse/dome-instances/<id>/state`・`metaverse/dome-hosting/<id>/state`）へ置き、旧topic/channel
+  replicaへは書かない。idは時刻を持たずcontextとownerから決まるので、bucketではなくownerの制御領域でexactに引く。
+  instanceの更新は更新時のauthor bucketへもeventとして置く。hostingの記録は最後のepochの分だけを1keyに置き、
+  epochごとのkeyのprefix全件読みをやめた。読取りは制御領域を手元→ownerを含む有界なproviderの順にexactに読み、
+  無ければ更新前に旧context replicaへ置いた分を手元から読む。訪問者は、手元の一覧の行のownerと、owner端末の
+  hostingのheartbeat hint（hostとcontextからinstance idを導けるとき、hostをownerとみなす）からownerを知って読む。
+  ownerがofflineでhintも無いDomeは、手元に行があってもinstanceを読めなければ一覧に出ない。全bucketの走査はしない。
+  CNのhostingのheartbeatはhostがCNなのでownerを導けず、行の無いDomeはhintだけでは見つからない。
+  Domeのsession（訪問者もchatで書く）・接続の提案と合意・削除とlayoutの操作記録は、引き続き旧context replicaにある。
 
 - CNの新旧readiness、clientの読取り、#1224の作業集合、保存/回収、対応する移行testの成立後にwriterを切り替える。
   本番での実施日とデプロイは本実装作業とは別に扱う。新形式のwriterを旧CNへ先行配布しない。
