@@ -303,8 +303,15 @@ impl AppService {
         else {
             anyhow::bail!("private notification must reference a post");
         };
+        // 切替後の送り手は現 epoch の bucket、切替前の送り手は現 epoch の旧 replica を入れる(#1221 R5-H)。bucket と
+        // 投稿の署名済みの作成時刻の一致は、下の投稿の検証で確かめる。
+        let current_bucket = replica.as_str().starts_with("bucket::")
+            && kukuri_docs_sync::BucketReplica::parse(&replica).is_ok_and(|bucket| {
+                matches!(bucket.scope(), kukuri_docs_sync::BucketScope::PrivateChannel { channel_id, epoch_id }
+                    if channel_id == channel && *epoch_id == state.current_epoch_id)
+            });
         anyhow::ensure!(
-            replica == current_private_channel_replica_id(&state),
+            current_bucket || replica == current_private_channel_replica_id(&state),
             "private notification replica does not match its epoch"
         );
         let local = services.keys.public_key_hex();
