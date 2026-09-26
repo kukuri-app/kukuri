@@ -229,7 +229,7 @@ async fn instance_lookup_reads_a_constant_number_of_docs_records() {
     let context = SpatialContextV1::Topic {
         topic_id: TopicId::new(TOPIC),
     };
-    app.hosting_instance(&replica, &context, &instance_id)
+    app.hosting_instance(&context, &instance_id)
         .await
         .expect("baseline lookup")
         .expect("baseline Instance");
@@ -253,7 +253,7 @@ async fn instance_lookup_reads_a_constant_number_of_docs_records() {
 
     docs.reset_records_returned();
     docs.clear_queries().await;
-    app.hosting_instance(&replica, &context, &instance_id)
+    app.hosting_instance(&context, &instance_id)
         .await
         .expect("bounded lookup")
         .expect("bounded Instance");

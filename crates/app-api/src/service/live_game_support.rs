@@ -503,6 +503,14 @@ impl AppService {
         manifest: GameRoomManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedGameRoom> {
+        // #1221 R5-H: Dome の session は anchor へ書く(切替後に旧 replica にある Dome は作成時刻の scope bucket へ)。
+        let replica = &match manifest.metaverse.as_ref() {
+            Some(metaverse) => {
+                self.dome_write_anchor(&metaverse.spatial_context, replica, created_at)
+                    .await?
+            }
+            None => replica.clone(),
+        };
         let now = Utc::now().timestamp_millis();
         let envelope = build_game_session_envelope(
             self.services.keys.as_ref(),

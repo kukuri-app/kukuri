@@ -267,11 +267,11 @@ impl AppService {
                 topic_id: TopicId::new(topic_id),
             },
         };
-        let source_replica_id = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let now = Utc::now().timestamp_millis();
+        // #1221 R5-H: Dome の session は作成時の scope bucket(Dome の anchor)に置く。
+        let source_replica_id =
+            self.services
+                .scope_write_replica(topic_id, private_state.as_ref(), now / 1_000)?;
         let title = input.title.trim();
         if title.is_empty() {
             anyhow::bail!("metaverse room title is required");
@@ -349,10 +349,10 @@ impl AppService {
             updated_at: now,
         };
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&instance_manifest, now)
-            .await?;
         let state = self
             .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), now)
+            .await?;
+        self.persist_dome_instance_manifest(state.replica(), &instance_manifest, now)
             .await?;
         self.services
             .projection_store
@@ -517,15 +517,11 @@ impl AppService {
         manifest.status = input.status;
         manifest.updated_at = now;
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&instance_manifest, state.created_at)
-            .await?;
+        let created_at = state.created_at;
         let state = self
-            .persist_game_room_manifest(
-                &source_replica_id,
-                topic_id,
-                manifest.clone(),
-                state.created_at,
-            )
+            .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), created_at)
+            .await?;
+        self.persist_dome_instance_manifest(state.replica(), &instance_manifest, created_at)
             .await?;
         self.services
             .projection_store
@@ -796,8 +792,6 @@ impl AppService {
         metaverse.asset_refs = asset_refs;
         manifest.updated_at = now;
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&instance_manifest, state.created_at)
-            .await?;
         let persisted = self
             .persist_game_room_manifest(
                 &source_replica_id,
@@ -806,6 +800,12 @@ impl AppService {
                 state.created_at,
             )
             .await?;
+        self.persist_dome_instance_manifest(
+            persisted.replica(),
+            &instance_manifest,
+            state.created_at,
+        )
+        .await?;
         self.services
             .projection_store
             .upsert_game_room_cache(game_projection_row(&persisted))

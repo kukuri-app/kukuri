@@ -11,16 +11,14 @@ use kukuri_core::{
     DomeHostingLeaseV1, DomeHostingRecordV1, DomeHostingStateKindV1, DomeInstanceStatusV1,
     DomeLayoutCommitV1, DomeSessionInputKindV1, DomeTransitionAccessDecisionV1,
     DomeTransitionAdmissionTicketV1, SignedDomeHostingAcceptanceV1, SignedDomeHostingLeaseV1,
-    SignedDomeLayoutCandidateV1, SignedDomeLayoutCommitV1, SignedDomePhysicsSnapshotV1,
-    SpatialContextV1, accept_dome_hosting_lease, activate_dome_hosting_lease,
-    build_signed_dome_hosting_lease, build_signed_dome_layout_commit,
-    build_signed_dome_session_input, close_dome_hosting_lease, dome_layout_candidate_digest,
-    resolve_dome_hosting_state, verify_signed_dome_host_heartbeat,
+    SignedDomeLayoutCandidateV1, SignedDomePhysicsSnapshotV1, SpatialContextV1,
+    accept_dome_hosting_lease, activate_dome_hosting_lease, build_signed_dome_hosting_lease,
+    build_signed_dome_layout_commit, build_signed_dome_session_input, close_dome_hosting_lease,
+    dome_layout_candidate_digest, resolve_dome_hosting_state, verify_signed_dome_host_heartbeat,
     verify_signed_dome_layout_candidate,
 };
 
 const HOSTING_RECORD_PREFIX: &str = "metaverse/dome-hosting";
-const LAYOUT_COMMIT_PREFIX: &str = "metaverse/dome-layout-commits";
 const DEFAULT_LEASE_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 
 impl AppService {
@@ -29,9 +27,9 @@ impl AppService {
         spatial_context: SpatialContextV1,
         instance_id: &str,
     ) -> Result<DomeHostingView> {
-        let replica = self.hosting_context_replica(&spatial_context).await?;
+        self.hosting_context_replica(&spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &spatial_context, instance_id)
+            .hosting_instance(&spatial_context, instance_id)
             .await?
             .context("Dome instance was not found")?;
         self.hosting_view_for_instance(&instance).await
@@ -80,9 +78,9 @@ impl AppService {
         if input.endpoint_id.trim().is_empty() {
             anyhow::bail!("owner device endpoint id is required");
         }
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         if input
@@ -151,10 +149,16 @@ impl AppService {
             .lock()
             .await
             .insert(instance.instance_id.clone(), runtime);
+        // private の Dome は、行の無い参加者が heartbeat から anchor を知れるよう locator を置く(#1221 R5-H)。
+        let locator = match instance.spatial_context {
+            SpatialContextV1::Topic { .. } => None,
+            SpatialContextV1::Channel { .. } => Some(self.dome_record_replica(&instance).await?),
+        };
         self.spawn_owner_dome_heartbeat_task(
             instance.spatial_context.clone(),
             instance.instance_id.clone(),
             session_id.clone(),
+            locator,
         )
         .await;
         self.publish_dome_hosting_hint(
@@ -179,9 +183,9 @@ impl AppService {
         &self,
         input: PrepareCommunityNodeDomeHostingInput,
     ) -> Result<DomeHostingView> {
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         if input
@@ -237,9 +241,9 @@ impl AppService {
         input: ActivateCommunityNodeDomeHostingInput,
     ) -> Result<DomeHostingView> {
         let _guard = self.services.dome_mutations.lock().await;
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         self.ensure_dome_hosting_owner(&instance)?;
@@ -291,9 +295,9 @@ impl AppService {
         &self,
         input: CloseDomeHostingInput,
     ) -> Result<DomeHostingView> {
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         if input
@@ -327,9 +331,9 @@ impl AppService {
         &self,
         input: SubmitDomeSessionInput,
     ) -> Result<SignedDomePhysicsSnapshotV1> {
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         if input
@@ -554,9 +558,9 @@ impl AppService {
         if input.operation_id.trim().is_empty() {
             anyhow::bail!("Dome layout commit operation id is required");
         }
-        let replica = self.hosting_context_replica(&input.spatial_context).await?;
+        self.hosting_context_replica(&input.spatial_context).await?;
         let instance = self
-            .hosting_instance(&replica, &input.spatial_context, &input.instance_id)
+            .hosting_instance(&input.spatial_context, &input.instance_id)
             .await?
             .context("Dome instance was not found")?;
         self.ensure_dome_hosting_owner(&instance)?;
@@ -567,8 +571,9 @@ impl AppService {
         )
         .await?;
 
+        let replica = self.dome_record_replica(&instance).await?;
         if let Some(existing) = self
-            .find_dome_layout_commit(&replica, &input.instance_id, &input.operation_id)
+            .find_dome_layout_commit(&instance, &input.operation_id)
             .await?
         {
             let hosting = self
@@ -646,9 +651,7 @@ impl AppService {
             });
         }
 
-        if let Some(last_committed_at) = self
-            .last_dome_layout_commit_at(&replica, &input.instance_id)
-            .await?
+        if let Some(last_committed_at) = self.last_dome_layout_commit_at(&instance).await?
             && now.saturating_sub(last_committed_at) < DOME_LAYOUT_COMMIT_MIN_INTERVAL_MILLIS
         {
             anyhow::bail!("Dome layout commit rate limit is active");
@@ -751,29 +754,29 @@ impl AppService {
         Ok(replica)
     }
 
-    /// hosting の記録(owner が最後に始めた epoch の分)。owner の制御領域を手元の次に owner を含む有界な provider から
-    /// exact に読み(#1221 R5-H、2026-09-27 ユーザー決定)、無ければ更新前に旧 context replica へ置いた分を手元から読む。
+    /// hosting の記録(owner が最後に始めた epoch の分)。Dome の記録の場所(公開は owner の制御領域、private は
+    /// anchor)を exact に読み(#1221 R5-H)、無ければ更新前に旧 context replica へ置いた分を手元から読む。
     pub(crate) async fn list_dome_hosting_records(
         &self,
         instance: &DomeInstanceManifestV1,
     ) -> Result<Vec<DomeHostingRecordV1>> {
-        let owner = instance.owner_pubkey.as_str();
-        let (author, key) = (
-            author_replica_id(owner),
-            hosting_state_key(&instance.instance_id),
-        );
+        let key = hosting_state_key(&instance.instance_id);
         let current = self
-            .read_author_object(owner, |docs, policy| {
-                let (author, key) = (&author, &key);
-                async move {
-                    docs.query_replica_with_policy(author, DocQuery::Exact(key.clone()), policy)
-                        .await?
-                        .into_iter()
-                        .next()
-                        .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
-                        .transpose()
-                }
-            })
+            .read_dome_record(
+                &instance.spatial_context,
+                &instance.owner_pubkey,
+                |docs, replica, policy| {
+                    let key = key.clone();
+                    async move {
+                        docs.query_replica_with_policy(&replica, DocQuery::Exact(key), policy)
+                            .await?
+                            .into_iter()
+                            .next()
+                            .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
+                            .transpose()
+                    }
+                },
+            )
             .await?;
         if let Some(records) = current {
             return Ok(records);
@@ -791,7 +794,7 @@ impl AppService {
             .collect()
     }
 
-    /// 最後の epoch の記録だけを、owner の制御領域の instance の 1 key へ置く(旧 topic/channel replica へは書かない)。
+    /// 最後の epoch の記録だけを、Dome の記録の場所の instance の 1 key へ置く(旧 topic/channel replica へは書かない)。
     async fn persist_dome_hosting_records(
         &self,
         instance: &DomeInstanceManifestV1,
@@ -805,7 +808,7 @@ impl AppService {
             .iter()
             .filter(|record| Some(hosting_record_identity(record).0) == latest)
             .collect::<Vec<_>>();
-        let replica = author_replica_id(instance.owner_pubkey.as_str());
+        let replica = self.dome_record_replica(instance).await?;
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
@@ -814,78 +817,6 @@ impl AppService {
                 DocOp::SetJson {
                     key: hosting_state_key(&instance.instance_id),
                     value: serde_json::to_value(current)?,
-                },
-            )
-            .await
-    }
-
-    async fn find_dome_layout_commit(
-        &self,
-        replica: &ReplicaId,
-        instance_id: &str,
-        operation_id: &str,
-    ) -> Result<Option<SignedDomeLayoutCommitV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Exact(stable_key(
-                    LAYOUT_COMMIT_PREFIX,
-                    &format!("{instance_id}/{operation_id}"),
-                )),
-            )
-            .await?;
-        records
-            .into_iter()
-            .next()
-            .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
-            .transpose()
-    }
-
-    async fn last_dome_layout_commit_at(
-        &self,
-        replica: &ReplicaId,
-        instance_id: &str,
-    ) -> Result<Option<i64>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Prefix(stable_key(LAYOUT_COMMIT_PREFIX, &format!("{instance_id}/"))),
-            )
-            .await?;
-        let mut latest: Option<i64> = None;
-        for record in records {
-            let commit: SignedDomeLayoutCommitV1 = serde_json::from_slice(&record.value)?;
-            latest = Some(
-                latest
-                    .unwrap_or(commit.commit.committed_at)
-                    .max(commit.commit.committed_at),
-            );
-        }
-        Ok(latest)
-    }
-
-    async fn persist_dome_layout_commit(
-        &self,
-        replica: &ReplicaId,
-        signed: &SignedDomeLayoutCommitV1,
-    ) -> Result<()> {
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        LAYOUT_COMMIT_PREFIX,
-                        &format!(
-                            "{}/{}",
-                            signed.commit.instance_id, signed.commit.operation_id
-                        ),
-                    ),
-                    value: serde_json::to_value(signed)?,
                 },
             )
             .await

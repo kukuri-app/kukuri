@@ -128,6 +128,7 @@ mod author_state_support;
 mod direct_messages_delivery_support;
 mod direct_messages_subscription_support;
 mod dm_outbox_retry_support;
+mod dome_connection_store;
 mod dome_connection_support;
 mod dome_host_ownership;
 mod dome_instance_support;
@@ -147,7 +148,7 @@ use game_projection_support::GameRoomProjectionLocks;
 #[cfg(test)]
 pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
-pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
+pub(crate) use live_game_support::DomeReadUnavailable;
 mod metaverse_room_event_support;
 mod notifications_support;
 mod object_hydration;

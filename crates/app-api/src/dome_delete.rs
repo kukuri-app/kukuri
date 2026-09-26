@@ -48,15 +48,18 @@ impl AppService {
         &self,
         context: SpatialContextV1,
     ) -> Result<Vec<PendingDomeDeletionView>> {
-        let replica = self.dome_deletion_replica(&context).await?;
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(
-                &replica,
-                DocQuery::Prefix("metaverse/dome-deletions/".into()),
-            )
-            .await?;
+        let mut records = Vec::new();
+        for replica in self.dome_deletion_replicas(&context).await?.1 {
+            records.extend(
+                self.services
+                    .docs_sync
+                    .query_replica(
+                        &replica,
+                        DocQuery::Prefix("metaverse/dome-deletions/".into()),
+                    )
+                    .await?,
+            );
+        }
         let mut pending = vec![];
         for record in records {
             let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
@@ -87,16 +90,16 @@ impl AppService {
 
     pub async fn finish_dome_deletion_release(&self, input: &DeleteDomeInput) -> Result<()> {
         let _guard = self.services.dome_mutations.lock().await;
-        let replica = self.dome_deletion_replica(&input.spatial_context).await?;
+        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
         let mut record = self
-            .load_dome_deletion(&replica, input)
+            .load_dome_deletion(&replicas, input)
             .await?
             .context("Dome deletion not found")?;
         if record.request != *input || !record.completed {
             anyhow::bail!("DOME_DELETE_OPERATION_MISMATCH");
         }
         record.node_url = None;
-        self.save_dome_deletion(&replica, &record).await
+        self.save_dome_deletion(&replicas, &record).await
     }
 
     pub async fn delete_dome(&self, input: DeleteDomeInput) -> Result<DeleteDomeView> {
@@ -110,9 +113,9 @@ impl AppService {
         {
             anyhow::bail!("DOME_DELETE_INVALID_OPERATION");
         }
-        let replica = self.dome_deletion_replica(&input.spatial_context).await?;
+        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
         let owner = self.services.keys.public_key();
-        let mut operation = match self.load_dome_deletion(&replica, &input).await? {
+        let mut operation = match self.load_dome_deletion(&replicas, &input).await? {
             Some(record) => {
                 if record.request != input || record.owner != owner {
                     anyhow::bail!("DOME_DELETE_OPERATION_MISMATCH");
@@ -154,7 +157,7 @@ impl AppService {
                     node_url,
                     signed_close_json: None,
                 };
-                self.save_dome_deletion(&replica, &record).await?;
+                self.save_dome_deletion(&replicas, &record).await?;
                 record
             }
         };
@@ -180,7 +183,7 @@ impl AppService {
                     })
                     .await?;
                 operation.signed_close_json = closed.signed_close_json;
-                self.save_dome_deletion(&replica, &operation).await?;
+                self.save_dome_deletion(&replicas, &operation).await?;
             }
         }
         let topology = self
@@ -216,15 +219,21 @@ impl AppService {
         manifest.status = GameRoomStatus::Ended;
         manifest.updated_at = Utc::now().timestamp_millis();
         let tombstone = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&tombstone, operation.created_at)
-            .await?;
+        let session = self
+            .dome_anchors(&input.spatial_context, &input.instance_id, &owner)
+            .await?
+            .into_iter()
+            .next()
+            .context("DOME_DELETE_STALE_INSTANCE")?;
         let state = self
             .persist_game_room_manifest(
-                &replica,
+                &session,
                 input.spatial_context.topic_id().as_str(),
                 manifest.clone(),
                 operation.created_at,
             )
+            .await?;
+        self.persist_dome_instance_manifest(state.replica(), &tombstone, operation.created_at)
             .await?;
         self.services
             .projection_store
@@ -249,7 +258,7 @@ impl AppService {
             )
             .await?;
         operation.completed = true;
-        self.save_dome_deletion(&replica, &operation).await?;
+        self.save_dome_deletion(&replicas, &operation).await?;
         Ok(deletion_view(&operation))
     }
 
@@ -257,9 +266,9 @@ impl AppService {
         &self,
         input: &DeleteDomeInput,
     ) -> Result<Option<(String, String)>> {
-        let replica = self.dome_deletion_replica(&input.spatial_context).await?;
+        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
         let record = self
-            .load_dome_deletion(&replica, input)
+            .load_dome_deletion(&replicas, input)
             .await?
             .context("Dome deletion not found")?;
         if record.request != *input || !record.completed {
@@ -274,27 +283,36 @@ impl AppService {
         id: &str,
         generation: u64,
     ) -> Result<()> {
-        let replica = self.dome_deletion_replica(context).await?;
+        let replicas = self.dome_deletion_replicas(context).await?;
         let input = DeleteDomeInput {
             spatial_context: context.clone(),
             instance_id: id.into(),
             expected_generation: generation,
             operation_id: String::new(),
         };
-        if self.load_dome_deletion(&replica, &input).await?.is_some() {
+        if self.load_dome_deletion(&replicas, &input).await?.is_some() {
             anyhow::bail!("DOME_DELETE_IN_PROGRESS");
         }
         Ok(())
     }
 
-    async fn dome_deletion_replica(&self, context: &SpatialContextV1) -> Result<ReplicaId> {
-        match context {
+    /// 削除の操作記録を書く replica(自分の Dome の記録の場所。#1221 R5-H)と、読む replica(それと更新前の旧 context
+    /// replica)。private で自分の Dome の anchor が分からなければ、書く先は無い。
+    async fn dome_deletion_replicas(
+        &self,
+        context: &SpatialContextV1,
+    ) -> Result<(Option<ReplicaId>, Vec<ReplicaId>)> {
+        let owner = self.services.keys.public_key();
+        let (write, legacy) = match context {
             SpatialContextV1::Topic { topic_id } => {
                 // 公開 topic は gossip を止めていなければ扱える(購読の有無は問わない。#1221 R2-C)。
                 if self.is_topic_gossip_disabled(topic_id.as_str()).await {
                     anyhow::bail!("DOME_DELETE_CONTEXT_ACCESS_REQUIRED");
                 }
-                Ok(topic_replica_id(topic_id.as_str()))
+                (
+                    Some(author_replica_id(owner.as_str())),
+                    topic_replica_id(topic_id.as_str()),
+                )
             }
             SpatialContextV1::Channel {
                 topic_id,
@@ -303,9 +321,16 @@ impl AppService {
                 let state = self
                     .private_channel_write_state(topic_id.as_str(), channel_id)
                     .await?;
-                Ok(current_private_channel_replica_id(&state))
+                let anchor = self
+                    .dome_anchors(context, &dome_instance_id(context, &owner), &owner)
+                    .await?
+                    .into_iter()
+                    .next();
+                (anchor, current_private_channel_replica_id(&state))
             }
-        }
+        };
+        let reads = write.iter().cloned().chain([legacy]).collect();
+        Ok((write, reads))
     }
 
     pub(crate) async fn ensure_dome_deletion_finished(
@@ -314,7 +339,7 @@ impl AppService {
         id: &str,
         generation: u64,
     ) -> Result<()> {
-        let replica = self.dome_deletion_replica(context).await?;
+        let replicas = self.dome_deletion_replicas(context).await?;
         let input = DeleteDomeInput {
             spatial_context: context.clone(),
             instance_id: id.into(),
@@ -322,7 +347,7 @@ impl AppService {
             operation_id: String::new(),
         };
         if self
-            .load_dome_deletion(&replica, &input)
+            .load_dome_deletion(&replicas, &input)
             .await?
             .is_some_and(|r| !r.completed)
         {
@@ -333,15 +358,23 @@ impl AppService {
 
     async fn load_dome_deletion(
         &self,
-        replica: &ReplicaId,
+        replicas: &(Option<ReplicaId>, Vec<ReplicaId>),
         input: &DeleteDomeInput,
     ) -> Result<Option<DomeDeletion>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(replica, DocQuery::Exact(deletion_key(input)))
-            .await?;
-        let Some(record) = records.first() else {
+        let mut found = None;
+        for replica in &replicas.1 {
+            found = self
+                .services
+                .docs_sync
+                .query_replica(replica, DocQuery::Exact(deletion_key(input)))
+                .await?
+                .into_iter()
+                .next();
+            if found.is_some() {
+                break;
+            }
+        }
+        let Some(record) = found else {
             return Ok(None);
         };
         let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
@@ -360,7 +393,16 @@ impl AppService {
         Ok(Some(operation))
     }
 
-    async fn save_dome_deletion(&self, replica: &ReplicaId, record: &DomeDeletion) -> Result<()> {
+    async fn save_dome_deletion(
+        &self,
+        replicas: &(Option<ReplicaId>, Vec<ReplicaId>),
+        record: &DomeDeletion,
+    ) -> Result<()> {
+        let replica = replicas
+            .0
+            .as_ref()
+            .context("the private Dome's anchor is unknown")?;
+        self.services.docs_sync.open_replica(replica).await?;
         let envelope = kukuri_core::sign_envelope_json(
             self.services.keys.as_ref(),
             "dome-deletion",

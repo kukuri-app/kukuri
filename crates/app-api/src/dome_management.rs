@@ -9,9 +9,9 @@ impl AppService {
         context: SpatialContextV1,
         id: &str,
     ) -> Result<DomeHostingView> {
-        let replica = self.hosting_context_replica(&context).await?;
+        self.hosting_context_replica(&context).await?;
         let instance = self
-            .hosting_instance(&replica, &context, id)
+            .hosting_instance(&context, id)
             .await?
             .context("Dome instance not found")?;
         let records = self.list_dome_hosting_records(&instance).await?;

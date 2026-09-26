@@ -601,7 +601,7 @@ impl AppService {
             .filter(|value| !value.is_empty());
         if let Some(instance_id) = entry_dome_instance_id.as_deref() {
             let instance = self
-                .hosting_instance(&replica, &context, instance_id)
+                .hosting_instance(&context, instance_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("entry Dome is not in this Spatial Context"))?;
             if instance.spatial_context != context
