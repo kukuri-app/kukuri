@@ -31,11 +31,18 @@ impl<T> SessionRead<T> {
     }
 }
 
+/// manifest の blob。remote から読む state(hint の exact 読取り・読み直し)は、manifest も provider から取得する
+/// (#1221 R5-H。旧 sync の後の取得 worker は無い)。
 async fn read_session_blob<T: DeserializeOwned>(
     blobs: &dyn BlobService,
     blob: &ManifestBlobRef,
+    policy: DocFetchPolicy,
 ) -> Result<Option<T>> {
-    match blobs.fetch_local_blob(&blob.hash).await? {
+    let bytes = match policy {
+        DocFetchPolicy::LocalOnly => blobs.fetch_local_blob(&blob.hash).await?,
+        _ => blobs.fetch_blob(&blob.hash).await?,
+    };
+    match bytes {
         Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         None => Ok(None),
     }
@@ -311,7 +318,9 @@ pub(crate) async fn inspect_live_session_record(
     if current_manifest.hash != signed_hash {
         return rejected(SessionRejection::ManifestMismatch);
     }
-    match read_session_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest).await {
+    match read_session_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest, policy)
+        .await
+    {
         Ok(Some(blob)) if blob == verified.manifest => Ok(SessionRead::Ready(verified)),
         Ok(Some(_)) | Err(_) => rejected(SessionRejection::ManifestMismatch),
         Ok(None) => Ok(SessionRead::MissingManifest(current_manifest.hash)),
@@ -529,7 +538,12 @@ pub(crate) async fn inspect_game_room_record(
             {
                 return rejected(SessionRejection::BucketTimeMismatch);
             }
-            match read_session_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest).await
+            match read_session_blob::<GameRoomManifestBlobV1>(
+                blob_service,
+                &current_manifest,
+                policy,
+            )
+            .await
             {
                 Ok(Some(blob)) if blob == verified.manifest => Ok(SessionRead::Ready(verified)),
                 Ok(Some(_)) | Err(_) => rejected(SessionRejection::ManifestMismatch),
@@ -557,7 +571,12 @@ pub(crate) async fn inspect_game_room_record(
             if state.room_id != dome_instance_id(&context, &state.owner_pubkey) {
                 return rejected(SessionRejection::IdNotBoundToOwner);
             }
-            match read_session_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest).await
+            match read_session_blob::<GameRoomManifestBlobV1>(
+                blob_service,
+                &current_manifest,
+                policy,
+            )
+            .await
             {
                 Ok(Some(manifest)) => {
                     match VerifiedGameRoom::verify(

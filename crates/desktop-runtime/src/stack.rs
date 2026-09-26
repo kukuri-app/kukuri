@@ -120,6 +120,7 @@ reloadable_service! {
         async fn subscribe_hints(topic: &TopicId) -> Result<HintStream>;
         async fn unsubscribe_hints(topic: &TopicId) -> Result<()>;
         async fn publish_hint(topic: &TopicId, hint: GossipHint) -> Result<()>;
+        async fn topic_read_candidates(topic: &TopicId) -> Result<Vec<SeedPeer>>;
         async fn resolve_receive_destination(recipient: &Pubkey) -> Result<Option<EndpointAddr>>;
         async fn receive_candidate_fence() -> Result<ReceiveCandidateFence>;
         async fn offer_receive_candidates(source: &str, recipient: &Pubkey, candidates: Vec<EndpointAddr>, fence: ReceiveCandidateFence) -> Result<()>;

@@ -463,21 +463,31 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         Some(b_pubkey.as_str())
     );
 
-    let private_timeline_after_restart = restarted_c
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
-        .await
-        .expect("private timeline after restart");
-    assert!(
-        private_timeline_after_restart
-            .items
-            .iter()
-            .any(|post| post.object_id == old_post_id)
-    );
+    // #1221 R5-H: DB を失った c は、他人の投稿を手元の docs に複製していない。列の読取りが参加中の channel の
+    // peer から読み直して表示する。
+    timeout(runtime_replication_timeout(), async {
+        loop {
+            let private_timeline_after_restart = restarted_c
+                .list_timeline(ListTimelineRequest {
+                    topic: topic.into(),
+                    scope: private_scope.clone(),
+                    cursor: None,
+                    limit: Some(20),
+                })
+                .await
+                .expect("private timeline after restart");
+            if private_timeline_after_restart
+                .items
+                .iter()
+                .any(|post| post.object_id == old_post_id)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the old private post is read again after the restart");
     let joined_restarted_before_rotate = wait_for_joined_private_channel_epoch(
         &restarted_c,
         topic,
