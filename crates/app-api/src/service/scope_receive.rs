@@ -249,7 +249,7 @@ impl AppService {
             }
         }
         for (session_id, kind) in sessions {
-            if let Err(error) = self.read_session(topic_id, &session_id, kind).await {
+            if let Err(error) = self.read_session(topic_id, scope, &session_id, kind).await {
                 warn!(%error, "failed to reread a session");
             }
         }
@@ -260,10 +260,15 @@ impl AppService {
     pub(crate) async fn read_session(
         &self,
         topic_id: &str,
+        scope: &TimelineScope,
         session_id: &str,
         object_kind: &str,
     ) -> Result<bool> {
         let projection_store = &self.services.projection_store;
+        let channel = match scope {
+            TimelineScope::Public => PUBLIC_CHANNEL_ID,
+            TimelineScope::Channel { channel_id } => channel_id.as_str(),
+        };
         match object_kind {
             "live-session" => {
                 let _lock = self
@@ -272,7 +277,7 @@ impl AppService {
                     .lock(session_id)
                     .await;
                 match self
-                    .fetch_verified_live_session(topic_id, session_id)
+                    .fetch_verified_live_session(topic_id, channel, session_id)
                     .await?
                 {
                     Some(verified) => projection_store
@@ -284,7 +289,10 @@ impl AppService {
             }
             "game-session" => {
                 let _lock = self.services.game_room_projections.lock(session_id).await;
-                match self.fetch_verified_game_room(topic_id, session_id).await? {
+                match self
+                    .fetch_verified_game_room(topic_id, channel, session_id)
+                    .await?
+                {
                     Some(verified) => projection_store
                         .upsert_game_room_cache(game_projection_row(&verified))
                         .await
@@ -323,7 +331,7 @@ impl AppService {
                 ..
             } => {
                 return self
-                    .read_session(topic_id, session_id, object_kind)
+                    .read_session(topic_id, scope, session_id, object_kind)
                     .await
                     .inspect_err(|error| warn!(%error, "failed to read a hinted session"))
                     .unwrap_or_default() as usize;
@@ -482,7 +490,7 @@ impl AppService {
         session_id: &str,
     ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
         Ok(self
-            .fetch_verified_live_session(topic_id, session_id)
+            .fetch_verified_live_session(topic_id, PUBLIC_CHANNEL_ID, session_id)
             .await?
             .map(VerifiedLiveSession::into_parts))
     }
@@ -494,7 +502,7 @@ impl AppService {
         room_id: &str,
     ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
         Ok(self
-            .fetch_verified_game_room(topic_id, room_id)
+            .fetch_verified_game_room(topic_id, PUBLIC_CHANNEL_ID, room_id)
             .await?
             .map(VerifiedGameRoom::into_parts))
     }

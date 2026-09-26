@@ -475,9 +475,11 @@ impl AppService {
         }
         Ok(replicas)
     }
+    /// `channel` は projection に行が無い session(hint・読み直し・表示で初めて読む)の scope。
     pub(super) async fn session_target_candidates(
         &self,
         topic_id: &str,
+        channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
     ) -> Result<Vec<RemotePostReplica>> {
@@ -496,7 +498,13 @@ impl AppService {
                     .split('-')
                     .nth(1)
                     .and_then(|part| part.parse::<i64>().ok());
-                (TimelineScope::Public, millis.map(|value| value / 1_000))
+                let scope = match channel {
+                    PUBLIC_CHANNEL_ID => TimelineScope::Public,
+                    channel => TimelineScope::Channel {
+                        channel_id: ChannelId::new(channel),
+                    },
+                };
+                (scope, millis.map(|value| value / 1_000))
             }
         };
         let mut candidates = self
@@ -523,12 +531,16 @@ impl AppService {
     pub(super) async fn session_target_readers(
         &self,
         topic_id: &str,
+        channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
     ) -> Result<Vec<SessionTargetReader>> {
         let mut readers = Vec::new();
-        for (replica, epoch) in self.session_target_candidates(topic_id, source, id).await? {
-            let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
+        for (replica, epoch) in self
+            .session_target_candidates(topic_id, channel, source, id)
+            .await?
+        {
             if replica == topic_replica_id(topic_id)
                 || (channel != PUBLIC_CHANNEL_ID && !replica.as_str().starts_with("bucket::"))
             {

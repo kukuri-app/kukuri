@@ -458,3 +458,76 @@ async fn lease_start_rereads_existing_live_sessions_and_game_rooms() {
     .await
     .expect("the lease start rereads the existing sessions");
 }
+
+/// #1221 R5-H: projection に行の無い private channel の live session も、hint を受けた channel の scope で読む
+/// (公開 topic の replica だけを探さない)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn private_live_session_reaches_a_member_through_the_channel_hint() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("private-live-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("private-live-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
+    let topic = "kukuri:topic:private-live";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic_in(&[&app_a, &app_b], topic).await;
+    let channel = app_a
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "live".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create private channel");
+    let invite = app_a
+        .export_private_channel_invite(topic, channel.channel_id.as_str(), None)
+        .await
+        .expect("export invite");
+    app_b
+        .import_private_channel_invite(invite.as_str())
+        .await
+        .expect("import invite");
+    let channel_id = ChannelId::new(channel.channel_id.clone());
+    let session_id = app_b
+        .create_live_session_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: channel_id.clone(),
+            },
+            CreateLiveSessionInput {
+                title: "private live".into(),
+                description: "members only".into(),
+            },
+        )
+        .await
+        .expect("create private live session");
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let sessions = app_a
+                .list_live_sessions_scoped(
+                    topic,
+                    TimelineScope::Channel {
+                        channel_id: channel_id.clone(),
+                    },
+                )
+                .await
+                .expect("private live sessions");
+            if sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the member reads the private live session");
+}

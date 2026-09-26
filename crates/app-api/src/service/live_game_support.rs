@@ -816,6 +816,7 @@ impl AppService {
     pub(crate) async fn fetch_verified_live_session(
         &self,
         topic_id: &str,
+        channel: &str,
         session_id: &str,
     ) -> Result<Option<VerifiedLiveSession>> {
         let projected = self
@@ -830,13 +831,13 @@ impl AppService {
                 row.updated_at,
             )
         });
-        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
         let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, source, session_id)
+            .session_target_readers(topic_id, channel, source, session_id)
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {
@@ -885,6 +886,7 @@ impl AppService {
     pub(crate) async fn fetch_verified_game_room(
         &self,
         topic_id: &str,
+        channel: &str,
         room_id: &str,
     ) -> Result<Option<VerifiedGameRoom>> {
         let projected = self
@@ -899,13 +901,13 @@ impl AppService {
                 row.updated_at,
             )
         });
-        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
         let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, source, room_id)
+            .session_target_readers(topic_id, channel, source, room_id)
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {

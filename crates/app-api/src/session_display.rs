@@ -99,7 +99,7 @@ impl AppService {
             "game-session"
         };
         if let Err(error) = self
-            .read_session(&request.topic, &request.session_id, kind)
+            .read_session(&request.topic, &request.scope, &request.session_id, kind)
             .await
         {
             tracing::warn!(%error, "failed to read the displayed session");
