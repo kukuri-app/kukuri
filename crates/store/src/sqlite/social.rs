@@ -360,97 +360,47 @@ impl SocialProjectionStore for SqliteStore {
         local_author_pubkey: &str,
         author_pubkey: &str,
     ) -> Result<Option<AuthorRelationshipProjectionRow>> {
-        let row = sqlx::query(
-            r#"
-            SELECT local_author_pubkey, author_pubkey, following, followed_by, mutual,
-                   friend_of_friend, friend_of_friend_via_pubkeys_json, derived_at
-            FROM author_relationship_cache
-            WHERE local_author_pubkey = ?1 AND author_pubkey = ?2
-            "#,
-        )
-        .bind(local_author_pubkey)
-        .bind(author_pubkey)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        row.map(row_to_author_relationship_projection).transpose()
-    }
-
-    async fn list_author_relationships(
-        &self,
-        local_author_pubkey: &str,
-        author_pubkeys: &[String],
-    ) -> Result<std::collections::HashMap<String, AuthorRelationshipProjectionRow>> {
-        if author_pubkeys.is_empty() {
-            return Ok(std::collections::HashMap::new());
-        }
-
-        let mut builder = QueryBuilder::<Sqlite>::new(
-            r#"
-            SELECT local_author_pubkey, author_pubkey, following, followed_by, mutual,
-                   friend_of_friend, friend_of_friend_via_pubkeys_json, derived_at
-            FROM author_relationship_cache
-            WHERE local_author_pubkey = "#,
-        );
-        builder.push_bind(local_author_pubkey);
-        builder.push(" AND author_pubkey IN (");
-        let mut separated = builder.separated(", ");
-        for author_pubkey in author_pubkeys {
-            separated.push_bind(author_pubkey);
-        }
-        separated.push_unseparated(")");
-
-        let rows = builder.build().fetch_all(&self.pool).await?;
-        let mut relationships = std::collections::HashMap::with_capacity(rows.len());
-        for row in rows {
-            let relationship = row_to_author_relationship_projection(row)?;
-            relationships.insert(relationship.author_pubkey.clone(), relationship);
-        }
-        Ok(relationships)
-    }
-
-    async fn rebuild_author_relationships(
-        &self,
-        local_author_pubkey: &str,
-        rows: Vec<AuthorRelationshipProjectionRow>,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            r#"
-            DELETE FROM author_relationship_cache
-            WHERE local_author_pubkey = ?1
-            "#,
-        )
-        .bind(local_author_pubkey)
-        .execute(&mut *tx)
-        .await?;
-
-        for row in rows {
-            let via_json = serde_json::to_string(&row.friend_of_friend_via_pubkeys)?;
-            sqlx::query(
+        // #1221 R4-D: 対象の author の edge から求める。主 key の 2 回の点読みと、自分の follow から
+        // 対象への edge を主 key で引く join(自分の follow の数まで)。関係の cache を持たない。
+        let active = |subject: &str, target: &str| {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM follow_edges WHERE subject_pubkey = ?1 AND target_pubkey = ?2",
+            )
+            .bind(subject.to_string())
+            .bind(target.to_string())
+            .fetch_optional(&self.pool)
+        };
+        let following =
+            active(local_author_pubkey, author_pubkey).await?.as_deref() == Some("active");
+        let followed_by =
+            active(author_pubkey, local_author_pubkey).await?.as_deref() == Some("active");
+        let via = if following {
+            Vec::new()
+        } else {
+            sqlx::query_scalar::<_, String>(
                 r#"
-                INSERT OR REPLACE INTO author_relationship_cache (
-                  local_author_pubkey, author_pubkey, following, followed_by, mutual,
-                  friend_of_friend, friend_of_friend_via_pubkeys_json, derived_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                SELECT mine.target_pubkey
+                FROM follow_edges AS mine
+                JOIN follow_edges AS theirs
+                  ON theirs.subject_pubkey = mine.target_pubkey
+                 AND theirs.target_pubkey = ?2
+                 AND theirs.status = 'active'
+                WHERE mine.subject_pubkey = ?1 AND mine.status = 'active'
+                ORDER BY mine.target_pubkey
                 "#,
             )
-            .bind(row.local_author_pubkey.as_str())
-            .bind(row.author_pubkey.as_str())
-            .bind(row.following)
-            .bind(row.followed_by)
-            .bind(row.mutual)
-            .bind(row.friend_of_friend)
-            .bind(via_json)
-            .bind(row.derived_at)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
+            .bind(local_author_pubkey)
+            .bind(author_pubkey)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(AuthorRelationshipProjectionRow::derive(
+            local_author_pubkey,
+            author_pubkey,
+            following,
+            followed_by,
+            via,
+        ))
     }
 
     async fn get_author_docs_author(&self, author_pubkey: &str) -> Result<Option<String>> {

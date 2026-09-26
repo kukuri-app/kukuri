@@ -133,9 +133,9 @@ impl AppService {
         self.ensure_topic_subscription(spec.topic_id.as_str())
             .await?;
         if let Some(peer_pubkey) = spec.mutual_with.as_ref() {
+            // #1221 R4-D: 関係は手元の edge から読むときに求める。相手の follow は購読の追いつきと follow の offer で届く。
             self.ensure_author_subscription(peer_pubkey.as_str())
                 .await?;
-            self.rebuild_author_relationships().await?;
             let relationship = self
                 .services
                 .projection_store

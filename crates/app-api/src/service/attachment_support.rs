@@ -212,27 +212,6 @@ pub(crate) async fn materialize_direct_message_blob_ref(
     }))
 }
 
-pub(crate) async fn direct_message_topic_peer_count(
-    transport: &dyn Transport,
-    topic: &TopicId,
-) -> Result<usize> {
-    let snapshot = transport.peers().await?;
-    let hint_topic = kukuri_core::wire::hint_topic_id(topic).0;
-    let topic_peer_count = snapshot
-        .topic_diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.topic == hint_topic || diagnostic.topic == topic.as_str())
-        .map(|diagnostic| diagnostic.peer_count)
-        .unwrap_or(0);
-    if topic_peer_count > 0 {
-        return Ok(topic_peer_count);
-    }
-    if snapshot.connected && snapshot.peer_count > 0 {
-        return Ok(snapshot.peer_count);
-    }
-    Ok(0)
-}
-
 pub(crate) fn blob_view_status(status: BlobStatus) -> BlobViewStatus {
     match status {
         BlobStatus::Missing => BlobViewStatus::Missing,

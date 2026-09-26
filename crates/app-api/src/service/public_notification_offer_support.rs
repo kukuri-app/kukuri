@@ -228,6 +228,10 @@ impl AppService {
                     "follow offer sender mismatch"
                 );
                 let edge = parse_follow_edge(&envelope)?.context("invalid follow offer")?;
+                // #1221 R4-D: 自分を指す署名済みの edge を手元へ保存する。関係(mutual)は読むときに edge から求める。
+                if edge.target_pubkey.as_str() == local {
+                    services.store.put_envelope(envelope).await?;
+                }
                 notification_candidate_from_verified_follow(
                     &local,
                     &author_replica_id(offer.sender().as_str()),

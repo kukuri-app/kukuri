@@ -316,6 +316,17 @@ pub(crate) async fn refresh_direct_message_pair(
     Ok(())
 }
 
+async fn direct_message_status(
+    runtime: &DesktopRuntime,
+    pubkey: &str,
+) -> Result<kukuri_app_api::DirectMessageStatusView> {
+    runtime
+        .get_direct_message_status(DirectMessageRequest {
+            pubkey: pubkey.to_string(),
+        })
+        .await
+}
+
 pub(crate) fn is_retryable_direct_message_pair_refresh_error(message: &str) -> bool {
     message.contains("mutual relationship")
 }
@@ -329,42 +340,19 @@ pub(crate) async fn wait_for_direct_message_pair_ready_with_refresh(
     b_pubkey: &str,
     step_timeout: Duration,
 ) -> Result<()> {
+    // #1221 R4-D: DM は account の受信 route で届くので、pairwise topic の参加は待たない。双方の送信可能(mutual)を待つ。
     let refresh_interval = Duration::from_secs(5);
-    match timeout(step_timeout, async {
+    let result = timeout(step_timeout, async {
         let mut next_refresh_at = Instant::now() + refresh_interval;
         loop {
-            let status_a = runtime_a
-                .get_direct_message_status(DirectMessageRequest {
-                    pubkey: b_pubkey.to_string(),
-                })
+            let ready_a = direct_message_status(runtime_a, b_pubkey)
                 .await
-                .context("desktop a direct message status")?;
-            let topic_a = runtime_a
-                .get_direct_message_topic_status(DirectMessageRequest {
-                    pubkey: b_pubkey.to_string(),
-                })
+                .context("desktop a direct message status")?
+                .send_enabled;
+            let ready_b = direct_message_status(runtime_b, a_pubkey)
                 .await
-                .context("desktop a direct message topic status")?;
-            let status_b = runtime_b
-                .get_direct_message_status(DirectMessageRequest {
-                    pubkey: a_pubkey.to_string(),
-                })
-                .await
-                .context("desktop b direct message status")?;
-            let topic_b = runtime_b
-                .get_direct_message_topic_status(DirectMessageRequest {
-                    pubkey: a_pubkey.to_string(),
-                })
-                .await
-                .context("desktop b direct message topic status")?;
-            let ready_a = status_a.send_enabled
-                && topic_a.as_ref().is_some_and(|topic_status| {
-                    topic_status.joined && topic_status.peer_count >= 1
-                });
-            let ready_b = status_b.send_enabled
-                && topic_b.as_ref().is_some_and(|topic_status| {
-                    topic_status.joined && topic_status.peer_count >= 1
-                });
+                .context("desktop b direct message status")?
+                .send_enabled;
             if ready_a && ready_b {
                 return Ok::<(), anyhow::Error>(());
             }
@@ -379,82 +367,14 @@ pub(crate) async fn wait_for_direct_message_pair_ready_with_refresh(
             sleep(Duration::from_millis(100)).await;
         }
     })
-    .await
-    {
+    .await;
+    match result {
         Ok(result) => result,
         Err(_) => {
-            let snapshot_a = runtime_a
-                .get_direct_message_status(DirectMessageRequest {
-                    pubkey: b_pubkey.to_string(),
-                })
-                .await
-                .ok()
-                .map(|status| {
-                    format!(
-                        "send_enabled={}, mutual={}, peer_count={}, pending_outbox_count={}",
-                        status.send_enabled,
-                        status.mutual,
-                        status.peer_count,
-                        status.pending_outbox_count
-                    )
-                })
-                .unwrap_or_else(|| "direct_message_status=unavailable".to_string());
-            let topic_snapshot_a = runtime_a
-                .get_direct_message_topic_status(DirectMessageRequest {
-                    pubkey: b_pubkey.to_string(),
-                })
-                .await
-                .ok()
-                .flatten()
-                .map(|topic_status| {
-                    format!(
-                        "topic={}, joined={}, topic_peer_count={}, connected_peers={:?}, status_detail={}, last_error={:?}",
-                        topic_status.topic,
-                        topic_status.joined,
-                        topic_status.peer_count,
-                        topic_status.connected_peers,
-                        topic_status.status_detail,
-                        topic_status.last_error
-                    )
-                })
-                .unwrap_or_else(|| "direct_message_topic=unavailable".to_string());
-            let snapshot_b = runtime_b
-                .get_direct_message_status(DirectMessageRequest {
-                    pubkey: a_pubkey.to_string(),
-                })
-                .await
-                .ok()
-                .map(|status| {
-                    format!(
-                        "send_enabled={}, mutual={}, peer_count={}, pending_outbox_count={}",
-                        status.send_enabled,
-                        status.mutual,
-                        status.peer_count,
-                        status.pending_outbox_count
-                    )
-                })
-                .unwrap_or_else(|| "direct_message_status=unavailable".to_string());
-            let topic_snapshot_b = runtime_b
-                .get_direct_message_topic_status(DirectMessageRequest {
-                    pubkey: a_pubkey.to_string(),
-                })
-                .await
-                .ok()
-                .flatten()
-                .map(|topic_status| {
-                    format!(
-                        "topic={}, joined={}, topic_peer_count={}, connected_peers={:?}, status_detail={}, last_error={:?}",
-                        topic_status.topic,
-                        topic_status.joined,
-                        topic_status.peer_count,
-                        topic_status.connected_peers,
-                        topic_status.status_detail,
-                        topic_status.last_error
-                    )
-                })
-                .unwrap_or_else(|| "direct_message_topic=unavailable".to_string());
+            let snapshot_a = direct_message_status(runtime_a, b_pubkey).await.ok();
+            let snapshot_b = direct_message_status(runtime_b, a_pubkey).await.ok();
             anyhow::bail!(
-                "direct message pair readiness timeout; desktop_a=({snapshot_a}; {topic_snapshot_a}); desktop_b=({snapshot_b}; {topic_snapshot_b})"
+                "direct message pair readiness timeout; desktop_a={snapshot_a:?}; desktop_b={snapshot_b:?}"
             );
         }
     }

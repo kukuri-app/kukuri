@@ -467,7 +467,6 @@ export const dmConversationView = {
     "dm_id": "dm-1",
     "mutual": true,
     "send_enabled": true,
-    "peer_count": 1,
     "pending_outbox_count": 2,
     "pending_outbox_has_more": false
   }

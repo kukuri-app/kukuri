@@ -87,8 +87,6 @@ pub struct MemoryStore {
     game_room_index: Arc<RwLock<ProjectionIndex>>,
     dome_connection_rows: Arc<RwLock<HashMap<String, DomeConnectionProjectionRow>>>,
     dome_hosting_rows: Arc<RwLock<HashMap<String, DomeHostingProjectionRow>>>,
-    author_relationship_rows:
-        Arc<RwLock<HashMap<(String, String), AuthorRelationshipProjectionRow>>>,
     muted_authors: Arc<RwLock<HashMap<String, MutedAuthorRow>>>,
     author_docs_authors: Arc<RwLock<HashMap<String, String>>>,
     live_presence: Arc<RwLock<HashMap<LivePresenceKey, LivePresenceValue>>>,

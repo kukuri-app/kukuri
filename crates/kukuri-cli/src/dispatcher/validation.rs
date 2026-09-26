@@ -237,7 +237,7 @@ mod tests {
         let registry = CommandRegistry::builtin();
         let status = json!({
             "peer_pubkey": "a", "dm_id": "dm", "mutual": true,
-            "send_enabled": true, "peer_count": 1,
+            "send_enabled": true,
             "pending_outbox_count": 64, "pending_outbox_has_more": true
         });
         let conversation = json!({

@@ -239,6 +239,43 @@ pub struct AuthorRelationshipProjectionRow {
     pub derived_at: i64,
 }
 
+impl AuthorRelationshipProjectionRow {
+    /// 対象の author の edge から、読むときに関係を求める(#1221 R4-D)。関係の cache と全件の再計算を持たない。
+    ///
+    /// `via` は自分が follow している相手のうち対象を follow している相手(昇順)。自分が対象を follow していれば
+    /// friend-of-friend にしない。どの関係も無ければ `None`。
+    pub fn derive(
+        local_author_pubkey: &str,
+        author_pubkey: &str,
+        following: bool,
+        followed_by: bool,
+        mut via: Vec<String>,
+    ) -> Option<Self> {
+        if author_pubkey == local_author_pubkey {
+            return None;
+        }
+        if following {
+            via.clear();
+        }
+        via.retain(|pubkey| pubkey != local_author_pubkey);
+        via.sort();
+        via.dedup();
+        (following || followed_by || !via.is_empty()).then(|| Self {
+            local_author_pubkey: local_author_pubkey.to_string(),
+            author_pubkey: author_pubkey.to_string(),
+            following,
+            followed_by,
+            mutual: following && followed_by,
+            friend_of_friend: !via.is_empty(),
+            friend_of_friend_via_pubkeys: via,
+            derived_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis() as i64)
+                .unwrap_or_default(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutedAuthorRow {
     pub author_pubkey: String,

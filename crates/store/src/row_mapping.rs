@@ -6,10 +6,10 @@ use kukuri_core::{
 use sqlx::Row;
 
 use crate::models::{
-    AuthorRelationshipProjectionRow, BookmarkedCustomReactionRow, BookmarkedPostRow,
-    DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxRow,
-    DirectMessageTombstoneRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
-    NotificationKind, NotificationRow, ObjectProjectionRow, ReactionProjectionRow,
+    BookmarkedCustomReactionRow, BookmarkedPostRow, DirectMessageConversationRow,
+    DirectMessageMessageRow, DirectMessageOutboxRow, DirectMessageTombstoneRow,
+    GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow, NotificationKind,
+    NotificationRow, ObjectProjectionRow, ReactionProjectionRow,
 };
 
 /// NULL 許容列の読み出し。sqlx-sqlite は NULL を `String` なら `Ok("")`、`i64` なら
@@ -353,24 +353,6 @@ pub(crate) fn row_to_game_room_projection(
         manifest_blob_hash: BlobHash::new(row.get::<String, _>("manifest_blob_hash")),
         derived_at: row.get("derived_at"),
         projection_version: row.get("projection_version"),
-    })
-}
-
-pub(crate) fn row_to_author_relationship_projection(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<AuthorRelationshipProjectionRow> {
-    Ok(AuthorRelationshipProjectionRow {
-        local_author_pubkey: row.get("local_author_pubkey"),
-        author_pubkey: row.get("author_pubkey"),
-        following: row.get("following"),
-        followed_by: row.get("followed_by"),
-        mutual: row.get("mutual"),
-        friend_of_friend: row.get("friend_of_friend"),
-        friend_of_friend_via_pubkeys: serde_json::from_str(
-            row.get::<String, _>("friend_of_friend_via_pubkeys_json")
-                .as_str(),
-        )?,
-        derived_at: row.get("derived_at"),
     })
 }
 

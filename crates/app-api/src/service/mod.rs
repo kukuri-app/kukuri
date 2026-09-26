@@ -89,7 +89,6 @@ pub(crate) use tokio::task::JoinHandle;
 pub(crate) use tracing::{info, warn};
 
 pub(crate) const REPLICA_SYNC_RESTART_RETRY_SECONDS: i64 = 5;
-pub(crate) const DIRECT_MESSAGE_SUBSCRIPTION_RESTART_RETRY_SECONDS: i64 = 5;
 pub(crate) const PUBLIC_TOPIC_RECOVERY_GRACE_MS: i64 = 3_000;
 /// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。
 pub(crate) const EXISTING_REPOST_LOOKUP_LIMIT: usize = 64;
@@ -111,16 +110,16 @@ pub(crate) use crate::views::{
     CreateCustomReactionAssetInput, CreateDomeConnectionProposalInput, CreateGameRoomInput,
     CreateLiveSessionInput, CreateMetaverseRoomInput, CustomReactionAssetView, DeliveryState,
     DirectMessageConversationView, DirectMessageMessageView, DirectMessageStatusView,
-    DirectMessageTimelineView, DirectMessageTopicStatusView, DiscoveryStatus,
-    DomeConnectionProposalView, DomeConnectionTopologyView, DomeConnectionView, DomeMoveView,
-    GameRoomView, GameScoreView, ImportMetaverseRoomAssetInput, JoinedPrivateChannelView,
-    LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput,
-    NotificationStatusView, NotificationView, PendingAttachment, PostView, PostWithdrawalView,
-    PrivateChannelCapability, PrivateChannelEpochCapability, ProfileAssetView, ProfileInput,
-    PublishMetaverseRoomEventInput, ReactionKeyView, ReactionStateView, ReactionSummaryView,
-    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
-    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
-    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
+    DirectMessageTimelineView, DiscoveryStatus, DomeConnectionProposalView,
+    DomeConnectionTopologyView, DomeConnectionView, DomeMoveView, GameRoomView, GameScoreView,
+    ImportMetaverseRoomAssetInput, JoinedPrivateChannelView, LiveSessionView,
+    MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput, NotificationStatusView,
+    NotificationView, PendingAttachment, PostView, PostWithdrawalView, PrivateChannelCapability,
+    PrivateChannelEpochCapability, ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput,
+    ReactionKeyView, ReactionStateView, ReactionSummaryView, RecentReactionView,
+    ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput,
+    SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput,
+    UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
 mod attachment_support;
@@ -166,7 +165,6 @@ mod remote_read_support;
 mod replica_window;
 pub(crate) use replica_window::RangeReconcile;
 mod session_integrity;
-mod social_helpers;
 mod social_runtime_support;
 mod spatial_access_support;
 mod subscription_catch_up;
@@ -191,13 +189,13 @@ pub(crate) use attachment_support::{
     attachment_views_from_refs, blob_status, blob_view_status, blob_view_status_for_payload,
     channel_hint_topic_for, channel_id_for_view, channel_id_from_storage, channel_storage_id,
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
-    direct_message_preview, direct_message_topic_peer_count, effective_sync_status_detail,
-    effective_topic_status_detail, joined_private_channel_key,
-    joined_private_channel_subscription_key, joined_private_channel_subscription_prefix,
-    live_presence_task_key, materialize_direct_message_manifest, merge_optional_timestamp,
-    normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
-    register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
-    validate_game_room_scores, validate_game_room_transition,
+    direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
+    joined_private_channel_key, joined_private_channel_subscription_key,
+    joined_private_channel_subscription_prefix, live_presence_task_key,
+    materialize_direct_message_manifest, merge_optional_timestamp, normalize_topic_diagnostics,
+    normalize_topic_name, normalize_topics, register_private_channel_replica_secrets,
+    sanitize_game_participants, short_id_suffix, validate_game_room_scores,
+    validate_game_room_transition,
 };
 pub(crate) use author_state_support::{
     catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,
@@ -271,11 +269,6 @@ pub(crate) use session_integrity::{
 };
 #[cfg(test)]
 pub(crate) use session_integrity::{verify_game_room_record, verify_live_session_record};
-pub(crate) use social_helpers::{
-    current_mutual_direct_message_peers, rebuild_author_relationships,
-    reconcile_direct_message_subscriptions, schedule_direct_message_reconcile,
-    stop_direct_message_subscription,
-};
 pub(crate) use subscription_registry::{AbortOnDropTask, SubscriptionRegistry};
 pub(crate) use timeline_view_support::{
     MAX_POST_CONTENT_CHARS, MAX_PROFILE_ABOUT_CHARS, MAX_PROFILE_DISPLAY_NAME_CHARS,
@@ -959,7 +952,6 @@ impl AppService {
         for author in authors {
             self.restart_author_subscription(author.as_str()).await?;
         }
-        self.restart_direct_message_subscriptions().await?;
         Ok(())
     }
 

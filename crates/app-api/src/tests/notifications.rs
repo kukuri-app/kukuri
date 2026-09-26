@@ -462,34 +462,21 @@ async fn quote_repost_notification_survives_hydration_before_live_doc_event() {
 #[tokio::test]
 async fn incoming_dm_frame_creates_single_direct_message_notification_after_store() {
     let (app, store, _, blob_service) = local_app_with_memory_services();
-    let local_keys = app.services.keys.clone();
     let local_author_pubkey = app.current_author_pubkey();
     let remote_keys = generate_keys();
     let remote_pubkey = remote_keys.public_key_hex();
-    SocialProjectionStore::rebuild_author_relationships(
+    seed_follow_edges(
         store.as_ref(),
         local_author_pubkey.as_str(),
-        vec![AuthorRelationshipProjectionRow {
-            local_author_pubkey: local_author_pubkey.clone(),
-            author_pubkey: remote_pubkey.clone(),
-            following: true,
-            followed_by: true,
-            mutual: true,
-            friend_of_friend: false,
-            friend_of_friend_via_pubkeys: Vec::new(),
-            derived_at: 1,
-        }],
+        [remote_pubkey.as_str()],
+        FollowEdgeStatus::Active,
     )
-    .await
-    .expect("establish mutual relationship");
+    .await;
     let dm_id = direct_message_id_for_participants(
         &Pubkey::from(local_author_pubkey.as_str()),
         &Pubkey::from(remote_pubkey.as_str()),
     );
     let message_id = "dm-message-remote-1";
-    let topic =
-        derive_direct_message_topic(local_keys.as_ref(), &Pubkey::from(remote_pubkey.as_str()))
-            .expect("derive dm topic");
     let frame = encrypt_direct_message_frame(
         &remote_keys,
         &Pubkey::from(local_author_pubkey.as_str()),
@@ -515,7 +502,6 @@ async fn incoming_dm_frame_creates_single_direct_message_notification_after_stor
         &app.services,
         local_author_pubkey.as_str(),
         remote_pubkey.as_str(),
-        &topic,
         dm_id.as_str(),
         message_id,
         &frame_blob.hash,

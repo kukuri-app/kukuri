@@ -280,7 +280,6 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
       dm_id: [syncStatus.local_author_pubkey, pubkey].sort().join(':'),
       mutual: author.mutual,
       send_enabled: author.mutual,
-      peer_count: author.mutual ? 1 : 0,
       pending_outbox_count: 0,
       pending_outbox_has_more: false,
     };

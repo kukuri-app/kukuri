@@ -244,7 +244,6 @@ test.each(SUPPORTED_LOCALES)('locale %s keeps count-aware English noun keys plur
     'common:feed.pendingPosts',
     'shell:context.threadSummary',
     'shell:messages.conversationCount',
-    'shell:messages.peerCount',
     'shell:notifications.summary',
     'profile:overview.followedCount',
     'profile:overview.followingCount',

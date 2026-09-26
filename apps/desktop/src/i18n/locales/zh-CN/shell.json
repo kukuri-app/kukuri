@@ -149,11 +149,10 @@
     "mutualRequired": "双方不再互相关注，暂时无法发送私信。",
     "noMessages": "还没有消息。",
     "open": "打开",
-    "peerCount_one": "{{count}} 位已连接用户",
-    "peerCount_other": "{{count}} 位已连接用户",
     "pending": "等待发送",
     "pendingOutbox": "待发箱：{{count}} 条",
     "sendDisabled": "无法发送",
+    "sendEnabled": "可以发送",
     "sending": "正在发送…",
     "title": "消息"
   },

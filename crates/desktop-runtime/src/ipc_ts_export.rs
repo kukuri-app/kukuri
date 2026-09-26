@@ -168,7 +168,6 @@ fn export_ipc_types() {
         BookmarkedPostPageView,
         AuthorSocialView,
         DirectMessageStatusView,
-        DirectMessageTopicStatusView,
         DirectMessageMessageView,
         DirectMessageConversationView,
         NotificationView,

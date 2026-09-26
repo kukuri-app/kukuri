@@ -114,13 +114,4 @@ impl DesktopRuntime {
             .get_direct_message_status(request.pubkey.as_str())
             .await
     }
-
-    pub async fn get_direct_message_topic_status(
-        &self,
-        request: DirectMessageRequest,
-    ) -> Result<Option<DirectMessageTopicStatusView>> {
-        self.app_service
-            .get_direct_message_topic_status(request.pubkey.as_str())
-            .await
-    }
 }

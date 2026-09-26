@@ -149,11 +149,10 @@
     "mutualRequired": "相互フォローでなくなったため、ダイレクトメッセージを送信できません。",
     "noMessages": "メッセージはまだありません。",
     "open": "開く",
-    "peerCount_one": "接続中 {{count}}人",
-    "peerCount_other": "接続中 {{count}}人",
     "pending": "送信待ち",
     "pendingOutbox": "送信待ち: {{count}}件",
     "sendDisabled": "送信不可",
+    "sendEnabled": "送信可能",
     "sending": "送信中…",
     "title": "メッセージ"
   },
