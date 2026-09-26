@@ -1,6 +1,5 @@
 //! #1262: 拒否・欠損 session は一度だけ読み、後続の event を待たせない。
 use super::*;
-use crate::service::hydrate_subscription_doc_event;
 
 async fn rejected_session_reads_once(kind: &str) {
     let docs = Arc::new(CountingDocsSync::default());
@@ -35,9 +34,11 @@ async fn rejected_session_reads_once(kind: &str) {
         docs_author: None,
     };
     assert_eq!(
-        hydrate_subscription_doc_event(&services, topic, &replica, &event)
-            .await
-            .unwrap(),
+        crate::service::hydration_support::hydrate_session_key(
+            &services, topic, &replica, &event.key
+        )
+        .await
+        .unwrap(),
         0
     );
     let reads = docs
@@ -235,17 +236,11 @@ impl SessionFixture {
     }
 
     async fn event(&self, key: &str) -> usize {
-        hydrate_subscription_doc_event(
+        crate::service::hydration_support::hydrate_session_key(
             &self.app.services,
             self.topic,
             &self.replica,
-            &kukuri_docs_sync::DocEvent {
-                replica_id: self.replica.clone(),
-                key: key.into(),
-                content_hash: String::new(),
-                source_peer: None,
-                docs_author: None,
-            },
+            key,
         )
         .await
         .unwrap()
@@ -384,63 +379,6 @@ async fn displayed_manifest_finishing_after_five_seconds_projects_without_anothe
     assert!(*f.app.last_sync_ts.lock().await > before);
     assert_eq!(f.fetches(), 1);
     f.app.shutdown().await;
-}
-
-#[tokio::test]
-async fn session_envelope_arrival_projects_without_window_catch_up() {
-    for kind in ["live", "game"] {
-        let f = SessionFixture::new(kind).await;
-        let state = f
-            .docs
-            .query_replica(&f.replica, DocQuery::Exact(f.key.clone()))
-            .await
-            .unwrap()
-            .remove(0);
-        let state_json: serde_json::Value = serde_json::from_slice(&state.value).unwrap();
-        let hash = BlobHash::new(state_json["current_manifest"]["hash"].as_str().unwrap());
-        // Manifest is already local. Only envelope arrives late.
-        f.blobs.fetch_blob(&hash).await.unwrap();
-        let envelope_key = format!(
-            "envelopes/{}",
-            state_json["last_envelope_id"].as_str().unwrap()
-        );
-        let envelope = f
-            .docs
-            .query_replica(&f.replica, DocQuery::Exact(envelope_key.clone()))
-            .await
-            .unwrap()
-            .remove(0);
-        f.docs
-            .apply_doc_op(
-                &f.replica,
-                DocOp::DeletePrefix {
-                    prefix: envelope_key.clone(),
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(f.event(&f.key).await, 0);
-        f.docs
-            .apply_doc_op(
-                &f.replica,
-                DocOp::SetBytes {
-                    key: envelope_key.clone(),
-                    value: envelope.value,
-                },
-            )
-            .await
-            .unwrap();
-        f.docs.clear_queries().await;
-        assert_eq!(f.event(&envelope_key).await, 1);
-        assert!(
-            f.docs
-                .queries()
-                .await
-                .iter()
-                .all(|(_, query)| matches!(query, DocQuery::Exact(_)))
-        );
-        f.app.shutdown().await;
-    }
 }
 
 async fn wait_for_fetches(blobs: &RemoteManifest, expected: usize) {
@@ -608,63 +546,6 @@ async fn duplicate_candidate_sets_keep_shared_retry_history_and_candidate_memory
 }
 
 #[tokio::test]
-async fn pending_manifest_does_not_block_following_post_event_and_hidden_card_cancels() {
-    let f = SessionFixture::new("live").await;
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    *f.blobs.gate.lock().unwrap() = Some(gate.clone());
-    f.event(&f.key).await;
-    f.app
-        .set_session_display(crate::SessionDisplayRequest {
-            topic: f.topic.into(),
-            scope: TimelineScope::Public,
-            replica_id: f.replica.as_str().into(),
-            session_id: f.id.clone(),
-            kind: "live".into(),
-            observer: "visible-card".into(),
-            visible: true,
-            retry: false,
-        })
-        .await
-        .unwrap();
-    wait_for_fetches(&f.blobs, 1).await;
-    let post = persist_test_post(
-        f.docs.as_ref(),
-        None,
-        &generate_keys(),
-        &TopicId::new(f.topic),
-        PayloadRef::InlineText {
-            text: "following post".into(),
-        },
-        vec![],
-        None,
-    )
-    .await;
-    assert_eq!(
-        f.event(&format!("objects/{}/envelope", post.id.as_str()))
-            .await,
-        1
-    );
-    assert!(
-        f.app
-            .services
-            .projection_store
-            .get_object_projection(&post.id)
-            .await
-            .unwrap()
-            .is_some()
-    );
-    f.display(false, false).await;
-    gate.add_permits(1);
-    assert_eq!(
-        f.event(&f.key).await,
-        0,
-        "cancelled acquisition has not imported the manifest"
-    );
-    assert_eq!(f.fetches(), 1);
-    f.app.shutdown().await;
-}
-
-#[tokio::test]
 async fn stale_live_read_cannot_overwrite_a_later_ended_projection() {
     let f = SessionFixture::new("live").await;
     f.event(&f.key).await;
@@ -752,168 +633,6 @@ async fn rejected_private_display_does_not_fetch_or_register_a_candidate() {
             .is_empty()
     );
     f.app.shutdown().await;
-}
-
-#[tokio::test]
-async fn entry_body_after_its_notice_is_replayed_by_content_ready_without_a_window() {
-    let f = SessionFixture::new("live").await;
-    let state = f
-        .docs
-        .query_replica(&f.replica, DocQuery::Exact(f.key.clone()))
-        .await
-        .unwrap()
-        .remove(0);
-    let parsed: LiveSessionStateDocV1 = serde_json::from_slice(&state.value).unwrap();
-    f.blobs
-        .fetch_blob(&parsed.current_manifest.hash)
-        .await
-        .unwrap();
-    f.docs
-        .apply_doc_op(
-            &f.replica,
-            DocOp::DeletePrefix {
-                prefix: f.key.clone(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(f.event(&f.key).await, 0);
-    f.docs
-        .apply_doc_op(
-            &f.replica,
-            DocOp::SetBytes {
-                key: f.key.clone(),
-                value: state.value,
-            },
-        )
-        .await
-        .unwrap();
-    f.docs.clear_queries().await;
-    let pending = f
-        .app
-        .services
-        .session_projections
-        .take_ready_entries(&f.replica)
-        .await;
-    assert_eq!(pending.len(), 1);
-    assert_eq!(f.event(&pending[0].1).await, 1);
-    assert!(
-        f.docs
-            .queries()
-            .await
-            .iter()
-            .all(|(_, query)| matches!(query, DocQuery::Exact(_)))
-    );
-    assert!(
-        f.app
-            .services
-            .session_projections
-            .take_ready_entries(&f.replica)
-            .await
-            .is_empty()
-    );
-    f.app.shutdown().await;
-}
-
-#[tokio::test]
-async fn content_ready_tracks_the_notified_hash_even_when_a_rejected_record_exists() {
-    for envelope_event in [false, true] {
-        let f = SessionFixture::new("live").await;
-        let state = f
-            .docs
-            .query_replica(&f.replica, DocQuery::Exact(f.key.clone()))
-            .await
-            .unwrap()
-            .remove(0);
-        let parsed: LiveSessionStateDocV1 = serde_json::from_slice(&state.value).unwrap();
-        f.blobs
-            .fetch_blob(&parsed.current_manifest.hash)
-            .await
-            .unwrap();
-        let key = if envelope_event {
-            format!("envelopes/{}", parsed.last_envelope_id.as_str())
-        } else {
-            f.key.clone()
-        };
-        let genuine = f
-            .docs
-            .query_replica(&f.replica, DocQuery::Exact(key.clone()))
-            .await
-            .unwrap()
-            .remove(0);
-        f.docs
-            .apply_doc_op(
-                &f.replica,
-                DocOp::SetBytes {
-                    key: key.clone(),
-                    value: b"invalid existing record".to_vec(),
-                },
-            )
-            .await
-            .unwrap();
-        let notice = kukuri_docs_sync::DocEvent {
-            replica_id: f.replica.clone(),
-            key: key.clone(),
-            content_hash: genuine.content_hash.clone(),
-            source_peer: Some("remote".into()),
-            docs_author: None,
-        };
-        assert_eq!(
-            hydrate_subscription_doc_event(&f.app.services, f.topic, &f.replica, &notice)
-                .await
-                .unwrap(),
-            0
-        );
-        let pending = f
-            .app
-            .services
-            .session_projections
-            .take_ready_entries(&f.replica)
-            .await;
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].2.as_deref(), Some(genuine.content_hash.as_str()));
-        // An unrelated ContentReady must not discard the still-missing notified record.
-        assert_eq!(
-            hydrate_subscription_doc_event(&f.app.services, f.topic, &f.replica, &notice)
-                .await
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            f.app
-                .services
-                .session_projections
-                .take_ready_entries(&f.replica)
-                .await
-                .len(),
-            1
-        );
-        f.docs
-            .apply_doc_op(
-                &f.replica,
-                DocOp::SetBytes {
-                    key,
-                    value: genuine.value,
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            hydrate_subscription_doc_event(&f.app.services, f.topic, &f.replica, &notice)
-                .await
-                .unwrap(),
-            1
-        );
-        assert!(
-            f.app
-                .services
-                .session_projections
-                .take_ready_entries(&f.replica)
-                .await
-                .is_empty()
-        );
-        f.app.shutdown().await;
-    }
 }
 
 #[tokio::test]

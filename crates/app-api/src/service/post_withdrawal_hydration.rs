@@ -388,9 +388,3 @@ async fn apply_first_verified_withdrawal(
 pub(crate) fn post_withdrawal_key(object_id: &EnvelopeId) -> String {
     stable_key("withdrawals", &format!("{}/state", object_id.as_str()))
 }
-
-/// `withdrawals/<object id>/state` の key から object id を取り出す。
-pub(crate) fn object_id_from_post_withdrawal_key(key: &str) -> Option<EnvelopeId> {
-    let object_id = key.strip_prefix("withdrawals/")?.strip_suffix("/state")?;
-    (!object_id.is_empty() && !object_id.contains('/')).then(|| EnvelopeId::from(object_id))
-}

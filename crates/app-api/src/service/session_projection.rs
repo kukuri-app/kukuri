@@ -152,22 +152,6 @@ impl SessionProjections {
             expected_hash.map(str::to_owned),
         ));
     }
-    pub(crate) async fn take_ready_entries(
-        &self,
-        replica: &ReplicaId,
-    ) -> Vec<(String, String, Option<String>)> {
-        let mut state = self.state.lock().await;
-        let mut ready = Vec::new();
-        state.pending_docs.retain(|(topic, r, key, hash)| {
-            if r == replica {
-                ready.push((topic.clone(), key.clone(), hash.clone()));
-                false
-            } else {
-                true
-            }
-        });
-        ready
-    }
     /// 1 keyの全recordを検証し終えた結果。同じ集合の再通知で予算を復活させない。
     pub(crate) async fn observe_key(
         &self,

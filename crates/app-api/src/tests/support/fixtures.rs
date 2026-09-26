@@ -330,92 +330,6 @@ pub(crate) async fn remote_doc_event(
     }
 }
 
-pub(crate) async fn create_remote_object_notification(
-    app: &AppService,
-    projection_store: &dyn ProjectionStore,
-    docs_sync: &dyn DocsSync,
-    blob_service: &dyn BlobService,
-    event: DocEvent,
-) -> bool {
-    create_remote_object_notification_with_baseline(
-        app,
-        projection_store,
-        docs_sync,
-        blob_service,
-        &NotificationDocEventBaseline::default(),
-        event,
-    )
-    .await
-}
-
-pub(crate) async fn create_remote_object_notification_with_baseline(
-    app: &AppService,
-    projection_store: &dyn ProjectionStore,
-    docs_sync: &dyn DocsSync,
-    blob_service: &dyn BlobService,
-    baseline: &NotificationDocEventBaseline,
-    event: DocEvent,
-) -> bool {
-    // public topic の replica は、replica id から購読の topic が決まる。
-    let topic_id = match kukuri_docs_sync::post_replica_kind(&event.replica_id) {
-        Some(kukuri_docs_sync::PostReplicaKind::PublicTopic { topic_id }) => topic_id,
-        other => panic!("the notification fixture expects a public topic replica: {other:?}"),
-    };
-    AppService::maybe_create_notification_for_remote_object_event(
-        projection_store,
-        docs_sync,
-        blob_service,
-        app.current_author_pubkey().as_str(),
-        topic_id.as_str(),
-        baseline,
-        &event,
-    )
-    .await
-    .expect("create remote object notification")
-}
-
-pub(crate) async fn create_remote_follow_notification(
-    app: &AppService,
-    store: &dyn Store,
-    projection_store: &dyn ProjectionStore,
-    docs_sync: &dyn DocsSync,
-    author_pubkey: &str,
-    event: DocEvent,
-) -> bool {
-    create_remote_follow_notification_with_baseline(
-        app,
-        store,
-        projection_store,
-        docs_sync,
-        author_pubkey,
-        &NotificationDocEventBaseline::default(),
-        event,
-    )
-    .await
-}
-
-pub(crate) async fn create_remote_follow_notification_with_baseline(
-    app: &AppService,
-    store: &dyn Store,
-    projection_store: &dyn ProjectionStore,
-    docs_sync: &dyn DocsSync,
-    author_pubkey: &str,
-    baseline: &NotificationDocEventBaseline,
-    event: DocEvent,
-) -> bool {
-    AppService::maybe_create_notification_for_remote_follow_event(
-        store,
-        projection_store,
-        docs_sync,
-        app.current_author_pubkey().as_str(),
-        author_pubkey,
-        baseline,
-        &event,
-    )
-    .await
-    .expect("create remote follow notification")
-}
-
 /// 関係は follow edge から読むときに求める(#1221 R4-D)。test は双方向の edge を置いて mutual にする。
 pub(crate) async fn seed_follow_edges(
     store: &dyn Store,
@@ -438,4 +352,63 @@ pub(crate) async fn seed_follow_edges(
                 .expect("seed follow edge");
         }
     }
+}
+
+/// 取り込んだ remote の投稿から通知を作る(#1221 R5-H の `notify_remote_post` と同じ判定)。自分の書込みは通知しない。
+pub(crate) async fn create_remote_object_notification(
+    app: &AppService,
+    projection_store: &dyn ProjectionStore,
+    docs_sync: &dyn DocsSync,
+    blob_service: &dyn BlobService,
+    event: DocEvent,
+) -> bool {
+    let topic_id = match kukuri_docs_sync::post_replica_kind(&event.replica_id) {
+        Some(kukuri_docs_sync::PostReplicaKind::PublicTopic { topic_id }) => topic_id,
+        other => panic!("the notification fixture expects a public topic replica: {other:?}"),
+    };
+    let object_id = event
+        .key
+        .strip_prefix("objects/")
+        .and_then(|rest| rest.split('/').next())
+        .map(EnvelopeId::from);
+    let (Some(object_id), Some(_)) = (object_id, event.source_peer.as_ref()) else {
+        return false;
+    };
+    let Some(post) = load_verified_post(
+        docs_sync,
+        &event.replica_id,
+        &topic_id,
+        &object_id,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("load post") else {
+        return false;
+    };
+    let local = app.current_author_pubkey();
+    let content = match &post.header().payload_ref {
+        PayloadRef::InlineText { text } => Some(text.clone()),
+        PayloadRef::BlobText { hash, .. } => blob_service
+            .fetch_blob(hash)
+            .await
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string()),
+    };
+    let reply_to_local = match post.header().reply_to.as_ref() {
+        Some(parent) => projection_store
+            .get_object_projection(parent)
+            .await
+            .expect("parent")
+            .is_some_and(|row| row.author_pubkey == local),
+        None => false,
+    };
+    let Some(candidate) =
+        notification_candidate_from_verified_post(&local, &post, content, reply_to_local)
+    else {
+        return false;
+    };
+    AppService::put_notification_candidate(projection_store, &local, candidate)
+        .await
+        .expect("put notification")
 }

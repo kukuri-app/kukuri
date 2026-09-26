@@ -75,9 +75,9 @@ pub(crate) fn update_locator_replica(
     }
     let source = BucketReplica::parse(replica)?;
     let now = TimeBucket::from_unix_seconds(now_secs)?;
-    Ok((source.bucket() != now)
+    (source.bucket() != now)
         .then(|| BucketReplica::new(source.scope().clone(), now).map(|bucket| bucket.replica_id()))
-        .transpose()?)
+        .transpose()
 }
 
 impl AppService {

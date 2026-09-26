@@ -431,54 +431,6 @@ impl BackgroundCheckLedger {
     }
 }
 
-/// recovery tick が走査の要否を決めるための peer の状態。
-/// 戻り値は (topic に live な peer がいる, topic に設定済みの peer がいる, docs の支援 peer 数)。
-pub(crate) async fn recovery_probe_peer_state(
-    transport: &dyn Transport,
-    docs_sync: &dyn DocsSync,
-    topic: &str,
-) -> (bool, bool, usize) {
-    let (has_live_topic_peer, has_configured_topic_peer) = match transport.peers().await {
-        Ok(snapshot) => snapshot
-            .topic_diagnostics
-            .iter()
-            .find(|diagnostic| {
-                normalize_topic_name(diagnostic.topic.clone()).as_deref() == Some(topic)
-            })
-            .map(|diagnostic| {
-                (
-                    diagnostic.joined && !diagnostic.connected_peers.is_empty(),
-                    !diagnostic.configured_peer_ids.is_empty(),
-                )
-            })
-            .unwrap_or((false, false)),
-        Err(error) => {
-            warn!(
-                topic = %topic,
-                error = %error,
-                "failed to inspect live topic peer state during recovery tick"
-            );
-            (false, false)
-        }
-    };
-    let docs_assist_peer_count = match docs_sync.assist_peer_ids().await {
-        Ok(peer_ids) => peer_ids.len(),
-        Err(error) => {
-            warn!(
-                topic = %topic,
-                error = %error,
-                "failed to inspect docs-assisted peers during recovery tick"
-            );
-            0
-        }
-    };
-    (
-        has_live_topic_peer,
-        has_configured_topic_peer,
-        docs_assist_peer_count,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -50,9 +50,24 @@ pub(super) async fn integrity_fixture(name: &str) -> IntegrityFixture {
         None,
     )
     .await;
+    // R5-H: 新着は hint を受けた対象の exact 読取りで取り込む。
+    viewer
+        .apply_content_hint(
+            topic.as_str(),
+            &TimelineScope::Public,
+            &GossipHint::TopicObjectsChanged {
+                topic_id: topic.clone(),
+                objects: vec![HintObjectRef {
+                    object_id: first.id.as_str().to_string(),
+                    object_kind: "post".into(),
+                    docs_author: None,
+                }],
+            },
+        )
+        .await;
     assert!(
         wait_for_row(&viewer_store, &first.id).await,
-        "the first post must be projected by the docs event"
+        "the first post must be projected by the hint"
     );
     IntegrityFixture {
         docs_sync,
@@ -518,39 +533,4 @@ async fn unreadable_state_record_does_not_break_the_timeline_of_the_topic() {
             .any(|item| item.object_id == honest.id.as_str()),
         "an unreadable record hid the honest posts of the topic"
     );
-}
-
-// 正しい投稿(署名つき envelope と一致する header を、申告どおりの replica へ置いたもの)は、これまでどおり反映する。
-#[tokio::test]
-async fn consistent_post_is_still_projected() {
-    let fixture = integrity_fixture("consistent").await;
-    let author_keys = generate_keys();
-    let envelope = signed_post(
-        &author_keys,
-        &fixture.topic,
-        "an honest post",
-        ObjectVisibility::Public,
-        None,
-    );
-    let header = envelope
-        .to_post_object()
-        .expect("post object")
-        .expect("post object");
-    write_object_entries(
-        fixture.docs_sync.as_ref(),
-        &fixture.replica,
-        Some(&envelope),
-        &header,
-    )
-    .await;
-
-    assert!(wait_for_row(&fixture.viewer_store, &envelope.id).await);
-    let view = public_timeline_after_settle(&fixture).await;
-    let item = view
-        .items
-        .iter()
-        .find(|item| item.object_id == envelope.id.as_str())
-        .expect("the honest post is listed");
-    assert_eq!(item.author_pubkey, author_keys.public_key_hex());
-    assert_eq!(item.content, "an honest post");
 }

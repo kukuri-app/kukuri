@@ -284,7 +284,7 @@ async fn reconcile_applies_a_withdrawal_that_was_never_delivered_as_an_event() {
         docs_sync.as_ref(),
         &WithdrawalWriteRow {
             withdrawal_envelope_id: withdrawal.id.clone(),
-            replica_id: (&replica).clone(),
+            replica_id: replica.clone(),
             target_object_id: envelope.id.clone(),
             envelope: withdrawal.clone(),
             target_replica_id: None,

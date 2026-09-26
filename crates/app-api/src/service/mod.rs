@@ -66,9 +66,9 @@ pub(crate) use kukuri_core::{
     validate_metaverse_room_state, verify_post_withdrawal,
 };
 pub(crate) use kukuri_docs_sync::{
-    DocEvent, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync,
-    author_replica_id, private_channel_epoch_replica_id, private_channel_hint_topic,
-    private_channel_replica_id, stable_key, topic_replica_id,
+    DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync, author_replica_id,
+    private_channel_epoch_replica_id, private_channel_hint_topic, private_channel_replica_id,
+    stable_key, topic_replica_id,
 };
 pub(crate) use kukuri_metaverse_host::DomeSessionRuntime;
 pub(crate) use kukuri_store::{
@@ -90,10 +90,8 @@ pub(crate) use tokio::task::JoinHandle;
 pub(crate) use tracing::{info, warn};
 
 pub(crate) const REPLICA_SYNC_RESTART_RETRY_SECONDS: i64 = 5;
-pub(crate) const PUBLIC_TOPIC_RECOVERY_GRACE_MS: i64 = 3_000;
 /// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。
 pub(crate) const EXISTING_REPOST_LOOKUP_LIMIT: usize = 64;
-pub(crate) const PUBLIC_TOPIC_RECOVERY_BACKOFF_MS: [i64; 3] = [3_000, 10_000, 30_000];
 pub(crate) const PUBLIC_CHANNEL_ID: &str = "public";
 pub(crate) const DIRECT_MESSAGE_FRAME_MIME: &str =
     "application/vnd.kukuri.direct-message-frame+json";
@@ -142,9 +140,8 @@ mod hydration_limits;
 pub(crate) mod hydration_support;
 pub(crate) mod session_projection;
 use game_projection_support::GameRoomProjectionLocks;
-pub(crate) use hydration_limits::recovery_probe_peer_state;
 #[cfg(test)]
-pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_subscription_event};
+pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
 pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
 mod metaverse_room_event_support;
@@ -173,12 +170,9 @@ mod spatial_access_support;
 mod subscription_catch_up;
 #[cfg(test)]
 pub(crate) use subscription_catch_up::catch_up_sessions;
-pub(crate) use subscription_catch_up::{
-    CatchUpSchedule, catch_up_replica_window, missed_entry_needs_catch_up,
-    snapshot_window_notification_baseline,
-};
 mod reply_target_support;
 mod scope_leases;
+pub(crate) mod scope_receive;
 pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
 pub(crate) use scope_leases::{
     ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
@@ -200,31 +194,23 @@ pub(crate) use attachment_support::{
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
     joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
-    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
+    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topics,
     register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
     validate_game_room_scores, validate_game_room_transition,
 };
-pub(crate) use author_state_support::{
-    catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,
-};
+pub(crate) use author_state_support::{hydrate_author_state, known_docs_author};
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
-pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_doc_event,
-    hydrate_subscription_hint,
-};
+pub(crate) use hydration_support::hint_targets_topic;
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
     push_metaverse_room_event_buffer,
 };
 pub(crate) use notifications_support::{
     author_social_view_from_parts, author_social_view_sort_key, direct_message_notification_id,
-    document_notification_id, normalize_author_pubkey, notification_candidate_from_follow_event,
-    notification_candidate_from_object_event, notification_doc_event_fingerprint,
-    notification_doc_event_fingerprint_parts, notification_preview_text,
+    document_notification_id, normalize_author_pubkey, notification_preview_text,
 };
 pub(crate) use object_hydration::{
     BodyFetch, ObjectHydration, hydrate_object_in_topic, hydrate_object_in_topic_with,
-    hydrate_object_in_topic_with_hint,
 };
 pub(crate) use object_persistence_support::{
     PrivateEpochSnapshot, best_effort_blob_cache_status, best_effort_blob_view_status,
@@ -244,18 +230,17 @@ pub(crate) use object_persistence_support::{
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
     VerifiedPost, WithdrawalTargetCheck, load_post_with_hint, load_verified_post,
-    object_id_from_post_key, post_envelope_key, verify_withdrawal_against_records,
+    post_envelope_key, verify_withdrawal_against_records,
 };
 pub(crate) use post_withdrawal_hydration::{
     PostWithdrawalHydration, WithdrawalReadHints, hydrate_post_withdrawal_for_object,
-    hydrate_post_withdrawal_for_object_with_hints, object_id_from_post_withdrawal_key,
+    hydrate_post_withdrawal_for_object_with_hints,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope, fetch_author_envelope_by_id,
     load_custom_reaction_assets_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,
-    snapshot_follow_notification_baseline,
 };
 pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
@@ -286,7 +271,15 @@ pub(crate) use timeline_view_support::{
 
 // テストからのみ参照される再輸出(依存の可視化。WP-H5 PR1)。
 #[cfg(test)]
+pub(crate) use attachment_support::normalize_topic_name;
+#[cfg(test)]
 pub(crate) use kukuri_core::{build_post_envelope_with_payload_in_channel, build_repost_envelope};
+#[cfg(test)]
+pub(crate) use kukuri_docs_sync::DocEvent;
+#[cfg(test)]
+pub(crate) use notifications_support::notification_candidate_from_verified_post;
+#[cfg(test)]
+pub(crate) use object_hydration::hydrate_object_in_topic_with_hint;
 #[cfg(test)]
 pub(crate) use object_persistence_support::custom_reaction_asset_view_from_snapshot;
 #[cfg(test)]
@@ -341,27 +334,6 @@ pub(crate) async fn record_public_topic_docs_activity_if_current(
     {
         entry.last_docs_activity_at = Some(at_ms);
     }
-}
-
-pub(crate) async fn restart_replica_sync_with_backoff(
-    docs_sync: &dyn DocsSync,
-    topic_id: &str,
-    replica: &ReplicaId,
-    backoff: &mut SubscriptionRecoveryBackoff,
-) {
-    let now_ms = Utc::now().timestamp_millis();
-    if !backoff.ready(now_ms) {
-        return;
-    }
-    if let Err(error) = docs_sync.restart_replica_sync(replica).await {
-        warn!(
-            topic = %topic_id,
-            replica = %replica.as_str(),
-            error = %error,
-            "failed to restart replica sync"
-        );
-    }
-    backoff.schedule(now_ms);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -424,6 +396,8 @@ pub struct ServiceHandles {
     pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
     /// #1221 R5-H: 新形式の writer へ切り替えた時刻。切替前は空。
     pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
+    /// lease の task の読み手だけが持つ。取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。
+    pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl ServiceHandles {
@@ -535,6 +509,7 @@ impl ServiceHandles {
             withdrawal_checks: Arc::default(),
             range_checks: Arc::default(),
             writer_switched_at: Arc::default(),
+            notify_remote_posts: None,
         }
     }
 }
@@ -573,40 +548,6 @@ pub struct AppService {
 pub(crate) struct PublicTopicDeliveryStatus {
     pub(crate) generation: u64,
     pub(crate) last_docs_activity_at: Option<i64>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SubscriptionRecoveryBackoff {
-    pub(crate) next_retry_at_ms: i64,
-    pub(crate) step: usize,
-}
-
-impl SubscriptionRecoveryBackoff {
-    pub(crate) fn reset(&mut self) {
-        self.next_retry_at_ms = 0;
-        self.step = 0;
-    }
-
-    /// 変化が無い間の、次に再 sync を促す時刻。再 sync の backoff に合わせて伸ばす(#1225)。
-    pub(crate) fn next_probe_at(&self, now_ms: i64) -> i64 {
-        now_ms
-            .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS)
-            .max(self.next_retry_at_ms)
-    }
-
-    pub(crate) fn ready(&self, now_ms: i64) -> bool {
-        self.next_retry_at_ms <= now_ms
-    }
-
-    pub(crate) fn schedule(&mut self, now_ms: i64) {
-        let delay_ms = PUBLIC_TOPIC_RECOVERY_BACKOFF_MS[self
-            .step
-            .min(PUBLIC_TOPIC_RECOVERY_BACKOFF_MS.len().saturating_sub(1))];
-        self.next_retry_at_ms = now_ms.saturating_add(delay_ms);
-        if self.step + 1 < PUBLIC_TOPIC_RECOVERY_BACKOFF_MS.len() {
-            self.step += 1;
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -655,32 +596,6 @@ pub(crate) struct NotificationCandidate {
     pub(crate) content_labels: Option<Vec<String>>,
     pub(crate) created_at: i64,
     pub(crate) received_at: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct NotificationDocEventBaseline {
-    fingerprints: BTreeSet<String>,
-}
-
-impl NotificationDocEventBaseline {
-    /// key だけの読み出しの結果(key と content hash)から作る。値は読まない。
-    pub(crate) fn from_key_entries<'a>(
-        entries: impl IntoIterator<Item = &'a kukuri_docs_sync::DocKeyEntry>,
-    ) -> Self {
-        Self {
-            fingerprints: entries
-                .into_iter()
-                .map(|entry| {
-                    notification_doc_event_fingerprint_parts(&entry.key, &entry.content_hash)
-                })
-                .collect(),
-        }
-    }
-
-    pub(crate) fn contains(&self, event: &DocEvent) -> bool {
-        self.fingerprints
-            .contains(notification_doc_event_fingerprint(event).as_str())
-    }
 }
 
 impl AppService {

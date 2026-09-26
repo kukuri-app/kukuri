@@ -358,7 +358,7 @@ async fn withdrawal_with_an_oversized_generation_does_not_fail_a_non_empty_head_
         docs_sync.as_ref(),
         &WithdrawalWriteRow {
             withdrawal_envelope_id: withdrawal.id.clone(),
-            replica_id: (&replica).clone(),
+            replica_id: replica.clone(),
             target_object_id: envelopes[0].id.clone(),
             envelope: withdrawal.clone(),
             target_replica_id: None,

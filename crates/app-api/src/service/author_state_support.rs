@@ -252,38 +252,6 @@ pub(crate) async fn hydrate_author_state(
     )
 }
 
-/// 同期の区切りと取りこぼしの後の追いつき。読むのは、自分を指す follow・block の key(`graph/follows/<自分>`・
-/// `graph/blocks/<自分>`)だけ。相互 follow の判定と DM に要るので、取りこぼしても読み直す。それ以外の key の取りこぼしは
-/// 埋めない。
-pub(crate) async fn catch_up_author_state(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    policy: DocFetchPolicy,
-) -> Result<AuthorHydration> {
-    let mut reader =
-        AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy).await?;
-    let mut outcome = AuthorHydration::default();
-    for key in self_edge_keys(local_author_pubkey) {
-        outcome.add(reader.read(&key).await?);
-    }
-    Ok(outcome)
-}
-
-/// docs の event が指す author replica の key を 1 つ反映する。
-pub(crate) async fn hydrate_author_key(
-    services: &ServiceHandles,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    key: &str,
-    policy: DocFetchPolicy,
-) -> Result<AuthorHydration> {
-    AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy)
-        .await?
-        .read(key)
-        .await
-}
-
 /// author replica の key の種類。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AuthorKeyKind {

@@ -24,14 +24,15 @@ fn tracked_app(store: Arc<MemoryStore>, keys: KukuriKeys) -> Tracked {
     Tracked { app, hints, docs }
 }
 
-/// (lease の数、動いている task の数、購読中の hint topic の数、開いている replica の数)
+/// (lease の数、動いている task の数、購読中の hint topic の数、docs の replica の購読の数)。R5-H から task は
+/// docs の replica を購読しない。
 async fn counts(tracked: &Tracked) -> (usize, usize, usize, usize) {
     let leases = tracked.app.subscription_registry.scope_leases.lock().await;
     (
         leases.len(),
         leases.running_tasks(),
         tracked.hints.active_topics.lock().await.len(),
-        tracked.docs.open_replicas.lock().await.len(),
+        tracked.docs.subscribe_replicas.lock().await.len(),
     )
 }
 
@@ -178,12 +179,7 @@ async fn the_65th_column_is_rejected_without_subscribing() {
         .expect("an existing scope");
     assert_eq!(
         counts(&tracked).await,
-        (
-            MAX_ACTIVE_SCOPES,
-            MAX_ACTIVE_SCOPES,
-            MAX_ACTIVE_SCOPES,
-            MAX_ACTIVE_SCOPES
-        )
+        (MAX_ACTIVE_SCOPES, MAX_ACTIVE_SCOPES, MAX_ACTIVE_SCOPES, 0)
     );
 }
 
@@ -319,9 +315,10 @@ async fn leaving_a_screen_and_ending_participation_are_separate() {
     assert!(!app.has_topic_subscription(topic).await);
 }
 
-// channel の回転が続いても、開いている replica は現在と直前の 2 つまで。最後の holder で両方を閉じる。
+// R5-H: channel の回転が続いても、task は docs の replica を購読しない(直前の epoch の replica を開いて
+// handoff の grant を同期で待つ経路は、account 経路の grant の配送に置き換えた)。
 #[tokio::test]
-async fn a_rotating_channel_keeps_only_the_current_and_previous_replicas_open() {
+async fn a_rotating_channel_subscribes_no_docs_replica() {
     let tracked = tracked_app(Arc::new(MemoryStore::default()), generate_keys());
     let topic = "kukuri:topic:rotating";
     let channel = "channel-rotating";
@@ -340,14 +337,8 @@ async fn a_rotating_channel_keeps_only_the_current_and_previous_replicas_open() 
             .restore_private_channel_capability(joined.clone())
             .await
             .expect("rotate");
-        let open = tracked.docs.open_replicas.lock().await.len();
-        assert_eq!(open, (rotation + 1).min(2), "rotation {rotation}");
+        assert_eq!(counts(&tracked).await, (1, 1, 1, 0), "rotation {rotation}");
     }
-    tracked
-        .app
-        .release_scope_holder(&private_channel_holder(topic, channel))
-        .await;
-    assert!(tracked.docs.open_replicas.lock().await.is_empty());
 }
 
 async fn start_with_dormant_history(scale: usize) -> (usize, usize, usize, usize) {
@@ -421,7 +412,7 @@ async fn startup_with_ten_times_the_dormant_history_subscribes_only_the_leases()
     let base = start_with_dormant_history(1).await;
     let ten_times = start_with_dormant_history(10).await;
     // 2 channel(現 epoch)と desired の 1 topic だけ。task・hint・replica は lease の数と一致する。
-    assert_eq!(base, (3, 3, 3, 3));
+    assert_eq!(base, (3, 3, 3, 0));
     assert_eq!(ten_times, base);
 }
 
@@ -452,8 +443,7 @@ async fn endpoint_rebuild_recreates_only_leased_tasks_and_peer_changes_do_not() 
     app.follow_author(&generate_keys().public_key_hex())
         .await
         .expect("follow");
-    let before = tracked.docs.subscribe_replicas.lock().await.len();
-    assert_eq!(before, 3);
+    assert_eq!(counts(&tracked).await, (3, 3, 2, 0));
 
     app.set_discovery_seeds(
         DiscoveryMode::StaticPeer,
@@ -468,24 +458,10 @@ async fn endpoint_rebuild_recreates_only_leased_tasks_and_peer_changes_do_not() 
     .expect("seeds");
     app.import_peer_ticket("peer-ticket").await.expect("ticket");
     assert_eq!(*tracked.hints.subscribe_count.lock().await, 2);
-    assert_eq!(tracked.docs.subscribe_replicas.lock().await.len(), before);
 
     app.rebuild_scope_subscriptions().await.expect("rebuild");
     assert_eq!(*tracked.hints.subscribe_count.lock().await, 4);
-    let mut resubscribed = tracked.docs.subscribe_replicas.lock().await[before..].to_vec();
-    resubscribed.sort();
-    let mut leased = tracked.docs.subscribe_replicas.lock().await[..before].to_vec();
-    leased.sort();
-    assert_eq!(resubscribed, leased);
-    assert!(
-        !leased.contains(
-            &topic_replica_id("kukuri:topic:unleased")
-                .as_str()
-                .to_string()
-        )
-    );
-    let (leases, running, hints, _) = counts(&tracked).await;
-    assert_eq!((leases, running, hints), (3, 3, 2));
+    assert_eq!(counts(&tracked).await, (3, 3, 2, 0));
 }
 
 #[tokio::test(start_paused = true)]

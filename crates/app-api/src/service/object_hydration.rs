@@ -139,12 +139,48 @@ pub(crate) async fn hydrate_object_projection_from_post(
         anyhow::ensure!(stored.hash == *hash, "hydrated body hash changed");
     }
     services
-        .put_post_projection(projection_row_from_post(&post, content))
+        .put_post_projection(projection_row_from_post(&post, content.clone()))
         .await?;
     if let Some(attempt) = fetched_body.and_then(|body| body.attempt) {
         attempt.succeed();
     }
+    if let Some(notify) = &services.notify_remote_posts {
+        notify_remote_post(services, notify, &post, content).await?;
+    }
     Ok(true)
+}
+
+/// 購読中の scope へ取り込んだ投稿から通知を作る。通知の id は envelope から決まるので、読み直しても重複しない。
+async fn notify_remote_post(
+    services: &ServiceHandles,
+    notify: &tokio::sync::Notify,
+    post: &VerifiedPost,
+    content: Option<String>,
+) -> Result<()> {
+    let local = services.keys.public_key_hex();
+    let reply_to_local = match post.header().reply_to.as_ref() {
+        Some(parent) => services
+            .projection_store
+            .get_object_projection(parent)
+            .await?
+            .is_some_and(|row| row.author_pubkey == local),
+        None => false,
+    };
+    if let Some(candidate) = super::notifications_support::notification_candidate_from_verified_post(
+        &local,
+        post,
+        content,
+        reply_to_local,
+    ) && AppService::put_notification_candidate(
+        services.projection_store.as_ref(),
+        &local,
+        candidate,
+    )
+    .await?
+    {
+        notify.notify_waiters();
+    }
+    Ok(())
 }
 
 /// object id を 1 つ指定して、その投稿を projection へ反映する(#1239)。replica は走査しない。

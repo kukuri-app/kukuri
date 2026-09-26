@@ -218,57 +218,6 @@ async fn invalid_records_placed_before_the_withdrawal_do_not_cancel_the_withdraw
     assert_withdrawal_applied(&fixture).await;
 }
 
-// TR-1 / AC-2(INV-2): docs の event(key が `withdrawals/<object id>/state`)。
-#[tokio::test]
-async fn withdrawal_event_applies_the_withdrawal_behind_invalid_records() {
-    let fixture = shadowed_withdrawal("event", Vec::new()).await;
-    for shadow in invalid_withdrawal_records(&fixture.topic, &fixture.post) {
-        fixture
-            .docs_sync
-            .shadow(fixture.withdrawal_key.as_str(), shadow)
-            .await;
-    }
-    let applied = hydrate_subscription_event(
-        &fixture.app.services,
-        fixture.topic.as_str(),
-        &fixture.replica,
-        fixture.withdrawal_key.as_str(),
-    )
-    .await
-    .expect("event");
-    assert_eq!(applied, 1);
-    assert_withdrawal_applied(&fixture).await;
-}
-
-// TR-1 / AC-2(INV-3): hint(object kind が `post_withdrawal`)。
-#[tokio::test]
-async fn withdrawal_hint_applies_the_withdrawal_behind_invalid_records() {
-    let fixture = shadowed_withdrawal("hint", Vec::new()).await;
-    for shadow in invalid_withdrawal_records(&fixture.topic, &fixture.post) {
-        fixture
-            .docs_sync
-            .shadow(fixture.withdrawal_key.as_str(), shadow)
-            .await;
-    }
-    let applied = hydrate_subscription_hint(
-        &fixture.app.services,
-        fixture.topic.as_str(),
-        &fixture.replica,
-        &GossipHint::TopicObjectsChanged {
-            topic_id: fixture.topic.clone(),
-            objects: vec![HintObjectRef {
-                object_id: fixture.post.id.as_str().to_string(),
-                object_kind: "post_withdrawal".into(),
-                docs_author: None,
-            }],
-        },
-    )
-    .await
-    .expect("hint");
-    assert_eq!(applied, 1);
-    assert_withdrawal_applied(&fixture).await;
-}
-
 // TR-8 / AC-2(INV-4): 本文つきで保存された行は、view の生成からの背景の確認で伏せられる。
 #[tokio::test]
 async fn background_withdrawal_check_applies_the_withdrawal_behind_invalid_records() {

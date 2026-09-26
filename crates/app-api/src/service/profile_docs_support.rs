@@ -418,36 +418,6 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
     Ok(items)
 }
 
-/// follow の通知の起点(#1239)。replica は走査しない。
-///
-/// 通知になるのは、自分を指す follow(`graph/follows/<自分>`)だけなので、その key 1 件の key と content hash
-/// だけを読む。値は読まない。
-pub(crate) async fn snapshot_follow_notification_baseline(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    local_author_pubkey: &str,
-    docs_author: Option<&str>,
-) -> Result<NotificationDocEventBaseline> {
-    let key = stable_key("graph/follows", local_author_pubkey);
-    let query = DocKeyQuery {
-        prefix: key.clone(),
-        order: DocKeyOrder::Ascending,
-        limit: 1,
-    };
-    // 相手の docs author が分かれば、その名義の entry だけを起点にする(他の名義の entry で 1 件の枠を埋められない)。
-    let page = match docs_author {
-        Some(docs_author) => {
-            docs_sync
-                .query_replica_keys_by_author(replica, docs_author, query)
-                .await?
-        }
-        None => docs_sync.query_replica_keys(replica, query).await?,
-    };
-    Ok(NotificationDocEventBaseline::from_key_entries(
-        page.entries.iter().filter(|entry| entry.key == key),
-    ))
-}
-
 pub(crate) fn merge_seed_peers(
     configured_seed_peers: Vec<SeedPeer>,
     bootstrap_seed_peers: Vec<SeedPeer>,

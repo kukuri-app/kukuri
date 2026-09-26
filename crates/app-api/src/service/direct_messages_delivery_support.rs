@@ -78,59 +78,6 @@ impl AppService {
         }
     }
 
-    pub(crate) async fn maybe_create_notification_for_remote_object_event(
-        projection_store: &dyn ProjectionStore,
-        docs_sync: &dyn DocsSync,
-        blob_service: &dyn BlobService,
-        local_author_pubkey: &str,
-        topic_id: &str,
-        notification_baseline: &NotificationDocEventBaseline,
-        event: &DocEvent,
-    ) -> Result<bool> {
-        if notification_baseline.contains(event) {
-            return Ok(false);
-        }
-        let Some(candidate) = notification_candidate_from_object_event(
-            projection_store,
-            docs_sync,
-            blob_service,
-            local_author_pubkey,
-            topic_id,
-            event,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        Self::put_notification_candidate(projection_store, local_author_pubkey, candidate).await
-    }
-
-    pub(crate) async fn maybe_create_notification_for_remote_follow_event(
-        store: &dyn Store,
-        projection_store: &dyn ProjectionStore,
-        docs_sync: &dyn DocsSync,
-        local_author_pubkey: &str,
-        author_pubkey: &str,
-        notification_baseline: &NotificationDocEventBaseline,
-        event: &DocEvent,
-    ) -> Result<bool> {
-        if notification_baseline.contains(event) {
-            return Ok(false);
-        }
-        let Some(candidate) = notification_candidate_from_follow_event(
-            store,
-            docs_sync,
-            local_author_pubkey,
-            author_pubkey,
-            event,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        Self::put_notification_candidate(projection_store, local_author_pubkey, candidate).await
-    }
-
     pub(crate) async fn put_notification_candidate(
         projection_store: &dyn ProjectionStore,
         recipient_pubkey: &str,

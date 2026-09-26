@@ -122,60 +122,6 @@ async fn local_public_post_restarts_replica_sync_after_each_write() {
 }
 
 #[tokio::test]
-async fn hint_miss_coalesces_replica_sync_restarts() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
-    let hint_transport = Arc::new(TrackingHintTransport::default());
-    let docs_sync = Arc::new(TrackingDocsSync::default());
-    let app = app_service_from_dependencies(
-        store.clone(),
-        store,
-        transport,
-        hint_transport.clone(),
-        docs_sync.clone(),
-        Arc::new(MemoryBlobService::default()),
-        generate_keys(),
-    );
-    let topic = "kukuri:topic:hint-miss-cooldown";
-
-    display_topic(&app, topic).await.expect("display topic");
-
-    let hint_topic = TopicId::new(topic);
-    for suffix in ["one", "two"] {
-        hint_transport
-            .publish_hint(
-                &hint_topic,
-                GossipHint::TopicObjectsChanged {
-                    topic_id: hint_topic.clone(),
-                    objects: vec![HintObjectRef {
-                        object_id: format!("missing-{suffix}"),
-                        object_kind: "post".into(),
-                        docs_author: None,
-                    }],
-                },
-            )
-            .await
-            .expect("publish hint miss");
-    }
-
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if !docs_sync.restarted_replicas.lock().await.is_empty() {
-                return;
-            }
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("restart should be requested");
-
-    assert_eq!(
-        docs_sync.restarted_replicas.lock().await.clone(),
-        vec![topic_replica_id(topic).as_str().to_string()]
-    );
-}
-
-#[tokio::test]
 async fn shutdown_unsubscribes_active_hint_topics() {
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
