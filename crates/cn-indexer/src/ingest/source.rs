@@ -227,6 +227,12 @@ pub(super) struct PostObjectView {
     pub(super) media_manifest_refs: Vec<String>,
     #[serde(default)]
     pub(super) status: ObjectStatus,
+    /// 返信先の投稿（#1221 R5-E。関係の観測に使う）。
+    #[serde(default)]
+    pub(super) reply_to: Option<kukuri_core::EnvelopeId>,
+    /// repost・引用の元投稿（#1221 R5-E）。
+    #[serde(default)]
+    pub(super) repost_of: Option<kukuri_core::RepostSourceSnapshotV1>,
 }
 
 /// scan 対象の media 参照 1 件（blob hash + 参照元 metadata 由来の mime）。

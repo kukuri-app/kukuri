@@ -76,6 +76,16 @@ async fn persist_post(
             stable_key("objects", &format!("{object_id}/envelope")),
             serde_json::to_value(&envelope)?,
         ),
+        (
+            stable_key(
+                "indexes/timeline",
+                &format!(
+                    "{}/{object_id}",
+                    kukuri_core::timeline_sort_key(object.created_at, &object.object_id)
+                ),
+            ),
+            serde_json::json!({ "object_id": object_id }),
+        ),
     ] {
         docs.apply_doc_op(&replica, DocOp::SetJson { key, value })
             .await?;
@@ -95,10 +105,10 @@ async fn active_transmission_prevention_wins_before_scan_and_reingest() -> Resul
 
     let scope = ScopeReplica::from_scope(IndexScopeKind::PublicTopic, topic.as_str());
     let first = pipeline
-        .ingest_scope(scope.kind, &scope.id, &replica)
+        .ingest_recent_scope(scope.kind, &scope.id, &replica)
         .await?;
     let second = pipeline
-        .ingest_scope(scope.kind, &scope.id, &replica)
+        .ingest_recent_scope(scope.kind, &scope.id, &replica)
         .await?;
 
     assert_eq!(first.deindexed, 1);
@@ -137,7 +147,7 @@ async fn verified_author_withdrawal_deindexes_and_never_reappears() -> Result<()
 
     let (pipeline, entries, store) = pipeline_with(&docs, &projection);
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
         .await?;
     assert_eq!(summary.deindexed, 1);
     assert!(!entries.contains(IndexScopeKind::PublicTopic, topic.as_str(), &object_id));

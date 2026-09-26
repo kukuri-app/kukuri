@@ -184,10 +184,12 @@ async fn ten_times_more_history_does_not_increase_public_startup_reads() -> Resu
         }
         let (participant, projection) = participant(docs.clone(), pool.clone())?;
         let participant = participant.with_public_replica_mode(PublicReplicaReadMode::TimeBucketV1);
-        let scopes = participant.restore_scopes_at(1000 * 86_400).await?;
+        let scopes = participant
+            .restore_selected_scopes(&participant.selected_scopes_at(1000 * 86_400).await?)
+            .await?;
         assert_eq!(scopes.len(), 2);
         for scope in &scopes {
-            participant.ingest_scope(scope).await?;
+            participant.ingest_recent_scope(scope).await?;
         }
         assert_eq!(
             projection

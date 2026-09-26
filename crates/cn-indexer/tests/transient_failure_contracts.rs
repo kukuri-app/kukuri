@@ -133,6 +133,14 @@ impl DocsSync for FaultyDocs {
         Ok(records)
     }
 
+    async fn query_replica_keys(
+        &self,
+        replica_id: &ReplicaId,
+        query: kukuri_docs_sync::DocKeyQuery,
+    ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.inner.query_replica_keys(replica_id, query).await
+    }
+
     async fn subscribe_replica(
         &self,
         replica_id: &ReplicaId,
@@ -277,7 +285,7 @@ impl Fixture {
 
     async fn ingest(&self) -> Result<IngestSummary> {
         self.pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &self.replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &self.replica)
             .await
     }
 
@@ -414,7 +422,7 @@ async fn transient_index_store_read_failure_keeps_indexed_post() -> Result<()> {
     let replica = topic_replica_id("rust");
     let topic = TopicId::new("rust");
     let indexed = persist_post(&docs, &replica, &topic, "indexed").await;
-    let ingest = || pipeline.ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica);
+    let ingest = || pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica);
     assert_eq!(ingest().await?.indexed, 1);
 
     entries.arm(None);

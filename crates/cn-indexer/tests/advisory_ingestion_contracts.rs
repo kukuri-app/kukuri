@@ -55,7 +55,7 @@ async fn general_nsfw_is_indexed_with_advisory_label() -> Result<()> {
     let (pipeline, entries, store) =
         pipeline_with(&docs, &projection, service_with_providers(providers()));
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(summary.indexed, 1);
     assert_eq!(summary.skipped_non_allow, 0);
@@ -112,7 +112,7 @@ async fn general_nsfw_is_indexed_with_advisory_label() -> Result<()> {
 
     // 2 巡目（内容・構成不変）: provider 呼び出しなし、signal / event 増えず、advisory 不変（TR-10）。
     let second = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(second.indexed, 1);
     assert_eq!(second.scans_fresh, 0);
@@ -142,7 +142,7 @@ async fn general_nsfw_is_indexed_with_advisory_label() -> Result<()> {
     );
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, (strict, strict_store.clone()));
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(summary.indexed, 0);
     assert_eq!(summary.skipped_non_allow, 1);
@@ -180,7 +180,7 @@ async fn labeled_allow_text_does_not_short_circuit_media_scan() -> Result<()> {
     let (pipeline, entries, store) =
         pipeline_with(&docs, &projection, service_with_providers(vec![known, vlm]));
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(summary.indexed, 0);
     assert_eq!(summary.skipped_non_allow, 1);
@@ -222,7 +222,7 @@ async fn labeled_allow_text_does_not_short_circuit_media_scan() -> Result<()> {
     let (pipeline, entries, store) =
         pipeline_with(&docs, &projection, service_with_providers(vec![known, vlm]));
     let summary = pipeline
-        .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
     assert_eq!(summary.indexed, 1);
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));

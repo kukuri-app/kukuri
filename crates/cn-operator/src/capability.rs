@@ -247,8 +247,8 @@ impl Capability {
                     （trust と relation の双方を含む）",
                 telecom_note: "信頼・関係は node-local advisory であり、本ノードの authority scope 内に\
                     限定される。canonical な identity / social graph を変更しない。",
-                privacy_note: "関係の入力は公開トピックの共参加のみで、プライベートチャンネル由来の信号は\
-                    使わない。関係表示の離脱（opt-out）は可逆で、信頼値に影響しない。",
+                privacy_note: "関係の入力は公開トピックでの 2 者間のアクション（返信・repost・引用・リアクション）と\
+                    公開のフォローだけで、プライベートチャンネル由来の信号は使わない。関係表示の離脱（opt-out）は可逆で、信頼値に影響しない。",
                 terms_note: "trust signal は network-wide command ではなく optional な入力であり、\
                     cross-cluster content を自動抑制しない旨を記載する。",
             },

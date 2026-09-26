@@ -31,6 +31,16 @@ fn cipher() -> ChannelSecretCipher {
     ChannelSecretCipher::from_key_material(TEST_CIPHER_KEY).expect("cipher")
 }
 
+async fn has_index_demand(pool: &sqlx::PgPool, id: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT last_index_demand_at IS NOT NULL FROM cn_index.supported_topics
+         WHERE kind = 'public_topic' AND id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?)
+}
+
 #[tokio::test]
 async fn index_scope_limited_to_operator_supported_topics() -> Result<()> {
     let Some(admin_url) = integration_test_admin_database_url() else {
@@ -46,6 +56,8 @@ async fn index_scope_limited_to_operator_supported_topics() -> Result<()> {
 
     add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
     assert!(is_topic_supported(&pool, IndexScopeKind::PublicTopic, "rust").await?);
+    // 追加は取込みの需要として登録する（#1221 R5-E。手動の全件取込は無い）。
+    assert!(has_index_demand(&pool, "rust").await?);
 
     // supported set 外の topic は拒否される（index_rejects_topic_outside_supported_set）。
     assert!(!is_topic_supported(&pool, IndexScopeKind::PublicTopic, "golang").await?);
@@ -84,6 +96,7 @@ async fn index_admits_approved_user_indexing_request() -> Result<()> {
         .expect("request exists");
     assert_eq!(approved.status, IndexingRequestStatus::Approved);
     assert!(is_topic_supported(&pool, IndexScopeKind::PublicTopic, "rust").await?);
+    assert!(has_index_demand(&pool, "rust").await?);
 
     database.cleanup().await
 }

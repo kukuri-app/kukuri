@@ -76,11 +76,13 @@ impl IngestPipeline {
                 );
             }
         }
-        let (state_records, context) = self
-            .scope_context(replica_id, records, Some(object_ids))
+        let (state_records, context) = self.scope_context(replica_id, records, object_ids).await?;
+        let summary = self
+            .ingest_records(scope_kind, scope_id, replica_id, &state_records, &context)
             .await?;
-        self.ingest_records(scope_kind, scope_id, replica_id, &state_records, &context)
-            .await
+        self.observe_reactions(scope_kind, scope_id, replica_id, object_ids, None)
+            .await;
+        Ok(summary)
     }
 
     /// Poll only the current index window. A missing page never de-indexes older entries.

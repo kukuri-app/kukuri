@@ -674,11 +674,11 @@ fn promoted_capability_metadata_describes_implemented_behavior() {
     assert!(moderation.telecom_note.contains("authority scope"));
     assert!(moderation.terms_note.contains("申し立て"));
 
-    // trust / relation: 双方を含む・node-local advisory・共参加のみ・opt-out 可逆。
+    // trust / relation: 双方を含む・node-local advisory・公開の 2 者間のアクションのみ・opt-out 可逆。
     let trust = Capability::CommunityLocalTrust.meta();
     assert!(trust.display_name.contains("relation"));
     assert!(trust.purpose.contains("node-local advisory"));
-    assert!(trust.privacy_note.contains("共参加"));
+    assert!(trust.privacy_note.contains("2 者間のアクション"));
     assert!(trust.privacy_note.contains("プライベートチャンネル"));
     assert!(trust.privacy_note.contains("可逆"));
     assert!(trust.telecom_note.contains("canonical"));

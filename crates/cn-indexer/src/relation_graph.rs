@@ -6,14 +6,16 @@
 //! 使えることを担保する。schema 定義（型 / index 作成）のみ ArcadeDB SQL（`IF NOT EXISTS` が
 //! 必要なため。neo4j では相当する constraint 作成に置き換える）。
 //!
-//! - vertex `TrustUser { pubkey, cluster }`: relation の観測対象 user（社会グラフの canonical
+//! - vertex `RelationUser { pubkey, cluster }`: relation の観測対象 user（社会グラフの canonical
 //!   ではなく node-local overlay。この graph への書き込みは canonical に一切触れない）。
-//! - edge `RelatesTo { features_json }`: pairwise の feature（`shared_topics` 等）。feature は
+//! - edge `InteractsWith { features_json }`: pairwise の feature（`shared_topics` 等）。feature は
 //!   JSON 文字列 1 property に格納する（neo4j も map property を持たないため、この表現は
 //!   backend 間で可搬）。proximity の合成は backend 非依存の
 //!   [`proximity_from_features`] で行い、in-memory 実装と同一の score を返す。
 //! - edge は正規化ペア（辞書順 (小, 大)）で 1 本だけ張り、読みは無向 match（`-[r]-`）で
 //!   双方向から同じ feature が見える（対称性 contract）。
+//! - #1221 R5-E で観測を投稿の共起から 2 者間のアクションへ置き換えた。旧定義の型（`TrustUser` / `RelatesTo`）は
+//!   意味が違うため読まず、`ensure_schema` が型ごと削除する。新しい型の edge・cluster は解析が差分で作り直す。
 
 use std::collections::BTreeMap;
 
@@ -29,9 +31,11 @@ use crate::arcadedb::ArcadeDbClient;
 use crate::config::ArcadeDbConfig;
 
 /// relation graph の vertex type 名。
-const USER_TYPE: &str = "TrustUser";
+const USER_TYPE: &str = "RelationUser";
 /// relation graph の edge type 名。
-const EDGE_TYPE: &str = "RelatesTo";
+const EDGE_TYPE: &str = "InteractsWith";
+/// 旧定義（投稿の共起、#1221 R5-E より前）の型。edge 型を先に消す。
+const LEGACY_TYPES: [&str; 2] = ["RelatesTo", "TrustUser"];
 /// `proximity_scores` の 1 query あたりの candidate 数。
 const PROXIMITY_SCORES_CHUNK: usize = 200;
 
@@ -49,6 +53,11 @@ impl ArcadeDbRelationGraph {
 
     /// relation graph の schema（vertex / edge type + unique index）を冪等に用意する。
     pub async fn ensure_schema(&self) -> Result<()> {
+        for legacy in LEGACY_TYPES {
+            self.client
+                .command("sql", &format!("DROP TYPE {legacy} IF EXISTS UNSAFE"))
+                .await?;
+        }
         self.client
             .command(
                 "sql",
@@ -128,6 +137,19 @@ impl RelationStore for ArcadeDbRelationGraph {
                      SET r.features_json = $features_json"
                 ),
                 json!({ "a": a, "b": b, "features_json": features_json }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn remove_edge(&self, from: &str, to: &str) -> Result<()> {
+        self.client
+            .command_with_params(
+                "cypher",
+                &format!(
+                    "MATCH (a:{USER_TYPE} {{pubkey: $a}})-[r:{EDGE_TYPE}]-(b:{USER_TYPE} {{pubkey: $b}}) DELETE r"
+                ),
+                json!({ "a": from, "b": to }),
             )
             .await?;
         Ok(())
@@ -247,6 +269,17 @@ impl RelationStore for ArcadeDbRelationGraph {
                 "cypher",
                 &format!("MERGE (u:{USER_TYPE} {{pubkey: $pubkey}}) SET u.cluster = $cluster"),
                 json!({ "pubkey": pubkey, "cluster": cluster.0 }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn clear_cluster(&self, pubkey: &str) -> Result<()> {
+        self.client
+            .command_with_params(
+                "cypher",
+                &format!("MATCH (u:{USER_TYPE} {{pubkey: $pubkey}}) REMOVE u.cluster"),
+                json!({ "pubkey": pubkey }),
             )
             .await?;
         Ok(())

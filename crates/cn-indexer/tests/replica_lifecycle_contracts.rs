@@ -135,7 +135,7 @@ async fn mismatched_scope_is_rejected_before_opening_any_replica() -> Result<()>
     ] {
         assert!(
             participant
-                .ingest_scope(&ScopeReplica {
+                .ingest_recent_scope(&ScopeReplica {
                     kind: IndexScopeKind::PublicTopic,
                     id: "expected".into(),
                     replica_id
@@ -175,7 +175,7 @@ async fn a_post_signed_for_another_bucket_is_not_indexed() -> Result<()> {
     )
     .await?;
     let result = participant
-        .ingest_scope(&ScopeReplica {
+        .ingest_recent_scope(&ScopeReplica {
             kind: IndexScopeKind::PublicTopic,
             id: "time-check".into(),
             replica_id: replica.replica_id(),
@@ -216,7 +216,7 @@ async fn a_misplaced_copy_cannot_remove_an_already_indexed_post() -> Result<()> 
         let proper = scope(1)?;
         let wrong = scope(2)?;
         let id = post(&docs, &proper.replica_id, topic, "original", 86_400).await?;
-        assert_eq!(participant.ingest_scope(&proper).await?.indexed, 1);
+        assert_eq!(participant.ingest_recent_scope(&proper).await?.indexed, 1);
         for record in docs
             .query_replica(&proper.replica_id, DocQuery::All)
             .await?
@@ -234,7 +234,7 @@ async fn a_misplaced_copy_cannot_remove_an_already_indexed_post() -> Result<()> 
             )
             .await?;
         }
-        assert_eq!(participant.ingest_scope(&wrong).await?.indexed, 0);
+        assert_eq!(participant.ingest_recent_scope(&wrong).await?.indexed, 0);
         assert!(
             projection
                 .contains_object(IndexScopeKind::PublicTopic, topic, &id)
@@ -272,7 +272,7 @@ async fn bucket_posts_are_derived_from_the_signature_not_an_untrusted_state() ->
     .await?;
     assert_eq!(
         participant
-            .ingest_scope(&ScopeReplica {
+            .ingest_recent_scope(&ScopeReplica {
                 kind: IndexScopeKind::PublicTopic,
                 id: topic.into(),
                 replica_id: replica
@@ -320,7 +320,10 @@ async fn changing_only_the_bucket_marker_reuses_the_signed_post_scan() -> Result
         86_400,
     )
     .await?;
-    assert_eq!(participant.ingest_scope(&scope).await?.scans_fresh, 1);
+    assert_eq!(
+        participant.ingest_recent_scope(&scope).await?.scans_fresh,
+        1
+    );
     docs.apply_doc_op(
         &scope.replica_id,
         DocOp::SetBytes {
@@ -329,7 +332,7 @@ async fn changing_only_the_bucket_marker_reuses_the_signed_post_scan() -> Result
         },
     )
     .await?;
-    let result = participant.ingest_scope(&scope).await?;
+    let result = participant.ingest_recent_scope(&scope).await?;
     assert_eq!(
         result.scans_fresh, 0,
         "unsigned marker must not trigger a provider call"
@@ -492,7 +495,7 @@ async fn moving_to_bucket_replicas_does_not_deindex_the_still_supported_logical_
         now - 3 * 86_400,
     )
     .await?;
-    assert_eq!(participant.ingest_scope(&legacy).await?.indexed, 1);
+    assert_eq!(participant.ingest_recent_scope(&legacy).await?.indexed, 1);
     // process再起動の境界に相当する。保存済みの索引とdocs entryは残し、旧syncだけを閉じる。
     participant.stop_replica(&legacy).await?;
     let current = BucketReplica::new(
@@ -503,7 +506,7 @@ async fn moving_to_bucket_replicas_does_not_deindex_the_still_supported_logical_
     )?;
     let new_id = post(&docs, &current.replica_id(), topic, "bucket post", now).await?;
     let participant = participant.with_public_replica_mode(PublicReplicaReadMode::TimeBucketV1);
-    let desired = participant.desired_scopes_at(now).await?;
+    let desired = participant.selected_scopes_at(now).await?;
     assert_eq!(desired.len(), 2);
     assert!(
         desired

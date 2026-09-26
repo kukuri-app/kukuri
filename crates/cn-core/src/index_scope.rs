@@ -159,7 +159,8 @@ impl ChannelSecretCipher {
     }
 }
 
-/// supported set へ scope を追加する（冪等）。
+/// supported set へ scope を追加する（冪等）。追加は取込みの需要として登録し、bucket reader の優先枠が現在の窓を読む
+/// （#1221 R5-E。手動の全件取込は撤去済み）。
 pub async fn add_supported_topic(
     pool: &PgPool,
     kind: IndexScopeKind,
@@ -170,9 +171,9 @@ pub async fn add_supported_topic(
         bail!("supported topic id must not be empty");
     }
     let row = sqlx::query(
-        "INSERT INTO cn_index.supported_topics (id, kind)
-         VALUES ($1, $2)
-         ON CONFLICT (kind, id) DO UPDATE SET id = EXCLUDED.id
+        "INSERT INTO cn_index.supported_topics (id, kind, last_index_demand_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (kind, id) DO UPDATE SET id = EXCLUDED.id, last_index_demand_at = NOW()
          RETURNING id, kind, created_at",
     )
     .bind(id)
@@ -353,9 +354,9 @@ pub async fn approve_indexing_request(pool: &PgPool, id: &str) -> Result<Option<
     };
     let request = indexing_request_from_row(&row)?;
     sqlx::query(
-        "INSERT INTO cn_index.supported_topics (id, kind)
-         VALUES ($1, $2)
-         ON CONFLICT (kind, id) DO NOTHING",
+        "INSERT INTO cn_index.supported_topics (id, kind, last_index_demand_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (kind, id) DO UPDATE SET last_index_demand_at = NOW()",
     )
     .bind(&request.target_id)
     .bind(request.kind.as_str())

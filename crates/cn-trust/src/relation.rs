@@ -17,9 +17,9 @@ use async_trait::async_trait;
 pub use kukuri_cn_protocol::{Proximity, ProximityBasisEntry};
 use serde::{Deserialize, Serialize};
 
-/// 共有 supported topic 数の feature key。
+/// 2 者間のアクションがあった public topic の数の feature key（#1221 R5-E で意味を置換。key は維持）。
 pub const FEATURE_SHARED_TOPICS: &str = "shared_topics";
-/// co-participation イベント数（同一 scope での共起 entry 数）の feature key。
+/// 2 者間のアクション（返信・repost・引用・リアクション・フォロー）の件数の feature key（#1221 R5-E で意味を置換）。
 pub const FEATURE_CO_PARTICIPATION_EVENTS: &str = "co_participation_events";
 /// follow projection（ADR 0013）由来 feature の key。
 ///
@@ -104,11 +104,14 @@ pub fn proximity_from_features(features: &EdgeFeatures) -> Proximity {
 /// （`relation_does_not_mutate_social_graph_canonical` の構造的保証）。
 #[async_trait]
 pub trait RelationStore: Send + Sync {
-    /// co-participation / follow projection 等の feature を pairwise edge に格納する。
+    /// 2 者間のアクション等の feature を pairwise edge に格納する。
     ///
-    /// foundation の feature（co-participation 系）は対称なので、実装は (from, to) と
-    /// (to, from) のどちらで読んでも同じ feature が見えることを保証する。
+    /// feature は対称なので、実装は (from, to) と (to, from) のどちらで読んでも同じ feature が
+    /// 見えることを保証する。
     async fn upsert_edge(&self, from: &str, to: &str, features: &EdgeFeatures) -> Result<()>;
+
+    /// 成立しなくなったペアの edge を消す（#1221 R5-E）。無ければ何もしない。
+    async fn remove_edge(&self, from: &str, to: &str) -> Result<()>;
 
     /// viewer 視点の target への近接度（根拠つき）。edge が無ければ None。
     async fn pairwise_proximity(&self, viewer: &str, target: &str) -> Result<Option<Proximity>>;
@@ -138,4 +141,7 @@ pub trait RelationStore: Send + Sync {
 
     /// 解析 worker が算出した cluster 帰属を格納する（§6.1 の最小 API に加える書き込み口）。
     async fn set_cluster(&self, pubkey: &str, cluster: &ClusterRef) -> Result<()>;
+
+    /// public 参加が 0 になった author の cluster 帰属を外す（#1221 R5-E）。
+    async fn clear_cluster(&self, pubkey: &str) -> Result<()>;
 }

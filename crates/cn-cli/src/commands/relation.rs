@@ -2,9 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use sqlx::PgPool;
 
-use kukuri_cn_core::{
-    PgCoParticipationSource, RelationAnalyzeRun, initialize_database, record_relation_analyze_run,
-};
+use kukuri_cn_core::{RelationAnalyzeRun, initialize_database, record_relation_analyze_run};
 use kukuri_cn_indexer::{ArcadeDbConfig, ArcadeDbRelationGraph, analyze_relations};
 
 use crate::RelationAction;
@@ -42,8 +40,11 @@ pub(super) async fn run(pool: &PgPool, action: RelationAction) -> Result<()> {
 
             let report = outcome?;
             println!(
-                "relation analysis done: {} edge(s) upserted, {} cluster(s) assigned",
-                report.edges_upserted, report.clusters_assigned
+                "relation analysis done: {} edge(s) upserted, {} removed, {} cluster(s) assigned, {} cleared",
+                report.edges_upserted,
+                report.edges_removed,
+                report.clusters_assigned,
+                report.clusters_cleared
             );
         }
     }
@@ -51,12 +52,11 @@ pub(super) async fn run(pool: &PgPool, action: RelationAction) -> Result<()> {
 }
 
 async fn analyze(pool: &PgPool, limit: usize) -> Result<kukuri_cn_indexer::RelationAnalysisReport> {
-    let source = PgCoParticipationSource::new(pool.clone());
     let graph = ArcadeDbRelationGraph::new(ArcadeDbConfig::from_env())
         .context("failed to build ArcadeDB relation graph client")?;
     graph
         .ensure_schema()
         .await
         .context("failed to ensure relation graph schema")?;
-    analyze_relations(&source, &graph, limit).await
+    analyze_relations(pool, &graph, limit).await
 }

@@ -124,6 +124,21 @@ async fn persist_post(
     )
     .await
     .expect("envelope op");
+    docs.apply_doc_op(
+        replica,
+        DocOp::SetJson {
+            key: stable_key(
+                "indexes/timeline",
+                &format!(
+                    "{}/{object_id}",
+                    kukuri_core::timeline_sort_key(object.created_at, &object.object_id)
+                ),
+            ),
+            value: serde_json::json!({ "object_id": object_id }),
+        },
+    )
+    .await
+    .expect("timeline op");
     object_id
 }
 
@@ -173,6 +188,21 @@ async fn persist_blob_text_post(
     )
     .await
     .expect("envelope op");
+    docs.apply_doc_op(
+        replica,
+        DocOp::SetJson {
+            key: stable_key(
+                "indexes/timeline",
+                &format!(
+                    "{}/{object_id}",
+                    kukuri_core::timeline_sort_key(object.created_at, &object.object_id)
+                ),
+            ),
+            value: serde_json::json!({ "object_id": object_id }),
+        },
+    )
+    .await
+    .expect("timeline op");
     object_id
 }
 
@@ -189,6 +219,7 @@ async fn two_node_replica_sync_feeds_ingest() -> Result<()> {
     let replica = topic_replica_id("rust");
     let object_id = persist_post(docs_a.as_ref(), &replica, &topic, "hello from node a").await;
     docs_b.import_peer_ticket(&loopback_ticket(&node_a)).await?;
+    docs_b.open_replica(&replica).await?;
 
     // B 側の取り込みパイプライン（mock 安全性プロバイダ + メモリ内の真実源 / 投影）。
     let (service, artifact_store) = allow_service();
@@ -201,7 +232,7 @@ async fn two_node_replica_sync_feeds_ingest() -> Result<()> {
     let mut indexed = false;
     for _ in 0..600 {
         let _ = pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await;
         if projection
             .contains_object(IndexScopeKind::PublicTopic, "rust", object_id.as_str())
@@ -287,6 +318,7 @@ async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
     let object_id = persist_blob_text_post(docs_a.as_ref(), &replica, &topic, &stored).await;
     let ticket = loopback_ticket(&node_a);
     docs_b.import_peer_ticket(&ticket).await?;
+    docs_b.open_replica(&replica).await?;
     blobs_b.import_peer_ticket(&ticket).await?;
 
     let (service, artifact_store) = allow_service();
@@ -299,7 +331,7 @@ async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
     let mut indexed = false;
     for _ in 0..600 {
         let _ = pipeline
-            .ingest_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
             .await;
         let hits = projection
             .search_scope(IndexScopeKind::PublicTopic, "rust", "テスト", 10)

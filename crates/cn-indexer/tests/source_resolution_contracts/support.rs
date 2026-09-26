@@ -352,7 +352,7 @@ impl Fixture {
             self.projection.clone(),
         )
         .with_blob_service(self.blobs.clone())
-        .ingest_scope(self.kind, SCOPE, &self.replica)
+        .ingest_recent_scope(self.kind, SCOPE, &self.replica)
         .await
     }
     pub fn post(&self, bytes: &[u8]) -> Result<Post> {
@@ -406,6 +406,16 @@ impl Fixture {
         self.set(
             &format!("objects/{}/envelope", post.id),
             serde_json::to_value(&post.envelope)?,
+        )
+        .await?;
+        let created_at = post.state["created_at"].as_i64().unwrap_or_default();
+        self.set(
+            &format!(
+                "indexes/timeline/{}/{}",
+                kukuri_core::timeline_sort_key(created_at, &post.id.as_str().into()),
+                post.id
+            ),
+            serde_json::json!({ "object_id": post.id }),
         )
         .await
     }
