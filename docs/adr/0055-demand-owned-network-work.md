@@ -41,6 +41,36 @@ ownerは秘密鍵や投稿本文を持たず、capabilityの識別子と世代�
 登録履歴を起動時に全件読んでleaseへ展開しない。対象への操作・受信時に索引から個別確認する。
 休止は退出・unfollow・既読・データ削除ではない。
 
+### 1.1 購読するscopeのlease（R2-C、2026-09-26）
+
+clientの購読task・gossip hint購読・docs replicaの購読（`open_replica`と通知の購読）は、leaseを持つkeyだけに置く。
+keyは`Topic(topic)`・`Channel(topic, channel)`・`Author(pubkey)`で、accountあたり同時に最大64件（§2の意味上の同期対象64）。
+holderは次の4種類だけで、同じkeyを複数のholderが持っても枠は1つ。
+
+| holder | 取るkey | 外れる時 |
+| --- | --- | --- |
+| 開いている列（observerは列id） | timeline・thread・stream・game・metaverseは列のscope（channelの列は公開timelineも読むため`Topic`と`Channel`の2key）。profileは表示中のauthor、conversationはDMの相手 | 列を閉じた時。ウィンドウを隠しただけでは外れない |
+| 参加中のprivate channel | 現epochの`Channel`だけ（過去epochは購読しない） | 退出 |
+| 参加中のlive・自分の端末のDome hosting | `Topic`（channelなら`Channel`も） | live退出・終了、hostingの終了・移譲・Dome削除、accountのshutdown |
+| CLI daemonのdesired | 保存したscope（保存は64件まで。超えるfileは先頭64件だけを使う） | desiredの解除（`unsubscribe_topic`） |
+
+- 64件を超える取得は`ScopeLimitReached`（Tauriのcodeは`SCOPE_LIMIT_REACHED`）で拒否し、どのkeyも取らない。
+  列の追加は取り消して画面で説明し、live参加・Dome hosting・private channel参加は状態を保存せずに拒否する。
+  起動時の復元（参加中channelとdesired）は上限を超えた分を購読せずwarnを記録し、起動は続ける。
+  列はfrontendが登録し直すことで復元する。
+- 最後のholderが外れたら、taskをabortし、hint topicを抜け、replicaを`close_replica`で閉じる（旧syncの要求を残さない）。
+  private channelのepochが変わった時は、taskを現epochへ作り直し、直前のepochのreplicaは閉じない
+  （参加者はそこに書かれたhandoffのgrantを同期で受け取る。旧syncの撤去はR5-H）。
+- 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
+  一覧の行の著者ごとの購読と、起動時のfollow/block全員の購読は行わない。
+- `unsubscribe_topic`は列とdesiredのholderを外す操作で、参加は止めない。live退出は参加のholderだけを外す。
+- endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
+  seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う）。
+- 購読していないtopicへのpublishは短期送信先としてtopicへ入り、16件を超えたら最も古い短期送信先から抜ける（gossip購読81の内訳）。
+- 通知: 購読中のscopeでは、docsの通知（object eventとauthorのfollow event）を従来どおり作る。画面外の通知は§4の受信入口が担う。
+- 公開topicのDome操作と入場の権限は購読の有無ではなく、そのtopicのgossipを止めていないことで判定する（R2-C以前の実効的な判定と同じ）。
+  blockによるDome接続の解除は、leaseのあるtopicと参加中のchannelのcontextを対象にする。
+
 ## 2. 受付・容量・公平性（D3・D4）
 
 要求キーは `(account, scope/capability generation, protocol, object/replica,
