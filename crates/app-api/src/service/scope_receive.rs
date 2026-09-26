@@ -189,7 +189,7 @@ impl AppService {
     /// 現在と直前の bucket(と旧形式の保存済みデータ)を 1 ページだけ読み直す。live・game の session も含める。
     pub(crate) async fn reread_scope(&self, topic_id: &str, scope: &TimelineScope) {
         if let Err(error) = self
-            .reconcile_timeline_range_checked(topic_id, scope, None, REPLICA_WINDOW_ENTRIES)
+            .reconcile_timeline_range_checked(topic_id, scope, None, REPLICA_WINDOW_ENTRIES, false)
             .await
         {
             warn!(topic = %topic_id, %error, "failed to reread the current buckets");

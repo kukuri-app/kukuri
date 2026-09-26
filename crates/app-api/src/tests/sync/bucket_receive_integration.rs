@@ -162,3 +162,102 @@ fn the_day_boundary_reread_waits_until_the_next_bucket() {
     assert_eq!(until_next_bucket(day * 11 - 1).as_secs(), 1);
     assert_eq!(until_next_bucket(day * 10 + 60).as_secs(), day as u64 - 60);
 }
+
+// 同じ task の 2 回目の読み直し(日の境界と同じ台帳の key)も、bucket の先頭を読み直す。1 回目が 1 ページで止めた読み残しの
+// 位置を持ち越さない(#1221 R5-H)。
+#[tokio::test]
+async fn a_second_reread_reads_the_head_again() -> Result<()> {
+    let network = FakeNetwork::default();
+    let writer = Peer::new(&network, "writer").await?;
+    let reader = Peer::new(&network, "reader").await?;
+    reader.learn(&writer).await?;
+    writer.learn(&reader).await?;
+    let topic = "kukuri:topic:r5h-reread-head";
+    let mut last = String::new();
+    for index in 0..60 {
+        last = writer
+            .app
+            .create_post(topic, &format!("bulk {index}"), None)
+            .await?;
+    }
+    reader.app.reread_scope(topic, &TimelineScope::Public).await;
+    assert!(
+        reader.projected(&last).await,
+        "the first reread reads the newest"
+    );
+    let late = writer
+        .app
+        .create_post(topic, "late without a hint", None)
+        .await?;
+    sleep(Duration::from_millis(31_000)).await;
+    reader.app.reread_scope(topic, &TimelineScope::Public).await;
+    assert!(
+        reader.projected(&late).await,
+        "the second reread reads the newest post"
+    );
+    reader.finish().await?;
+    writer.finish().await
+}
+
+// 日の境界の読み直しは、直前の日の bucket も先頭から 1 ページ読む。前日に hint を落とした投稿(前日の時刻で署名し、前日の
+// bucket に置いた投稿)を、lease の開始の読み直しの直後の境界の読み直しで取り込む(AC-4・AC-9)。
+#[tokio::test]
+async fn the_day_boundary_reread_takes_in_a_post_whose_hint_was_dropped_the_day_before()
+-> Result<()> {
+    let network = FakeNetwork::default();
+    let writer = Peer::new(&network, "writer").await?;
+    let reader = Peer::new(&network, "reader").await?;
+    reader.learn(&writer).await?;
+    writer.learn(&reader).await?;
+    let topic = TopicId::new("kukuri:topic:r5h-day-boundary");
+    let yesterday = TimeBucket::from_unix_seconds(Utc::now().timestamp() - 86_400)?;
+    let day_start = yesterday.start_seconds() as i64;
+    let bucket = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: topic.as_str().into(),
+        },
+        yesterday,
+    )?
+    .replica_id();
+    let mut last = None;
+    for index in 0..60 {
+        last = Some(
+            super::range_reconcile::put_post_at(
+                writer.docs.as_ref(),
+                &bucket,
+                writer.app.keys(),
+                &topic,
+                day_start + 100 + index,
+                &format!("yesterday {index}"),
+                None,
+            )
+            .await,
+        );
+    }
+    let last = last.expect("posts");
+    reader
+        .app
+        .reread_scope(topic.as_str(), &TimelineScope::Public)
+        .await;
+    assert!(reader.projected(last.envelope.id.as_str()).await);
+    let late = super::range_reconcile::put_post_at(
+        writer.docs.as_ref(),
+        &bucket,
+        writer.app.keys(),
+        &topic,
+        day_start + 200,
+        "yesterday without a hint",
+        None,
+    )
+    .await;
+    reader
+        .app
+        .reread_scope(topic.as_str(), &TimelineScope::Public)
+        .await;
+    assert!(
+        reader.projected(late.envelope.id.as_str()).await,
+        "the boundary reread takes in the post from the day before"
+    );
+    reader.finish().await?;
+    writer.finish().await
+}

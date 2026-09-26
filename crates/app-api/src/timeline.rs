@@ -811,7 +811,7 @@ impl AppService {
         let unavailable;
         {
             let reconcile = self
-                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
+                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit, true)
                 .await?;
             if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());

@@ -446,18 +446,20 @@ impl AppService {
         limit: usize,
     ) -> Result<usize> {
         Ok(self
-            .reconcile_timeline_range_checked(topic_id, scope, before, limit)
+            .reconcile_timeline_range_checked(topic_id, scope, before, limit, true)
             .await?
             .hydrated)
     }
 
-    /// `reconcile_timeline_range` の本体。取得側は、照合したかどうかでページの読み直しを決める。
+    /// `reconcile_timeline_range` の本体。取得側は、照合したかどうかでページの読み直しを決める。`ledger` は remote の
+    /// 照合の台帳を使うか(読み直しは使わない。`reconcile_remote_index_range`)。
     pub(crate) async fn reconcile_timeline_range_checked(
         &self,
         topic_id: &str,
         scope: &TimelineScope,
         before: Option<&TimelineCursor>,
         limit: usize,
+        ledger: bool,
     ) -> Result<RangeReconcile> {
         if limit == 0 {
             return Ok(RangeReconcile::default());
@@ -484,6 +486,7 @@ impl AppService {
                 before.as_ref().map(|c| c.created_at),
                 &range,
                 RANGE_CHECK_ENTRY_LIMIT / 2,
+                ledger,
             )
             .await?;
         let local = self
@@ -777,6 +780,7 @@ impl AppService {
                 anchor,
                 &range,
                 RANGE_CHECK_ENTRY_LIMIT / 2,
+                true,
             )
             .await?;
         let local = self

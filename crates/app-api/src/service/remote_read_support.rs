@@ -127,6 +127,9 @@ pub(crate) async fn writer_readers(
 impl AppService {
     /// Read the selected bucket page from one provider at a time. It shares
     /// the signed post/withdrawal projector with the local range check.
+    ///
+    /// `ledger` が偽の読み直し(lease の開始・再接続・日の境界。#1221 R5-H)は、照合の台帳を使わず、毎回各 bucket の
+    /// 先頭(新しい側)から 1 ページを読む。読み残しの位置を持ち越さず、記録もしない。
     pub(super) async fn reconcile_remote_index_range(
         &self,
         topic_id: &str,
@@ -134,6 +137,7 @@ impl AppService {
         anchor_seconds: Option<i64>,
         range: &IndexRange<'_>,
         max_entries: usize,
+        ledger: bool,
     ) -> Result<RangeReconcile> {
         if max_entries == 0 {
             return Ok(RangeReconcile::default());
@@ -218,12 +222,16 @@ impl AppService {
                 anchor_seconds.unwrap_or_default(),
             );
             let now_ms = Utc::now().timestamp_millis();
-            let Some(resume_from) = self
-                .services
-                .range_checks
-                .try_begin(&ledger_key, now_ms)
-                .await
-            else {
+            let begun = match ledger {
+                true => {
+                    self.services
+                        .range_checks
+                        .try_begin(&ledger_key, now_ms)
+                        .await
+                }
+                false => Some(None),
+            };
+            let Some(resume_from) = begun else {
                 let (missing, read_past) =
                     self.services.range_checks.last_result(&ledger_key).await;
                 total.merge_from(
@@ -347,12 +355,12 @@ impl AppService {
                         },
                         range.order,
                     );
-                    if let Some(cursor) = read_past {
+                    if let Some(cursor) = read_past.filter(|_| ledger) {
                         self.services
                             .range_checks
                             .record_resume(&ledger_key, cursor, outcome.missing)
                             .await;
-                    } else {
+                    } else if ledger {
                         self.services
                             .range_checks
                             .record_finished(&ledger_key, now_ms, outcome.result(), outcome.missing)
@@ -361,10 +369,12 @@ impl AppService {
                 }
                 Some(Ok(Err(error))) => {
                     warn!(%error, "remote page read failed");
-                    self.services
-                        .range_checks
-                        .record_finished(&ledger_key, now_ms, RangeCheckResult::Stalled, 0)
-                        .await;
+                    if ledger {
+                        self.services
+                            .range_checks
+                            .record_finished(&ledger_key, now_ms, RangeCheckResult::Stalled, 0)
+                            .await;
+                    }
                 }
                 Some(Err(_)) | None => break,
             }
