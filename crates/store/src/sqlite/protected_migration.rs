@@ -12,7 +12,8 @@ use kukuri_core::DirectMessageAttachmentManifestV1;
 pub const PROTECTED_MIGRATION_PAGE: usize = 128;
 
 /// 移行する kind。`private` と `dome_pin` は呼出し元が旧領域の索引(capability の一覧・blob の tag)から読む。
-pub const PROTECTED_MIGRATION_KINDS: [&str; 10] = [
+/// `owner_participants` は、owner の channel の旧 docs にある参加 record を参加者の表へ移す(#1221 R5-H)。
+pub const PROTECTED_MIGRATION_KINDS: [&str; 11] = [
     "own_envelope",
     "bookmark",
     "reaction_bookmark",
@@ -23,6 +24,7 @@ pub const PROTECTED_MIGRATION_KINDS: [&str; 10] = [
     "avatar",
     "private",
     "dome_pin",
+    "owner_participants",
 ];
 
 /// 候補の保護参照の元。呼出し元は、これから旧領域の依存 record と追加の blob を求める。

@@ -10,6 +10,7 @@ use kukuri_core::{
     VerifiedReceiveOffer, build_direct_message_ack, receive_epoch_key_id,
     seal_private_receive_payload,
 };
+use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{DirectMessageOutboxRow, PrivateChannelParticipantRow};
 use kukuri_transport::EndpointAddr;
 
@@ -103,6 +104,85 @@ impl AppService {
                 last_attempt_at: None,
             })
             .await
+    }
+
+    /// 更新前からの参加者を参加者の表へ移す 1 ステップ(#1221 R5-H 決定 3)。owner の channel の現 epoch の旧 docs に
+    /// ある参加 record を、key の窓 1 つ(128 件まで)ずつ移す。窓は参加者の pubkey の hex の接頭辞で切り、128 件で
+    /// 埋まる接頭辞は 1 桁細かくしてから読む(全件を一度に読まない)。
+    ///
+    /// `cursor` は保存した位置で、`"<channel の key>\t<接頭辞>"` はその channel の途中、`"<channel の key>"` はその
+    /// channel まで済んだこと、空は未着手。戻り値は次の位置と、終端へ達したか。rotation は参加者の表だけを読むので、
+    /// 移し終える前の rotation も、移した分と表の分を宛先にする。
+    pub async fn migrate_legacy_private_channel_participants(
+        &self,
+        cursor: &str,
+    ) -> Result<(String, bool)> {
+        let local = self.current_author_pubkey();
+        let (finished, prefix) = match cursor.split_once('\t') {
+            Some((key, prefix)) => (key, Some(prefix)),
+            None => (cursor, None),
+        };
+        let target = self
+            .joined_private_channels
+            .lock()
+            .await
+            .iter()
+            .filter(|(key, state)| {
+                state.owner_pubkey == local
+                    && prefix.map_or(key.as_str() > finished, |_| key.as_str() == finished)
+            })
+            .min_by(|left, right| left.0.cmp(right.0))
+            .map(|(key, state)| (key.clone(), state.clone()));
+        let Some((key, state)) = target else {
+            // 途中の channel から退出していれば、その channel は済みとして次へ進む。
+            return Ok((finished.to_string(), prefix.is_none()));
+        };
+        let prefix = prefix.unwrap_or_default();
+        let replica = current_private_channel_replica_id(&state);
+        let page = self
+            .docs_sync()
+            .query_replica_keys(
+                &replica,
+                DocKeyQuery {
+                    prefix: stable_key("channels/participants", prefix),
+                    order: DocKeyOrder::Ascending,
+                    limit: PRIVATE_CHANNEL_PARTICIPANT_PAGE,
+                },
+            )
+            .await?;
+        if page.reached_limit && prefix.len() < 64 {
+            return Ok((format!("{key}\t{prefix}0"), false));
+        }
+        for entry in page.entries {
+            let Some(pubkey) = entry
+                .key
+                .strip_prefix("channels/participants/")
+                .and_then(|rest| rest.strip_suffix("/envelope"))
+            else {
+                continue;
+            };
+            if let Some(participant) = fetch_private_channel_participant_from_replica(
+                self.docs_sync(),
+                &replica,
+                pubkey,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
+                && participant.channel_id == state.channel_id
+            {
+                self.services
+                    .projection_store
+                    .put_private_channel_participant(participant_row(&participant))
+                    .await?;
+            }
+        }
+        // 同じ桁数の次の接頭辞(末尾の f は繰り上げる)。無ければこの channel は済み。
+        let rest = prefix.trim_end_matches('f');
+        let next = match rest.chars().last().and_then(|last| last.to_digit(16)) {
+            Some(digit) => format!("{key}\t{}{:x}", &rest[..rest.len() - 1], digit + 1),
+            None => key,
+        };
+        Ok((next, false))
     }
 
     /// outbox の制御 record の行を運ぶ offer の参照。

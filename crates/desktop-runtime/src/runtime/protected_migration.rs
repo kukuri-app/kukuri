@@ -146,6 +146,14 @@ impl DesktopRuntime {
                     let done = tags.len() < PROTECTED_MIGRATION_PAGE;
                     (plans, tags.last().cloned().unwrap_or(cursor), done)
                 }
+                // #1221 R5-H: 更新前からの参加者を、owner の参加者の表へ 1 回だけ移す。
+                "owner_participants" => {
+                    let (next, done) = self
+                        .app_service
+                        .migrate_legacy_private_channel_participants(&cursor)
+                        .await?;
+                    (Vec::new(), next, done)
+                }
                 _ => {
                     let page = self.store.protected_migration_page(kind, &local).await?;
                     let (mut next, mut done) = (page.cursor, page.done);
