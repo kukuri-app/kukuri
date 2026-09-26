@@ -165,6 +165,12 @@ async fn index_row(pool: &PgPool, scope: &str, object: &str, created_at: i64) ->
         &VerdictPersistMeta::default(),
     )
     .await?;
+    // verdict は投稿を取り込んだ当時に作られる（投稿の作成時刻と同じ頃）。
+    sqlx::query("UPDATE cn_safety.scan_verdicts SET updated_at = TO_TIMESTAMP($1) WHERE id = $2")
+        .bind(created_at)
+        .bind(&verdict.id)
+        .execute(pool)
+        .await?;
     upsert_index_entry(
         pool,
         &NewIndexEntry {
@@ -277,7 +283,8 @@ async fn withdrawn_post_stays_out_after_its_marker_is_reclaimed() -> Result<()> 
         );
 
         // 受入下限が投稿の作成時刻を越えると、marker は回収される。
-        let floor = advance_retention_floor(&pool, post.created_at + RETENTION_SECS + 100).await?;
+        let floor =
+            advance_retention_floor(&pool, post.created_at + RETENTION_SECS + 100, 128).await?;
         assert!(floor > post.created_at);
         while reclaim_expired(&pool, floor, 128).await? > 0 {}
         assert_eq!(count(&pool, "cn_index.known_post_withdrawals").await?, 0);
@@ -306,39 +313,38 @@ async fn withdrawn_post_stays_out_after_its_marker_is_reclaimed() -> Result<()> 
 }
 
 #[tokio::test]
-async fn capacity_raises_the_floor_until_the_count_fits() -> Result<()> {
+async fn capacity_keeps_the_count_within_b_through_the_worker_pass() -> Result<()> {
     with_database("cn_retention_capacity", |_, pool| async move {
         let now = chrono::Utc::now().timestamp();
         configure_retention(
             &pool,
             RetentionSettings {
-                capacity_rows: 10,
+                capacity_rows: 200,
                 retention_secs: RETENTION_SECS,
             },
         )
         .await?;
-        for index in 0..8 {
-            index_row(&pool, TOPIC, &format!("post-{index}"), now - 100 + index).await?;
+        let participant = participant(&pool, Arc::new(MemoryIndexProjection::new()))?;
+        // 流入が容量を大きく上回っても、worker と同じ 1 回の見直しで計数は B 以下へ戻る。
+        for cycle in 0..5 {
+            for index in 0..150 {
+                let created_at = now - 10_000 + cycle * 1_000 + index;
+                index_row(&pool, TOPIC, &format!("post-{cycle}-{index}"), created_at).await?;
+            }
+            assert!(units(&pool).await? > 200);
+            participant.reclaim_retention_pass(now, 128, 16).await?;
+            assert!(units(&pool).await? <= 200, "cycle {cycle}");
         }
-        assert_eq!(units(&pool).await?, 16, "8 index rows and their 8 verdicts");
-        let mut floor = 0;
-        while units(&pool).await? > 10 {
-            floor = advance_retention_floor(&pool, now).await?;
-            assert!(reclaim_expired(&pool, floor, 128).await? <= 128);
-        }
-        assert_eq!(count(&pool, "cn_index.index_entries").await?, 2);
-        assert_eq!(
-            floor,
-            now - 100 + 6,
-            "the floor passes only the reclaimed rows"
-        );
-        // 受入下限より古い投稿は、容量に余裕ができても索引へ入らない。
+        // 残ったのは最新の行で、受入下限より古い投稿は容量に余裕があっても索引へ入らない。
+        let floor: i64 = sqlx::query_scalar("SELECT floor FROM cn_index.retention_state")
+            .fetch_one(&pool)
+            .await?;
+        assert!(floor > now - 10_000 + 4_000);
         assert!(
-            index_row(&pool, TOPIC, "late-old-post", now - 100)
+            index_row(&pool, TOPIC, "late-old-post", floor - 1)
                 .await
                 .is_err()
         );
-        index_row(&pool, TOPIC, "new-post", now).await?;
         Ok(())
     })
     .await
@@ -441,11 +447,6 @@ async fn reclaim_resumes_from_the_persisted_floor_in_bounded_steps() -> Result<(
                 .upsert_entry(&projected(TOPIC, &object, old + index))
                 .await?;
         }
-        // 古い投稿の verdict は、取り込んだ当時（古い時刻）に作られている。
-        sqlx::query("UPDATE cn_safety.scan_verdicts SET updated_at = TO_TIMESTAMP($1)")
-            .bind(old)
-            .execute(&pool)
-            .await?;
         index_row(&pool, TOPIC, "fresh", now).await?;
         let first = participant(&pool, projection.clone())?;
         assert_eq!(

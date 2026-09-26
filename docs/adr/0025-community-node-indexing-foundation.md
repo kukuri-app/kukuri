@@ -502,7 +502,7 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 内容 scan cache）を node の受入下限 W・容量 B・保持期間 T で有界に回収する。無期限に増える撤回 marker と scope 全体の一括削除は
 この判断で失効する。
 
-- 受入下限: W = max(現在 − T, 容量超過なら W 以上で最古の行の時刻 + 1) を `cn_index.retention_state` に永続化し、単調に上げる。
+- 受入下限: W = max(現在 − T, 容量超過なら超過分（1 回最大 128 行）の古い行を越える時刻) を `cn_index.retention_state` に永続化し、単調に上げる。
   署名済み envelope の作成時刻が W 未満の投稿は、索引の trigger が拒否する（撤回 marker の有無と W を同じ文で読む）。どの replica の
   経路でも、索引の作成時刻と返信・repost の宛先は署名済み envelope の値に一致させる（旧 `topic::` 経路の state を信用しない）。
 - 撤回 marker: 撤回対象の署名済み envelope の作成時刻を持ち、W がそれを越えるまで残す。W を越えた投稿は再び索引へ入らないため、

@@ -435,12 +435,30 @@ impl IndexerParticipant {
 
     /// 受入下限を進め、下限未満の保存物を最大 `budget` 件回収して消した件数を返す（#1221 R5-F）。
     pub async fn reclaim_retention(&self, now: i64, budget: usize) -> Result<usize> {
-        let floor = advance_retention_floor(&self.pool, now).await?;
+        let floor = advance_retention_floor(&self.pool, now, budget).await?;
         let projected = self.projection.remove_older_than(floor, budget).await?;
         Ok(
             projected
                 + reclaim_expired(&self.pool, floor, budget.saturating_sub(projected)).await?,
         )
+    }
+
+    /// worker の 1 回の見直しで行う回収。上限まで消せた間だけ最大 `steps` 回繰り返し、消した件数を返す。
+    pub async fn reclaim_retention_pass(
+        &self,
+        now: i64,
+        budget: usize,
+        steps: usize,
+    ) -> Result<usize> {
+        let mut total = 0;
+        for _ in 0..steps {
+            let removed = self.reclaim_retention(now, budget).await?;
+            total += removed;
+            if removed < budget {
+                break;
+            }
+        }
+        Ok(total)
     }
 
     /// bucketが窓から出ただけなら同期だけを止め、論理scopeの索引は残す。

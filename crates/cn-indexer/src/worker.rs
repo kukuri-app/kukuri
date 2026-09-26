@@ -374,21 +374,17 @@ impl IndexerWorker {
         }
 
         // 3. 受入下限を進め、下限未満の保存物を 1 回 128 件以内で回収する（#1221 R5-F）。
-        let now = chrono::Utc::now().timestamp();
-        for _ in 0..RECLAIM_STEPS_PER_PASS {
-            match self
-                .participant
-                .reclaim_retention(now, RECLAIM_BUDGET)
-                .await
-            {
-                Ok(removed) if removed == RECLAIM_BUDGET => continue,
-                Ok(_) => break,
-                Err(error) => {
-                    warn!(error = %format!("{error:#}"), "failed to reclaim expired index state; will retry");
-                    self.state.record_error(None, &format!("{error:#}"));
-                    break;
-                }
-            }
+        if let Err(error) = self
+            .participant
+            .reclaim_retention_pass(
+                chrono::Utc::now().timestamp(),
+                RECLAIM_BUDGET,
+                RECLAIM_STEPS_PER_PASS,
+            )
+            .await
+        {
+            warn!(error = %format!("{error:#}"), "failed to reclaim expired index state; will retry");
+            self.state.record_error(None, &format!("{error:#}"));
         }
 
         // 購読が残っている「対象外」scope（索引が空で差分に出ないもの）も止める。
