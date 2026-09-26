@@ -130,6 +130,7 @@ mod direct_messages_subscription_support;
 mod dm_outbox_retry_support;
 mod dome_connection_support;
 mod dome_host_ownership;
+mod dome_instance_support;
 mod epoch_control_support;
 pub(crate) use epoch_control_support::{
     EPOCH_CONTROL_OUTBOX_PREFIX, PRIVATE_CHANNEL_PARTICIPANT_PAGE,

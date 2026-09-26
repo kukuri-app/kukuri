@@ -682,6 +682,13 @@ pub(crate) async fn run_desktop_smoke_scenario(
                             },
                         )
                         .await?;
+                    wait_for_listed_domes(
+                        runtime.app()?,
+                        &topic,
+                        &[&peer_b_instance_id, &peer_c_instance_id],
+                        step_timeout,
+                    )
+                    .await?;
 
                     runtime
                         .app()?
@@ -698,6 +705,8 @@ pub(crate) async fn run_desktop_smoke_scenario(
                             spatial_context: context.clone(),
                             proposal_id: "scenario-a-b".into(),
                         })
+                        .await?;
+                    wait_for_listed_domes(&peer_c, &topic, &[&peer_b_instance_id], step_timeout)
                         .await?;
                     peer_c
                         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
@@ -764,6 +773,8 @@ pub(crate) async fn run_desktop_smoke_scenario(
                                 max_peers: Some(8),
                             },
                         )
+                        .await?;
+                    wait_for_listed_domes(runtime.app()?, &topic, &[&target_instance_id], step_timeout)
                         .await?;
                     runtime
                         .app()?

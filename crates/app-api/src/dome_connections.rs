@@ -25,7 +25,8 @@ impl AppService {
                     &state.record.agreement.receiver,
                 ]
             }))
-            .map(|endpoint| endpoint.owner_pubkey.clone());
+            .map(|endpoint| endpoint.owner_pubkey.clone())
+            .collect::<Vec<_>>();
         let instances = self
             .list_context_dome_instances(&spatial_context, endpoints)
             .await?;
@@ -549,56 +550,6 @@ impl AppService {
         };
         self.services.docs_sync.open_replica(&replica).await?;
         Ok(replica)
-    }
-
-    /// context の Dome Instance(#1221 R5-H)。replica は走査しない。手元の一覧の metaverse の行の owner、hosting の
-    /// heartbeat で知った owner、自分、`owners`(提案・接続の端点)について、owner の制御領域を exact に読む。
-    async fn list_context_dome_instances(
-        &self,
-        context: &SpatialContextV1,
-        owners: impl IntoIterator<Item = Pubkey>,
-    ) -> Result<Vec<DomeInstanceManifestV1>> {
-        let rows = self
-            .services
-            .projection_store
-            .list_channel_game_rooms(
-                context.topic_id().as_str(),
-                channel_storage_id(context.channel_id()).as_str(),
-                LIVE_GAME_LIST_LIMIT,
-            )
-            .await?;
-        let owners = rows
-            .into_iter()
-            .filter(|row| row.room_kind == GameRoomKind::MetaverseRoom)
-            .map(|row| row.host_pubkey)
-            .chain(
-                owners
-                    .into_iter()
-                    .chain(self.heartbeat_dome_owners(context).await)
-                    .map(|owner| owner.as_str().to_string()),
-            )
-            .chain([self.current_author_pubkey()])
-            .collect::<BTreeSet<_>>();
-        let mut instances = Vec::new();
-        for owner in owners {
-            let resolved = match self
-                .fetch_dome_instance_manifest(context, &Pubkey::from(owner))
-                .await
-            {
-                Ok(value) => value,
-                Err(error) if error.downcast_ref::<DomeReadUnavailable>().is_some() => continue,
-                Err(error) => return Err(error),
-            };
-            if let Some((_, manifest)) = resolved
-                && manifest.status == kukuri_core::DomeInstanceStatusV1::Active
-                && manifest.relationship_detach.is_none()
-            {
-                instances.push(manifest);
-            }
-        }
-        instances.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
-        instances.dedup_by(|left, right| left.instance_id == right.instance_id);
-        Ok(instances)
     }
 
     async fn persist_connection_envelope(
