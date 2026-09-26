@@ -641,6 +641,7 @@ impl AppService {
             handle.abort();
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
+        self.release_scope_holder(&live_holder(&key)).await;
     }
 
     pub(crate) async fn cleanup_ended_live_presence_tasks(

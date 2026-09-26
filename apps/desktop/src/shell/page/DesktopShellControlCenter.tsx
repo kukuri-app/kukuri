@@ -61,6 +61,7 @@ import { connectivityGuidance } from '@/shell/connectivityGuidance';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts';
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
+import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
 
@@ -281,6 +282,7 @@ export function DesktopShellControlCenter({
 
   return (
     <>
+      <ColumnScopeLeases api={api} onActivateColumn={onActivateColumn} />
       <div className='shell-control-cluster' data-control-center-open={workspaceState.controlCenterOpen}>
         <AccountMenu onOpen={() => setOpen(false)} onManage={() => openSettings('account')} onProfile={onOpenProfile} />
         <Button

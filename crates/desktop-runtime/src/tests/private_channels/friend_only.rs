@@ -51,22 +51,10 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
         .expect("status b")
         .local_author_pubkey;
     let topic = "kukuri:topic:desktop-friend-only-restart";
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, TimelineScope::Public)
         .await
         .expect("subscribe b");
     wait_for_topic_delivery(

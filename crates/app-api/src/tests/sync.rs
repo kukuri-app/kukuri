@@ -467,6 +467,7 @@ mod range_reconcile_walk;
 mod reply_target_background;
 mod scale_counts;
 mod scale_independence;
+mod scope_leases;
 mod session_catch_up;
 mod session_event_progress;
 mod session_manifest_fetch;

@@ -276,6 +276,17 @@ async fn game_update_by_non_owner_is_rejected_without_changing_replicated_state(
     }
     let dispatcher = Dispatcher::builtin();
     let topic = "kukuri:topic:cli-game-owner-contract";
+    // CLI の購読は desired(set_topic_gossip_enabled)で始める。読み込みは購読を始めない(#1221 R2-C)。
+    for host in [&host_a, &host_b] {
+        let subscribed = call(
+            &dispatcher,
+            host,
+            "set_topic_gossip_enabled",
+            json!({"topic": topic, "enabled": true}),
+        )
+        .await;
+        assert!(subscribed.ok, "{:?}", subscribed.error);
+    }
     let created = call(&dispatcher, &host_a, "create_game_room",
         json!({"topic": topic, "title": "owner room", "description": "owner contract", "participants": ["Alice", "Bob"]})).await;
     assert!(created.ok, "{:?}", created.error);

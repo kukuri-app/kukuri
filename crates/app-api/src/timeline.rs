@@ -9,8 +9,6 @@ impl AppService {
         limit: usize,
     ) -> Result<TimelineView> {
         let author_pubkey = normalize_author_pubkey(author_pubkey)?;
-        self.ensure_author_subscription(author_pubkey.as_str())
-            .await?;
         // #1239: replica は走査しない。プロフィールの索引から、ページの行だけを読む。
         // #1221 R5-C: 手元で埋まらないページだけを、author 本人を含む有界な provider から読む。
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
@@ -63,8 +61,6 @@ impl AppService {
             commentary,
             MAX_REPOST_COMMENTARY_CHARS,
         )?;
-        self.ensure_topic_subscription(target_topic_id).await?;
-        self.ensure_topic_subscription(source_topic_id).await?;
 
         let normalized_commentary = normalize_repost_commentary(commentary.map(str::to_string));
         if let Some(existing_object_id) = self
@@ -234,7 +230,6 @@ impl AppService {
         source_object_id: &str,
         channel_ref: ChannelRef,
     ) -> Result<BookmarkedPostView> {
-        self.ensure_topic_subscription(topic_id).await?;
         let scope = match &channel_ref {
             ChannelRef::Public => TimelineScope::Public,
             ChannelRef::PrivateChannel { channel_id } => TimelineScope::Channel {
@@ -368,7 +363,6 @@ impl AppService {
         reason_visibility: WithdrawalReasonVisibility,
         reason: Option<PostWithdrawalReason>,
     ) -> Result<String> {
-        self.ensure_topic_subscription(topic_id).await?;
         let scope = match &channel_ref {
             ChannelRef::Public => TimelineScope::Public,
             ChannelRef::PrivateChannel { channel_id } => TimelineScope::Channel {
@@ -499,7 +493,6 @@ impl AppService {
         }
         let mut content_labels = content_labels;
         content_labels.dedup();
-        self.ensure_topic_subscription(topic_id).await?;
         let topic = TopicId::new(topic_id);
         let parent = if let Some(reply_to) = reply_to {
             let scope = match &channel_ref {
@@ -776,7 +769,6 @@ impl AppService {
     ) -> Result<TimelineView> {
         let had_topic_subscription = self.has_topic_subscription(topic_id).await;
         let empty_recovery_key = scope_empty_recovery_key(topic_id, &scope);
-        self.ensure_scope_subscriptions(topic_id, &scope).await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let mut page = filtered_timeline_page(
             self.services.projection_store.as_ref(),
@@ -836,8 +828,6 @@ impl AppService {
             self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
                 .await;
         }
-        self.ensure_author_subscriptions_for_rows(&page.items)
-            .await?;
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
@@ -857,8 +847,6 @@ impl AppService {
     ) -> Result<TimelineView> {
         let had_topic_subscription = self.has_topic_subscription(topic_id).await;
         let empty_recovery_key = thread_empty_recovery_key(topic_id, thread_id);
-        self.ensure_replica_scope_subscriptions(topic_id, &ReplicaScope::AllJoined)
-            .await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let thread_root = EnvelopeId::from(thread_id);
         let mut page = filtered_thread_page(
@@ -925,8 +913,6 @@ impl AppService {
             self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
                 .await;
         }
-        self.ensure_author_subscriptions_for_rows(&page.items)
-            .await?;
         continue_past_unavailable(
             &mut page,
             &reconcile,

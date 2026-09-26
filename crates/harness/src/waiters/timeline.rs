@@ -161,12 +161,31 @@ pub(crate) async fn wait_for_thread_object(
     .context("thread assertion timeout")?
 }
 
+/// topic の列を開いて購読する(#1221 R2-C。読み込みは購読を開始しない)。
+pub(crate) async fn open_topic_column(
+    runtime: &DesktopRuntime,
+    topic: &str,
+    scope: &TimelineScope,
+) -> Result<()> {
+    runtime
+        .set_scope_display(kukuri_desktop_runtime::ScopeDisplayRequest {
+            observer: format!("harness-column:{topic}:{scope:?}"),
+            target: kukuri_desktop_runtime::ScopeDisplayTarget::Timeline {
+                topic: topic.to_string(),
+                scope: scope.clone(),
+            },
+            visible: true,
+        })
+        .await
+}
+
 pub(crate) async fn wait_for_topic_peer_count(
     runtime: &DesktopRuntime,
     topic: &str,
     expected: usize,
     step_timeout: Duration,
 ) -> Result<()> {
+    open_topic_column(runtime, topic, &TimelineScope::Public).await?;
     match poll_until(step_timeout, Duration::from_millis(50), 3, || async {
         let status = runtime.get_sync_status().await?;
         let ready = status.topic_diagnostics.iter().any(|entry| {
@@ -203,6 +222,7 @@ pub(crate) async fn wait_for_topic_delivery(
     expected: usize,
     step_timeout: Duration,
 ) -> Result<()> {
+    open_topic_column(runtime, topic, &TimelineScope::Public).await?;
     match poll_until(step_timeout, Duration::from_millis(50), 3, || async {
         let status = runtime.get_sync_status().await?;
         let ready = topic_has_direct_peer(&status, topic, expected)

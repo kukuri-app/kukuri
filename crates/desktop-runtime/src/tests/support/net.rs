@@ -8,6 +8,11 @@ pub(crate) async fn wait_for_seeded_dht_topic_ready(
     runtime_b: &DesktopRuntime,
     topic: &str,
 ) {
+    for runtime in [runtime_a, runtime_b] {
+        open_topic_column(runtime, topic, TimelineScope::Public)
+            .await
+            .expect("open the topic column");
+    }
     let result = poll_until(
         seeded_dht_runtime_ready_timeout(),
         Duration::from_millis(100),

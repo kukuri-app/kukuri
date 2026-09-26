@@ -17,6 +17,9 @@ async fn remember_connected_peer(
     Ok(())
 }
 
+/// 購読していない topic への publish で入る短期送信先の上限(ADR 0055 §2)。
+pub(crate) const MAX_SHORT_TERM_HINT_TOPICS: usize = 16;
+
 pub(crate) fn initial_topic_join_timeout() -> Duration {
     if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
         Duration::from_secs(180)
@@ -736,7 +739,28 @@ impl IrohGossipTransport {
     pub(crate) async fn hint_subscribe_hints_impl(&self, topic: &TopicId) -> Result<HintStream> {
         let hint_topic = kukuri_core::wire::hint_topic_id(topic);
         let sender = self.ensure_hint_topic(&hint_topic).await?;
+        // 購読した topic は、短期送信先として抜けない。
+        self.short_term_topics
+            .lock()
+            .await
+            .retain(|short_term| short_term != hint_topic.as_str());
         Ok(Self::stream_from_sender(&sender))
+    }
+
+    /// 購読していない topic への publish の送信先を覚え、最大数を超えたら最も古い送信先の topic を抜ける
+    /// (ADR 0055 §2 の gossip 購読 81 のうち短期送信先 16。#1221 R2-C)。
+    async fn keep_short_term_topic(&self, hint_topic: &str) {
+        let evicted = {
+            let mut short_term = self.short_term_topics.lock().await;
+            short_term.retain(|topic| topic != hint_topic);
+            short_term.push_back(hint_topic.to_string());
+            (short_term.len() > MAX_SHORT_TERM_HINT_TOPICS)
+                .then(|| short_term.pop_front())
+                .flatten()
+        };
+        if let Some(evicted) = evicted {
+            self.remove_topic_state(&evicted).await;
+        }
     }
 
     /// 対象 topic の hint parse 失敗の累計(WP-C4 の観測用)。未購読なら 0。
@@ -753,6 +777,10 @@ impl IrohGossipTransport {
 
     pub(crate) async fn hint_unsubscribe_hints_impl(&self, topic: &TopicId) -> Result<()> {
         let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        self.short_term_topics
+            .lock()
+            .await
+            .retain(|short_term| short_term != hint_topic.as_str());
         self.remove_topic_state(hint_topic.as_str()).await;
         Ok(())
     }
@@ -763,7 +791,21 @@ impl IrohGossipTransport {
         hint: GossipHint,
     ) -> Result<()> {
         let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let subscribed = self
+            .topic_states
+            .lock()
+            .await
+            .contains_key(hint_topic.as_str())
+            && !self
+                .short_term_topics
+                .lock()
+                .await
+                .iter()
+                .any(|short_term| short_term == hint_topic.as_str());
         let _ = self.ensure_hint_topic(&hint_topic).await?;
+        if !subscribed {
+            self.keep_short_term_topic(hint_topic.as_str()).await;
+        }
         let states = self.topic_states.lock().await;
         let state = states
             .get(hint_topic.as_str())

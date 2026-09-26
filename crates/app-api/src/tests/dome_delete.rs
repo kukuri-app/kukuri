@@ -96,7 +96,6 @@ async fn dome_delete_write_failures_remain_retryable_after_restart() {
         assert!(first.is_err(), "fault point {fail_at} must be reached");
         docs.fail_at.store(0, Ordering::SeqCst);
         let restarted = AppService::from_handles(app.services.clone());
-        restarted.ensure_topic_subscription(topic).await.unwrap();
         if fail_at > 1 {
             let pending = restarted
                 .list_pending_dome_deletions(context)

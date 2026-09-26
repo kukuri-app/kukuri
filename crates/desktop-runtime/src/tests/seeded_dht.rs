@@ -46,22 +46,10 @@ async fn set_discovery_seeds_reapplies_runtime_without_restart() {
     assert_eq!(config_a.seed_peers[0].endpoint_id, endpoint_b);
     assert_eq!(config_b.seed_peers[0].endpoint_id, endpoint_a);
     let topic = "kukuri:topic:runtime-seeded-dht";
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, TimelineScope::Public)
         .await
         .expect("subscribe b");
     wait_for_seeded_dht_topic_ready(&runtime_a, &runtime_b, topic).await;
@@ -161,22 +149,10 @@ async fn restart_restores_seeded_dht_config_and_endpoint_identity() {
     assert_eq!(restarted_endpoint_a, endpoint_a);
     assert_eq!(restarted_endpoint_b, endpoint_b);
     let topic = "kukuri:topic:runtime-seeded-restart";
-    let _ = restarted_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&restarted_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe restarted a");
-    let _ = restarted_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&restarted_b, topic, TimelineScope::Public)
         .await
         .expect("subscribe restarted b");
     let status_a = restarted_a.get_sync_status().await.expect("sync status a");

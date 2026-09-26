@@ -1,5 +1,6 @@
 import type { ChannelRef, DesktopApi } from '@/lib/api';
 import type { MetaverseRoomActions } from '@/components/extended/metaverse/MetaverseRoomActions';
+import { explainScopeLimit } from '@/shell/columnScopeLeases';
 
 type CreateMetaverseRoomActionsArgs = {
   api: DesktopApi;
@@ -46,7 +47,9 @@ export function createMetaverseRoomActions({
       api.updateMetaverseRoom(activeTopic, roomId, status, customization),
     getHosting: (context, instanceId) => api.getDomeHosting(context, instanceId),
     startOwnerHosting: (context, instanceId, endpointId, expectedGeneration) =>
-      api.startOwnerDomeHosting(context, instanceId, endpointId, 86_400_000, expectedGeneration),
+      explainScopeLimit(
+        api.startOwnerDomeHosting(context, instanceId, endpointId, 86_400_000, expectedGeneration)
+      ),
     delegateHosting: (context, instanceId, nodeId, baseUrl, expectedGeneration) =>
       api.delegateDomeHosting(context, instanceId, nodeId, baseUrl, 86_400_000, expectedGeneration),
     closeHosting: (context, instanceId, expectedGeneration) => api.closeDomeHosting(context, instanceId, expectedGeneration),

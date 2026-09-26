@@ -740,13 +740,7 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
     .await
     .expect("実行環境を作成できる");
     let topic = "kukuri:topic:private-rendezvous";
-    runtime
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime, topic, TimelineScope::Public)
         .await
         .expect("公開話題を購読できる");
     let channel = runtime

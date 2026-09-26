@@ -3,6 +3,7 @@
 // DesktopApi interface と、生成型に front 専用フィールドを交差させる PostView を扱う。
 export * from './types.generated';
 import type {
+  ScopeDisplayRequest,
   SessionCandidateView,
   SessionDisplayRequest,
   AuthorSocialView,
@@ -363,6 +364,8 @@ export interface DesktopApi {
   getDirectMessageStatus(pubkey: string): Promise<DirectMessageStatusView>;
   listSessionCandidates(topic: string, scope: TimelineScope): Promise<SessionCandidateView[]>;
   setSessionDisplay(request: SessionDisplayRequest): Promise<void>;
+  // #1221 R2-C: 開いている列の購読の需要。上限なら code `SCOPE_LIMIT_REACHED` で失敗する。
+  setScopeDisplay(request: ScopeDisplayRequest): Promise<void>;
   listLiveSessions(topic: string, scope?: TimelineScope): Promise<LiveSessionView[]>;
   createLiveSession(
     topic: string,

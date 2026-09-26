@@ -63,39 +63,4 @@ impl AppService {
             channels.extend(disabled_channels);
         }
     }
-
-    /// Tear down the gossip subscription for a single private channel without
-    /// leaving the channel. Mirrors the abort path of
-    /// [`restart_private_channel_subscription`].
-    pub async fn unsubscribe_private_channel(
-        &self,
-        topic_id: &str,
-        channel_id: &str,
-    ) -> Result<()> {
-        let prefix = joined_private_channel_subscription_prefix(topic_id, channel_id);
-        let keys = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.starts_with(prefix.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in keys {
-            if let Some(handle) = self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .remove(key.as_str())
-            {
-                handle.abort();
-            }
-        }
-        self.services
-            .hint_transport
-            .unsubscribe_hints(&private_channel_hint_topic(channel_id))
-            .await
-    }
 }

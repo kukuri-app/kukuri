@@ -812,6 +812,10 @@ export type LiveSessionCommandRequest = { topic: string, session_id: string, };
 
 export type SessionDisplayRequest = { topic: string, scope: TimelineScope, replica_id: string, session_id: string, kind: string, observer: string, visible: boolean, retry: boolean, };
 
+export type ScopeDisplayRequest = { observer: string, target: ScopeDisplayTarget, visible: boolean, };
+
+export type ScopeDisplayTarget = { "kind": "timeline", topic: string, scope: TimelineScope, } | { "kind": "author", pubkey: string, };
+
 export type SessionCandidateView = { replica_id: string, session_id: string, kind: string, };
 
 export type ListGameRoomsRequest = { topic: string, scope: TimelineScope, };

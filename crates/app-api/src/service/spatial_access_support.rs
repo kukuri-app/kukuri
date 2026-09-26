@@ -120,13 +120,10 @@ impl AppService {
         participant_pubkey: &Pubkey,
     ) -> Result<DomeTransitionAccessDecisionV1> {
         let allowed = match spatial_context {
-            SpatialContextV1::Topic { topic_id } => self
-                .subscription_registry
-                .subscriptions
-                .lock()
-                .await
-                .get(topic_id.as_str())
-                .is_some_and(|handle| !handle.is_finished()),
+            // 公開 topic は gossip を止めていなければ入れる(購読の有無は問わない。#1221 R2-C)。
+            SpatialContextV1::Topic { topic_id } => {
+                !self.is_topic_gossip_disabled(topic_id.as_str()).await
+            }
             SpatialContextV1::Channel {
                 topic_id,
                 channel_id,

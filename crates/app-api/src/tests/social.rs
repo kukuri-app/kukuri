@@ -235,10 +235,6 @@ async fn list_social_connections_followed_is_local_known_only() {
         .follow_author(local_pubkey.as_str())
         .await
         .expect("remote follows local");
-    local_app
-        .warm_social_graph()
-        .await
-        .expect("warm local social graph");
 
     let followed = local_app
         .list_social_connections(SocialConnectionKind::Followed)
@@ -440,14 +436,6 @@ async fn social_graph_derives_friend_of_friend_and_clears_after_unfollow() {
         stack_b.blob_service.clone(),
         keys_b.clone(),
     );
-    app_a
-        .warm_social_graph()
-        .await
-        .expect("warm social graph a");
-    app_b
-        .warm_social_graph()
-        .await
-        .expect("warm social graph b");
 
     let ticket_a = stack_a
         .transport
@@ -474,6 +462,10 @@ async fn social_graph_derives_friend_of_friend_and_clears_after_unfollow() {
         .follow_author(c_pubkey.as_str())
         .await
         .expect("b follows c");
+    // B の follow は、B の profile を開いている間に届く(#1221 R2-C)。
+    display_author(&app_a, b_pubkey.as_str())
+        .await
+        .expect("open the profile of b");
 
     timeout(social_graph_propagation_timeout(), async {
         loop {

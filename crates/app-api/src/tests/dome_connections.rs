@@ -259,13 +259,9 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
         "viewing must not rotate the epoch or publish records"
     );
     assert_eq!(docs.secrets.load(Ordering::SeqCst), secrets_before);
-    assert!(
-        reader
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .is_empty()
+    assert_eq!(
+        reader.subscription_registry.scope_leases.lock().await.len(),
+        0
     );
     assert!(!reader.has_topic_subscription(topic).await);
     assert_eq!(
@@ -310,6 +306,12 @@ async fn open_proposal_fixture(
         app_with_shared_dome_services(docs_sync.clone(), blob_service.clone(), proposer_keys);
     let receiver = app_with_shared_dome_services(docs_sync, blob_service, receiver_keys);
     let topic = format!("kukuri:topic:dome-open-proposal-{suffix}");
+    // block での解除は、開いている列(lease のある topic)の Dome 接続を対象にする(#1221 R2-C)。
+    for app in [&proposer, &receiver] {
+        display_topic(app, &topic)
+            .await
+            .expect("open the Dome column");
+    }
     let context = SpatialContextV1::Topic {
         topic_id: TopicId::new(topic.clone()),
     };
@@ -497,6 +499,11 @@ async fn owner_block_revokes_connection_and_unblock_does_not_restore_it() {
         app_with_shared_dome_services(docs_sync.clone(), blob_service.clone(), proposer_keys);
     let receiver = app_with_shared_dome_services(docs_sync, blob_service, receiver_keys);
     let topic = "kukuri:topic:dome-connection-owner-block";
+    for app in [&proposer, &receiver] {
+        display_topic(app, topic)
+            .await
+            .expect("open the Dome column");
+    }
     let context = SpatialContextV1::Topic {
         topic_id: TopicId::new(topic),
     };

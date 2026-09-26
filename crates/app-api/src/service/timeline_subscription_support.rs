@@ -33,38 +33,6 @@ impl From<&ReplicaScope> for ReplicaScope {
 }
 
 impl AppService {
-    pub(crate) async fn ensure_topic_subscription(&self, topic_id: &str) -> Result<()> {
-        if self.is_topic_gossip_disabled(topic_id).await {
-            return Ok(());
-        }
-        let stale_key = {
-            let subscriptions = self.subscription_registry.subscriptions.lock().await;
-            match subscriptions.get(topic_id) {
-                Some(handle) if !handle.is_finished() => return Ok(()),
-                Some(_) => Some(topic_id.to_string()),
-                None => None,
-            }
-        };
-        if let Some(stale_key) = stale_key {
-            self.subscription_registry
-                .subscriptions
-                .lock()
-                .await
-                .remove(stale_key.as_str());
-        }
-
-        self.spawn_topic_subscription(topic_id).await
-    }
-
-    pub(crate) async fn has_topic_subscription(&self, topic_id: &str) -> bool {
-        self.subscription_registry
-            .subscriptions
-            .lock()
-            .await
-            .get(topic_id)
-            .is_some_and(|handle| !handle.is_finished())
-    }
-
     pub(crate) async fn should_restart_after_empty_result(&self, key: &str) -> bool {
         !self
             .empty_recovery_candidates
@@ -75,34 +43,6 @@ impl AppService {
 
     pub(crate) async fn clear_empty_result_restart_marker(&self, key: &str) {
         self.empty_recovery_candidates.lock().await.remove(key);
-    }
-
-    pub(crate) async fn restart_topic_subscription(&self, topic_id: &str) -> Result<()> {
-        if let Some(handle) = self
-            .subscription_registry
-            .subscriptions
-            .lock()
-            .await
-            .remove(topic_id)
-        {
-            handle.abort();
-        }
-        // gossip topic は抜けない。抜けてすぐ入り直すと、相手が古い Disconnect を新しい Join より
-        // 後に処理した場合に片側だけが neighbor を失い、戻す経路が無い。新しい peer と neighbor で
-        // なくなった既知の peer は transport が既存の topic へ join させ、初回 join に失敗した topic は
-        // subscribe_hints が作り直す。
-        self.spawn_topic_subscription(topic_id).await
-    }
-
-    pub(crate) async fn spawn_topic_subscription(&self, topic_id: &str) -> Result<()> {
-        self.spawn_subscription_task(
-            topic_id,
-            None,
-            topic_replica_id(topic_id),
-            TopicId::new(topic_id),
-            None,
-        )
-        .await
     }
 
     pub(crate) async fn ingest_event(
@@ -326,36 +266,6 @@ impl AppService {
             }
         }
         Ok(None)
-    }
-
-    pub async fn ensure_scope_subscriptions(
-        &self,
-        topic_id: &str,
-        scope: &TimelineScope,
-    ) -> Result<()> {
-        self.ensure_replica_scope_subscriptions(topic_id, &ReplicaScope::from(scope))
-            .await
-    }
-
-    pub(crate) async fn ensure_replica_scope_subscriptions(
-        &self,
-        topic_id: &str,
-        scope: &ReplicaScope,
-    ) -> Result<()> {
-        self.ensure_topic_subscription(topic_id).await?;
-        match scope {
-            ReplicaScope::Public => Ok(()),
-            ReplicaScope::AllJoined => {
-                self.ensure_joined_private_channel_subscriptions(topic_id)
-                    .await
-            }
-            ReplicaScope::Channel { channel_id } => {
-                self.ensure_private_channel_access(topic_id, channel_id)
-                    .await?;
-                self.ensure_private_channel_subscription(topic_id, channel_id.as_str())
-                    .await
-            }
-        }
     }
 
     pub(crate) async fn scope_needs_current_private_epoch_hydration(
@@ -877,17 +787,11 @@ impl AppService {
             }
             deadlines.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
         }
-        if let Err(error) = self
-            .restart_private_channel_subscription(topic_id, channel_id)
-            .await
-        {
-            warn!(
-                topic = %topic_id,
-                channel_id = %channel_id,
-                error = %error,
-                "failed to restart private channel subscription"
-            );
-        }
+        self.restart_scope_subscription(&ScopeKey::Channel(
+            topic_id.to_string(),
+            channel_id.to_string(),
+        ))
+        .await;
     }
 
     pub(crate) async fn maybe_restart_topic_subscription(&self, topic_id: &str) {
@@ -905,13 +809,8 @@ impl AppService {
             }
             deadlines.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
         }
-        if let Err(error) = self.restart_topic_subscription(topic_id).await {
-            warn!(
-                topic = %topic_id,
-                error = %error,
-                "failed to restart topic subscription"
-            );
-        }
+        self.restart_scope_subscription(&ScopeKey::Topic(topic_id.to_string()))
+            .await;
     }
 
     pub(crate) async fn maybe_restart_scope_subscription(

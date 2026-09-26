@@ -29,6 +29,9 @@ async fn event_fixture(name: &str) -> EventFixture {
     );
     let topic = TopicId::new(format!("kukuri:topic:event-{name}").as_str());
     let replica = topic_replica_id(topic.as_str());
+    display_topic(&viewer, topic.as_str())
+        .await
+        .expect("open the topic column");
     viewer
         .list_timeline(topic.as_str(), None, 20)
         .await

@@ -204,10 +204,7 @@ impl AppService {
                 .await?;
             }
         }
-        self.dome_host_sessions
-            .lock()
-            .await
-            .remove(&input.instance_id);
+        self.stop_owner_dome_hosting(&input.instance_id).await;
         self.dome_host_heartbeats
             .lock()
             .await
@@ -292,7 +289,8 @@ impl AppService {
     async fn dome_deletion_replica(&self, context: &SpatialContextV1) -> Result<ReplicaId> {
         match context {
             SpatialContextV1::Topic { topic_id } => {
-                if !self.has_topic_subscription(topic_id.as_str()).await {
+                // 公開 topic は gossip を止めていなければ扱える(購読の有無は問わない。#1221 R2-C)。
+                if self.is_topic_gossip_disabled(topic_id.as_str()).await {
                     anyhow::bail!("DOME_DELETE_CONTEXT_ACCESS_REQUIRED");
                 }
                 Ok(topic_replica_id(topic_id.as_str()))

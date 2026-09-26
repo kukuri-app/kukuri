@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-26-1221-r5-g-bookmark-page-v1",
+  "scope_revision": "2026-09-26-1221-r2-c-scope-display-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -127,6 +127,7 @@
     {"tauri":"commands::live_game::import_metaverse_room_asset","cli":"import_metaverse_room_asset","inventory":"INV-6"},
     {"tauri":"commands::community_node::import_peer_ticket","cli":"import_peer_ticket","inventory":"INV-7"},
     {"tauri":"commands::community_node::set_discovery_seeds","cli":"set_discovery_seeds","inventory":"INV-7"},
+    {"tauri":"commands::community_node::set_scope_display","excluded":"gui_visible_membership","reason":"#1221 R2-C: GUIの開いている列を購読の需要(lease)として登録・解除する。CLI／daemonは列を持たず、同じ上限の購読をdesired（set_topic_gossip_enabled・unsubscribe_topic）で扱う。"},
     {"tauri":"commands::community_node::unsubscribe_topic","cli":"unsubscribe_topic","inventory":"INV-7"},
     {"tauri":"commands::community_node::set_topic_gossip_enabled","cli":"set_topic_gossip_enabled","inventory":"INV-7"},
     {"tauri":"commands::community_node::set_channel_gossip_enabled","cli":"set_channel_gossip_enabled","inventory":"INV-7"},

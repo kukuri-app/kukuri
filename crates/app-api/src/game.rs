@@ -14,7 +14,6 @@ impl AppService {
         topic_id: &str,
         scope: TimelineScope,
     ) -> Result<Vec<GameRoomView>> {
-        self.ensure_scope_subscriptions(topic_id, &scope).await?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let channel_id = self.allowed_channel_id_for_scope(topic_id, &scope).await?;
         let allowed = BTreeSet::from([channel_id.clone()]);
@@ -160,7 +159,6 @@ impl AppService {
         channel_ref: ChannelRef,
         input: CreateGameRoomInput,
     ) -> Result<String> {
-        self.ensure_topic_subscription(topic_id).await?;
         let private_state = match channel_ref {
             ChannelRef::Public => None,
             ChannelRef::PrivateChannel { channel_id } => Some(
@@ -255,7 +253,6 @@ impl AppService {
         input: CreateMetaverseRoomInput,
     ) -> Result<String> {
         let _guard = self.services.dome_mutations.lock().await;
-        self.ensure_topic_subscription(topic_id).await?;
         let private_state = match channel_ref {
             ChannelRef::Public => None,
             ChannelRef::PrivateChannel { channel_id } => Some(
@@ -385,7 +382,6 @@ impl AppService {
         room_id: &str,
         input: UpdateGameRoomInput,
     ) -> Result<()> {
-        self.ensure_topic_subscription(topic_id).await?;
         let projection_guard = self.services.game_room_projections.lock(room_id).await;
         let (source_replica_id, state, mut manifest) = self
             .fetch_game_room_state_and_manifest(topic_id, room_id)
@@ -464,7 +460,6 @@ impl AppService {
         room_id: &str,
         input: UpdateMetaverseRoomInput,
     ) -> Result<()> {
-        self.ensure_topic_subscription(topic_id).await?;
         let (source_replica_id, state, mut manifest) = self
             .fetch_game_room_state_and_manifest(topic_id, room_id)
             .await?
@@ -561,7 +556,6 @@ impl AppService {
         topic_id: &str,
         input: PublishMetaverseRoomEventInput,
     ) -> Result<MetaverseRoomEventView> {
-        self.ensure_topic_subscription(topic_id).await?;
         let (source_replica_id, state, mut manifest) = self
             .fetch_game_room_state_and_manifest(topic_id, input.room_id.as_str())
             .await?
@@ -694,7 +688,6 @@ impl AppService {
         input: ImportMetaverseRoomAssetInput,
     ) -> Result<MetaverseAssetRefView> {
         let _guard = self.services.dome_mutations.lock().await;
-        self.ensure_topic_subscription(topic_id).await?;
         let (source_replica_id, state, mut manifest) = self
             .fetch_game_room_state_and_manifest(topic_id, input.room_id.as_str())
             .await?
@@ -835,7 +828,6 @@ impl AppService {
         after_envelope_id: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<MetaverseRoomEventView>> {
-        self.ensure_topic_subscription(topic_id).await?;
         let room_state = self
             .fetch_game_room_state_and_manifest(topic_id, room_id)
             .await?;

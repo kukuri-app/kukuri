@@ -466,6 +466,7 @@ pub fn run() {
             commands::live_game::import_metaverse_room_asset,
             commands::community_node::import_peer_ticket,
             commands::community_node::set_discovery_seeds,
+            commands::community_node::set_scope_display,
             commands::community_node::unsubscribe_topic,
             commands::community_node::set_topic_gossip_enabled,
             commands::community_node::set_channel_gossip_enabled,

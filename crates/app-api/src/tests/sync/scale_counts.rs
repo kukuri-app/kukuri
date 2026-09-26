@@ -483,7 +483,7 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                 "topic subscription start",
                 fixture
                     .reads_of(|| async {
-                        app.ensure_topic_subscription(topic)
+                        display_topic(app, topic)
                             .await
                             .expect("subscribe the topic");
                     })

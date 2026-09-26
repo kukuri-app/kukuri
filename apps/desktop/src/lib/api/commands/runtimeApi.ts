@@ -1,6 +1,5 @@
 import type {
   SessionCandidateView,
-  SessionDisplayRequest,
   AuthorSocialView,
   BlobMediaPayload,
   BlobMediaFile,
@@ -152,7 +151,7 @@ import type {
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
 import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHostingRequests';
-import { developerLogsApi, domeTransitionApi, postReloadApi, socialBlockApi } from './apiModules';
+import { developerLogsApi, displayDemandApi, domeTransitionApi, postReloadApi, socialBlockApi } from './apiModules';
 
 export const runtimeApi: DesktopApi = {
   createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = []) => {
@@ -421,8 +420,6 @@ export const runtimeApi: DesktopApi = {
   }),
   listSessionCandidates: command('listSessionCandidates', async (topic, scope) =>
     invokeDesktop<SessionCandidateView[]>('list_session_candidates', { request: { topic, scope } satisfies ListLiveSessionsRequest })),
-  setSessionDisplay: command('setSessionDisplay', async (request) =>
-    invokeDesktop<void>('set_session_display', { request: request satisfies SessionDisplayRequest })),
   listLiveSessions: command('listLiveSessions', async (topic, scope = { kind: 'public' }) => {
     return invokeDesktop<LiveSessionView[]>('list_live_sessions', {
       request: {
@@ -719,6 +716,7 @@ export const runtimeApi: DesktopApi = {
   ...socialBlockApi,
   ...developerLogsApi,
   ...postReloadApi,
+  ...displayDemandApi,
   commitDomeLayout: command('commitDomeLayout', async (
     spatialContext,
     instanceId,

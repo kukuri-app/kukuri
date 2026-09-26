@@ -39,6 +39,8 @@ pub enum SubscriptionStateErrorKind {
     UnsupportedVersion,
     PersistFailed,
     ActivationFailed,
+    /// 購読する scope が上限(列・参加と共通の 64)に達している(#1221 R2-C)。
+    LimitReached,
 }
 
 impl SubscriptionStateErrorKind {
@@ -50,6 +52,7 @@ impl SubscriptionStateErrorKind {
             Self::UnsupportedVersion => "subscription_state_version_unsupported",
             Self::PersistFailed => "subscription_state_persist_failed",
             Self::ActivationFailed => "subscription_activation_failed",
+            Self::LimitReached => "subscription_limit_reached",
         }
     }
 }
@@ -66,6 +69,27 @@ impl SubscriptionStateError {
             kind,
             message: message.into(),
         }
+    }
+
+    /// 購読の開始の失敗。上限による拒否は `LimitReached` にする。
+    pub(crate) fn activation(error: anyhow::Error) -> Self {
+        if error
+            .downcast_ref::<kukuri_app_api::ScopeLimitReached>()
+            .is_some()
+        {
+            return Self::limit_reached();
+        }
+        Self::new(
+            SubscriptionStateErrorKind::ActivationFailed,
+            format!("failed to activate desired subscription: {error:#}"),
+        )
+    }
+
+    pub(crate) fn limit_reached() -> Self {
+        Self::new(
+            SubscriptionStateErrorKind::LimitReached,
+            kukuri_app_api::ScopeLimitReached.to_string(),
+        )
     }
 
     pub fn code(&self) -> &'static str {
@@ -126,6 +150,10 @@ pub(crate) fn load_desired_subscriptions(
     }
     store.subscriptions.sort();
     store.subscriptions.dedup();
+    // 保存は 64 件まで。超える file は先頭の 64 件だけを使う(#1221 R2-C)。
+    store
+        .subscriptions
+        .truncate(kukuri_app_api::MAX_ACTIVE_SCOPES);
     Ok(store.subscriptions)
 }
 

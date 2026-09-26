@@ -998,15 +998,7 @@ pub(crate) async fn run_community_node_connectivity(
             .await
             .context("failed to re-refresh community-node metadata for desktop b after restart")?;
         let reconnect_timeout = ci_timeout_floor(step_timeout, Duration::from_secs(360));
-        let _ = runtime_b
-            .list_timeline(ListTimelineRequest {
-                topic: topic.to_string(),
-                scope: TimelineScope::Public,
-                cursor: None,
-                limit: Some(20),
-            })
-            .await
-            .context("failed to resubscribe desktop b to scenario topic after reconnect")?;
+        open_topic_column(&runtime_b, topic, &TimelineScope::Public).await.context("failed to resubscribe desktop b to scenario topic after reconnect")?;
         refresh_public_pair(&runtime_a, &runtime_b, topic, reconnect_timeout)
             .await
             .context("failed to refresh public topic after desktop b restart")?;

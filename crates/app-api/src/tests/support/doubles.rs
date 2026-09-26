@@ -94,11 +94,22 @@ impl DocsSync for AssistedDocsSync {
 pub(crate) struct TrackingDocsSync {
     pub(crate) restarted_replicas: Arc<TokioMutex<Vec<String>>>,
     pub(crate) subscribe_replicas: Arc<TokioMutex<Vec<String>>>,
+    /// 開いたまま(close されていない)の replica。
+    pub(crate) open_replicas: Arc<TokioMutex<BTreeSet<String>>>,
 }
 
 #[async_trait]
 impl DocsSync for TrackingDocsSync {
-    async fn open_replica(&self, _replica_id: &ReplicaId) -> Result<()> {
+    async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
+        self.open_replicas
+            .lock()
+            .await
+            .insert(replica_id.as_str().to_string());
+        Ok(())
+    }
+
+    async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
+        self.open_replicas.lock().await.remove(replica_id.as_str());
         Ok(())
     }
 
@@ -271,6 +282,8 @@ impl HintTransport for NoopHintTransport {
 pub(crate) struct TrackingHintTransport {
     hints: Arc<TokioMutex<HashMap<String, broadcast::Sender<HintEnvelope>>>>,
     pub(crate) subscribe_count: Arc<TokioMutex<usize>>,
+    /// 購読したまま(unsubscribe されていない)の hint topic。
+    pub(crate) active_topics: Arc<TokioMutex<BTreeSet<String>>>,
     pub(crate) unsubscribed_topics: Arc<TokioMutex<Vec<String>>>,
     pub(crate) published_count: Arc<AtomicUsize>,
     pub(crate) publish_hint_barrier: Option<Arc<tokio::sync::Barrier>>,
@@ -296,6 +309,10 @@ impl TrackingHintTransport {
 impl HintTransport for TrackingHintTransport {
     async fn subscribe_hints(&self, topic: &TopicId) -> Result<HintStream> {
         *self.subscribe_count.lock().await += 1;
+        self.active_topics
+            .lock()
+            .await
+            .insert(topic.as_str().to_string());
         let sender = self.hint_sender(topic).await;
         let stream =
             BroadcastStream::new(sender.subscribe()).filter_map(|item| async move { item.ok() });
@@ -303,6 +320,7 @@ impl HintTransport for TrackingHintTransport {
     }
 
     async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()> {
+        self.active_topics.lock().await.remove(topic.as_str());
         self.unsubscribed_topics
             .lock()
             .await

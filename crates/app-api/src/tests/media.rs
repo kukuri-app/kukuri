@@ -649,8 +649,7 @@ async fn iroh_transport_syncs_image_post_between_apps() {
         .expect("import a into b");
 
     let topic = "kukuri:topic:image-sync";
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("app b should subscribe to topic");
 
@@ -734,8 +733,7 @@ async fn remote_video_manifest_payload_available_after_sync() {
         .expect("import a into b");
 
     let topic = "kukuri:topic:video-sync";
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
 
@@ -1006,12 +1004,10 @@ async fn image_reply_thread_syncs() {
         .import_peer_ticket(&ticket_a)
         .await
         .expect("import a into b");
-    let _ = app_a
-        .list_timeline(topic, None, 20)
+    display_topic(&app_a, topic)
         .await
         .expect("subscribe a timeline");
-    let _ = app_b
-        .list_timeline(topic, None, 20)
+    display_topic(&app_b, topic)
         .await
         .expect("subscribe b timeline");
     wait_for_topic_delivery(&app_a, topic, 1).await;

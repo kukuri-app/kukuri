@@ -9,73 +9,20 @@ impl AppService {
         self.shutdown_direct_message_outbox_retry().await;
         self.shutdown_account_receive_offers().await;
         self.services.session_projections.clear().await;
-        let topics_to_unsubscribe = self
-            .subscription_registry
-            .subscriptions
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let private_channels_to_unsubscribe = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .keys()
-            .filter_map(|key| key.split("::").nth(1).map(str::to_owned))
-            .collect::<BTreeSet<_>>();
-        let handles = {
-            let mut subscriptions = self.subscription_registry.subscriptions.lock().await;
-            subscriptions
-                .drain()
-                .map(|(_, handle)| handle)
-                .collect::<Vec<_>>()
-        };
-        for handle in handles {
-            handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        {
+            // 取り直しが止める途中の hint 購読の上に乗らないよう、lock を持ったまま止める。
+            let mut leases = self.subscription_registry.scope_leases.lock().await;
+            for task in leases.clear() {
+                stop_scope_task(&self.services, task).await;
+            }
         }
-        let private_handles = {
-            let mut subscriptions = self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await;
-            subscriptions
-                .drain()
-                .map(|(_, handle)| handle)
-                .collect::<Vec<_>>()
-        };
-        for handle in private_handles {
-            handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        let heartbeats =
+            std::mem::take(&mut *self.subscription_registry.dome_heartbeats.lock().await);
+        for (_, heartbeat) in heartbeats {
+            heartbeat.abort();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), heartbeat.wait()).await;
         }
-        for channel_id in private_channels_to_unsubscribe {
-            let _ = self
-                .services
-                .hint_transport
-                .unsubscribe_hints(&private_channel_hint_topic(channel_id.as_str()))
-                .await;
-        }
-        for topic_id in topics_to_unsubscribe {
-            let _ = self
-                .services
-                .hint_transport
-                .unsubscribe_hints(&TopicId::new(topic_id))
-                .await;
-        }
-        let author_handles = {
-            let mut subscriptions = self.subscription_registry.author_subscriptions.lock().await;
-            subscriptions
-                .drain()
-                .map(|(_, handle)| handle)
-                .collect::<Vec<_>>()
-        };
-        for handle in author_handles {
-            handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-        }
+        self.dome_host_sessions.lock().await.clear();
         let presence_handles = {
             let mut tasks = self.subscription_registry.live_presence_tasks.lock().await;
             tasks.drain().map(|(_, handle)| handle).collect::<Vec<_>>()

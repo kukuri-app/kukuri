@@ -9,8 +9,6 @@ impl AppService {
         channel_ref: Option<ChannelRef>,
     ) -> Result<ReactionStateView> {
         let target_topic_id = TopicId::new(target_topic_id);
-        self.ensure_topic_subscription(target_topic_id.as_str())
-            .await?;
         let scope = match channel_ref.as_ref() {
             Some(ChannelRef::PrivateChannel { channel_id }) => {
                 self.private_channel_write_state(target_topic_id.as_str(), channel_id)

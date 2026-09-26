@@ -37,6 +37,10 @@ pub(crate) async fn wait_for_connected_topic_peer_count(
     expected: usize,
     timeout_label: &str,
 ) {
+    // 届くのは購読している topic だけ。待つ topic の列を開く(#1221 R2-C)。
+    open_topic_column(runtime, topic, TimelineScope::Public)
+        .await
+        .expect("open the topic column");
     let result = poll_until(
         runtime_replication_timeout(),
         Duration::from_millis(100),
@@ -63,6 +67,9 @@ pub(crate) async fn wait_for_topic_delivery(
     expected: usize,
     timeout_label: &str,
 ) {
+    open_topic_column(runtime, topic, TimelineScope::Public)
+        .await
+        .expect("open the topic column");
     let result = poll_until(
         runtime_replication_timeout(),
         Duration::from_millis(100),
@@ -89,6 +96,7 @@ pub(crate) async fn wait_for_topic_delivery_result(
     expected: usize,
     step_timeout: Duration,
 ) -> Result<()> {
+    open_topic_column(runtime, topic, TimelineScope::Public).await?;
     match poll_until(step_timeout, Duration::from_millis(100), 3, || async {
         let status = runtime.get_sync_status().await.context("sync status")?;
         Ok::<_, anyhow::Error>(if topic_has_delivery(&status, topic, expected) {
@@ -320,6 +328,8 @@ pub(crate) async fn wait_for_profile_timeline_posts_result(
     object_ids: &[String],
     timeout_label: &str,
 ) -> Result<TimelineView> {
+    // author の購読は profile を開いている間だけ(#1221 R2-C)。
+    open_profile_column(runtime, author_pubkey).await?;
     match timeout(runtime_replication_timeout(), async {
         loop {
             let timeline = runtime

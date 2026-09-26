@@ -6,8 +6,6 @@ impl AppService {
         &self,
         input: CreatePrivateChannelInput,
     ) -> Result<JoinedPrivateChannelView> {
-        self.ensure_topic_subscription(input.topic_id.as_str())
-            .await?;
         let label = input.label.trim();
         if label.is_empty() {
             anyhow::bail!("private channel label is required");
@@ -130,12 +128,8 @@ impl AppService {
         {
             return Err(PrivateChannelImportError::Expired { kind: spec.kind }.into());
         }
-        self.ensure_topic_subscription(spec.topic_id.as_str())
-            .await?;
         if let Some(peer_pubkey) = spec.mutual_with.as_ref() {
             // #1221 R4-D: 関係は手元の edge から読むときに求める。相手の follow は購読の追いつきと follow の offer で届く。
-            self.ensure_author_subscription(peer_pubkey.as_str())
-                .await?;
             let relationship = self
                 .services
                 .projection_store
@@ -151,6 +145,10 @@ impl AppService {
                 .into());
             }
         }
+        // 新しい参加は、何かを保存する前に参加の holder で channel key を取る。上限なら参加しない(#1221 R2-C)。
+        let newly_held = self
+            .hold_joined_private_channel(spec.topic_id.as_str(), spec.channel_id.as_str())
+            .await?;
         let replica = if spec.use_legacy_aware_replica {
             private_channel_replica_for_epoch(spec.channel_id.as_str(), spec.epoch_id.as_str())
         } else {
@@ -234,6 +232,13 @@ impl AppService {
                 .docs_sync
                 .remove_private_replica_secret(&replica)
                 .await;
+            if newly_held {
+                self.release_scope_holder(&private_channel_holder(
+                    spec.topic_id.as_str(),
+                    spec.channel_id.as_str(),
+                ))
+                .await;
+            }
         }
         import_result
     }
@@ -823,8 +828,6 @@ impl AppService {
         let state = &prep.state;
         for participant in prep.rotation_recipients.values() {
             if state.audience_kind == ChannelAudienceKind::FriendOnly {
-                self.ensure_author_subscription(participant.participant_pubkey.as_str())
-                    .await?;
                 let relationship = self
                     .services
                     .projection_store
@@ -904,9 +907,7 @@ impl AppService {
         capability: PrivateChannelCapability,
     ) -> Result<()> {
         let state = joined_private_channel_state_from_capability(capability)?;
-        self.ensure_topic_subscription(state.topic_id.as_str())
-            .await?;
-        self.register_joined_private_channel(state).await
+        self.restore_joined_private_channel(state).await
     }
     pub async fn leave_private_channel(&self, topic_id: &str, channel_id: &str) -> Result<()> {
         let Some(state) = self
@@ -1004,9 +1005,6 @@ impl AppService {
         &self,
         topic_id: &str,
     ) -> Result<Vec<JoinedPrivateChannelView>> {
-        self.ensure_topic_subscription(topic_id).await?;
-        self.ensure_joined_private_channel_subscriptions(topic_id)
-            .await?;
         self.maybe_restart_scope_replica_sync(topic_id, &ReplicaScope::AllJoined)
             .await;
         for state in self.joined_private_channel_states_for_topic(topic_id).await {

@@ -376,32 +376,20 @@ impl ClientHost {
         let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path())?;
         if desired.contains(&subscription) {
             return runtime
-                .ensure_desired_subscription(&subscription)
+                .set_desired_subscription(&subscription, true)
                 .await
-                .map_err(|error| {
-                    SubscriptionStateError::new(
-                        SubscriptionStateErrorKind::ActivationFailed,
-                        format!("failed to activate desired subscription: {error:#}"),
-                    )
-                });
+                .map_err(SubscriptionStateError::activation);
+        }
+        if desired.len() >= kukuri_app_api::MAX_ACTIVE_SCOPES {
+            return Err(SubscriptionStateError::limit_reached());
         }
         runtime
-            .ensure_desired_subscription(&subscription)
+            .set_desired_subscription(&subscription, true)
             .await
-            .map_err(|error| {
-                SubscriptionStateError::new(
-                    SubscriptionStateErrorKind::ActivationFailed,
-                    format!("failed to activate desired subscription: {error:#}"),
-                )
-            })?;
-        let topic_was_desired = desired
-            .iter()
-            .any(|current| current.topic == subscription.topic);
+            .map_err(SubscriptionStateError::activation)?;
         desired.push(subscription.clone());
         if let Err(error) = subscriptions::save_desired_subscriptions(runtime.db_path(), &desired) {
-            let _ = runtime
-                .remove_desired_subscription(&subscription, topic_was_desired)
-                .await;
+            let _ = runtime.set_desired_subscription(&subscription, false).await;
             return Err(error);
         }
         Ok(())
@@ -426,11 +414,8 @@ impl ClientHost {
         }
         desired.retain(|current| current != subscription);
         subscriptions::save_desired_subscriptions(runtime.db_path(), &desired)?;
-        let topic_still_desired = desired
-            .iter()
-            .any(|current| current.topic == subscription.topic);
         runtime
-            .remove_desired_subscription(subscription, topic_still_desired)
+            .set_desired_subscription(subscription, false)
             .await
             .map_err(|error| {
                 SubscriptionStateError::new(
@@ -483,15 +468,26 @@ impl ClientHost {
     ) -> Result<(), SubscriptionStateError> {
         let runtime = self.runtime();
         for subscription in desired {
-            runtime
-                .ensure_desired_subscription(subscription)
-                .await
-                .map_err(|error| {
-                    SubscriptionStateError::new(
+            match runtime.set_desired_subscription(subscription, true).await {
+                Ok(()) => {}
+                // 参加中の channel と合わせて上限を超えた分は購読せず、起動は続ける(#1221 R2-C)。
+                Err(error)
+                    if error
+                        .downcast_ref::<kukuri_app_api::ScopeLimitReached>()
+                        .is_some() =>
+                {
+                    tracing::warn!(
+                        topic = %subscription.topic,
+                        "desired subscription is not restored because the active scopes are full"
+                    );
+                }
+                Err(error) => {
+                    return Err(SubscriptionStateError::new(
                         SubscriptionStateErrorKind::ActivationFailed,
                         format!("failed to restore desired subscription: {error:#}"),
-                    )
-                })?;
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -632,5 +628,100 @@ mod tests {
                 .contains(&desired.topic)
         );
         second.shutdown().await;
+    }
+
+    fn public(topic: &str) -> DesiredSubscription {
+        DesiredSubscription {
+            topic: topic.to_string(),
+            scope: DesiredSubscriptionScope::Public,
+        }
+    }
+
+    fn column(topic: &str) -> crate::ScopeDisplayRequest {
+        crate::ScopeDisplayRequest {
+            observer: format!("column-{topic}"),
+            target: crate::ScopeDisplayTarget::Timeline {
+                topic: topic.to_string(),
+                scope: kukuri_core::TimelineScope::Public,
+            },
+            visible: true,
+        }
+    }
+
+    // #1221 R2-C: desired は 64 件まで。列・参加と上限を共有し、起動時に上限を超えた分は購読しない。
+    #[tokio::test]
+    async fn desired_subscriptions_are_bounded_and_share_the_scope_limit() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let db_path = root.path().join("kukuri.db");
+        let desired = (0..70)
+            .map(|index| public(&format!("kukuri:topic:desired-{index:02}")))
+            .collect::<Vec<_>>();
+        subscriptions::save_desired_subscriptions(&db_path, &desired).expect("seventy desired");
+        let runtime = Arc::new(DesktopRuntime::new(&db_path).await.expect("runtime"));
+        runtime
+            .set_scope_display(column("kukuri:topic:column"))
+            .await
+            .expect("an open column");
+        let host = ClientHost::from_runtime(root.path().to_path_buf(), runtime)
+            .await
+            .expect("startup continues over the limit");
+        assert_eq!(
+            host.desired_subscriptions().expect("desired"),
+            desired[..kukuri_app_api::MAX_ACTIVE_SCOPES].to_vec()
+        );
+        let subscribed = host
+            .runtime()
+            .get_sync_status()
+            .await
+            .expect("status")
+            .subscribed_topics;
+        assert_eq!(subscribed.len(), kukuri_app_api::MAX_ACTIVE_SCOPES);
+        assert!(subscribed.contains(&"kukuri:topic:column".to_string()));
+        assert!(!subscribed.contains(&"kukuri:topic:desired-63".to_string()));
+        let error = host
+            .add_desired_subscription(public("kukuri:topic:extra"))
+            .await
+            .expect_err("the 65th desired subscription");
+        assert_eq!(error.kind, SubscriptionStateErrorKind::LimitReached);
+        host.shutdown().await;
+    }
+
+    // #1221 R2-C: endpoint を作り直したら、lease のある topic だけを新しい stack で購読し直す。
+    #[tokio::test]
+    async fn endpoint_rebuild_resubscribes_only_leased_topics() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime = DesktopRuntime::new(root.path().join("kukuri.db"))
+            .await
+            .expect("runtime");
+        runtime
+            .set_scope_display(column("kukuri:topic:leased"))
+            .await
+            .expect("an open column");
+        runtime
+            .create_post(crate::CreatePostRequest {
+                topic: "kukuri:topic:written".into(),
+                content: "post".into(),
+                reply_to: None,
+                channel_ref: kukuri_core::ChannelRef::Public,
+                attachments: Vec::new(),
+                content_labels: Vec::new(),
+            })
+            .await
+            .expect("post");
+        let generation = runtime.iroh_stack.generation();
+        runtime
+            .reapply_community_node_connectivity()
+            .await
+            .expect("rebuild");
+        assert_ne!(runtime.iroh_stack.generation(), generation);
+        assert_eq!(
+            runtime
+                .get_sync_status()
+                .await
+                .expect("status")
+                .subscribed_topics,
+            vec!["kukuri:topic:leased".to_string()]
+        );
+        runtime.shutdown().await;
     }
 }

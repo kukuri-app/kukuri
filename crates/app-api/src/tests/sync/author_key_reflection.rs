@@ -248,7 +248,7 @@ async fn the_author_subscription_catches_up_after_missed_events() {
         let local_author_pubkey = app.current_author_pubkey();
         let remote_keys = generate_keys();
         let remote_pubkey = remote_keys.public_key_hex();
-        app.spawn_author_subscription(remote_pubkey.as_str())
+        display_author(&app, remote_pubkey.as_str())
             .await
             .expect("subscribe the author");
         sleep(Duration::from_millis(200)).await;
@@ -305,7 +305,7 @@ async fn the_author_subscription_reflects_an_entry_event_by_its_key() {
     let remote_keys = generate_keys();
     let remote_pubkey = remote_keys.public_key_hex();
     let replica = author_replica_id(remote_pubkey.as_str());
-    app.spawn_author_subscription(remote_pubkey.as_str())
+    display_author(&app, remote_pubkey.as_str())
         .await
         .expect("subscribe the author");
     sleep(Duration::from_millis(200)).await;
@@ -775,7 +775,7 @@ async fn a_lag_on_the_own_replica_does_not_read_every_own_follow() {
         Arc::new(MemoryBlobService::default()),
         local_keys,
     );
-    app.spawn_author_subscription(local_author_pubkey.as_str())
+    display_author(&app, local_author_pubkey.as_str())
         .await
         .expect("subscribe myself");
     let own_edges = || async {

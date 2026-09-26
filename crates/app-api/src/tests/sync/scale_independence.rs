@@ -50,6 +50,9 @@ async fn fixture(name: &str, posts: usize) -> Fixture {
     );
     // 購読タスクの起動時の処理(通知の起点の作成と窓の追いつき)を済ませてから数える。購読タスクは起動時の処理を終えてから
     // hint を受け取るので、docs を読まない hint が受け取られるまで待つ。固定の時間では、負荷が高いと起動時の読み出しが数に混ざる。
+    display_topic(&app, topic.as_str())
+        .await
+        .expect("open the topic column");
     app.list_timeline(topic.as_str(), None, 5)
         .await
         .expect("initial timeline");
@@ -486,6 +489,9 @@ async fn withdrawal_doc_event_is_reflected_by_key_without_scanning() {
         generate_keys(),
     );
     let topic = "kukuri:topic:withdrawal-doc-event";
+    display_topic(&viewer, topic)
+        .await
+        .expect("open the topic column");
     let object_id = author
         .create_post(topic, "body to be withdrawn", None)
         .await

@@ -17,6 +17,40 @@ pub(crate) async fn display_remote_session(app: &AppService, topic: &str, id: &s
     .expect("display the remote session");
 }
 
+/// topic の公開 timeline の列を開く(列の lease を取る。#1221 R2-C)。
+pub(crate) async fn display_topic(app: &AppService, topic: &str) -> Result<()> {
+    app.set_scope_display(crate::ScopeDisplayRequest {
+        observer: format!("test-topic:{topic}"),
+        target: crate::ScopeDisplayTarget::Timeline {
+            topic: topic.into(),
+            scope: TimelineScope::Public,
+        },
+        visible: true,
+    })
+    .await
+}
+
+#[cfg(feature = "iroh-integration-tests")]
+pub(crate) async fn display_topic_in(apps: &[&AppService], topic: &str) {
+    for app in apps {
+        display_topic(app, topic)
+            .await
+            .expect("open the topic column");
+    }
+}
+
+/// author の profile を開く(列の lease を取る。#1221 R2-C)。
+pub(crate) async fn display_author(app: &AppService, pubkey: &str) -> Result<()> {
+    app.set_scope_display(crate::ScopeDisplayRequest {
+        observer: format!("test-author:{pubkey}"),
+        target: crate::ScopeDisplayTarget::Author {
+            pubkey: pubkey.into(),
+        },
+        visible: true,
+    })
+    .await
+}
+
 pub(crate) fn app_service_from_dependencies(
     store: Arc<dyn Store>,
     projection_store: Arc<dyn ProjectionStore>,

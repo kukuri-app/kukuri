@@ -138,7 +138,11 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         ),
         // #1284: 表示中の投稿cardだけに作用する局所的な欠損blobの回復。
         "gui_content_recovery" => tauri == "commands::posts::retry_post_elements",
-        "gui_visible_membership" => tauri == "commands::posts::bookmarked_post_ids",
+        // #1221 R2-C: GUIの表示中の要素・列だけを対象にする照会と購読の需要。
+        "gui_visible_membership" => matches!(
+            tauri,
+            "commands::posts::bookmarked_post_ids" | "commands::community_node::set_scope_display"
+        ),
         _ => false,
     }
 }
@@ -181,9 +185,9 @@ fn baseline_inventory_is_classified_once() {
     );
     assert_eq!(
         manifest.scope_revision,
-        "2026-09-26-1221-r5-g-bookmark-page-v1"
+        "2026-09-26-1221-r2-c-scope-display-v1"
     );
-    assert_eq!(manifest.entries.len(), 172);
+    assert_eq!(manifest.entries.len(), 173);
     check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");
 }
 

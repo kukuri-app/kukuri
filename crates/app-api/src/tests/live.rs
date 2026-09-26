@@ -12,6 +12,7 @@ async fn late_joiner_backfills_live_session_manifest() {
     let app_a = app_with_iroh_services(store_a, &stack_a);
     let app_b = app_with_iroh_services(store_b, &stack_b);
     let topic = "kukuri:topic:live-late";
+    display_topic_in(&[&app_a, &app_b], topic).await;
 
     let session_id = app_a
         .create_live_session(
@@ -66,6 +67,9 @@ async fn live_presence_expires_without_heartbeat() {
     let transport = Arc::new(FakeTransport::new("self", FakeNetwork::default()));
     let app = AppService::new(store.clone(), transport.clone());
     let topic = "kukuri:topic:presence-expiry";
+    display_topic(&app, topic)
+        .await
+        .expect("open the topic column");
     let session_id = app
         .create_live_session(
             topic,

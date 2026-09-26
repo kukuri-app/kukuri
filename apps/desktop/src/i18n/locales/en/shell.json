@@ -589,5 +589,11 @@
     "later": "Later",
     "nodeUnavailable": "The community node status is unavailable. Retry or skip to continue setting up your profile.",
     "skipNode": "Skip and continue"
+  },
+  "scopeLimit": {
+    "title": "Limit reached",
+    "column": "You cannot add a new column because the column limit has been reached. Close a column you are not using, then open it again.",
+    "participation": "You cannot join because your joined channels and open columns have reached the limit. Close a column you are not using or leave something you joined, then try again.",
+    "confirm": "OK"
   }
 }

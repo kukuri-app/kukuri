@@ -23,12 +23,10 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) dm_outbox_retry_closed: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     pub(crate) dm_outbox_retry_starts: Arc<std::sync::atomic::AtomicUsize>,
-    /// 公開 topic の購読 task(key = topic_id)。
-    pub(crate) subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    /// private channel の購読 task(key = channel 購読キー)。
-    pub(crate) private_channel_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    /// 作者(プロフィール)購読 task(key = author pubkey)。
-    pub(crate) author_subscriptions: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    /// 購読する scope の lease と、その task(上限 64。#1221 R2-C)。
+    pub(crate) scope_leases: Arc<Mutex<ScopeLeases>>,
+    /// 自分の端末で hosting する Dome の heartbeat task(key = instance id)。
+    pub(crate) dome_heartbeats: Arc<Mutex<HashMap<String, AbortOnDropTask>>>,
     /// live presence の期限管理 task(key = live_presence_task_key)。
     pub(crate) live_presence_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     /// 購読の世代番号(key = topic_id)。

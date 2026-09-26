@@ -56,8 +56,6 @@ impl AppService {
     ) -> Result<DirectMessageConversationView> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
         // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
-        self.ensure_author_subscription(peer_pubkey.as_str())
-            .await?;
         let existing = self
             .services
             .projection_store
@@ -139,8 +137,6 @@ impl AppService {
     ) -> Result<String> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
         // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
-        self.ensure_author_subscription(peer_pubkey.as_str())
-            .await?;
         if !self
             .direct_message_send_enabled(peer_pubkey.as_str())
             .await?
@@ -229,8 +225,6 @@ impl AppService {
     ) -> Result<DirectMessageStatusView> {
         let peer_pubkey = normalize_author_pubkey(peer_pubkey)?;
         // 表示・送信の需要がある相手だけ author を購読し、自分を指す edge を追いつかせる(関係は読むときに edge から求める)。
-        self.ensure_author_subscription(peer_pubkey.as_str())
-            .await?;
         self.direct_message_status_view(peer_pubkey.as_str()).await
     }
 }

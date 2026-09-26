@@ -4,9 +4,11 @@ use kukuri_core::TrustObservationKind;
 use tracing::warn;
 
 impl DesktopRuntime {
-    pub(crate) async fn ensure_desired_subscription(
+    /// CLI daemon の desired を desired の holder で購読する。上限は列・参加と共通(#1221 R2-C)。
+    pub(crate) async fn set_desired_subscription(
         &self,
         subscription: &DesiredSubscription,
+        desired: bool,
     ) -> Result<()> {
         let scope = match &subscription.scope {
             DesiredSubscriptionScope::Public => TimelineScope::Public,
@@ -15,28 +17,8 @@ impl DesktopRuntime {
             },
         };
         self.app_service
-            .ensure_scope_subscriptions(subscription.topic.as_str(), &scope)
+            .set_desired_scope(subscription.topic.as_str(), &scope, desired)
             .await
-    }
-
-    pub(crate) async fn remove_desired_subscription(
-        &self,
-        subscription: &DesiredSubscription,
-        topic_still_desired: bool,
-    ) -> Result<()> {
-        match (&subscription.scope, topic_still_desired) {
-            (_, false) => {
-                self.app_service
-                    .unsubscribe_topic(subscription.topic.as_str())
-                    .await
-            }
-            (DesiredSubscriptionScope::Channel { channel_id }, true) => {
-                self.app_service
-                    .unsubscribe_private_channel(subscription.topic.as_str(), channel_id.as_str())
-                    .await
-            }
-            (DesiredSubscriptionScope::Public, true) => Ok(()),
-        }
     }
 
     pub async fn create_post(&self, request: CreatePostRequest) -> Result<String> {

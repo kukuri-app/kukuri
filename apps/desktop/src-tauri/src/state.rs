@@ -65,6 +65,7 @@ pub(crate) struct CommandError {
 }
 
 pub(crate) const COMMAND_FAILED_CODE: &str = "command_failed";
+pub(crate) const SCOPE_LIMIT_REACHED_CODE: &str = "SCOPE_LIMIT_REACHED";
 
 impl From<anyhow::Error> for CommandError {
     fn from(error: anyhow::Error) -> Self {
@@ -166,6 +167,18 @@ pub(crate) fn map_error(error: anyhow::Error) -> CommandError {
                     422
                 },
             ),
+            retry_after_seconds: None,
+        };
+    }
+    // 購読する scope の上限(#1221 R2-C)。画面は code で判別し、操作を取り消して説明する。
+    if error
+        .downcast_ref::<kukuri_desktop_runtime::ScopeLimitReached>()
+        .is_some()
+    {
+        return CommandError {
+            code: SCOPE_LIMIT_REACHED_CODE.to_string(),
+            message: error_message(error),
+            status: None,
             retry_after_seconds: None,
         };
     }
@@ -310,6 +323,14 @@ mod tests {
             json,
             r#"{"code":"command_failed","message":"inner: outer"}"#
         );
+    }
+
+    #[test]
+    fn scope_limit_is_reported_by_its_code_through_context() {
+        let error = map_error(
+            anyhow::Error::from(kukuri_desktop_runtime::ScopeLimitReached).context("join"),
+        );
+        assert_eq!(error.code, SCOPE_LIMIT_REACHED_CODE);
     }
 
     #[test]

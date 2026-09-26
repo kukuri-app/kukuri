@@ -12,7 +12,6 @@ impl AppService {
         input: MoveDomeInput,
     ) -> Result<DomeMoveView> {
         let _guard = self.services.dome_mutations.lock().await;
-        self.ensure_topic_subscription(source_topic_id).await?;
         let actor = Pubkey::from(self.current_author_pubkey());
         if input.move_id.trim().is_empty() {
             anyhow::bail!("Dome move id is required");
@@ -113,8 +112,6 @@ impl AppService {
         }
 
         let target_topic_id = record.target_context.topic_id().as_str().to_string();
-        self.ensure_topic_subscription(target_topic_id.as_str())
-            .await?;
         let (target_channel_id, target_replica_id) = match &record.target_context {
             SpatialContextV1::Topic { .. } => (None, topic_replica_id(target_topic_id.as_str())),
             SpatialContextV1::Channel { channel_id, .. } => {
@@ -187,13 +184,19 @@ impl AppService {
                 Utc::now().timestamp_millis(),
             )
             .await?;
-            self.persist_game_room_manifest(
-                &target_replica_id,
-                target_topic_id.as_str(),
-                staged,
-                Utc::now().timestamp_millis(),
-            )
-            .await?;
+            let staged = self
+                .persist_game_room_manifest(
+                    &target_replica_id,
+                    target_topic_id.as_str(),
+                    staged,
+                    Utc::now().timestamp_millis(),
+                )
+                .await?;
+            // 次の段は projection から staging を読む。購読 task の反映を待たずに自分で置く(#1221 R2-C)。
+            self.services
+                .projection_store
+                .upsert_game_room_cache(game_projection_row(&staged))
+                .await?;
             record.phase = DomeMovePhaseV1::TargetStaged;
             record.updated_at = Utc::now().timestamp_millis();
             self.persist_dome_move_record(&record).await?;

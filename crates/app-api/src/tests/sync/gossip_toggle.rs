@@ -24,8 +24,8 @@ async fn disabled_topic_blocks_topic_subscription() {
         .await
         .expect("disable topic gossip");
 
-    let timeline = app.list_timeline(topic, None, 20).await.expect("timeline");
-    assert!(timeline.items.is_empty());
+    // 列を開いても、gossip を止めた topic は購読しない(lease だけを持つ)。
+    display_topic(&app, topic).await.expect("display topic");
 
     assert!(!app.has_topic_subscription(topic).await);
     assert_eq!(*hint_transport.subscribe_count.lock().await, 0);
@@ -40,8 +40,7 @@ async fn enabling_topic_resubscribes() {
     let app = build_app(hint_transport.clone());
     let topic = "kukuri:topic:gossip-reenable";
 
-    // Initial timeline fetch subscribes the topic.
-    app.list_timeline(topic, None, 20).await.expect("timeline");
+    display_topic(&app, topic).await.expect("display topic");
     assert!(app.has_topic_subscription(topic).await);
 
     app.set_topic_gossip_enabled(topic, false)

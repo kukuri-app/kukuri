@@ -188,24 +188,25 @@ async fn real_iroh_private_reader_stops_after_leave() -> Result<()> {
         Arc::new(MemoryBlobService::default()),
         generate_keys(),
     );
+    let state = JoinedPrivateChannelState {
+        generation: 1,
+        topic_id: topic.as_str().into(),
+        channel_id: channel.clone(),
+        label: "room".into(),
+        creator_pubkey: keys.public_key_hex(),
+        owner_pubkey: keys.public_key_hex(),
+        joined_via_pubkey: None,
+        audience_kind: ChannelAudienceKind::InviteOnly,
+        current_epoch_id: current_epoch,
+        current_epoch_secret_hex: hex::encode([7; 32]),
+        archived_epochs: vec![PrivateChannelEpochCapability {
+            epoch_id: old_epoch,
+            namespace_secret_hex: hex::encode([8; 32]),
+        }],
+    };
     app.joined_private_channels.lock().await.insert(
         joined_private_channel_key(topic.as_str(), channel.as_str()),
-        JoinedPrivateChannelState {
-            generation: 1,
-            topic_id: topic.as_str().into(),
-            channel_id: channel.clone(),
-            label: "room".into(),
-            creator_pubkey: keys.public_key_hex(),
-            owner_pubkey: keys.public_key_hex(),
-            joined_via_pubkey: None,
-            audience_kind: ChannelAudienceKind::InviteOnly,
-            current_epoch_id: current_epoch,
-            current_epoch_secret_hex: hex::encode([7; 32]),
-            archived_epochs: vec![PrivateChannelEpochCapability {
-                epoch_id: old_epoch,
-                namespace_secret_hex: hex::encode([8; 32]),
-            }],
-        },
+        state.clone(),
     );
     let input = CommunityIndexPostResolveInput {
         key: "private-quic".into(),
@@ -228,6 +229,8 @@ async fn real_iroh_private_reader_stops_after_leave() -> Result<()> {
         Some("private over quic")
     );
     assert_eq!(client_node.docs().list().await?.count().await, 0);
+    // channel の timeline は参加の登録と同じく秘密を登録してから読む(読み出しは秘密を登録しない。#1221 R2-C)。
+    register_private_channel_replica_secrets(client.as_ref(), &state).await?;
     let page = app
         .list_timeline_scoped(
             topic.as_str(),

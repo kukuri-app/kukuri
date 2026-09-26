@@ -157,7 +157,7 @@ async fn content_ready_session_outside_the_window_notifies_the_visible_list() {
     )
     .await
     .unwrap();
-    pair.viewer.ensure_topic_subscription(topic).await.unwrap();
+    display_topic(&pair.viewer, topic).await.unwrap();
     let notice = kukuri_docs_sync::DocEvent {
         replica_id: replica.clone(),
         key: key.clone(),
@@ -260,10 +260,7 @@ async fn subscription_start_projects_the_sessions_of_the_replica() {
         .create_game_room(topic, game_room_input("a room"))
         .await
         .expect("create game room");
-    pair.viewer
-        .ensure_topic_subscription(topic)
-        .await
-        .expect("subscribe");
+    display_topic(&pair.viewer, topic).await.expect("subscribe");
     let projection_store: &dyn ProjectionStore = pair.viewer_store.as_ref();
     timeout(Duration::from_secs(10), async {
         while !projection_store
@@ -294,10 +291,7 @@ async fn lagged_notice_refreshes_the_reactions_of_the_window() {
         .create_post(topic, "a post", None)
         .await
         .expect("create post");
-    pair.viewer
-        .ensure_topic_subscription(topic)
-        .await
-        .expect("subscribe");
+    display_topic(&pair.viewer, topic).await.expect("subscribe");
     let target_id = EnvelopeId::from(target.as_str());
     let projection_store: &dyn ProjectionStore = pair.viewer_store.as_ref();
     timeout(Duration::from_secs(10), async {
@@ -360,8 +354,7 @@ async fn a_hint_that_arrives_before_the_docs_requests_a_catch_up() {
     let docs_sync = Arc::new(SilentNoScanDocsSync::default());
     let pair = pair(docs_sync.clone());
     let topic = TopicId::new("kukuri:topic:session-catch-up-hint");
-    pair.viewer
-        .ensure_topic_subscription(topic.as_str())
+    display_topic(&pair.viewer, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(300)).await;
@@ -409,8 +402,7 @@ async fn sync_finished_waits_for_the_interval_stretched_by_empty_runs() {
     let docs_sync = Arc::new(SilentNoScanDocsSync::default());
     let pair = pair(docs_sync.clone());
     let topic = TopicId::new("kukuri:topic:session-catch-up-sync-finished-backoff");
-    pair.viewer
-        .ensure_topic_subscription(topic.as_str())
+    display_topic(&pair.viewer, topic.as_str())
         .await
         .expect("subscribe");
     sleep(Duration::from_millis(300)).await;
@@ -569,6 +561,9 @@ async fn live_list_refreshes_a_live_session_without_viewers() {
     let docs_sync = Arc::new(SilentNoScanDocsSync::default());
     let pair = pair(docs_sync);
     let topic = "kukuri:topic:live-refresh";
+    display_topic(&pair.viewer, topic)
+        .await
+        .expect("open the topic column");
     let session_id = pair
         .author
         .create_live_session(

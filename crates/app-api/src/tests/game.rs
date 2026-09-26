@@ -17,6 +17,7 @@ async fn game_room_score_update_replicates() {
     let app_a = app_with_iroh_services(store_a, &stack_a);
     let app_b = app_with_iroh_services(store_b, &stack_b);
     let topic = "kukuri:topic:game-sync";
+    display_topic_in(&[&app_a, &app_b], topic).await;
 
     let ticket_a = app_a
         .peer_ticket()
@@ -112,6 +113,7 @@ async fn metaverse_room_events_replicate_between_iroh_peers() {
     let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
     let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
     let topic = "kukuri:topic:metaverse-iroh-events";
+    display_topic_in(&[&app_a, &app_b], topic).await;
 
     let ticket_a = app_a
         .peer_ticket()
@@ -388,10 +390,8 @@ async fn metaverse_room_events_are_signed_and_delivered_over_hint_transport() {
         )
         .await
         .expect("create metaverse room");
-    app_b
-        .list_game_rooms(topic)
-        .await
-        .expect("start topic subscription");
+    display_topic(&app_b, topic).await.unwrap();
+    app_b.list_game_rooms(topic).await.expect("list rooms");
 
     let local_event = app_a
         .publish_metaverse_room_event(
@@ -441,6 +441,8 @@ async fn metaverse_room_events_are_signed_and_delivered_over_hint_transport() {
 
     let visitor_pubkey = app_b.current_author_pubkey();
     let owner_pubkey = app_a.current_author_pubkey();
+    // owner の block は、owner の profile を開いている間に届く(#1221 R2-C)。
+    display_author(&app_b, &owner_pubkey).await.unwrap();
     app_a
         .block_author(visitor_pubkey.as_str())
         .await

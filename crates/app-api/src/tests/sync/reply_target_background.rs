@@ -222,7 +222,7 @@ async fn an_older_page_reflects_the_reply_target_before_building_the_view() {
     );
     let topic = TopicId::new("kukuri:topic:reply-target-older-page");
     let replica = topic_replica_id(topic.as_str());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe the topic");
     sleep(Duration::from_millis(200)).await;
@@ -294,7 +294,7 @@ async fn a_thread_page_reflects_the_reply_target_before_building_the_view() {
     );
     let topic = TopicId::new("kukuri:topic:reply-target-thread-page");
     let replica = topic_replica_id(topic.as_str());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe the topic");
     sleep(Duration::from_millis(200)).await;
@@ -492,7 +492,7 @@ async fn a_visible_reply_target_with_a_missing_body_recovers_after_its_provider_
     );
     let topic = TopicId::new("kukuri:topic:reply-target-missing-body");
     let replica = topic_replica_id(topic.as_str());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe the topic");
     sleep(Duration::from_millis(200)).await;
@@ -742,7 +742,7 @@ async fn the_listing_does_not_wait_for_a_remote_body_of_the_reply_target() {
     );
     let topic = TopicId::new("kukuri:topic:reply-target-remote-body");
     let replica = topic_replica_id(topic.as_str());
-    app.ensure_topic_subscription(topic.as_str())
+    display_topic(&app, topic.as_str())
         .await
         .expect("subscribe the topic");
     sleep(Duration::from_millis(200)).await;

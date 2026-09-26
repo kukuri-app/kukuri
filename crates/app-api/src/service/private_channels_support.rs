@@ -156,8 +156,6 @@ impl AppService {
                 if participant.is_owner {
                     continue;
                 }
-                self.ensure_author_subscription(participant.participant_pubkey.as_str())
-                    .await?;
                 let relationship = self
                     .services
                     .projection_store
@@ -328,15 +326,11 @@ impl AppService {
             .await?;
         self.ensure_private_channel_access(topic_id, channel_id)
             .await?;
-        self.ensure_private_channel_subscription(topic_id, channel_id.as_str())
-            .await?;
         self.maybe_auto_rotate_private_channel_for_owner(topic_id, channel_id, action)
             .await?;
         self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, channel_id.as_str())
             .await?;
         self.ensure_private_channel_access(topic_id, channel_id)
-            .await?;
-        self.ensure_private_channel_subscription(topic_id, channel_id.as_str())
             .await?;
         let state = self
             .joined_private_channel_state(topic_id, channel_id.as_str())
@@ -381,7 +375,59 @@ impl AppService {
         persist(&snapshot)
     }
 
+    /// 参加を登録する。新しい参加は参加の holder で channel key を取る。上限なら何も保存しない(#1221 R2-C)。
     pub(crate) async fn register_joined_private_channel(
+        &self,
+        state: JoinedPrivateChannelState,
+    ) -> Result<()> {
+        self.hold_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
+            .await?;
+        self.register_joined_private_channel_state(state).await
+    }
+
+    /// 参加の holder で channel key を取る。既に持っていれば何もしない。戻り値は今回取ったか。
+    pub(crate) async fn hold_joined_private_channel(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<bool> {
+        let holder = private_channel_holder(topic_id, channel_id);
+        let key = ScopeKey::Channel(topic_id.to_string(), channel_id.to_string());
+        if self
+            .subscription_registry
+            .scope_leases
+            .lock()
+            .await
+            .holds(&holder, &key)
+        {
+            return Ok(false);
+        }
+        self.set_scope_holder(&holder, [key]).await?;
+        Ok(true)
+    }
+
+    /// 起動時の復元。上限を超えた channel は購読せずに参加状態だけを戻す(起動を失敗させない)。
+    pub(crate) async fn restore_joined_private_channel(
+        &self,
+        state: JoinedPrivateChannelState,
+    ) -> Result<()> {
+        if let Err(error) = self
+            .hold_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
+            .await
+        {
+            if error.downcast_ref::<ScopeLimitReached>().is_none() {
+                return Err(error);
+            }
+            warn!(
+                topic = %state.topic_id,
+                channel_id = %state.channel_id.as_str(),
+                "private channel is not subscribed because the active scopes are full"
+            );
+        }
+        self.register_joined_private_channel_state(state).await
+    }
+
+    pub(crate) async fn register_joined_private_channel_state(
         &self,
         mut state: JoinedPrivateChannelState,
     ) -> Result<()> {
@@ -410,11 +456,14 @@ impl AppService {
         drop(_save_access);
         self.persist_private_channel_capabilities_if_configured()
             .await?;
-        self.ensure_private_channel_subscription(
-            state.topic_id.as_str(),
-            state.channel_id.as_str(),
-        )
-        .await?;
+        // 現 epoch の replica だけを購読する。epoch が変わったら task を作り直す。
+        if changed {
+            self.restart_scope_subscription(&ScopeKey::Channel(
+                state.topic_id.clone(),
+                state.channel_id.as_str().to_string(),
+            ))
+            .await;
+        }
         Ok(())
     }
 
@@ -451,163 +500,15 @@ impl AppService {
             self.persist_private_channel_capabilities_if_configured()
                 .await?;
         }
-        let prefix = joined_private_channel_subscription_prefix(topic_id, channel_id);
-        let keys = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.starts_with(prefix.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in keys {
-            if let Some(handle) = self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .remove(key.as_str())
-            {
-                handle.abort();
-            }
-        }
-        let has_peers = self
-            .services
-            .transport
-            .peers()
-            .await
-            .is_ok_and(|peers| peers.peer_count > 0);
-        if has_peers {
-            let hint_topic = private_channel_hint_topic(channel_id);
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                self.hint_transport().unsubscribe_hints(&hint_topic),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    warn!(
-                        topic = %topic_id,
-                        channel_id = %channel_id,
-                        error = %error,
-                        "failed to unsubscribe private channel hints after leave"
-                    );
-                }
-                Err(_) => {
-                    warn!(
-                        topic = %topic_id,
-                        channel_id = %channel_id,
-                        "timed out unsubscribing private channel hints after leave"
-                    );
-                }
-            }
-        }
+        self.release_scope_holder(&private_channel_holder(topic_id, channel_id))
+            .await;
+        // 列が channel を開いたままでも、参加していない channel は購読しない。
+        self.restart_scope_subscription(&ScopeKey::Channel(
+            topic_id.to_string(),
+            channel_id.to_string(),
+        ))
+        .await;
         Ok(removed)
-    }
-
-    pub(crate) async fn ensure_private_channel_subscription(
-        &self,
-        topic_id: &str,
-        channel_id: &str,
-    ) -> Result<()> {
-        if self.is_channel_gossip_disabled(topic_id, channel_id).await {
-            return Ok(());
-        }
-        let Some(state) = self
-            .joined_private_channel_state(topic_id, channel_id)
-            .await
-        else {
-            anyhow::bail!("private channel is not joined");
-        };
-        self.spawn_private_channel_subscription(state).await
-    }
-
-    pub(crate) async fn ensure_joined_private_channel_subscriptions(
-        &self,
-        topic_id: &str,
-    ) -> Result<()> {
-        for state in self.joined_private_channel_states_for_topic(topic_id).await {
-            self.ensure_private_channel_subscription(topic_id, state.channel_id.as_str())
-                .await?;
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn restart_private_channel_subscription(
-        &self,
-        topic_id: &str,
-        channel_id: &str,
-    ) -> Result<()> {
-        let prefix = joined_private_channel_subscription_prefix(topic_id, channel_id);
-        let keys = self
-            .subscription_registry
-            .private_channel_subscriptions
-            .lock()
-            .await
-            .keys()
-            .filter(|key| key.starts_with(prefix.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in keys {
-            if let Some(handle) = self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .remove(key.as_str())
-            {
-                handle.abort();
-            }
-        }
-        // restart_topic_subscription と同じ理由で gossip topic は抜けない。
-        let Some(state) = self
-            .joined_private_channel_state(topic_id, channel_id)
-            .await
-        else {
-            return Ok(());
-        };
-        self.spawn_private_channel_subscription(state).await
-    }
-
-    pub(crate) async fn spawn_private_channel_subscription(
-        &self,
-        state: JoinedPrivateChannelState,
-    ) -> Result<()> {
-        let docs_sync = Arc::clone(&self.services.docs_sync);
-        for epoch in private_channel_epoch_capabilities(&state) {
-            let replica = private_channel_replica_for_epoch(
-                state.channel_id.as_str(),
-                epoch.epoch_id.as_str(),
-            );
-            let key = joined_private_channel_subscription_key(
-                state.topic_id.as_str(),
-                state.channel_id.as_str(),
-                &replica,
-            );
-            if self
-                .subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .contains_key(key.as_str())
-            {
-                continue;
-            }
-            docs_sync
-                .register_private_replica_secret(&replica, epoch.namespace_secret_hex.as_str())
-                .await?;
-            self.spawn_subscription_task(
-                state.topic_id.as_str(),
-                Some(state.channel_id.clone()),
-                replica,
-                private_channel_hint_topic(state.channel_id.as_str()),
-                Some(key),
-            )
-            .await?;
-        }
-        Ok(())
     }
 
     pub(crate) async fn spawn_subscription_task(
@@ -616,8 +517,7 @@ impl AppService {
         channel_id: Option<ChannelId>,
         replica: ReplicaId,
         hint_topic: TopicId,
-        private_key: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<ScopeTask> {
         let services = self.services.clone();
         let metaverse_room_events = Arc::clone(&self.metaverse_room_events);
         let dome_host_heartbeats = Arc::clone(&self.dome_host_heartbeats);
@@ -627,11 +527,15 @@ impl AppService {
         let topic = topic_id.to_string();
         let storage_channel_id = channel_storage_id(channel_id.as_ref());
         let local_author_pubkey = self.current_author_pubkey();
-        let subscription_key = private_key.clone().unwrap_or_else(|| topic_id.to_string());
+        let is_public_topic = channel_id.is_none();
+        let subscription_key = if is_public_topic {
+            topic_id.to_string()
+        } else {
+            replica.as_str().to_string()
+        };
         let generation = self
             .next_subscription_generation(subscription_key.as_str())
             .await;
-        let is_public_topic = channel_id.is_none() && private_key.is_none();
         if is_public_topic {
             self.reset_public_topic_delivery_generation(topic_id, generation)
                 .await;
@@ -644,12 +548,10 @@ impl AppService {
             .await?;
         let mut hint_stream = services.hint_transport.subscribe_hints(&hint_topic).await?;
         let replica_for_task = replica.clone();
-        let hint_topic_for_task = hint_topic.clone();
         let handle = tokio::spawn(async move {
             let projection_store = &services.projection_store;
             let docs_sync = &services.docs_sync;
             let blob_service = &services.blob_service;
-            let hint_transport = &services.hint_transport;
             let transport = &services.transport;
             let notification_baseline = match snapshot_window_notification_baseline(
                 docs_sync.as_ref(),
@@ -1023,28 +925,18 @@ impl AppService {
                         .await;
                         recovery_probe_due_at = recovery_backoff.next_probe_at(now);
                     }
-                    else => {
-                        let _ = hint_transport.unsubscribe_hints(&hint_topic_for_task).await;
-                        break;
-                    },
+                    // hint の購読を抜けるのは lease の持ち主(`stop_scope_task`)。
+                    else => break,
                 }
             }
         });
 
-        if let Some(private_key) = private_key {
-            self.subscription_registry
-                .private_channel_subscriptions
-                .lock()
-                .await
-                .insert(private_key, handle);
-        } else {
-            self.subscription_registry
-                .subscriptions
-                .lock()
-                .await
-                .insert(topic_id.to_string(), handle);
-        }
-        Ok(())
+        Ok(ScopeTask {
+            handle: AbortOnDropTask::new(handle),
+            replica,
+            hint_topic: Some(hint_topic),
+            previous: None,
+        })
     }
 }
 

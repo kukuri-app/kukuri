@@ -185,21 +185,8 @@ pub(crate) async fn refresh_private_channel_pair(
             ticket: ticket_a.to_string(),
         })
         .await?;
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
-        .await;
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.to_string(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
-        .await;
+    for runtime in [runtime_a, runtime_b] {
+        let _ = open_topic_column(runtime, topic, private_scope).await;
+    }
     Ok(())
 }

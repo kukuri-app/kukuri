@@ -22,13 +22,7 @@ async fn preview_channel_access_token_is_non_mutating() {
     .expect("runtime b");
     let topic = "kukuri:topic:desktop-preview-channel";
 
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe a");
 
@@ -128,22 +122,10 @@ async fn private_channel_import_without_local_posts_restores_after_restart() {
         .expect("import a");
 
     let topic = "kukuri:topic:desktop-private-import-no-posts";
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, TimelineScope::Public)
         .await
         .expect("subscribe b");
     wait_for_topic_delivery(&runtime_a, topic, 1, "import owner topic delivery timeout").await;
@@ -254,22 +236,10 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
         .expect("import a");
 
     let topic = "kukuri:topic:desktop-private-channel";
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, TimelineScope::Public)
         .await
         .expect("subscribe a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: TimelineScope::Public,
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, TimelineScope::Public)
         .await
         .expect("subscribe b");
     wait_for_topic_delivery(
@@ -316,22 +286,10 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
     let private_scope = TimelineScope::Channel {
         channel_id: private_channel_id.clone(),
     };
-    let _ = runtime_a
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_a, topic, private_scope.clone())
         .await
         .expect("subscribe private a");
-    let _ = runtime_b
-        .list_timeline(ListTimelineRequest {
-            topic: topic.into(),
-            scope: private_scope.clone(),
-            cursor: None,
-            limit: Some(20),
-        })
+    open_topic_column(&runtime_b, topic, private_scope.clone())
         .await
         .expect("subscribe private b");
 

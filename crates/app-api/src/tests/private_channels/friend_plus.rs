@@ -64,10 +64,6 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
     ] {
         stack.bind_account(app).await;
     }
-    app_a.warm_social_graph().await.expect("warm a");
-    app_b.warm_social_graph().await.expect("warm b");
-    app_c.warm_social_graph().await.expect("warm c");
-    app_d.warm_social_graph().await.expect("warm d");
 
     let ticket_a = stack_a
         .transport
@@ -113,8 +109,7 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         .expect("b imports a");
 
     for app in [&app_a, &app_b] {
-        let _ = app
-            .list_timeline(topic, None, 20)
+        display_topic(app, topic)
             .await
             .expect("subscribe public timeline");
     }
@@ -206,8 +201,7 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         .await
         .expect("c imports b");
 
-    let _ = app_c
-        .list_timeline(topic, None, 20)
+    display_topic(&app_c, topic)
         .await
         .expect("subscribe public timeline c");
     wait_for_topic_delivery(&app_a, topic, 1).await;
@@ -318,8 +312,7 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         .import_peer_ticket(&ticket_b)
         .await
         .expect("d imports b");
-    let _ = app_d
-        .list_timeline(topic, None, 20)
+    display_topic(&app_d, topic)
         .await
         .expect("subscribe public timeline d");
     wait_for_topic_delivery(&app_b, topic, 1).await;
