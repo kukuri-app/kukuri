@@ -34,11 +34,16 @@ mod local_source;
 mod remote_source;
 use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 
+/// 同時に開いておく namespace の上限(ADR 0055 の docs handle 128)。書込みで開いた bucket も含む。
+pub(crate) const MAX_OPEN_REPLICAS: usize = 128;
+
 struct ReplicaHandle {
-    doc: Doc,
+    /// 使用中の操作は clone を持つ。map だけが持つ handle が、上限を超えたときに閉じる対象になる。
+    doc: Arc<Doc>,
     events: broadcast::Sender<ReplicaNotice>,
     closing: bool,
     live_task: Option<JoinHandle<()>>,
+    last_used: std::time::Instant,
 }
 
 #[derive(Clone)]
@@ -170,15 +175,20 @@ impl IrohDocsSync {
     }
 
     /// 手元の namespace を開く(R5-H: 旧 sync は撤去した。開いても同期を始めない)。
-    pub(crate) async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Doc> {
+    ///
+    /// 開いた handle は `MAX_OPEN_REPLICAS` まで残し、超えたら使用中でない最も古いものから閉じる。日ごとの bucket へ
+    /// 書き続けても、開いている handle と event の task は増え続けない。閉じた namespace の提供は、読む間だけ開く
+    /// (`DocReadProtocol`)。
+    pub(crate) async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Arc<Doc>> {
         // openの競合で同じnamespaceのtaskを複数作らない。
         let mut replicas = self.replicas.lock().await;
         // revokeとopenを直列化する。mapのlock前にsecretをコピーすると、revoke完了後に再openできてしまう。
         let secret = self.replica_secret(replica_id).await?;
-        if let Some(handle) = replicas.get(replica_id.as_str()) {
+        if let Some(handle) = replicas.get_mut(replica_id.as_str()) {
             if handle.closing {
                 anyhow::bail!("replica close is pending; retry close before reopening");
             }
+            handle.last_used = std::time::Instant::now();
             return Ok(handle.doc.clone());
         }
 
@@ -242,6 +252,7 @@ impl IrohDocsSync {
                 }
             }
         });
+        let doc = Arc::new(doc);
         replicas.insert(
             replica_id.as_str().to_string(),
             ReplicaHandle {
@@ -249,8 +260,27 @@ impl IrohDocsSync {
                 events: tx,
                 closing: false,
                 live_task: Some(task),
+                last_used: std::time::Instant::now(),
             },
         );
+        while replicas.len() > MAX_OPEN_REPLICAS {
+            // 使用中(clone を持つ操作がある)と停止中の handle は閉じない。全部が使用中なら、終わるまで上限を超えてよい。
+            let Some(idle) = replicas
+                .iter()
+                .filter(|(_, handle)| !handle.closing && Arc::strong_count(&handle.doc) == 1)
+                .min_by_key(|(_, handle)| handle.last_used)
+                .map(|(id, _)| id.clone())
+            else {
+                break;
+            };
+            let mut handle = replicas.remove(&idle).expect("idle replica handle");
+            if let Some(task) = handle.live_task.take() {
+                task.abort();
+            }
+            if let Err(error) = handle.doc.close().await {
+                warn!(replica = %idle, error = %error, "failed to close an idle docs replica");
+            }
+        }
         Ok(doc)
     }
 
@@ -669,6 +699,61 @@ mod tests {
     use super::*;
 
     // リトライ状態のテストは共通実装側(kukuri-transport::peers)へ移動した(WP-H2)。
+
+    // #1221 R5-H: 日ごとの bucket へ書き続けても、開いている handle と event の task は上限で止まる。
+    // 閉じた bucket の内容は残り、手元から読める。
+    #[tokio::test]
+    async fn writes_across_many_day_buckets_keep_open_handles_at_the_limit() -> Result<()> {
+        let node = IrohDocsNode::memory().await?;
+        let docs = IrohDocsSync::new(node.clone());
+        let bucket = |day: u64| -> Result<ReplicaId> {
+            Ok(crate::BucketReplica::new(
+                crate::BucketScope::Topic {
+                    topic_id: "handles".into(),
+                },
+                crate::TimeBucket::from_index(day)?,
+            )?
+            .replica_id())
+        };
+        let days = MAX_OPEN_REPLICAS as u64 + 16;
+        let mut written = 0;
+        let mut open = Vec::new();
+        for total in [days, days * 10] {
+            while written < total {
+                docs.apply_doc_op(
+                    &bucket(written)?,
+                    DocOp::SetBytes {
+                        key: "objects/post/state".into(),
+                        value: written.to_be_bytes().to_vec(),
+                    },
+                )
+                .await?;
+                written += 1;
+            }
+            let replicas = docs.replicas.lock().await;
+            let tasks = replicas
+                .values()
+                .filter(|handle| handle.live_task.is_some())
+                .count();
+            open.push((replicas.len(), tasks));
+        }
+        assert_eq!(
+            open,
+            vec![(MAX_OPEN_REPLICAS, MAX_OPEN_REPLICAS); 2],
+            "open handles and event tasks do not grow with the number of days"
+        );
+        let rows = docs
+            .query_replica_with_policy(
+                &bucket(0)?,
+                DocQuery::Exact("objects/post/state".into()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?;
+        assert_eq!(rows[0].value, 0u64.to_be_bytes().to_vec());
+        docs.shutdown().await;
+        node.shutdown().await?;
+        Ok(())
+    }
 
     // #1248: 同じ key には docs author ごとの entry がある。key 指定の読み出しは全部を返すので、
     // 上限つきの読み出しは query の `limit` で読む entry 数を抑える(読んでから切り詰めるのではない)。

@@ -51,6 +51,48 @@ async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
     Ok(())
 }
 
+// #1221 R5-H: 書き手は開いた handle を上限で閉じる。閉じた bucket も、読む間だけ開いて提供する。
+#[tokio::test]
+async fn closed_bucket_is_served_while_the_page_is_read() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let replica = ReplicaId::new("bucket::v1::topic::6b756b757269::1");
+    let secret = NamespaceSecret::from_bytes(
+        blake3::hash(format!("kukuri-docs:{}", replica.as_str()).as_bytes()).as_bytes(),
+    );
+    let doc = provider
+        .docs()
+        .import_namespace(Capability::Write(secret.clone()))
+        .await?;
+    doc.set_bytes(
+        provider.docs().author_default().await?,
+        b"indexes/timeline/0001/public".to_vec(),
+        b"public".to_vec(),
+    )
+    .await?;
+    doc.close().await?;
+    let response = requester
+        .query_remote_docs(
+            provider.endpoint().addr(),
+            &replica,
+            &secret,
+            DocReadQuery::Keys {
+                prefix: "indexes/timeline/".into(),
+                descending: true,
+                limit: 1,
+                author: None,
+            },
+        )
+        .await?;
+    let DocReadResponse::Keys { entries, .. } = response else {
+        anyhow::bail!("expected public page")
+    };
+    assert_eq!(entries[0].key, "indexes/timeline/0001/public");
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn legacy_topic_and_private_epoch_use_the_same_bounded_reader() -> Result<()> {
     let provider = IrohDocsNode::memory().await?;
