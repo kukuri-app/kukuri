@@ -396,7 +396,7 @@ fn views_wire_joined_private_channel_view() {
             archived_epoch_ids: vec!["epoch-1".to_string()],
             sharing_state: ChannelSharingState::Frozen,
             rotation_required: true,
-            participant_count: 4,
+            participant_count: None,
             stale_participant_count: 1,
             entry_dome_instance_id: Some("dome-entry".to_string()),
         },

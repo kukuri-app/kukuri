@@ -767,7 +767,8 @@ pub struct JoinedPrivateChannelView {
     pub archived_epoch_ids: Vec<String>,
     pub sharing_state: ChannelSharingState,
     pub rotation_required: bool,
-    pub participant_count: usize,
+    /// 参加者数。参加・退出 record が届く owner の端末だけが持ち、owner 以外は `None`(#1221 R5-H)。
+    pub participant_count: Option<usize>,
     pub stale_participant_count: usize,
     pub entry_dome_instance_id: Option<String>,
 }

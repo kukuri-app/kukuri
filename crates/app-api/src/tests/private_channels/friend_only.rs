@@ -230,7 +230,7 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
                 .into_iter()
                 .find(|entry| entry.channel_id == channel.channel_id)
                 .expect("friend-only channel view");
-            if channel_a.participant_count == 2 {
+            if channel_a.participant_count == Some(2) {
                 break channel_a;
             }
             sleep(Duration::from_millis(100)).await;

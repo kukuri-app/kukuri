@@ -543,7 +543,7 @@ pub(crate) struct JoinedPrivateChannelState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrivateChannelDiagnostics {
     pub(crate) sharing_state: ChannelSharingState,
-    pub(crate) participant_count: usize,
+    pub(crate) participant_count: Option<usize>,
     pub(crate) stale_participant_count: usize,
     pub(crate) rotation_required: bool,
     pub(crate) entry_dome_instance_id: Option<String>,

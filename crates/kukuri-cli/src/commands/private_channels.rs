@@ -281,7 +281,8 @@ fn joined_schema() -> Value {
         "is_owner": {"type": "boolean"}, "current_epoch_id": {"type": "string"},
         "archived_epoch_ids": schema::array(json!({"type": "string"})),
         "sharing_state": {"enum": ["open", "frozen"]}, "rotation_required": {"type": "boolean"},
-        "participant_count": {"type": "integer", "minimum": 0}, "stale_participant_count": {"type": "integer", "minimum": 0},
+        "participant_count": schema::nullable(json!({"type": "integer", "minimum": 0})),
+        "stale_participant_count": {"type": "integer", "minimum": 0},
         "entry_dome_instance_id": schema::nullable(json!({"type": "string"}))}),
         &[
             "topic_id",

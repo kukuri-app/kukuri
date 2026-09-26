@@ -140,16 +140,22 @@ impl AppService {
             .map(|policy| policy.sharing_state.clone())
             .unwrap_or(ChannelSharingState::Open);
         // #1221 R5-H: 参加者数は参加者の表(owner は account 経路で届いた参加・退出)の現 epoch の行で数える。
+        // 参加・退出 record は owner にだけ届くため、人数は owner の端末だけが返す(2026-09-27 ユーザー決定)。
         let store = &self.services.projection_store;
         let channel_id = state.channel_id.as_str();
         let epoch_id = state.current_epoch_id.as_str();
-        let participant_count = store
-            .count_private_channel_participants(channel_id, epoch_id)
-            .await?;
+        let is_owner = state.owner_pubkey == self.current_author_pubkey();
+        let participant_count = if is_owner {
+            Some(
+                store
+                    .count_private_channel_participants(channel_id, epoch_id)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut stale_participant_count = 0usize;
-        if state.audience_kind == ChannelAudienceKind::FriendOnly
-            && state.owner_pubkey == self.current_author_pubkey()
-        {
+        if state.audience_kind == ChannelAudienceKind::FriendOnly && is_owner {
             let mut after = String::new();
             loop {
                 let page = store
@@ -235,7 +241,7 @@ impl AppService {
             current_epoch_secret_hex: state.current_epoch_secret_hex.clone(),
             archived_epochs: state.archived_epochs.clone(),
             rotation_required: diagnostics.rotation_required,
-            participant_count: diagnostics.participant_count,
+            participant_count: diagnostics.participant_count.unwrap_or_default(),
             stale_participant_count: diagnostics.stale_participant_count,
             namespace_secret_hex: state.current_epoch_secret_hex.clone(),
         })

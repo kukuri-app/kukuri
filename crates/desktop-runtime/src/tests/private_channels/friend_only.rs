@@ -237,11 +237,23 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
         topic,
         channel.channel_id.as_str(),
         rotated.current_epoch_id.as_str(),
-        2,
+        None,
         "joined channel update timeout",
     )
     .await];
     assert_eq!(joined_before_restart.len(), 1);
+    // 参加・退出 record は owner にだけ届く。人数は owner だけが返し、b の参加 record が届けば 2 になる(#1221 R5-H)。
+    assert_eq!(joined_before_restart[0].participant_count, None);
+    let owner_after_rotate = wait_for_joined_private_channel_epoch(
+        &runtime_a,
+        topic,
+        channel.channel_id.as_str(),
+        rotated.current_epoch_id.as_str(),
+        Some(2),
+        "owner participant count timeout",
+    )
+    .await;
+    assert_eq!(owner_after_rotate.participant_count, Some(2));
     assert_eq!(
         joined_before_restart[0].archived_epoch_ids,
         vec![original_epoch_id.clone()]

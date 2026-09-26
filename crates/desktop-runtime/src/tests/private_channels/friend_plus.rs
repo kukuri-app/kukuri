@@ -300,17 +300,17 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         topic,
         channel.channel_id.as_str(),
         original_epoch_id.as_str(),
-        3,
+        Some(3),
         "friend-plus owner private readiness timeout",
     )
     .await;
-    assert_eq!(joined_a_before_history.participant_count, 3);
+    assert_eq!(joined_a_before_history.participant_count, Some(3));
     let joined_b_before_history = wait_for_joined_private_channel_epoch(
         &runtime_b,
         topic,
         channel.channel_id.as_str(),
         original_epoch_id.as_str(),
-        3,
+        None,
         "friend-plus sponsor private readiness timeout",
     )
     .await;
@@ -318,13 +318,14 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         joined_b_before_history.joined_via_pubkey.as_deref(),
         Some(a_pubkey.as_str())
     );
-    assert_eq!(joined_b_before_history.participant_count, 3);
+    // 人数は owner の端末だけが返す(#1221 R5-H)。
+    assert_eq!(joined_b_before_history.participant_count, None);
     let joined_c_before_history = wait_for_joined_private_channel_epoch(
         &runtime_c,
         topic,
         channel.channel_id.as_str(),
         original_epoch_id.as_str(),
-        3,
+        None,
         "friend-plus recipient private readiness timeout",
     )
     .await;
@@ -332,7 +333,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         joined_c_before_history.joined_via_pubkey.as_deref(),
         Some(b_pubkey.as_str())
     );
-    assert_eq!(joined_c_before_history.participant_count, 3);
+    assert_eq!(joined_c_before_history.participant_count, None);
     let old_post_id = replicate_private_post_with_retry(
         &runtime_a,
         &[&runtime_b, &runtime_c],
@@ -493,7 +494,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         topic,
         channel.channel_id.as_str(),
         restored_epoch_id.as_str(),
-        3,
+        None,
         "friend-plus restarted private readiness timeout",
     )
     .await;
@@ -501,7 +502,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         joined_restarted_before_rotate.joined_via_pubkey.as_deref(),
         Some(b_pubkey.as_str())
     );
-    assert_eq!(joined_restarted_before_rotate.participant_count, 3);
+    assert_eq!(joined_restarted_before_rotate.participant_count, None);
 
     wait_for_topic_delivery(
         &runtime_a,
@@ -553,7 +554,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         topic,
         channel.channel_id.as_str(),
         shared_epoch_id.as_str(),
-        2,
+        None,
         "friend-plus sponsor refresh share redeem timeout",
     )
     .await;
@@ -600,7 +601,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         topic,
         channel.channel_id.as_str(),
         shared_epoch_id.as_str(),
-        3,
+        None,
         "friend-plus restarted share redeem timeout",
     )
     .await;
@@ -608,7 +609,18 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         joined_after_rotate.joined_via_pubkey.as_deref(),
         Some(b_pubkey.as_str())
     );
-    assert_eq!(joined_after_rotate.participant_count, 3);
+    assert_eq!(joined_after_rotate.participant_count, None);
+    // 回転後の epoch の参加 record(b の redeem と、DB を失った c の redeem)は owner へ届く。
+    let owner_after_rotate = wait_for_joined_private_channel_epoch(
+        &runtime_a,
+        topic,
+        channel.channel_id.as_str(),
+        shared_epoch_id.as_str(),
+        Some(3),
+        "friend-plus owner participant count after rotate timeout",
+    )
+    .await;
+    assert_eq!(owner_after_rotate.participant_count, Some(3));
     assert!(
         joined_after_rotate
             .archived_epoch_ids

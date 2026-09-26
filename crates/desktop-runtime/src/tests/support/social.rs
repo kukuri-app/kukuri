@@ -215,7 +215,7 @@ pub(crate) async fn wait_for_joined_private_channel_epoch_result(
     topic: &str,
     channel_id: &str,
     expected_epoch_id: &str,
-    min_participant_count: usize,
+    min_owner_participant_count: Option<usize>,
     step_timeout: Duration,
 ) -> Result<JoinedPrivateChannelView> {
     match timeout(step_timeout, async {
@@ -249,8 +249,10 @@ pub(crate) async fn wait_for_joined_private_channel_epoch_result(
                     limit: Some(20),
                 })
                 .await;
+            // 人数は owner の端末だけが返す(#1221 R5-H)。owner 以外を待つときは人数を条件にしない。
             if entry.current_epoch_id == expected_epoch_id
-                && entry.participant_count >= min_participant_count
+                && min_owner_participant_count
+                    .is_none_or(|min| entry.participant_count.is_some_and(|count| count >= min))
             {
                 return Ok::<JoinedPrivateChannelView, anyhow::Error>(entry.clone());
             }
@@ -298,7 +300,7 @@ pub(crate) async fn wait_for_joined_private_channel_epoch(
     topic: &str,
     channel_id: &str,
     expected_epoch_id: &str,
-    min_participant_count: usize,
+    min_owner_participant_count: Option<usize>,
     timeout_label: &str,
 ) -> JoinedPrivateChannelView {
     match wait_for_joined_private_channel_epoch_result(
@@ -306,7 +308,7 @@ pub(crate) async fn wait_for_joined_private_channel_epoch(
         topic,
         channel_id,
         expected_epoch_id,
-        min_participant_count,
+        min_owner_participant_count,
         runtime_replication_timeout(),
     )
     .await

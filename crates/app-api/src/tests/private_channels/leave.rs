@@ -52,10 +52,9 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
                 .list_joined_private_channels(topic)
                 .await
                 .expect("owner joined channels");
-            if joined
-                .iter()
-                .any(|item| item.channel_id == channel.channel_id && item.participant_count == 2)
-            {
+            if joined.iter().any(|item| {
+                item.channel_id == channel.channel_id && item.participant_count == Some(2)
+            }) {
                 break;
             }
             sleep(Duration::from_millis(50)).await;
@@ -63,6 +62,13 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     })
     .await
     .expect("participant join propagation timeout");
+    // 参加・退出 record は owner にだけ届くため、owner 以外の端末は人数を返さない(#1221 R5-H)。
+    let joined_b = app_b
+        .list_joined_private_channels(topic)
+        .await
+        .expect("participant joined channels");
+    assert_eq!(joined_b.len(), 1);
+    assert_eq!(joined_b[0].participant_count, None);
 
     app_b
         .leave_private_channel(topic, channel.channel_id.as_str())
@@ -94,10 +100,9 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
                 .list_joined_private_channels(topic)
                 .await
                 .expect("owner joined channels after leave");
-            if joined
-                .iter()
-                .any(|item| item.channel_id == channel.channel_id && item.participant_count == 1)
-            {
+            if joined.iter().any(|item| {
+                item.channel_id == channel.channel_id && item.participant_count == Some(1)
+            }) {
                 break;
             }
             sleep(Duration::from_millis(50)).await;
@@ -120,7 +125,9 @@ async fn wait_for_owner_participant_count(
                 .await
                 .expect("owner joined channels")
                 .iter()
-                .any(|item| item.channel_id == channel_id && item.participant_count == expected)
+                .any(|item| {
+                    item.channel_id == channel_id && item.participant_count == Some(expected)
+                })
             {
                 break;
             }
