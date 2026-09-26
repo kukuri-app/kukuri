@@ -491,3 +491,61 @@ async fn worker_writes_and_deindexes_real_arcadedb_projection() -> Result<()> {
     handle.shutdown().await;
     Ok(())
 }
+
+/// 実 ArcadeDB: 受入下限と解除 scope の回収は 1 回あたり上限つきで消し、消した件数を返す（#1221 R5-F）。
+#[tokio::test]
+async fn arcadedb_projection_reclaims_in_bounded_pages() -> Result<()> {
+    if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_ARCADEDB_TESTS") {
+        eprintln!("skipping ArcadeDB projection test; set KUKURI_CN_RUN_ARCADEDB_TESTS=1");
+        return Ok(());
+    }
+    let projection = ArcadeDbProjection::new(ArcadeDbConfig::from_env())?;
+    projection.ensure_schema().await?;
+    let scope = format!(
+        "cnreclaim-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    // 他の test の行と重ならないよう、作成時刻は 1970 年の値にする。
+    for (object, created_at) in [
+        ("old-1", 1),
+        ("old-2", 2),
+        ("old-3", 3),
+        ("kept", 4_000_000_000),
+    ] {
+        projection
+            .upsert_entry(&kukuri_cn_indexer::projection::IndexedEntry {
+                scope_kind: IndexScopeKind::PublicTopic,
+                scope_id: scope.clone(),
+                object_id: object.into(),
+                author_pubkey: "author".into(),
+                text: "reclaim".into(),
+                created_at,
+                source_replica_id: format!("topic::{scope}"),
+                content_advisories: Vec::new(),
+            })
+            .await?;
+    }
+    assert_eq!(projection.remove_older_than(10, 2).await?, 2);
+    assert_eq!(projection.remove_older_than(10, 2).await?, 1);
+    assert_eq!(
+        projection
+            .count_scope(IndexScopeKind::PublicTopic, &scope)
+            .await?,
+        1
+    );
+    assert_eq!(
+        projection
+            .remove_scope_page(IndexScopeKind::PublicTopic, &scope, 5)
+            .await?,
+        1
+    );
+    assert_eq!(
+        projection
+            .count_scope(IndexScopeKind::PublicTopic, &scope)
+            .await?,
+        0
+    );
+    Ok(())
+}

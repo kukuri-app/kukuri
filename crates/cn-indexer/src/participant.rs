@@ -19,9 +19,9 @@ use tracing::{info, warn};
 use kukuri_blob_service::BlobService;
 use kukuri_cn_core::{
     ChannelSecretCipher, IndexEntryStore, IndexScopeKind, NewTransmissionPrevention,
-    TransmissionPreventionMutation, apply_transmission_prevention, get_channel_secret,
-    is_topic_supported, load_bootstrap_seed_peers, mark_index_demand,
-    release_transmission_prevention,
+    TransmissionPreventionMutation, advance_retention_floor, apply_transmission_prevention,
+    get_channel_secret, is_topic_supported, load_bootstrap_seed_peers, mark_index_demand,
+    reclaim_expired, release_transmission_prevention,
 };
 use kukuri_core::ReplicaId;
 use kukuri_docs_sync::{DocsSync, private_channel_replica_id, topic_replica_id};
@@ -409,25 +409,38 @@ impl IndexerParticipant {
         release_transmission_prevention(&self.pool, actor, subject_kind, subject_id, reason).await
     }
 
-    /// supported topic 除外時の sync 停止 + de-index（E2 / E5）。
+    /// 解除した scope の同期を止め、索引を最大 `budget` 件回収して消した件数を返す（#1221 R5-F）。
     ///
-    /// public topicも同期を停止する。namespaceの保存値は削除しない。private channelはcapabilityも外す。
-    pub async fn stop_and_deindex_scope(&self, kind: IndexScopeKind, id: &str) -> Result<()> {
+    /// 投影 → 真実源の順で消す（真実源が先に空になると、残った投影を見つける入口が無くなる）。解除した scope は
+    /// 検索の gate が表示から外すため、回収が済むまでの間も表示されない。撤回 marker は受入下限まで残す。
+    pub async fn retire_scope(
+        &self,
+        kind: IndexScopeKind,
+        id: &str,
+        budget: usize,
+    ) -> Result<usize> {
         for scope in self
             .public_replica_mode
             .scopes(kind, id, chrono::Utc::now().timestamp())?
         {
             self.stop_replica(&scope).await?;
         }
-        // 真実源 → 投影の順で消す（投影削除が失敗しても query 境界の突合が即座に効く）。
-        self.entries.remove_scope(kind, id).await?;
-        self.projection.remove_scope(kind, id).await?;
-        info!(
-            kind = kind.as_str(),
-            scope_id = %id,
-            "stopped sync and de-indexed scope"
-        );
-        Ok(())
+        let projected = self.projection.remove_scope_page(kind, id, budget).await?;
+        let entries = self
+            .entries
+            .remove_scope_page(kind, id, budget.saturating_sub(projected))
+            .await?;
+        Ok(projected + entries)
+    }
+
+    /// 受入下限を進め、下限未満の保存物を最大 `budget` 件回収して消した件数を返す（#1221 R5-F）。
+    pub async fn reclaim_retention(&self, now: i64, budget: usize) -> Result<usize> {
+        let floor = advance_retention_floor(&self.pool, now).await?;
+        let projected = self.projection.remove_older_than(floor, budget).await?;
+        Ok(
+            projected
+                + reclaim_expired(&self.pool, floor, budget.saturating_sub(projected)).await?,
+        )
     }
 
     /// bucketが窓から出ただけなら同期だけを止め、論理scopeの索引は残す。
@@ -439,12 +452,6 @@ impl IndexerParticipant {
         } else {
             self.docs_sync.close_replica(&scope.replica_id).await
         }
-    }
-
-    /// channel secret 失効時の capability 除去 + sync 停止 + de-index（E4）。
-    pub async fn revoke_channel_and_deindex(&self, channel_id: &str) -> Result<()> {
-        self.stop_and_deindex_scope(IndexScopeKind::PrivateChannel, channel_id)
-            .await
     }
 }
 

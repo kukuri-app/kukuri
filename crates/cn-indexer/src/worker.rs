@@ -27,6 +27,11 @@ use crate::bucket_reader::BucketReader;
 use crate::participant::{IndexerParticipant, ScopeReplica};
 use crate::state::IndexerRuntimeState;
 
+/// 1 回の回収で消す保存物の上限（#1221 R5-F）。
+const RECLAIM_BUDGET: usize = 128;
+/// 1 回の見直しで繰り返す受入下限の回収の回数の上限。
+const RECLAIM_STEPS_PER_PASS: usize = 16;
+
 /// ワーカーの動作設定。テストから各間隔を注入して短縮できる。
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
@@ -309,9 +314,14 @@ impl IndexerWorker {
             .map(|scope| scope.replica_id.as_str())
             .collect();
         // 2. Check one finite truth-store page. An unselected supported scope keeps its index.
+        // 解除した scope は 1 回の見直しで合わせて 128 件まで回収し、残りは次の見直しで続ける（#1221 R5-F）。
+        let mut retire_budget = RECLAIM_BUDGET;
         match self.participant.indexed_scope_page().await {
             Ok(indexed) => {
                 for (kind, id) in indexed {
+                    if retire_budget == 0 {
+                        break;
+                    }
                     let scope = ScopeReplica::from_scope(kind, id.as_str());
                     let authorized = match self.participant.is_scope_authorized(kind, &id).await {
                         Ok(authorized) => authorized,
@@ -328,9 +338,14 @@ impl IndexerWorker {
                     if authorized {
                         continue;
                     }
-                    match self.participant.stop_and_deindex_scope(kind, &id).await {
-                        Ok(()) => {
-                            self.state.record_deindexed(1);
+                    match self
+                        .participant
+                        .retire_scope(kind, &id, retire_budget)
+                        .await
+                    {
+                        Ok(removed) => {
+                            retire_budget = retire_budget.saturating_sub(removed);
+                            self.state.record_deindexed(u64::from(removed > 0));
                             if let Some(handle) = subscriptions.remove(scope.replica_id.as_str()) {
                                 handle.abort();
                             }
@@ -355,6 +370,24 @@ impl IndexerWorker {
             Err(error) => {
                 warn!(error = %format!("{error:#}"), "failed to page indexed scopes; will retry");
                 self.state.record_error(None, &format!("{error:#}"));
+            }
+        }
+
+        // 3. 受入下限を進め、下限未満の保存物を 1 回 128 件以内で回収する（#1221 R5-F）。
+        let now = chrono::Utc::now().timestamp();
+        for _ in 0..RECLAIM_STEPS_PER_PASS {
+            match self
+                .participant
+                .reclaim_retention(now, RECLAIM_BUDGET)
+                .await
+            {
+                Ok(removed) if removed == RECLAIM_BUDGET => continue,
+                Ok(_) => break,
+                Err(error) => {
+                    warn!(error = %format!("{error:#}"), "failed to reclaim expired index state; will retry");
+                    self.state.record_error(None, &format!("{error:#}"));
+                    break;
+                }
             }
         }
 

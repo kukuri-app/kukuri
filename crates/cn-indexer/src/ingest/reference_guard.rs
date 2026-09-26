@@ -82,7 +82,12 @@ impl ReferenceGuard<'_> {
             !self
                 .pipeline
                 .entries
-                .is_known_withdrawn(self.scope_kind, self.scope_id, &self.object.object_id)
+                .is_known_withdrawn(
+                    self.scope_kind,
+                    self.scope_id,
+                    &self.object.object_id,
+                    self.object.created_at,
+                )
                 .await
                 .map_err(transient)?,
             "post has a verified withdrawal"
@@ -119,13 +124,22 @@ impl ReferenceGuard<'_> {
                     "post creation time does not match its bucket or exceeds clock skew allowance"
                 );
             }
+            // どの replica でも、索引の作成時刻と返信・repost の宛先は署名済み envelope の値に一致させる。受入下限と
+            // 撤回 marker の回収は、この作成時刻が偽れないことを前提にする（#1221 R5-F）。
+            ensure!(
+                self.object.created_at == envelope.created_at
+                    && envelope.created_at <= chrono::Utc::now().timestamp().saturating_add(600),
+                "post creation time differs from its signed envelope or exceeds clock skew allowance"
+            );
             let content = envelope
                 .post_content()?
                 .context("source is not a signed post")?;
             ensure!(
                 content.payload_ref == self.object.payload_ref
                     && content.attachments == self.object.attachments
-                    && content.media_manifest_refs == self.object.media_manifest_refs,
+                    && content.media_manifest_refs == self.object.media_manifest_refs
+                    && content.reply_to == self.object.reply_to
+                    && content.repost_of == self.object.repost_of,
                 "materialized post differs from signed content"
             );
             match self.scope_kind {
@@ -211,6 +225,7 @@ impl ReferenceGuard<'_> {
                             self.scope_kind,
                             self.scope_id,
                             &self.object.object_id,
+                            envelope.created_at,
                         )
                         .await
                         .map_err(transient)?;

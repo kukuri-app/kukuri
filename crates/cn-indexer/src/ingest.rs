@@ -28,7 +28,7 @@
 //! 1 件の取り込みの失敗は、確定した理由（de-index する）と一時的な失敗（既存 entry を保持し、
 //! 新たには索引しない）に分ける（#1090。分類は `failure` を参照）。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -174,7 +174,8 @@ pub fn classify_changed_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> Cha
 /// scope 走査で読み込んだ、per-record 処理の共有文脈。
 struct ScopeContext {
     envelopes: HashMap<String, DocRecord>,
-    withdrawn_object_ids: HashSet<String>,
+    /// 検証済みの撤回の対象と、その署名済み envelope の作成時刻（#1221 R5-F）。
+    withdrawn_object_ids: HashMap<String, i64>,
 }
 
 #[derive(Clone, Copy)]
@@ -431,7 +432,7 @@ impl IngestPipeline {
             }
             records
         };
-        let mut withdrawn_object_ids = HashSet::new();
+        let mut withdrawn_object_ids = HashMap::new();
         for record in withdrawal_records {
             if !record.key.ends_with("/state") {
                 continue;
@@ -449,7 +450,7 @@ impl IngestPipeline {
                 continue;
             };
             if verify_post_withdrawal(&withdrawal, &target).is_ok() {
-                withdrawn_object_ids.insert(content.target_object_id.0);
+                withdrawn_object_ids.insert(content.target_object_id.0, target.created_at);
             }
         }
         Ok((
@@ -641,13 +642,18 @@ impl IngestPipeline {
 
         if context
             .withdrawn_object_ids
-            .contains(object.object_id.as_str())
+            .contains_key(object.object_id.as_str())
         {
             // ingest_records already persisted this verified withdrawal and removed its projection.
             return Ok(IngestOutcome::Deindexed);
         }
         if self
-            .suppress_known_withdrawal(scope_kind, scope_id, object.object_id.as_str())
+            .suppress_known_withdrawal(
+                scope_kind,
+                scope_id,
+                object.object_id.as_str(),
+                object.created_at,
+            )
             .await?
         {
             return Ok(IngestOutcome::Deindexed);
@@ -879,13 +885,10 @@ impl IngestPipeline {
         Ok(IngestOutcome::Indexed)
     }
 
+    /// 解除した scope は取り込まない。残った索引は検索の gate が表示から外し、worker が 1 回 128 件以内で回収する
+    /// （#1221 R5-F。scope 全体を一度に消さない）。
     async fn retain_supported_scope(&self, kind: IndexScopeKind, id: &str) -> Result<bool> {
-        if self.entries.is_scope_supported(kind, id).await? {
-            return Ok(true);
-        }
-        self.entries.remove_scope(kind, id).await?;
-        self.projection.remove_scope(kind, id).await?;
-        Ok(false)
+        self.entries.is_scope_supported(kind, id).await
     }
 
     /// object を index 真実源 → 投影の順で両方から消す。

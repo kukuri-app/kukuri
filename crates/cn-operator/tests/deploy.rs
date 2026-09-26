@@ -397,6 +397,8 @@ fn config_with_indexer_stack(extra_deploy: &str, extra_features: &str) -> String
          \x20 jwt_secret_id: kukuri-cn-jwt-secret\n\
          \x20 postgres_password_secret_id: kukuri-cn-postgres-password\n\
          \x20 deploy_indexer_stack: true\n\
+         \x20 indexer_retention_days: 30\n\
+         \x20 indexer_capacity_rows: 1000000\n\
          \x20 channel_secret_key_secret_id: kukuri-cn-channel-secret-key\n\
          \x20 arcadedb_password_secret_id: kukuri-cn-arcadedb-password\n\
          \x20 arachnid_username_secret_id: kukuri-cn-arachnid-username\n\
@@ -583,6 +585,29 @@ fn indexer_stack_requires_channel_and_arcadedb_secret_ids() {
         err.to_string().contains("arcadedb_password_secret_id"),
         "got: {err}"
     );
+}
+
+#[test]
+fn indexer_stack_requires_retention_settings() {
+    // 保持期間 T と容量 B は既定値を置かず必須。T は 3 日以上（#1221 R5-F）。
+    let missing = config_with_indexer_stack("", "").replace(
+        "  indexer_capacity_rows: 1000000
+",
+        "",
+    );
+    let err = load_and_validate(&missing).unwrap_err();
+    assert!(
+        err.to_string().contains("indexer_capacity_rows"),
+        "got: {err}"
+    );
+    let short = config_with_indexer_stack("", "")
+        .replace("indexer_retention_days: 30", "indexer_retention_days: 2");
+    let err = load_and_validate(&short).unwrap_err();
+    assert!(err.to_string().contains("3 以上"), "got: {err}");
+    let tfvars =
+        generate_tfvars(&load_and_validate(&config_with_indexer_stack("", "")).unwrap()).unwrap();
+    assert!(tfvars.contains("indexer_retention_days            = \"30\""));
+    assert!(tfvars.contains("indexer_capacity_rows             = \"1000000\""));
 }
 
 #[test]

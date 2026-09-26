@@ -125,6 +125,7 @@ fn action(
         target_pubkey: target.to_string(),
         scope_id: Some(scope.to_string()),
         anchor_object_id: Some(anchor.to_string()),
+        created_at: 1_700_000_000,
     }
 }
 

@@ -39,6 +39,8 @@ pub struct RelationAction {
     pub scope_id: Option<String>,
     /// この public topic の索引行が消えると、このアクションも消える。
     pub anchor_object_id: Option<String>,
+    /// 受入下限と比べる時刻（起点の投稿の作成時刻、フォローは観測した時刻。#1221 R5-F）。
+    pub created_at: i64,
 }
 
 impl RelationAction {
@@ -50,6 +52,7 @@ impl RelationAction {
             target_pubkey: target_pubkey.to_string(),
             scope_id: None,
             anchor_object_id: None,
+            created_at: chrono::Utc::now().timestamp(),
         }
     }
 }
@@ -61,8 +64,8 @@ pub async fn record_relation_action(pool: &PgPool, action: &RelationAction) -> R
     }
     let result = sqlx::query(
         "INSERT INTO cn_index.relation_actions
-             (kind, source_id, actor_pubkey, target_pubkey, scope_id, anchor_object_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+             (kind, source_id, actor_pubkey, target_pubkey, scope_id, anchor_object_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (kind, source_id) DO NOTHING",
     )
     .bind(action.kind.as_str())
@@ -71,6 +74,7 @@ pub async fn record_relation_action(pool: &PgPool, action: &RelationAction) -> R
     .bind(&action.target_pubkey)
     .bind(&action.scope_id)
     .bind(&action.anchor_object_id)
+    .bind(action.created_at)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -103,14 +107,14 @@ pub async fn relation_action_exists(
     .await?)
 }
 
-/// public topic の索引にある投稿の著者（返信先・リアクション先の解決）。索引に無ければ None。
+/// public topic の索引にある投稿の著者と作成時刻（返信先・リアクション先の解決）。索引に無ければ None。
 pub async fn indexed_public_author(
     pool: &PgPool,
     scope_id: &str,
     object_id: &str,
-) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT author_pubkey FROM cn_index.index_entries
+) -> Result<Option<(String, i64)>> {
+    Ok(sqlx::query_as(
+        "SELECT author_pubkey, created_at FROM cn_index.index_entries
          WHERE scope_kind = 'public_topic' AND scope_id = $1 AND object_id = $2",
     )
     .bind(scope_id)

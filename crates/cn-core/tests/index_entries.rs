@@ -11,7 +11,7 @@ use anyhow::Result;
 use kukuri_cn_core::{
     IndexEntryStore, IndexScopeKind, NewIndexEntry, PgIndexEntryStore, PgSafetyArtifactStore,
     SurfaceableEntry, TestDatabase, connect_postgres, filter_surfaceable_objects, get_index_entry,
-    get_scan_verdict, initialize_database, remove_index_entry, remove_index_scope,
+    get_scan_verdict, initialize_database, remove_index_entry, remove_index_scope_page,
     update_scan_verdict_advisories, upsert_index_entry, upsert_scan_verdict,
 };
 use kukuri_cn_safety::provider::{ProviderScanRequest, SubjectKind};
@@ -37,6 +37,7 @@ async fn indexed_scope_seek_skips_other_posts_in_the_same_scope() -> Result<()> 
     let database = TestDatabase::create(admin_url.as_str(), "cn_indexed_scope_seek").await?;
     let pool = connect_postgres(database.database_url.as_str()).await?;
     initialize_database(&pool).await?;
+    kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
     for (scope, object) in [
         ("a", "post-a1"),
         ("a", "post-a2"),
@@ -80,6 +81,7 @@ async fn verified_withdrawal_prevents_a_later_stale_provider_upsert() -> Result<
     let database = TestDatabase::create(admin_url.as_str(), "cn_known_withdrawal").await?;
     let pool = connect_postgres(database.database_url.as_str()).await?;
     initialize_database(&pool).await?;
+    kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
     let allow = upsert_scan_verdict(
         &pool,
         SubjectKind::Post,
@@ -92,11 +94,11 @@ async fn verified_withdrawal_prevents_a_later_stale_provider_upsert() -> Result<
     upsert_index_entry(&pool, &candidate).await?;
     let store = PgIndexEntryStore::new(pool.clone());
     store
-        .record_verified_withdrawal(IndexScopeKind::PublicTopic, "rust", "post-1")
+        .record_verified_withdrawal(IndexScopeKind::PublicTopic, "rust", "post-1", 1_700_000_000)
         .await?;
     assert!(
         store
-            .is_known_withdrawn(IndexScopeKind::PublicTopic, "rust", "post-1")
+            .is_known_withdrawn(IndexScopeKind::PublicTopic, "rust", "post-1", 1_700_000_000)
             .await?
     );
     assert!(
@@ -161,6 +163,7 @@ async fn scan_verdict_upsert_keeps_id_and_tracks_latest() -> Result<()> {
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
 
         let first = upsert_scan_verdict(
             &pool,
@@ -217,6 +220,7 @@ async fn index_only_allow_verdict_content_enforced_by_db_constraints() -> Result
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
 
         let allow = upsert_scan_verdict(
             &pool,
@@ -296,6 +300,7 @@ async fn index_entry_upsert_is_idempotent_and_deindexable() -> Result<()> {
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
 
         let allow_1 = upsert_scan_verdict(
             &pool,
@@ -334,8 +339,11 @@ async fn index_entry_upsert_is_idempotent_and_deindexable() -> Result<()> {
                 .is_none()
         );
 
-        // scope 単位の de-index（supported 除去 / channel secret 失効）。
-        remove_index_scope(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+        // scope 単位の de-index（supported 除去 / channel secret 失効）は 1 回あたり上限つき。
+        assert_eq!(
+            remove_index_scope_page(&pool, IndexScopeKind::PublicTopic, "rust", 128).await?,
+            1
+        );
         assert!(
             get_index_entry(&pool, IndexScopeKind::PublicTopic, "rust", "post-2")
                 .await?
@@ -360,6 +368,7 @@ async fn filter_surfaceable_objects_excludes_non_allow_and_unknown() -> Result<(
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
 
         let allow_kept = upsert_scan_verdict(
             &pool,
@@ -440,6 +449,7 @@ async fn scan_and_record_upserts_verdict_state_via_postgres_store() -> Result<()
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
         let signer = Secp256k1ModerationEventSigner::from_secret(TEST_SECRET)?;
         let issuer = signer.issuer_node_id().to_string();
 
@@ -506,6 +516,7 @@ async fn scan_verdict_round_trips_fingerprints_and_derived_tags() -> Result<()> 
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
         let meta = VerdictPersistMeta {
             source_fingerprint: Some("state-hash-1".to_string()),
             scan_config_fingerprint: Some("config-1".to_string()),
@@ -567,6 +578,7 @@ async fn index_entry_advisories_derive_from_latest_verdict() -> Result<()> {
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
 
         let advisory =
             |subject_kind: AdvisorySubjectKind, subject_id: &str, category| ContentAdvisory {

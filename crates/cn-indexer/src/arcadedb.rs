@@ -131,6 +131,12 @@ impl ArcadeDbProjection {
             ),
         )
         .await?;
+        // 受入下限による回収（#1221 R5-F）の access path。
+        self.command(
+            "sql",
+            &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (created_at) NOTUNIQUE"),
+        )
+        .await?;
         // 全文検索 index（Lucene）。ユーザー向け search は #404 が使う。
         self.command(
             "sql",
@@ -244,20 +250,35 @@ impl IndexProjection for ArcadeDbProjection {
         Ok(count_from_result(&value) as usize)
     }
 
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()> {
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize> {
         let command = format!(
-            "DELETE FROM {ENTRY_TYPE} WHERE scope_kind = :scope_kind AND scope_id = :scope_id"
+            "DELETE FROM {ENTRY_TYPE} WHERE scope_kind = :scope_kind AND scope_id = :scope_id \
+             LIMIT {limit}"
         );
-        self.command_with_params(
-            "sql",
-            &command,
-            json!({
-                "scope_kind": Self::scope_kind_str(scope_kind),
-                "scope_id": scope_id,
-            }),
-        )
-        .await?;
-        Ok(())
+        let value = self
+            .command_with_params(
+                "sql",
+                &command,
+                json!({
+                    "scope_kind": Self::scope_kind_str(scope_kind),
+                    "scope_id": scope_id,
+                }),
+            )
+            .await?;
+        Ok(deleted_from_result(&value))
+    }
+
+    async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize> {
+        let command = format!("DELETE FROM {ENTRY_TYPE} WHERE created_at < :floor LIMIT {limit}");
+        let value = self
+            .command_with_params("sql", &command, json!({ "floor": floor }))
+            .await?;
+        Ok(deleted_from_result(&value))
     }
 
     async fn remove_object(
@@ -374,6 +395,18 @@ fn entries_from_result(value: &Value) -> Result<Vec<IndexedEntry>> {
 }
 
 /// ArcadeDB の `SELECT count(*) AS total` 応答（`{ "result": [{ "total": N }] }`）から件数を読む。
+/// `DELETE` の結果（`{"result":[{"count":N}]}`）から消した件数を読む。
+fn deleted_from_result(value: &Value) -> usize {
+    value
+        .get("result")
+        .and_then(|result| result.as_array())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("count"))
+        .and_then(Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(0)
+}
+
 fn count_from_result(value: &Value) -> i64 {
     value
         .get("result")

@@ -301,10 +301,10 @@ async fn deindexed_scope_disappears_from_all_read_surfaces() -> Result<()> {
 
     use kukuri_cn_core::IndexEntryStore;
     f.entries
-        .remove_scope(IndexScopeKind::PublicTopic, "rust")
+        .remove_scope_page(IndexScopeKind::PublicTopic, "rust", 128)
         .await?;
     f.projection
-        .remove_scope(IndexScopeKind::PublicTopic, "rust")
+        .remove_scope_page(IndexScopeKind::PublicTopic, "rust", 128)
         .await?;
 
     assert!(f.query.search_all("unsupported", 10).await?.is_empty());

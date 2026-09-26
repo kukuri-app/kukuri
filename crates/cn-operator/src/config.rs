@@ -424,6 +424,11 @@ pub struct DeployConfig {
     /// 自前 relay（`features.iroh_relay`）が無効な場合、deploy_indexer_stack=true では必須。
     #[serde(default)]
     pub indexer_external_relay_urls: Vec<String>,
+    /// cn-indexer の保持期間 T（日。>= 3）と容量 B（行数）。deploy_indexer_stack=true で必須（#1221 R5-F）。
+    #[serde(default)]
+    pub indexer_retention_days: Option<u32>,
+    #[serde(default)]
+    pub indexer_capacity_rows: Option<u64>,
     /// distance opt-out が「遠い」と判定する node-local proximity 境界。
     /// community index / local trust のどちらかを公開する場合は明示設定が必須。
     #[serde(default)]
@@ -1035,6 +1040,14 @@ fn validate_indexer_stack(resolved: &ResolvedConfig, deploy: &DeployConfig) -> R
         "deploy.arcadedb_password_secret_id",
         &deploy.arcadedb_password_secret_id,
     )?;
+
+    if !(deploy.indexer_retention_days.is_some_and(|days| days >= 3)
+        && deploy.indexer_capacity_rows.is_some_and(|rows| rows > 0))
+    {
+        bail!(
+            "deploy.deploy_indexer_stack=true の場合、deploy.indexer_retention_days（3 以上）と deploy.indexer_capacity_rows（1 以上）は必須です"
+        );
+    }
 
     // relay validation gate（ADR 0025 §6.4）を config 段階で写す。
     if !resolved.enabled(Capability::IrohRelay) && deploy.indexer_external_relay_urls.is_empty() {

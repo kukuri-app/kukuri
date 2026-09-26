@@ -63,8 +63,16 @@ pub trait IndexProjection: Send + Sync {
     /// scope 内の投影 entry 数（テスト / 監査用）。
     async fn count_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<usize>;
 
-    /// scope 全体を de-index する（supported topic 除去 / channel secret 失効時）。
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()>;
+    /// 解除した scope の entry を最大 `limit` 件 de-index し、消した件数を返す（#1221 R5-F。1 回の回収は有界）。
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize>;
+
+    /// 作成時刻が受入下限 `floor` 未満の entry を最大 `limit` 件 de-index し、消した件数を返す（#1221 R5-F）。
+    async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize>;
 
     /// 単一 object を de-index する（replica 上の tombstone / 削除時）。
     async fn remove_object(
@@ -154,12 +162,30 @@ impl IndexProjection for MemoryIndexProjection {
             .count())
     }
 
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()> {
-        self.entries
-            .lock()
-            .await
-            .retain(|entry| !(entry.scope_kind == scope_kind && entry.scope_id == scope_id));
-        Ok(())
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize> {
+        let mut removed = 0;
+        self.entries.lock().await.retain(|entry| {
+            let remove =
+                removed < limit && entry.scope_kind == scope_kind && entry.scope_id == scope_id;
+            removed += usize::from(remove);
+            !remove
+        });
+        Ok(removed)
+    }
+
+    async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize> {
+        let mut removed = 0;
+        self.entries.lock().await.retain(|entry| {
+            let remove = removed < limit && entry.created_at < floor;
+            removed += usize::from(remove);
+            !remove
+        });
+        Ok(removed)
     }
 
     async fn remove_object(
@@ -314,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_scope_deindexes_all_entries_for_scope() {
+    async fn remove_scope_page_deindexes_a_bounded_page_of_the_scope() {
         let projection = MemoryIndexProjection::new();
         projection
             .upsert_entry(&entry("t1", "o1", "a"))
@@ -328,10 +354,15 @@ mod tests {
             .upsert_entry(&entry("t2", "o3", "c"))
             .await
             .unwrap();
-        projection
-            .remove_scope(IndexScopeKind::PublicTopic, "t1")
-            .await
-            .unwrap();
+        for expected in [1, 1, 0] {
+            assert_eq!(
+                projection
+                    .remove_scope_page(IndexScopeKind::PublicTopic, "t1", 1)
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
         assert_eq!(
             projection
                 .count_scope(IndexScopeKind::PublicTopic, "t1")

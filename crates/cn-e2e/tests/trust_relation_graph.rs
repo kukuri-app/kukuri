@@ -114,6 +114,7 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
                 target_pubkey: target,
                 scope_id: Some(stack.topic_id.clone()),
                 anchor_object_id: Some(source.to_string()),
+                created_at: chrono::Utc::now().timestamp(),
             },
         )
         .await?;

@@ -156,18 +156,24 @@ pub async fn remove_index_entry(
     Ok(())
 }
 
-/// scope 全体を真実源から削除する（supported topic 除去 / channel secret 失効時の de-index）。
-pub async fn remove_index_scope(
+/// 解除した scope の真実源の行を最大 `limit` 件消し、消した件数を返す（#1221 R5-F。1 回の回収は有界）。
+pub async fn remove_index_scope_page(
     pool: &PgPool,
     scope_kind: IndexScopeKind,
     scope_id: &str,
-) -> Result<()> {
-    sqlx::query("DELETE FROM cn_index.index_entries WHERE scope_kind = $1 AND scope_id = $2")
-        .bind(scope_kind.as_str())
-        .bind(scope_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    limit: usize,
+) -> Result<usize> {
+    let result = sqlx::query(
+        "DELETE FROM cn_index.index_entries WHERE (scope_kind, scope_id, object_id) IN (
+             SELECT scope_kind, scope_id, object_id FROM cn_index.index_entries
+             WHERE scope_kind = $1 AND scope_id = $2 LIMIT $3)",
+    )
+    .bind(scope_kind.as_str())
+    .bind(scope_id)
+    .bind(i64::try_from(limit)?)
+    .execute(pool)
+    .await?;
+    Ok(usize::try_from(result.rows_affected())?)
 }
 
 /// 単一 object の真実源 entry を取得する。
@@ -221,6 +227,12 @@ pub async fn filter_surfaceable_objects(
            ON v.id = e.verdict_id
          WHERE v.action = 'allow'
            AND NOT v.critical
+           AND EXISTS (
+               SELECT 1 FROM cn_index.supported_topics s
+               WHERE s.kind = e.scope_kind AND s.id = e.scope_id
+                 AND (s.kind = 'public_topic' OR EXISTS (
+                     SELECT 1 FROM cn_index.channel_secrets c WHERE c.channel_id = s.id))
+           )
            AND NOT EXISTS (
                SELECT 1 FROM cn_legal.transmission_preventions p
                WHERE p.subject_kind = 'post' AND p.subject_id = e.object_id
@@ -275,21 +287,30 @@ pub trait IndexEntryStore: Send + Sync {
         object_id: &str,
     ) -> Result<()>;
 
-    /// scope 全体を真実源から削除する。
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()>;
+    /// 解除した scope の真実源の行を最大 `limit` 件消し、消した件数を返す（#1221 R5-F）。
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize>;
 
     /// Keep a validated withdrawal across provider changes and remove any old indexed row.
+    /// `created_at` は撤回対象の署名済み envelope の作成時刻（受入下限を越えるまで marker を残す。#1221 R5-F）。
     async fn record_verified_withdrawal(
         &self,
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<()>;
+    /// 撤回済み、または作成時刻が受入下限未満で索引へ入れない投稿か。
     async fn is_known_withdrawn(
         &self,
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<bool>;
 
     /// 投影 hit 候補 `(scope_id, object_id)` のうち、いま surfacing してよいものだけを返す
@@ -353,8 +374,13 @@ impl IndexEntryStore for PgIndexEntryStore {
         remove_index_entry(&self.pool, scope_kind, scope_id, object_id).await
     }
 
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()> {
-        remove_index_scope(&self.pool, scope_kind, scope_id).await
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize> {
+        remove_index_scope_page(&self.pool, scope_kind, scope_id, limit).await
     }
 
     async fn record_verified_withdrawal(
@@ -362,14 +388,16 @@ impl IndexEntryStore for PgIndexEntryStore {
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO cn_index.known_post_withdrawals (scope_kind, scope_id, object_id)
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            "INSERT INTO cn_index.known_post_withdrawals (scope_kind, scope_id, object_id, created_at)
+             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
         )
         .bind(scope_kind.as_str())
         .bind(scope_id)
         .bind(object_id)
+        .bind(created_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -380,14 +408,17 @@ impl IndexEntryStore for PgIndexEntryStore {
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<bool> {
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM cn_index.known_post_withdrawals
-             WHERE scope_kind = $1 AND scope_id = $2 AND object_id = $3)",
+                 WHERE scope_kind = $1 AND scope_id = $2 AND object_id = $3)
+                 OR EXISTS(SELECT 1 FROM cn_index.retention_state WHERE $4 < floor)",
         )
         .bind(scope_kind.as_str())
         .bind(scope_id)
         .bind(object_id)
+        .bind(created_at)
         .fetch_one(&self.pool)
         .await?)
     }
@@ -588,12 +619,23 @@ impl IndexEntryStore for MemoryIndexEntryStore {
         Ok(())
     }
 
-    async fn remove_scope(&self, scope_kind: IndexScopeKind, scope_id: &str) -> Result<()> {
-        self.entries
-            .lock()
-            .expect("entries mutex poisoned")
-            .retain(|(kind, id, _), _| !(*kind == scope_kind && id == scope_id));
-        Ok(())
+    async fn remove_scope_page(
+        &self,
+        scope_kind: IndexScopeKind,
+        scope_id: &str,
+        limit: usize,
+    ) -> Result<usize> {
+        let mut entries = self.entries.lock().expect("entries mutex poisoned");
+        let page = entries
+            .keys()
+            .filter(|(kind, id, _)| *kind == scope_kind && id == scope_id)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in &page {
+            entries.remove(key);
+        }
+        Ok(page.len())
     }
 
     async fn record_verified_withdrawal(
@@ -601,6 +643,7 @@ impl IndexEntryStore for MemoryIndexEntryStore {
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        _created_at: i64,
     ) -> Result<()> {
         let key = (scope_kind, scope_id.to_string(), object_id.to_string());
         let mut withdrawn = self.withdrawn.lock().expect("withdrawn mutex poisoned");
@@ -617,6 +660,7 @@ impl IndexEntryStore for MemoryIndexEntryStore {
         scope_kind: IndexScopeKind,
         scope_id: &str,
         object_id: &str,
+        _created_at: i64,
     ) -> Result<bool> {
         Ok(self
             .withdrawn

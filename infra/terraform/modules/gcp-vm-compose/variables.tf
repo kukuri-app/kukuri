@@ -395,6 +395,18 @@ variable "indexer_external_relay_urls" {
   default     = []
 }
 
+variable "indexer_retention_days" {
+  description = "COMMUNITY_NODE_INDEXER_RETENTION_DAYS。再取得可能な保存物の保持期間 T（日、3 以上）。deploy_indexer_stack=true のとき必須。"
+  type        = string
+  default     = ""
+}
+
+variable "indexer_capacity_rows" {
+  description = "COMMUNITY_NODE_INDEXER_CAPACITY_ROWS。再取得可能な保存物の容量 B（行数）。deploy_indexer_stack=true のとき必須。"
+  type        = string
+  default     = ""
+}
+
 variable "index_query_enabled" {
   description = "COMMUNITY_NODE_INDEX_QUERY_ENABLED。full-stack E2E 完了までは false を維持する。"
   type        = bool

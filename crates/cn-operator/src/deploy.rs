@@ -263,6 +263,26 @@ fn render_low_cost_tfvars(config: &ResolvedConfig, deploy: &DeployConfig) -> Str
         "indexer_external_relay_urls       = {}",
         hcl_string_list(&deploy.indexer_external_relay_urls)
     );
+    let _ = writeln!(
+        out,
+        "indexer_retention_days            = {}",
+        hcl_string(
+            &deploy
+                .indexer_retention_days
+                .map(|days| days.to_string())
+                .unwrap_or_default()
+        )
+    );
+    let _ = writeln!(
+        out,
+        "indexer_capacity_rows             = {}",
+        hcl_string(
+            &deploy
+                .indexer_capacity_rows
+                .map(|rows| rows.to_string())
+                .unwrap_or_default()
+        )
+    );
     let _ = writeln!(out);
     let _ = writeln!(
         out,

@@ -227,6 +227,8 @@ manifest:
 #   arcadedb_image: arcadedata/arcadedb:26.8.1
 #   indexer_data_disk_gb: 10
 #   relation_analyze_interval_minutes: 60   # 1〜90
+#   indexer_retention_days: 30              # 必須。保持期間 T（3 以上）
+#   indexer_capacity_rows: 1000000          # 必須。容量 B（行数）
 #   channel_secret_key_secret_id: kukuri-cn-channel-secret-key
 #   legal_data_key_secret_id: kukuri-cn-legal-data-key
 #   arcadedb_password_secret_id: kukuri-cn-arcadedb-password

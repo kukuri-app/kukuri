@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use kukuri_cn_core::IndexScopeKind;
@@ -10,11 +10,11 @@ impl IngestPipeline {
         &self,
         kind: IndexScopeKind,
         scope: &str,
-        object_ids: &HashSet<String>,
+        object_ids: &HashMap<String, i64>,
     ) -> Result<()> {
-        for id in object_ids {
+        for (id, created_at) in object_ids {
             self.entries
-                .record_verified_withdrawal(kind, scope, id)
+                .record_verified_withdrawal(kind, scope, id, *created_at)
                 .await?;
             self.projection.remove_object(kind, scope, id).await?;
         }
@@ -26,10 +26,11 @@ impl IngestPipeline {
         kind: IndexScopeKind,
         scope: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<bool> {
         if !self
             .entries
-            .is_known_withdrawn(kind, scope, object_id)
+            .is_known_withdrawn(kind, scope, object_id, created_at)
             .await
             .map_err(transient)?
         {

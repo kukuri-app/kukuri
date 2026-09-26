@@ -313,6 +313,9 @@ async fn compose_ingest_stack(
         );
     }
 
+    kukuri_cn_core::configure_retention(&pool, config.retention)
+        .await
+        .context("failed to apply the index retention settings")?;
     let entries = Arc::new(PgIndexEntryStore::new(pool.clone()));
     let projection = ArcadeDbProjection::new(config.arcadedb.clone())
         .context("failed to build the ArcadeDB projection client")?;
@@ -389,6 +392,10 @@ mod tests {
             poll_interval: std::time::Duration::from_secs(300),
             max_concurrent_posts: 4,
             status_addr: None,
+            retention: kukuri_cn_core::RetentionSettings {
+                capacity_rows: 1_000,
+                retention_secs: kukuri_cn_core::MIN_RETENTION_SECS,
+            },
         }
     }
 
