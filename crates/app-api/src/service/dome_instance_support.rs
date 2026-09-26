@@ -442,10 +442,15 @@ impl AppService {
         if let Some(state) = local {
             return Ok(Some(state.created_at));
         }
-        Ok(self
-            .fetch_verified_game_room(topic, row.channel_id.as_str(), row.room_id.as_str())
-            .await?
-            .map(|verified| verified.state().created_at))
+        // 呼び出し側の future が `Send` のまま spawn できるように、型を消してから待つ。
+        let session: std::pin::Pin<
+            Box<dyn Future<Output = Result<Option<VerifiedGameRoom>>> + Send + '_>,
+        > = Box::pin(self.fetch_verified_game_room(
+            topic,
+            row.channel_id.as_str(),
+            row.room_id.as_str(),
+        ));
+        Ok(session.await?.map(|verified| verified.state().created_at))
     }
 
     /// Instance・hosting・owner だけが書く記録を書く replica。公開は owner の制御領域、private は Dome の anchor。
