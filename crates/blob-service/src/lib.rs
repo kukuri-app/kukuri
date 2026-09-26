@@ -146,6 +146,8 @@ pub struct IrohBlobService {
     // 台帳変化の bool は blob-service では使わない(レプリカへの配り直しが無いため)。
     peers: Arc<PeerAddrBook>,
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
+    /// pin するたびに増える(#1221 R5-G。保護所有先への移行が pin の tag を読み直す合図)。
+    pin_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Clone, Default)]
@@ -155,6 +157,12 @@ pub struct MemoryBlobService {
 }
 
 impl IrohBlobService {
+    /// pin した回数(この process の中で単調に増える)。
+    pub fn pin_generation(&self) -> u64 {
+        self.pin_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn new(node: Arc<IrohDocsNode>) -> Self {
         let peers = Arc::new(PeerAddrBook::with_fetch_health(
             node.endpoint().clone(),
@@ -167,6 +175,7 @@ impl IrohBlobService {
             pinned: Arc::new(RwLock::new(HashSet::new())),
             peers,
             remote_fetch_retries: Arc::new(Mutex::new(RemoteFetchRetryState::default())),
+            pin_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -524,6 +533,8 @@ impl BlobService for IrohBlobService {
             .tags()
             .set(metaverse_pin_tag(hash), parsed)
             .await?;
+        self.pin_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.pinned.write().await.insert(hash.as_str().to_string());
         if let Some(cache) = &self.remote_cache {
             cache.remove_remote_content("blob", hash.as_str()).await?;

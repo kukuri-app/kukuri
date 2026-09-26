@@ -598,3 +598,89 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     }
     restored.shutdown().await;
 }
+
+// pin の tag は hash の順に並ぶ。追いついた後に pin した asset も、hash の大小に関わらず読み直して移す(監査の指摘)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn assets_pinned_after_catch_up_are_moved_whatever_their_hash() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().expect("dir");
+    let db =
+        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let runtime = open_runtime(&db).await;
+    let blobs = runtime.iroh_stack.blob_service.clone();
+    let first = blobs
+        .put_blob(b"first pinned asset".to_vec(), "model/gltf-binary")
+        .await
+        .expect("first asset");
+    blobs.pin_blob(&first.hash).await.expect("pin first");
+    runtime
+        .finish_protected_migration()
+        .await
+        .expect("catch up");
+    assert!(is_protected(&runtime.store, first.hash.as_str()).await);
+    let mut later = Vec::new();
+    for index in 0..8 {
+        let asset = blobs
+            .put_blob(
+                format!("later pinned asset {index}").into_bytes(),
+                "model/gltf-binary",
+            )
+            .await
+            .expect("later asset");
+        blobs.pin_blob(&asset.hash).await.expect("pin later");
+        later.push(asset.hash);
+    }
+    assert!(
+        later.iter().any(|hash| hash.as_str() < first.hash.as_str()),
+        "at least one later hash sorts before the caught-up cursor"
+    );
+    runtime
+        .finish_protected_migration()
+        .await
+        .expect("read pins again");
+    for hash in &later {
+        assert!(
+            is_protected(&runtime.store, hash.as_str()).await,
+            "{hash:?}"
+        );
+    }
+    runtime.shutdown().await;
+}
+
+// 本人の envelope 行は docs の record より先に入る。record がまだ無い新しい行の手前で止まり、揃ってから写す(監査の指摘)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_envelope_waits_for_its_docs_records() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().expect("dir");
+    let db =
+        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let runtime = open_runtime(&db).await;
+    let envelope = build_post_envelope(
+        runtime.author_keys.as_ref(),
+        &TopicId::new(TOPIC),
+        "records are not written yet",
+        None,
+    )
+    .expect("own envelope");
+    runtime
+        .store
+        .put_envelope(envelope.clone())
+        .await
+        .expect("envelope row before its records");
+    for _ in 0..3 {
+        assert!(
+            !runtime.protected_migration_step().await.expect("step"),
+            "a new own row without records keeps the migration from catching up"
+        );
+    }
+    let reference = format!("own:{}", envelope.id.as_str());
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM remote_content_cache_protected_ref WHERE ref_id = ?1",
+    )
+    .bind(&reference)
+    .fetch_one(runtime.store.pool())
+    .await
+    .expect("refs");
+    assert_eq!(refs, 0, "the row is not treated as migrated");
+    runtime.shutdown().await;
+}

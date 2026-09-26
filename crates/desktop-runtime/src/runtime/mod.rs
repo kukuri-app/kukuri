@@ -134,6 +134,8 @@ pub struct DesktopRuntime {
     pub(crate) protected_migration_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) protected_migration_guard: Mutex<()>,
     pub(crate) private_migration_dirty: Arc<AtomicBool>,
+    /// 最後に読み直した pin の世代。起動時は読み直すため、あり得ない値から始める。
+    pub(crate) dome_pin_generation: std::sync::atomic::AtomicU64,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
     notification_event_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) active_connectivity_urls: Arc<Mutex<Vec<String>>>,
@@ -505,6 +507,7 @@ impl DesktopRuntime {
             protected_migration_task: Mutex::new(None),
             protected_migration_guard: Mutex::new(()),
             private_migration_dirty,
+            dome_pin_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             notification_event_task: StdMutex::new(Some(notification_event_task)),
             active_connectivity_urls: Arc::new(Mutex::new(relay_config.iroh_relay_urls.clone())),
             last_runtime_connectivity_assist_state: Arc::new(Mutex::new(Some(

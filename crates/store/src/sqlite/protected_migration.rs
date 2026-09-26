@@ -46,6 +46,8 @@ pub struct ProtectedCandidate {
     pub reference: String,
     pub blobs: Vec<String>,
     pub source: ProtectedSource,
+    /// rowid で歩く kind の行の rowid。依存 record がまだ無い行の手前で止まるときの位置に使う。
+    pub rowid: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +64,7 @@ fn blob_candidate(reference: String, blobs: Vec<String>) -> ProtectedCandidate {
         reference,
         blobs,
         source: ProtectedSource::Blobs,
+        rowid: None,
     }
 }
 
@@ -109,11 +112,13 @@ impl SqliteStore {
                 let position = last_rowid(&rows);
                 for row in rows {
                     if row.get::<String, _>("pubkey") == local_pubkey {
+                        let rowid = row.get::<i64, _>("rowid");
                         let envelope = row_to_envelope(row)?;
                         candidates.push(ProtectedCandidate {
                             reference: format!("own:{}", envelope.id.as_str()),
                             blobs: Vec::new(),
                             source: ProtectedSource::Envelope(envelope),
+                            rowid: Some(rowid),
                         });
                     }
                 }
@@ -213,6 +218,7 @@ impl SqliteStore {
                         ),
                         blobs: vec![row.get("frame_blob_hash")],
                         source: ProtectedSource::DirectMessageFrame,
+                        rowid: None,
                     });
                 }
                 let next = rows
@@ -252,6 +258,7 @@ impl SqliteStore {
                             replica: ReplicaId::new(row.get::<String, _>("source_replica_id")),
                             state_key: row.get("source_key"),
                         },
+                        rowid: None,
                     });
                 }
                 let next = rows

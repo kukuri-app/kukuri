@@ -71,7 +71,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("private_channels/friend_plus.rs", "IrohNetwork", 1),
     ("private_channels/invite.rs", "IrohNetwork", 3),
     ("private_channels/persistence.rs", "IrohNetwork", 2),
-    ("protected_migration.rs", "IdentityStorage", 1),
+    ("protected_migration.rs", "IdentityStorage", 3),
     ("receive_binding.rs", "IdentityStorage", 1),
     ("runtime_events.rs", "CommunityNodeServer", 2),
     ("runtime_events.rs", "IdentityStorage", 2),

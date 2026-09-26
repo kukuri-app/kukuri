@@ -98,3 +98,9 @@ live/game は更新で rowid が変わらないため `(derived_at, id)`(索引�
 - Tauri crate: worktree では workspace 解決のため、一時的に `[workspace]` を足して `cargo check --locked` が成功(manifest は戻した)。
 - 未実行: frontend の test(mock の文字列 1 件だけ)、全体の CI。IPC 型は変えていない。
 - rowid の再利用: `a_reused_rowid_after_the_cursor_is_read_again`（最大の bookmark を消した直後の追加が、移行済みの位置の手前から読み直される）。
+- 監査の指摘（固定 head `98f9a1b4`）への修正: (1) Dome pin の tag は hash の順に並ぶため、追いついた後に pin した asset を
+  読み飛ばしていた。blob service が pin の世代を持ち、起動時と pin したときに dome_pin の位置を先頭へ戻す
+  （`assets_pinned_after_catch_up_are_moved_whatever_their_hash`、読み直しを外すと失敗することを確認）。(2) 本人の envelope 行は
+  docs の record より先に入るため、並行時に record を取り残して位置を進めていた。依存 record（state、公開投稿はプロフィールの行、
+  custom reaction asset は asset の record）がまだ無い作成 10 分以内の行の手前で位置を止め、次のステップで読み直す
+  （`own_envelope_waits_for_its_docs_records`）。backup 前の drain は、読み直しの間 100ms 待つ。
