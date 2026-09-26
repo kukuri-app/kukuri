@@ -262,6 +262,11 @@ impl AppService {
                 .projection_store
                 .put_private_channel_participant(participant_row(&participant))
                 .await?;
+            if participant.left_at.is_none() && epoch_id != state.current_epoch_id {
+                AppService::from_handles(services.clone())
+                    .grant_current_epoch_to_late_participant(&state, &epoch_id, sender)
+                    .await?;
+            }
         } else if let Some(grant) = parse_private_channel_epoch_handoff_grant(&envelope)? {
             anyhow::ensure!(
                 grant.channel_id == state.channel_id

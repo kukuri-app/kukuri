@@ -248,3 +248,59 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
         "the member who left is not a rotation recipient"
     );
 }
+
+/// #1221 R5-H: 参加 record は account 経路で owner へ届くので、owner の回転より後に着きうる。回転の後に届いた直前の
+/// epoch の参加 record にも、owner は現 epoch の handoff grant を送り、参加者は回転後の epoch へ移る。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("late-join-owner")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("late-join-member")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
+    let topic = "kukuri:topic:private-channel-late-join";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    let channel = app_a
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "late join".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create private channel");
+    let invite = app_a
+        .export_private_channel_invite(topic, channel.channel_id.as_str(), None)
+        .await
+        .expect("export invite");
+    app_b
+        .import_private_channel_invite(invite.as_str())
+        .await
+        .expect("import invite");
+    // 参加 record が owner の outbox の周期で届く前に回転する。
+    let rotated = app_a
+        .rotate_private_channel(topic, &channel.channel_id)
+        .await
+        .expect("rotate");
+    timeout(p2p_replication_timeout(), async {
+        loop {
+            if app_b
+                .list_joined_private_channels(topic)
+                .await
+                .expect("member channels")
+                .iter()
+                .any(|item| item.current_epoch_id == rotated.current_epoch_id)
+            {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the member moves to the rotated epoch");
+}
