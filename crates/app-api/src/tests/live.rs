@@ -402,3 +402,59 @@ async fn listing_live_session_without_viewers_keeps_topic_subscription() {
     );
     assert_eq!(*hint_transport.subscribe_count.lock().await, subscribed);
 }
+
+/// #1221 R5-H 判断 5: 既存の session の後から lease を始めた端末は、hint も表示の操作も待たずに、lease の開始の
+/// 読み直し(現在と直前の bucket と旧形式の session の索引)で既存の live session と game room を一覧に出す。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn lease_start_rereads_existing_live_sessions_and_game_rooms() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("reread-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("reread-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    let topic = "kukuri:topic:session-reread";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic(&app_a, topic).await.expect("display a");
+    let session_id = app_a
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "existing live".into(),
+                description: "before the lease".into(),
+            },
+        )
+        .await
+        .expect("create live session");
+    let room_id = app_a
+        .create_game_room(
+            topic,
+            CreateGameRoomInput {
+                title: "existing room".into(),
+                description: "before the lease".into(),
+                participants: vec!["Alice".into(), "Bob".into()],
+            },
+        )
+        .await
+        .expect("create game room");
+
+    display_topic(&app_b, topic).await.expect("display b");
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let live = app_b.list_live_sessions(topic).await.expect("live");
+            let games = app_b.list_game_rooms(topic).await.expect("games");
+            if live.iter().any(|session| session.session_id == session_id)
+                && games.iter().any(|room| room.room_id == room_id)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the lease start rereads the existing sessions");
+}
