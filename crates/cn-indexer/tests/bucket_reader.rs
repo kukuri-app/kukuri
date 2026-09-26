@@ -7,6 +7,7 @@ use kukuri_cn_core::{
     ChannelSecretCipher, IndexScopeKind, MemoryIndexEntryStore, TestDatabase, add_supported_topic,
     approve_indexing_request, connect_postgres, initialize_database, insert_indexing_request,
     mark_index_demand, register_channel_secret_with_epoch, remove_channel_secret,
+    rotate_channel_secret_epoch,
 };
 use kukuri_cn_indexer::bucket_reader::BucketReader;
 use kukuri_cn_indexer::ingest::IngestPipeline;
@@ -165,6 +166,32 @@ async fn two_clients_feed_one_cn_through_bounded_bucket_reader() -> Result<()> {
             .contains_object(IndexScopeKind::PublicTopic, "rust", &b)
             .await?
     );
+    // 日の境界（時刻の注入）: 翌日の巡回は直前の bucket として同じ投稿を読み直すが、索引は 1 件のまま。
+    // 2 日後の巡回は、その bucket を読まない（休止した過去 bucket を読みに行かない）。
+    let late = publish(&docs_a, &replica, &topic, "late in the day", None).await?;
+    assert_eq!(reader.poll_once(now + 2 * 86_400, true).await?.0.indexed, 0);
+    assert!(
+        !projection
+            .contains_object(IndexScopeKind::PublicTopic, "rust", &late)
+            .await?
+    );
+    reader.poll_once(now + 86_400, true).await?;
+    assert!(
+        projection
+            .contains_object(IndexScopeKind::PublicTopic, "rust", &late)
+            .await?
+    );
+    for id in [&a, &b, &late] {
+        assert_eq!(
+            entries
+                .entries_snapshot()
+                .iter()
+                .filter(|entry| &entry.object_id == id)
+                .count(),
+            1,
+            "読み直しで二重に反映しない"
+        );
+    }
     let mut local_namespaces = cn_node.docs().list().await?;
     assert!(
         local_namespaces.next().await.is_none(),
@@ -319,7 +346,7 @@ async fn registered_private_epoch_reads_only_the_disclosing_provider() -> Result
         cn_docs.clone(),
         entries.clone(),
         pipeline,
-        cipher,
+        cipher.clone(),
     );
     assert_eq!(reader.poll_once(now, true).await?.0.indexed, 1);
     assert!(
@@ -353,6 +380,58 @@ async fn registered_private_epoch_reads_only_the_disclosing_provider() -> Result
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].source_replica_id, replica.as_str());
     assert!(cn_node.docs().list().await?.next().await.is_none());
+
+    // epoch の境界: 回転後は新 epoch の bucket を読み、旧 epoch の投稿を二重に取り込まない。
+    let next_secret = [8u8; 32];
+    rotate_channel_secret_epoch(
+        &pool,
+        &cipher,
+        &subscriber,
+        "private-room",
+        ("epoch-1", &hex::encode(epoch_secret)),
+        ("epoch-2", &hex::encode(next_secret)),
+    )
+    .await?;
+    let next_bucket = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: "private-room".into(),
+            epoch_id: "epoch-2".into(),
+        },
+        TimeBucket::from_unix_seconds(now)?,
+    )?;
+    let replica = next_bucket.replica_id();
+    docs_provider
+        .register_private_replica_secret(
+            &replica,
+            &hex::encode(next_bucket.derive_private_secret(&next_secret)?),
+        )
+        .await?;
+    let after_rotation = publish(
+        &docs_provider,
+        &replica,
+        &topic,
+        "after rotation",
+        Some("private-room"),
+    )
+    .await?;
+    assert_eq!(reader.poll_once(now, true).await?.0.indexed, 1);
+    assert!(
+        projection
+            .contains_object(
+                IndexScopeKind::PrivateChannel,
+                "private-room",
+                &after_rotation
+            )
+            .await?
+    );
+    assert_eq!(
+        entries
+            .entries_snapshot()
+            .iter()
+            .filter(|entry| entry.object_id == wanted)
+            .count(),
+        1
+    );
     sqlx::query(
         "UPDATE cn_user.subscriber_accounts SET status = 'inactive' WHERE subscriber_pubkey = $1",
     )
