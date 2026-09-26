@@ -461,6 +461,7 @@ const PROFILE_REMOTE_REPLICAS: usize = 4;
 
 /// 1 つの source(手元のページ、または 1 provider の 1 replica の索引)から読んだ行と、読み残しの境界。
 /// 境界(`frontier`)は、その source がまだ読んでいない側で最も新しい位置。`None` はその source が尽きたこと。
+#[derive(Clone)]
 pub(crate) struct ProfileSourceRows<T> {
     pub(crate) rows: Vec<((i64, String), T)>,
     pub(crate) frontier: Option<(i64, String)>,
@@ -505,9 +506,11 @@ where
     Ok((items, horizon))
 }
 
-/// プロフィールの 1 ページ(#1221 R5-C)。手元のページが埋まらないときだけ、author 本人を含む有界な provider から
-/// 旧 `author::<pubkey>` と author bucket(cursor の bucket、その前の bucket、現在の bucket)の索引を読み、手元と合わせる。
-/// 自分のプロフィールも同じく読み、同じ account の別端末の投稿を出す(R5-H、2026-09-27 ユーザー決定)。
+/// プロフィールの 1 ページ(#1221 R5-C)。手元の旧 `author::<pubkey>` と、cursor が選ぶ author bucket(cursor の bucket、
+/// その前の bucket、現在の bucket。ADR 0054 §3)のうち手元にあるものの索引を合わせてページにする(R5-H: 切替後の書込み
+/// も手元で照合する。手元に無い bucket の namespace は作らない)。手元のページが埋まらないときだけ、author 本人を含む有界
+/// な provider から同じ replica の索引を読んで合わせる。自分のプロフィールも同じく読み、同じ account の別端末の投稿を
+/// 出す(R5-H、2026-09-27 ユーザー決定)。
 ///
 /// remote の読取りは namespace を import・sync しない。1 操作は索引 200 行・30 秒まで。署名・author・索引の位置・bucket の
 /// 時刻を確かめた行だけを返す。読めない provider・replica は欠けたまま進む。
@@ -528,15 +531,6 @@ pub(crate) async fn profile_timeline_page(
         hidden_author_pubkeys,
     )
     .await?;
-    if local.items.len() >= limit {
-        return Ok(local);
-    }
-    let legacy = author_replica_id(author_pubkey);
-    let readers = writer_readers(services, &legacy, &[author_pubkey], None).await;
-    if readers.is_empty() {
-        return Ok(local);
-    }
-    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
     let before = cursor.as_ref().map(|cursor| TimeIndexCursor {
         created_at: cursor.created_at,
         object_id: cursor.object_id.as_str().to_owned(),
@@ -546,7 +540,8 @@ pub(crate) async fn profile_timeline_page(
             .as_ref()
             .map_or_else(|| Utc::now().timestamp(), |cursor| cursor.created_at),
     )?;
-    let mut replicas = vec![legacy];
+    let legacy = author_replica_id(author_pubkey);
+    let mut replicas = vec![legacy.clone()];
     for bucket in [
         Some(anchor),
         anchor.previous(),
@@ -579,6 +574,71 @@ pub(crate) async fn profile_timeline_page(
             .map(|item| (item_position(&item), ProfileRow::Local(Box::new(item))))
             .collect(),
     }];
+    for replica in replicas.iter().skip(1) {
+        if !services.docs_sync.has_local_replica(replica).await? {
+            continue;
+        }
+        let (entries, frontier) = remote_profile_index(
+            services.docs_sync.as_ref(),
+            replica,
+            docs_author,
+            before.as_ref(),
+            rows_per_source,
+        )
+        .await?;
+        sources.push(profile_source(
+            services.docs_sync.clone(),
+            replica,
+            DocFetchPolicy::LocalOnly,
+            entries,
+            frontier,
+        ));
+    }
+    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let load = |row| async move {
+        let (reader, replica, position, policy) = match row {
+            ProfileRow::Local(item) => return Ok(Some(*item)),
+            ProfileRow::Indexed(reader, replica, position, policy) => {
+                (reader, replica, position, policy)
+            }
+        };
+        let read = tokio::time::timeout_at(
+            deadline,
+            load_profile_item(
+                reader.as_ref(),
+                &replica,
+                author_pubkey,
+                &position.1,
+                docs_author,
+                policy,
+            ),
+        )
+        .await;
+        if policy == DocFetchPolicy::LocalThenRemote {
+            reader.finish_remote_object().await;
+        }
+        let item = match read {
+            Ok(Ok(item)) => item,
+            Ok(Err(error)) => {
+                warn!(%error, "remote profile row read failed");
+                None
+            }
+            Err(_) => None,
+        };
+        Ok(item.filter(|item| {
+            item_position(item) == position
+                && !profile_timeline_item_is_hidden(item, hidden_author_pubkeys)
+        }))
+    };
+    let (items, next) = assemble_profile_page(sources.clone(), limit, load).await?;
+    let readers = if items.len() >= limit {
+        Vec::new()
+    } else {
+        writer_readers(services, &legacy, &[author_pubkey], None).await
+    };
+    if readers.is_empty() {
+        return Ok(profile_page(items, next));
+    }
     'replicas: for replica in replicas {
         for reader in &readers {
             let read = tokio::time::timeout_at(
@@ -594,18 +654,13 @@ pub(crate) async fn profile_timeline_page(
             .await;
             match read {
                 Ok(Ok((entries, frontier))) => {
-                    sources.push(ProfileSourceRows {
-                        rows: entries
-                            .into_iter()
-                            .map(|position| {
-                                (
-                                    position.clone(),
-                                    ProfileRow::Remote(reader.clone(), replica.clone(), position),
-                                )
-                            })
-                            .collect(),
+                    sources.push(profile_source(
+                        reader.clone(),
+                        &replica,
+                        DocFetchPolicy::LocalThenRemote,
+                        entries,
                         frontier,
-                    });
+                    ));
                     continue 'replicas;
                 }
                 Ok(Err(error)) => warn!(%error, "remote profile index read failed"),
@@ -613,50 +668,50 @@ pub(crate) async fn profile_timeline_page(
             }
         }
     }
-    let (items, next) = assemble_profile_page(sources, limit, |row| async move {
-        let (reader, replica, position) = match row {
-            ProfileRow::Local(item) => return Ok(Some(*item)),
-            ProfileRow::Remote(reader, replica, position) => (reader, replica, position),
-        };
-        let read = tokio::time::timeout_at(
-            deadline,
-            load_profile_item(
-                reader.as_ref(),
-                &replica,
-                author_pubkey,
-                &position.1,
-                docs_author,
-                DocFetchPolicy::LocalThenRemote,
-            ),
-        )
-        .await;
-        reader.finish_remote_object().await;
-        let item = match read {
-            Ok(Ok(item)) => item,
-            Ok(Err(error)) => {
-                warn!(%error, "remote profile row read failed");
-                None
-            }
-            Err(_) => None,
-        };
-        Ok(item.filter(|item| {
-            item_position(item) == position
-                && !profile_timeline_item_is_hidden(item, hidden_author_pubkeys)
-        }))
-    })
-    .await?;
-    Ok(Page {
+    let (items, next) = assemble_profile_page(sources, limit, load).await?;
+    Ok(profile_page(items, next))
+}
+
+fn profile_page(
+    items: Vec<ProfileTimelineItem>,
+    next: Option<(i64, String)>,
+) -> Page<ProfileTimelineItem> {
+    Page {
         items,
         next_cursor: next.map(|(created_at, object_id)| TimelineCursor {
             created_at,
             object_id: EnvelopeId::from(object_id.as_str()),
         }),
-    })
+    }
 }
 
+/// 1 つの reader の 1 replica の索引の行を、ページの source にする。
+fn profile_source(
+    reader: Arc<dyn DocsSync>,
+    replica: &ReplicaId,
+    policy: DocFetchPolicy,
+    entries: Vec<(i64, String)>,
+    frontier: Option<(i64, String)>,
+) -> ProfileSourceRows<ProfileRow> {
+    ProfileSourceRows {
+        rows: entries
+            .into_iter()
+            .map(|position| {
+                (
+                    position.clone(),
+                    ProfileRow::Indexed(reader.clone(), replica.clone(), position, policy),
+                )
+            })
+            .collect(),
+        frontier,
+    }
+}
+
+#[derive(Clone)]
 enum ProfileRow {
     Local(Box<ProfileTimelineItem>),
-    Remote(Arc<dyn DocsSync>, ReplicaId, (i64, String)),
+    /// 索引の行。手元の bucket は `LocalOnly`、provider は `LocalThenRemote` で読む。
+    Indexed(Arc<dyn DocsSync>, ReplicaId, (i64, String), DocFetchPolicy),
 }
 
 /// 1 provider の 1 replica の索引を cursor から新しい順に読む。bucket の時刻の外の行は捨てる。

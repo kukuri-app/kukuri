@@ -485,6 +485,20 @@ impl DocsSync for IrohDocsSync {
         Ok(())
     }
 
+    async fn has_local_replica(&self, replica_id: &ReplicaId) -> Result<bool> {
+        if self.replicas.lock().await.contains_key(replica_id.as_str()) {
+            return Ok(true);
+        }
+        let secret = self.replica_secret(replica_id).await?;
+        match self.open_existing(&secret).await? {
+            Some(doc) => {
+                doc.close().await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     async fn register_private_replica_secret(
         &self,
         replica_id: &ReplicaId,

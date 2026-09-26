@@ -282,3 +282,30 @@ async fn private_exact_reads_include_moved_records_only_with_the_capability() {
     docs.shutdown().await;
     node.shutdown().await.expect("shutdown");
 }
+
+// 手元に無い namespace を「無い」と答え、作らない。書いた namespace は、handle を閉じた後も「ある」と答える(#1221 R5-H)。
+#[tokio::test]
+async fn has_local_replica_does_not_create_a_namespace() -> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    let missing = author_replica_id("aa".repeat(32).as_str());
+    assert!(!docs.has_local_replica(&missing).await?);
+    let namespace = crate::replicas::public_replica_secret(&missing)
+        .unwrap()
+        .id();
+    assert!(node.docs().open(namespace).await.ok().flatten().is_none());
+    let written = author_replica_id("bb".repeat(32).as_str());
+    docs.apply_doc_op(
+        &written,
+        DocOp::SetJson {
+            key: "profile/latest".into(),
+            value: serde_json::json!({}),
+        },
+    )
+    .await?;
+    docs.close_replica(&written).await?;
+    assert!(docs.has_local_replica(&written).await?);
+    docs.shutdown().await;
+    node.shutdown().await?;
+    Ok(())
+}
