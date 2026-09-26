@@ -21,7 +21,6 @@ impl AppService {
         .await?;
         let page = profile_timeline_page(
             &self.services,
-            local_author.as_str(),
             author_pubkey.as_str(),
             docs_author.as_deref(),
             cursor,

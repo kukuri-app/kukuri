@@ -507,12 +507,12 @@ where
 
 /// プロフィールの 1 ページ(#1221 R5-C)。手元のページが埋まらないときだけ、author 本人を含む有界な provider から
 /// 旧 `author::<pubkey>` と author bucket(cursor の bucket、その前の bucket、現在の bucket)の索引を読み、手元と合わせる。
+/// 自分のプロフィールも同じく読み、同じ account の別端末の投稿を出す(R5-H、2026-09-27 ユーザー決定)。
 ///
 /// remote の読取りは namespace を import・sync しない。1 操作は索引 200 行・30 秒まで。署名・author・索引の位置・bucket の
 /// 時刻を確かめた行だけを返す。読めない provider・replica は欠けたまま進む。
 pub(crate) async fn profile_timeline_page(
     services: &ServiceHandles,
-    local_author_pubkey: &str,
     author_pubkey: &str,
     docs_author: Option<&str>,
     cursor: Option<TimelineCursor>,
@@ -528,7 +528,7 @@ pub(crate) async fn profile_timeline_page(
         hidden_author_pubkeys,
     )
     .await?;
-    if local.items.len() >= limit || author_pubkey == local_author_pubkey {
+    if local.items.len() >= limit {
         return Ok(local);
     }
     let legacy = author_replica_id(author_pubkey);

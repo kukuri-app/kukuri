@@ -189,7 +189,6 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
         provider.reset_records_returned();
         let first = profile_timeline_page(
             &app.services,
-            local.public_key_hex().as_str(),
             author_pubkey.as_str(),
             None,
             None,
@@ -212,7 +211,6 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
             while let Some(next) = cursor {
                 let page = profile_timeline_page(
                     &app.services,
-                    local.public_key_hex().as_str(),
                     author_pubkey.as_str(),
                     None,
                     Some(next),
@@ -234,19 +232,20 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
     assert_eq!(counts[0], counts[1], "provider reads: {counts:?}");
 }
 
-// 自分のプロフィールは手元だけを読む(provider へ要求しない)。
+// 自分のプロフィールも、手元のページが埋まらないときだけ provider を読み、同じ account の別端末の投稿を出す
+// (#1221 R5-H)。手元でページが埋まれば provider へ要求しない。
 #[tokio::test]
-async fn the_own_profile_is_read_only_locally() {
+async fn the_own_profile_reads_a_provider_only_when_the_local_page_is_short() {
     let local = generate_keys();
+    let own = local.public_key_hex();
     let provider = Arc::new(CountingDocsSync::default());
-    put_profile_post(provider.as_ref(), &local, BASE_TIME).await;
+    let other_device_post = put_profile_post(provider.as_ref(), &local, BASE_TIME).await;
     let docs = Arc::new(CountingDocsSync::reading_from(provider.clone()));
-    let (app, _) = app_over(docs, local.clone());
+    let (app, _) = app_over(docs.clone(), local.clone());
     provider.reset_records_returned();
     let page = profile_timeline_page(
         &app.services,
-        local.public_key_hex().as_str(),
-        local.public_key_hex().as_str(),
+        own.as_str(),
         None,
         None,
         20,
@@ -254,7 +253,19 @@ async fn the_own_profile_is_read_only_locally() {
     )
     .await
     .expect("own page");
-    assert!(page.items.is_empty());
+    let ids = page
+        .items
+        .iter()
+        .map(|item| item.object_id().as_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![other_device_post]);
+
+    put_profile_post(docs.as_ref(), &local, BASE_TIME + 1).await;
+    provider.reset_records_returned();
+    let page = profile_timeline_page(&app.services, own.as_str(), None, None, 1, &BTreeSet::new())
+        .await
+        .expect("own full page");
+    assert_eq!(page.items.len(), 1);
     assert_eq!(provider.records_returned(), 0);
 }
 
