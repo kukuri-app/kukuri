@@ -254,7 +254,7 @@ async fn blob_text_post_body_is_searchable_in_scope_and_across_supported_entries
     let (pipeline, entries) = pipeline_with(&docs, &projection);
     let summary = pipeline
         .with_blob_service(blobs)
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 1);
@@ -316,7 +316,7 @@ async fn assert_blob_text_refs_rejected(
     };
 
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     assert_eq!(summary.scanned, 1);
     assert_eq!(summary.indexed, 0);
@@ -412,7 +412,7 @@ async fn blob_text_fetch_failure_keeps_an_existing_entry_until_validation_fails(
     let pipeline = pipeline.with_blob_service(blobs.clone());
 
     let initial = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     assert_eq!(initial.indexed, 1);
     assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
@@ -425,7 +425,7 @@ async fn blob_text_fetch_failure_keeps_an_existing_entry_until_validation_fails(
     for failure in [FetchFailure::Missing, FetchFailure::Error] {
         blobs.set_failure(Some(failure));
         let retry = pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
             .await?;
         assert_eq!(retry.indexed, 0, "{failure:?}");
         assert_eq!(retry.deindexed, 0, "{failure:?}");
@@ -445,7 +445,7 @@ async fn blob_text_fetch_failure_keeps_an_existing_entry_until_validation_fails(
     blobs.set_failure(None);
     blobs.set_body(Some(b"Community Index evil".to_vec()));
     let retry = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     assert_eq!(retry.indexed, 0);
     assert_eq!(retry.skipped_non_allow, 1);

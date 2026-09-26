@@ -103,10 +103,10 @@ async fn active_transmission_prevention_wins_before_scan_and_reingest() -> Resul
     entries.prevent_subject(object_id.clone());
 
     let first = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
     let second = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
 
     assert_eq!(first.deindexed, 1);
@@ -145,7 +145,7 @@ async fn verified_author_withdrawal_deindexes_and_never_reappears() -> Result<()
 
     let (pipeline, entries, store) = pipeline_with(&docs, &projection);
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
     assert_eq!(summary.deindexed, 1);
     assert!(!entries.contains(IndexScopeKind::PublicTopic, topic.as_str(), &object_id));

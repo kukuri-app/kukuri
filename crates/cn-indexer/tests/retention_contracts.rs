@@ -245,7 +245,7 @@ async fn withdrawn_post_stays_out_after_its_marker_is_reclaimed() -> Result<()> 
         let replica = topic_replica_id(TOPIC);
         assert_eq!(
             ingest
-                .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+                .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
                 .await?
                 .indexed,
             1
@@ -265,7 +265,7 @@ async fn withdrawn_post_stays_out_after_its_marker_is_reclaimed() -> Result<()> 
         )
         .await?;
         ingest
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
             .await?;
         let marker: i64 = sqlx::query_scalar(
             "SELECT created_at FROM cn_index.known_post_withdrawals WHERE object_id = $1",
@@ -292,7 +292,7 @@ async fn withdrawn_post_stays_out_after_its_marker_is_reclaimed() -> Result<()> 
         write_post(&forged, &post, floor + 60).await?;
         for docs in [stale, forged] {
             let summary = pipeline(&pool, docs, projection.clone())?
-                .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+                .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
                 .await?;
             assert_eq!(summary.indexed, 0);
             assert_eq!(count(&pool, "cn_index.index_entries").await?, 0);

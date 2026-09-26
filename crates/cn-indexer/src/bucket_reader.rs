@@ -38,7 +38,8 @@ pub struct BucketReader {
     entries: Arc<dyn IndexEntryStore>,
     pipeline: IngestPipeline,
     cipher: ChannelSecretCipher,
-    /// media の一時取得の候補。巡回ごとに、運用者指定の seed と今回選んだ提供元だけにする。
+    /// 運用者指定の seed(`COMMUNITY_NODE_INDEXER_SEED_PEERS`)。公開 bucket の提供元の候補の先頭に置き、media の
+    /// 一時取得の候補は、巡回ごとにこの seed と今回選んだ提供元だけにする。
     blob_seeds: Option<(Arc<dyn BlobService>, Vec<SeedPeer>)>,
 }
 
@@ -392,7 +393,23 @@ impl BucketReader {
     /// 1 回の巡回。`full` でなければ需要のある scope だけを読む。取り込み結果と読んだ物理 scope 数を返す。
     pub async fn poll_once(&self, now: i64, full: bool) -> Result<(IngestSummary, usize)> {
         let (selected, next_cursor) = Self::selected_scopes(&self.pool, full).await?;
-        let (public_seeds, next_peer_cursor) = Self::selected_public_providers(&self.pool).await?;
+        let (selected_public, next_peer_cursor) =
+            Self::selected_public_providers(&self.pool).await?;
+        // #1221 R5-H: 旧 sync の peer だった運用者指定の seed も、公開 bucket の提供元の候補にする(最大 4)。
+        let mut public_seeds = self
+            .blob_seeds
+            .as_ref()
+            .map(|(_, configured)| configured.clone())
+            .unwrap_or_default();
+        for seed in selected_public {
+            if !public_seeds
+                .iter()
+                .any(|known| known.endpoint_id == seed.endpoint_id)
+            {
+                public_seeds.push(seed);
+            }
+        }
+        public_seeds.truncate(4);
         let buckets = TimeBucket::from_unix_seconds(now)?
             .live_window()
             .collect::<Vec<_>>();

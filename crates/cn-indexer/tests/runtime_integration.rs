@@ -354,7 +354,12 @@ async fn ingest_and_maintenance_write_and_deindex_real_arcadedb_projection() -> 
         .with_metrics(Arc::clone(&state))
         .with_blob_service(blobs);
     pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic_id.as_str(), &replica)
+        .ingest_changed_keys(
+            IndexScopeKind::PublicTopic,
+            topic_id.as_str(),
+            &replica,
+            &[],
+        )
         .await?;
     assert!(
         projection

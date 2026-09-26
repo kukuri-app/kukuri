@@ -620,3 +620,63 @@ async fn demanded_scope_is_read_each_demand_interval_and_others_each_poll() -> R
     database.cleanup().await?;
     result
 }
+
+/// #1221 R5-H 判断 6: 旧 sync の peer だった運用者指定の seed(`COMMUNITY_NODE_INDEXER_SEED_PEERS`。bootstrap 登録の
+/// 無い端末)も、公開 bucket の提供元の候補になる。
+#[tokio::test(flavor = "multi_thread")]
+async fn configured_seed_peer_is_a_public_bucket_provider() -> Result<()> {
+    let Some(admin) = kukuri_test_support::gated_env_url(
+        "KUKURI_CN_RUN_INTEGRATION_TESTS",
+        "COMMUNITY_NODE_DATABASE_URL",
+        "postgres://cn:cn_password@127.0.0.1:15432/cn",
+    ) else {
+        return Ok(());
+    };
+    let database = TestDatabase::create(&admin, "cn_bucket_seed_provider").await?;
+    let pool = connect_postgres(&database.database_url).await?;
+    initialize_database(&pool).await?;
+    add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+    let seed = IrohDocsNode::memory().await?;
+    let cn_node = IrohDocsNode::memory().await?;
+    let seed_docs = Arc::new(IrohDocsSync::new(seed.clone()));
+    let cn_docs = Arc::new(IrohDocsSync::new(cn_node.clone()));
+    let now = chrono::Utc::now().timestamp();
+    let id = publish(
+        &seed_docs,
+        &topic_bucket("rust", now)?,
+        &TopicId::new("rust"),
+        "from the configured seed",
+        None,
+    )
+    .await?;
+    let (safety, artifacts) = ingest_support::allow_service();
+    let entries = Arc::new(MemoryIndexEntryStore::new(artifacts));
+    let projection = Arc::new(MemoryIndexProjection::default());
+    let pipeline =
+        IngestPipeline::new(cn_docs.clone(), safety, entries.clone(), projection.clone());
+    let cipher = ChannelSecretCipher::from_key_material("seed-bucket-test-cipher-key-0123456789")?;
+    let socket = seed
+        .endpoint()
+        .bound_sockets()
+        .into_iter()
+        .next()
+        .expect("socket");
+    let reader = BucketReader::new(pool.clone(), cn_docs, entries, pipeline, cipher)
+        .with_blob_seeds(
+            Arc::new(kukuri_blob_service::IrohBlobService::new(cn_node.clone())),
+            vec![kukuri_transport::SeedPeer {
+                endpoint_id: seed.endpoint().addr().id.to_string(),
+                addr_hint: Some(socket.to_string()),
+            }],
+        );
+    assert_eq!(reader.poll_once(now, true).await?.0.indexed, 1);
+    assert!(
+        projection
+            .contains_object(IndexScopeKind::PublicTopic, "rust", &id)
+            .await?
+    );
+    seed.shutdown().await?;
+    cn_node.shutdown().await?;
+    pool.close().await;
+    database.cleanup().await
+}

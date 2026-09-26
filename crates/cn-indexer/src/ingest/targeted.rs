@@ -86,17 +86,7 @@ impl IngestPipeline {
     }
 
     /// Poll only the current index window. A missing page never de-indexes older entries.
-    /// Remote readers can reuse this object-scoped path without importing a namespace.
-    pub async fn ingest_recent_scope(
-        &self,
-        scope_kind: IndexScopeKind,
-        scope_id: &str,
-        replica_id: &ReplicaId,
-    ) -> Result<IngestSummary> {
-        self.ingest_recent_scope_excluding(scope_kind, scope_id, replica_id, &[])
-            .await
-    }
-
+    /// 対象を特定できない変更 key(空の key 列を含む)で `ingest_changed_keys` から呼ばれる。
     pub(crate) async fn ingest_recent_scope_excluding(
         &self,
         scope_kind: IndexScopeKind,

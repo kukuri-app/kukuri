@@ -107,7 +107,7 @@ async fn mismatched_scope_is_rejected_before_opening_any_replica() -> Result<()>
     ] {
         assert!(
             pipeline
-                .ingest_recent_scope(IndexScopeKind::PublicTopic, "expected", &replica_id)
+                .ingest_changed_keys(IndexScopeKind::PublicTopic, "expected", &replica_id, &[])
                 .await
                 .is_err()
         );
@@ -127,7 +127,7 @@ async fn a_post_signed_for_another_bucket_is_not_indexed() -> Result<()> {
     let replica = topic_bucket("time-check", 2)?;
     let id = post(&docs, &replica, "time-check", "wrong bucket", 86_400).await?;
     let result = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "time-check", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "time-check", &replica, &[])
         .await?;
     assert_eq!(result.indexed, 0);
     assert!(
@@ -147,8 +147,9 @@ async fn a_misplaced_copy_cannot_remove_an_already_indexed_post() -> Result<()> 
         let proper = topic_bucket(topic, 1)?;
         let wrong = topic_bucket(topic, 2)?;
         let id = post(&docs, &proper, topic, "original", 86_400).await?;
-        let ingest =
-            |replica| pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, topic, replica);
+        let ingest = |replica| {
+            pipeline.ingest_changed_keys(IndexScopeKind::PublicTopic, topic, replica, &[])
+        };
         assert_eq!(ingest(&proper).await?.indexed, 1);
         for record in docs.query_replica(&proper, DocQuery::All).await? {
             let mut value: serde_json::Value = serde_json::from_slice(&record.value)?;
@@ -192,7 +193,7 @@ async fn bucket_posts_are_derived_from_the_signature_not_an_untrusted_state() ->
     .await?;
     assert_eq!(
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, topic, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, topic, &replica, &[])
             .await?
             .indexed,
         1
@@ -215,7 +216,7 @@ async fn changing_only_the_bucket_marker_reuses_the_signed_post_scan() -> Result
     let topic = "marker-reuse";
     let replica = topic_bucket(topic, 1)?;
     let id = post(&docs, &replica, topic, "authentic text", 86_400).await?;
-    let ingest = || pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, topic, &replica);
+    let ingest = || pipeline.ingest_changed_keys(IndexScopeKind::PublicTopic, topic, &replica, &[]);
     assert_eq!(ingest().await?.scans_fresh, 1);
     docs.apply_doc_op(
         &replica,
