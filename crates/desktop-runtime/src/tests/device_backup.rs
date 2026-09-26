@@ -94,7 +94,29 @@ async fn initialized_app_data() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("mark protected migration finished");
     }
     connection.close().await.expect("close sqlite");
+    fold_sqlite_wal(&db_path).await;
     (dir, db_path)
+}
+
+/// pool を閉じても、接続が別 thread で遅れて閉じるため、`-wal`/`-shm` が残ったり snapshot の途中で消えたり
+/// する(Linux)。単独の接続を開いて閉じ、最後の接続として WAL を畳んで消えたことを確かめてから返す。
+async fn fold_sqlite_wal(db_path: &std::path::Path) {
+    use sqlx::Connection;
+    let wal = db_path.with_extension("db-wal");
+    let shm = db_path.with_extension("db-shm");
+    for _ in 0..100 {
+        sqlx::SqliteConnection::connect(&format!("sqlite://{}", db_path.display()))
+            .await
+            .expect("open sqlite")
+            .close()
+            .await
+            .expect("close sqlite");
+        if !wal.exists() && !shm.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("sqlite WAL was not folded");
 }
 
 /// 保護所有先の file(`kukuri.remote-blobs/`)に置いた blob。`reference` が無ければ非保護の cache。
@@ -121,6 +143,7 @@ async fn cached_blob_file(
         .expect("cache blob file");
     fs::remove_file(&source).expect("remove blob fixture");
     store.close().await;
+    fold_sqlite_wal(db_path).await;
     hash
 }
 
