@@ -268,19 +268,27 @@ async fn leaving_a_screen_and_ending_participation_are_separate() {
         .await
         .expect("live session");
 
-    // 列を閉じても、live に参加している間は topic を購読する。
+    // unsubscribe_topic は desired の holder だけを外す。開いている列の購読は、列を閉じるまで続く。
     display(&app, "column", timeline(topic))
         .await
         .expect("open");
+    app.unsubscribe_topic(topic).await.expect("unsubscribe");
+    assert!(app.has_topic_subscription(topic).await);
+
+    // 列を閉じても、live に参加している間は topic を購読する。
     app.join_live_session(topic, &session).await.expect("join");
     close(&app, "column").await;
     assert!(app.has_topic_subscription(topic).await);
 
-    // unsubscribe_topic は列・desired の holder だけを外し、参加は止めない。
-    display(&app, "column", timeline(topic))
+    // unsubscribe_topic は desired を外しても参加は止めない。
+    app.set_desired_scope(topic, &TimelineScope::Public, true)
         .await
-        .expect("reopen");
+        .expect("desired");
     app.unsubscribe_topic(topic).await.expect("unsubscribe");
+    let desired = desired_holder(topic, &TimelineScope::Public);
+    let leases = app.subscription_registry.scope_leases.lock().await;
+    assert!(!leases.holds(&desired, &topic_key(topic)));
+    drop(leases);
     assert!(app.has_topic_subscription(topic).await);
     assert_eq!(
         app.subscription_registry
@@ -306,8 +314,40 @@ async fn leaving_a_screen_and_ending_participation_are_separate() {
             .is_empty()
     );
     assert!(app.has_topic_subscription(topic).await);
+    // 列を閉じると止まる。
     close(&app, "column").await;
     assert!(!app.has_topic_subscription(topic).await);
+}
+
+// channel の回転が続いても、開いている replica は現在と直前の 2 つまで。最後の holder で両方を閉じる。
+#[tokio::test]
+async fn a_rotating_channel_keeps_only_the_current_and_previous_replicas_open() {
+    let tracked = tracked_app(Arc::new(MemoryStore::default()), generate_keys());
+    let topic = "kukuri:topic:rotating";
+    let channel = "channel-rotating";
+    let mut joined = capability(topic, channel, 0);
+    for rotation in 0..4 {
+        if rotation > 0 {
+            joined.archived_epochs.push(PrivateChannelEpochCapability {
+                epoch_id: joined.current_epoch_id.clone(),
+                namespace_secret_hex: joined.current_epoch_secret_hex.clone(),
+            });
+            joined.current_epoch_id = format!("{channel}-epoch-{rotation}");
+            joined.current_epoch_secret_hex = generate_keys().export_secret_hex();
+        }
+        tracked
+            .app
+            .restore_private_channel_capability(joined.clone())
+            .await
+            .expect("rotate");
+        let open = tracked.docs.open_replicas.lock().await.len();
+        assert_eq!(open, (rotation + 1).min(2), "rotation {rotation}");
+    }
+    tracked
+        .app
+        .release_scope_holder(&private_channel_holder(topic, channel))
+        .await;
+    assert!(tracked.docs.open_replicas.lock().await.is_empty());
 }
 
 async fn start_with_dormant_history(scale: usize) -> (usize, usize, usize, usize) {

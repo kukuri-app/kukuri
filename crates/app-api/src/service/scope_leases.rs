@@ -46,6 +46,9 @@ pub(crate) struct ScopeTask {
     pub(crate) replica: ReplicaId,
     /// author の購読は hint を購読しない。
     pub(crate) hint_topic: Option<TopicId>,
+    /// private channel の epoch が変わる前の replica(1 つだけ)。参加者はそこに書かれた handoff の grant を
+    /// 同期で受け取る。現在と直前の 2 つまでを開く(ADR 0055 §2 の「現在 / 直前の 2 bucket」)。
+    pub(crate) previous: Option<ReplicaId>,
 }
 
 struct Lease {
@@ -237,8 +240,14 @@ pub(crate) async fn stop_scope_task(services: &ServiceHandles, task: ScopeTask) 
             Err(_) => warn!(topic = %hint_topic.as_str(), "timed out leaving scope hints"),
         }
     }
-    if let Err(error) = services.docs_sync.close_replica(&task.replica).await {
-        warn!(replica = %task.replica.as_str(), %error, "failed to close scope replica");
+    for replica in std::iter::once(&task.replica).chain(&task.previous) {
+        close_scope_replica(services, replica).await;
+    }
+}
+
+async fn close_scope_replica(services: &ServiceHandles, replica: &ReplicaId) {
+    if let Err(error) = services.docs_sync.close_replica(replica).await {
+        warn!(replica = %replica.as_str(), %error, "failed to close scope replica");
     }
 }
 
@@ -346,13 +355,23 @@ impl AppService {
             return;
         };
         let old = slot.take();
-        let new = self.start_scope_task(key).await;
+        let mut new = self.start_scope_task(key).await;
         if let Some(old) = old {
-            match &new {
+            match &mut new {
                 // gossip topic は抜けない。抜けてすぐ入り直すと、相手が古い Disconnect を新しい Join より後に
-                // 処理した場合に片側だけが neighbor を失う。epoch が変わった直前の replica も閉じない
-                // (参加者は、そこに書かれた handoff の grant を同期で受け取る。旧 sync の撤去は R5-H)。
-                Some(_) => old.handle.abort(),
+                // 処理した場合に片側だけが neighbor を失う。
+                Some(new) if new.replica == old.replica => {
+                    old.handle.abort();
+                    new.previous = old.previous;
+                }
+                // epoch が変わった。直前の replica を覚え、それより前(2 世代前)を閉じる。
+                Some(new) => {
+                    old.handle.abort();
+                    new.previous = Some(old.replica);
+                    if let Some(replica) = &old.previous {
+                        close_scope_replica(&self.services, replica).await;
+                    }
+                }
                 None => stop_scope_task(&self.services, old).await,
             }
         }

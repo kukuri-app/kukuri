@@ -935,6 +935,7 @@ impl AppService {
             handle: AbortOnDropTask::new(handle),
             replica,
             hint_topic: Some(hint_topic),
+            previous: None,
         })
     }
 }

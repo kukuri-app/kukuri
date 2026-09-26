@@ -172,15 +172,15 @@ impl AppService {
         Ok(())
     }
 
-    /// 表示中の列と CLI の desired のうち、この topic を持つ holder を外す。live・Dome・private channel の
-    /// 参加は止めない(#1221 R2-C)。
+    /// CLI の desired のうち、この topic を持つ holder を外す。開いている列の holder は列だけが外し、
+    /// live・Dome・private channel の参加も止めない(#1221 R2-C)。
     pub async fn unsubscribe_topic(&self, topic_id: &str) -> Result<()> {
         let holders = self
             .subscription_registry
             .scope_leases
             .lock()
             .await
-            .holders_with(&["display:", "desired:"], |key| match key {
+            .holders_with(&["desired:"], |key| match key {
                 ScopeKey::Topic(topic) | ScopeKey::Channel(topic, _) => topic == topic_id,
                 ScopeKey::Author(_) => false,
             });

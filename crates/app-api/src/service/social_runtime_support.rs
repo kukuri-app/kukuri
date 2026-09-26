@@ -351,6 +351,7 @@ impl AppService {
             handle: AbortOnDropTask::new(handle),
             replica: replica_for_owner,
             hint_topic: None,
+            previous: None,
         })
     }
 }

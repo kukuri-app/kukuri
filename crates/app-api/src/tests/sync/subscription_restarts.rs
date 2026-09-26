@@ -272,12 +272,12 @@ async fn unsubscribe_topic_removes_subscription_from_sync_status() {
     let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
     let app = AppService::new(store, transport);
 
-    display_topic(&app, "kukuri:topic:one")
-        .await
-        .expect("display one");
-    display_topic(&app, "kukuri:topic:two")
-        .await
-        .expect("display two");
+    // unsubscribe_topic が外すのは desired(#1221 R2-C)。
+    for topic in ["kukuri:topic:one", "kukuri:topic:two"] {
+        app.set_desired_scope(topic, &TimelineScope::Public, true)
+            .await
+            .expect("desired");
+    }
     app.unsubscribe_topic("kukuri:topic:two")
         .await
         .expect("unsubscribe topic");

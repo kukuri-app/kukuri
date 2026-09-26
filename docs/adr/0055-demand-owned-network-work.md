@@ -59,11 +59,13 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   起動時の復元（参加中channelとdesired）は上限を超えた分を購読せずwarnを記録し、起動は続ける。
   列はfrontendが登録し直すことで復元する。
 - 最後のholderが外れたら、taskをabortし、hint topicを抜け、replicaを`close_replica`で閉じる（旧syncの要求を残さない）。
-  private channelのepochが変わった時は、taskを現epochへ作り直し、直前のepochのreplicaは閉じない
-  （参加者はそこに書かれたhandoffのgrantを同期で受け取る。旧syncの撤去はR5-H）。
+  private channelのepochが変わった時は、taskを現epochへ作り直し、直前のepochのreplicaを1つだけ開いたまま残す
+  （参加者はそこに書かれたhandoffのgrantを同期で受け取る）。それより前（2世代前）のreplicaは閉じる。
+  1つのchannelで開くreplicaは現在と直前の2つまで（§2の「現在/直前の2bucket」）。最後のholderが外れたら両方を閉じる。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
   一覧の行の著者ごとの購読と、起動時のfollow/block全員の購読は行わない。
-- `unsubscribe_topic`は列とdesiredのholderを外す操作で、参加は止めない。live退出は参加のholderだけを外す。
+- `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
+  （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
   seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う）。
 - 購読していないtopicへのpublishは短期送信先としてtopicへ入り、16件を超えたら最も古い短期送信先から抜ける（gossip購読81の内訳）。
