@@ -352,7 +352,7 @@ impl AppService {
         let state = self
             .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), now)
             .await?;
-        self.persist_dome_instance_manifest(state.replica(), &instance_manifest, now)
+        self.persist_dome_instance_manifest(&instance_manifest, now)
             .await?;
         self.services
             .projection_store
@@ -521,7 +521,7 @@ impl AppService {
         let state = self
             .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), created_at)
             .await?;
-        self.persist_dome_instance_manifest(state.replica(), &instance_manifest, created_at)
+        self.persist_dome_instance_manifest(&instance_manifest, created_at)
             .await?;
         self.services
             .projection_store
@@ -800,12 +800,8 @@ impl AppService {
                 state.created_at,
             )
             .await?;
-        self.persist_dome_instance_manifest(
-            persisted.replica(),
-            &instance_manifest,
-            state.created_at,
-        )
-        .await?;
+        self.persist_dome_instance_manifest(&instance_manifest, state.created_at)
+            .await?;
         self.services
             .projection_store
             .upsert_game_room_cache(game_projection_row(&persisted))

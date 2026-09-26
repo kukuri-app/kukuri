@@ -1,15 +1,15 @@
 //! Dome の記録の置き場所と読取り(#1221 R5-H、2026-09-27 ユーザー決定)。
 //!
-//! - Dome の anchor: Dome の session の state を置く replica。作成時刻の context の scope bucket(private は作成時の
-//!   現 epoch)で、session・接続の記録はここに置く(ADR 0054 §2 の継続状態)。切替後に旧 replica にある Dome は、
-//!   作成時刻の scope bucket へ移して書く。
+//! - Dome の anchor: Dome の作成時刻(session の state の `created_at`)の context の scope bucket。private は現 epoch。
+//!   接続の記録はここに置く(ADR 0054 §2)。書き手と読み手は同じ作成時刻から同じ anchor を導くので、日が変わっても
+//!   変わらない。session の state は live・game と同じく更新の日の bucket へ移る(locator で読む)。
 //! - Instance・hosting・owner だけが書く記録(layout・削除)は、公開の context なら owner の制御領域
 //!   (`author::<owner>`)の instance の id の key、private の context なら Dome の anchor に置く(公開の領域へ置かない)。
 //! - 旧 topic/channel replica へは書かない。更新前に置いた分は手元から読む。
 //! - private の Dome を行の無い端末が見つけるため、owner の端末の hosting は、channel の現 epoch のその日の bucket に
 //!   anchor を指す locator を 1 日 1 回置く。
 
-use super::remote_read_support::read_local_then_remote;
+use super::remote_read_support::{private_epochs_for_bucket, read_local_then_remote};
 use super::*;
 use kukuri_core::{SignedDomeLayoutCommitV1, SpatialContextV1};
 use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
@@ -65,10 +65,10 @@ async fn load_signed_dome_instance_manifest(
 }
 
 impl AppService {
-    /// Dome Instance を置く。公開の context は owner の制御領域、private の context は Dome の `anchor`。
+    /// Dome Instance を置く。公開の context は owner の制御領域、private の context は Dome の anchor(`created_at` は
+    /// Dome の作成時刻)。
     pub(crate) async fn persist_dome_instance_manifest(
         &self,
-        anchor: &ReplicaId,
         manifest: &DomeInstanceManifestV1,
         created_at: i64,
     ) -> Result<DomeInstanceStateDocV1> {
@@ -95,12 +95,15 @@ impl AppService {
             last_envelope_id: envelope.id.clone(),
         };
         let owner = manifest.owner_pubkey.as_str();
-        let replica = match manifest.spatial_context {
+        let replica = match &manifest.spatial_context {
             SpatialContextV1::Topic { .. } => {
                 self.services.persist_author_event(owner, &envelope).await?;
                 author_replica_id(owner)
             }
-            SpatialContextV1::Channel { .. } => anchor.clone(),
+            context @ SpatialContextV1::Channel { .. } => self
+                .dome_anchor_candidates(context, created_at)
+                .await?
+                .swap_remove(0),
         };
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
@@ -327,9 +330,53 @@ impl AppService {
         Ok(Some(manifest))
     }
 
-    /// 既にある Dome の anchor の候補(書く先を先に)。一覧の行の session の replica(切替後に旧 replica・回転の前の
-    /// epoch の bucket なら、移し先の `session_write_replica` を先に)。行が無ければ、公開は owner の制御領域の Instance
-    /// の作成時刻、private は locator から。
+    /// Dome の作成時刻(ミリ秒)から導く anchor(書く先)と、読むだけの候補。書く先は作成時刻の context の scope bucket
+    /// (private は現 epoch。切替前は旧 context replica)。private は、作成時刻の bucket に重なる回転の前の epoch の
+    /// bucket(回転の前に置いた記録)も読む。
+    async fn dome_anchor_candidates(
+        &self,
+        context: &SpatialContextV1,
+        created_at: i64,
+    ) -> Result<Vec<ReplicaId>> {
+        let topic = context.topic_id().as_str();
+        let Some(channel_id) = context.channel_id() else {
+            return Ok(vec![self.services.scope_write_replica(
+                topic,
+                None,
+                created_at / 1_000,
+            )?]);
+        };
+        let private = self
+            .joined_private_channel_state(topic, channel_id.as_str())
+            .await
+            .context("private channel is not joined")?;
+        let mut anchors =
+            vec![
+                self.services
+                    .scope_write_replica(topic, Some(&private), created_at / 1_000)?,
+            ];
+        if self.services.writes_buckets() {
+            let bucket = TimeBucket::from_unix_seconds(created_at / 1_000)?;
+            for (epoch_id, _) in private_epochs_for_bucket(&private, bucket) {
+                let replica = BucketReplica::new(
+                    BucketScope::PrivateChannel {
+                        channel_id: channel_id.as_str().to_owned(),
+                        epoch_id,
+                    },
+                    bucket,
+                )?
+                .replica_id();
+                if !anchors.contains(&replica) {
+                    anchors.push(replica);
+                }
+            }
+        }
+        Ok(anchors)
+    }
+
+    /// 既にある Dome の anchor の候補(書く先を先に)。作成時刻は、一覧の行があれば session の state、無ければ公開は
+    /// owner の制御領域の Instance から知る。行の無い private は、owner の hosting が置く locator から。行の session の
+    /// replica も読む(更新前の記録)。
     pub(crate) async fn dome_anchors(
         &self,
         context: &SpatialContextV1,
@@ -343,69 +390,62 @@ impl AppService {
             .get_game_room(topic, instance_id)
             .await?
             .filter(|row| row.channel_id == channel_storage_id(context.channel_id()));
-        let mut anchors = Vec::new();
-        match (row, context) {
-            (Some(row), _) => {
-                if self.services.writes_buckets()
-                    && let Some(record) = self
-                        .services
-                        .docs_sync
-                        .query_replica_with_policy(
-                            &row.source_replica_id,
-                            DocQuery::Exact(stable_key(
-                                "sessions/game",
-                                &format!("{instance_id}/state"),
-                            )),
-                            DocFetchPolicy::LocalOnly,
-                        )
-                        .await?
-                        .into_iter()
-                        .next()
-                    && let Ok(state) = serde_json::from_slice::<GameRoomStateDocV1>(&record.value)
-                {
-                    anchors.push(
-                        self.session_write_replica(
-                            topic,
-                            context.channel_id(),
-                            &row.source_replica_id,
-                            state.created_at,
-                        )
-                        .await?,
-                    );
-                }
-                if !anchors.contains(&row.source_replica_id) {
-                    anchors.push(row.source_replica_id);
-                }
-            }
+        let created_at = match (&row, context) {
+            (Some(row), _) => self.dome_session_created_at(topic, row).await?,
             (None, SpatialContextV1::Topic { .. }) => {
                 let author = author_replica_id(owner.as_str());
                 let key = dome_instance_state_key(instance_id);
-                let instance = self
-                    .read_author_object(owner.as_str(), |docs, policy| {
-                        let (author, key) = (&author, &key);
-                        async move {
-                            self.read_dome_instance(docs.as_ref(), author, key, owner, policy)
-                                .await
-                        }
-                    })
-                    .await?;
-                if let Some((state, _)) = instance {
-                    anchors.push(
-                        self.session_write_replica(
-                            topic,
-                            None,
-                            &topic_replica_id(topic),
-                            state.created_at,
-                        )
-                        .await?,
-                    );
-                }
+                self.read_author_object(owner.as_str(), |docs, policy| {
+                    let (author, key) = (&author, &key);
+                    async move {
+                        self.read_dome_instance(docs.as_ref(), author, key, owner, policy)
+                            .await
+                    }
+                })
+                .await?
+                .map(|(state, _)| state.created_at)
             }
             (None, SpatialContextV1::Channel { .. }) => {
-                anchors.extend(self.read_dome_locators(context, instance_id).await?);
+                return self.read_dome_locators(context, instance_id).await;
             }
+        };
+        let mut anchors = match created_at {
+            Some(created_at) => self.dome_anchor_candidates(context, created_at).await?,
+            None => Vec::new(),
+        };
+        if let Some(row) = row
+            && !anchors.contains(&row.source_replica_id)
+        {
+            anchors.push(row.source_replica_id);
         }
         Ok(anchors)
+    }
+
+    /// 一覧の行の Dome の作成時刻。行の session の state を手元から読み、無ければ session を読む(locator・provider)。
+    async fn dome_session_created_at(
+        &self,
+        topic: &str,
+        row: &GameRoomProjectionRow,
+    ) -> Result<Option<i64>> {
+        let local = self
+            .services
+            .docs_sync
+            .query_replica_with_policy(
+                &row.source_replica_id,
+                DocQuery::Exact(row.source_key.clone()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
+            .into_iter()
+            .find_map(|record| serde_json::from_slice::<GameRoomStateDocV1>(&record.value).ok())
+            .filter(|state| state.room_id == row.room_id);
+        if let Some(state) = local {
+            return Ok(Some(state.created_at));
+        }
+        Ok(self
+            .fetch_verified_game_room(topic, row.channel_id.as_str(), row.room_id.as_str())
+            .await?
+            .map(|verified| verified.state().created_at))
     }
 
     /// Instance・hosting・owner だけが書く記録を書く replica。公開は owner の制御領域、private は Dome の anchor。

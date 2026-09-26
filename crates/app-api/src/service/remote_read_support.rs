@@ -815,7 +815,7 @@ fn epoch_start_millis(id: &str) -> Option<i64> {
     id.strip_prefix("epoch-")?.split('-').next()?.parse().ok()
 }
 
-fn private_epochs_for_bucket(
+pub(super) fn private_epochs_for_bucket(
     state: &JoinedPrivateChannelState,
     bucket: TimeBucket,
 ) -> Vec<(String, String)> {

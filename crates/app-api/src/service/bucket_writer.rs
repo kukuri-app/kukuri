@@ -64,30 +64,21 @@ impl ServiceHandles {
     }
 }
 
-/// live・game・Dome の session の署名済み envelope を state の replica へ置き、更新が別の日なら更新時の bucket にも
-/// envelope と、state の replica を指す locator(`sessions/<kind>/<id>/locator`)を置く(ADR 0054 §2)。state を別の
-/// replica へ移した(`moved`)ときも、その日の bucket に locator を置く。
+/// live・game・Dome の session の署名済み envelope を state の replica へ置く。state を別の replica へ移した(`moved`)
+/// ときは、移した先の bucket に、その replica を指す locator(`sessions/<kind>/<id>/locator`)を置く(ADR 0054 §2)。
 pub(crate) async fn persist_session_envelope_and_locator(
     services: &ServiceHandles,
     replica: &ReplicaId,
     envelope: &KukuriEnvelope,
     locator_key: &str,
     moved: bool,
-    now_ms: i64,
 ) -> Result<()> {
     persist_session_envelope(services.docs_sync.as_ref(), replica, envelope).await?;
-    let locator = match update_locator_replica(replica, now_ms / 1_000)? {
-        Some(locator) => {
-            persist_session_envelope(services.docs_sync.as_ref(), &locator, envelope).await?;
-            Some(locator)
-        }
-        None => (moved && replica.as_str().starts_with("bucket::")).then(|| replica.clone()),
-    };
-    if let Some(locator) = locator {
+    if moved && replica.as_str().starts_with("bucket::") {
         services
             .docs_sync
             .apply_doc_op(
-                &locator,
+                replica,
                 DocOp::SetJson {
                     key: locator_key.to_owned(),
                     value: serde_json::to_value(replica.as_str())?,
@@ -98,62 +89,32 @@ pub(crate) async fn persist_session_envelope_and_locator(
     Ok(())
 }
 
-/// 継続状態(live・game)の更新が、entity の state を置いた bucket と違う日に起きたときの、更新時の bucket。
-/// 署名済み envelope をそこへ locator として置く(ADR 0054 §2)。旧 replica と同じ日なら `None`。
-pub(crate) fn update_locator_replica(
-    replica: &ReplicaId,
-    now_secs: i64,
-) -> Result<Option<ReplicaId>> {
-    if !replica.as_str().starts_with("bucket::") {
-        return Ok(None);
-    }
-    let source = BucketReplica::parse(replica)?;
-    let now = TimeBucket::from_unix_seconds(now_secs)?;
-    (source.bucket() != now)
-        .then(|| BucketReplica::new(source.scope().clone(), now).map(|bucket| bucket.replica_id()))
-        .transpose()
-}
-
 impl AppService {
-    /// session(live・game・Dome)の state を書く replica(#1221 R5-H)。切替前は `source` のまま。切替後は、公開なら
-    /// `source` の bucket、private なら現 epoch の `source` の bucket に書く。切替前に旧 replica へ置いた session は
-    /// 公開なら作成時刻の bucket へ、回転の前の epoch の bucket・旧 replica に置いた private の session は現 epoch の
-    /// その日の bucket へ移す(旧 replica と、回転で外れた参加者が読める旧 epoch の bucket へは書かない)。移したときは
-    /// 書く側が locator を置く(`persist_session_envelope_and_locator`)。
+    /// session(live・game・Dome)の state を書く replica(#1221 R5-H)。切替前は `source` のまま。切替後は、更新の
+    /// envelope の署名時刻(`signed_at` 秒)の scope bucket(private は現 epoch)に書く。読み手は bucket と署名時刻の
+    /// 一致を確かめるので、日が変わった更新・切替前に旧 replica へ置いた session・回転の前の epoch の session は、
+    /// 更新の日の bucket へ移し、移した先に locator を置く(`persist_session_envelope_and_locator`)。旧 replica と、
+    /// 回転で外れた参加者が読める旧 epoch の bucket へは書かない。
     pub(crate) async fn session_write_replica(
         &self,
         topic_id: &str,
         channel_id: Option<&ChannelId>,
         source: &ReplicaId,
-        created_at_ms: i64,
+        signed_at: i64,
     ) -> Result<ReplicaId> {
         if !self.services.writes_buckets() {
             return Ok(source.clone());
         }
-        let bucket = source
-            .as_str()
-            .starts_with("bucket::")
-            .then(|| BucketReplica::parse(source))
-            .transpose()?;
-        let Some(channel_id) = channel_id else {
-            return match bucket {
-                Some(_) => Ok(source.clone()),
-                None => self
-                    .services
-                    .scope_write_replica(topic_id, None, created_at_ms / 1_000),
-            };
+        let private = match channel_id {
+            Some(channel_id) => Some(
+                self.joined_private_channel_state(topic_id, channel_id.as_str())
+                    .await
+                    .context("private channel is not joined")?,
+            ),
+            None => None,
         };
-        let private = self
-            .joined_private_channel_state(topic_id, channel_id.as_str())
-            .await
-            .context("private channel is not joined")?;
-        if bucket.is_some_and(|bucket| {
-            matches!(bucket.scope(), BucketScope::PrivateChannel { epoch_id, .. } if *epoch_id == private.current_epoch_id)
-        }) {
-            return Ok(source.clone());
-        }
         self.services
-            .scope_write_replica(topic_id, Some(&private), Utc::now().timestamp())
+            .scope_write_replica(topic_id, private.as_ref(), signed_at)
     }
 
     /// 保存済みの切替状態を渡す(R5-H AC-1)。以後の新しい操作は新形式だけへ書く。2 回目以降は無視する。

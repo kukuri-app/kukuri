@@ -2,7 +2,7 @@
 //! へ書かず、作成時刻の scope bucket(private は現 epoch)へ移し、日が変わった更新は locator で読み手へ示す。
 
 use super::*;
-use kukuri_core::ChannelId;
+use kukuri_core::{ChannelId, MetaverseRoomChatMessageV1};
 use kukuri_docs_sync::{BucketReplica, BucketScope, DocKeyOrder, DocKeyQuery, TimeBucket};
 
 const TOPIC: &str = "kukuri:topic:session-rehome";
@@ -264,4 +264,187 @@ async fn a_session_locator_in_the_current_bucket_leads_to_the_state_replica() {
         .await
         .expect("candidates");
     assert_eq!(candidates[0].0, created);
+}
+
+fn chat(room_id: &str, message_id: &str) -> MetaverseRoomChatMessageV1 {
+    MetaverseRoomChatMessageV1 {
+        room_id: room_id.into(),
+        message_id: message_id.into(),
+        author_peer_id: "peer-a".into(),
+        display_name: None,
+        body: message_id.into(),
+        created_at: Utc::now().timestamp_millis(),
+    }
+}
+
+// 作成の翌日以降の更新(live・game・private の game・Dome の chat)は、更新の日の bucket へ移し、読み手は locator から
+// 読める。owner の次の操作も成功する(ADR 0054 §2)。前日の bucket を source に前日の作成時刻で書くことで、昨日作った
+// session を今日更新する書込みを作る。
+#[tokio::test]
+async fn a_session_updated_on_a_later_day_stays_readable() {
+    let (owner, _, _, _) = local_app_with_memory_services();
+    owner.switch_writer(1);
+    let yesterday = Utc::now().timestamp() - 86_400;
+    let channel = owner
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(TOPIC),
+            label: "room".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("channel");
+    let channel_id = ChannelId::new(channel.channel_id.clone());
+    let private_scope = TimelineScope::Channel {
+        channel_id: channel_id.clone(),
+    };
+    let yesterday_bucket = |scope| {
+        BucketReplica::new(
+            scope,
+            TimeBucket::from_unix_seconds(yesterday).expect("bucket"),
+        )
+        .expect("replica")
+        .replica_id()
+    };
+    let public_yesterday = yesterday_bucket(BucketScope::Topic {
+        topic_id: TOPIC.into(),
+    });
+    let private_yesterday = yesterday_bucket(BucketScope::PrivateChannel {
+        channel_id: channel.channel_id.clone(),
+        epoch_id: channel.current_epoch_id.clone(),
+    });
+
+    let live = owner
+        .create_live_session(
+            TOPIC,
+            CreateLiveSessionInput {
+                title: "live".into(),
+                description: String::new(),
+            },
+        )
+        .await
+        .expect("live");
+    let (_, _, manifest) = owner
+        .fetch_live_session_state_and_manifest(TOPIC, &live)
+        .await
+        .expect("fetch live")
+        .expect("live exists");
+    owner
+        .persist_live_session_manifest(&public_yesterday, TOPIC, manifest, yesterday * 1_000)
+        .await
+        .expect("update the live on a later day");
+    owner
+        .end_live_session(TOPIC, &live)
+        .await
+        .expect("the owner ends the live");
+
+    let game = owner
+        .create_game_room(TOPIC, game_input())
+        .await
+        .expect("game");
+    let private_game = owner
+        .create_game_room_in_channel(
+            TOPIC,
+            ChannelRef::PrivateChannel {
+                channel_id: channel_id.clone(),
+            },
+            game_input(),
+        )
+        .await
+        .expect("private game");
+    for (id, source) in [
+        (&game, &public_yesterday),
+        (&private_game, &private_yesterday),
+    ] {
+        let (_, _, manifest) = owner
+            .fetch_game_room_state_and_manifest(TOPIC, id)
+            .await
+            .expect("fetch game")
+            .expect("game exists");
+        owner
+            .persist_game_room_manifest(source, TOPIC, manifest, yesterday * 1_000)
+            .await
+            .expect("update the game on a later day");
+        owner
+            .update_game_room(TOPIC, id, scored(7))
+            .await
+            .expect("the owner updates the game");
+    }
+
+    let dome = owner
+        .create_metaverse_room(
+            TOPIC,
+            CreateMetaverseRoomInput {
+                title: "dome".into(),
+                description: String::new(),
+                max_peers: Some(4),
+            },
+        )
+        .await
+        .expect("Dome");
+    let (_, _, mut manifest) = owner
+        .fetch_game_room_state_and_manifest(TOPIC, &dome)
+        .await
+        .expect("fetch Dome")
+        .expect("Dome exists");
+    let metaverse = manifest.metaverse.as_mut().expect("metaverse");
+    metaverse.chat_history.push(chat(&dome, "chat-later-day"));
+    owner
+        .persist_game_room_manifest(&public_yesterday, TOPIC, manifest, yesterday * 1_000)
+        .await
+        .expect("chat on a later day");
+    owner
+        .publish_metaverse_room_event(
+            TOPIC,
+            PublishMetaverseRoomEventInput {
+                room_id: dome.clone(),
+                peer_id: "peer-a".into(),
+                seq: 1,
+                event: MetaverseRoomEventV1::ChatMessage {
+                    message: chat(&dome, "chat-next"),
+                },
+            },
+        )
+        .await
+        .expect("the owner chats next");
+
+    let (reader, store) = reader_over(&owner, None);
+    for (id, kind, scope) in [
+        (&live, "live-session", &TimelineScope::Public),
+        (&game, "game-session", &TimelineScope::Public),
+        (&private_game, "game-session", &private_scope),
+        (&dome, "game-session", &TimelineScope::Public),
+    ] {
+        assert!(
+            reader
+                .read_session(TOPIC, scope, id, kind)
+                .await
+                .expect("read session"),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        store
+            .get_live_session(TOPIC, &live)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        LiveSessionStatus::Ended
+    );
+    for id in [&game, &private_game] {
+        let row = store.get_game_room(TOPIC, id).await.unwrap().unwrap();
+        assert_eq!(row.scores[0].score, 7, "{id}");
+    }
+    let history = store
+        .get_game_room(TOPIC, &dome)
+        .await
+        .unwrap()
+        .unwrap()
+        .metaverse
+        .expect("metaverse")
+        .chat_history
+        .into_iter()
+        .map(|message| message.message_id)
+        .collect::<Vec<_>>();
+    assert_eq!(history, ["chat-later-day", "chat-next"]);
 }

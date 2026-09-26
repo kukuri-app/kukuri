@@ -283,3 +283,126 @@ async fn a_participant_lists_a_hosted_private_dome_and_an_outsider_cannot() {
     );
     owner.shutdown().await;
 }
+
+// 切替前と回転前に作った private の Dome の hosting の記録は、Dome の作成時刻の現 epoch の bucket(anchor)に置く。
+// anchor は今日の日付で変わらないので、hosting の開始の翌日も owner は同じ場所から閉じ、行を持つ参加者も同じ場所から
+// 読む(#1221 R5-H)。前日に作った Dome は、session の state の作成時刻を前日にして作る。
+#[tokio::test]
+async fn private_dome_hosting_records_stay_at_the_creation_day_anchor() {
+    let (owner, _, docs, _) = local_app_with_memory_services();
+    let yesterday = Utc::now().timestamp() - 86_400;
+    let create_channel = |label: &'static str| {
+        owner.create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(TOPIC),
+            label: label.into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+    };
+    let legacy = create_channel("legacy").await.expect("legacy channel");
+    let legacy_dome = create_dome(
+        &owner,
+        ChannelRef::PrivateChannel {
+            channel_id: ChannelId::new(legacy.channel_id.clone()),
+        },
+        "legacy",
+    )
+    .await;
+    owner.switch_writer(1);
+    let rotated = create_channel("rotated").await.expect("rotated channel");
+    let rotated_dome = create_dome(
+        &owner,
+        ChannelRef::PrivateChannel {
+            channel_id: ChannelId::new(rotated.channel_id.clone()),
+        },
+        "rotated",
+    )
+    .await;
+    let rotated_epoch = owner
+        .rotate_private_channel(TOPIC, &rotated.channel_id)
+        .await
+        .expect("rotate")
+        .current_epoch_id;
+    let participant = peer_over(&owner, Arc::new(MemoryStore::default()));
+
+    for (channel_id, epoch_id, dome) in [
+        (&legacy.channel_id, &legacy.current_epoch_id, &legacy_dome),
+        (&rotated.channel_id, &rotated_epoch, &rotated_dome),
+    ] {
+        let row = owner
+            .services
+            .projection_store
+            .get_game_room(TOPIC, dome)
+            .await
+            .expect("row")
+            .expect("owner row");
+        let record = docs
+            .query_replica_with_policy(
+                &row.source_replica_id,
+                DocQuery::Exact(row.source_key.clone()),
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            .expect("state")
+            .remove(0);
+        let mut state: GameRoomStateDocV1 = serde_json::from_slice(&record.value).expect("state");
+        state.created_at = yesterday * 1_000;
+        docs.apply_doc_op(
+            &row.source_replica_id,
+            DocOp::SetJson {
+                key: row.source_key.clone(),
+                value: serde_json::to_value(&state).expect("json"),
+            },
+        )
+        .await
+        .expect("created yesterday");
+
+        let context = SpatialContextV1::Channel {
+            topic_id: TopicId::new(TOPIC),
+            channel_id: ChannelId::new(channel_id.clone()),
+        };
+        start_hosting(&owner, context.clone(), dome).await;
+        let anchor = BucketReplica::new(
+            BucketScope::PrivateChannel {
+                channel_id: channel_id.clone(),
+                epoch_id: epoch_id.clone(),
+            },
+            TimeBucket::from_unix_seconds(yesterday).expect("bucket"),
+        )
+        .expect("replica")
+        .replica_id();
+        let hosting_key = format!("metaverse/dome-hosting/{dome}/state");
+        assert!(
+            keys_with_prefix(&docs, &anchor, "metaverse/dome-hosting/")
+                .await
+                .contains(&hosting_key),
+            "the hosting record is at the creation-day anchor"
+        );
+
+        let scope = TimelineScope::Channel {
+            channel_id: ChannelId::new(channel_id.clone()),
+        };
+        assert!(
+            participant
+                .read_session(TOPIC, &scope, dome, "game-session")
+                .await
+                .expect("the participant reads the Dome")
+        );
+        assert!(
+            participant
+                .get_dome_hosting(context.clone(), dome)
+                .await
+                .expect("the participant reads the hosting")
+                .lease
+                .is_some()
+        );
+        owner
+            .close_dome_hosting(crate::CloseDomeHostingInput {
+                expected_generation: None,
+                spatial_context: context,
+                instance_id: dome.clone(),
+            })
+            .await
+            .expect("the owner closes the hosting");
+    }
+    owner.shutdown().await;
+}

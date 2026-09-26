@@ -233,7 +233,7 @@ impl AppService {
                 operation.created_at,
             )
             .await?;
-        self.persist_dome_instance_manifest(state.replica(), &tombstone, operation.created_at)
+        self.persist_dome_instance_manifest(&tombstone, operation.created_at)
             .await?;
         self.services
             .projection_store

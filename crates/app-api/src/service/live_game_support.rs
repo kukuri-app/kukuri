@@ -450,18 +450,23 @@ impl AppService {
         manifest: LiveSessionManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedLiveSession> {
-        let target = self
-            .session_write_replica(topic_id, manifest.channel_id.as_ref(), replica, created_at)
-            .await?;
-        let moved = target != *replica;
-        let replica = &target;
-        let now = Utc::now().timestamp_millis();
         let envelope = build_live_session_envelope(
             self.services.keys.as_ref(),
             &manifest.topic_id,
             manifest.session_id.as_str(),
             &manifest,
         )?;
+        let target = self
+            .session_write_replica(
+                topic_id,
+                manifest.channel_id.as_ref(),
+                replica,
+                envelope.created_at,
+            )
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
+        let now = Utc::now().timestamp_millis();
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -483,11 +488,15 @@ impl AppService {
             },
             last_envelope_id: envelope.id.clone(),
         };
-        let verified =
-            VerifiedLiveSession::verify(state, &envelope.pubkey, manifest, replica, topic_id)
-                .map_err(|reason| {
-                    anyhow::anyhow!("live session was rejected: {}", reason.as_str())
-                })?;
+        let verified = VerifiedLiveSession::verify(
+            state,
+            &envelope.pubkey,
+            envelope.created_at,
+            manifest,
+            replica,
+            topic_id,
+        )
+        .map_err(|reason| anyhow::anyhow!("live session was rejected: {}", reason.as_str()))?;
         super::bucket_writer::persist_session_envelope_and_locator(
             &self.services,
             replica,
@@ -497,7 +506,6 @@ impl AppService {
                 &format!("{}/locator", verified.state().session_id),
             ),
             moved,
-            now,
         )
         .await?;
         persist_live_session_state(self.services.docs_sync.as_ref(), replica, verified.state())
@@ -513,18 +521,23 @@ impl AppService {
         manifest: GameRoomManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedGameRoom> {
-        let target = self
-            .session_write_replica(topic_id, manifest.channel_id.as_ref(), replica, created_at)
-            .await?;
-        let moved = target != *replica;
-        let replica = &target;
-        let now = Utc::now().timestamp_millis();
         let envelope = build_game_session_envelope(
             self.services.keys.as_ref(),
             &manifest.topic_id,
             manifest.room_id.as_str(),
             &manifest,
         )?;
+        let target = self
+            .session_write_replica(
+                topic_id,
+                manifest.channel_id.as_ref(),
+                replica,
+                envelope.created_at,
+            )
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
+        let now = Utc::now().timestamp_millis();
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -546,9 +559,14 @@ impl AppService {
             },
             last_envelope_id: envelope.id.clone(),
         };
-        let verified =
-            VerifiedGameRoom::verify(state, Some(&envelope.pubkey), manifest, replica, topic_id)
-                .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
+        let verified = VerifiedGameRoom::verify(
+            state,
+            Some((&envelope.pubkey, envelope.created_at)),
+            manifest,
+            replica,
+            topic_id,
+        )
+        .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
         super::bucket_writer::persist_session_envelope_and_locator(
             &self.services,
             replica,
@@ -558,7 +576,6 @@ impl AppService {
                 &format!("{}/locator", verified.state().room_id),
             ),
             moved,
-            now,
         )
         .await?;
         persist_game_room_state(self.services.docs_sync.as_ref(), replica, verified.state())

@@ -191,7 +191,7 @@ impl AppService {
                     now,
                 )
                 .await?;
-            self.persist_dome_instance_manifest(staged.replica(), &staged_instance, now)
+            self.persist_dome_instance_manifest(&staged_instance, now)
                 .await?;
             // 次の段は projection から staging を読む。購読 task の反映を待たずに自分で置く(#1221 R2-C)。
             self.services
@@ -233,12 +233,8 @@ impl AppService {
                     source_state.created_at,
                 )
                 .await?;
-            self.persist_dome_instance_manifest(
-                persisted.replica(),
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
+                .await?;
             self.services
                 .projection_store
                 .upsert_game_room_cache(game_projection_row(&persisted))
@@ -271,12 +267,8 @@ impl AppService {
                     target_state.created_at,
                 )
                 .await?;
-            self.persist_dome_instance_manifest(
-                persisted.replica(),
-                &target_instance,
-                target_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&target_instance, target_state.created_at)
+                .await?;
             self.services
                 .projection_store
                 .upsert_game_room_cache(game_projection_row(&persisted))
@@ -311,12 +303,8 @@ impl AppService {
                     source_state.created_at,
                 )
                 .await?;
-            self.persist_dome_instance_manifest(
-                persisted.replica(),
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
+                .await?;
             self.services
                 .projection_store
                 .upsert_game_room_cache(game_projection_row(&persisted))
