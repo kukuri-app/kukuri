@@ -94,29 +94,25 @@ async fn initialized_app_data() -> (tempfile::TempDir, std::path::PathBuf) {
         .expect("mark protected migration finished");
     }
     connection.close().await.expect("close sqlite");
-    fold_sqlite_wal(&db_path).await;
+    checkpoint_sqlite_wal(&db_path).await;
     (dir, db_path)
 }
 
-/// pool を閉じても、接続が別 thread で遅れて閉じるため、`-wal`/`-shm` が残ったり snapshot の途中で消えたり
-/// する(Linux)。単独の接続を開いて閉じ、最後の接続として WAL を畳んで消えたことを確かめてから返す。
-async fn fold_sqlite_wal(db_path: &std::path::Path) {
-    use sqlx::Connection;
-    let wal = db_path.with_extension("db-wal");
-    let shm = db_path.with_extension("db-shm");
-    for _ in 0..100 {
+/// pool を閉じても、接続は別 thread でいつ閉じるか決まらない。その接続か backup が最後に閉じると、WAL の内容が
+/// 本体へ畳まれて `kukuri.db` が書き変わる(Linux)。snapshot の前に WAL の内容を本体へ畳んでおく。
+async fn checkpoint_sqlite_wal(db_path: &std::path::Path) {
+    use sqlx::{Connection, Row};
+    let mut connection =
         sqlx::SqliteConnection::connect(&format!("sqlite://{}", db_path.display()))
             .await
-            .expect("open sqlite")
-            .close()
-            .await
-            .expect("close sqlite");
-        if !wal.exists() && !shm.exists() {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    panic!("sqlite WAL was not folded");
+            .expect("open sqlite");
+    let busy: i64 = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut connection)
+        .await
+        .expect("checkpoint sqlite")
+        .get(0);
+    assert_eq!(busy, 0, "sqlite WAL checkpoint was blocked");
+    connection.close().await.expect("close sqlite");
 }
 
 /// 保護所有先の file(`kukuri.remote-blobs/`)に置いた blob。`reference` が無ければ非保護の cache。
@@ -143,7 +139,7 @@ async fn cached_blob_file(
         .expect("cache blob file");
     fs::remove_file(&source).expect("remove blob fixture");
     store.close().await;
-    fold_sqlite_wal(db_path).await;
+    checkpoint_sqlite_wal(db_path).await;
     hash
 }
 
@@ -159,6 +155,12 @@ fn app_data_snapshot(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
             .expect("collect snapshot directory");
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
+            // SQLite の作業 file(`-wal`/`-shm`)は、どの接続がいつ閉じて消すかが決まらないので比べない。WAL の内容は
+            // fixture が本体へ畳んでいる(`checkpoint_sqlite_wal`)。
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with("-wal") || name.ends_with("-shm") {
+                continue;
+            }
             let file_type = entry.file_type().expect("snapshot file type");
             if file_type.is_dir() {
                 collect(root, &entry.path(), files);
