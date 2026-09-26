@@ -202,25 +202,18 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
         .await
         .unwrap();
     let peer = generate_keys();
-    persist_private_channel_participant(
-        docs.as_ref(),
-        &peer,
-        &PrivateChannelParticipantDocV1 {
-            channel_id: state.channel_id.clone(),
-            topic_id: TopicId::new(&state.topic_id),
+    // #1221 R5-H: owner は参加 record を account 経路で受け取り、参加者の表に置く。
+    app.services
+        .projection_store
+        .put_private_channel_participant(kukuri_store::PrivateChannelParticipantRow {
+            channel_id: state.channel_id.as_str().to_string(),
             epoch_id: state.current_epoch_id.clone(),
-            participant_pubkey: peer.public_key(),
-            joined_at: 1,
-            is_owner: false,
-            join_mode: None,
-            sponsor_pubkey: None,
-            share_token_id: None,
+            participant_pubkey: peer.public_key_hex(),
             left_at: None,
-        },
-        &current_private_channel_replica_id(&state),
-    )
-    .await
-    .unwrap();
+            updated_at: 1,
+        })
+        .await
+        .unwrap();
     app.services
         .store
         .upsert_follow_edge(FollowEdge {

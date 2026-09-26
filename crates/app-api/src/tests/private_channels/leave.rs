@@ -189,7 +189,12 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
     // owner を止めてから退出する。退出 record は owner 宛の outbox に残る。
     app_a.shutdown().await;
     drop(app_a);
-    stack_a._node.clone().shutdown().await.expect("stop owner node");
+    stack_a
+        ._node
+        .clone()
+        .shutdown()
+        .await
+        .expect("stop owner node");
     drop(stack_a);
     app_b
         .leave_private_channel(topic, channel.channel_id.as_str())
@@ -215,7 +220,12 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
         .expect("import restarted owner");
     wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 1).await;
     timeout(p2p_replication_timeout(), async {
-        while !store_b.list_direct_message_outbox().await.unwrap().is_empty() {
+        while !store_b
+            .list_direct_message_outbox()
+            .await
+            .unwrap()
+            .is_empty()
+        {
             sleep(Duration::from_millis(100)).await;
         }
     })

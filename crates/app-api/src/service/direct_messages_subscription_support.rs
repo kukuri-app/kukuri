@@ -34,7 +34,7 @@ impl AppService {
         let pending_outbox_count = pending_outbox_page
             .items
             .iter()
-            .filter(|row| row.dm_id == dm_id)
+            .filter(|row| !row.dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX))
             .count();
         Ok(DirectMessageStatusView {
             peer_pubkey: peer_pubkey.to_string(),
