@@ -44,7 +44,7 @@ async fn worker_restart_projection_rebuild_and_provider_recovery() -> Result<()>
     // --- 復旧 2: 投影を空にしても真実源とレプリカから再構築される ---
     stack
         .projection
-        .remove_scope(IndexScopeKind::PublicTopic, stack.topic_id.as_str())
+        .remove_scope_page(IndexScopeKind::PublicTopic, stack.topic_id.as_str(), 128)
         .await?;
     assert!(
         stack

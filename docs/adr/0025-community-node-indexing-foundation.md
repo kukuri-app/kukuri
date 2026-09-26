@@ -495,3 +495,25 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 - 不正・取得不能な結果1件で、他の正常な結果を隠さない。全bucketの探索や未許可private取得を追加しない。
 - これは[ADR0054](0054-time-bucketed-docs-replicas.md)の読取り準備であり、writer/private epoch/同期owner/GCの
   切替完了を意味しない。既存の認証・同意・安全性・readiness gateを通った結果にだけmetadataを付ける。
+
+## 9. 改訂追補（#1221 R5-F、2026-09-26）: 受入下限・容量・保持期間による回収
+
+2026-09-26 のユーザー決定により、CN の再取得可能な保存物（索引の真実源と投影・撤回 marker・関係のアクション・scan verdict・
+内容 scan cache）を node の受入下限 W・容量 B・保持期間 T で有界に回収する。無期限に増える撤回 marker と scope 全体の一括削除は
+この判断で失効する。
+
+- 受入下限: W = max(現在 − T, 容量超過なら超過分（1 回最大 128 行）の古い行を越える時刻) を `cn_index.retention_state` に永続化し、単調に上げる。
+  署名済み envelope の作成時刻が W 未満の投稿は、索引の trigger が拒否する（撤回 marker の有無と W を同じ文で読む）。どの replica の
+  経路でも、索引の作成時刻と返信・repost の宛先は署名済み envelope の値に一致させる（旧 `topic::` 経路の state を信用しない）。
+- 撤回 marker: 撤回対象の署名済み envelope の作成時刻を持ち、W がそれを越えるまで残す。W を越えた投稿は再び索引へ入らないため、
+  marker を消しても古い provider の応答で復活しない。作成時刻が W 未満の撤回は marker を作らない。
+- 回収: cn-indexer の worker が見直しのたびに W を進め、投影 → 関係のアクション → 撤回 marker → 索引行 → 参照されていない
+  verdict → scan cache の順に W 未満を古い順で 1 回 128 件以内消す（1 回の見直しで最大 16 回）。全件の走査・GC はしない。
+- 容量 B は 5 表の行数の合計（trigger で数える）。B と T は既定値を置かない必須の運用設定（`deploy.indexer_retention_days` /
+  `deploy.indexer_capacity_rows`、env `COMMUNITY_NODE_INDEXER_RETENTION_DAYS` / `COMMUNITY_NODE_INDEXER_CAPACITY_ROWS`）で、
+  未設定なら cn-indexer は起動しない。T は bucket reader の窓（約 48 時間）を越える 3 日以上。本番は T=30 日・B=1,000,000 行。
+- scope 解除: 解除した scope は検索の gate（`filter_surfaceable`）が即座に外し、worker が投影 → 真実源の順に 1 回 128 件以内で
+  回収する。撤回 marker は scope を解除しても W まで残す。
+- 利用体験: T より古い投稿と容量で押し出された投稿は、CN の検索・discovery に出なくなる（ユーザー決定で受け入れ済み）。
+- 対象外: CN の旧同期の iroh store（topic/channel replica の entry と内容 blob）は全 blob GC なしに回収できないため、R5-H で同期を
+  止めた後の R5-I の回収対象とする（2026-09-26 ユーザー決定）。

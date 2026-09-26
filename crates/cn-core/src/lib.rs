@@ -24,6 +24,7 @@ mod dome_hosting;
 mod env;
 mod errors;
 mod index_entries;
+mod index_retention;
 mod index_scope;
 mod legal_data;
 mod legal_holds;
@@ -103,7 +104,11 @@ pub use errors::{ApiError, ApiResult, auth_required_error, consent_required_erro
 pub use index_entries::{
     IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore, StoredIndexEntry,
     SurfaceableEntry, filter_surfaceable_objects, get_index_entry, remove_index_entry,
-    remove_index_scope, upsert_index_entry,
+    remove_index_scope_page, upsert_index_entry,
+};
+pub use index_retention::{
+    MIN_RETENTION_SECS, RetentionSettings, advance_retention_floor, configure_retention,
+    reclaim_expired,
 };
 pub use index_scope::{
     ChannelSecret, ChannelSecretCipher, ChannelSecretConflict, IndexScopeKind, IndexingRequest,

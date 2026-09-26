@@ -8,6 +8,8 @@ base_args=(
   -e COMMUNITY_NODE_DATABASE_URL=postgres://smoke.invalid/cn
   -e COMMUNITY_NODE_CHANNEL_SECRET_KEY=image-smoke-channel-secret-key-0123456789abcdef
   -e COMMUNITY_NODE_INDEXER_EXTERNAL_RELAY_URLS=https://relay.example.net
+  -e COMMUNITY_NODE_INDEXER_RETENTION_DAYS=30
+  -e COMMUNITY_NODE_INDEXER_CAPACITY_ROWS=1000000
 )
 leak_log=""
 

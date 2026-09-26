@@ -82,6 +82,8 @@ module "vm" {
   relation_analyze_interval_minutes      = var.relation_analyze_interval_minutes
   indexer_own_relay                      = var.indexer_own_relay
   indexer_external_relay_urls            = var.indexer_external_relay_urls
+  indexer_retention_days                 = var.indexer_retention_days
+  indexer_capacity_rows                  = var.indexer_capacity_rows
   index_query_enabled                    = var.index_query_enabled
   trust_read_enabled                     = var.trust_read_enabled
   relation_distance_optout_min_proximity = var.relation_distance_optout_min_proximity

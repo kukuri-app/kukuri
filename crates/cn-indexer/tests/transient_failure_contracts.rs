@@ -207,8 +207,13 @@ impl IndexEntryStore for FlakyEntries {
         self.inner.remove_entry(kind, id, object_id).await
     }
 
-    async fn remove_scope(&self, kind: IndexScopeKind, id: &str) -> Result<()> {
-        self.inner.remove_scope(kind, id).await
+    async fn remove_scope_page(
+        &self,
+        kind: IndexScopeKind,
+        id: &str,
+        limit: usize,
+    ) -> Result<usize> {
+        self.inner.remove_scope_page(kind, id, limit).await
     }
 
     async fn record_verified_withdrawal(
@@ -216,9 +221,10 @@ impl IndexEntryStore for FlakyEntries {
         kind: IndexScopeKind,
         id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<()> {
         self.inner
-            .record_verified_withdrawal(kind, id, object_id)
+            .record_verified_withdrawal(kind, id, object_id, created_at)
             .await
     }
 
@@ -227,9 +233,12 @@ impl IndexEntryStore for FlakyEntries {
         kind: IndexScopeKind,
         id: &str,
         object_id: &str,
+        created_at: i64,
     ) -> Result<bool> {
         self.read()?;
-        self.inner.is_known_withdrawn(kind, id, object_id).await
+        self.inner
+            .is_known_withdrawn(kind, id, object_id, created_at)
+            .await
     }
 
     async fn filter_surfaceable(

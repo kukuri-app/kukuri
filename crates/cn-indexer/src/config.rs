@@ -148,6 +148,8 @@ pub struct IndexerConfig {
     pub max_concurrent_posts: usize,
     /// 観測状態の HTTP エンドポイントの待ち受けアドレス（#613 T3）。None なら公開しない。
     pub status_addr: Option<std::net::SocketAddr>,
+    /// 再取得可能な保存物の容量 B（行数）と保持期間 T（#1221 R5-F）。必須。
+    pub retention: kukuri_cn_core::RetentionSettings,
 }
 
 impl std::fmt::Debug for IndexerConfig {
@@ -165,6 +167,7 @@ impl std::fmt::Debug for IndexerConfig {
             .field("poll_interval", &self.poll_interval)
             .field("max_concurrent_posts", &self.max_concurrent_posts)
             .field("status_addr", &self.status_addr)
+            .field("retention", &self.retention)
             .finish()
     }
 }
@@ -195,6 +198,10 @@ pub const MAX_CONCURRENT_POSTS_ENV: &str = "COMMUNITY_NODE_INDEXER_MAX_CONCURREN
 /// 観測状態の HTTP エンドポイントの待ち受けアドレス（#613 T3）。
 /// 未設定なら HTTP では公開しない。例: `127.0.0.1:8630`。
 pub const STATUS_ADDR_ENV: &str = "COMMUNITY_NODE_INDEXER_STATUS_ADDR";
+
+/// 保持期間 T（日）と容量 B（行数）。既定値を置かず必須（未設定なら起動しない。#1221 R5-F）。
+pub const RETENTION_DAYS_ENV: &str = "COMMUNITY_NODE_INDEXER_RETENTION_DAYS";
+pub const CAPACITY_ROWS_ENV: &str = "COMMUNITY_NODE_INDEXER_CAPACITY_ROWS";
 
 /// scope窓巡回間隔の既定値。
 pub const DEFAULT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
@@ -355,6 +362,7 @@ impl IndexerConfig {
             poll_interval: parse_poll_interval_env()?,
             max_concurrent_posts: parse_max_concurrent_posts_env()?,
             status_addr: parse_status_addr_env()?,
+            retention: parse_retention_env()?,
         })
     }
 }
@@ -370,6 +378,24 @@ fn parse_max_concurrent_posts_env() -> Result<usize> {
         bail!("{MAX_CONCURRENT_POSTS_ENV} must not be zero");
     }
     Ok(value)
+}
+
+/// 容量 B と保持期間 T を読む。未設定・非数値・T が 3 日未満は起動エラー（fail-closed）。
+fn parse_retention_env() -> Result<kukuri_cn_core::RetentionSettings> {
+    let days: i64 = non_empty_env(RETENTION_DAYS_ENV)
+        .with_context(|| format!("{RETENTION_DAYS_ENV} is required"))?
+        .parse()
+        .with_context(|| format!("{RETENTION_DAYS_ENV} must be an integer (days)"))?;
+    let capacity_rows: i64 = non_empty_env(CAPACITY_ROWS_ENV)
+        .with_context(|| format!("{CAPACITY_ROWS_ENV} is required"))?
+        .parse()
+        .with_context(|| format!("{CAPACITY_ROWS_ENV} must be an integer (rows)"))?;
+    let settings = kukuri_cn_core::RetentionSettings {
+        capacity_rows,
+        retention_secs: days.saturating_mul(86_400),
+    };
+    settings.validate()?;
+    Ok(settings)
 }
 
 /// scope窓巡回間隔 env を読む。0 や非数値は起動エラー（fail-closed）。
@@ -530,6 +556,8 @@ pub(crate) mod tests {
         POLL_INTERVAL_SECS_ENV,
         MAX_CONCURRENT_POSTS_ENV,
         STATUS_ADDR_ENV,
+        RETENTION_DAYS_ENV,
+        CAPACITY_ROWS_ENV,
     ];
 
     pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -567,7 +595,24 @@ pub(crate) mod tests {
         unsafe {
             std::env::set_var("COMMUNITY_NODE_DATABASE_URL", "postgres://example");
             std::env::set_var("COMMUNITY_NODE_CHANNEL_SECRET_KEY", "test-channel-secret");
+            std::env::set_var(RETENTION_DAYS_ENV, "30");
+            std::env::set_var(CAPACITY_ROWS_ENV, "1000000");
         }
+    }
+
+    #[test]
+    fn retention_settings_are_required_and_at_least_three_days() {
+        with_clean_indexer_env(|| {
+            set_minimal_indexer_env();
+            unsafe { std::env::set_var("COMMUNITY_NODE_INDEXER_OWN_RELAY", "true") };
+            let config = IndexerConfig::from_env().expect("config");
+            assert_eq!(config.retention.retention_secs, 30 * 86_400);
+            assert_eq!(config.retention.capacity_rows, 1_000_000);
+            unsafe { std::env::set_var(RETENTION_DAYS_ENV, "2") };
+            assert!(IndexerConfig::from_env().is_err());
+            unsafe { std::env::remove_var(RETENTION_DAYS_ENV) };
+            assert!(IndexerConfig::from_env().is_err());
+        });
     }
 
     #[test]

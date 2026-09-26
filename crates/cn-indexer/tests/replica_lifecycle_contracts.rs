@@ -390,7 +390,7 @@ async fn public_scope_removal_stops_replica_events_and_preserves_local_entries()
     .await?;
     let mut stream = docs.subscribe_replica(&replica).await?;
     participant
-        .stop_and_deindex_scope(IndexScopeKind::PublicTopic, "bucket-lifecycle")
+        .retire_scope(IndexScopeKind::PublicTopic, "bucket-lifecycle", 128)
         .await?;
     assert!(
         tokio::time::timeout(Duration::from_secs(2), stream.next())

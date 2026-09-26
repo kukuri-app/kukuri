@@ -514,7 +514,7 @@ async fn withdrawal_verified_during_scan_stays_suppressed_across_providers() -> 
     let _ = ingest.await??;
     assert!(
         entries
-            .is_known_withdrawn(IndexScopeKind::PublicTopic, "rust", &id)
+            .is_known_withdrawn(IndexScopeKind::PublicTopic, "rust", &id, 0)
             .await?
     );
     assert!(!entries.contains(IndexScopeKind::PublicTopic, "rust", &id));

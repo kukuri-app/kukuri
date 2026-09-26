@@ -186,33 +186,44 @@ impl IndexEntryStore for ObservedEntries {
             .push(id.into());
         self.inner.remove_entry(kind, scope, id).await
     }
-    async fn remove_scope(&self, kind: IndexScopeKind, scope: &str) -> Result<()> {
+    async fn remove_scope_page(
+        &self,
+        kind: IndexScopeKind,
+        scope: &str,
+        limit: usize,
+    ) -> Result<usize> {
         self.trace
             .lock()
             .expect("source contract fixture mutex poisoned")
             .scope_removes += 1;
-        self.inner.remove_scope(kind, scope).await
+        self.inner.remove_scope_page(kind, scope, limit).await
     }
     async fn record_verified_withdrawal(
         &self,
         kind: IndexScopeKind,
         scope: &str,
         id: &str,
+        created_at: i64,
     ) -> Result<()> {
         self.trace
             .lock()
             .expect("source contract fixture mutex poisoned")
             .entry_removes
             .push(id.into());
-        self.inner.record_verified_withdrawal(kind, scope, id).await
+        self.inner
+            .record_verified_withdrawal(kind, scope, id, created_at)
+            .await
     }
     async fn is_known_withdrawn(
         &self,
         kind: IndexScopeKind,
         scope: &str,
         id: &str,
+        created_at: i64,
     ) -> Result<bool> {
-        self.inner.is_known_withdrawn(kind, scope, id).await
+        self.inner
+            .is_known_withdrawn(kind, scope, id, created_at)
+            .await
     }
     async fn filter_surfaceable(
         &self,
@@ -253,12 +264,20 @@ impl IndexProjection for ObservedProjection {
     async fn count_scope(&self, kind: IndexScopeKind, scope: &str) -> Result<usize> {
         self.inner.count_scope(kind, scope).await
     }
-    async fn remove_scope(&self, kind: IndexScopeKind, scope: &str) -> Result<()> {
+    async fn remove_scope_page(
+        &self,
+        kind: IndexScopeKind,
+        scope: &str,
+        limit: usize,
+    ) -> Result<usize> {
         self.trace
             .lock()
             .expect("source contract fixture mutex poisoned")
             .scope_removes += 1;
-        self.inner.remove_scope(kind, scope).await
+        self.inner.remove_scope_page(kind, scope, limit).await
+    }
+    async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize> {
+        self.inner.remove_older_than(floor, limit).await
     }
     async fn remove_object(&self, kind: IndexScopeKind, scope: &str, id: &str) -> Result<()> {
         self.trace

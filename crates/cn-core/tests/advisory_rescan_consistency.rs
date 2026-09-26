@@ -234,6 +234,7 @@ where
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         initialize_database(&pool).await?;
+        kukuri_cn_core::add_supported_topic(&pool, IndexScopeKind::PublicTopic, SCOPE_ID).await?;
         body(pool.clone()).await
     }
     .await;

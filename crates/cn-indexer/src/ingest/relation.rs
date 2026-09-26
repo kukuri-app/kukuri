@@ -55,6 +55,7 @@ impl IngestPipeline {
         let reply_target = match &object.reply_to {
             Some(parent) => indexed_public_author(pool, scope_id, parent.as_str())
                 .await
+                .map(|found| found.map(|(author, _)| author))
                 .unwrap_or_else(|error| {
                     warn!(%error, "failed to resolve the reply target author");
                     None
@@ -77,6 +78,7 @@ impl IngestPipeline {
                     target_pubkey: target,
                     scope_id: Some(scope_id.to_string()),
                     anchor_object_id: Some(object.object_id.as_str().to_string()),
+                    created_at: object.created_at,
                 })
                 .await;
             }
@@ -207,7 +209,9 @@ impl IngestPipeline {
         if doc.status != ObjectStatus::Active {
             return remove_relation_action(pool, RelationActionKind::Reaction, reaction_id).await;
         }
-        let Some(target_author) = indexed_public_author(pool, scope_id, target).await? else {
+        let Some((target_author, target_created_at)) =
+            indexed_public_author(pool, scope_id, target).await?
+        else {
             return Ok(());
         };
         self.observe_action(RelationAction {
@@ -217,6 +221,7 @@ impl IngestPipeline {
             target_pubkey: target_author,
             scope_id: Some(scope_id.to_string()),
             anchor_object_id: Some(target.to_string()),
+            created_at: target_created_at,
         })
         .await;
         Ok(())
