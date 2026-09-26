@@ -285,12 +285,13 @@ pub(crate) async fn persist_private_channel_policy(
         .await
 }
 
+/// 参加 record を置き、署名済みの envelope を返す(owner へ届けるのに使う。#1221 R5-H)。
 pub(crate) async fn persist_private_channel_participant(
     docs_sync: &dyn DocsSync,
     keys: &KukuriKeys,
     participant: &PrivateChannelParticipantDocV1,
     replica: &ReplicaId,
-) -> Result<()> {
+) -> Result<KukuriEnvelope> {
     let envelope = build_private_channel_participant_envelope(keys, participant)?;
     docs_sync.open_replica(replica).await?;
     docs_sync
@@ -301,18 +302,20 @@ pub(crate) async fn persist_private_channel_participant(
                     "channels/participants",
                     &format!("{}/envelope", participant.participant_pubkey.as_str()),
                 ),
-                value: serde_json::to_value(envelope)?,
+                value: serde_json::to_value(&envelope)?,
             },
         )
-        .await
+        .await?;
+    Ok(envelope)
 }
 
+/// handoff grant を置き、署名済みの envelope を返す(参加者へ届けるのに使う。#1221 R5-H)。
 pub(crate) async fn persist_private_channel_epoch_handoff_grant(
     docs_sync: &dyn DocsSync,
     keys: &KukuriKeys,
     grant: &PrivateChannelEpochHandoffGrantDocV1,
     replica: &ReplicaId,
-) -> Result<()> {
+) -> Result<KukuriEnvelope> {
     let envelope = build_private_channel_epoch_handoff_grant_envelope(keys, grant)?;
     docs_sync.open_replica(replica).await?;
     docs_sync
@@ -323,10 +326,11 @@ pub(crate) async fn persist_private_channel_epoch_handoff_grant(
                     "channels/rotation-grants",
                     &format!("{}/envelope", grant.recipient_pubkey.as_str()),
                 ),
-                value: serde_json::to_value(envelope)?,
+                value: serde_json::to_value(&envelope)?,
             },
         )
-        .await
+        .await?;
+    Ok(envelope)
 }
 
 pub(crate) async fn fetch_private_channel_metadata_from_replica(
@@ -371,33 +375,6 @@ pub(crate) async fn fetch_private_channel_policy_from_replica(
     let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
     envelope.verify()?;
     parse_private_channel_policy(&envelope)
-}
-
-pub(crate) async fn fetch_private_channel_participants_from_replica(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    policy: DocFetchPolicy,
-) -> Result<Vec<PrivateChannelParticipantDocV1>> {
-    let records = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Prefix(stable_key("channels/participants", "")),
-        policy,
-    )
-    .await?;
-    let mut items = Vec::new();
-    for record in records {
-        if !record.key.ends_with("/envelope") {
-            continue;
-        }
-        let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
-        envelope.verify()?;
-        if let Some(participant) = parse_private_channel_participant(&envelope)? {
-            items.push(participant);
-        }
-    }
-    items.sort_by(|left, right| left.participant_pubkey.cmp(&right.participant_pubkey));
-    Ok(items)
 }
 
 pub(crate) async fn fetch_private_channel_epoch_handoff_grant_from_replica(

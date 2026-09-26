@@ -312,6 +312,16 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         .import_peer_ticket(&ticket_b)
         .await
         .expect("d imports b");
+    // #1221 R5-H: 取込み中の d は、発行者と owner から制御 record(凍結した policy)を読む。旧 sync で b が
+    // 複製した policy を読む経路は無いので、d が owner へ届くようにする。
+    app_a
+        .import_peer_ticket(&ticket_d)
+        .await
+        .expect("a imports d");
+    app_d
+        .import_peer_ticket(&ticket_a)
+        .await
+        .expect("d imports a");
     display_topic(&app_d, topic)
         .await
         .expect("subscribe public timeline d");

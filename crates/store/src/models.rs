@@ -288,6 +288,16 @@ impl AuthorRelationshipProjectionRow {
     }
 }
 
+/// owner が受け取った private channel の参加・退出(#1221 R5-H)。`updated_at` は record の時刻。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateChannelParticipantRow {
+    pub channel_id: String,
+    pub epoch_id: String,
+    pub participant_pubkey: String,
+    pub left_at: Option<i64>,
+    pub updated_at: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutedAuthorRow {
     pub author_pubkey: String,

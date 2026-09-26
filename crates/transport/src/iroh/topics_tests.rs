@@ -128,6 +128,30 @@ async fn hint_subscribe_waiting_for_registration_cannot_revive_after_shutdown() 
     transport._router.take().unwrap().shutdown().await.unwrap();
 }
 
+// #1221 R5-H: private の読み手の候補は、購読した hint topic の gossip の隣接 peer から選ぶ。
+#[tokio::test]
+async fn read_candidates_are_the_neighbors_of_the_subscribed_hint_topic() {
+    let transport = IrohGossipTransport::bind_local().await.unwrap();
+    let topic = TopicId::new("private/channel-read-candidates");
+    let _stream = transport.subscribe_hints(&topic).await.unwrap();
+    let neighbor = "1".repeat(64);
+    {
+        let states = transport.topic_states.lock().await;
+        let state = states
+            .get(kukuri_core::wire::hint_topic_id(&topic).as_str())
+            .unwrap();
+        state.neighbors.write().await.insert(neighbor.clone());
+    }
+    let candidates = transport.topic_read_candidates(&topic).await.unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|peer| peer.endpoint_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![neighbor.as_str()]
+    );
+}
+
 #[tokio::test]
 async fn stale_rejoin_decision_cannot_remove_a_new_topic_generation() {
     let transport = Arc::new(IrohGossipTransport::bind_local().await.unwrap());

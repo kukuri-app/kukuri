@@ -17,8 +17,8 @@ use crate::models::{
     DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
     DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
     LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationRow,
-    ObjectProjectionRow, Page, PostWithdrawalRow, ReactionProjectionRow, TimelineCursor,
-    WithdrawalWriteRow,
+    ObjectProjectionRow, Page, PostWithdrawalRow, PrivateChannelParticipantRow,
+    ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 use crate::pagination::{
     apply_asc_cursor, apply_asc_projection_cursor, apply_desc_cursor,
@@ -102,6 +102,8 @@ pub struct MemoryStore {
     content_observation_rows: Arc<RwLock<MemoryContentObservationRows>>,
     post_withdrawal_rows: Arc<RwLock<HashMap<EnvelopeId, PostWithdrawalRow>>>,
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
+    private_channel_participants:
+        Arc<RwLock<BTreeMap<(String, String, String), PrivateChannelParticipantRow>>>,
 }
 
 mod bookmarks;

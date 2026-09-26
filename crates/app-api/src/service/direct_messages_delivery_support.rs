@@ -305,7 +305,8 @@ impl AppService {
         Ok(())
     }
 
-    async fn publish_account_receive_dm_ack(
+    /// ACK を account route で返す。送ってよいかは呼出し元が確かめる(DM は mutual、制御 record は epoch の鍵)。
+    pub(crate) async fn publish_account_receive_dm_ack(
         services: &ServiceHandles,
         peer_pubkey: &str,
         ack: &kukuri_core::DirectMessageAckV1,
@@ -314,16 +315,6 @@ impl AppService {
         let Ok(_permit) = services.account_dm_offer_permits.try_acquire() else {
             return Ok(false);
         };
-        let local = services.keys.public_key_hex();
-        if !services
-            .projection_store
-            .get_author_relationship(&local, peer_pubkey)
-            .await?
-            .as_ref()
-            .is_some_and(|relationship| relationship.mutual)
-        {
-            return Ok(false);
-        }
         let now = Utc::now().timestamp_millis();
         let offer = seal_receive_offer(
             services.keys.as_ref(),
@@ -439,11 +430,18 @@ impl AppService {
         if !Self::account_dm_outbox_row_can_send(services, row).await? {
             return Ok(false);
         }
-        let now = Utc::now().timestamp_millis();
-        let offer = seal_receive_offer(
-            services.keys.as_ref(),
-            &Pubkey::from(row.peer_pubkey.as_str()),
-            ReceiveOfferReferenceV1::inline(
+        // #1221 R5-H: private channel の制御 record の行は、epoch の鍵で封じた blob を指す `EpochControl` で送る。
+        let reference = match row.dm_id.strip_prefix(EPOCH_CONTROL_OUTBOX_PREFIX) {
+            Some(epoch_key_id) => {
+                Self::epoch_control_reference(
+                    services,
+                    row,
+                    epoch_key_id,
+                    destination.provider_endpoint_id.clone(),
+                )
+                .await?
+            }
+            None => ReceiveOfferReferenceV1::inline(
                 destination.provider_endpoint_id.clone(),
                 ReceiveOfferScopeV1::DirectMessageFrame {
                     dm_id: row.dm_id.clone(),
@@ -451,6 +449,12 @@ impl AppService {
                     frame_hash: row.frame_blob_hash.clone(),
                 },
             )?,
+        };
+        let now = Utc::now().timestamp_millis();
+        let offer = seal_receive_offer(
+            services.keys.as_ref(),
+            &Pubkey::from(row.peer_pubkey.as_str()),
+            reference,
             now,
             now + 60_000,
         )?;
@@ -494,6 +498,10 @@ impl AppService {
             || current.created_at != row.created_at
         {
             return Ok(false);
+        }
+        // 制御 record の宛先(owner・参加者)は mutual とは限らない。受け手が epoch の鍵で確かめる。
+        if row.dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX) {
+            return Ok(true);
         }
         let local = services.keys.public_key_hex();
         Ok(services

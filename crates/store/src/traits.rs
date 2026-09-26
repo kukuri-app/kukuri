@@ -14,7 +14,7 @@ use crate::models::{
     DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
-    ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
+    PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 
 pub(crate) const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
@@ -309,6 +309,25 @@ pub trait SocialProjectionStore: Send + Sync {
     async fn get_author_docs_author(&self, author_pubkey: &str) -> Result<Option<String>>;
     /// author が署名つきの envelope で申告した docs author の id を書く(#1239)。同じ author は上書きする。
     async fn put_author_docs_author(&self, author_pubkey: &str, docs_author: &str) -> Result<()>;
+    /// private channel の参加・退出を置く(#1221 R5-H)。同じ (channel, epoch, pubkey) の行より新しいときだけ置き換える。
+    /// 退出は channel からの退出なので、同じ channel のそれより古い他の epoch の行も退出にする。置き換えたら `true`。
+    async fn put_private_channel_participant(
+        &self,
+        row: PrivateChannelParticipantRow,
+    ) -> Result<bool>;
+    /// 参加中の pubkey を `after` より後ろから昇順に最大 `limit` 件。`epoch_id` が `None` なら channel の全 epoch から重複なく。
+    async fn list_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: Option<&str>,
+        after: &str,
+        limit: usize,
+    ) -> Result<Vec<String>>;
+    async fn count_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<usize>;
 }
 
 /// `list_author_relationships` の既定動作: 1 件ずつ `get_author_relationship` を呼ぶ。

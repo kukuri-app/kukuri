@@ -343,17 +343,6 @@ pub(crate) fn archive_private_channel_epoch(
     });
 }
 
-pub(crate) fn active_private_channel_participants(
-    participants: &[PrivateChannelParticipantDocV1],
-    epoch_id: &str,
-) -> Vec<PrivateChannelParticipantDocV1> {
-    participants
-        .iter()
-        .filter(|participant| participant.epoch_id == epoch_id && participant.left_at.is_none())
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod bounded_list_tests {
     use super::*;

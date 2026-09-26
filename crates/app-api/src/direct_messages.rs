@@ -26,13 +26,17 @@ impl AppService {
             let Ok(peer) = normalize_author_pubkey(&row.peer_pubkey) else {
                 continue;
             };
-            if self
-                .services
-                .projection_store
-                .get_author_relationship(local.as_str(), peer.as_str())
-                .await?
-                .as_ref()
-                .is_some_and(|relationship| relationship.mutual)
+            // #1221 R5-H: private channel の制御 record の宛先は mutual とは限らない。
+            if row
+                .dm_id
+                .starts_with(crate::service::EPOCH_CONTROL_OUTBOX_PREFIX)
+                || self
+                    .services
+                    .projection_store
+                    .get_author_relationship(local.as_str(), peer.as_str())
+                    .await?
+                    .as_ref()
+                    .is_some_and(|relationship| relationship.mutual)
             {
                 unique.insert(Pubkey::from(peer));
             }

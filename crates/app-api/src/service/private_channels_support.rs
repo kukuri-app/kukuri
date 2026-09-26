@@ -89,9 +89,7 @@ impl AppService {
             }
             let local_pubkey = Pubkey::from(local_author.clone());
             if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
-                persist_private_channel_participant(
-                    self.docs_sync(),
-                    self.keys(),
+                self.record_private_channel_participant(
                     &PrivateChannelParticipantDocV1 {
                         channel_id: metadata.channel_id.clone(),
                         topic_id: metadata.topic_id.clone(),
@@ -104,6 +102,8 @@ impl AppService {
                         share_token_id: None,
                         left_at: None,
                     },
+                    policy.owner_pubkey.as_str(),
+                    payload.new_namespace_secret_hex.as_str(),
                     &next_replica,
                 )
                 .await?;
@@ -139,34 +139,45 @@ impl AppService {
             .as_ref()
             .map(|policy| policy.sharing_state.clone())
             .unwrap_or(ChannelSharingState::Open);
-        let participants = fetch_private_channel_participants_from_replica(
-            self.docs_sync(),
-            &replica,
-            DocFetchPolicy::LocalOnly,
-        )
-        .await?;
-        let participants =
-            active_private_channel_participants(&participants, state.current_epoch_id.as_str());
-        let participant_count = participants.len();
+        // #1221 R5-H: 参加者数は参加者の表(owner は account 経路で届いた参加・退出)の現 epoch の行で数える。
+        let store = &self.services.projection_store;
+        let channel_id = state.channel_id.as_str();
+        let epoch_id = state.current_epoch_id.as_str();
+        let participant_count = store
+            .count_private_channel_participants(channel_id, epoch_id)
+            .await?;
         let mut stale_participant_count = 0usize;
         if state.audience_kind == ChannelAudienceKind::FriendOnly
             && state.owner_pubkey == self.current_author_pubkey()
         {
-            for participant in &participants {
-                if participant.is_owner {
-                    continue;
-                }
-                let relationship = self
-                    .services
-                    .projection_store
-                    .get_author_relationship(
-                        self.current_author_pubkey().as_str(),
-                        participant.participant_pubkey.as_str(),
+            let mut after = String::new();
+            loop {
+                let page = store
+                    .list_private_channel_participants(
+                        channel_id,
+                        Some(epoch_id),
+                        &after,
+                        PRIVATE_CHANNEL_PARTICIPANT_PAGE,
                     )
                     .await?;
-                if relationship.as_ref().is_some_and(|value| !value.mutual) {
-                    stale_participant_count += 1;
+                let Some(last) = page.last().cloned() else {
+                    break;
+                };
+                for participant in page {
+                    if participant == state.owner_pubkey {
+                        continue;
+                    }
+                    let relationship = store
+                        .get_author_relationship(
+                            self.current_author_pubkey().as_str(),
+                            participant.as_str(),
+                        )
+                        .await?;
+                    if relationship.as_ref().is_some_and(|value| !value.mutual) {
+                        stale_participant_count += 1;
+                    }
                 }
+                after = last;
             }
         }
         Ok(PrivateChannelDiagnostics {

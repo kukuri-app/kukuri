@@ -130,6 +130,10 @@ mod direct_messages_subscription_support;
 mod dm_outbox_retry_support;
 mod dome_connection_support;
 mod dome_host_ownership;
+mod epoch_control_support;
+pub(crate) use epoch_control_support::{
+    EPOCH_CONTROL_OUTBOX_PREFIX, PRIVATE_CHANNEL_PARTICIPANT_PAGE,
+};
 mod receive_offer_support;
 pub(crate) use dome_connection_support::*;
 mod errors;
@@ -215,8 +219,7 @@ pub(crate) use object_persistence_support::{
     PrivateEpochSnapshot, best_effort_blob_cache_status, best_effort_blob_view_status,
     bookmarked_custom_reaction_view_from_row, custom_reaction_asset_view_from_doc,
     fetch_manifest_blob, fetch_private_channel_epoch_handoff_grant_from_replica,
-    fetch_private_channel_participant_from_replica,
-    fetch_private_channel_participants_from_replica, fetch_private_channel_policy_from_replica,
+    fetch_private_channel_participant_from_replica, fetch_private_channel_policy_from_replica,
     fetch_projection_blob_text, game_projection_row, live_projection_row, persist_game_room_state,
     persist_live_session_state, persist_media_manifest, persist_post_object,
     persist_private_channel_epoch_handoff_grant, persist_private_channel_metadata,
@@ -243,13 +246,13 @@ pub(crate) use profile_docs_support::{
 };
 pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
-    LIVE_GAME_LIST_LIMIT, active_private_channel_participants, archive_private_channel_epoch,
-    bookmarked_post_row_is_hidden, current_private_channel_replica_id, filtered_thread_page,
-    filtered_timeline_page, initial_private_channel_epoch_id,
-    joined_private_channel_state_from_capability, load_projection_rows_with_one_refresh,
-    merged_private_channel_state_from_epoch_join, next_private_channel_epoch_id,
-    private_channel_epoch_capabilities, private_channel_is_epoch_aware,
-    private_channel_replica_for_epoch, profile_timeline_item_is_hidden,
+    LIVE_GAME_LIST_LIMIT, archive_private_channel_epoch, bookmarked_post_row_is_hidden,
+    current_private_channel_replica_id, filtered_thread_page, filtered_timeline_page,
+    initial_private_channel_epoch_id, joined_private_channel_state_from_capability,
+    load_projection_rows_with_one_refresh, merged_private_channel_state_from_epoch_join,
+    next_private_channel_epoch_id, private_channel_epoch_capabilities,
+    private_channel_is_epoch_aware, private_channel_replica_for_epoch,
+    profile_timeline_item_is_hidden,
 };
 pub(crate) use public_notification_offer_support::PublicNotificationSource;
 pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};

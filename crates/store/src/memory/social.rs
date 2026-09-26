@@ -232,4 +232,72 @@ impl SocialProjectionStore for MemoryStore {
         self.muted_authors.write().await.remove(author_pubkey);
         Ok(())
     }
+
+    async fn put_private_channel_participant(
+        &self,
+        row: PrivateChannelParticipantRow,
+    ) -> Result<bool> {
+        let mut rows = self.private_channel_participants.write().await;
+        let key = (
+            row.channel_id.clone(),
+            row.epoch_id.clone(),
+            row.participant_pubkey.clone(),
+        );
+        if rows
+            .get(&key)
+            .is_some_and(|existing| existing.updated_at >= row.updated_at)
+        {
+            return Ok(false);
+        }
+        if let Some(left_at) = row.left_at {
+            for existing in rows.values_mut().filter(|existing| {
+                existing.channel_id == row.channel_id
+                    && existing.participant_pubkey == row.participant_pubkey
+                    && existing.left_at.is_none()
+                    && existing.updated_at < left_at
+            }) {
+                existing.left_at = Some(left_at);
+                existing.updated_at = left_at;
+            }
+        }
+        rows.insert(key, row);
+        Ok(true)
+    }
+
+    async fn list_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: Option<&str>,
+        after: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let rows = self.private_channel_participants.read().await;
+        let pubkeys = rows
+            .values()
+            .filter(|row| {
+                row.channel_id == channel_id
+                    && row.left_at.is_none()
+                    && epoch_id.is_none_or(|epoch| row.epoch_id == epoch)
+                    && row.participant_pubkey.as_str() > after
+            })
+            .map(|row| row.participant_pubkey.clone())
+            .collect::<BTreeSet<_>>();
+        Ok(pubkeys.into_iter().take(limit).collect())
+    }
+
+    async fn count_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<usize> {
+        Ok(self
+            .private_channel_participants
+            .read()
+            .await
+            .values()
+            .filter(|row| {
+                row.channel_id == channel_id && row.epoch_id == epoch_id && row.left_at.is_none()
+            })
+            .count())
+    }
 }

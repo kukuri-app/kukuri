@@ -106,3 +106,128 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     .await
     .expect("participant leave propagation timeout");
 }
+
+async fn wait_for_owner_participant_count(
+    app: &AppService,
+    topic: &str,
+    channel_id: &str,
+    expected: usize,
+) {
+    timeout(p2p_replication_timeout(), async {
+        loop {
+            if app
+                .list_joined_private_channels(topic)
+                .await
+                .expect("owner joined channels")
+                .iter()
+                .any(|item| item.channel_id == channel_id && item.participant_count == expected)
+            {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("owner participant count did not become {expected}"));
+}
+
+/// #1221 R5-H AC-5: owner が offline の間の退出 record は参加者の outbox に残り、owner の再起動後に account 経路で
+/// 届いて人数と rotation の宛先に入る(旧 sync なし)。届いたら owner の ACK で outbox から消える。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_restarts() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let store_a = Arc::new(MemoryStore::default());
+    let keys_a = generate_keys();
+    let owner = |stack: &TestIrohStack| {
+        app_service_from_dependencies(
+            store_a.clone(),
+            store_a.clone(),
+            stack.transport.clone(),
+            stack.transport.clone(),
+            stack.docs_sync.clone(),
+            stack.blob_service.clone(),
+            keys_a.clone(),
+        )
+    };
+    let stack_a = TestIrohStack::new(&dir.path().join("offline-owner")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("offline-member")).await;
+    let app_a = owner(&stack_a);
+    let store_b = Arc::new(MemoryStore::default());
+    let app_b = app_with_iroh_services(store_b.clone(), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
+    let topic = "kukuri:topic:private-channel-offline-owner";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+
+    let channel = app_a
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "offline owner".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create private channel");
+    let invite = app_a
+        .export_private_channel_invite(topic, channel.channel_id.as_str(), None)
+        .await
+        .expect("export invite");
+    app_b
+        .import_private_channel_invite(invite.as_str())
+        .await
+        .expect("import invite");
+    wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 2).await;
+    let capability = app_a
+        .get_private_channel_capability(topic, &channel.channel_id)
+        .await
+        .expect("capability")
+        .expect("owner capability");
+
+    // owner を止めてから退出する。退出 record は owner 宛の outbox に残る。
+    app_a.shutdown().await;
+    drop(app_a);
+    stack_a._node.clone().shutdown().await.expect("stop owner node");
+    drop(stack_a);
+    app_b
+        .leave_private_channel(topic, channel.channel_id.as_str())
+        .await
+        .expect("leave while the owner is offline");
+    sleep(Duration::from_secs(3)).await;
+    let pending = store_b.list_direct_message_outbox().await.unwrap();
+    assert_eq!(pending.len(), 1, "the leave record waits for the owner");
+    assert!(pending[0].dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX));
+
+    // owner の再起動(同じ保存場所・同じ account)。参加者は新しい宛先を知る。
+    let stack_a = TestIrohStack::new(&dir.path().join("offline-owner")).await;
+    let app_a = owner(&stack_a);
+    app_a
+        .restore_private_channel_capability(capability)
+        .await
+        .expect("restore owner channel");
+    stack_a.bind_account(&app_a).await;
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    app_b
+        .import_peer_ticket(&ticket_a)
+        .await
+        .expect("import restarted owner");
+    wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 1).await;
+    timeout(p2p_replication_timeout(), async {
+        while !store_b.list_direct_message_outbox().await.unwrap().is_empty() {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the owner's ACK removes the leave record");
+    assert!(
+        store_a
+            .list_private_channel_participants(&channel.channel_id, None, "", 8)
+            .await
+            .unwrap()
+            .iter()
+            .all(|participant| *participant != app_b.current_author_pubkey()),
+        "the member who left is not a rotation recipient"
+    );
+}

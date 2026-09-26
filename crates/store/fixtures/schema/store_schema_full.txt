@@ -251,6 +251,12 @@ table post_withdrawals
   column cid=6 name=replacement_object_id type=TEXT notnull=0 default=None pk=0
   column cid=7 name=reason_visibility type=TEXT notnull=1 default=None pk=0
   column cid=8 name=reason type=TEXT notnull=0 default=None pk=0
+table private_channel_participants
+  column cid=0 name=channel_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=epoch_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=participant_pubkey type=TEXT notnull=1 default=None pk=3
+  column cid=3 name=left_at type=INTEGER notnull=0 default=None pk=0
+  column cid=4 name=updated_at type=INTEGER notnull=1 default=None pk=0
 table profile_cache
   column cid=0 name=pubkey type=TEXT notnull=0 default=None pk=1
   column cid=1 name=name type=TEXT notnull=0 default=None pk=0
@@ -540,6 +546,10 @@ index idx_post_withdrawals_author table=post_withdrawals unique=0 origin=c parti
   key seqno=0 cid=1 name=Some("target_author_pubkey")
   key seqno=1 cid=4 name=Some("withdrawn_at")
   sql=Some("CREATE INDEX idx_post_withdrawals_author ON post_withdrawals (target_author_pubkey, withdrawn_at DESC)")
+index idx_private_channel_participants_active table=private_channel_participants unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=2 name=Some("participant_pubkey")
+  sql=Some("CREATE INDEX idx_private_channel_participants_active ON private_channel_participants(channel_id, participant_pubkey) WHERE left_at IS NULL")
 index idx_reaction_cache_author_updated_at table=reaction_cache unique=0 origin=c partial=0
   key seqno=0 cid=3 name=Some("author_pubkey")
   key seqno=1 cid=5 name=Some("updated_at")
@@ -687,6 +697,11 @@ index sqlite_autoindex_peer_seed_state_1 table=peer_seed_state unique=1 origin=p
   sql=None
 index sqlite_autoindex_post_withdrawals_1 table=post_withdrawals unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("target_object_id")
+  sql=None
+index sqlite_autoindex_private_channel_participants_1 table=private_channel_participants unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=1 name=Some("epoch_id")
+  key seqno=2 cid=2 name=Some("participant_pubkey")
   sql=None
 index sqlite_autoindex_profile_cache_1 table=profile_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("pubkey")
