@@ -3,7 +3,7 @@
 ## Status
 
 Proposed（旧#1243、実装計画承認済み。現在は#1221 P2〜P4へ集約。
-各段階の実装・監査後に採用状態を更新する）
+各段階の実装・監査後に採用状態を更新する。2026-09-26 R5-Hで§6の書込み切替・新形式定常を実装）
 
 2026-09-24の#1221 G3-3で有界ページ/対象ID取得（B）を採用した。以下の旧「常時同期」記述は
 識別・移行時の履歴であり、新bucket readerの完成形ではない。公開CN readerから順に切り替える。
@@ -123,7 +123,7 @@ readerはnamespaceをimport/open/start_syncせず、
 現行scope/secretを要求前と対象反映前に確認する。公開providerも直近2＋永続cursorの巡回2端末を
 PostgreSQLから選び、全bootstrap peerをreader内へmaterializeしない。公開・privateは同じ
 scope需要優先と永続cursorで巡回し、
-移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とする。旧selectorと旧namespaceの
+移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とした（R5-Hで旧workerを撤去し、bucket readerが64物理scopeを使う。需要のあるscopeは既定30秒、それ以外は`poll_interval`で巡回する）。旧selectorと旧namespaceの
 最終撤去はR5-H、clientのauthor/private制御参照と保護cache/移行は後続条件の担当である。
 旧公開replicaで対象不明の変更通知が来た場合も、現在timeline索引窓の最大100 IDだけを
 対象別に再確認する。同じ通知batchに既知object IDがあれば窓外でも対象別に先に処理する。
@@ -184,6 +184,26 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
 | 読取り準備 | CNが新旧を認識、clientが新refを解決。新形式のwriterはまだ無効 | 旧clientに新形式が読めるとの扱い |
 | 書込み切替 | 端末に切替状態を保存し、新操作を新形式へ。未完了outboxは記録済みの宛先へ再開 | 再起動ごとの切替や二重投稿 |
 | 新形式定常 | 新規参加/起動は作業集合の新bucketだけ。旧保存データはローカルから利用 | 旧replicaの常時同期、旧履歴の起動時全コピー |
+
+2026-09-26の#1221 R5-Hで「書込み切替」と「新形式定常」を実装した（本番での実施は別Issue）。
+
+- 切替: account SQLiteの`writer_cutover`（1行）に、R5-Gの保護移行が全kindで終端へ達した時刻を1回だけ保存する。
+  desktop-runtimeは起動時に保存済みの状態を最初の書込みより前に`AppService::switch_writer`へ渡し、移行の完了で切り替える。
+  `kukuri.db`に入るのでbackup/restoreでも旧writerへ戻らない。ADR 0048 §7の旧領域を削除できる前提はこの時刻に合わせる。
+- writer: §2の配置どおり。bucketは署名した`created_at`（reactionはミリ秒の署名時刻）から決める。取り下げは操作時の
+  bucket（`withdrawals/<id>/locator`に元投稿の位置）と元投稿の位置の2行を永続outbox（`withdrawal_write_outbox`）へ
+  積み、書けた行だけを消す。起動時と取り下げのたびに記録済みの宛先へ再開する。live/gameのentityは作成時のbucketに
+  最新stateを置き、日が変わった更新は更新時のbucketへ署名済みenvelopeを置く。authorの現在値は制御領域のkeyに置き、
+  更新時のauthor bucketへ署名済みenvelopeをeventとして置く。private bucketのcapabilityは、登録済みのepochの
+  capabilityからdocs-syncが導出する（epochのcapabilityを外せばbucketも読み書きできない）。
+- 受信側の検証: reactionは読んだbucketとenvelopeの時刻の一致、識別は対象の投稿を置いたreplica。取り下げは元投稿の
+  bucketか取り下げ時刻のbucketに置かれたものだけを受け付ける。
+- 定常: 旧namespaceの同期（`start_sync`・`reapply_sync_peers`・`restart_replica_sync`・`LocalThenRemote`の暗黙の
+  同期開始）を撤去した。docsのnamespaceは手元の読み書きだけに開き、remoteは有界なQUIC readerで読む。受信はADR 0055 §1.1。
+  旧版の端末が旧形式へ書いた新着は、hintを受けた対象の有界な読みで旧形式も読むが、全件の同期はしない。
+- 未実装（R5-Hの残り）: private channelの参加・退出recordとhandoff grantのaccount経路の配送（AC-5）、
+  timeline/profile/threadの版つきcursor（既存cursorの`created_at`からbucketが一意に決まる。判断を報告済み）、
+  Dome instanceの配置（idに時刻を持たないため、切替後も旧replicaへ書いている。判断を報告済み）。
 
 - CNの新旧readiness、clientの読取り、#1224の作業集合、保存/回収、対応する移行testの成立後にwriterを切り替える。
   本番での実施日とデプロイは本実装作業とは別に扱う。新形式のwriterを旧CNへ先行配布しない。

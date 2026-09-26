@@ -248,7 +248,8 @@ mod tests {
         let handles = docs.replicas.lock().await;
         assert_eq!(handles.len(), 1);
         let handle = handles.get(replica.as_str()).unwrap();
-        assert!(handle.sync_requested && handle.doc.status().await?.sync);
+        // R5-H: 書いた namespace も同期を始めない。
+        assert!(!handle.doc.status().await?.sync);
         drop(handles);
         docs.shutdown().await;
         node.shutdown().await?;

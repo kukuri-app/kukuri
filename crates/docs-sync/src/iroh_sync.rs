@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -37,8 +37,6 @@ use kukuri_iroh_node::{IrohDocsNode, remote_fetch};
 struct ReplicaHandle {
     doc: Doc,
     events: broadcast::Sender<ReplicaNotice>,
-    sync_peer_ids: BTreeSet<String>,
-    sync_requested: bool,
     closing: bool,
     live_task: Option<JoinHandle<()>>,
 }
@@ -153,35 +151,8 @@ impl IrohDocsSync {
         }
     }
 
-    async fn sync_peers(&self) -> Vec<EndpointAddr> {
-        self.peers.ranked_peers().await
-    }
-
-    // 本体ループは remote_fetch(WP-B14)へ移設。characterization テスト専用に残す。
-    #[cfg(test)]
-    async fn connect_candidates(&self, imported_peer: &EndpointAddr) -> Vec<EndpointAddr> {
-        self.peers.connect_candidates(imported_peer).await
-    }
-
     pub(crate) async fn available_sync_peer_ids(&self) -> Vec<String> {
         self.peers.available_peer_ids().await
-    }
-
-    async fn reapply_sync_peers(&self) -> Result<()> {
-        let peers = self.sync_peers().await;
-        let peer_ids = peers
-            .iter()
-            .map(|peer| peer.id.to_string())
-            .collect::<BTreeSet<_>>();
-        let mut replicas = self.replicas.lock().await;
-        for handle in replicas.values_mut() {
-            if !handle.sync_requested {
-                continue;
-            }
-            doc_start_sync(&handle.doc, peers.clone()).await?;
-            handle.sync_peer_ids = peer_ids.clone();
-        }
-        Ok(())
     }
 
     pub(crate) async fn replica_secret(&self, replica_id: &ReplicaId) -> Result<NamespaceSecret> {
@@ -198,47 +169,18 @@ impl IrohDocsSync {
             .ok_or_else(|| anyhow!("private replica capability is not registered"))
     }
 
+    /// 手元の namespace を開く(R5-H: 旧 sync は撤去した。開いても同期を始めない)。
     pub(crate) async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Doc> {
-        self.ensure_replica_with_sync(replica_id, true).await
-    }
-
-    async fn ensure_replica_for_read(
-        &self,
-        replica_id: &ReplicaId,
-        policy: DocFetchPolicy,
-    ) -> Result<Doc> {
-        self.ensure_replica_with_sync(replica_id, policy == DocFetchPolicy::LocalThenRemote)
-            .await
-    }
-
-    async fn ensure_replica_with_sync(&self, replica_id: &ReplicaId, sync: bool) -> Result<Doc> {
-        // openの競合で同じnamespaceのtaskを複数作らない。ローカルreadはsyncを昇格しない。
+        // openの競合で同じnamespaceのtaskを複数作らない。
         let mut replicas = self.replicas.lock().await;
         // revokeとopenを直列化する。mapのlock前にsecretをコピーすると、revoke完了後に再openできてしまう。
         let secret = self.replica_secret(replica_id).await?;
-        if let Some(handle) = replicas.get_mut(replica_id.as_str()) {
+        if let Some(handle) = replicas.get(replica_id.as_str()) {
             if handle.closing {
                 anyhow::bail!("replica close is pending; retry close before reopening");
             }
-            if sync && !handle.sync_requested {
-                let peers = self.sync_peers().await;
-                let peer_ids = peers.iter().map(|peer| peer.id.to_string()).collect();
-                doc_start_sync(&handle.doc, peers).await?;
-                handle.sync_peer_ids = peer_ids;
-                handle.sync_requested = true;
-            }
             return Ok(handle.doc.clone());
         }
-
-        let imported = if sync {
-            self.sync_peers().await
-        } else {
-            Vec::new()
-        };
-        let imported_ids = imported
-            .iter()
-            .map(|peer| peer.id.to_string())
-            .collect::<BTreeSet<_>>();
 
         let doc = self
             .node
@@ -247,9 +189,6 @@ impl IrohDocsSync {
             .await?;
         let (tx, _) = broadcast::channel(256);
         let mut live = doc.subscribe().await?;
-        if sync {
-            doc_start_sync(&doc, imported).await?;
-        }
         let live_replica = replica_id.clone();
         let live_events = tx.clone();
         let peer_observations = self.peers.clone();
@@ -308,8 +247,6 @@ impl IrohDocsSync {
             ReplicaHandle {
                 doc: doc.clone(),
                 events: tx,
-                sync_peer_ids: imported_ids,
-                sync_requested: sync,
                 closing: false,
                 live_task: Some(task),
             },
@@ -366,7 +303,7 @@ impl IrohDocsSync {
         query: Query,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
-        let doc = self.ensure_replica_for_read(replica_id, policy).await?;
+        let doc = self.ensure_replica(replica_id).await?;
         let stream = doc.get_many(query).await?;
         tokio::pin!(stream);
         let mut records = Vec::new();
@@ -440,7 +377,7 @@ impl IrohDocsSync {
         query: DocKeyQuery,
     ) -> Result<DocKeyPage> {
         // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
-        let doc = self.ensure_replica_with_sync(replica_id, false).await?;
+        let doc = self.ensure_replica(replica_id).await?;
         if query.limit == 0 {
             return Ok(DocKeyPage::default());
         }
@@ -602,7 +539,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<Vec<DocRecord>> {
         if limit == 0 {
             // 読む件数にかかわらず replica は開く(権限の無い private replica は失敗する)。
-            let _ = self.ensure_replica_with_sync(replica_id, false).await?;
+            let _ = self.ensure_replica(replica_id).await?;
             return Ok(Vec::new());
         }
         let records = self.collect_records(replica_id, bounded_exact_query(key, limit), policy);
@@ -627,7 +564,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<DocKeyPage> {
         // 手がかりは信用しない入力。docs author の id として読めない値は「無い」として扱う。
         let Ok(author) = AuthorId::from_str(docs_author) else {
-            self.ensure_replica_with_sync(replica_id, false).await?;
+            self.ensure_replica(replica_id).await?;
             return Ok(DocKeyPage::default());
         };
         self.key_page(replica_id, Some(author), query).await
@@ -653,7 +590,7 @@ impl DocsSync for IrohDocsSync {
         let Ok(author) = AuthorId::from_str(docs_author) else {
             return Ok(None);
         };
-        let doc = self.ensure_replica_for_read(replica_id, policy).await?;
+        let doc = self.ensure_replica(replica_id).await?;
         // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
         let Some(entry) = doc.get_exact(author, key.as_bytes(), false).await? else {
             return Ok(None);
@@ -690,47 +627,22 @@ impl DocsSync for IrohDocsSync {
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
         let endpoint_addr = parse_endpoint_ticket(ticket)?;
         self.peers.insert_imported_peer_addr(endpoint_addr).await?;
-        self.reapply_sync_peers().await?;
         Ok(())
     }
 
     async fn learn_peer(&self, endpoint_id: &str) -> Result<()> {
+        // reader の候補台帳だけを更新する(R5-H: replica へ同期先を配り直す旧 sync は撤去した)。
         let relay_urls = self.node.relay_urls().await;
-        // 台帳に変化があったときだけ全レプリカへ同期先を配り直す(bool は docs-sync 固有の挙動)。
-        if self
-            .peers
+        self.peers
             .record_learned_peer(endpoint_id, &relay_urls)
-            .await?
-        {
-            self.reapply_sync_peers().await?;
-        }
-        Ok(())
-    }
-
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        let peers = self.sync_peers().await;
-        let peer_ids = peers
-            .iter()
-            .map(|peer| peer.id.to_string())
-            .collect::<BTreeSet<_>>();
-        // 背景のrestartは、close後やLocalOnlyで開いたreplicaを昇格させない。
-        // cloneをlock外へ持ち出すと、古いrestartがclose後の新handleを消す競合になる。
-        let mut replicas = self.replicas.lock().await;
-        if let Some(handle) = replicas.get_mut(replica_id.as_str())
-            && handle.sync_requested
-            && !handle.closing
-        {
-            doc_start_sync(&handle.doc, peers).await?;
-            handle.sync_peer_ids = peer_ids;
-        }
+            .await?;
         Ok(())
     }
 
     async fn set_seed_peers(&self, peers: Vec<SeedPeer>) -> Result<()> {
         let relay_urls = self.node.relay_urls().await;
         self.peers.set_seed_peers(peers, &relay_urls).await?;
-        // seed 差し替え後の reapply は docs-sync 固有の挙動(共通台帳は行わない)。
-        self.reapply_sync_peers().await
+        Ok(())
     }
 
     async fn assist_peer_ids(&self) -> Result<Vec<String>> {
@@ -748,10 +660,6 @@ impl DocsSync for IrohDocsSync {
     }
 }
 
-async fn doc_start_sync(doc: &Doc, peers: Vec<EndpointAddr>) -> Result<()> {
-    doc.start_sync(peers).await
-}
-
 #[cfg(test)]
 #[path = "iroh_sync_key_query_tests.rs"]
 mod key_query_tests;
@@ -759,63 +667,9 @@ mod key_query_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kukuri_transport::TransportNetworkConfig;
-    use tempfile::tempdir;
-    use tokio::time::{Duration, sleep, timeout};
-
-    // 接続候補の順序は外部挙動(characterization、WP-H2)。
-    // direct(remote_info 由来)→ relay 付き → 元の値、の優先順位を固定する。
-    // blob-service 側の同名観点テストと対になる。
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn connect_candidates_prefers_direct_remote_info_before_relay_hint() {
-        let sender_dir = tempdir().expect("sender tempdir");
-        let receiver_dir = tempdir().expect("receiver tempdir");
-        let config = TransportNetworkConfig::loopback();
-
-        let sender_node = IrohDocsNode::persistent_with_config(sender_dir.path(), config.clone())
-            .await
-            .expect("sender node");
-        let receiver_node = IrohDocsNode::persistent_with_config(receiver_dir.path(), config)
-            .await
-            .expect("receiver node");
-
-        let receiver = IrohDocsSync::new(receiver_node.clone());
-        let relay_url = "https://relay.example.invalid/".parse().expect("relay url");
-        let sender_addr = EndpointAddr::new(sender_node.endpoint().id()).with_relay_url(relay_url);
-
-        let seeded = sender_node
-            .endpoint()
-            .connect(receiver_node.endpoint().addr(), iroh_gossip::ALPN)
-            .await
-            .expect("seed connection");
-        drop(seeded);
-
-        timeout(Duration::from_secs(5), async {
-            loop {
-                if receiver_node
-                    .endpoint()
-                    .remote_info(sender_node.endpoint().id())
-                    .await
-                    .is_some()
-                {
-                    return;
-                }
-                sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("receiver should learn sender remote info");
-
-        let candidates = receiver.connect_candidates(&sender_addr).await;
-        assert!(!candidates.is_empty());
-        assert_ne!(candidates[0], sender_addr);
-        assert!(candidates[0].relay_urls().next().is_none());
-        assert_eq!(candidates.last(), Some(&sender_addr));
-
-        receiver.shutdown().await;
-        let _ = sender_node.shutdown().await;
-        let _ = receiver_node.shutdown().await;
-    }
+    
+    
+    
 
     // リトライ状態のテストは共通実装側(kukuri-transport::peers)へ移動した(WP-H2)。
 

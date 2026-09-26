@@ -257,9 +257,6 @@ pub trait DocsSync: Send + Sync {
     async fn learn_peer(&self, _endpoint_id: &str) -> Result<()> {
         Ok(())
     }
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.open_replica(replica_id).await
-    }
     async fn set_seed_peers(&self, _peers: Vec<SeedPeer>) -> Result<()> {
         Ok(())
     }

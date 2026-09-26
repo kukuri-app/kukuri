@@ -43,7 +43,8 @@ ownerは秘密鍵や投稿本文を持たず、capabilityの識別子と世代�
 
 ### 1.1 購読するscopeのlease（R2-C、2026-09-26）
 
-clientの購読task・gossip hint購読・docs replicaの購読（`open_replica`と通知の購読）は、leaseを持つkeyだけに置く。
+clientの購読task・gossip hint購読は、leaseを持つkeyだけに置く。R5-H（2026-09-26）からtaskはdocsのreplicaを
+開かず購読もしない（下記「受信」）。
 keyは`Topic(topic)`・`Channel(topic, channel)`・`Author(pubkey)`で、accountあたり同時に最大64件（§2の意味上の同期対象64）。
 holderは次の4種類だけで、同じkeyを複数のholderが持っても枠は1つ。
 
@@ -58,10 +59,14 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   列の追加は取り消して画面で説明し、live参加・Dome hosting・private channel参加は状態を保存せずに拒否する。
   起動時の復元（参加中channelとdesired）は上限を超えた分を購読せずwarnを記録し、起動は続ける。
   列はfrontendが登録し直すことで復元する。
-- 最後のholderが外れたら、taskをabortし、hint topicを抜け、replicaを`close_replica`で閉じる（旧syncの要求を残さない）。
-  private channelのepochが変わった時は、taskを現epochへ作り直し、直前のepochのreplicaを1つだけ開いたまま残す
-  （参加者はそこに書かれたhandoffのgrantを同期で受け取る）。それより前（2世代前）のreplicaは閉じる。
-  1つのchannelで開くreplicaは現在と直前の2つまで（§2の「現在/直前の2bucket」）。最後のholderが外れたら両方を閉じる。
+- 最後のholderが外れたら、taskをabortし、hint topicを抜ける。private channelのepochが変わった時は、taskを現epochへ
+  作り直す（hint topicは同じなので抜けない）。R2-Cで直前のepochのreplicaを開いたままにしていた保持は、handoffのgrantを
+  旧syncで受けるためのものだったのでR5-Hで撤去した（grantの配送はaccount経路、R5-HのAC-5）。
+- 受信（R5-H）: taskはgossip hintが指す対象だけを手元→有界なprovider（R5-B/CのQUIC reader）の順にexactに読む。
+  投稿・返信はobject id、reactionは現在と直前のbucketの対象ごとの上限つき一覧、取り下げは元投稿の位置、live/gameは
+  idの時刻のbucket。leaseの開始・endpointの世代の変化（taskの作り直し）・日の境界（UTC）で、現在と直前のbucketと
+  旧形式の保存済みデータを1ページ（最大200行）だけ読み直し、続きを全件読みに行かない。照合の間隔の台帳はtaskごと。
+  authorのleaseは開始時と日の境界でR5-Cの制御領域・author bucketの有界な読みを行う。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
   一覧の行の著者ごとの購読と、起動時のfollow/block全員の購読は行わない。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
@@ -69,7 +74,9 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
   seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う）。
 - 購読していないtopicへのpublishは短期送信先としてtopicへ入り、16件を超えたら最も古い短期送信先から抜ける（gossip購読81の内訳）。
-- 通知: 購読中のscopeでは、docsの通知（object eventとauthorのfollow event）を従来どおり作る。画面外の通知は§4の受信入口が担う。
+- 通知: 購読中のscopeでは、taskの読み手が取り込んだremoteの投稿から通知を作る（R5-H。通知のidはenvelopeから
+  決まるので読み直しで重ならない）。followの通知は§4のaccount経路だけが作る（authorのdocs eventからの通知は旧syncと
+  一緒に撤去した）。画面外の通知は§4の受信入口が担う。
 - 公開topicのDome操作と入場の権限は購読の有無ではなく、そのtopicのgossipを止めていないことで判定する（R2-C以前の実効的な判定と同じ）。
   blockによるDome接続の解除は、leaseのあるtopicと参加中のchannelのcontextを対象にする。
 

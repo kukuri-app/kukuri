@@ -33,18 +33,6 @@ impl From<&ReplicaScope> for ReplicaScope {
 }
 
 impl AppService {
-    pub(crate) async fn should_restart_after_empty_result(&self, key: &str) -> bool {
-        !self
-            .empty_recovery_candidates
-            .lock()
-            .await
-            .insert(key.to_string())
-    }
-
-    pub(crate) async fn clear_empty_result_restart_marker(&self, key: &str) {
-        self.empty_recovery_candidates.lock().await.remove(key);
-    }
-
     pub(crate) async fn ingest_event(
         &self,
         replica: &ReplicaId,
@@ -73,13 +61,6 @@ impl AppService {
             envelope.clone(),
         )
         .await?;
-        if let Err(error) = self.services.docs_sync.restart_replica_sync(replica).await {
-            warn!(
-                replica_id = %replica.as_str(),
-                error = %error,
-                "failed to restart replica sync after local timeline write"
-            );
-        }
         ObjectProjectionStore::put_object_projection(
             self.services.projection_store.as_ref(),
             projection_row_from_post(&post, content),
@@ -266,33 +247,6 @@ impl AppService {
             }
         }
         Ok(None)
-    }
-
-    pub(crate) async fn scope_needs_current_private_epoch_hydration(
-        &self,
-        topic_id: &str,
-        scope: &TimelineScope,
-        page: &Page<ObjectProjectionRow>,
-    ) -> bool {
-        let TimelineScope::Channel { channel_id } = scope else {
-            return false;
-        };
-        let current_replica = {
-            let joined = self.joined_private_channels.lock().await;
-            let Some(state) =
-                joined.get(&joined_private_channel_key(topic_id, channel_id.as_str()))
-            else {
-                return false;
-            };
-            if state.archived_epochs.is_empty() {
-                return false;
-            }
-            current_private_channel_replica_id(state)
-        };
-        !page
-            .items
-            .iter()
-            .any(|item| item.source_replica_id == current_replica)
     }
 
     /// scope が指す 1 つの channel(#1280)。private channel は、参加状態の確認を通ったものだけを返す。
@@ -701,140 +655,5 @@ impl AppService {
             }
         }
         Ok(replicas)
-    }
-
-    pub(crate) async fn maybe_restart_scope_replica_sync(
-        &self,
-        topic_id: &str,
-        scope: impl Into<ReplicaScope>,
-    ) {
-        let scope = scope.into();
-        self.maybe_restart_replica_sync(topic_id, &topic_replica_id(topic_id))
-            .await;
-        match &scope {
-            ReplicaScope::Public => {}
-            ReplicaScope::AllJoined => {
-                for state in self.joined_private_channel_states_for_topic(topic_id).await {
-                    self.maybe_restart_private_channel_subscription(
-                        topic_id,
-                        state.channel_id.as_str(),
-                    )
-                    .await;
-                    for replica in
-                        private_channel_epoch_capabilities(&state)
-                            .into_iter()
-                            .map(|epoch| {
-                                private_channel_replica_for_epoch(
-                                    state.channel_id.as_str(),
-                                    epoch.epoch_id.as_str(),
-                                )
-                            })
-                    {
-                        self.maybe_restart_replica_sync(topic_id, &replica).await;
-                    }
-                }
-            }
-            ReplicaScope::Channel { channel_id } => {
-                if let Some(state) = self
-                    .joined_private_channel_state(topic_id, channel_id.as_str())
-                    .await
-                {
-                    self.maybe_restart_private_channel_subscription(topic_id, channel_id.as_str())
-                        .await;
-                    for replica in
-                        private_channel_epoch_capabilities(&state)
-                            .into_iter()
-                            .map(|epoch| {
-                                private_channel_replica_for_epoch(
-                                    state.channel_id.as_str(),
-                                    epoch.epoch_id.as_str(),
-                                )
-                            })
-                    {
-                        self.maybe_restart_replica_sync(topic_id, &replica).await;
-                    }
-                }
-            }
-        }
-    }
-
-    pub(crate) async fn maybe_restart_replica_sync(&self, topic_id: &str, replica: &ReplicaId) {
-        maybe_restart_replica_sync_with_cooldown(
-            self.services.docs_sync.as_ref(),
-            &self.subscription_registry.replica_sync_restart_deadlines,
-            topic_id,
-            replica,
-        )
-        .await;
-    }
-
-    pub(crate) async fn maybe_restart_private_channel_subscription(
-        &self,
-        topic_id: &str,
-        channel_id: &str,
-    ) {
-        let key = format!("private-channel:{topic_id}:{channel_id}");
-        let now = Utc::now().timestamp();
-        {
-            let mut deadlines = self
-                .subscription_registry
-                .replica_sync_restart_deadlines
-                .lock()
-                .await;
-            let next_due_at = deadlines.get(key.as_str()).copied().unwrap_or_default();
-            if next_due_at > now {
-                return;
-            }
-            deadlines.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
-        }
-        self.restart_scope_subscription(&ScopeKey::Channel(
-            topic_id.to_string(),
-            channel_id.to_string(),
-        ))
-        .await;
-    }
-
-    pub(crate) async fn maybe_restart_topic_subscription(&self, topic_id: &str) {
-        let key = format!("topic-subscription:{topic_id}");
-        let now = Utc::now().timestamp();
-        {
-            let mut deadlines = self
-                .subscription_registry
-                .replica_sync_restart_deadlines
-                .lock()
-                .await;
-            let next_due_at = deadlines.get(key.as_str()).copied().unwrap_or_default();
-            if next_due_at > now {
-                return;
-            }
-            deadlines.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
-        }
-        self.restart_scope_subscription(&ScopeKey::Topic(topic_id.to_string()))
-            .await;
-    }
-
-    pub(crate) async fn maybe_restart_scope_subscription(
-        &self,
-        topic_id: &str,
-        scope: impl Into<ReplicaScope>,
-    ) {
-        let scope = scope.into();
-        self.maybe_restart_topic_subscription(topic_id).await;
-        match &scope {
-            ReplicaScope::Public => {}
-            ReplicaScope::AllJoined => {
-                for state in self.joined_private_channel_states_for_topic(topic_id).await {
-                    self.maybe_restart_private_channel_subscription(
-                        topic_id,
-                        state.channel_id.as_str(),
-                    )
-                    .await;
-                }
-            }
-            ReplicaScope::Channel { channel_id } => {
-                self.maybe_restart_private_channel_subscription(topic_id, channel_id.as_str())
-                    .await;
-            }
-        }
     }
 }

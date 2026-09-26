@@ -144,6 +144,7 @@ impl ScopeLeases {
             .is_some_and(|keys| keys.contains(key))
     }
 
+    #[cfg(test)]
     pub(crate) fn has_running_task(&self, key: &ScopeKey) -> bool {
         self.leases
             .get(key)
@@ -363,6 +364,7 @@ impl AppService {
             .await;
     }
 
+    #[cfg(test)]
     pub(crate) async fn has_topic_subscription(&self, topic_id: &str) -> bool {
         self.subscription_registry
             .scope_leases

@@ -188,7 +188,6 @@ reloadable_service! {
         async fn subscribe_replica_notices(replica_id: &ReplicaId) -> Result<ReplicaNoticeStream>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
-        async fn restart_replica_sync(replica_id: &ReplicaId) -> Result<()>;
         async fn set_seed_peers(peers: Vec<SeedPeer>) -> Result<()>;
         async fn assist_peer_ids() -> Result<Vec<String>>;
         async fn remote_readers(

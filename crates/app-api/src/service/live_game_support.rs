@@ -812,6 +812,18 @@ impl AppService {
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
+        Ok(self
+            .fetch_verified_live_session(topic_id, session_id)
+            .await?
+            .map(VerifiedLiveSession::into_parts))
+    }
+
+    /// 手元 → 有界な provider の順に読み、検証した版。projection より古い版は返さない。
+    pub(crate) async fn fetch_verified_live_session(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<VerifiedLiveSession>> {
         let projected = self
             .services
             .projection_store
@@ -867,7 +879,7 @@ impl AppService {
                 {
                     continue;
                 }
-                return Ok(Some(verified.into_parts()));
+                return Ok(Some(verified));
             }
             if tokio::time::Instant::now() >= deadline {
                 break;
@@ -882,6 +894,17 @@ impl AppService {
         topic_id: &str,
         room_id: &str,
     ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
+        Ok(self
+            .fetch_verified_game_room(topic_id, room_id)
+            .await?
+            .map(VerifiedGameRoom::into_parts))
+    }
+
+    pub(crate) async fn fetch_verified_game_room(
+        &self,
+        topic_id: &str,
+        room_id: &str,
+    ) -> Result<Option<VerifiedGameRoom>> {
         let projected = self
             .services
             .projection_store
@@ -939,7 +962,7 @@ impl AppService {
                 {
                     continue;
                 }
-                return Ok(Some(verified.into_parts()));
+                return Ok(Some(verified));
             }
             if tokio::time::Instant::now() >= deadline {
                 break;

@@ -21,10 +21,9 @@ pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
 }
 
 impl AppService {
-    /// task の中で使う読み手。通知を作る印を付けた `ServiceHandles` を使う(参加状態は同じ Arc)。
+    /// task の中で使う読み手。`ServiceHandles` を共有する(参加状態・通知の Notify は同じ Arc)。
     fn scope_reader(&self) -> AppService {
         let mut services = self.services.clone();
-        services.notify_remote_posts = Some(Arc::clone(&self.notification_inserted_notify));
         // 読み直しは lease の開始・再接続(task の作り直し)と日の境界だけ。表示の照合の間隔の台帳を共有すると、
         // 直前に表示が照合した範囲を読み飛ばすので、task ごとの台帳にする。
         services.range_checks = Arc::default();
@@ -71,10 +70,14 @@ impl AppService {
                             continue;
                         }
                         let now = Utc::now().timestamp_millis();
-                        if !event.source_peer.is_empty()
-                            && let Err(error) = reader.services.blob_service.learn_peer(&event.source_peer).await
-                        {
-                            warn!(%error, "failed to learn blob peer from hint event");
+                        // hint の送り手を reader・blob の候補台帳へ入れる(hint の exact 読取りの provider になる)。
+                        if !event.source_peer.is_empty() {
+                            if let Err(error) = reader.services.docs_sync.learn_peer(&event.source_peer).await {
+                                warn!(%error, "failed to learn docs peer from hint event");
+                            }
+                            if let Err(error) = reader.services.blob_service.learn_peer(&event.source_peer).await {
+                                warn!(%error, "failed to learn blob peer from hint event");
+                            }
                         }
                         match &event.hint {
                             GossipHint::MetaverseRoomEvent { event: envelope, .. } => {
@@ -216,15 +219,33 @@ impl AppService {
                 object_kind,
                 ..
             } => {
+                // 操作と同じ lock の下で読み、projection より新しい版だけを一覧へ反映する。
+                let projection_store = &self.services.projection_store;
                 let read = match object_kind.as_str() {
-                    "live-session" => self
-                        .fetch_live_session_state_and_manifest(topic_id, session_id)
-                        .await
-                        .map(|found| found.is_some()),
-                    "game-session" => self
-                        .fetch_game_room_state_and_manifest(topic_id, session_id)
-                        .await
-                        .map(|found| found.is_some()),
+                    "live-session" => {
+                        let _lock = self
+                            .services
+                            .live_session_projections
+                            .lock(session_id)
+                            .await;
+                        match self.fetch_verified_live_session(topic_id, session_id).await {
+                            Ok(Some(verified)) => projection_store
+                                .upsert_live_session_cache(live_projection_row(&verified))
+                                .await
+                                .map(|()| true),
+                            other => other.map(|_| false),
+                        }
+                    }
+                    "game-session" => {
+                        let _lock = self.services.game_room_projections.lock(session_id).await;
+                        match self.fetch_verified_game_room(topic_id, session_id).await {
+                            Ok(Some(verified)) => projection_store
+                                .upsert_game_room_cache(game_projection_row(&verified))
+                                .await
+                                .map(|()| true),
+                            other => other.map(|_| false),
+                        }
+                    }
                     _ => Ok(false),
                 };
                 return read

@@ -493,9 +493,6 @@ impl AppService {
                 "failed to publish withdrawal hint; durable docs state was already persisted"
             );
         }
-        if target_content.channel_id.is_none() {
-            self.maybe_restart_replica_sync(topic_id, &replica).await;
-        }
         Ok(envelope.id.0)
     }
 
@@ -741,8 +738,6 @@ impl AppService {
             );
         }
         if effective_channel_id.is_none() {
-            self.maybe_restart_replica_sync(topic_id, &topic_replica_id(topic_id))
-                .await;
             match self.get_sync_status().await {
                 Ok(status) => {
                     if let Some(topic_status) = status
@@ -802,8 +797,6 @@ impl AppService {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<TimelineView> {
-        let had_topic_subscription = self.has_topic_subscription(topic_id).await;
-        let empty_recovery_key = scope_empty_recovery_key(topic_id, &scope);
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let mut page = filtered_timeline_page(
             self.services.projection_store.as_ref(),
@@ -814,16 +807,6 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: 本文が欠けた行は復旧の理由にしない。欠損は行単位の取り直しへ渡す。
-        let needs_epoch_hydration = self
-            .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
-            .await;
-        let restart_after_empty = had_topic_subscription
-            && page.items.is_empty()
-            && page.next_cursor.is_none()
-            && self
-                .should_restart_after_empty_result(empty_recovery_key.as_str())
-                .await;
         // The visible page (including its first page) checks only its bounded
         // index range; this also sees new buckets before local sync exists.
         let unavailable;
@@ -849,20 +832,8 @@ impl AppService {
             }
             unavailable = reconcile.unavailable;
             continue_past_unavailable(&mut page, &reconcile, PageOrder::NewestFirst, None);
-            if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
-                if had_topic_subscription {
-                    self.maybe_restart_scope_subscription(topic_id, &scope)
-                        .await;
-                }
-                self.maybe_restart_scope_replica_sync(topic_id, &scope)
-                    .await;
-            }
         }
         Box::pin(self.recover_missing_bodies(&mut page.items)).await;
-        if !page.items.is_empty() {
-            self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
-                .await;
-        }
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
@@ -880,8 +851,6 @@ impl AppService {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<TimelineView> {
-        let had_topic_subscription = self.has_topic_subscription(topic_id).await;
-        let empty_recovery_key = thread_empty_recovery_key(topic_id, thread_id);
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let thread_root = EnvelopeId::from(thread_id);
         let mut page = filtered_thread_page(
@@ -894,13 +863,6 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は復旧の理由にしない。
-        let restart_after_empty = had_topic_subscription
-            && page.items.is_empty()
-            && page.next_cursor.is_none()
-            && self
-                .should_restart_after_empty_result(empty_recovery_key.as_str())
-                .await;
         // #1239: replica を走査しない。このページの範囲を thread の索引と照合して、欠けている object だけを
         // key 指定で反映する(範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても
         // 照合する。
@@ -934,20 +896,8 @@ impl AppService {
                 )
                 .await?;
             }
-            if page.items.is_empty() && restart_after_empty {
-                if had_topic_subscription {
-                    self.maybe_restart_scope_subscription(topic_id, &ReplicaScope::AllJoined)
-                        .await;
-                }
-                self.maybe_restart_scope_replica_sync(topic_id, &ReplicaScope::AllJoined)
-                    .await;
-            }
         }
         Box::pin(self.recover_missing_bodies(&mut page.items)).await;
-        if !page.items.is_empty() {
-            self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
-                .await;
-        }
         continue_past_unavailable(
             &mut page,
             &reconcile,
@@ -963,19 +913,6 @@ impl AppService {
         }
         Ok(view)
     }
-}
-
-fn scope_empty_recovery_key(topic_id: &str, scope: &TimelineScope) -> String {
-    match scope {
-        TimelineScope::Public => format!("empty-scope:{topic_id}:public"),
-        TimelineScope::Channel { channel_id } => {
-            format!("empty-scope:{topic_id}:channel:{}", channel_id.as_str())
-        }
-    }
-}
-
-fn thread_empty_recovery_key(topic_id: &str, thread_id: &str) -> String {
-    format!("empty-thread:{topic_id}:{thread_id}")
 }
 
 /// ページの並び(続きの位置の向き)。

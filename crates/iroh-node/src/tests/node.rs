@@ -6,40 +6,6 @@ use tempfile::tempdir;
 use crate::IrohDocsNode;
 
 #[tokio::test]
-async fn production_docs_api_and_explicit_sync_share_one_persistent_store() {
-    let dir = tempdir().expect("tempdir");
-    let secret = iroh_docs::NamespaceSecret::from_bytes(&[42; 32]);
-    let namespace = secret.id();
-    let node = IrohDocsNode::persistent(dir.path()).await.expect("node");
-    let doc = node
-        .docs()
-        .import_namespace(iroh_docs::Capability::Write(secret))
-        .await
-        .expect("import through production API");
-    assert!(node.docs_sync_handle().get_state(namespace).await.is_ok());
-    doc.close().await.expect("close doc");
-    node.shutdown().await.expect("shutdown");
-
-    let reopened = IrohDocsNode::persistent(dir.path()).await.expect("reopen");
-    assert!(
-        reopened
-            .docs()
-            .open(namespace)
-            .await
-            .expect("open")
-            .is_some()
-    );
-    assert!(
-        reopened
-            .docs_sync_handle()
-            .get_state(namespace)
-            .await
-            .is_ok()
-    );
-    reopened.shutdown().await.expect("shutdown reopened");
-}
-
-#[tokio::test]
 async fn runtime_reopen_requires_existing_data_without_initializing_a_profile() {
     let dir = tempdir().expect("tempdir");
     let result = IrohDocsNode::reopen_with_discovery_config(

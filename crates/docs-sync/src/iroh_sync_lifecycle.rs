@@ -67,7 +67,6 @@ async fn close_replica_under_guard(
         secrets.lock().await.remove(&id);
     }
     if let Some(mut handle) = replicas.remove(&id) {
-        handle.sync_requested = false;
         handle.closing = true;
         if let Some(task) = handle.live_task.take() {
             task.abort();

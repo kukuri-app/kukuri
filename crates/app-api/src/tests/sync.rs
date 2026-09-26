@@ -174,14 +174,6 @@ impl DocsSync for CountingDocsSync {
         Ok(self.assist_peer_ids.clone())
     }
 
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.restarts
-            .lock()
-            .await
-            .push(replica_id.as_str().to_string());
-        Ok(())
-    }
-
     async fn remote_readers(
         &self,
         _replica: &ReplicaId,
@@ -349,6 +341,8 @@ mod author_docs_author;
 mod author_key_reflection;
 mod author_remote_reads;
 mod bucket_integrity;
+#[cfg(feature = "iroh-integration-tests")]
+mod bucket_receive_integration;
 mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;

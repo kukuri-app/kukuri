@@ -42,10 +42,6 @@ impl AppService {
             },
             |rows| rows.is_empty(),
             || async {
-                self.maybe_restart_scope_subscription(topic_id, &scope)
-                    .await;
-                self.maybe_restart_scope_replica_sync(topic_id, &scope)
-                    .await;
                 // #1239: replica を走査しない。session の固定件数だけを、key の一覧から反映する。
                 self.catch_up_scope_sessions(topic_id, &scope).await?;
                 self.services

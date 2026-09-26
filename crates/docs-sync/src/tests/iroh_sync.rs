@@ -81,7 +81,8 @@ async fn local_bucket_reads_stay_idle_after_seed_reapply_and_close_preserves_dat
     )
     .await?;
     let probe = node.docs().open(namespace).await?.unwrap();
-    assert!(probe.status().await?.sync, "explicit open must enable sync");
+    // R5-H: 旧 sync は撤去した。書込みで開いた namespace も同期を始めない(旧 replica の同期 I/O は 0)。
+    assert!(!probe.status().await?.sync, "writes must not start sync");
     probe.close().await?;
     docs.close_replica(&replica).await?;
     docs.close_replica(&replica).await?;

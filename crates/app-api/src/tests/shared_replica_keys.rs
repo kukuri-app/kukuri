@@ -75,10 +75,6 @@ impl DocsSync for KeyRecordingDocsSync {
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
         self.inner.import_peer_ticket(ticket).await
     }
-
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.restart_replica_sync(replica_id).await
-    }
 }
 
 #[tokio::test]

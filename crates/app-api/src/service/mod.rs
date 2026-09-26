@@ -89,7 +89,6 @@ pub(crate) use tokio::sync::Mutex;
 pub(crate) use tokio::task::JoinHandle;
 pub(crate) use tracing::{info, warn};
 
-pub(crate) const REPLICA_SYNC_RESTART_RETRY_SECONDS: i64 = 5;
 /// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。
 pub(crate) const EXISTING_REPOST_LOOKUP_LIMIT: usize = 64;
 pub(crate) const PUBLIC_CHANNEL_ID: &str = "public";
@@ -285,32 +284,6 @@ pub(crate) use object_persistence_support::custom_reaction_asset_view_from_snaps
 #[cfg(test)]
 pub(crate) use object_persistence_support::persist_post_withdrawal;
 
-pub(crate) async fn maybe_restart_replica_sync_with_cooldown(
-    docs_sync: &dyn DocsSync,
-    deadlines: &Arc<Mutex<HashMap<String, i64>>>,
-    topic_id: &str,
-    replica: &ReplicaId,
-) {
-    let key = replica.as_str().to_string();
-    let now = Utc::now().timestamp();
-    {
-        let mut guard = deadlines.lock().await;
-        let next_due_at = guard.get(key.as_str()).copied().unwrap_or_default();
-        if next_due_at > now {
-            return;
-        }
-        guard.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
-    }
-    if let Err(error) = docs_sync.restart_replica_sync(replica).await {
-        warn!(
-            topic = %topic_id,
-            replica = %replica.as_str(),
-            error = %error,
-            "failed to restart replica sync"
-        );
-    }
-}
-
 pub(crate) async fn query_replica_with_fetch_policy(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
@@ -396,7 +369,7 @@ pub struct ServiceHandles {
     pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
     /// #1221 R5-H: 新形式の writer へ切り替えた時刻。切替前は空。
     pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
-    /// lease の task の読み手だけが持つ。取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。
+    /// 取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。`AppService` の構築時に入る。
     pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
 }
 
@@ -527,7 +500,6 @@ pub struct AppService {
     pub(crate) metaverse_resource_budget: kukuri_core::MetaverseResourceBudgetConfig,
     pub(crate) last_sync_ts: Arc<Mutex<Option<i64>>>,
     pub(crate) public_topic_delivery: Arc<Mutex<HashMap<String, PublicTopicDeliveryStatus>>>,
-    pub(crate) empty_recovery_candidates: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_topics: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_channels: Arc<Mutex<HashSet<String>>>,
     pub(crate) private_channel_capability_persist:
@@ -638,10 +610,15 @@ impl AppService {
     }
 
     pub fn from_handles_with_metaverse_budget(
-        services: ServiceHandles,
+        mut services: ServiceHandles,
         budget: kukuri_core::MetaverseResourceBudgetConfig,
     ) -> Result<Self> {
         budget.validate()?;
+        // R5-H: 取り込んだ remote の投稿から通知を作る(表示の照合と hint のどちらが先に取り込んでも 1 回)。
+        let notification_inserted_notify = services
+            .notify_remote_posts
+            .get_or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone();
         let cache = MetaverseBlobCacheIndex::new(budget.client.cache_capacity_bytes)?;
         let last_sync_ts = services.session_projections.last_change.clone();
         let joined_private_channels = services.joined_private_channels.clone();
@@ -656,12 +633,11 @@ impl AppService {
             metaverse_resource_budget: budget,
             last_sync_ts,
             public_topic_delivery: Arc::new(Mutex::new(HashMap::new())),
-            empty_recovery_candidates: Arc::new(Mutex::new(HashSet::new())),
             gossip_disabled_topics: Arc::new(Mutex::new(HashSet::new())),
             gossip_disabled_channels: Arc::new(Mutex::new(HashSet::new())),
             private_channel_capability_persist: std::sync::OnceLock::new(),
             private_channel_capability_persist_guard: Arc::new(Mutex::new(())),
-            notification_inserted_notify: Arc::new(tokio::sync::Notify::new()),
+            notification_inserted_notify,
             adult_content_display_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             advisory_media_hashes: Arc::new(Mutex::new(HashSet::new())),
         })
