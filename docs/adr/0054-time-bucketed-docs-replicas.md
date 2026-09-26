@@ -70,9 +70,10 @@ iroh-docsの受信前filterと同一視しない。
   locatorは探索の手がかりであり権限の証明ではない。署名済みenvelopeとscopeを照合してから反映する。
 - objectの既存 `source_replica_id` は保持する。profileやrepostからtopic IDだけで旧replicaを再構成しない。
   旧refは既存ローカルprojection/保存envelopeから解決し、分からなければ取得不能として返す。全bucketを探さない。
-- timeline/profile/thread cursorはbucketとbucket内の既存cursor、方向、版を持つ。
+- timeline/profile/thread cursorは既存の`created_at`/`object_id` cursorをそのまま使う。bucketは署名した`created_at`から
+  1回だけ決まる（§1）ので、cursorの`created_at`から対象bucketが一意に決まり、bucketを別に持つ版つきcursorは作らない
+  （R5-H、2026-09-26判断。旧案「新writer後の版付きcursorはR5-Hで切り替える」は失効）。
   1回で読むbucketは最大4、各bucketの読みはADR 0052の既存上限内。空bucketにも同じ上限を適用し、続き位置を返す。
-  R5-Bの移行中は既存の`created_at`/`object_id` cursorから対象bucketを選ぶ。新writer後の版付きcursorはR5-Hで切り替える。
   空ページを履歴の終端と誤認しない。epochの一覧も全件展開せず、許可された範囲をcursorで進む。
 - 古いbucketの取得は明示的な遡り・対象参照・取り下げ照会に限り要求する。表示側は保存済みprojectionを先に返す。
   peer不在/期限切れは取得不能として表示し、taskのcancelや次ページ操作を妨げない。
@@ -201,9 +202,12 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
 - 定常: 旧namespaceの同期（`start_sync`・`reapply_sync_peers`・`restart_replica_sync`・`LocalThenRemote`の暗黙の
   同期開始）を撤去した。docsのnamespaceは手元の読み書きだけに開き、remoteは有界なQUIC readerで読む。受信はADR 0055 §1.1。
   旧版の端末が旧形式へ書いた新着は、hintを受けた対象の有界な読みで旧形式も読むが、全件の同期はしない。
-- 未実装（R5-Hの残り）: private channelの参加・退出recordとhandoff grantのaccount経路の配送（AC-5）、
-  timeline/profile/threadの版つきcursor（既存cursorの`created_at`からbucketが一意に決まる。判断を報告済み）、
-  Dome instanceの配置（idに時刻を持たないため、切替後も旧replicaへ書いている。判断を報告済み）。
+- 開いたnamespaceのhandleはADR 0055のdocs handle 128までに保ち、超えたら使用中でない最も古いものから閉じる。
+  提供側（`DocReadProtocol`）は読む間だけnamespaceを開くので、閉じたbucketも提供できる。
+- private channelの参加・退出recordとhandoff grantはaccount経路（ADR 0055 §4）で届け、ownerは参加者の表から
+  rotationの宛先と参加者数をページで読む（ADR 0055 §1.1）。
+- 未決（R5-H）: Dome instanceの配置。idに時刻を持たず（contextとownerから決まる）、切替後も旧topic/channel replicaへ
+  書いている。参照側がbucketを有界に引けないため、配置の判断を待つ。
 
 - CNの新旧readiness、clientの読取り、#1224の作業集合、保存/回収、対応する移行testの成立後にwriterを切り替える。
   本番での実施日とデプロイは本実装作業とは別に扱う。新形式のwriterを旧CNへ先行配布しない。

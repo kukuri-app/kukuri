@@ -67,6 +67,16 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   idの時刻のbucket。leaseの開始・endpointの世代の変化（taskの作り直し）・日の境界（UTC）で、現在と直前のbucketと
   旧形式の保存済みデータを1ページ（最大200行）だけ読み直し、続きを全件読みに行かない。照合の間隔の台帳はtaskごと。
   authorのleaseは開始時と日の境界でR5-Cの制御領域・author bucketの有界な読みを行う。
+  読み直しには、現在と直前のbucketと旧形式のsessionの索引（`sessions/{live,game}/<id>/state`）をproviderから種類ごとに
+  64件まで含め、hintと同じ読取りで反映する。表示したsession（`set_session_display`）は手元に無ければexactに読む。
+  remoteから読んだsessionのmanifestはproviderから取得する。
+- private channelの参加・退出recordはownerへ、回転のhandoff grantは各参加者へ、recordが属するepochの鍵で封じた
+  blobを§4の`EpochControl`のofferで届ける。DMと同じoutbox（`dm_outbox`。`dm_id`は`epoch-control:<epochの識別子>`）
+  に積み、DMのaccount再送ownerがACK（`DirectMessageAck`）まで送り直す。制御recordの宛先はmutualを求めない。
+  ownerは届いたrecordを参加者の表（channel・epoch・pubkeyが主キー、退出時刻と更新時刻。退出はchannelの全epochに及ぶ）
+  へ置き、rotationの宛先（いずれかのepochで参加中のpubkey）と参加者数（現epoch）をpubkeyの順に128件ずつ読む。
+  参加者は届いたgrantを手元の旧epochのreplicaへ置き、redeemは手元のgrantだけを読む（旧syncによるFrozenの
+  policyの受取りに依らない）。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
   一覧の行の著者ごとの購読と、起動時のfollow/block全員の購読は行わない。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
@@ -75,8 +85,9 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う）。
 - 購読していないtopicへのpublishは短期送信先としてtopicへ入り、16件を超えたら最も古い短期送信先から抜ける（gossip購読81の内訳）。
 - 通知: 購読中のscopeでは、taskの読み手が取り込んだremoteの投稿から通知を作る（R5-H。通知のidはenvelopeから
-  決まるので読み直しで重ならない）。followの通知は§4のaccount経路だけが作る（authorのdocs eventからの通知は旧syncと
-  一緒に撤去した）。画面外の通知は§4の受信入口が担う。
+  決まるので読み直しで重ならない）。followの通知は§4のaccount経路と、authorのleaseの読み直しが自分を指すActiveの
+  follow edgeを新しく保存したときに作る（同じ候補関数で、idはenvelopeから決まるので二重にならない）。
+  画面外の通知は§4の受信入口が担う。
 - 公開topicのDome操作と入場の権限は購読の有無ではなく、そのtopicのgossipを止めていないことで判定する（R2-C以前の実効的な判定と同じ）。
   blockによるDome接続の解除は、leaseのあるtopicと参加中のchannelのcontextを対象にする。
 
