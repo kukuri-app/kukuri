@@ -6,6 +6,16 @@ pub(crate) async fn wait_for_author_social_view(
     author_pubkey: &str,
     step_timeout: Duration,
 ) -> Result<()> {
+    // 相手の profile を開く(#1221 R2-C。author は profile/DM を表示している間だけ購読し、follow の edge もその購読で届く)。
+    runtime
+        .set_scope_display(kukuri_desktop_runtime::ScopeDisplayRequest {
+            observer: format!("harness-profile:{author_pubkey}"),
+            target: kukuri_desktop_runtime::ScopeDisplayTarget::Author {
+                pubkey: author_pubkey.to_string(),
+            },
+            visible: true,
+        })
+        .await?;
     match timeout(step_timeout, async {
         loop {
             if runtime
