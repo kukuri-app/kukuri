@@ -91,6 +91,19 @@ impl AppService {
             .session_projections
             .schedule(&self.services)
             .await;
+        drop(_access);
+        // #1221 R5-H: 表示した session は、手元に無ければ provider から exact に読む(旧 sync で届くのを待たない)。
+        let kind = if request.kind == "live" {
+            "live-session"
+        } else {
+            "game-session"
+        };
+        if let Err(error) = self
+            .read_session(&request.topic, &request.session_id, kind)
+            .await
+        {
+            tracing::warn!(%error, "failed to read the displayed session");
+        }
         Ok(())
     }
 }

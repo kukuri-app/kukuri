@@ -8,7 +8,10 @@
 use super::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
 use super::subscription_catch_up::REPLICA_WINDOW_ENTRIES;
 use super::*;
-use kukuri_docs_sync::BUCKET_SECONDS_V1;
+use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
+
+/// lease の読み直しで、replica ごとに種類ごとに読む session の索引の上限(判断 5)。
+const SESSION_REREAD_LIMIT: usize = 64;
 
 /// 次の日の境界(UTC、bucket の切れ目)までの時間。
 pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
@@ -183,13 +186,113 @@ impl AppService {
         })
     }
 
-    /// 現在と直前の bucket(と旧形式の保存済みデータ)を 1 ページだけ読み直す。
+    /// 現在と直前の bucket(と旧形式の保存済みデータ)を 1 ページだけ読み直す。live・game の session も含める。
     pub(crate) async fn reread_scope(&self, topic_id: &str, scope: &TimelineScope) {
         if let Err(error) = self
             .reconcile_timeline_range_checked(topic_id, scope, None, REPLICA_WINDOW_ENTRIES)
             .await
         {
             warn!(topic = %topic_id, %error, "failed to reread the current buckets");
+        }
+        if let Err(error) = self.reread_sessions(topic_id, scope).await {
+            warn!(topic = %topic_id, %error, "failed to reread the current sessions");
+        }
+    }
+
+    /// 現在と直前の bucket(と旧形式)の session の索引を、provider から種類ごとに `SESSION_REREAD_LIMIT` 件まで読み、
+    /// hint を受けたときと同じ読取りで反映する。途中から参加した端末も、既存の session を hint を待たずに表示できる。
+    async fn reread_sessions(&self, topic_id: &str, scope: &TimelineScope) -> Result<()> {
+        let channel = match scope {
+            TimelineScope::Public => None,
+            TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
+        };
+        let mut sessions = BTreeSet::new();
+        for (replica, epoch) in self
+            .remote_page_replicas(topic_id, scope, None, false, false)
+            .await?
+        {
+            let readers = self
+                .remote_post_readers(
+                    topic_id,
+                    channel,
+                    &replica,
+                    epoch
+                        .as_ref()
+                        .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                )
+                .await?;
+            for (prefix, kind) in [
+                ("sessions/live/", "live-session"),
+                ("sessions/game/", "game-session"),
+            ] {
+                for reader in &readers {
+                    let page = tokio::time::timeout(
+                        super::remote_read_support::REMOTE_READ_DEADLINE,
+                        reader.query_replica_keys(
+                            &replica,
+                            DocKeyQuery {
+                                prefix: prefix.to_string(),
+                                order: DocKeyOrder::Descending,
+                                limit: SESSION_REREAD_LIMIT,
+                            },
+                        ),
+                    )
+                    .await;
+                    let Ok(Ok(page)) = page else {
+                        continue;
+                    };
+                    sessions.extend(page.entries.iter().filter_map(|entry| {
+                        let id = entry.key.strip_prefix(prefix)?.strip_suffix("/state")?;
+                        (!id.is_empty() && !id.contains('/')).then(|| (id.to_string(), kind))
+                    }));
+                }
+            }
+        }
+        for (session_id, kind) in sessions {
+            if let Err(error) = self.read_session(topic_id, &session_id, kind).await {
+                warn!(%error, "failed to reread a session");
+            }
+        }
+        Ok(())
+    }
+
+    /// session 1 件を、操作と同じ lock の下で読み、projection より新しい版だけを一覧へ反映する。
+    pub(crate) async fn read_session(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+        object_kind: &str,
+    ) -> Result<bool> {
+        let projection_store = &self.services.projection_store;
+        match object_kind {
+            "live-session" => {
+                let _lock = self
+                    .services
+                    .live_session_projections
+                    .lock(session_id)
+                    .await;
+                match self
+                    .fetch_verified_live_session(topic_id, session_id)
+                    .await?
+                {
+                    Some(verified) => projection_store
+                        .upsert_live_session_cache(live_projection_row(&verified))
+                        .await
+                        .map(|()| true),
+                    None => Ok(false),
+                }
+            }
+            "game-session" => {
+                let _lock = self.services.game_room_projections.lock(session_id).await;
+                match self.fetch_verified_game_room(topic_id, session_id).await? {
+                    Some(verified) => projection_store
+                        .upsert_game_room_cache(game_projection_row(&verified))
+                        .await
+                        .map(|()| true),
+                    None => Ok(false),
+                }
+            }
+            _ => Ok(false),
         }
     }
 
@@ -219,36 +322,9 @@ impl AppService {
                 object_kind,
                 ..
             } => {
-                // 操作と同じ lock の下で読み、projection より新しい版だけを一覧へ反映する。
-                let projection_store = &self.services.projection_store;
-                let read = match object_kind.as_str() {
-                    "live-session" => {
-                        let _lock = self
-                            .services
-                            .live_session_projections
-                            .lock(session_id)
-                            .await;
-                        match self.fetch_verified_live_session(topic_id, session_id).await {
-                            Ok(Some(verified)) => projection_store
-                                .upsert_live_session_cache(live_projection_row(&verified))
-                                .await
-                                .map(|()| true),
-                            other => other.map(|_| false),
-                        }
-                    }
-                    "game-session" => {
-                        let _lock = self.services.game_room_projections.lock(session_id).await;
-                        match self.fetch_verified_game_room(topic_id, session_id).await {
-                            Ok(Some(verified)) => projection_store
-                                .upsert_game_room_cache(game_projection_row(&verified))
-                                .await
-                                .map(|()| true),
-                            other => other.map(|_| false),
-                        }
-                    }
-                    _ => Ok(false),
-                };
-                return read
+                return self
+                    .read_session(topic_id, session_id, object_kind)
+                    .await
                     .inspect_err(|error| warn!(%error, "failed to read a hinted session"))
                     .unwrap_or_default() as usize;
             }
