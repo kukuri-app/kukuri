@@ -482,6 +482,7 @@ impl AppService {
         channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
+        kind: &str,
     ) -> Result<Vec<RemotePostReplica>> {
         let (scope, anchor) = match source {
             Some((PUBLIC_CHANNEL_ID, _, updated_at)) => {
@@ -525,7 +526,105 @@ impl AppService {
             }
             candidates.truncate(4);
         }
+        // #1221 R5-H: 現在と直前の bucket の locator が指す replica(日が変わった更新・回転や切替で移した session の
+        // state)を先に読む。
+        for located in self
+            .session_locators(topic_id, &scope, kind, id)
+            .await?
+            .into_iter()
+            .rev()
+        {
+            candidates.retain(|(replica, _)| *replica != located.0);
+            candidates.insert(0, located);
+        }
         Ok(candidates)
+    }
+
+    /// 現在と直前の bucket(private は現 epoch)に置かれた、session の state の replica を指す locator。同じ scope の
+    /// bucket だけを受け取る。
+    async fn session_locators(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        kind: &str,
+        id: &str,
+    ) -> Result<Vec<RemotePostReplica>> {
+        let key = stable_key(&format!("sessions/{kind}"), &format!("{id}/locator"));
+        let channel = match scope {
+            TimelineScope::Public => None,
+            TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
+        };
+        let mut located: Vec<RemotePostReplica> = Vec::new();
+        for (bucket, epoch) in self
+            .remote_page_replicas(topic_id, scope, None, false, false)
+            .await?
+            .into_iter()
+            .filter(|(replica, _)| replica.as_str().starts_with("bucket::"))
+        {
+            let readers = async {
+                self.remote_post_readers(
+                    topic_id,
+                    channel,
+                    &bucket,
+                    epoch
+                        .as_ref()
+                        .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                )
+                .await
+                .unwrap_or_default()
+            };
+            // 公開の bucket は namespace を作らない手元の読取り、private は capability を持つ手元の docs。
+            let local: Arc<dyn DocsSync> = match channel {
+                None => Arc::new(LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: bucket.clone(),
+                }),
+                Some(_) => self.services.docs_sync.clone(),
+            };
+            let found = read_local_then_remote(local, readers, |docs, policy| {
+                let (bucket, key) = (bucket.clone(), key.clone());
+                async move {
+                    Ok(docs
+                        .query_replica_with_policy(&bucket, DocQuery::Exact(key), policy)
+                        .await?
+                        .into_iter()
+                        .next())
+                }
+            })
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, "session locator read failed");
+                None
+            });
+            let Some(target) = found
+                .and_then(|record| serde_json::from_slice::<String>(&record.value).ok())
+                .map(ReplicaId::new)
+            else {
+                continue;
+            };
+            let Ok(parsed) = BucketReplica::parse(&target) else {
+                continue;
+            };
+            let epoch = match (parsed.scope(), channel) {
+                (BucketScope::Topic { topic_id: topic }, None) if topic == topic_id => None,
+                (BucketScope::PrivateChannel { channel_id, .. }, Some(channel))
+                    if channel_id == channel =>
+                {
+                    match self
+                        .private_epoch_for_source(topic_id, channel, &target)
+                        .await?
+                    {
+                        Some(epoch) => Some(epoch),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+            if !located.iter().any(|(replica, _)| *replica == target) {
+                located.push((target, epoch));
+            }
+        }
+        Ok(located)
     }
 
     pub(super) async fn session_target_readers(
@@ -534,16 +633,17 @@ impl AppService {
         channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
+        kind: &str,
     ) -> Result<Vec<SessionTargetReader>> {
         let mut readers = Vec::new();
         let channel = source.map_or(channel, |(channel, _, _)| channel);
         for (replica, epoch) in self
-            .session_target_candidates(topic_id, channel, source, id)
+            .session_target_candidates(topic_id, channel, source, id, kind)
             .await?
         {
-            if replica == topic_replica_id(topic_id)
-                || (channel != PUBLIC_CHANNEL_ID && !replica.as_str().starts_with("bucket::"))
-            {
+            // private は旧 replica も bucket も、capability を持つ手元の docs から読む(自分が書いた session を、channel の
+            // 他の参加者がいなくても読める。#1221 R5-H)。
+            if replica == topic_replica_id(topic_id) || channel != PUBLIC_CHANNEL_ID {
                 readers.push((
                     replica.clone(),
                     self.services.docs_sync.clone(),

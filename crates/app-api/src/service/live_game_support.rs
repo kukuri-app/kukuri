@@ -450,6 +450,11 @@ impl AppService {
         manifest: LiveSessionManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedLiveSession> {
+        let target = self
+            .session_write_replica(topic_id, manifest.channel_id.as_ref(), replica, created_at)
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
         let now = Utc::now().timestamp_millis();
         let envelope = build_live_session_envelope(
             self.services.keys.as_ref(),
@@ -487,6 +492,11 @@ impl AppService {
             &self.services,
             replica,
             &envelope,
+            &stable_key(
+                "sessions/live",
+                &format!("{}/locator", verified.state().session_id),
+            ),
+            moved,
             now,
         )
         .await?;
@@ -503,14 +513,11 @@ impl AppService {
         manifest: GameRoomManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedGameRoom> {
-        // #1221 R5-H: Dome の session は anchor へ書く(切替後に旧 replica にある Dome は作成時刻の scope bucket へ)。
-        let replica = &match manifest.metaverse.as_ref() {
-            Some(metaverse) => {
-                self.dome_write_anchor(&metaverse.spatial_context, replica, created_at)
-                    .await?
-            }
-            None => replica.clone(),
-        };
+        let target = self
+            .session_write_replica(topic_id, manifest.channel_id.as_ref(), replica, created_at)
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
         let now = Utc::now().timestamp_millis();
         let envelope = build_game_session_envelope(
             self.services.keys.as_ref(),
@@ -546,6 +553,11 @@ impl AppService {
             &self.services,
             replica,
             &envelope,
+            &stable_key(
+                "sessions/game",
+                &format!("{}/locator", verified.state().room_id),
+            ),
+            moved,
             now,
         )
         .await?;
@@ -579,7 +591,7 @@ impl AppService {
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, channel, source, session_id)
+            .session_target_readers(topic_id, channel, source, session_id, "live")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {
@@ -649,7 +661,7 @@ impl AppService {
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, channel, source, room_id)
+            .session_target_readers(topic_id, channel, source, room_id, "game")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {

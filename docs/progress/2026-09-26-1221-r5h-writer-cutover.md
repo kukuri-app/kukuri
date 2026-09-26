@@ -49,7 +49,8 @@
 | 保護移行 kind `owner_participants` | `migrate_legacy_private_channel_participants` | owner の channel の現 epoch の旧 docs の参加 record を、pubkey の hex の接頭辞の窓(128 件まで。埋まれば 1 桁細かく)ずつ参加者の表へ移す。位置は保護移行の台帳 |
 | Dome の anchor | `dome_write_anchor`・`dome_anchors`・`dome_record_replica`・`read_dome_record` | session の state を置く作成時の scope bucket(private は作成時の現 epoch)。切替前の Dome は最初の書込みで作成時刻の bucket へ移す。行が無ければ、公開は制御領域の Instance の作成時刻、private は locator から |
 | Dome instance・hosting・layout・削除の記録 | `persist_dome_instance_manifest`・`persist_dome_hosting_records`・`persist_dome_layout_commit`・`save_dome_deletion` | 公開は owner の制御領域の instance id の key、private は anchor(hosting は最後の epoch の分を 1 key)。読取りは exact、無ければ旧 context replica の手元 |
-| Dome の session | `persist_game_room_manifest`(metaverse) | anchor に書く(旧 replica の Dome は作成時刻の bucket へ移す) |
+| session(live・game・Dome)の書込み先 | `session_write_replica`・`persist_session_envelope_and_locator` | 切替後は、公開は state の bucket(旧 replica の session は作成時刻の bucket へ移す)、private は現 epoch の state の bucket(旧 epoch の bucket・旧 replica の session は現 epoch のその日の bucket へ移す)。日が変わった更新と移したときは、その日の bucket に envelope と locator(`sessions/<kind>/<id>/locator`)を置く |
+| session の読取り | `session_target_candidates`(`session_locators`)・`reread_sessions` | 現在と直前の bucket の locator が指す replica を先に読む。読み直しは locator の key も拾う。private の bucket は capability を持つ手元の docs からも読む |
 | Dome の接続 | `service/dome_connection_store.rs` | 提案した Dome の anchor に書き、知っている Dome の anchor と旧 context replica を読む。切替後に旧 replica へ書こうとすると `dome_connection_legacy_guard` が拒む |
 | private の Dome の locator | `spawn_owner_dome_heartbeat_task`・`persist_dome_locator` | owner の端末の hosting が 1 日 1 回、channel の現 epoch のその日の bucket に anchor を置く |
 | Dome の一覧・接続の Instance | `append_context_domes`・`heartbeat_dome_owners`・`list_context_dome_instances` | 手元の行の owner・自分・heartbeat の host(context と合わせて instance id を導けるとき)・接続の端点の owner について exact に読む。replica を走査しない |
@@ -105,6 +106,12 @@
   mutation check: private の instance を制御領域へ置くと 2 件とも失敗、locator の読取りを外すと参加者の一覧の試験が
   失敗、接続の記録を旧 topic replica へ書くと旧 replica の試験が失敗、Dome の作成を旧 replica にして書込み先の移し替え
   も外すと接続の旧 replica の拒否(`dome_connection_legacy_guard`)で失敗。
+- 追加決定(回転後の session と切替前の live・game)の後: app-api(`iroh-integration-tests`)lib 499 件、desktop-runtime
+  lib 319 件、harness 23 件成功。`cargo xtask rust-check`・clippy・fmt・oversized-files 成功。試験は app-api
+  `session_rehome` の 3 件(切替前の live・game を切替後に更新しても旧 replica のキーが増えず読み手に届く、回転後の更新が
+  旧 epoch の bucket に書かれず新 epoch の参加者は読め外れた参加者は読めない、現在の bucket の locator が state の replica
+  へ導く)。mutation check: 旧 epoch の bucket を書込み先に残すと回転の試験、旧 replica の公開の session を移さないと切替前の
+  試験、locator の読取りを外すと locator の試験が失敗。
 
 以前の記録(引継ぎ前): docs-sync 66 件、iroh-node 47 件、transport 136 件、blob-service 12 件、core 145 件成功。
 cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の rendezvous の 3 件は Valkey が無いため時間切れ
@@ -153,14 +160,10 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   Dome を切替の前から一覧に出せない(private は切替前は旧 channel replica)。
 - 接続の記録は、提案した Dome を読み手が知っている(行・heartbeat・自分)ときだけ読める。接続の記録の読取りは手元だけ
   (旧 sync の撤去後の既存の挙動のまま。provider からは読まない)。
-- private の Dome の anchor は作成時の epoch の bucket なので、回転の後の更新も旧 epoch の bucket に書く(回転で外れた
-  参加者も、旧 epoch の capability で読める。live・game の session と同じ)。
 - private の Dome の locator は owner の端末の hosting だけが置く。CN の hosting・hosting していない Dome は、行が無い
   参加者には見つからない。
 - 切替前に作った Dome は、切替後の最初の書込みで作成時刻の bucket へ移す。移す前の行(旧 replica)を持つ訪問者は、
   移した後の更新を読むまで旧 replica の版を見る。
-- 切替前に作った live・game の session は、切替後の更新でも作成時の旧 replica へ書く(Dome 以外の session は今回の
-  範囲外。既存の挙動のまま)。
 - Existing-gap: Dome の移動の記録と Preset は、この PR より前から owner の公開の制御領域にある(private の context の
   Dome でも公開)。今回は直さない。
 - 他人の Dome の一覧は、一覧の表示の中で owner の制御領域を provider から読む(Preset と同じ。一覧の上限と 30 秒の

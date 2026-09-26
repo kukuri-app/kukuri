@@ -241,8 +241,12 @@ impl AppService {
                     let Ok(Ok(page)) = page else {
                         continue;
                     };
+                    // 日が変わった更新・移した session は、その日の bucket に locator がある(#1221 R5-H)。
                     sessions.extend(page.entries.iter().filter_map(|entry| {
-                        let id = entry.key.strip_prefix(prefix)?.strip_suffix("/state")?;
+                        let rest = entry.key.strip_prefix(prefix)?;
+                        let id = rest
+                            .strip_suffix("/state")
+                            .or_else(|| rest.strip_suffix("/locator"))?;
                         (!id.is_empty() && !id.contains('/')).then(|| (id.to_string(), kind))
                     }));
                 }

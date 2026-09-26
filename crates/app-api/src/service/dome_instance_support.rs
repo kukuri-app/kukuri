@@ -327,37 +327,9 @@ impl AppService {
         Ok(Some(manifest))
     }
 
-    /// Dome の session と private の Dome の記録を書く replica(anchor)。`source` は session の state を置いた replica。
-    /// 切替後に旧 replica にある Dome は、作成時刻の context の scope bucket(private は現 epoch)へ移す。
-    pub(crate) async fn dome_write_anchor(
-        &self,
-        context: &SpatialContextV1,
-        source: &ReplicaId,
-        created_at_ms: i64,
-    ) -> Result<ReplicaId> {
-        if !self.services.writes_buckets() || source.as_str().starts_with("bucket::") {
-            return Ok(source.clone());
-        }
-        let private = match context {
-            SpatialContextV1::Topic { .. } => None,
-            SpatialContextV1::Channel {
-                topic_id,
-                channel_id,
-            } => Some(
-                self.joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
-                    .await
-                    .context("private channel is not joined")?,
-            ),
-        };
-        self.services.scope_write_replica(
-            context.topic_id().as_str(),
-            private.as_ref(),
-            created_at_ms / 1_000,
-        )
-    }
-
-    /// 既にある Dome の anchor の候補(書く先を先に)。一覧の行の session の replica(切替後に旧 replica なら移し先を
-    /// 先に)。行が無ければ、公開は owner の制御領域の Instance の作成時刻、private は locator から。
+    /// 既にある Dome の anchor の候補(書く先を先に)。一覧の行の session の replica(切替後に旧 replica・回転の前の
+    /// epoch の bucket なら、移し先の `session_write_replica` を先に)。行が無ければ、公開は owner の制御領域の Instance
+    /// の作成時刻、private は locator から。
     pub(crate) async fn dome_anchors(
         &self,
         context: &SpatialContextV1,
@@ -375,7 +347,6 @@ impl AppService {
         match (row, context) {
             (Some(row), _) => {
                 if self.services.writes_buckets()
-                    && !row.source_replica_id.as_str().starts_with("bucket::")
                     && let Some(record) = self
                         .services
                         .docs_sync
@@ -393,11 +364,18 @@ impl AppService {
                     && let Ok(state) = serde_json::from_slice::<GameRoomStateDocV1>(&record.value)
                 {
                     anchors.push(
-                        self.dome_write_anchor(context, &row.source_replica_id, state.created_at)
-                            .await?,
+                        self.session_write_replica(
+                            topic,
+                            context.channel_id(),
+                            &row.source_replica_id,
+                            state.created_at,
+                        )
+                        .await?,
                     );
                 }
-                anchors.push(row.source_replica_id);
+                if !anchors.contains(&row.source_replica_id) {
+                    anchors.push(row.source_replica_id);
+                }
             }
             (None, SpatialContextV1::Topic { .. }) => {
                 let author = author_replica_id(owner.as_str());
@@ -413,8 +391,13 @@ impl AppService {
                     .await?;
                 if let Some((state, _)) = instance {
                     anchors.push(
-                        self.dome_write_anchor(context, &topic_replica_id(topic), state.created_at)
-                            .await?,
+                        self.session_write_replica(
+                            topic,
+                            None,
+                            &topic_replica_id(topic),
+                            state.created_at,
+                        )
+                        .await?,
                     );
                 }
             }
