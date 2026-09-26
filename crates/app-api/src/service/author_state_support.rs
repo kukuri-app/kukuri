@@ -6,12 +6,13 @@
 //! 限り同期・復旧はしない)。
 //!
 //! #1221 R5-C: 手元に無い現在値の key(profile と自分を指す follow・block、event の key)は、author 本人を含む
-//! 有界な provider から key 指定で読む。remote の読取りのために namespace を import・sync しない。他の相手を指す edge の
-//! 窓は手元だけを読む。
+//! 有界な provider から key 指定で読む。remote の読取りのために namespace を import・sync しない。
+//! R5-H(2026-09-27 ユーザー決定): 友達の友達の判定のため、他の相手を指す follow の窓(最大 `AUTHOR_EDGE_KEYS` key)も
+//! provider から読んで手元へ保存する。block の窓は手元だけを読む。
 
 use super::remote_read_support::{REMOTE_READ_DEADLINE, writer_readers};
 use super::*;
-use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
+use kukuri_docs_sync::{DocKeyOrder, DocKeyPage, DocKeyQuery};
 
 /// author replica の follow・block の edge を、購読の開始時に読む key の数の上限。
 ///
@@ -57,27 +58,39 @@ async fn author_state_keys(
         .into_iter()
         .collect::<BTreeSet<_>>();
     for prefix in ["graph/follows/", "graph/blocks/"] {
-        let query = DocKeyQuery {
-            prefix: prefix.to_string(),
-            order: DocKeyOrder::Ascending,
-            limit: AUTHOR_EDGE_KEYS,
-        };
-        // 著者の docs author が分かれば、その名義の key だけで窓を作る(他の名義の key で窓を埋められない)。
-        let page = match docs_author {
-            Some(docs_author) => {
-                docs_sync
-                    .query_replica_keys_by_author(replica, docs_author, query)
-                    .await?
-            }
-            None => docs_sync.query_replica_keys(replica, query).await?,
-        };
-        for entry in page.entries {
+        for entry in edge_key_window(docs_sync, replica, docs_author, prefix)
+            .await?
+            .entries
+        {
             if seen.insert(entry.key.clone()) {
                 keys.push(entry.key);
             }
         }
     }
     Ok(keys)
+}
+
+/// `prefix` の edge の key の窓(昇順で `AUTHOR_EDGE_KEYS` 件)。著者の docs author が分かれば、その名義の key だけで
+/// 窓を作る(他の名義の key で窓を埋められない)。手元と provider の窓で同じ選択順を使う(ADR 0054 §3)。
+async fn edge_key_window(
+    docs_sync: &dyn DocsSync,
+    replica: &ReplicaId,
+    docs_author: Option<&str>,
+    prefix: &str,
+) -> Result<DocKeyPage> {
+    let query = DocKeyQuery {
+        prefix: prefix.to_string(),
+        order: DocKeyOrder::Ascending,
+        limit: AUTHOR_EDGE_KEYS,
+    };
+    match docs_author {
+        Some(docs_author) => {
+            docs_sync
+                .query_replica_keys_by_author(replica, docs_author, query)
+                .await
+        }
+        None => docs_sync.query_replica_keys(replica, query).await,
+    }
 }
 
 fn self_edge_keys(local_author_pubkey: &str) -> [String; 2] {
@@ -144,13 +157,7 @@ impl<'a> AuthorKeyReader<'a> {
         if local.reflected > 0 || AuthorKeyKind::of(key).is_none() {
             return Ok(local);
         }
-        if self.remote.is_none() {
-            self.deadline = Some(tokio::time::Instant::now() + REMOTE_READ_DEADLINE);
-            self.remote = Some(
-                writer_readers(self.services, &self.replica, &[self.author_pubkey], None).await,
-            );
-        }
-        let deadline = self.deadline.unwrap_or_else(tokio::time::Instant::now);
+        let deadline = self.select_remote().await;
         for reader in self.remote.iter().flatten() {
             let mut services = self.services.clone();
             services.docs_sync = reader.clone();
@@ -176,6 +183,41 @@ impl<'a> AuthorKeyReader<'a> {
         }
         Ok(AuthorHydration::default())
     }
+
+    /// provider を最初に要るときに一度だけ選び、同じ操作の期限を返す。
+    async fn select_remote(&mut self) -> tokio::time::Instant {
+        if self.remote.is_none() {
+            self.deadline = Some(tokio::time::Instant::now() + REMOTE_READ_DEADLINE);
+            self.remote = Some(
+                writer_readers(self.services, &self.replica, &[self.author_pubkey], None).await,
+            );
+        }
+        self.deadline.unwrap_or_else(tokio::time::Instant::now)
+    }
+
+    /// provider の follow の窓の key(最初に答えた provider の 1 ページ)。remote を読まない回と、答えが無いときは空。
+    async fn remote_follow_keys(&mut self) -> Vec<String> {
+        let deadline = self.select_remote().await;
+        for reader in self.remote.iter().flatten() {
+            let page = tokio::time::timeout_at(
+                deadline,
+                edge_key_window(
+                    reader.as_ref(),
+                    &self.replica,
+                    self.docs_author.as_deref(),
+                    "graph/follows/",
+                ),
+            )
+            .await;
+            reader.finish_remote_object().await;
+            match page {
+                Ok(Ok(page)) => return page.entries.into_iter().map(|entry| entry.key).collect(),
+                Ok(Err(error)) => warn!(%error, "author follow window read from a provider failed"),
+                Err(_) => break,
+            }
+        }
+        Vec::new()
+    }
 }
 
 async fn hydrate_author_keys(
@@ -195,15 +237,20 @@ async fn hydrate_author_keys(
     for key in self_edge_keys(local_author_pubkey) {
         outcome.add(reader.read(&key).await?);
     }
-    // 他の相手を指す edge の窓は手元だけを読む。remote の全 edge の復元はしない(グラフの全件復元を要求しない)。
-    for key in author_state_keys(
+    // 他の相手を指す edge の窓は手元から読む。remote の全 edge の復元はしない(グラフの全件復元を要求しない)。
+    let local_keys = author_state_keys(
         services.docs_sync.as_ref(),
         &reader.replica,
         local_author_pubkey,
         reader.docs_author.as_deref(),
     )
-    .await?
-    {
+    .await?;
+    let mut seen = local_keys
+        .iter()
+        .cloned()
+        .chain(self_edge_keys(local_author_pubkey))
+        .collect::<BTreeSet<_>>();
+    for key in local_keys {
         outcome.add(
             hydrate_author_record(
                 services,
@@ -215,6 +262,13 @@ async fn hydrate_author_keys(
             )
             .await?,
         );
+    }
+    // R5-H: 友達の友達の判定のため、follow の窓は provider の窓(最大 `AUTHOR_EDGE_KEYS` key)も読み、手元に無い key を
+    // provider から反映する(2026-09-27 ユーザー決定)。
+    for key in reader.remote_follow_keys().await {
+        if seen.insert(key.clone()) {
+            outcome.add(reader.read(&key).await?);
+        }
     }
     Ok(outcome)
 }

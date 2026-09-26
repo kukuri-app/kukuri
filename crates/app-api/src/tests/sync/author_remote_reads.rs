@@ -2,6 +2,7 @@
 //! provider の履歴(edge・投稿)を 10 倍にしても、provider から読む量が変わらないことを固定する。
 
 use super::*;
+use crate::service::author_state_support::AUTHOR_EDGE_KEYS;
 use crate::service::profile_timeline_support::profile_timeline_page;
 use kukuri_core::DomeMovePhaseV1;
 
@@ -90,14 +91,17 @@ async fn put_profile_post(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_a
     object_id.as_str().to_string()
 }
 
-// 購読の開始時の反映は、手元に無い profile と自分を指す follow・block だけを provider から読む。
-// provider の follow の総数を 10 倍にしても読む量は同じで、他の相手を指す edge は remote から読まない。
+// 購読の開始時の反映は、手元に無い profile と自分を指す follow・block と、follow の窓(512 key)を provider から読む
+// (#1221 R5-H、友達の友達の判定)。provider の follow の総数を 10 倍にしても読む量は同じで、窓の外の edge は読まない。
 #[tokio::test]
-async fn author_state_reads_only_the_current_keys_from_a_provider() {
+async fn author_state_reads_the_current_keys_and_a_bounded_follow_window_from_a_provider() {
     let mut counts = Vec::new();
-    for edges in [60, 600] {
+    for edges in [600, 6000] {
         let author = generate_keys();
-        let local = generate_keys();
+        // 自分を指す edge の key が窓の外に並ぶ相手にして、窓の key の数を 2 回で揃える。
+        let local = std::iter::repeat_with(generate_keys)
+            .find(|keys| keys.public_key_hex().starts_with("ff"))
+            .expect("local keys");
         let provider = Arc::new(CountingDocsSync::default());
         put_profile(provider.as_ref(), &author).await;
         put_follow(provider.as_ref(), &author, local.public_key_hex().as_str()).await;
@@ -161,8 +165,8 @@ async fn author_state_reads_only_the_current_keys_from_a_provider() {
                 .await
                 .expect("edges")
                 .len(),
-            1,
-            "edges to other authors are not restored from the provider"
+            AUTHOR_EDGE_KEYS + 1,
+            "the follow window and the follow of me are restored, the rest is not"
         );
     }
     assert_eq!(counts[0], counts[1], "provider reads: {counts:?}");
