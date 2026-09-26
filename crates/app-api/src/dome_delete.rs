@@ -244,6 +244,7 @@ impl AppService {
                     topic_id: input.spatial_context.topic_id().clone(),
                     session_id: input.instance_id.clone(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;

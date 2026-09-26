@@ -157,8 +157,19 @@ fn gossip_hint_session_changed_snapshot() {
             topic_id: demo_topic(),
             session_id: "session-1".to_string(),
             object_kind: "live_session".to_string(),
+            sent_at: None,
         },
         r#"{"SessionChanged":{"topic_id":"kukuri:topic:demo","session_id":"session-1","object_kind":"live_session"}}"#,
+    );
+    // #1221 R5-H: 続く更新の hint を gossip が重複として落とさないよう、送った時刻を載せる。
+    assert_wire(
+        &GossipHint::SessionChanged {
+            topic_id: demo_topic(),
+            session_id: "session-1".to_string(),
+            object_kind: "live_session".to_string(),
+            sent_at: Some(7),
+        },
+        r#"{"SessionChanged":{"topic_id":"kukuri:topic:demo","session_id":"session-1","object_kind":"live_session","sent_at":7}}"#,
     );
 }
 

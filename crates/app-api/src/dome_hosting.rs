@@ -1061,6 +1061,7 @@ impl AppService {
                     topic_id: context.topic_id().clone(),
                     session_id: session_id.to_string(),
                     object_kind: format!("dome-hosting:{instance_id}"),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await

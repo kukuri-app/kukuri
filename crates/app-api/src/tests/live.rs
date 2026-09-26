@@ -531,3 +531,62 @@ async fn private_live_session_reaches_a_member_through_the_channel_hint() {
     .await
     .expect("the member reads the private live session");
 }
+
+#[cfg(feature = "iroh-integration-tests")]
+async fn live_status(app: &AppService, topic: &str, session_id: &str) -> Option<LiveSessionStatus> {
+    app.list_live_sessions(topic)
+        .await
+        .expect("live sessions")
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .map(|session| session.status)
+}
+
+/// #1221 R5-H: 同じ session の続く更新(作成の後の終了)の hint も届き、見ている端末が終了を反映する
+/// (gossip は同じ内容の message を重複として落とすので、hint に送った時刻を載せる)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn successive_session_hints_reach_the_viewer() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("successive-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("successive-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    let topic = "kukuri:topic:successive-session-hints";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic_in(&[&app_a, &app_b], topic).await;
+    wait_for_topic_delivery(&app_a, topic, 1).await;
+    wait_for_topic_delivery(&app_b, topic, 1).await;
+    let session_id = app_a
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "successive".into(),
+                description: "create then end".into(),
+            },
+        )
+        .await
+        .expect("create live session");
+    timeout(Duration::from_secs(20), async {
+        while live_status(&app_b, topic, &session_id).await != Some(LiveSessionStatus::Live) {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the viewer sees the live session");
+    app_a
+        .end_live_session(topic, &session_id)
+        .await
+        .expect("end live session");
+    timeout(Duration::from_secs(20), async {
+        while live_status(&app_b, topic, &session_id).await != Some(LiveSessionStatus::Ended) {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the viewer sees the end through the second hint");
+}

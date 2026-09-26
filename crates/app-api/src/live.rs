@@ -146,6 +146,7 @@ impl AppService {
                     topic_id: topic.clone(),
                     session_id: session_id.clone(),
                     object_kind: "live-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -203,6 +204,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: session_id.to_string(),
                     object_kind: "live-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;

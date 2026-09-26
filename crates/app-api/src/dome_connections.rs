@@ -934,6 +934,7 @@ impl AppService {
                     topic_id: context.topic_id().clone(),
                     session_id: connection_id.to_string(),
                     object_kind: "dome-topology".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await

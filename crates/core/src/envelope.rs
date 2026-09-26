@@ -47,6 +47,10 @@ pub enum GossipHint {
         topic_id: TopicId,
         session_id: String,
         object_kind: String,
+        /// 送った時刻(ミリ秒)。gossip は同じ内容の message を重複として落とすので、同じ session の続く更新の
+        /// hint を別の message にする(#1221 R5-H)。旧版は読まずに無視する。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sent_at: Option<i64>,
     },
     LivePresence {
         topic_id: TopicId,

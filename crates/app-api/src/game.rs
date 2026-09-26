@@ -230,6 +230,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.clone(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -369,6 +370,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.clone(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -436,6 +438,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.to_string(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -544,6 +547,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.to_string(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
