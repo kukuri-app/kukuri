@@ -63,7 +63,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
         11,
     ),
     ("community_node/trust_relation.rs", "CommunityNodeServer", 5),
-    ("device_backup.rs", "IdentityStorage", 7),
+    ("device_backup.rs", "IdentityStorage", 8),
     ("device_backup/recovery.rs", "IdentityStorage", 13),
     ("identity_restart.rs", "IdentityStorage", 2),
     ("media_blob_restore.rs", "IrohNetwork", 11),
@@ -71,6 +71,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("private_channels/friend_plus.rs", "IrohNetwork", 1),
     ("private_channels/invite.rs", "IrohNetwork", 3),
     ("private_channels/persistence.rs", "IrohNetwork", 2),
+    ("protected_migration.rs", "IdentityStorage", 3),
     ("receive_binding.rs", "IdentityStorage", 1),
     ("runtime_events.rs", "CommunityNodeServer", 2),
     ("runtime_events.rs", "IdentityStorage", 2),
@@ -140,7 +141,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 173,
+        total, 177,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -149,6 +150,6 @@ fn lock_acquisitions_match_declared_classification() {
          transition rerun で index_query 試験を 3 件、tester feedback・trust relation 試験を各 1 件追加、
          #921 で Dome transfer contract の CommunityNodeServer 取得を 5 件追加、\
          #975 で indexing_status 試験の CommunityNodeServer 取得を 4 件追加、\
-         #1005 で account_logout 試験の IdentityStorage 取得を 2 件追加、         #1055 で index_query の content advisory 試験の CommunityNodeServer 取得を 4 件追加、\n         #1056 で content advisory 試験を 2 件、一括照会試験を 7 件追加、\n         #1061 で観測提供試験を 11 件、表示判断試験を 8 件追加、\n         #1221 で受信bindingの実account起動試験に IdentityStorage 取得を 1 件、通知event taskのshutdown/drop試験に各 1 件、N70のCN候補二端末試験に CommunityNodeServer 取得を 1 件追加)"
+         #1005 で account_logout 試験の IdentityStorage 取得を 2 件追加、         #1055 で index_query の content advisory 試験の CommunityNodeServer 取得を 4 件追加、\n         #1056 で content advisory 試験を 2 件、一括照会試験を 7 件追加、\n         #1061 で観測提供試験を 11 件、表示判断試験を 8 件追加、\n         #1221 で受信bindingの実account起動試験に IdentityStorage 取得を 1 件、通知event taskのshutdown/drop試験に各 1 件、N70のCN候補二端末試験に CommunityNodeServer 取得を 1 件追加、         #1221 R5-G で未完了の移行の backup 拒否試験と保護データの移行・復元試験に IdentityStorage 取得を各 1 件、追いついた後の pin と依存 record を待つ本人 envelope の試験に各 1 件追加)"
     );
 }

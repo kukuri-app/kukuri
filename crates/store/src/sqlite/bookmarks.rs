@@ -2,7 +2,7 @@ use super::*;
 use crate::BookmarkCursor;
 use kukuri_core::PayloadRef;
 
-fn bookmark_cache_refs(row: &BookmarkedPostRow) -> Vec<(String, String)> {
+pub(super) fn bookmark_cache_refs(row: &BookmarkedPostRow) -> Vec<(String, String)> {
     let mut refs = Vec::new();
     if let PayloadRef::BlobText { hash, .. } = &row.payload_ref {
         refs.push(("blob".to_string(), hash.as_str().to_string()));
@@ -225,8 +225,10 @@ impl ReactionBookmarkStore for SqliteStore {
             SELECT asset_id, owner_pubkey, blob_hash, search_key, mime, bytes, width, height, bookmarked_at
             FROM bookmarked_custom_reactions
             ORDER BY bookmarked_at DESC, asset_id DESC
+            LIMIT ?1
             "#,
         )
+        .bind(i64::try_from(crate::traits::BOOKMARKED_CUSTOM_REACTION_LIMIT)?)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
@@ -235,30 +237,21 @@ impl ReactionBookmarkStore for SqliteStore {
     }
 
     async fn remove_bookmarked_custom_reaction(&self, asset_id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            DELETE FROM bookmarked_custom_reactions
-            WHERE asset_id = ?1
-            "#,
-        )
-        .bind(asset_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        let mut update = self.begin_protected_ref_update().await?;
+        sqlx::query("DELETE FROM bookmarked_custom_reactions WHERE asset_id = ?1")
+            .bind(asset_id)
+            .execute(&mut *update.tx)
+            .await?;
+        // #1221 R5-G: 移行で付けた asset の保護を、bookmark を外すときに外す。
+        self.set_refs_in(&mut update, &format!("reaction_bookmark:{asset_id}"), &[])
+            .await?;
+        self.commit_protected_ref_update(update).await
     }
 
     async fn put_bookmarked_post(&self, row: BookmarkedPostRow) -> Result<()> {
         let reference = format!("bookmark:{}", row.source_object_id.as_str());
         let refs = bookmark_cache_refs(&row);
-        let _cache_gate = self.remote_cache_gate.lock().await;
-        let budget =
-            super::remote_cache::REMOTE_CACHE_CAPACITY_BYTES.saturating_sub(i64::try_from(
-                self.remote_cache_reserved
-                    .load(std::sync::atomic::Ordering::Acquire),
-            )?);
-        let mut tx = self.pool.begin().await?;
-        let mut label_evictions = Vec::new();
-        let mut removed_files = Vec::new();
+        let mut update = self.begin_protected_ref_update().await?;
         sqlx::query(
             r#"
             INSERT INTO bookmarked_posts (
@@ -316,21 +309,10 @@ impl ReactionBookmarkStore for SqliteStore {
                 .transpose()?,
         )
         .bind(row.bookmarked_at)
-        .execute(&mut *tx)
+        .execute(&mut *update.tx)
         .await?;
-        self.replace_remote_protected_refs(
-            &mut tx,
-            &reference,
-            &refs,
-            budget,
-            &mut label_evictions,
-            &mut removed_files,
-        )
-        .await?;
-        tx.commit().await?;
-        self.publish_adult_label_evictions(label_evictions);
-        self.remove_remote_blob_files(removed_files).await?;
-        Ok(())
+        self.set_refs_in(&mut update, &reference, &refs).await?;
+        self.commit_protected_ref_update(update).await
     }
 
     async fn list_bookmarked_posts_page(
@@ -391,36 +373,17 @@ impl ReactionBookmarkStore for SqliteStore {
     }
 
     async fn remove_bookmarked_post(&self, source_object_id: &EnvelopeId) -> Result<()> {
-        let _cache_gate = self.remote_cache_gate.lock().await;
-        let budget =
-            super::remote_cache::REMOTE_CACHE_CAPACITY_BYTES.saturating_sub(i64::try_from(
-                self.remote_cache_reserved
-                    .load(std::sync::atomic::Ordering::Acquire),
-            )?);
-        let mut tx = self.pool.begin().await?;
-        let mut label_evictions = Vec::new();
-        let mut removed_files = Vec::new();
-        sqlx::query(
-            r#"
-            DELETE FROM bookmarked_posts
-            WHERE source_object_id = ?1
-            "#,
-        )
-        .bind(source_object_id.as_str())
-        .execute(&mut *tx)
-        .await?;
-        self.replace_remote_protected_refs(
-            &mut tx,
+        let mut update = self.begin_protected_ref_update().await?;
+        sqlx::query("DELETE FROM bookmarked_posts WHERE source_object_id = ?1")
+            .bind(source_object_id.as_str())
+            .execute(&mut *update.tx)
+            .await?;
+        self.set_refs_in(
+            &mut update,
             &format!("bookmark:{}", source_object_id.as_str()),
             &[],
-            budget,
-            &mut label_evictions,
-            &mut removed_files,
         )
         .await?;
-        tx.commit().await?;
-        self.publish_adult_label_evictions(label_evictions);
-        self.remove_remote_blob_files(removed_files).await?;
-        Ok(())
+        self.commit_protected_ref_update(update).await
     }
 }

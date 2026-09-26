@@ -217,3 +217,67 @@ async fn measure_exact_query_cost() -> Result<()> {
     node.shutdown().await?;
     Ok(())
 }
+
+// #1221 R5-G: 旧領域から保護所有先へ移した private の record は、旧領域が無くても key 指定の読み出しで読める。
+// capability を外した後は読めない。
+#[tokio::test]
+async fn private_exact_reads_include_moved_records_only_with_the_capability() {
+    let node = IrohDocsNode::memory().await.expect("docs node");
+    let store = std::sync::Arc::new(
+        kukuri_store::SqliteStore::connect_memory()
+            .await
+            .expect("store"),
+    );
+    let docs = IrohDocsSync::with_account_store(node.clone(), store.clone());
+    let replica = crate::private_channel_epoch_replica_id("channel", "epoch");
+    let key = "channels/metadata";
+    let value = br#"{"moved":true}"#.to_vec();
+    let record = kukuri_iroh_node::DocReadRecord {
+        key: key.into(),
+        value: value.clone(),
+        content_hash: blake3::hash(&value).to_hex().to_string(),
+        content_len: value.len() as u64,
+        docs_author: "owner-author".into(),
+    };
+    store
+        .put_remote_record(
+            replica.as_str(),
+            key,
+            "owner-author",
+            &serde_json::to_vec(&record).expect("record"),
+        )
+        .await
+        .expect("cache record");
+    docs.register_private_replica_secret(&replica, &hex::encode([7u8; 32]))
+        .await
+        .expect("capability");
+    let exact = docs
+        .query_replica_with_policy(
+            &replica,
+            DocQuery::Exact(key.into()),
+            crate::DocFetchPolicy::LocalOnly,
+        )
+        .await
+        .expect("exact read");
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].value, value);
+    let bounded = docs
+        .query_replica_exact_bounded(&replica, key, 8, crate::DocFetchPolicy::LocalOnly)
+        .await
+        .expect("bounded read");
+    assert_eq!(bounded.len(), 1);
+    docs.remove_private_replica_secret(&replica)
+        .await
+        .expect("remove capability");
+    assert!(
+        docs.query_replica_with_policy(
+            &replica,
+            DocQuery::Exact(key.into()),
+            crate::DocFetchPolicy::LocalOnly,
+        )
+        .await
+        .is_err()
+    );
+    docs.shutdown().await;
+    node.shutdown().await.expect("shutdown");
+}

@@ -137,6 +137,7 @@ impl ReactionBookmarkStore for MemoryStore {
                 .cmp(&left.bookmarked_at)
                 .then_with(|| right.asset_id.cmp(&left.asset_id))
         });
+        items.truncate(crate::traits::BOOKMARKED_CUSTOM_REACTION_LIMIT);
         Ok(items)
     }
 

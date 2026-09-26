@@ -143,22 +143,6 @@ impl AppService {
         Ok(envelope.id.0)
     }
 
-    /// Explicit CLI/export listing; desktop display uses the fixed-size page below.
-    pub async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostView>> {
-        let mut items = Vec::new();
-        let mut cursor = None;
-        loop {
-            let page = self
-                .list_bookmarked_posts_page(cursor.as_ref(), false)
-                .await?;
-            items.extend(page.items);
-            cursor = page.older_cursor;
-            if cursor.is_none() {
-                return Ok(items);
-            }
-        }
-    }
-
     pub async fn list_bookmarked_posts_page(
         &self,
         cursor: Option<&kukuri_store::BookmarkCursor>,

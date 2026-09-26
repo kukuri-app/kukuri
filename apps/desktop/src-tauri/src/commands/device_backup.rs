@@ -142,9 +142,21 @@ pub async fn create_device_backup_command(
 
     let current = state.runtime();
     let db_path = current.db_path().to_path_buf();
+    // #1221 R5-G: backup は保護所有先だけを含めるため、旧 `iroh-data` からの移行の残りを先に写す。
+    let migrated = current.finish_protected_migration().await;
     current.shutdown().await;
 
     let restart_path = db_path.clone();
+    if let Err(error) = migrated {
+        return Err(restore_previous_runtime(
+            &app_handle,
+            &state,
+            &startup,
+            restart_path,
+            map_error(error),
+        )
+        .await);
+    }
     let app_data_dir = state.app_data_dir.clone();
     let cancellation = operation.device_backup_cancellation();
     let progress_app = app_handle.clone();

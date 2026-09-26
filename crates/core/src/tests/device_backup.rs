@@ -272,15 +272,18 @@ fn unknown_format_and_component_versions_are_rejected() {
             .contains("unsupported device backup manifest version")
     );
 
-    let (mut manifest, _) = fixture();
-    manifest.component_version += 1;
-    let error = match DeviceBackupWriter::new(Vec::new(), "long enough passphrase", manifest) {
-        Ok(_) => panic!("unknown component version unexpectedly succeeded"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("unsupported device backup component version")
-    );
+    // #1221 R5-G: 旧形式(1: `iroh-data` 入り)も未知の版と同じく拒否する。
+    for version in [DEVICE_BACKUP_COMPONENT_VERSION + 1, 1] {
+        let (mut manifest, _) = fixture();
+        manifest.component_version = version;
+        let error = match DeviceBackupWriter::new(Vec::new(), "long enough passphrase", manifest) {
+            Ok(_) => panic!("unsupported component version unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported device backup component version")
+        );
+    }
 }

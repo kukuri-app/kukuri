@@ -18,8 +18,6 @@ use super::{
 };
 use crate::paths::DB_FILE_NAME;
 
-const IROH_ENDPOINT_SECRET_FILE: &str = "endpoint-secret.json";
-
 enum EntrySource {
     File(PathBuf),
     Bytes(Vec<u8>),
@@ -105,7 +103,7 @@ where
     let included = vec![
         "account_key".to_string(),
         "sqlite".to_string(),
-        "local_docs_and_blobs".to_string(),
+        "protected_content".to_string(),
         "private_channel_state".to_string(),
         "drafts_and_preferences".to_string(),
         "community_node_configuration".to_string(),
@@ -192,6 +190,8 @@ where
 }
 
 fn account_file_sources(db_path: &Path) -> Result<Vec<(String, EntrySource)>> {
+    // SQLite を開いて閉じる(WAL を畳む)のは、SQLite の file を列挙する前に済ませる。
+    let protected_blobs = protected_blob_files(db_path)?;
     let mut sources = Vec::new();
     add_file_source(&mut sources, db_path, Path::new(DB_FILE_NAME))?;
     for extension in ["db-wal", "db-shm"] {
@@ -216,47 +216,37 @@ fn account_file_sources(db_path: &Path) -> Result<Vec<(String, EntrySource)>> {
             add_file_source(&mut sources, &path, Path::new(name))?;
         }
     }
-    let iroh_root = db_path.with_extension("iroh-data");
-    if iroh_root.exists() {
-        collect_tree_sources(&iroh_root, &iroh_root, &mut sources)?;
+    // #1221 R5-G: 旧 `iroh-data`(remote 混在の tree)は含めない。保護された内容は `kukuri.db` の行と、
+    // 保護された `kukuri.remote-blobs/` の file だけにある。
+    let blob_root = db_path.with_extension("remote-blobs");
+    let blob_dir = blob_root
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid protected blob directory"))?;
+    for name in protected_blobs {
+        add_file_source(
+            &mut sources,
+            &blob_root.join(&name),
+            &Path::new(blob_dir).join(name),
+        )?;
     }
     Ok(sources)
 }
 
-fn collect_tree_sources(
-    root: &Path,
-    current: &Path,
-    sources: &mut Vec<(String, EntrySource)>,
-) -> Result<()> {
-    let mut entries = fs::read_dir(current)
-        .with_context(|| format!("failed to read `{}`", current.display()))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let file_type = entry
-            .file_type()
-            .context("failed to inspect account state entry")?;
-        if file_type.is_symlink() {
-            bail!("device backup does not follow symbolic links");
-        }
-        if file_type.is_dir() {
-            collect_tree_sources(root, &entry.path(), sources)?;
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-        let relative = entry.path().strip_prefix(root)?.to_path_buf();
-        if relative == Path::new(IROH_ENDPOINT_SECRET_FILE) {
-            continue;
-        }
-        add_file_source(
-            sources,
-            &entry.path(),
-            &Path::new("kukuri.iroh-data").join(relative),
-        )?;
-    }
-    Ok(())
+/// 停止した account の SQLite から、保護された file の名前を読む。移行が終端へ達していなければ作らない。
+/// 呼出し元が async の文脈でも使えるよう、専用の thread の runtime で読む。
+fn protected_blob_files(db_path: &Path) -> Result<Vec<String>> {
+    let db_path = db_path.to_path_buf();
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(kukuri_store::SqliteStore::read_protected_backup_files(
+                &db_path,
+            ))?
+            .ok_or_else(|| anyhow!("protected data migration has not finished"))
+    })
+    .join()
+    .map_err(|_| anyhow!("protected blob listing stopped"))?
 }
 
 fn add_file_source(

@@ -231,6 +231,7 @@ impl ClientHost {
             return Err(ClientStartupError::from_subscription_error(error));
         }
         host.runtime().start_sync_status_observer().await;
+        host.runtime().start_protected_migration().await;
         Ok(host)
     }
 
@@ -299,6 +300,7 @@ impl ClientHost {
             return Err(ClientStartupError::from_subscription_error(error));
         }
         next.start_sync_status_observer().await;
+        next.start_protected_migration().await;
         Ok(previous)
     }
 

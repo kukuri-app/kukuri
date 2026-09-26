@@ -271,6 +271,10 @@ table profiles
   column cid=6 name=picture_blob_hash type=TEXT notnull=0 default=None pk=0
   column cid=7 name=picture_mime type=TEXT notnull=0 default=None pk=0
   column cid=8 name=picture_bytes type=INTEGER notnull=0 default=None pk=0
+table protected_migration
+  column cid=0 name=kind type=TEXT notnull=0 default=None pk=1
+  column cid=1 name=cursor type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=caught_up_at type=INTEGER notnull=0 default=None pk=0
 table reaction_cache
   column cid=0 name=source_replica_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_object_id type=TEXT notnull=1 default=None pk=2
@@ -416,6 +420,10 @@ index idx_follow_edges_target table=follow_edges unique=0 origin=c partial=0
   key seqno=1 cid=3 name=Some("updated_at")
   key seqno=2 cid=0 name=Some("subject_pubkey")
   sql=Some("CREATE INDEX idx_follow_edges_target ON follow_edges(target_pubkey, updated_at DESC, subject_pubkey ASC)")
+index idx_game_room_cache_derived table=game_room_cache unique=0 origin=c partial=0
+  key seqno=0 cid=12 name=Some("derived_at")
+  key seqno=1 cid=0 name=Some("room_id")
+  sql=Some("CREATE INDEX idx_game_room_cache_derived ON game_room_cache(derived_at, room_id)")
 index idx_game_room_cache_topic_kind_updated table=game_room_cache unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=15 name=Some("room_kind")
@@ -442,6 +450,10 @@ index idx_live_presence_cache_identity table=live_presence_cache unique=1 origin
   key seqno=2 cid=1 name=Some("session_id")
   key seqno=3 cid=2 name=Some("author_pubkey")
   sql=Some("CREATE UNIQUE INDEX idx_live_presence_cache_identity ON live_presence_cache(topic_id, channel_id, session_id, author_pubkey)")
+index idx_live_session_cache_derived table=live_session_cache unique=0 origin=c partial=0
+  key seqno=0 cid=12 name=Some("derived_at")
+  key seqno=1 cid=0 name=Some("session_id")
+  sql=Some("CREATE INDEX idx_live_session_cache_derived ON live_session_cache(derived_at, session_id)")
 index idx_live_session_cache_topic_started table=live_session_cache unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=14 name=Some("channel_id")
@@ -673,6 +685,9 @@ index sqlite_autoindex_profile_cache_1 table=profile_cache unique=1 origin=pk pa
 index sqlite_autoindex_profiles_1 table=profiles unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("pubkey")
   sql=None
+index sqlite_autoindex_protected_migration_1 table=protected_migration unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("kind")
+  sql=None
 index sqlite_autoindex_reaction_cache_1 table=reaction_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_replica_id")
   key seqno=1 cid=1 name=Some("target_object_id")
@@ -705,4 +720,8 @@ trigger notifications_assign_dispatch_seq table=notifications sql="CREATE TRIGGE
 trigger notifications_unread_delete table=notifications sql="CREATE TRIGGER notifications_unread_delete AFTER DELETE ON notifications WHEN OLD.read_at IS NULL AND (OLD.dispatch_seq IS NULL AND (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL OR OLD.dispatch_seq > (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1)) BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
 trigger notifications_unread_insert table=notifications sql="CREATE TRIGGER notifications_unread_insert AFTER INSERT ON notifications WHEN NEW.read_at IS NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count + 1 WHERE singleton = 1; END"
 trigger notifications_unread_read table=notifications sql="CREATE TRIGGER notifications_unread_read AFTER UPDATE OF read_at ON notifications WHEN OLD.read_at IS NULL AND NEW.read_at IS NOT NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
+trigger protected_migration_rewind_bookmark table=bookmarked_posts sql="CREATE TRIGGER protected_migration_rewind_bookmark AFTER INSERT ON bookmarked_posts WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'bookmark') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'bookmark'; END"
+trigger protected_migration_rewind_dm_message table=dm_messages sql="CREATE TRIGGER protected_migration_rewind_dm_message AFTER INSERT ON dm_messages WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'dm_message') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'dm_message'; END"
+trigger protected_migration_rewind_own_envelope table=envelopes sql="CREATE TRIGGER protected_migration_rewind_own_envelope AFTER INSERT ON envelopes WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'own_envelope') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'own_envelope'; END"
+trigger protected_migration_rewind_reaction_bookmark table=bookmarked_custom_reactions sql="CREATE TRIGGER protected_migration_rewind_reaction_bookmark AFTER INSERT ON bookmarked_custom_reactions WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'reaction_bookmark') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'reaction_bookmark'; END"
 view notification_inbox_rows sql="CREATE VIEW notification_inbox_rows AS SELECT n.notification_id, n.recipient_pubkey, n.kind, n.actor_pubkey, n.source_envelope_id, n.source_replica_id, n.topic_id, n.channel_id, n.object_id, n.dm_id, n.message_id, n.preview_text, n.content_labels_json, n.created_at, n.received_at, n.dispatch_seq, CASE WHEN n.read_at IS NOT NULL THEN n.read_at WHEN n.dispatch_seq IS NULL THEN s.legacy_read_at WHEN n.dispatch_seq <= s.read_through_seq THEN s.read_through_at ELSE NULL END AS read_at FROM notifications AS n CROSS JOIN notification_inbox_state AS s"

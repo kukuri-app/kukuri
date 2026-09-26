@@ -44,6 +44,7 @@ pub use direct_messages::{
     DirectMessagePayloadV1, build_direct_message_ack, decrypt_direct_message_attachment,
     decrypt_direct_message_frame, derive_direct_message_topic, direct_message_id_for_participants,
     encrypt_direct_message_attachment, encrypt_direct_message_frame,
+    open_sent_direct_message_frame,
 };
 pub use dome_connections::{
     DOME_CONNECTION_DRAIN_MILLIS, DOME_CONNECTION_MAX_OPEN_OUTBOUND,

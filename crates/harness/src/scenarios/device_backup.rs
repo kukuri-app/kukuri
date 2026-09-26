@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use kukuri_desktop_runtime::{
     AuthorRequest, BookmarkPostRequest, CommunityNodeConfig, CommunityNodeNodeConfig,
     CreateDeviceBackupRequest, CreatePostRequest, CreatePrivateChannelRequest,
-    DeviceBackupCancellation, GetBlobMediaRequest, ListJoinedPrivateChannelsRequest,
-    ListTimelineRequest, PreviewDeviceBackupRequest, RestoreDeviceBackupRequest,
-    commit_device_restore, create_device_backup, ensure_accounts_initialized_from_env,
-    finalize_device_restore, install_prepared_device_restore, list_accounts,
-    mark_device_restore_activated, mark_device_restore_awaiting_consent, prepare_device_restore,
-    preview_device_backup,
+    DeviceBackupCancellation, GetBlobMediaRequest, ListBookmarkedPostsRequest,
+    ListJoinedPrivateChannelsRequest, ListTimelineRequest, PreviewDeviceBackupRequest,
+    RestoreDeviceBackupRequest, commit_device_restore, create_device_backup,
+    ensure_accounts_initialized_from_env, finalize_device_restore, install_prepared_device_restore,
+    list_accounts, mark_device_restore_activated, mark_device_restore_awaiting_consent,
+    prepare_device_restore, preview_device_backup,
 };
 
 use crate::*;
@@ -91,6 +91,8 @@ pub(crate) async fn run_device_backup_restore(
         .first()
         .context("source attachment missing before backup")?;
     let attachment_hash = attachment.hash.clone();
+    // #1221 R5-G: backup は保護所有先だけを含める。旧 `iroh-data` の本人データを移してから止める。
+    source_runtime.finish_protected_migration().await?;
     source_runtime.shutdown().await;
     drop(source_runtime);
 
@@ -237,8 +239,12 @@ pub(crate) async fn run_device_backup_restore(
     );
     anyhow::ensure!(
         restored_runtime
-            .list_bookmarked_posts()
+            .list_bookmarked_posts_page(ListBookmarkedPostsRequest {
+                cursor: None,
+                before: false,
+            })
             .await?
+            .items
             .iter()
             .any(|bookmark| bookmark.post.object_id == post_id),
         "restored bookmark missing"

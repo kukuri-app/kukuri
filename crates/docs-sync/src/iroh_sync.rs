@@ -590,7 +590,9 @@ impl DocsSync for IrohDocsSync {
         query: DocQuery,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
-        self.collect_records(replica_id, indexed_query(query), policy)
+        let exact = matches!(&query, DocQuery::Exact(_)).then(|| query.clone());
+        let records = self.collect_records(replica_id, indexed_query(query), policy);
+        self.with_private_cache(replica_id, exact, 8, records.await?)
             .await
     }
 
@@ -606,7 +608,9 @@ impl DocsSync for IrohDocsSync {
             let _ = self.ensure_replica_with_sync(replica_id, false).await?;
             return Ok(Vec::new());
         }
-        self.collect_records(replica_id, bounded_exact_query(key, limit), policy)
+        let records = self.collect_records(replica_id, bounded_exact_query(key, limit), policy);
+        let exact = Some(DocQuery::Exact(key.into()));
+        self.with_private_cache(replica_id, exact, limit, records.await?)
             .await
     }
 
