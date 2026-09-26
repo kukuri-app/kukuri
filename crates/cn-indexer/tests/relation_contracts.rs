@@ -244,6 +244,17 @@ async fn relation_edges_need_actions_in_both_directions_and_follow_removal() -> 
         // private channel だけの author は cluster を持たない。
         assert!(graph.cluster_of("author-d").await?.is_none());
 
+        // 相互フォローだけのペアは作らない。
+        record_relation_action(&pool, &RelationAction::follow("author-a", "author-e")).await?;
+        record_relation_action(&pool, &RelationAction::follow("author-e", "author-a")).await?;
+        analyze_until_settled(&pool, &graph, 1000).await?;
+        assert!(
+            graph
+                .pairwise_proximity("author-a", "author-e")
+                .await?
+                .is_none()
+        );
+
         // A がフォローを加えると A → C もそろう。フォローは topic を数えない。
         record_relation_action(&pool, &RelationAction::follow("author-a", "author-c")).await?;
         analyze_until_settled(&pool, &graph, 1000).await?;
@@ -284,8 +295,8 @@ async fn relation_edges_need_actions_in_both_directions_and_follow_removal() -> 
             .fetch_one(&pool)
             .await?;
         assert_eq!(
-            remaining, 1,
-            "only the one-way A-C reply pair keeps its counters"
+            remaining, 2,
+            "only the one-way A-C reply pair and the follow-only A-E pair keep their counters"
         );
         Ok(())
     })
@@ -397,7 +408,7 @@ async fn bounded_analysis_steps_converge_to_the_action_oracle() -> Result<()> {
                     }
                 }
                 let edge = graph.pairwise_proximity(&authors[a], &authors[b]).await?;
-                if ab > 0 && ba > 0 {
+                if ab > 0 && ba > 0 && !shared.is_empty() {
                     let edge = edge.expect("oracle expects an edge");
                     assert_eq!(feature(&edge, FEATURE_SHARED_TOPICS), shared.len() as f64);
                     assert_eq!(

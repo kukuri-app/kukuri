@@ -119,7 +119,8 @@ pub async fn indexed_public_author(
     .await?)
 }
 
-/// 印の付いたペア。`a_to_b` と `b_to_a` が両方 1 以上なら edge を作る。
+/// 印の付いたペア。`a_to_b` と `b_to_a` が両方 1 以上で、フォロー以外のアクション（public topic のアクション）が
+/// 1 件以上あるときだけ edge を作る（相互フォローだけのペアは作らない。2026-09-26 ユーザー決定）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationPairChange {
     pub author_a: String,
@@ -132,7 +133,7 @@ pub struct RelationPairChange {
 
 impl RelationPairChange {
     pub fn is_mutual(&self) -> bool {
-        self.a_to_b > 0 && self.b_to_a > 0
+        self.a_to_b > 0 && self.b_to_a > 0 && self.shared_topics > 0
     }
 }
 

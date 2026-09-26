@@ -416,7 +416,8 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 - フォロー: 新しいアクション actor→target を保存したときだけ、target の author replica の `graph/follows/<actor>` を
   remote の reader から 1 key（doc と署名つき envelope）読み、有効なら target→actor の行を置き、取り消しなら消す。
   相互フォローだけのペアは作らない。§2.4 の follow projection（ADR 0013）はこの形で relation に入る。
-- ペア: 双方向（方向ごとに種類は異なってよい）にアクションがあるときだけ edge を作る。値は key を維持して意味を置換し、
+- ペア: 双方向（方向ごとに種類は異なってよい）にアクションがあり、フォロー以外のアクション（public topic のアクション）が
+  1 件以上あるときだけ edge を作る（相互フォローだけのペアは作らない）。値は key を維持して意味を置換し、
   `shared_topics`＝その 2 者間のアクションがあった public topic の数、`co_participation_events`＝アクションの件数とする。
   proximity の計算式・重み・API は変えない。成立しなくなったペアの edge は消す（`RelationStore::remove_edge`）。
 - cluster: author の dominant topic（最多の索引件数の public topic、同数は scope_id の辞書順）。参加が 0 になった author の
