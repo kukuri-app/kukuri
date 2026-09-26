@@ -11,7 +11,10 @@ use kukuri_core::{
     DirectMessageFrameV1, KukuriEnvelope, PayloadRef, ReplicaId, open_sent_direct_message_frame,
     parse_custom_reaction_asset,
 };
-use kukuri_docs_sync::{DocRecord, IrohDocsSync, author_replica_id, stable_key, topic_replica_id};
+use kukuri_docs_sync::{
+    BucketReplica, BucketScope, DocRecord, IrohDocsSync, TimeBucket, author_replica_id, stable_key,
+    topic_replica_id,
+};
 use kukuri_iroh_node::{DocReadRecord, IrohDocsNode};
 use kukuri_store::{
     ObjectProjectionStore, PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
@@ -338,6 +341,18 @@ impl DesktopRuntime {
             }
             let has_state = !plan.records.is_empty();
             if post.channel_id.is_none() {
+                // #1221 R5-H: 切替後の投稿(bucket へ書いた投稿)は、プロフィールの行を作成時の author bucket に置く。
+                let author = if replica.as_str().starts_with("bucket::") {
+                    BucketReplica::new(
+                        BucketScope::Author {
+                            author_pubkey: local.to_string(),
+                        },
+                        TimeBucket::from_unix_seconds(post.created_at)?,
+                    )?
+                    .replica_id()
+                } else {
+                    author
+                };
                 let prefix = if post.object_kind == "repost" {
                     "profile/reposts"
                 } else {

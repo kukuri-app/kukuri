@@ -3,10 +3,11 @@
 use super::*;
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use kukuri_blob_service::BlobService;
 use kukuri_core::{
-    DirectMessageAttachmentKind, DirectMessageAttachmentManifestV1,
+    ChannelId, DirectMessageAttachmentKind, DirectMessageAttachmentManifestV1,
     DirectMessageEncryptedBlobRefV1, DirectMessagePayloadV1, EnvelopeId, TopicId,
     build_post_envelope, direct_message_id_for_participants, encrypt_direct_message_attachment,
     encrypt_direct_message_frame,
@@ -53,6 +54,55 @@ async fn is_protected(store: &SqliteStore, hash: &str) -> bool {
     .await
     .expect("protected flag")
         == Some(1)
+}
+
+/// backup を作り、`target` の新しい account として復元する。archive の entry 名と、復元した db の path を返す。
+fn backup_and_restore(source: &Path, db: &Path, target: &Path) -> (Vec<String>, PathBuf) {
+    let archive_dir = tempdir().expect("archive dir");
+    let archive = archive_dir.path().join("account.kukuri-backup");
+    create_device_backup(
+        source,
+        db,
+        &CreateDeviceBackupRequest {
+            path: archive.display().to_string(),
+            passphrase: "protected migration passphrase".into(),
+            frontend_state: BTreeMap::new(),
+        },
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect("create backup");
+    let reader = kukuri_core::DeviceBackupReader::open(
+        std::fs::File::open(&archive).expect("open archive"),
+        "protected migration passphrase",
+    )
+    .expect("read archive");
+    let names = reader
+        .manifest()
+        .entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
+    ensure_accounts_initialized(target, IdentityStorageMode::FileOnly).expect("target account");
+    let prepared = prepare_device_restore(
+        target,
+        &RestoreDeviceBackupRequest {
+            path: archive.display().to_string(),
+            passphrase: "protected migration passphrase".into(),
+            replace_existing: false,
+            apply_frontend_state: false,
+        },
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect("prepare restore");
+    let installed = install_prepared_device_restore(target, prepared).expect("install");
+    let restored_db = installed.db_path();
+    commit_device_restore(&installed).expect("commit");
+    mark_device_restore_awaiting_consent(target).expect("awaiting consent");
+    mark_device_restore_activated(target).expect("activated");
+    finalize_device_restore(installed).expect("finalize");
+    (names, restored_db)
 }
 
 /// 旧領域に置いた本人データ。hash は旧 blob store(`iroh-data`)にある。
@@ -432,31 +482,8 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     drop(runtime);
 
     // backup は旧 `iroh-data` を含めず、保護所有先を含める。
-    let archive_dir = tempdir().expect("archive dir");
-    let archive = archive_dir.path().join("account.kukuri-backup");
-    create_device_backup(
-        source.path(),
-        &db,
-        &CreateDeviceBackupRequest {
-            path: archive.display().to_string(),
-            passphrase: "protected migration passphrase".into(),
-            frontend_state: BTreeMap::new(),
-        },
-        &DeviceBackupCancellation::default(),
-        |_| {},
-    )
-    .expect("create backup");
-    let reader = kukuri_core::DeviceBackupReader::open(
-        std::fs::File::open(&archive).expect("open archive"),
-        "protected migration passphrase",
-    )
-    .expect("read archive");
-    let names = reader
-        .manifest()
-        .entries
-        .iter()
-        .map(|entry| entry.name.clone())
-        .collect::<Vec<_>>();
+    let target = tempdir().expect("target dir");
+    let (names, restored_db) = backup_and_restore(source.path(), &db, target.path());
     assert!(
         names.iter().all(|name| !name.contains("iroh-data")),
         "{names:?}"
@@ -468,28 +495,6 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         )),
         "{names:?}"
     );
-
-    let target = tempdir().expect("target dir");
-    ensure_accounts_initialized(target.path(), IdentityStorageMode::FileOnly)
-        .expect("target account");
-    let prepared = prepare_device_restore(
-        target.path(),
-        &RestoreDeviceBackupRequest {
-            path: archive.display().to_string(),
-            passphrase: "protected migration passphrase".into(),
-            replace_existing: false,
-            apply_frontend_state: false,
-        },
-        &DeviceBackupCancellation::default(),
-        |_| {},
-    )
-    .expect("prepare restore");
-    let installed = install_prepared_device_restore(target.path(), prepared).expect("install");
-    let restored_db = installed.db_path();
-    commit_device_restore(&installed).expect("commit");
-    mark_device_restore_awaiting_consent(target.path()).expect("awaiting consent");
-    mark_device_restore_activated(target.path()).expect("activated");
-    finalize_device_restore(installed).expect("finalize");
 
     let restored = open_runtime(&restored_db).await;
     assert!(
@@ -708,4 +713,141 @@ async fn the_writer_switches_once_after_the_migration_and_keeps_it_across_restar
     let runtime = open_runtime(&db).await;
     assert_eq!(runtime.app_service.writer_switched_at(), Some(switched));
     runtime.shutdown().await;
+}
+
+/// #1221 R5-H: 切替後に書いた本人の投稿も、bucket の record・author bucket のプロフィールの行・本文の blob が
+/// 保護所有先へ入り、旧領域を含めない backup → restore で戻る。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_posts_written_after_the_switch_are_protected_and_restored() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let source = tempdir().expect("source dir");
+    let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .expect("source account");
+    let runtime = open_runtime(&db).await;
+    let channel = runtime
+        .create_private_channel(CreatePrivateChannelRequest {
+            topic: TOPIC.into(),
+            label: "after the switch".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("private channel");
+    runtime
+        .finish_protected_migration()
+        .await
+        .expect("finish migration");
+    assert!(runtime.app_service.writer_switched_at().is_some());
+    let mut posts = Vec::new();
+    for (content, channel_ref) in [
+        ("public after the switch", ChannelRef::Public),
+        (
+            "private after the switch",
+            ChannelRef::PrivateChannel {
+                channel_id: ChannelId::new(channel.channel_id.clone()),
+            },
+        ),
+    ] {
+        let post_id = runtime
+            .create_post(CreatePostRequest {
+                topic: TOPIC.into(),
+                content: content.into(),
+                reply_to: None,
+                channel_ref,
+                attachments: Vec::new(),
+                content_labels: Vec::new(),
+            })
+            .await
+            .expect("own post after the switch");
+        let projection = runtime
+            .store
+            .get_object_projection(&EnvelopeId::from(post_id.as_str()))
+            .await
+            .expect("projection")
+            .expect("own projection");
+        assert!(
+            projection
+                .source_replica_id
+                .as_str()
+                .starts_with("bucket::")
+        );
+        posts.push((post_id, projection));
+    }
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        runtime.finish_protected_migration(),
+    )
+    .await
+    .expect("posts after the switch do not hold the migration back")
+    .expect("migrate posts after the switch");
+    let local = runtime.author_keys.public_key_hex();
+    let profile_replica = kukuri_docs_sync::BucketReplica::new(
+        kukuri_docs_sync::BucketScope::Author {
+            author_pubkey: local.clone(),
+        },
+        kukuri_docs_sync::TimeBucket::from_unix_seconds(posts[0].1.created_at).expect("bucket"),
+    )
+    .expect("author bucket")
+    .replica_id();
+    let mut protected_records = vec![(
+        profile_replica.clone(),
+        kukuri_docs_sync::stable_key("profile/posts", &posts[0].0),
+    )];
+    for (post_id, projection) in &posts {
+        protected_records.push((
+            projection.source_replica_id.clone(),
+            format!("objects/{post_id}/envelope"),
+        ));
+    }
+    for (replica, key) in &protected_records {
+        assert!(
+            !runtime
+                .store
+                .get_remote_records(replica.as_str(), key, None, 8)
+                .await
+                .expect("records")
+                .is_empty(),
+            "{replica:?} {key} was not moved"
+        );
+    }
+    runtime.shutdown().await;
+    drop(runtime);
+
+    let target = tempdir().expect("target dir");
+    let (_, restored_db) = backup_and_restore(source.path(), &db, target.path());
+    let restored = open_runtime(&restored_db).await;
+    for (replica, key) in &protected_records {
+        assert!(
+            !restored
+                .store
+                .get_remote_records(replica.as_str(), key, None, 8)
+                .await
+                .expect("restored records")
+                .is_empty(),
+            "{replica:?} {key} was not restored"
+        );
+    }
+    for (scope, content) in [
+        (TimelineScope::Public, "public after the switch"),
+        (
+            TimelineScope::Channel {
+                channel_id: ChannelId::new(channel.channel_id.clone()),
+            },
+            "private after the switch",
+        ),
+    ] {
+        let timeline = restored
+            .list_timeline(ListTimelineRequest {
+                topic: TOPIC.into(),
+                scope,
+                cursor: None,
+                limit: Some(20),
+            })
+            .await
+            .expect("restored timeline");
+        assert!(
+            timeline.items.iter().any(|post| post.content == content),
+            "{content} was not restored"
+        );
+    }
+    restored.shutdown().await;
 }
