@@ -5,6 +5,7 @@
 //! - 容量を超えると受入下限が上がり、計数が容量以下になるまで古い順に回収する。
 //! - 解除した scope は検索から即座に外れ、索引は 1 回 128 件以内で回収される。撤回 marker は受入下限まで残る。
 //! - 回収は途中で止めても、永続化した受入下限から同じ条件で続き、1 回の回収は常に 128 件以内。
+//! - 巡回は索引済みの scope を永続 cursor で 32 件ずつ照合し、support を失った scope だけを回収する（#1221 R5-H）。
 
 use std::sync::Arc;
 
@@ -19,8 +20,9 @@ use kukuri_cn_core::{
     upsert_scan_verdict,
 };
 use kukuri_cn_indexer::ingest::IngestPipeline;
-use kukuri_cn_indexer::participant::IndexerParticipant;
+use kukuri_cn_indexer::maintenance::IndexMaintenance;
 use kukuri_cn_indexer::projection::{IndexProjection, IndexedEntry, MemoryIndexProjection};
+use kukuri_cn_indexer::state::IndexerRuntimeState;
 use kukuri_cn_safety::provider::SubjectKind;
 use kukuri_cn_safety::{
     MockSafetyProvider, ModerationEventSigner, ReasonCode, SafetyAction, SafetyVerdict,
@@ -91,17 +93,11 @@ fn pipeline(
     ))
 }
 
-fn participant(
-    pool: &PgPool,
-    projection: Arc<MemoryIndexProjection>,
-) -> Result<IndexerParticipant> {
-    let docs: Arc<dyn DocsSync> = Arc::new(MemoryDocsSync::default());
-    Ok(IndexerParticipant::new(
+fn maintenance(pool: &PgPool, projection: Arc<MemoryIndexProjection>) -> Result<IndexMaintenance> {
+    Ok(IndexMaintenance::new(
         pool.clone(),
-        docs.clone(),
         Arc::new(PgIndexEntryStore::new(pool.clone())),
-        projection.clone(),
-        pipeline(pool, docs, projection)?,
+        projection,
         ChannelSecretCipher::from_key_material("retention-test-channel-secret-key-0123456789")?,
     ))
 }
@@ -324,7 +320,7 @@ async fn capacity_keeps_the_count_within_b_through_the_worker_pass() -> Result<(
             },
         )
         .await?;
-        let participant = participant(&pool, Arc::new(MemoryIndexProjection::new()))?;
+        let maintenance = maintenance(&pool, Arc::new(MemoryIndexProjection::new()))?;
         // 流入が容量を大きく上回っても、worker と同じ 1 回の見直しで計数は B 以下へ戻る。
         for cycle in 0..5 {
             for index in 0..150 {
@@ -332,7 +328,7 @@ async fn capacity_keeps_the_count_within_b_through_the_worker_pass() -> Result<(
                 index_row(&pool, TOPIC, &format!("post-{cycle}-{index}"), created_at).await?;
             }
             assert!(units(&pool).await? > 200);
-            participant.reclaim_retention_pass(now, 128, 16).await?;
+            maintenance.reclaim_retention_pass(now, 128, 16).await?;
             assert!(units(&pool).await? <= 200, "cycle {cycle}");
         }
         // 残ったのは最新の行で、受入下限より古い投稿は容量に余裕があっても索引へ入らない。
@@ -389,10 +385,10 @@ async fn retired_scope_hides_at_once_and_reclaims_in_bounded_pages() -> Result<(
                 .is_empty(),
             "a retired scope leaves search before its rows are reclaimed"
         );
-        let participant = participant(&pool, projection.clone())?;
+        let maintenance = maintenance(&pool, projection.clone())?;
         let mut steps = 0;
         loop {
-            let removed = participant
+            let removed = maintenance
                 .retire_scope(IndexScopeKind::PublicTopic, "gone", 128)
                 .await?;
             assert!(removed <= 128);
@@ -448,7 +444,7 @@ async fn reclaim_resumes_from_the_persisted_floor_in_bounded_steps() -> Result<(
                 .await?;
         }
         index_row(&pool, TOPIC, "fresh", now).await?;
-        let first = participant(&pool, projection.clone())?;
+        let first = maintenance(&pool, projection.clone())?;
         assert_eq!(
             first.reclaim_retention(now, 128).await?,
             128,
@@ -462,7 +458,7 @@ async fn reclaim_resumes_from_the_persisted_floor_in_bounded_steps() -> Result<(
 
         // 別の接続（再起動後）で、同じ受入下限から続きを回収する。
         let reopened = connect_postgres(database_url.as_str()).await?;
-        let second = participant(&reopened, projection.clone())?;
+        let second = maintenance(&reopened, projection.clone())?;
         loop {
             let removed = second.reclaim_retention(now, 128).await?;
             assert!(removed <= 128);
@@ -485,5 +481,70 @@ async fn reclaim_resumes_from_the_persisted_floor_in_bounded_steps() -> Result<(
         reopened.close().await;
         Ok(())
     })
+    .await
+}
+
+#[tokio::test]
+async fn pass_retires_unsupported_scopes_by_a_persisted_cursor() -> Result<()> {
+    with_database(
+        "cn_retention_indexed_cursor",
+        |database_url, pool| async move {
+            let now = chrono::Utc::now().timestamp();
+            configure_retention(
+                &pool,
+                RetentionSettings {
+                    capacity_rows: 1_000_000,
+                    retention_secs: RETENTION_SECS,
+                },
+            )
+            .await?;
+            for index in 0..80 {
+                let topic = format!("topic-{index:02}");
+                add_supported_topic(&pool, IndexScopeKind::PublicTopic, &topic).await?;
+                index_row(&pool, &topic, "post", now).await?;
+            }
+            for index in 1..80 {
+                remove_supported_topic(
+                    &pool,
+                    IndexScopeKind::PublicTopic,
+                    &format!("topic-{index:02}"),
+                )
+                .await?;
+            }
+            let cursor = |pool: PgPool| async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT last_scope_id FROM cn_index.indexed_scope_cursor WHERE id = TRUE",
+                )
+                .fetch_one(&pool)
+                .await
+            };
+            // 1 回の巡回は索引済みの scope を 32 件だけ照合する（全 scope を読まない）。
+            let state = IndexerRuntimeState::default();
+            maintenance(&pool, Arc::new(MemoryIndexProjection::new()))?
+                .run_pass(now, &state)
+                .await;
+            assert_eq!(state.snapshot().deindexed, 31);
+            assert_eq!(cursor(pool.clone()).await?, "topic-31");
+
+            // 再起動後も、永続した位置から続けて照合する。
+            let reopened = connect_postgres(database_url.as_str()).await?;
+            let resumed = maintenance(&reopened, Arc::new(MemoryIndexProjection::new()))?;
+            resumed.run_pass(now, &state).await;
+            assert_eq!(cursor(reopened.clone()).await?, "topic-63");
+            resumed.run_pass(now, &state).await;
+            assert_eq!(state.snapshot().deindexed, 79);
+            let kept: Vec<String> =
+                sqlx::query_scalar("SELECT scope_id FROM cn_index.index_entries")
+                    .fetch_all(&reopened)
+                    .await?;
+            assert_eq!(
+                kept,
+                vec!["topic-00".to_string()],
+                "support を保つ scope は残す"
+            );
+            reopened.close().await;
+            Ok(())
+        },
+    )
     .await
 }

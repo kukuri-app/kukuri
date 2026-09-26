@@ -22,15 +22,15 @@ pub struct IndexerStateSnapshot {
     pub worker_running: bool,
     /// 取り込みが有効か（安全性プロバイダ未設定なら false のまま常駐する）。
     pub ingest_enabled: bool,
-    /// 旧workerがopen枠を予約したスコープ数。途中失敗でopen状態が不明な枠も含む。
+    /// 直近の全 scope の巡回で読んだ物理 scope（論理 scope × bucket）の数。
     pub opened_scopes: u64,
-    /// 最後にscope窓の1巡（restore → 対象別取り込み）が成功した時刻（unix 秒）。
+    /// 最後に全 scope の巡回が成功した時刻（unix 秒）。
     pub last_sync_at: Option<i64>,
     /// 最後にスコープ取り込みが成功した時刻（unix 秒）。
     pub last_ingest_at: Option<i64>,
     /// 最後のエラー内容。
     pub last_error: Option<String>,
-    /// 最後のエラーが起きた対象スコープ（`replica id` 表現。全体エラーなら None）。
+    /// 最後のエラーが起きた対象スコープ（scope id。全体エラーなら None）。
     pub last_error_scope: Option<String>,
     /// 走査した項目数の累計。
     pub scanned: u64,
@@ -61,9 +61,6 @@ pub struct IndexerStateSnapshot {
     /// 最後のscope窓1巡にかかった時間（ミリ秒。#1050）。
     #[serde(default)]
     pub last_pass_duration_ms: Option<u64>,
-    /// 最後の変更通知駆動の取り込みにかかった時間（ミリ秒。#1050）。
-    #[serde(default)]
-    pub last_event_ingest_duration_ms: Option<u64>,
     /// 最後に新規判定で索引に入った投稿の、作成時刻から索引までの遅れ（秒。著者時刻由来の
     /// 近似値。#1050）。
     #[serde(default)]
@@ -96,7 +93,6 @@ pub struct IndexerRuntimeState {
     scans_fresh: AtomicU64,
     scans_reused: AtomicU64,
     last_pass_duration_ms: RwLock<Option<u64>>,
-    last_event_ingest_duration_ms: RwLock<Option<u64>>,
     last_index_lag_secs: RwLock<Option<i64>>,
     post_scheduler: RwLock<Option<std::sync::Arc<PostFetchScheduler>>>,
 }
@@ -159,14 +155,6 @@ impl IndexerRuntimeState {
             .expect("last_pass_duration_ms poisoned") = Some(millis);
     }
 
-    /// 変更通知駆動の取り込みの所要時間を記録する（#1050）。
-    pub fn record_event_ingest_duration(&self, millis: u64) {
-        *self
-            .last_event_ingest_duration_ms
-            .write()
-            .expect("last_event_ingest_duration_ms poisoned") = Some(millis);
-    }
-
     /// 新規判定で索引に入った投稿の作成→索引の遅れを記録する（秒。#1050）。
     pub fn record_index_lag(&self, secs: i64) {
         *self
@@ -175,7 +163,7 @@ impl IndexerRuntimeState {
             .expect("last_index_lag_secs poisoned") = Some(secs.max(0));
     }
 
-    /// エラーを記録する（scope は replica id 表現。全体エラーなら None）。
+    /// エラーを記録する（scope は scope id。全体エラーなら None）。
     pub fn record_error(&self, scope: Option<&str>, error: &str) {
         *self.last_error.write().expect("last_error poisoned") =
             Some((error.to_string(), scope.map(str::to_string)));
@@ -256,10 +244,6 @@ impl IndexerRuntimeState {
                 .last_pass_duration_ms
                 .read()
                 .expect("last_pass_duration_ms poisoned"),
-            last_event_ingest_duration_ms: *self
-                .last_event_ingest_duration_ms
-                .read()
-                .expect("last_event_ingest_duration_ms poisoned"),
             last_index_lag_secs: *self
                 .last_index_lag_secs
                 .read()
@@ -300,7 +284,6 @@ mod tests {
             },
         );
         state.record_pass_duration(1200);
-        state.record_event_ingest_duration(80);
         state.record_index_lag(-3);
         state.record_scan_error();
         state.record_provider_unavailable();
@@ -309,7 +292,7 @@ mod tests {
         state.record_media_fetch_unavailable();
         state.record_media_fetch_timeout();
         state.record_media_fetch_oversize();
-        state.record_error(Some("topic::rust"), "boom");
+        state.record_error(Some("rust"), "boom");
         let scheduler = std::sync::Arc::new(PostFetchScheduler::new(2));
         let _lease = scheduler.enqueue(
             crate::scheduler::PostFetchJobKey {
@@ -328,7 +311,7 @@ mod tests {
         assert_eq!(snapshot.last_sync_at, Some(100));
         assert_eq!(snapshot.last_ingest_at, Some(101));
         assert_eq!(snapshot.last_error.as_deref(), Some("boom"));
-        assert_eq!(snapshot.last_error_scope.as_deref(), Some("topic::rust"));
+        assert_eq!(snapshot.last_error_scope.as_deref(), Some("rust"));
         assert_eq!(snapshot.scanned, 3);
         assert_eq!(snapshot.indexed, 2);
         assert_eq!(snapshot.skipped_non_allow, 1);
@@ -342,7 +325,6 @@ mod tests {
         assert_eq!(snapshot.scans_fresh, 4);
         assert_eq!(snapshot.scans_reused, 5);
         assert_eq!(snapshot.last_pass_duration_ms, Some(1200));
-        assert_eq!(snapshot.last_event_ingest_duration_ms, Some(80));
         assert_eq!(
             snapshot.last_index_lag_secs,
             Some(0),

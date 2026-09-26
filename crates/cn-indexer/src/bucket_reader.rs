@@ -1,4 +1,5 @@
-//! One bounded public/private bucket reader alongside the legacy CN sync path.
+//! CN の索引の読取り経路（#1221 R5-D / R5-H）。公開 bucket と、CN へ開示された private epoch の bucket を、
+//! 選んだ提供元から件数・時間の上限つきで読む。namespace を open / 同期しない。
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -9,9 +10,9 @@ use sqlx::{
     Row,
     postgres::{PgPool, PgRow},
 };
-use tokio::sync::Semaphore;
 use tracing::warn;
 
+use kukuri_blob_service::BlobService;
 use kukuri_cn_core::{ChannelSecretCipher, IndexEntryStore, IndexScopeKind, get_channel_secret};
 use kukuri_docs_sync::{BucketReplica, BucketScope, DocsSync, IrohDocsSync, TimeBucket};
 use kukuri_transport::SeedPeer;
@@ -20,6 +21,8 @@ use crate::ingest::{IngestPipeline, IngestSummary, recent_object_keys};
 
 const PRIORITY_SCOPES: usize = 8;
 const MAX_SCOPE_READS: usize = 8;
+/// 1 回の巡回で読む物理 scope（論理 scope × 現在と直前の bucket）の上限。
+const PHYSICAL_SCOPES: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SelectedScope {
@@ -35,8 +38,8 @@ pub struct BucketReader {
     entries: Arc<dyn IndexEntryStore>,
     pipeline: IngestPipeline,
     cipher: ChannelSecretCipher,
-    physical_budget: usize,
-    scope_permits: Arc<Semaphore>,
+    /// media の一時取得の候補。巡回ごとに、運用者指定の seed と今回選んだ提供元だけにする。
+    blob_seeds: Option<(Arc<dyn BlobService>, Vec<SeedPeer>)>,
 }
 
 impl BucketReader {
@@ -60,27 +63,30 @@ impl BucketReader {
         entries: Arc<dyn IndexEntryStore>,
         pipeline: IngestPipeline,
         cipher: ChannelSecretCipher,
-        physical_budget: usize,
     ) -> Self {
-        assert!(physical_budget == 32 || physical_budget == 64);
         Self {
             pool,
             docs,
             entries,
             pipeline,
             cipher,
-            physical_budget,
-            scope_permits: Arc::new(Semaphore::new(MAX_SCOPE_READS)),
+            blob_seeds: None,
         }
     }
 
-    pub(crate) fn scope_permits(&self) -> Arc<Semaphore> {
-        Arc::clone(&self.scope_permits)
+    pub fn with_blob_seeds(
+        mut self,
+        blob_service: Arc<dyn BlobService>,
+        configured: Vec<SeedPeer>,
+    ) -> Self {
+        self.blob_seeds = Some((blob_service, configured));
+        self
     }
 
+    /// 需要のある scope（最大 8）を先に選ぶ。`full` のときだけ、残りの枠を永続 cursor の巡回で埋める。
     async fn selected_scopes(
         pool: &PgPool,
-        physical_budget: usize,
+        full: bool,
     ) -> Result<(Vec<SelectedScope>, (String, String))> {
         let priority_rows = sqlx::query(
             "WITH candidates AS MATERIALIZED (
@@ -121,6 +127,9 @@ impl BucketReader {
             cursor.try_get("last_kind")?,
             cursor.try_get("last_scope_id")?,
         );
+        if !full {
+            return Ok((selected, next_cursor));
+        }
         let page_sql = "WITH candidates AS MATERIALIZED (
                 SELECT kind, id FROM cn_index.supported_topics
                 WHERE (kind, id) > ($1, $2)
@@ -152,7 +161,7 @@ impl BucketReader {
                 && seen.insert((scope.kind, scope.id.clone()))
             {
                 selected.push(scope);
-                if selected.len() >= physical_budget / 2 {
+                if selected.len() >= PHYSICAL_SCOPES / 2 {
                     break;
                 }
             }
@@ -380,21 +389,33 @@ impl BucketReader {
         Ok(seeds)
     }
 
-    pub async fn poll_once(&self, now: i64) -> Result<IngestSummary> {
-        let (selected, next_cursor) =
-            Self::selected_scopes(&self.pool, self.physical_budget).await?;
+    /// 1 回の巡回。`full` でなければ需要のある scope だけを読む。取り込み結果と読んだ物理 scope 数を返す。
+    pub async fn poll_once(&self, now: i64, full: bool) -> Result<(IngestSummary, usize)> {
+        let (selected, next_cursor) = Self::selected_scopes(&self.pool, full).await?;
         let (public_seeds, next_peer_cursor) = Self::selected_public_providers(&self.pool).await?;
         let buckets = TimeBucket::from_unix_seconds(now)?
             .live_window()
             .collect::<Vec<_>>();
+        let mut blob_seeds = public_seeds.clone();
         let mut scopes = Vec::with_capacity(selected.len() * buckets.len());
         for scope in selected {
+            let seeds = if scope.epoch_id.is_some() {
+                let seeds = Self::selected_private_providers(&self.pool, &scope.id).await?;
+                blob_seeds.extend(seeds.iter().cloned());
+                seeds
+            } else {
+                public_seeds.clone()
+            };
             for bucket in &buckets {
-                scopes.push((scope.clone(), *bucket));
+                scopes.push((scope.clone(), *bucket, seeds.clone()));
             }
         }
-        let public_seeds = &public_seeds;
-        let mut jobs = stream::iter(scopes.into_iter().map(|(scope, bucket)| async move {
+        if let Some((blob_service, configured)) = &self.blob_seeds {
+            blob_seeds.extend(configured.iter().cloned());
+            blob_service.set_seed_peers(blob_seeds).await?;
+        }
+        let physical = scopes.len();
+        let mut jobs = stream::iter(scopes.into_iter().map(|(scope, bucket, seeds)| async move {
             let replica = BucketReplica::new(
                 match &scope.epoch_id {
                     Some(epoch_id) => BucketScope::PrivateChannel {
@@ -407,13 +428,8 @@ impl BucketReader {
                 },
                 bucket,
             )?;
-            self.read_scope(
-                &scope,
-                &replica,
-                if scope.priority { 20 } else { 4 },
-                public_seeds,
-            )
-            .await
+            self.read_scope(&scope, &replica, if scope.priority { 20 } else { 4 }, seeds)
+                .await
         }))
         .buffer_unordered(MAX_SCOPE_READS);
         let mut total = IngestSummary::default();
@@ -434,7 +450,7 @@ impl BucketReader {
         .bind(next_peer_cursor.1)
         .execute(&self.pool)
         .await?;
-        Ok(total)
+        Ok((total, physical))
     }
 
     async fn read_scope(
@@ -442,7 +458,7 @@ impl BucketReader {
         scope: &SelectedScope,
         replica: &BucketReplica,
         limit: usize,
-        public_seeds: &[SeedPeer],
+        seeds: Vec<SeedPeer>,
     ) -> Result<IngestSummary> {
         if !self
             .entries
@@ -465,18 +481,10 @@ impl BucketReader {
         } else {
             None
         };
-        let peers = if private_secret.is_some() {
-            let seeds = Self::selected_private_providers(&self.pool, &scope.id).await?;
-            self.docs.remote_read_candidates_for_seeds(seeds).await?
-        } else {
-            self.docs
-                .remote_read_candidates_for_seeds(public_seeds.to_vec())
-                .await?
-        };
+        let peers = self.docs.remote_read_candidates_for_seeds(seeds).await?;
         if peers.is_empty() {
             return Ok(IngestSummary::default());
         }
-        let _permit = self.scope_permits.acquire().await?;
         let per_peer = limit / peers.len();
         let mut total = IngestSummary::default();
         for peer in peers {
@@ -575,16 +583,21 @@ mod tests {
             .await?;
             let hot = format!("topic-{:04}", total - 1);
             mark_index_demand(&pool, IndexScopeKind::PublicTopic, &hot).await?;
-            let (expanded, _) = BucketReader::selected_scopes(&pool, 64).await?;
+            // 需要だけの巡回は、需要のある scope だけを読み、公平な巡回の cursor を進めない。
+            let (demand_only, cursor) = BucketReader::selected_scopes(&pool, false).await?;
             assert_eq!(
-                expanded.len(),
-                32,
-                "the post-transition reader uses the same 64-slot selector"
+                demand_only
+                    .iter()
+                    .map(|scope| &scope.id)
+                    .collect::<Vec<_>>(),
+                vec![&hot]
             );
+            assert_eq!(cursor, ("public_topic".to_string(), String::new()));
             let mut fair = HashSet::new();
-            for _ in 0..(total / 15 + 2) {
-                let (selected, cursor) = BucketReader::selected_scopes(&pool, 32).await?;
-                assert!(selected.len() <= 16);
+            for _ in 0..(total / 31 + 2) {
+                let (selected, cursor) = BucketReader::selected_scopes(&pool, true).await?;
+                // 論理 32 scope × 現在と直前の bucket = 64 物理 scope。
+                assert!(selected.len() <= 32);
                 assert_eq!(selected[0].id, hot);
                 assert!(selected[0].priority);
                 fair.extend(
@@ -629,7 +642,7 @@ mod tests {
         add_supported_topic(&pool, IndexScopeKind::PublicTopic, "later-public").await?;
         let mut reached = false;
         for _ in 0..14 {
-            let (scopes, cursor) = BucketReader::selected_scopes(&pool, 32).await?;
+            let (scopes, cursor) = BucketReader::selected_scopes(&pool, true).await?;
             reached |= scopes.iter().any(|scope| scope.id == "later-public");
             sqlx::query(
                 "UPDATE cn_index.bucket_reader_cursor
@@ -660,18 +673,33 @@ mod tests {
             ChannelSecretCipher::from_key_material("cn-bucket-private-test-key-0123456789")?;
         let secret = hex::encode([7; 32]);
         add_supported_topic(&pool, IndexScopeKind::PrivateChannel, "private-room").await?;
-        assert!(BucketReader::selected_scopes(&pool, 32).await?.0.is_empty());
+        assert!(
+            BucketReader::selected_scopes(&pool, true)
+                .await?
+                .0
+                .is_empty()
+        );
         register_channel_secret_with_epoch(&pool, &cipher, "private-room", "epoch-1", &secret)
             .await?;
-        let (selected, _) = BucketReader::selected_scopes(&pool, 32).await?;
+        let (selected, _) = BucketReader::selected_scopes(&pool, true).await?;
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].epoch_id.as_deref(), Some("epoch-1"));
         remove_channel_secret(&pool, "private-room").await?;
-        assert!(BucketReader::selected_scopes(&pool, 32).await?.0.is_empty());
+        assert!(
+            BucketReader::selected_scopes(&pool, true)
+                .await?
+                .0
+                .is_empty()
+        );
         register_channel_secret_with_epoch(&pool, &cipher, "private-room", "epoch-1", &secret)
             .await?;
         remove_supported_topic(&pool, IndexScopeKind::PrivateChannel, "private-room").await?;
-        assert!(BucketReader::selected_scopes(&pool, 32).await?.0.is_empty());
+        assert!(
+            BucketReader::selected_scopes(&pool, true)
+                .await?
+                .0
+                .is_empty()
+        );
         pool.close().await;
         database.cleanup().await
     }

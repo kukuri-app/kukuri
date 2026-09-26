@@ -173,8 +173,8 @@ async fn oversize_media_holds_posts() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery() -> Result<()> {
-    let Some(stack) = E2eStack::boot("replicaqueryfail").await? else {
+async fn unreachable_provider_keeps_new_posts_out_of_surfaces_until_recovery() -> Result<()> {
+    let Some(stack) = E2eStack::boot("providerloss").await? else {
         return Ok(());
     };
 
@@ -190,24 +190,12 @@ async fn replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery() 
     let client = Client::new();
     let token = stack.authenticate(&client).await?;
 
-    // 実IrohDocsSyncの直前で、この走行のreplica queryだけを失敗させる。
-    stack.set_replica_query_failure(true);
-    assert!(
-        stack
-            .wait_for_state(
-                |state| {
-                    state.last_error_scope.as_deref()
-                        == Some(format!("topic::{}", stack.topic_id).as_str())
-                },
-                HOLD_TIMEOUT,
-            )
-            .await?,
-        "replica query failure must be observable on the worker"
-    );
-
+    // 投稿者の登録を失効させ、indexer が読める提供元を無くす（bucket の読取りは登録済みの提供元だけを読む）。
+    stack.set_author_provider_available(false).await?;
     let blocked = stack
         .publish_text_post("replica-failure-marker must stay hidden")
         .await?;
+    // 需要の周期（300ms）の巡回が何度も回る間、索引に入らない。
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     assert!(
@@ -219,12 +207,12 @@ async fn replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery() 
                 blocked.as_str(),
             )
             .await?,
-        "a post published while replica queries fail must not reach ArcadeDB"
+        "a post published while no provider is reachable must not reach ArcadeDB"
     );
     let findings = inspect_index_integrity(&stack.pool).await?;
     assert_eq!(
         findings.index_entries_total, 1,
-        "the failed replica query must not add a truth entry: {findings:?}"
+        "an unreachable provider must not add a truth entry: {findings:?}"
     );
 
     let search_url = format!(
@@ -240,16 +228,16 @@ async fn replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery() 
     let body = response.json::<serde_json::Value>().await?;
     assert!(
         !E2eStack::entry_ids(&body).contains(&blocked),
-        "the failed replica query must not expose the new post: {body}"
+        "an unreachable provider must not expose the new post: {body}"
     );
 
-    // 障害を解除すると同じ常駐workerが再試行し、未処理投稿を安全に取り込む。
-    stack.set_replica_query_failure(false);
+    // 提供元が戻ると同じ常駐workerの次の巡回が、未処理投稿を安全に取り込む。
+    stack.set_author_provider_available(true).await?;
     assert!(
         stack
             .wait_for_projection(blocked.as_str(), HOLD_TIMEOUT)
             .await?,
-        "the post did not reach the projection after replica query recovery"
+        "the post did not reach the projection after the provider recovered"
     );
     let response = client
         .get(&search_url)
@@ -260,7 +248,7 @@ async fn replica_query_failure_keeps_new_posts_out_of_surfaces_until_recovery() 
     let body = response.json::<serde_json::Value>().await?;
     assert!(
         E2eStack::entry_ids(&body).contains(&blocked),
-        "the recovered replica query must make the post searchable: {body}"
+        "the recovered provider must make the post searchable: {body}"
     );
 
     stack.shutdown().await

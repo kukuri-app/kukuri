@@ -15,7 +15,6 @@ use kukuri_cn_indexer::PostFetchScheduler;
 use kukuri_cn_indexer::config::{MediaFetchConfig, RelayConfig};
 use kukuri_cn_indexer::ingest::IngestPipeline;
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
-use kukuri_cn_indexer::participant::ScopeReplica;
 use kukuri_cn_indexer::projection::{IndexProjection, MemoryIndexProjection};
 use kukuri_cn_indexer::state::IndexerRuntimeState;
 use kukuri_cn_safety::provider::{
@@ -123,9 +122,8 @@ async fn index_only_indexes_shared_replica_entries() -> Result<()> {
     let object_id = persist_post(&docs, &replica, &topic, "hello shared replica").await;
 
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, allow_service());
-    let scope = ScopeReplica::from_scope(IndexScopeKind::PublicTopic, "rust");
     let summary = pipeline
-        .ingest_recent_scope(scope.kind, &scope.id, &scope.replica_id)
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
         .await?;
 
     assert_eq!(summary.scanned, 1);

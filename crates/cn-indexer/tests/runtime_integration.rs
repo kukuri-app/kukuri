@@ -1,15 +1,14 @@
 //! #613 T4 実行系の統合テスト。
 //!
 //! 3 つの層で「本番と同じ経路」を検証する:
-//! 1. **実 iroh ノード 2 台のレプリカ同期 → 取り込み**（ゲートなし。ループバックで完結）:
-//!    ノード A に置いた投稿が、ピア接続したノード B の取り込みパイプラインから見え、
-//!    スキャンを通って索引に入る。
-//! 2. **実 iroh ノード 2 台のリモートメディア一時取得**(ゲートなし):
+//! 1. **実 iroh ノード 2 台のリモートメディア一時取得**(ゲートなし):
 //!    ノード A にだけある blob を、ノード B の `BlobMediaFetcher` が取得できる。取得後も
 //!    B のローカル blob 保存領域にデータが残らない（恒久保存しない前提の構造的担保）。
-//! 3. **実 Postgres + 実 ArcadeDB の常駐ワーカー**（`KUKURI_CN_RUN_INTEGRATION_TESTS=1` かつ
-//!    `KUKURI_CN_RUN_ARCADEDB_TESTS=1`）: ワーカーが実投影へ書き、サポート対象から外すと
-//!    実投影からも消える。
+//! 2. **実 iroh ノード 2 台 + 実 Postgres の bucket reader**（`KUKURI_CN_RUN_INTEGRATION_TESTS=1`）:
+//!    A の `BlobText` 投稿を B が提供元として読み、本文を一時取得して索引する。
+//! 3. **実 Postgres + 実 ArcadeDB**（`KUKURI_CN_RUN_INTEGRATION_TESTS=1` かつ
+//!    `KUKURI_CN_RUN_ARCADEDB_TESTS=1`）: 取り込みが実投影へ書き、サポート対象から外すと
+//!    保守の巡回で実投影からも消える。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,14 +23,14 @@ use kukuri_cn_core::{
     initialize_database, remove_supported_topic,
 };
 use kukuri_cn_indexer::ArcadeDbProjection;
+use kukuri_cn_indexer::bucket_reader::BucketReader;
 use kukuri_cn_indexer::config::{ArcadeDbConfig, MediaFetchConfig};
 use kukuri_cn_indexer::ingest::IngestPipeline;
+use kukuri_cn_indexer::maintenance::IndexMaintenance;
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
-use kukuri_cn_indexer::participant::IndexerParticipant;
 use kukuri_cn_indexer::projection::{IndexProjection, MemoryIndexProjection};
 use kukuri_cn_indexer::query::IndexQuery;
 use kukuri_cn_indexer::state::IndexerRuntimeState;
-use kukuri_cn_indexer::worker::{IndexerWorker, WorkerConfig};
 use kukuri_cn_safety::provider::MediaFetcher;
 use kukuri_cn_safety::{MockSafetyProvider, ModerationEventSigner};
 use kukuri_cn_safety_runtime::clock::SystemScanClock;
@@ -41,10 +40,13 @@ use kukuri_cn_safety_runtime::{
     Secp256k1ModerationEventSigner,
 };
 use kukuri_core::{
-    BlobHash, KukuriKeys, ObjectVisibility, PayloadRef, ReplicaId, TopicId, build_post_envelope,
+    BlobHash, KukuriKeys, ObjectVisibility, PayloadRef, ReplicaId, TopicId,
     build_post_envelope_with_payload,
 };
-use kukuri_docs_sync::{DocOp, DocsSync, IrohDocsSync, stable_key, topic_replica_id};
+use kukuri_docs_sync::{
+    BucketReplica, BucketScope, DocOp, DocsSync, IrohDocsSync, TimeBucket, stable_key,
+    topic_replica_id,
+};
 use kukuri_iroh_node::IrohDocsNode;
 
 const TEST_SIGNER_SECRET: &str = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -89,57 +91,6 @@ fn loopback_ticket(node: &IrohDocsNode) -> String {
         .next()
         .expect("bound socket");
     format!("{}@{}", node.endpoint().addr().id, socket)
-}
-
-/// 本文 text の post envelope を共有 replica に実在させ、object_id を返す。
-async fn persist_post(
-    docs: &dyn DocsSync,
-    replica: &ReplicaId,
-    topic: &TopicId,
-    body: &str,
-) -> String {
-    let keys = KukuriKeys::generate();
-    let envelope = build_post_envelope(&keys, topic, body, None).expect("envelope");
-    let object = envelope
-        .to_post_object()
-        .expect("post object")
-        .expect("post object present");
-    let object_id = object.object_id.as_str().to_string();
-    docs.open_replica(replica).await.expect("open");
-    docs.apply_doc_op(
-        replica,
-        DocOp::SetJson {
-            key: stable_key("objects", &format!("{object_id}/state")),
-            value: serde_json::to_value(&object).expect("state json"),
-        },
-    )
-    .await
-    .expect("state op");
-    docs.apply_doc_op(
-        replica,
-        DocOp::SetJson {
-            key: stable_key("objects", &format!("{object_id}/envelope")),
-            value: serde_json::to_value(&envelope).expect("envelope json"),
-        },
-    )
-    .await
-    .expect("envelope op");
-    docs.apply_doc_op(
-        replica,
-        DocOp::SetJson {
-            key: stable_key(
-                "indexes/timeline",
-                &format!(
-                    "{}/{object_id}",
-                    kukuri_core::timeline_sort_key(object.created_at, &object.object_id)
-                ),
-            ),
-            value: serde_json::json!({ "object_id": object_id }),
-        },
-    )
-    .await
-    .expect("timeline op");
-    object_id
 }
 
 /// app-api の通常投稿と同じ `BlobText` を共有 replica に配置する。
@@ -206,54 +157,6 @@ async fn persist_blob_text_post(
     object_id
 }
 
-/// 実 iroh 2 台: A の投稿が B のレプリカ同期 → スキャン → 索引まで通る。
-#[tokio::test(flavor = "multi_thread")]
-async fn two_node_replica_sync_feeds_ingest() -> Result<()> {
-    let node_a = IrohDocsNode::memory().await?;
-    let node_b = IrohDocsNode::memory().await?;
-    let docs_a = Arc::new(IrohDocsSync::new(Arc::clone(&node_a)));
-    let docs_b = Arc::new(IrohDocsSync::new(Arc::clone(&node_b)));
-
-    // A に投稿を置き、B は A をピアとして学ぶ。
-    let topic = TopicId::new("rust".to_string());
-    let replica = topic_replica_id("rust");
-    let object_id = persist_post(docs_a.as_ref(), &replica, &topic, "hello from node a").await;
-    docs_b.import_peer_ticket(&loopback_ticket(&node_a)).await?;
-    docs_b.open_replica(&replica).await?;
-
-    // B 側の取り込みパイプライン（mock 安全性プロバイダ + メモリ内の真実源 / 投影）。
-    let (service, artifact_store) = allow_service();
-    let entries = Arc::new(MemoryIndexEntryStore::new(artifact_store));
-    let projection = Arc::new(MemoryIndexProjection::default());
-    let pipeline =
-        IngestPipeline::new(docs_b.clone(), service, entries.clone(), projection.clone());
-
-    // レプリカ同期は非同期に進むため、取り込みが成立するまで再実行する（冪等）。
-    let mut indexed = false;
-    for _ in 0..600 {
-        let _ = pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
-            .await;
-        if projection
-            .contains_object(IndexScopeKind::PublicTopic, "rust", object_id.as_str())
-            .await
-            .unwrap_or(false)
-        {
-            indexed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(indexed, "post from node A was not ingested on node B");
-    assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", object_id.as_str()));
-
-    docs_a.shutdown().await;
-    docs_b.shutdown().await;
-    node_a.shutdown().await?;
-    node_b.shutdown().await?;
-    Ok(())
-}
-
 /// 実 iroh 2 台: B は A の blob を一時取得でき、取得後も B のローカル保存領域に残らない。
 #[tokio::test(flavor = "multi_thread")]
 async fn two_node_remote_media_fetch_is_ephemeral() -> Result<()> {
@@ -299,9 +202,19 @@ async fn two_node_remote_media_fetch_is_ephemeral() -> Result<()> {
     Ok(())
 }
 
-/// 実 iroh 2 台: `BlobText` を replica 同期後に一時取得して索引し、受信側へ恒久保存しない。
+/// 実 iroh 2 台 + 実 Postgres: bucket reader が提供元の `BlobText` を読み、巡回で選んだ提供元から本文を一時取得して
+/// 索引する。受信側へ恒久保存しない（#1221 R5-H。media の取得候補は巡回で選んだ提供元に限る）。
 #[tokio::test(flavor = "multi_thread")]
 async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
+    let Some(admin_url) = integration_test_admin_database_url() else {
+        eprintln!("skipping bucket blob text test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
+        return Ok(());
+    };
+    let database = TestDatabase::create(admin_url.as_str(), "cn_runtime_blob_text").await?;
+    let pool = connect_postgres(database.database_url.as_str()).await?;
+    initialize_database(&pool).await?;
+    add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+
     let node_a = IrohDocsNode::memory().await?;
     let node_b = IrohDocsNode::memory().await?;
     let docs_a = Arc::new(IrohDocsSync::new(Arc::clone(&node_a)));
@@ -313,13 +226,34 @@ async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
     let stored = blobs_a
         .put_blob(body.as_bytes().to_vec(), "text/markdown")
         .await?;
-    let topic = TopicId::new("rust");
-    let replica = topic_replica_id("rust");
-    let object_id = persist_blob_text_post(docs_a.as_ref(), &replica, &topic, &stored).await;
-    let ticket = loopback_ticket(&node_a);
-    docs_b.import_peer_ticket(&ticket).await?;
-    docs_b.open_replica(&replica).await?;
-    blobs_b.import_peer_ticket(&ticket).await?;
+    let now = chrono::Utc::now().timestamp();
+    let replica = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: "rust".into(),
+        },
+        TimeBucket::from_unix_seconds(now)?,
+    )?
+    .replica_id();
+    let object_id =
+        persist_blob_text_post(docs_a.as_ref(), &replica, &TopicId::new("rust"), &stored).await;
+    let pubkey = "a".repeat(64);
+    sqlx::query("INSERT INTO cn_user.subscriber_accounts(subscriber_pubkey) VALUES ($1)")
+        .bind(&pubkey)
+        .execute(&pool)
+        .await?;
+    let (endpoint_id, addr) = loopback_ticket(&node_a)
+        .split_once('@')
+        .map(|(id, addr)| (id.to_string(), addr.to_string()))
+        .expect("ticket");
+    sqlx::query(
+        "INSERT INTO cn_bootstrap.peer_registrations(subscriber_pubkey, endpoint_id, addr_hint, expires_at)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')",
+    )
+    .bind(&pubkey)
+    .bind(endpoint_id)
+    .bind(addr)
+    .execute(&pool)
+    .await?;
 
     let (service, artifact_store) = allow_service();
     let entries = Arc::new(MemoryIndexEntryStore::new(artifact_store));
@@ -327,52 +261,55 @@ async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
     let pipeline =
         IngestPipeline::new(docs_b.clone(), service, entries.clone(), projection.clone())
             .with_blob_service(blobs_b.clone());
-
+    let reader = BucketReader::new(
+        pool.clone(),
+        docs_b.clone(),
+        entries.clone(),
+        pipeline,
+        kukuri_cn_core::ChannelSecretCipher::from_key_material(
+            "runtime-integration-test-channel-secret-key-0123456789",
+        )?,
+    )
+    .with_blob_seeds(blobs_b.clone(), Vec::new());
     let mut indexed = false;
-    for _ in 0..600 {
-        let _ = pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
-            .await;
+    for _ in 0..20 {
+        reader.poll_once(now, true).await?;
         let hits = projection
             .search_scope(IndexScopeKind::PublicTopic, "rust", "テスト", 10)
-            .await
-            .unwrap_or_default();
+            .await?;
         if hits.iter().any(|entry| entry.object_id == object_id) {
             indexed = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(indexed, "remote BlobText was not ingested and searchable");
-    assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
-    assert_eq!(
-        projection
-            .entries_in_scope(IndexScopeKind::PublicTopic, "rust")
-            .await[0]
-            .text,
-        body
-    );
-
+    let text = projection
+        .entries_in_scope(IndexScopeKind::PublicTopic, "rust")
+        .await
+        .first()
+        .map(|entry| entry.text.clone());
     let blobs_b_local_only = Arc::new(IrohBlobService::new(Arc::clone(&node_b)));
-    assert_eq!(
-        blobs_b_local_only.blob_status(&stored.hash).await?,
-        BlobStatus::Missing
-    );
+    let local = blobs_b_local_only.blob_status(&stored.hash).await?;
 
     docs_a.shutdown().await;
     docs_b.shutdown().await;
     node_a.shutdown().await?;
     node_b.shutdown().await?;
+    pool.close().await;
+    database.cleanup().await?;
+    assert!(indexed, "remote BlobText was not ingested and searchable");
+    assert!(entries.contains(IndexScopeKind::PublicTopic, "rust", &object_id));
+    assert_eq!(text.as_deref(), Some(body));
+    assert_eq!(local, BlobStatus::Missing);
     Ok(())
 }
 
-/// 実 Postgres + 実 ArcadeDB: 常駐ワーカーの取り込みが実投影に入り、サポート対象から
-/// 外すと実投影からも消える。
+/// 実 Postgres + 実 ArcadeDB: 取り込みが実投影に入り、サポート対象から外すと保守の巡回で実投影からも消える。
 ///
 /// `KUKURI_CN_RUN_INTEGRATION_TESTS=1`（Postgres）かつ `KUKURI_CN_RUN_ARCADEDB_TESTS=1`
 /// （live ArcadeDB、`COMMUNITY_NODE_ARCADEDB_*`）のときのみ実行する。
 #[tokio::test]
-async fn worker_writes_and_deindexes_real_arcadedb_projection() -> Result<()> {
+async fn ingest_and_maintenance_write_and_deindex_real_arcadedb_projection() -> Result<()> {
     let Some(admin_url) = integration_test_admin_database_url() else {
         eprintln!("skipping runtime integration test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
         return Ok(());
@@ -414,47 +351,17 @@ async fn worker_writes_and_deindexes_real_arcadedb_projection() -> Result<()> {
     let entries = Arc::new(MemoryIndexEntryStore::new(artifact_store));
     let state = Arc::new(IndexerRuntimeState::default());
     let pipeline = IngestPipeline::new(docs.clone(), service, entries.clone(), projection.clone())
-        .with_metrics(Arc::clone(&state));
-    let participant = Arc::new(
-        IndexerParticipant::new(
-            pool.clone(),
-            docs.clone(),
-            entries.clone(),
-            projection.clone(),
-            pipeline,
-            kukuri_cn_core::ChannelSecretCipher::from_key_material(
-                "runtime-integration-test-channel-secret-key-0123456789",
-            )?,
-        )
-        .with_blob_service(blobs),
-    );
-    let worker = IndexerWorker::new(
-        participant,
-        docs.clone(),
-        Arc::clone(&state),
-        WorkerConfig {
-            poll_interval: Duration::from_millis(300),
-            event_debounce: Duration::from_millis(50),
-            backoff_base: Duration::from_millis(100),
-            backoff_max: Duration::from_millis(500),
-        },
-    );
-    let handle = worker.spawn();
-
-    // ワーカー経由で実 ArcadeDB 投影に入る。
-    let mut visible = false;
-    for _ in 0..600 {
-        if projection
+        .with_metrics(Arc::clone(&state))
+        .with_blob_service(blobs);
+    pipeline
+        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic_id.as_str(), &replica)
+        .await?;
+    assert!(
+        projection
             .contains_object(IndexScopeKind::PublicTopic, topic_id.as_str(), &object_id)
-            .await
-            .unwrap_or(false)
-        {
-            visible = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(visible, "worker did not project into real ArcadeDB");
+            .await?,
+        "ingest did not project into real ArcadeDB"
+    );
     // 実投影の発見一覧と topic 内 / 横断検索が同じ object を返す。
     let recent = projection
         .list_recent(Some((IndexScopeKind::PublicTopic, topic_id.as_str())), 10)
@@ -467,29 +374,28 @@ async fn worker_writes_and_deindexes_real_arcadedb_projection() -> Result<()> {
     let all = projection.search_all("テスト", 10).await?;
     assert!(all.iter().any(|entry| entry.object_id == object_id));
 
-    // サポート対象から外すと、実投影からも消える（真実源 → 投影の順）。
+    // サポート対象から外すと、保守の巡回で実投影からも消える（投影 → 真実源の順）。
     remove_supported_topic(&pool, IndexScopeKind::PublicTopic, topic_id.as_str()).await?;
-    let mut removed = false;
-    for _ in 0..600 {
-        if projection
+    IndexMaintenance::new(
+        pool.clone(),
+        entries.clone(),
+        projection.clone(),
+        kukuri_cn_core::ChannelSecretCipher::from_key_material(
+            "runtime-integration-test-channel-secret-key-0123456789",
+        )?,
+    )
+    .run_pass(chrono::Utc::now().timestamp(), &state)
+    .await;
+    assert_eq!(
+        projection
             .count_scope(IndexScopeKind::PublicTopic, topic_id.as_str())
-            .await
-            .unwrap_or(usize::MAX)
-            == 0
-        {
-            removed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        removed,
+            .await?,
+        0,
         "removed scope was not de-indexed from real ArcadeDB"
     );
     assert!(!entries.contains(IndexScopeKind::PublicTopic, topic_id.as_str(), &object_id));
-
-    handle.shutdown().await;
-    Ok(())
+    pool.close().await;
+    database.cleanup().await
 }
 
 /// 実 ArcadeDB: 受入下限と解除 scope の回収は 1 回あたり上限つきで消し、消した件数を返す（#1221 R5-F）。

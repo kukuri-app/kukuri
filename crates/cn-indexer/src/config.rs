@@ -137,12 +137,12 @@ pub struct IndexerConfig {
     pub safety: SafetyRuntimeConfig,
     /// media scan 用の一時 blob fetch（#609）の制限。
     pub media_fetch: MediaFetchConfig,
-    /// docs replica sync / remote blob fetch のためのシードピア（#613 T1）。
+    /// remote blob fetch のためのシードピア（#613 T1。bucket の読取りは提供元の登録から選ぶ）。
     ///
     /// `COMMUNITY_NODE_INDEXER_SEED_PEERS`（カンマ区切り、`endpoint_id` または
     /// `endpoint_id@host:port`）から読む。不正な値は起動エラー（fail-closed）。
     pub seed_peers: Vec<SeedPeer>,
-    /// 常駐ワーカーのscope窓巡回間隔（#613 T2）。
+    /// 常駐ワーカーの全 scope の巡回間隔（#613 T2）。需要のある scope は既定 30 秒ごとに別に読む。
     pub poll_interval: std::time::Duration,
     /// 投稿取得・検査を同時に進める最大件数。
     pub max_concurrent_posts: usize,
@@ -187,7 +187,7 @@ pub struct MediaFetchConfig {
 pub(crate) const MEDIA_FETCH_MAX_BYTES_ENV: &str = "COMMUNITY_NODE_MEDIA_FETCH_MAX_BYTES";
 pub(crate) const MEDIA_FETCH_TIMEOUT_SECS_ENV: &str = "COMMUNITY_NODE_MEDIA_FETCH_TIMEOUT_SECS";
 
-/// docs replica sync / remote blob fetch のシードピア指定（#613 T1）。
+/// remote blob fetch のシードピア指定（#613 T1）。
 /// カンマ区切りで `endpoint_id` または `endpoint_id@host:port` を並べる。
 pub const SEED_PEERS_ENV: &str = "COMMUNITY_NODE_INDEXER_SEED_PEERS";
 
