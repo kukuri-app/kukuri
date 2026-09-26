@@ -749,10 +749,13 @@ impl AppService {
                 .map_err(|reason| {
                     anyhow::anyhow!("live session was rejected: {}", reason.as_str())
                 })?;
-        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
-        if let Some(locator) = super::bucket_writer::update_locator_replica(replica, now / 1_000)? {
-            persist_session_envelope(self.services.docs_sync.as_ref(), &locator, &envelope).await?;
-        }
+        super::bucket_writer::persist_session_envelope_and_locator(
+            &self.services,
+            replica,
+            &envelope,
+            now,
+        )
+        .await?;
         persist_live_session_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)
@@ -797,25 +800,16 @@ impl AppService {
         let verified =
             VerifiedGameRoom::verify(state, Some(&envelope.pubkey), manifest, replica, topic_id)
                 .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
-        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
-        if let Some(locator) = super::bucket_writer::update_locator_replica(replica, now / 1_000)? {
-            persist_session_envelope(self.services.docs_sync.as_ref(), &locator, &envelope).await?;
-        }
+        super::bucket_writer::persist_session_envelope_and_locator(
+            &self.services,
+            replica,
+            &envelope,
+            now,
+        )
+        .await?;
         persist_game_room_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)
-    }
-
-    /// 操作(終了・参加・更新)が使う state と manifest。docs から反映するときと同じ検証を通す(#1252)。
-    pub(crate) async fn fetch_live_session_state_and_manifest(
-        &self,
-        topic_id: &str,
-        session_id: &str,
-    ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
-        Ok(self
-            .fetch_verified_live_session(topic_id, session_id)
-            .await?
-            .map(VerifiedLiveSession::into_parts))
     }
 
     /// 手元 → 有界な provider の順に読み、検証した版。projection より古い版は返さない。
@@ -886,18 +880,6 @@ impl AppService {
             }
         }
         Ok(None)
-    }
-
-    /// `fetch_live_session_state_and_manifest` と同じ形。
-    pub(crate) async fn fetch_game_room_state_and_manifest(
-        &self,
-        topic_id: &str,
-        room_id: &str,
-    ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
-        Ok(self
-            .fetch_verified_game_room(topic_id, room_id)
-            .await?
-            .map(VerifiedGameRoom::into_parts))
     }
 
     pub(crate) async fn fetch_verified_game_room(

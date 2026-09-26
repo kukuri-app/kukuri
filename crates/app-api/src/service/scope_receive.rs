@@ -396,3 +396,30 @@ impl AppService {
         Ok(applied)
     }
 }
+
+/// 操作(終了・参加・更新)が使う state と manifest(検証した版を分解する)。
+impl AppService {
+    /// 操作(終了・参加・更新)が使う state と manifest。docs から反映するときと同じ検証を通す(#1252)。
+    pub(crate) async fn fetch_live_session_state_and_manifest(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
+        Ok(self
+            .fetch_verified_live_session(topic_id, session_id)
+            .await?
+            .map(VerifiedLiveSession::into_parts))
+    }
+
+    /// `fetch_live_session_state_and_manifest` と同じ形。
+    pub(crate) async fn fetch_game_room_state_and_manifest(
+        &self,
+        topic_id: &str,
+        room_id: &str,
+    ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
+        Ok(self
+            .fetch_verified_game_room(topic_id, room_id)
+            .await?
+            .map(VerifiedGameRoom::into_parts))
+    }
+}

@@ -667,9 +667,6 @@ mod key_query_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
-    
 
     // リトライ状態のテストは共通実装側(kukuri-transport::peers)へ移動した(WP-H2)。
 

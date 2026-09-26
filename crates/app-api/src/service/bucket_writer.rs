@@ -64,6 +64,20 @@ impl ServiceHandles {
     }
 }
 
+/// live・game の署名済み envelope を state の replica へ置き、更新が別の日なら更新時の bucket にも locator として置く。
+pub(crate) async fn persist_session_envelope_and_locator(
+    services: &ServiceHandles,
+    replica: &ReplicaId,
+    envelope: &KukuriEnvelope,
+    now_ms: i64,
+) -> Result<()> {
+    persist_session_envelope(services.docs_sync.as_ref(), replica, envelope).await?;
+    if let Some(locator) = update_locator_replica(replica, now_ms / 1_000)? {
+        persist_session_envelope(services.docs_sync.as_ref(), &locator, envelope).await?;
+    }
+    Ok(())
+}
+
 /// 継続状態(live・game)の更新が、entity の state を置いた bucket と違う日に起きたときの、更新時の bucket。
 /// 署名済み envelope をそこへ locator として置く(ADR 0054 §2)。旧 replica と同じ日なら `None`。
 pub(crate) fn update_locator_replica(

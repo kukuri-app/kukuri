@@ -379,8 +379,7 @@ impl IrohDocsNode {
         };
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
         let remote_cache = Arc::new(OnceLock::new());
-        let page_read =
-            DocReadProtocol::new(docs.sync, blobs.clone(), remote_cache.clone());
+        let page_read = DocReadProtocol::new(docs.sync, blobs.clone(), remote_cache.clone());
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
         let router = Router::builder(endpoint.clone())
             .accept(
