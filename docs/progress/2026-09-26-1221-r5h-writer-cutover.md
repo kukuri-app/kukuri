@@ -20,8 +20,8 @@
 | AC-1 | 切替状態 1 行。移行完了で 1 回だけ保存し、再起動・restore で戻らない | 実装済み。store `the_writer_switches_once_after_the_migration_and_stays_switched`、desktop-runtime `the_writer_switches_once_after_the_migration_and_keeps_it_across_restarts` |
 | AC-2 | 各 record を §2 の replica と key へ。日の境界・再試行で宛先が変わらない | 実装済み。app-api `bucket_writer` の 3 件。版つき cursor は作らない(既存 cursor の `created_at` から bucket が一意。ADR 0054 §3)。Dome の instance と hosting の記録は owner の制御領域の instance id の key(決定 1。app-api `instance_lookup_reads_a_constant_number_of_docs_records`) |
 | AC-3 | 切替後は旧 replica へ書かない | 実装済み。切替後の本人投稿は保護所有先へ入る(desktop-runtime `own_posts_written_after_the_switch_are_protected_and_restored`)。Dome は app-api `switched_dome_records_skip_legacy_replicas_and_private_ones_stay_in_the_channel`(作成・hosting・接続・削除・private の作成と hosting の後に旧 topic/channel replica に Dome の記録が 0 件) |
-| AC-4 | 旧 sync なしの受信(hint の exact 読取り、lease の開始・再接続・日の境界の 1 ページの読み直し、通知) | 実装済み。実 Iroh `real_iroh_hint_exact_read_and_bounded_rereads_receive_new_posts_without_sync`、`the_day_boundary_reread_waits_until_the_next_bucket`、規模 `reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries`(新着の受信を hint の読取りで数える) |
-| AC-5 | 参加・退出 record と handoff grant の account 経路の配送、owner の SQLite 保存 | 実装済み。app-api `participant_leave_while_the_owner_is_offline_arrives_after_the_owner_restarts`、private_channels の friend_only・friend_plus・invite・leave、store `private_channel_participants_keep_the_newest_record_and_page_by_pubkey`。参加者数は owner だけ(決定 2。desktop-runtime friend-only・friend-plus の restore、frontend `settings panel shows the participant count only on the owner device`)。更新前からの参加者の移行(決定 3。app-api `legacy_participants_move_to_the_table_one_bounded_window_at_a_time`・`a_participant_from_before_the_update_receives_the_first_rotation_grant`) |
+| AC-4 | 旧 sync なしの受信(hint の exact 読取り、lease の開始・再接続・日の境界の 1 ページの読み直し、通知) | 実装済み。実 Iroh `real_iroh_hint_exact_read_and_bounded_rereads_receive_new_posts_without_sync`・`a_second_reread_reads_the_head_again`・`the_day_boundary_reread_takes_in_a_post_whose_hint_was_dropped_the_day_before`、`the_day_boundary_reread_waits_until_the_next_bucket`、プロフィールの手元の author bucket(`profile_page_one_shows_posts_written_after_the_switch`)、private の通知 offer(`a_private_offer_from_a_switched_writer_creates_a_mention`)、規模 `reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries`(新着の受信を hint の読取りで数える) |
+| AC-5 | 参加・退出 record と handoff grant の account 経路の配送、owner の SQLite 保存 | 実装済み。app-api `participant_leave_while_the_owner_is_offline_arrives_after_the_owner_restarts`・`a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant`、private_channels の friend_only・friend_plus・invite・leave、store `private_channel_participants_keep_the_newest_record_and_page_by_pubkey`。参加者数は owner だけ(決定 2。desktop-runtime friend-only・friend-plus の restore、frontend `settings panel shows the participant count only on the owner device`)。更新前からの参加者の移行(決定 3。app-api `legacy_participants_move_to_the_table_one_bounded_window_at_a_time`・`a_participant_from_before_the_update_receives_the_first_rotation_grant`) |
 | AC-6 | client の旧 sync の撤去 | 実装済み。docs-sync `local_bucket_reads_stay_idle_after_seed_reapply_and_close_preserves_data`、開いた handle は 128 まで(`writes_across_many_day_buckets_keep_open_handles_at_the_limit`)。sync status の docs の活動時刻は hint の取込みで記録する |
 | AC-7 | CN の撤去と bucket reader の周期 | 実装済み。cn-indexer `demanded_scope_is_read_each_demand_interval_and_others_each_poll` ほか |
 | AC-8 | 新側は 64 scope / 256 要求の内側 | lease(R2-C)と CN の 64 枠 |
@@ -38,25 +38,26 @@
 | プロフィールの行 | `author_index_replica` | 作成時の author bucket |
 | reaction | `scope_write_replica`(ミリ秒の署名時刻) | 作成時の bucket。識別は対象の投稿の replica |
 | 取り下げ | `queue_withdrawal_writes` → `resume_withdrawal_writes` | 操作時の bucket(locator つき)と元投稿の位置の 2 行。書けた行だけを消す |
-| live/game の作成・更新 | `scope_write_replica`・`update_locator_replica` | 作成時の bucket に最新 state、日が変わった更新は更新時の bucket に署名済み envelope |
+| live/game の作成・更新 | `scope_write_replica`・`session_write_replica` | 更新の envelope の署名時刻の bucket に最新 state と署名済み envelope。日が変わった更新は更新の日の bucket へ移して locator を置く |
 | profile・follow・block・asset・Dome preset/移動 | `persist_author_event` | 制御領域の key はそのまま、更新時の author bucket に署名済み envelope |
-| lease の task | `scope_receive.rs`(`spawn_subscription_task`・`apply_content_hint`・`reread_scope`) | replica を開かない。hint の exact 読取り、開始・作り直し・日の境界で 1 ページと session の索引(種類ごとに 64 件) |
+| lease の task | `scope_receive.rs`(`spawn_subscription_task`・`apply_content_hint`・`reread_scope`) | replica を開かない。hint の exact 読取り、開始・作り直し・日の境界で 1 ページと session の索引(種類ごとに 64 件)。読み直しは照合の台帳を使わず、毎回各 bucket の先頭から読む |
 | session の表示 | `set_session_display` → `read_session` | 手元に無ければ provider から exact に読む。remote の manifest は provider から取得。projection に行が無い session は hint・読み直し・表示の channel の scope で探す |
 | session の hint | `GossipHint::SessionChanged { sent_at }` | 送った時刻を載せ、同じ session の続く更新を gossip が重複として落とさない(旧版は無視する) |
 | private channel の参加・退出 | `record_private_channel_participant` → `queue_epoch_control` | 手元の docs と参加者の表へ置き、owner でなければ epoch の鍵で封じて dm_outbox(`epoch-control:`)へ。DM の再送 owner が `EpochControl` で送り、ACK で消す |
-| 回転 | `distribute_epoch_handoff_grants` | 参加者の表を 128 件ずつ読み、grant を旧 replica に置いて各参加者へ届ける |
+| 回転 | `distribute_epoch_handoff_grants` | 参加者の表を 128 件ずつ読み、grant を旧 replica に置いて各参加者へ届ける。回転の後に届いた直前の epoch の参加 record には `grant_current_epoch_to_late_participant` で現 epoch の grant を送る |
 | 参加者数の表示 | `private_channel_diagnostics` | owner の端末だけが参加者の表の現 epoch の人数を返す。owner 以外は `None`(CLI は null、画面は出さない) |
 | 保護移行 kind `owner_participants` | `migrate_legacy_private_channel_participants` | owner の channel の現 epoch の旧 docs の参加 record を、pubkey の hex の接頭辞の窓(128 件まで。埋まれば 1 桁細かく)ずつ参加者の表へ移す。位置は保護移行の台帳 |
-| Dome の anchor | `dome_write_anchor`・`dome_anchors`・`dome_record_replica`・`read_dome_record` | session の state を置く作成時の scope bucket(private は作成時の現 epoch)。切替前の Dome は最初の書込みで作成時刻の bucket へ移す。行が無ければ、公開は制御領域の Instance の作成時刻、private は locator から |
+| Dome の anchor | `dome_anchor_candidates`・`dome_anchors`・`dome_record_replica`・`read_dome_record` | Dome の作成時刻(session の state の `created_at`)の scope bucket(private は現 epoch、回転の前の epoch の同じ日の bucket も読む)。日で変わらない。作成時刻は行の session の state(手元に無ければ session を読む)、行が無ければ公開は制御領域の Instance、private は locator から |
 | Dome instance・hosting・layout・削除の記録 | `persist_dome_instance_manifest`・`persist_dome_hosting_records`・`persist_dome_layout_commit`・`save_dome_deletion` | 公開は owner の制御領域の instance id の key、private は anchor(hosting は最後の epoch の分を 1 key)。読取りは exact、無ければ旧 context replica の手元 |
-| session(live・game・Dome)の書込み先 | `session_write_replica`・`persist_session_envelope_and_locator` | 切替後は、公開は state の bucket(旧 replica の session は作成時刻の bucket へ移す)、private は現 epoch の state の bucket(旧 epoch の bucket・旧 replica の session は現 epoch のその日の bucket へ移す)。日が変わった更新と移したときは、その日の bucket に envelope と locator(`sessions/<kind>/<id>/locator`)を置く |
+| session(live・game・Dome)の書込み先 | `session_write_replica`・`persist_session_envelope_and_locator` | 切替後は、更新の envelope の署名時刻の scope bucket(private は現 epoch)。日が変わった更新・旧 replica・旧 epoch の bucket の session はその日の bucket へ移し、locator(`sessions/<kind>/<id>/locator`)を置く。書き手も読み手と同じく bucket と署名時刻の一致を確かめる |
 | session の読取り | `session_target_candidates`(`session_locators`)・`reread_sessions` | 現在と直前の bucket の locator が指す replica を先に読む。読み直しは locator の key も拾う。private の bucket は capability を持つ手元の docs からも読む |
 | Dome の接続 | `service/dome_connection_store.rs` | 提案した Dome の anchor に書き、知っている Dome の anchor と旧 context replica を読む。切替後に旧 replica へ書こうとすると `dome_connection_legacy_guard` が拒む |
 | private の Dome の locator | `spawn_owner_dome_heartbeat_task`・`persist_dome_locator` | owner の端末の hosting が 1 日 1 回、channel の現 epoch のその日の bucket に anchor を置く |
 | Dome の一覧・接続の Instance | `append_context_domes`・`heartbeat_dome_owners`・`list_context_dome_instances` | 手元の行の owner・自分・heartbeat の host(context と合わせて instance id を導けるとき)・接続の端点の owner について exact に読む。replica を走査しない |
 | author の lease の follow の窓 | `hydrate_author_keys`(`AuthorKeyReader::remote_follow_keys`) | provider の follow の窓(512 key、手元と同じ昇順・docs author 指定)を 1 ページ読み、手元に無い key を provider から反映 |
-| プロフィールの列 | `profile_timeline_page` | 自分も含め、手元のページが埋まらないときだけ remote の旧 author replica と author bucket を読む |
-| 制御 record の受信 | `ingest_epoch_control_offer` | owner は参加者の表へ、参加者は grant を手元の旧 epoch の replica へ置いて ACK |
+| プロフィールの列 | `profile_timeline_page` | 手元の旧 author replica と、cursor が選ぶ author bucket のうち手元にあるもの(`has_local_replica`。namespace を作らない)を合わせる。自分も含め、手元のページが埋まらないときだけ remote の旧 author replica と author bucket を読む |
+| 制御 record の受信 | `ingest_epoch_control_offer` | owner は参加者の表へ(直前の epoch の参加 record なら現 epoch の grant も送る)、参加者は grant を手元の旧 epoch の replica へ置いて ACK |
+| private の通知 offer の受信 | `ingest_private_notification_offer` | 現 epoch の旧 replica と、現 epoch の bucket(切替後の送り手)を受け付ける。bucket と作成時刻は投稿の検証で確かめる |
 | author の lease の読み直し | `hydrate_author_record` | 自分を指す Active の follow を新しく保存したら followed の通知(id は envelope から) |
 | 保護移行(切替後) | `own_envelope_plan` | bucket へ書いた投稿のプロフィールの行を作成時の author bucket から写す |
 
@@ -130,9 +131,33 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
 - 決定 4 友達の友達: author の lease の読み直しで provider の follow の窓(512 key)を 1 ページ読む。
 - 決定 5 自分の別端末の投稿: `profile_timeline_page` の自分の分岐を撤去。
 
+## 監査 FAIL の修正(2026-09-27、PR #1375)
+
+- B1 日が変わった session の更新: 書込み先を署名時刻の bucket にし、移したら locator。書き手の検証にも bucket と
+  署名時刻の一致を入れた。試験 `session_rehome::a_session_updated_on_a_later_day_stays_readable`(前日の bucket を
+  source に前日の作成時刻で書き、live・game・private の game・Dome の chat の読み手と owner の次の操作を確かめる)。
+- B2 プロフィールの 1 ページ目: 手元の author bucket を合わせる。試験 `profile_page_one_shows_posts_written_after_the_switch`
+  (自分と、同じ docs を読む別の端末)、docs-sync `has_local_replica_does_not_create_a_namespace`。
+- B3 読み直しの位置の持ち越し: 読み直しは照合の台帳を使わない。試験は AC-4 の 2 件(実 Iroh)。
+- B4 private の通知 offer: 現 epoch の bucket を受け付ける。試験は AC-4 の 1 件。
+- B5 private の Dome の anchor: Dome の作成時刻から導く。試験 `dome_placement::private_dome_hosting_records_stay_at_the_creation_day_anchor`
+  (切替前と回転前の Dome の作成時刻を前日にし、hosting の記録が前日の bucket にあり、行を持つ参加者が読め、owner が閉じる)。
+- B6 CLI の 3 台の daemon の試験: 参加 record が outbox の周期(約 2 秒)で届く前に回転し、b に grant が送られなかった。
+  直前の epoch の参加 record に現 epoch の grant を送る。試験 `a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant`。
+  Linux(Docker)で回転の伝播は通るようになったが、同じ試験は後段の Dome の接続(`process_e2e.rs:475`)で失敗する
+  (下の「未決」)。
+- 時刻の注入: app-api に時計の抽象は無く、envelope の署名時刻は core が現在時刻で付ける。日をまたぐ場面は、前日の
+  bucket・前日の作成時刻・前日の時刻で署名した投稿を置くことで作った。
+
 ## 未決(ユーザーの判断を待つ)
 
-なし。2026-09-27 の追加決定で次のとおり解消した。
+- 別の端末の Dome の接続の記録: 接続の提案・選択・合意は、提案した Dome の anchor(owner の端末の docs)にだけ
+  あり、読取りは手元だけ(下の既知の制約)。受け手の端末は提案を読めず、CLI の `three_real_daemons_exchange_content_and_preserve_private_boundaries`
+  (Linux の CI だけで動く)が `list_dome_connection_topology` の伝播期限で失敗する。選択肢: (a) `dome-topology` の hint と
+  topology の読取りで、知っている Dome の anchor の接続の key を provider から有界に読む、(b) 提案・合意を受け手の owner
+  へ account 経路(receive offer)で届ける、(c) 試験の期待を変える(ユーザー判断が要る)。
+
+次は 2026-09-27 の追加決定で解消した。
 
 - Dome の残りの記録(session・接続・layout・削除)も旧 replica へ書かない: session と接続は Dome の anchor(作成時の
   scope bucket)、layout・削除は公開なら owner の制御領域、private なら anchor。
@@ -162,8 +187,15 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   (旧 sync の撤去後の既存の挙動のまま。provider からは読まない)。
 - private の Dome の locator は owner の端末の hosting だけが置く。CN の hosting・hosting していない Dome は、行が無い
   参加者には見つからない。
-- 切替前に作った Dome は、切替後の最初の書込みで作成時刻の bucket へ移す。移す前の行(旧 replica)を持つ訪問者は、
-  移した後の更新を読むまで旧 replica の版を見る。
+- 切替前に作った Dome の session は、切替後の最初の書込みで更新の日の bucket へ移す。移す前の行(旧 replica)を持つ
+  訪問者は、移した後の更新を読むまで旧 replica の版を見る。
+- session を移した locator は移した日の bucket にだけあり、読み手は現在と直前の bucket の locator を読む。3 日以上
+  更新の無い session を、行を持たない読み手は locator から見つけられない(行の source と id の時刻からは読む)。
+- 回転の後に届いた参加 record に grant を送るのは、直前の epoch の参加 record だけ(2 回以上の回転をまたいだ参加 record
+  には送らない)。参加 record の再送ごとに grant の行を積む(ACK で消える)。
+- プロフィールの手元の author bucket は、手元に namespace がある bucket だけを読む。他人の author bucket は手元に無い
+  ことが多く(remote の読取りは namespace を取り込まない)、手元の旧 `author::` の行が limit 件以上あると、他人の切替後の
+  投稿は provider から読まれず 1 ページ目に出ない(remote は手元が埋まらないときだけの既存の形)。
 - Existing-gap: Dome の移動の記録と Preset は、この PR より前から owner の公開の制御領域にある(private の context の
   Dome でも公開)。今回は直さない。
 - 他人の Dome の一覧は、一覧の表示の中で owner の制御領域を provider から読む(Preset と同じ。一覧の上限と 30 秒の

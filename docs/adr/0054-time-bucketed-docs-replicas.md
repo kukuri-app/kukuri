@@ -50,8 +50,8 @@ replica の識別、取得理由、解放、保存の回収を定める。
 | 投稿のmedia manifest | 投稿と同じbucket。refはsource locatorを持つ | 投稿と同じ |
 | reaction | reaction作成時のbucket。元投稿のbucketへ無期限追記しない | 現在bucketのeventと対象locator |
 | 取り下げ | 元投稿bucketの `withdrawals/<id>/state`（署名済みenvelopeを同じkeyへ上書き） | 操作時bucketにも同じ取り下げとtarget locatorを置く |
-| live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない | 更新時bucketへ署名済みlocatorを置く |
-| Domeのsession・接続の提案/選択/合意 | Domeのanchor（Dome作成時のcontextのscope bucket。privateは作成時の現epoch）。接続は提案したDomeのanchor（R5-H） | session・接続のhintと、知っているDomeのanchorの読取り |
+| live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない。日が変わった更新は、最新stateと署名済みenvelopeを更新時bucketへ移す（R5-H） | 移した先の更新時bucketにlocatorを置く |
+| Domeのsession・接続の提案/選択/合意 | sessionはlive/gameと同じ。接続は提案したDomeのanchor（Dome作成時刻のcontextのscope bucket。privateは現epoch。R5-H） | session・接続のhintと、知っているDomeのanchorの読取り |
 | Dome instance・hosting・layout/削除の記録 | 公開contextはownerの制御領域（`author::<owner>`）のinstance idのkey、private contextはDomeのanchor（R5-H、2026-09-27決定） | owner端末のhostingのheartbeat hint。privateはchannelのbucketのlocator |
 | author profile/latest | author別の固定数の最新state/envelopeの制御領域 | 更新時author bucketのevent |
 | follow/block | author/target/種別から決定できる対象別最新state | 更新時author bucketのevent。全edgeのコピー/再生はしない |
@@ -195,8 +195,11 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
   `kukuri.db`に入るのでbackup/restoreでも旧writerへ戻らない。ADR 0048 §7の旧領域を削除できる前提はこの時刻に合わせる。
 - writer: §2の配置どおり。bucketは署名した`created_at`（reactionはミリ秒の署名時刻）から決める。取り下げは操作時の
   bucket（`withdrawals/<id>/locator`に元投稿の位置）と元投稿の位置の2行を永続outbox（`withdrawal_write_outbox`）へ
-  積み、書けた行だけを消す。起動時と取り下げのたびに記録済みの宛先へ再開する。live/gameのentityは作成時のbucketに
-  最新stateを置き、日が変わった更新は更新時のbucketへ署名済みenvelopeを置く。authorの現在値は制御領域のkeyに置き、
+  積み、書けた行だけを消す。起動時と取り下げのたびに記録済みの宛先へ再開する。live/game/Domeのsessionは、更新の
+  envelopeの署名時刻のscope bucket（privateは現epoch）に最新stateと署名済みenvelopeを置く。日が変わった更新、切替前の
+  旧replicaや回転の前のepochのsessionは更新の日のbucketへ移し、移した先にlocatorを置く。読み手と書き手はbucketと署名
+  時刻の一致を確かめる（2026-09-27監査の修正。作成日のbucketにstateを残して更新時刻で署名すると読み手が拒否した）。
+  authorの現在値は制御領域のkeyに置き、
   更新時のauthor bucketへ署名済みenvelopeをeventとして置く。private bucketのcapabilityは、登録済みのepochの
   capabilityからdocs-syncが導出する（epochのcapabilityを外せばbucketも読み書きできない）。
 - 受信側の検証: reactionは読んだbucketとenvelopeの時刻の一致、識別は対象の投稿を置いたreplica。取り下げは元投稿の
@@ -212,9 +215,11 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
   replica）の参加recordを、pubkeyのhexの接頭辞で切ったkeyの窓（128件まで）ずつ参加者の表へ1回だけ移す。位置は
   R5-Gの保護移行の台帳（kind `owner_participants`）に永続し、移し終える前のrotationも移した分と表の分を宛先にする。
 - Dome（R5-H、2026-09-27ユーザー決定）: 切替後はDomeの記録を旧topic/channel replicaへ1件も書かない。
-  - anchor: Domeのsession（訪問者もchatで書くmetaverse roomのmanifest）を置くreplica。Dome作成時刻のcontextの
-    scope bucket（privateは作成時の現epoch）で、最新stateはここに置き、日が変わった更新は更新時のbucketへ署名済み
-    envelopeを置く（live/gameと同じ）。切替前に旧replicaへ置いたDomeは、切替後の最初の書込みで作成時刻のbucketへ移す。
+  - anchor: Dome作成時刻（sessionのstateの`created_at`）のcontextのscope bucket（privateは現epoch。回転の前のepochの
+    同じ日のbucketも読む）。書き手と読み手は同じ作成時刻から導くので、日が変わっても変わらない。行を持つ参加者は、
+    手元にstateが無ければsessionを読んで作成時刻を知る。Domeのsession（訪問者もchatで書くmetaverse roomのmanifest）は
+    live/gameと同じく更新の日のbucketへ移る（2026-09-27監査の修正。anchorをsessionの移し先にすると日ごとに変わり、
+    前日のhostingの記録を読めなかった）。
   - 接続の提案・選択・合意（複数の書き手）は、提案したDomeのanchorに置く。idに時刻が無く、作成時のbucketを読み手が
     導けないため、Domeの継続状態として置く。読むのは、contextで知っているDome（一覧の行・heartbeat・自分）のanchorと
     旧context replica（手元）。
