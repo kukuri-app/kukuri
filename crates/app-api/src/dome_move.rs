@@ -29,7 +29,7 @@ impl AppService {
             }
             existing
         } else {
-            let (source_replica_id, source_state, source_manifest) = self
+            let (_, source_state, source_manifest) = self
                 .fetch_game_room_state_and_manifest(
                     source_topic_id,
                     input.source_instance_id.as_str(),
@@ -46,7 +46,7 @@ impl AppService {
                 anyhow::bail!("only the owner can move an active Dome instance");
             }
             let (_, canonical_source) = self
-                .fetch_dome_instance_manifest(&source_replica_id, &actor)
+                .fetch_dome_instance_manifest(&source.spatial_context, &actor)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("canonical source Dome instance not found"))?;
             if canonical_source.instance_id != source.instance_id
@@ -127,7 +127,7 @@ impl AppService {
 
         if record.phase == DomeMovePhaseV1::Preparing {
             if let Some((_, existing)) = self
-                .fetch_dome_instance_manifest(&target_replica_id, &actor)
+                .fetch_dome_instance_manifest(&record.target_context, &actor)
                 .await?
             {
                 let is_same_staging_attempt = existing.instance_id == record.target_instance_id
@@ -178,12 +178,8 @@ impl AppService {
             target.session_id = record.target_instance_id.clone();
             target.chat_history.clear();
             let staged_instance = dome_instance_manifest_from_game_manifest(&staged)?;
-            self.persist_dome_instance_manifest(
-                &target_replica_id,
-                &staged_instance,
-                Utc::now().timestamp_millis(),
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&staged_instance, Utc::now().timestamp_millis())
+                .await?;
             let staged = self
                 .persist_game_room_manifest(
                     &target_replica_id,
@@ -224,12 +220,8 @@ impl AppService {
             });
             source_manifest.updated_at = Utc::now().timestamp_millis();
             let source_instance = dome_instance_manifest_from_game_manifest(&source_manifest)?;
-            self.persist_dome_instance_manifest(
-                &source_replica_id,
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
+                .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,
@@ -262,12 +254,8 @@ impl AppService {
             target.instance_status = DomeInstanceStatusV1::Active;
             target_manifest.updated_at = Utc::now().timestamp_millis();
             let target_instance = dome_instance_manifest_from_game_manifest(&target_manifest)?;
-            self.persist_dome_instance_manifest(
-                &target_source_replica,
-                &target_instance,
-                target_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&target_instance, target_state.created_at)
+                .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &target_source_replica,
@@ -302,12 +290,8 @@ impl AppService {
             source_manifest.status = GameRoomStatus::Ended;
             source_manifest.updated_at = Utc::now().timestamp_millis();
             let source_instance = dome_instance_manifest_from_game_manifest(&source_manifest)?;
-            self.persist_dome_instance_manifest(
-                &source_replica_id,
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
+                .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,

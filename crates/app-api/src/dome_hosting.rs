@@ -34,17 +34,14 @@ impl AppService {
             .hosting_instance(&replica, &spatial_context, instance_id)
             .await?
             .context("Dome instance was not found")?;
-        self.hosting_view_for_instance(&replica, &instance).await
+        self.hosting_view_for_instance(&instance).await
     }
 
     pub(crate) async fn hosting_view_for_instance(
         &self,
-        replica: &ReplicaId,
         instance: &DomeInstanceManifestV1,
     ) -> Result<DomeHostingView> {
-        let records = self
-            .list_dome_hosting_records(replica, &instance.instance_id)
-            .await?;
+        let records = self.list_dome_hosting_records(instance).await?;
         self.hosting_view(instance, &records, Utc::now().timestamp_millis())
             .await
     }
@@ -105,9 +102,7 @@ impl AppService {
             .fetch_dome_preset_manifest(&instance.preset_ref)
             .await?
             .ok_or(DomeReadUnavailable::Preset)?;
-        let records = self
-            .list_dome_hosting_records(&replica, &input.instance_id)
-            .await?;
+        let records = self.list_dome_hosting_records(&instance).await?;
         let now = Utc::now().timestamp_millis();
         let epoch = next_hosting_epoch(&records);
         let lease = build_signed_dome_hosting_lease(
@@ -148,10 +143,10 @@ impl AppService {
             DomeHostingRecordV1::HostAccepted(acceptance),
             DomeHostingRecordV1::LeaseActivated(activation),
         ];
-        for record in &new_records {
-            self.persist_dome_hosting_record(&replica, &instance.instance_id, record)
-                .await?;
-        }
+        let mut all_records = records;
+        all_records.extend(new_records);
+        self.persist_dome_hosting_records(&instance, &all_records)
+            .await?;
         self.dome_host_sessions
             .lock()
             .await
@@ -162,8 +157,6 @@ impl AppService {
             session_id.clone(),
         )
         .await;
-        let mut all_records = records;
-        all_records.extend(new_records);
         self.publish_dome_hosting_hint(
             &instance.spatial_context,
             &instance.instance_id,
@@ -204,9 +197,7 @@ impl AppService {
             instance.generation,
         )
         .await?;
-        let mut records = self
-            .list_dome_hosting_records(&replica, &input.instance_id)
-            .await?;
+        let mut records = self.list_dome_hosting_records(&instance).await?;
         let now = Utc::now().timestamp_millis();
         let epoch = next_hosting_epoch(&records);
         let lease = build_signed_dome_hosting_lease(
@@ -228,10 +219,9 @@ impl AppService {
                 expires_at: lease_expiry(now, input.lease_duration_millis)?,
             },
         )?;
-        let record = DomeHostingRecordV1::LeaseIssued(lease);
-        self.persist_dome_hosting_record(&replica, &instance.instance_id, &record)
+        records.push(DomeHostingRecordV1::LeaseIssued(lease));
+        self.persist_dome_hosting_records(&instance, &records)
             .await?;
-        records.push(record);
         self.stop_owner_dome_hosting(&instance.instance_id).await;
         self.publish_dome_hosting_hint(
             &instance.spatial_context,
@@ -259,9 +249,7 @@ impl AppService {
             instance.generation,
         )
         .await?;
-        let mut records = self
-            .list_dome_hosting_records(&replica, &input.instance_id)
-            .await?;
+        let mut records = self.list_dome_hosting_records(&instance).await?;
         let lease = current_unique_lease(&records)?.context("no pending Hosting Lease")?;
         if !matches!(lease.lease.host, DomeHostTargetV1::CommunityNode { .. }) {
             anyhow::bail!("pending Hosting Lease does not target a Community Node");
@@ -276,11 +264,9 @@ impl AppService {
             DomeHostingRecordV1::HostAccepted(acceptance),
             DomeHostingRecordV1::LeaseActivated(activation),
         ];
-        for record in &new_records {
-            self.persist_dome_hosting_record(&replica, &instance.instance_id, record)
-                .await?;
-        }
         records.extend(new_records);
+        self.persist_dome_hosting_records(&instance, &records)
+            .await?;
         self.publish_dome_hosting_hint(
             &instance.spatial_context,
             &instance.instance_id,
@@ -317,9 +303,7 @@ impl AppService {
             anyhow::bail!("DOME_HOSTING_STALE_INSTANCE");
         }
         self.ensure_dome_hosting_owner(&instance)?;
-        let mut records = self
-            .list_dome_hosting_records(&replica, &input.instance_id)
-            .await?;
+        let mut records = self.list_dome_hosting_records(&instance).await?;
         let lease = current_unique_lease(&records)?.context("no Hosting Lease to close")?;
         if lease.lease.instance_generation != instance.generation {
             anyhow::bail!("no current-generation Hosting Lease to close");
@@ -330,9 +314,9 @@ impl AppService {
             &lease,
             now,
         )?);
-        self.persist_dome_hosting_record(&replica, &instance.instance_id, &record)
-            .await?;
         records.push(record);
+        self.persist_dome_hosting_records(&instance, &records)
+            .await?;
         self.stop_owner_dome_hosting(&instance.instance_id).await;
         self.publish_dome_hosting_hint(&instance.spatial_context, &instance.instance_id, "closed")
             .await?;
@@ -600,9 +584,7 @@ impl AppService {
             });
         }
 
-        let records = self
-            .list_dome_hosting_records(&replica, &input.instance_id)
-            .await?;
+        let records = self.list_dome_hosting_records(&instance).await?;
         let lease = current_unique_lease(&records)?.context("no active Dome Hosting Lease")?;
         let now = Utc::now().timestamp_millis();
         let resolved = resolve_dome_hosting_state(&instance, &records, now, Some(now))?;
@@ -769,40 +751,69 @@ impl AppService {
         Ok(replica)
     }
 
+    /// hosting の記録(owner が最後に始めた epoch の分)。owner の制御領域を手元の次に owner を含む有界な provider から
+    /// exact に読み(#1221 R5-H、2026-09-27 ユーザー決定)、無ければ更新前に旧 context replica へ置いた分を手元から読む。
     pub(crate) async fn list_dome_hosting_records(
         &self,
-        replica: &ReplicaId,
-        instance_id: &str,
+        instance: &DomeInstanceManifestV1,
     ) -> Result<Vec<DomeHostingRecordV1>> {
-        let prefix = stable_key(HOSTING_RECORD_PREFIX, &format!("{instance_id}/"));
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(replica, DocQuery::Prefix(prefix))
+        let owner = instance.owner_pubkey.as_str();
+        let (author, key) = (
+            author_replica_id(owner),
+            hosting_state_key(&instance.instance_id),
+        );
+        let current = self
+            .read_author_object(owner, |docs, policy| {
+                let (author, key) = (&author, &key);
+                async move {
+                    docs.query_replica_with_policy(author, DocQuery::Exact(key.clone()), policy)
+                        .await?
+                        .into_iter()
+                        .next()
+                        .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
+                        .transpose()
+                }
+            })
             .await?;
-        records
+        if let Some(records) = current {
+            return Ok(records);
+        }
+        let Some(legacy) = self.legacy_dome_replica(&instance.spatial_context).await else {
+            return Ok(Vec::new());
+        };
+        let prefix = stable_key(HOSTING_RECORD_PREFIX, &format!("{}/", instance.instance_id));
+        self.services
+            .docs_sync
+            .query_replica(&legacy, DocQuery::Prefix(prefix))
+            .await?
             .into_iter()
             .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
             .collect()
     }
 
-    async fn persist_dome_hosting_record(
+    /// 最後の epoch の記録だけを、owner の制御領域の instance の 1 key へ置く(旧 topic/channel replica へは書かない)。
+    async fn persist_dome_hosting_records(
         &self,
-        replica: &ReplicaId,
-        instance_id: &str,
-        record: &DomeHostingRecordV1,
+        instance: &DomeInstanceManifestV1,
+        records: &[DomeHostingRecordV1],
     ) -> Result<()> {
-        let (epoch, stage, envelope_id) = hosting_record_identity(record);
+        let latest = records
+            .iter()
+            .map(|record| hosting_record_identity(record).0)
+            .max();
+        let current = records
+            .iter()
+            .filter(|record| Some(hosting_record_identity(record).0) == latest)
+            .collect::<Vec<_>>();
+        let replica = author_replica_id(instance.owner_pubkey.as_str());
+        self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
             .apply_doc_op(
-                replica,
+                &replica,
                 DocOp::SetJson {
-                    key: stable_key(
-                        HOSTING_RECORD_PREFIX,
-                        &format!("{instance_id}/{epoch:020}/{stage}/{envelope_id}"),
-                    ),
-                    value: serde_json::to_value(record)?,
+                    key: hosting_state_key(&instance.instance_id),
+                    value: serde_json::to_value(current)?,
                 },
             )
             .await
@@ -1133,6 +1144,11 @@ fn current_unique_lease(
         anyhow::bail!("split-brain Hosting Leases require a higher owner epoch");
     }
     Ok(leases.into_iter().next())
+}
+
+/// owner の制御領域の、hosting の記録の現在値の key(#1221 R5-H)。
+fn hosting_state_key(instance_id: &str) -> String {
+    stable_key(HOSTING_RECORD_PREFIX, &format!("{instance_id}/state"))
 }
 
 fn hosting_record_identity(record: &DomeHostingRecordV1) -> (u64, &'static str, &str) {

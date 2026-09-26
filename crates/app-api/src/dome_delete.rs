@@ -124,7 +124,7 @@ impl AppService {
             }
             None => {
                 let (state, instance) = self
-                    .fetch_dome_instance_manifest(&replica, &owner)
+                    .fetch_dome_instance_manifest(&input.spatial_context, &owner)
                     .await?
                     .context("DOME_DELETE_OWNER_REQUIRED")?;
                 if instance.instance_id != input.instance_id
@@ -159,7 +159,7 @@ impl AppService {
             }
         };
         let (_, instance) = self
-            .fetch_dome_instance_manifest(&replica, &owner)
+            .fetch_dome_instance_manifest(&input.spatial_context, &owner)
             .await?
             .context("DOME_DELETE_STALE_INSTANCE")?;
         if instance.instance_id != input.instance_id
@@ -216,7 +216,7 @@ impl AppService {
         manifest.status = GameRoomStatus::Ended;
         manifest.updated_at = Utc::now().timestamp_millis();
         let tombstone = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&replica, &tombstone, operation.created_at)
+        self.persist_dome_instance_manifest(&tombstone, operation.created_at)
             .await?;
         let state = self
             .persist_game_room_manifest(

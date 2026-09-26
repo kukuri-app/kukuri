@@ -13,10 +13,22 @@ impl AppService {
         spatial_context: SpatialContextV1,
     ) -> Result<DomeConnectionTopologyView> {
         let replica = self.dome_connection_read_replica(&spatial_context).await?;
-        let instances = self.list_context_dome_instances(&replica).await?;
         let proposal_states = self.list_dome_proposal_states(&replica).await?;
         let selections = self.list_dome_selections(&replica).await?;
         let connection_states = self.list_dome_connection_states(&replica).await?;
+        let endpoints = proposal_states
+            .iter()
+            .flat_map(|state| [&state.proposal.proposer, &state.proposal.receiver])
+            .chain(connection_states.iter().flat_map(|state| {
+                [
+                    &state.record.agreement.proposer,
+                    &state.record.agreement.receiver,
+                ]
+            }))
+            .map(|endpoint| endpoint.owner_pubkey.clone());
+        let instances = self
+            .list_context_dome_instances(&spatial_context, endpoints)
+            .await?;
         let connections = connection_states
             .iter()
             .map(|state| state.record.clone())
@@ -139,7 +151,9 @@ impl AppService {
             }
             return self.proposal_view_from_state(&replica, existing).await;
         }
-        let instances = self.list_context_dome_instances(&replica).await?;
+        let instances = self
+            .list_context_dome_instances(&input.spatial_context, [])
+            .await?;
         let proposer = instances
             .iter()
             .find(|instance| instance.instance_id == input.proposer_instance_id)
@@ -308,7 +322,13 @@ impl AppService {
                 record: existing.record,
             });
         }
-        let instances = self.list_context_dome_instances(&replica).await?;
+        let owners = [
+            proposal_state.proposal.proposer.owner_pubkey.clone(),
+            proposal_state.proposal.receiver.owner_pubkey.clone(),
+        ];
+        let instances = self
+            .list_context_dome_instances(&input.spatial_context, owners)
+            .await?;
         let proposer =
             current_instance_for_endpoint(&instances, &proposal_state.proposal.proposer)?;
         let receiver =
@@ -531,26 +551,38 @@ impl AppService {
         Ok(replica)
     }
 
+    /// context の Dome Instance(#1221 R5-H)。replica は走査しない。手元の一覧の metaverse の行の owner、hosting の
+    /// heartbeat で知った owner、自分、`owners`(提案・接続の端点)について、owner の制御領域を exact に読む。
     async fn list_context_dome_instances(
         &self,
-        replica: &ReplicaId,
+        context: &SpatialContextV1,
+        owners: impl IntoIterator<Item = Pubkey>,
     ) -> Result<Vec<DomeInstanceManifestV1>> {
-        let records = self
+        let rows = self
             .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Prefix(stable_key("metaverse/dome-instances", "")),
+            .projection_store
+            .list_channel_game_rooms(
+                context.topic_id().as_str(),
+                channel_storage_id(context.channel_id()).as_str(),
+                LIVE_GAME_LIST_LIMIT,
             )
             .await?;
+        let owners = rows
+            .into_iter()
+            .filter(|row| row.room_kind == GameRoomKind::MetaverseRoom)
+            .map(|row| row.host_pubkey)
+            .chain(
+                owners
+                    .into_iter()
+                    .chain(self.heartbeat_dome_owners(context).await)
+                    .map(|owner| owner.as_str().to_string()),
+            )
+            .chain([self.current_author_pubkey()])
+            .collect::<BTreeSet<_>>();
         let mut instances = Vec::new();
-        for record in records {
-            if !record.key.ends_with("/state") {
-                continue;
-            }
-            let state: DomeInstanceStateDocV1 = serde_json::from_slice(&record.value)?;
+        for owner in owners {
             let resolved = match self
-                .fetch_dome_instance_manifest(replica, &state.owner_pubkey)
+                .fetch_dome_instance_manifest(context, &Pubkey::from(owner))
                 .await
             {
                 Ok(value) => value,

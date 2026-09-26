@@ -258,7 +258,12 @@ async fn stopped_dome_delete_recreates_same_id_with_new_generation_and_old_retry
         room
     );
     let before = app
-        .fetch_dome_instance_manifest(&topic_replica_id(topic), &app.keys().public_key())
+        .fetch_dome_instance_manifest(
+            &SpatialContextV1::Topic {
+                topic_id: TopicId::new(topic),
+            },
+            &app.keys().public_key(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -266,7 +271,12 @@ async fn stopped_dome_delete_recreates_same_id_with_new_generation_and_old_retry
     assert_eq!(before.1.status, DomeInstanceStatusV1::Active);
     assert!(app.delete_dome(input.clone()).await.unwrap().deleted);
     let after = app
-        .fetch_dome_instance_manifest(&topic_replica_id(topic), &app.keys().public_key())
+        .fetch_dome_instance_manifest(
+            &SpatialContextV1::Topic {
+                topic_id: TopicId::new(topic),
+            },
+            &app.keys().public_key(),
+        )
         .await
         .unwrap()
         .unwrap();

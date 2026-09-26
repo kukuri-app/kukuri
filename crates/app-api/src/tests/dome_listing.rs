@@ -101,10 +101,7 @@ async fn unreadable_unrelated_instance_does_not_break_game_room_listing() {
 #[tokio::test]
 async fn invalid_first_record_for_owner_slot_does_not_shadow_valid_instance() {
     let f = fixture().await;
-    let key = stable_key(
-        "metaverse/dome-instances",
-        &format!("{}/state", f.app.keys().public_key().as_str()),
-    );
+    let key = instance_state_key(&f);
     f.docs
         .shadow(&key, serde_json::json!("not an Instance state"))
         .await;
@@ -120,13 +117,10 @@ async fn invalid_first_record_for_owner_slot_does_not_shadow_valid_instance() {
 #[tokio::test]
 async fn invalid_first_envelope_record_does_not_shadow_valid_instance() {
     let f = fixture().await;
-    let state_key = stable_key(
-        "metaverse/dome-instances",
-        &format!("{}/state", f.app.keys().public_key().as_str()),
-    );
+    let state_key = instance_state_key(&f);
     let state_record = f
         .docs
-        .query_replica(&topic_replica_id(TOPIC), DocQuery::Exact(state_key))
+        .query_replica(&owner_replica(&f), DocQuery::Exact(state_key))
         .await
         .expect("read Instance state")
         .pop()
@@ -151,13 +145,10 @@ async fn invalid_first_envelope_record_does_not_shadow_valid_instance() {
 #[tokio::test]
 async fn instance_blob_io_failure_is_returned() {
     let f = fixture().await;
-    let state_key = stable_key(
-        "metaverse/dome-instances",
-        &format!("{}/state", f.app.keys().public_key().as_str()),
-    );
+    let state_key = instance_state_key(&f);
     let state_record = f
         .docs
-        .query_replica(&topic_replica_id(TOPIC), DocQuery::Exact(state_key))
+        .query_replica(&owner_replica(&f), DocQuery::Exact(state_key))
         .await
         .expect("read Instance state")
         .pop()
@@ -177,10 +168,7 @@ async fn instance_blob_io_failure_is_returned() {
 #[tokio::test]
 async fn instance_docs_io_failure_is_returned() {
     let f = fixture().await;
-    let state_key = stable_key(
-        "metaverse/dome-instances",
-        &format!("{}/state", f.app.keys().public_key().as_str()),
-    );
+    let state_key = instance_state_key(&f);
     f.docs.fail_on_key(&state_key).await;
 
     let error = f
@@ -220,11 +208,9 @@ async fn instance_lookup_reads_a_constant_number_of_docs_records() {
         )
         .await
         .expect("create Dome");
-    let replica = topic_replica_id(TOPIC);
-    let owner_key = stable_key(
-        "metaverse/dome-instances",
-        &format!("{}/state", app.keys().public_key().as_str()),
-    );
+    // #1221 R5-H: Instance は owner の制御領域の、instance の id の key に置く。
+    let replica = author_replica_id(app.keys().public_key().as_str());
+    let owner_key = stable_key("metaverse/dome-instances", &format!("{instance_id}/state"));
     let state_record = docs
         .query_replica(&replica, DocQuery::Exact(owner_key))
         .await
@@ -316,7 +302,12 @@ async fn missing_other_instance_keeps_owner_management_topology_available() {
     let f = fixture().await;
     let instance = f
         .app
-        .fetch_dome_instance_manifest(&topic_replica_id(TOPIC), &f.app.keys().public_key())
+        .fetch_dome_instance_manifest(
+            &kukuri_core::SpatialContextV1::Topic {
+                topic_id: TopicId::new(TOPIC),
+            },
+            &f.app.keys().public_key(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -350,6 +341,98 @@ async fn missing_other_instance_keeps_owner_management_topology_available() {
             .iter()
             .any(|component| component.instance_ids.contains(&owned))
     );
+}
+
+// #1221 R5-H(2026-09-27 ユーザー決定): 訪問者は、owner の端末の hosting の heartbeat から owner と context を知り、
+// owner の制御領域(provider)の Instance と hosting の記録を exact に読んで一覧に出す。Dome の session は読まない。
+// heartbeat が無ければ(owner が offline で hint も無い)一覧に出ない。
+#[tokio::test]
+async fn a_hosted_dome_is_listed_from_the_heartbeat_and_the_owner_control_area() {
+    let owner_docs = Arc::new(CountingDocsSync::default());
+    let blobs = Arc::new(MemoryBlobService::default());
+    let app = |docs: Arc<CountingDocsSync>| {
+        let store = Arc::new(MemoryStore::default());
+        let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+        app_service_from_dependencies(
+            store.clone(),
+            store,
+            transport,
+            Arc::new(NoopHintTransport),
+            docs,
+            blobs.clone(),
+            generate_keys(),
+        )
+    };
+    let owner = app(owner_docs.clone());
+    let visitor = app(Arc::new(CountingDocsSync::reading_from(owner_docs)));
+    let context = SpatialContextV1::Topic {
+        topic_id: TopicId::new(TOPIC),
+    };
+    let dome_id = owner
+        .create_metaverse_room(
+            TOPIC,
+            CreateMetaverseRoomInput {
+                title: "hosted Dome".into(),
+                description: String::new(),
+                max_peers: Some(4),
+            },
+        )
+        .await
+        .expect("create Dome");
+    owner
+        .start_owner_dome_hosting(crate::StartOwnerDomeHostingInput {
+            expected_generation: None,
+            spatial_context: context,
+            instance_id: dome_id.clone(),
+            endpoint_id: "owner-endpoint".into(),
+            lease_duration_millis: 60_000,
+        })
+        .await
+        .expect("start owner hosting");
+    assert!(
+        visitor
+            .list_game_rooms(TOPIC)
+            .await
+            .unwrap()
+            .iter()
+            .all(|room| room.room_id != dome_id),
+        "without a hint the Dome is not listed"
+    );
+
+    // topic の hint で受け取る heartbeat(scope の task が台帳へ置く)。
+    let heartbeat = owner
+        .dome_host_sessions
+        .lock()
+        .await
+        .get(&dome_id)
+        .expect("owner session")
+        .signed_heartbeat(Utc::now().timestamp_millis())
+        .expect("signed heartbeat");
+    visitor
+        .dome_host_heartbeats
+        .lock()
+        .await
+        .insert(dome_id.clone(), heartbeat);
+    let rooms = visitor.list_game_rooms(TOPIC).await.unwrap();
+    let room = rooms
+        .iter()
+        .find(|room| room.room_id == dome_id)
+        .expect("the hosted Dome is listed");
+    assert_eq!(room.host_pubkey, owner.current_author_pubkey());
+    assert_eq!(
+        room.dome_hosting.as_ref().map(|state| state.kind),
+        Some(kukuri_core::DomeHostingStateKindV1::OwnerHosted)
+    );
+    owner.shutdown().await;
+}
+
+/// #1221 R5-H: Instance は owner の制御領域の、instance の id の key に置く。
+fn instance_state_key(f: &Fixture) -> String {
+    stable_key("metaverse/dome-instances", &format!("{}/state", f.dome_id))
+}
+
+fn owner_replica(f: &Fixture) -> ReplicaId {
+    author_replica_id(f.app.keys().public_key().as_str())
 }
 
 struct Fixture {

@@ -268,6 +268,13 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
 }
 use kukuri_core::{DomeDirection, DomeProposalDerivedStatusV1, SpatialContextV1};
 
+/// 提案する owner は、相手の Dome を手元の一覧で知っている(#1221 R5-H: context の replica を走査しない)。
+async fn show_domes(app: &AppService, topic: &str) {
+    app.catch_up_scope_sessions(topic, &TimelineScope::Public)
+        .await
+        .expect("read the Dome sessions");
+}
+
 fn app_with_shared_dome_services(
     docs_sync: Arc<MemoryDocsSync>,
     blob_service: Arc<MemoryBlobService>,
@@ -330,6 +337,7 @@ async fn open_proposal_fixture(
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, &topic).await;
     proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
             proposal_id: format!("proposal-{suffix}"),
@@ -384,6 +392,7 @@ async fn dome_connection_proposal_accept_and_revoke_round_trip() {
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, topic).await;
 
     let proposal = proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
@@ -522,6 +531,7 @@ async fn owner_block_revokes_connection_and_unblock_does_not_restore_it() {
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, topic).await;
     proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
             proposal_id: "proposal-owner-block".into(),
@@ -733,6 +743,7 @@ async fn only_proposer_can_withdraw_and_only_receiver_can_accept() {
         )
         .await
         .expect("create B");
+    show_domes(&proposer, topic).await;
     assert!(
         proposer
             .create_dome_connection_proposal(CreateDomeConnectionProposalInput {

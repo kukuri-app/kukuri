@@ -21,11 +21,17 @@ impl std::fmt::Display for DomeReadUnavailable {
 
 impl std::error::Error for DomeReadUnavailable {}
 
+/// owner の制御領域の、Dome Instance の現在値の key。instance の id は context と owner から決まる(#1221 R5-H)。
+fn dome_instance_state_key(instance_id: &str) -> String {
+    stable_key("metaverse/dome-instances", &format!("{instance_id}/state"))
+}
+
 async fn load_signed_dome_instance_manifest(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     envelope_id: &EnvelopeId,
     owner_pubkey: &Pubkey,
+    policy: DocFetchPolicy,
 ) -> Result<Option<DomeInstanceManifestV1>> {
     let key = stable_key("envelopes", envelope_id.as_str());
     let records = docs_sync
@@ -33,7 +39,7 @@ async fn load_signed_dome_instance_manifest(
             replica,
             key.as_str(),
             MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            DocFetchPolicy::LocalThenRemote,
+            policy,
         )
         .await?;
     for record in records {
@@ -323,9 +329,10 @@ impl AppService {
         Ok(Some(manifest))
     }
 
+    /// Dome Instance を owner の制御領域(`author::<owner>`)の、context から決まる instance の key へ置く
+    /// (#1221 R5-H、2026-09-27 ユーザー決定)。旧 topic/channel replica へは書かない。
     pub(crate) async fn persist_dome_instance_manifest(
         &self,
-        replica: &ReplicaId,
         manifest: &DomeInstanceManifestV1,
         created_at: i64,
     ) -> Result<DomeInstanceStateDocV1> {
@@ -351,11 +358,14 @@ impl AppService {
             },
             last_envelope_id: envelope.id.clone(),
         };
-        self.services.docs_sync.open_replica(replica).await?;
+        let owner = manifest.owner_pubkey.as_str();
+        let replica = author_replica_id(owner);
+        self.services.persist_author_event(owner, &envelope).await?;
+        self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
             .apply_doc_op(
-                replica,
+                &replica,
                 DocOp::SetJson {
                     key: stable_key("envelopes", envelope.id.as_str()),
                     value: serde_json::to_value(&envelope)?,
@@ -365,12 +375,9 @@ impl AppService {
         self.services
             .docs_sync
             .apply_doc_op(
-                replica,
+                &replica,
                 DocOp::SetJson {
-                    key: stable_key(
-                        "metaverse/dome-instances",
-                        &format!("{}/state", manifest.owner_pubkey.as_str()),
-                    ),
+                    key: dome_instance_state_key(&manifest.instance_id),
                     value: serde_json::to_value(&state)?,
                 },
             )
@@ -378,24 +385,71 @@ impl AppService {
         Ok(state)
     }
 
+    /// owner の Dome Instance。owner の制御領域を手元の次に owner を含む有界な provider から exact に読み
+    /// (#1221 R5-H)、無ければ更新前に旧 context replica へ置いた分を手元から読む。
     pub(crate) async fn fetch_dome_instance_manifest(
         &self,
-        replica: &ReplicaId,
+        spatial_context: &SpatialContextV1,
         owner_pubkey: &Pubkey,
     ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
+        let author = author_replica_id(owner_pubkey.as_str());
+        let key = dome_instance_state_key(&dome_instance_id(spatial_context, owner_pubkey));
+        let current = self
+            .read_author_object(owner_pubkey.as_str(), |docs, policy| {
+                let (author, key) = (&author, &key);
+                async move {
+                    self.read_dome_instance(docs.as_ref(), author, key, owner_pubkey, policy)
+                        .await
+                }
+            })
+            .await?;
+        if current.is_some() {
+            return Ok(current);
+        }
+        let Some(legacy) = self.legacy_dome_replica(spatial_context).await else {
+            return Ok(None);
+        };
         let key = stable_key(
             "metaverse/dome-instances",
             &format!("{}/state", owner_pubkey.as_str()),
         );
-        let records = self
-            .services
-            .docs_sync
-            .query_replica_exact_bounded(
-                replica,
-                key.as_str(),
-                MAX_ENVELOPE_RECORDS_PER_OBJECT,
-                DocFetchPolicy::LocalThenRemote,
-            )
+        self.read_dome_instance(
+            self.services.docs_sync.as_ref(),
+            &legacy,
+            &key,
+            owner_pubkey,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await
+    }
+
+    /// 更新前に Dome の記録を置いていた旧 context replica。読むだけなので、private は参加中の現 epoch を回転なしで使う。
+    pub(crate) async fn legacy_dome_replica(
+        &self,
+        context: &SpatialContextV1,
+    ) -> Option<ReplicaId> {
+        match context {
+            SpatialContextV1::Topic { topic_id } => Some(topic_replica_id(topic_id.as_str())),
+            SpatialContextV1::Channel {
+                topic_id,
+                channel_id,
+            } => self
+                .joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
+                .await
+                .map(|state| current_private_channel_replica_id(&state)),
+        }
+    }
+
+    async fn read_dome_instance(
+        &self,
+        docs: &dyn DocsSync,
+        replica: &ReplicaId,
+        key: &str,
+        owner_pubkey: &Pubkey,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
+        let records = docs
+            .query_replica_exact_bounded(replica, key, MAX_ENVELOPE_RECORDS_PER_OBJECT, policy)
             .await?;
         let mut newest: Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)> = None;
         let mut unavailable = None;
@@ -447,10 +501,11 @@ impl AppService {
                 continue;
             }
             let Some(signed) = load_signed_dome_instance_manifest(
-                self.services.docs_sync.as_ref(),
+                docs,
                 replica,
                 &state.last_envelope_id,
                 &manifest.owner_pubkey,
+                policy,
             )
             .await?
             else {
@@ -486,7 +541,7 @@ impl AppService {
         let local_owner = self.services.keys.public_key();
         if dome_instance_id(spatial_context, &local_owner) == instance_id {
             return self
-                .hosting_instance_for_owner(replica, spatial_context, instance_id, &local_owner)
+                .hosting_instance_for_owner(spatial_context, instance_id, &local_owner)
                 .await;
         }
         let Some(room) = load_verified_game_room(
@@ -507,18 +562,12 @@ impl AppService {
         if metaverse.spatial_context != *spatial_context || metaverse.instance_id != instance_id {
             return Ok(None);
         }
-        self.hosting_instance_for_owner(
-            replica,
-            spatial_context,
-            instance_id,
-            &room.manifest().owner_pubkey,
-        )
-        .await
+        self.hosting_instance_for_owner(spatial_context, instance_id, &room.manifest().owner_pubkey)
+            .await
     }
 
     pub(crate) async fn hosting_instance_for_owner(
         &self,
-        replica: &ReplicaId,
         spatial_context: &SpatialContextV1,
         instance_id: &str,
         owner_pubkey: &Pubkey,
@@ -527,7 +576,7 @@ impl AppService {
             return Ok(None);
         }
         let resolved = self
-            .fetch_dome_instance_manifest(replica, owner_pubkey)
+            .fetch_dome_instance_manifest(spatial_context, owner_pubkey)
             .await?;
         let Some((_, manifest)) = resolved else {
             return Ok(None);
@@ -537,7 +586,6 @@ impl AppService {
             || manifest.owner_pubkey != *owner_pubkey
         {
             warn!(
-                replica = %replica.as_str(),
                 instance_id,
                 owner_pubkey = %owner_pubkey.as_str(),
                 "ignored a Dome Instance that does not match its lookup identity"
