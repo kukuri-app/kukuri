@@ -48,12 +48,17 @@ mod observations;
 mod peer_candidates;
 mod private_index_grants;
 pub(crate) mod projections;
+mod protected_migration;
 mod remote_cache;
 mod social;
 mod withdrawals;
 
 pub use connection::StoreStartupError;
 pub use private_index_grants::PrivateIndexGrant;
+pub use protected_migration::{
+    PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
+    ProtectedMigrationPage, ProtectedSource,
+};
 pub use remote_cache::{
     REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation,
 };

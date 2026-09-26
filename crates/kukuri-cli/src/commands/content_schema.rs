@@ -38,6 +38,7 @@ pub(super) fn input(name: &str) -> Value {
         "remove_bookmarked_post" => {
             object(json!({"object_id": {"type": "string"}}), &["object_id"])
         }
+        "list_bookmarked_posts" => object(json!({"cursor": bookmark_cursor()}), &[]),
         "list_timeline" => object(
             json!({"topic": {"type": "string"}, "scope": timeline_scope(), "cursor": cursor(), "limit": unsigned()}),
             &["topic"],
@@ -110,8 +111,7 @@ pub(super) fn input(name: &str) -> Value {
             json!({"notification_id": {"type": "string"}}),
             &["notification_id"],
         ),
-        "list_bookmarked_posts"
-        | "get_content_display_settings"
+        "get_content_display_settings"
         | "list_my_custom_reaction_assets"
         | "list_bookmarked_custom_reactions"
         | "get_my_profile"
@@ -120,6 +120,13 @@ pub(super) fn input(name: &str) -> Value {
         | "get_notification_status" => object(json!({}), &[]),
         _ => panic!("content commandのinput schemaが未定義: {name}"),
     }
+}
+
+pub(super) fn bookmark_cursor() -> Value {
+    object(
+        json!({"bookmarked_at": {"type": "integer"}, "source_object_id": {"type": "string"}}),
+        &["bookmarked_at", "source_object_id"],
+    )
 }
 
 pub(super) fn unsigned() -> Value {

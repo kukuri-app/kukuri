@@ -70,6 +70,68 @@ impl IrohDocsNode {
             .ok()
             .map(|b| b.to_vec()))
     }
+
+    /// 旧 blob store の bytes を file へ写し、BLAKE3 を照合する(#1221 R5-G)。旧 store に無ければ `None`。
+    pub async fn export_local_blob(
+        &self,
+        hash: &str,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Option<u64>> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let hash = hash.parse::<iroh_blobs::Hash>()?;
+        if !self.blobs().blobs().has(hash).await? {
+            return Ok(None);
+        }
+        let mut reader = self.blobs().blobs().reader(hash);
+        let mut file = tokio::fs::File::create(path).await?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buffer = vec![0; 64 * 1024];
+        let mut total = 0u64;
+        loop {
+            let read = reader.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            file.write_all(&buffer[..read]).await?;
+            total += read as u64;
+        }
+        file.flush().await?;
+        anyhow::ensure!(
+            hasher.finalize().as_bytes() == hash.as_bytes(),
+            "legacy blob hash mismatch"
+        );
+        Ok(Some(total))
+    }
+
+    /// 旧 blob store の `prefix` の tag を名前順に、`after` の後ろから `limit` 件だけ返す(#1221 R5-G)。
+    pub async fn list_local_tags(
+        &self,
+        prefix: &str,
+        after: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        use futures_util::StreamExt;
+        use std::ops::Bound;
+        let start = if after.is_empty() {
+            Bound::Included(prefix.as_bytes().to_vec())
+        } else {
+            Bound::Excluded(after.as_bytes().to_vec())
+        };
+        let mut end = prefix.as_bytes().to_vec();
+        if let Some(last) = end.last_mut() {
+            *last += 1;
+        }
+        let stream = self
+            .blobs()
+            .tags()
+            .list_range::<_, Vec<u8>>((start, Bound::Excluded(end)))
+            .await?;
+        let tags = stream.take(limit).collect::<Vec<_>>().await;
+        tags.into_iter()
+            .map(|tag| Ok(String::from_utf8(tag?.name.0.to_vec())?))
+            .collect()
+    }
 }
 
 /// Read an inactive account's existing blob store without creating an endpoint.

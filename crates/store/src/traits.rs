@@ -323,6 +323,9 @@ where
     Ok(relationships)
 }
 
+/// custom reaction の bookmark を読む上限(#1221 R5-G)。
+pub const BOOKMARKED_CUSTOM_REACTION_LIMIT: usize = 200;
+
 /// リアクション cache / カスタムリアクション / ブックマーク(実装: sqlite/bookmarks.rs)。
 #[async_trait]
 pub trait ReactionBookmarkStore: Send + Sync {
@@ -350,6 +353,7 @@ pub trait ReactionBookmarkStore: Send + Sync {
         author_pubkey: &str,
     ) -> Result<Vec<ReactionProjectionRow>>;
     async fn put_bookmarked_custom_reaction(&self, row: BookmarkedCustomReactionRow) -> Result<()>;
+    /// 新しい順の先頭 `BOOKMARKED_CUSTOM_REACTION_LIMIT` 件(#1221 R5-G: 全件を読まない)。
     async fn list_bookmarked_custom_reactions(&self) -> Result<Vec<BookmarkedCustomReactionRow>>;
     async fn remove_bookmarked_custom_reaction(&self, asset_id: &str) -> Result<()>;
     async fn put_bookmarked_post(&self, row: BookmarkedPostRow) -> Result<()>;

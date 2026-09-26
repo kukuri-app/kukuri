@@ -31,7 +31,16 @@ impl Drop for RemoteCacheReservation {
     }
 }
 
-fn now_ms() -> Result<i64> {
+/// 保護参照の変更の途中。gate を持ったまま、行の変更と同じ transaction で参照を変える。
+pub(super) struct ProtectedRefUpdate<'a> {
+    _gate: tokio::sync::MutexGuard<'a, ()>,
+    pub(super) tx: sqlx::Transaction<'static, Sqlite>,
+    budget: i64,
+    label_evictions: Vec<String>,
+    removed_files: Vec<String>,
+}
+
+pub(super) fn now_ms() -> Result<i64> {
     Ok(i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -375,6 +384,11 @@ impl SqliteStore {
         .await
     }
 
+    /// record を置く cache の key(保護参照もこの key を指す)。
+    pub fn remote_record_cache_key(replica: &str, key: &str, author: &str) -> String {
+        format!("{replica}\0{key}\0{author}")
+    }
+
     pub async fn put_remote_record(
         &self,
         replica: &str,
@@ -382,7 +396,7 @@ impl SqliteStore {
         author: &str,
         payload: &[u8],
     ) -> Result<bool> {
-        let cache_key = format!("{replica}\0{key}\0{author}");
+        let cache_key = Self::remote_record_cache_key(replica, key, author);
         self.put_remote_content_with_budget(
             "record",
             &cache_key,
@@ -790,6 +804,48 @@ impl SqliteStore {
         .execute(&mut **tx)
         .await?;
         Ok(())
+    }
+
+    /// 保護参照の変更を、呼出し元の行の変更と同じ transaction で行う。cache の書込みと直列にする。
+    pub(super) async fn begin_protected_ref_update(&self) -> Result<ProtectedRefUpdate<'_>> {
+        let gate = self.remote_cache_gate.lock().await;
+        let budget = REMOTE_CACHE_CAPACITY_BYTES.saturating_sub(i64::try_from(
+            self.remote_cache_reserved.load(Ordering::Acquire),
+        )?);
+        Ok(ProtectedRefUpdate {
+            _gate: gate,
+            tx: self.pool.begin().await?,
+            budget,
+            label_evictions: Vec::new(),
+            removed_files: Vec::new(),
+        })
+    }
+
+    /// `reference` の保護参照を `desired` に置き換える。外れた内容は容量の内なら非保護へ戻し、超えるなら消す。
+    pub(super) async fn set_refs_in(
+        &self,
+        update: &mut ProtectedRefUpdate<'_>,
+        reference: &str,
+        desired: &[(String, String)],
+    ) -> Result<()> {
+        self.replace_remote_protected_refs(
+            &mut update.tx,
+            reference,
+            desired,
+            update.budget,
+            &mut update.label_evictions,
+            &mut update.removed_files,
+        )
+        .await
+    }
+
+    pub(super) async fn commit_protected_ref_update(
+        &self,
+        update: ProtectedRefUpdate<'_>,
+    ) -> Result<()> {
+        update.tx.commit().await?;
+        self.publish_adult_label_evictions(update.label_evictions);
+        self.remove_remote_blob_files(update.removed_files).await
     }
 
     pub(super) async fn replace_remote_protected_refs(

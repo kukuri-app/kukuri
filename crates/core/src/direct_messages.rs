@@ -257,6 +257,26 @@ pub fn decrypt_direct_message_frame(
     if local_keys.public_key() != frame.recipient {
         bail!("direct message frame recipient pubkey must match decrypting author");
     }
+    open_direct_message_frame(local_keys, frame, &frame.sender)
+}
+
+/// 送信者が自分の送った frame を開く(#1221 R5-G: 暗号化添付の hash は frame の中にしか無い)。
+pub fn open_sent_direct_message_frame(
+    local_keys: &KukuriKeys,
+    frame: &DirectMessageFrameV1,
+) -> Result<DirectMessagePayloadV1> {
+    frame.verify()?;
+    if local_keys.public_key() != frame.sender {
+        bail!("direct message frame sender pubkey must match opening author");
+    }
+    open_direct_message_frame(local_keys, frame, &frame.recipient)
+}
+
+fn open_direct_message_frame(
+    local_keys: &KukuriKeys,
+    frame: &DirectMessageFrameV1,
+    remote: &Pubkey,
+) -> Result<DirectMessagePayloadV1> {
     let nonce =
         hex::decode(frame.nonce_hex.trim()).context("invalid direct message frame nonce")?;
     if nonce.len() != 24 {
@@ -265,7 +285,7 @@ pub fn decrypt_direct_message_frame(
     let ciphertext = hex::decode(frame.ciphertext_hex.trim())
         .context("invalid direct message frame ciphertext")?;
     let key = derive_direct_message_frame_key(
-        &derive_direct_message_secret(local_keys, &frame.sender)?,
+        &derive_direct_message_secret(local_keys, remote)?,
         frame.dm_id.as_str(),
         frame.message_id.as_str(),
         frame.sender.as_str(),

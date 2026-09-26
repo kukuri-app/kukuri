@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     AuthorRequest, BookmarkCustomReactionRequest, BookmarkPostRequest,
     CreateCustomReactionAssetRequest, CreatePostRequest, CreateRepostRequest,
-    ListProfileTimelineRequest, ListRecentReactionsRequest, ListSocialConnectionsRequest,
-    ListThreadRequest, ListTimelineRequest, NotificationIdRequest,
+    ListBookmarkedPostsRequest, ListProfileTimelineRequest, ListRecentReactionsRequest,
+    ListSocialConnectionsRequest, ListThreadRequest, ListTimelineRequest, NotificationIdRequest,
     RemoveBookmarkedCustomReactionRequest, RemoveBookmarkedPostRequest,
     ResolveCommunityIndexPostsRequest, SetMyProfileRequest, ToggleReactionRequest,
     WithdrawPostRequest,
@@ -105,7 +105,13 @@ impl CommandHandler for Handler {
             Operation::CreateRepost => {
                 async_call!(runtime, payload, CreateRepostRequest, create_repost)
             }
-            Operation::ListBookmarkedPosts => async_call0!(runtime, list_bookmarked_posts),
+            // #1221 R5-G: 全件でなく、cursor の後ろの 1 ページを返す。
+            Operation::ListBookmarkedPosts => async_call!(
+                runtime,
+                payload,
+                ListBookmarkedPostsRequest,
+                list_bookmarked_posts_page
+            ),
             Operation::ResolveCommunityIndexPosts => async_call!(
                 runtime,
                 payload,

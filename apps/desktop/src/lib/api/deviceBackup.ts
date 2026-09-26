@@ -147,7 +147,7 @@ export async function previewDeviceBackup(
       app_version: '0.1.8',
       content_bytes: 4096,
       existing_account_id: null,
-      included: ['account_key', 'sqlite', 'local_docs_and_blobs'],
+      included: ['account_key', 'sqlite', 'protected_content'],
       requires_reconsent: ['app_legal_documents', 'age_attestation'],
     };
   }

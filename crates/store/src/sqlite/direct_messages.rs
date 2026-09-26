@@ -530,17 +530,16 @@ impl DirectMessageStore for SqliteStore {
     }
 
     async fn remove_direct_message_outbox(&self, dm_id: &str, message_id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            DELETE FROM dm_outbox
-            WHERE dm_id = ?1 AND message_id = ?2
-            "#,
-        )
-        .bind(dm_id)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        // #1221 R5-G: ACK で送信待ちを消す transaction の中で、frame と暗号化添付の保護を外す。
+        let mut update = self.begin_protected_ref_update().await?;
+        sqlx::query("DELETE FROM dm_outbox WHERE dm_id = ?1 AND message_id = ?2")
+            .bind(dm_id)
+            .bind(message_id)
+            .execute(&mut *update.tx)
+            .await?;
+        self.set_refs_in(&mut update, &format!("dm_outbox:{dm_id}/{message_id}"), &[])
+            .await?;
+        self.commit_protected_ref_update(update).await
     }
 
     async fn put_direct_message_tombstone(&self, row: DirectMessageTombstoneRow) -> Result<()> {
@@ -602,27 +601,22 @@ impl DirectMessageStore for SqliteStore {
         dm_id: &str,
         message_id: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            DELETE FROM dm_messages
-            WHERE dm_id = ?1 AND message_id = ?2
-            "#,
-        )
-        .bind(dm_id)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(
-            r#"
-            DELETE FROM dm_outbox
-            WHERE dm_id = ?1 AND message_id = ?2
-            "#,
-        )
-        .bind(dm_id)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        let mut update = self.begin_protected_ref_update().await?;
+        for table in ["dm_messages", "dm_outbox"] {
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE dm_id = ?1 AND message_id = ?2"
+            ))
+            .bind(dm_id)
+            .bind(message_id)
+            .execute(&mut *update.tx)
+            .await?;
+        }
+        // #1221 R5-G: 手元から消した message の添付と送信待ちの保護を外す。
+        for kind in ["dm_message", "dm_outbox"] {
+            self.set_refs_in(&mut update, &format!("{kind}:{dm_id}/{message_id}"), &[])
+                .await?;
+        }
+        self.commit_protected_ref_update(update).await
     }
 
     async fn clear_direct_message_local(&self, dm_id: &str) -> Result<()> {

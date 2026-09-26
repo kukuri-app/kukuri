@@ -13,6 +13,39 @@ impl IrohDocsSync {
         let local = self
             .read_local_source_owned(replica, key, author, limit)
             .await;
+        self.with_cached_records(replica, key, author, limit, local)
+            .await
+    }
+
+    /// private の key 指定の読み出しに、保護所有先へ移した record を足す(#1221 R5-G: 旧領域が消えても読める)。
+    /// capability の確認は手元の読み出し(replica を開く)が済ませている。
+    pub(super) async fn with_private_cache(
+        &self,
+        replica: &ReplicaId,
+        query: Option<DocQuery>,
+        limit: usize,
+        records: Vec<DocRecord>,
+    ) -> Result<Vec<DocRecord>> {
+        match query {
+            Some(DocQuery::Exact(key))
+                if public_replica_secret(replica).is_none() && records.len() < limit =>
+            {
+                self.with_cached_records(replica, &key, None, limit, Ok(records))
+                    .await
+            }
+            _ => Ok(records),
+        }
+    }
+
+    /// 手元の読み出しの結果に、record cache(保護所有先を含む)の同じ key の record を足す。
+    pub(super) async fn with_cached_records(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+        local: Result<Vec<DocRecord>>,
+    ) -> Result<Vec<DocRecord>> {
         let Some(cache) = self.remote_cache() else {
             return local;
         };
@@ -52,6 +85,29 @@ impl IrohDocsSync {
         }
         let secret = public_replica_secret(replica)
             .context("local source reader only accepts public replicas")?;
+        self.read_local_records(replica, secret, key, author, limit)
+            .await
+    }
+
+    /// 旧領域(`iroh-data`)に残る 1 key の record を、namespace を import せずに読む(#1221 R5-G の移行)。
+    /// private は登録済みの capability で開く。
+    pub async fn read_legacy_records(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+    ) -> Result<Vec<DocRecord>> {
+        let secret = self.replica_secret(replica).await?;
+        self.read_local_records(replica, secret, key, None, 8).await
+    }
+
+    async fn read_local_records(
+        &self,
+        replica: &ReplicaId,
+        secret: iroh_docs::NamespaceSecret,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocRecord>> {
         let query = match author {
             Some(author) => {
                 let Ok(author) = AuthorId::from_str(author) else {

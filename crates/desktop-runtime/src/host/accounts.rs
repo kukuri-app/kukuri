@@ -102,7 +102,7 @@ impl ClientHost {
         let mut result = Vec::new();
         for account in snapshot.accounts {
             let entry = read_profile(&self.app_data_dir, &account).await;
-            let (mut display, hash) = match entry {
+            let (mut display, hash, protected) = match entry {
                 Ok(entry) => entry,
                 Err(_) => {
                     result.push(crate::AccountDisplay {
@@ -116,7 +116,10 @@ impl ClientHost {
                 }
             };
             if let Some(hash) = hash {
-                let bytes = if account.id == snapshot.active_account_id {
+                // #1221 R5-G: 保護所有先を先に読み、旧領域(`iroh-data`)は移行前の fallback にする。
+                let bytes = if protected.is_some() {
+                    protected
+                } else if account.id == snapshot.active_account_id {
                     let runtime = self.runtime();
                     let stack = runtime.iroh_stack.current.lock().await;
                     if let Some(stack) = stack.as_ref() {

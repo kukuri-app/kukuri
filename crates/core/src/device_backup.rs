@@ -9,7 +9,9 @@ use secp256k1::rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 pub const DEVICE_BACKUP_FORMAT_VERSION: u32 = 1;
-pub const DEVICE_BACKUP_COMPONENT_VERSION: u32 = 1;
+/// 2: 旧 `iroh-data` を含めず、保護所有先(`kukuri.db` 一式と保護された `kukuri.remote-blobs/`)を含める(#1221 R5-G)。
+/// 1(`iroh-data` 入り)の復元は拒否する。
+pub const DEVICE_BACKUP_COMPONENT_VERSION: u32 = 2;
 pub const DEVICE_BACKUP_MIN_PASSPHRASE_CHARS: usize = 8;
 pub const DEVICE_BACKUP_CHUNK_BYTES: usize = 64 * 1024;
 pub const DEVICE_BACKUP_MAX_ENTRY_COUNT: usize = 100_000;

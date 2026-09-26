@@ -21,12 +21,13 @@ pub use models::{
     VERIFIED_SESSION_PROJECTION_VERSION, adult_media_hashes_for_row,
 };
 pub use sqlite::{
-    PrivateIndexGrant, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
-    RemoteCacheReservation, SqliteStore, StoreStartupError,
+    PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, PrivateIndexGrant, ProtectedCandidate,
+    ProtectedMigrationPage, ProtectedSource, REMOTE_CACHE_CAPACITY_BYTES,
+    REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, SqliteStore, StoreStartupError,
 };
 pub use traits::{
-    ContentObservationStore, DirectMessageStore, LiveGameProjectionStore,
-    NOTIFICATION_DISPATCH_PAGE_SIZE, NOTIFICATION_PAGE_SIZE, NotificationStore,
-    ObjectProjectionStore, PostWithdrawalStore, ProjectionStore, ReactionBookmarkStore,
-    SocialProjectionStore, Store,
+    BOOKMARKED_CUSTOM_REACTION_LIMIT, ContentObservationStore, DirectMessageStore,
+    LiveGameProjectionStore, NOTIFICATION_DISPATCH_PAGE_SIZE, NOTIFICATION_PAGE_SIZE,
+    NotificationStore, ObjectProjectionStore, PostWithdrawalStore, ProjectionStore,
+    ReactionBookmarkStore, SocialProjectionStore, Store,
 };

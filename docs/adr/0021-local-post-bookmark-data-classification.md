@@ -73,6 +73,7 @@ Proposed
 - `kukuri-store` に `BookmarkedPostRow` と `put_bookmarked_post`, `list_bookmarked_posts`, `remove_bookmarked_post` を追加する。
 - `kukuri-app-api` に `BookmarkedPostView` と `bookmark_post(topic_id, object_id)`, `list_bookmarked_posts()`, `remove_bookmarked_post(object_id)` を追加する。
 - `desktop-runtime` / Tauri / `apps/desktop/src/lib/api.ts` は上記 API をそのまま公開する。
+- 現行（#1221 R1-A・R5-G）: 一覧は `list_bookmarked_posts_page`（固定件数の cursor ページ）だけで読む。全件の `list_bookmarked_posts()` は撤去し、CLI の `list_bookmarked_posts` も cursor つきのページを返す。
 - desktop shell は `timelineView` route state を追加し、timeline workspace 内に `feed / bookmarks` subpage を持つ。
 
 ## Consequences

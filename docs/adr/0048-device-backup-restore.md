@@ -27,7 +27,8 @@ Accepted
 
 ### 3. 対象と除外
 
-- 必須: account key、整合したSQLite、discovery/Community Node接続設定、private channel能力、gossip購読状態、Community Node招待情報、iroh Docs/Blobの端末内状態（endpoint secretを除く）、下書き、workspace layout、theme、locale。
+- 必須: account key、整合したSQLite（保護所有先の台帳を含む）、保護された`kukuri.remote-blobs/`のfile、discovery/Community Node接続設定、private channel能力、gossip購読状態、Community Node招待情報、下書き、workspace layout、theme、locale。
+- 旧`iroh-data`（remote内容が混在するSDKのDocs/Blob）は含めない（§7、#1221 R5-G）。
 - 移行不可: iroh endpoint secret、Community Node bearer token、実行中session、通知cursor、OS通知権限。
 - 再同意: app-level同意、Community Node同意、18歳以上の自己申告。これらの記録はバックアップへ含めない。成人向け表示設定も含めず、復元後はOFFとする。
 - バックアップはCommunity Node、他端末、Direct P2P参加者が保持するcopyを削除または巻き戻さない。
@@ -36,7 +37,7 @@ Accepted
 
 - active runtimeを停止してSQLite pool、Docs、Blob、background syncを閉じた後にファイルを列挙する。main DBを正とし、close timeoutなどで残ったWAL/shmも失わないよう存在時は同じarchiveへ含める。
 - identityとoptional secretは保存backendに依存せず論理値として読み出す。keyring名やfile fallback名はarchive formatへ露出させない。
-- `iroh-data`は停止後に再帰列挙するが、端末固有の`endpoint-secret.json`は除外する。
+- runtimeを止める前に、旧`iroh-data`から保護所有先への移行（§7）の残りを128件ずつ終端まで写す。停止後、同じSQLiteを1本の接続で読み、全kindが終端へ達していることを確かめてから、保護された`kukuri.remote-blobs/`のfileを列挙する。達していなければbackupを作らない。
 
 ### 5. 復元と競合
 
@@ -57,8 +58,16 @@ Accepted
 - offlineでもローカルファイルの作成・preview・復元は可能とする。runtime停止中のネットワーク同期は復元後の明示的な再同意とruntime activation後に再開し、remote copyを削除したような表示はしない。
 - 非目標は複数アカウント一括選択、バックアップ内容の個別編集、クラウド同期、旧端末の遠隔削除である。
 
+### 7. 保護データの移行と旧領域（#1221 R5-G、2026-09-26）
+
+- 旧`iroh-data`にしか無い本人のデータ（本人投稿の本文・添付・state・envelope・media manifest・プロフィールの行、bookmark、private参加状態の現epochの記録、未送信outboxのframeと暗号化添付、DM履歴の平文添付、custom reaction bookmarkのasset、本人のprofile avatar、自作のcustom reaction asset、自作Domeのpin済みasset、自分が署名したlive/gameのmanifest）を、R5-Aのremote cacheと保護参照（大きいblobは`kukuri.remote-blobs/`のfile）へ移す。新しいstoreは作らない。ownerの参加者名簿はR5-Hの参加record配送で扱う。
+- 移行はkindごとの索引（`envelopes`・bookmark・DMの行、live/gameの反映時刻、capabilityの一覧、SDKのpin tag）を1回128件以内のcursorで歩き、BLAKE3（blob）とcontent hash（record）で照合してから写し、`protected_migration`へ位置と終端へ達した時刻を保存する。途中で止まれば保存した位置から同じ結果でやり直す。旧領域に無いものは写さずに進み、旧領域から何も読めなかった参照（復元後・旧領域の回収後）は置き換えず、既にある保護を減らさない。
+- 保護参照はindex行の寿命に従う。bookmarkとcustom reaction bookmarkの解除、DMのACKと手元の削除で、同じtransactionの中で外す。privateの記録は旧領域が無くても、capabilityを持つ間はkey指定の手元の読み出しで読める。
+- 旧領域を削除できる前提: R5-Hのwriter切替（本人の新しい書込みを旧領域へ入れない）を永続化した後に、全kindの`caught_up_at`がその時刻より後になっていること（`SqliteStore::protected_migration_caught_up_at`）。削除そのもの（有限単位の回収）はR5-Iで行う。
+- 旧案の失効: `iroh-data`全体を毎回backupへ含める案（component version 1）は失効した。component version 2だけを作成・復元し、1の復元は既存状態を変更せず拒否する。
+
 ## Consequences
 
 - データ分類は`docs/legal/device-backup-data-classification.md`を正とする。
-- raw iroh storeは同一の現行desktop世代でのみ復元対象とし、外側のbackup formatとは独立したcomponent versionを持つ。非対応component版は既存状態を変更せず拒否する。
+- 含める内容は外側のbackup formatとは独立したcomponent versionを持つ。現行は2（保護所有先、§7）で、非対応component版（旧`iroh-data`入りの1を含む）は既存状態を変更せず拒否する。
 - 初版は複数アカウント一括archive、クラウド保管、定期実行、内容mergeを提供しない。

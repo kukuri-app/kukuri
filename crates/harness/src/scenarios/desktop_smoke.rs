@@ -143,7 +143,7 @@ pub(crate) async fn run_desktop_smoke_scenario(
                     let expected = text.clone();
                     let assertion = timeout(step_timeout, async {
                         loop {
-                            let bookmarks = runtime.app()?.list_bookmarked_posts().await?;
+                            let bookmarks = runtime.bookmarks().await?;
                             if bookmarks
                                 .iter()
                                 .any(|item| item.post.content == expected)
@@ -156,13 +156,13 @@ pub(crate) async fn run_desktop_smoke_scenario(
                     assertion.await.context("assertion timeout")??;
                 }
                 ScenarioStep::AssertBookmarkListMissing { text } => {
-                    let bookmarks = runtime.app()?.list_bookmarked_posts().await?;
+                    let bookmarks = runtime.bookmarks().await?;
                     if bookmarks.iter().any(|item| item.post.content == *text) {
                         anyhow::bail!("bookmark still present: {text}");
                     }
                 }
                 ScenarioStep::RemoveBookmark { text } => {
-                    let bookmarks = runtime.app()?.list_bookmarked_posts().await?;
+                    let bookmarks = runtime.bookmarks().await?;
                     let bookmarked = bookmarks
                         .iter()
                         .find(|item| item.post.content == *text)

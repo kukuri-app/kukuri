@@ -40,7 +40,9 @@ pub(super) fn output(name: &str) -> Value {
         ),
         "get_blob_preview_url" | "get_blob_media_payload" => media_output::output_schema(),
         "bookmark_post" => bookmark(),
-        "list_bookmarked_posts" => array(bookmark()),
+        "list_bookmarked_posts" => view(json!({"items": array(bookmark()),
+            "newer_cursor": nullable(content_schema::bookmark_cursor()),
+            "older_cursor": nullable(content_schema::bookmark_cursor())})),
         "remove_bookmarked_post" | "remove_bookmarked_custom_reaction" => json!({"type": "null"}),
         "resolve_community_index_posts" => view(
             json!({"entries": array(view(json!({"key": string(), "post": nullable(post()),

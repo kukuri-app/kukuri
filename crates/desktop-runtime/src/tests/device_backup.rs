@@ -78,7 +78,50 @@ async fn initialized_app_data() -> (tempfile::TempDir, std::path::PathBuf) {
         .await
         .expect("initialize sqlite");
     store.close().await;
+    // backup の前に drain が済んだ状態(#1221 R5-G)。pool を使わず、閉じ終えてから snapshot を取らせる。
+    use sqlx::Connection;
+    let mut connection =
+        sqlx::SqliteConnection::connect(&format!("sqlite://{}", db_path.display()))
+            .await
+            .expect("open sqlite");
+    for kind in kukuri_store::PROTECTED_MIGRATION_KINDS {
+        sqlx::query(
+            "INSERT INTO protected_migration (kind, cursor, caught_up_at) VALUES (?1, '', 1)",
+        )
+        .bind(kind)
+        .execute(&mut connection)
+        .await
+        .expect("mark protected migration finished");
+    }
+    connection.close().await.expect("close sqlite");
     (dir, db_path)
+}
+
+/// 保護所有先の file(`kukuri.remote-blobs/`)に置いた blob。`reference` が無ければ非保護の cache。
+async fn cached_blob_file(
+    db_path: &std::path::Path,
+    bytes: &[u8],
+    reference: Option<&str>,
+) -> String {
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    let store = SqliteStore::connect_file(db_path)
+        .await
+        .expect("open sqlite");
+    if let Some(reference) = reference {
+        store
+            .set_protected_refs(reference, &[("blob".to_string(), hash.clone())])
+            .await
+            .expect("protect blob");
+    }
+    let source = db_path.with_extension("fixture.bin");
+    fs::write(&source, bytes).expect("write blob fixture");
+    store
+        .put_remote_blob_file(&hash, &source)
+        .await
+        .expect("cache blob file");
+    fs::remove_file(&source).expect("remove blob fixture");
+    store.close().await;
+    hash
 }
 
 fn app_data_snapshot(root: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
@@ -168,12 +211,15 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
     let source_keys = load_existing_keys(&source_db, IdentityStorageMode::FileOnly)
         .expect("load source identity")
         .expect("source identity");
+    // #1221 R5-G: 旧 `iroh-data` は含めず、保護された file だけを含める。
     let iroh_dir = source_db.with_extension("iroh-data");
     fs::create_dir_all(iroh_dir.join("blobs")).expect("create iroh data");
-    fs::write(iroh_dir.join("blobs").join("marker.bin"), b"portable blob")
-        .expect("write portable marker");
-    fs::write(iroh_dir.join("endpoint-secret.json"), b"device-bound")
-        .expect("write endpoint secret");
+    fs::write(iroh_dir.join("blobs").join("marker.bin"), b"legacy blob")
+        .expect("write legacy marker");
+    let protected_bytes = vec![3u8; 2 * 1024 * 1024 + 5];
+    let protected_hash =
+        cached_blob_file(&source_db, &protected_bytes, Some("own:backup-post")).await;
+    let remote_hash = cached_blob_file(&source_db, b"remote display cache", None).await;
     let node_base_url = "https://backup-node.example";
     save_community_node_config(
         &source_db,
@@ -296,22 +342,16 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             .with_file_name("kukuri.idempotency.sqlite3")
             .exists()
     );
+    let staged_blobs = prepared.staging_db_path().with_extension("remote-blobs");
     assert_eq!(
-        fs::read(
-            prepared
-                .staging_db_path()
-                .with_extension("iroh-data")
-                .join("blobs")
-                .join("marker.bin")
-        )
-        .expect("read staged marker"),
-        b"portable blob"
+        fs::read(staged_blobs.join(&protected_hash)).expect("read staged protected blob"),
+        protected_bytes
     );
+    assert!(!staged_blobs.join(&remote_hash).exists());
     assert!(
         !prepared
             .staging_db_path()
             .with_extension("iroh-data")
-            .join("endpoint-secret.json")
             .exists()
     );
     let staged_store = SqliteStore::connect_file(prepared.staging_db_path())
@@ -485,13 +525,7 @@ async fn restore_failures_preserve_the_existing_account_registry() {
 async fn canceled_backup_removes_partial_output_and_preserves_source_state() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let (source, source_db) = initialized_app_data().await;
-    let iroh_dir = source_db.with_extension("iroh-data");
-    fs::create_dir_all(iroh_dir.join("blobs")).expect("create iroh blobs");
-    fs::write(
-        iroh_dir.join("blobs").join("large.bin"),
-        vec![7u8; 256 * 1024],
-    )
-    .expect("write large portable blob");
+    cached_blob_file(&source_db, &vec![7u8; 256 * 1024], Some("own:large")).await;
     let state_before = app_data_snapshot(source.path());
     let archive_dir = tempdir().expect("archive tempdir");
     let archive_path = archive_dir.path().join("canceled.kukuri-backup");
@@ -521,6 +555,36 @@ async fn canceled_backup_removes_partial_output_and_preserves_source_state() {
     assert!(!archive_path.exists());
     assert!(!partial_path.exists());
     assert_eq!(app_data_snapshot(source.path()), state_before);
+}
+
+#[tokio::test]
+async fn backup_is_refused_until_the_protected_migration_finishes() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let (source, source_db) = initialized_app_data().await;
+    let store = SqliteStore::connect_file(&source_db)
+        .await
+        .expect("open sqlite");
+    store
+        .reset_protected_migration("private")
+        .await
+        .expect("restart one kind");
+    store.close().await;
+    let archive_dir = tempdir().expect("archive tempdir");
+    let archive_path = archive_dir.path().join("unfinished.kukuri-backup");
+    let error = create_device_backup(
+        source.path(),
+        &source_db,
+        &CreateDeviceBackupRequest {
+            path: archive_path.display().to_string(),
+            passphrase: PASSPHRASE.to_string(),
+            frontend_state: BTreeMap::new(),
+        },
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect_err("unfinished migration must not produce a backup");
+    assert!(error.to_string().contains("migration has not finished"));
+    assert!(!archive_path.exists());
 }
 
 #[tokio::test]

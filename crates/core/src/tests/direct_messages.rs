@@ -40,6 +40,12 @@ fn dm_frame_encrypt_decrypt_roundtrip_and_tamper_reject() {
     .expect("encrypt frame");
     let decrypted = decrypt_direct_message_frame(&bob, &frame).expect("decrypt frame");
     assert_eq!(decrypted, payload);
+    // #1221 R5-G: 送信者は自分の frame を開けるが、受信者は送信者として開けない。
+    assert_eq!(
+        open_sent_direct_message_frame(&alice, &frame).expect("sender opens frame"),
+        payload
+    );
+    assert!(open_sent_direct_message_frame(&bob, &frame).is_err());
 
     let mut tampered = frame.clone();
     tampered.ciphertext_hex = "00".repeat(32);

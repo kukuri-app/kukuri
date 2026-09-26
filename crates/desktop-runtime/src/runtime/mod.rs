@@ -86,6 +86,7 @@ mod content_profile_api;
 mod identity_api;
 mod notifications_messages_api;
 mod private_channels_game_api;
+mod protected_migration;
 mod sync_live_api;
 mod sync_status_observer;
 
@@ -129,6 +130,10 @@ pub struct DesktopRuntime {
     pub(crate) community_node_reconnect_guard: Arc<Mutex<()>>,
     pub(crate) community_node_scheduler_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// #1221 R5-G: 旧 `iroh-data` から保護所有先への移行。背景 task と backup 前の drain を直列にする。
+    pub(crate) protected_migration_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) protected_migration_guard: Mutex<()>,
+    pub(crate) private_migration_dirty: Arc<AtomicBool>,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
     notification_event_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) active_connectivity_urls: Arc<Mutex<Vec<String>>>,
@@ -419,10 +424,19 @@ impl DesktopRuntime {
         // 部分リストが persist され、途中クラッシュでディスク上の registry が縮む)。
         // 以後、capability registry の変異(register/remove 経由の全経路)は AppService
         // 層でそのまま identity storage へ永続化され、ラッパー側の手動 persist 規約は不要。
+        // #1221 R5-G: 参加状態は索引の順に並ばないため、起動時と変更時に現 epoch の記録の移行を先頭から読み直す。
+        let private_migration_dirty = Arc::new(AtomicBool::new(true));
         {
             let persist_db_path = db_path.clone();
+            let dirty = private_migration_dirty.clone();
             app_service.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-                persist_private_channel_capabilities(&persist_db_path, identity_mode, capabilities)
+                persist_private_channel_capabilities(
+                    &persist_db_path,
+                    identity_mode,
+                    capabilities,
+                )?;
+                dirty.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
             }));
         }
         let gossip_subscription_state = load_gossip_subscription_state(&db_path, identity_mode)?;
@@ -488,6 +502,9 @@ impl DesktopRuntime {
             community_node_reconnect_guard: Arc::new(Mutex::new(())),
             community_node_scheduler_task: Mutex::new(None),
             sync_status_observer_task: Mutex::new(None),
+            protected_migration_task: Mutex::new(None),
+            protected_migration_guard: Mutex::new(()),
+            private_migration_dirty,
             notification_event_task: StdMutex::new(Some(notification_event_task)),
             active_connectivity_urls: Arc::new(Mutex::new(relay_config.iroh_relay_urls.clone())),
             last_runtime_connectivity_assist_state: Arc::new(Mutex::new(Some(

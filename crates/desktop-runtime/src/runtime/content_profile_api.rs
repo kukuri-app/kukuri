@@ -212,11 +212,6 @@ impl DesktopRuntime {
             .await
     }
 
-    /// Explicit CLI/export listing; UI uses `list_bookmarked_posts_page`.
-    pub async fn list_bookmarked_posts(&self) -> Result<Vec<BookmarkedPostView>> {
-        self.app_service.list_bookmarked_posts().await
-    }
-
     pub async fn bookmarked_post_ids(
         &self,
         request: BookmarkedPostIdsRequest,

@@ -63,6 +63,15 @@ impl ScenarioRuntime {
             .ok_or_else(|| anyhow::anyhow!("desktop app is not running"))
     }
 
+    /// bookmark の先頭ページ(#1221 R5-G: 全件の一覧 API は無い)。
+    pub(crate) async fn bookmarks(&self) -> Result<Vec<kukuri_app_api::BookmarkedPostView>> {
+        Ok(self
+            .app()?
+            .list_bookmarked_posts_page(None, false)
+            .await?
+            .items)
+    }
+
     pub(crate) fn topic_or_default(&self, default_topic: &str) -> String {
         self.current_topic
             .clone()
