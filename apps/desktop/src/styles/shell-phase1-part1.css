@@ -942,9 +942,12 @@
   border-top: 2px solid var(--border-accent);
 }
 
+/* Deep replies keep a readable card width; the column body scrolls horizontally
+   instead of shrinking them further. */
+
 .thread-tree-body {
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: min(100cqi, 22rem);
 }
 
 .post-card {
