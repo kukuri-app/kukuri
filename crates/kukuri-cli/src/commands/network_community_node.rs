@@ -88,19 +88,17 @@ impl CommandHandler for Handler {
                     .iter()
                     .filter(|subscription| subscription.topic == request.topic)
                     .collect::<Vec<_>>();
-                if subscriptions.is_empty() {
-                    runtime
-                        .unsubscribe_topic(request)
+                // 保存済みの購読も解除し、再起動で意図せず再購読しない。
+                for subscription in subscriptions {
+                    host.remove_desired_subscription(subscription)
                         .await
-                        .map_err(command_error)?;
-                } else {
-                    // 保存済みの購読も解除し、再起動で意図せず再購読しない。
-                    for subscription in subscriptions {
-                        host.remove_desired_subscription(subscription)
-                            .await
-                            .map_err(|error| command_error(error.into()))?;
-                    }
+                        .map_err(|error| command_error(error.into()))?;
                 }
+                // topic の停止設定も消す(#1221 R2-D)。
+                runtime
+                    .unsubscribe_topic(request)
+                    .await
+                    .map_err(command_error)?;
                 encode(())
             }
             _ => unreachable!("登録済みのnetwork command"),

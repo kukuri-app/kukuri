@@ -87,8 +87,10 @@ async fn real_public_offer_reaches_offscreen_account_from_bounded_app_cache() {
             .iter()
             .all(|subscribed| subscribed != topic)
     );
+    // #1221 R5-I: 本人の投稿の本文は保護所有先(`is_protected = 1`)へ入る。offer の manifest は非保護の
+    // cache の行なので、非保護の行を選ぶ。
     let cached_manifest: String = sqlx::query_scalar(
-        "SELECT cache_key FROM remote_content_cache WHERE kind = 'blob' LIMIT 1",
+        "SELECT cache_key FROM remote_content_cache WHERE kind = 'blob' AND is_protected = 0 LIMIT 1",
     )
     .fetch_one(sender_store.pool())
     .await

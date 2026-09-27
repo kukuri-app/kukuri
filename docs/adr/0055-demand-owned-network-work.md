@@ -236,7 +236,8 @@ policyとconsentのGET、全nodeの合成と全topicへのjoin、30秒不健全�
 - **通常の状態は件数と稼働中のtopic**: `get_sync_status`は、件数（接続中・設定済み・seed・補助の数）と、
   稼働中のtopic（leaseの64件と短期の送信先16件）の診断だけを返す。transportとapp-apiが保持している状態から作り、
   seed・台帳・SQLite・keyringを読まず、取得の候補のcursor（`account_cursor`・`fetch_cursor`）を進めない。
-  gossipの停止は、稼働中のscope（lease）と突き合わせた分だけを返す。
+  gossipの停止は、保存済みの設定を全件、手元の集合から返す（2026-09-27ユーザー判断。列を開いていないtopicの停止も
+  表示する）。設定が履歴とともに増えないよう、topicをやめる（`unsubscribe_topic`）とそのtopicとchannelの停止設定を消す。
 - **補助のpeer**: docs・blobの補助は、取得の成功を観測し、待機中でも切断中でもないpeer（`preferred`、最大2件）とする。
   `remote_info`の`Active`（保持中のpath）では数えない。docsの読取りは成功したproviderを記録する。
   未確認（neighborが無い）・延期（CNの再試行中など）は、Live・DurableReady・Readyとして表示しない。

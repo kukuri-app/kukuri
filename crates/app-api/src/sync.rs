@@ -102,8 +102,6 @@ impl AppService {
             }
             _ => Vec::new(),
         };
-        let (gossip_disabled_topics, gossip_disabled_channels) =
-            self.active_gossip_disabled_scopes().await;
         let status = SyncStatus {
             connected,
             delivery_state: effective_delivery_state,
@@ -124,35 +122,11 @@ impl AppService {
             topic_diagnostics: effective_topic_diagnostics,
             local_author_pubkey: self.current_author_pubkey(),
             discovery,
-            gossip_disabled_topics,
-            gossip_disabled_channels,
+            // 保存済みの停止設定(手元の集合)。topic をやめると、その topic の設定も消える。
+            gossip_disabled_topics: self.list_gossip_disabled_topics().await,
+            gossip_disabled_channels: self.list_gossip_disabled_channels().await,
         };
         Ok((status, removed_topics))
-    }
-
-    /// gossip を止めた topic・channel のうち、稼働中の scope(lease の 64 件以内)の分だけ。
-    async fn active_gossip_disabled_scopes(&self) -> (Vec<String>, Vec<String>) {
-        let keys = self.subscription_registry.scope_leases.lock().await.keys();
-        let disabled_topics = self.gossip_disabled_topics.lock().await;
-        let disabled_channels = self.gossip_disabled_channels.lock().await;
-        let (mut topics, mut channels) = (BTreeSet::new(), BTreeSet::new());
-        for key in keys {
-            let (topic, channel) = match key {
-                ScopeKey::Topic(topic) => (topic, None),
-                ScopeKey::Channel(topic, channel) => {
-                    let channel = gossip_disabled_channel_key(&topic, &channel);
-                    (topic, Some(channel))
-                }
-                ScopeKey::Author(_) => continue,
-            };
-            if disabled_topics.contains(&topic) {
-                topics.insert(topic);
-            }
-            if let Some(channel) = channel.filter(|channel| disabled_channels.contains(channel)) {
-                channels.insert(channel);
-            }
-        }
-        (topics.into_iter().collect(), channels.into_iter().collect())
     }
 
     /// 件数だけを返す。補助の peer は、取得の成功を観測した peer の数(#1221 R2-D)。
@@ -270,6 +244,13 @@ impl AppService {
             self.release_scope_holder(&holder).await;
         }
         self.clear_public_topic_delivery(topic_id).await;
+        // やめた topic の gossip の停止設定を消す(停止設定が履歴とともに増えない。#1221 R2-D)。
+        self.gossip_disabled_topics.lock().await.remove(topic_id);
+        let channel_prefix = gossip_disabled_channel_key(topic_id, "");
+        self.gossip_disabled_channels
+            .lock()
+            .await
+            .retain(|key| !key.starts_with(&channel_prefix));
         Ok(())
     }
 

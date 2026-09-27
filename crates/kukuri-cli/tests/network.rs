@@ -98,14 +98,6 @@ async fn network_commands_preserve_identity_and_subscription_changes_after_resta
         .await
         .expect("restarted host");
     let dispatcher = Dispatcher::builtin();
-    // 通常の状態は、稼働中の topic の gossip の停止だけを返す(#1221 R2-D)。止めた設定が再起動の後も
-    // 残ることは、その topic を購読して確かめる。
-    host.add_desired_subscription(DesiredSubscription {
-        topic: disabled.into(),
-        scope: DesiredSubscriptionScope::Public,
-    })
-    .await
-    .expect("subscribe the disabled topic");
     let after = call(&dispatcher, &host, "get_sync_status", json!({})).await;
     assert!(after.ok, "{:?}", after.error);
     let after = after.data.expect("sync status");

@@ -278,11 +278,16 @@ async fn status_push_work_does_not_grow_with_dormant_history() {
             close_topic_column(runtime, &topic).await;
             runtime
                 .set_topic_gossip_enabled(SetTopicGossipEnabledRequest {
-                    topic,
+                    topic: topic.clone(),
                     enabled: false,
                 })
                 .await
                 .expect("disable dormant");
+            // 一覧から削除した topic(停止設定の履歴は topic とともに消える)。
+            runtime
+                .unsubscribe_topic(UnsubscribeTopicRequest { topic })
+                .await
+                .expect("remove dormant");
             for index in 0..10 {
                 let id = endpoint_id(1_000 + history * 10 + index);
                 let addr = iroh::EndpointAddr::new(id.parse().expect("id"));

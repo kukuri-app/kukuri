@@ -1035,7 +1035,8 @@ impl DesktopRuntime {
     pub async fn unsubscribe_topic(&self, request: UnsubscribeTopicRequest) -> Result<()> {
         self.app_service
             .unsubscribe_topic(request.topic.as_str())
-            .await
+            .await?;
+        self.persist_gossip_subscription_state_from_app().await
     }
 
     pub async fn set_topic_gossip_enabled(

@@ -373,36 +373,48 @@ async fn blob_only_assist_peers_do_not_mark_sync_healthy() {
     );
 }
 
-/// #1221 R2-D AC-1: gossip を止めた設定は、稼働中の scope(lease)の分だけを返す。止めた設定の履歴を
-/// 10 倍にしても、状態に載る件数は変わらない。
+/// #1221 R2-D: gossip の停止設定は、列を開いていない topic の分も状態に載る(手元の集合から作る)。
+/// topic をやめると、その topic と channel の停止設定が消える。再開でも消える。
 #[tokio::test]
-async fn status_lists_gossip_disabled_scopes_only_for_active_leases() {
+async fn gossip_disabled_settings_are_listed_and_forgotten_with_the_topic() {
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
     let app = AppService::new(store, transport);
-    display_topic(&app, "kukuri:topic:leased")
-        .await
-        .expect("open the leased column");
-    app.set_topic_gossip_enabled("kukuri:topic:leased", false)
-        .await
-        .expect("disable leased");
-    for count in [1, 10] {
-        let mut disabled_topics = vec!["kukuri:topic:leased".to_string()];
-        let mut disabled_channels = Vec::new();
-        for index in 0..count {
-            disabled_topics.push(format!("kukuri:topic:dormant-{index}"));
-            disabled_channels.push(format!("kukuri:topic:dormant-{index}::channel"));
-        }
-        app.restore_gossip_disabled_state(disabled_topics, disabled_channels)
-            .await;
-        let status = app.get_sync_status().await.expect("status");
-        assert_eq!(
-            status.gossip_disabled_topics,
-            vec!["kukuri:topic:leased".to_string()],
-            "history x{count}"
-        );
-        assert!(status.gossip_disabled_channels.is_empty());
+    let (closed, other) = ("kukuri:topic:not-open", "kukuri:topic:other");
+    for topic in [closed, other] {
+        app.set_topic_gossip_enabled(topic, false)
+            .await
+            .expect("disable");
+        app.set_channel_gossip_enabled(topic, "channel", false)
+            .await
+            .expect("disable channel");
     }
+    let status = app.get_sync_status().await.expect("status");
+    assert_eq!(status.gossip_disabled_topics, vec![closed, other]);
+    assert_eq!(
+        status.gossip_disabled_channels,
+        vec![format!("{closed}::channel"), format!("{other}::channel")]
+    );
+
+    app.unsubscribe_topic(closed)
+        .await
+        .expect("remove the topic");
+    let status = app.get_sync_status().await.expect("status");
+    assert_eq!(status.gossip_disabled_topics, vec![other]);
+    assert_eq!(
+        status.gossip_disabled_channels,
+        vec![format!("{other}::channel")]
+    );
+    app.set_topic_gossip_enabled(other, true)
+        .await
+        .expect("enable");
+    assert!(
+        app.get_sync_status()
+            .await
+            .expect("status")
+            .gossip_disabled_topics
+            .is_empty()
+    );
 }
 
 /// #1221 R2-D AC-3: 詳細のページは、重複も欠落も無く全件を返し、1 回は上限(64)以内。
@@ -512,6 +524,8 @@ async fn status_read_does_not_touch_sqlite_or_grow_with_history() {
             app.set_topic_gossip_enabled(&topic, false)
                 .await
                 .expect("disable dormant");
+            // 一覧から削除した topic(停止設定の履歴は topic とともに消える)。
+            app.unsubscribe_topic(&topic).await.expect("remove dormant");
             dormant += 1;
         }
         let seeds = (0..dormant * 10)
