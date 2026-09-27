@@ -146,6 +146,7 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   直前の epoch の参加 record に現 epoch の grant を送る。試験 `a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant`。
   Linux(Docker)で回転の伝播は通るようになったが、同じ試験は後段の Dome の接続(`process_e2e.rs:475`)で失敗する
   (下の「未決」)。
+- 検証: app-api(`iroh-integration-tests`)lib 506 件、desktop-runtime lib 319 件、harness 23 件、kukuri-cli(Windows)、docs-sync 成功。`cargo xtask rust-check`・fmt・oversized-files・`ipc-types --check` 成功。Linux の `process_e2e` は Docker で回転の伝播まで通り、Dome の接続で失敗(未決)。1 回だけ `private_live_session_reaches_a_member_through_the_channel_hint` が全件実行の負荷で時間切れ(単独 4 回と全件の再実行は成功)。
 - 時刻の注入: app-api に時計の抽象は無く、envelope の署名時刻は core が現在時刻で付ける。日をまたぐ場面は、前日の
   bucket・前日の作成時刻・前日の時刻で署名した投稿を置くことで作った。
 
