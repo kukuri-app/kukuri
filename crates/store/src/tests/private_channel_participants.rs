@@ -78,6 +78,23 @@ async fn participant_table_contract(store: &dyn SocialProjectionStore) -> Result
             .await?,
         2
     );
+    // 退出した相手も含め、channel で一度でも行を持った相手は既知(B7。回転後の遅れた参加 record を受け付けない)。
+    assert!(
+        store
+            .has_private_channel_participant("channel", "a")
+            .await?
+    );
+    assert!(
+        store
+            .has_private_channel_participant("channel", "d")
+            .await?
+    );
+    assert!(
+        !store
+            .has_private_channel_participant("channel", "z")
+            .await?
+    );
+    assert!(!store.has_private_channel_participant("other", "a").await?);
     // 退出より後の参加(再参加)は戻す。
     assert!(
         store

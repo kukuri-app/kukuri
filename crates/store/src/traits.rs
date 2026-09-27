@@ -315,6 +315,12 @@ pub trait SocialProjectionStore: Send + Sync {
         &self,
         row: PrivateChannelParticipantRow,
     ) -> Result<bool>;
+    /// 同じ channel にその pubkey の行が(epoch と退出を問わず)1 行でもあれば `true`(#1221 R5-H B7)。
+    async fn has_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool>;
     /// 参加中の pubkey を `after` より後ろから昇順に最大 `limit` 件。`epoch_id` が `None` なら channel の全 epoch から重複なく。
     async fn list_private_channel_participants(
         &self,

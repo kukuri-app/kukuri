@@ -285,6 +285,21 @@ impl SocialProjectionStore for MemoryStore {
         Ok(pubkeys.into_iter().take(limit).collect())
     }
 
+    async fn has_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .private_channel_participants
+            .read()
+            .await
+            .values()
+            .any(|row| {
+                row.channel_id == channel_id && row.participant_pubkey == participant_pubkey
+            }))
+    }
+
     async fn count_private_channel_participants(
         &self,
         channel_id: &str,

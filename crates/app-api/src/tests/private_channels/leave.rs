@@ -368,8 +368,11 @@ async fn a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record() {
         .register_private_replica_secret(&old_replica, old.current_epoch_secret_hex.as_str())
         .await
         .expect("register old secret");
-    // 退出した端末(改変したもの)が、回転の後の時刻と、回転の前へ遡らせた時刻の参加 record を送り直す。
-    for forged_joined_at in [Utc::now().timestamp_millis(), joined_at] {
+    // 退出した端末(改変したもの)が、退出と回転の間の時刻・回転の後の時刻・元の参加の時刻の参加 record を送り直す。
+    let rotated_at =
+        crate::service::remote_read_support::epoch_start_millis(&rotated.current_epoch_id)
+            .expect("rotation time");
+    for forged_joined_at in [rotated_at - 1, Utc::now().timestamp_millis(), joined_at] {
         app_b
             .record_private_channel_participant(
                 &PrivateChannelParticipantDocV1 {
@@ -415,6 +418,15 @@ async fn a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record() {
         assert_eq!(
             grants, 0,
             "no grant for the member who left ({forged_joined_at})"
+        );
+        // 退出した人の行は有効へ戻らず、次の回転の宛先にも入らない。
+        assert!(
+            !store_a
+                .list_private_channel_participants(channel.channel_id.as_str(), None, "", 128)
+                .await
+                .unwrap()
+                .contains(&b_pubkey),
+            "the member who left stays out of the rotation recipients ({forged_joined_at})"
         );
     }
 }

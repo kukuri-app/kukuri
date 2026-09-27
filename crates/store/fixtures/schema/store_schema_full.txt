@@ -550,6 +550,10 @@ index idx_private_channel_participants_active table=private_channel_participants
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=2 name=Some("participant_pubkey")
   sql=Some("CREATE INDEX idx_private_channel_participants_active ON private_channel_participants(channel_id, participant_pubkey) WHERE left_at IS NULL")
+index idx_private_channel_participants_pubkey table=private_channel_participants unique=0 origin=c partial=0
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=2 name=Some("participant_pubkey")
+  sql=Some("CREATE INDEX idx_private_channel_participants_pubkey ON private_channel_participants(channel_id, participant_pubkey)")
 index idx_reaction_cache_author_updated_at table=reaction_cache unique=0 origin=c partial=0
   key seqno=0 cid=3 name=Some("author_pubkey")
   key seqno=1 cid=5 name=Some("updated_at")

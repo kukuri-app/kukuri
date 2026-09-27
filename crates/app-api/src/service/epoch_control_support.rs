@@ -285,23 +285,34 @@ impl AppService {
                     && participant.participant_pubkey.as_str() == sender,
                 "participant record does not belong to this owner's epoch"
             );
-            let placed = services
-                .projection_store
-                .put_private_channel_participant(participant_row(&participant))
-                .await?;
-            // 回転の前に参加したのに record の到着が遅れた人だけに、回転後の grant を送る(#1221 R5-H B7)。この record で
-            // 表の行が新しく入った・更新された(退出済みの行を古い参加 record で戻せない)うえで、参加の時刻が回転の時刻
-            // (現 epoch の開始)より前のものに限る。回転の時点で退出していた人・回転の後に参加した人には送らない。
-            let joined_before_rotation =
-                super::remote_read_support::epoch_start_millis(&state.current_epoch_id)
-                    .is_some_and(|rotated_at| participant.joined_at < rotated_at);
-            if placed
-                && participant.left_at.is_none()
-                && epoch_id != state.current_epoch_id
-                && joined_before_rotation
-            {
-                AppService::from_handles(services.clone())
-                    .grant_current_epoch_to_late_participant(&state, &epoch_id, sender)
+            // 回転の前に参加したのに record の到着が遅れた人だけを、表に入れて回転後の grant を送る(#1221 R5-H B7)。
+            // 現 epoch でない参加 record は、その相手の行が channel にまだ 1 行も無く(退出した人・既に宛先に入った人は
+            // 行を持つ)、参加の時刻が回転の時刻(現 epoch の開始)より前のときだけ受け付ける。退出した人が参加の時刻を
+            // 偽って送り直しても、行は有効へ戻らず、grant も出ない。
+            let late_join = participant.left_at.is_none() && epoch_id != state.current_epoch_id;
+            if late_join {
+                let joined_before_rotation =
+                    super::remote_read_support::epoch_start_millis(&state.current_epoch_id)
+                        .is_some_and(|rotated_at| participant.joined_at < rotated_at);
+                let known = services
+                    .projection_store
+                    .has_private_channel_participant(state.channel_id.as_str(), sender)
+                    .await?;
+                if joined_before_rotation
+                    && !known
+                    && services
+                        .projection_store
+                        .put_private_channel_participant(participant_row(&participant))
+                        .await?
+                {
+                    AppService::from_handles(services.clone())
+                        .grant_current_epoch_to_late_participant(&state, &epoch_id, sender)
+                        .await?;
+                }
+            } else {
+                services
+                    .projection_store
+                    .put_private_channel_participant(participant_row(&participant))
                     .await?;
             }
         } else if let Some(grant) = parse_private_channel_epoch_handoff_grant(&envelope)? {

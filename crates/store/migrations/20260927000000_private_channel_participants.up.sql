@@ -12,3 +12,7 @@ CREATE TABLE private_channel_participants (
 CREATE INDEX idx_private_channel_participants_active
     ON private_channel_participants(channel_id, participant_pubkey)
     WHERE left_at IS NULL;
+
+-- 回転の後に届いた参加 record へ grant を送る前に、その相手が channel で既知か(退出を含む)を点照合する。
+CREATE INDEX idx_private_channel_participants_pubkey
+    ON private_channel_participants(channel_id, participant_pubkey);
