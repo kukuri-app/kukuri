@@ -3,7 +3,6 @@ use super::*;
 
 #[derive(Debug)]
 pub(crate) enum DomeReadUnavailable {
-    Instance,
     Preset,
     Envelope,
 }
@@ -11,7 +10,6 @@ pub(crate) enum DomeReadUnavailable {
 impl std::fmt::Display for DomeReadUnavailable {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Instance => "Dome instance manifest is unavailable",
             Self::Preset => "Dome preset manifest is unavailable",
             Self::Envelope => "signed Dome envelope is unavailable",
         })

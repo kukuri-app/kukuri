@@ -2,7 +2,85 @@
 
 use super::*;
 use crate::{AcceptDomeConnectionProposalInput, CreateDomeConnectionProposalInput};
-use kukuri_core::{DomeDirection, SpatialContextV1};
+use kukuri_blob_service::DisplayBlobFetch;
+use kukuri_core::{BlobHash, DomeDirection, SpatialContextV1};
+use kukuri_transport::{EndpointAddr, SeedPeer};
+
+/// 指定した hash の blob を手元にも provider からも取れない blob service(取得の失敗・cooldown の場面)。ほかは実 Iroh へ渡す。
+struct WithheldBlob {
+    inner: Arc<kukuri_blob_service::IrohBlobService>,
+    withheld: TokioMutex<Option<BlobHash>>,
+}
+
+impl WithheldBlob {
+    async fn withheld(&self, hash: &BlobHash) -> bool {
+        self.withheld.lock().await.as_ref() == Some(hash)
+    }
+}
+
+#[async_trait]
+impl BlobService for WithheldBlob {
+    async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        self.inner.put_blob(data, mime).await
+    }
+    async fn put_remote_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        self.inner.put_remote_blob(data, mime).await
+    }
+    async fn fetch_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        if self.withheld(hash).await {
+            return Ok(None);
+        }
+        self.inner.fetch_blob(hash).await
+    }
+    async fn fetch_local_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        if self.withheld(hash).await {
+            return Ok(None);
+        }
+        self.inner.fetch_local_blob(hash).await
+    }
+    async fn fetch_blob_ephemeral(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        if self.withheld(hash).await {
+            return Ok(None);
+        }
+        self.inner.fetch_blob_ephemeral(hash).await
+    }
+    async fn prepare_display_fetch(&self, hash: &BlobHash) -> Result<DisplayBlobFetch> {
+        self.inner.prepare_display_fetch(hash).await
+    }
+    async fn fetch_verified_receive_offer_payload(
+        &self,
+        offer: &kukuri_core::VerifiedReceiveOffer,
+        provider: EndpointAddr,
+    ) -> Result<Vec<u8>> {
+        self.inner
+            .fetch_verified_receive_offer_payload(offer, provider)
+            .await
+    }
+    async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
+        self.inner.pin_blob(hash).await
+    }
+    async fn unpin_blob(&self, hash: &BlobHash) -> Result<()> {
+        self.inner.unpin_blob(hash).await
+    }
+    async fn blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
+        self.inner.blob_status(hash).await
+    }
+    async fn local_blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
+        self.inner.local_blob_status(hash).await
+    }
+    async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
+        self.inner.import_peer_ticket(ticket).await
+    }
+    async fn learn_peer(&self, endpoint_id: &str) -> Result<()> {
+        self.inner.learn_peer(endpoint_id).await
+    }
+    async fn set_seed_peers(&self, peers: Vec<SeedPeer>) -> Result<()> {
+        self.inner.set_seed_peers(peers).await
+    }
+    async fn assist_peer_ids(&self) -> Result<Vec<String>> {
+        self.inner.assist_peer_ids().await
+    }
+}
 
 async fn wait_for_topology(
     app: &AppService,
@@ -45,7 +123,21 @@ async fn another_owners_proposal_and_acceptance_reach_the_topology() {
     let stack_a = TestIrohStack::new(&dir.path().join("connection-a")).await;
     let stack_b = TestIrohStack::new(&dir.path().join("connection-b")).await;
     let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
-    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    // b は a の Dome Instance の manifest blob を取れない(CI で起きた取得の失敗と同じ場面。#1221 R5-H)。
+    let blob_b = Arc::new(WithheldBlob {
+        inner: stack_b.blob_service.clone(),
+        withheld: TokioMutex::new(None),
+    });
+    let store_b = Arc::new(MemoryStore::default());
+    let app_b = app_service_from_dependencies(
+        store_b.clone(),
+        store_b,
+        stack_b.transport.clone(),
+        stack_b.transport.clone(),
+        stack_b.docs_sync.clone(),
+        blob_b.clone(),
+        generate_keys(),
+    );
     app_a.switch_writer(1);
     app_b.switch_writer(1);
     let topic = "kukuri:topic:dome-connection-remote";
@@ -73,6 +165,18 @@ async fn another_owners_proposal_and_acceptance_reach_the_topology() {
         .await
         .expect("the other Dome is listed");
     }
+    // 一覧に出た後に、b は a の Instance の manifest blob を取れなくなる。
+    let (instance_a, _) = app_a
+        .fetch_dome_instance_manifest(
+            &SpatialContextV1::Topic {
+                topic_id: TopicId::new(topic),
+            },
+            &app_a.keys().public_key(),
+        )
+        .await
+        .expect("instance")
+        .expect("a's instance");
+    *blob_b.withheld.lock().await = Some(instance_a.current_manifest.hash);
     let context = SpatialContextV1::Topic {
         topic_id: TopicId::new(topic),
     };

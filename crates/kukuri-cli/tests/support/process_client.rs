@@ -74,7 +74,7 @@ impl ProcessClient {
         let text = fs::read_to_string(self.path("daemon.stderr")).unwrap_or_default();
         let lines = text.lines().collect::<Vec<_>>();
         let tail = lines[lines.len().saturating_sub(STDERR_TAIL_LINES)..].join("\n");
-        format!("\n--- daemon {} stderr (末尾) ---\n{tail}", self.label)
+        format!("\n--- daemon「{}」の stderr の末尾 ---\n{tail}", self.label)
     }
 
     fn command(&self) -> Command {

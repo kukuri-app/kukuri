@@ -22,13 +22,14 @@ fn dome_instance_state_key(instance_id: &str) -> String {
     stable_key("metaverse/dome-instances", &format!("{instance_id}/state"))
 }
 
+/// 署名済み envelope の Dome Instance と、署名された content(manifest blob と同じ bytes)の hash。
 async fn load_signed_dome_instance_manifest(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     envelope_id: &EnvelopeId,
     owner_pubkey: &Pubkey,
     policy: DocFetchPolicy,
-) -> Result<Option<DomeInstanceManifestV1>> {
+) -> Result<Option<(DomeInstanceManifestV1, kukuri_core::BlobHash)>> {
     let key = stable_key("envelopes", envelope_id.as_str());
     let records = docs_sync
         .query_replica_exact_bounded(
@@ -55,7 +56,12 @@ async fn load_signed_dome_instance_manifest(
             continue;
         }
         match serde_json::from_str::<DomeInstanceManifestV1>(&envelope.content) {
-            Ok(manifest) => return Ok(Some(manifest)),
+            Ok(manifest) => {
+                return Ok(Some((
+                    manifest,
+                    kukuri_core::blob_hash(envelope.content.as_bytes()),
+                )));
+            }
             Err(error) => {
                 warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable signed Dome Instance manifest");
             }
@@ -208,28 +214,24 @@ impl AppService {
                 warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state with a mismatched owner");
                 continue;
             }
-            let bytes = match tokio::time::timeout(
-                projection_blob_fetch_timeout(),
-                self.services
-                    .blob_service
-                    .fetch_blob(&state.current_manifest.hash),
+            // manifest は owner が署名した envelope の content から読む(manifest blob と同じ bytes。hash で照合する)。
+            // blob を別の経路で取りに行かない(#1221 R5-H: 取得の失敗・cooldown で、読めた Instance を欠けさせない)。
+            let Some((manifest, signed_hash)) = load_signed_dome_instance_manifest(
+                docs,
+                replica,
+                &state.last_envelope_id,
+                &state.owner_pubkey,
+                policy,
             )
-            .await
-            {
-                Ok(result) => result?,
-                Err(error) => return Err(error.into()),
-            };
-            let Some(bytes) = bytes else {
-                unavailable = Some(DomeReadUnavailable::Instance);
+            .await?
+            else {
+                unavailable = Some(DomeReadUnavailable::Envelope);
                 continue;
             };
-            let manifest = match serde_json::from_slice::<DomeInstanceManifestV1>(&bytes) {
-                Ok(manifest) => manifest,
-                Err(error) => {
-                    warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance manifest");
-                    continue;
-                }
-            };
+            if signed_hash != state.current_manifest.hash {
+                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its signed manifest");
+                continue;
+            }
             if let Err(error) = kukuri_core::validate_dome_instance_manifest(&manifest) {
                 warn!(replica = %replica.as_str(), key, %error, "ignored an invalid Dome Instance manifest");
                 continue;
@@ -241,22 +243,6 @@ impl AppService {
                 || state.status != manifest.status
             {
                 warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its manifest");
-                continue;
-            }
-            let Some(signed) = load_signed_dome_instance_manifest(
-                docs,
-                replica,
-                &state.last_envelope_id,
-                &manifest.owner_pubkey,
-                policy,
-            )
-            .await?
-            else {
-                unavailable = Some(DomeReadUnavailable::Envelope);
-                continue;
-            };
-            if signed != manifest {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance without a matching owner signature");
                 continue;
             }
             if newest.as_ref().is_none_or(|(_, current)| {
@@ -774,82 +760,4 @@ pub(crate) async fn persist_dome_locator(
         )
         .await?;
     Ok(bucket)
-}
-
-// DEBUG(#1221 一時): 受諾で instance が見つからないときの読取りの内訳を stderr へ出す。原因の特定後に消す。
-impl AppService {
-    pub(crate) async fn debug_dome_instance_read(
-        &self,
-        context: &SpatialContextV1,
-        owner: &Pubkey,
-    ) {
-        let short = &owner.as_str()[..8];
-        let key = dome_instance_state_key(&dome_instance_id(context, owner));
-        let author = author_replica_id(owner.as_str());
-        let local = self
-            .read_dome_instance(
-                self.services.docs_sync.as_ref(),
-                &author,
-                &key,
-                owner,
-                DocFetchPolicy::LocalOnly,
-            )
-            .await;
-        eprintln!(
-            "DBG1221 owner={short} local={:?}",
-            local
-                .as_ref()
-                .map(|value| value.as_ref().map(|(_, m)| m.generation))
-                .map_err(|e| e.to_string())
-        );
-        let resolved = self
-            .services
-            .hint_transport
-            .resolve_receive_destination(owner)
-            .await;
-        eprintln!(
-            "DBG1221 owner={short} resolved={:?}",
-            resolved
-                .as_ref()
-                .map(|a| a.as_ref().map(|a| format!(
-                    "{}@{:?}",
-                    &a.id.to_string()[..8],
-                    a.ip_addrs().collect::<Vec<_>>()
-                )))
-                .map_err(|e| e.to_string())
-        );
-        let readers = super::remote_read_support::writer_readers(
-            &self.services,
-            &author,
-            &[owner.as_str()],
-            None,
-        )
-        .await;
-        eprintln!(
-            "DBG1221 owner={short} readers={:?}",
-            readers
-                .iter()
-                .map(|r| r.remote_reader_id().map(|id| id[..8].to_string()))
-                .collect::<Vec<_>>()
-        );
-        for reader in readers {
-            let read = self
-                .read_dome_instance(
-                    reader.as_ref(),
-                    &author,
-                    &key,
-                    owner,
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await;
-            reader.finish_remote_object().await;
-            eprintln!(
-                "DBG1221 owner={short} reader={:?} read={:?}",
-                reader.remote_reader_id().map(|id| id[..8].to_string()),
-                read.as_ref()
-                    .map(|value| value.as_ref().map(|(_, m)| m.generation))
-                    .map_err(|e| format!("{e:#}"))
-            );
-        }
-    }
 }

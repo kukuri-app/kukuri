@@ -94,11 +94,7 @@ impl AppService {
                     Err(error)
                         if matches!(
                             error.downcast_ref::<DomeReadUnavailable>(),
-                            Some(
-                                DomeReadUnavailable::Preset
-                                    | DomeReadUnavailable::Instance
-                                    | DomeReadUnavailable::Envelope
-                            )
+                            Some(DomeReadUnavailable::Preset | DomeReadUnavailable::Envelope)
                         ) =>
                     {
                         continue;

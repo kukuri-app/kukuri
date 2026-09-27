@@ -142,8 +142,10 @@ async fn invalid_first_envelope_record_does_not_shadow_valid_instance() {
     assert!(rooms.iter().any(|room| room.room_id == f.dome_id));
 }
 
+// #1221 R5-H: Instance の manifest は owner の署名済み envelope の content から読む。manifest blob を取りに行かないので、
+// blob の取得の失敗(provider の cooldown など)で Instance が欠けない。
 #[tokio::test]
-async fn instance_blob_io_failure_is_returned() {
+async fn an_instance_is_read_from_its_signed_envelope_without_the_manifest_blob() {
     let f = fixture().await;
     let state_key = instance_state_key(&f);
     let state_record = f
@@ -157,12 +159,12 @@ async fn instance_blob_io_failure_is_returned() {
         serde_json::from_slice(&state_record.value).expect("decode Instance state");
     *f.blobs.failing_hash.lock().await = Some(state.current_manifest.hash);
 
-    let error = f
+    let rooms = f
         .app
         .list_game_rooms(TOPIC)
         .await
-        .expect_err("blob I/O failure must remain an error");
-    assert!(error.to_string().contains("simulated blob read failure"));
+        .expect("the Instance does not depend on the manifest blob");
+    assert!(rooms.iter().any(|room| room.room_id == f.dome_id));
 }
 
 #[tokio::test]
