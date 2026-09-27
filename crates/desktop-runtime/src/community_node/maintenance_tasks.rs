@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) enum MaintenanceJob {
+pub(crate) enum MaintenanceJob {
     Session(String),
     Observations,
     Connectivity,

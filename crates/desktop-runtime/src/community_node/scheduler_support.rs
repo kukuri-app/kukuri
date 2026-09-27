@@ -14,7 +14,7 @@ impl DesktopRuntime {
         while tasks.next().await.is_some() {}
     }
 
-    async fn community_node_maintenance_jobs(&self) -> Vec<MaintenanceJob> {
+    pub(crate) async fn community_node_maintenance_jobs(&self) -> Vec<MaintenanceJob> {
         let config = self.community_node_config.lock().await;
         if config.nodes.is_empty() {
             return Vec::new();
