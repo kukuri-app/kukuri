@@ -16,6 +16,8 @@ impl AppService {
         let stores = self
             .dome_connection_stores(&spatial_context, legacy, &[])
             .await?;
+        self.hydrate_dome_connection_records(&spatial_context, &stores)
+            .await;
         let proposal_states = self.list_dome_proposal_states(&stores).await?;
         let selections = self.list_dome_selections(&stores).await?;
         let connection_states = self.list_dome_connection_states(&stores).await?;

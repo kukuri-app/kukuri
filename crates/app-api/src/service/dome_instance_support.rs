@@ -512,7 +512,7 @@ impl AppService {
     }
 
     /// private の bucket を、その epoch の capability で channel の provider から読む reader。
-    async fn private_dome_readers(
+    pub(crate) async fn private_dome_readers(
         &self,
         topic: &str,
         channel: &str,

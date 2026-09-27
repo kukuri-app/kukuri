@@ -304,6 +304,25 @@ impl AppService {
                     None => Ok(false),
                 }
             }
+            // 別の端末の Dome の接続の記録を、知っている Dome の anchor から有界に読む(#1221 R5-H)。
+            "dome-topology" => {
+                let context = match scope {
+                    TimelineScope::Public => kukuri_core::SpatialContextV1::Topic {
+                        topic_id: TopicId::new(topic_id),
+                    },
+                    TimelineScope::Channel { channel_id } => {
+                        kukuri_core::SpatialContextV1::Channel {
+                            topic_id: TopicId::new(topic_id),
+                            channel_id: channel_id.clone(),
+                        }
+                    }
+                };
+                let legacy = self.dome_connection_read_replica(&context).await?;
+                let stores = self.dome_connection_stores(&context, legacy, &[]).await?;
+                self.hydrate_dome_connection_records(&context, &stores)
+                    .await;
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
