@@ -1,6 +1,6 @@
 [package]
 name = "kukuri-desktop-tauri"
-version = "0.2.8"
+version = "0.3.0"
 edition = "2024"
 default-run = "kukuri-desktop-tauri"
 
