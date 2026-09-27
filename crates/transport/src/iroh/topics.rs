@@ -1,3 +1,4 @@
+use super::topic_rendezvous::{topic_rejoin_delay, topic_rejoin_window};
 use super::*;
 
 async fn remember_connected_peer(
@@ -303,8 +304,10 @@ impl IrohGossipTransport {
         true
     }
 
-    pub(crate) async fn extend_active_topic_peers(
+    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。
+    pub(crate) async fn extend_topic_peers(
         &self,
+        only: Option<&str>,
         endpoint_addrs: Vec<EndpointAddr>,
         reason: &str,
     ) {
@@ -317,7 +320,10 @@ impl IrohGossipTransport {
             if self.hint_closed.load(Ordering::Acquire) {
                 return;
             }
-            for (topic, state) in topic_states.iter_mut() {
+            for (topic, state) in topic_states
+                .iter_mut()
+                .filter(|(topic, _)| only.is_none_or(|only| only == topic.as_str()))
+            {
                 let mut join_peer_ids = Vec::new();
                 let mut added_peer_ids = Vec::new();
                 let mut join_endpoint_addrs = Vec::new();
@@ -343,6 +349,7 @@ impl IrohGossipTransport {
                 }
                 drop(neighbors);
                 if !join_peer_ids.is_empty() {
+                    state.joins[0].fetch_add(1, Ordering::Relaxed);
                     updates.push((
                         topic.clone(),
                         state.sender.clone(),
@@ -503,6 +510,17 @@ impl IrohGossipTransport {
             }
         };
         let (sender, mut receiver) = topic_handle.split();
+        let sender = Arc::new(Mutex::new(sender));
+        let rendezvous = Arc::new(Mutex::new(Vec::new()));
+        let joins = Arc::new([AtomicU64::new(0), AtomicU64::new(0)]);
+        let rejoin_sender = Arc::clone(&sender);
+        let rejoin_rendezvous = Arc::clone(&rendezvous);
+        let rejoin_joins = Arc::clone(&joins);
+        let rejoin_candidates = self.bootstrap_candidates();
+        let rejoin_endpoint = self.endpoint.clone();
+        let rejoin_gossip = self.gossip.clone();
+        let rejoin_warmups = Arc::clone(&self.topic_warmups);
+        let mut candidates_added = self.candidates_added.subscribe();
         let (broadcaster, _) = broadcast::channel(256);
         let outbound = broadcaster.clone();
         let topic_name = topic.as_str().to_string();
@@ -592,7 +610,47 @@ impl IrohGossipTransport {
                         Some(format!("topic join pending: {message}"));
                 }
             }
-            while let Some(event) = receiver.next().await {
+            // neighbor の無い間だけ、候補の窓で再 join する。回復は neighbor の成立(NeighborUp)で判定し、
+            // seed の適用の成功や別の protocol の成功では判定しない(ADR 0055 §3、#1221 R2-B)。
+            let mut rejoin_step = 0u32;
+            let mut rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(0);
+            let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
+            loop {
+                let idle = neighbors_task.read().await.is_empty();
+                let event = tokio::select! {
+                    event = receiver.next() => event,
+                    changed = candidates_added.changed(), if idle => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        rejoin_at = tokio::time::Instant::now();
+                        continue;
+                    }
+                    () = tokio::time::sleep_until(rejoin_at), if idle => {
+                        let peers =
+                            topic_rejoin_window(&rejoin_candidates, &rejoin_rendezvous, rejoin_step)
+                                .await;
+                        rejoin_step = rejoin_step.saturating_add(1);
+                        rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                        if !peers.is_empty() {
+                            rejoin_joins[1].fetch_add(1, Ordering::Relaxed);
+                            let ids = peers.iter().map(|peer| peer.id).collect();
+                            let _ = rejoin_sender.lock().await.join_peers(ids).await;
+                            let (endpoint, gossip, warmups) = (
+                                rejoin_endpoint.clone(),
+                                rejoin_gossip.clone(),
+                                Arc::clone(&rejoin_warmups),
+                            );
+                            _rejoin_warmup = Some(AbortWarmupOnDrop(tokio::spawn(async move {
+                                warmups.warmup_peers_once(&endpoint, &gossip, &peers).await;
+                            })));
+                        }
+                        continue;
+                    }
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 match event {
                     Ok(GossipEvent::Received(message)) => {
                         joined_task_state.store(true, Ordering::SeqCst);
@@ -644,6 +702,7 @@ impl IrohGossipTransport {
                         }
                     }
                     Ok(GossipEvent::NeighborUp(peer_id)) => {
+                        rejoin_step = 0;
                         gossip_health.success(peer_id, Duration::ZERO).await;
                         joined_task_state.store(true, Ordering::SeqCst);
                         joined_task_notify.notify_waiters();
@@ -669,6 +728,10 @@ impl IrohGossipTransport {
                     Ok(GossipEvent::NeighborDown(peer_id)) => {
                         let mut guard = neighbors_task.write().await;
                         guard.remove(peer_id.to_string().as_str());
+                        if guard.is_empty() {
+                            rejoin_at =
+                                tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                        }
                     }
                     Ok(GossipEvent::Lagged) => {}
                     Err(error) => {
@@ -685,7 +748,7 @@ impl IrohGossipTransport {
         topics.insert(
             topic.0.clone(),
             HintTopicState {
-                sender: Arc::new(Mutex::new(sender)),
+                sender,
                 broadcaster: broadcaster.clone(),
                 bootstrap_peer_ids,
                 neighbors,
@@ -693,6 +756,8 @@ impl IrohGossipTransport {
                 last_received_at,
                 last_error,
                 invalid_hint_count,
+                rendezvous,
+                joins,
                 closed,
                 closed_notify,
                 update_warmup_task: None,

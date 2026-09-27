@@ -1,5 +1,4 @@
 use super::super::*;
-use crate::community_node::community_node_config_with_active_local_consents;
 
 #[tokio::test]
 async fn persisted_community_node_connectivity_is_not_applied_without_local_consent() {
@@ -38,7 +37,14 @@ async fn persisted_community_node_connectivity_is_not_applied_without_local_cons
     .await
     .expect("runtime");
 
-    assert!(runtime.active_connectivity_urls.lock().await.is_empty());
+    assert!(
+        runtime
+            .community_node_connectivity
+            .lock()
+            .await
+            .relay_urls
+            .is_empty()
+    );
     assert!(
         runtime
             .get_sync_status()
@@ -124,15 +130,13 @@ async fn startup_does_not_apply_persisted_community_node_connectivity_before_pre
     .await
     .expect("runtime");
 
-    assert!(runtime.active_connectivity_urls.lock().await.is_empty());
-    let applied = runtime
-        .last_effective_seed_peer_apply_state
-        .lock()
-        .await
-        .clone()
-        .expect("initial effective seed state");
-    assert_eq!(applied.configured_seed_peers, vec![configured_seed]);
-    assert!(applied.bootstrap_seed_peers.is_empty());
+    let discovery = runtime.get_sync_status().await.expect("status").discovery;
+    assert_eq!(
+        discovery.configured_seed_peer_ids,
+        vec![configured_seed.endpoint_id]
+    );
+    assert!(discovery.bootstrap_seed_peer_ids.is_empty());
+    assert_eq!(discovery.connect_mode, ConnectMode::DirectOnly);
 
     runtime.shutdown().await;
 }
@@ -173,22 +177,14 @@ async fn connectivity_apply_ignores_local_consent_without_verified_ready_session
     };
 
     runtime
-        .apply_runtime_connectivity_assist()
+        .sync_community_node_connectivity(base_url)
         .await
-        .expect("apply runtime connectivity");
-    runtime
-        .apply_effective_seed_peers()
-        .await
-        .expect("apply effective seeds");
+        .expect("sync connectivity");
 
-    assert!(runtime.active_connectivity_urls.lock().await.is_empty());
-    let applied = runtime
-        .last_effective_seed_peer_apply_state
-        .lock()
-        .await
-        .clone()
-        .expect("effective seed state");
-    assert!(applied.bootstrap_seed_peers.is_empty());
+    let applied = runtime.community_node_connectivity.lock().await;
+    assert!(applied.relay_urls.is_empty());
+    assert!(applied.seed_peers.is_empty());
+    drop(applied);
 
     runtime.shutdown().await;
 }
@@ -239,13 +235,15 @@ async fn connectivity_apply_keeps_only_the_node_with_verified_ready_session() {
         ],
     };
 
-    runtime
-        .apply_runtime_connectivity_assist()
-        .await
-        .expect("apply runtime connectivity");
+    for base_url in [verified_base_url, unverified_base_url] {
+        runtime
+            .sync_community_node_connectivity(base_url)
+            .await
+            .expect("sync connectivity");
+    }
 
     assert_eq!(
-        *runtime.active_connectivity_urls.lock().await,
+        runtime.community_node_connectivity.lock().await.relay_urls,
         vec!["https://relay-verified.example.com".to_string()]
     );
 
@@ -267,10 +265,6 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
         Some("127.0.0.1:22002".to_string()),
     )
     .expect("bootstrap seed");
-    let rendezvous_seed = SeedPeer {
-        endpoint_id: "3333333333333333333333333333333333333333333333333333333333333333".to_string(),
-        addr_hint: Some("127.0.0.1:33003".to_string()),
-    };
     let mut discovery_config = DiscoveryConfig::static_peer_default();
     discovery_config.seed_peers = vec![configured_seed.clone()];
     let runtime = DesktopRuntime::new_with_config_and_identity_and_discovery(
@@ -301,31 +295,17 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
     };
     mark_community_node_session_ready_for_test(&runtime, base_url).await;
     runtime
-        .community_node_rendezvous_seed_peers
-        .lock()
+        .sync_community_node_connectivity(base_url)
         .await
-        .insert(base_url.to_string(), vec![rendezvous_seed]);
-    runtime
-        .apply_runtime_connectivity_assist()
-        .await
-        .expect("apply runtime connectivity");
-    runtime
-        .apply_effective_seed_peers()
-        .await
-        .expect("apply effective seeds");
+        .expect("sync connectivity");
 
+    let before = runtime.get_sync_status().await.expect("status").discovery;
+    assert_eq!(before.connect_mode, ConnectMode::DirectOrRelay);
     assert_eq!(
-        *runtime.active_connectivity_urls.lock().await,
-        vec![relay_url.to_string()]
+        before.configured_seed_peer_ids,
+        vec![configured_seed.endpoint_id.clone()]
     );
-    let before = runtime
-        .last_effective_seed_peer_apply_state
-        .lock()
-        .await
-        .clone()
-        .expect("effective seeds before withdrawal");
-    assert_eq!(before.configured_seed_peers, vec![configured_seed.clone()]);
-    assert_eq!(before.bootstrap_seed_peers.len(), 2);
+    assert_eq!(before.bootstrap_seed_peer_ids.len(), 1);
 
     runtime
         .withdraw_community_node_consents(crate::CommunityNodeTargetRequest {
@@ -334,23 +314,13 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
         .await
         .expect("withdraw consents");
 
-    assert!(runtime.active_connectivity_urls.lock().await.is_empty());
-    assert!(
-        runtime
-            .community_node_rendezvous_seed_peers
-            .lock()
-            .await
-            .get(base_url)
-            .is_none()
+    let after = runtime.get_sync_status().await.expect("status").discovery;
+    assert_eq!(after.connect_mode, ConnectMode::DirectOnly);
+    assert_eq!(
+        after.configured_seed_peer_ids,
+        vec![configured_seed.endpoint_id]
     );
-    let after = runtime
-        .last_effective_seed_peer_apply_state
-        .lock()
-        .await
-        .clone()
-        .expect("effective seeds after withdrawal");
-    assert_eq!(after.configured_seed_peers, vec![configured_seed]);
-    assert!(after.bootstrap_seed_peers.is_empty());
+    assert!(after.bootstrap_seed_peer_ids.is_empty());
 
     runtime.shutdown().await;
 }
@@ -399,16 +369,18 @@ async fn community_node_connectivity_filter_is_scoped_per_node() {
         ],
     };
 
-    let active = community_node_config_with_active_local_consents(
-        &db_path,
-        IdentityStorageMode::FileOnly,
-        &config,
-    );
+    *runtime.community_node_config.lock().await = config;
+    // 同意の無い node は、session の状態がどうであれ relay と seed を足さない。
+    for base_url in [consented_base_url, pending_base_url] {
+        mark_community_node_session_ready_for_test(&runtime, base_url).await;
+        runtime
+            .sync_community_node_connectivity(base_url)
+            .await
+            .expect("sync connectivity");
+    }
 
-    assert_eq!(active.nodes.len(), 1);
-    assert_eq!(active.nodes[0].base_url, consented_base_url);
     assert_eq!(
-        relay_config_from_community_node_config(&active).iroh_relay_urls,
+        runtime.community_node_connectivity.lock().await.relay_urls,
         vec!["https://relay-consented.example.com".to_string()]
     );
 
@@ -593,11 +565,12 @@ fn stored_community_node_config_restores_cached_connectivity_union() {
     let restored = load_community_node_config_from_file(&db_path)
         .expect("load community node config")
         .expect("community node config");
-    let relay_config = relay_config_from_community_node_config(&restored);
-
-    assert_eq!(relay_config.connect_mode(), ConnectMode::DirectOrRelay);
     assert_eq!(
-        relay_config.iroh_relay_urls,
+        restored.nodes[0]
+            .resolved_urls
+            .as_ref()
+            .expect("resolved urls")
+            .connectivity_urls,
         vec!["https://relay.example.com".to_string()]
     );
     assert_eq!(

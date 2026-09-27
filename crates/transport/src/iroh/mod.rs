@@ -66,6 +66,10 @@ struct HintTopicState {
     // 現状の読み手は cfg(test) のアクセサのみ(診断 UI への露出は契約変更のため別 WP)。
     #[cfg_attr(not(test), allow(dead_code))]
     invalid_hint_count: Arc<AtomicU64>,
+    /// CN の rendezvous が返した、この topic の候補(取得元の CN、最大 4 件)。
+    rendezvous: Arc<Mutex<Vec<(String, EndpointAddr)>>>,
+    /// この topic へ `join_peers` した回数(候補の更新による分、再 join の分)。#1221 R2-B の観測用。
+    joins: Arc<[AtomicU64; 2]>,
     closed: Arc<AtomicBool>,
     closed_notify: Arc<Notify>,
     update_warmup_task: Option<JoinHandle<()>>,
@@ -121,10 +125,12 @@ pub struct IrohGossipTransport {
     bootstrap_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     imported_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     account_store: Option<Arc<kukuri_store::SqliteStore>>,
-    imported_cursor: Mutex<Option<(i64, String)>>,
-    hot_peer_ids: Mutex<VecDeque<EndpointId>>,
+    imported_cursor: Arc<Mutex<Option<(i64, String)>>>,
+    hot_peer_ids: Arc<Mutex<VecDeque<EndpointId>>>,
     gossip_health: Arc<crate::peers::BlobPeerHealth>,
-    bootstrap_cursor: Mutex<(usize, [Option<String>; 3])>,
+    bootstrap_cursor: Arc<Mutex<(usize, [Option<String>; 3])>>,
+    /// seed が増えたことを、neighbor の無い topic の再 join へ知らせる(#1221 R2-B)。
+    candidates_added: watch::Sender<u64>,
     receive_destinations: Mutex<receive_destination::DestinationWindow>,
     receive_destination_probes: Semaphore,
     subscribed_topics: Arc<Mutex<BTreeSet<String>>>,
@@ -162,6 +168,7 @@ mod receive_destination;
 mod relay;
 #[cfg(test)]
 mod tests;
+mod topic_rendezvous;
 mod topics;
 
 #[cfg(test)]
@@ -269,11 +276,21 @@ impl HintTransport for IrohGossipTransport {
             .await
     }
 
+    async fn join_topic_peers(
+        &self,
+        source: &str,
+        topic: &TopicId,
+        peers: Vec<SeedPeer>,
+    ) -> Result<()> {
+        self.join_topic_peers_impl(source, topic, peers).await
+    }
+
     async fn clear_receive_candidates(&self, source: Option<&str>) -> Result<()> {
         self.receive_destinations
             .lock()
             .await
             .clear_rendezvous(source);
+        self.clear_topic_rendezvous(source).await;
         Ok(())
     }
 

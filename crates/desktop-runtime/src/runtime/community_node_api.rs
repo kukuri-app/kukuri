@@ -2,7 +2,6 @@ use super::*;
 
 use chrono::Utc;
 use kukuri_cn_protocol::{CommunityNodePoliciesResponse, IndexingStatusResponse};
-use kukuri_transport::HintTransport;
 
 use crate::community_node::{
     CommunityNodeContentAdvisoryLookupError, CommunityNodeContentAdvisoryLookupRequest,
@@ -133,7 +132,7 @@ impl DesktopRuntime {
         Ok(self.community_node_config.lock().await.clone())
     }
 
-    /// 読み取り専用。CN セッションの establish/refresh・self-heal は
+    /// 読み取り専用。CN セッションの establish/refresh は
     /// セッション維持スケジューラ(`run_community_node_session_maintenance_once`)が
     /// 担い、getter は副作用(registration refresh のネットワーク I/O)を持たない(WP-Q2)。
     /// config は tick 側が resolved_urls を書き戻すため、ここで読んだ node が最新。
@@ -217,26 +216,14 @@ impl DesktopRuntime {
                 self.identity_mode,
                 removed_node.base_url.as_str(),
             )?;
-            self.community_node_rendezvous_seed_peers
-                .lock()
-                .await
-                .remove(removed_node.base_url.as_str());
+            self.forget_community_node(removed_node.base_url.as_str())
+                .await?;
         }
         save_community_node_config(&self.db_path, &next_config)?;
         *self.community_node_config.lock().await = next_config.clone();
-        self.iroh_stack
-            .transport
-            .clear_receive_candidates(None)
-            .await?;
         self.content_advisory_issuer_cache.lock().await.clear();
-        self.community_node_sessions.lock().await.clear();
         self.invalidate_author_trust_gate_cache().await;
-        *self.community_node_reconnect_state.lock().await = Default::default();
-        self.apply_runtime_connectivity_assist().await?;
-        self.apply_effective_seed_peers().await?;
-        // getter を読取専用化した(WP-Q2)ため、config 変更直後の登録はここで 1 tick 即時実行する。
-        // これが無いと新規 Node の bootstrap がスケジューラ次 tick(最大 15 秒)まで
-        // 遅延する。tick は deadline ゲート済みの冪等設計で、直後の scheduler tick と二重でも安全。
+        // 足した node は session が無いので期限が来ている。登録をここで 1 回送る(残した node は触らない)。
         drop(grant_guard);
         self.run_community_node_session_maintenance_once().await;
         Ok(next_config)
@@ -267,24 +254,19 @@ impl DesktopRuntime {
                 COMMUNITY_NODE_TOKEN_PURPOSE,
                 node.base_url.as_str(),
             )?;
+            self.forget_community_node(node.base_url.as_str()).await?;
         }
         save_community_node_config(&self.db_path, &CommunityNodeConfig::default())?;
         *self.community_node_config.lock().await = CommunityNodeConfig::default();
-        self.iroh_stack
-            .transport
-            .clear_receive_candidates(None)
-            .await?;
         self.content_advisory_issuer_cache.lock().await.clear();
         self.invalidate_author_trust_gate_cache().await;
-        self.community_node_rendezvous_seed_peers
-            .lock()
-            .await
-            .clear();
-        self.community_node_sessions.lock().await.clear();
-        *self.community_node_reconnect_state.lock().await = Default::default();
-        self.apply_runtime_connectivity_assist().await?;
-        self.apply_effective_seed_peers().await?;
         Ok(())
+    }
+
+    /// 設定から外した node の session・候補・relay・seed だけを外す(#1221 R2-B)。
+    async fn forget_community_node(&self, base_url: &str) -> Result<()> {
+        self.community_node_sessions.lock().await.remove(base_url);
+        self.deactivate_community_node_connectivity(base_url).await
     }
 
     pub async fn authenticate_community_node(
@@ -366,12 +348,18 @@ impl DesktopRuntime {
                 CommunityNodeSessionPhase::Refreshing,
             )
             .await;
-            self.refresh_community_node_registration_with_token_if_due(
-                base_url.as_str(),
-                &mut token,
-                false,
-            )
-            .await?;
+            if !self
+                .refresh_community_node_registration_with_token_if_due(
+                    base_url.as_str(),
+                    &mut token,
+                    false,
+                )
+                .await?
+            {
+                self.community_node_consent_required(base_url.as_str())
+                    .await?;
+                return self.community_node_status(node, None, None).await;
+            }
             self.clear_community_node_retry_state(base_url.as_str())
                 .await;
             self.set_community_node_session_ready(base_url.as_str(), true, local_consent)
@@ -441,11 +429,8 @@ impl DesktopRuntime {
                 ..Default::default()
             },
         );
-        self.iroh_stack
-            .transport
-            .clear_receive_candidates(Some(base_url.as_str()))
+        self.deactivate_community_node_connectivity(base_url.as_str())
             .await?;
-        *self.community_node_reconnect_state.lock().await = Default::default();
         let node = self
             .community_node_config
             .lock()
@@ -546,8 +531,6 @@ impl DesktopRuntime {
         })
         .await?;
         self.invalidate_author_trust_gate_cache().await;
-        self.deactivate_community_node_connectivity(base_url.as_str())
-            .await?;
         let node = self.require_community_node(base_url.as_str()).await?;
         self.community_node_status(node, None, None).await
     }
@@ -595,12 +578,6 @@ impl DesktopRuntime {
         request: SubmitCommunityNodeReportRequest,
     ) -> Result<SubmitCommunityNodeReportResult, CommunityNodeReportError> {
         self.request_community_node_report_submit(&request).await
-    }
-
-    pub async fn reapply_community_node_connectivity(&self) -> Result<()> {
-        self.force_rebuild_runtime_connectivity_assist().await?;
-        self.force_apply_effective_seed_peers().await?;
-        Ok(())
     }
 
     pub async fn shutdown(&self) {

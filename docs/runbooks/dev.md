@@ -563,7 +563,7 @@ cd apps/desktop && npx pnpm@10.16.1 test
 ## Windows native smoke
 ### 無操作時のCN維持・接続復旧を調べる（#1176）
 
-- CNのnode別session、観測送信、self-healは独立laneで実行される。応答待ちのCNがある場合は、`kukuri_connectivity`の失敗段階・retryと、正常CNのheartbeat/rendezvous期限を分けて確認する。共通HTTP clientの上限は接続5秒・本文込み10秒。上限を長くするだけで回復したと判定しない。
+- CNのsessionは期限の来たnodeだけを、観測送信はnodeごとの独立laneで実行される。15秒ごとのself-healは撤去し、neighborの無いgossip topicはtransportがtopicごとに再joinする（#1221 R2-B、ADR 0055 §3.1）。応答待ちのCNがある場合は、`kukuri_connectivity`の失敗段階・retryと、正常CNのheartbeat/rendezvous期限を分けて確認する。共通HTTP clientの上限は接続5秒・本文込み10秒。上限を長くするだけで回復したと判定しない。
 - `kukuri_connectivity=info`は既定filterに含まれる。scheduler開始/停止、session ready/失敗、local docs actor不通、stack再構築の世代/commitを記録する。明示的な`RUST_LOG`を使う場合は必要に応じこのtargetを追加する。token・鍵・本文をログへ追加しない。
 - `sending to iroh_docs actor failed`はCNのHTTP失敗とは別層。正規のstack切替中か、再構築失敗後かを世代とcommit記録で確認する。remote peerがofflineなだけならlocal actorは維持される。local probeのtimeoutはactor破損の証拠にしない。
 - dedicated profileで表示/非表示のみ/画面ロック/suspendを区別し、開始・格納・復帰時刻、版・OS/WebView、CN期限、peer数、実投稿/返信/blobの到達を記録する。既定bufferは2000件/1MiBで過去が落ちるので、調査中は明示的に標準出力を保存する。製品が常時ログファイルを書き出す機能ではない。

@@ -6,6 +6,7 @@ mod idle_connectivity;
 mod index_query;
 mod indexing_status;
 mod metadata;
+mod node_isolation;
 mod report_submission;
 mod scheduler;
 mod session;

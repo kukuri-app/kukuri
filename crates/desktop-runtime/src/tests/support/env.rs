@@ -16,13 +16,6 @@ pub(crate) fn runtime_shutdown_timeout() -> Duration {
     kukuri_test_support::constrained_timeout(Duration::from_secs(15), Duration::from_secs(60))
 }
 
-pub(crate) fn public_connectivity_reapply_interval() -> Duration {
-    if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
-        Duration::from_secs(20)
-    } else {
-        Duration::from_secs(10)
-    }
-}
 pub(crate) fn delete_sqlite_artifacts(db_path: &Path) {
     for path in [
         db_path.to_path_buf(),

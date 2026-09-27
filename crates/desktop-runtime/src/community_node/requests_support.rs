@@ -119,6 +119,27 @@ impl DesktopRuntime {
         Ok(token)
     }
 
+    /// 401 の後の再認証。失敗したら認証の失効として、その node の relay と seed を外す(#1221 R2-B)。
+    /// 5xx・通信失敗などの一時的な失敗だけでは外さない。
+    async fn reauthenticate_community_node(
+        &self,
+        base_url: &str,
+    ) -> Result<StoredCommunityNodeToken> {
+        self.set_community_node_session_phase(base_url, CommunityNodeSessionPhase::Authenticating)
+            .await;
+        let result = self
+            .request_community_node_authentication_token(base_url)
+            .await;
+        if result.is_err() {
+            if let Some(session) = self.community_node_sessions.lock().await.get_mut(base_url) {
+                session.current_policy_verified_for = None;
+            }
+            self.deactivate_community_node_connectivity(base_url)
+                .await?;
+        }
+        result
+    }
+
     /// 認証不要の公開 policy カタログ取得(#857)。同意判断に必要な文書一覧・本文・版
     /// のみで、Node 同意前に許可される通信(公開 manifest / 法務文書)に含まれる。
     pub(crate) async fn request_community_node_policies(
@@ -223,10 +244,6 @@ impl DesktopRuntime {
         access_token: &str,
     ) -> std::result::Result<CommunityNodeNodeConfig, CommunityNodeRequestError> {
         let base_url = normalize_http_url(base_url).map_err(CommunityNodeRequestError::Other)?;
-        let local_seed_peer_before = self
-            .local_community_node_seed_peer("metadata-refresh-baseline")
-            .await
-            .ok();
         self.require_community_node(&base_url)
             .await
             .map_err(CommunityNodeRequestError::Other)?;
@@ -300,32 +317,9 @@ impl DesktopRuntime {
             .map_err(CommunityNodeRequestError::Other)?;
         *current_config = normalized.clone();
         drop(current_config);
-        self.apply_runtime_connectivity_assist()
+        self.sync_community_node_connectivity(base_url.as_str())
             .await
             .map_err(CommunityNodeRequestError::Other)?;
-        self.apply_effective_seed_peers()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
-        let local_seed_peer_after = self
-            .local_community_node_seed_peer("metadata-refresh-post-apply")
-            .await
-            .ok();
-        if local_seed_peer_before != local_seed_peer_after {
-            if let Some(entry) = self
-                .community_node_sessions
-                .lock()
-                .await
-                .get_mut(base_url.as_str())
-            {
-                entry.heartbeat_deadline = 0;
-            }
-            debug!(
-                %base_url,
-                before = ?local_seed_peer_before,
-                after = ?local_seed_peer_after,
-                "scheduled immediate community-node heartbeat after local seed peer changed during metadata sync"
-            );
-        }
         normalized
             .nodes
             .iter()
@@ -441,7 +435,8 @@ impl DesktopRuntime {
         let private_topic_keys = self.app_service.private_channel_rendezvous_keys().await;
         let account_receive_route = receive_route_for_account(&self.author_keys.public_key())
             .map_err(CommunityNodeRequestError::Other)?;
-        let mut topic_keys = std::collections::BTreeSet::new();
+        // rendezvous の鍵 → 購読している topic。応答の peer は、その topic だけへ join する(#1221 R2-B)。
+        let mut topic_keys = std::collections::BTreeMap::new();
         let mut skipped_private_topics = 0usize;
         for topic in &snapshot.subscribed_topics {
             if topic == account_receive_route.as_str() {
@@ -452,13 +447,16 @@ impl DesktopRuntime {
                 .is_some_and(|topic| topic.starts_with(PRIVATE_CHANNEL_TOPIC_PREFIX));
             if is_private_channel_hint {
                 if let Some(key) = private_topic_keys.get(topic) {
-                    topic_keys.insert(key.clone());
+                    topic_keys.insert(key.clone(), topic.clone());
                 } else {
                     skipped_private_topics += 1;
                 }
                 continue;
             }
-            topic_keys.insert(public_topic_rendezvous_key(&TopicId::new(topic.clone())));
+            topic_keys.insert(
+                public_topic_rendezvous_key(&TopicId::new(topic.clone())),
+                topic.clone(),
+            );
         }
         if skipped_private_topics > 0 {
             warn!(
@@ -466,7 +464,6 @@ impl DesktopRuntime {
                 "現在世代の秘密がない非公開チャンネルのランデブー話題を除外しました"
             );
         }
-        let topic_keys = topic_keys.into_iter().collect::<Vec<_>>();
         if topic_keys.is_empty() {
             return Ok(());
         }
@@ -482,7 +479,7 @@ impl DesktopRuntime {
                 endpoint_id: seed_peer.endpoint_id,
                 addr_hint: seed_peer.addr_hint,
                 joins: Vec::new(),
-                refreshes: topic_keys,
+                refreshes: topic_keys.keys().cloned().collect(),
                 leaves: Vec::new(),
             })
             .send()
@@ -519,29 +516,24 @@ impl DesktopRuntime {
             (response.expires_in_seconds.min(i64::MAX as u64) as i64)
                 .saturating_sub(COMMUNITY_NODE_TOPIC_RENDEZVOUS_REFRESH_MARGIN_SECONDS),
         );
-        let mut peers_by_endpoint = std::collections::BTreeMap::new();
-        for topic in response.topics {
-            for peer in topic.peers {
-                peers_by_endpoint.insert(
-                    peer.endpoint_id.clone(),
-                    SeedPeer {
-                        endpoint_id: peer.endpoint_id,
-                        addr_hint: peer.addr_hint,
-                    },
-                );
-            }
+        for response_topic in response.topics {
+            let Some(topic) = topic_keys.get(&response_topic.topic_key) else {
+                continue;
+            };
+            let peers = response_topic
+                .peers
+                .into_iter()
+                .map(|peer| SeedPeer {
+                    endpoint_id: peer.endpoint_id,
+                    addr_hint: peer.addr_hint,
+                })
+                .collect();
+            self.iroh_stack
+                .transport
+                .join_topic_peers(base_url, &TopicId::new(topic.clone()), peers)
+                .await
+                .map_err(CommunityNodeRequestError::Other)?;
         }
-        let rendezvous_peers = peers_by_endpoint.into_values().collect::<Vec<_>>();
-        self.community_node_rendezvous_seed_peers
-            .lock()
-            .await
-            .insert(base_url.to_string(), rendezvous_peers);
-        self.apply_runtime_connectivity_assist()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
-        self.apply_effective_seed_peers()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
         Ok(())
     }
 
@@ -557,14 +549,7 @@ impl DesktopRuntime {
         {
             Ok(status) => Ok(status),
             Err(CommunityNodeRequestError::AuthRequired) if allow_reauthenticate => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 self.request_community_node_consent_status(base_url, token.access_token.as_str())
                     .await
                     .map_err(CommunityNodeRequestError::into_anyhow)
@@ -591,14 +576,7 @@ impl DesktopRuntime {
         {
             Ok(status) => Ok(status),
             Err(CommunityNodeRequestError::AuthRequired) => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 self.request_accept_community_node_consents(
                     base_url,
                     token.access_token.as_str(),
@@ -826,12 +804,13 @@ impl DesktopRuntime {
         Ok(true)
     }
 
+    /// 期限の来た登録を送る。偽は、サーバの同意が手元の同意で覆えず、再同意が要ること。
     pub(crate) async fn refresh_community_node_registration_with_token_if_due(
         &self,
         base_url: &str,
         token: &mut StoredCommunityNodeToken,
         force_heartbeat: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match self
             .refresh_community_node_registration_with_token_if_due_once(
                 base_url,
@@ -840,16 +819,9 @@ impl DesktopRuntime {
             )
             .await
         {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(CommunityNodeRequestError::AuthRequired) => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 let consent_status = self
                     .fetch_community_node_consent_status_with_retry(base_url, token, false)
                     .await?;
@@ -857,7 +829,7 @@ impl DesktopRuntime {
                     .sync_covered_community_node_consents(base_url, token, consent_status)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.refresh_community_node_registration_with_token_if_due_once(
                     base_url,
@@ -865,7 +837,8 @@ impl DesktopRuntime {
                     force_heartbeat,
                 )
                 .await
-                .map_err(CommunityNodeRequestError::into_anyhow)
+                .map_err(CommunityNodeRequestError::into_anyhow)?;
+                Ok(true)
             }
             Err(CommunityNodeRequestError::ConsentRequired) => {
                 // 版が上がっての再同意（更新）かどうかを判定するため、現在の consent 状態を取得する。
@@ -877,7 +850,7 @@ impl DesktopRuntime {
                     .sync_covered_community_node_consents(base_url, token, consent_status)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.refresh_community_node_registration_with_token_if_due_once(
                     base_url,
@@ -885,7 +858,8 @@ impl DesktopRuntime {
                     force_heartbeat,
                 )
                 .await
-                .map_err(CommunityNodeRequestError::into_anyhow)
+                .map_err(CommunityNodeRequestError::into_anyhow)?;
+                Ok(true)
             }
             Err(error) => Err(error.into_anyhow()),
         }

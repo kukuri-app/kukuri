@@ -34,6 +34,8 @@ struct MockObservationState {
     submit_error: Arc<Mutex<Option<(StatusCode, String)>>>,
     revoke_error: Arc<Mutex<Option<StatusCode>>>,
     offer_sharing: Arc<AtomicBool>,
+    /// GET /v1/policies の受信。
+    policy_hits: Arc<AtomicUsize>,
 }
 
 fn policy(slug: &str, version: i32, required: bool) -> CommunityNodePolicyDocument {
@@ -69,6 +71,7 @@ fn policy(slug: &str, version: i32, required: bool) -> CommunityNodePolicyDocume
 async fn mock_policies(
     State(state): State<MockObservationState>,
 ) -> Json<CommunityNodePoliciesResponse> {
+    state.policy_hits.fetch_add(1, Ordering::SeqCst);
     let mut policies = vec![policy(MOCK_MANAGED_POLICY_SLUG, 1, true)];
     if state.offer_sharing.load(Ordering::SeqCst) {
         policies.push(policy(
@@ -243,6 +246,7 @@ async fn harness() -> Harness {
         submit_error: Arc::new(Mutex::new(None)),
         revoke_error: Arc::new(Mutex::new(None)),
         offer_sharing: Arc::new(AtomicBool::new(true)),
+        policy_hits: Arc::new(AtomicUsize::new(0)),
     };
     let server = spawn_server(state.clone(), listener).await;
     persist_community_node_token(
@@ -502,6 +506,93 @@ async fn revocation_pending_blocks_new_posts() {
     assert_eq!(harness.state.revocations.load(Ordering::SeqCst), 1);
     assert!(!harness.status().await.revocation_pending);
     assert_eq!(harness.submission_count().await, 0);
+    harness.finish().await;
+}
+
+/// #1221 R2-B(監査 B1): 観測の提供の同意(任意文書)を手元の同意へ足しても、その CN の確認済みの状態は揃ったまま。
+/// 期限の来た登録の後も、その CN の relay・seed は残り、認証済みの表示も変わらない。
+#[tokio::test]
+async fn enabling_sharing_keeps_the_node_connectivity_after_a_due_registration() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let harness = harness().await;
+    harness.enable(false).await;
+    let base_url = harness.base_url.as_str();
+    if let Some(session) = harness
+        .runtime
+        .community_node_sessions
+        .lock()
+        .await
+        .get_mut(base_url)
+    {
+        session.heartbeat_deadline = 0;
+        session.rendezvous_refresh_deadline = 0;
+    }
+    let heartbeats = harness.state.managed.heartbeat_hits.load(Ordering::SeqCst);
+    harness
+        .runtime
+        .run_community_node_session_maintenance_once()
+        .await;
+    assert!(harness.state.managed.heartbeat_hits.load(Ordering::SeqCst) > heartbeats);
+    assert!(
+        harness
+            .runtime
+            .community_node_connectivity
+            .lock()
+            .await
+            .nodes
+            .contains_key(base_url),
+        "the node keeps its relay and seed"
+    );
+    let status = harness
+        .runtime
+        .get_community_node_statuses()
+        .await
+        .expect("statuses")
+        .remove(0);
+    assert!(status.auth_state.authenticated);
+    harness.finish().await;
+}
+
+/// #1221 R2-B(監査 B3): Ready でない node(再試行の待ち)に送信待ちの観測があっても、期限前の tick では
+/// その node へ policy・同意の確認も観測も送らない。
+#[tokio::test]
+async fn a_retrying_node_gets_no_request_from_the_observation_lane_before_due() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let harness = harness().await;
+    harness.enable(false).await;
+    harness.mute(author('1').as_str()).await;
+    harness
+        .runtime
+        .set_community_node_retry_state(harness.base_url.as_str(), anyhow::anyhow!("temporary"))
+        .await;
+    let before = (
+        harness.state.policy_hits.load(Ordering::SeqCst),
+        harness
+            .state
+            .managed
+            .consent_status_hits
+            .load(Ordering::SeqCst),
+    );
+    for _ in 0..2 {
+        harness
+            .runtime
+            .run_community_node_session_maintenance_once()
+            .await;
+    }
+    assert_eq!(
+        (
+            harness.state.policy_hits.load(Ordering::SeqCst),
+            harness
+                .state
+                .managed
+                .consent_status_hits
+                .load(Ordering::SeqCst),
+        ),
+        before,
+        "no consent or policy check before the retry deadline"
+    );
+    assert_eq!(harness.submission_count().await, 0);
+    assert_eq!(harness.status().await.pending_count, 1);
     harness.finish().await;
 }
 

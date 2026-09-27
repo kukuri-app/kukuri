@@ -24,7 +24,7 @@ impl DesktopRuntime {
     ) -> Result<()> {
         self.app_service.set_scope_display(request).await
     }
-    /// 読み取り専用。CN セッションの establish/refresh・self-heal はスケジューラ
+    /// 読み取り専用。CN セッションの establish/refresh はスケジューラ
     /// (`run_community_node_session_maintenance_once`)が担い、getter は副作用を持たない。
     pub async fn get_sync_status(&self) -> Result<SyncStatus> {
         self.app_service.get_sync_status().await

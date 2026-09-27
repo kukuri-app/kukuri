@@ -22,7 +22,7 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::discovery::{DiscoveryConfig, normalize_seed_peers};
+use crate::discovery::normalize_seed_peers;
 use crate::identity::{IdentityStorageMode, load_optional_secret, persist_optional_secret};
 use crate::paths::community_node_config_path;
 use crate::runtime::DesktopRuntime;
@@ -40,7 +40,6 @@ mod indexing_status_support;
 mod invite_storage_support;
 mod maintenance_tasks;
 mod manifest_support;
-mod reconnect_support;
 mod report_routing_support;
 mod requests_support;
 mod scheduler_support;
@@ -121,8 +120,6 @@ pub(crate) const COMMUNITY_NODE_BOOTSTRAP_HEARTBEAT_RETRY_SECONDS: i64 = 10;
 pub(crate) const COMMUNITY_NODE_BOOTSTRAP_METADATA_RETRY_SECONDS: i64 = 5;
 pub(crate) const COMMUNITY_NODE_SESSION_RETRY_SECONDS: i64 = 30;
 pub(crate) const COMMUNITY_NODE_AUTH_REFRESH_SKEW_SECONDS: i64 = 300;
-pub(crate) const COMMUNITY_NODE_RECONNECT_UNHEALTHY_SECONDS: i64 = 30;
-pub(crate) const COMMUNITY_NODE_RECONNECT_BACKOFF_SECONDS: [i64; 3] = [30, 60, 120];
 // heartbeat の次回期限は「サーバ TTL(90 秒)− 30 秒」で管理されるため、tick は 30 秒未満が必須。
 // 15 秒は失効防止を満たしつつ、tick 毎の consent GET を可視時の現行ポーリング(3 秒 ×2 getter)
 // より低頻度に抑える値(WP-C1 プランの決定事項 1)。
@@ -323,28 +320,19 @@ pub struct CommunityNodeAuthState {
     pub expires_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RuntimeConnectivityAssistState {
-    pub(crate) discovery_mode: kukuri_transport::DiscoveryMode,
-    pub(crate) discovery_env_locked: bool,
-    pub(crate) configured_seed_peers: Vec<SeedPeer>,
-    pub(crate) bootstrap_seed_peers: Vec<SeedPeer>,
-    pub(crate) relay_urls: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct EffectiveSeedPeerApplyState {
-    pub(crate) discovery_mode: kukuri_transport::DiscoveryMode,
-    pub(crate) discovery_env_locked: bool,
-    pub(crate) configured_seed_peers: Vec<SeedPeer>,
-    pub(crate) bootstrap_seed_peers: Vec<SeedPeer>,
-}
-
+/// 1 node が足している relay と seed(#1221 R2-B)。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CommunityNodeReconnectState {
-    pub(crate) unhealthy_since: Option<i64>,
-    pub(crate) next_retry_at: i64,
-    pub(crate) backoff_step: usize,
+pub(crate) struct NodeConnectivity {
+    pub(crate) relay_urls: Vec<String>,
+    pub(crate) seed_peers: Vec<SeedPeer>,
+}
+
+/// node ごとの寄与と、endpoint・transport・docs・blob へ適用した和。
+#[derive(Debug, Default)]
+pub(crate) struct AppliedConnectivity {
+    pub(crate) nodes: std::collections::BTreeMap<String, NodeConnectivity>,
+    pub(crate) relay_urls: Vec<String>,
+    pub(crate) seed_peers: Vec<SeedPeer>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,6 +366,8 @@ pub(crate) struct CommunityNodeSessionState {
     pub(crate) account_candidate_cycle_end: Option<DirectMessageOutboxCursor>,
     pub(crate) metadata_refresh_deadline: i64,
     pub(crate) session_retry_deadline: i64,
+    /// token の更新(再認証と同意・policy の確認)が要る時刻。0 は未確認(#1221 R2-B)。
+    pub(crate) token_refresh_at: i64,
     pub(crate) session_phase: CommunityNodeSessionPhase,
     pub(crate) ready_refresh_pending: bool,
     pub(crate) last_error: Option<String>,
@@ -389,6 +379,28 @@ pub(crate) struct CommunityNodeSessionState {
     /// 公開current policyとの厳密一致を確認して`Ready`へ到達した時点のlocal consent。
     /// runtime内だけのevidenceとし、restart後は再度preflightする。
     pub(crate) current_policy_verified_for: Option<CommunityNodeLocalConsentState>,
+}
+
+impl CommunityNodeSessionState {
+    /// この node へ次に要求を送る時刻(#1221 R2-B)。scheduler はこれより前に、その node へ HTTP を送らない。
+    /// 利用者の操作を待つ node(参加の拒否、再同意の待ち)は期限を持たない。
+    pub(crate) fn due_at(&self) -> i64 {
+        match self.session_phase {
+            CommunityNodeSessionPhase::Ready if !self.ready_refresh_pending => [
+                self.heartbeat_deadline,
+                self.rendezvous_refresh_deadline,
+                self.token_refresh_at,
+            ]
+            .into_iter()
+            .chain((self.metadata_refresh_deadline > 0).then_some(self.metadata_refresh_deadline))
+            .min()
+            .unwrap_or_default(),
+            CommunityNodeSessionPhase::Retrying => self.session_retry_deadline,
+            CommunityNodeSessionPhase::AwaitingAdmission => i64::MAX,
+            CommunityNodeSessionPhase::Idle if self.local_consent_update_pending => i64::MAX,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

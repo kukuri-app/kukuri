@@ -36,9 +36,9 @@ Accepted
 
 ## セッション維持と接続復旧（#1176）
 
-- Rust側schedulerがUI pollingと独立してnodeごとの登録・rendezvous・token更新を駆動する。観測送信とconnectivity self-healは別laneで、あるlaneの未完了を次tickや別nodeの実行条件にしない。同じlaneを重複実行せず、runtime停止時は実行中futureも破棄する。
+- Rust側schedulerがUI pollingと独立してnodeごとの登録・rendezvous・token更新を駆動する。観測送信はnodeごとの別laneで、あるlaneの未完了を次tickや別nodeの実行条件にしない。期限前のnodeへは要求を送らない（#1221 R2-Bでconnectivity self-healを撤去した。ADR 0055 §3.1）。同じlaneを重複実行せず、runtime停止時は実行中futureも破棄する。
 - CNの通常HTTP clientは接続5秒・応答本文を含む全体10秒を上限とする。セッション更新の排他はnode別、relay/seedの全体反映は専用の排他区間で最新の検証済み状態から行う。未同意nodeを別nodeの成功で有効化しない。
-- remote peer不在だけで正常なlocal docs actorを停止しない。通常のself-healはdiscovery/購読の再適用とする。local docsの読み取りprobeが失敗した場合はstackを再構築するが、probeのtimeoutだけでは破損と判定せず再試行へ戻す。
+- remote peer不在だけで正常なlocal docs actorを停止しない。peer不在からの回復は、neighborの無いgossip topicの再joinとする（#1221 R2-B）。relay・seedを適用するときのlocal docsの読み取りprobeが失敗した場合はstackを再構築するが、probeのtimeoutだけでは破損と判定せず再試行へ戻す。
 - 再構築が失敗しても前回stackの参照・peer stateを保持し、次回の再試行を可能にする。再構築のcommit後はseed値が同じでも旧streamを再利用せず、購読・private capabilityを新しいstackへ復元する。identityやdocs/blobsの初期化は復旧手段にしない。
 - node生成前の失敗でも、開いたFsStoreのshutdown完了を待ってからエラーを返す。失敗したstoreの非同期Dropだけに次回openの安全性を依存させない。
 - relay受信容量とblob取得失敗のUI/キャッシュはそれぞれ#1206・#1207の責務であり、本変更で通信優先度や取得gateを変更しない。

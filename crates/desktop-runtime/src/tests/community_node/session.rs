@@ -505,7 +505,7 @@ async fn community_node_status_does_not_require_restart_when_verified_connectivi
         nodes: vec![node.clone()],
     };
     mark_community_node_session_ready_for_test(&runtime, base_url.as_str()).await;
-    *runtime.active_connectivity_urls.lock().await = vec![connectivity_url.clone()];
+    runtime.community_node_connectivity.lock().await.relay_urls = vec![connectivity_url.clone()];
 
     let status = timeout(
         test_timeout,

@@ -9,6 +9,57 @@ impl DesktopRuntime {
             .await
     }
 
+    /// scheduler・背景の lane の session。Ready で token が有効な間は、同意と policy を確かめず、期限の来た
+    /// 登録だけを送る(#1221 R2-B)。同意と policy は、token の更新・session の確立・利用者の操作
+    /// (`ensure_community_node_session`)のときに確かめ、サーバ側の失効はこの要求の 403 で分かる。
+    /// Ready でない node へは、その node の期限(再試行の期限)まで要求を送らない。参加の拒否と再同意の待ちは
+    /// 期限を持たないので、利用者の操作まで送らない。
+    pub(crate) async fn ensure_due_community_node_session(
+        &self,
+        base_url: &str,
+    ) -> Result<CommunityNodeSessionOutcome> {
+        let base_url = normalize_http_url(base_url)?;
+        let guard = self.community_node_session_guard.lock(&base_url).await;
+        if let Some(mut token) = self.ready_community_node_token(base_url.as_str()).await? {
+            if !self
+                .refresh_community_node_registration_with_token_if_due(
+                    base_url.as_str(),
+                    &mut token,
+                    false,
+                )
+                .await?
+            {
+                return self
+                    .community_node_consent_required(base_url.as_str())
+                    .await;
+            }
+            // 401 の後の再認証で Authenticating になっていても、確認を済ませたので Ready へ戻す。
+            self.set_community_node_session_phase(
+                base_url.as_str(),
+                CommunityNodeSessionPhase::Ready,
+            )
+            .await;
+            self.note_community_node_token(base_url.as_str(), &token)
+                .await;
+            return Ok(CommunityNodeSessionOutcome::Ready);
+        }
+        let now = Utc::now().timestamp();
+        if let Some(phase) = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get(base_url.as_str())
+            .filter(|session| {
+                session.session_phase != CommunityNodeSessionPhase::Ready && session.due_at() > now
+            })
+            .map(|session| session.session_phase)
+        {
+            return Ok(CommunityNodeSessionOutcome::Deferred(phase));
+        }
+        drop(guard);
+        self.ensure_community_node_session(&base_url).await
+    }
+
     pub(crate) async fn ensure_community_node_session_with_mode(
         &self,
         base_url: &str,
@@ -22,20 +73,13 @@ impl DesktopRuntime {
         let base_url = preflight.base_url().to_string();
         let local_consent = preflight.local_consent().clone();
         if let CommunityNodeConsentPreflight::Required { policy_update, .. } = preflight {
-            self.clear_community_node_retry_state(base_url.as_str())
-                .await;
             self.set_community_node_cached_consent(base_url.as_str(), None)
                 .await;
             self.set_community_node_local_consent_update_pending(base_url.as_str(), policy_update)
                 .await;
-            self.set_community_node_session_phase(
-                base_url.as_str(),
-                CommunityNodeSessionPhase::Idle,
-            )
-            .await;
-            self.deactivate_community_node_connectivity(base_url.as_str())
-                .await?;
-            return Ok(CommunityNodeSessionOutcome::ConsentRequired);
+            return self
+                .community_node_consent_required(base_url.as_str())
+                .await;
         }
         self.set_community_node_local_consent_update_pending(base_url.as_str(), false)
             .await;
@@ -104,16 +148,9 @@ impl DesktopRuntime {
                 // 再受諾せず、UI が本文を再提示するまでセッションを進めない。
                 self.set_community_node_local_consent_update_pending(base_url.as_str(), true)
                     .await;
-                self.clear_community_node_retry_state(base_url.as_str())
+                return self
+                    .community_node_consent_required(base_url.as_str())
                     .await;
-                self.set_community_node_session_phase(
-                    base_url.as_str(),
-                    CommunityNodeSessionPhase::Idle,
-                )
-                .await;
-                self.deactivate_community_node_connectivity(base_url.as_str())
-                    .await?;
-                return Ok(CommunityNodeSessionOutcome::ConsentRequired);
             }
             // ローカル同意済みの内容をサーバ記録へ同期する(#857)。
             self.set_community_node_session_phase(
@@ -140,41 +177,76 @@ impl DesktopRuntime {
             CommunityNodeSessionPhase::Refreshing,
         )
         .await;
-        self.refresh_community_node_registration_with_token_if_due(
-            base_url.as_str(),
-            &mut token,
-            force_refresh,
-        )
-        .await?;
+        if !self
+            .refresh_community_node_registration_with_token_if_due(
+                base_url.as_str(),
+                &mut token,
+                force_refresh,
+            )
+            .await?
+        {
+            return self
+                .community_node_consent_required(base_url.as_str())
+                .await;
+        }
         self.clear_community_node_retry_state(base_url.as_str())
             .await;
         self.set_community_node_session_ready(base_url.as_str(), !was_ready, local_consent)
+            .await;
+        self.note_community_node_token(base_url.as_str(), &token)
             .await;
         self.apply_ready_community_node_connectivity(base_url.as_str())
             .await?;
         Ok(CommunityNodeSessionOutcome::Ready)
     }
 
+    /// Ready の session の、更新の要らない token。
+    async fn ready_community_node_token(
+        &self,
+        base_url: &str,
+    ) -> Result<Option<StoredCommunityNodeToken>> {
+        let ready = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get(base_url)
+            .is_some_and(|session| session.session_phase == CommunityNodeSessionPhase::Ready);
+        if !ready {
+            return Ok(None);
+        }
+        let now = Utc::now().timestamp();
+        Ok(
+            load_community_node_token(&self.db_path, self.identity_mode, base_url)?
+                .filter(|token| !Self::community_node_token_requires_refresh(token, now)),
+        )
+    }
+
+    async fn note_community_node_token(&self, base_url: &str, token: &StoredCommunityNodeToken) {
+        if let Some(session) = self.community_node_sessions.lock().await.get_mut(base_url) {
+            session.token_refresh_at = token
+                .expires_at
+                .saturating_sub(COMMUNITY_NODE_AUTH_REFRESH_SKEW_SECONDS);
+        }
+    }
+
+    /// 同意が要る node を Idle にし、その node の relay と seed を外す。
+    pub(crate) async fn community_node_consent_required(
+        &self,
+        base_url: &str,
+    ) -> Result<CommunityNodeSessionOutcome> {
+        self.clear_community_node_retry_state(base_url).await;
+        self.set_community_node_session_phase(base_url, CommunityNodeSessionPhase::Idle)
+            .await;
+        self.deactivate_community_node_connectivity(base_url)
+            .await?;
+        Ok(CommunityNodeSessionOutcome::ConsentRequired)
+    }
+
     pub(crate) async fn apply_ready_community_node_connectivity(
         &self,
         base_url: &str,
     ) -> Result<()> {
-        let local_seed_peer_before = self
-            .local_community_node_seed_peer("ready-connectivity-pre-apply")
-            .await
-            .ok();
-        self.apply_runtime_connectivity_assist().await?;
-        self.apply_effective_seed_peers().await?;
-        let local_seed_peer_after = self
-            .local_community_node_seed_peer("ready-connectivity-post-apply")
-            .await
-            .ok();
-        if local_seed_peer_before != local_seed_peer_after
-            && let Some(entry) = self.community_node_sessions.lock().await.get_mut(base_url)
-        {
-            entry.heartbeat_deadline = 0;
-        }
-        Ok(())
+        self.sync_community_node_connectivity(base_url).await
     }
 
     pub(crate) async fn refresh_community_node_registration_if_due(
@@ -182,7 +254,10 @@ impl DesktopRuntime {
         base_url: &str,
     ) -> Result<()> {
         let base_url = normalize_http_url(base_url)?;
-        match self.ensure_community_node_session(base_url.as_str()).await {
+        match self
+            .ensure_due_community_node_session(base_url.as_str())
+            .await
+        {
             Ok(_) => Ok(()),
             Err(error) => {
                 if let Some(rejection) = Self::community_node_admission_rejection(&error).cloned() {
@@ -211,47 +286,68 @@ impl DesktopRuntime {
             .ok_or_else(|| anyhow!("community node `{base_url}` is not configured"))
     }
 
-    async fn active_community_node_connectivity_config(&self) -> CommunityNodeConfig {
-        let config = self.community_node_config.lock().await.clone();
-        let mut active = community_node_config_with_active_local_consents(
-            &self.db_path,
-            self.identity_mode,
-            &config,
-        );
-        let sessions = self.community_node_sessions.lock().await;
-        active.nodes.retain(|node| {
-            let Ok(local_consent) = load_community_node_local_consents(
-                &self.db_path,
-                self.identity_mode,
-                node.base_url.as_str(),
-            ) else {
-                return false;
-            };
-            sessions.get(node.base_url.as_str()).is_some_and(|session| {
+    /// 認証・同意を確かめ済みの node の relay と seed。確かめていない node は `None`。
+    async fn community_node_connectivity(&self, base_url: &str) -> Option<NodeConnectivity> {
+        let local_consent =
+            load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .ok()
+                .filter(|consent| consent.has_active_consent())?;
+        let verified = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get(base_url)
+            .is_some_and(|session| {
                 !session.local_consent_update_pending
                     && session.current_policy_verified_for.as_ref() == Some(&local_consent)
-            })
-        });
-        active
-    }
-
-    async fn active_community_node_rendezvous_seed_peers(
-        &self,
-        active_config: &CommunityNodeConfig,
-    ) -> Vec<SeedPeer> {
-        let rendezvous_by_node = self.community_node_rendezvous_seed_peers.lock().await;
-        rendezvous_by_node
+            });
+        if !verified {
+            return None;
+        }
+        let config = self.community_node_config.lock().await;
+        let resolved = config
+            .nodes
             .iter()
-            .filter(|(base_url, _)| {
-                active_config
-                    .nodes
-                    .iter()
-                    .any(|node| node.base_url.as_str() == base_url.as_str())
-            })
-            .flat_map(|(_, peers)| peers.iter().cloned())
-            .collect()
+            .find(|node| node.base_url == base_url)?
+            .resolved_urls
+            .as_ref()?;
+        Some(NodeConnectivity {
+            relay_urls: resolved.connectivity_urls.clone(),
+            seed_peers: resolved
+                .seed_peers
+                .iter()
+                .filter_map(seed_peer_from_community_node)
+                .collect(),
+        })
     }
 
+    /// その node の relay と seed を、認証・同意の状態に合わせて差分だけ適用する(#1221 R2-B)。
+    /// 自分の宛先が変わったら、その node への登録をすぐ送り直す。
+    pub(crate) async fn sync_community_node_connectivity(&self, base_url: &str) -> Result<()> {
+        let next = self.community_node_connectivity(base_url).await;
+        let before = self
+            .local_community_node_seed_peer("connectivity-pre-apply")
+            .await
+            .ok();
+        if !self
+            .apply_community_node_connectivity(Some((base_url, next)))
+            .await?
+        {
+            return Ok(());
+        }
+        let after = self
+            .local_community_node_seed_peer("connectivity-post-apply")
+            .await
+            .ok();
+        if before != after
+            && let Some(entry) = self.community_node_sessions.lock().await.get_mut(base_url)
+        {
+            entry.heartbeat_deadline = 0;
+        }
+        Ok(())
+    }
+
+    /// 同意の解除・認証の失効・設定からの削除で、その node の relay・seed・rendezvous の候補を外す。
     pub(crate) async fn deactivate_community_node_connectivity(
         &self,
         base_url: &str,
@@ -260,12 +356,71 @@ impl DesktopRuntime {
             .transport
             .clear_receive_candidates(Some(base_url))
             .await?;
-        self.community_node_rendezvous_seed_peers
-            .lock()
-            .await
-            .remove(base_url);
-        self.apply_runtime_connectivity_assist().await?;
-        self.apply_effective_seed_peers().await
+        self.apply_community_node_connectivity(Some((base_url, None)))
+            .await?;
+        Ok(())
+    }
+
+    /// node ごとの relay と seed の和を transport・docs・blob へ適用する(#1221 R2-B)。`change` はその node の
+    /// 新しい寄与で、和が変わらなければ何もしない。`None` は利用者の seed の設定の変更で、和が同じでも適用し直す。
+    /// 適用したら真を返す。endpoint を作り直すのは、既存の endpoint を使えないときだけ(`SharedIrohStack`)。
+    pub(crate) async fn apply_community_node_connectivity(
+        &self,
+        change: Option<(&str, Option<NodeConnectivity>)>,
+    ) -> Result<bool> {
+        let mut applied = self.community_node_connectivity.lock().await;
+        let mut nodes = applied.nodes.clone();
+        let forced = change.is_none();
+        if let Some((base_url, next)) = change {
+            if nodes.get(base_url) == next.as_ref() {
+                return Ok(false);
+            }
+            match next {
+                Some(next) => nodes.insert(base_url.to_string(), next),
+                None => nodes.remove(base_url),
+            };
+        }
+        let relay_urls = nodes
+            .values()
+            .flat_map(|node| node.relay_urls.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let seed_peers = normalize_seed_peers(
+            nodes
+                .values()
+                .flat_map(|node| node.seed_peers.iter().cloned())
+                .collect(),
+        );
+        let changed = relay_urls != applied.relay_urls || seed_peers != applied.seed_peers;
+        if forced || changed {
+            let discovery_config = self.discovery_config.lock().await.clone();
+            let generation = self.iroh_stack.generation();
+            self.iroh_stack
+                .apply_runtime_connectivity(
+                    &discovery_config,
+                    &seed_peers,
+                    TransportRelayConfig {
+                        iroh_relay_urls: relay_urls.clone(),
+                    },
+                )
+                .await?;
+            if self.iroh_stack.generation() != generation {
+                // 旧 stack の stream は終わっている。lease のある key の task だけを作り直す(#1221 R2-C)。
+                self.app_service.rebuild_scope_subscriptions().await?;
+            }
+            debug!(
+                relay_url_count = relay_urls.len(),
+                bootstrap_seed_peer_count = seed_peers.len(),
+                "applied community-node relay and seed connectivity"
+            );
+        }
+        *applied = AppliedConnectivity {
+            nodes,
+            relay_urls,
+            seed_peers,
+        };
+        Ok(forced || changed)
     }
 
     pub(crate) async fn community_node_status(
@@ -324,9 +479,17 @@ impl DesktopRuntime {
             node.base_url.as_str(),
         )?
         .is_some();
-        let active_config = self.active_community_node_connectivity_config().await;
-        let current_connectivity_urls =
-            relay_config_from_community_node_config(&active_config).iroh_relay_urls;
+        // 確かめ済みの relay のうち、まだ endpoint へ入っていないものがある。
+        let restart_required = match self.community_node_connectivity(&node.base_url).await {
+            Some(desired) => {
+                let applied = self.community_node_connectivity.lock().await;
+                desired
+                    .relay_urls
+                    .iter()
+                    .any(|url| !applied.relay_urls.contains(url))
+            }
+            None => false,
+        };
         Ok(CommunityNodeNodeStatus {
             base_url: node.base_url,
             auth_state,
@@ -339,171 +502,7 @@ impl DesktopRuntime {
             admission_rejection,
             session_phase,
             retry_after,
-            restart_required: current_connectivity_urls
-                != *self.active_connectivity_urls.lock().await,
+            restart_required,
         })
-    }
-
-    async fn apply_runtime_connectivity_assist_with_mode(&self, force: bool) -> Result<()> {
-        let _apply = self.community_node_connectivity_guard.lock().await;
-        let discovery_config = self.discovery_config.lock().await.clone();
-        let community_node_config = self.active_community_node_connectivity_config().await;
-        let mut next_state =
-            runtime_connectivity_assist_state(&discovery_config, &community_node_config);
-        let rendezvous_seed_peers = self
-            .active_community_node_rendezvous_seed_peers(&community_node_config)
-            .await;
-        next_state.bootstrap_seed_peers = normalize_seed_peers(
-            next_state
-                .bootstrap_seed_peers
-                .into_iter()
-                .chain(rendezvous_seed_peers)
-                .collect(),
-        );
-        if !force {
-            let unchanged = self
-                .last_runtime_connectivity_assist_state
-                .lock()
-                .await
-                .as_ref()
-                == Some(&next_state);
-            if unchanged && self.iroh_stack.local_docs_available().await? {
-                debug!(
-                    relay_url_count = next_state.relay_urls.len(),
-                    bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),
-                    "skipping runtime connectivity apply because relay and seed inputs are unchanged"
-                );
-                return Ok(());
-            }
-        }
-        let relay_config = TransportRelayConfig {
-            iroh_relay_urls: next_state.relay_urls.clone(),
-        };
-        let generation = self.iroh_stack.generation();
-        self.iroh_stack
-            .apply_runtime_connectivity(
-                &discovery_config,
-                &next_state.bootstrap_seed_peers,
-                relay_config.clone(),
-            )
-            .await?;
-        if self.iroh_stack.generation() != generation {
-            // 新しい stack へ seed を設定し直す(入力が同じでも)。
-            *self.last_effective_seed_peer_apply_state.lock().await = None;
-            // 旧 stack の stream は終わっている。lease のある key の task だけを作り直す(#1221 R2-C)。
-            self.app_service.rebuild_scope_subscriptions().await?;
-        }
-        debug!(
-            relay_url_count = relay_config.iroh_relay_urls.len(),
-            bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),
-            "applied runtime connectivity assist from community-node metadata"
-        );
-        *self.active_connectivity_urls.lock().await = relay_config.iroh_relay_urls;
-        *self.last_runtime_connectivity_assist_state.lock().await = Some(next_state);
-        self.runtime_connectivity_apply_version
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub(crate) async fn apply_runtime_connectivity_assist(&self) -> Result<()> {
-        self.apply_runtime_connectivity_assist_with_mode(false)
-            .await
-    }
-
-    pub(crate) async fn force_apply_runtime_connectivity_assist(&self) -> Result<()> {
-        self.apply_runtime_connectivity_assist_with_mode(true).await
-    }
-
-    pub(crate) async fn force_rebuild_runtime_connectivity_assist(&self) -> Result<()> {
-        let _apply = self.community_node_connectivity_guard.lock().await;
-        let discovery_config = self.discovery_config.lock().await.clone();
-        let community_node_config = self.active_community_node_connectivity_config().await;
-        let mut next_state =
-            runtime_connectivity_assist_state(&discovery_config, &community_node_config);
-        let rendezvous_seed_peers = self
-            .active_community_node_rendezvous_seed_peers(&community_node_config)
-            .await;
-        next_state.bootstrap_seed_peers = normalize_seed_peers(
-            next_state
-                .bootstrap_seed_peers
-                .into_iter()
-                .chain(rendezvous_seed_peers)
-                .collect(),
-        );
-        let relay_config = TransportRelayConfig {
-            iroh_relay_urls: next_state.relay_urls.clone(),
-        };
-        self.iroh_stack
-            .force_rebuild_runtime_connectivity(
-                &discovery_config,
-                &next_state.bootstrap_seed_peers,
-                relay_config.clone(),
-            )
-            .await?;
-        self.app_service.rebuild_scope_subscriptions().await?;
-        debug!(
-            relay_url_count = relay_config.iroh_relay_urls.len(),
-            bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),
-            "force rebuilt runtime connectivity assist from community-node metadata"
-        );
-        *self.active_connectivity_urls.lock().await = relay_config.iroh_relay_urls;
-        *self.last_runtime_connectivity_assist_state.lock().await = Some(next_state);
-        self.runtime_connectivity_apply_version
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    async fn apply_effective_seed_peers_with_mode(&self, force: bool) -> Result<()> {
-        let _apply = self.community_node_connectivity_guard.lock().await;
-        let discovery_config = self.discovery_config.lock().await.clone();
-        let community_node_config = self.active_community_node_connectivity_config().await;
-        let mut next_state =
-            effective_seed_peer_apply_state(&discovery_config, &community_node_config);
-        let rendezvous_seed_peers = self
-            .active_community_node_rendezvous_seed_peers(&community_node_config)
-            .await;
-        next_state.bootstrap_seed_peers = normalize_seed_peers(
-            next_state
-                .bootstrap_seed_peers
-                .into_iter()
-                .chain(rendezvous_seed_peers)
-                .collect(),
-        );
-        if !force {
-            let current_state = self.last_effective_seed_peer_apply_state.lock().await;
-            if current_state.as_ref() == Some(&next_state) {
-                debug!(
-                    bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),
-                    configured_seed_peer_count = next_state.configured_seed_peers.len(),
-                    "skipping discovery seed apply because the effective seed inputs are unchanged"
-                );
-                return Ok(());
-            }
-        }
-        self.app_service
-            .set_discovery_seeds(
-                next_state.discovery_mode.clone(),
-                next_state.discovery_env_locked,
-                next_state.configured_seed_peers.clone(),
-                next_state.bootstrap_seed_peers.clone(),
-            )
-            .await?;
-        debug!(
-            bootstrap_seed_peer_count = next_state.bootstrap_seed_peers.len(),
-            configured_seed_peer_count = next_state.configured_seed_peers.len(),
-            "applied effective discovery seeds from community-node metadata"
-        );
-        *self.last_effective_seed_peer_apply_state.lock().await = Some(next_state);
-        self.effective_seed_peer_apply_version
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub(crate) async fn apply_effective_seed_peers(&self) -> Result<()> {
-        self.apply_effective_seed_peers_with_mode(false).await
-    }
-
-    pub(crate) async fn force_apply_effective_seed_peers(&self) -> Result<()> {
-        self.apply_effective_seed_peers_with_mode(true).await
     }
 }

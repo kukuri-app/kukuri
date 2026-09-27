@@ -40,7 +40,9 @@ use kukuri_core::{
 };
 use kukuri_docs_sync::{DocQuery, DocsSync};
 use kukuri_store::SqliteStore;
-use kukuri_transport::{DhtDiscoveryOptions, DiscoveryMode, TransportNetworkConfig};
+use kukuri_transport::{
+    DhtDiscoveryOptions, DiscoveryMode, TransportNetworkConfig, TransportRelayConfig,
+};
 use tokio::sync::Mutex;
 
 use crate::attachments::{
@@ -51,22 +53,19 @@ use crate::community_node::{
     CONTENT_ADVISORY_SYNTHESIS_DEFAULT, CommunityNodeConfig, CommunityNodeConsentPreflight,
     CommunityNodeIndexQueryError, CommunityNodeIndexQueryRequest, CommunityNodeIndexingRequest,
     CommunityNodeIndexingRequestError, CommunityNodeManifestFetch, CommunityNodeNodeConfig,
-    CommunityNodeNodeStatus, CommunityNodeReconnectState, CommunityNodeRelationNeighborsRequest,
-    CommunityNodeReportError, CommunityNodeSessionPhase, CommunityNodeSessionState,
-    CommunityNodeTargetRequest, CommunityNodeTesterFeedbackError,
-    CommunityNodeTesterFeedbackResponse, CommunityNodeTesterFeedbackSubmission,
-    CommunityNodeTrustRelationError, CommunityNodeUserAdvisoryRequest,
-    FetchCommunityNodePoliciesRequest, IndexOperation, IndexQueryResponse,
-    RelationNeighborsResponse, RelationOptoutResponse, RelationReadResponse,
+    CommunityNodeNodeStatus, CommunityNodeRelationNeighborsRequest, CommunityNodeReportError,
+    CommunityNodeSessionPhase, CommunityNodeSessionState, CommunityNodeTargetRequest,
+    CommunityNodeTesterFeedbackError, CommunityNodeTesterFeedbackResponse,
+    CommunityNodeTesterFeedbackSubmission, CommunityNodeTrustRelationError,
+    CommunityNodeUserAdvisoryRequest, FetchCommunityNodePoliciesRequest, IndexOperation,
+    IndexQueryResponse, RelationNeighborsResponse, RelationOptoutResponse, RelationReadResponse,
     SetCommunityNodeConfigRequest, SetCommunityNodeInviteCodeRequest,
     SubmitCommunityNodeReportRequest, SubmitCommunityNodeReportResult,
     SubmitIndexingRequestResponse, TrustUserReadResponse,
-    community_node_local_consent_covers_status, community_node_seed_peers,
-    delete_community_node_invite_code, effective_seed_peer_apply_state,
+    community_node_local_consent_covers_status, delete_community_node_invite_code,
     load_community_node_config_from_file, load_community_node_local_consents,
     normalize_community_node_config, persist_community_node_invite_code,
     persist_community_node_local_consents, record_community_node_local_consents,
-    relay_config_from_community_node_config, runtime_connectivity_assist_state,
     save_community_node_config,
 };
 use crate::discovery::{
@@ -125,12 +124,9 @@ pub struct DesktopRuntime {
     pub(crate) community_node_sessions: Arc<Mutex<HashMap<String, CommunityNodeSessionState>>>,
     pub(crate) community_node_dome_heartbeats:
         Arc<Mutex<HashMap<String, kukuri_core::SignedDomeHostHeartbeatV1>>>,
-    pub(crate) community_node_rendezvous_seed_peers:
-        Arc<Mutex<HashMap<String, Vec<kukuri_transport::SeedPeer>>>>,
     pub(crate) community_node_session_guard: crate::community_node::SessionLocks,
-    pub(crate) community_node_connectivity_guard: Mutex<()>,
-    pub(crate) community_node_reconnect_state: Arc<Mutex<CommunityNodeReconnectState>>,
-    pub(crate) community_node_reconnect_guard: Arc<Mutex<()>>,
+    /// node ごとの relay と seed、適用した和(#1221 R2-B)。適用はこの lock の中で直列にする。
+    pub(crate) community_node_connectivity: Mutex<crate::community_node::AppliedConnectivity>,
     pub(crate) community_node_scheduler_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// #1221 R5-G・R5-I: 旧 `iroh-data` の保護移行と退役の背景 task。backup 前の drain と直列にする。
@@ -141,13 +137,6 @@ pub struct DesktopRuntime {
     pub(crate) legacy_store: Mutex<Option<Arc<kukuri_iroh_node::LegacyStore>>>,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
     notification_event_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
-    pub(crate) active_connectivity_urls: Arc<Mutex<Vec<String>>>,
-    pub(crate) last_runtime_connectivity_assist_state:
-        Arc<Mutex<Option<crate::community_node::RuntimeConnectivityAssistState>>>,
-    pub(crate) last_effective_seed_peer_apply_state:
-        Arc<Mutex<Option<crate::community_node::EffectiveSeedPeerApplyState>>>,
-    pub(crate) runtime_connectivity_apply_version: Arc<AtomicU64>,
-    pub(crate) effective_seed_peer_apply_version: Arc<AtomicU64>,
     /// #1055: Community Node の content advisory を成人向けゲートへ合成するかどうか。
     /// ADR 0046 §6.4 の利用規約改訂と再同意(C4 = #1056)で既定 ON にした。
     pub(crate) content_advisory_synthesis_enabled: Arc<AtomicBool>,
@@ -374,15 +363,7 @@ impl DesktopRuntime {
             None => CommunityNodeConfig::default(),
         };
         // 保存済みの Node relay / seed は、公開 policy とサーバ同意を確認する前の
-        // 起動入力へ渡さない。設定と resolved_urls は保持し、scheduler 成功後に再適用する。
-        let active_community_node_config = CommunityNodeConfig::default();
-        let relay_config = relay_config_from_community_node_config(&active_community_node_config);
-        let community_node_seed_peers =
-            community_node_seed_peers(&active_community_node_config).collect::<Vec<_>>();
-        let initial_runtime_connectivity_state =
-            runtime_connectivity_assist_state(&discovery_config, &active_community_node_config);
-        let initial_effective_seed_peer_state =
-            effective_seed_peer_apply_state(&discovery_config, &active_community_node_config);
+        // 起動入力へ渡さない。設定と resolved_urls は保持し、node ごとに確かめてから足す。
         // #1221 R5-I: node は新しい store で動く。旧 `iroh-data` の endpoint secret を写して endpoint ID を保つ。
         let docs_root = db_path.with_extension("iroh-store");
         kukuri_iroh_node::adopt_endpoint_secret(&db_path.with_extension("iroh-data"), &docs_root)?;
@@ -397,9 +378,9 @@ impl DesktopRuntime {
             &docs_root,
             network_config.clone(),
             &discovery_config,
-            &community_node_seed_peers,
+            &[],
             dht_options,
-            relay_config.clone(),
+            TransportRelayConfig::default(),
             Some(store.clone()),
         )
         .await?;
@@ -516,13 +497,8 @@ impl DesktopRuntime {
             community_node_config: Arc::new(Mutex::new(community_node_config)),
             community_node_sessions: Arc::new(Mutex::new(HashMap::new())),
             community_node_dome_heartbeats: Arc::new(Mutex::new(HashMap::new())),
-            community_node_rendezvous_seed_peers: Arc::new(Mutex::new(HashMap::new())),
             community_node_session_guard: Default::default(),
-            community_node_connectivity_guard: Mutex::new(()),
-            community_node_reconnect_state: Arc::new(Mutex::new(
-                CommunityNodeReconnectState::default(),
-            )),
-            community_node_reconnect_guard: Arc::new(Mutex::new(())),
+            community_node_connectivity: Mutex::default(),
             community_node_scheduler_task: Mutex::new(None),
             sync_status_observer_task: Mutex::new(None),
             legacy_store_task: Mutex::new(None),
@@ -530,15 +506,6 @@ impl DesktopRuntime {
             private_migration_dirty,
             legacy_store: Mutex::new(legacy_store.map(Arc::new)),
             notification_event_task: StdMutex::new(Some(notification_event_task)),
-            active_connectivity_urls: Arc::new(Mutex::new(relay_config.iroh_relay_urls.clone())),
-            last_runtime_connectivity_assist_state: Arc::new(Mutex::new(Some(
-                initial_runtime_connectivity_state,
-            ))),
-            last_effective_seed_peer_apply_state: Arc::new(Mutex::new(Some(
-                initial_effective_seed_peer_state,
-            ))),
-            runtime_connectivity_apply_version: Arc::new(AtomicU64::new(0)),
-            effective_seed_peer_apply_version: Arc::new(AtomicU64::new(0)),
             content_advisory_synthesis_enabled: Arc::new(AtomicBool::new(
                 CONTENT_ADVISORY_SYNTHESIS_DEFAULT,
             )),

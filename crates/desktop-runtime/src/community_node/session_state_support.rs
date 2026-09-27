@@ -11,11 +11,10 @@ impl DesktopRuntime {
             .entry(base_url.to_string())
             .or_insert_with(CommunityNodeSessionState::default);
         entry.session_phase = phase;
+        // 一時的な失敗(Retrying)では認証・同意の確認を捨てない。relay と seed を使い続ける(#1221 R2-B)。
         if matches!(
             phase,
-            CommunityNodeSessionPhase::Idle
-                | CommunityNodeSessionPhase::Retrying
-                | CommunityNodeSessionPhase::AwaitingAdmission
+            CommunityNodeSessionPhase::Idle | CommunityNodeSessionPhase::AwaitingAdmission
         ) {
             entry.current_policy_verified_for = None;
         }
@@ -166,6 +165,11 @@ impl DesktopRuntime {
             CommunityNodeSessionPhase::AwaitingAdmission,
         )
         .await;
+        // 参加の拒否は認証の失効。token の更新・401 の後の再認証・初回のどの経路でも、
+        // その node の relay・seed・候補を外す(#1221 R2-B)。
+        if let Err(error) = self.deactivate_community_node_connectivity(base_url).await {
+            warn!(base_url, %error, "failed to drop community-node connectivity after admission rejection");
+        }
     }
 
     pub(crate) fn community_node_admission_rejection(

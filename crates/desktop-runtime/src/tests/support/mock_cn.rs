@@ -21,18 +21,11 @@ pub(crate) async fn apply_relay_backed_community_node_seed_peers(
     };
     timeout(
         Duration::from_secs(30),
-        runtime.apply_runtime_connectivity_assist(),
+        runtime.sync_community_node_connectivity(base_url),
     )
     .await
-    .expect("apply assist timeout")
-    .expect("apply assist");
-    timeout(
-        Duration::from_secs(15),
-        runtime.apply_effective_seed_peers(),
-    )
-    .await
-    .expect("apply seed peers timeout")
-    .expect("apply seed peers");
+    .expect("apply connectivity timeout")
+    .expect("apply connectivity");
 }
 
 pub(crate) async fn mark_community_node_session_ready_for_test(

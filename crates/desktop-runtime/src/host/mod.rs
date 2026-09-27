@@ -709,8 +709,15 @@ mod tests {
             .await
             .expect("post");
         let generation = runtime.iroh_stack.generation();
+        // 直接だけから relay つきへの切替は、endpoint を作り直す(#1221 R2-B)。
         runtime
-            .reapply_community_node_connectivity()
+            .apply_community_node_connectivity(Some((
+                "https://community.invalid",
+                Some(crate::community_node::NodeConnectivity {
+                    relay_urls: vec!["https://relay.invalid".into()],
+                    seed_peers: Vec::new(),
+                }),
+            )))
             .await
             .expect("rebuild");
         assert_ne!(runtime.iroh_stack.generation(), generation);

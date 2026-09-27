@@ -259,48 +259,48 @@ impl DesktopRuntime {
         save_state(&self.db_path, &state)
     }
 
-    /// 送信待ちの観測を送り、未完了の削除要求を再送する（scheduler の 1 tick）。
-    pub(crate) async fn flush_community_node_trust_observations_once(&self) {
-        let configured: Vec<String> = self
-            .community_node_config
-            .lock()
-            .await
-            .nodes
-            .iter()
-            .map(|node| node.base_url.clone())
-            .collect();
-        let snapshot = {
+    /// 1 node の送信待ちの観測を送り、未完了の削除要求を再送する(scheduler の node ごとの lane。
+    /// 止まった node が別の node の送信を塞がない。#1221 R2-B)。
+    pub(crate) async fn flush_community_node_trust_observations_for(&self, base_url: &str) {
+        let node = {
             let _guard = self.trust_observation_guard.lock().await;
             match load_state(&self.db_path) {
-                Ok(state) => state,
+                Ok(mut state) => state.nodes.remove(base_url),
                 Err(error) => {
                     warn!(error = %error, "failed to load trust observation state");
                     return;
                 }
             }
         };
-        for (base_url, node) in snapshot.nodes {
-            if !configured.contains(&base_url) {
-                continue;
+        let Some(node) = node else {
+            return;
+        };
+        if node.revocation_pending {
+            if let Err(error) = self.complete_trust_observation_revocation(base_url).await {
+                warn!(base_url, error = %error, "trust observation revocation is still pending");
             }
-            if node.revocation_pending {
-                if let Err(error) = self.complete_trust_observation_revocation(&base_url).await {
-                    warn!(base_url = %base_url, error = %error, "trust observation revocation is still pending");
-                }
-                continue;
-            }
-            if !node.enabled || node.pending.is_empty() {
-                continue;
-            }
-            let batch: Vec<(String, KukuriEnvelope)> = node
-                .pending
-                .into_iter()
-                .take(TRUST_OBSERVATIONS_MAX_ENVELOPES)
-                .collect();
-            let outcome = self.submit_trust_observations(&base_url, &batch).await;
-            if let Err(error) = self.apply_submit_outcome(&base_url, outcome).await {
-                warn!(base_url = %base_url, error = %error, "failed to record trust observation delivery");
-            }
+            return;
+        }
+        if !node.enabled || node.pending.is_empty() {
+            return;
+        }
+        let batch: Vec<(String, KukuriEnvelope)> = node
+            .pending
+            .into_iter()
+            .take(TRUST_OBSERVATIONS_MAX_ENVELOPES)
+            .collect();
+        let outcome = self.submit_trust_observations(base_url, &batch).await;
+        if let Err(error) = self.apply_submit_outcome(base_url, outcome).await {
+            warn!(base_url, error = %error, "failed to record trust observation delivery");
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn flush_community_node_trust_observations_once(&self) {
+        let configured = self.community_node_config.lock().await.nodes.clone();
+        for node in configured {
+            self.flush_community_node_trust_observations_for(&node.base_url)
+                .await;
         }
     }
 
@@ -314,7 +314,7 @@ impl DesktopRuntime {
             .map(|(key, envelope)| (key.clone(), envelope.id.0.clone()))
             .collect();
         // session が Ready でない（必須同意の未成立・Deferred）場合は HTTP を送らない。
-        match self.ensure_community_node_session(base_url).await {
+        match self.ensure_due_community_node_session(base_url).await {
             Ok(CommunityNodeSessionOutcome::Ready) => {}
             Ok(_) => return SubmitOutcome::Retry,
             Err(error) => {
@@ -593,6 +593,7 @@ impl DesktopRuntime {
             base_url.as_str(),
         )?;
         let withdrawn_at = consents.withdrawn_at;
+        let verified_before = consents.clone();
         record_community_node_local_consents(
             &mut consents,
             &[CommunityNodeConsentDocumentRef {
@@ -612,6 +613,17 @@ impl DesktopRuntime {
             base_url.as_str(),
             &consents,
         )?;
+        // 任意文書の追記は、確認済みの必須の同意を変えない。確認済みの状態も同じ操作で揃え、
+        // 次の期限の登録でその CN の relay と seed を外さない(#1221 R2-B)。
+        if let Some(session) = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get_mut(base_url.as_str())
+            && session.current_policy_verified_for.as_ref() == Some(&verified_before)
+        {
+            session.current_policy_verified_for = Some(consents.clone());
+        }
 
         // 端末の現在の状態。送信待ちの突き合わせに使い、`include_existing` のときは送る対象にもする。
         let mut current: BTreeSet<String> = BTreeSet::new();
@@ -654,7 +666,8 @@ impl DesktopRuntime {
             node.pending.extend(pending);
             save_state(&self.db_path, &state)?;
         }
-        self.flush_community_node_trust_observations_once().await;
+        self.flush_community_node_trust_observations_for(&base_url)
+            .await;
         self.observation_sharing_status(base_url, Some(policy))
             .await
     }

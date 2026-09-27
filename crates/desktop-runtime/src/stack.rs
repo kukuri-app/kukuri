@@ -121,6 +121,7 @@ reloadable_service! {
         async fn unsubscribe_hints(topic: &TopicId) -> Result<()>;
         async fn publish_hint(topic: &TopicId, hint: GossipHint) -> Result<()>;
         async fn topic_read_candidates(topic: &TopicId) -> Result<Vec<SeedPeer>>;
+        async fn join_topic_peers(source: &str, topic: &TopicId, peers: Vec<SeedPeer>) -> Result<()>;
         async fn resolve_receive_destination(recipient: &Pubkey) -> Result<Option<EndpointAddr>>;
         async fn receive_candidate_fence() -> Result<ReceiveCandidateFence>;
         async fn offer_receive_candidates(source: &str, recipient: &Pubkey, candidates: Vec<EndpointAddr>, fence: ReceiveCandidateFence) -> Result<()>;
@@ -241,6 +242,8 @@ pub(crate) struct SharedIrohStack {
     pub(crate) root: PathBuf,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
+    /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
+    dht_enabled: AtomicBool,
     candidate_store: Arc<SqliteStore>,
     remote_cache_reaper: tokio::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
@@ -253,13 +256,6 @@ pub(crate) struct SharedIrohStack {
     /// Test-only cancellation point immediately before rebuild starts shutting down the old stack.
     #[cfg(test)]
     rebuild_before_shutdown_gate: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
-}
-
-fn should_rebuild_runtime_connectivity(
-    current_relay_urls: &[String],
-    next_relay_urls: &[String],
-) -> bool {
-    current_relay_urls != next_relay_urls
 }
 
 pub(crate) fn effective_seed_peers(
@@ -347,6 +343,7 @@ impl SharedIrohStack {
             blob_service,
             root: root.to_path_buf(),
             network_config,
+            dht_enabled: AtomicBool::new(dht_options.enabled),
             dht_options,
             candidate_store,
             remote_cache_reaper,
@@ -400,6 +397,7 @@ impl SharedIrohStack {
         let relay_config = relay_config.normalized();
         let dht_options =
             effective_dht_options(&self.dht_options, bootstrap_seed_peers, &relay_config);
+        let dht_enabled = dht_options.enabled;
         // Keep the last stack until replacement commits. Peer candidates remain
         // in the account store and are read through bounded windows by the new stack.
         // A failed/cancelled bind must not leave current=None forever. Holding
@@ -445,6 +443,7 @@ impl SharedIrohStack {
         self.docs_sync.replace(next.docs_sync.clone()).await;
         self.blob_service.replace(next.blob_service.clone()).await;
         *current = Some(next);
+        self.dht_enabled.store(dht_enabled, Ordering::SeqCst);
         self.current_shut_down.store(false, Ordering::SeqCst);
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         info!(target: "kukuri_connectivity", generation, "iroh stack replacement committed");
@@ -505,7 +504,12 @@ impl SharedIrohStack {
                 .map(|url| url.to_string())
                 .collect::<Vec<_>>()
         };
-        if should_rebuild_runtime_connectivity(&current_relay_urls, &next_relay_urls)
+        // 既存の endpoint を使えないときだけ作り直す: 直接だけと relay つきの切替、DHT の有効・無効の切替、
+        // docs の probe の失敗(#1221 R2-B)。relay の集合の変化は、その場で足し引きする。
+        let dht_enabled =
+            effective_dht_options(&self.dht_options, bootstrap_seed_peers, &relay_config).enabled;
+        if current_relay_urls.is_empty() != next_relay_urls.is_empty()
+            || dht_enabled != self.dht_enabled.load(Ordering::SeqCst)
             || !self.local_docs_available().await?
         {
             info!(
@@ -546,16 +550,6 @@ impl SharedIrohStack {
             .set_seed_peers(effective_seed_peers)
             .await?;
         Ok(())
-    }
-
-    pub(crate) async fn force_rebuild_runtime_connectivity(
-        &self,
-        discovery_config: &DiscoveryConfig,
-        bootstrap_seed_peers: &[SeedPeer],
-        relay_config: TransportRelayConfig,
-    ) -> Result<()> {
-        self.rebuild(discovery_config, bootstrap_seed_peers, relay_config)
-            .await
     }
 
     pub(crate) async fn shutdown_checked(&self) -> Result<()> {
