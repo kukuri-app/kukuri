@@ -144,21 +144,31 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   (切替前と回転前の Dome の作成時刻を前日にし、hosting の記録が前日の bucket にあり、行を持つ参加者が読め、owner が閉じる)。
 - B6 CLI の 3 台の daemon の試験: 参加 record が outbox の周期(約 2 秒)で届く前に回転し、b に grant が送られなかった。
   直前の epoch の参加 record に現 epoch の grant を送る。試験 `a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant`。
-  Linux(Docker)で回転の伝播は通るようになったが、同じ試験は後段の Dome の接続(`process_e2e.rs:475`)で失敗する
-  (下の「未決」)。
+  Linux(Docker)で回転の伝播は通るようになった。後段の Dome の接続(`process_e2e.rs:475`)は下の決定 1 で直した。
 - 検証: app-api(`iroh-integration-tests`)lib 506 件、desktop-runtime lib 319 件、harness 23 件、kukuri-cli(Windows)、docs-sync 成功。`cargo xtask rust-check`・fmt・oversized-files・`ipc-types --check` 成功。Linux の `process_e2e` は Docker で回転の伝播まで通り、Dome の接続で失敗(未決)。1 回だけ `private_live_session_reaches_a_member_through_the_channel_hint` が全件実行の負荷で時間切れ(単独 4 回と全件の再実行は成功)。
 - 時刻の注入: app-api に時計の抽象は無く、envelope の署名時刻は core が現在時刻で付ける。日をまたぐ場面は、前日の
   bucket・前日の作成時刻・前日の時刻で署名した投稿を置くことで作った。
 
+## 監査の修正の後の決定(2026-09-27)
+
+- 決定 1 別の端末の Dome の接続(main からの退行。(a) で直す): `list_dome_connection_topology` と `dome-topology` の
+  hint のときに、context で知っている Dome(一覧の行・heartbeat・自分)の anchor 8 件まで、提案・選択・合意の
+  それぞれ 32 key までを provider から読み、署名を確かめた記録を、手元より新しいとき(提案は終端、合意は lifecycle の
+  世代)に手元へ置く(`service/dome_connection_remote.rs`)。試験は実 Iroh の `another_owners_proposal_and_acceptance_reach_the_topology`
+  と、Linux(Docker)の `three_real_daemons_exchange_content_and_preserve_private_boundaries`(最後まで成功)。
+  mutation check: 読む anchor を 0 件にすると実 Iroh の試験が失敗。
+- 決定 2 他人のプロフィール: author の lease の開始時と日の境界に、現在と直前の author bucket の索引の先頭を合わせて
+  200 行まで provider から読み、検証した行を手元の同じ bucket へ置く(`reread_author_buckets`)。手元の author bucket は
+  自分の書込みと検証して置いた行だけなので、ページの読取りは名義で絞らない。remote を読むのは手元のページが足りない
+  ときだけ、の規則は変えない。試験は実 Iroh の `the_author_lease_reread_brings_another_authors_switched_posts_to_page_one`
+  (手元の旧行が limit 件以上ある他人のプロフィールは、lease の前は remote を読まず切替後の投稿が 1 ページ目に無く、
+  lease の後に出る)。mutation check: 読む行を 0 にすると失敗。
+
+- 決定 1・2 の後の検証: app-api(`iroh-integration-tests`)lib 508 件、desktop-runtime lib 319 件、harness 23 件、kukuri-cli、Linux(Docker)の `process_e2e` の 3 台の daemon の試験が成功。`cargo xtask rust-check`・oversized-files 成功。全件実行の負荷で `real_public_offer_reaches_offscreen_account_from_bounded_app_cache`(4 回中 2 回)と`private_live_session_reaches_a_member_through_the_channel_hint` が時間切れになることがある(単独では各 6 回成功。後者は決定 1・2 の前の commit でも 3 回中 1 回)。
+
 ## 未決(ユーザーの判断を待つ)
 
-- 別の端末の Dome の接続の記録: 接続の提案・選択・合意は、提案した Dome の anchor(owner の端末の docs)にだけ
-  あり、読取りは手元だけ(下の既知の制約)。受け手の端末は提案を読めず、CLI の `three_real_daemons_exchange_content_and_preserve_private_boundaries`
-  (Linux の CI だけで動く)が `list_dome_connection_topology` の伝播期限で失敗する。選択肢: (a) `dome-topology` の hint と
-  topology の読取りで、知っている Dome の anchor の接続の key を provider から有界に読む、(b) 提案・合意を受け手の owner
-  へ account 経路(receive offer)で届ける、(c) 試験の期待を変える(ユーザー判断が要る)。
-
-次は 2026-09-27 の追加決定で解消した。
+なし。次は 2026-09-27 の追加決定で解消した。
 
 - Dome の残りの記録(session・接続・layout・削除)も旧 replica へ書かない: session と接続は Dome の anchor(作成時の
   scope bucket)、layout・削除は公開なら owner の制御領域、private なら anchor。
@@ -184,8 +194,9 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   移動・削除)するまで訪問者の一覧に出ない。
 - 切替の前も公開の Dome の instance と hosting の記録は owner の制御領域にだけ書くため、旧版の端末は新しい公開の
   Dome を切替の前から一覧に出せない(private は切替前は旧 channel replica)。
-- 接続の記録は、提案した Dome を読み手が知っている(行・heartbeat・自分)ときだけ読める。接続の記録の読取りは手元だけ
-  (旧 sync の撤去後の既存の挙動のまま。provider からは読まない)。
+- 接続の記録は、提案した Dome を読み手が知っている(行・heartbeat・自分)ときだけ読める。provider から読むのは
+  topology の表示と `dome-topology` の hint のときの、anchor 8 件・1 種類 32 key まで(それを超える記録は届かない)。
+  表示のたびに provider を読む(30 秒の期限つき)。
 - private の Dome の locator は owner の端末の hosting だけが置く。CN の hosting・hosting していない Dome は、行が無い
   参加者には見つからない。
 - 切替前に作った Dome の session は、切替後の最初の書込みで更新の日の bucket へ移す。移す前の行(旧 replica)を持つ
@@ -194,9 +205,9 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   更新の無い session を、行を持たない読み手は locator から見つけられない(行の source と id の時刻からは読む)。
 - 回転の後に届いた参加 record に grant を送るのは、直前の epoch の参加 record だけ(2 回以上の回転をまたいだ参加 record
   には送らない)。参加 record の再送ごとに grant の行を積む(ACK で消える)。
-- プロフィールの手元の author bucket は、手元に namespace がある bucket だけを読む。他人の author bucket は手元に無い
-  ことが多く(remote の読取りは namespace を取り込まない)、手元の旧 `author::` の行が limit 件以上あると、他人の切替後の
-  投稿は provider から読まれず 1 ページ目に出ない(remote は手元が埋まらないときだけの既存の形)。
+- プロフィールの手元の author bucket は、手元に namespace がある bucket だけを読む。他人の author bucket は author の
+  lease の読み直しが現在と直前の分を置く。それより前の bucket の他人の投稿は、手元のページが足りないときだけ provider
+  から読む。
 - Existing-gap: Dome の移動の記録と Preset は、この PR より前から owner の公開の制御領域にある(private の context の
   Dome でも公開)。今回は直さない。
 - 他人の Dome の一覧は、一覧の表示の中で owner の制御領域を provider から読む(Preset と同じ。一覧の上限と 30 秒の
