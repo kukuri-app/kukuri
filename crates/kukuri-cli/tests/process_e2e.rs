@@ -213,9 +213,9 @@ fn real_cli_node_consent_is_per_node_and_survives_restart_without_auto_acceptanc
 
 #[test]
 fn three_real_daemons_exchange_content_and_preserve_private_boundaries() {
-    let mut a = ProcessClient::start();
-    let mut b = ProcessClient::start();
-    let mut outsider = ProcessClient::start();
+    let mut a = ProcessClient::start_named("a");
+    let mut b = ProcessClient::start_named("b");
+    let mut outsider = ProcessClient::start_named("outsider");
     for client in [&a, &b, &outsider] {
         client.consent();
     }
