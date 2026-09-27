@@ -16,26 +16,46 @@ impl DesktopRuntime {
     ) -> Result<CommunityNodeSessionOutcome> {
         let base_url = normalize_http_url(base_url)?;
         let _guard = self.community_node_session_guard.lock(&base_url).await;
+        // Ready で token が有効な間は、同意と policy を確かめず、期限の来た登録だけを送る(#1221 R2-B)。
+        // サーバ側の同意の失効は、この要求の 403 で分かる。
+        if !force_refresh
+            && let Some(mut token) = self.ready_community_node_token(base_url.as_str()).await?
+        {
+            if !self
+                .refresh_community_node_registration_with_token_if_due(
+                    base_url.as_str(),
+                    &mut token,
+                    false,
+                )
+                .await?
+            {
+                return self
+                    .community_node_consent_required(base_url.as_str())
+                    .await;
+            }
+            // 401 の後の再認証で Authenticating になっていても、確認を済ませたので Ready へ戻す。
+            self.set_community_node_session_phase(
+                base_url.as_str(),
+                CommunityNodeSessionPhase::Ready,
+            )
+            .await;
+            self.note_community_node_token(base_url.as_str(), &token)
+                .await;
+            return Ok(CommunityNodeSessionOutcome::Ready);
+        }
         let preflight = self
             .preflight_community_node_consent(base_url.as_str())
             .await?;
         let base_url = preflight.base_url().to_string();
         let local_consent = preflight.local_consent().clone();
         if let CommunityNodeConsentPreflight::Required { policy_update, .. } = preflight {
-            self.clear_community_node_retry_state(base_url.as_str())
-                .await;
             self.set_community_node_cached_consent(base_url.as_str(), None)
                 .await;
             self.set_community_node_local_consent_update_pending(base_url.as_str(), policy_update)
                 .await;
-            self.set_community_node_session_phase(
-                base_url.as_str(),
-                CommunityNodeSessionPhase::Idle,
-            )
-            .await;
-            self.deactivate_community_node_connectivity(base_url.as_str())
-                .await?;
-            return Ok(CommunityNodeSessionOutcome::ConsentRequired);
+            return self
+                .community_node_consent_required(base_url.as_str())
+                .await;
         }
         self.set_community_node_local_consent_update_pending(base_url.as_str(), false)
             .await;
@@ -104,16 +124,9 @@ impl DesktopRuntime {
                 // 再受諾せず、UI が本文を再提示するまでセッションを進めない。
                 self.set_community_node_local_consent_update_pending(base_url.as_str(), true)
                     .await;
-                self.clear_community_node_retry_state(base_url.as_str())
+                return self
+                    .community_node_consent_required(base_url.as_str())
                     .await;
-                self.set_community_node_session_phase(
-                    base_url.as_str(),
-                    CommunityNodeSessionPhase::Idle,
-                )
-                .await;
-                self.deactivate_community_node_connectivity(base_url.as_str())
-                    .await?;
-                return Ok(CommunityNodeSessionOutcome::ConsentRequired);
             }
             // ローカル同意済みの内容をサーバ記録へ同期する(#857)。
             self.set_community_node_session_phase(
@@ -140,19 +153,69 @@ impl DesktopRuntime {
             CommunityNodeSessionPhase::Refreshing,
         )
         .await;
-        self.refresh_community_node_registration_with_token_if_due(
-            base_url.as_str(),
-            &mut token,
-            force_refresh,
-        )
-        .await?;
+        if !self
+            .refresh_community_node_registration_with_token_if_due(
+                base_url.as_str(),
+                &mut token,
+                force_refresh,
+            )
+            .await?
+        {
+            return self
+                .community_node_consent_required(base_url.as_str())
+                .await;
+        }
         self.clear_community_node_retry_state(base_url.as_str())
             .await;
         self.set_community_node_session_ready(base_url.as_str(), !was_ready, local_consent)
             .await;
+        self.note_community_node_token(base_url.as_str(), &token)
+            .await;
         self.apply_ready_community_node_connectivity(base_url.as_str())
             .await?;
         Ok(CommunityNodeSessionOutcome::Ready)
+    }
+
+    /// Ready の session の、更新の要らない token。
+    async fn ready_community_node_token(
+        &self,
+        base_url: &str,
+    ) -> Result<Option<StoredCommunityNodeToken>> {
+        let ready = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get(base_url)
+            .is_some_and(|session| session.session_phase == CommunityNodeSessionPhase::Ready);
+        if !ready {
+            return Ok(None);
+        }
+        let now = Utc::now().timestamp();
+        Ok(
+            load_community_node_token(&self.db_path, self.identity_mode, base_url)?
+                .filter(|token| !Self::community_node_token_requires_refresh(token, now)),
+        )
+    }
+
+    async fn note_community_node_token(&self, base_url: &str, token: &StoredCommunityNodeToken) {
+        if let Some(session) = self.community_node_sessions.lock().await.get_mut(base_url) {
+            session.token_refresh_at = token
+                .expires_at
+                .saturating_sub(COMMUNITY_NODE_AUTH_REFRESH_SKEW_SECONDS);
+        }
+    }
+
+    /// 同意が要る node を Idle にし、その node の relay と seed を外す。
+    pub(crate) async fn community_node_consent_required(
+        &self,
+        base_url: &str,
+    ) -> Result<CommunityNodeSessionOutcome> {
+        self.clear_community_node_retry_state(base_url).await;
+        self.set_community_node_session_phase(base_url, CommunityNodeSessionPhase::Idle)
+            .await;
+        self.deactivate_community_node_connectivity(base_url)
+            .await?;
+        Ok(CommunityNodeSessionOutcome::ConsentRequired)
     }
 
     pub(crate) async fn apply_ready_community_node_connectivity(

@@ -826,12 +826,13 @@ impl DesktopRuntime {
         Ok(true)
     }
 
+    /// 期限の来た登録を送る。偽は、サーバの同意が手元の同意で覆えず、再同意が要ること。
     pub(crate) async fn refresh_community_node_registration_with_token_if_due(
         &self,
         base_url: &str,
         token: &mut StoredCommunityNodeToken,
         force_heartbeat: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match self
             .refresh_community_node_registration_with_token_if_due_once(
                 base_url,
@@ -840,7 +841,7 @@ impl DesktopRuntime {
             )
             .await
         {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(CommunityNodeRequestError::AuthRequired) => {
                 self.set_community_node_session_phase(
                     base_url,
@@ -857,7 +858,7 @@ impl DesktopRuntime {
                     .sync_covered_community_node_consents(base_url, token, consent_status)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.refresh_community_node_registration_with_token_if_due_once(
                     base_url,
@@ -865,7 +866,8 @@ impl DesktopRuntime {
                     force_heartbeat,
                 )
                 .await
-                .map_err(CommunityNodeRequestError::into_anyhow)
+                .map_err(CommunityNodeRequestError::into_anyhow)?;
+                Ok(true)
             }
             Err(CommunityNodeRequestError::ConsentRequired) => {
                 // 版が上がっての再同意（更新）かどうかを判定するため、現在の consent 状態を取得する。
@@ -877,7 +879,7 @@ impl DesktopRuntime {
                     .sync_covered_community_node_consents(base_url, token, consent_status)
                     .await?
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.refresh_community_node_registration_with_token_if_due_once(
                     base_url,
@@ -885,7 +887,8 @@ impl DesktopRuntime {
                     force_heartbeat,
                 )
                 .await
-                .map_err(CommunityNodeRequestError::into_anyhow)
+                .map_err(CommunityNodeRequestError::into_anyhow)?;
+                Ok(true)
             }
             Err(error) => Err(error.into_anyhow()),
         }

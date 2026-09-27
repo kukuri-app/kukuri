@@ -14,17 +14,32 @@ impl DesktopRuntime {
         while tasks.next().await.is_some() {}
     }
 
+    /// 期限の来た node の session と、node ごとの観測の送信(#1221 R2-B)。期限前の node には HTTP を送らない。
     pub(crate) async fn community_node_maintenance_jobs(&self) -> Vec<MaintenanceJob> {
-        let config = self.community_node_config.lock().await;
-        if config.nodes.is_empty() {
-            return Vec::new();
-        }
-        let mut jobs = config
+        let base_urls = self
+            .community_node_config
+            .lock()
+            .await
             .nodes
             .iter()
-            .map(|node| MaintenanceJob::Session(node.base_url.clone()))
+            .map(|node| node.base_url.clone())
             .collect::<Vec<_>>();
-        jobs.extend([MaintenanceJob::Observations, MaintenanceJob::Connectivity]);
+        if base_urls.is_empty() {
+            return Vec::new();
+        }
+        let now = Utc::now().timestamp();
+        let sessions = self.community_node_sessions.lock().await;
+        let mut jobs = Vec::new();
+        for base_url in base_urls {
+            if sessions
+                .get(base_url.as_str())
+                .is_none_or(|session| session.due_at() <= now)
+            {
+                jobs.push(MaintenanceJob::Session(base_url.clone()));
+            }
+            jobs.push(MaintenanceJob::Observations(base_url));
+        }
+        jobs.push(MaintenanceJob::Connectivity);
         jobs
     }
 
@@ -41,8 +56,9 @@ impl DesktopRuntime {
                     warn!(base_url, %error, "failed to refresh private channel indexing grant");
                 }
             }
-            MaintenanceJob::Observations => {
-                self.flush_community_node_trust_observations_once().await
+            MaintenanceJob::Observations(base_url) => {
+                self.flush_community_node_trust_observations_for(&base_url)
+                    .await
             }
             MaintenanceJob::Connectivity => match self.app_service.get_sync_status().await {
                 Ok(status) => {

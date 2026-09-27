@@ -378,6 +378,8 @@ pub(crate) struct CommunityNodeSessionState {
     pub(crate) account_candidate_cycle_end: Option<DirectMessageOutboxCursor>,
     pub(crate) metadata_refresh_deadline: i64,
     pub(crate) session_retry_deadline: i64,
+    /// token の更新(再認証と同意・policy の確認)が要る時刻。0 は未確認(#1221 R2-B)。
+    pub(crate) token_refresh_at: i64,
     pub(crate) session_phase: CommunityNodeSessionPhase,
     pub(crate) ready_refresh_pending: bool,
     pub(crate) last_error: Option<String>,
@@ -389,6 +391,28 @@ pub(crate) struct CommunityNodeSessionState {
     /// 公開current policyとの厳密一致を確認して`Ready`へ到達した時点のlocal consent。
     /// runtime内だけのevidenceとし、restart後は再度preflightする。
     pub(crate) current_policy_verified_for: Option<CommunityNodeLocalConsentState>,
+}
+
+impl CommunityNodeSessionState {
+    /// この node へ次に要求を送る時刻(#1221 R2-B)。scheduler はこれより前に、その node へ HTTP を送らない。
+    /// 利用者の操作を待つ node(参加の拒否、再同意の待ち)は期限を持たない。
+    pub(crate) fn due_at(&self) -> i64 {
+        match self.session_phase {
+            CommunityNodeSessionPhase::Ready if !self.ready_refresh_pending => [
+                self.heartbeat_deadline,
+                self.rendezvous_refresh_deadline,
+                self.token_refresh_at,
+            ]
+            .into_iter()
+            .chain((self.metadata_refresh_deadline > 0).then_some(self.metadata_refresh_deadline))
+            .min()
+            .unwrap_or_default(),
+            CommunityNodeSessionPhase::Retrying => self.session_retry_deadline,
+            CommunityNodeSessionPhase::AwaitingAdmission => i64::MAX,
+            CommunityNodeSessionPhase::Idle if self.local_consent_update_pending => i64::MAX,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

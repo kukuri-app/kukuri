@@ -7,7 +7,7 @@ use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnord
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum MaintenanceJob {
     Session(String),
-    Observations,
+    Observations(String),
     Connectivity,
 }
 
@@ -67,7 +67,10 @@ mod tests {
                 std::future::pending::<()>().await;
             }
         });
-        tasks.insert(MaintenanceJob::Observations, std::future::pending());
+        tasks.insert(
+            MaintenanceJob::Observations("blocked".into()),
+            std::future::pending(),
+        );
         for _ in 0..3 {
             let calls = calls.clone();
             tasks.insert(ready.clone(), async move {

@@ -366,12 +366,18 @@ impl DesktopRuntime {
                 CommunityNodeSessionPhase::Refreshing,
             )
             .await;
-            self.refresh_community_node_registration_with_token_if_due(
-                base_url.as_str(),
-                &mut token,
-                false,
-            )
-            .await?;
+            if !self
+                .refresh_community_node_registration_with_token_if_due(
+                    base_url.as_str(),
+                    &mut token,
+                    false,
+                )
+                .await?
+            {
+                self.community_node_consent_required(base_url.as_str())
+                    .await?;
+                return self.community_node_status(node, None, None).await;
+            }
             self.clear_community_node_retry_state(base_url.as_str())
                 .await;
             self.set_community_node_session_ready(base_url.as_str(), true, local_consent)

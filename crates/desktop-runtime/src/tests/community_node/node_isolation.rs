@@ -241,6 +241,8 @@ async fn isolation_runtime(dir: &Path, nodes: &[&Arc<FlakyNode>]) -> DesktopRunt
             CommunityNodeSessionPhase::Ready
         );
     }
+    // relay を足すと自分の宛先が変わるので、登録をもう一度送る。その期限の来た分を済ませる。
+    runtime.run_community_node_session_maintenance_once().await;
     runtime
 }
 

@@ -259,48 +259,48 @@ impl DesktopRuntime {
         save_state(&self.db_path, &state)
     }
 
-    /// 送信待ちの観測を送り、未完了の削除要求を再送する（scheduler の 1 tick）。
-    pub(crate) async fn flush_community_node_trust_observations_once(&self) {
-        let configured: Vec<String> = self
-            .community_node_config
-            .lock()
-            .await
-            .nodes
-            .iter()
-            .map(|node| node.base_url.clone())
-            .collect();
-        let snapshot = {
+    /// 1 node の送信待ちの観測を送り、未完了の削除要求を再送する(scheduler の node ごとの lane。
+    /// 止まった node が別の node の送信を塞がない。#1221 R2-B)。
+    pub(crate) async fn flush_community_node_trust_observations_for(&self, base_url: &str) {
+        let node = {
             let _guard = self.trust_observation_guard.lock().await;
             match load_state(&self.db_path) {
-                Ok(state) => state,
+                Ok(mut state) => state.nodes.remove(base_url),
                 Err(error) => {
                     warn!(error = %error, "failed to load trust observation state");
                     return;
                 }
             }
         };
-        for (base_url, node) in snapshot.nodes {
-            if !configured.contains(&base_url) {
-                continue;
+        let Some(node) = node else {
+            return;
+        };
+        if node.revocation_pending {
+            if let Err(error) = self.complete_trust_observation_revocation(base_url).await {
+                warn!(base_url, error = %error, "trust observation revocation is still pending");
             }
-            if node.revocation_pending {
-                if let Err(error) = self.complete_trust_observation_revocation(&base_url).await {
-                    warn!(base_url = %base_url, error = %error, "trust observation revocation is still pending");
-                }
-                continue;
-            }
-            if !node.enabled || node.pending.is_empty() {
-                continue;
-            }
-            let batch: Vec<(String, KukuriEnvelope)> = node
-                .pending
-                .into_iter()
-                .take(TRUST_OBSERVATIONS_MAX_ENVELOPES)
-                .collect();
-            let outcome = self.submit_trust_observations(&base_url, &batch).await;
-            if let Err(error) = self.apply_submit_outcome(&base_url, outcome).await {
-                warn!(base_url = %base_url, error = %error, "failed to record trust observation delivery");
-            }
+            return;
+        }
+        if !node.enabled || node.pending.is_empty() {
+            return;
+        }
+        let batch: Vec<(String, KukuriEnvelope)> = node
+            .pending
+            .into_iter()
+            .take(TRUST_OBSERVATIONS_MAX_ENVELOPES)
+            .collect();
+        let outcome = self.submit_trust_observations(base_url, &batch).await;
+        if let Err(error) = self.apply_submit_outcome(base_url, outcome).await {
+            warn!(base_url, error = %error, "failed to record trust observation delivery");
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn flush_community_node_trust_observations_once(&self) {
+        let configured = self.community_node_config.lock().await.nodes.clone();
+        for node in configured {
+            self.flush_community_node_trust_observations_for(&node.base_url)
+                .await;
         }
     }
 
@@ -654,7 +654,8 @@ impl DesktopRuntime {
             node.pending.extend(pending);
             save_state(&self.db_path, &state)?;
         }
-        self.flush_community_node_trust_observations_once().await;
+        self.flush_community_node_trust_observations_for(&base_url)
+            .await;
         self.observation_sharing_status(base_url, Some(policy))
             .await
     }
