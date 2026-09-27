@@ -314,7 +314,7 @@ impl DesktopRuntime {
             .map(|(key, envelope)| (key.clone(), envelope.id.0.clone()))
             .collect();
         // session が Ready でない（必須同意の未成立・Deferred）場合は HTTP を送らない。
-        match self.ensure_community_node_session(base_url).await {
+        match self.ensure_due_community_node_session(base_url).await {
             Ok(CommunityNodeSessionOutcome::Ready) => {}
             Ok(_) => return SubmitOutcome::Retry,
             Err(error) => {

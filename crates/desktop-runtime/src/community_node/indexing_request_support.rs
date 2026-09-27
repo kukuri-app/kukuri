@@ -379,7 +379,8 @@ impl DesktopRuntime {
         else {
             return Ok(());
         };
-        if self.ensure_community_node_session(base_url).await? != CommunityNodeSessionOutcome::Ready
+        if self.ensure_due_community_node_session(base_url).await?
+            != CommunityNodeSessionOutcome::Ready
         {
             return Ok(());
         }

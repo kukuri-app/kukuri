@@ -9,18 +9,16 @@ impl DesktopRuntime {
             .await
     }
 
-    pub(crate) async fn ensure_community_node_session_with_mode(
+    /// scheduler・背景の lane の session。Ready で token が有効な間は、同意と policy を確かめず、期限の来た
+    /// 登録だけを送る(#1221 R2-B)。同意と policy は、token の更新・session の確立・利用者の操作
+    /// (`ensure_community_node_session`)のときに確かめ、サーバ側の失効はこの要求の 403 で分かる。
+    pub(crate) async fn ensure_due_community_node_session(
         &self,
         base_url: &str,
-        force_refresh: bool,
     ) -> Result<CommunityNodeSessionOutcome> {
         let base_url = normalize_http_url(base_url)?;
-        let _guard = self.community_node_session_guard.lock(&base_url).await;
-        // Ready で token が有効な間は、同意と policy を確かめず、期限の来た登録だけを送る(#1221 R2-B)。
-        // サーバ側の同意の失効は、この要求の 403 で分かる。
-        if !force_refresh
-            && let Some(mut token) = self.ready_community_node_token(base_url.as_str()).await?
-        {
+        let guard = self.community_node_session_guard.lock(&base_url).await;
+        if let Some(mut token) = self.ready_community_node_token(base_url.as_str()).await? {
             if !self
                 .refresh_community_node_registration_with_token_if_due(
                     base_url.as_str(),
@@ -43,6 +41,17 @@ impl DesktopRuntime {
                 .await;
             return Ok(CommunityNodeSessionOutcome::Ready);
         }
+        drop(guard);
+        self.ensure_community_node_session(&base_url).await
+    }
+
+    pub(crate) async fn ensure_community_node_session_with_mode(
+        &self,
+        base_url: &str,
+        force_refresh: bool,
+    ) -> Result<CommunityNodeSessionOutcome> {
+        let base_url = normalize_http_url(base_url)?;
+        let _guard = self.community_node_session_guard.lock(&base_url).await;
         let preflight = self
             .preflight_community_node_consent(base_url.as_str())
             .await?;
@@ -230,7 +239,10 @@ impl DesktopRuntime {
         base_url: &str,
     ) -> Result<()> {
         let base_url = normalize_http_url(base_url)?;
-        match self.ensure_community_node_session(base_url.as_str()).await {
+        match self
+            .ensure_due_community_node_session(base_url.as_str())
+            .await
+        {
             Ok(_) => Ok(()),
             Err(error) => {
                 if let Some(rejection) = Self::community_node_admission_rejection(&error).cloned() {

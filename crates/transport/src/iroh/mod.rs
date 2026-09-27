@@ -66,7 +66,7 @@ struct HintTopicState {
     // 現状の読み手は cfg(test) のアクセサのみ(診断 UI への露出は契約変更のため別 WP)。
     #[cfg_attr(not(test), allow(dead_code))]
     invalid_hint_count: Arc<AtomicU64>,
-    /// CN の rendezvous が返した、この topic の候補(取得元の CN、最大 [`MAX_TOPIC_RENDEZVOUS_PEERS`] 件)。
+    /// CN の rendezvous が返した、この topic の候補(取得元の CN、最大 4 件)。
     rendezvous: Arc<Mutex<Vec<(String, EndpointAddr)>>>,
     /// この topic へ `join_peers` した回数(候補の更新による分、再 join の分)。#1221 R2-B の観測用。
     joins: Arc<[AtomicU64; 2]>,
@@ -168,6 +168,7 @@ mod receive_destination;
 mod relay;
 #[cfg(test)]
 mod tests;
+mod topic_rendezvous;
 mod topics;
 
 #[cfg(test)]
