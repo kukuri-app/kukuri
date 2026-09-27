@@ -166,7 +166,18 @@ pub trait HintTransport: Send + Sync {
         anyhow::bail!("account receive candidate feed is not supported")
     }
 
-    /// Forget one CN owner's addresses (or all owners for a config reset).
+    /// CN の rendezvous が返した peer を、購読している topic(`hint/...`)だけへ join する(#1221 R2-B)。
+    async fn join_topic_peers(
+        &self,
+        _source: &str,
+        _topic: &TopicId,
+        _peers: Vec<SeedPeer>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Forget one CN owner's addresses (or all owners for a config reset),
+    /// including the topic rendezvous candidates learned from it.
     async fn clear_receive_candidates(&self, _source: Option<&str>) -> Result<()> {
         anyhow::bail!("account receive candidate clear is not supported")
     }

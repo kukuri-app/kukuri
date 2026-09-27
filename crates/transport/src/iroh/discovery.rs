@@ -22,7 +22,7 @@ impl IrohGossipTransport {
                 .insert(endpoint_addr.id.to_string(), endpoint_addr.clone());
         }
         self.remember_hot_endpoint(endpoint_addr.clone()).await;
-        self.extend_active_topic_peers(vec![endpoint_addr], "imported-peer")
+        self.extend_topic_peers(None, vec![endpoint_addr], "imported-peer")
             .await;
         Ok(())
     }
@@ -77,11 +77,21 @@ impl IrohGossipTransport {
         }
         *self.discovery_mode.lock().await = mode;
         *self.env_locked.lock().await = env_locked;
-        *self.configured_seed_peers.lock().await = configured;
-        *self.bootstrap_seed_peers.lock().await = bootstrap;
+        // 既存の topic へは join しない。seed が増えたときだけ、neighbor の無い topic の再 join へ知らせる
+        // (#1221 R2-B。neighbor のある topic は触らない)。
+        let mut added = false;
+        for (current, next) in [
+            (&self.configured_seed_peers, configured),
+            (&self.bootstrap_seed_peers, bootstrap),
+        ] {
+            let mut current = current.lock().await;
+            added |= next.keys().any(|id| !current.contains_key(id));
+            *current = next;
+        }
+        if added {
+            self.candidates_added.send_modify(|version| *version += 1);
+        }
         *self.last_error.lock().await = None;
-        self.extend_active_topic_peers(self.bootstrap_peers().await?, "seed-update")
-            .await;
         Ok(())
     }
 

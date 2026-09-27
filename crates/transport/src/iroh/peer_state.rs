@@ -75,8 +75,23 @@ fn aggregate_fallback_peer_ids(topic_diagnostics: &[TopicPeerSnapshot]) -> Vec<S
         .collect()
 }
 
-impl IrohGossipTransport {
-    pub(crate) async fn bootstrap_peers(&self) -> Result<Vec<EndpointAddr>> {
+/// seed・ticket の候補を 4 件ずつ読む部品。neighbor の無い topic の再 join の task からも読むため、
+/// 読む先を `Arc` で共有する(#1221 R2-B)。
+#[derive(Clone)]
+pub(crate) struct BootstrapCandidates {
+    discovery: Arc<MemoryLookup>,
+    configured_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
+    bootstrap_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
+    imported_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
+    account_store: Option<Arc<kukuri_store::SqliteStore>>,
+    imported_cursor: Arc<Mutex<Option<(i64, String)>>>,
+    hot_peer_ids: Arc<Mutex<VecDeque<EndpointId>>>,
+    gossip_health: Arc<crate::peers::BlobPeerHealth>,
+    bootstrap_cursor: Arc<Mutex<(usize, [Option<String>; 3])>>,
+}
+
+impl BootstrapCandidates {
+    pub(crate) async fn window(&self) -> Result<Vec<EndpointAddr>> {
         let mut cursor = self.bootstrap_cursor.lock().await;
         let mut peers = Vec::with_capacity(4);
         let mut seen = BTreeSet::new();
@@ -147,6 +162,32 @@ impl IrohGossipTransport {
                 self.discovery.remove_endpoint_info(id);
             }
         }
+    }
+}
+
+impl IrohGossipTransport {
+    pub(crate) fn bootstrap_candidates(&self) -> BootstrapCandidates {
+        BootstrapCandidates {
+            discovery: Arc::clone(&self.discovery),
+            configured_seed_peers: Arc::clone(&self.configured_seed_peers),
+            bootstrap_seed_peers: Arc::clone(&self.bootstrap_seed_peers),
+            imported_peers: Arc::clone(&self.imported_peers),
+            account_store: self.account_store.clone(),
+            imported_cursor: Arc::clone(&self.imported_cursor),
+            hot_peer_ids: Arc::clone(&self.hot_peer_ids),
+            gossip_health: Arc::clone(&self.gossip_health),
+            bootstrap_cursor: Arc::clone(&self.bootstrap_cursor),
+        }
+    }
+
+    pub(crate) async fn bootstrap_peers(&self) -> Result<Vec<EndpointAddr>> {
+        self.bootstrap_candidates().window().await
+    }
+
+    pub(crate) async fn remember_hot_endpoint(&self, peer: EndpointAddr) {
+        self.bootstrap_candidates()
+            .remember_hot_endpoint(peer)
+            .await
     }
 
     pub(crate) async fn configured_seed_peer_ids(&self) -> Vec<String> {
@@ -219,6 +260,7 @@ impl IrohGossipTransport {
                     Arc::clone(&state.neighbors),
                     Arc::clone(&state.last_received_at),
                     Arc::clone(&state.last_error),
+                    Arc::clone(&state.rendezvous),
                 )
             })
             .collect::<Vec<_>>();
@@ -226,10 +268,18 @@ impl IrohGossipTransport {
         let configured_peers = self.configured_peer_ids().await?;
         let bootstrap_seed_peer_ids = self.bootstrap_seed_peer_ids().await;
         let mut topic_entries = Vec::with_capacity(topic_states.len());
-        for (topic, configured_peer_ids, neighbors, last_received_at, last_error) in topic_states {
+        for (topic, configured_peer_ids, neighbors, last_received_at, last_error, rendezvous) in
+            topic_states
+        {
             let peers = neighbors.read().await.iter().cloned().collect::<Vec<_>>();
             let last_received_at = *last_received_at.lock().await;
             let last_error = last_error.lock().await.clone();
+            let rendezvous = rendezvous
+                .lock()
+                .await
+                .iter()
+                .map(|(_, peer)| peer.id.to_string())
+                .collect::<Vec<_>>();
             for peer in &peers {
                 connected.insert(peer.clone());
             }
@@ -239,11 +289,14 @@ impl IrohGossipTransport {
                 peers,
                 last_received_at,
                 last_error,
+                rendezvous,
             ));
         }
         let observed_paths = self.observed_peer_paths(&connected).await;
         let mut topic_diagnostics = Vec::with_capacity(topic_entries.len());
-        for (topic, configured_peer_ids, peers, last_received_at, last_error) in topic_entries {
+        for (topic, configured_peer_ids, peers, last_received_at, last_error, rendezvous) in
+            topic_entries
+        {
             let configured_peer_count = configured_peer_ids.len();
             let connected_peer_count = peers.len();
             let missing_peer_ids = configured_peer_ids
@@ -253,7 +306,7 @@ impl IrohGossipTransport {
                 .collect::<Vec<_>>();
             let rendezvous_peer_ids = peers
                 .iter()
-                .filter(|peer| bootstrap_seed_peer_ids.contains(peer))
+                .filter(|peer| bootstrap_seed_peer_ids.contains(peer) || rendezvous.contains(peer))
                 .cloned()
                 .collect::<Vec<_>>();
             let (active_path, fallback_peer_ids) =

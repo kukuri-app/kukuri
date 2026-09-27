@@ -1,3 +1,4 @@
+use super::peer_state::BootstrapCandidates;
 use super::*;
 
 async fn remember_connected_peer(
@@ -19,6 +20,40 @@ async fn remember_connected_peer(
 
 /// 購読していない topic への publish で入る短期送信先の上限(ADR 0055 §2)。
 pub(crate) const MAX_SHORT_TERM_HINT_TOPICS: usize = 16;
+
+/// topic ごとに覚える rendezvous の候補の上限(1 回の join の窓と同じ。#1221 R2-B)。
+pub(crate) const MAX_TOPIC_RENDEZVOUS_PEERS: usize = 4;
+
+/// neighbor の無い topic を再 join する間隔。topic ごとに倍へ伸ばし(上限 64 秒)、neighbor の成立で最初へ戻す
+/// (#1221 R2-B)。
+fn topic_rejoin_delay(step: u32) -> Duration {
+    Duration::from_secs(1 << step.min(6))
+}
+
+/// 再 join の窓: この topic の rendezvous の候補と、seed・ticket の窓から最大 4 件。
+async fn topic_rejoin_window(
+    candidates: &BootstrapCandidates,
+    rendezvous: &Mutex<Vec<(String, EndpointAddr)>>,
+    step: u32,
+) -> Vec<EndpointAddr> {
+    let mut peers = rendezvous
+        .lock()
+        .await
+        .iter()
+        .map(|(_, peer)| peer.clone())
+        .collect::<Vec<_>>();
+    for peer in candidates.window().await.unwrap_or_default() {
+        if !peers.iter().any(|known| known.id == peer.id) {
+            peers.push(peer);
+        }
+    }
+    if !peers.is_empty() {
+        let start = step as usize % peers.len();
+        peers.rotate_left(start);
+    }
+    peers.truncate(4);
+    peers
+}
 
 pub(crate) fn initial_topic_join_timeout() -> Duration {
     if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
@@ -303,8 +338,10 @@ impl IrohGossipTransport {
         true
     }
 
-    pub(crate) async fn extend_active_topic_peers(
+    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。
+    pub(crate) async fn extend_topic_peers(
         &self,
+        only: Option<&str>,
         endpoint_addrs: Vec<EndpointAddr>,
         reason: &str,
     ) {
@@ -317,7 +354,10 @@ impl IrohGossipTransport {
             if self.hint_closed.load(Ordering::Acquire) {
                 return;
             }
-            for (topic, state) in topic_states.iter_mut() {
+            for (topic, state) in topic_states
+                .iter_mut()
+                .filter(|(topic, _)| only.is_none_or(|only| only == topic.as_str()))
+            {
                 let mut join_peer_ids = Vec::new();
                 let mut added_peer_ids = Vec::new();
                 let mut join_endpoint_addrs = Vec::new();
@@ -343,6 +383,7 @@ impl IrohGossipTransport {
                 }
                 drop(neighbors);
                 if !join_peer_ids.is_empty() {
+                    state.joins[0].fetch_add(1, Ordering::Relaxed);
                     updates.push((
                         topic.clone(),
                         state.sender.clone(),
@@ -503,6 +544,17 @@ impl IrohGossipTransport {
             }
         };
         let (sender, mut receiver) = topic_handle.split();
+        let sender = Arc::new(Mutex::new(sender));
+        let rendezvous = Arc::new(Mutex::new(Vec::new()));
+        let joins = Arc::new([AtomicU64::new(0), AtomicU64::new(0)]);
+        let rejoin_sender = Arc::clone(&sender);
+        let rejoin_rendezvous = Arc::clone(&rendezvous);
+        let rejoin_joins = Arc::clone(&joins);
+        let rejoin_candidates = self.bootstrap_candidates();
+        let rejoin_endpoint = self.endpoint.clone();
+        let rejoin_gossip = self.gossip.clone();
+        let rejoin_warmups = Arc::clone(&self.topic_warmups);
+        let mut candidates_added = self.candidates_added.subscribe();
         let (broadcaster, _) = broadcast::channel(256);
         let outbound = broadcaster.clone();
         let topic_name = topic.as_str().to_string();
@@ -592,7 +644,47 @@ impl IrohGossipTransport {
                         Some(format!("topic join pending: {message}"));
                 }
             }
-            while let Some(event) = receiver.next().await {
+            // neighbor の無い間だけ、候補の窓で再 join する。回復は neighbor の成立(NeighborUp)で判定し、
+            // seed の適用の成功や別の protocol の成功では判定しない(ADR 0055 §3、#1221 R2-B)。
+            let mut rejoin_step = 0u32;
+            let mut rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(0);
+            let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
+            loop {
+                let idle = neighbors_task.read().await.is_empty();
+                let event = tokio::select! {
+                    event = receiver.next() => event,
+                    changed = candidates_added.changed(), if idle => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        rejoin_at = tokio::time::Instant::now();
+                        continue;
+                    }
+                    () = tokio::time::sleep_until(rejoin_at), if idle => {
+                        let peers =
+                            topic_rejoin_window(&rejoin_candidates, &rejoin_rendezvous, rejoin_step)
+                                .await;
+                        rejoin_step = rejoin_step.saturating_add(1);
+                        rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                        if !peers.is_empty() {
+                            rejoin_joins[1].fetch_add(1, Ordering::Relaxed);
+                            let ids = peers.iter().map(|peer| peer.id).collect();
+                            let _ = rejoin_sender.lock().await.join_peers(ids).await;
+                            let (endpoint, gossip, warmups) = (
+                                rejoin_endpoint.clone(),
+                                rejoin_gossip.clone(),
+                                Arc::clone(&rejoin_warmups),
+                            );
+                            _rejoin_warmup = Some(AbortWarmupOnDrop(tokio::spawn(async move {
+                                warmups.warmup_peers_once(&endpoint, &gossip, &peers).await;
+                            })));
+                        }
+                        continue;
+                    }
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 match event {
                     Ok(GossipEvent::Received(message)) => {
                         joined_task_state.store(true, Ordering::SeqCst);
@@ -644,6 +736,7 @@ impl IrohGossipTransport {
                         }
                     }
                     Ok(GossipEvent::NeighborUp(peer_id)) => {
+                        rejoin_step = 0;
                         gossip_health.success(peer_id, Duration::ZERO).await;
                         joined_task_state.store(true, Ordering::SeqCst);
                         joined_task_notify.notify_waiters();
@@ -669,6 +762,10 @@ impl IrohGossipTransport {
                     Ok(GossipEvent::NeighborDown(peer_id)) => {
                         let mut guard = neighbors_task.write().await;
                         guard.remove(peer_id.to_string().as_str());
+                        if guard.is_empty() {
+                            rejoin_at =
+                                tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                        }
                     }
                     Ok(GossipEvent::Lagged) => {}
                     Err(error) => {
@@ -685,7 +782,7 @@ impl IrohGossipTransport {
         topics.insert(
             topic.0.clone(),
             HintTopicState {
-                sender: Arc::new(Mutex::new(sender)),
+                sender,
                 broadcaster: broadcaster.clone(),
                 bootstrap_peer_ids,
                 neighbors,
@@ -693,6 +790,8 @@ impl IrohGossipTransport {
                 last_received_at,
                 last_error,
                 invalid_hint_count,
+                rendezvous,
+                joins,
                 closed,
                 closed_notify,
                 update_warmup_task: None,
@@ -701,6 +800,80 @@ impl IrohGossipTransport {
         );
 
         Ok(broadcaster)
+    }
+
+    /// CN の rendezvous が返した peer を、その topic だけへ join する(#1221 R2-B)。`topic` は購読している
+    /// gossip の topic(`hint/...`)。まだ知らない候補だけを join し、最大 [`MAX_TOPIC_RENDEZVOUS_PEERS`] 件を覚える。
+    pub(crate) async fn join_topic_peers_impl(
+        &self,
+        source: &str,
+        topic: &TopicId,
+        peers: Vec<SeedPeer>,
+    ) -> Result<()> {
+        let relay_urls = self
+            .relay_urls
+            .read()
+            .expect("transport relay urls poisoned")
+            .clone();
+        let mut added = Vec::new();
+        if let Some(rendezvous) = self
+            .topic_states
+            .lock()
+            .await
+            .get(topic.as_str())
+            .map(|state| Arc::clone(&state.rendezvous))
+        {
+            let mut rendezvous = rendezvous.lock().await;
+            for peer in peers.into_iter().take(MAX_TOPIC_RENDEZVOUS_PEERS) {
+                let peer = peer.to_endpoint_addr_with_relays(&relay_urls)?;
+                if rendezvous.iter().any(|(_, known)| known.id == peer.id) {
+                    continue;
+                }
+                if rendezvous.len() == MAX_TOPIC_RENDEZVOUS_PEERS {
+                    rendezvous.remove(0);
+                }
+                rendezvous.push((source.to_string(), peer.clone()));
+                added.push(peer);
+            }
+        }
+        for peer in &added {
+            self.remember_hot_endpoint(peer.clone()).await;
+        }
+        self.extend_topic_peers(Some(topic.as_str()), added, "rendezvous")
+            .await;
+        Ok(())
+    }
+
+    /// 取得元の CN(`None` は全部)の rendezvous の候補を忘れる。
+    pub(crate) async fn clear_topic_rendezvous(&self, source: Option<&str>) {
+        let states = self
+            .topic_states
+            .lock()
+            .await
+            .values()
+            .map(|state| Arc::clone(&state.rendezvous))
+            .collect::<Vec<_>>();
+        for rendezvous in states {
+            rendezvous
+                .lock()
+                .await
+                .retain(|(from, _)| source.is_some_and(|source| source != from));
+        }
+    }
+
+    /// topic(`hint/...`)へ `join_peers` した回数(候補の更新による分、再 join の分)。#1221 R2-B の観測用。
+    pub async fn topic_join_counts(&self, topic: &str) -> (u64, u64) {
+        self.topic_states
+            .lock()
+            .await
+            .get(topic)
+            .map(|state| {
+                (
+                    state.joins[0].load(Ordering::Relaxed),
+                    state.joins[1].load(Ordering::Relaxed),
+                )
+            })
+            .unwrap_or_default()
     }
 
     fn stream_from_sender(sender: &broadcast::Sender<HintEnvelope>) -> HintStream {
