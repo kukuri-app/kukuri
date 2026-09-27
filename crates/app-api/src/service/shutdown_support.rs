@@ -8,6 +8,11 @@ impl AppService {
         }
         self.shutdown_direct_message_outbox_retry().await;
         self.shutdown_account_receive_offers().await;
+        self.subscription_registry
+            .missing_profiles
+            .lock()
+            .await
+            .stop();
         self.services.session_projections.clear().await;
         {
             // 取り直しが止める途中の hint 購読の上に乗らないよう、lock を持ったまま止める。

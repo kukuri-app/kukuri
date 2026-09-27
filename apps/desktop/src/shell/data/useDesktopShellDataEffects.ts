@@ -267,6 +267,19 @@ export function useDesktopShellDataEffects({
           if (disposed) break;
           await refreshVisibleShellData(scope.topicId, null, 'buffer', scope.channelId);
         }
+        // 表示中の profile 列は、自分の profile の読込みが失敗している間と、相手の名前がまだ無い間
+        // (読込みの失敗を含む)だけ読み直す(起動直後の失敗と、背景で後から届く profile。#1221 R6-B)。
+        for (const column of currentState.workspaceState.columns) {
+          if (disposed) break;
+          if (column.kind !== 'profile' || !visibleIds.has(column.id)) continue;
+          const state = storeApi.getState();
+          if (!column.entityId) {
+            if (state.profilePanelState.status === 'error') await loadProfileSection();
+            continue;
+          }
+          const author = state.knownAuthorsByPubkey[column.entityId];
+          if (!(author?.display_name || author?.name)) await loadAuthorSection(column.entityId);
+        }
       } finally {
         visibleRefreshInFlightRef.current = false;
       }
@@ -296,6 +309,8 @@ export function useDesktopShellDataEffects({
     };
   }, [
     activeTopic,
+    loadAuthorSection,
+    loadProfileSection,
     refreshVisibleShellData,
     selectedThread,
     storeApi,

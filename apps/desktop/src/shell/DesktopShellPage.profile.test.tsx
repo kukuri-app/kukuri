@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { App } from '@/App';
 import type { TimelineView } from '@/lib/api';
+import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
+import { columnIdentityId } from '@/shell/slices/workspace';
 import {
   expectActiveTopic,
   createDeferred,
@@ -430,4 +432,62 @@ test('keeps local peer ticket visible when profile loading fails', async () => {
   await waitFor(() => {
     expect(within(drawer).getByDisplayValue('peer1@127.0.0.1:7777')).toBeInTheDocument();
   });
+});
+
+// #1221 R6-B: 表示中の profile 列は、読込みの失敗と、背景で後から届く名前を、表示の定期更新で読み直す。
+test('a failed profile column read recovers on the next visible refresh', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const api = createDesktopMockApi();
+  const read = vi.spyOn(api, 'listProfileTimeline').mockRejectedValue(new Error('docs actor closed'));
+  render(<App api={api} />);
+  const column = await screen.findByRole('region', { name: /^Profile Column,/ });
+  await waitFor(() => expect(within(column).getByText('docs actor closed')).toBeInTheDocument());
+  read.mockResolvedValue({ items: [], next_cursor: null });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await waitFor(() => expect(within(column).getByText('No public posts published yet.')).toBeInTheDocument());
+  expect(within(column).queryByText('docs actor closed')).not.toBeInTheDocument();
+});
+
+test('a restored author profile column re-reads a failed read until the name arrives', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const authorPubkey = 'd'.repeat(64);
+  const scope = { topicId: 'kukuri:topic:general', channelId: null };
+  const timelineId = columnIdentityId('timeline', scope);
+  const authorColumnId = columnIdentityId('profile', scope, authorPubkey);
+  window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify({
+    version: 1,
+    activeColumnId: timelineId,
+    columns: [
+      { id: timelineId, kind: 'timeline', scope, pinned: true, preferredDesktopSpan: 1 },
+      { id: authorColumnId, kind: 'profile', scope, entityId: authorPubkey, pinned: true, preferredDesktopSpan: 1 },
+    ],
+  }));
+  const api = createDesktopMockApi({ authorSocialViews: { [authorPubkey]: { name: 'carol' } } });
+  const original = api.getAuthorSocialView.bind(api);
+  let phase: 'failing' | 'unnamed' | 'named' = 'failing';
+  vi.spyOn(api, 'getAuthorSocialView').mockImplementation(async (pubkey) => {
+    if (phase === 'failing') throw new Error('docs actor closed');
+    const view = await original(pubkey);
+    return phase === 'named' ? view : { ...view, name: null, display_name: null };
+  });
+  render(<App api={api} />);
+  const column = await waitFor(() => {
+    const found = document.querySelector(`[data-column-id="${authorColumnId}"]`);
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  await waitFor(() => expect(within(column).getByText('docs actor closed')).toBeInTheDocument());
+  phase = 'unnamed';
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await waitFor(() => expect(within(column).queryByText('docs actor closed')).not.toBeInTheDocument());
+  expect(within(column).queryByText('carol')).not.toBeInTheDocument();
+  phase = 'named';
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await waitFor(() => expect(within(column).getAllByText('carol').length).toBeGreaterThan(0));
 });

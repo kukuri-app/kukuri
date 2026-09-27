@@ -328,3 +328,74 @@ async fn a_dome_move_record_is_read_from_the_owner_provider() {
         "only exact keys are read locally"
     );
 }
+
+// #1221 R6-B: timeline に出た author のうち手元に profile が無いものは、購読せずに背景で profile の key だけを
+// provider から読む(R2-C で読取りの暗黙の購読を外した後の、表示名の回帰の補修)。profile の無い author は
+// 台帳で読み直さない。scope の lease は増えない。
+#[tokio::test]
+async fn timeline_authors_without_a_local_profile_are_read_once_in_the_background() {
+    let named = generate_keys();
+    let unnamed = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    put_profile(provider.as_ref(), &named).await;
+    let docs = Arc::new(CountingDocsSync::reading_from(provider.clone()));
+    let (app, store) = app_over(docs.clone(), generate_keys());
+    let topic = TopicId::new(TOPIC);
+    for keys in [&named, &unnamed] {
+        persist_test_post_with_labels(
+            docs.as_ref(),
+            Some(store.as_ref()),
+            keys,
+            &topic,
+            PayloadRef::InlineText {
+                text: "post".into(),
+            },
+            Vec::new(),
+            None,
+            Vec::new(),
+        )
+        .await;
+    }
+    let name_of = |view: &TimelineView, keys: &KukuriKeys| {
+        view.items
+            .iter()
+            .find(|item| item.author_pubkey == keys.public_key_hex())
+            .and_then(|item| item.author_name.clone())
+    };
+    let unnamed_replica = author_replica_id(unnamed.public_key_hex().as_str());
+    let unnamed_reads = || async {
+        provider
+            .queries()
+            .await
+            .iter()
+            .filter(|(replica, _)| replica == unnamed_replica.as_str())
+            .count()
+    };
+
+    let first = app.list_timeline(TOPIC, None, 20).await.expect("timeline");
+    assert_eq!(name_of(&first, &named), None);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while store
+            .get_profile(named.public_key_hex().as_str())
+            .await
+            .expect("profile")
+            .is_none()
+            || unnamed_reads().await == 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the missing profiles are read in the background");
+    let reads = unnamed_reads().await;
+    let second = app.list_timeline(TOPIC, None, 20).await.expect("timeline");
+    assert_eq!(name_of(&second, &named).as_deref(), Some("provider"));
+    app.list_timeline(TOPIC, None, 20).await.expect("timeline");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        unnamed_reads().await,
+        reads,
+        "an author without a profile is not read again"
+    );
+    assert_eq!(app.subscription_registry.scope_leases.lock().await.len(), 0);
+}

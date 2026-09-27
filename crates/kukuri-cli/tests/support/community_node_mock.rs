@@ -33,7 +33,7 @@ pub async fn mock_node(
                 "公開policyへtokenを送らない"
             );
             return Json(json!({"policies": [{"policy_slug": "builder-preview", "policy_version": version,
-                "title": "テスト規約", "body_markdown": "テスト文書の本文", "required": true, "language": "ja", "is_current": true}]})).into_response();
+                "title": "テスト規約", "body_markdown": "テスト文書の本文", "required": true, "language": "ja", "is_current": true, "policy_kind": "terms"}]})).into_response();
         }
         "/v1/node/manifest" => return StatusCode::NOT_FOUND.into_response(),
         "/v1/auth/challenge" => {

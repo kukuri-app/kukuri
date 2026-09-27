@@ -97,6 +97,13 @@ impl AppService {
 
         let author_pubkeys = author_pubkeys.into_iter().collect::<Vec<_>>();
         let profiles = self.services.store.get_profiles(&author_pubkeys).await?;
+        self.request_missing_profiles(
+            author_pubkeys
+                .iter()
+                .filter(|author| !profiles.contains_key(*author) && **author != local_author)
+                .cloned(),
+        )
+        .await;
         let relationships = self
             .services
             .projection_store

@@ -25,6 +25,8 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) dm_outbox_retry_starts: Arc<std::sync::atomic::AtomicUsize>,
     /// 購読する scope の lease と、その task(上限 64。#1221 R2-C)。
     pub(crate) scope_leases: Arc<Mutex<ScopeLeases>>,
+    /// 手元に profile の無い timeline の author を背景で読む queue と台帳(#1221 R6-B)。
+    pub(crate) missing_profiles: Arc<Mutex<super::missing_profiles::MissingProfiles>>,
     /// 自分の端末で hosting する Dome の heartbeat task(key = instance id)。
     pub(crate) dome_heartbeats: Arc<Mutex<HashMap<String, AbortOnDropTask>>>,
     /// live presence の期限管理 task(key = live_presence_task_key)。

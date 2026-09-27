@@ -306,6 +306,25 @@ pub(crate) async fn hydrate_author_state(
     )
 }
 
+/// author の profile の key だけを、手元の次に有界な provider から読んで反映する(timeline の表示名。#1221 R6-B)。
+pub(crate) async fn hydrate_author_profile(
+    services: &ServiceHandles,
+    local_author_pubkey: &str,
+    author_pubkey: &str,
+) -> Result<usize> {
+    let mut reader = AuthorKeyReader::new(
+        services,
+        local_author_pubkey,
+        author_pubkey,
+        DocFetchPolicy::LocalThenRemote,
+    )
+    .await?;
+    Ok(reader
+        .read(stable_key("profile", "latest").as_str())
+        .await?
+        .reflected)
+}
+
 /// author replica の key の種類。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AuthorKeyKind {
