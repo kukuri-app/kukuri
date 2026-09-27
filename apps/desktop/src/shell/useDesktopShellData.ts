@@ -869,6 +869,7 @@ export function useDesktopShellData({
     loadBookmarksSection,
     navigateBookmarkPage,
     loadMessagesSection,
+    refreshConversationColumn,
     loadCommunityIndexCapability,
   } = useDesktopShellSectionLoaders({
     api,
@@ -898,6 +899,11 @@ export function useDesktopShellData({
         if (!storeApi.getState().threadsById[column.entityId]?.length) {
           void refreshVisibleShellData(column.scope.topicId, column.entityId, 'apply', column.scope.channelId);
         }
+      } else if (column.kind === 'conversation' && column.entityId) {
+        // 復元した DM の列は、選ぶ前でも相手と会話を読む(#1221 R6-C)。
+        if (!storeApi.getState().directMessageTimelineByPeer[column.entityId]) {
+          void refreshConversationColumn(column.entityId);
+        }
       } else if (column.kind === 'profile') {
         if (column.entityId) {
           if (!storeApi.getState().authorTimelinesByPubkey[column.entityId]?.length) {
@@ -909,7 +915,7 @@ export function useDesktopShellData({
       }
     }
   }, [state.visibleListColumnIds, state.workspaceState.columns, state.workspaceState.activeColumnId, storeApi,
-    loadBookmarksSection, loadAuthorSection, loadProfileSection, refreshVisibleShellData]);
+    loadBookmarksSection, loadAuthorSection, loadProfileSection, refreshConversationColumn, refreshVisibleShellData]);
   useSessionProjectionRefresh(storeApi, loadLiveSection, loadGameSection, visibleColumnIdsRef);
 
   const runLoadTopics = useCallback(
@@ -1088,6 +1094,7 @@ export function useDesktopShellData({
     refreshTimelineFeed,
     loadProfileSection,
     loadAuthorSection,
+    refreshConversationColumn,
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
