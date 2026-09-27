@@ -169,9 +169,6 @@ export function DesktopShellPage({
   const setTrackedTopics = useDesktopShellFieldSetter('trackedTopics');
   const setNotificationAutoReadError = useDesktopShellFieldSetter('notificationAutoReadError');
   const setNotificationPanelState = useDesktopShellFieldSetter('notificationPanelState');
-  const setDirectMessages = useDesktopShellFieldSetter('directMessages');
-  const setDirectMessageTimelineByPeer = useDesktopShellFieldSetter('directMessageTimelineByPeer');
-  const setDirectMessageStatusByPeer = useDesktopShellFieldSetter('directMessageStatusByPeer');
   const setDirectMessageError = useDesktopShellFieldSetter('directMessageError');
   const setShellChromeState = useDesktopShellFieldSetter('shellChromeState');
   const setVisibleListColumnIds = useDesktopShellFieldSetter('visibleListColumnIds');
@@ -201,6 +198,7 @@ export function DesktopShellPage({
     refreshConnectivityStatus,
     loadProfileSection,
     loadAuthorSection,
+    refreshConversationColumn,
     loadMoreProfileTimeline,
     loadMoreAuthorTimeline,
     loadBookmarksSection,
@@ -775,36 +773,6 @@ export function DesktopShellPage({
     setNotificationPanelState,
     shellChromeState.activePrimarySection,
   ]);
-  const refreshConversationColumn = useCallback(
-    async (peerPubkey: string) => {
-      try {
-        const [conversation, timeline, status] = await Promise.all([
-          api.openDirectMessage(peerPubkey),
-          api.listDirectMessageMessages(peerPubkey, null, 100),
-          api.getDirectMessageStatus(peerPubkey),
-        ]);
-        setDirectMessages((current) => [
-          conversation,
-          ...current.filter((entry) => entry.peer_pubkey !== conversation.peer_pubkey),
-        ]);
-        setDirectMessageTimelineByPeer(setRecordEntry(peerPubkey, timeline.items));
-        setDirectMessageStatusByPeer(setRecordEntry(peerPubkey, status));
-        setDirectMessageError(null);
-      } catch (refreshError) {
-        setDirectMessageError(
-          messageFromError(refreshError, translate('common:errors.failedToOpenDirectMessage'))
-        );
-      }
-    },
-    [
-      api,
-      setDirectMessageError,
-      setDirectMessages,
-      setDirectMessageStatusByPeer,
-      setDirectMessageTimelineByPeer,
-      translate,
-    ]
-  );
   const clearConversationColumn = useCallback(
     async (peerPubkey: string) => {
       try {

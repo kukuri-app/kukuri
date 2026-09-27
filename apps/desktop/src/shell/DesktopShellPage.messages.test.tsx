@@ -13,6 +13,8 @@ import {
 } from './DesktopShellPage.testHelpers';
 import type { DesktopApi, DirectMessageMessageView } from '@/lib/api';
 import { REFRESH_INTERVAL_MS } from '@/shell/store';
+import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
+import { columnIdentityId } from '@/shell/slices/workspace';
 
 beforeEach(() => {
   setViewportWidth(1024);
@@ -457,3 +459,42 @@ test('messages workspace keeps the last successful DM state when status refresh 
   });
 });
 
+
+// #1221 R6-C: 再起動で復元された、選ばれていない DM の列は、選ばなくても相手と会話を読む。
+test('a restored inactive conversation column loads its peer and messages', async () => {
+  const peerPubkey = 'e'.repeat(64);
+  const scope = { topicId: 'kukuri:topic:general', channelId: null };
+  const timelineId = columnIdentityId('timeline', scope);
+  const conversationId = columnIdentityId('conversation', scope, peerPubkey);
+  window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify({
+    version: 1,
+    activeColumnId: timelineId,
+    columns: [
+      { id: timelineId, kind: 'timeline', scope, pinned: true, preferredDesktopSpan: 1 },
+      {
+        id: conversationId,
+        kind: 'conversation',
+        scope,
+        entityId: peerPubkey,
+        parentColumnId: timelineId,
+        pinned: false,
+        preferredDesktopSpan: 1,
+      },
+    ],
+  }));
+  const api = createDesktopMockApi({
+    authorSocialViews: {
+      [peerPubkey]: { name: 'erin', following: true, followed_by: true, mutual: true },
+    },
+  });
+  await api.sendDirectMessage(peerPubkey, 'restored dm');
+  render(<App api={api} />);
+  const column = await waitFor(() => {
+    const found = document.querySelector(`[data-column-id="${conversationId}"]`);
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  await waitFor(() => expect(within(column).getByText('restored dm')).toBeInTheDocument());
+  expect(within(column).getAllByText('erin').length).toBeGreaterThan(0);
+  expect(column).not.toHaveAttribute('aria-current', 'true');
+});

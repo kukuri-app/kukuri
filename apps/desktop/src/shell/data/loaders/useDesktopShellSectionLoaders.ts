@@ -733,6 +733,36 @@ export function useDesktopShellSectionLoaders({
     ]
   );
 
+  const refreshConversationColumn = useCallback(
+    async (peerPubkey: string) => {
+      try {
+        const [conversation, timeline, status] = await Promise.all([
+          api.openDirectMessage(peerPubkey),
+          api.listDirectMessageMessages(peerPubkey, null, 100),
+          api.getDirectMessageStatus(peerPubkey),
+        ]);
+        setDirectMessages((current) => [
+          conversation,
+          ...current.filter((entry) => entry.peer_pubkey !== conversation.peer_pubkey),
+        ]);
+        setDirectMessageTimelineByPeer(setRecordEntry(peerPubkey, timeline.items));
+        setDirectMessageStatusByPeer(setRecordEntry(peerPubkey, status));
+        setDirectMessageError(null);
+      } catch (refreshError) {
+        setDirectMessageError(
+          messageFromError(refreshError, translate('common:errors.failedToOpenDirectMessage'))
+        );
+      }
+    },
+    [
+      api,
+      setDirectMessageError,
+      setDirectMessages,
+      setDirectMessageStatusByPeer,
+      setDirectMessageTimelineByPeer,
+      translate,
+    ]
+  );
   // 個別 loader も公開する: section 遷移起点の effect(useDesktopShellDataEffects)が
   // 同じ実装を呼ぶための入口。通知の取得・state反映は注入したloaderへ委譲する。
   return {
@@ -746,6 +776,7 @@ export function useDesktopShellSectionLoaders({
     loadBookmarksSection,
     navigateBookmarkPage,
     loadMessagesSection,
+    refreshConversationColumn,
     loadNotificationsSection,
     loadCommunityIndexCapability,
   };
