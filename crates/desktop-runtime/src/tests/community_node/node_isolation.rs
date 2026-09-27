@@ -21,6 +21,8 @@ enum Fault {
     Unauthorized {
         reauth: bool,
     },
+    /// 認証の verify へ 403 BANNED(参加の拒否)。
+    Banned,
 }
 
 /// 受け付けた接続を、`unreachable` の間は応答せずに閉じる(通信失敗)。
@@ -142,6 +144,16 @@ async fn flaky_node_request(
             .into_response();
         }
         (Method::POST, "/v1/auth/verify") => {
+            if fault == Fault::Banned {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(kukuri_cn_protocol::ApiErrorBody {
+                        code: "BANNED".into(),
+                        message: "banned".into(),
+                    }),
+                )
+                    .into_response();
+            }
             let token = format!("token-{}", node.hits());
             *node.token.lock().unwrap() = token.clone();
             *node.fault.lock().unwrap() = Fault::None;
@@ -450,6 +462,65 @@ async fn a_failing_node_never_touches_the_healthy_node() {
     assert_eq!(
         session_phase(&runtime, &a).await,
         CommunityNodeSessionPhase::Ready
+    );
+    runtime.shutdown().await;
+}
+
+/// 監査 B2: token の期限の更新で参加を拒否(BANNED)されたら、その node の relay と seed を外す。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admission_rejection_on_token_refresh_drops_the_node_connectivity() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let a = FlakyNode::spawn(Vec::new(), A_SEED).await;
+    let b = FlakyNode::spawn(Vec::new(), B_SEED).await;
+    let dir = tempdir().expect("tempdir");
+    let runtime = isolation_runtime(dir.path(), &[&a, &b]).await;
+    assert!(
+        bootstrap_seeds(&runtime)
+            .await
+            .contains(&B_SEED.to_string())
+    );
+    // 更新の要る token にして、その期限を来させる。
+    persist_community_node_token(
+        &runtime.db_path,
+        runtime.identity_mode,
+        &b.base_url,
+        &StoredCommunityNodeToken {
+            access_token: b.token.lock().unwrap().clone(),
+            expires_at: Utc::now().timestamp() + 10,
+        },
+    )
+    .expect("expiring token");
+    if let Some(session) = runtime
+        .community_node_sessions
+        .lock()
+        .await
+        .get_mut(b.base_url.as_str())
+    {
+        session.token_refresh_at = 0;
+    }
+    b.set_fault(Fault::Banned);
+    runtime.run_community_node_session_maintenance_once().await;
+    assert_eq!(
+        session_phase(&runtime, &b).await,
+        CommunityNodeSessionPhase::AwaitingAdmission
+    );
+    assert!(
+        !bootstrap_seeds(&runtime)
+            .await
+            .contains(&B_SEED.to_string())
+    );
+    assert!(
+        bootstrap_seeds(&runtime)
+            .await
+            .contains(&A_SEED.to_string())
+    );
+    assert!(
+        !runtime
+            .community_node_connectivity
+            .lock()
+            .await
+            .nodes
+            .contains_key(b.base_url.as_str())
     );
     runtime.shutdown().await;
 }

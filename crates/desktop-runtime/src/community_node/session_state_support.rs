@@ -165,6 +165,11 @@ impl DesktopRuntime {
             CommunityNodeSessionPhase::AwaitingAdmission,
         )
         .await;
+        // 参加の拒否は認証の失効。token の更新・401 の後の再認証・初回のどの経路でも、
+        // その node の relay・seed・候補を外す(#1221 R2-B)。
+        if let Err(error) = self.deactivate_community_node_connectivity(base_url).await {
+            warn!(base_url, %error, "failed to drop community-node connectivity after admission rejection");
+        }
     }
 
     pub(crate) fn community_node_admission_rejection(

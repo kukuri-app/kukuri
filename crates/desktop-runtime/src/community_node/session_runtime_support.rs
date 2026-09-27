@@ -12,6 +12,8 @@ impl DesktopRuntime {
     /// scheduler・背景の lane の session。Ready で token が有効な間は、同意と policy を確かめず、期限の来た
     /// 登録だけを送る(#1221 R2-B)。同意と policy は、token の更新・session の確立・利用者の操作
     /// (`ensure_community_node_session`)のときに確かめ、サーバ側の失効はこの要求の 403 で分かる。
+    /// Ready でない node へは、その node の期限(再試行の期限)まで要求を送らない。参加の拒否と再同意の待ちは
+    /// 期限を持たないので、利用者の操作まで送らない。
     pub(crate) async fn ensure_due_community_node_session(
         &self,
         base_url: &str,
@@ -40,6 +42,19 @@ impl DesktopRuntime {
             self.note_community_node_token(base_url.as_str(), &token)
                 .await;
             return Ok(CommunityNodeSessionOutcome::Ready);
+        }
+        let now = Utc::now().timestamp();
+        if let Some(phase) = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get(base_url.as_str())
+            .filter(|session| {
+                session.session_phase != CommunityNodeSessionPhase::Ready && session.due_at() > now
+            })
+            .map(|session| session.session_phase)
+        {
+            return Ok(CommunityNodeSessionOutcome::Deferred(phase));
         }
         drop(guard);
         self.ensure_community_node_session(&base_url).await

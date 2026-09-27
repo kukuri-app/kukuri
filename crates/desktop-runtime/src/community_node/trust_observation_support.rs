@@ -593,6 +593,7 @@ impl DesktopRuntime {
             base_url.as_str(),
         )?;
         let withdrawn_at = consents.withdrawn_at;
+        let verified_before = consents.clone();
         record_community_node_local_consents(
             &mut consents,
             &[CommunityNodeConsentDocumentRef {
@@ -612,6 +613,17 @@ impl DesktopRuntime {
             base_url.as_str(),
             &consents,
         )?;
+        // 任意文書の追記は、確認済みの必須の同意を変えない。確認済みの状態も同じ操作で揃え、
+        // 次の期限の登録でその CN の relay と seed を外さない(#1221 R2-B)。
+        if let Some(session) = self
+            .community_node_sessions
+            .lock()
+            .await
+            .get_mut(base_url.as_str())
+            && session.current_policy_verified_for.as_ref() == Some(&verified_before)
+        {
+            session.current_policy_verified_for = Some(consents.clone());
+        }
 
         // 端末の現在の状態。送信待ちの突き合わせに使い、`include_existing` のときは送る対象にもする。
         let mut current: BTreeSet<String> = BTreeSet::new();
