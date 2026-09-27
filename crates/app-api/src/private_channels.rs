@@ -648,8 +648,7 @@ impl AppService {
                 prep.current_policy.entry_dome_instance_id.clone(),
             )
             .await?;
-        self.distribute_epoch_handoff_grants(topic_id, &prep, &next)
-            .await?;
+        self.distribute_epoch_handoff_grants(&prep, &next).await?;
         self.finalize_rotated_channel_state(topic_id, prep.state, next)
             .await
     }
@@ -781,7 +780,6 @@ impl AppService {
     /// (分割前と同じ。受け取れなかった参加者は新 epoch に入れない)。
     async fn distribute_epoch_handoff_grants(
         &self,
-        topic_id: &str,
         prep: &PrivateChannelRotationPrep,
         next: &PrivateChannelNextEpoch,
     ) -> Result<()> {
@@ -803,10 +801,9 @@ impl AppService {
             };
             for recipient in page {
                 self.distribute_epoch_handoff_grant(
-                    topic_id,
-                    &prep.state,
-                    &prep.current_replica,
-                    next,
+                    state,
+                    &next.epoch_id,
+                    &next.secret_hex,
                     &recipient,
                 )
                 .await?;
@@ -815,89 +812,53 @@ impl AppService {
         }
     }
 
-    /// 回転の後に届いた、直前の epoch の参加 record の参加者へ、現 epoch の handoff grant を送る(#1221 R5-H)。参加
-    /// record は account 経路で届くので、回転より後に着きうる。回転のときに表にあれば受け取れた grant と同じもの。
-    pub(crate) async fn grant_current_epoch_to_late_participant(
+    pub(crate) async fn distribute_epoch_handoff_grant(
         &self,
         state: &JoinedPrivateChannelState,
-        participant_epoch_id: &str,
+        new_epoch_id: &str,
+        new_secret_hex: &str,
         recipient: &str,
     ) -> Result<()> {
-        let Some(previous) = state
-            .archived_epochs
-            .last()
-            .filter(|epoch| epoch.epoch_id == participant_epoch_id)
-        else {
+        if recipient == state.owner_pubkey {
             return Ok(());
-        };
-        let mut old = state.clone();
-        old.current_epoch_id = previous.epoch_id.clone();
-        old.current_epoch_secret_hex = previous.namespace_secret_hex.clone();
-        let next = PrivateChannelNextEpoch {
-            epoch_id: state.current_epoch_id.clone(),
-            secret_hex: state.current_epoch_secret_hex.clone(),
-        };
-        self.distribute_epoch_handoff_grant(
-            &state.topic_id,
-            &old,
-            &current_private_channel_replica_id(&old),
-            &next,
-            recipient,
-        )
-        .await
-    }
-
-    /// `state` は回転の前の epoch を現 epoch とする参加状態、`current_replica` はその epoch の replica。
-    async fn distribute_epoch_handoff_grant(
-        &self,
-        topic_id: &str,
-        state: &JoinedPrivateChannelState,
-        current_replica: &ReplicaId,
-        next: &PrivateChannelNextEpoch,
-        recipient: &str,
-    ) -> Result<()> {
-        {
-            if recipient == state.owner_pubkey {
+        }
+        if state.audience_kind == ChannelAudienceKind::FriendOnly {
+            let relationship = self
+                .services
+                .projection_store
+                .get_author_relationship(self.current_author_pubkey().as_str(), recipient)
+                .await?;
+            if !relationship.as_ref().is_some_and(|value| value.mutual) {
                 return Ok(());
             }
-            if state.audience_kind == ChannelAudienceKind::FriendOnly {
-                let relationship = self
-                    .services
-                    .projection_store
-                    .get_author_relationship(self.current_author_pubkey().as_str(), recipient)
-                    .await?;
-                if !relationship.as_ref().is_some_and(|value| value.mutual) {
-                    return Ok(());
-                }
-            }
-            let grant_doc = encrypt_private_channel_epoch_handoff_grant(
-                self.keys(),
-                &PrivateChannelEpochHandoffGrantPayloadV1 {
-                    channel_id: state.channel_id.clone(),
-                    topic_id: TopicId::new(topic_id),
-                    owner_pubkey: Pubkey::from(state.owner_pubkey.clone()),
-                    recipient_pubkey: Pubkey::from(recipient),
-                    old_epoch_id: state.current_epoch_id.clone(),
-                    new_epoch_id: next.epoch_id.clone(),
-                    new_namespace_secret_hex: next.secret_hex.clone(),
-                },
-            )?;
-            let envelope = persist_private_channel_epoch_handoff_grant(
-                self.docs_sync(),
-                self.keys(),
-                &grant_doc,
-                current_replica,
-            )
-            .await?;
-            self.queue_epoch_control(
-                recipient,
-                state.channel_id.as_str(),
-                &state.current_epoch_id,
-                &state.current_epoch_secret_hex,
-                &envelope,
-            )
-            .await
         }
+        let grant_doc = encrypt_private_channel_epoch_handoff_grant(
+            self.keys(),
+            &PrivateChannelEpochHandoffGrantPayloadV1 {
+                channel_id: state.channel_id.clone(),
+                topic_id: TopicId::new(state.topic_id.as_str()),
+                owner_pubkey: Pubkey::from(state.owner_pubkey.clone()),
+                recipient_pubkey: Pubkey::from(recipient),
+                old_epoch_id: state.current_epoch_id.clone(),
+                new_epoch_id: new_epoch_id.to_string(),
+                new_namespace_secret_hex: new_secret_hex.to_string(),
+            },
+        )?;
+        let envelope = persist_private_channel_epoch_handoff_grant(
+            self.docs_sync(),
+            self.keys(),
+            &grant_doc,
+            &current_private_channel_replica_id(state),
+        )
+        .await?;
+        self.queue_epoch_control(
+            recipient,
+            state.channel_id.as_str(),
+            &state.current_epoch_id,
+            &state.current_epoch_secret_hex,
+            &envelope,
+        )
+        .await
     }
     /// フェーズ 5: 旧 epoch を archive して現 epoch を差し替え、registry へ登録、
     /// rotation hint を publish(失敗は warn のみ)して view を返す。

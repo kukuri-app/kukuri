@@ -185,6 +185,33 @@ impl AppService {
         Ok((next, false))
     }
 
+    /// 回転の後に届いた、直前の epoch の参加 record の参加者へ、現 epoch の handoff grant を送る(#1221 R5-H)。参加
+    /// record は account 経路で届くので、回転より後に着きうる。回転のときに表にあれば受け取れた grant と同じもの。
+    async fn grant_current_epoch_to_late_participant(
+        &self,
+        state: &JoinedPrivateChannelState,
+        participant_epoch_id: &str,
+        recipient: &str,
+    ) -> Result<()> {
+        let Some(previous) = state
+            .archived_epochs
+            .last()
+            .filter(|epoch| epoch.epoch_id == participant_epoch_id)
+        else {
+            return Ok(());
+        };
+        let mut old = state.clone();
+        old.current_epoch_id = previous.epoch_id.clone();
+        old.current_epoch_secret_hex = previous.namespace_secret_hex.clone();
+        self.distribute_epoch_handoff_grant(
+            &old,
+            &state.current_epoch_id,
+            &state.current_epoch_secret_hex,
+            recipient,
+        )
+        .await
+    }
+
     /// outbox の制御 record の行を運ぶ offer の参照。
     pub(crate) async fn epoch_control_reference(
         services: &ServiceHandles,
