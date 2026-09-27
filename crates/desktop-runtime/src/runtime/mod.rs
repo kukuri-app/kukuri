@@ -417,6 +417,14 @@ impl DesktopRuntime {
         )?;
         let app_service =
             AppService::from_handles_with_metaverse_budget(services, metaverse_budget)?;
+        // #1221 R5-H: 保存済みの切替状態は、最初の書込みより前に渡す(再起動で旧 writer へ戻らない)。
+        if let Some(switched_at) = store.writer_switched_at().await? {
+            app_service.switch_writer(switched_at);
+        }
+        // 取り下げの書込みの outbox を、積んだ時の宛先へ再開する。
+        if let Err(error) = app_service.resume_withdrawal_writes().await {
+            tracing::warn!(%error, "queued withdrawal writes stay pending");
+        }
         for capability in load_private_channel_capabilities(&db_path, identity_mode)? {
             app_service
                 .restore_private_channel_capability(capability)

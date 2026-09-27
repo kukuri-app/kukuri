@@ -267,7 +267,10 @@ export function PrivateChannelSettingsPanel({
       <div className='extended-module-stack'>
         {(channel.audience_kind === 'friend_only' || channel.audience_kind === 'friend_plus') ? (
           <div className='topic-diagnostic topic-diagnostic-secondary'>
-            <span>{t('common:labels.participants')}: {channel.participant_count}</span>
+            {/* 参加者数は参加・退出 record が届く owner の端末だけが持つ(#1221 R5-H)。 */}
+            {channel.participant_count != null ? (
+              <span>{t('common:labels.participants')}: {channel.participant_count}</span>
+            ) : null}
             <span>{t('common:labels.stale')}: {channel.stale_participant_count}</span>
             <span>
               {t('common:labels.owner')}: {channel.is_owner ? t('common:states.yes') : t('common:states.no')}

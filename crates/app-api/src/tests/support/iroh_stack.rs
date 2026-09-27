@@ -79,13 +79,20 @@ impl TestIrohStack {
 }
 
 impl TestIrohStack {
-    /// desktop の起動と同じく、この端末で app の account の受信 binding に答える(#1221 R5-C。private の参加は
-    /// token の発行者の検証済み宛先から制御 record を読む)。
+    /// desktop の起動と同じく、この端末で app の account の受信 binding に答え(#1221 R5-C。private の参加は
+    /// token の発行者の検証済み宛先から制御 record を読む)、account の受信 route と outbox の再送 owner を始める
+    /// (#1221 R5-H。private channel の参加 record と handoff grant は account 経路で届く)。
     pub(crate) async fn bind_account(&self, app: &AppService) {
         self._node
             .install_receive_binding(app.services.keys.clone())
             .await
             .expect("install receive binding");
+        app.start_account_receive_offers()
+            .await
+            .expect("start account receive offers");
+        app.resume_direct_message_state()
+            .await
+            .expect("start account outbox retry");
     }
 }
 

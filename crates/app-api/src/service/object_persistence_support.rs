@@ -73,25 +73,66 @@ pub(crate) async fn persist_post_object(
     Ok(())
 }
 
+/// 取り下げの outbox の 1 行を書く。操作時の bucket の行には、元投稿の位置(target locator)も置く。
 pub(crate) async fn persist_post_withdrawal(
     docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    target_object_id: &EnvelopeId,
-    envelope: &KukuriEnvelope,
+    write: &WithdrawalWriteRow,
 ) -> Result<()> {
+    let replica = &write.replica_id;
+    let target = write.target_object_id.as_str();
     docs_sync.open_replica(replica).await?;
     docs_sync
         .apply_doc_op(
             replica,
             DocOp::SetJson {
-                key: stable_key(
-                    "withdrawals",
-                    &format!("{}/state", target_object_id.as_str()),
-                ),
-                value: serde_json::to_value(envelope)?,
+                key: stable_key("withdrawals", &format!("{target}/state")),
+                value: serde_json::to_value(&write.envelope)?,
             },
         )
-        .await
+        .await?;
+    if let Some(source) = &write.target_replica_id {
+        docs_sync
+            .apply_doc_op(
+                replica,
+                DocOp::SetJson {
+                    key: stable_key("withdrawals", &format!("{target}/locator")),
+                    value: serde_json::json!({ "replica_id": source }),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// 1 回に書く取り下げの outbox の行数。
+const WITHDRAWAL_WRITES_PER_DRAIN: usize = 64;
+
+impl AppService {
+    /// 積んだ取り下げの書込みを、記録した宛先へ書く(起動時と取り下げの操作のたびに呼ぶ)。書けた行だけを消し、
+    /// 失敗した行は残して次の再開で書き直す。失敗が 1 件でもあれば、その最初のエラーを返す。
+    pub async fn resume_withdrawal_writes(&self) -> Result<()> {
+        let pending = self
+            .services
+            .projection_store
+            .pending_withdrawal_writes(WITHDRAWAL_WRITES_PER_DRAIN)
+            .await?;
+        let mut first_error = None;
+        for write in pending {
+            match persist_post_withdrawal(self.services.docs_sync.as_ref(), &write).await {
+                Ok(()) => {
+                    self.services
+                        .projection_store
+                        .finish_withdrawal_write(&write.withdrawal_envelope_id, &write.replica_id)
+                        .await?
+                }
+                Err(error) => {
+                    warn!(%error, replica = %write.replica_id.as_str(), "withdrawal write stays queued");
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
 }
 
 pub(crate) fn post_withdrawal_row(
@@ -244,12 +285,13 @@ pub(crate) async fn persist_private_channel_policy(
         .await
 }
 
+/// 参加 record を置き、署名済みの envelope を返す(owner へ届けるのに使う。#1221 R5-H)。
 pub(crate) async fn persist_private_channel_participant(
     docs_sync: &dyn DocsSync,
     keys: &KukuriKeys,
     participant: &PrivateChannelParticipantDocV1,
     replica: &ReplicaId,
-) -> Result<()> {
+) -> Result<KukuriEnvelope> {
     let envelope = build_private_channel_participant_envelope(keys, participant)?;
     docs_sync.open_replica(replica).await?;
     docs_sync
@@ -260,18 +302,20 @@ pub(crate) async fn persist_private_channel_participant(
                     "channels/participants",
                     &format!("{}/envelope", participant.participant_pubkey.as_str()),
                 ),
-                value: serde_json::to_value(envelope)?,
+                value: serde_json::to_value(&envelope)?,
             },
         )
-        .await
+        .await?;
+    Ok(envelope)
 }
 
+/// handoff grant を置き、署名済みの envelope を返す(参加者へ届けるのに使う。#1221 R5-H)。
 pub(crate) async fn persist_private_channel_epoch_handoff_grant(
     docs_sync: &dyn DocsSync,
     keys: &KukuriKeys,
     grant: &PrivateChannelEpochHandoffGrantDocV1,
     replica: &ReplicaId,
-) -> Result<()> {
+) -> Result<KukuriEnvelope> {
     let envelope = build_private_channel_epoch_handoff_grant_envelope(keys, grant)?;
     docs_sync.open_replica(replica).await?;
     docs_sync
@@ -282,10 +326,11 @@ pub(crate) async fn persist_private_channel_epoch_handoff_grant(
                     "channels/rotation-grants",
                     &format!("{}/envelope", grant.recipient_pubkey.as_str()),
                 ),
-                value: serde_json::to_value(envelope)?,
+                value: serde_json::to_value(&envelope)?,
             },
         )
-        .await
+        .await?;
+    Ok(envelope)
 }
 
 pub(crate) async fn fetch_private_channel_metadata_from_replica(
@@ -330,33 +375,6 @@ pub(crate) async fn fetch_private_channel_policy_from_replica(
     let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
     envelope.verify()?;
     parse_private_channel_policy(&envelope)
-}
-
-pub(crate) async fn fetch_private_channel_participants_from_replica(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    policy: DocFetchPolicy,
-) -> Result<Vec<PrivateChannelParticipantDocV1>> {
-    let records = query_replica_with_fetch_policy(
-        docs_sync,
-        replica,
-        DocQuery::Prefix(stable_key("channels/participants", "")),
-        policy,
-    )
-    .await?;
-    let mut items = Vec::new();
-    for record in records {
-        if !record.key.ends_with("/envelope") {
-            continue;
-        }
-        let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
-        envelope.verify()?;
-        if let Some(participant) = parse_private_channel_participant(&envelope)? {
-            items.push(participant);
-        }
-    }
-    items.sort_by(|left, right| left.participant_pubkey.cmp(&right.participant_pubkey));
-    Ok(items)
 }
 
 pub(crate) async fn fetch_private_channel_epoch_handoff_grant_from_replica(

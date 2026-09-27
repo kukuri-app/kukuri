@@ -3,7 +3,7 @@
 //! 本番相当の構成を 1 プロセス + 外部ミドルウェアで再現する:
 //! - 実 Postgres（まっさらな migration。`TestDatabase`）・実 ArcadeDB（投影）・実 Redis
 //! - 同一プロセス内の cn-user-api（HTTP で叩く）・cn-indexer 常駐ワーカー・cn-iroh-relay
-//! - 実 iroh ノード 2 台（投稿者ノード / indexer ノード。ループバックで同期）
+//! - 実 iroh ノード 2 台（投稿者ノード / indexer ノード。indexer は投稿者を提供元として bucket を読む）
 //! - プロバイダ（Project Arachnid Shield / 視覚言語モデル）は wiremock による模擬。
 //!   実装は本物のプロバイダ crate を使い、HTTP 応答だけを合成する。
 //!   実在の違法メディアは一切使わない。
@@ -15,11 +15,9 @@ mod scan_stack;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
 use tempfile::TempDir;
@@ -35,10 +33,9 @@ use kukuri_cn_core::{
 use kukuri_cn_indexer::ArcadeDbProjection;
 use kukuri_cn_indexer::config::{ArcadeDbConfig, MediaFetchConfig};
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
-use kukuri_cn_indexer::participant::IndexerParticipant;
 use kukuri_cn_indexer::projection::IndexProjection;
 use kukuri_cn_indexer::state::{IndexerRuntimeState, IndexerStateSnapshot};
-use kukuri_cn_indexer::worker::{IndexerWorker, WorkerConfig, WorkerHandle};
+use kukuri_cn_indexer::worker::WorkerHandle;
 use kukuri_cn_iroh_relay::{IrohRelayConfig, SpawnedIrohRelay};
 use kukuri_cn_operator::READINESS_CHECK_IDS;
 use kukuri_cn_safety::provider::MediaFetcher;
@@ -50,15 +47,12 @@ use kukuri_core::{
     timeline_sort_key,
 };
 use kukuri_docs_sync::{
-    DocEventStream, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, IrohDocsSync, stable_key,
-    topic_replica_id,
+    BucketReplica, BucketScope, DocOp, DocsSync, IrohDocsSync, TimeBucket, stable_key,
 };
 use kukuri_iroh_node::IrohDocsNode;
-use kukuri_transport::{
-    DhtDiscoveryOptions, SeedPeer, TransportNetworkConfig, TransportRelayConfig,
-};
+use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
 
-use crate::scan_stack::{SyntheticBasicAuth, build_participant};
+use crate::scan_stack::{SyntheticBasicAuth, WorkerParts, build_worker};
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const DEFAULT_RENDEZVOUS_REDIS_URL: &str = "redis://127.0.0.1:16379/";
@@ -105,111 +99,6 @@ pub struct AuthorNode {
     _data_dir: TempDir,
 }
 
-/// 実 `IrohDocsSync` の query 境界だけを可逆に失敗させるE2E専用ラッパー。
-///
-/// production runtimeに障害注入用envやendpointを持ち込まず、残りの同期・Postgres・ArcadeDB・
-/// user-apiは本物の構成のままreplica query failureを再現する。
-struct FaultInjectingDocsSync {
-    inner: Arc<IrohDocsSync>,
-    fail_queries: Arc<AtomicBool>,
-}
-
-#[cfg(test)]
-mod docs_wrapper_tests;
-
-#[async_trait]
-impl DocsSync for FaultInjectingDocsSync {
-    async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.open_replica(replica_id).await
-    }
-
-    async fn close_replica(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.close_replica(replica_id).await
-    }
-
-    async fn query_replica_by_author(
-        &self,
-        replica_id: &ReplicaId,
-        docs_author: &str,
-        key: &str,
-        policy: DocFetchPolicy,
-    ) -> Result<Option<DocRecord>> {
-        if self.fail_queries.load(Ordering::SeqCst) {
-            anyhow::bail!("injected replica query failure for {}", replica_id.as_str());
-        }
-        self.inner
-            .query_replica_by_author(replica_id, docs_author, key, policy)
-            .await
-    }
-
-    async fn register_private_replica_secret(
-        &self,
-        replica_id: &ReplicaId,
-        namespace_secret_hex: &str,
-    ) -> Result<()> {
-        self.inner
-            .register_private_replica_secret(replica_id, namespace_secret_hex)
-            .await
-    }
-
-    async fn remove_private_replica_secret(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.remove_private_replica_secret(replica_id).await
-    }
-
-    async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()> {
-        self.inner.apply_doc_op(replica_id, op).await
-    }
-
-    async fn query_replica_with_policy(
-        &self,
-        replica_id: &ReplicaId,
-        query: DocQuery,
-        policy: DocFetchPolicy,
-    ) -> Result<Vec<DocRecord>> {
-        if self.fail_queries.load(Ordering::SeqCst) {
-            anyhow::bail!("injected replica query failure for {}", replica_id.as_str());
-        }
-        self.inner
-            .query_replica_with_policy(replica_id, query, policy)
-            .await
-    }
-
-    async fn query_replica_keys(
-        &self,
-        replica_id: &ReplicaId,
-        query: kukuri_docs_sync::DocKeyQuery,
-    ) -> Result<kukuri_docs_sync::DocKeyPage> {
-        if self.fail_queries.load(Ordering::SeqCst) {
-            anyhow::bail!("injected replica query failure for {}", replica_id.as_str());
-        }
-        self.inner.query_replica_keys(replica_id, query).await
-    }
-
-    async fn subscribe_replica(&self, replica_id: &ReplicaId) -> Result<DocEventStream> {
-        self.inner.subscribe_replica(replica_id).await
-    }
-
-    async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
-        self.inner.import_peer_ticket(ticket).await
-    }
-
-    async fn learn_peer(&self, endpoint_id: &str) -> Result<()> {
-        self.inner.learn_peer(endpoint_id).await
-    }
-
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.inner.restart_replica_sync(replica_id).await
-    }
-
-    async fn set_seed_peers(&self, peers: Vec<SeedPeer>) -> Result<()> {
-        self.inner.set_seed_peers(peers).await
-    }
-
-    async fn assist_peer_ids(&self) -> Result<Vec<String>> {
-        self.inner.assist_peer_ids().await
-    }
-}
-
 /// 全構成 E2E の稼働一式。`boot` で本番相当の順序（migration → 投影 schema →
 /// 対象範囲の登録 → 常駐ワーカー → 有効化記録 → API 公開）で立ち上がる。
 pub struct E2eStack {
@@ -229,10 +118,8 @@ pub struct E2eStack {
     pub entries: Arc<PgIndexEntryStore>,
     pub api_base_url: String,
     arachnid_auth: SyntheticBasicAuth,
-    media_fetcher: Arc<dyn MediaFetcher>,
-    participant: Arc<IndexerParticipant>,
-    worker_docs: Arc<dyn DocsSync>,
-    replica_query_failure: Arc<AtomicBool>,
+    worker_parts: WorkerParts,
+    suspected_threshold: Option<u8>,
     worker: Option<WorkerHandle>,
     api_task: tokio::task::JoinHandle<()>,
     _relay: SpawnedIrohRelay,
@@ -375,22 +262,34 @@ impl E2eStack {
             _data_dir: author_dir,
         };
         let indexer_docs = Arc::new(IrohDocsSync::new(Arc::clone(&indexer_node)));
-        let replica_query_failure = Arc::new(AtomicBool::new(false));
-        let worker_docs: Arc<dyn DocsSync> = Arc::new(FaultInjectingDocsSync {
-            inner: Arc::clone(&indexer_docs),
-            fail_queries: Arc::clone(&replica_query_failure),
-        });
-        let indexer_blobs = Arc::new(IrohBlobService::new(Arc::clone(&indexer_node)));
-        let indexer_blob_service: Arc<dyn BlobService> = indexer_blobs.clone();
-        let ticket = loopback_ticket(&author.node)?;
-        indexer_docs.import_peer_ticket(&ticket).await?;
-        indexer_blobs.import_peer_ticket(&ticket).await?;
+        let indexer_blob_service: Arc<dyn BlobService> =
+            Arc::new(IrohBlobService::new(Arc::clone(&indexer_node)));
+        // 投稿者を CN の bootstrap 登録へ載せる。indexer はここから提供元を選び、bucket と media を読む。
+        let (endpoint_id, addr_hint) = loopback_ticket(&author.node)?
+            .split_once('@')
+            .map(|(id, addr)| (id.to_string(), addr.to_string()))
+            .context("loopback ticket has no address")?;
+        let author_pubkey = author.keys.public_key_hex();
+        sqlx::query("INSERT INTO cn_user.subscriber_accounts(subscriber_pubkey) VALUES ($1)")
+            .bind(&author_pubkey)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO cn_bootstrap.peer_registrations
+               (subscriber_pubkey, endpoint_id, addr_hint, expires_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')",
+        )
+        .bind(&author_pubkey)
+        .bind(endpoint_id)
+        .bind(addr_hint)
+        .execute(&pool)
+        .await?;
 
         // 5. 走査系（本物のプロバイダ実装 + wiremock、真実源は実 Postgres）。
         let runtime_state = Arc::new(IndexerRuntimeState::default());
         let media_fetch_config = options.media_fetch.unwrap_or_default();
         let media_fetcher: Arc<dyn MediaFetcher> = Arc::new(
-            BlobMediaFetcher::new(indexer_blob_service, media_fetch_config)
+            BlobMediaFetcher::new(Arc::clone(&indexer_blob_service), media_fetch_config)
                 .with_metrics(Arc::clone(&runtime_state)),
         );
         // 6. 索引の真実源（実 Postgres）と投影（実 ArcadeDB）。
@@ -405,48 +304,28 @@ impl E2eStack {
             .context("ArcadeDB is unreachable; run via `cargo xtask cn-e2e`")?;
 
         // 7. 走査系（本物のプロバイダ実装 + wiremock、真実源は実 Postgres）と常駐ワーカー
-        //    （本番と同じ participant / pipeline 構成）。
-        let participant = build_participant(
-            &pool,
-            &worker_docs,
-            &entries,
-            &projection,
-            &runtime_state,
-            &arachnid.uri(),
-            &vlm.uri(),
-            &arachnid_auth,
-            Arc::clone(&media_fetcher),
-            None,
-        )?;
-        let worker = IndexerWorker::new(
-            Arc::clone(&participant),
-            Arc::clone(&worker_docs),
-            Arc::clone(&runtime_state),
-            WorkerConfig {
-                poll_interval: Duration::from_millis(300),
-                event_debounce: Duration::from_millis(50),
-                backoff_base: Duration::from_millis(100),
-                backoff_max: Duration::from_millis(500),
-            },
-        );
-        let worker = worker.spawn();
+        //    （本番と同じ pipeline / bucket reader / 保守の構成）。
+        let worker_parts = WorkerParts {
+            pool: pool.clone(),
+            docs: Arc::clone(&indexer_docs),
+            blobs: indexer_blob_service,
+            entries: Arc::clone(&entries),
+            projection: Arc::clone(&projection),
+            runtime_state: Arc::clone(&runtime_state),
+            arachnid_url: arachnid.uri(),
+            vlm_url: vlm.uri(),
+            arachnid_auth: arachnid_auth.clone(),
+            media_fetcher,
+        };
+        let worker = build_worker(&worker_parts, None)?.spawn();
 
-        // 8. この走行専用の公開トピックを索引対象に登録する。
-        //
-        // 登録の前に投稿者側 replica を開いておく（namespace を実在させる）。indexer 側の
-        // 初回同期 join は相手に namespace が無いと `NotFound` で中断され、そのまま再試行
-        // されないため、投稿者側が先に replica を持っていることが同期成立の前提になる
-        // （実運用でも投稿が存在する topic だけが索引対象になるため、この順序が本番相当）。
+        // 8. この走行専用の公開トピックを索引対象に登録する（追加は需要として登録される。#1221 R5-E）。
         let topic_id = format!(
             "e2e-{prefix}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()
         );
-        author
-            .docs
-            .open_replica(&topic_replica_id(topic_id.as_str()))
-            .await?;
         add_supported_topic(&pool, IndexScopeKind::PublicTopic, topic_id.as_str()).await?;
 
         // 9. 有効化の関門（T3）を通し、cn-user-api を公開する。
@@ -508,10 +387,8 @@ impl E2eStack {
             entries,
             api_base_url,
             arachnid_auth,
-            media_fetcher,
-            participant,
-            worker_docs,
-            replica_query_failure,
+            worker_parts,
+            suspected_threshold: None,
             worker: Some(worker),
             api_task,
             _relay: relay,
@@ -577,7 +454,6 @@ impl E2eStack {
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let topic = TopicId::new(self.topic_id.clone());
-        let replica = topic_replica_id(self.topic_id.as_str());
         let manifest = KukuriMediaManifestV1 {
             manifest_id: manifest_id.clone(),
             owner_pubkey: self.author.keys.public_key(),
@@ -611,7 +487,7 @@ impl E2eStack {
             .context("post envelope must yield a post object")?;
         let object_id = object.object_id.as_str().to_string();
         let docs = &self.author.docs;
-        docs.open_replica(&replica).await?;
+        let replica = self.topic_bucket(object.created_at)?;
         for (key, value) in [
             (
                 stable_key("objects", &format!("{object_id}/state")),
@@ -661,7 +537,6 @@ impl E2eStack {
         attachments: Vec<AssetRef>,
     ) -> Result<String> {
         let topic = TopicId::new(self.topic_id.clone());
-        let replica = topic_replica_id(self.topic_id.as_str());
         let envelope = build_post_envelope_with_payload(
             keys,
             &topic,
@@ -678,7 +553,7 @@ impl E2eStack {
             .context("post envelope must yield a post object")?;
         let object_id = object.object_id.as_str().to_string();
         let docs = &self.author.docs;
-        docs.open_replica(&replica).await?;
+        let replica = self.topic_bucket(object.created_at)?;
         docs.apply_doc_op(
             &replica,
             DocOp::SetJson {
@@ -697,6 +572,17 @@ impl E2eStack {
         .await?;
         persist_timeline_index(docs.as_ref(), &replica, &object).await?;
         Ok(object_id)
+    }
+
+    /// 署名済みの作成時刻が属する、この走行の公開 topic の bucket（#1221 R5-H の書込み先）。
+    fn topic_bucket(&self, created_at: i64) -> Result<ReplicaId> {
+        Ok(BucketReplica::new(
+            BucketScope::Topic {
+                topic_id: self.topic_id.clone(),
+            },
+            TimeBucket::from_unix_seconds(created_at)?,
+        )?
+        .replica_id())
     }
 
     /// 対象 object が実 ArcadeDB 投影へ入るまで待つ（最長 timeout）。
@@ -850,18 +736,7 @@ impl E2eStack {
         if let Some(worker) = self.worker.take() {
             worker.shutdown().await;
         }
-        let worker = IndexerWorker::new(
-            Arc::clone(&self.participant),
-            Arc::clone(&self.worker_docs),
-            Arc::clone(&self.runtime_state),
-            WorkerConfig {
-                poll_interval: Duration::from_millis(300),
-                event_debounce: Duration::from_millis(50),
-                backoff_base: Duration::from_millis(100),
-                backoff_max: Duration::from_millis(500),
-            },
-        );
-        self.worker = Some(worker.spawn());
+        self.worker = Some(build_worker(&self.worker_parts, self.suspected_threshold)?.spawn());
         Ok(())
     }
 
@@ -874,27 +749,22 @@ impl E2eStack {
         &mut self,
         threshold: Option<u8>,
     ) -> Result<()> {
-        if let Some(worker) = self.worker.take() {
-            worker.shutdown().await;
-        }
-        self.participant = build_participant(
-            &self.pool,
-            &self.worker_docs,
-            &self.entries,
-            &self.projection,
-            &self.runtime_state,
-            &self.arachnid.uri(),
-            &self.vlm.uri(),
-            &self.arachnid_auth,
-            Arc::clone(&self.media_fetcher),
-            threshold,
-        )?;
+        self.suspected_threshold = threshold;
         self.restart_worker().await
     }
 
-    /// E2E内のdocs replica query障害を有効化・解除する。
-    pub fn set_replica_query_failure(&self, enabled: bool) {
-        self.replica_query_failure.store(enabled, Ordering::SeqCst);
+    /// 投稿者の bootstrap 登録を失効・復帰させ、indexer が選べる提供元の有無を切り替える。
+    pub async fn set_author_provider_available(&self, available: bool) -> Result<()> {
+        sqlx::query(
+            "UPDATE cn_bootstrap.peer_registrations
+             SET expires_at = NOW() + CASE WHEN $2 THEN INTERVAL '1 day' ELSE INTERVAL '-1 day' END
+             WHERE subscriber_pubkey = $1",
+        )
+        .bind(self.author.keys.public_key_hex())
+        .bind(available)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// 既定の許可応答を両プロバイダ模擬へ載せ直す（`MockServer::reset` 後の復旧用）。

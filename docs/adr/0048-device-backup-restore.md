@@ -63,7 +63,7 @@ Accepted
 - 旧`iroh-data`にしか無い本人のデータ（本人投稿の本文・添付・state・envelope・media manifest・プロフィールの行、bookmark、private参加状態の現epochの記録、未送信outboxのframeと暗号化添付、DM履歴の平文添付、custom reaction bookmarkのasset、本人のprofile avatar、自作のcustom reaction asset、自作Domeのpin済みasset、自分が署名したlive/gameのmanifest）を、R5-Aのremote cacheと保護参照（大きいblobは`kukuri.remote-blobs/`のfile）へ移す。新しいstoreは作らない。ownerの参加者名簿はR5-Hの参加record配送で扱う。
 - 移行はkindごとの索引（`envelopes`・bookmark・DMの行、live/gameの反映時刻、capabilityの一覧、SDKのpin tag）を1回128件以内のcursorで歩き、BLAKE3（blob）とcontent hash（record）で照合してから写し、`protected_migration`へ位置と終端へ達した時刻を保存する。途中で止まれば保存した位置から同じ結果でやり直す。旧領域に無いものは写さずに進み、旧領域から何も読めなかった参照（復元後・旧領域の回収後）は置き換えず、既にある保護を減らさない。
 - 保護参照はindex行の寿命に従う。bookmarkとcustom reaction bookmarkの解除、DMのACKと手元の削除で、同じtransactionの中で外す。privateの記録は旧領域が無くても、capabilityを持つ間はkey指定の手元の読み出しで読める。
-- 旧領域を削除できる前提: R5-Hのwriter切替（本人の新しい書込みを旧領域へ入れない）を永続化した後に、全kindの`caught_up_at`がその時刻より後になっていること（`SqliteStore::protected_migration_caught_up_at`）。削除そのもの（有限単位の回収）はR5-Iで行う。
+- 旧領域を削除できる前提: R5-Hのwriter切替（本人の新しい書込みを旧領域へ入れない）を永続化した後に、全kindの`caught_up_at`がその時刻より後になっていること（`SqliteStore::protected_migration_caught_up_at`と`SqliteStore::writer_switched_at`。切替の時刻は`writer_cutover`に1回だけ保存し、R5-Gの移行が全kindで終端へ達した時にだけ入る）。削除そのもの（有限単位の回収）はR5-Iで行う。
 - 旧案の失効: `iroh-data`全体を毎回backupへ含める案（component version 1）は失効した。component version 2だけを作成・復元し、1の復元は既存状態を変更せず拒否する。
 
 ## Consequences

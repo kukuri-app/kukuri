@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use kukuri_cn_core::{IndexScopeKind, MemoryIndexEntryStore};
 use kukuri_cn_indexer::ingest::IngestPipeline;
-use kukuri_cn_indexer::participant::ScopeReplica;
 use kukuri_cn_indexer::projection::MemoryIndexProjection;
 use kukuri_cn_safety::provider::SubjectKind;
 use kukuri_cn_safety::{MockSafetyProvider, ModerationEventSigner};
@@ -103,12 +102,11 @@ async fn active_transmission_prevention_wins_before_scan_and_reingest() -> Resul
     let (pipeline, entries, store) = pipeline_with(&docs, &projection);
     entries.prevent_subject(object_id.clone());
 
-    let scope = ScopeReplica::from_scope(IndexScopeKind::PublicTopic, topic.as_str());
     let first = pipeline
-        .ingest_recent_scope(scope.kind, &scope.id, &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
     let second = pipeline
-        .ingest_recent_scope(scope.kind, &scope.id, &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
 
     assert_eq!(first.deindexed, 1);
@@ -147,7 +145,7 @@ async fn verified_author_withdrawal_deindexes_and_never_reappears() -> Result<()
 
     let (pipeline, entries, store) = pipeline_with(&docs, &projection);
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, topic.as_str(), &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, topic.as_str(), &replica, &[])
         .await?;
     assert_eq!(summary.deindexed, 1);
     assert!(!entries.contains(IndexScopeKind::PublicTopic, topic.as_str(), &object_id));

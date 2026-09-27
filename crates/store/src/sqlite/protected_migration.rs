@@ -12,7 +12,8 @@ use kukuri_core::DirectMessageAttachmentManifestV1;
 pub const PROTECTED_MIGRATION_PAGE: usize = 128;
 
 /// 移行する kind。`private` と `dome_pin` は呼出し元が旧領域の索引(capability の一覧・blob の tag)から読む。
-pub const PROTECTED_MIGRATION_KINDS: [&str; 10] = [
+/// `owner_participants` は、owner の channel の旧 docs にある参加 record を参加者の表へ移す(#1221 R5-H)。
+pub const PROTECTED_MIGRATION_KINDS: [&str; 11] = [
     "own_envelope",
     "bookmark",
     "reaction_bookmark",
@@ -23,6 +24,7 @@ pub const PROTECTED_MIGRATION_KINDS: [&str; 10] = [
     "avatar",
     "private",
     "dome_pin",
+    "owner_participants",
 ];
 
 /// 候補の保護参照の元。呼出し元は、これから旧領域の依存 record と追加の blob を求める。
@@ -334,6 +336,32 @@ impl SqliteStore {
     /// (R5-H)の永続化より後のときだけ。
     pub async fn protected_migration_caught_up_at(&self) -> Result<Option<i64>> {
         caught_up_at(&mut *self.pool.acquire().await?).await
+    }
+
+    /// 新形式の writer へ切り替えた時刻(R5-H)。切り替えていなければ `None`。
+    pub async fn writer_switched_at(&self) -> Result<Option<i64>> {
+        Ok(
+            sqlx::query_scalar("SELECT switched_at FROM writer_cutover WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
+    /// 保護移行が全 kind で終端へ達していれば、切替の時刻を 1 回だけ保存する。保存済みならその時刻を返し、
+    /// 移行が済んでいなければ `None`(旧 writer のまま)。
+    pub async fn switch_writer_if_migrated(&self) -> Result<Option<i64>> {
+        let mut tx = self.pool.begin().await?;
+        if caught_up_at(&mut tx).await?.is_some() {
+            sqlx::query("INSERT OR IGNORE INTO writer_cutover (id, switched_at) VALUES (1, ?1)")
+                .bind(now_ms()?)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let switched = sqlx::query_scalar("SELECT switched_at FROM writer_cutover WHERE id = 1")
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(switched)
     }
 
     /// 停止した account の SQLite を 1 本の接続で読み、backup に含める保護された file の名前

@@ -42,10 +42,6 @@ impl AppService {
             },
             |rows| rows.is_empty(),
             || async {
-                self.maybe_restart_scope_subscription(topic_id, &scope)
-                    .await;
-                self.maybe_restart_scope_replica_sync(topic_id, &scope)
-                    .await;
                 // #1239: replica を走査しない。session の固定件数だけを、key の一覧から反映する。
                 self.catch_up_scope_sessions(topic_id, &scope).await?;
                 self.services
@@ -113,10 +109,10 @@ impl AppService {
             ),
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
-        let source_replica_id = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
+        // 切替後は作成時の bucket に entity の最新 state を置く(id の時刻から読み手が bucket を決める)。
+        let source_replica_id =
+            self.services
+                .scope_write_replica(topic_id, private_state.as_ref(), now / 1_000)?;
         let session_id = format!(
             "live-{}-{}",
             now,
@@ -150,6 +146,7 @@ impl AppService {
                     topic_id: topic.clone(),
                     session_id: session_id.clone(),
                     object_kind: "live-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -207,6 +204,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: session_id.to_string(),
                     object_kind: "live-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;

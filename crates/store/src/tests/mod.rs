@@ -20,6 +20,7 @@ mod notifications_dispatch;
 mod page_query_plans;
 mod pagination;
 mod post_withdrawals;
+mod private_channel_participants;
 mod private_index_grants;
 mod protected_migration;
 mod row_mapping_edge;

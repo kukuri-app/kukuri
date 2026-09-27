@@ -4,8 +4,13 @@ use kukuri_desktop_runtime::{
     ScopeLimitReached, SubscriptionStateError, SubscriptionStateErrorKind,
 };
 use serde_json::json;
+use std::io::Write;
 
 use crate::protocol::{ProtocolError, error_code};
+
+/// この環境変数がある daemon だけが、`internal_error` に分類したエラーの chain を stderr へ 1 行で出す(試験の診断用の
+/// opt-in)。protocol の応答(message・details)へは転記しない。
+pub(crate) const DEBUG_INTERNAL_ERRORS_ENV: &str = "KUKURI_CLI_DEBUG_INTERNAL_ERRORS";
 
 pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
     if let Some(error) = error.downcast_ref::<CommunityNodeIndexQueryError>() {
@@ -71,7 +76,45 @@ pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
         "direct message reply target was not found" => {
             ProtocolError::new(error_code::NOT_FOUND, "返信先のDMが見つかりません")
         }
-        _ => ProtocolError::new(error_code::INTERNAL_ERROR, "操作を完了できませんでした"),
+        _ => {
+            write_internal_error_diagnostic(
+                std::env::var_os(DEBUG_INTERNAL_ERRORS_ENV).is_some(),
+                &error,
+                &mut std::io::stderr(),
+            );
+            ProtocolError::new(error_code::INTERNAL_ERROR, "操作を完了できませんでした")
+        }
+    }
+}
+
+/// `enabled` のときだけ、エラーの chain を 1 行で `out` へ書く。書けなくても応答は変えない。
+fn write_internal_error_diagnostic(enabled: bool, error: &anyhow::Error, out: &mut impl Write) {
+    if enabled {
+        let chain = format!("{error:#}").replace(['\r', '\n'], " ");
+        let _ = writeln!(out, "kukuri-cli internal_error: {chain}");
+    }
+}
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+
+    // opt-in のときだけ stderr へ chain を出し、応答には出さない。既定では何も出さない。
+    #[test]
+    fn internal_error_chain_goes_to_stderr_only_when_opted_in() {
+        let error = anyhow::anyhow!("inner-sentinel").context("outer-sentinel");
+        let mut enabled = Vec::new();
+        write_internal_error_diagnostic(true, &error, &mut enabled);
+        let line = String::from_utf8(enabled).expect("utf8");
+        assert!(line.contains("outer-sentinel") && line.contains("inner-sentinel"));
+        assert_eq!(line.lines().count(), 1);
+        let mut disabled = Vec::new();
+        write_internal_error_diagnostic(false, &error, &mut disabled);
+        assert!(disabled.is_empty());
+        let response = command_error(error);
+        assert_eq!(response.code, error_code::INTERNAL_ERROR);
+        assert!(!response.message.contains("sentinel"));
+        assert!(response.details.is_none());
     }
 }
 

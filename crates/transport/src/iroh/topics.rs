@@ -235,11 +235,13 @@ impl IrohGossipTransport {
         &self,
         topic: &TopicId,
     ) -> Result<Vec<SeedPeer>> {
+        // 購読(`subscribe_hints`)と同じ hint topic の状態を読む(#1221 R5-H)。
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
         let Some((neighbors, cursor, closed)) = self
             .topic_states
             .lock()
             .await
-            .get(topic.as_str())
+            .get(hint_topic.as_str())
             .map(|state| {
                 (
                     Arc::clone(&state.neighbors),

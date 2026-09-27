@@ -89,9 +89,7 @@ impl AppService {
             }
             let local_pubkey = Pubkey::from(local_author.clone());
             if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
-                persist_private_channel_participant(
-                    self.docs_sync(),
-                    self.keys(),
+                self.record_private_channel_participant(
                     &PrivateChannelParticipantDocV1 {
                         channel_id: metadata.channel_id.clone(),
                         topic_id: metadata.topic_id.clone(),
@@ -104,6 +102,8 @@ impl AppService {
                         share_token_id: None,
                         left_at: None,
                     },
+                    policy.owner_pubkey.as_str(),
+                    payload.new_namespace_secret_hex.as_str(),
                     &next_replica,
                 )
                 .await?;
@@ -139,34 +139,51 @@ impl AppService {
             .as_ref()
             .map(|policy| policy.sharing_state.clone())
             .unwrap_or(ChannelSharingState::Open);
-        let participants = fetch_private_channel_participants_from_replica(
-            self.docs_sync(),
-            &replica,
-            DocFetchPolicy::LocalOnly,
-        )
-        .await?;
-        let participants =
-            active_private_channel_participants(&participants, state.current_epoch_id.as_str());
-        let participant_count = participants.len();
+        // #1221 R5-H: 参加者数は参加者の表(owner は account 経路で届いた参加・退出)の現 epoch の行で数える。
+        // 参加・退出 record は owner にだけ届くため、人数は owner の端末だけが返す(2026-09-27 ユーザー決定)。
+        let store = &self.services.projection_store;
+        let channel_id = state.channel_id.as_str();
+        let epoch_id = state.current_epoch_id.as_str();
+        let is_owner = state.owner_pubkey == self.current_author_pubkey();
+        let participant_count = if is_owner {
+            Some(
+                store
+                    .count_private_channel_participants(channel_id, epoch_id)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut stale_participant_count = 0usize;
-        if state.audience_kind == ChannelAudienceKind::FriendOnly
-            && state.owner_pubkey == self.current_author_pubkey()
-        {
-            for participant in &participants {
-                if participant.is_owner {
-                    continue;
-                }
-                let relationship = self
-                    .services
-                    .projection_store
-                    .get_author_relationship(
-                        self.current_author_pubkey().as_str(),
-                        participant.participant_pubkey.as_str(),
+        if state.audience_kind == ChannelAudienceKind::FriendOnly && is_owner {
+            let mut after = String::new();
+            loop {
+                let page = store
+                    .list_private_channel_participants(
+                        channel_id,
+                        Some(epoch_id),
+                        &after,
+                        PRIVATE_CHANNEL_PARTICIPANT_PAGE,
                     )
                     .await?;
-                if relationship.as_ref().is_some_and(|value| !value.mutual) {
-                    stale_participant_count += 1;
+                let Some(last) = page.last().cloned() else {
+                    break;
+                };
+                for participant in page {
+                    if participant == state.owner_pubkey {
+                        continue;
+                    }
+                    let relationship = store
+                        .get_author_relationship(
+                            self.current_author_pubkey().as_str(),
+                            participant.as_str(),
+                        )
+                        .await?;
+                    if relationship.as_ref().is_some_and(|value| !value.mutual) {
+                        stale_participant_count += 1;
+                    }
                 }
+                after = last;
             }
         }
         Ok(PrivateChannelDiagnostics {
@@ -224,7 +241,7 @@ impl AppService {
             current_epoch_secret_hex: state.current_epoch_secret_hex.clone(),
             archived_epochs: state.archived_epochs.clone(),
             rotation_required: diagnostics.rotation_required,
-            participant_count: diagnostics.participant_count,
+            participant_count: diagnostics.participant_count.unwrap_or_default(),
             stale_participant_count: diagnostics.stale_participant_count,
             namespace_secret_hex: state.current_epoch_secret_hex.clone(),
         })
@@ -509,434 +526,6 @@ impl AppService {
         ))
         .await;
         Ok(removed)
-    }
-
-    pub(crate) async fn spawn_subscription_task(
-        &self,
-        topic_id: &str,
-        channel_id: Option<ChannelId>,
-        replica: ReplicaId,
-        hint_topic: TopicId,
-    ) -> Result<ScopeTask> {
-        let services = self.services.clone();
-        let metaverse_room_events = Arc::clone(&self.metaverse_room_events);
-        let dome_host_heartbeats = Arc::clone(&self.dome_host_heartbeats);
-        let last_sync = Arc::clone(&self.last_sync_ts);
-        let notification_inserted = Arc::clone(&self.notification_inserted_notify);
-        let public_topic_delivery = Arc::clone(&self.public_topic_delivery);
-        let topic = topic_id.to_string();
-        let storage_channel_id = channel_storage_id(channel_id.as_ref());
-        let local_author_pubkey = self.current_author_pubkey();
-        let is_public_topic = channel_id.is_none();
-        let subscription_key = if is_public_topic {
-            topic_id.to_string()
-        } else {
-            replica.as_str().to_string()
-        };
-        let generation = self
-            .next_subscription_generation(subscription_key.as_str())
-            .await;
-        if is_public_topic {
-            self.reset_public_topic_delivery_generation(topic_id, generation)
-                .await;
-        }
-        services.docs_sync.open_replica(&replica).await?;
-        // #1239: entry の event のほかに、取りこぼしと同期の区切りも受け取る(窓の追いつきの契機にする)。
-        let mut doc_stream = services
-            .docs_sync
-            .subscribe_replica_notices(&replica)
-            .await?;
-        let mut hint_stream = services.hint_transport.subscribe_hints(&hint_topic).await?;
-        let replica_for_task = replica.clone();
-        let handle = tokio::spawn(async move {
-            let projection_store = &services.projection_store;
-            let docs_sync = &services.docs_sync;
-            let blob_service = &services.blob_service;
-            let transport = &services.transport;
-            let notification_baseline = match snapshot_window_notification_baseline(
-                docs_sync.as_ref(),
-                &replica_for_task,
-            )
-            .await
-            {
-                Ok(baseline) => baseline,
-                Err(error) => {
-                    warn!(
-                        topic = %topic,
-                        replica = %replica_for_task.as_str(),
-                        error = %error,
-                        "failed to snapshot local notification baseline for subscription bootstrap"
-                    );
-                    NotificationDocEventBaseline::default()
-                }
-            };
-            let mut recovery_tick = tokio::time::interval(std::time::Duration::from_secs(1));
-            recovery_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // #1239: replica を走査しない。起動時は、窓(新しい側の固定件数)だけを手元の docs から追いつく。
-            if let Err(error) = catch_up_replica_window(
-                &services,
-                topic.as_str(),
-                &replica_for_task,
-                DocFetchPolicy::LocalOnly,
-                true,
-            )
-            .await
-            {
-                warn!(
-                    topic = %topic,
-                    replica = %replica_for_task.as_str(),
-                    error = %error,
-                    "failed to hydrate local subscription cache during background bootstrap"
-                );
-            }
-            let mut recovery_backoff = SubscriptionRecoveryBackoff::default();
-            let mut recovery_probe_due_at = Utc::now()
-                .timestamp_millis()
-                .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-            let mut catch_up = CatchUpSchedule::default();
-            loop {
-                tokio::select! {
-                    Some(notice) = doc_stream.next() => {
-                        let event = match notice {
-                            Ok(kukuri_docs_sync::ReplicaNotice::Entry(event)) => Ok(event),
-                            Ok(kukuri_docs_sync::ReplicaNotice::Lagged { .. }) => {
-                                catch_up.request_after_lag();
-                                continue;
-                            }
-                            Ok(kukuri_docs_sync::ReplicaNotice::ContentReady) => {
-                                for (pending_topic, key, expected_hash) in services.session_projections.take_ready_entries(&replica_for_task).await {
-                                    let event = DocEvent { replica_id: replica_for_task.clone(), key,
-                                        content_hash: expected_hash.unwrap_or_default(), source_peer: None, docs_author: None };
-                                    match hydrate_subscription_doc_event(&services, &pending_topic, &replica_for_task, &event).await {
-                                        Ok(count) if count > 0 => { *last_sync.lock().await = Some(Utc::now().timestamp_millis()); }
-                                        Ok(_) => {}
-                                        Err(error) => { warn!(%error, "failed to reflect an available session entry"); }
-                                    }
-                                }
-                                catch_up.request_now();
-                                continue;
-                            }
-                            Ok(kukuri_docs_sync::ReplicaNotice::SyncFinished) => {
-                                catch_up.request();
-                                continue;
-                            }
-                            Err(error) => Err(error),
-                        };
-                        if let Ok(event) = event {
-                            let now = Utc::now().timestamp_millis();
-                            let had_source_peer = event.source_peer.is_some();
-                            if let Some(source_peer) = event.source_peer.as_deref() {
-                                if let Err(error) = docs_sync.learn_peer(source_peer).await {
-                                    warn!(
-                                        topic = %topic,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn docs peer from docs sync event"
-                                    );
-                                }
-                                if let Err(error) = blob_service.learn_peer(source_peer).await {
-                                    warn!(
-                                        topic = %topic,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn blob peer from docs sync event"
-                                    );
-                                }
-                            }
-                            match AppService::maybe_create_notification_for_remote_object_event(
-                                projection_store.as_ref(),
-                                docs_sync.as_ref(),
-                                blob_service.as_ref(),
-                                local_author_pubkey.as_str(),
-                                topic.as_str(),
-                                &notification_baseline,
-                                &event,
-                            ).await {
-                                Ok(true) => {
-                                    *last_sync.lock().await = Some(now);
-                                    notification_inserted.notify_waiters();
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    warn!(
-                                        topic = %topic,
-                                        key = %event.key,
-                                        error = %error,
-                                        "failed to create notification from remote object event"
-                                    );
-                                }
-                            }
-                            let hydrated = match hydrate_subscription_doc_event(
-                                &services,
-                                topic.as_str(),
-                                &replica_for_task,
-                                &event,
-                            ).await {
-                                Ok(count) => count,
-                                Err(error) => {
-                                    warn!(
-                                        topic = %topic,
-                                        key = %event.key,
-                                        error = %error,
-                                        "failed to hydrate subscription from docs event"
-                                    );
-                                    0
-                                }
-                            };
-                            let session_notice = hydrated == 0 && super::hydration_support::is_session_notice(&services, &replica_for_task, &event.key).await;
-                            // 相手から届いた、個別反映の対象でない key や、本体がまだ届いていない entry。走査はせず、
-                            // 追いつきを依頼する(自分が書いた entry と、反映済みの object を指す索引は依頼しない)。
-                            if hydrated == 0
-                                && !session_notice
-                                && had_source_peer
-                                && missed_entry_needs_catch_up(projection_store.as_ref(), &event.key).await
-                            {
-                                catch_up.request_now();
-                            }
-                            if hydrated > 0 {
-                                catch_up.record_progress();
-                                recovery_backoff.reset();
-                                if is_public_topic && event.source_peer.is_some() {
-                                    record_public_topic_docs_activity_if_current(
-                                        &public_topic_delivery,
-                                        topic.as_str(),
-                                        generation,
-                                        now,
-                                    )
-                                    .await;
-                                    recovery_backoff.reset();
-                                    recovery_probe_due_at =
-                                        now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                                }
-                                *last_sync.lock().await = Some(now);
-                            } else if !session_notice {
-                                restart_replica_sync_with_backoff(
-                                    docs_sync.as_ref(),
-                                    topic.as_str(),
-                                    &replica_for_task,
-                                    &mut recovery_backoff,
-                                )
-                                .await;
-                                if is_public_topic && had_source_peer {
-                                    recovery_probe_due_at =
-                                        now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                                }
-                            }
-                        }
-                    }
-                    Some(event) = hint_stream.next() => {
-                        if hint_targets_topic(&event.hint, topic.as_str()) {
-                            if !event.source_peer.is_empty() {
-                                let source_peer = event.source_peer.as_str();
-                                if let Err(error) = docs_sync.learn_peer(source_peer).await {
-                                    warn!(
-                                        topic = %topic,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn docs peer from hint event"
-                                    );
-                                }
-                                if let Err(error) = blob_service.learn_peer(source_peer).await {
-                                    warn!(
-                                        topic = %topic,
-                                        source_peer = %source_peer,
-                                        error = %error,
-                                        "failed to learn blob peer from hint event"
-                                    );
-                                }
-                            }
-                            match &event.hint {
-                                GossipHint::MetaverseRoomEvent { event: envelope, .. } => {
-                                    let now = Utc::now().timestamp_millis();
-                                    match parse_metaverse_room_event_envelope(
-                                        envelope.as_ref().clone(),
-                                        event.received_at,
-                                        event.source_peer.clone(),
-                                    ) {
-                                        Ok(Some(view)) => {
-                                            push_metaverse_room_event_buffer(
-                                                &metaverse_room_events,
-                                                view,
-                                            )
-                                            .await;
-                                            *last_sync.lock().await = Some(now);
-                                        }
-                                        Ok(None) => {}
-                                        Err(error) => {
-                                            warn!(
-                                                topic = %topic,
-                                                error = %error,
-                                                "failed to parse metaverse room event hint"
-                                            );
-                                        }
-                                    }
-                                }
-                                GossipHint::DomeHostHeartbeat { instance_id, heartbeat, .. } => {
-                                    let mut heartbeats = dome_host_heartbeats.lock().await;
-                                    let replace = heartbeats
-                                        .get(instance_id)
-                                        .is_none_or(|current| {
-                                            heartbeat.heartbeat.sequence > current.heartbeat.sequence
-                                                || (heartbeat.heartbeat.sequence == current.heartbeat.sequence
-                                                    && heartbeat.heartbeat.sent_at > current.heartbeat.sent_at)
-                                        });
-                                    if replace {
-                                        heartbeats.insert(instance_id.clone(), heartbeat.as_ref().clone());
-                                        *last_sync.lock().await = Some(Utc::now().timestamp_millis());
-                                    }
-                                }
-                                GossipHint::LivePresence { session_id, author, ttl_ms, .. } => {
-                                    let now = Utc::now().timestamp_millis();
-                                    let _ = projection_store
-                                        .upsert_live_presence(
-                                            topic.as_str(),
-                                            storage_channel_id.as_str(),
-                                            session_id.as_str(),
-                                            author.as_str(),
-                                            now + i64::from(*ttl_ms),
-                                            now,
-                                        )
-                                        .await;
-                                    let _ = projection_store.clear_expired_live_presence(now).await;
-                                    *last_sync.lock().await = Some(now);
-                                }
-                                _ => {
-                                    let hydrated = match hydrate_subscription_hint(
-                                        &services,
-                                        topic.as_str(),
-                                        &replica_for_task,
-                                        &event.hint,
-                                    )
-                                    .await {
-                                        Ok(count) => count,
-                                        Err(error) => {
-                                            warn!(
-                                                topic = %topic,
-                                                error = %error,
-                                                "failed to hydrate subscription from hint"
-                                            );
-                                            0
-                                        }
-                                    };
-                                    if matches!(&event.hint, GossipHint::SessionChanged { object_kind, .. }
-                                        if matches!(object_kind.as_str(), "live-session" | "game-session")) {
-                                        services.session_projections.schedule(&services).await;
-                                        if hydrated == 0 { continue; }
-                                    }
-                                    let now = Utc::now().timestamp_millis();
-                                    // #1239: 個別反映が 0 件でも走査しない。replica の内容を指す hint だけ、
-                                    // 追いつきを依頼する(docs の同期より先に hint が届いた場合など)。
-                                    if hydrated == 0 {
-                                        if !hint_refers_to_replica_content(&event.hint) {
-                                            continue;
-                                        }
-                                        catch_up.request_now();
-                                    }
-                                    if hydrated > 0 {
-                                        catch_up.record_progress();
-                                        recovery_backoff.reset();
-                                        if is_public_topic && !event.source_peer.is_empty() {
-                                            record_public_topic_docs_activity_if_current(
-                                                &public_topic_delivery,
-                                                topic.as_str(),
-                                                generation,
-                                                now,
-                                            )
-                                            .await;
-                                            recovery_backoff.reset();
-                                            recovery_probe_due_at =
-                                                now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                                        }
-                                        *last_sync.lock().await = Some(now);
-                                    } else {
-                                        restart_replica_sync_with_backoff(
-                                            docs_sync.as_ref(),
-                                            topic.as_str(),
-                                            &replica_for_task,
-                                            &mut recovery_backoff,
-                                        )
-                                        .await;
-                                        recovery_probe_due_at =
-                                            now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ = recovery_tick.tick() => {
-                        let now = Utc::now().timestamp_millis();
-                        if let Some(run) = catch_up.take_due(now) {
-                            let hydrated = match catch_up_replica_window(
-                                &services,
-                                topic.as_str(),
-                                &replica_for_task,
-                                DocFetchPolicy::LocalThenRemote,
-                                run.refresh_reactions,
-                            )
-                            .await {
-                                Ok(count) => count,
-                                Err(error) => {
-                                    warn!(
-                                        topic = %topic,
-                                        replica = %replica_for_task.as_str(),
-                                        error = %error,
-                                        "failed to catch up the replica window"
-                                    );
-                                    catch_up.restore(run);
-                                    0
-                                }
-                            };
-                            let now = Utc::now().timestamp_millis();
-                            catch_up.record_finished(now, hydrated);
-                            if hydrated > 0 {
-                                recovery_backoff.reset();
-                                recovery_probe_due_at =
-                                    now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                                *last_sync.lock().await = Some(now);
-                            }
-                            continue;
-                        }
-                        if !is_public_topic || recovery_probe_due_at > now {
-                            continue;
-                        }
-                        let (has_live_topic_peer, has_configured_topic_peer, docs_assist_peer_count) =
-                            recovery_probe_peer_state(
-                                transport.as_ref(),
-                                docs_sync.as_ref(),
-                                topic.as_str(),
-                            )
-                            .await;
-                        // #1225: 走査しない場合も次の期限を置く。置かないと毎秒 peer を照会し続ける。
-                        if docs_assist_peer_count == 0
-                            && (has_live_topic_peer || !has_configured_topic_peer)
-                        {
-                            recovery_probe_due_at =
-                                now.saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS);
-                            continue;
-                        }
-                        // #1239: recovery tick は docs を読まない。再 sync を backoff つきで促すだけで、
-                        // 届いた entry は docs の event が、取りこぼしは同期の区切りの通知からの追いつきが反映する。
-                        restart_replica_sync_with_backoff(
-                            docs_sync.as_ref(),
-                            topic.as_str(),
-                            &replica_for_task,
-                            &mut recovery_backoff,
-                        )
-                        .await;
-                        recovery_probe_due_at = recovery_backoff.next_probe_at(now);
-                    }
-                    // hint の購読を抜けるのは lease の持ち主(`stop_scope_task`)。
-                    else => break,
-                }
-            }
-        });
-
-        Ok(ScopeTask {
-            handle: AbortOnDropTask::new(handle),
-            replica,
-            hint_topic: Some(hint_topic),
-            previous: None,
-        })
     }
 }
 

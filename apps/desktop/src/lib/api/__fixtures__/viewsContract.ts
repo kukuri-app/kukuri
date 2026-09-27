@@ -441,7 +441,7 @@ export const joinedPrivateChannelView = {
   ],
   "sharing_state": "frozen",
   "rotation_required": true,
-  "participant_count": 4,
+  "participant_count": null,
   "stale_participant_count": 1,
   "entry_dome_instance_id": "dome-entry"
 } satisfies JoinedPrivateChannelView;

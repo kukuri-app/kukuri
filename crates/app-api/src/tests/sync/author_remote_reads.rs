@@ -2,6 +2,7 @@
 //! provider の履歴(edge・投稿)を 10 倍にしても、provider から読む量が変わらないことを固定する。
 
 use super::*;
+use crate::service::author_state_support::AUTHOR_EDGE_KEYS;
 use crate::service::profile_timeline_support::profile_timeline_page;
 use kukuri_core::DomeMovePhaseV1;
 
@@ -79,20 +80,28 @@ async fn put_profile_post(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_a
     let post = parse_profile_post(&envelope)
         .expect("parse profile post")
         .expect("profile post");
-    persist_profile_post_doc(docs_sync, &post, &envelope)
-        .await
-        .expect("persist profile post");
+    persist_profile_post_doc(
+        docs_sync,
+        &author_replica_id(post.author_pubkey.as_str()),
+        &post,
+        &envelope,
+    )
+    .await
+    .expect("persist profile post");
     object_id.as_str().to_string()
 }
 
-// 購読の開始時の反映は、手元に無い profile と自分を指す follow・block だけを provider から読む。
-// provider の follow の総数を 10 倍にしても読む量は同じで、他の相手を指す edge は remote から読まない。
+// 購読の開始時の反映は、手元に無い profile と自分を指す follow・block と、follow の窓(512 key)を provider から読む
+// (#1221 R5-H、友達の友達の判定)。provider の follow の総数を 10 倍にしても読む量は同じで、窓の外の edge は読まない。
 #[tokio::test]
-async fn author_state_reads_only_the_current_keys_from_a_provider() {
+async fn author_state_reads_the_current_keys_and_a_bounded_follow_window_from_a_provider() {
     let mut counts = Vec::new();
-    for edges in [60, 600] {
+    for edges in [600, 6000] {
         let author = generate_keys();
-        let local = generate_keys();
+        // 自分を指す edge の key が窓の外に並ぶ相手にして、窓の key の数を 2 回で揃える。
+        let local = std::iter::repeat_with(generate_keys)
+            .find(|keys| keys.public_key_hex().starts_with("ff"))
+            .expect("local keys");
         let provider = Arc::new(CountingDocsSync::default());
         put_profile(provider.as_ref(), &author).await;
         put_follow(provider.as_ref(), &author, local.public_key_hex().as_str()).await;
@@ -156,8 +165,8 @@ async fn author_state_reads_only_the_current_keys_from_a_provider() {
                 .await
                 .expect("edges")
                 .len(),
-            1,
-            "edges to other authors are not restored from the provider"
+            AUTHOR_EDGE_KEYS + 1,
+            "the follow window and the follow of me are restored, the rest is not"
         );
     }
     assert_eq!(counts[0], counts[1], "provider reads: {counts:?}");
@@ -184,7 +193,6 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
         provider.reset_records_returned();
         let first = profile_timeline_page(
             &app.services,
-            local.public_key_hex().as_str(),
             author_pubkey.as_str(),
             None,
             None,
@@ -207,7 +215,6 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
             while let Some(next) = cursor {
                 let page = profile_timeline_page(
                     &app.services,
-                    local.public_key_hex().as_str(),
                     author_pubkey.as_str(),
                     None,
                     Some(next),
@@ -229,19 +236,20 @@ async fn profile_pages_read_a_constant_amount_from_a_provider() {
     assert_eq!(counts[0], counts[1], "provider reads: {counts:?}");
 }
 
-// 自分のプロフィールは手元だけを読む(provider へ要求しない)。
+// 自分のプロフィールも、手元のページが埋まらないときだけ provider を読み、同じ account の別端末の投稿を出す
+// (#1221 R5-H)。手元でページが埋まれば provider へ要求しない。
 #[tokio::test]
-async fn the_own_profile_is_read_only_locally() {
+async fn the_own_profile_reads_a_provider_only_when_the_local_page_is_short() {
     let local = generate_keys();
+    let own = local.public_key_hex();
     let provider = Arc::new(CountingDocsSync::default());
-    put_profile_post(provider.as_ref(), &local, BASE_TIME).await;
+    let other_device_post = put_profile_post(provider.as_ref(), &local, BASE_TIME).await;
     let docs = Arc::new(CountingDocsSync::reading_from(provider.clone()));
-    let (app, _) = app_over(docs, local.clone());
+    let (app, _) = app_over(docs.clone(), local.clone());
     provider.reset_records_returned();
     let page = profile_timeline_page(
         &app.services,
-        local.public_key_hex().as_str(),
-        local.public_key_hex().as_str(),
+        own.as_str(),
         None,
         None,
         20,
@@ -249,7 +257,19 @@ async fn the_own_profile_is_read_only_locally() {
     )
     .await
     .expect("own page");
-    assert!(page.items.is_empty());
+    let ids = page
+        .items
+        .iter()
+        .map(|item| item.object_id().as_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![other_device_post]);
+
+    put_profile_post(docs.as_ref(), &local, BASE_TIME + 1).await;
+    provider.reset_records_returned();
+    let page = profile_timeline_page(&app.services, own.as_str(), None, None, 1, &BTreeSet::new())
+        .await
+        .expect("own full page");
+    assert_eq!(page.items.len(), 1);
     assert_eq!(provider.records_returned(), 0);
 }
 

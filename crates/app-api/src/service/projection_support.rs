@@ -223,12 +223,7 @@ pub(crate) fn next_private_channel_epoch_id(owner_pubkey: &str) -> String {
     )
 }
 
-pub(crate) fn private_channel_replica_for_epoch(channel_id: &str, epoch_id: &str) -> ReplicaId {
-    if epoch_id == legacy_epoch_id() {
-        return private_channel_replica_id(channel_id);
-    }
-    private_channel_epoch_replica_id(channel_id, epoch_id)
-}
+pub(crate) use kukuri_docs_sync::private_channel_replica_for_epoch;
 
 pub(crate) fn current_private_channel_replica_id(state: &JoinedPrivateChannelState) -> ReplicaId {
     private_channel_replica_for_epoch(state.channel_id.as_str(), state.current_epoch_id.as_str())
@@ -346,17 +341,6 @@ pub(crate) fn archive_private_channel_epoch(
         epoch_id: epoch_id.to_string(),
         namespace_secret_hex: namespace_secret_hex.to_string(),
     });
-}
-
-pub(crate) fn active_private_channel_participants(
-    participants: &[PrivateChannelParticipantDocV1],
-    epoch_id: &str,
-) -> Vec<PrivateChannelParticipantDocV1> {
-    participants
-        .iter()
-        .filter(|participant| participant.epoch_id == epoch_id && participant.left_at.is_none())
-        .cloned()
-        .collect()
 }
 
 #[cfg(test)]

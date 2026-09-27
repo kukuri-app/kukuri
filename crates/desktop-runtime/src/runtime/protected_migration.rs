@@ -11,7 +11,10 @@ use kukuri_core::{
     DirectMessageFrameV1, KukuriEnvelope, PayloadRef, ReplicaId, open_sent_direct_message_frame,
     parse_custom_reaction_asset,
 };
-use kukuri_docs_sync::{DocRecord, IrohDocsSync, author_replica_id, stable_key, topic_replica_id};
+use kukuri_docs_sync::{
+    BucketReplica, BucketScope, DocRecord, IrohDocsSync, TimeBucket, author_replica_id, stable_key,
+    topic_replica_id,
+};
 use kukuri_iroh_node::{DocReadRecord, IrohDocsNode};
 use kukuri_store::{
     ObjectProjectionStore, PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
@@ -143,6 +146,14 @@ impl DesktopRuntime {
                     let done = tags.len() < PROTECTED_MIGRATION_PAGE;
                     (plans, tags.last().cloned().unwrap_or(cursor), done)
                 }
+                // #1221 R5-H: 更新前からの参加者を、owner の参加者の表へ 1 回だけ移す。
+                "owner_participants" => {
+                    let (next, done) = self
+                        .app_service
+                        .migrate_legacy_private_channel_participants(&cursor)
+                        .await?;
+                    (Vec::new(), next, done)
+                }
                 _ => {
                     let page = self.store.protected_migration_page(kind, &local).await?;
                     let (mut next, mut done) = (page.cursor, page.done);
@@ -169,6 +180,10 @@ impl DesktopRuntime {
                 .finish_protected_migration_page(kind, &cursor, done)
                 .await?;
             caught_up &= done;
+        }
+        // #1221 R5-H: 移行が全 kind で終端へ達したら、新形式の writer へ 1 回だけ切り替える。
+        if caught_up && let Some(switched_at) = self.store.switch_writer_if_migrated().await? {
+            self.app_service.switch_writer(switched_at);
         }
         Ok(caught_up)
     }
@@ -334,6 +349,18 @@ impl DesktopRuntime {
             }
             let has_state = !plan.records.is_empty();
             if post.channel_id.is_none() {
+                // #1221 R5-H: 切替後の投稿(bucket へ書いた投稿)は、プロフィールの行を作成時の author bucket に置く。
+                let author = if replica.as_str().starts_with("bucket::") {
+                    BucketReplica::new(
+                        BucketScope::Author {
+                            author_pubkey: local.to_string(),
+                        },
+                        TimeBucket::from_unix_seconds(post.created_at)?,
+                    )?
+                    .replica_id()
+                } else {
+                    author
+                };
                 let prefix = if post.object_kind == "repost" {
                     "profile/reposts"
                 } else {

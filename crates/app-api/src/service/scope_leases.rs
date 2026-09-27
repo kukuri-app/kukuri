@@ -41,14 +41,11 @@ impl std::fmt::Display for ScopeLimitReached {
 
 impl std::error::Error for ScopeLimitReached {}
 
+/// lease の task。docs の replica は開かない(R5-H: 受信は hint と有界な読取り)。
 pub(crate) struct ScopeTask {
     pub(crate) handle: AbortOnDropTask,
-    pub(crate) replica: ReplicaId,
     /// author の購読は hint を購読しない。
     pub(crate) hint_topic: Option<TopicId>,
-    /// private channel の epoch が変わる前の replica(1 つだけ)。参加者はそこに書かれた handoff の grant を
-    /// 同期で受け取る。現在と直前の 2 つまでを開く(ADR 0055 §2 の「現在 / 直前の 2 bucket」)。
-    pub(crate) previous: Option<ReplicaId>,
 }
 
 struct Lease {
@@ -147,6 +144,7 @@ impl ScopeLeases {
             .is_some_and(|keys| keys.contains(key))
     }
 
+    #[cfg(test)]
     pub(crate) fn has_running_task(&self, key: &ScopeKey) -> bool {
         self.leases
             .get(key)
@@ -222,7 +220,7 @@ pub(crate) fn participation_keys(topic: &str, channel: Option<&ChannelId>) -> Ve
     keys
 }
 
-/// task を止め、hint の購読を抜け、replica を閉じる(旧 sync の要求も残さない)。
+/// task を止め、hint の購読を抜ける。
 pub(crate) async fn stop_scope_task(services: &ServiceHandles, task: ScopeTask) {
     task.handle.abort();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task.handle.wait()).await;
@@ -239,15 +237,6 @@ pub(crate) async fn stop_scope_task(services: &ServiceHandles, task: ScopeTask) 
             }
             Err(_) => warn!(topic = %hint_topic.as_str(), "timed out leaving scope hints"),
         }
-    }
-    for replica in std::iter::once(&task.replica).chain(&task.previous) {
-        close_scope_replica(services, replica).await;
-    }
-}
-
-async fn close_scope_replica(services: &ServiceHandles, replica: &ReplicaId) {
-    if let Err(error) = services.docs_sync.close_replica(replica).await {
-        warn!(replica = %replica.as_str(), %error, "failed to close scope replica");
     }
 }
 
@@ -321,13 +310,8 @@ impl AppService {
                 if self.is_topic_gossip_disabled(topic).await {
                     return None;
                 }
-                self.spawn_subscription_task(
-                    topic,
-                    None,
-                    topic_replica_id(topic),
-                    TopicId::new(topic),
-                )
-                .await
+                self.spawn_subscription_task(topic, None, TopicId::new(topic))
+                    .await
             }
             ScopeKey::Channel(topic, channel) => {
                 if self.is_channel_gossip_disabled(topic, channel).await {
@@ -337,7 +321,6 @@ impl AppService {
                 self.spawn_subscription_task(
                     topic,
                     Some(state.channel_id.clone()),
-                    current_private_channel_replica_id(&state),
                     private_channel_hint_topic(channel),
                 )
                 .await
@@ -355,24 +338,13 @@ impl AppService {
             return;
         };
         let old = slot.take();
-        let mut new = self.start_scope_task(key).await;
+        let new = self.start_scope_task(key).await;
         if let Some(old) = old {
-            match &mut new {
+            match &new {
                 // gossip topic は抜けない。抜けてすぐ入り直すと、相手が古い Disconnect を新しい Join より後に
-                // 処理した場合に片側だけが neighbor を失う。
-                Some(new) if new.replica == old.replica => {
-                    old.handle.abort();
-                    new.previous = old.previous;
-                }
-                // epoch が変わった。直前の replica を覚え、それより前(2 世代前)を閉じる。
-                Some(new) => {
-                    old.handle.abort();
-                    new.previous = Some(old.replica);
-                    if let Some(replica) = &old.previous {
-                        close_scope_replica(&self.services, replica).await;
-                    }
-                }
-                None => stop_scope_task(&self.services, old).await,
+                // 処理した場合に片側だけが neighbor を失う(epoch が変わっても channel の hint topic は同じ)。
+                Some(new) if new.hint_topic == old.hint_topic => old.handle.abort(),
+                _ => stop_scope_task(&self.services, old).await,
             }
         }
         if let Some(slot) = leases.slot(key) {
@@ -392,6 +364,7 @@ impl AppService {
             .await;
     }
 
+    #[cfg(test)]
     pub(crate) async fn has_topic_subscription(&self, topic_id: &str) -> bool {
         self.subscription_registry
             .scope_leases

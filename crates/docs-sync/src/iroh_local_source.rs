@@ -3,6 +3,28 @@ use super::*;
 use tokio::sync::oneshot;
 
 impl IrohDocsSync {
+    /// 手元にある namespace だけを開く(import しない)。無ければ `None`。
+    pub(super) async fn open_existing(
+        &self,
+        secret: &iroh_docs::NamespaceSecret,
+    ) -> Result<Option<iroh_docs::api::Doc>> {
+        match self.node.docs().open(secret.id()).await {
+            Ok(doc) => Ok(doc),
+            // Pinned iroh-docs serializes OpenError through RPC instead of returning None.
+            // Only its explicit NotFound result is a miss; actor/I/O failures stay errors.
+            Err(error)
+                if error
+                    .downcast_ref::<iroh_docs::api::RpcError>()
+                    .is_some_and(|error| {
+                        error.to_string() == iroh_docs::store::OpenError::NotFound.to_string()
+                    }) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub(super) async fn read_cached_local_source(
         &self,
         replica: &ReplicaId,
@@ -140,22 +162,8 @@ impl IrohDocsSync {
                         .is_some_and(|handle| handle.closing),
                     "replica close is pending"
                 );
-                let doc = match this.node.docs().open(secret.id()).await {
-                    Ok(Some(doc)) => doc,
-                    Ok(None) => return Ok(Vec::new()),
-                    // Pinned iroh-docs serializes OpenError through RPC instead of returning None.
-                    // Only its explicit NotFound result is a miss; actor/I/O failures stay errors.
-                    Err(error)
-                        if error
-                            .downcast_ref::<iroh_docs::api::RpcError>()
-                            .is_some_and(|error| {
-                                error.to_string()
-                                    == iroh_docs::store::OpenError::NotFound.to_string()
-                            }) =>
-                    {
-                        return Ok(Vec::new());
-                    }
-                    Err(error) => return Err(error),
+                let Some(doc) = this.open_existing(&secret).await? else {
+                    return Ok(Vec::new());
                 };
                 let read = async {
                     let stream = doc.get_many(query).await?;
@@ -248,7 +256,8 @@ mod tests {
         let handles = docs.replicas.lock().await;
         assert_eq!(handles.len(), 1);
         let handle = handles.get(replica.as_str()).unwrap();
-        assert!(handle.sync_requested && handle.doc.status().await?.sync);
+        // R5-H: 書いた namespace も同期を始めない。
+        assert!(!handle.doc.status().await?.sync);
         drop(handles);
         docs.shutdown().await;
         node.shutdown().await?;

@@ -281,7 +281,7 @@ async fn ingest_records_two_party_actions_and_reads_the_reverse_follow_once() ->
         let root = build_post_envelope(&a, &topic, "root by a", None)?;
         write_post(&memory, &replica, &root).await;
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
             .await?;
 
         // A は B をフォローしている（C と D はフォローしていない）。
@@ -338,12 +338,12 @@ async fn ingest_records_two_party_actions_and_reads_the_reverse_follow_once() ->
         write_post(&memory, &channel, &private_reply).await;
         for _ in 0..2 {
             pipeline
-                .ingest_recent_scope(IndexScopeKind::PrivateChannel, "room", &channel)
+                .ingest_changed_keys(IndexScopeKind::PrivateChannel, "room", &channel, &[])
                 .await?;
         }
 
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
             .await?;
         let mut expected = vec![
             row("follow", &a, &b),
@@ -358,7 +358,7 @@ async fn ingest_records_two_party_actions_and_reads_the_reverse_follow_once() ->
         assert_eq!(reads, 4, "follow doc for b/c/d plus b's signed envelope");
         // 同じ内容をもう一度取り込んでも、新しいアクションは無く、author replica を読まない。
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
             .await?;
         assert_eq!(docs.author_reads.load(Ordering::SeqCst), reads);
 
@@ -380,7 +380,7 @@ async fn ingest_records_two_party_actions_and_reads_the_reverse_follow_once() ->
         let again = build_post_envelope(&b, &topic, "second reply by b", Some(&root))?;
         write_post(&memory, &replica, &again).await;
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, TOPIC, &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, TOPIC, &replica, &[])
             .await?;
         // 最初の返信は replica に残っているため、索引の窓で再び取り込まれて行が戻る。
         let mut expected = vec![

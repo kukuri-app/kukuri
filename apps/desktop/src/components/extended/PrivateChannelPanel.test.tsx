@@ -126,6 +126,32 @@ test('settings panel blocks mutuals share for non-owners with a reason instead o
   expect(onShare).not.toHaveBeenCalled();
 });
 
+test('settings panel shows the participant count only on the owner device', () => {
+  const { rerender } = render(
+    <PrivateChannelSettingsPanel
+      error={null}
+      pendingAction={null}
+      channel={channel({ audience_kind: 'friend_plus', participant_count: 3 })}
+      inviteOutput={null}
+      inviteOutputLabel='grant'
+      onShare={vi.fn()}
+    />
+  );
+  expect(screen.getByText('participants: 3')).toBeInTheDocument();
+
+  rerender(
+    <PrivateChannelSettingsPanel
+      error={null}
+      pendingAction={null}
+      channel={channel({ audience_kind: 'friend_plus', is_owner: false, participant_count: null })}
+      inviteOutput={null}
+      inviteOutputLabel='grant'
+      onShare={vi.fn()}
+    />
+  );
+  expect(screen.queryByText(/participants:/)).not.toBeInTheDocument();
+});
+
 test('settings panel keeps invite-only sharing available to participants and explains the link', async () => {
   const user = userEvent.setup();
   const onShare = vi.fn();

@@ -371,7 +371,7 @@ impl Fixture {
             self.projection.clone(),
         )
         .with_blob_service(self.blobs.clone())
-        .ingest_recent_scope(self.kind, SCOPE, &self.replica)
+        .ingest_changed_keys(self.kind, SCOPE, &self.replica, &[])
         .await
     }
     pub fn post(&self, bytes: &[u8]) -> Result<Post> {

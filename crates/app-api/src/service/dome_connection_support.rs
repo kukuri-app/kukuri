@@ -116,13 +116,32 @@ impl AppService {
         connection_id: &str,
         reason: DomeConnectionTerminalReasonV1,
     ) -> Result<DomeConnectionView> {
-        let replica = self
+        let legacy = self
             .dome_connection_context_replica(spatial_context)
             .await?;
-        let mut state = self
-            .fetch_dome_connection_state(&replica, connection_id)
+        let stores = self
+            .dome_connection_stores(spatial_context, legacy, &[])
+            .await?;
+        let (found, mut state) = self
+            .fetch_dome_connection_state(&stores, connection_id)
             .await?
             .context("Dome Connection was not found")?;
+        let proposer = self
+            .list_context_dome_instances(
+                spatial_context,
+                [state.record.agreement.proposer.owner_pubkey.clone()],
+            )
+            .await?
+            .into_iter()
+            .find(|instance| instance.instance_id == state.record.agreement.proposer.instance_id);
+        let replica = match proposer {
+            Some(proposer) => {
+                self.dome_connection_record_replica(&found, &proposer)
+                    .await?
+            }
+            None => self.dome_connection_legacy_guard(found)?,
+        };
+        let stores = [vec![replica.clone()], stores].concat();
         let actor = Pubkey::from(self.current_author_pubkey());
         if actor != state.record.agreement.proposer.owner_pubkey
             && actor != state.record.agreement.receiver.owner_pubkey
@@ -159,9 +178,10 @@ impl AppService {
                     tokio::time::sleep(std::time::Duration::from_millis(remaining as u64)).await;
                 }
                 state = self
-                    .fetch_dome_connection_state(&replica, connection_id)
+                    .fetch_dome_connection_state(&stores, connection_id)
                     .await?
-                    .context("Dome Connection was not found after draining")?;
+                    .context("Dome Connection was not found after draining")?
+                    .1;
             }
             if state.record.status == DomeConnectionStatusV1::Revoked {
                 return Ok(DomeConnectionView {

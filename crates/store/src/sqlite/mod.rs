@@ -18,7 +18,7 @@ use crate::models::{
     DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
-    ReactionProjectionRow, TimelineCursor,
+    PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 use crate::pagination::{
     direct_message_page_from_rows, envelope_page_from_rows, object_projection_page_from_rows,

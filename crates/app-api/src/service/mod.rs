@@ -66,9 +66,9 @@ pub(crate) use kukuri_core::{
     validate_metaverse_room_state, verify_post_withdrawal,
 };
 pub(crate) use kukuri_docs_sync::{
-    DocEvent, DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync,
-    author_replica_id, private_channel_epoch_replica_id, private_channel_hint_topic,
-    private_channel_replica_id, stable_key, topic_replica_id,
+    DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync, author_replica_id,
+    private_channel_epoch_replica_id, private_channel_hint_topic, private_channel_replica_id,
+    stable_key, topic_replica_id,
 };
 pub(crate) use kukuri_metaverse_host::DomeSessionRuntime;
 pub(crate) use kukuri_store::{
@@ -78,6 +78,7 @@ pub(crate) use kukuri_store::{
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationKind, NotificationRow, ObjectProjectionRow, ObjectProjectionStore, Page,
     PostWithdrawalRow, ProjectionStore, ReactionProjectionRow, Store, TimelineCursor,
+    WithdrawalWriteRow,
 };
 pub(crate) use kukuri_transport::{
     ConnectionPath, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerSnapshot,
@@ -88,11 +89,8 @@ pub(crate) use tokio::sync::Mutex;
 pub(crate) use tokio::task::JoinHandle;
 pub(crate) use tracing::{info, warn};
 
-pub(crate) const REPLICA_SYNC_RESTART_RETRY_SECONDS: i64 = 5;
-pub(crate) const PUBLIC_TOPIC_RECOVERY_GRACE_MS: i64 = 3_000;
 /// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。
 pub(crate) const EXISTING_REPOST_LOOKUP_LIMIT: usize = 64;
-pub(crate) const PUBLIC_TOPIC_RECOVERY_BACKOFF_MS: [i64; 3] = [3_000, 10_000, 30_000];
 pub(crate) const PUBLIC_CHANNEL_ID: &str = "public";
 pub(crate) const DIRECT_MESSAGE_FRAME_MIME: &str =
     "application/vnd.kukuri.direct-message-frame+json";
@@ -123,14 +121,22 @@ pub(crate) use crate::views::{
 };
 
 mod attachment_support;
+mod bucket_writer;
 mod local_source_reader;
 pub(crate) use local_source_reader::LocalSourceReader;
 mod author_state_support;
 mod direct_messages_delivery_support;
 mod direct_messages_subscription_support;
 mod dm_outbox_retry_support;
+mod dome_connection_remote;
+mod dome_connection_store;
 mod dome_connection_support;
 mod dome_host_ownership;
+mod dome_instance_support;
+mod epoch_control_support;
+pub(crate) use epoch_control_support::{
+    EPOCH_CONTROL_OUTBOX_PREFIX, PRIVATE_CHANNEL_PARTICIPANT_PAGE,
+};
 mod receive_offer_support;
 pub(crate) use dome_connection_support::*;
 mod errors;
@@ -140,11 +146,10 @@ mod hydration_limits;
 pub(crate) mod hydration_support;
 pub(crate) mod session_projection;
 use game_projection_support::GameRoomProjectionLocks;
-pub(crate) use hydration_limits::recovery_probe_peer_state;
 #[cfg(test)]
-pub(crate) use hydration_support::{hydrate_game_room_from_key, hydrate_subscription_event};
+pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
-pub(crate) use live_game_support::{DomeReadUnavailable, fetch_verified_dome_envelope};
+pub(crate) use live_game_support::DomeReadUnavailable;
 mod metaverse_room_event_support;
 mod notifications_support;
 mod object_hydration;
@@ -171,12 +176,9 @@ mod spatial_access_support;
 mod subscription_catch_up;
 #[cfg(test)]
 pub(crate) use subscription_catch_up::catch_up_sessions;
-pub(crate) use subscription_catch_up::{
-    CatchUpSchedule, catch_up_replica_window, missed_entry_needs_catch_up,
-    snapshot_window_notification_baseline,
-};
 mod reply_target_support;
 mod scope_leases;
+pub(crate) mod scope_receive;
 pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
 pub(crate) use scope_leases::{
     ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
@@ -198,72 +200,62 @@ pub(crate) use attachment_support::{
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
     joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
-    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
+    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topics,
     register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
     validate_game_room_scores, validate_game_room_transition,
 };
-pub(crate) use author_state_support::{
-    catch_up_author_state, hydrate_author_key, hydrate_author_state, known_docs_author,
-};
+pub(crate) use author_state_support::{hydrate_author_state, known_docs_author};
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
-pub(crate) use hydration_support::{
-    hint_refers_to_replica_content, hint_targets_topic, hydrate_subscription_doc_event,
-    hydrate_subscription_hint,
-};
+pub(crate) use hydration_support::hint_targets_topic;
 pub(crate) use metaverse_room_event_support::{
     metaverse_room_event_buffer_key, parse_metaverse_room_event_envelope,
     push_metaverse_room_event_buffer,
 };
 pub(crate) use notifications_support::{
     author_social_view_from_parts, author_social_view_sort_key, direct_message_notification_id,
-    document_notification_id, normalize_author_pubkey, notification_candidate_from_follow_event,
-    notification_candidate_from_object_event, notification_doc_event_fingerprint,
-    notification_doc_event_fingerprint_parts, notification_preview_text,
+    document_notification_id, normalize_author_pubkey, notification_preview_text,
 };
 pub(crate) use object_hydration::{
     BodyFetch, ObjectHydration, hydrate_object_in_topic, hydrate_object_in_topic_with,
-    hydrate_object_in_topic_with_hint,
 };
 pub(crate) use object_persistence_support::{
     PrivateEpochSnapshot, best_effort_blob_cache_status, best_effort_blob_view_status,
     bookmarked_custom_reaction_view_from_row, custom_reaction_asset_view_from_doc,
     fetch_manifest_blob, fetch_private_channel_epoch_handoff_grant_from_replica,
-    fetch_private_channel_participant_from_replica,
-    fetch_private_channel_participants_from_replica, fetch_private_channel_policy_from_replica,
+    fetch_private_channel_participant_from_replica, fetch_private_channel_policy_from_replica,
     fetch_projection_blob_text, game_projection_row, live_projection_row, persist_game_room_state,
     persist_live_session_state, persist_media_manifest, persist_post_object,
-    persist_post_withdrawal, persist_private_channel_epoch_handoff_grant,
-    persist_private_channel_metadata, persist_private_channel_participant,
-    persist_private_channel_policy, persist_session_envelope, post_withdrawal_row,
-    projection_blob_fetch_timeout, projection_row_from_post, reaction_cache_key,
-    reaction_projection_row, reaction_state_view_from_rows, read_private_epoch_snapshot,
-    recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
+    persist_private_channel_epoch_handoff_grant, persist_private_channel_metadata,
+    persist_private_channel_participant, persist_private_channel_policy, persist_session_envelope,
+    post_withdrawal_row, projection_blob_fetch_timeout, projection_row_from_post,
+    reaction_cache_key, reaction_projection_row, reaction_state_view_from_rows,
+    read_private_epoch_snapshot, recent_reaction_view_from_projection, search_key_or_asset_id,
+    store_manifest_blob,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
     VerifiedPost, WithdrawalTargetCheck, load_post_with_hint, load_verified_post,
-    object_id_from_post_key, post_envelope_key, verify_withdrawal_against_records,
+    post_envelope_key, verify_withdrawal_against_records,
 };
 pub(crate) use post_withdrawal_hydration::{
     PostWithdrawalHydration, WithdrawalReadHints, hydrate_post_withdrawal_for_object,
-    hydrate_post_withdrawal_for_object_with_hints, object_id_from_post_withdrawal_key,
+    hydrate_post_withdrawal_for_object_with_hints,
 };
 pub(crate) use profile_docs_support::{
     fetch_author_envelope, fetch_author_envelope_by_id,
     load_custom_reaction_assets_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,
-    snapshot_follow_notification_baseline,
 };
 pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
-    LIVE_GAME_LIST_LIMIT, active_private_channel_participants, archive_private_channel_epoch,
-    bookmarked_post_row_is_hidden, current_private_channel_replica_id, filtered_thread_page,
-    filtered_timeline_page, initial_private_channel_epoch_id,
-    joined_private_channel_state_from_capability, load_projection_rows_with_one_refresh,
-    merged_private_channel_state_from_epoch_join, next_private_channel_epoch_id,
-    private_channel_epoch_capabilities, private_channel_is_epoch_aware,
-    private_channel_replica_for_epoch, profile_timeline_item_is_hidden,
+    LIVE_GAME_LIST_LIMIT, archive_private_channel_epoch, bookmarked_post_row_is_hidden,
+    current_private_channel_replica_id, filtered_thread_page, filtered_timeline_page,
+    initial_private_channel_epoch_id, joined_private_channel_state_from_capability,
+    load_projection_rows_with_one_refresh, merged_private_channel_state_from_epoch_join,
+    next_private_channel_epoch_id, private_channel_epoch_capabilities,
+    private_channel_is_epoch_aware, private_channel_replica_for_epoch,
+    profile_timeline_item_is_hidden,
 };
 pub(crate) use public_notification_offer_support::PublicNotificationSource;
 pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};
@@ -284,35 +276,19 @@ pub(crate) use timeline_view_support::{
 
 // テストからのみ参照される再輸出(依存の可視化。WP-H5 PR1)。
 #[cfg(test)]
+pub(crate) use attachment_support::normalize_topic_name;
+#[cfg(test)]
 pub(crate) use kukuri_core::{build_post_envelope_with_payload_in_channel, build_repost_envelope};
 #[cfg(test)]
+pub(crate) use kukuri_docs_sync::DocEvent;
+#[cfg(test)]
+pub(crate) use notifications_support::notification_candidate_from_verified_post;
+#[cfg(test)]
+pub(crate) use object_hydration::hydrate_object_in_topic_with_hint;
+#[cfg(test)]
 pub(crate) use object_persistence_support::custom_reaction_asset_view_from_snapshot;
-
-pub(crate) async fn maybe_restart_replica_sync_with_cooldown(
-    docs_sync: &dyn DocsSync,
-    deadlines: &Arc<Mutex<HashMap<String, i64>>>,
-    topic_id: &str,
-    replica: &ReplicaId,
-) {
-    let key = replica.as_str().to_string();
-    let now = Utc::now().timestamp();
-    {
-        let mut guard = deadlines.lock().await;
-        let next_due_at = guard.get(key.as_str()).copied().unwrap_or_default();
-        if next_due_at > now {
-            return;
-        }
-        guard.insert(key, now.saturating_add(REPLICA_SYNC_RESTART_RETRY_SECONDS));
-    }
-    if let Err(error) = docs_sync.restart_replica_sync(replica).await {
-        warn!(
-            topic = %topic_id,
-            replica = %replica.as_str(),
-            error = %error,
-            "failed to restart replica sync"
-        );
-    }
-}
+#[cfg(test)]
+pub(crate) use object_persistence_support::persist_post_withdrawal;
 
 pub(crate) async fn query_replica_with_fetch_policy(
     docs_sync: &dyn DocsSync,
@@ -337,27 +313,6 @@ pub(crate) async fn record_public_topic_docs_activity_if_current(
     {
         entry.last_docs_activity_at = Some(at_ms);
     }
-}
-
-pub(crate) async fn restart_replica_sync_with_backoff(
-    docs_sync: &dyn DocsSync,
-    topic_id: &str,
-    replica: &ReplicaId,
-    backoff: &mut SubscriptionRecoveryBackoff,
-) {
-    let now_ms = Utc::now().timestamp_millis();
-    if !backoff.ready(now_ms) {
-        return;
-    }
-    if let Err(error) = docs_sync.restart_replica_sync(replica).await {
-        warn!(
-            topic = %topic_id,
-            replica = %replica.as_str(),
-            error = %error,
-            "failed to restart replica sync"
-        );
-    }
-    backoff.schedule(now_ms);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -418,6 +373,10 @@ pub struct ServiceHandles {
     pub(crate) withdrawal_checks: Arc<hydration_limits::BackgroundCheckLedger>,
     /// #1239: ページの範囲と時系列の索引の照合の台帳。
     pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
+    /// #1221 R5-H: 新形式の writer へ切り替えた時刻。切替前は空。
+    pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
+    /// 取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。`AppService` の構築時に入る。
+    pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl ServiceHandles {
@@ -528,6 +487,8 @@ impl ServiceHandles {
             missing_body_ledger,
             withdrawal_checks: Arc::default(),
             range_checks: Arc::default(),
+            writer_switched_at: Arc::default(),
+            notify_remote_posts: None,
         }
     }
 }
@@ -545,7 +506,6 @@ pub struct AppService {
     pub(crate) metaverse_resource_budget: kukuri_core::MetaverseResourceBudgetConfig,
     pub(crate) last_sync_ts: Arc<Mutex<Option<i64>>>,
     pub(crate) public_topic_delivery: Arc<Mutex<HashMap<String, PublicTopicDeliveryStatus>>>,
-    pub(crate) empty_recovery_candidates: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_topics: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_channels: Arc<Mutex<HashSet<String>>>,
     pub(crate) private_channel_capability_persist:
@@ -568,40 +528,6 @@ pub(crate) struct PublicTopicDeliveryStatus {
     pub(crate) last_docs_activity_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SubscriptionRecoveryBackoff {
-    pub(crate) next_retry_at_ms: i64,
-    pub(crate) step: usize,
-}
-
-impl SubscriptionRecoveryBackoff {
-    pub(crate) fn reset(&mut self) {
-        self.next_retry_at_ms = 0;
-        self.step = 0;
-    }
-
-    /// 変化が無い間の、次に再 sync を促す時刻。再 sync の backoff に合わせて伸ばす(#1225)。
-    pub(crate) fn next_probe_at(&self, now_ms: i64) -> i64 {
-        now_ms
-            .saturating_add(PUBLIC_TOPIC_RECOVERY_GRACE_MS)
-            .max(self.next_retry_at_ms)
-    }
-
-    pub(crate) fn ready(&self, now_ms: i64) -> bool {
-        self.next_retry_at_ms <= now_ms
-    }
-
-    pub(crate) fn schedule(&mut self, now_ms: i64) {
-        let delay_ms = PUBLIC_TOPIC_RECOVERY_BACKOFF_MS[self
-            .step
-            .min(PUBLIC_TOPIC_RECOVERY_BACKOFF_MS.len().saturating_sub(1))];
-        self.next_retry_at_ms = now_ms.saturating_add(delay_ms);
-        if self.step + 1 < PUBLIC_TOPIC_RECOVERY_BACKOFF_MS.len() {
-            self.step += 1;
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct JoinedPrivateChannelState {
     pub(crate) generation: u64,
@@ -620,7 +546,7 @@ pub(crate) struct JoinedPrivateChannelState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrivateChannelDiagnostics {
     pub(crate) sharing_state: ChannelSharingState,
-    pub(crate) participant_count: usize,
+    pub(crate) participant_count: Option<usize>,
     pub(crate) stale_participant_count: usize,
     pub(crate) rotation_required: bool,
     pub(crate) entry_dome_instance_id: Option<String>,
@@ -648,32 +574,6 @@ pub(crate) struct NotificationCandidate {
     pub(crate) content_labels: Option<Vec<String>>,
     pub(crate) created_at: i64,
     pub(crate) received_at: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct NotificationDocEventBaseline {
-    fingerprints: BTreeSet<String>,
-}
-
-impl NotificationDocEventBaseline {
-    /// key だけの読み出しの結果(key と content hash)から作る。値は読まない。
-    pub(crate) fn from_key_entries<'a>(
-        entries: impl IntoIterator<Item = &'a kukuri_docs_sync::DocKeyEntry>,
-    ) -> Self {
-        Self {
-            fingerprints: entries
-                .into_iter()
-                .map(|entry| {
-                    notification_doc_event_fingerprint_parts(&entry.key, &entry.content_hash)
-                })
-                .collect(),
-        }
-    }
-
-    pub(crate) fn contains(&self, event: &DocEvent) -> bool {
-        self.fingerprints
-            .contains(notification_doc_event_fingerprint(event).as_str())
-    }
 }
 
 impl AppService {
@@ -716,10 +616,15 @@ impl AppService {
     }
 
     pub fn from_handles_with_metaverse_budget(
-        services: ServiceHandles,
+        mut services: ServiceHandles,
         budget: kukuri_core::MetaverseResourceBudgetConfig,
     ) -> Result<Self> {
         budget.validate()?;
+        // R5-H: 取り込んだ remote の投稿から通知を作る(表示の照合と hint のどちらが先に取り込んでも 1 回)。
+        let notification_inserted_notify = services
+            .notify_remote_posts
+            .get_or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone();
         let cache = MetaverseBlobCacheIndex::new(budget.client.cache_capacity_bytes)?;
         let last_sync_ts = services.session_projections.last_change.clone();
         let joined_private_channels = services.joined_private_channels.clone();
@@ -734,12 +639,11 @@ impl AppService {
             metaverse_resource_budget: budget,
             last_sync_ts,
             public_topic_delivery: Arc::new(Mutex::new(HashMap::new())),
-            empty_recovery_candidates: Arc::new(Mutex::new(HashSet::new())),
             gossip_disabled_topics: Arc::new(Mutex::new(HashSet::new())),
             gossip_disabled_channels: Arc::new(Mutex::new(HashSet::new())),
             private_channel_capability_persist: std::sync::OnceLock::new(),
             private_channel_capability_persist_guard: Arc::new(Mutex::new(())),
-            notification_inserted_notify: Arc::new(tokio::sync::Notify::new()),
+            notification_inserted_notify,
             adult_content_display_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             advisory_media_hashes: Arc::new(Mutex::new(HashSet::new())),
         })

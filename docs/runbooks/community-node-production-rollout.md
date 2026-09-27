@@ -499,12 +499,12 @@ readinessの鮮度やfail-closed判定を緩めない。remote blob取得は1件
 1. [重複集約migration](../../crates/cn-core/migrations/202609150002_risk_signal_dedupe.sql)を初めて導入する場合は、backup取得後・`cn-migrate`前に移行対象の活性重複鍵と通報から参照される行を確認する。同一鍵に参照行が2件以上ある場合、migrationは2件目以降を削除せず失効させるため、該当鍵が0件であることを確認する。0件でなければ適用を止め、既存通報への影響と実行可否を先に確定する。適用後はmigration記録、対象鍵の結果と `uq_cn_safety_risk_signals_active_key` の存在を確認する。この移行対象の事前確認を、適用済みの通常rolloutで毎回実行する全DB照合へ広げない。
 2. 対象の既存投稿を処理した際の `scans_reused` / `scans_fresh` と対象risk signalを照合し、同じ内容・構成で不要な再scanや追加行が発生しないことを確認する。
 3. 無害な新規投稿1件の到着から `indexed_at` までを、固定した待機期限で確認する。他投稿の再scanや全件passの終了を待たない。
-4. 対象通知の前後で `scanned` / `last_event_ingest_duration_ms` と対象期間のlogを確認する。既知IDは対象別、対象不明keyは現在索引窓として処理され、今回選んだ投稿の結果へ到達したかを区別する。全prefix読取り0・100 ID上限の判定は変更PRのcontractで行い、rollout時のstatus値だけから全履歴非走査を推定しない。
+4. 対象の巡回(需要のある scope は既定 30 秒、それ以外は `poll_interval`)の前後で `scanned` と対象期間のlogを確認する(R5-H で旧 event 経路と `last_event_ingest_duration_ms` は撤去した)。既知IDは対象別、対象不明keyは現在索引窓として処理され、今回選んだ投稿の結果へ到達したかを区別する。全prefix読取り0・100 ID上限の判定は変更PRのcontractで行い、rollout時のstatus値だけから全履歴非走査を推定しない。
 5. peer更新を変更した場合は、対象peerの登録後の本文/media取得を同じ投稿で確認する。対象batchの失敗時はその原因を記録し、全peer・全scopeの強制再適用で成功扱いにしない。
 
-旧workerのopen/購読は最大32物理replica、新公開readerの受付は最大32scopeであり、`opened_scopes`は
-全support件数ではなくその時点の旧workerの予約枠（途中失敗でopen状態が不明な枠を含む）を表す。
-定常の失効scope照合は最大32件の永続cursorで進む。手動全scope取込は#1221 R5-Eで撤去したが、旧namespace同期は残るため、
+R5-H から索引は bucket reader の巡回だけで行い、物理 scope は最大64件、`opened_scopes`は直近の全 scope の巡回で読んだ
+物理 scope 数を表す（旧 worker の open/購読と旧 selector は撤去した）。
+定常の失効scope照合は最大32件の永続cursorで進む。手動全scope取込は#1221 R5-Eで、旧namespace同期はR5-Hで撤去したが、
 この有限な運用確認の成功を、保持量・失敗回数への依存を含む#1221全体の解消と読み替えない。
 
 ### 5.7 content advisory 付き索引と trust 不変の確認（#1054）

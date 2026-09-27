@@ -486,6 +486,93 @@ impl SocialProjectionStore for SqliteStore {
         .await?;
         Ok(())
     }
+
+    async fn put_private_channel_participant(
+        &self,
+        row: PrivateChannelParticipantRow,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let changed = sqlx::query(
+            "INSERT INTO private_channel_participants \
+             (channel_id, epoch_id, participant_pubkey, left_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(channel_id, epoch_id, participant_pubkey) DO UPDATE SET \
+             left_at = excluded.left_at, updated_at = excluded.updated_at \
+             WHERE excluded.updated_at > private_channel_participants.updated_at",
+        )
+        .bind(&row.channel_id)
+        .bind(&row.epoch_id)
+        .bind(&row.participant_pubkey)
+        .bind(row.left_at)
+        .bind(row.updated_at)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+        if changed && let Some(left_at) = row.left_at {
+            sqlx::query(
+                "UPDATE private_channel_participants SET left_at = ?3, updated_at = ?3 \
+                 WHERE channel_id = ?1 AND participant_pubkey = ?2 AND left_at IS NULL AND updated_at < ?3",
+            )
+            .bind(&row.channel_id)
+            .bind(&row.participant_pubkey)
+            .bind(left_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(changed)
+    }
+
+    async fn list_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: Option<&str>,
+        after: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT DISTINCT participant_pubkey FROM private_channel_participants \
+             WHERE channel_id = ?1 AND left_at IS NULL AND (?2 IS NULL OR epoch_id = ?2) \
+             AND participant_pubkey > ?3 ORDER BY participant_pubkey LIMIT ?4",
+        )
+        .bind(channel_id)
+        .bind(epoch_id)
+        .bind(after)
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn has_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM private_channel_participants \
+             WHERE channel_id = ?1 AND participant_pubkey = ?2)",
+        )
+        .bind(channel_id)
+        .bind(participant_pubkey)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    async fn count_private_channel_participants(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM private_channel_participants \
+             WHERE channel_id = ?1 AND epoch_id = ?2 AND left_at IS NULL",
+        )
+        .bind(channel_id)
+        .bind(epoch_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(usize::try_from(count)?)
+    }
 }
 
 fn now_millis() -> i64 {

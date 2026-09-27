@@ -232,3 +232,43 @@ async fn a_private_offer_for_another_channel_or_sender_is_not_saved() {
     );
     assert!(f.app.list_notifications().await.unwrap().is_empty());
 }
+
+// 切替後の送り手は offer の replica に現 epoch の bucket を入れる。受け手はそれを受け付けて mention を作る(#1221 R5-H)。
+#[tokio::test]
+async fn a_private_offer_from_a_switched_writer_creates_a_mention() {
+    use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
+    let f = fixture();
+    join(&f.app, joined(&f.topic, &f.channel, SECRET)).await;
+    let mention_text = format!("private hello @{}", f.recipient.public_key_hex());
+    let mention = private_post(&f.sender, &f.topic, &f.channel, &mention_text, None);
+    let bucket = BucketReplica::new(
+        BucketScope::PrivateChannel {
+            channel_id: f.channel.as_str().into(),
+            epoch_id: EPOCH.into(),
+        },
+        TimeBucket::from_unix_seconds(mention.created_at).unwrap(),
+    )
+    .unwrap()
+    .replica_id();
+    let delivered = f
+        .deliver(PublicNotificationSource::Post {
+            replica: bucket,
+            envelope: mention,
+            content: mention_text,
+            reply_target: None,
+        })
+        .await;
+    assert!(
+        matches!(delivered, Ok(true)),
+        "switched private offer rejected: {delivered:?}"
+    );
+    let kinds = f
+        .app
+        .list_notifications()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|item| item.kind)
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, [NotificationKind::Mention]);
+}

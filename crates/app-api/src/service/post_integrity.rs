@@ -183,15 +183,6 @@ impl VerifiedPost {
     }
 }
 
-/// `objects/<object id>/state` と `objects/<object id>/envelope` の key から object id を取り出す。
-pub(crate) fn object_id_from_post_key(key: &str) -> Option<EnvelopeId> {
-    let rest = key.strip_prefix("objects/")?;
-    let object_id = rest
-        .strip_suffix("/state")
-        .or_else(|| rest.strip_suffix("/envelope"))?;
-    (!object_id.is_empty() && !object_id.contains('/')).then(|| EnvelopeId::from(object_id))
-}
-
 pub(crate) fn post_envelope_key(object_id: &EnvelopeId) -> String {
     stable_key("objects", &format!("{}/envelope", object_id.as_str()))
 }

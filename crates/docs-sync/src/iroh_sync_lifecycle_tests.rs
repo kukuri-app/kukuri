@@ -86,17 +86,7 @@ async fn bucket_close_and_revoke_finish_after_the_caller_is_cancelled() -> Resul
         entered.notified().await;
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
-        let restart = tokio::spawn({
-            let docs = docs.clone();
-            let replica = replica.clone();
-            async move { docs.restart_replica_sync(&replica).await }
-        });
         resume.notify_one();
-        restart.await??;
-        assert!(
-            !probe.status().await?.sync,
-            "a queued restart resurrected the closed replica"
-        );
         let read = docs
             .query_replica_with_policy(&replica, DocQuery::All, DocFetchPolicy::LocalOnly)
             .await;

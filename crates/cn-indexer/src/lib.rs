@@ -1,9 +1,9 @@
 //! kukuri community node indexing participant（#413 / ADR 0025 §6）。
 //!
-//! CN は現状 docs 非参加のため、cn-indexer が iroh-docs を駆動する docs replica sync participant を
-//! 新設する。責務は「取得経路 = Model C」の ingest→投影まで:
+//! cn-indexer は supported topic / 許可 channel の bucket を提供元から有界に読み（namespace を同期しない。
+//! #1221 R5-H）、索引へ投影する。責務は「取得経路 = Model C」の ingest→投影まで:
 //!
-//! 1. supported topic / 許可 channel の共有 replica を sync する participant（`participant`）。
+//! 1. bucket の読取りと巡回（`bucket_reader` / `worker`）、索引の保守（`maintenance`）。
 //! 2. 共有 replica に実在する post entry のみを scan→`allow` 判定して index 投影に書く（`ingest`）。
 //! 3. index 投影 store の境界と ArcadeDB adapter（`projection` / `arcadedb`）。全文のみ、canonical
 //!    ではない写像。
@@ -21,8 +21,8 @@ pub mod arcadedb;
 pub mod bucket_reader;
 pub mod config;
 pub mod ingest;
+pub mod maintenance;
 pub mod media_fetcher;
-pub mod participant;
 pub mod projection;
 pub mod query;
 pub mod relation_graph;
@@ -37,8 +37,8 @@ pub mod worker;
 pub use arcadedb::ArcadeDbProjection;
 pub use config::{ArcadeDbConfig, IndexerConfig, MediaFetchConfig, RelayConfig, RelayValidation};
 pub use ingest::{IngestPipeline, IngestSummary};
+pub use maintenance::IndexMaintenance;
 pub use media_fetcher::BlobMediaFetcher;
-pub use participant::{IndexerParticipant, ScopeReplica};
 pub use projection::{IndexProjection, IndexedEntry, MemoryIndexProjection};
 pub use query::{FailClosedIndexQuery, IndexQuery, MAX_QUERY_LIMIT, clamp_query_limit};
 pub use relation_graph::ArcadeDbRelationGraph;

@@ -524,7 +524,7 @@ pub(crate) async fn replicate_private_post_with_retry(
                         topic,
                         channel_id.as_str(),
                         post_write_epoch.as_str(),
-                        1,
+                        None,
                         attempt_timeout,
                     )
                     .await

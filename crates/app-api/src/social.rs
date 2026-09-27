@@ -117,6 +117,9 @@ impl AppService {
             .upsert_profile_cache(profile.clone())
             .await?;
         persist_profile_doc(self.services.docs_sync.as_ref(), &profile, &envelope).await?;
+        self.services
+            .persist_author_event(profile.pubkey.as_str(), &envelope)
+            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         Ok(profile)
     }
@@ -134,6 +137,9 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
+        self.services
+            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
+            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         let view = self
             .build_author_social_view(target_pubkey.as_str())
@@ -159,6 +165,9 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
+        self.services
+            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
+            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         let view = self
             .build_author_social_view(target_pubkey.as_str())
@@ -233,6 +242,9 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse block edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
         persist_block_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
+        self.services
+            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
+            .await?;
         *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
         if edge.status == BlockEdgeStatus::Active {
             self.reconcile_blocked_dome_connections(&target_pubkey)

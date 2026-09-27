@@ -39,6 +39,63 @@ fn parse_reason(value: Option<String>) -> Result<Option<PostWithdrawalReason>> {
 
 #[async_trait]
 impl PostWithdrawalStore for SqliteStore {
+    async fn queue_withdrawal_writes(&self, rows: Vec<WithdrawalWriteRow>) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        for row in rows {
+            sqlx::query(
+                "INSERT OR REPLACE INTO withdrawal_write_outbox                  (withdrawal_envelope_id, replica_id, target_object_id, envelope_json, target_replica_id)                  VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(row.withdrawal_envelope_id.as_str())
+            .bind(row.replica_id.as_str())
+            .bind(row.target_object_id.as_str())
+            .bind(serde_json::to_string(&row.envelope)?)
+            .bind(row.target_replica_id.as_ref().map(ReplicaId::as_str))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn pending_withdrawal_writes(&self, limit: usize) -> Result<Vec<WithdrawalWriteRow>> {
+        let rows = sqlx::query(
+            "SELECT withdrawal_envelope_id, replica_id, target_object_id, envelope_json, target_replica_id              FROM withdrawal_write_outbox ORDER BY rowid LIMIT ?1",
+        )
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(WithdrawalWriteRow {
+                    withdrawal_envelope_id: EnvelopeId::from(
+                        row.get::<String, _>("withdrawal_envelope_id"),
+                    ),
+                    replica_id: ReplicaId::new(row.get::<String, _>("replica_id")),
+                    target_object_id: EnvelopeId::from(row.get::<String, _>("target_object_id")),
+                    envelope: serde_json::from_str(&row.get::<String, _>("envelope_json"))?,
+                    target_replica_id: row
+                        .get::<Option<String>, _>("target_replica_id")
+                        .map(ReplicaId::new),
+                })
+            })
+            .collect()
+    }
+
+    async fn finish_withdrawal_write(
+        &self,
+        withdrawal_envelope_id: &EnvelopeId,
+        replica_id: &ReplicaId,
+    ) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM withdrawal_write_outbox WHERE withdrawal_envelope_id = ?1 AND replica_id = ?2",
+        )
+        .bind(withdrawal_envelope_id.as_str())
+        .bind(replica_id.as_str())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     async fn put_post_withdrawal(&self, row: PostWithdrawalRow) -> Result<bool> {
         let result = sqlx::query(
             r#"

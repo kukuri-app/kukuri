@@ -87,7 +87,6 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
           archived_epoch_ids: [],
           sharing_state: 'open',
           rotation_required: false,
-          participant_count: 1,
           stale_participant_count: 0,
         }),
       ];
@@ -181,7 +180,6 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
           archived_epoch_ids: [],
           sharing_state: 'open',
           rotation_required: false,
-          participant_count: 1,
           stale_participant_count: 0,
         }),
       ];
@@ -217,7 +215,6 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
           archived_epoch_ids: [],
           sharing_state: 'open',
           rotation_required: false,
-          participant_count: 2,
           stale_participant_count: 0,
         }),
       ];

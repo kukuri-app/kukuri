@@ -3,7 +3,7 @@
 ## Status
 
 Proposed（旧#1243、実装計画承認済み。現在は#1221 P2〜P4へ集約。
-各段階の実装・監査後に採用状態を更新する）
+各段階の実装・監査後に採用状態を更新する。2026-09-26 R5-Hで§6の書込み切替・新形式定常を実装）
 
 2026-09-24の#1221 G3-3で有界ページ/対象ID取得（B）を採用した。以下の旧「常時同期」記述は
 識別・移行時の履歴であり、新bucket readerの完成形ではない。公開CN readerから順に切り替える。
@@ -50,7 +50,9 @@ replica の識別、取得理由、解放、保存の回収を定める。
 | 投稿のmedia manifest | 投稿と同じbucket。refはsource locatorを持つ | 投稿と同じ |
 | reaction | reaction作成時のbucket。元投稿のbucketへ無期限追記しない | 現在bucketのeventと対象locator |
 | 取り下げ | 元投稿bucketの `withdrawals/<id>/state`（署名済みenvelopeを同じkeyへ上書き） | 操作時bucketにも同じ取り下げとtarget locatorを置く |
-| live/game/Dome等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない | 更新時bucketへ署名済みlocatorを置く |
+| live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない。日が変わった更新は、最新stateと署名済みenvelopeを更新時bucketへ移す（R5-H） | 移した先の更新時bucketにlocatorを置く |
+| Domeのsession・接続の提案/選択/合意 | sessionはlive/gameと同じ。接続は提案したDomeのanchor（Dome作成時刻のcontextのscope bucket。privateは現epoch。R5-H） | session・接続のhintと、知っているDomeのanchorの読取り |
+| Dome instance・hosting・layout/削除の記録 | 公開contextはownerの制御領域（`author::<owner>`）のinstance idのkey、private contextはDomeのanchor（R5-H、2026-09-27決定） | owner端末のhostingのheartbeat hint。privateはchannelのbucketのlocator |
 | author profile/latest | author別の固定数の最新state/envelopeの制御領域 | 更新時author bucketのevent |
 | follow/block | author/target/種別から決定できる対象別最新state | 更新時author bucketのevent。全edgeのコピー/再生はしない |
 | author asset/preset | IDから引ける対象別stateとcontent-addressed blob | 作成/更新時author bucketの索引 |
@@ -70,9 +72,10 @@ iroh-docsの受信前filterと同一視しない。
   locatorは探索の手がかりであり権限の証明ではない。署名済みenvelopeとscopeを照合してから反映する。
 - objectの既存 `source_replica_id` は保持する。profileやrepostからtopic IDだけで旧replicaを再構成しない。
   旧refは既存ローカルprojection/保存envelopeから解決し、分からなければ取得不能として返す。全bucketを探さない。
-- timeline/profile/thread cursorはbucketとbucket内の既存cursor、方向、版を持つ。
+- timeline/profile/thread cursorは既存の`created_at`/`object_id` cursorをそのまま使う。bucketは署名した`created_at`から
+  1回だけ決まる（§1）ので、cursorの`created_at`から対象bucketが一意に決まり、bucketを別に持つ版つきcursorは作らない
+  （R5-H、2026-09-26判断。旧案「新writer後の版付きcursorはR5-Hで切り替える」は失効）。
   1回で読むbucketは最大4、各bucketの読みはADR 0052の既存上限内。空bucketにも同じ上限を適用し、続き位置を返す。
-  R5-Bの移行中は既存の`created_at`/`object_id` cursorから対象bucketを選ぶ。新writer後の版付きcursorはR5-Hで切り替える。
   空ページを履歴の終端と誤認しない。epochの一覧も全件展開せず、許可された範囲をcursorで進む。
 - 古いbucketの取得は明示的な遡り・対象参照・取り下げ照会に限り要求する。表示側は保存済みprojectionを先に返す。
   peer不在/期限切れは取得不能として表示し、taskのcancelや次ページ操作を妨げない。
@@ -123,7 +126,7 @@ readerはnamespaceをimport/open/start_syncせず、
 現行scope/secretを要求前と対象反映前に確認する。公開providerも直近2＋永続cursorの巡回2端末を
 PostgreSQLから選び、全bootstrap peerをreader内へmaterializeしない。公開・privateは同じ
 scope需要優先と永続cursorで巡回し、
-移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とする。旧selectorと旧namespaceの
+移行中は旧32＋新32の合計64物理scope、共通の同時8実行以内とした（R5-Hで旧workerを撤去し、bucket readerが64物理scopeを使う。需要のあるscopeは既定30秒、それ以外は`poll_interval`で巡回する）。旧selectorと旧namespaceの
 最終撤去はR5-H、clientのauthor/private制御参照と保護cache/移行は後続条件の担当である。
 旧公開replicaで対象不明の変更通知が来た場合も、現在timeline索引窓の最大100 IDだけを
 対象別に再確認する。同じ通知batchに既知object IDがあれば窓外でも対象別に先に処理する。
@@ -184,6 +187,53 @@ scope/object単位の抑制stateへ記録する。旧投稿を受け付け得る
 | 読取り準備 | CNが新旧を認識、clientが新refを解決。新形式のwriterはまだ無効 | 旧clientに新形式が読めるとの扱い |
 | 書込み切替 | 端末に切替状態を保存し、新操作を新形式へ。未完了outboxは記録済みの宛先へ再開 | 再起動ごとの切替や二重投稿 |
 | 新形式定常 | 新規参加/起動は作業集合の新bucketだけ。旧保存データはローカルから利用 | 旧replicaの常時同期、旧履歴の起動時全コピー |
+
+2026-09-26の#1221 R5-Hで「書込み切替」と「新形式定常」を実装した（本番での実施は別Issue）。
+
+- 切替: account SQLiteの`writer_cutover`（1行）に、R5-Gの保護移行が全kindで終端へ達した時刻を1回だけ保存する。
+  desktop-runtimeは起動時に保存済みの状態を最初の書込みより前に`AppService::switch_writer`へ渡し、移行の完了で切り替える。
+  `kukuri.db`に入るのでbackup/restoreでも旧writerへ戻らない。ADR 0048 §7の旧領域を削除できる前提はこの時刻に合わせる。
+- writer: §2の配置どおり。bucketは署名した`created_at`（reactionはミリ秒の署名時刻）から決める。取り下げは操作時の
+  bucket（`withdrawals/<id>/locator`に元投稿の位置）と元投稿の位置の2行を永続outbox（`withdrawal_write_outbox`）へ
+  積み、書けた行だけを消す。起動時と取り下げのたびに記録済みの宛先へ再開する。live/game/Domeのsessionは、更新の
+  envelopeの署名時刻のscope bucket（privateは現epoch）に最新stateと署名済みenvelopeを置く。日が変わった更新、切替前の
+  旧replicaや回転の前のepochのsessionは更新の日のbucketへ移し、移した先にlocatorを置く。読み手と書き手はbucketと署名
+  時刻の一致を確かめる（2026-09-27監査の修正。作成日のbucketにstateを残して更新時刻で署名すると読み手が拒否した）。
+  authorの現在値は制御領域のkeyに置き、
+  更新時のauthor bucketへ署名済みenvelopeをeventとして置く。private bucketのcapabilityは、登録済みのepochの
+  capabilityからdocs-syncが導出する（epochのcapabilityを外せばbucketも読み書きできない）。
+- 受信側の検証: reactionは読んだbucketとenvelopeの時刻の一致、識別は対象の投稿を置いたreplica。取り下げは元投稿の
+  bucketか取り下げ時刻のbucketに置かれたものだけを受け付ける。
+- 定常: 旧namespaceの同期（`start_sync`・`reapply_sync_peers`・`restart_replica_sync`・`LocalThenRemote`の暗黙の
+  同期開始）を撤去した。docsのnamespaceは手元の読み書きだけに開き、remoteは有界なQUIC readerで読む。受信はADR 0055 §1.1。
+  旧版の端末が旧形式へ書いた新着は、hintを受けた対象の有界な読みで旧形式も読むが、全件の同期はしない。
+- 開いたnamespaceのhandleはADR 0055のdocs handle 128までに保ち、超えたら使用中でない最も古いものから閉じる。
+  提供側（`DocReadProtocol`）は読む間だけnamespaceを開くので、閉じたbucketも提供できる。
+- private channelの参加・退出recordとhandoff grantはaccount経路（ADR 0055 §4）で届け、ownerは参加者の表から
+  rotationの宛先と参加者数をページで読む（ADR 0055 §1.1）。参加者数はownerの端末だけが返し、owner以外は表示しない
+  （2026-09-27ユーザー決定。新しい配送は作らない）。更新前からの参加者は、ownerの端末が手元の旧docs（現epochの
+  replica）の参加recordを、pubkeyのhexの接頭辞で切ったkeyの窓（128件まで）ずつ参加者の表へ1回だけ移す。位置は
+  R5-Gの保護移行の台帳（kind `owner_participants`）に永続し、移し終える前のrotationも移した分と表の分を宛先にする。
+- Dome（R5-H、2026-09-27ユーザー決定）: 切替後はDomeの記録を旧topic/channel replicaへ1件も書かない。
+  - anchor: Dome作成時刻（sessionのstateの`created_at`）のcontextのscope bucket（privateは現epoch。回転の前のepochの
+    同じ日のbucketも読む）。書き手と読み手は同じ作成時刻から導くので、日が変わっても変わらない。行を持つ参加者は、
+    手元にstateが無ければsessionを読んで作成時刻を知る。Domeのsession（訪問者もchatで書くmetaverse roomのmanifest）は
+    live/gameと同じく更新の日のbucketへ移る（2026-09-27監査の修正。anchorをsessionの移し先にすると日ごとに変わり、
+    前日のhostingの記録を読めなかった）。
+  - 接続の提案・選択・合意（複数の書き手）は、提案したDomeのanchorに置く。idに時刻が無く、作成時のbucketを読み手が
+    導けないため、Domeの継続状態として置く。読むのは、contextで知っているDome（一覧の行・heartbeat・自分）のanchorと
+    旧context replica（手元）。
+  - instance（stateと署名済みenvelope）・hosting（最後のepochの分を1key）・owner だけが書く記録（layoutのcommit、
+    削除の操作記録）: 公開contextはownerの制御領域のinstance idのkey（`metaverse/dome-instances/<id>/state`・
+    `metaverse/dome-hosting/<id>/state`）、private contextはDomeのanchor（公開の領域へ置かない。private audienceの維持）。
+    idは時刻を持たずcontextとownerから決まるので、公開はownerの制御領域でexactに引く。
+  - 読取り: 公開は制御領域を手元→ownerを含む有界なprovider、privateはanchorを手元→epochのcapabilityを持つchannelの
+    providerの順にexactに読み、無ければ更新前に旧context replicaへ置いた分を手元から読む。
+  - 発見: 訪問者は手元の一覧の行と、owner端末のhostingのheartbeat hint（hostとcontextからinstance idを導けるとき、
+    hostをownerとみなす）から見つける。privateのanchorは、行が無ければowner端末のhostingが1日1回channelの現epochの
+    その日のbucketに置くlocator（`metaverse/dome-locators/<id>`）を、現在と直前のbucketからexactに読んで知る。
+    ownerがofflineでhintも無いDomeは一覧に出ない（手元に既にある分は出る）。全bucketの走査はしない。
+    CNのhostingのheartbeatはhostがCNなのでownerを導けず、行の無いDomeはhintだけでは見つからない。
 
 - CNの新旧readiness、clientの読取り、#1224の作業集合、保存/回収、対応する移行testの成立後にwriterを切り替える。
   本番での実施日とデプロイは本実装作業とは別に扱う。新形式のwriterを旧CNへ先行配布しない。

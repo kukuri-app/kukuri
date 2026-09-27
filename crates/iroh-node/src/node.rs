@@ -56,7 +56,7 @@ async fn spawn_docs(
     gossip: Gossip,
 ) -> Result<SpawnedDocs> {
     // Keep the high-level API and its persistent store layout while retaining
-    // the public SyncHandle for demand-owned, selected-peer sessions. The
+    // the SyncHandle for the bounded page reader (`DocReadProtocol`). The
     // high-level Docs::Builder discards this handle after creating the Engine.
     let (replica_store, author_store) = match root {
         Some(path) => (
@@ -178,7 +178,6 @@ pub struct IrohDocsNode {
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
     router: Arc<Router>,
     docs: DocsApi,
-    docs_sync: SyncHandle,
     blobs: BlobStore,
     remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
@@ -380,8 +379,7 @@ impl IrohDocsNode {
         };
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
         let remote_cache = Arc::new(OnceLock::new());
-        let page_read =
-            DocReadProtocol::new(docs.sync.clone(), blobs.clone(), remote_cache.clone());
+        let page_read = DocReadProtocol::new(docs.sync, blobs.clone(), remote_cache.clone());
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
         let router = Router::builder(endpoint.clone())
             .accept(
@@ -402,7 +400,6 @@ impl IrohDocsNode {
             relay_urls,
             router: Arc::new(router),
             docs: docs.protocol.api().clone(),
-            docs_sync: docs.sync,
             blobs,
             remote_cache,
             fetch_peer_health: Arc::new(kukuri_transport::BlobPeerHealth::default()),
@@ -419,12 +416,6 @@ impl IrohDocsNode {
 
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
-    }
-
-    /// The same store used by the production DocsApi; selected-peer sync must
-    /// not create a second in-memory or persistent docs store.
-    pub fn docs_sync_handle(&self) -> SyncHandle {
-        self.docs_sync.clone()
     }
 
     pub fn install_remote_cache(&self, cache: Arc<SqliteStore>) -> Result<()> {

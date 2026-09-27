@@ -31,11 +31,18 @@ impl<T> SessionRead<T> {
     }
 }
 
+/// manifest の blob。remote から読む state(hint の exact 読取り・読み直し)は、manifest も provider から取得する
+/// (#1221 R5-H。旧 sync の後の取得 worker は無い)。
 async fn read_session_blob<T: DeserializeOwned>(
     blobs: &dyn BlobService,
     blob: &ManifestBlobRef,
+    policy: DocFetchPolicy,
 ) -> Result<Option<T>> {
-    match blobs.fetch_local_blob(&blob.hash).await? {
+    let bytes = match policy {
+        DocFetchPolicy::LocalOnly => blobs.fetch_local_blob(&blob.hash).await?,
+        _ => blobs.fetch_blob(&blob.hash).await?,
+    };
+    match bytes {
         Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         None => Ok(None),
     }
@@ -179,12 +186,16 @@ impl VerifiedLiveSession {
     pub(crate) fn verify(
         state: LiveSessionStateDocV1,
         signer: &Pubkey,
+        signed_at: i64,
         manifest: LiveSessionManifestBlobV1,
         replica: &ReplicaId,
         subscription_topic_id: &str,
     ) -> std::result::Result<Self, SessionRejection> {
         let scope = ReplicaPostScope::for_replica(replica, subscription_topic_id)
             .ok_or(SessionRejection::UnsupportedReplica)?;
+        if !scope.accepts_created_at(signed_at) {
+            return Err(SessionRejection::BucketTimeMismatch);
+        }
         if *signer != manifest.owner_pubkey {
             return Err(SessionRejection::SignerIsNotOwner);
         }
@@ -297,21 +308,23 @@ pub(crate) async fn inspect_live_session_record(
         _ => return rejected(SessionRejection::SignedManifestUnavailable),
     };
     let current_manifest = state.current_manifest.clone();
-    let verified =
-        match VerifiedLiveSession::verify(state, &signer, manifest, replica, subscription_topic_id)
-        {
-            Ok(verified) => verified,
-            Err(reason) => return rejected(reason),
-        };
-    if !ReplicaPostScope::for_replica(replica, subscription_topic_id)
-        .is_some_and(|scope| scope.accepts_created_at(signed_at))
-    {
-        return rejected(SessionRejection::BucketTimeMismatch);
-    }
+    let verified = match VerifiedLiveSession::verify(
+        state,
+        &signer,
+        signed_at,
+        manifest,
+        replica,
+        subscription_topic_id,
+    ) {
+        Ok(verified) => verified,
+        Err(reason) => return rejected(reason),
+    };
     if current_manifest.hash != signed_hash {
         return rejected(SessionRejection::ManifestMismatch);
     }
-    match read_session_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest).await {
+    match read_session_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest, policy)
+        .await
+    {
         Ok(Some(blob)) if blob == verified.manifest => Ok(SessionRead::Ready(verified)),
         Ok(Some(_)) | Err(_) => rejected(SessionRejection::ManifestMismatch),
         Ok(None) => Ok(SessionRead::MissingManifest(current_manifest.hash)),
@@ -366,20 +379,25 @@ pub(crate) struct VerifiedGameRoom {
 }
 
 impl VerifiedGameRoom {
-    /// docs も blob も読まない。`signer` は、`manifest` を content にした envelope の署名者(無ければ `None`)。
+    /// docs も blob も読まない。`signed` は、`manifest` を content にした envelope の署名者と署名時刻(無ければ `None`)。
+    /// 署名時刻が読んだ bucket の日に属さなければ受け付けない(書く側も同じ検証を通す)。
     ///
     /// - ScoreGame: owner の署名と、owner に結び付いた id を要求する。
     /// - metaverse room: 訪問者も chat で manifest を書く設計なので、owner の署名は要求しない。id が Spatial Context と
     ///   owner から決まる値であることだけを確かめる。一覧は、署名つきの Dome Instance でさらに確かめる(ADR 0036)。
     pub(crate) fn verify(
         state: GameRoomStateDocV1,
-        signer: Option<&Pubkey>,
+        signed: Option<(&Pubkey, i64)>,
         manifest: GameRoomManifestBlobV1,
         replica: &ReplicaId,
         subscription_topic_id: &str,
     ) -> std::result::Result<Self, SessionRejection> {
         let scope = ReplicaPostScope::for_replica(replica, subscription_topic_id)
             .ok_or(SessionRejection::UnsupportedReplica)?;
+        if signed.is_some_and(|(_, signed_at)| !scope.accepts_created_at(signed_at)) {
+            return Err(SessionRejection::BucketTimeMismatch);
+        }
+        let signer = signed.map(|(signer, _)| signer);
         match manifest.room_kind {
             GameRoomKind::ScoreGame => {
                 let Some(signer) = signer else {
@@ -513,7 +531,7 @@ pub(crate) async fn inspect_game_room_record(
         SessionRead::Ready((signer, manifest, signed_hash, signed_at)) => {
             let verified = match VerifiedGameRoom::verify(
                 state,
-                Some(&signer),
+                Some((&signer, signed_at)),
                 manifest,
                 replica,
                 subscription_topic_id,
@@ -524,12 +542,12 @@ pub(crate) async fn inspect_game_room_record(
             if current_manifest.hash != signed_hash {
                 return rejected(SessionRejection::ManifestMismatch);
             }
-            if !ReplicaPostScope::for_replica(replica, subscription_topic_id)
-                .is_some_and(|scope| scope.accepts_created_at(signed_at))
-            {
-                return rejected(SessionRejection::BucketTimeMismatch);
-            }
-            match read_session_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest).await
+            match read_session_blob::<GameRoomManifestBlobV1>(
+                blob_service,
+                &current_manifest,
+                policy,
+            )
+            .await
             {
                 Ok(Some(blob)) if blob == verified.manifest => Ok(SessionRead::Ready(verified)),
                 Ok(Some(_)) | Err(_) => rejected(SessionRejection::ManifestMismatch),
@@ -557,7 +575,12 @@ pub(crate) async fn inspect_game_room_record(
             if state.room_id != dome_instance_id(&context, &state.owner_pubkey) {
                 return rejected(SessionRejection::IdNotBoundToOwner);
             }
-            match read_session_blob::<GameRoomManifestBlobV1>(blob_service, &current_manifest).await
+            match read_session_blob::<GameRoomManifestBlobV1>(
+                blob_service,
+                &current_manifest,
+                policy,
+            )
+            .await
             {
                 Ok(Some(manifest)) => {
                     match VerifiedGameRoom::verify(

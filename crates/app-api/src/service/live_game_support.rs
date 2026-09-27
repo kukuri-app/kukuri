@@ -1,10 +1,8 @@
 use super::remote_read_support::{read_local_then_remote, writer_readers};
 use super::*;
-use kukuri_core::SpatialContextV1;
 
 #[derive(Debug)]
 pub(crate) enum DomeReadUnavailable {
-    Instance,
     Preset,
     Envelope,
 }
@@ -12,7 +10,6 @@ pub(crate) enum DomeReadUnavailable {
 impl std::fmt::Display for DomeReadUnavailable {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Instance => "Dome instance manifest is unavailable",
             Self::Preset => "Dome preset manifest is unavailable",
             Self::Envelope => "signed Dome envelope is unavailable",
         })
@@ -20,47 +17,6 @@ impl std::fmt::Display for DomeReadUnavailable {
 }
 
 impl std::error::Error for DomeReadUnavailable {}
-
-async fn load_signed_dome_instance_manifest(
-    docs_sync: &dyn DocsSync,
-    replica: &ReplicaId,
-    envelope_id: &EnvelopeId,
-    owner_pubkey: &Pubkey,
-) -> Result<Option<DomeInstanceManifestV1>> {
-    let key = stable_key("envelopes", envelope_id.as_str());
-    let records = docs_sync
-        .query_replica_exact_bounded(
-            replica,
-            key.as_str(),
-            MAX_ENVELOPE_RECORDS_PER_OBJECT,
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
-    for record in records {
-        let envelope = match serde_json::from_slice::<KukuriEnvelope>(&record.value) {
-            Ok(envelope) => envelope,
-            Err(error) => {
-                warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance envelope");
-                continue;
-            }
-        };
-        if envelope.verify().is_err()
-            || envelope.id != *envelope_id
-            || envelope.kind != "dome-instance"
-            || envelope.pubkey != *owner_pubkey
-        {
-            warn!(replica = %replica.as_str(), key, "ignored an invalid Dome Instance envelope");
-            continue;
-        }
-        match serde_json::from_str::<DomeInstanceManifestV1>(&envelope.content) {
-            Ok(manifest) => return Ok(Some(manifest)),
-            Err(error) => {
-                warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable signed Dome Instance manifest");
-            }
-        }
-    }
-    Ok(None)
-}
 
 impl AppService {
     pub async fn fetch_metaverse_blob_bytes(&self, hash: &str) -> Result<Option<Vec<u8>>> {
@@ -157,6 +113,9 @@ impl AppService {
             last_envelope_id: envelope.id.clone(),
         };
         let replica = author_replica_id(manifest.owner_pubkey.as_str());
+        self.services
+            .persist_author_event(manifest.owner_pubkey.as_str(), &envelope)
+            .await?;
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
@@ -320,233 +279,12 @@ impl AppService {
         Ok(Some(manifest))
     }
 
-    pub(crate) async fn persist_dome_instance_manifest(
-        &self,
-        replica: &ReplicaId,
-        manifest: &DomeInstanceManifestV1,
-        created_at: i64,
-    ) -> Result<DomeInstanceStateDocV1> {
-        let envelope = build_dome_instance_envelope(self.services.keys.as_ref(), manifest)?;
-        let stored = store_manifest_blob(
-            self.services.blob_service.as_ref(),
-            manifest,
-            DOME_INSTANCE_MANIFEST_MIME,
-        )
-        .await?;
-        let state = DomeInstanceStateDocV1 {
-            instance_id: manifest.instance_id.clone(),
-            spatial_context: manifest.spatial_context.clone(),
-            owner_pubkey: manifest.owner_pubkey.clone(),
-            generation: manifest.generation,
-            status: manifest.status,
-            created_at,
-            updated_at: manifest.updated_at,
-            current_manifest: ManifestBlobRef {
-                hash: stored.hash.clone(),
-                mime: stored.mime.clone(),
-                bytes: stored.bytes,
-            },
-            last_envelope_id: envelope.id.clone(),
-        };
-        self.services.docs_sync.open_replica(replica).await?;
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key("envelopes", envelope.id.as_str()),
-                    value: serde_json::to_value(&envelope)?,
-                },
-            )
-            .await?;
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        "metaverse/dome-instances",
-                        &format!("{}/state", manifest.owner_pubkey.as_str()),
-                    ),
-                    value: serde_json::to_value(&state)?,
-                },
-            )
-            .await?;
-        Ok(state)
-    }
-
-    pub(crate) async fn fetch_dome_instance_manifest(
-        &self,
-        replica: &ReplicaId,
-        owner_pubkey: &Pubkey,
-    ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
-        let key = stable_key(
-            "metaverse/dome-instances",
-            &format!("{}/state", owner_pubkey.as_str()),
-        );
-        let records = self
-            .services
-            .docs_sync
-            .query_replica_exact_bounded(
-                replica,
-                key.as_str(),
-                MAX_ENVELOPE_RECORDS_PER_OBJECT,
-                DocFetchPolicy::LocalThenRemote,
-            )
-            .await?;
-        let mut newest: Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)> = None;
-        let mut unavailable = None;
-        for record in records {
-            let state = match serde_json::from_slice::<DomeInstanceStateDocV1>(&record.value) {
-                Ok(state) => state,
-                Err(error) => {
-                    warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance state");
-                    continue;
-                }
-            };
-            if state.owner_pubkey != *owner_pubkey {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state with a mismatched owner");
-                continue;
-            }
-            let bytes = match tokio::time::timeout(
-                projection_blob_fetch_timeout(),
-                self.services
-                    .blob_service
-                    .fetch_blob(&state.current_manifest.hash),
-            )
-            .await
-            {
-                Ok(result) => result?,
-                Err(error) => return Err(error.into()),
-            };
-            let Some(bytes) = bytes else {
-                unavailable = Some(DomeReadUnavailable::Instance);
-                continue;
-            };
-            let manifest = match serde_json::from_slice::<DomeInstanceManifestV1>(&bytes) {
-                Ok(manifest) => manifest,
-                Err(error) => {
-                    warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance manifest");
-                    continue;
-                }
-            };
-            if let Err(error) = kukuri_core::validate_dome_instance_manifest(&manifest) {
-                warn!(replica = %replica.as_str(), key, %error, "ignored an invalid Dome Instance manifest");
-                continue;
-            }
-            if state.instance_id != manifest.instance_id
-                || state.owner_pubkey != manifest.owner_pubkey
-                || state.spatial_context != manifest.spatial_context
-                || state.generation != manifest.generation
-                || state.status != manifest.status
-            {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its manifest");
-                continue;
-            }
-            let Some(signed) = load_signed_dome_instance_manifest(
-                self.services.docs_sync.as_ref(),
-                replica,
-                &state.last_envelope_id,
-                &manifest.owner_pubkey,
-            )
-            .await?
-            else {
-                unavailable = Some(DomeReadUnavailable::Envelope);
-                continue;
-            };
-            if signed != manifest {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance without a matching owner signature");
-                continue;
-            }
-            if newest.as_ref().is_none_or(|(_, current)| {
-                (manifest.generation, manifest.updated_at)
-                    > (current.generation, current.updated_at)
-            }) {
-                newest = Some((state, manifest));
-            }
-        }
-        match newest {
-            Some(value) => Ok(Some(value)),
-            None => match unavailable {
-                Some(reason) => Err(reason.into()),
-                None => Ok(None),
-            },
-        }
-    }
-
-    pub(crate) async fn hosting_instance(
-        &self,
-        replica: &ReplicaId,
-        spatial_context: &SpatialContextV1,
-        instance_id: &str,
-    ) -> Result<Option<DomeInstanceManifestV1>> {
-        let local_owner = self.services.keys.public_key();
-        if dome_instance_id(spatial_context, &local_owner) == instance_id {
-            return self
-                .hosting_instance_for_owner(replica, spatial_context, instance_id, &local_owner)
-                .await;
-        }
-        let Some(room) = load_verified_game_room(
-            self.services.docs_sync.as_ref(),
-            self.services.blob_service.as_ref(),
-            replica,
-            spatial_context.topic_id().as_str(),
-            instance_id,
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?
-        else {
-            return Ok(None);
-        };
-        let Some(metaverse) = room.manifest().metaverse.as_ref() else {
-            return Ok(None);
-        };
-        if metaverse.spatial_context != *spatial_context || metaverse.instance_id != instance_id {
-            return Ok(None);
-        }
-        self.hosting_instance_for_owner(
-            replica,
-            spatial_context,
-            instance_id,
-            &room.manifest().owner_pubkey,
-        )
-        .await
-    }
-
-    pub(crate) async fn hosting_instance_for_owner(
-        &self,
-        replica: &ReplicaId,
-        spatial_context: &SpatialContextV1,
-        instance_id: &str,
-        owner_pubkey: &Pubkey,
-    ) -> Result<Option<DomeInstanceManifestV1>> {
-        if dome_instance_id(spatial_context, owner_pubkey) != instance_id {
-            return Ok(None);
-        }
-        let resolved = self
-            .fetch_dome_instance_manifest(replica, owner_pubkey)
-            .await?;
-        let Some((_, manifest)) = resolved else {
-            return Ok(None);
-        };
-        if manifest.instance_id != instance_id
-            || manifest.spatial_context != *spatial_context
-            || manifest.owner_pubkey != *owner_pubkey
-        {
-            warn!(
-                replica = %replica.as_str(),
-                instance_id,
-                owner_pubkey = %owner_pubkey.as_str(),
-                "ignored a Dome Instance that does not match its lookup identity"
-            );
-            return Ok(None);
-        }
-        Ok(Some(manifest))
-    }
-
     pub(crate) async fn persist_dome_move_record(&self, record: &DomeMoveRecordV1) -> Result<()> {
         let envelope = build_dome_move_envelope(self.services.keys.as_ref(), record)?;
         let replica = author_replica_id(record.owner_pubkey.as_str());
+        self.services
+            .persist_author_event(record.owner_pubkey.as_str(), &envelope)
+            .await?;
         self.services.docs_sync.open_replica(&replica).await?;
         self.services
             .docs_sync
@@ -710,13 +448,23 @@ impl AppService {
         manifest: LiveSessionManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedLiveSession> {
-        let now = Utc::now().timestamp_millis();
         let envelope = build_live_session_envelope(
             self.services.keys.as_ref(),
             &manifest.topic_id,
             manifest.session_id.as_str(),
             &manifest,
         )?;
+        let target = self
+            .session_write_replica(
+                topic_id,
+                manifest.channel_id.as_ref(),
+                replica,
+                envelope.created_at,
+            )
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
+        let now = Utc::now().timestamp_millis();
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -738,12 +486,26 @@ impl AppService {
             },
             last_envelope_id: envelope.id.clone(),
         };
-        let verified =
-            VerifiedLiveSession::verify(state, &envelope.pubkey, manifest, replica, topic_id)
-                .map_err(|reason| {
-                    anyhow::anyhow!("live session was rejected: {}", reason.as_str())
-                })?;
-        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        let verified = VerifiedLiveSession::verify(
+            state,
+            &envelope.pubkey,
+            envelope.created_at,
+            manifest,
+            replica,
+            topic_id,
+        )
+        .map_err(|reason| anyhow::anyhow!("live session was rejected: {}", reason.as_str()))?;
+        super::bucket_writer::persist_session_envelope_and_locator(
+            &self.services,
+            replica,
+            &envelope,
+            &stable_key(
+                "sessions/live",
+                &format!("{}/locator", verified.state().session_id),
+            ),
+            moved,
+        )
+        .await?;
         persist_live_session_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)
@@ -757,13 +519,23 @@ impl AppService {
         manifest: GameRoomManifestBlobV1,
         created_at: i64,
     ) -> Result<VerifiedGameRoom> {
-        let now = Utc::now().timestamp_millis();
         let envelope = build_game_session_envelope(
             self.services.keys.as_ref(),
             &manifest.topic_id,
             manifest.room_id.as_str(),
             &manifest,
         )?;
+        let target = self
+            .session_write_replica(
+                topic_id,
+                manifest.channel_id.as_ref(),
+                replica,
+                envelope.created_at,
+            )
+            .await?;
+        let moved = target != *replica;
+        let replica = &target;
+        let now = Utc::now().timestamp_millis();
         let stored = store_manifest_blob(
             self.services.blob_service.as_ref(),
             &manifest,
@@ -785,21 +557,37 @@ impl AppService {
             },
             last_envelope_id: envelope.id.clone(),
         };
-        let verified =
-            VerifiedGameRoom::verify(state, Some(&envelope.pubkey), manifest, replica, topic_id)
-                .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
-        persist_session_envelope(self.services.docs_sync.as_ref(), replica, &envelope).await?;
+        let verified = VerifiedGameRoom::verify(
+            state,
+            Some((&envelope.pubkey, envelope.created_at)),
+            manifest,
+            replica,
+            topic_id,
+        )
+        .map_err(|reason| anyhow::anyhow!("game room was rejected: {}", reason.as_str()))?;
+        super::bucket_writer::persist_session_envelope_and_locator(
+            &self.services,
+            replica,
+            &envelope,
+            &stable_key(
+                "sessions/game",
+                &format!("{}/locator", verified.state().room_id),
+            ),
+            moved,
+        )
+        .await?;
         persist_game_room_state(self.services.docs_sync.as_ref(), replica, verified.state())
             .await?;
         Ok(verified)
     }
 
-    /// 操作(終了・参加・更新)が使う state と manifest。docs から反映するときと同じ検証を通す(#1252)。
-    pub(crate) async fn fetch_live_session_state_and_manifest(
+    /// 手元 → 有界な provider の順に読み、検証した版。projection より古い版は返さない。
+    pub(crate) async fn fetch_verified_live_session(
         &self,
         topic_id: &str,
+        channel: &str,
         session_id: &str,
-    ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
+    ) -> Result<Option<VerifiedLiveSession>> {
         let projected = self
             .services
             .projection_store
@@ -812,13 +600,13 @@ impl AppService {
                 row.updated_at,
             )
         });
-        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
         let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, source, session_id)
+            .session_target_readers(topic_id, channel, source, session_id, "live")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {
@@ -855,7 +643,7 @@ impl AppService {
                 {
                     continue;
                 }
-                return Ok(Some(verified.into_parts()));
+                return Ok(Some(verified));
             }
             if tokio::time::Instant::now() >= deadline {
                 break;
@@ -864,12 +652,12 @@ impl AppService {
         Ok(None)
     }
 
-    /// `fetch_live_session_state_and_manifest` と同じ形。
-    pub(crate) async fn fetch_game_room_state_and_manifest(
+    pub(crate) async fn fetch_verified_game_room(
         &self,
         topic_id: &str,
+        channel: &str,
         room_id: &str,
-    ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
+    ) -> Result<Option<VerifiedGameRoom>> {
         let projected = self
             .services
             .projection_store
@@ -882,13 +670,13 @@ impl AppService {
                 row.updated_at,
             )
         });
-        let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
         let generation = self
             .services
             .active_content_scope_generation(topic_id, channel)
             .await;
         let readers = self
-            .session_target_readers(topic_id, source, room_id)
+            .session_target_readers(topic_id, channel, source, room_id, "game")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, docs, policy) in readers {
@@ -927,7 +715,7 @@ impl AppService {
                 {
                     continue;
                 }
-                return Ok(Some(verified.into_parts()));
+                return Ok(Some(verified));
             }
             if tokio::time::Instant::now() >= deadline {
                 break;

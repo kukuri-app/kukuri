@@ -33,9 +33,14 @@ async fn put_profile_post(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_a
     let post = parse_profile_post(&envelope)
         .expect("parse profile post")
         .expect("profile post");
-    persist_profile_post_doc(docs_sync, &post, &envelope)
-        .await
-        .expect("persist profile post");
+    persist_profile_post_doc(
+        docs_sync,
+        &author_replica_id(post.author_pubkey.as_str()),
+        &post,
+        &envelope,
+    )
+    .await
+    .expect("persist profile post");
     object_id.as_str().to_string()
 }
 
@@ -310,4 +315,52 @@ async fn profile_rows_are_read_by_the_docs_author_behind_shadows() {
             .collect::<Vec<_>>(),
         ids
     );
+}
+
+/// 同じ docs を読む別の端末(別の鍵と projection)。
+fn other_device(app: &AppService) -> AppService {
+    let store = Arc::new(MemoryStore::default());
+    let mut handles = app.services.clone();
+    handles.keys = Arc::new(generate_keys());
+    handles.store = store.clone();
+    handles.projection_store = store;
+    AppService::from_handles(handles)
+}
+
+// 切替後の投稿は author bucket にある。手元の旧 `author::` に `limit` 件以上の行があっても、手元の author bucket を合わせた
+// 1 ページ目に出る。自分のプロフィールも、他人のプロフィールも同じ(#1221 R5-H AC-4)。
+#[tokio::test]
+async fn profile_page_one_shows_posts_written_after_the_switch() {
+    let (writer, _, _, _) = local_app_with_memory_services();
+    for index in 0..3 {
+        writer
+            .create_post(TOPIC, &format!("old {index}"), None)
+            .await
+            .expect("old post");
+    }
+    writer.switch_writer(1);
+    // 行の並びは署名の秒と object id。旧い投稿と別の秒にする。
+    sleep(Duration::from_millis(1_100)).await;
+    let new_post = writer
+        .create_post(TOPIC, "after the switch", None)
+        .await
+        .expect("new post");
+    let author = writer.current_author_pubkey();
+    let reader = other_device(&writer);
+    for app in [&writer, &reader] {
+        let page = app
+            .list_profile_timeline(author.as_str(), None, 2)
+            .await
+            .expect("profile");
+        let ids = page
+            .items
+            .iter()
+            .map(|item| item.object_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 2, "{ids:?}");
+        assert_eq!(
+            ids[0], new_post,
+            "page 1 starts with the post after the switch"
+        );
+    }
 }

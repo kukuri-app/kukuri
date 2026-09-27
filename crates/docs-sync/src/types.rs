@@ -147,6 +147,11 @@ pub trait DocsSync: Send + Sync {
         anyhow::bail!("this DocsSync implementation does not support local source reads")
     }
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()>;
+    /// replica の namespace が手元にあるか。namespace を作らない(#1221 R5-H: 手元の読取りが、書いていない bucket を
+    /// 作らないため)。
+    async fn has_local_replica(&self, _replica_id: &ReplicaId) -> Result<bool> {
+        Ok(true)
+    }
     /// 同期とevent転送を停止しhandleを解放する。永続entryとcapabilityは削除しない。
     /// 呼出元は利用中のleaseが無いことを保証する。未対応実装を成功扱いにしない。
     async fn close_replica(&self, _replica_id: &ReplicaId) -> Result<()> {
@@ -256,9 +261,6 @@ pub trait DocsSync: Send + Sync {
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()>;
     async fn learn_peer(&self, _endpoint_id: &str) -> Result<()> {
         Ok(())
-    }
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.open_replica(replica_id).await
     }
     async fn set_seed_peers(&self, _peers: Vec<SeedPeer>) -> Result<()> {
         Ok(())

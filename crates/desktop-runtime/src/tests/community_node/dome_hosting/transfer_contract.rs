@@ -284,8 +284,11 @@ async fn saved_layout_operations(
     let current = runtime.iroh_stack.current.lock().await;
     let docs = current.as_ref().expect("runtime stack").docs_sync.clone();
     drop(current);
+    // #1221 R5-H: 公開の context の layout の commit は owner の制御領域に置く。
+    assert!(matches!(context, SpatialContextV1::Topic { .. }));
+    let owner = runtime.author_keys.public_key_hex();
     docs.query_replica(
-        &kukuri_docs_sync::topic_replica_id(context.topic_id().as_str()),
+        &kukuri_docs_sync::author_replica_id(owner.as_str()),
         DocQuery::Prefix(format!("metaverse/dome-layout-commits/{instance}/")),
     )
     .await

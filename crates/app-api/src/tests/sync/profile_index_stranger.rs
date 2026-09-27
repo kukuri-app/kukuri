@@ -44,9 +44,14 @@ async fn a_stranger_reads_a_bounded_amount_regardless_of_the_post_count() {
             )
             .expect("envelope");
             let post = parse_profile_post(&envelope).expect("parse").expect("post");
-            persist_profile_post_doc(docs_sync.as_ref(), &post, &envelope)
-                .await
-                .expect("persist");
+            persist_profile_post_doc(
+                docs_sync.as_ref(),
+                &author_replica_id(post.author_pubkey.as_str()),
+                &post,
+                &envelope,
+            )
+            .await
+            .expect("persist");
         }
         app.list_profile_timeline(pubkey.as_str(), None, 20)
             .await

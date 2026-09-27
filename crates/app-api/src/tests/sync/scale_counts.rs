@@ -10,7 +10,6 @@
 
 use super::range_reconcile::{BASE_TIME, TestPost, put_post_at};
 use super::*;
-use crate::service::catch_up_replica_window;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
@@ -70,14 +69,6 @@ impl IndexedDocsSync {
                 source_peer: Some("remote-peer".into()),
                 docs_author: Some(DOCS_AUTHOR.to_string()),
             });
-    }
-
-    /// 覚えた entry を、書いた順に購読へ通知する。
-    fn flush(&self) {
-        for event in std::mem::take(&mut *self.pending.lock().expect("pending events")) {
-            // 購読が無いときの送信の失敗は無視する。
-            let _ = self.events.send(event);
-        }
     }
 
     fn record(key: &str, value: &[u8]) -> kukuri_docs_sync::DocRecord {
@@ -500,22 +491,6 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                     .await,
             ),
             (
-                "subscription catch-up",
-                fixture
-                    .reads_of(|| async {
-                        catch_up_replica_window(
-                            &app.services,
-                            topic,
-                            &replica,
-                            DocFetchPolicy::LocalOnly,
-                            true,
-                        )
-                        .await
-                        .expect("catch up");
-                    })
-                    .await,
-            ),
-            (
                 "timeline head page",
                 fixture
                     .reads_of(|| async {
@@ -528,8 +503,8 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                 "receive a new post",
                 fixture
                     .reads_of(|| async {
-                        fixture.docs_sync.emit.store(true, AtomicOrdering::SeqCst);
-                        put_post_at(
+                        // R5-H: 新着は hint が指す対象だけを exact に読む。
+                        let post = put_post_at(
                             fixture.docs_sync.as_ref(),
                             &replica,
                             &fixture.author_keys,
@@ -539,8 +514,19 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                             None,
                         )
                         .await;
-                        fixture.docs_sync.emit.store(false, AtomicOrdering::SeqCst);
-                        fixture.docs_sync.flush();
+                        app.apply_content_hint(
+                            topic,
+                            &TimelineScope::Public,
+                            &GossipHint::TopicObjectsChanged {
+                                topic_id: fixture.topic.clone(),
+                                objects: vec![HintObjectRef {
+                                    object_id: post.envelope.id.as_str().to_string(),
+                                    object_kind: "post".into(),
+                                    docs_author: None,
+                                }],
+                            },
+                        )
+                        .await;
                     })
                     .await,
             ),
@@ -580,21 +566,6 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                     .await,
             ),
             (
-                "author catch-up",
-                fixture
-                    .reads_of(|| async {
-                        catch_up_author_state(
-                            &app.services,
-                            app.current_author_pubkey().as_str(),
-                            fixture.remote_pubkey.as_str(),
-                            DocFetchPolicy::LocalOnly,
-                        )
-                        .await
-                        .expect("author catch-up");
-                    })
-                    .await,
-            ),
-            (
                 "profile timeline",
                 fixture
                     .reads_of(|| async {
@@ -624,7 +595,7 @@ async fn reads_do_not_grow_from_one_thousand_to_one_hundred_thousand_entries() {
     assert!(
         reads
             .iter()
-            .filter(|(operation, _)| **operation != "timeline head page")
+            .filter(|(operation, _)| !matches!(**operation, "timeline head page" | "reaction"))
             .all(|(_, counts)| counts[0].docs > 0),
         "{reads:?}"
     );

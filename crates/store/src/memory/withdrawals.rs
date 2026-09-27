@@ -37,4 +37,38 @@ impl PostWithdrawalStore for MemoryStore {
             .get(target_object_id)
             .cloned())
     }
+
+    async fn queue_withdrawal_writes(&self, rows: Vec<WithdrawalWriteRow>) -> Result<()> {
+        let mut pending = self.withdrawal_write_rows.write().await;
+        for row in rows {
+            pending.retain(|item| {
+                (&item.withdrawal_envelope_id, &item.replica_id)
+                    != (&row.withdrawal_envelope_id, &row.replica_id)
+            });
+            pending.push(row);
+        }
+        Ok(())
+    }
+
+    async fn pending_withdrawal_writes(&self, limit: usize) -> Result<Vec<WithdrawalWriteRow>> {
+        Ok(self
+            .withdrawal_write_rows
+            .read()
+            .await
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn finish_withdrawal_write(
+        &self,
+        withdrawal_envelope_id: &EnvelopeId,
+        replica_id: &ReplicaId,
+    ) -> Result<()> {
+        self.withdrawal_write_rows.write().await.retain(|item| {
+            (&item.withdrawal_envelope_id, &item.replica_id) != (withdrawal_envelope_id, replica_id)
+        });
+        Ok(())
+    }
 }

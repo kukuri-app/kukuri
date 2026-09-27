@@ -294,7 +294,7 @@ impl Fixture {
 
     async fn ingest(&self) -> Result<IngestSummary> {
         self.pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &self.replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &self.replica, &[])
             .await
     }
 
@@ -431,7 +431,8 @@ async fn transient_index_store_read_failure_keeps_indexed_post() -> Result<()> {
     let replica = topic_replica_id("rust");
     let topic = TopicId::new("rust");
     let indexed = persist_post(&docs, &replica, &topic, "indexed").await;
-    let ingest = || pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica);
+    let ingest =
+        || pipeline.ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[]);
     assert_eq!(ingest().await?.indexed, 1);
 
     entries.arm(None);

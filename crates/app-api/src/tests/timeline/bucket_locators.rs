@@ -364,8 +364,10 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
     let target = app
         .session_target_candidates(
             topic,
+            channel.as_str(),
             Some((channel.as_str(), &source, (6 * 86_400 + 7_200) * 1_000)),
             "live-same-day-old",
+            "live",
         )
         .await?;
     assert_eq!(target[0].0, source);
@@ -384,8 +386,10 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
     let earlier_target = app
         .session_target_candidates(
             topic,
+            channel.as_str(),
             Some((channel.as_str(), &earlier, (6 * 86_400 + 2_400) * 1_000)),
             "live-earlier-in-same-bucket",
+            "live",
         )
         .await?;
     assert_eq!(

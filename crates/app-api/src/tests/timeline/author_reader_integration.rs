@@ -145,7 +145,13 @@ async fn real_iroh_author_profile_is_read_from_the_author_device_without_sync() 
     let mut expected = Vec::new();
     for index in 0..25 {
         let (post, envelope) = profile_post(&author, now - 3_600 - index, "legacy post");
-        persist_profile_post_doc(&author_docs, &post, &envelope).await?;
+        persist_profile_post_doc(
+            &author_docs,
+            &author_replica_id(post.author_pubkey.as_str()),
+            &post,
+            &envelope,
+        )
+        .await?;
         expected.push(post.object_id.as_str().to_string());
     }
     expected.insert(0, put_bucket_profile_post(&author_docs, &author, now).await);

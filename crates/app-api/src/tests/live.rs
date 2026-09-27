@@ -402,3 +402,191 @@ async fn listing_live_session_without_viewers_keeps_topic_subscription() {
     );
     assert_eq!(*hint_transport.subscribe_count.lock().await, subscribed);
 }
+
+/// #1221 R5-H 判断 5: 既存の session の後から lease を始めた端末は、hint も表示の操作も待たずに、lease の開始の
+/// 読み直し(現在と直前の bucket と旧形式の session の索引)で既存の live session と game room を一覧に出す。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn lease_start_rereads_existing_live_sessions_and_game_rooms() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("reread-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("reread-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    let topic = "kukuri:topic:session-reread";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic(&app_a, topic).await.expect("display a");
+    let session_id = app_a
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "existing live".into(),
+                description: "before the lease".into(),
+            },
+        )
+        .await
+        .expect("create live session");
+    let room_id = app_a
+        .create_game_room(
+            topic,
+            CreateGameRoomInput {
+                title: "existing room".into(),
+                description: "before the lease".into(),
+                participants: vec!["Alice".into(), "Bob".into()],
+            },
+        )
+        .await
+        .expect("create game room");
+
+    display_topic(&app_b, topic).await.expect("display b");
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let live = app_b.list_live_sessions(topic).await.expect("live");
+            let games = app_b.list_game_rooms(topic).await.expect("games");
+            if live.iter().any(|session| session.session_id == session_id)
+                && games.iter().any(|room| room.room_id == room_id)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the lease start rereads the existing sessions");
+}
+
+/// #1221 R5-H: projection に行の無い private channel の live session も、hint を受けた channel の scope で読む
+/// (公開 topic の replica だけを探さない)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn private_live_session_reaches_a_member_through_the_channel_hint() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("private-live-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("private-live-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
+    let topic = "kukuri:topic:private-live";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic_in(&[&app_a, &app_b], topic).await;
+    let channel = app_a
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "live".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create private channel");
+    let invite = app_a
+        .export_private_channel_invite(topic, channel.channel_id.as_str(), None)
+        .await
+        .expect("export invite");
+    app_b
+        .import_private_channel_invite(invite.as_str())
+        .await
+        .expect("import invite");
+    let channel_id = ChannelId::new(channel.channel_id.clone());
+    let session_id = app_b
+        .create_live_session_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: channel_id.clone(),
+            },
+            CreateLiveSessionInput {
+                title: "private live".into(),
+                description: "members only".into(),
+            },
+        )
+        .await
+        .expect("create private live session");
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let sessions = app_a
+                .list_live_sessions_scoped(
+                    topic,
+                    TimelineScope::Channel {
+                        channel_id: channel_id.clone(),
+                    },
+                )
+                .await
+                .expect("private live sessions");
+            if sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the member reads the private live session");
+}
+
+#[cfg(feature = "iroh-integration-tests")]
+async fn live_status(app: &AppService, topic: &str, session_id: &str) -> Option<LiveSessionStatus> {
+    app.list_live_sessions(topic)
+        .await
+        .expect("live sessions")
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .map(|session| session.status)
+}
+
+/// #1221 R5-H: 同じ session の続く更新(作成の後の終了)の hint も届き、見ている端末が終了を反映する
+/// (gossip は同じ内容の message を重複として落とすので、hint に送った時刻を載せる)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "iroh-integration-tests")]
+async fn successive_session_hints_reach_the_viewer() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("successive-a")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("successive-b")).await;
+    let app_a = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_a);
+    let app_b = app_with_iroh_services(Arc::new(MemoryStore::default()), &stack_b);
+    let topic = "kukuri:topic:successive-session-hints";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    display_topic_in(&[&app_a, &app_b], topic).await;
+    wait_for_topic_delivery(&app_a, topic, 1).await;
+    wait_for_topic_delivery(&app_b, topic, 1).await;
+    let session_id = app_a
+        .create_live_session(
+            topic,
+            CreateLiveSessionInput {
+                title: "successive".into(),
+                description: "create then end".into(),
+            },
+        )
+        .await
+        .expect("create live session");
+    timeout(Duration::from_secs(20), async {
+        while live_status(&app_b, topic, &session_id).await != Some(LiveSessionStatus::Live) {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the viewer sees the live session");
+    app_a
+        .end_live_session(topic, &session_id)
+        .await
+        .expect("end live session");
+    timeout(Duration::from_secs(20), async {
+        while live_status(&app_b, topic, &session_id).await != Some(LiveSessionStatus::Ended) {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the viewer sees the end through the second hint");
+}

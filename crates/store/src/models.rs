@@ -82,6 +82,18 @@ pub struct PostWithdrawalRow {
     pub reason: Option<PostWithdrawalReason>,
 }
 
+/// 取り下げの docs への書込み 1 件(R5-H)。元投稿の位置と操作時の bucket の 2 か所を別の行にし、
+/// 書けた行だけを消す(片側の失敗を成功として落とさない)。宛先は積んだ時に決め、再開で変えない。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WithdrawalWriteRow {
+    pub withdrawal_envelope_id: EnvelopeId,
+    pub replica_id: ReplicaId,
+    pub target_object_id: EnvelopeId,
+    pub envelope: kukuri_core::KukuriEnvelope,
+    /// 操作時の bucket の行だけが持つ、元投稿の位置(target locator)。
+    pub target_replica_id: Option<ReplicaId>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentObservationRow {
     pub subject_kind: String,
@@ -274,6 +286,16 @@ impl AuthorRelationshipProjectionRow {
                 .unwrap_or_default(),
         })
     }
+}
+
+/// owner が受け取った private channel の参加・退出(#1221 R5-H)。`updated_at` は record の時刻。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateChannelParticipantRow {
+    pub channel_id: String,
+    pub epoch_id: String,
+    pub participant_pubkey: String,
+    pub left_at: Option<i64>,
+    pub updated_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

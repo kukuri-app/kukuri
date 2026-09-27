@@ -220,14 +220,24 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
         .unfollow_author(b_pubkey.as_str())
         .await
         .expect("a unfollows b");
-    let joined_a = app_a
-        .list_joined_private_channels(topic)
-        .await
-        .expect("list joined channels on a");
-    let channel_a = joined_a
-        .into_iter()
-        .find(|entry| entry.channel_id == channel.channel_id)
-        .expect("friend-only channel view");
+    // #1221 R5-H: b の参加 record は account 経路で owner へ届く(outbox の再送 owner が送る)。
+    let channel_a = timeout(Duration::from_secs(20), async {
+        loop {
+            let channel_a = app_a
+                .list_joined_private_channels(topic)
+                .await
+                .expect("list joined channels on a")
+                .into_iter()
+                .find(|entry| entry.channel_id == channel.channel_id)
+                .expect("friend-only channel view");
+            if channel_a.participant_count == Some(2) {
+                break channel_a;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("b's participant record reaches the owner");
     assert!(channel_a.rotation_required);
     assert_eq!(channel_a.stale_participant_count, 1);
 

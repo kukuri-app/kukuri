@@ -120,6 +120,7 @@ reloadable_service! {
         async fn subscribe_hints(topic: &TopicId) -> Result<HintStream>;
         async fn unsubscribe_hints(topic: &TopicId) -> Result<()>;
         async fn publish_hint(topic: &TopicId, hint: GossipHint) -> Result<()>;
+        async fn topic_read_candidates(topic: &TopicId) -> Result<Vec<SeedPeer>>;
         async fn resolve_receive_destination(recipient: &Pubkey) -> Result<Option<EndpointAddr>>;
         async fn receive_candidate_fence() -> Result<ReceiveCandidateFence>;
         async fn offer_receive_candidates(source: &str, recipient: &Pubkey, candidates: Vec<EndpointAddr>, fence: ReceiveCandidateFence) -> Result<()>;
@@ -188,7 +189,6 @@ reloadable_service! {
         async fn subscribe_replica_notices(replica_id: &ReplicaId) -> Result<ReplicaNoticeStream>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
-        async fn restart_replica_sync(replica_id: &ReplicaId) -> Result<()>;
         async fn set_seed_peers(peers: Vec<SeedPeer>) -> Result<()>;
         async fn assist_peer_ids() -> Result<Vec<String>>;
         async fn remote_readers(

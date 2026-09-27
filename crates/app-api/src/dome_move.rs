@@ -29,7 +29,7 @@ impl AppService {
             }
             existing
         } else {
-            let (source_replica_id, source_state, source_manifest) = self
+            let (_, source_state, source_manifest) = self
                 .fetch_game_room_state_and_manifest(
                     source_topic_id,
                     input.source_instance_id.as_str(),
@@ -46,7 +46,7 @@ impl AppService {
                 anyhow::bail!("only the owner can move an active Dome instance");
             }
             let (_, canonical_source) = self
-                .fetch_dome_instance_manifest(&source_replica_id, &actor)
+                .fetch_dome_instance_manifest(&source.spatial_context, &actor)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("canonical source Dome instance not found"))?;
             if canonical_source.instance_id != source.instance_id
@@ -112,22 +112,20 @@ impl AppService {
         }
 
         let target_topic_id = record.target_context.topic_id().as_str().to_string();
-        let (target_channel_id, target_replica_id) = match &record.target_context {
-            SpatialContextV1::Topic { .. } => (None, topic_replica_id(target_topic_id.as_str())),
-            SpatialContextV1::Channel { channel_id, .. } => {
-                let state = self
-                    .private_channel_write_state(target_topic_id.as_str(), channel_id)
-                    .await?;
-                (
-                    Some(state.channel_id.clone()),
-                    current_private_channel_replica_id(&state),
-                )
-            }
+        let target_private = match &record.target_context {
+            SpatialContextV1::Topic { .. } => None,
+            SpatialContextV1::Channel { channel_id, .. } => Some(
+                self.private_channel_write_state(target_topic_id.as_str(), channel_id)
+                    .await?,
+            ),
         };
+        let target_channel_id = target_private
+            .as_ref()
+            .map(|state| state.channel_id.clone());
 
         if record.phase == DomeMovePhaseV1::Preparing {
             if let Some((_, existing)) = self
-                .fetch_dome_instance_manifest(&target_replica_id, &actor)
+                .fetch_dome_instance_manifest(&record.target_context, &actor)
                 .await?
             {
                 let is_same_staging_attempt = existing.instance_id == record.target_instance_id
@@ -178,19 +176,22 @@ impl AppService {
             target.session_id = record.target_instance_id.clone();
             target.chat_history.clear();
             let staged_instance = dome_instance_manifest_from_game_manifest(&staged)?;
-            self.persist_dome_instance_manifest(
-                &target_replica_id,
-                &staged_instance,
-                Utc::now().timestamp_millis(),
-            )
-            .await?;
+            // #1221 R5-H: 移動先の Dome の session は作成時の scope bucket(移動先の anchor)に置く。
+            let now = Utc::now().timestamp_millis();
+            let target_replica_id = self.services.scope_write_replica(
+                target_topic_id.as_str(),
+                target_private.as_ref(),
+                now / 1_000,
+            )?;
             let staged = self
                 .persist_game_room_manifest(
                     &target_replica_id,
                     target_topic_id.as_str(),
                     staged,
-                    Utc::now().timestamp_millis(),
+                    now,
                 )
+                .await?;
+            self.persist_dome_instance_manifest(&staged_instance, now)
                 .await?;
             // 次の段は projection から staging を読む。購読 task の反映を待たずに自分で置く(#1221 R2-C)。
             self.services
@@ -224,12 +225,6 @@ impl AppService {
             });
             source_manifest.updated_at = Utc::now().timestamp_millis();
             let source_instance = dome_instance_manifest_from_game_manifest(&source_manifest)?;
-            self.persist_dome_instance_manifest(
-                &source_replica_id,
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,
@@ -237,6 +232,8 @@ impl AppService {
                     source_manifest.clone(),
                     source_state.created_at,
                 )
+                .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
                 .await?;
             self.services
                 .projection_store
@@ -262,12 +259,6 @@ impl AppService {
             target.instance_status = DomeInstanceStatusV1::Active;
             target_manifest.updated_at = Utc::now().timestamp_millis();
             let target_instance = dome_instance_manifest_from_game_manifest(&target_manifest)?;
-            self.persist_dome_instance_manifest(
-                &target_source_replica,
-                &target_instance,
-                target_state.created_at,
-            )
-            .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &target_source_replica,
@@ -275,6 +266,8 @@ impl AppService {
                     target_manifest.clone(),
                     target_state.created_at,
                 )
+                .await?;
+            self.persist_dome_instance_manifest(&target_instance, target_state.created_at)
                 .await?;
             self.services
                 .projection_store
@@ -302,12 +295,6 @@ impl AppService {
             source_manifest.status = GameRoomStatus::Ended;
             source_manifest.updated_at = Utc::now().timestamp_millis();
             let source_instance = dome_instance_manifest_from_game_manifest(&source_manifest)?;
-            self.persist_dome_instance_manifest(
-                &source_replica_id,
-                &source_instance,
-                source_state.created_at,
-            )
-            .await?;
             let persisted = self
                 .persist_game_room_manifest(
                     &source_replica_id,
@@ -315,6 +302,8 @@ impl AppService {
                     source_manifest.clone(),
                     source_state.created_at,
                 )
+                .await?;
+            self.persist_dome_instance_manifest(&source_instance, source_state.created_at)
                 .await?;
             self.services
                 .projection_store

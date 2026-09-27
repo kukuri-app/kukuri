@@ -92,7 +92,11 @@ unavailable_count?: number | null, };
 
 export type DirectMessageTimelineView = { items: Array<DirectMessageMessageView>, next_cursor?: TimelineCursor | null, };
 
-export type JoinedPrivateChannelView = { topic_id: string, channel_id: string, label: string, creator_pubkey: string, owner_pubkey: string, joined_via_pubkey?: string | null, audience_kind: ChannelAudienceKind, is_owner: boolean, current_epoch_id: string, archived_epoch_ids: Array<string>, sharing_state: ChannelSharingState, rotation_required: boolean, participant_count: number, stale_participant_count: number, entry_dome_instance_id?: string | null, };
+export type JoinedPrivateChannelView = { topic_id: string, channel_id: string, label: string, creator_pubkey: string, owner_pubkey: string, joined_via_pubkey?: string | null, audience_kind: ChannelAudienceKind, is_owner: boolean, current_epoch_id: string, archived_epoch_ids: Array<string>, sharing_state: ChannelSharingState, rotation_required: boolean, 
+/**
+ * 参加者数。参加・退出 record が届く owner の端末だけが持ち、owner 以外は `None`(#1221 R5-H)。
+ */
+participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, };
 
 export type PrivateChannelEpochCapability = { epoch_id: string, namespace_secret_hex: string, };
 

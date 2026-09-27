@@ -127,6 +127,9 @@ pub(crate) async fn writer_readers(
 impl AppService {
     /// Read the selected bucket page from one provider at a time. It shares
     /// the signed post/withdrawal projector with the local range check.
+    ///
+    /// `ledger` が偽の読み直し(lease の開始・再接続・日の境界。#1221 R5-H)は、照合の台帳を使わず、毎回各 bucket の
+    /// 先頭(新しい側)から 1 ページを読む。読み残しの位置を持ち越さず、記録もしない。
     pub(super) async fn reconcile_remote_index_range(
         &self,
         topic_id: &str,
@@ -134,6 +137,7 @@ impl AppService {
         anchor_seconds: Option<i64>,
         range: &IndexRange<'_>,
         max_entries: usize,
+        ledger: bool,
     ) -> Result<RangeReconcile> {
         if max_entries == 0 {
             return Ok(RangeReconcile::default());
@@ -218,12 +222,16 @@ impl AppService {
                 anchor_seconds.unwrap_or_default(),
             );
             let now_ms = Utc::now().timestamp_millis();
-            let Some(resume_from) = self
-                .services
-                .range_checks
-                .try_begin(&ledger_key, now_ms)
-                .await
-            else {
+            let begun = match ledger {
+                true => {
+                    self.services
+                        .range_checks
+                        .try_begin(&ledger_key, now_ms)
+                        .await
+                }
+                false => Some(None),
+            };
+            let Some(resume_from) = begun else {
                 let (missing, read_past) =
                     self.services.range_checks.last_result(&ledger_key).await;
                 total.merge_from(
@@ -347,12 +355,12 @@ impl AppService {
                         },
                         range.order,
                     );
-                    if let Some(cursor) = read_past {
+                    if let Some(cursor) = read_past.filter(|_| ledger) {
                         self.services
                             .range_checks
                             .record_resume(&ledger_key, cursor, outcome.missing)
                             .await;
-                    } else {
+                    } else if ledger {
                         self.services
                             .range_checks
                             .record_finished(&ledger_key, now_ms, outcome.result(), outcome.missing)
@@ -361,10 +369,12 @@ impl AppService {
                 }
                 Some(Ok(Err(error))) => {
                     warn!(%error, "remote page read failed");
-                    self.services
-                        .range_checks
-                        .record_finished(&ledger_key, now_ms, RangeCheckResult::Stalled, 0)
-                        .await;
+                    if ledger {
+                        self.services
+                            .range_checks
+                            .record_finished(&ledger_key, now_ms, RangeCheckResult::Stalled, 0)
+                            .await;
+                    }
                 }
                 Some(Err(_)) | None => break,
             }
@@ -475,11 +485,14 @@ impl AppService {
         }
         Ok(replicas)
     }
+    /// `channel` は projection に行が無い session(hint・読み直し・表示で初めて読む)の scope。
     pub(super) async fn session_target_candidates(
         &self,
         topic_id: &str,
+        channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
+        kind: &str,
     ) -> Result<Vec<RemotePostReplica>> {
         let (scope, anchor) = match source {
             Some((PUBLIC_CHANNEL_ID, _, updated_at)) => {
@@ -496,7 +509,13 @@ impl AppService {
                     .split('-')
                     .nth(1)
                     .and_then(|part| part.parse::<i64>().ok());
-                (TimelineScope::Public, millis.map(|value| value / 1_000))
+                let scope = match channel {
+                    PUBLIC_CHANNEL_ID => TimelineScope::Public,
+                    channel => TimelineScope::Channel {
+                        channel_id: ChannelId::new(channel),
+                    },
+                };
+                (scope, millis.map(|value| value / 1_000))
             }
         };
         let mut candidates = self
@@ -517,21 +536,124 @@ impl AppService {
             }
             candidates.truncate(4);
         }
+        // #1221 R5-H: 現在と直前の bucket の locator が指す replica(日が変わった更新・回転や切替で移した session の
+        // state)を先に読む。
+        for located in self
+            .session_locators(topic_id, &scope, kind, id)
+            .await?
+            .into_iter()
+            .rev()
+        {
+            candidates.retain(|(replica, _)| *replica != located.0);
+            candidates.insert(0, located);
+        }
         Ok(candidates)
+    }
+
+    /// 現在と直前の bucket(private は現 epoch)に置かれた、session の state の replica を指す locator。同じ scope の
+    /// bucket だけを受け取る。
+    async fn session_locators(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        kind: &str,
+        id: &str,
+    ) -> Result<Vec<RemotePostReplica>> {
+        let key = stable_key(&format!("sessions/{kind}"), &format!("{id}/locator"));
+        let channel = match scope {
+            TimelineScope::Public => None,
+            TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
+        };
+        let mut located: Vec<RemotePostReplica> = Vec::new();
+        for (bucket, epoch) in self
+            .remote_page_replicas(topic_id, scope, None, false, false)
+            .await?
+            .into_iter()
+            .filter(|(replica, _)| replica.as_str().starts_with("bucket::"))
+        {
+            let readers = async {
+                self.remote_post_readers(
+                    topic_id,
+                    channel,
+                    &bucket,
+                    epoch
+                        .as_ref()
+                        .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                )
+                .await
+                .unwrap_or_default()
+            };
+            // 公開の bucket は namespace を作らない手元の読取り、private は capability を持つ手元の docs。
+            let local: Arc<dyn DocsSync> = match channel {
+                None => Arc::new(LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: bucket.clone(),
+                }),
+                Some(_) => self.services.docs_sync.clone(),
+            };
+            let found = read_local_then_remote(local, readers, |docs, policy| {
+                let (bucket, key) = (bucket.clone(), key.clone());
+                async move {
+                    Ok(docs
+                        .query_replica_with_policy(&bucket, DocQuery::Exact(key), policy)
+                        .await?
+                        .into_iter()
+                        .next())
+                }
+            })
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, "session locator read failed");
+                None
+            });
+            let Some(target) = found
+                .and_then(|record| serde_json::from_slice::<String>(&record.value).ok())
+                .map(ReplicaId::new)
+            else {
+                continue;
+            };
+            let Ok(parsed) = BucketReplica::parse(&target) else {
+                continue;
+            };
+            let epoch = match (parsed.scope(), channel) {
+                (BucketScope::Topic { topic_id: topic }, None) if topic == topic_id => None,
+                (BucketScope::PrivateChannel { channel_id, .. }, Some(channel))
+                    if channel_id == channel =>
+                {
+                    match self
+                        .private_epoch_for_source(topic_id, channel, &target)
+                        .await?
+                    {
+                        Some(epoch) => Some(epoch),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+            if !located.iter().any(|(replica, _)| *replica == target) {
+                located.push((target, epoch));
+            }
+        }
+        Ok(located)
     }
 
     pub(super) async fn session_target_readers(
         &self,
         topic_id: &str,
+        channel: &str,
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
+        kind: &str,
     ) -> Result<Vec<SessionTargetReader>> {
         let mut readers = Vec::new();
-        for (replica, epoch) in self.session_target_candidates(topic_id, source, id).await? {
-            let channel = source.map_or(PUBLIC_CHANNEL_ID, |(channel, _, _)| channel);
-            if replica == topic_replica_id(topic_id)
-                || (channel != PUBLIC_CHANNEL_ID && !replica.as_str().starts_with("bucket::"))
-            {
+        let channel = source.map_or(channel, |(channel, _, _)| channel);
+        for (replica, epoch) in self
+            .session_target_candidates(topic_id, channel, source, id, kind)
+            .await?
+        {
+            // private は旧 replica も bucket も、capability を持つ手元の docs から読む(自分が書いた session を、channel の
+            // 他の参加者がいなくても読める。#1221 R5-H)。
+            if replica == topic_replica_id(topic_id) || channel != PUBLIC_CHANNEL_ID {
                 readers.push((
                     replica.clone(),
                     self.services.docs_sync.clone(),
@@ -699,11 +821,11 @@ impl AppService {
     }
 }
 
-fn epoch_start_millis(id: &str) -> Option<i64> {
+pub(super) fn epoch_start_millis(id: &str) -> Option<i64> {
     id.strip_prefix("epoch-")?.split('-').next()?.parse().ok()
 }
 
-fn private_epochs_for_bucket(
+pub(super) fn private_epochs_for_bucket(
     state: &JoinedPrivateChannelState,
     bucket: TimeBucket,
 ) -> Vec<(String, String)> {

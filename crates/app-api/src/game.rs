@@ -57,13 +57,9 @@ impl AppService {
         let mut items = Vec::with_capacity(rows.len());
         for mut row in rows {
             let dome_hosting = if let Some(metaverse) = row.metaverse.as_ref() {
-                let replica = self
-                    .hosting_context_replica(&metaverse.spatial_context)
-                    .await?;
                 let owner = Pubkey::from(row.host_pubkey.clone());
                 let instance = match self
                     .hosting_instance_for_owner(
-                        &replica,
                         &metaverse.spatial_context,
                         &metaverse.instance_id,
                         &owner,
@@ -82,7 +78,7 @@ impl AppService {
                 }
                 // Resolve readiness from the canonical Instance, not the cached ref.
                 // A pending Preset keeps its row for refresh; invalid data still fails.
-                match self.hosting_view_for_instance(&replica, &instance).await {
+                match self.hosting_view_for_instance(&instance).await {
                     Ok(hosting)
                         if hosting.preset_manifest_json.is_none()
                             && instance.owner_pubkey != self.services.keys.public_key() =>
@@ -98,11 +94,7 @@ impl AppService {
                     Err(error)
                         if matches!(
                             error.downcast_ref::<DomeReadUnavailable>(),
-                            Some(
-                                DomeReadUnavailable::Preset
-                                    | DomeReadUnavailable::Instance
-                                    | DomeReadUnavailable::Envelope
-                            )
+                            Some(DomeReadUnavailable::Preset | DomeReadUnavailable::Envelope)
                         ) =>
                     {
                         continue;
@@ -139,7 +131,7 @@ impl AppService {
                     .await,
             });
         }
-        self.append_owned_dome_management(topic_id, &allowed, &mut items)
+        self.append_context_domes(topic_id, &allowed, &mut items)
             .await?;
         Ok(items)
     }
@@ -167,12 +159,12 @@ impl AppService {
             ),
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
-        let source_replica_id = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let participants = sanitize_game_participants(input.participants)?;
         let now = Utc::now().timestamp_millis();
+        // 切替後は作成時の bucket に entity の最新 state を置く(id の時刻から読み手が bucket を決める)。
+        let source_replica_id =
+            self.services
+                .scope_write_replica(topic_id, private_state.as_ref(), now / 1_000)?;
         let title = input.title.trim();
         if title.is_empty() {
             anyhow::bail!("game room title is required");
@@ -230,6 +222,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.clone(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -270,11 +263,11 @@ impl AppService {
                 topic_id: TopicId::new(topic_id),
             },
         };
-        let source_replica_id = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let now = Utc::now().timestamp_millis();
+        // #1221 R5-H: Dome の session は作成時の scope bucket(Dome の anchor)に置く。
+        let source_replica_id =
+            self.services
+                .scope_write_replica(topic_id, private_state.as_ref(), now / 1_000)?;
         let title = input.title.trim();
         if title.is_empty() {
             anyhow::bail!("metaverse room title is required");
@@ -287,7 +280,7 @@ impl AppService {
         ));
         let room_id = format!("dome-{}", &instance_hash.as_str()[..24]);
         let instance_generation = match self
-            .fetch_dome_instance_manifest(&source_replica_id, &owner_pubkey)
+            .fetch_dome_instance_manifest(&spatial_context, &owner_pubkey)
             .await?
         {
             Some((_, existing)) if existing.status != DomeInstanceStatusV1::Tombstoned => {
@@ -352,10 +345,10 @@ impl AppService {
             updated_at: now,
         };
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(&source_replica_id, &instance_manifest, now)
-            .await?;
         let state = self
             .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), now)
+            .await?;
+        self.persist_dome_instance_manifest(&instance_manifest, now)
             .await?;
         self.services
             .projection_store
@@ -369,6 +362,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.clone(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -436,6 +430,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.to_string(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -518,19 +513,11 @@ impl AppService {
         manifest.status = input.status;
         manifest.updated_at = now;
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(
-            &source_replica_id,
-            &instance_manifest,
-            state.created_at,
-        )
-        .await?;
+        let created_at = state.created_at;
         let state = self
-            .persist_game_room_manifest(
-                &source_replica_id,
-                topic_id,
-                manifest.clone(),
-                state.created_at,
-            )
+            .persist_game_room_manifest(&source_replica_id, topic_id, manifest.clone(), created_at)
+            .await?;
+        self.persist_dome_instance_manifest(&instance_manifest, created_at)
             .await?;
         self.services
             .projection_store
@@ -544,6 +531,7 @@ impl AppService {
                     topic_id: TopicId::new(topic_id),
                     session_id: room_id.to_string(),
                     object_kind: "game-session".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await?;
@@ -800,12 +788,6 @@ impl AppService {
         metaverse.asset_refs = asset_refs;
         manifest.updated_at = now;
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
-        self.persist_dome_instance_manifest(
-            &source_replica_id,
-            &instance_manifest,
-            state.created_at,
-        )
-        .await?;
         let persisted = self
             .persist_game_room_manifest(
                 &source_replica_id,
@@ -813,6 +795,8 @@ impl AppService {
                 manifest.clone(),
                 state.created_at,
             )
+            .await?;
+        self.persist_dome_instance_manifest(&instance_manifest, state.created_at)
             .await?;
         self.services
             .projection_store

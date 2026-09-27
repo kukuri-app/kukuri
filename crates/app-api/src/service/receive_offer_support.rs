@@ -237,6 +237,25 @@ impl AppService {
                 return Self::ingest_private_notification_offer(services, &verified, epoch_key_id)
                     .await;
             }
+            ReceiveOfferScopeV1::EpochControl { epoch_key_id } => {
+                return Self::ingest_epoch_control_offer(services, &verified, epoch_key_id).await;
+            }
+            ReceiveOfferScopeV1::DirectMessageAck {
+                dm_id,
+                message_id,
+                acked_at,
+                signature,
+            } if dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX) => {
+                let ack = DirectMessageAckV1 {
+                    dm_id: dm_id.clone(),
+                    message_id: message_id.clone(),
+                    sender: verified.sender().clone(),
+                    recipient: verified.recipient().clone(),
+                    acked_at: *acked_at,
+                    signature: signature.clone(),
+                };
+                return Self::ingest_epoch_control_ack(services, &verified, ack).await;
+            }
             ReceiveOfferScopeV1::DirectMessageAck {
                 dm_id,
                 message_id,
@@ -316,7 +335,6 @@ impl AppService {
                 .await;
             }
             ReceiveOfferScopeV1::DirectMessage => {}
-            _ => return Ok(false),
         }
         if !receive_offer_dm_is_mutual(services, local.as_str(), sender).await? {
             return Ok(false);

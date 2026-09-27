@@ -527,29 +527,15 @@ async fn rejected_updates_do_not_mutate_sqlite() {
     rejected_updates_do_not_mutate(true).await;
 }
 
-async fn refresh_trigger(services: &ServiceHandles, room_id: &str, hint: bool) -> Result<usize> {
-    let replica = topic_replica_id(TOPIC);
-    if hint {
-        hydrate_subscription_hint(
-            services,
-            TOPIC,
-            &replica,
-            &GossipHint::SessionChanged {
-                topic_id: TopicId::new(TOPIC),
-                session_id: room_id.into(),
-                object_kind: "game-session".into(),
-            },
-        )
-        .await
-    } else {
-        hydrate_subscription_event(
-            services,
-            TOPIC,
-            &replica,
-            &stable_key("sessions/game", &format!("{room_id}/state")),
-        )
-        .await
-    }
+/// R5-H: hint と docs の event は、どちらも session の key 1 つの反映へ合流する。
+async fn refresh_trigger(services: &ServiceHandles, room_id: &str, _hint: bool) -> Result<usize> {
+    crate::service::hydration_support::hydrate_session_key(
+        services,
+        TOPIC,
+        &topic_replica_id(TOPIC),
+        &stable_key("sessions/game", &format!("{room_id}/state")),
+    )
+    .await
 }
 
 async fn current_pointer_wins_at_same_timestamp(hint: bool) {

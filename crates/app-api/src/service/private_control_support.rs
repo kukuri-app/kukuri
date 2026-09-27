@@ -109,44 +109,18 @@ impl AppService {
         .map_err(|_| context.timeout_error())?
     }
 
-    /// 自分宛の handoff grant。手元に無ければ、手元の policy が rotation を示すときだけ owner と channel の peer から読む。
+    /// 自分宛の handoff grant。owner が account 経路で届け、受け取った時に手元の現 epoch の replica へ置いたもの
+    /// (#1221 R5-H。旧 sync による Frozen の policy の受取りには依らない)。
     pub(crate) async fn own_epoch_handoff_grant(
         &self,
         state: &JoinedPrivateChannelState,
     ) -> Result<Option<PrivateChannelEpochHandoffGrantDocV1>> {
-        let local = &self.current_author_pubkey();
-        let replica = &current_private_channel_replica_id(state);
-        if let Some(grant) = fetch_private_channel_epoch_handoff_grant_from_replica(
+        fetch_private_channel_epoch_handoff_grant_from_replica(
             self.docs_sync(),
-            replica,
-            local,
+            &current_private_channel_replica_id(state),
+            &self.current_author_pubkey(),
             DocFetchPolicy::LocalOnly,
         )
-        .await?
-        {
-            return Ok(Some(grant));
-        }
-        let rotated = fetch_private_channel_policy_from_replica(
-            self.docs_sync(),
-            replica,
-            DocFetchPolicy::LocalOnly,
-        )
-        .await?
-        .is_some_and(|policy| {
-            policy.sharing_state == ChannelSharingState::Frozen && policy.rotated_at.is_some()
-        });
-        if !rotated {
-            return Ok(None);
-        }
-        self.read_joined_private_control(state, |docs, policy| async move {
-            fetch_private_channel_epoch_handoff_grant_from_replica(
-                docs.as_ref(),
-                replica,
-                local,
-                policy,
-            )
-            .await
-        })
         .await
     }
 

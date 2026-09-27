@@ -18,22 +18,45 @@ impl AppService {
         self.release_scope_holder(&dome_holder(instance_id)).await;
     }
 
+    /// hosting の heartbeat の task。private の Dome は、channel の現 epoch のその日の bucket に anchor を指す locator を
+    /// 1 日 1 回置く(`locator`。#1221 R5-H)。
     pub(crate) async fn spawn_owner_dome_heartbeat_task(
         &self,
         context: SpatialContextV1,
         instance_id: String,
         session_id: String,
+        locator: Option<ReplicaId>,
     ) {
         let sessions = Arc::clone(&self.dome_host_sessions);
         let hint_transport = Arc::clone(&self.services.hint_transport);
+        let services = self.services.clone();
         let key = instance_id.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(
                 kukuri_core::DOME_HOST_HEARTBEAT_INTERVAL_MILLIS as u64,
             ));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut located = None;
             loop {
                 interval.tick().await;
+                let today =
+                    kukuri_docs_sync::TimeBucket::from_unix_seconds(Utc::now().timestamp()).ok();
+                if let Some(anchor) = locator.as_ref()
+                    && located != today
+                {
+                    match super::dome_instance_support::persist_dome_locator(
+                        &services,
+                        &context,
+                        &instance_id,
+                        anchor,
+                        Utc::now().timestamp(),
+                    )
+                    .await
+                    {
+                        Ok(bucket) => located = Some(bucket),
+                        Err(error) => warn!(%error, "failed to place the Dome locator"),
+                    }
+                }
                 let signed = {
                     let sessions = sessions.lock().await;
                     let Some(runtime) = sessions.get(&instance_id) else {

@@ -92,7 +92,6 @@ impl DocsSync for AssistedDocsSync {
 
 #[derive(Clone, Default)]
 pub(crate) struct TrackingDocsSync {
-    pub(crate) restarted_replicas: Arc<TokioMutex<Vec<String>>>,
     pub(crate) subscribe_replicas: Arc<TokioMutex<Vec<String>>>,
     /// 開いたまま(close されていない)の replica。
     pub(crate) open_replicas: Arc<TokioMutex<BTreeSet<String>>>,
@@ -149,14 +148,6 @@ impl DocsSync for TrackingDocsSync {
     }
 
     async fn import_peer_ticket(&self, _ticket: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.restarted_replicas
-            .lock()
-            .await
-            .push(replica_id.as_str().to_string());
         Ok(())
     }
 }

@@ -15,7 +15,6 @@ use kukuri_cn_indexer::PostFetchScheduler;
 use kukuri_cn_indexer::config::{MediaFetchConfig, RelayConfig};
 use kukuri_cn_indexer::ingest::IngestPipeline;
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
-use kukuri_cn_indexer::participant::ScopeReplica;
 use kukuri_cn_indexer::projection::{IndexProjection, MemoryIndexProjection};
 use kukuri_cn_indexer::state::IndexerRuntimeState;
 use kukuri_cn_safety::provider::{
@@ -105,7 +104,7 @@ async fn independent_posts_are_ingested_concurrently_within_the_configured_bound
 
     let summary = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        pipeline.ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica),
+        pipeline.ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[]),
     )
     .await??;
     assert_eq!(summary.scanned, 2);
@@ -123,9 +122,8 @@ async fn index_only_indexes_shared_replica_entries() -> Result<()> {
     let object_id = persist_post(&docs, &replica, &topic, "hello shared replica").await;
 
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, allow_service());
-    let scope = ScopeReplica::from_scope(IndexScopeKind::PublicTopic, "rust");
     let summary = pipeline
-        .ingest_recent_scope(scope.kind, &scope.id, &scope.replica_id)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.scanned, 1);
@@ -151,7 +149,7 @@ async fn content_not_in_shared_replica_is_not_indexed() -> Result<()> {
 
     let (pipeline, _, _) = pipeline_with(&docs, &projection, allow_service());
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "empty", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "empty", &replica, &[])
         .await?;
 
     assert_eq!(summary.scanned, 0);
@@ -188,7 +186,7 @@ async fn media_scan_unavailable_fails_closed_and_post_is_not_indexed() -> Result
         .default_error(ScanError::Unavailable("no media fetcher".to_string()));
     let (pipeline, entries, store) = pipeline_with(&docs, &projection, service_with(provider));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -282,7 +280,7 @@ async fn missing_media_is_not_counted_as_external_provider_unavailable() -> Resu
     let pipeline = pipeline.with_metrics(Arc::clone(&metrics));
 
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     let snapshot = metrics.snapshot();
 
@@ -305,7 +303,7 @@ async fn missing_media_manifest_fails_closed_and_post_is_not_indexed() -> Result
 
     let (pipeline, entries, store) = pipeline_with(&docs, &projection, allow_service());
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -355,7 +353,7 @@ async fn media_scan_requests_carry_blob_hash_and_mime_from_the_manifest() -> Res
         pipeline_with(&docs, &projection, (Arc::new(service), store));
 
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     assert_eq!(summary.indexed, 1);
 
@@ -412,7 +410,7 @@ async fn allow_media_post_is_indexed_and_searchable_via_derived_tags() -> Result
     let (pipeline, entries, _store) =
         pipeline_with(&docs, &projection, service_with_providers(vec![known, vlm]));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 1);
@@ -465,7 +463,7 @@ async fn flagged_media_post_is_not_indexed_and_tags_do_not_leak() -> Result<()> 
     let (pipeline, entries, _store) =
         pipeline_with(&docs, &projection, service_with_providers(vec![known, vlm]));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -496,7 +494,7 @@ async fn index_excludes_unscanned_and_scan_failed() -> Result<()> {
 
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, scan_failed_service());
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.scanned, 1);
@@ -524,7 +522,7 @@ async fn provider_unavailable_is_never_allowed_and_not_indexed() -> Result<()> {
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, provider_unavailable_service());
     let pipeline = pipeline.with_metrics(Arc::clone(&metrics));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -551,7 +549,7 @@ async fn index_excludes_non_allow_verdict_content() -> Result<()> {
 
     let (pipeline, entries, _) = pipeline_with(&docs, &projection, known_csam_service(&object_id));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -576,7 +574,7 @@ async fn reingest_deindexes_when_verdict_flips_to_non_allow() -> Result<()> {
 
     let (allow_pipeline, entries, _) = pipeline_with(&docs, &projection, allow_service());
     allow_pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
     assert!(
         projection
@@ -594,7 +592,7 @@ async fn reingest_deindexes_when_verdict_flips_to_non_allow() -> Result<()> {
         entries.clone(),
         projection.clone(),
     )
-    .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+    .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
     .await?;
     assert!(
         !projection
@@ -645,7 +643,7 @@ async fn deleted_and_tombstoned_objects_are_deindexed() -> Result<()> {
 
         let (pipeline, entries, _) = pipeline_with(&docs, &projection, allow_service());
         pipeline
-            .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+            .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
             .await?;
         assert!(
             projection
@@ -680,7 +678,7 @@ async fn deleted_and_tombstoned_objects_are_deindexed() -> Result<()> {
             entries.clone(),
             projection.clone(),
         )
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
         assert_eq!(summary.deindexed, 1);
         assert!(
@@ -707,7 +705,7 @@ async fn ingest_known_csam_records_risk_signal_and_does_not_index() -> Result<()
     let (pipeline, entries, store) =
         pipeline_with(&docs, &projection, known_csam_service(&object_id));
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -747,7 +745,7 @@ async fn ingest_scan_failure_is_fail_closed_and_records_no_risk_signal() -> Resu
 
     let (pipeline, _, store) = pipeline_with(&docs, &projection, scan_failed_service());
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 0);
@@ -772,7 +770,7 @@ async fn ingest_allow_records_no_artifacts() -> Result<()> {
 
     let (pipeline, entries, store) = pipeline_with(&docs, &projection, allow_service());
     let summary = pipeline
-        .ingest_recent_scope(IndexScopeKind::PublicTopic, "rust", &replica)
+        .ingest_changed_keys(IndexScopeKind::PublicTopic, "rust", &replica, &[])
         .await?;
 
     assert_eq!(summary.indexed, 1);

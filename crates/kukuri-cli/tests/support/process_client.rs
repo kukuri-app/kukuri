@@ -11,7 +11,12 @@ use std::{
 pub struct ProcessClient {
     root: tempfile::TempDir,
     daemon: Option<Child>,
+    /// 失敗の文面で daemon を見分ける名前。
+    label: String,
 }
+
+/// 失敗の文面に載せる daemon の stderr の行数。
+const STDERR_TAIL_LINES: usize = 50;
 
 pub struct PendingCall(Option<Child>);
 
@@ -46,13 +51,30 @@ impl Drop for PendingCall {
 
 impl ProcessClient {
     pub fn start() -> Self {
+        Self::start_named("daemon")
+    }
+
+    /// `label` は失敗の文面で daemon を見分ける名前。
+    pub fn start_named(label: &str) -> Self {
         let root = tempfile::tempdir().expect("一時profile");
         let runtime = root.path().join("run");
         fs::create_dir(&runtime).expect("runtime dir");
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("runtime権限");
-        let mut client = Self { root, daemon: None };
+        let mut client = Self {
+            root,
+            daemon: None,
+            label: label.to_string(),
+        };
         client.restart();
         client
+    }
+
+    /// daemon の stderr(内部エラーの診断を含む)の末尾。失敗の文面に載せる。
+    fn daemon_stderr_tail(&self) -> String {
+        let text = fs::read_to_string(self.path("daemon.stderr")).unwrap_or_default();
+        let lines = text.lines().collect::<Vec<_>>();
+        let tail = lines[lines.len().saturating_sub(STDERR_TAIL_LINES)..].join("\n");
+        format!("\n--- daemon「{}」の stderr の末尾 ---\n{tail}", self.label)
     }
 
     fn command(&self) -> Command {
@@ -77,9 +99,16 @@ impl ProcessClient {
         self.daemon = Some(
             self.command()
                 .args(["daemon", "run"])
+                .env("KUKURI_CLI_DEBUG_INTERNAL_ERRORS", "1")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::piped())
+                .stderr(
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(self.path("daemon.stderr"))
+                        .expect("daemon stderr file"),
+                )
                 .spawn()
                 .expect("daemon起動"),
         );
@@ -96,9 +125,13 @@ impl ProcessClient {
                 .try_wait()
                 .expect("起動状態")
             {
-                panic!("daemonの起動失敗: {status}");
+                panic!("daemonの起動失敗: {status}{}", self.daemon_stderr_tail());
             }
-            assert!(Instant::now() < deadline, "daemonの起動期限");
+            assert!(
+                Instant::now() < deadline,
+                "daemonの起動期限{}",
+                self.daemon_stderr_tail()
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -187,7 +220,13 @@ impl ProcessClient {
 
     pub fn call(&self, name: &str, payload: Value) -> Value {
         let result = self.raw_call(name, payload, None, None);
-        assert_eq!(result["ok"], true, "{name}: {}", result["error"]);
+        assert_eq!(
+            result["ok"],
+            true,
+            "{name}: {}{}",
+            result["error"],
+            self.daemon_stderr_tail()
+        );
         result["data"].clone()
     }
 
@@ -219,7 +258,11 @@ impl ProcessClient {
             if predicate(&data) {
                 return data;
             }
-            assert!(Instant::now() < deadline, "{name}の伝播期限");
+            assert!(
+                Instant::now() < deadline,
+                "{name}の伝播期限{}",
+                self.daemon_stderr_tail()
+            );
             std::thread::sleep(Duration::from_millis(100));
         }
     }

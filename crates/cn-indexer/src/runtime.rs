@@ -2,7 +2,7 @@
 //!
 //! 起動フローの要は **relay validation の起動 gate**（ADR 0025 §6.4）: 自前 relay も外部 relay も
 //! 設定されていなければ indexing を起動しない（fail-closed）。gate を通ったら Postgres の scope
-//! 管理 state を真実源に docs replica sync participant を立ち上げる。
+//! 管理 state を真実源に bucket reader の巡回を立ち上げる。
 //!
 //! safety scan の構築境界は #406 で結線済み: provider が構成されていれば
 //! `SafetyScanService`（scan → risk signal / signed event 永続化）を構築・検証する。
@@ -10,11 +10,11 @@
 //! fail-closed と整合。`CommunityIndex` capability が `Availability::Planned` である現状と一致する）。
 //! relay gate 自体はそれとは独立に起動時へ適用する。
 //!
-//! media scan 用の一時 fetch（#609）と docs replica sync（#613 T1）は、同じ persistent iroh node
+//! media scan 用の一時 fetch（#609）と bucket の読取り（#1221 R5-D）は、同じ persistent iroh node
 //! （`data_dir` 配下）を共有する。provider が構成されている場合のみ node を立ち上げ、
-//! `IrohBlobService` + `BlobMediaFetcher`（media fetch）と `IrohDocsSync`（docs participant）の
-//! 双方へ渡す。シードピア（`COMMUNITY_NODE_INDEXER_SEED_PEERS` と active bootstrap registration）は
-//! docs 同期と media の一時 fetch の両方へ適用する。
+//! `IrohBlobService` + `BlobMediaFetcher`（media fetch）と `IrohDocsSync`（bucket reader）の
+//! 双方へ渡す。media の一時 fetch の候補は、シードピア（`COMMUNITY_NODE_INDEXER_SEED_PEERS`）と
+//! 巡回ごとに選んだ提供元に限る。
 
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ use kukuri_blob_service::{BlobService, IrohBlobService};
 use kukuri_cn_core::{ChannelSecretCipher, PgIndexEntryStore, PgSafetyArtifactStore};
 use kukuri_cn_safety::provider::MediaFetcher;
 use kukuri_cn_safety_runtime::SafetyScanService;
-use kukuri_docs_sync::{DocsSync, IrohDocsSync};
+use kukuri_docs_sync::IrohDocsSync;
 use kukuri_iroh_node::IrohDocsNode;
 use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
 
@@ -34,8 +34,8 @@ use crate::arcadedb::ArcadeDbProjection;
 use crate::bucket_reader::BucketReader;
 use crate::config::IndexerConfig;
 use crate::ingest::IngestPipeline;
+use crate::maintenance::IndexMaintenance;
 use crate::media_fetcher::BlobMediaFetcher;
-use crate::participant::IndexerParticipant;
 use crate::scheduler::PostFetchScheduler;
 use crate::state::IndexerRuntimeState;
 use crate::status::spawn_status_server;
@@ -201,7 +201,7 @@ async fn run(config: IndexerConfig) -> Result<()> {
                 issuer_node_id = %service.issuer_node_id(),
                 "safety scan service constructed"
             );
-            let (participant, docs_sync, bucket_reader) = compose_ingest_stack(
+            let (docs_sync, bucket_reader, maintenance) = compose_ingest_stack(
                 &config,
                 pool,
                 cipher,
@@ -213,24 +213,23 @@ async fn run(config: IndexerConfig) -> Result<()> {
             .await?;
             state.set_ingest_enabled(true);
 
-            // 常駐 ingest loop（#613 T2）。変更通知 + 定期のscope窓で取り込み続ける。
+            // 常駐 ingest loop（#613 T2 / #1221 R5-H）。bucket reader の巡回で取り込み続ける。
             let worker = IndexerWorker::new(
-                Arc::new(participant),
-                docs_sync.clone(),
+                Arc::new(bucket_reader),
+                maintenance,
                 Arc::clone(&state),
                 WorkerConfig {
                     poll_interval: config.poll_interval,
                     ..WorkerConfig::default()
                 },
-            )
-            .with_bucket_reader(bucket_reader);
+            );
             let handle = worker.spawn();
             info!("cn-indexer is resident; ingest loop running");
 
             wait_for_shutdown_signal().await;
             info!("shutdown signal received; stopping cn-indexer");
 
-            // 停止順: ワーカー → docs 同期の購読 → iroh node。
+            // 停止順: ワーカー → docs → iroh node。
             handle.shutdown().await;
             docs_sync.shutdown().await;
             if let Err(error) = node.shutdown().await {
@@ -287,8 +286,8 @@ async fn wait_for_shutdown_signal() {
 
 /// ingest 経路の本番依存を組み立てる（#613 T1）。
 ///
-/// - 共有 iroh node から `IrohDocsSync` を作り、シードピアを docs sync と blob fetch の双方へ
-///   適用できるよう participant へ渡す。
+/// - 共有 iroh node から `IrohDocsSync` を作り、bucket reader へ渡す。運用者指定のシードピアは、
+///   巡回ごとに選んだ提供元と合わせて media の一時取得へ適用する。
 /// - ArcadeDB 投影は起動時に schema 準備（`ensure_schema`）を行い、接続できなければ起動失敗に
 ///   する（fail-closed。投影へ書けない構成で取り込みを始めない）。
 /// - 索引の真実源は Postgres（`PgIndexEntryStore`）。
@@ -300,18 +299,8 @@ async fn compose_ingest_stack(
     node: Arc<IrohDocsNode>,
     blob_service: Arc<dyn BlobService>,
     state: Arc<IndexerRuntimeState>,
-) -> Result<(IndexerParticipant, Arc<IrohDocsSync>, Arc<BucketReader>)> {
+) -> Result<(Arc<IrohDocsSync>, BucketReader, IndexMaintenance)> {
     let docs_sync = Arc::new(IrohDocsSync::new(node));
-    if !config.seed_peers.is_empty() {
-        docs_sync
-            .set_seed_peers(config.seed_peers.clone())
-            .await
-            .context("failed to apply COMMUNITY_NODE_INDEXER_SEED_PEERS to docs sync")?;
-        info!(
-            seed_peers = config.seed_peers.len(),
-            "applied seed peers to docs sync"
-        );
-    }
 
     kukuri_cn_core::configure_retention(&pool, config.retention)
         .await
@@ -337,25 +326,16 @@ async fn compose_ingest_stack(
     .with_blob_service(blob_service.clone())
     .with_post_scheduler(post_scheduler, config.max_concurrent_posts)
     .with_relation_pool(pool.clone());
-    let bucket_reader = Arc::new(BucketReader::new(
+    let bucket_reader = BucketReader::new(
         pool.clone(),
         docs_sync.clone(),
         entries.clone(),
-        pipeline.clone(),
-        cipher.clone(),
-        32,
-    ));
-    let participant = IndexerParticipant::new(
-        pool,
-        docs_sync.clone(),
-        entries,
-        projection,
         pipeline,
-        cipher,
+        cipher.clone(),
     )
-    .with_configured_seed_peers(config.seed_peers.clone())
-    .with_blob_service(blob_service);
-    Ok((participant, docs_sync, bucket_reader))
+    .with_blob_seeds(blob_service, config.seed_peers.clone());
+    let maintenance = IndexMaintenance::new(pool, entries, projection, cipher);
+    Ok((docs_sync, bucket_reader, maintenance))
 }
 
 fn init_tracing() {

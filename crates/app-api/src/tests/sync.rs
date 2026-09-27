@@ -174,14 +174,6 @@ impl DocsSync for CountingDocsSync {
         Ok(self.assist_peer_ids.clone())
     }
 
-    async fn restart_replica_sync(&self, replica_id: &ReplicaId) -> Result<()> {
-        self.restarts
-            .lock()
-            .await
-            .push(replica_id.as_str().to_string());
-        Ok(())
-    }
-
     async fn remote_readers(
         &self,
         _replica: &ReplicaId,
@@ -247,98 +239,6 @@ impl DocsSync for HangingRemoteOnMissDocsSync {
         replica_id: &ReplicaId,
     ) -> Result<kukuri_docs_sync::DocEventStream> {
         self.inner.subscribe_replica(replica_id).await
-    }
-
-    async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
-        self.inner.import_peer_ticket(ticket).await
-    }
-}
-
-#[derive(Clone, Default)]
-struct DelayedBlobService {
-    inner: MemoryBlobService,
-    remaining_misses: Arc<TokioMutex<HashMap<String, usize>>>,
-}
-
-impl DelayedBlobService {
-    async fn delay_hash(&self, hash: &BlobHash, misses: usize) {
-        self.remaining_misses
-            .lock()
-            .await
-            .insert(hash.as_str().to_string(), misses);
-    }
-}
-
-#[async_trait]
-impl BlobService for DelayedBlobService {
-    async fn prepare_display_fetch(
-        &self,
-        hash: &BlobHash,
-    ) -> Result<kukuri_blob_service::DisplayBlobFetch> {
-        let blobs = self.clone();
-        let hash = hash.clone();
-        Ok(Box::pin(async move { blobs.fetch_blob(&hash).await }))
-    }
-    async fn fetch_local_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
-        if self
-            .remaining_misses
-            .lock()
-            .await
-            .get(hash.as_str())
-            .is_some_and(|n| *n > 0)
-        {
-            return Ok(None);
-        }
-        self.inner.fetch_local_blob(hash).await
-    }
-    async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
-        self.inner.put_blob(data, mime).await
-    }
-
-    async fn fetch_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
-        let mut guard = self.remaining_misses.lock().await;
-        if let Some(remaining) = guard.get_mut(hash.as_str())
-            && *remaining > 0
-        {
-            *remaining -= 1;
-            return Ok(None);
-        }
-        drop(guard);
-        self.inner.fetch_blob(hash).await
-    }
-
-    async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
-        self.inner.pin_blob(hash).await
-    }
-
-    async fn blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
-        if self
-            .remaining_misses
-            .lock()
-            .await
-            .get(hash.as_str())
-            .copied()
-            .unwrap_or_default()
-            > 0
-        {
-            return Ok(BlobStatus::Missing);
-        }
-        self.inner.blob_status(hash).await
-    }
-
-    async fn local_blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
-        if self
-            .remaining_misses
-            .lock()
-            .await
-            .get(hash.as_str())
-            .copied()
-            .unwrap_or_default()
-            > 0
-        {
-            return Ok(BlobStatus::Missing);
-        }
-        self.inner.local_blob_status(hash).await
     }
 
     async fn import_peer_ticket(&self, ticket: &str) -> Result<()> {
@@ -441,6 +341,8 @@ mod author_docs_author;
 mod author_key_reflection;
 mod author_remote_reads;
 mod bucket_integrity;
+#[cfg(feature = "iroh-integration-tests")]
+mod bucket_receive_integration;
 mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;

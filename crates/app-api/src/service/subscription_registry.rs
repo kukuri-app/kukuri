@@ -31,8 +31,6 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) live_presence_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     /// 購読の世代番号(key = topic_id)。
     pub(crate) subscription_generations: Arc<Mutex<HashMap<String, u64>>>,
-    /// replica sync の再起動クールダウン(key = replica id、値 = 次回可能時刻)。
-    pub(crate) replica_sync_restart_deadlines: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 pub(crate) struct AbortOnDropTask(Option<JoinHandle<()>>);

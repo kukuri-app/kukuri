@@ -6,4 +6,5 @@ mod friend_plus;
 mod invite;
 #[cfg(feature = "iroh-integration-tests")]
 mod leave;
+mod legacy_participants;
 mod persist_callback;

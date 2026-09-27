@@ -46,31 +46,6 @@ async fn put_profile(docs_sync: &dyn DocsSync, keys: &KukuriKeys, docs_author: O
         .expect("persist profile");
 }
 
-/// `keys` の著者が、docs author を申告した follow を書く。
-async fn put_follow(docs_sync: &dyn DocsSync, keys: &KukuriKeys, target: &str) {
-    let envelope = build_follow_edge_envelope_with_docs_author(
-        keys,
-        &Pubkey::from(target),
-        FollowEdgeStatus::Active,
-        Some(ACCOUNT_DOCS_AUTHOR),
-    )
-    .expect("follow envelope");
-    let edge = parse_follow_edge(&envelope)
-        .expect("parse follow")
-        .expect("follow");
-    persist_follow_edge_doc(docs_sync, &edge, &envelope)
-        .await
-        .expect("persist follow");
-}
-
-async fn shadow_many(docs_sync: &ShadowingDocsSync, key: &str) {
-    for index in 0..SHADOWS {
-        docs_sync
-            .shadow(key, serde_json::json!({ "garbage": index }))
-            .await;
-    }
-}
-
 // profile・follow・block・custom reaction の asset の envelope は、docs author を申告する tag を持てる。
 #[test]
 fn author_envelopes_declare_the_docs_author() {
@@ -125,74 +100,6 @@ fn author_envelopes_declare_the_docs_author() {
             Some("not-a-docs-author"),
         )
         .is_err()
-    );
-}
-
-// 上限つきの読み出しを超える数のごみが同じ key にあっても、docs author が分かれば、組で 1 件読んで反映する。
-// docs author は、署名つきの profile の tag から覚える(同じ回の follow の読み出しから使う)。
-#[tokio::test]
-async fn a_learned_docs_author_reads_the_edge_behind_any_number_of_shadows() {
-    let docs_sync = Arc::new(ShadowingDocsSync::with_account_docs_author(
-        ACCOUNT_DOCS_AUTHOR,
-    ));
-    let (app, store) = app_over(docs_sync.clone());
-    let local_author_pubkey = app.current_author_pubkey();
-    let remote_keys = generate_keys();
-    let remote_pubkey = remote_keys.public_key_hex();
-    put_profile(docs_sync.as_ref(), &remote_keys, Some(ACCOUNT_DOCS_AUTHOR)).await;
-    put_follow(
-        docs_sync.as_ref(),
-        &remote_keys,
-        local_author_pubkey.as_str(),
-    )
-    .await;
-    let key = stable_key("graph/follows", local_author_pubkey.as_str());
-    shadow_many(docs_sync.as_ref(), key.as_str()).await;
-
-    // docs author を知らないうちは、上限つきの読み出しがごみで埋まる(旧 record の best effort)。
-    let before = hydrate_author_key(
-        &app.services,
-        local_author_pubkey.as_str(),
-        remote_pubkey.as_str(),
-        key.as_str(),
-        DocFetchPolicy::LocalOnly,
-    )
-    .await
-    .expect("hydrate before learning");
-    assert_eq!(before.reflected, 0);
-
-    hydrate_author_state(
-        &app.services,
-        local_author_pubkey.as_str(),
-        remote_pubkey.as_str(),
-        DocFetchPolicy::LocalOnly,
-    )
-    .await
-    .expect("hydrate author state");
-
-    assert_eq!(
-        store
-            .get_author_docs_author(remote_pubkey.as_str())
-            .await
-            .expect("docs author")
-            .as_deref(),
-        Some(ACCOUNT_DOCS_AUTHOR),
-        "learned from the signed profile"
-    );
-    assert!(
-        store
-            .get_author_relationship(local_author_pubkey.as_str(), remote_pubkey.as_str())
-            .await
-            .expect("relationship")
-            .is_some_and(|row| row.followed_by),
-        "the follow of me is read by the docs author and key"
-    );
-    assert!(
-        docs_sync
-            .author_reads
-            .lock()
-            .await
-            .contains(&(ACCOUNT_DOCS_AUTHOR.to_string(), key.clone()))
     );
 }
 

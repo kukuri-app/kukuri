@@ -28,6 +28,14 @@ pub fn private_channel_epoch_replica_id(channel_id: &str, epoch_id: &str) -> Rep
     ReplicaId::new(format!("channel::{channel_id}::epoch::{epoch_id}"))
 }
 
+/// epoch の旧形式の replica。最初の epoch(`legacy`)は `channel::<channel id>`。
+pub fn private_channel_replica_for_epoch(channel_id: &str, epoch_id: &str) -> ReplicaId {
+    if epoch_id == "legacy" {
+        return private_channel_replica_id(channel_id);
+    }
+    private_channel_epoch_replica_id(channel_id, epoch_id)
+}
+
 /// 投稿を置く replica の種別(#1248)。replica id の組み立て(`topic_replica_id`・`private_channel_replica_id`・
 /// `private_channel_epoch_replica_id`)の逆。
 ///

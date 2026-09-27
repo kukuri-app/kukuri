@@ -202,25 +202,18 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
         .await
         .unwrap();
     let peer = generate_keys();
-    persist_private_channel_participant(
-        docs.as_ref(),
-        &peer,
-        &PrivateChannelParticipantDocV1 {
-            channel_id: state.channel_id.clone(),
-            topic_id: TopicId::new(&state.topic_id),
+    // #1221 R5-H: owner は参加 record を account 経路で受け取り、参加者の表に置く。
+    app.services
+        .projection_store
+        .put_private_channel_participant(kukuri_store::PrivateChannelParticipantRow {
+            channel_id: state.channel_id.as_str().to_string(),
             epoch_id: state.current_epoch_id.clone(),
-            participant_pubkey: peer.public_key(),
-            joined_at: 1,
-            is_owner: false,
-            join_mode: None,
-            sponsor_pubkey: None,
-            share_token_id: None,
+            participant_pubkey: peer.public_key_hex(),
             left_at: None,
-        },
-        &current_private_channel_replica_id(&state),
-    )
-    .await
-    .unwrap();
+            updated_at: 1,
+        })
+        .await
+        .unwrap();
     app.services
         .store
         .upsert_follow_edge(FollowEdge {
@@ -274,6 +267,13 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
     );
 }
 use kukuri_core::{DomeDirection, DomeProposalDerivedStatusV1, SpatialContextV1};
+
+/// 提案する owner は、相手の Dome を手元の一覧で知っている(#1221 R5-H: context の replica を走査しない)。
+async fn show_domes(app: &AppService, topic: &str) {
+    app.catch_up_scope_sessions(topic, &TimelineScope::Public)
+        .await
+        .expect("read the Dome sessions");
+}
 
 fn app_with_shared_dome_services(
     docs_sync: Arc<MemoryDocsSync>,
@@ -337,6 +337,7 @@ async fn open_proposal_fixture(
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, &topic).await;
     proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
             proposal_id: format!("proposal-{suffix}"),
@@ -391,6 +392,7 @@ async fn dome_connection_proposal_accept_and_revoke_round_trip() {
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, topic).await;
 
     let proposal = proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
@@ -529,6 +531,7 @@ async fn owner_block_revokes_connection_and_unblock_does_not_restore_it() {
         )
         .await
         .expect("create receiver Dome");
+    show_domes(&proposer, topic).await;
     proposer
         .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
             proposal_id: "proposal-owner-block".into(),
@@ -740,6 +743,7 @@ async fn only_proposer_can_withdraw_and_only_receiver_can_accept() {
         )
         .await
         .expect("create B");
+    show_domes(&proposer, topic).await;
     assert!(
         proposer
             .create_dome_connection_proposal(CreateDomeConnectionProposalInput {

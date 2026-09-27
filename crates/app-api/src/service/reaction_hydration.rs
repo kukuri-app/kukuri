@@ -38,7 +38,20 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     let Some(key) = ReactionKey::from_doc_key(key) else {
         return Ok(false);
     };
-    let Some(reaction) = load_verified_reaction(docs_sync, replica, topic_id, &key, policy).await?
+    // bucket(R5-H)の reaction は作成時の bucket にあり、識別は対象の投稿を置いた replica で行う。
+    let identity = if replica.as_str().starts_with("bucket::") {
+        match projection_store
+            .get_object_projection(&key.target_object_id)
+            .await?
+        {
+            Some(target) => target.source_replica_id,
+            None => return Ok(false),
+        }
+    } else {
+        replica.clone()
+    };
+    let Some(reaction) =
+        load_verified_reaction(docs_sync, replica, &identity, topic_id, &key, policy).await?
     else {
         return Ok(false);
     };

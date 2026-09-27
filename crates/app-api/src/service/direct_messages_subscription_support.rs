@@ -30,12 +30,18 @@ impl AppService {
                 kukuri_store::DIRECT_MESSAGE_OUTBOX_PAGE_LIMIT,
             )
             .await?;
+        // 同じ相手への private channel の制御 record の行(#1221 R5-H)は DM の未送信に数えない。
+        let pending_outbox_count = pending_outbox_page
+            .items
+            .iter()
+            .filter(|row| !row.dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX))
+            .count();
         Ok(DirectMessageStatusView {
             peer_pubkey: peer_pubkey.to_string(),
             dm_id,
             mutual: send_enabled,
             send_enabled,
-            pending_outbox_count: pending_outbox_page.items.len(),
+            pending_outbox_count,
             pending_outbox_has_more: pending_outbox_page.next_cursor.is_some(),
         })
     }

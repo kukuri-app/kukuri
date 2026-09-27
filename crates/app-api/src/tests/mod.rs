@@ -56,11 +56,14 @@ fn minimal_metaverse_png_bytes() -> Vec<u8> {
 
 mod capability_registry_snapshot;
 mod direct_messages;
+#[cfg(feature = "iroh-integration-tests")]
+mod dome_connection_remote;
 mod dome_connections;
 mod dome_delete;
 mod dome_hosting;
 mod dome_listing;
 mod dome_move;
+mod dome_placement;
 mod game;
 mod game_projection_freshness;
 mod live;
@@ -69,6 +72,7 @@ mod media_adult_gating;
 mod notifications;
 mod private_channels;
 mod reactions;
+mod session_rehome;
 mod shared_replica_keys;
 mod social;
 mod sync;

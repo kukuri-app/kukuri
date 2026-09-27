@@ -12,11 +12,29 @@ impl AppService {
         &self,
         spatial_context: SpatialContextV1,
     ) -> Result<DomeConnectionTopologyView> {
-        let replica = self.dome_connection_read_replica(&spatial_context).await?;
-        let instances = self.list_context_dome_instances(&replica).await?;
-        let proposal_states = self.list_dome_proposal_states(&replica).await?;
-        let selections = self.list_dome_selections(&replica).await?;
-        let connection_states = self.list_dome_connection_states(&replica).await?;
+        let legacy = self.dome_connection_read_replica(&spatial_context).await?;
+        let stores = self
+            .dome_connection_stores(&spatial_context, legacy, &[])
+            .await?;
+        self.hydrate_dome_connection_records(&spatial_context, &stores)
+            .await;
+        let proposal_states = self.list_dome_proposal_states(&stores).await?;
+        let selections = self.list_dome_selections(&stores).await?;
+        let connection_states = self.list_dome_connection_states(&stores).await?;
+        let endpoints = proposal_states
+            .iter()
+            .flat_map(|state| [&state.proposal.proposer, &state.proposal.receiver])
+            .chain(connection_states.iter().flat_map(|state| {
+                [
+                    &state.record.agreement.proposer,
+                    &state.record.agreement.receiver,
+                ]
+            }))
+            .map(|endpoint| endpoint.owner_pubkey.clone())
+            .collect::<Vec<_>>();
+        let instances = self
+            .list_context_dome_instances(&spatial_context, endpoints)
+            .await?;
         let connections = connection_states
             .iter()
             .map(|state| state.record.clone())
@@ -120,11 +138,14 @@ impl AppService {
         if !is_valid_dome_operation_id(&input.proposal_id, 128) {
             anyhow::bail!("Dome Connection proposal id is required");
         }
-        let replica = self
+        let legacy = self
             .dome_connection_context_replica(&input.spatial_context)
             .await?;
-        if let Some(existing) = self
-            .fetch_dome_proposal_state(&replica, input.proposal_id.as_str())
+        let stores = self
+            .dome_connection_stores(&input.spatial_context, legacy, &[])
+            .await?;
+        if let Some((_, existing)) = self
+            .fetch_dome_proposal_state(&stores, input.proposal_id.as_str())
             .await?
         {
             if existing.proposal.proposer.owner_pubkey.as_str() != self.current_author_pubkey() {
@@ -137,9 +158,11 @@ impl AppService {
             {
                 anyhow::bail!("Dome Connection proposal idempotency payload mismatch");
             }
-            return self.proposal_view_from_state(&replica, existing).await;
+            return self.proposal_view_from_state(&stores, existing).await;
         }
-        let instances = self.list_context_dome_instances(&replica).await?;
+        let instances = self
+            .list_context_dome_instances(&input.spatial_context, [])
+            .await?;
         let proposer = instances
             .iter()
             .find(|instance| instance.instance_id == input.proposer_instance_id)
@@ -151,9 +174,9 @@ impl AppService {
         if proposer.owner_pubkey.as_str() != self.current_author_pubkey() {
             anyhow::bail!("only the Dome owner can create a Connection proposal");
         }
-        let existing = self.list_dome_proposal_states(&replica).await?;
+        let existing = self.list_dome_proposal_states(&stores).await?;
         let connected_proposal_ids = self
-            .list_dome_connection_states(&replica)
+            .list_dome_connection_states(&stores)
             .await?
             .into_iter()
             .map(|state| state.record.agreement.proposal_id)
@@ -243,6 +266,8 @@ impl AppService {
         let connection_id = format!("connection-{}", proposal.proposal_id);
         let agreement = DomeConnectionAgreementV1::from_proposal(&connection_id, &proposal);
         validate_dome_connection_agreement(&agreement, proposer, receiver)?;
+        // #1221 R5-H: 接続の記録は、提案した Dome の anchor(継続状態の置き場所)に置く。
+        let replica = self.dome_connection_write_replica(proposer).await?;
         let proposal_envelope =
             build_dome_connection_proposal_envelope(self.services.keys.as_ref(), &proposal)?;
         let agreement_envelope =
@@ -262,7 +287,8 @@ impl AppService {
         self.persist_dome_proposal_state(&replica, &state).await?;
         self.publish_dome_topology_hint(&state.proposal.spatial_context, &state.connection_id)
             .await?;
-        self.proposal_view_from_state(&replica, state).await
+        let stores = [vec![replica], stores].concat();
+        self.proposal_view_from_state(&stores, state).await
     }
 
     pub async fn accept_dome_connection_proposal(
@@ -272,11 +298,14 @@ impl AppService {
         if !is_valid_dome_operation_id(&input.proposal_id, 128) {
             anyhow::bail!("invalid Dome Connection proposal id");
         }
-        let replica = self
+        let legacy = self
             .dome_connection_context_replica(&input.spatial_context)
             .await?;
-        let proposal_state = self
-            .fetch_dome_proposal_state(&replica, input.proposal_id.as_str())
+        let stores = self
+            .dome_connection_stores(&input.spatial_context, legacy, &[])
+            .await?;
+        let (found, proposal_state) = self
+            .fetch_dome_proposal_state(&stores, input.proposal_id.as_str())
             .await?
             .context("Dome Connection proposal was not found")?;
         if proposal_state.terminal_reason.is_some() {
@@ -300,21 +329,30 @@ impl AppService {
             .await?;
             anyhow::bail!("DOME_CONNECTION_OWNERS_BLOCKED");
         }
-        if let Some(existing) = self
-            .fetch_dome_connection_state(&replica, &proposal_state.connection_id)
+        if let Some((_, existing)) = self
+            .fetch_dome_connection_state(&stores, &proposal_state.connection_id)
             .await?
         {
             return Ok(DomeConnectionView {
                 record: existing.record,
             });
         }
-        let instances = self.list_context_dome_instances(&replica).await?;
+        let owners = [
+            proposal_state.proposal.proposer.owner_pubkey.clone(),
+            proposal_state.proposal.receiver.owner_pubkey.clone(),
+        ];
+        let instances = self
+            .list_context_dome_instances(&input.spatial_context, owners)
+            .await?;
         let proposer =
             current_instance_for_endpoint(&instances, &proposal_state.proposal.proposer)?;
         let receiver =
             current_instance_for_endpoint(&instances, &proposal_state.proposal.receiver)?;
         validate_dome_connection_proposal(&proposal_state.proposal, proposer, receiver)?;
-        let selections = self.list_dome_selections(&replica).await?;
+        let replica = self
+            .dome_connection_record_replica(&found, proposer)
+            .await?;
+        let selections = self.list_dome_selections(&stores).await?;
         let slot_generation = selections
             .iter()
             .filter(|selection| {
@@ -328,7 +366,7 @@ impl AppService {
             .unwrap_or(0)
             + 1;
         let current_connections = self
-            .list_dome_connection_states(&replica)
+            .list_dome_connection_states(&stores)
             .await?
             .into_iter()
             .map(|state| state.record)
@@ -361,7 +399,7 @@ impl AppService {
         let receiver_signature =
             build_dome_connection_agreement_envelope(self.services.keys.as_ref(), &agreement)?;
         let proposer_signature = self
-            .fetch_connection_envelope(&replica, &proposal_state.proposer_agreement_envelope_id)
+            .fetch_connection_envelope(&stores, &proposal_state.proposer_agreement_envelope_id)
             .await?;
         verify_signed_dome_connection_agreement(&SignedDomeConnectionAgreementV1 {
             agreement: agreement.clone(),
@@ -430,11 +468,14 @@ impl AppService {
         if !is_valid_dome_operation_id(&input.proposal_id, 128) {
             anyhow::bail!("invalid Dome Connection proposal id");
         }
-        let replica = self
+        let legacy = self
             .dome_connection_context_replica(&input.spatial_context)
             .await?;
-        let state = self
-            .fetch_dome_proposal_state(&replica, input.proposal_id.as_str())
+        let stores = self
+            .dome_connection_stores(&input.spatial_context, legacy, &[])
+            .await?;
+        let (_, state) = self
+            .fetch_dome_proposal_state(&stores, input.proposal_id.as_str())
             .await?
             .context("Dome Connection proposal was not found")?;
         if state.proposal.proposer.owner_pubkey.as_str() != self.current_author_pubkey() {
@@ -454,21 +495,39 @@ impl AppService {
         proposal_id: &str,
         reason: DomeConnectionTerminalReasonV1,
     ) -> Result<DomeConnectionProposalView> {
-        let replica = self
+        let legacy = self
             .dome_connection_context_replica(spatial_context)
             .await?;
-        let mut state = self
-            .fetch_dome_proposal_state(&replica, proposal_id)
+        let stores = self
+            .dome_connection_stores(spatial_context, legacy, &[])
+            .await?;
+        let (found, mut state) = self
+            .fetch_dome_proposal_state(&stores, proposal_id)
             .await?
             .context("Dome Connection proposal was not found")?;
         if state.terminal_reason.is_some()
             || self
-                .fetch_dome_connection_state(&replica, &state.connection_id)
+                .fetch_dome_connection_state(&stores, &state.connection_id)
                 .await?
                 .is_some()
         {
-            return self.proposal_view_from_state(&replica, state).await;
+            return self.proposal_view_from_state(&stores, state).await;
         }
+        let proposer = self
+            .list_context_dome_instances(
+                spatial_context,
+                [state.proposal.proposer.owner_pubkey.clone()],
+            )
+            .await?
+            .into_iter()
+            .find(|instance| instance.instance_id == state.proposal.proposer.instance_id);
+        let replica = match proposer {
+            Some(proposer) => {
+                self.dome_connection_record_replica(&found, &proposer)
+                    .await?
+            }
+            None => self.dome_connection_legacy_guard(found)?,
+        };
         let actor = Pubkey::from(self.current_author_pubkey());
         validate_dome_proposal_terminal_actor(&state.proposal, &actor, reason)?;
         let event = DomeProposalTerminalEventV1 {
@@ -491,7 +550,8 @@ impl AppService {
         self.persist_dome_proposal_state(&replica, &state).await?;
         self.publish_dome_topology_hint(&state.proposal.spatial_context, &state.connection_id)
             .await?;
-        self.proposal_view_from_state(&replica, state).await
+        let stores = [vec![replica], stores].concat();
+        self.proposal_view_from_state(&stores, state).await
     }
 
     pub async fn revoke_dome_connection(
@@ -509,400 +569,15 @@ impl AppService {
         .await
     }
 
-    pub(crate) async fn dome_connection_context_replica(
-        &self,
-        context: &SpatialContextV1,
-    ) -> Result<ReplicaId> {
-        let replica = match context {
-            SpatialContextV1::Topic { topic_id } => topic_replica_id(topic_id.as_str()),
-            SpatialContextV1::Channel {
-                topic_id,
-                channel_id,
-            } => {
-                self.ensure_private_channel_access(topic_id.as_str(), channel_id)
-                    .await?;
-                let state = self
-                    .private_channel_write_state(topic_id.as_str(), channel_id)
-                    .await?;
-                current_private_channel_replica_id(&state)
-            }
-        };
-        self.services.docs_sync.open_replica(&replica).await?;
-        Ok(replica)
-    }
-
-    async fn list_context_dome_instances(
-        &self,
-        replica: &ReplicaId,
-    ) -> Result<Vec<DomeInstanceManifestV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Prefix(stable_key("metaverse/dome-instances", "")),
-            )
-            .await?;
-        let mut instances = Vec::new();
-        for record in records {
-            if !record.key.ends_with("/state") {
-                continue;
-            }
-            let state: DomeInstanceStateDocV1 = serde_json::from_slice(&record.value)?;
-            let resolved = match self
-                .fetch_dome_instance_manifest(replica, &state.owner_pubkey)
-                .await
-            {
-                Ok(value) => value,
-                Err(error) if error.downcast_ref::<DomeReadUnavailable>().is_some() => continue,
-                Err(error) => return Err(error),
-            };
-            if let Some((_, manifest)) = resolved
-                && manifest.status == kukuri_core::DomeInstanceStatusV1::Active
-                && manifest.relationship_detach.is_none()
-            {
-                instances.push(manifest);
-            }
-        }
-        instances.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
-        instances.dedup_by(|left, right| left.instance_id == right.instance_id);
-        Ok(instances)
-    }
-
-    async fn persist_connection_envelope(
-        &self,
-        replica: &ReplicaId,
-        envelope: &KukuriEnvelope,
-    ) -> Result<()> {
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key("envelopes", envelope.id.as_str()),
-                    value: serde_json::to_value(envelope)?,
-                },
-            )
-            .await
-    }
-
-    async fn fetch_connection_envelope(
-        &self,
-        replica: &ReplicaId,
-        envelope_id: &EnvelopeId,
-    ) -> Result<KukuriEnvelope> {
-        let record = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Exact(stable_key("envelopes", envelope_id.as_str())),
-            )
-            .await?
-            .into_iter()
-            .next()
-            .context("Dome Connection envelope is unavailable")?;
-        let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
-        envelope.verify()?;
-        Ok(envelope)
-    }
-
-    async fn persist_dome_proposal_state(
-        &self,
-        replica: &ReplicaId,
-        state: &DomeProposalStateDocV1,
-    ) -> Result<()> {
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        PROPOSAL_PREFIX,
-                        &format!("{}/state", state.proposal.proposal_id),
-                    ),
-                    value: serde_json::to_value(state)?,
-                },
-            )
-            .await
-    }
-
-    async fn fetch_dome_proposal_state(
-        &self,
-        replica: &ReplicaId,
-        proposal_id: &str,
-    ) -> Result<Option<DomeProposalStateDocV1>> {
-        let state = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Exact(stable_key(PROPOSAL_PREFIX, &format!("{proposal_id}/state"))),
-            )
-            .await?
-            .into_iter()
-            .next()
-            .map(|record| serde_json::from_slice(&record.value))
-            .transpose()?;
-        if let Some(state) = &state {
-            self.verify_dome_proposal_state(replica, state).await?;
-        }
-        Ok(state)
-    }
-
-    async fn list_dome_proposal_states(
-        &self,
-        replica: &ReplicaId,
-    ) -> Result<Vec<DomeProposalStateDocV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(replica, DocQuery::Prefix(stable_key(PROPOSAL_PREFIX, "")))
-            .await?;
-        let mut states = Vec::new();
-        for record in records {
-            if record.key.ends_with("/state") {
-                let state: DomeProposalStateDocV1 = serde_json::from_slice(&record.value)?;
-                self.verify_dome_proposal_state(replica, &state).await?;
-                states.push(state);
-            }
-        }
-        states.sort_by(|left, right| left.proposal.proposal_id.cmp(&right.proposal.proposal_id));
-        Ok(states)
-    }
-
-    async fn verify_dome_proposal_state(
-        &self,
-        replica: &ReplicaId,
-        state: &DomeProposalStateDocV1,
-    ) -> Result<()> {
-        let proposal: DomeConnectionProposalV1 = fetch_verified_dome_envelope(
-            self.services.docs_sync.as_ref(),
-            replica,
-            &state.proposal_envelope_id,
-            "dome-connection-proposal",
-            &state.proposal.proposer.owner_pubkey,
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
-        if proposal != state.proposal {
-            anyhow::bail!("signed Dome Connection proposal does not match state");
-        }
-        let agreement: DomeConnectionAgreementV1 = fetch_verified_dome_envelope(
-            self.services.docs_sync.as_ref(),
-            replica,
-            &state.proposer_agreement_envelope_id,
-            "dome-connection-agreement",
-            &state.proposal.proposer.owner_pubkey,
-            DocFetchPolicy::LocalThenRemote,
-        )
-        .await?;
-        if agreement
-            != DomeConnectionAgreementV1::from_proposal(&state.connection_id, &state.proposal)
-        {
-            anyhow::bail!("signed Dome Connection agreement does not match proposal");
-        }
-        match (
-            state.terminal_reason,
-            state.terminal_event_envelope_id.as_ref(),
-        ) {
-            (Some(reason), Some(envelope_id)) => {
-                let envelope = self.fetch_connection_envelope(replica, envelope_id).await?;
-                verify_dome_proposal_terminal_event(state, envelope_id, reason, &envelope)?;
-            }
-            (None, None) => {}
-            _ => anyhow::bail!("Dome Connection terminal state is incomplete"),
-        }
-        Ok(())
-    }
-
-    async fn persist_dome_selection(
-        &self,
-        replica: &ReplicaId,
-        state: &DomeSelectionStateDocV1,
-    ) -> Result<()> {
-        let direction = direction_key(state.selection.receiver.direction);
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        SELECTION_PREFIX,
-                        &format!(
-                            "{}/{}/{}",
-                            state.selection.receiver.instance_id,
-                            direction,
-                            state.selection.selection_id
-                        ),
-                    ),
-                    value: serde_json::to_value(state)?,
-                },
-            )
-            .await
-    }
-
-    async fn list_dome_selections(
-        &self,
-        replica: &ReplicaId,
-    ) -> Result<Vec<DomeSelectionStateDocV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(replica, DocQuery::Prefix(stable_key(SELECTION_PREFIX, "")))
-            .await?;
-        let mut states = Vec::new();
-        for record in records {
-            let state: DomeSelectionStateDocV1 = serde_json::from_slice(&record.value)?;
-            let signed: DomeProposalSelectionV1 = fetch_verified_dome_envelope(
-                self.services.docs_sync.as_ref(),
-                replica,
-                &state.envelope_id,
-                "dome-connection-selection",
-                &state.selection.receiver.owner_pubkey,
-                DocFetchPolicy::LocalThenRemote,
-            )
-            .await?;
-            if signed != state.selection {
-                anyhow::bail!("signed Dome Connection selection does not match state");
-            }
-            states.push(state);
-        }
-        Ok(states)
-    }
-
-    async fn persist_dome_connection_state(
-        &self,
-        replica: &ReplicaId,
-        state: &DomeConnectionStateDocV1,
-    ) -> Result<()> {
-        self.services
-            .docs_sync
-            .apply_doc_op(
-                replica,
-                DocOp::SetJson {
-                    key: stable_key(
-                        CONNECTION_PREFIX,
-                        &format!("{}/state", state.record.agreement.connection_id),
-                    ),
-                    value: serde_json::to_value(state)?,
-                },
-            )
-            .await
-    }
-
-    pub(crate) async fn fetch_dome_connection_state(
-        &self,
-        replica: &ReplicaId,
-        connection_id: &str,
-    ) -> Result<Option<DomeConnectionStateDocV1>> {
-        let state = self
-            .services
-            .docs_sync
-            .query_replica(
-                replica,
-                DocQuery::Exact(stable_key(
-                    CONNECTION_PREFIX,
-                    &format!("{connection_id}/state"),
-                )),
-            )
-            .await?
-            .into_iter()
-            .next()
-            .map(|record| serde_json::from_slice(&record.value))
-            .transpose()?;
-        if let Some(state) = &state {
-            self.verify_dome_connection_state(replica, state).await?;
-        }
-        Ok(state)
-    }
-
-    async fn list_dome_connection_states(
-        &self,
-        replica: &ReplicaId,
-    ) -> Result<Vec<DomeConnectionStateDocV1>> {
-        let records = self
-            .services
-            .docs_sync
-            .query_replica(replica, DocQuery::Prefix(stable_key(CONNECTION_PREFIX, "")))
-            .await?;
-        let mut states = Vec::new();
-        for record in records {
-            if record.key.ends_with("/state") {
-                let state: DomeConnectionStateDocV1 = serde_json::from_slice(&record.value)?;
-                self.verify_dome_connection_state(replica, &state).await?;
-                states.push(state);
-            }
-        }
-        states.sort_by(|left, right| {
-            left.record
-                .agreement
-                .connection_id
-                .cmp(&right.record.agreement.connection_id)
-        });
-        Ok(states)
-    }
-
-    async fn verify_dome_connection_state(
-        &self,
-        replica: &ReplicaId,
-        state: &DomeConnectionStateDocV1,
-    ) -> Result<()> {
-        validate_dome_connection_record(&state.record)?;
-        let signed = SignedDomeConnectionAgreementV1 {
-            agreement: state.record.agreement.clone(),
-            proposer_signature: self
-                .fetch_connection_envelope(replica, &state.proposer_agreement_envelope_id)
-                .await?,
-            receiver_signature: self
-                .fetch_connection_envelope(replica, &state.receiver_agreement_envelope_id)
-                .await?,
-        };
-        verify_signed_dome_connection_agreement(&signed)?;
-        let lifecycle = self
-            .fetch_connection_envelope(replica, &state.lifecycle_envelope_id)
-            .await?;
-        if lifecycle.kind != "dome-connection-lifecycle" {
-            anyhow::bail!("Dome Connection lifecycle envelope kind mismatch");
-        }
-        let lifecycle_record: DomeConnectionRecordV1 = serde_json::from_str(&lifecycle.content)?;
-        if lifecycle_record != state.record {
-            anyhow::bail!("signed Dome Connection lifecycle does not match state");
-        }
-        if lifecycle.pubkey != state.record.agreement.receiver.owner_pubkey
-            && lifecycle.pubkey != state.record.agreement.proposer.owner_pubkey
-        {
-            anyhow::bail!("Dome Connection lifecycle signer is not an endpoint owner");
-        }
-        Ok(())
-    }
-
-    pub(crate) async fn persist_connection_lifecycle(
-        &self,
-        replica: &ReplicaId,
-        state: &mut DomeConnectionStateDocV1,
-    ) -> Result<()> {
-        validate_dome_connection_record(&state.record)?;
-        let envelope = sign_envelope_json(
-            self.services.keys.as_ref(),
-            "dome-connection-lifecycle",
-            connection_tags_for_state(&state.record, self.current_author_pubkey().as_str()),
-            &state.record,
-        )?;
-        self.persist_connection_envelope(replica, &envelope).await?;
-        state.lifecycle_envelope_id = envelope.id;
-        self.persist_dome_connection_state(replica, state).await
-    }
-
     async fn proposal_view_from_state(
         &self,
-        replica: &ReplicaId,
+        stores: &[ReplicaId],
         state: DomeProposalStateDocV1,
     ) -> Result<DomeConnectionProposalView> {
-        let selections = selected_proposals(&self.list_dome_selections(replica).await?);
+        let selections = selected_proposals(&self.list_dome_selections(stores).await?);
         let selection = selections.get(&state.proposal.proposal_id).cloned();
         let connections = self
-            .list_dome_connection_states(replica)
+            .list_dome_connection_states(stores)
             .await?
             .into_iter()
             .map(|state| state.record)
@@ -934,6 +609,7 @@ impl AppService {
                     topic_id: context.topic_id().clone(),
                     session_id: connection_id.to_string(),
                     object_kind: "dome-topology".into(),
+                    sent_at: Some(Utc::now().timestamp_millis()),
                 },
             )
             .await
@@ -1003,7 +679,7 @@ fn proposal_instance_invalidation(
         .then_some(DomeConnectionTerminalReasonV1::InstanceDetached)
 }
 
-fn direction_key(direction: DomeDirection) -> &'static str {
+pub(crate) fn direction_key(direction: DomeDirection) -> &'static str {
     match direction {
         DomeDirection::North => "north",
         DomeDirection::East => "east",
@@ -1012,7 +688,10 @@ fn direction_key(direction: DomeDirection) -> &'static str {
     }
 }
 
-fn connection_tags_for_state(record: &DomeConnectionRecordV1, author: &str) -> Vec<Vec<String>> {
+pub(crate) fn connection_tags_for_state(
+    record: &DomeConnectionRecordV1,
+    author: &str,
+) -> Vec<Vec<String>> {
     vec![
         vec!["author".into(), author.into()],
         vec!["object".into(), "dome-connection-lifecycle".into()],

@@ -9,31 +9,27 @@ impl AppService {
         context: SpatialContextV1,
         id: &str,
     ) -> Result<DomeHostingView> {
-        let replica = self.hosting_context_replica(&context).await?;
+        self.hosting_context_replica(&context).await?;
         let instance = self
-            .hosting_instance(&replica, &context, id)
+            .hosting_instance(&context, id)
             .await?
             .context("Dome instance not found")?;
-        let records = self.list_dome_hosting_records(&replica, id).await?;
+        let records = self.list_dome_hosting_records(&instance).await?;
         self.hosting_authority_view(&instance, &records, Utc::now().timestamp_millis())
             .await
     }
 
-    pub(crate) async fn append_owned_dome_management(
+    /// 手元の一覧に無い Dome を、owner の制御領域の Instance と Preset から足す。自分の Dome と、hosting の heartbeat で
+    /// 知った Dome(#1221 R5-H、2026-09-27 ユーザー決定)が対象。heartbeat の host は、context と合わせて instance の
+    /// id を導けるときだけ owner とみなす(owner の端末の hosting)。
+    pub(crate) async fn append_context_domes(
         &self,
         topic: &str,
         channels: &BTreeSet<String>,
         items: &mut Vec<GameRoomView>,
     ) -> Result<()> {
-        let owner = self.services.keys.public_key();
+        let local = self.services.keys.public_key();
         for channel in channels {
-            if items.iter().any(|room| {
-                room.room_kind == GameRoomKind::MetaverseRoom
-                    && room.host_pubkey == owner.as_str()
-                    && room.channel_id.as_deref().unwrap_or(PUBLIC_CHANNEL_ID) == channel
-            }) {
-                continue;
-            }
             let context = if channel == PUBLIC_CHANNEL_ID {
                 SpatialContextV1::Topic {
                     topic_id: TopicId::new(topic),
@@ -44,52 +40,94 @@ impl AppService {
                     channel_id: kukuri_core::ChannelId::new(channel),
                 }
             };
-            let replica = self.hosting_context_replica(&context).await?;
-            let resolved = match self.fetch_dome_instance_manifest(&replica, &owner).await {
-                Ok(value) => value,
-                Err(error) if error.downcast_ref::<DomeReadUnavailable>().is_some() => continue,
-                Err(error) => return Err(error),
-            };
-            let Some((state, instance)) = resolved else {
-                continue;
-            };
-            if instance.status != DomeInstanceStatusV1::Active
-                || instance.relationship_detach.is_some()
-            {
-                continue;
+            let hosted = self.heartbeat_dome_owners(&context).await;
+            for owner in std::iter::once(local.clone()).chain(hosted) {
+                if let Some(item) = self
+                    .context_dome_view(topic, channel, &context, &owner, items)
+                    .await?
+                {
+                    items.push(item);
+                }
             }
-            let preset = self
-                .fetch_dome_preset_manifest(&instance.preset_ref)
-                .await?;
-            let mut manifest = instance_management_manifest(&instance);
-            let hosting = self
-                .get_dome_hosting_authority(context, &instance.instance_id)
-                .await?
-                .state;
-            if let Some(preset) = preset {
-                manifest.metaverse = Some(kukuri_core::resolve_metaverse_room_state(
-                    &instance, &preset,
-                )?);
-                manifest.phase_label = None;
-            }
-            items.push(GameRoomView {
-                room_id: instance.instance_id,
-                host_pubkey: owner.as_str().into(),
-                title: instance.title,
-                description: instance.description,
-                status: GameRoomStatus::Waiting,
-                phase_label: manifest.phase_label,
-                scores: vec![],
-                room_kind: GameRoomKind::MetaverseRoom,
-                metaverse: manifest.metaverse,
-                dome_hosting: Some(hosting),
-                manifest_blob_hash: state.current_manifest.hash.as_str().into(),
-                updated_at: instance.updated_at,
-                channel_id: channel_id_for_view(channel),
-                audience_label: self.audience_label_for_storage(topic, channel).await,
-            });
         }
         Ok(())
+    }
+
+    /// hosting の heartbeat の host のうち、context と合わせて instance の id を導ける owner(owner の端末の hosting)。
+    pub(crate) async fn heartbeat_dome_owners(&self, context: &SpatialContextV1) -> Vec<Pubkey> {
+        self.dome_host_heartbeats
+            .lock()
+            .await
+            .iter()
+            .filter(|(instance_id, signed)| {
+                dome_instance_id(context, &signed.heartbeat.host_pubkey) == **instance_id
+            })
+            .map(|(_, signed)| signed.heartbeat.host_pubkey.clone())
+            .collect()
+    }
+
+    async fn context_dome_view(
+        &self,
+        topic: &str,
+        channel: &str,
+        context: &SpatialContextV1,
+        owner: &Pubkey,
+        items: &[GameRoomView],
+    ) -> Result<Option<GameRoomView>> {
+        if items.iter().any(|room| {
+            room.room_kind == GameRoomKind::MetaverseRoom
+                && room.host_pubkey == owner.as_str()
+                && room.channel_id.as_deref().unwrap_or(PUBLIC_CHANNEL_ID) == channel
+        }) {
+            return Ok(None);
+        }
+        let resolved = match self.fetch_dome_instance_manifest(context, owner).await {
+            Ok(value) => value,
+            Err(error) if error.downcast_ref::<DomeReadUnavailable>().is_some() => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some((state, instance)) = resolved else {
+            return Ok(None);
+        };
+        if instance.status != DomeInstanceStatusV1::Active || instance.relationship_detach.is_some()
+        {
+            return Ok(None);
+        }
+        let preset = self
+            .fetch_dome_preset_manifest(&instance.preset_ref)
+            .await?;
+        // 自分の Dome は Preset が読めなくても管理のために出す。他人の Dome は Preset が読めるときだけ出す。
+        if preset.is_none() && *owner != self.services.keys.public_key() {
+            return Ok(None);
+        }
+        let mut manifest = instance_management_manifest(&instance);
+        let records = self.list_dome_hosting_records(&instance).await?;
+        let hosting = self
+            .hosting_authority_view(&instance, &records, Utc::now().timestamp_millis())
+            .await?
+            .state;
+        if let Some(preset) = preset {
+            manifest.metaverse = Some(kukuri_core::resolve_metaverse_room_state(
+                &instance, &preset,
+            )?);
+            manifest.phase_label = None;
+        }
+        Ok(Some(GameRoomView {
+            room_id: instance.instance_id,
+            host_pubkey: owner.as_str().into(),
+            title: instance.title,
+            description: instance.description,
+            status: GameRoomStatus::Waiting,
+            phase_label: manifest.phase_label,
+            scores: vec![],
+            room_kind: GameRoomKind::MetaverseRoom,
+            metaverse: manifest.metaverse,
+            dome_hosting: Some(hosting),
+            manifest_blob_hash: state.current_manifest.hash.as_str().into(),
+            updated_at: instance.updated_at,
+            channel_id: channel_id_for_view(channel),
+            audience_label: self.audience_label_for_storage(topic, channel).await,
+        }))
     }
 }
 

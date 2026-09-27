@@ -305,3 +305,41 @@ pub(crate) async fn assert_game_room_absent_in_scope(
         Ok(inner) => inner,
     }
 }
+
+/// 提案する側は、相手の Dome を開いて一覧で知ってから提案する(#1221 R5-H: context の replica を走査しない)。
+pub(crate) async fn wait_for_listed_domes(
+    app: &AppService,
+    topic: &str,
+    instance_ids: &[&str],
+    wait: Duration,
+) -> Result<()> {
+    for id in instance_ids {
+        app.set_session_display(kukuri_app_api::SessionDisplayRequest {
+            topic: topic.into(),
+            scope: TimelineScope::Public,
+            replica_id: String::new(),
+            session_id: (*id).into(),
+            kind: "game".into(),
+            observer: format!("harness-dome:{id}"),
+            visible: true,
+            retry: false,
+        })
+        .await?;
+    }
+    tokio::time::timeout(wait, async {
+        loop {
+            let rooms = app
+                .list_game_rooms_scoped(topic, TimelineScope::Public)
+                .await?;
+            if instance_ids
+                .iter()
+                .all(|id| rooms.iter().any(|room| room.room_id == *id))
+            {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .context("peer Domes were not listed")?
+}

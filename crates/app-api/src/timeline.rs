@@ -21,7 +21,6 @@ impl AppService {
         .await?;
         let page = profile_timeline_page(
             &self.services,
-            local_author.as_str(),
             author_pubkey.as_str(),
             docs_author.as_deref(),
             cursor,
@@ -90,8 +89,10 @@ impl AppService {
         let repost_object = envelope
             .to_post_object()?
             .ok_or_else(|| anyhow::anyhow!("failed to parse repost object"))?;
-        self.ingest_event(&topic_replica_id(target_topic_id), envelope.clone())
-            .await?;
+        let write_replica =
+            self.services
+                .scope_write_replica(target_topic_id, None, envelope.created_at)?;
+        self.ingest_event(&write_replica, envelope.clone()).await?;
 
         let local_author_pubkey = self.current_author_pubkey();
         let profile_repost_envelope = build_profile_repost_envelope(
@@ -110,6 +111,9 @@ impl AppService {
             .ok_or_else(|| anyhow::anyhow!("failed to parse profile repost envelope"))?;
         persist_profile_repost_doc(
             self.services.docs_sync.as_ref(),
+            &self
+                .services
+                .author_index_replica(&local_author_pubkey, profile_repost.created_at)?,
             &profile_repost,
             &profile_repost_envelope,
         )
@@ -408,10 +412,6 @@ impl AppService {
                 None
             }
         };
-        let replica = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let generation = self
             .services
             .projection_store
@@ -428,17 +428,41 @@ impl AppService {
             reason,
         )?;
         let withdrawal = verify_post_withdrawal(&envelope, &target)?;
-        persist_post_withdrawal(
-            self.services.docs_sync.as_ref(),
-            &replica,
-            &target_object_id,
-            &envelope,
-        )
-        .await?;
+        // 操作時の位置と、切替後は元投稿の位置(private は元 epoch)の 2 か所を outbox へ積んでから書く(ADR 0054 §2)。
+        let replica = self.services.scope_write_replica(
+            topic_id,
+            private_state.as_ref(),
+            envelope.created_at,
+        )?;
+        let target_replica = match self.services.writes_buckets() {
+            true => self
+                .services
+                .projection_store
+                .get_object_projection(&target_object_id)
+                .await?
+                .map(|row| row.source_replica_id)
+                .filter(|source| source != &replica),
+            false => None,
+        };
+        let row =
+            |replica_id: &ReplicaId, target_replica_id: Option<ReplicaId>| WithdrawalWriteRow {
+                withdrawal_envelope_id: envelope.id.clone(),
+                replica_id: replica_id.clone(),
+                target_object_id: target_object_id.clone(),
+                envelope: envelope.clone(),
+                target_replica_id,
+            };
+        let mut writes = vec![row(&replica, target_replica.clone())];
+        writes.extend(target_replica.iter().map(|source| row(source, None)));
+        self.services
+            .projection_store
+            .queue_withdrawal_writes(writes)
+            .await?;
         self.services
             .projection_store
             .put_post_withdrawal(post_withdrawal_row(withdrawal, &replica))
             .await?;
+        self.resume_withdrawal_writes().await?;
 
         let hint_topic = channel_hint_topic_for(topic_id, target_content.channel_id.as_ref());
         if let Err(error) = self
@@ -467,9 +491,6 @@ impl AppService {
                 error = %error,
                 "failed to publish withdrawal hint; durable docs state was already persisted"
             );
-        }
-        if target_content.channel_id.is_none() {
-            self.maybe_restart_replica_sync(topic_id, &replica).await;
         }
         Ok(envelope.id.0)
     }
@@ -547,10 +568,6 @@ impl AppService {
             }
         };
         let effective_channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
-        let write_replica = private_state
-            .as_ref()
-            .map(current_private_channel_replica_id)
-            .unwrap_or_else(|| topic_replica_id(topic_id));
         let now = Utc::now().timestamp_millis();
         let stored_blob = self
             .services
@@ -568,8 +585,8 @@ impl AppService {
             },
         ))
         .await?;
-        let manifest_ids = if stored_attachments.is_empty() {
-            Vec::new()
+        let manifest = if stored_attachments.is_empty() {
+            None
         } else {
             let manifest_id = format!(
                 "media-{}-{}",
@@ -599,14 +616,7 @@ impl AppService {
             };
             let envelope =
                 build_media_manifest_envelope(self.services.keys.as_ref(), &topic, &manifest)?;
-            persist_media_manifest(
-                &write_replica,
-                &envelope,
-                &manifest,
-                self.services.docs_sync.as_ref(),
-            )
-            .await?;
-            vec![manifest_id]
+            Some((manifest, envelope))
         };
         // ADR 0053 §2: docs へ書く docs author を、署名の対象の tag と hint に入れる。
         let docs_author = self.services.docs_sync.local_docs_author().await?;
@@ -627,7 +637,10 @@ impl AppService {
                     role: role.clone(),
                 })
                 .collect(),
-            manifest_ids,
+            manifest
+                .iter()
+                .map(|(manifest, _)| manifest.manifest_id.clone())
+                .collect(),
             parent.as_ref(),
             if effective_channel_id.is_some() {
                 ObjectVisibility::Private
@@ -641,6 +654,21 @@ impl AppService {
         let post_object = envelope
             .to_post_object()?
             .ok_or_else(|| anyhow::anyhow!("failed to parse post object for profile topic"))?;
+        // manifest は投稿と同じ bucket(署名した `created_at` から決める)へ置く。
+        let write_replica = self.services.scope_write_replica(
+            topic_id,
+            private_state.as_ref(),
+            envelope.created_at,
+        )?;
+        if let Some((manifest, manifest_envelope)) = &manifest {
+            persist_media_manifest(
+                &write_replica,
+                manifest_envelope,
+                manifest,
+                self.services.docs_sync.as_ref(),
+            )
+            .await?;
+        }
         self.ingest_event(&write_replica, envelope.clone()).await?;
         if effective_channel_id.is_none() {
             let local_author_pubkey = self.current_author_pubkey();
@@ -664,6 +692,9 @@ impl AppService {
                 .ok_or_else(|| anyhow::anyhow!("failed to parse profile post envelope"))?;
             persist_profile_post_doc(
                 self.services.docs_sync.as_ref(),
+                &self
+                    .services
+                    .author_index_replica(&local_author_pubkey, profile_post.created_at)?,
                 &profile_post,
                 &profile_post_envelope,
             )
@@ -706,8 +737,6 @@ impl AppService {
             );
         }
         if effective_channel_id.is_none() {
-            self.maybe_restart_replica_sync(topic_id, &topic_replica_id(topic_id))
-                .await;
             match self.get_sync_status().await {
                 Ok(status) => {
                     if let Some(topic_status) = status
@@ -767,8 +796,6 @@ impl AppService {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<TimelineView> {
-        let had_topic_subscription = self.has_topic_subscription(topic_id).await;
-        let empty_recovery_key = scope_empty_recovery_key(topic_id, &scope);
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let mut page = filtered_timeline_page(
             self.services.projection_store.as_ref(),
@@ -779,22 +806,12 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: 本文が欠けた行は復旧の理由にしない。欠損は行単位の取り直しへ渡す。
-        let needs_epoch_hydration = self
-            .scope_needs_current_private_epoch_hydration(topic_id, &scope, &page)
-            .await;
-        let restart_after_empty = had_topic_subscription
-            && page.items.is_empty()
-            && page.next_cursor.is_none()
-            && self
-                .should_restart_after_empty_result(empty_recovery_key.as_str())
-                .await;
         // The visible page (including its first page) checks only its bounded
         // index range; this also sees new buckets before local sync exists.
         let unavailable;
         {
             let reconcile = self
-                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit)
+                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit, true)
                 .await?;
             if reconcile.hydrated > 0 {
                 *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
@@ -814,20 +831,8 @@ impl AppService {
             }
             unavailable = reconcile.unavailable;
             continue_past_unavailable(&mut page, &reconcile, PageOrder::NewestFirst, None);
-            if needs_epoch_hydration || (page.items.is_empty() && restart_after_empty) {
-                if had_topic_subscription {
-                    self.maybe_restart_scope_subscription(topic_id, &scope)
-                        .await;
-                }
-                self.maybe_restart_scope_replica_sync(topic_id, &scope)
-                    .await;
-            }
         }
         Box::pin(self.recover_missing_bodies(&mut page.items)).await;
-        if !page.items.is_empty() {
-            self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
-                .await;
-        }
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
@@ -845,8 +850,6 @@ impl AppService {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<TimelineView> {
-        let had_topic_subscription = self.has_topic_subscription(topic_id).await;
-        let empty_recovery_key = thread_empty_recovery_key(topic_id, thread_id);
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let thread_root = EnvelopeId::from(thread_id);
         let mut page = filtered_thread_page(
@@ -859,13 +862,6 @@ impl AppService {
             &hidden_author_pubkeys,
         )
         .await?;
-        // #1225: `list_timeline_scoped` と同じく、本文が欠けた行は復旧の理由にしない。
-        let restart_after_empty = had_topic_subscription
-            && page.items.is_empty()
-            && page.next_cursor.is_none()
-            && self
-                .should_restart_after_empty_result(empty_recovery_key.as_str())
-                .await;
         // #1239: replica を走査しない。このページの範囲を thread の索引と照合して、欠けている object だけを
         // key 指定で反映する(範囲ごとに間隔を空ける)。thread は途中の返信が欠けうるので、ページが空でなくても
         // 照合する。
@@ -899,20 +895,8 @@ impl AppService {
                 )
                 .await?;
             }
-            if page.items.is_empty() && restart_after_empty {
-                if had_topic_subscription {
-                    self.maybe_restart_scope_subscription(topic_id, &ReplicaScope::AllJoined)
-                        .await;
-                }
-                self.maybe_restart_scope_replica_sync(topic_id, &ReplicaScope::AllJoined)
-                    .await;
-            }
         }
         Box::pin(self.recover_missing_bodies(&mut page.items)).await;
-        if !page.items.is_empty() {
-            self.clear_empty_result_restart_marker(empty_recovery_key.as_str())
-                .await;
-        }
         continue_past_unavailable(
             &mut page,
             &reconcile,
@@ -928,19 +912,6 @@ impl AppService {
         }
         Ok(view)
     }
-}
-
-fn scope_empty_recovery_key(topic_id: &str, scope: &TimelineScope) -> String {
-    match scope {
-        TimelineScope::Public => format!("empty-scope:{topic_id}:public"),
-        TimelineScope::Channel { channel_id } => {
-            format!("empty-scope:{topic_id}:channel:{}", channel_id.as_str())
-        }
-    }
-}
-
-fn thread_empty_recovery_key(topic_id: &str, thread_id: &str) -> String {
-    format!("empty-thread:{topic_id}:{thread_id}")
 }
 
 /// ページの並び(続きの位置の向き)。

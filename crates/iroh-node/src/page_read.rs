@@ -10,7 +10,7 @@ use iroh::EndpointAddr;
 use iroh::endpoint::{Connection, Endpoint};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::api::Store as BlobStore;
-use iroh_docs::actor::SyncHandle;
+use iroh_docs::actor::{OpenOpts, SyncHandle};
 use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
@@ -236,6 +236,25 @@ impl DocReadProtocol {
         let request: Request = serde_json::from_slice(&bytes)?;
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
+        // R5-H: 書き手の docs handle は上限(128)で閉じるので、提供する namespace は読む間だけ開く。
+        // 手元に無い namespace は開けず、読取りが失敗する(exact は従来どおり cache へ戻る)。
+        let opened = self.sync.open(namespace, OpenOpts::default()).await;
+        let response = self.respond(request, namespace).await;
+        if opened.is_ok() {
+            let _ = self.sync.close(namespace).await;
+        }
+        let bytes = serde_json::to_vec(&response?)?;
+        ensure!(
+            bytes.len() <= MAX_RESPONSE_BYTES,
+            "docs response budget exceeded"
+        );
+        send.write_all(&bytes).await?;
+        send.finish()?;
+        send.stopped().await?;
+        Ok(())
+    }
+
+    async fn respond(&self, request: Request, namespace: NamespaceId) -> Result<DocReadResponse> {
         if private_replica(&request.replica) {
             let secret = self.sync.export_secret_key(namespace).await?;
             let expected = private_capability_proof(
@@ -377,15 +396,7 @@ impl DocReadProtocol {
                 DocReadResponse::Records(records)
             }
         };
-        let bytes = serde_json::to_vec(&response)?;
-        ensure!(
-            bytes.len() <= MAX_RESPONSE_BYTES,
-            "docs response budget exceeded"
-        );
-        send.write_all(&bytes).await?;
-        send.finish()?;
-        send.stopped().await?;
-        Ok(())
+        Ok(response)
     }
 }
 

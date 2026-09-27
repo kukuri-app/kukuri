@@ -1,58 +1,5 @@
 use super::*;
 
-/// remote の投稿の event から通知の候補を作る。
-///
-/// actor・本文・channel は、署名つき envelope と replica の scope を確かめた投稿からだけ作る(#1248)。
-/// `topic_id` は、その replica を購読している topic。`state` と `envelope` のどちらの event でも試す
-/// (`state` が先に届いた投稿は、`envelope` の event で通知になる)。通知の id は envelope id から決まるので、
-/// 2 回試しても重複しない。
-pub(crate) async fn notification_candidate_from_object_event(
-    projection_store: &dyn ProjectionStore,
-    docs_sync: &dyn DocsSync,
-    blob_service: &dyn BlobService,
-    local_author_pubkey: &str,
-    topic_id: &str,
-    event: &DocEvent,
-) -> Result<Option<NotificationCandidate>> {
-    if event.source_peer.is_none() {
-        return Ok(None);
-    }
-    let Some(object_id) = object_id_from_post_key(event.key.as_str()) else {
-        return Ok(None);
-    };
-    let Some(post) = load_verified_post(
-        docs_sync,
-        &event.replica_id,
-        topic_id,
-        &object_id,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await?
-    else {
-        return Ok(None);
-    };
-    if post.header().author.as_str() == local_author_pubkey {
-        return Ok(None);
-    }
-    let reply_to_local = if let Some(reply_to_object_id) = post.header().reply_to.as_ref() {
-        projection_store
-            .get_object_projection(reply_to_object_id)
-            .await?
-            .as_ref()
-            .is_some_and(|row| row.author_pubkey == local_author_pubkey)
-    } else {
-        false
-    };
-    let content =
-        notification_text_from_payload_ref(blob_service, &post.header().payload_ref).await;
-    Ok(notification_candidate_from_verified_post(
-        local_author_pubkey,
-        &post,
-        content,
-        reply_to_local,
-    ))
-}
-
 pub(crate) fn notification_candidate_from_verified_post(
     local_author_pubkey: &str,
     post: &VerifiedPost,
@@ -152,48 +99,6 @@ pub(crate) fn notification_candidate_from_verified_post(
     None
 }
 
-pub(crate) async fn notification_candidate_from_follow_event(
-    _store: &dyn Store,
-    docs_sync: &dyn DocsSync,
-    local_author_pubkey: &str,
-    author_pubkey: &str,
-    event: &DocEvent,
-) -> Result<Option<NotificationCandidate>> {
-    if event.source_peer.is_none() || !event.key.starts_with("graph/follows/") {
-        return Ok(None);
-    }
-    let Some(record) = docs_sync
-        .query_replica(&event.replica_id, DocQuery::Exact(event.key.clone()))
-        .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(None);
-    };
-    let doc: FollowEdgeDocV1 = serde_json::from_slice(&record.value)?;
-    if doc.subject_pubkey.as_str() != author_pubkey {
-        return Ok(None);
-    }
-    let Some(envelope) = fetch_author_envelope_by_id(
-        docs_sync,
-        &event.replica_id,
-        &doc.envelope_id,
-        DocFetchPolicy::LocalThenRemote,
-    )
-    .await?
-    else {
-        return Ok(None);
-    };
-    let Some(edge) = parse_follow_edge(&envelope)? else {
-        return Ok(None);
-    };
-    Ok(notification_candidate_from_verified_follow(
-        local_author_pubkey,
-        &event.replica_id,
-        &edge,
-    ))
-}
-
 pub(crate) fn notification_candidate_from_verified_follow(
     local_author_pubkey: &str,
     replica: &ReplicaId,
@@ -222,16 +127,6 @@ pub(crate) fn notification_candidate_from_verified_follow(
     })
 }
 
-pub(crate) async fn notification_text_from_payload_ref(
-    blob_service: &dyn BlobService,
-    payload_ref: &PayloadRef,
-) -> Option<String> {
-    match payload_ref {
-        PayloadRef::InlineText { text } => Some(text.clone()),
-        PayloadRef::BlobText { hash, .. } => fetch_projection_blob_text(blob_service, hash).await,
-    }
-}
-
 pub(crate) fn notification_preview_text(value: Option<String>) -> Option<String> {
     normalize_optional_text(value)
         .map(|text| text.chars().take(NOTIFICATION_PREVIEW_LIMIT).collect())
@@ -246,14 +141,6 @@ pub(crate) fn notification_kind_key(kind: &NotificationKind) -> &'static str {
         NotificationKind::DirectMessage => "direct_message",
         NotificationKind::Followed => "followed",
     }
-}
-
-pub(crate) fn notification_doc_event_fingerprint_parts(key: &str, content_hash: &str) -> String {
-    format!("{key}|{content_hash}")
-}
-
-pub(crate) fn notification_doc_event_fingerprint(event: &DocEvent) -> String {
-    notification_doc_event_fingerprint_parts(&event.key, &event.content_hash)
 }
 
 pub(crate) fn document_notification_id(

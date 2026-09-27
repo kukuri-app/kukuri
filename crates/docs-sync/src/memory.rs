@@ -39,6 +39,10 @@ impl MemoryDocsSync {
 
 #[async_trait]
 impl DocsSync for MemoryDocsSync {
+    async fn has_local_replica(&self, replica_id: &ReplicaId) -> Result<bool> {
+        Ok(self.records.lock().await.contains_key(replica_id.as_str()))
+    }
+
     async fn query_local_source(
         &self,
         replica: &ReplicaId,

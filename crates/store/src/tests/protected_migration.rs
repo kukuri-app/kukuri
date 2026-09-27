@@ -328,3 +328,30 @@ async fn a_reused_rowid_after_the_cursor_is_read_again() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// #1221 R5-H AC-1: 移行が済むまで切り替えず、済んだら 1 回だけ時刻を保存し、再接続・読み直しでも変わらない。
+#[tokio::test]
+async fn the_writer_switches_once_after_the_migration_and_stays_switched() -> anyhow::Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("kukuri.db");
+    let store = SqliteStore::connect_file(&path).await?;
+    assert_eq!(store.switch_writer_if_migrated().await?, None);
+    for kind in PROTECTED_MIGRATION_KINDS {
+        store
+            .finish_protected_migration_page(kind, "", true)
+            .await?;
+    }
+    let switched = store
+        .switch_writer_if_migrated()
+        .await?
+        .expect("switched after the migration");
+    store.close().await;
+    let store = SqliteStore::connect_file(&path).await?;
+    assert_eq!(store.writer_switched_at().await?, Some(switched));
+    // 移行を読み直させても(新しい private channel など)、旧 writer へ戻らず、時刻も変わらない。
+    store.reset_protected_migration("private").await?;
+    assert_eq!(store.switch_writer_if_migrated().await?, Some(switched));
+    assert_eq!(store.writer_switched_at().await?, Some(switched));
+    store.close().await;
+    Ok(())
+}

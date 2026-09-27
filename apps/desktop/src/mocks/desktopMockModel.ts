@@ -274,17 +274,19 @@ export function cloneBookmarkedPost(view: BookmarkedPostView): BookmarkedPostVie
 }
 
 export function withJoinedChannelDefaults(channel: JoinedPrivateChannelView): JoinedPrivateChannelView {
+  const isOwner = channel.is_owner ?? true;
   return {
     ...channel,
     owner_pubkey: channel.owner_pubkey ?? channel.creator_pubkey,
     joined_via_pubkey: channel.joined_via_pubkey ?? null,
     audience_kind: channel.audience_kind ?? 'invite_only',
-    is_owner: channel.is_owner ?? true,
+    is_owner: isOwner,
     current_epoch_id: channel.current_epoch_id ?? 'legacy',
     archived_epoch_ids: [...(channel.archived_epoch_ids ?? [])],
     sharing_state: channel.sharing_state ?? 'open',
     rotation_required: channel.rotation_required ?? false,
-    participant_count: channel.participant_count ?? 0,
+    // 実装と同じく、参加者数は owner の端末だけが持つ。
+    participant_count: isOwner ? (channel.participant_count ?? 0) : null,
     stale_participant_count: channel.stale_participant_count ?? 0,
   };
 }
