@@ -87,7 +87,8 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
-  seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う）。
+  seedの変更・rendezvousの候補の変化・ticketの取込みでは作り直さない（既存topicへのpeerの追加はtransportの`join_peers`が行う。
+  R2-Bからrendezvousの候補はそのtopicだけへjoinし、seedの変化は既存topicへjoinしない。§3.1）。
 - 購読していないtopicへのpublishは短期送信先としてtopicへ入り、16件を超えたら最も古い短期送信先から抜ける（gossip購読81の内訳）。
 - 通知: 購読中のscopeでは、taskの読み手が取り込んだremoteの投稿から通知を作る（R5-H。通知のidはenvelopeから
   決まるので読み直しで重ならない）。followの通知は§4のaccount経路と、authorのleaseの読み直しが自分を指すActiveの
@@ -184,7 +185,7 @@ R4-A検証済み宛先を先頭に、公開は全体の候補窓、privateは当
   `remote_info`の`TransportAddrUsage::Active`は保持中のpath情報であり、QUIC接続の生存判定にも使わない。
   接続終了はconnectionを保持しない`WeakConnectionHandle::closed`等の実際の終了観測を使う。
 - Direct P2P → Relay Supported P2P → Relay Fallbackの順を維持する。
-  CNの認証/同意と接続の健康状態は別に保持し、あるnodeの成功で他nodeのgateを開かない。
+  CNの認証/同意と接続の健康状態は別に保持し、あるnodeの成功で他nodeのgateを開かない（実装は§3.1）。
 - queued要求の需要消失は削除、表示専用の最終需要消失はQUIC futureもcancelする。
   通常取得の待機者cancelはownerの実行と成否記録を消さない（#1207）。失効/終了はそれより強い停止理由。
 - private失効・account切替はguard世代を先に無効化し、予約・実行・完了反映を拒否する。
@@ -192,6 +193,37 @@ R4-A検証済み宛先を先頭に、公開は全体の候補窓、privateは当
   古いtaskが新しいhandleを消したり、旧世代のbytesを保存したりすることを禁止する。
 - ownerの状態lockを保持したままnetwork I/Oを待たない。command受付、worker完了、需要更新、
   次のdeadlineだけで進める。timerはdeadline索引の先頭を待ち、起動遅延分を連続実行しない。
+
+### 3.1 CNのnodeごとの期限・失敗・回復（R2-B、2026-09-27）
+
+2026-09-27のユーザー決定「R2-B CNごとの失敗・回復・確認」に従う。旧来の15秒ごとの全node処理（期限前でも
+policyとconsentのGET、全nodeの合成と全topicへのjoin、30秒不健全で全ready nodeのforce refreshと全体の再適用・
+作り直しを行うself-heal）は、次の形へ置き換えた。
+
+- **期限の索引**: schedulerはtickごとに、nodeのsessionの期限（heartbeat・rendezvous・seedが空のときのmetadataの
+  再試行・tokenの更新・再試行）が来たnodeだけのsession jobを積む（`CommunityNodeSessionState::due_at`）。
+  参加の拒否と再同意の待ちは利用者の操作まで期限を持たない。期限前のnodeへはHTTPを送らない。観測の送信は
+  nodeごとのlaneで、止まったnodeが別のnodeを塞がない。
+- **同意とpolicyの確認**: Readyでtokenが有効な間、schedulerと背景のlane（session job・索引申請の更新・観測の送信）は
+  期限の来た登録だけを送る。公開policyと同意の状態は、tokenの更新（再認証）・sessionの確立・利用者の操作（検索・
+  通報などの要求と手動の回復）のときだけ確かめる。サーバ側の失効は次の認証つき要求の403で検出し、
+  手元の同意で覆えなければIdleにしてそのnodeのrelayとseedを外す（Readyで上書きしない）。
+- **認証・同意と接続の健康状態**: 5xx・通信失敗・再試行中（Retrying）は、そのnodeのsessionのphaseとbackoffだけを
+  変え、確認済みの状態とrelay・seedを保つ。relayとseedを外すのは、同意の解除（利用者の撤回、403で再同意が要る）・
+  認証の失効（401の後の再認証の失敗、参加の拒否）・設定からの削除のときだけ。
+- **nodeごとの差分**: `node → {relay, seed}`を持ち、変わったnodeの分だけ和を取り直してtransport・docs・blobへ適用する
+  （和が変わらなければ何もしない）。rendezvousの応答のpeerは、鍵から引いたそのtopicだけへjoinし、取得元のCNごとに
+  topicあたり4件まで覚える。そのCNの候補は`clear_receive_candidates`で忘れる。設定の変更と消去は、外したnodeの
+  session・候補・relay・seedだけを触る。
+- **endpointの作り直し**: relayの集合の変化はendpointへその場で足し引きする。作り直すのは、既存のendpointを使えない
+  とき（直接だけとrelayつきの切替、DHTの有効・無効の切替、docsのprobeの失敗）だけ。
+- **topicの回復**: seedの設定は既存のtopicへjoinしない。gossipのtopicごとに、neighborが無い間だけ、rendezvousの候補と
+  seed・ticketの窓から最大4件へ再joinする（間隔はtopicごとに1秒から倍、上限64秒）。seedが増えたときはneighborの
+  無いtopicの次の再joinを早める。回復はneighborの成立（`NeighborUp`）で判定し、seedの適用の`Ok`では判定しない。
+  画面の手動の回復操作（`refresh_community_node_metadata`）は残す。
+- 撤去: scheduler のConnectivity job、`maybe_self_heal_community_node_connectivity`、
+  `repair_community_node_connectivity`、全ready nodeのforce refresh、forceの全体再適用・作り直し、
+  `reapply_community_node_connectivity`（本番の呼出しなし）、再接続の状態とguard、前回の適用状態と版。
 
 ### 実装前に固定する境界と負例
 
@@ -470,6 +502,7 @@ quiet/read/self/種類設定と成人向けpreview gateを従来どおりOS表�
 
 以下のtest名は追加予定のcontract識別子であり、成功済みの証拠ではない。
 inventoryの各行から同じ契約へ接続し、差分を実装する段階で実test名と証跡を記録する。
+NW-5・NW-6はR2-B（§3.1）で実試験へ接続した（表の試験名）。
 
 | ID | sequence | 許可/禁止する結果 | contract |
 | --- | --- | --- | --- |
@@ -477,8 +510,8 @@ inventoryの各行から同じ契約へ接続し、差分を実装する段階�
 | NW-2 | 異なる要求を枠以上に登録 | queue件数/bytes以下、超過はDeferred、待機task 0 | `admission_bounds_waiting_work` |
 | NW-3 | queue待機中に期限切れ/失効 | I/O 0、旧世代の完了保存0 | `expiry_and_revocation_dominate_io` |
 | NW-4 | 表示の最終observer離脱/通常取得の待機者離脱 | 前者はstream停止、後者は所有と成否記録維持 | 既存session cancel / #1207 + 統合contract |
-| NW-5 | peer1件変更、無関係なtopicは休止 | 影響対象だけ変更、休止/無関係のrestart 0 | `peer_delta_is_scoped` |
-| NW-6 | CN apply成功、gossip不通、blobのみ成功 | gossip backoff維持、未同意nodeへのI/O 0 | `recovery_requires_protocol_observation` |
+| NW-5 | peer1件変更、無関係なtopicは休止 | 影響対象だけ変更、休止/無関係のrestart 0 | desktop-runtime `peer_delta_is_scoped`・`a_failing_node_never_touches_the_healthy_node`、transport `rendezvous_peers_join_only_their_topic_once` |
+| NW-6 | CN apply成功、gossip不通、blobのみ成功 | gossip backoff維持、未同意nodeへのI/O 0 | transport `recovery_requires_protocol_observation`、desktop-runtime `tick_work_does_not_grow_with_failure_or_dormant_history` |
 | NW-7 | close途中cancel、leave失敗、endpoint交換 | owner完了/隔離枠維持、旧世代再反映0 | P1 lifecycle + owner統合contract |
 | NW-8 | 非表示topic通知、offline旧DM、同一sourceの重複受信、endpoint更新、CNなし | 署名bindingで到達、outboxの新輸送先/ACK維持、二重toast 0 | `account_receive_preserves_scope` |
 | NW-9 | private参照を公開routeで受信、未許可epoch/偽署名、非表示中のrotation | 秘密metadata露出0、不許可provider取得0、旧epoch grantからのみ更新 | `sealed_receive_requires_scope` |
