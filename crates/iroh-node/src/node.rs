@@ -33,7 +33,7 @@ use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 #[cfg(test)]
 use iroh::tls::CaTlsConfig;
 
-const ENDPOINT_SECRET_FILE_NAME: &str = "endpoint-secret.json";
+pub(crate) const ENDPOINT_SECRET_FILE_NAME: &str = "endpoint-secret.json";
 const DOCS_STORE_FILE_NAME: &str = "docs.redb";
 const DEFAULT_AUTHOR_FILE_NAME: &str = "default-author";
 

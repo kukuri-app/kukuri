@@ -20,7 +20,7 @@ async fn docs_for(secret: &str) -> (std::sync::Arc<IrohDocsNode>, IrohDocsSync, 
     let node = IrohDocsNode::memory().await.expect("docs node");
     let docs = IrohDocsSync::new(node.clone());
     let id = docs
-        .use_account_docs_author(&keys(secret).derive_docs_author_seed())
+        .use_account_docs_author(&keys(secret).derive_docs_author_seed(), "owner")
         .await
         .expect("use the account docs author");
     (node, docs, id)
@@ -57,7 +57,7 @@ async fn account_docs_author_is_the_same_on_every_device_of_the_account() {
     // 設定し直しても同じ結果になる。
     assert_eq!(
         docs_a
-            .use_account_docs_author(&keys(ACCOUNT_SECRET).derive_docs_author_seed())
+            .use_account_docs_author(&keys(ACCOUNT_SECRET).derive_docs_author_seed(), "owner")
             .await
             .expect("idempotent"),
         id_a
@@ -207,7 +207,7 @@ async fn entries_of_the_previous_docs_author_are_superseded() {
         .expect("legacy author")
         .to_string();
     let id = docs
-        .use_account_docs_author(&keys(ACCOUNT_SECRET).derive_docs_author_seed())
+        .use_account_docs_author(&keys(ACCOUNT_SECRET).derive_docs_author_seed(), "owner")
         .await
         .expect("switch");
     assert_ne!(legacy, id);

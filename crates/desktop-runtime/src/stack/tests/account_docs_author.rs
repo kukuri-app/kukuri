@@ -23,7 +23,7 @@ async fn account_docs_author_survives_a_stack_rebuild() {
     );
     let keys = kukuri_core::generate_keys();
     let id = stack
-        .use_account_docs_author(keys.derive_docs_author_seed())
+        .use_account_docs_author(keys.derive_docs_author_seed(), keys.public_key_hex())
         .await
         .expect("use the account docs author");
     let replica = kukuri_docs_sync::topic_replica_id("kukuri:topic:stack-docs-author");

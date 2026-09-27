@@ -115,29 +115,9 @@ impl ClientHost {
                     continue;
                 }
             };
-            if let Some(hash) = hash {
-                // #1221 R5-G: 保護所有先を先に読み、旧領域(`iroh-data`)は移行前の fallback にする。
-                let bytes = if protected.is_some() {
-                    protected
-                } else if account.id == snapshot.active_account_id {
-                    let runtime = self.runtime();
-                    let stack = runtime.iroh_stack.current.lock().await;
-                    if let Some(stack) = stack.as_ref() {
-                        stack.node.read_local_blob(&hash).await.ok().flatten()
-                    } else {
-                        None
-                    }
-                } else {
-                    kukuri_iroh_node::read_offline_blob(
-                        &account_db_path(&self.app_data_dir, &account.id)
-                            .with_extension("iroh-data"),
-                        &hash,
-                    )
-                    .await
-                    .ok()
-                    .flatten()
-                };
-                set_picture(&mut display, bytes);
+            // #1221 R5-I: avatar は保護所有先から読む(旧 `iroh-data` の fallback は撤去した)。
+            if hash.is_some() {
+                set_picture(&mut display, protected);
             }
             result.push(display);
         }

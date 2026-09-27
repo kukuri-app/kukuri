@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 1024 * 1024 * 1024;
 pub const REMOTE_CACHE_UNUSED_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 pub const REMOTE_CACHE_RECLAIM_STEP: usize = 128;
+/// これ以下の blob は SQLite の行に、超えるものは `kukuri.remote-blobs/` の file に置く。
+pub const OWNED_INLINE_BLOB_BYTES: u64 = 1024 * 1024;
 const REMOTE_CACHE_TOUCH_INTERVAL_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Clone, Copy)]
@@ -48,7 +50,7 @@ pub(super) fn now_ms() -> Result<i64> {
     )?)
 }
 
-async fn delete_cache_item(
+pub(super) async fn delete_cache_item(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     kind: &str,
     key: &str,
@@ -336,11 +338,13 @@ impl SqliteStore {
         Ok(count)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn charge_remote_projection(
         &self,
         tx: &mut sqlx::Transaction<'_, Sqlite>,
         row: &ObjectProjectionRow,
         budget: i64,
+        last_used_at: i64,
         label_evictions: &mut Vec<String>,
         removed_files: &mut Vec<String>,
     ) -> Result<bool> {
@@ -354,7 +358,7 @@ impl SqliteStore {
             None,
             None,
             budget,
-            now_ms()?,
+            last_used_at,
             Some(charge),
             label_evictions,
             removed_files,
@@ -814,7 +818,9 @@ impl SqliteStore {
         )?);
         Ok(ProtectedRefUpdate {
             _gate: gate,
-            tx: self.pool.begin().await?,
+            // 読んでから書く transaction なので、書込みの lock を先に取る(#1221 R5-I)。読取りで始めると、途中の書込みへの
+            // 格上げが別の接続の書込みと競合したとき busy_timeout を待たずに `database is locked` で失敗する。
+            tx: self.pool.begin_with("BEGIN IMMEDIATE").await?,
             budget,
             label_evictions: Vec::new(),
             removed_files: Vec::new(),
@@ -965,6 +971,7 @@ impl SqliteStore {
 }
 
 mod files;
+mod owned;
 
 #[cfg(test)]
 mod tests;

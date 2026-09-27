@@ -111,15 +111,30 @@ impl IrohDocsSync {
             .await
     }
 
-    /// 旧領域(`iroh-data`)に残る 1 key の record を、namespace を import せずに読む(#1221 R5-G の移行)。
-    /// private は登録済みの capability で開く。
+    /// 旧 store(`iroh-data`)に残る 1 key の record(#1221 R5-G・R5-I の移行)。旧 store に無ければ、新しい store の
+    /// 手元の record を namespace を import せずに読む(移行の途中に書いた本人の record)。private は登録済みの
+    /// capability で namespace を求める。
     pub async fn read_legacy_records(
         &self,
+        legacy: &kukuri_iroh_node::LegacyStore,
         replica: &ReplicaId,
         key: &str,
     ) -> Result<Vec<DocRecord>> {
         let secret = self.replica_secret(replica).await?;
-        self.read_local_records(replica, secret, key, None, 8).await
+        let records = legacy.records(secret.id(), key).await?;
+        if records.is_empty() {
+            return self.read_local_records(replica, secret, key, None, 8).await;
+        }
+        Ok(records
+            .into_iter()
+            .map(|record| DocRecord {
+                key: record.key,
+                value: record.value,
+                content_hash: record.content_hash,
+                content_len: record.content_len,
+                docs_author: Some(record.docs_author),
+            })
+            .collect())
     }
 
     async fn read_local_records(

@@ -543,6 +543,25 @@ sudo docker exec "$PG_CONTAINER" sh -lc \
 6. `general_action` を `hold` / `exclude` へ厳格化した node では、同じ投稿が索引に入らないこと
    （既定の `label` 運用では確認不要）。
 
+### 5.8 旧 iroh store の退役の確認（#1221 R5-I）
+
+R5-I を含む `cn-indexer` の初回起動は、`COMMUNITY_NODE_INDEXER_DATA_DIR`（compose では
+`/var/lib/kukuri/cn-indexer`）の直下にある旧 iroh store（旧同期の topic/channel replica と内容 blob）を、
+`endpoint-secret.json` を残して `legacy.retiring/` へ名前を変えて移し、node は `iroh-store/` の新しい空の store で動く。
+`endpoint-secret.json` は `iroh-store/` へも写すので、CN の endpoint ID は変わらない。`legacy.retiring/` の中の file は
+保守の巡回（`poll_interval` ごと）が 1 回 128 件以内で消し、再起動しても残った分から続ける。volume や file を手動で消さない。
+
+1. 起動後、data dir の直下が `endpoint-secret.json`・`iroh-store/`・（消し終えるまで）`legacy.retiring/` だけであること。
+2. `iroh-store/endpoint-secret.json` と data dir の直下の `endpoint-secret.json` が同じ内容であること（`sudo cmp` で比べる。
+   同じ鍵なので endpoint ID は変わらない）。鍵の内容を表示・記録しない。
+3. 固定した新規投稿 1 件が bucket reader の巡回で索引されること（§5.6 の 3）。旧 store は bucket reader に使っていない。
+4. `legacy.retiring/` が時間とともに減り、最後に無くなること。消し終えるまでの時間は旧 store の file 数に比例するが、
+   1 回の巡回の作業は 128 件以内で、索引の巡回を止めない。消せない file があれば log の
+   `failed to remove the retired iroh store` を確認する（次の巡回で再試行する）。
+
+CN は更新前の投稿の再提供元ではなくなる（2026-09-27 ユーザー決定）。safety provider を構成しない fail-closed の
+起動では node と保守の巡回を作らないため、`legacy.retiring/` は provider を構成した起動まで残る。
+
 ## 6. 実クライアントのbenign media確認
 
 実在の違法mediaや疑わしいmediaを検証に使わない。権利上問題のない小さな画像をpublic topicへ投稿し、
@@ -626,6 +645,9 @@ sudo docker run --rm --network community-node_default --env-file .env \
 - truth/projection不一致が再投影待ち時間を超えて続く
 - 検証対象のbenign contentが誤って除外される、または拒否対象が表出するregression
 - startup再実行後も容量・証明書・networkの障害が解消しない
+
+R5-I より前の image へ戻すと、node は data dir の直下に新しい空の store を作る（`endpoint-secret.json` が残るので
+endpoint ID は変わらない）。退役させた旧 store は戻らないが、索引の真実源は Postgres なので索引は失われない。
 
 rollbackでもtagではなく、直前に記録した4つのdigestを使う。apply前backupを保持し、DB schemaを
 戻す必要がある変更では専用のmigration rollback手順が無い限りDBを上書きしない。復旧後に

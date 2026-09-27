@@ -185,8 +185,17 @@ pub(crate) async fn materialize_direct_message_blob_ref(
     if !guard.is_mutual().await? {
         return Ok(None);
     }
+    // #1221 R5-I: 復号した添付は会話の履歴の保護参照で置く(手元から消すと外れる)。
+    let dm_id = direct_message_id_for_participants(
+        &Pubkey::from(guard.local_author_pubkey),
+        &Pubkey::from(guard.peer_pubkey),
+    );
     let local = blob_service
-        .put_blob(decrypted, encrypted_ref.mime.as_str())
+        .put_owned_blob(
+            decrypted,
+            encrypted_ref.mime.as_str(),
+            &format!("dm_message:{dm_id}/{message_id}"),
+        )
         .await?;
     Ok(Some(DirectMessageEncryptedBlobRefV1 {
         blob_id: encrypted_ref.blob_id.clone(),

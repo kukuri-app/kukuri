@@ -618,10 +618,11 @@ impl DesktopRuntime {
             handle.abort();
             let _ = handle.await;
         }
-        if let Some(handle) = self.protected_migration_task.lock().await.take() {
+        if let Some(handle) = self.legacy_store_task.lock().await.take() {
             handle.abort();
             let _ = handle.await;
         }
+        self.close_legacy_store().await;
         if let Some(handle) = self.community_node_scheduler_task.lock().await.take() {
             handle.abort();
             let _ = handle.await;

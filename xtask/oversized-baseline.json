@@ -37,12 +37,12 @@
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1106,
-      "path": "crates/app-api/src/dome_hosting.rs"
-    },
-    {
       "lines": 1099,
       "path": "crates/app-api/src/private_channels.rs"
+    },
+    {
+      "lines": 1093,
+      "path": "crates/app-api/src/dome_hosting.rs"
     },
     {
       "lines": 1078,

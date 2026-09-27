@@ -15,17 +15,15 @@ use kukuri_docs_sync::{
     BucketReplica, BucketScope, DocRecord, IrohDocsSync, TimeBucket, author_replica_id, stable_key,
     topic_replica_id,
 };
-use kukuri_iroh_node::{DocReadRecord, IrohDocsNode};
+use kukuri_iroh_node::{DocReadRecord, LegacyStore};
 use kukuri_store::{
-    ObjectProjectionStore, PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
-    ProtectedSource,
+    OWNED_INLINE_BLOB_BYTES, ObjectProjectionStore, PROTECTED_MIGRATION_KINDS,
+    PROTECTED_MIGRATION_PAGE, ProtectedCandidate, ProtectedSource,
 };
 
 use super::*;
 
-/// これ以下の blob は SQLite の行に、超えるものは `kukuri.remote-blobs/` の file に置く。
-const INLINE_BLOB_BYTES: u64 = 1024 * 1024;
-const DOME_PIN_TAG_PREFIX: &str = "kukuri/metaverse/pin/";
+pub(crate) const DOME_PIN_TAG_PREFIX: &str = "kukuri/metaverse/pin/";
 /// 本人の envelope 行は docs の record より先に入る。作成からこの秒数までは、依存 record が揃うまで位置を止める。
 const OWN_RECORD_SETTLE_SECS: i64 = 600;
 
@@ -42,18 +40,17 @@ struct ProtectionPlan {
     records: Vec<(ReplicaId, DocRecord)>,
 }
 
-/// 旧領域の読み手。1 ステップの間だけ現在の stack から借りる。
+/// 旧領域の読み手。旧 store と、namespace を求める docs を 1 ステップの間だけ借りる(#1221 R5-I: node は新しい store)。
 struct LegacySource {
-    node: Arc<IrohDocsNode>,
+    legacy: Arc<LegacyStore>,
     docs: Arc<IrohDocsSync>,
-    blobs: Arc<kukuri_blob_service::IrohBlobService>,
 }
 
 impl LegacySource {
     /// 旧領域の 1 key の record。開けない replica(退出した private など)は無いものとして扱う。
     /// 作り直しで止まった docs actor は応答しないことがあるため、時間切れはこのステップの失敗にする(次で読み直す)。
     async fn records(&self, replica: &ReplicaId, key: &str) -> Result<Vec<(ReplicaId, DocRecord)>> {
-        let read = self.docs.read_legacy_records(replica, key);
+        let read = self.docs.read_legacy_records(&self.legacy, replica, key);
         Ok(tokio::time::timeout(Duration::from_secs(10), read)
             .await
             .context("legacy docs read timed out")?
@@ -76,13 +73,20 @@ impl DesktopRuntime {
     /// 各 kind の保存した位置の後ろを 1 ページ(128 件まで)ずつ写す。全 kind が終端へ達していれば `true`。
     pub(crate) async fn protected_migration_step(&self) -> Result<bool> {
         let _guard = self.protected_migration_guard.lock().await;
+        // #1221 R5-I: 旧 store が無い account(新規・退役済み・復元)は、移すものが無い。移行を済んだものとし、
+        // 新形式の writer へ切り替える(台帳のページは読まない)。
+        let Some(legacy) = self.legacy_store.lock().await.clone() else {
+            if let Some(switched_at) = self.store.settle_without_legacy_store().await? {
+                self.app_service.switch_writer(switched_at);
+            }
+            return Ok(true);
+        };
         let source = {
             let current = self.iroh_stack.current.lock().await;
             let stack = current.as_ref().context("missing active iroh stack")?;
             LegacySource {
-                node: stack.node.clone(),
+                legacy,
                 docs: stack.docs_sync.clone(),
-                blobs: stack.blob_service.clone(),
             }
         };
         let local = self.author_keys.public_key_hex();
@@ -97,18 +101,6 @@ impl DesktopRuntime {
                 self.private_migration_dirty
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 return Err(error);
-            }
-            // pin の tag は hash の順に並ぶため、追いついた後に pin した asset を拾えるよう、起動時と pin したときに
-            // 先頭から読み直す。
-            if kind == "dome_pin" {
-                let generation = source.blobs.pin_generation();
-                if self
-                    .dome_pin_generation
-                    .swap(generation, std::sync::atomic::Ordering::SeqCst)
-                    != generation
-                {
-                    self.store.reset_protected_migration(kind).await?;
-                }
             }
             let cursor = self.store.protected_migration_cursor(kind).await?;
             let (plans, cursor, done) = match kind {
@@ -131,8 +123,8 @@ impl DesktopRuntime {
                 }
                 "dome_pin" => {
                     let tags = source
-                        .node
-                        .list_local_tags(DOME_PIN_TAG_PREFIX, &cursor, PROTECTED_MIGRATION_PAGE)
+                        .legacy
+                        .tags(DOME_PIN_TAG_PREFIX, &cursor, PROTECTED_MIGRATION_PAGE)
                         .await?;
                     let plans = tags
                         .iter()
@@ -197,32 +189,6 @@ impl DesktopRuntime {
         Ok(())
     }
 
-    /// 起動後の背景 task。満杯のページが続く間は 100ms、追いついたら 60 秒後に次を読む。shutdown で止める。
-    pub async fn start_protected_migration(self: &Arc<Self>) {
-        let mut task = self.protected_migration_task.lock().await;
-        if task.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            return;
-        }
-        let weak = Arc::downgrade(self);
-        *task = Some(tokio::spawn(async move {
-            loop {
-                let Some(runtime) = weak.upgrade() else {
-                    return;
-                };
-                let delay = match runtime.protected_migration_step().await {
-                    Ok(false) => Duration::from_millis(100),
-                    Ok(true) => Duration::from_secs(60),
-                    Err(error) => {
-                        tracing::warn!(%error, "protected data migration step failed");
-                        Duration::from_secs(60)
-                    }
-                };
-                drop(runtime);
-                tokio::time::sleep(delay).await;
-            }
-        }));
-    }
-
     async fn candidate_plan(
         &self,
         source: &LegacySource,
@@ -247,7 +213,7 @@ impl DesktopRuntime {
             ProtectedSource::DirectMessageFrame => {
                 // 暗号化添付の hash は frame の中にしか無いため、送信者として frame を開く。
                 let frame_hash = plan.blobs.first().cloned().unwrap_or_default();
-                let bytes = match source.node.read_local_blob(&frame_hash).await {
+                let bytes = match source.legacy.read_blob(&frame_hash).await {
                     Ok(Some(bytes)) => Some(bytes),
                     _ => self.store.get_remote_content("blob", &frame_hash).await?,
                 };
@@ -458,7 +424,7 @@ impl DesktopRuntime {
             return Ok(());
         }
         for hash in &blobs {
-            self.copy_legacy_blob(&source.node, hash).await?;
+            self.copy_legacy_blob(&source.legacy, hash).await?;
         }
         for (replica, author, record) in records {
             let payload = serde_json::to_vec(&DocReadRecord {
@@ -475,12 +441,12 @@ impl DesktopRuntime {
         Ok(())
     }
 
-    async fn copy_legacy_blob(&self, node: &IrohDocsNode, hash: &str) -> Result<()> {
+    pub(crate) async fn copy_legacy_blob(&self, legacy: &LegacyStore, hash: &str) -> Result<()> {
         if self.store.has_remote_content("blob", hash).await? {
             return Ok(());
         }
         let staging = self.db_path.with_extension("protected-migration.tmp");
-        let length = match node.export_local_blob(hash, &staging).await {
+        let length = match legacy.export_blob(hash, &staging).await {
             Ok(Some(length)) => length,
             Ok(None) => return Ok(()),
             Err(error) => {
@@ -489,7 +455,7 @@ impl DesktopRuntime {
                 return Ok(());
             }
         };
-        let result = if length <= INLINE_BLOB_BYTES {
+        let result = if length <= OWNED_INLINE_BLOB_BYTES {
             let bytes = tokio::fs::read(&staging).await?;
             self.store
                 .put_remote_content("blob", hash, "blob", &bytes)

@@ -147,12 +147,18 @@ async fn run(config: IndexerConfig) -> Result<()> {
     // 共有 iroh node（#613 T1）。provider が構成されている場合のみ persistent node を 1 つ立ち上げ、
     // media scan の一時 fetch（#609）と docs replica sync の双方で共有する。provider 未構成なら
     // scan service 自体を構成しない（fail-closed）ため node も立てない。
+    // #1221 R5-I: 旧 store(旧 topic/channel の replica と内容 blob)は endpoint secret を残して退役の directory へ移し、
+    // node は新しい空の store で動く(endpoint ID は変えない)。中の file は保守の巡回が上限つきで消す。
+    let store_root = config.data_dir.join("iroh-store");
+    let retiring = config.data_dir.join("legacy.retiring");
+    kukuri_iroh_node::retire_legacy_layout(&config.data_dir, &store_root, &retiring)
+        .context("failed to retire the legacy iroh store")?;
     let node: Option<Arc<IrohDocsNode>> = if config.safety.providers.is_empty() {
         None
     } else {
         Some(
             IrohDocsNode::persistent_with_discovery_config(
-                &config.data_dir,
+                &store_root,
                 TransportNetworkConfig::from_env()?,
                 DhtDiscoveryOptions::disabled(),
                 TransportRelayConfig {
@@ -334,7 +340,8 @@ async fn compose_ingest_stack(
         cipher.clone(),
     )
     .with_blob_seeds(blob_service, config.seed_peers.clone());
-    let maintenance = IndexMaintenance::new(pool, entries, projection, cipher);
+    let maintenance = IndexMaintenance::new(pool, entries, projection, cipher)
+        .with_legacy_store(config.data_dir.join("legacy.retiring"));
     Ok((docs_sync, bucket_reader, maintenance))
 }
 

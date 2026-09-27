@@ -208,6 +208,7 @@ reloadable_service! {
     #[async_trait]
     impl BlobService {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+        async fn put_owned_blob(data: Vec<u8>, mime: &str, reference: &str) -> Result<StoredBlob>;
         async fn put_remote_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
         async fn put_remote_blob_file(path: &std::path::Path, hash: &BlobHash) -> Result<()>;
         async fn fetch_blob(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
@@ -243,7 +244,7 @@ pub(crate) struct SharedIrohStack {
     candidate_store: Arc<SqliteStore>,
     remote_cache_reaper: tokio::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
-    docs_author_seed: Mutex<Option<kukuri_core::DocsAuthorSeed>>,
+    docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
     receive_binding_keys: Mutex<Option<Arc<KukuriKeys>>>,
     /// `current` の stack が shutdown 済みか。作り直しが古い stack の shutdown の後で失敗すると、shutdown 済みの stack が残る。
@@ -364,14 +365,17 @@ impl SharedIrohStack {
     pub(crate) async fn use_account_docs_author(
         &self,
         seed: kukuri_core::DocsAuthorSeed,
+        owner_pubkey: String,
     ) -> Result<String> {
         let current = self.current.lock().await;
         let docs_sync = &current
             .as_ref()
             .context("missing active iroh stack")?
             .docs_sync;
-        let id = docs_sync.use_account_docs_author(&seed).await?;
-        *self.docs_author_seed.lock().await = Some(seed);
+        let id = docs_sync
+            .use_account_docs_author(&seed, &owner_pubkey)
+            .await?;
+        *self.docs_author_seed.lock().await = Some((seed, owner_pubkey));
         Ok(id)
     }
 
@@ -431,8 +435,8 @@ impl SharedIrohStack {
         )
         .await?;
         // 差し替える前に設定する。設定の無い stack が、端末ごとの docs author で書くことが無いようにする。
-        if let Some(seed) = self.docs_author_seed.lock().await.as_ref() {
-            next.docs_sync.use_account_docs_author(seed).await?;
+        if let Some((seed, owner)) = self.docs_author_seed.lock().await.as_ref() {
+            next.docs_sync.use_account_docs_author(seed, owner).await?;
         }
         if let Some(keys) = self.receive_binding_keys.lock().await.as_ref() {
             next.node.install_receive_binding(keys.clone()).await?;

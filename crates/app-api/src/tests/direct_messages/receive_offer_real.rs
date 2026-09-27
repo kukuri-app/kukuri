@@ -223,20 +223,23 @@ async fn real_public_offer_reaches_offscreen_account_from_bounded_app_cache() {
             .collect::<Vec<_>>();
         panic!("all five public notifications reached the offscreen account route: {kinds:?}");
     }
-    let cached_before: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM remote_content_cache WHERE kind = 'blob'")
-            .fetch_one(sender_store.pool())
-            .await
-            .unwrap();
+    // #1221 R5-I: 本人の投稿の本文は保護所有先へ入る。offer の manifest は非保護の行なので、非保護の行を数える。
+    let cached_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM remote_content_cache WHERE kind = 'blob' AND is_protected = 0",
+    )
+    .fetch_one(sender_store.pool())
+    .await
+    .unwrap();
     sender_app
         .create_post(topic, "unrelated public post", None)
         .await
         .unwrap();
-    let cached_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM remote_content_cache WHERE kind = 'blob'")
-            .fetch_one(sender_store.pool())
-            .await
-            .unwrap();
+    let cached_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM remote_content_cache WHERE kind = 'blob' AND is_protected = 0",
+    )
+    .fetch_one(sender_store.pool())
+    .await
+    .unwrap();
     assert_eq!(
         cached_after, cached_before,
         "unrelated post created an offer manifest"

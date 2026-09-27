@@ -28,7 +28,7 @@ Accepted
 ### 3. 対象と除外
 
 - 必須: account key、整合したSQLite（保護所有先の台帳を含む）、保護された`kukuri.remote-blobs/`のfile、discovery/Community Node接続設定、private channel能力、gossip購読状態、Community Node招待情報、下書き、workspace layout、theme、locale。
-- 旧`iroh-data`（remote内容が混在するSDKのDocs/Blob）は含めない（§7、#1221 R5-G）。
+- 旧`iroh-data`（remote内容が混在するSDKのDocs/Blob）は含めない（§7、#1221 R5-G）。新しい`iroh-store`（新形式のDocs・pinのSDK store、#1221 R5-I）も含めない。本人の書込みは書いたときに保護所有先へ入る（§7）。
 - 移行不可: iroh endpoint secret、Community Node bearer token、実行中session、通知cursor、OS通知権限。
 - 再同意: app-level同意、Community Node同意、18歳以上の自己申告。これらの記録はバックアップへ含めない。成人向け表示設定も含めず、復元後はOFFとする。
 - バックアップはCommunity Node、他端末、Direct P2P参加者が保持するcopyを削除または巻き戻さない。
@@ -65,6 +65,15 @@ Accepted
 - 保護参照はindex行の寿命に従う。bookmarkとcustom reaction bookmarkの解除、DMのACKと手元の削除で、同じtransactionの中で外す。privateの記録は旧領域が無くても、capabilityを持つ間はkey指定の手元の読み出しで読める。
 - 旧領域を削除できる前提: R5-Hのwriter切替（本人の新しい書込みを旧領域へ入れない）を永続化した後に、全kindの`caught_up_at`がその時刻より後になっていること（`SqliteStore::protected_migration_caught_up_at`と`SqliteStore::writer_switched_at`。切替の時刻は`writer_cutover`に1回だけ保存し、R5-Gの移行が全kindで終端へ達した時にだけ入る）。削除そのもの（有限単位の回収）はR5-Iで行う。
 - 旧案の失効: `iroh-data`全体を毎回backupへ含める案（component version 1）は失効した。component version 2だけを作成・復元し、1の復元は既存状態を変更せず拒否する。
+
+#### 7.1 旧領域の退役（#1221 R5-I、2026-09-27）
+
+- node は新しい`<db>.iroh-store`で動く。起動時に旧`iroh-data`の`endpoint-secret.json`を一時fileへ写してから名前を変えて置き、endpoint IDを保つ。新規のaccountは旧storeを作らない。旧storeは読むだけの別のinstance（`LegacyStore`）として開き、書き換えない。
+- 本人の書込みは書いたときに保護所有先へ入る（ADR 0055 §5）。blobは`own_blob:<hash>`、DMのframe・暗号化添付とepochの制御frameは`dm_outbox:`、平文と復号した添付は`dm_message:`、pinしたassetは`dome_pin:`、本人のdocs recordは`own_docs`の保護参照で置く。blobは新しいstoreにも置き、SQLiteを失ってもdocsから戻せる。§7の保護移行は、旧storeの分（R5-Gの未完了分）だけを読む。
+- 移行は`legacy_store_retirement`（kind・位置・終端の時刻）に保存し、1回128対象以内で進める。`protected_migration`の終端の判定（全行数とkind数の比較）に相乗りしない。kindは、本人のdocs entry（この端末のdocs authorが書いたentryをnamespace・docs author・keyの順に読み、新しいstoreに同じkeyがあれば写さない）、DomeのpinのtagとBlob、課金の外の他人のprojection行（`REMOTE_CACHE_UNUSED_MS`より新しく導いた行は導いた時刻を最後の利用として台帳へ移し本文・添付をcacheへ写す。入らなければ回収、古い行も回収。本人の行には成人向けのhashの参照を置く）、旧保護の成人向けのhash（参照が残れば非保護、残らなければ回収）。
+- 退役できる条件: writerの切替の時刻より後に全kindの`caught_up_at`があり（本節の前提）、`legacy_store_retirement`の全kindが終端へ達している（`SqliteStore::legacy_store_retirable`）。満たせば旧storeを閉じ、`iroh-data`を`iroh-data.retiring`へ1回のrenameで名前を変え、中のfileを`read_dir`を少しずつ進めて1回128件以内で消す。全fileの一覧を先に作らない。途中で止まっても残った分から続ける。
+- 旧storeが無いaccount（新規・退役済み・復元）は、保護移行を済んだものとして新形式のwriterへ切り替え、保護移行の台帳のページを読まない。退役を終えると背景taskは止まり、以後は常駐しない。
+- 他人の旧投稿のうち予算に入らないものは手元から消え、表示時にproviderから取り直す（取れなければ取得不能）。更新前に旧context replicaへ置いたDome instanceの読取りは撤去した（2026-09-27ユーザー決定）。
 
 ## Consequences
 

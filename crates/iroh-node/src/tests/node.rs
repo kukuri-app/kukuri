@@ -38,18 +38,6 @@ async fn cancelled_shutdown_caller_still_waits_for_owned_cleanup_on_retry() {
     reopened.shutdown().await.unwrap();
 }
 
-#[tokio::test]
-async fn offline_blob_read_does_not_create_a_node_or_missing_store() {
-    let dir = tempdir().unwrap();
-    assert!(
-        crate::read_offline_blob(dir.path(), &"0".repeat(64))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
-}
-
 fn recovery_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = fs::read_dir(root)
         .expect("read root")
@@ -241,4 +229,29 @@ async fn persistent_node_rejects_corrupted_endpoint_secret() {
         format!("{error:#}").contains("failed to parse endpoint secret"),
         "unexpected error: {error:#}"
     );
+}
+
+/// #1221 R5-I: 新しい store の root へ endpoint secret を写すと、endpoint ID が変わらない。旧 root の file は残る。
+#[tokio::test]
+async fn adopting_the_legacy_endpoint_secret_keeps_the_endpoint_id() {
+    let dir = tempdir().unwrap();
+    let legacy = dir.path().join("kukuri.iroh-data");
+    let root = dir.path().join("kukuri.iroh-store");
+    let legacy_node = IrohDocsNode::persistent(&legacy).await.unwrap();
+    let legacy_id = legacy_node.endpoint().id();
+    legacy_node.shutdown().await.unwrap();
+
+    crate::adopt_endpoint_secret(&legacy, &root).unwrap();
+    crate::adopt_endpoint_secret(&legacy, &root).unwrap();
+    let node = IrohDocsNode::persistent(&root).await.unwrap();
+    assert_eq!(node.endpoint().id(), legacy_id);
+    node.shutdown().await.unwrap();
+    assert!(legacy.join("endpoint-secret.json").is_file());
+    assert!(!root.join("endpoint-secret.json.tmp").exists());
+
+    // 旧 root が無い新規の account は、新しい store だけを作る。
+    let fresh = dir.path().join("fresh.iroh-store");
+    crate::adopt_endpoint_secret(&dir.path().join("fresh.iroh-data"), &fresh).unwrap();
+    assert!(!fresh.exists());
+    assert!(!dir.path().join("fresh.iroh-data").exists());
 }

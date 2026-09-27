@@ -140,6 +140,10 @@ table game_room_cache
   column cid=15 name=room_kind type=TEXT notnull=1 default=Some("'score_game'") pk=0
   column cid=16 name=metaverse_json type=TEXT notnull=0 default=None pk=0
   column cid=17 name=score_revision type=INTEGER notnull=0 default=None pk=0
+table legacy_store_retirement
+  column cid=0 name=kind type=TEXT notnull=0 default=None pk=1
+  column cid=1 name=cursor type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=done_at type=INTEGER notnull=0 default=None pk=0
 table live_presence_cache
   column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=session_id type=TEXT notnull=1 default=None pk=2
@@ -667,6 +671,9 @@ index sqlite_autoindex_follow_edges_1 table=follow_edges unique=1 origin=pk part
   sql=None
 index sqlite_autoindex_game_room_cache_1 table=game_room_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("room_id")
+  sql=None
+index sqlite_autoindex_legacy_store_retirement_1 table=legacy_store_retirement unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("kind")
   sql=None
 index sqlite_autoindex_live_presence_cache_1 table=live_presence_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("topic_id")

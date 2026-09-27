@@ -563,7 +563,11 @@ impl AppService {
         let frame_blob = self
             .services
             .blob_service
-            .put_blob(frame_bytes, DIRECT_MESSAGE_FRAME_MIME)
+            .put_owned_blob(
+                frame_bytes,
+                DIRECT_MESSAGE_FRAME_MIME,
+                &format!("dm_outbox:{dm_id}/{message_id}"),
+            )
             .await?;
         self.services
             .projection_store
@@ -612,6 +616,13 @@ impl AppService {
         if attachments.is_empty() {
             return Ok((None, None));
         }
+        // #1221 R5-I: 手元の平文は履歴の、暗号化した添付は送信待ちの保護参照で置く(手元の削除・ACK で外れる)。
+        let dm_id = direct_message_id_for_participants(
+            &Pubkey::from(self.current_author_pubkey()),
+            &Pubkey::from(peer_pubkey),
+        );
+        let history = format!("dm_message:{dm_id}/{message_id}");
+        let outbox = format!("dm_outbox:{dm_id}/{message_id}");
         let image = attachments
             .iter()
             .find(|attachment| attachment.role == AssetRole::ImageOriginal);
@@ -631,7 +642,7 @@ impl AppService {
                 let local_blob = self
                     .services
                     .blob_service
-                    .put_blob(image.bytes.clone(), image.mime.as_str())
+                    .put_owned_blob(image.bytes.clone(), image.mime.as_str(), &history)
                     .await?;
                 let encrypted = encrypt_direct_message_attachment(
                     self.services.keys.as_ref(),
@@ -643,10 +654,11 @@ impl AppService {
                 let encrypted_blob = self
                     .services
                     .blob_service
-                    .put_blob(
+                    .put_owned_blob(
                         serde_json::to_vec(&encrypted)
                             .context("failed to encode encrypted direct message attachment")?,
                         DIRECT_MESSAGE_ATTACHMENT_MIME,
+                        &outbox,
                     )
                     .await?;
                 Ok((
@@ -688,12 +700,12 @@ impl AppService {
                 let local_video = self
                     .services
                     .blob_service
-                    .put_blob(video.bytes.clone(), video.mime.as_str())
+                    .put_owned_blob(video.bytes.clone(), video.mime.as_str(), &history)
                     .await?;
                 let local_poster = self
                     .services
                     .blob_service
-                    .put_blob(poster.bytes.clone(), poster.mime.as_str())
+                    .put_owned_blob(poster.bytes.clone(), poster.mime.as_str(), &history)
                     .await?;
                 let encrypted_video = encrypt_direct_message_attachment(
                     self.services.keys.as_ref(),
@@ -712,19 +724,21 @@ impl AppService {
                 let encrypted_video_blob = self
                     .services
                     .blob_service
-                    .put_blob(
+                    .put_owned_blob(
                         serde_json::to_vec(&encrypted_video)
                             .context("failed to encode encrypted direct message video")?,
                         DIRECT_MESSAGE_ATTACHMENT_MIME,
+                        &outbox,
                     )
                     .await?;
                 let encrypted_poster_blob = self
                     .services
                     .blob_service
-                    .put_blob(
+                    .put_owned_blob(
                         serde_json::to_vec(&encrypted_poster)
                             .context("failed to encode encrypted direct message poster")?,
                         DIRECT_MESSAGE_ATTACHMENT_MIME,
+                        &outbox,
                     )
                     .await?;
                 Ok((
