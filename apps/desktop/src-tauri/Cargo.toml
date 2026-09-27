@@ -65,4 +65,4 @@ iroh = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11
 iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
 iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
 iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
-iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", rev = "c42f40a1346200ae2b18d41596a2a8a02047e600" }
+iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c0433d6e7f3d9d81a37985ec243957af2c32" }
