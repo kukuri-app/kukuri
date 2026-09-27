@@ -40,7 +40,6 @@ mod indexing_status_support;
 mod invite_storage_support;
 mod maintenance_tasks;
 mod manifest_support;
-mod reconnect_support;
 mod report_routing_support;
 mod requests_support;
 mod scheduler_support;
@@ -121,8 +120,6 @@ pub(crate) const COMMUNITY_NODE_BOOTSTRAP_HEARTBEAT_RETRY_SECONDS: i64 = 10;
 pub(crate) const COMMUNITY_NODE_BOOTSTRAP_METADATA_RETRY_SECONDS: i64 = 5;
 pub(crate) const COMMUNITY_NODE_SESSION_RETRY_SECONDS: i64 = 30;
 pub(crate) const COMMUNITY_NODE_AUTH_REFRESH_SKEW_SECONDS: i64 = 300;
-pub(crate) const COMMUNITY_NODE_RECONNECT_UNHEALTHY_SECONDS: i64 = 30;
-pub(crate) const COMMUNITY_NODE_RECONNECT_BACKOFF_SECONDS: [i64; 3] = [30, 60, 120];
 // heartbeat の次回期限は「サーバ TTL(90 秒)− 30 秒」で管理されるため、tick は 30 秒未満が必須。
 // 15 秒は失効防止を満たしつつ、tick 毎の consent GET を可視時の現行ポーリング(3 秒 ×2 getter)
 // より低頻度に抑える値(WP-C1 プランの決定事項 1)。
@@ -336,13 +333,6 @@ pub(crate) struct AppliedConnectivity {
     pub(crate) nodes: std::collections::BTreeMap<String, NodeConnectivity>,
     pub(crate) relay_urls: Vec<String>,
     pub(crate) seed_peers: Vec<SeedPeer>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CommunityNodeReconnectState {
-    pub(crate) unhealthy_since: Option<i64>,
-    pub(crate) next_retry_at: i64,
-    pub(crate) backoff_step: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

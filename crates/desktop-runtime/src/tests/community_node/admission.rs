@@ -479,7 +479,7 @@ async fn banned_node_does_not_schedule_retries() {
 #[tokio::test]
 async fn banned_member_with_stored_token_stops_self_heal_reauthentication() {
     // #708: 参加済み利用者が禁止された場合、端末側トークンが未失効でも「認証済み」と扱わず、
-    // 自己修復経路(refresh_community_node_metadata)からも再認証を繰り返さない。
+    // 利用者の回復操作(refresh_community_node_metadata)からも再認証を繰り返さない。
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("admission-banned-member.db");
@@ -503,7 +503,7 @@ async fn banned_member_with_stored_token_stops_self_heal_reauthentication() {
         message: "node-local support denied".into(),
     });
 
-    // 自己修復経路が呼ぶ metadata 更新: 心拍 401 → 再認証 → 403 で参加拒否に落ちる。
+    // 回復操作が呼ぶ metadata 更新: 心拍 401 → 再認証 → 403 で参加拒否に落ちる。
     let rejected = runtime
         .refresh_community_node_metadata(CommunityNodeTargetRequest {
             base_url: base_url.clone(),
@@ -539,17 +539,18 @@ async fn banned_member_with_stored_token_stops_self_heal_reauthentication() {
         "stored token must be discarded on admission rejection"
     );
 
-    // 以後、定期処理でも自己修復判定でも認証要求は増えない。
+    // 以後、定期処理でも認証要求は増えない。認証の失効なので relay と seed も外れている(#1221 R2-B)。
     runtime.run_community_node_session_maintenance_once().await;
     runtime.run_community_node_session_maintenance_once().await;
     assert_eq!(state.verify_hits.load(Ordering::SeqCst), 2);
     assert!(
-        runtime
-            .ready_community_node_base_urls()
+        !runtime
+            .community_node_connectivity
+            .lock()
             .await
-            .expect("ready base urls")
-            .is_empty(),
-        "rejected node must not be a self-heal target"
+            .nodes
+            .contains_key(base_url.as_str()),
+        "rejected node must not keep its relay and seed"
     );
     let status = runtime
         .get_community_node_statuses()

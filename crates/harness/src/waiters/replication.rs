@@ -214,45 +214,16 @@ pub(crate) async fn refresh_public_pair(
         }
     }
 
-    fn public_connectivity_reapply_interval() -> Duration {
-        if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
-            Duration::from_secs(20)
-        } else {
-            Duration::from_secs(10)
-        }
-    }
-
-    async fn force_public_runtime_connectivity(runtime: &DesktopRuntime) {
-        let has_active_node_consent =
-            runtime
-                .get_community_node_statuses()
-                .await
-                .is_ok_and(|statuses| {
-                    statuses
-                        .iter()
-                        .any(|status| status.local_consent.has_active_consent())
-                });
-        if has_active_node_consent {
-            let _ = runtime.reapply_community_node_connectivity().await;
-        }
-    }
-
     let refresh_interval = Duration::from_secs(5);
-    let reapply_interval = public_connectivity_reapply_interval();
     // poll_until のクロージャは FnMut のため、時限アクションの締切は Cell 経由の
-    // 共有参照で持ち回る(値の意味・実行順序は従来の手書きループと同一)。
+    // 共有参照で持ち回る。neighbor の無い topic は transport が候補の窓で再 join するので、
+    // 待つ側は強制の再適用をせず、利用者と同じ回復操作(metadata の更新)と観測だけを行う(#1221 R2-B)。
     let next_refresh_at = Cell::new(Instant::now());
-    let next_reapply_at = Cell::new(Instant::now() + reapply_interval);
     match poll_until(step_timeout, Duration::from_millis(100), 3, || async {
         if Instant::now() >= next_refresh_at.get() {
             refresh_public_runtime(runtime_a, topic).await;
             refresh_public_runtime(runtime_b, topic).await;
             next_refresh_at.set(Instant::now() + refresh_interval);
-        }
-        if Instant::now() >= next_reapply_at.get() {
-            force_public_runtime_connectivity(runtime_a).await;
-            force_public_runtime_connectivity(runtime_b).await;
-            next_reapply_at.set(Instant::now() + reapply_interval);
         }
 
         let status_a = runtime_a

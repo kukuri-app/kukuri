@@ -132,7 +132,7 @@ impl DesktopRuntime {
         Ok(self.community_node_config.lock().await.clone())
     }
 
-    /// 読み取り専用。CN セッションの establish/refresh・self-heal は
+    /// 読み取り専用。CN セッションの establish/refresh は
     /// セッション維持スケジューラ(`run_community_node_session_maintenance_once`)が
     /// 担い、getter は副作用(registration refresh のネットワーク I/O)を持たない(WP-Q2)。
     /// config は tick 側が resolved_urls を書き戻すため、ここで読んだ node が最新。
@@ -578,11 +578,6 @@ impl DesktopRuntime {
         request: SubmitCommunityNodeReportRequest,
     ) -> Result<SubmitCommunityNodeReportResult, CommunityNodeReportError> {
         self.request_community_node_report_submit(&request).await
-    }
-
-    pub async fn reapply_community_node_connectivity(&self) -> Result<()> {
-        self.apply_community_node_connectivity(None).await?;
-        Ok(())
     }
 
     pub async fn shutdown(&self) {

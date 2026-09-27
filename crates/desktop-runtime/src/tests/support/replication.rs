@@ -61,16 +61,6 @@ pub(crate) async fn refresh_public_runtime_for_retry(
         .await;
     Ok(())
 }
-pub(crate) async fn force_public_runtime_connectivity_retry(
-    runtime: &DesktopRuntime,
-) -> Result<()> {
-    runtime
-        .reapply_community_node_connectivity()
-        .await
-        .context("reapply community-node connectivity during public retry")?;
-    Ok(())
-}
-
 pub(crate) async fn wait_for_public_runtime_delivery_with_refresh(
     runtime: &DesktopRuntime,
     topic: &str,
@@ -78,19 +68,13 @@ pub(crate) async fn wait_for_public_runtime_delivery_with_refresh(
     step_timeout: Duration,
 ) -> Result<()> {
     let refresh_interval = Duration::from_secs(5);
-    let reapply_interval = public_connectivity_reapply_interval();
     // poll_until のクロージャは FnMut のため、時限アクションの締切は Cell 経由の
-    // 共有参照で持ち回る(値の意味・実行順序は従来の手書きループと同一)。
+    // 共有参照で持ち回る。neighbor の無い topic は transport が再 join する(#1221 R2-B)。
     let next_refresh_at = Cell::new(tokio::time::Instant::now());
-    let next_reapply_at = Cell::new(tokio::time::Instant::now() + reapply_interval);
     match poll_until(step_timeout, Duration::from_millis(100), 3, || async {
         if tokio::time::Instant::now() >= next_refresh_at.get() {
             refresh_public_runtime_for_retry(runtime, topic).await?;
             next_refresh_at.set(tokio::time::Instant::now() + refresh_interval);
-        }
-        if tokio::time::Instant::now() >= next_reapply_at.get() {
-            force_public_runtime_connectivity_retry(runtime).await?;
-            next_reapply_at.set(tokio::time::Instant::now() + reapply_interval);
         }
 
         let status = runtime
@@ -129,19 +113,12 @@ pub(crate) async fn wait_for_public_pair_delivery_with_refresh(
     step_timeout: Duration,
 ) -> Result<()> {
     let refresh_interval = Duration::from_secs(5);
-    let reapply_interval = public_connectivity_reapply_interval();
     let next_refresh_at = Cell::new(tokio::time::Instant::now());
-    let next_reapply_at = Cell::new(tokio::time::Instant::now() + reapply_interval);
     match poll_until(step_timeout, Duration::from_millis(100), 3, || async {
         if tokio::time::Instant::now() >= next_refresh_at.get() {
             refresh_public_runtime_for_retry(runtime_a, topic).await?;
             refresh_public_runtime_for_retry(runtime_b, topic).await?;
             next_refresh_at.set(tokio::time::Instant::now() + refresh_interval);
-        }
-        if tokio::time::Instant::now() >= next_reapply_at.get() {
-            force_public_runtime_connectivity_retry(runtime_a).await?;
-            force_public_runtime_connectivity_retry(runtime_b).await?;
-            next_reapply_at.set(tokio::time::Instant::now() + reapply_interval);
         }
 
         let status_a = runtime_a

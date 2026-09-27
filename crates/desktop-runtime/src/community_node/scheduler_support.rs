@@ -39,7 +39,6 @@ impl DesktopRuntime {
             }
             jobs.push(MaintenanceJob::Observations(base_url));
         }
-        jobs.push(MaintenanceJob::Connectivity);
         jobs
     }
 
@@ -60,15 +59,6 @@ impl DesktopRuntime {
                 self.flush_community_node_trust_observations_for(&base_url)
                     .await
             }
-            MaintenanceJob::Connectivity => match self.app_service.get_sync_status().await {
-                Ok(status) => {
-                    self.maybe_self_heal_community_node_connectivity(&status)
-                        .await;
-                }
-                Err(error) => {
-                    warn!(%error, "failed to load sync status for community-node self-heal from session scheduler");
-                }
-            },
         }
     }
 

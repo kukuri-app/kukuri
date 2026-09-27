@@ -148,9 +148,9 @@ async fn idle_peer_repair_preserves_healthy_docs_actor() {
         .node
         .clone();
     runtime
-        .repair_community_node_connectivity()
+        .apply_community_node_connectivity(None)
         .await
-        .expect("repair");
+        .expect("reapply");
     let after = runtime
         .iroh_stack
         .current

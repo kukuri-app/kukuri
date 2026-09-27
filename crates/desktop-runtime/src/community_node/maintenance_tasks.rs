@@ -8,7 +8,6 @@ use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnord
 pub(crate) enum MaintenanceJob {
     Session(String),
     Observations(String),
-    Connectivity,
 }
 
 #[derive(Default)]
