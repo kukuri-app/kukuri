@@ -74,7 +74,8 @@ pub(super) fn policy_document() -> Value {
         "effective_date": string(), "language": string(), "policy_snapshot_revision": string(), "authoritative_language": string(), "reference_translation": boolean(),
         "translation_revision": integer(), "translation_of_version": integer(), "fallback": boolean(), "requested_language": string(),
         "material_change": boolean(), "requires_reconsent": boolean(), "is_current": boolean(), "publication_status": string(), "published_at": string(), "retired_at": string(),
-        "previous_policy_version": integer(), "previous_policy_snapshot_revision": string(), "next_policy_version": integer(), "next_policy_snapshot_revision": string()}),
+        "previous_policy_version": integer(), "previous_policy_snapshot_revision": string(), "next_policy_version": integer(), "next_policy_snapshot_revision": string(),
+        "policy_kind": string()}),
         &[
             "effective_date",
             "language",
@@ -90,6 +91,7 @@ pub(super) fn policy_document() -> Value {
             "previous_policy_snapshot_revision",
             "next_policy_version",
             "next_policy_snapshot_revision",
+            "policy_kind",
         ],
     )
 }

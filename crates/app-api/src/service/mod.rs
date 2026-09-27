@@ -151,6 +151,7 @@ pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
 pub(crate) use live_game_support::DomeReadUnavailable;
 mod metaverse_room_event_support;
+mod missing_profiles;
 mod notifications_support;
 mod object_hydration;
 mod object_persistence_support;
