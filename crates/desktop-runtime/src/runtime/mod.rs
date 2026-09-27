@@ -106,9 +106,13 @@ pub enum RuntimeEvent {
     AdultMediaLabelEvicted {
         hash: Option<String>,
     },
+    /// 通信状態の差分(#1221 R2-D)。`sync_status` は件数と、変わった topic だけの `topic_diagnostics`。
+    /// CN の node は変わった node だけ。抜けた topic と外した node は `removed_*`。
     SyncStatusChanged {
         sync_status: Option<Box<SyncStatus>>,
-        community_node_statuses: Option<Vec<CommunityNodeNodeStatus>>,
+        removed_topics: Vec<String>,
+        community_node_statuses: Vec<CommunityNodeNodeStatus>,
+        removed_community_nodes: Vec<String>,
     },
 }
 
@@ -121,7 +125,7 @@ pub struct DesktopRuntime {
     pub(crate) iroh_stack: SharedIrohStack,
     pub(crate) discovery_config: Arc<Mutex<DiscoveryConfig>>,
     pub(crate) community_node_config: Arc<Mutex<CommunityNodeConfig>>,
-    pub(crate) community_node_sessions: Arc<Mutex<HashMap<String, CommunityNodeSessionState>>>,
+    pub(crate) community_node_sessions: Arc<Mutex<crate::community_node::CommunityNodeSessions>>,
     pub(crate) community_node_dome_heartbeats:
         Arc<Mutex<HashMap<String, kukuri_core::SignedDomeHostHeartbeatV1>>>,
     pub(crate) community_node_session_guard: crate::community_node::SessionLocks,
@@ -129,6 +133,9 @@ pub struct DesktopRuntime {
     pub(crate) community_node_connectivity: Mutex<crate::community_node::AppliedConnectivity>,
     pub(crate) community_node_scheduler_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// 計測用: 差分を作った回数(#1221 R2-D)。
+    #[cfg(test)]
+    pub(crate) sync_status_delta_reads: std::sync::atomic::AtomicUsize,
     /// #1221 R5-G・R5-I: 旧 `iroh-data` の保護移行と退役の背景 task。backup 前の drain と直列にする。
     pub(crate) legacy_store_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) protected_migration_guard: Mutex<()>,
@@ -407,8 +414,10 @@ impl DesktopRuntime {
                 .ok()
                 .as_deref(),
         )?;
+        let status_changes = iroh_stack.status_changes.clone();
         let app_service =
-            AppService::from_handles_with_metaverse_budget(services, metaverse_budget)?;
+            AppService::from_handles_with_metaverse_budget(services, metaverse_budget)?
+                .with_status_changes(status_changes.clone());
         // #1221 R5-H: 保存済みの切替状態は、最初の書込みより前に渡す(再起動で旧 writer へ戻らない)。
         if let Some(switched_at) = store.writer_switched_at().await? {
             app_service.switch_writer(switched_at);
@@ -495,12 +504,16 @@ impl DesktopRuntime {
             iroh_stack,
             discovery_config: Arc::new(Mutex::new(discovery_config)),
             community_node_config: Arc::new(Mutex::new(community_node_config)),
-            community_node_sessions: Arc::new(Mutex::new(HashMap::new())),
+            community_node_sessions: Arc::new(Mutex::new(
+                crate::community_node::CommunityNodeSessions::new(status_changes),
+            )),
             community_node_dome_heartbeats: Arc::new(Mutex::new(HashMap::new())),
             community_node_session_guard: Default::default(),
             community_node_connectivity: Mutex::default(),
             community_node_scheduler_task: Mutex::new(None),
             sync_status_observer_task: Mutex::new(None),
+            #[cfg(test)]
+            sync_status_delta_reads: std::sync::atomic::AtomicUsize::new(0),
             legacy_store_task: Mutex::new(None),
             protected_migration_guard: Mutex::new(()),
             private_migration_dirty,

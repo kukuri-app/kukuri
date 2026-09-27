@@ -140,7 +140,7 @@ impl AppService {
                                 async move {
                                     match Self::ingest_account_receive_offer(&services, envelope).await {
                                         Ok(true) => {
-                                            *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                                            last_sync.set(Utc::now().timestamp_millis()).await;
                                             notification_inserted.notify_waiters();
                                         }
                                         Ok(false) => {}

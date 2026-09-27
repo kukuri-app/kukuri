@@ -222,6 +222,25 @@ impl SqliteStore {
 
     /// The receive-destination selector keeps an endpoint-ID cursor per account.
     /// The primary key serves this page without reading earlier tickets.
+    /// 取り込んだ ticket の id を、id の順に `after` の後から最大 `limit` 件読む(詳細のページ用。折り返さない。#1221 R2-D)。
+    pub async fn imported_peer_candidate_ids(
+        &self,
+        scope: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT endpoint_id FROM peer_candidates \
+             WHERE scope = ? AND source = 'imported' AND endpoint_id > ? \
+             ORDER BY endpoint_id LIMIT ?",
+        )
+        .bind(scope)
+        .bind(after.unwrap_or(""))
+        .bind(limit.min(65) as i64)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     pub async fn imported_peer_candidate_window(
         &self,
         scope: &str,

@@ -9,17 +9,16 @@ fn snapshot_from_status(status: &SyncStatus) -> SyncSnapshot {
         peer_count: status.peer_count,
         status_detail: status.status_detail.clone(),
         last_error: status.last_error.clone(),
-        discovery_connected_peers: status.discovery.connected_peer_ids.clone(),
+        discovery_connected_peer_count: status.discovery.connected_peer_count,
+        docs_assist_peer_count: status.discovery.docs_assist_peer_count,
         topics: status
             .topic_diagnostics
             .iter()
             .map(|entry| TopicSyncSnapshot {
                 topic: entry.topic.clone(),
                 peer_count: entry.peer_count,
-                connected_peers: entry.connected_peers.clone(),
-                docs_assist_peer_ids: entry.docs_assist_peer_ids.clone(),
-                configured_peer_ids: entry.configured_peer_ids.clone(),
-                missing_peer_ids: Some(entry.missing_peer_ids.clone()),
+                configured_peer_count: entry.configured_peer_count,
+                missing_peer_count: entry.missing_peer_count,
                 delivery_state: format!("{:?}", entry.delivery_state),
                 status_detail: entry.status_detail.clone(),
             })
@@ -124,8 +123,7 @@ pub(crate) async fn wait_for_topic_delivery_result(
 pub(crate) fn topic_has_direct_peer(status: &SyncStatus, topic: &str, expected: usize) -> bool {
     status.topic_diagnostics.iter().any(|topic_status| {
         topic_status.topic == topic
-            && topic_status.connected_peers.len() >= expected.min(1)
-            && topic_status.peer_count >= expected
+            && topic_status.peer_count >= expected.max(1)
             && (topic_status.joined
                 || matches!(
                     topic_status.delivery_state,
@@ -314,7 +312,7 @@ pub(crate) async fn wait_for_timeline_post_result(
 pub(crate) fn topic_has_durable_delivery(status: &SyncStatus, topic: &str) -> bool {
     status.topic_diagnostics.iter().any(|topic_status| {
         topic_status.topic == topic
-            && !topic_status.docs_assist_peer_ids.is_empty()
+            && status.discovery.docs_assist_peer_count > 0
             && matches!(
                 topic_status.delivery_state,
                 kukuri_app_api::DeliveryState::DurableRecovering
@@ -416,35 +414,30 @@ pub(crate) fn sync_status_with_topic(
         pending_events: 0,
         status_detail: "test".to_string(),
         last_error: None,
-        configured_peers: Vec::new(),
+        configured_peer_count: 0,
         subscribed_topics: vec![topic.to_string()],
         active_path: Default::default(),
-        fallback_peer_ids: Vec::new(),
+        fallback_peer_count: 0,
         topic_diagnostics: vec![kukuri_app_api::TopicSyncStatus {
             topic: topic.to_string(),
             joined: connected,
             delivery_state,
             peer_count: connected_peers.len(),
-            connected_peers: connected_peers
-                .iter()
-                .map(|peer| peer.to_string())
-                .collect(),
-            docs_assist_peer_ids: docs_assist_peer_ids
-                .iter()
-                .map(|peer| peer.to_string())
-                .collect(),
-            configured_peer_ids: Vec::new(),
-            missing_peer_ids: Vec::new(),
+            configured_peer_count: 0,
+            missing_peer_count: 0,
             active_path: Default::default(),
-            rendezvous_peer_ids: Vec::new(),
-            fallback_peer_ids: Vec::new(),
+            rendezvous_peer_count: 0,
+            fallback_peer_count: 0,
             last_received_at: None,
             last_docs_activity_at: None,
             status_detail: "test".to_string(),
             last_error: None,
         }],
         local_author_pubkey: "author".to_string(),
-        discovery: Default::default(),
+        discovery: kukuri_app_api::DiscoveryStatus {
+            docs_assist_peer_count: docs_assist_peer_ids.len(),
+            ..Default::default()
+        },
         gossip_disabled_topics: Vec::new(),
         gossip_disabled_channels: Vec::new(),
     }

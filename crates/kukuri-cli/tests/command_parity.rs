@@ -185,9 +185,9 @@ fn baseline_inventory_is_classified_once() {
     );
     assert_eq!(
         manifest.scope_revision,
-        "2026-09-26-1221-r2-c-scope-display-v1"
+        "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 173);
+    assert_eq!(manifest.entries.len(), 174);
     check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");
 }
 

@@ -150,7 +150,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(now);
+        self.last_sync_ts.set(now).await;
         Ok(session_id)
     }
 
@@ -208,7 +208,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(now);
+        self.last_sync_ts.set(now).await;
         Ok(())
     }
 
@@ -304,7 +304,7 @@ impl AppService {
             .lock()
             .await
             .insert(task_key, handle);
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(())
     }
 
@@ -318,7 +318,7 @@ impl AppService {
             .await;
         self.apply_live_presence(topic_id, state.channel_id.as_ref(), session_id, 0)
             .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(())
     }
 }

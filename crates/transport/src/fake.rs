@@ -24,10 +24,12 @@ use tokio::sync::{Mutex, broadcast, watch};
 use tokio::time::timeout;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::config::{ConnectMode, ConnectionPath, DiscoveryMode, DiscoverySnapshot, SeedPeer};
+use crate::config::{
+    ConnectMode, ConnectionPath, ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, SeedPeer,
+};
 use crate::diagnostics::{peer_status_detail, topic_status_detail};
 use crate::traits::{
-    HintEnvelope, HintStream, HintTransport, PeerSnapshot, ReceiveCandidateFence,
+    HintEnvelope, HintStream, HintTransport, PeerPage, PeerSnapshot, ReceiveCandidateFence,
     ReceiveOfferEnvelope, ReceiveOfferLease, ReceiveOfferStop, ReceiveOfferSubscription,
     TopicPeerSnapshot, Transport, next_receive_offer_lease,
 };
@@ -169,94 +171,118 @@ impl FakeTransport {
     }
 }
 
-#[async_trait]
-impl Transport for FakeTransport {
-    async fn peers(&self) -> Result<PeerSnapshot> {
-        let mut imported = self
-            .imported_peers
-            .lock()
-            .await
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        for peer in self.configured_seed_peers.lock().await.iter() {
-            if !imported.contains(peer) {
-                imported.push(peer.clone());
-            }
-        }
-        for peer in self.bootstrap_seed_peers.lock().await.iter() {
-            if !imported.contains(peer) {
-                imported.push(peer.clone());
-            }
-        }
+impl FakeTransport {
+    /// 設定済みの peer(取り込んだ ticket と seed)と、topic ごとの接続中の peer。
+    async fn fake_peer_view(&self) -> (BTreeSet<String>, Vec<(String, BTreeSet<String>)>) {
+        let mut configured = self.imported_peers.lock().await.clone();
+        configured.extend(self.configured_seed_peers.lock().await.iter().cloned());
+        configured.extend(self.bootstrap_seed_peers.lock().await.iter().cloned());
+        let topic_subscribers = self.network.topic_subscribers.lock().await.clone();
         let topics = self
             .subscribed_topics
             .lock()
             .await
             .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let topic_subscribers = self.network.topic_subscribers.lock().await.clone();
+            .map(|topic| {
+                let subscribers = topic_subscribers.get(topic).cloned().unwrap_or_default();
+                let connected = configured.intersection(&subscribers).cloned().collect();
+                (topic.clone(), connected)
+            })
+            .collect();
+        (configured, topics)
+    }
+}
+
+#[async_trait]
+impl Transport for FakeTransport {
+    async fn peers(&self) -> Result<PeerSnapshot> {
+        let (configured, topics) = self.fake_peer_view().await;
         let topic_diagnostics = topics
             .iter()
-            .cloned()
-            .map(|topic| {
-                let subscribed_peers = topic_subscribers.get(&topic).cloned().unwrap_or_default();
-                let connected_peers = imported
-                    .iter()
-                    .filter(|peer| subscribed_peers.contains(*peer))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let missing_peer_ids = imported
-                    .iter()
-                    .filter(|peer| !subscribed_peers.contains(*peer))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                TopicPeerSnapshot {
-                    topic,
-                    joined: !connected_peers.is_empty(),
-                    peer_count: connected_peers.len(),
-                    connected_peers: connected_peers.clone(),
-                    configured_peer_ids: imported.clone(),
-                    missing_peer_ids,
-                    active_path: if connected_peers.is_empty() {
-                        ConnectionPath::DirectP2p
-                    } else {
-                        ConnectionPath::RelaySupportedP2p
-                    },
-                    rendezvous_peer_ids: connected_peers.clone(),
-                    fallback_peer_ids: Vec::new(),
-                    last_received_at: None,
-                    status_detail: topic_status_detail(imported.len(), connected_peers.len()),
-                    last_error: None,
-                }
+            .map(|(topic, connected)| TopicPeerSnapshot {
+                topic: topic.clone(),
+                joined: !connected.is_empty(),
+                peer_count: connected.len(),
+                configured_peer_count: configured.len(),
+                missing_peer_count: configured.len() - connected.len(),
+                active_path: if connected.is_empty() {
+                    ConnectionPath::DirectP2p
+                } else {
+                    ConnectionPath::RelaySupportedP2p
+                },
+                rendezvous_peer_count: connected.len(),
+                fallback_peer_count: 0,
+                last_received_at: None,
+                status_detail: topic_status_detail(configured.len(), connected.len()),
+                last_error: None,
             })
             .collect::<Vec<_>>();
+        let connected_max = topics.iter().map(|(_, connected)| connected.len()).max();
         Ok(PeerSnapshot {
-            connected: !imported.is_empty(),
-            peer_count: imported.len(),
-            connected_peers: imported.clone(),
-            configured_peers: imported,
-            subscribed_topics: topics,
+            connected: !configured.is_empty(),
+            peer_count: configured.len(),
+            configured_peer_count: configured.len(),
+            subscribed_topics: topics.into_iter().map(|(topic, _)| topic).collect(),
             active_path: ConnectionPath::DirectP2p,
-            fallback_peer_ids: Vec::new(),
+            fallback_peer_count: 0,
             pending_events: 0,
             status_detail: peer_status_detail(
-                topic_diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.configured_peer_ids.len())
-                    .max()
-                    .unwrap_or(0),
-                topic_diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.connected_peers.len())
-                    .max()
-                    .unwrap_or(0),
+                if topic_diagnostics.is_empty() {
+                    0
+                } else {
+                    configured.len()
+                },
+                connected_max.unwrap_or(0),
                 topic_diagnostics.len(),
             ),
             last_error: None,
             topic_diagnostics,
         })
+    }
+
+    async fn subscribed_topics(&self) -> Result<Vec<String>> {
+        Ok(self
+            .subscribed_topics
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect())
+    }
+
+    async fn peer_page(
+        &self,
+        kind: ConnectivityPeerKind,
+        topic: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<PeerPage> {
+        let (configured, topics) = self.fake_peer_view().await;
+        let mut ids = BTreeSet::new();
+        for (_, connected) in topics
+            .iter()
+            .filter(|(name, _)| topic.is_none_or(|topic| topic == name))
+        {
+            match kind {
+                ConnectivityPeerKind::Connected => ids.extend(connected.iter().cloned()),
+                ConnectivityPeerKind::Configured => ids.extend(configured.iter().cloned()),
+                ConnectivityPeerKind::Missing => {
+                    ids.extend(configured.difference(connected).cloned())
+                }
+                _ => {}
+            }
+        }
+        match kind {
+            ConnectivityPeerKind::ManualTicket => ids = self.imported_peers.lock().await.clone(),
+            ConnectivityPeerKind::BootstrapSeed => {
+                ids = self.bootstrap_seed_peers.lock().await.clone()
+            }
+            ConnectivityPeerKind::ConfiguredSeed => {
+                ids = self.configured_seed_peers.lock().await.clone()
+            }
+            _ => {}
+        }
+        Ok(PeerPage::from_sorted(&ids, cursor, limit))
     }
 
     async fn export_ticket(&self) -> Result<Option<String>> {
@@ -301,46 +327,15 @@ impl Transport for FakeTransport {
     }
 
     async fn discovery(&self) -> Result<DiscoverySnapshot> {
-        let configured_seed_peer_ids = self
-            .configured_seed_peers
-            .lock()
-            .await
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let bootstrap_seed_peer_ids = self
-            .bootstrap_seed_peers
-            .lock()
-            .await
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let manual_ticket_peer_ids = self
-            .imported_peers
-            .lock()
-            .await
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut connected_peer_ids = manual_ticket_peer_ids.clone();
-        for peer in configured_seed_peer_ids
-            .iter()
-            .chain(bootstrap_seed_peer_ids.iter())
-        {
-            if !connected_peer_ids.contains(peer) {
-                connected_peer_ids.push(peer.clone());
-            }
-        }
+        let (connected, _) = self.fake_peer_view().await;
         Ok(DiscoverySnapshot {
             mode: self.discovery_mode.lock().await.clone(),
             connect_mode: ConnectMode::DirectOnly,
             active_path: ConnectionPath::DirectP2p,
-            fallback_peer_ids: Vec::new(),
             env_locked: *self.env_locked.lock().await,
-            configured_seed_peer_ids,
-            bootstrap_seed_peer_ids,
-            manual_ticket_peer_ids,
-            connected_peer_ids,
+            configured_seed_peer_count: self.configured_seed_peers.lock().await.len(),
+            bootstrap_seed_peer_count: self.bootstrap_seed_peers.lock().await.len(),
+            connected_peer_count: connected.len(),
             local_endpoint_id: self.local_id.clone(),
             last_discovery_error: None,
         })
@@ -659,27 +654,23 @@ mod tests {
             .expect("import ticket");
 
         let discovery = transport.discovery().await.expect("discovery");
-
-        assert_eq!(
-            discovery.configured_seed_peer_ids,
-            vec!["configured-peer".to_string()]
-        );
-        assert_eq!(
-            discovery.bootstrap_seed_peer_ids,
-            vec!["bootstrap-peer".to_string()]
-        );
-        assert_eq!(
-            discovery.manual_ticket_peer_ids,
-            vec!["manual-ticket-peer".to_string()]
-        );
-        assert_eq!(
-            discovery.connected_peer_ids,
-            vec![
-                "manual-ticket-peer".to_string(),
-                "configured-peer".to_string(),
-                "bootstrap-peer".to_string(),
-            ]
-        );
+        assert_eq!(discovery.configured_seed_peer_count, 1);
+        assert_eq!(discovery.bootstrap_seed_peer_count, 1);
+        assert_eq!(discovery.connected_peer_count, 3);
+        for (kind, expected) in [
+            (ConnectivityPeerKind::ConfiguredSeed, "configured-peer"),
+            (ConnectivityPeerKind::BootstrapSeed, "bootstrap-peer"),
+            (ConnectivityPeerKind::ManualTicket, "manual-ticket-peer"),
+        ] {
+            assert_eq!(
+                transport
+                    .peer_page(kind, None, None, 64)
+                    .await
+                    .expect("page")
+                    .peer_ids,
+                vec![expected.to_string()]
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

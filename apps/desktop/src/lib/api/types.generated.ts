@@ -106,11 +106,15 @@ export type ChannelAccessTokenExport = { kind: ChannelAccessTokenKind, token: st
 
 export type ChannelAccessTokenPreview = { kind: ChannelAccessTokenKind, topic_id: string, channel_id: string, channel_label: string, owner_pubkey: string, inviter_pubkey?: string | null, sponsor_pubkey?: string | null, epoch_id: string, };
 
-export type TopicSyncStatus = { topic: string, joined: boolean, delivery_state: DeliveryState, peer_count: number, connected_peers: Array<string>, docs_assist_peer_ids: Array<string>, configured_peer_ids: Array<string>, missing_peer_ids: Array<string>, active_path: ConnectionPath, rendezvous_peer_ids: Array<string>, fallback_peer_ids: Array<string>, last_received_at?: number | null, last_docs_activity_at?: number | null, status_detail: string, last_error?: string | null, };
+export type TopicSyncStatus = { topic: string, joined: boolean, delivery_state: DeliveryState, peer_count: number, configured_peer_count: number, missing_peer_count: number, active_path: ConnectionPath, rendezvous_peer_count: number, fallback_peer_count: number, last_received_at?: number | null, last_docs_activity_at?: number | null, status_detail: string, last_error?: string | null, };
 
-export type DiscoveryStatus = { mode: DiscoveryMode, connect_mode: ConnectMode, active_path: ConnectionPath, fallback_peer_ids: Array<string>, env_locked: boolean, configured_seed_peer_ids: Array<string>, bootstrap_seed_peer_ids: Array<string>, manual_ticket_peer_ids: Array<string>, connected_peer_ids: Array<string>, docs_assist_peer_ids: Array<string>, blob_assist_peer_ids: Array<string>, local_endpoint_id: string, last_discovery_error?: string | null, };
+export type DiscoveryStatus = { mode: DiscoveryMode, connect_mode: ConnectMode, active_path: ConnectionPath, env_locked: boolean, configured_seed_peer_count: number, bootstrap_seed_peer_count: number, connected_peer_count: number, 
+/**
+ * 補助に使える peer(直近に取得の成功を観測した peer)の数。
+ */
+docs_assist_peer_count: number, blob_assist_peer_count: number, local_endpoint_id: string, last_discovery_error?: string | null, };
 
-export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peers: Array<string>, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_ids: Array<string>, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, };
+export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peer_count: number, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_count: number, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, };
 
 export type LiveSessionStatus = "Scheduled" | "Live" | "Paused" | "Ended";
 
@@ -724,7 +728,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, community_node_statuses?: Array<CommunityNodeNodeStatus> | null, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, };
 
 export type CreatePostRequest = { topic: string, content: string, reply_to?: string | null, channel_ref: ChannelRef, attachments: Array<CreateAttachmentRequest>, 
 /**
@@ -819,6 +823,12 @@ export type SessionDisplayRequest = { topic: string, scope: TimelineScope, repli
 export type ScopeDisplayRequest = { observer: string, target: ScopeDisplayTarget, visible: boolean, };
 
 export type ScopeDisplayTarget = { "kind": "timeline", topic: string, scope: TimelineScope, } | { "kind": "author", pubkey: string, };
+
+export type ConnectivityPeersRequest = { kind: ConnectivityPeerKind, topic?: string | null, cursor?: string | null, limit?: number | null, };
+
+export type ConnectivityPeerKind = "connected" | "configured" | "missing" | "docs_assist" | "blob_assist" | "manual_ticket" | "bootstrap_seed" | "configured_seed";
+
+export type PeerPage = { peer_ids: Array<string>, next_cursor?: string | null, };
 
 export type SessionCandidateView = { replica_id: string, session_id: string, kind: string, };
 

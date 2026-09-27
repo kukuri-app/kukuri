@@ -719,25 +719,18 @@ impl PeerAddrBook {
         candidates
     }
 
-    /// 合成台帳のうち、endpoint がアクティブなアドレスを持つピア id を返す。
+    /// 補助に使える peer: 直近に取得の成功を観測し、待機中でも切断中でもない peer(最大 2 件)。
+    /// 状態の表示から読むので、候補の cursor・台帳・`remote_info` を触らない(ADR 0055 §3、#1221 R2-D)。
     pub async fn available_peer_ids(&self) -> Vec<String> {
-        let peers = self.ranked_peers().await;
-        let mut available = BTreeSet::new();
-        for peer in peers {
-            if self
-                .endpoint
-                .remote_info(peer.id)
-                .await
-                .is_some_and(|info| {
-                    info.addrs().any(|addr| {
-                        matches!(addr.usage(), iroh::endpoint::TransportAddrUsage::Active)
-                    })
-                })
-            {
-                available.insert(peer.id.to_string());
-            }
-        }
-        available.into_iter().collect()
+        let mut available = self
+            .health
+            .preferred()
+            .await
+            .into_iter()
+            .map(|peer| peer.to_string())
+            .collect::<Vec<_>>();
+        available.sort();
+        available
     }
 }
 

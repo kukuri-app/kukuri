@@ -286,6 +286,8 @@ impl IrohGossipTransport {
             return false;
         }
         if let Some(mut state) = topics.remove(topic) {
+            self.status_changes
+                .mark(StatusKey::Topic(topic.to_string()));
             state.closed.store(true, Ordering::Release);
             state.closed_notify.notify_waiters();
             state._receiver_task.abort();
@@ -539,6 +541,8 @@ impl IrohGossipTransport {
         let closed = Arc::new(AtomicBool::new(false));
         let closed_notify = Arc::new(Notify::new());
         let transport_last_error = Arc::clone(&self.last_error);
+        let status_changes = self.status_changes.clone();
+        let status_key = StatusKey::Topic(topic.as_str().to_string());
         let imported_count = bootstrap_peers.len();
         let warm_endpoint = self.endpoint.clone();
         let warm_bootstrap_peers = bootstrap_peers.clone();
@@ -609,6 +613,7 @@ impl IrohGossipTransport {
                     *transport_last_error.lock().await =
                         Some(format!("topic join pending: {message}"));
                 }
+                status_changes.mark(status_key.clone());
             }
             // neighbor の無い間だけ、候補の窓で再 join する。回復は neighbor の成立(NeighborUp)で判定し、
             // seed の適用の成功や別の protocol の成功では判定しない(ADR 0055 §3、#1221 R2-B)。
@@ -733,18 +738,22 @@ impl IrohGossipTransport {
                                 tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
                         }
                     }
-                    Ok(GossipEvent::Lagged) => {}
+                    Ok(GossipEvent::Lagged) => continue,
                     Err(error) => {
                         let message = format!("gossip receiver closed: {error}");
                         *last_error_task.lock().await = Some(message.clone());
                         *transport_last_error.lock().await = Some(message);
+                        status_changes.mark(status_key);
                         break;
                     }
                 }
+                // 接続・受信の変化。受信の時刻のように頻繁な変化は、読み手が 1 秒にまとめる(#1221 R2-D)。
+                status_changes.mark(status_key.clone());
             }
         });
 
         subscribed.insert(topic.0.clone());
+        self.status_changes.mark(StatusKey::Topic(topic.0.clone()));
         topics.insert(
             topic.0.clone(),
             HintTopicState {

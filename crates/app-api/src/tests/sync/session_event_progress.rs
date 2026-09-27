@@ -272,7 +272,7 @@ async fn manifest_fetch_requires_display_and_success_projects_only_that_session(
     for kind in ["live", "game"] {
         let f = SessionFixture::new(kind).await;
         assert_eq!(f.event(&f.key).await, 0);
-        let pending_change = *f.app.last_sync_ts.lock().await;
+        let pending_change = f.app.last_sync_ts.get().await;
         assert!(
             pending_change.is_some(),
             "candidate arrival signals the visible list"
@@ -281,7 +281,7 @@ async fn manifest_fetch_requires_display_and_success_projects_only_that_session(
             f.event(&f.key).await;
         }
         assert_eq!(
-            *f.app.last_sync_ts.lock().await,
+            f.app.last_sync_ts.get().await,
             pending_change,
             "duplicate events do not generate refresh loops"
         );
@@ -296,7 +296,7 @@ async fn manifest_fetch_requires_display_and_success_projects_only_that_session(
         );
         f.display(true, false).await;
         assert!(
-            *f.app.last_sync_ts.lock().await > pending_change,
+            f.app.last_sync_ts.get().await > pending_change,
             "completed projection signals the visible list"
         );
         assert_eq!(f.fetches(), 1);
@@ -349,7 +349,7 @@ async fn displayed_manifest_finishing_after_five_seconds_projects_without_anothe
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     *f.blobs.gate.lock().unwrap() = Some(gate.clone());
     f.event(&f.key).await;
-    let before = *f.app.last_sync_ts.lock().await;
+    let before = f.app.last_sync_ts.get().await;
     f.app
         .set_session_display(crate::SessionDisplayRequest {
             topic: f.topic.into(),
@@ -376,7 +376,7 @@ async fn displayed_manifest_finishing_after_five_seconds_projects_without_anothe
             .unwrap()
             .is_some()
     );
-    assert!(*f.app.last_sync_ts.lock().await > before);
+    assert!(f.app.last_sync_ts.get().await > before);
     assert_eq!(f.fetches(), 1);
     f.app.shutdown().await;
 }

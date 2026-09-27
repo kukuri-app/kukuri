@@ -245,10 +245,15 @@ async fn runtime_connectivity_rebuild_preserves_manual_ticket_peers() {
     assert!(
         stack_a
             .transport
-            .discovery()
+            .peer_page(
+                kukuri_transport::ConnectivityPeerKind::ManualTicket,
+                None,
+                None,
+                64
+            )
             .await
-            .expect("discovery")
-            .manual_ticket_peer_ids
+            .expect("manual tickets")
+            .peer_ids
             .contains(&peer_id_b.to_string())
     );
     assert!(

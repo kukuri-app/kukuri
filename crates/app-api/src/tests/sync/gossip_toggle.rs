@@ -67,6 +67,15 @@ async fn get_sync_status_reports_disabled_channels() {
     app.set_channel_gossip_enabled(topic, channel, false)
         .await
         .expect("disable channel gossip");
+    // 稼働していない channel の停止は、通常の状態に載せない(#1221 R2-D)。
+    let status = app.get_sync_status().await.expect("sync status");
+    assert!(status.gossip_disabled_channels.is_empty());
+    app.set_scope_holder(
+        "test-channel",
+        [ScopeKey::Channel(topic.to_string(), channel.to_string())],
+    )
+    .await
+    .expect("lease the channel");
 
     let status = app.get_sync_status().await.expect("sync status");
     assert_eq!(

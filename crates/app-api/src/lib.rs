@@ -27,7 +27,9 @@ mod game;
 mod live;
 mod session_display;
 pub use session_display::{SessionCandidateView, SessionDisplayRequest};
-pub use sync::{ScopeDisplayRequest, ScopeDisplayTarget};
+pub use sync::{
+    CONNECTIVITY_PEER_PAGE_LIMIT, ConnectivityPeersRequest, ScopeDisplayRequest, ScopeDisplayTarget,
+};
 mod media;
 mod notifications;
 mod private_channel_indexing;

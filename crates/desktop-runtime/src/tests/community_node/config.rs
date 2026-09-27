@@ -51,8 +51,8 @@ async fn persisted_community_node_connectivity_is_not_applied_without_local_cons
             .await
             .expect("sync status")
             .discovery
-            .bootstrap_seed_peer_ids
-            .is_empty()
+            .bootstrap_seed_peer_count
+            == 0
     );
     let stored = runtime
         .get_community_node_config()
@@ -132,10 +132,12 @@ async fn startup_does_not_apply_persisted_community_node_connectivity_before_pre
 
     let discovery = runtime.get_sync_status().await.expect("status").discovery;
     assert_eq!(
-        discovery.configured_seed_peer_ids,
+        runtime
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ConfiguredSeed)
+            .await,
         vec![configured_seed.endpoint_id]
     );
-    assert!(discovery.bootstrap_seed_peer_ids.is_empty());
+    assert_eq!(discovery.bootstrap_seed_peer_count, 0);
     assert_eq!(discovery.connect_mode, ConnectMode::DirectOnly);
 
     runtime.shutdown().await;
@@ -302,10 +304,12 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
     let before = runtime.get_sync_status().await.expect("status").discovery;
     assert_eq!(before.connect_mode, ConnectMode::DirectOrRelay);
     assert_eq!(
-        before.configured_seed_peer_ids,
+        runtime
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ConfiguredSeed)
+            .await,
         vec![configured_seed.endpoint_id.clone()]
     );
-    assert_eq!(before.bootstrap_seed_peer_ids.len(), 1);
+    assert_eq!(before.bootstrap_seed_peer_count, 1);
 
     runtime
         .withdraw_community_node_consents(crate::CommunityNodeTargetRequest {
@@ -317,10 +321,12 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
     let after = runtime.get_sync_status().await.expect("status").discovery;
     assert_eq!(after.connect_mode, ConnectMode::DirectOnly);
     assert_eq!(
-        after.configured_seed_peer_ids,
+        runtime
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ConfiguredSeed)
+            .await,
         vec![configured_seed.endpoint_id]
     );
-    assert!(after.bootstrap_seed_peer_ids.is_empty());
+    assert_eq!(after.bootstrap_seed_peer_count, 0);
 
     runtime.shutdown().await;
 }

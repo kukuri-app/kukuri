@@ -959,9 +959,9 @@ impl AppService {
         let has_peers = self
             .services
             .transport
-            .peers()
+            .discovery()
             .await
-            .is_ok_and(|peers| peers.peer_count > 0);
+            .is_ok_and(|discovery| discovery.connected_peer_count > 0);
         if has_peers {
             let publish_result = tokio::time::timeout(
                 std::time::Duration::from_secs(2),

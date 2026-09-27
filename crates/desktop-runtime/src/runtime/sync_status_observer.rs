@@ -1,148 +1,116 @@
+//! 通信状態の差分の push(#1221 R2-D)。
+//!
+//! transport(neighbor・受信・購読)、app-api(同期の時刻・docs の活動・gossip の停止)、CN の session が
+//! 変わった所に印を付け、ここは印の付いた部分だけを作り直して差分を送る。変化の無い間は何もしない。
+//! 旧来の 3 秒ごとの全体の作り直しと等値比較(WP-B13 の Decision)は失効した(ADR 0055 §3.2)。
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use tokio::time::MissedTickBehavior;
-use tracing::{info, warn};
+use kukuri_transport::StatusKey;
+use tracing::warn;
 
 use super::*;
 
-/// Decision(WP-B13, 2026-07-16): この observer は 3 秒 pull を恒久採用する。
-/// pull 1 回は「transport のメモリロック読み + 高々 CN node 数分のローカル
-/// トークン読み」で DB / ネットワーク I/O は無く、emit は下の snapshot が
-/// PartialEq 差分を検出した時だけなのでフロント側の churn も無い。
-/// 変化点駆動(event push)化は Transport trait への通知 API 追加
-/// (iroh / fake / static の 3 実装 + 3 crate 跨ぎの契約変更)が必要で、
-/// SyncStatus は多入力の合成値のため notify を受けても full snapshot の
-/// 再計算は残る。コストがこの規模のうちは見合わない。
-/// 再検討のトリガ: pull のコストが実測で問題化した場合。その際は
-/// NotificationStatusChanged(runtime/mod.rs の Notify 待ち)と同型の
-/// 配線が前例になる。
-const SYNC_STATUS_OBSERVER_INTERVAL: Duration = Duration::from_secs(3);
+/// 同じ種類の頻繁な変化(受信の時刻・`last_sync_ts`)は、この間隔に 1 回までにまとめる。
+pub(crate) const SYNC_STATUS_COALESCE: Duration = Duration::from_secs(1);
 
+/// 最後に送った件数と CN の node。印が付いても変わっていない部分は送らない。
 #[derive(Default)]
-struct SyncStatusEventSnapshot {
-    sync_status: Option<SyncStatus>,
-    community_node_statuses: Option<Vec<CommunityNodeNodeStatus>>,
-    sync_error: Option<String>,
-    community_node_error: Option<String>,
-}
-
-impl SyncStatusEventSnapshot {
-    fn update_sync_status(&mut self, result: Result<SyncStatus>) -> Option<SyncStatus> {
-        match result {
-            Ok(next) => {
-                if self.sync_error.take().is_some() {
-                    info!("sync status observer recovered");
-                }
-                if self.sync_status.as_ref() == Some(&next) {
-                    return None;
-                }
-                self.sync_status = Some(next.clone());
-                Some(next)
-            }
-            Err(error) => {
-                let message = format!("{error:#}");
-                if self.sync_error.as_deref() != Some(message.as_str()) {
-                    warn!(error = %message, "sync status observer failed to load sync status");
-                    self.sync_error = Some(message);
-                }
-                None
-            }
-        }
-    }
-
-    fn update_community_node_statuses(
-        &mut self,
-        result: Result<Vec<CommunityNodeNodeStatus>>,
-    ) -> Option<Vec<CommunityNodeNodeStatus>> {
-        match result {
-            Ok(next) => {
-                if self.community_node_error.take().is_some() {
-                    info!("sync status observer recovered community-node status");
-                }
-                if self.community_node_statuses.as_ref() == Some(&next) {
-                    return None;
-                }
-                self.community_node_statuses = Some(next.clone());
-                Some(next)
-            }
-            Err(error) => {
-                let message = format!("{error:#}");
-                if self.community_node_error.as_deref() != Some(message.as_str()) {
-                    warn!(error = %message, "sync status observer failed to load community-node status");
-                    self.community_node_error = Some(message);
-                }
-                None
-            }
-        }
-    }
+struct Emitted {
+    summary: Option<SyncStatus>,
+    nodes: HashMap<String, CommunityNodeNodeStatus>,
 }
 
 impl DesktopRuntime {
-    async fn observe_sync_status_once(&self, snapshot: &mut SyncStatusEventSnapshot) {
-        let (sync_status, community_node_statuses) =
-            tokio::join!(self.get_sync_status(), self.get_community_node_statuses());
-        let sync_status = snapshot.update_sync_status(sync_status);
-        let community_node_statuses =
-            snapshot.update_community_node_statuses(community_node_statuses);
-        if sync_status.is_some() || community_node_statuses.is_some() {
-            self.emit_event(RuntimeEvent::SyncStatusChanged {
-                sync_status: sync_status.map(Box::new),
-                community_node_statuses,
-            });
+    async fn emit_sync_status_delta(&self, keys: BTreeSet<StatusKey>, emitted: &mut Emitted) {
+        #[cfg(test)]
+        self.sync_status_delta_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (sync_status, removed_topics) =
+            match self.app_service.sync_status_delta(Some(&keys)).await {
+                Ok((status, removed)) => {
+                    let summary = SyncStatus {
+                        topic_diagnostics: Vec::new(),
+                        ..status.clone()
+                    };
+                    let unchanged = status.topic_diagnostics.is_empty()
+                        && removed.is_empty()
+                        && emitted.summary.as_ref() == Some(&summary);
+                    emitted.summary = Some(summary);
+                    ((!unchanged).then(|| Box::new(status)), removed)
+                }
+                Err(error) => {
+                    warn!(error = %format!("{error:#}"), "failed to build the sync status delta");
+                    (None, Vec::new())
+                }
+            };
+        let config = self.community_node_config.lock().await.clone();
+        let dirty = if keys.contains(&StatusKey::All) {
+            config
+                .nodes
+                .iter()
+                .map(|node| node.base_url.clone())
+                .chain(emitted.nodes.keys().cloned())
+                .collect::<BTreeSet<_>>()
+        } else {
+            keys.into_iter()
+                .filter_map(|key| match key {
+                    StatusKey::CommunityNode(base_url) => Some(base_url),
+                    _ => None,
+                })
+                .collect()
+        };
+        let (mut community_node_statuses, mut removed_community_nodes) = (Vec::new(), Vec::new());
+        for base_url in dirty {
+            let Some(node) = config.nodes.iter().find(|node| node.base_url == base_url) else {
+                emitted.nodes.remove(&base_url);
+                removed_community_nodes.push(base_url);
+                continue;
+            };
+            match self.community_node_status(node.clone(), None, None).await {
+                Ok(status) if emitted.nodes.get(&base_url) != Some(&status) => {
+                    emitted.nodes.insert(base_url, status.clone());
+                    community_node_statuses.push(status);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(%base_url, error = %format!("{error:#}"), "failed to build the community-node status delta");
+                }
+            }
         }
+        if sync_status.is_none()
+            && community_node_statuses.is_empty()
+            && removed_community_nodes.is_empty()
+        {
+            return;
+        }
+        self.emit_event(RuntimeEvent::SyncStatusChanged {
+            sync_status,
+            removed_topics,
+            community_node_statuses,
+            removed_community_nodes,
+        });
     }
 
     pub async fn start_sync_status_observer(self: &Arc<Self>) {
-        self.start_sync_status_observer_with_interval(SYNC_STATUS_OBSERVER_INTERVAL)
-            .await;
-    }
-
-    pub(crate) async fn start_sync_status_observer_with_interval(self: &Arc<Self>, tick: Duration) {
         let mut task = self.sync_status_observer_task.lock().await;
         if task.as_ref().is_some_and(|handle| !handle.is_finished()) {
             return;
         }
-
+        let changes = self.iroh_stack.status_changes.clone();
         let weak: Weak<Self> = Arc::downgrade(self);
         *task = Some(tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tick);
-            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            let mut snapshot = SyncStatusEventSnapshot::default();
+            let mut emitted = Emitted::default();
             loop {
-                interval.tick().await;
+                let keys = changes.changed().await;
                 let Some(runtime) = weak.upgrade() else {
                     return;
                 };
-                runtime.observe_sync_status_once(&mut snapshot).await;
+                runtime.emit_sync_status_delta(keys, &mut emitted).await;
                 drop(runtime);
+                tokio::time::sleep(SYNC_STATUS_COALESCE).await;
             }
         }));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshot_updates_each_status_source_independently() {
-        let mut snapshot = SyncStatusEventSnapshot::default();
-
-        assert!(
-            snapshot
-                .update_sync_status(Err(anyhow!("sync unavailable")))
-                .is_none()
-        );
-        assert_eq!(
-            snapshot.update_community_node_statuses(Ok(Vec::new())),
-            Some(Vec::new())
-        );
-        assert!(
-            snapshot
-                .update_community_node_statuses(Ok(Vec::new()))
-                .is_none(),
-            "an unchanged successful source must be suppressed"
-        );
     }
 }

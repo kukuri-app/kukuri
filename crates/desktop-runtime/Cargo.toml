@@ -49,6 +49,7 @@ keyring = { workspace = true, features = ["v1"] }
 keyring = { workspace = true, features = ["v1"] }
 
 [dev-dependencies]
+kukuri-transport = { path = "../transport", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 kukuri-test-support = { path = "../test-support" }
 axum.workspace = true

@@ -19,6 +19,7 @@ mod fake;
 mod iroh;
 mod peers;
 mod receive_binding;
+mod status_changes;
 #[cfg(test)]
 mod test_support;
 mod tickets;
@@ -31,5 +32,6 @@ pub use fake::*;
 pub use iroh::*;
 pub use peers::*;
 pub use receive_binding::*;
+pub use status_changes::*;
 pub use tickets::*;
 pub use traits::*;

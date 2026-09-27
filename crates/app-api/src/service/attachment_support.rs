@@ -366,83 +366,25 @@ pub(crate) fn normalize_topics(topics: Vec<String>) -> Vec<String> {
     normalized
 }
 
+/// transport の topic 名を表示の名前へ直し、private channel と DM を除く。同じ topic の旧名と `hint/` 名は
+/// peer の多い方を残す。
 pub(crate) fn normalize_topic_diagnostics(
     diagnostics: Vec<TopicPeerSnapshot>,
 ) -> Vec<TopicPeerSnapshot> {
     let mut merged = BTreeMap::<String, TopicPeerSnapshot>::new();
-    for diagnostic in diagnostics {
-        let Some(topic) = normalize_topic_name(diagnostic.topic) else {
+    for mut diagnostic in diagnostics {
+        let Some(topic) = normalize_topic_name(diagnostic.topic.clone()) else {
             continue;
         };
-        let entry = merged
-            .entry(topic.clone())
-            .or_insert_with(|| TopicPeerSnapshot {
-                topic: topic.clone(),
-                joined: false,
-                peer_count: 0,
-                connected_peers: Vec::new(),
-                configured_peer_ids: Vec::new(),
-                missing_peer_ids: Vec::new(),
-                active_path: diagnostic.active_path.clone(),
-                rendezvous_peer_ids: Vec::new(),
-                fallback_peer_ids: Vec::new(),
-                last_received_at: None,
-                status_detail: diagnostic.status_detail.clone(),
-                last_error: diagnostic.last_error.clone(),
-            });
-        entry.joined |= diagnostic.joined;
-        entry.peer_count = entry.peer_count.max(diagnostic.peer_count);
-        for peer in diagnostic.connected_peers {
-            if !entry.connected_peers.contains(&peer) {
-                entry.connected_peers.push(peer);
-            }
-        }
-        for peer in diagnostic.configured_peer_ids {
-            if !entry.configured_peer_ids.contains(&peer) {
-                entry.configured_peer_ids.push(peer);
-            }
-        }
-        for peer in diagnostic.missing_peer_ids {
-            if !entry.missing_peer_ids.contains(&peer) {
-                entry.missing_peer_ids.push(peer);
-            }
-        }
-        for peer in diagnostic.rendezvous_peer_ids {
-            if !entry.rendezvous_peer_ids.contains(&peer) {
-                entry.rendezvous_peer_ids.push(peer);
-            }
-        }
-        for peer in diagnostic.fallback_peer_ids {
-            if !entry.fallback_peer_ids.contains(&peer) {
-                entry.fallback_peer_ids.push(peer);
-            }
-        }
-        if connection_path_rank(&diagnostic.active_path) > connection_path_rank(&entry.active_path)
+        diagnostic.topic = topic.clone();
+        if merged
+            .get(&topic)
+            .is_none_or(|kept| kept.peer_count < diagnostic.peer_count)
         {
-            entry.active_path = diagnostic.active_path;
-        }
-        entry.last_received_at = match (entry.last_received_at, diagnostic.last_received_at) {
-            (Some(left), Some(right)) => Some(left.max(right)),
-            (None, value) | (value, None) => value,
-        };
-        if entry.status_detail.starts_with("No peers configured")
-            || entry.status_detail.starts_with("Waiting")
-        {
-            entry.status_detail = diagnostic.status_detail;
-        }
-        if entry.last_error.is_none() {
-            entry.last_error = diagnostic.last_error;
+            merged.insert(topic, diagnostic);
         }
     }
     merged.into_values().collect()
-}
-
-fn connection_path_rank(path: &ConnectionPath) -> u8 {
-    match path {
-        ConnectionPath::DirectP2p => 0,
-        ConnectionPath::RelaySupportedP2p => 1,
-        ConnectionPath::RelayFallback => 2,
-    }
 }
 
 pub(crate) fn merge_optional_timestamp(left: Option<i64>, right: Option<i64>) -> Option<i64> {

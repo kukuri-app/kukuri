@@ -102,15 +102,28 @@ pub struct DiscoverySnapshot {
     pub mode: DiscoveryMode,
     pub connect_mode: ConnectMode,
     pub active_path: ConnectionPath,
-    #[serde(default)]
-    pub fallback_peer_ids: Vec<String>,
     pub env_locked: bool,
-    pub configured_seed_peer_ids: Vec<String>,
-    pub bootstrap_seed_peer_ids: Vec<String>,
-    pub manual_ticket_peer_ids: Vec<String>,
-    pub connected_peer_ids: Vec<String>,
+    pub configured_seed_peer_count: usize,
+    pub bootstrap_seed_peer_count: usize,
+    pub connected_peer_count: usize,
     pub local_endpoint_id: String,
     pub last_discovery_error: Option<String>,
+}
+
+/// 設定画面の詳細で cursor つきのページとして読む peer の一覧の種類(#1221 R2-D)。
+/// `Connected`・`Configured`・`Missing` は topic を指定するとその topic の分、`Connected` は省くと全 topic の和。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectivityPeerKind {
+    Connected,
+    Configured,
+    Missing,
+    DocsAssist,
+    BlobAssist,
+    ManualTicket,
+    BootstrapSeed,
+    ConfiguredSeed,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -8,17 +8,16 @@ fn snapshot_from_status(status: &SyncStatus) -> SyncSnapshot {
         peer_count: status.peer_count,
         status_detail: status.status_detail.clone(),
         last_error: status.last_error.clone(),
-        discovery_connected_peers: status.discovery.connected_peer_ids.clone(),
+        discovery_connected_peer_count: status.discovery.connected_peer_count,
+        docs_assist_peer_count: status.discovery.docs_assist_peer_count,
         topics: status
             .topic_diagnostics
             .iter()
             .map(|entry| TopicSyncSnapshot {
                 topic: entry.topic.clone(),
                 peer_count: entry.peer_count,
-                connected_peers: entry.connected_peers.clone(),
-                docs_assist_peer_ids: entry.docs_assist_peer_ids.clone(),
-                configured_peer_ids: entry.configured_peer_ids.clone(),
-                missing_peer_ids: None,
+                configured_peer_count: entry.configured_peer_count,
+                missing_peer_count: entry.missing_peer_count,
                 delivery_state: format!("{:?}", entry.delivery_state),
                 status_detail: entry.status_detail.clone(),
             })
@@ -189,10 +188,7 @@ pub(crate) async fn wait_for_topic_peer_count(
     match poll_until(step_timeout, Duration::from_millis(50), 3, || async {
         let status = runtime.get_sync_status().await?;
         let ready = status.topic_diagnostics.iter().any(|entry| {
-            entry.topic == topic
-                && entry.joined
-                && entry.peer_count >= expected
-                && entry.connected_peers.len() >= expected.min(1)
+            entry.topic == topic && entry.joined && entry.peer_count >= expected.max(1)
         });
         Ok::<_, anyhow::Error>(if ready {
             PollState::Ready(())
@@ -260,8 +256,7 @@ pub(crate) fn ci_timeout_floor(step_timeout: Duration, floor: Duration) -> Durat
 pub(crate) fn topic_has_direct_peer(status: &SyncStatus, topic: &str, expected: usize) -> bool {
     status.topic_diagnostics.iter().any(|entry| {
         entry.topic == topic
-            && entry.peer_count >= expected
-            && entry.connected_peers.len() >= expected.min(1)
+            && entry.peer_count >= expected.max(1)
             && (entry.joined || matches!(entry.delivery_state, kukuri_app_api::DeliveryState::Live))
     })
 }
@@ -269,7 +264,7 @@ pub(crate) fn topic_has_direct_peer(status: &SyncStatus, topic: &str, expected: 
 pub(crate) fn topic_has_durable_delivery(status: &SyncStatus, topic: &str) -> bool {
     status.topic_diagnostics.iter().any(|entry| {
         entry.topic == topic
-            && !entry.docs_assist_peer_ids.is_empty()
+            && status.discovery.docs_assist_peer_count > 0
             && matches!(
                 entry.delivery_state,
                 kukuri_app_api::DeliveryState::DurableRecovering

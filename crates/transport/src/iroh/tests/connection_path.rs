@@ -80,20 +80,34 @@ async fn transport_relay_only_peer_reports_relay_fallback() {
         wait_for_topic_active_path(&transport_a, &ConnectionPath::RelayFallback, "transport a")
             .await;
     assert_eq!(snapshot_a.active_path, ConnectionPath::RelayFallback);
-    assert_eq!(snapshot_a.fallback_peer_ids, vec![peer_id_b.clone()]);
+    assert_eq!(snapshot_a.fallback_peer_count, 1);
     let topic_diag_a = snapshot_a
         .topic_diagnostics
         .iter()
         .find(|diag| diag.active_path == ConnectionPath::RelayFallback)
         .expect("topic diagnostic a");
-    assert_eq!(topic_diag_a.fallback_peer_ids, vec![peer_id_b]);
-    assert!(topic_diag_a.rendezvous_peer_ids.is_empty());
+    assert_eq!(topic_diag_a.fallback_peer_count, 1);
+    assert_eq!(topic_diag_a.rendezvous_peer_count, 0);
+    assert_eq!(
+        transport_a
+            .peer_page(
+                ConnectivityPeerKind::Connected,
+                Some(&topic_diag_a.topic),
+                None,
+                64
+            )
+            .await
+            .expect("connected page")
+            .peer_ids,
+        vec![peer_id_b]
+    );
 
     // IP transport を持つ側から見ても、相手には relay 経由でしか到達できないので relay_fallback。
     let snapshot_b =
         wait_for_topic_active_path(&transport_b, &ConnectionPath::RelayFallback, "transport b")
             .await;
-    assert_eq!(snapshot_b.fallback_peer_ids, vec![peer_id_a]);
+    assert_eq!(snapshot_b.fallback_peer_count, 1);
+    let _ = peer_id_a;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -191,6 +205,7 @@ async fn transport_custom_relay_bootstrap_seed_reports_relay_supported_p2p() {
         .iter()
         .find(|diag| diag.active_path == ConnectionPath::RelaySupportedP2p)
         .expect("topic diagnostic a");
-    assert_eq!(topic_diag_a.rendezvous_peer_ids, vec![peer_id_b]);
+    assert_eq!(topic_diag_a.rendezvous_peer_count, 1);
+    let _ = peer_id_b;
     assert_ne!(topic_diag_a.active_path, ConnectionPath::RelayFallback);
 }

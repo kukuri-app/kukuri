@@ -100,8 +100,48 @@ impl State {
         self.entries.back_mut()
     }
 }
+/// 最後に同期で状態が変わった時刻(`SyncStatus::last_sync_ts`)。変えたら通信状態の差分の印を付ける(#1221 R2-D)。
+#[derive(Default)]
+pub(crate) struct SyncClock {
+    at: Mutex<Option<i64>>,
+    changes: std::sync::OnceLock<kukuri_transport::StatusChanges>,
+}
+
+impl SyncClock {
+    pub(crate) async fn get(&self) -> Option<i64> {
+        *self.at.lock().await
+    }
+
+    pub(crate) async fn set(&self, at: i64) {
+        *self.at.lock().await = Some(at);
+        self.mark(kukuri_transport::StatusKey::Summary);
+    }
+
+    /// 今の時刻にする。前の値以下にはしない。
+    pub(crate) async fn advance(&self) {
+        let mut at = self.at.lock().await;
+        *at = Some(
+            Utc::now()
+                .timestamp_millis()
+                .max(at.unwrap_or_default().saturating_add(1)),
+        );
+        drop(at);
+        self.mark(kukuri_transport::StatusKey::Summary);
+    }
+
+    pub(crate) fn watch(&self, changes: kukuri_transport::StatusChanges) {
+        let _ = self.changes.set(changes);
+    }
+
+    pub(crate) fn mark(&self, key: kukuri_transport::StatusKey) {
+        if let Some(changes) = self.changes.get() {
+            changes.mark(key);
+        }
+    }
+}
+
 pub(crate) struct SessionProjections {
-    pub(crate) last_change: Arc<Mutex<Option<i64>>>,
+    pub(crate) last_change: Arc<SyncClock>,
     state: Mutex<State>,
     permits: Arc<tokio::sync::Semaphore>,
     tokens: AtomicU64,
@@ -184,12 +224,7 @@ impl SessionProjections {
         entry.hashes = hashes;
         drop(state);
         if changed {
-            let mut last = self.last_change.lock().await;
-            *last = Some(
-                Utc::now()
-                    .timestamp_millis()
-                    .max(last.unwrap_or_default().saturating_add(1)),
-            );
+            self.last_change.advance().await;
         }
     }
     pub(crate) async fn candidates(

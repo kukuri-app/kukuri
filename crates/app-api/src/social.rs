@@ -120,7 +120,7 @@ impl AppService {
         self.services
             .persist_author_event(profile.pubkey.as_str(), &envelope)
             .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(profile)
     }
 
@@ -140,7 +140,7 @@ impl AppService {
         self.services
             .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
             .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         let view = self
             .build_author_social_view(target_pubkey.as_str())
             .await?;
@@ -168,7 +168,7 @@ impl AppService {
         self.services
             .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
             .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         let view = self
             .build_author_social_view(target_pubkey.as_str())
             .await?;
@@ -245,7 +245,7 @@ impl AppService {
         self.services
             .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
             .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         if edge.status == BlockEdgeStatus::Active {
             self.reconcile_blocked_dome_connections(&target_pubkey)
                 .await?;

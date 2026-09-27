@@ -159,7 +159,7 @@ impl AppService {
                 "failed to publish reaction hint; durable docs state was already persisted"
             );
         }
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         self.reaction_state_for_target(&target.source_replica_id, &target_object_id)
             .await
     }
@@ -192,7 +192,7 @@ impl AppService {
             .persist_author_event(asset.author_pubkey.as_str(), &envelope)
             .await?;
         self.services.store.put_envelope(envelope).await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(custom_reaction_asset_view_from_doc(&asset))
     }
 

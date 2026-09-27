@@ -110,6 +110,9 @@ impl IrohGossipTransport {
             connect_mode: Arc::new(Mutex::new(relay_config.connect_mode())),
             relay_urls,
             env_locked: Arc::new(Mutex::new(false)),
+            status_changes: StatusChanges::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            status_read_steps: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -173,11 +176,20 @@ impl IrohGossipTransport {
             connect_mode: Arc::new(Mutex::new(relay_config.connect_mode())),
             relay_urls,
             env_locked: Arc::new(Mutex::new(false)),
+            status_changes: StatusChanges::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            status_read_steps: Arc::new(AtomicU64::new(0)),
         })
     }
 
     pub async fn bind_local() -> Result<Self> {
         Self::bind(TransportNetworkConfig::loopback()).await
+    }
+
+    /// 通信状態の変わった部分の印を、この印へ付ける(#1221 R2-D)。topic を購読する前に呼ぶ。
+    pub fn with_status_changes(mut self, changes: StatusChanges) -> Self {
+        self.status_changes = changes;
+        self
     }
 
     pub fn with_account_store(mut self, store: Arc<kukuri_store::SqliteStore>) -> Self {

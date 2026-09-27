@@ -56,16 +56,18 @@ async fn desktop_runtime_imports_peer_ticket_and_tracks_local_posts() {
         .await
         .expect("import a");
 
-    let status_a = runtime_a
-        .get_sync_status()
-        .await
-        .expect("status a after import");
-    let status_b = runtime_b
-        .get_sync_status()
-        .await
-        .expect("status b after import");
-    assert_eq!(status_a.discovery.manual_ticket_peer_ids, vec![endpoint_b]);
-    assert_eq!(status_b.discovery.manual_ticket_peer_ids, vec![endpoint_a]);
+    assert_eq!(
+        runtime_a
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ManualTicket)
+            .await,
+        vec![endpoint_b]
+    );
+    assert_eq!(
+        runtime_b
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ManualTicket)
+            .await,
+        vec![endpoint_a]
+    );
 
     let topic = "kukuri:topic:desktop-runtime";
     let object_id = runtime_a

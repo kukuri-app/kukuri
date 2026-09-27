@@ -396,3 +396,48 @@ async fn new_import_gets_a_slot_when_older_healthy_peers_fill_the_window() {
     );
     endpoint.close().await;
 }
+
+/// #1221 R2-D AC-2: 状態の表示が読む補助の peer は、取得の候補の cursor を進めず、台帳(SQLite)も読まない。
+/// 補助に数えるのは取得の成功を観測した peer だけで、台帳にあるだけの peer は数えない。
+#[tokio::test]
+async fn status_reads_do_not_advance_candidate_cursors() {
+    let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+    let steps = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let store = Arc::new(
+        SqliteStore::connect_memory_counting_vm_steps(steps.clone())
+            .await
+            .unwrap(),
+    );
+    let health = Arc::new(BlobPeerHealth::default());
+    let book = PeerAddrBook::with_account_store(
+        endpoint.clone(),
+        Arc::new(MemoryLookup::new()),
+        health.clone(),
+        store,
+        "docs",
+    );
+    let peer = |index: u64| {
+        let mut secret = [0; 32];
+        secret[..8].copy_from_slice(&index.to_be_bytes());
+        iroh::SecretKey::from_bytes(&secret).public()
+    };
+    for index in 0..20 {
+        book.insert_learned_peer_addr(EndpointAddr::new(peer(index)))
+            .await
+            .unwrap();
+        book.insert_imported_peer_addr(EndpointAddr::new(peer(100 + index)))
+            .await
+            .unwrap();
+    }
+    book.record_fetch_success(peer(3), Duration::from_millis(5))
+        .await;
+    let before = steps.load(Ordering::Relaxed);
+    for _ in 0..5 {
+        assert_eq!(book.available_peer_ids().await, vec![peer(3).to_string()]);
+    }
+    assert_eq!(steps.load(Ordering::Relaxed), before, "no SQLite read");
+    assert_eq!(*book.account_cursor.lock().await, [None, None, None]);
+    assert_eq!(*book.fetch_cursor.lock().await, [None, None, None]);
+    assert_eq!(book.sampled_peer_count.load(Ordering::Relaxed), 0);
+    endpoint.close().await;
+}

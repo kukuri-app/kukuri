@@ -294,12 +294,14 @@ async fn transport_import_ticket_updates_existing_topic_subscription() {
         loop {
             let peers_a = transport_a.peers().await.expect("peers a");
             let peers_b = transport_b.peers().await.expect("peers b");
-            let direct_a = peers_a.topic_diagnostics.iter().any(|diag| {
-                diag.topic == "hint/kukuri:topic:import-update" && !diag.connected_peers.is_empty()
-            });
-            let direct_b = peers_b.topic_diagnostics.iter().any(|diag| {
-                diag.topic == "hint/kukuri:topic:import-update" && !diag.connected_peers.is_empty()
-            });
+            let direct_a = peers_a
+                .topic_diagnostics
+                .iter()
+                .any(|diag| diag.topic == "hint/kukuri:topic:import-update" && diag.peer_count > 0);
+            let direct_b = peers_b
+                .topic_diagnostics
+                .iter()
+                .any(|diag| diag.topic == "hint/kukuri:topic:import-update" && diag.peer_count > 0);
             if direct_a && direct_b {
                 return;
             }
@@ -386,12 +388,14 @@ async fn transport_seed_update_updates_existing_topic_subscription() {
         loop {
             let peers_a = transport_a.peers().await.expect("peers a");
             let peers_b = transport_b.peers().await.expect("peers b");
-            let direct_a = peers_a.topic_diagnostics.iter().any(|diag| {
-                diag.topic == "hint/kukuri:topic:seed-update" && !diag.connected_peers.is_empty()
-            });
-            let direct_b = peers_b.topic_diagnostics.iter().any(|diag| {
-                diag.topic == "hint/kukuri:topic:seed-update" && !diag.connected_peers.is_empty()
-            });
+            let direct_a = peers_a
+                .topic_diagnostics
+                .iter()
+                .any(|diag| diag.topic == "hint/kukuri:topic:seed-update" && diag.peer_count > 0);
+            let direct_b = peers_b
+                .topic_diagnostics
+                .iter()
+                .any(|diag| diag.topic == "hint/kukuri:topic:seed-update" && diag.peer_count > 0);
             if direct_a && direct_b {
                 return;
             }
@@ -440,8 +444,7 @@ async fn reimporting_a_lost_neighbor_joins_it_again_without_leaving_the_topic() 
                 .topic_diagnostics
                 .iter()
                 .any(|diag| {
-                    diag.topic == "hint/kukuri:topic:rejoin-lost-neighbor"
-                        && !diag.connected_peers.is_empty()
+                    diag.topic == "hint/kukuri:topic:rejoin-lost-neighbor" && diag.peer_count > 0
                 })
                 != expected
             {
@@ -830,7 +833,7 @@ async fn wait_for_topic_active_path(
                     .iter()
                     .map(|topic| topic.active_path.clone())
                     .collect::<Vec<_>>(),
-                snapshot.fallback_peer_ids,
+                snapshot.fallback_peer_count,
                 format_peer_snapshot(&snapshot)
             );
         }
@@ -844,4 +847,5 @@ mod controlled_gossip;
 mod receive_offer;
 mod relay_connectivity;
 mod relay_overload;
+mod status_diff;
 mod topic_rejoin;

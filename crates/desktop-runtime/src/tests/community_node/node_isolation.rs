@@ -5,7 +5,6 @@ use axum::body::Bytes;
 use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
 use kukuri_cn_protocol::TopicRendezvousCandidate;
-use kukuri_transport::Transport;
 use std::sync::Mutex as StdMutex;
 
 const A_SEED: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -307,12 +306,8 @@ async fn relay_urls(runtime: &DesktopRuntime) -> Vec<String> {
 
 async fn bootstrap_seeds(runtime: &DesktopRuntime) -> Vec<String> {
     runtime
-        .iroh_stack
-        .transport
-        .discovery()
+        .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::BootstrapSeed)
         .await
-        .expect("discovery")
-        .bootstrap_seed_peer_ids
 }
 
 async fn update_joins(runtime: &DesktopRuntime, topic: &str) -> u64 {

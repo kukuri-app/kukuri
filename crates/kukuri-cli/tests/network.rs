@@ -60,7 +60,14 @@ async fn network_commands_preserve_identity_and_subscription_changes_after_resta
             .expect("topics")
             .contains(&json!(topic))
     );
+    // #1221 R2-D: 通常の状態は件数だけを持ち、peer の一覧は詳細のページで読む。
+    assert!(before["configured_peer_count"].is_u64());
+    assert!(before.get("configured_peers").is_none());
     for (command, payload) in [
+        (
+            "list_connectivity_peers",
+            json!({"kind": "configured_seed", "limit": 64}),
+        ),
         ("get_discovery_config", json!({})),
         ("get_local_peer_ticket", json!({})),
         (
@@ -91,6 +98,14 @@ async fn network_commands_preserve_identity_and_subscription_changes_after_resta
         .await
         .expect("restarted host");
     let dispatcher = Dispatcher::builtin();
+    // 通常の状態は、稼働中の topic の gossip の停止だけを返す(#1221 R2-D)。止めた設定が再起動の後も
+    // 残ることは、その topic を購読して確かめる。
+    host.add_desired_subscription(DesiredSubscription {
+        topic: disabled.into(),
+        scope: DesiredSubscriptionScope::Public,
+    })
+    .await
+    .expect("subscribe the disabled topic");
     let after = call(&dispatcher, &host, "get_sync_status", json!({})).await;
     assert!(after.ok, "{:?}", after.error);
     let after = after.data.expect("sync status");

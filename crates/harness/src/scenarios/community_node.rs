@@ -182,9 +182,9 @@ pub(crate) async fn run_community_node_connectivity(
                 "{label} enabled relay connectivity before community-node consent"
             );
             anyhow::ensure!(
-                status.discovery.bootstrap_seed_peer_ids.is_empty(),
-                "{label} applied community-node bootstrap seeds before consent: {:?}",
-                status.discovery.bootstrap_seed_peer_ids
+                status.discovery.bootstrap_seed_peer_count == 0,
+                "{label} applied community-node bootstrap seeds before consent: {}",
+                status.discovery.bootstrap_seed_peer_count
             );
             let node_status = runtime
                 .get_community_node_statuses()
@@ -323,8 +323,8 @@ pub(crate) async fn run_community_node_connectivity(
                     .context("missing community-node status for desktop b after consent")?;
                 let sync_a = runtime_a.get_sync_status().await?;
                 let sync_b = runtime_b.get_sync_status().await?;
-                if !sync_a.discovery.bootstrap_seed_peer_ids.is_empty()
-                    && !sync_b.discovery.bootstrap_seed_peer_ids.is_empty()
+                if sync_a.discovery.bootstrap_seed_peer_count > 0
+                    && sync_b.discovery.bootstrap_seed_peer_count > 0
                 {
                     return Ok::<_, anyhow::Error>((refreshed_a, refreshed_b, sync_a, sync_b));
                 }
@@ -1099,15 +1099,15 @@ pub(crate) async fn run_community_node_connectivity(
                     "{label} retained relay connectivity after consent withdrawal"
                 );
                 anyhow::ensure!(
-                    status.discovery.bootstrap_seed_peer_ids.is_empty(),
-                    "{label} retained community-node bootstrap seeds after withdrawal: {:?}",
-                    status.discovery.bootstrap_seed_peer_ids
+                    status.discovery.bootstrap_seed_peer_count == 0,
+                    "{label} retained community-node bootstrap seeds after withdrawal: {}",
+                    status.discovery.bootstrap_seed_peer_count
                 );
                 anyhow::ensure!(
                     status
                         .topic_diagnostics
                         .iter()
-                        .all(|diagnostic| diagnostic.rendezvous_peer_ids.is_empty()),
+                        .all(|diagnostic| diagnostic.rendezvous_peer_count == 0),
                     "{label} retained rendezvous peers after consent withdrawal"
                 );
             }

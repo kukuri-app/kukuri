@@ -5,9 +5,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    DesiredSubscription, DesiredSubscriptionScope, ImportPeerTicketRequest,
-    SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest, SetTopicGossipEnabledRequest,
-    UnsubscribeTopicRequest,
+    ConnectivityPeersRequest, DesiredSubscription, DesiredSubscriptionScope,
+    ImportPeerTicketRequest, SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest,
+    SetTopicGossipEnabledRequest, UnsubscribeTopicRequest,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -25,6 +25,12 @@ impl CommandHandler for Handler {
         let runtime = runtime(&context)?;
         match self.0 {
             "get_sync_status" => encode(runtime.get_sync_status().await.map_err(command_error)?),
+            "list_connectivity_peers" => encode(
+                runtime
+                    .list_connectivity_peers(decode::<ConnectivityPeersRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             "get_discovery_config" => encode(
                 runtime
                     .get_discovery_config()
@@ -106,6 +112,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
     use CommandEffect::{Read, Write};
     [
         ("get_sync_status", Read),
+        ("list_connectivity_peers", Read),
         ("get_discovery_config", Read),
         ("get_local_peer_ticket", Read),
         ("import_peer_ticket", Write),
