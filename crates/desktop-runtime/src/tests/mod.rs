@@ -57,6 +57,7 @@ mod attachments;
 mod community_node;
 mod device_backup;
 mod identity_restart;
+mod legacy_store_retirement;
 mod media_blob_restore;
 mod private_channels;
 mod protected_migration;

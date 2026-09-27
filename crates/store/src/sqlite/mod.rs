@@ -60,7 +60,8 @@ pub use protected_migration::{
     ProtectedMigrationPage, ProtectedSource,
 };
 pub use remote_cache::{
-    REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation,
+    OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
+    RemoteCacheReservation,
 };
 
 #[derive(Clone)]

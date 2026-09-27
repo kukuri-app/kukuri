@@ -66,6 +66,8 @@ pub struct IrohDocsSync {
 struct AccountDocsAuthor {
     id: AuthorId,
     legacy: Vec<AuthorId>,
+    /// アカウントの公開鍵。本人の書込みを保護所有先へ置くときに、他人の author の領域へ置く行と分ける(#1221 R5-I)。
+    owner: String,
 }
 
 impl IrohDocsSync {
@@ -90,7 +92,11 @@ impl IrohDocsSync {
     /// 以後の書き込みは、この docs author の名義になる。それまでの docs author の鍵は保存場所に残す。その名義の entry は
     /// 旧 record として扱い、同じ key を書き直すときと prefix を消すときに、旧い名義の entry も消す
     /// (`supersede_legacy_entry`)。何度呼んでも同じ結果になる。
-    pub async fn use_account_docs_author(&self, seed: &DocsAuthorSeed) -> Result<String> {
+    pub async fn use_account_docs_author(
+        &self,
+        seed: &DocsAuthorSeed,
+        owner_pubkey: &str,
+    ) -> Result<String> {
         let author = Author::from_bytes(seed.expose_secret_bytes());
         let id = author.id();
         let docs = self.node.docs();
@@ -105,7 +111,11 @@ impl IrohDocsSync {
                 legacy.push(existing);
             }
         }
-        *self.account_docs_author.lock().await = Some(AccountDocsAuthor { id, legacy });
+        *self.account_docs_author.lock().await = Some(AccountDocsAuthor {
+            id,
+            legacy,
+            owner: owner_pubkey.to_string(),
+        });
         Ok(id.to_string())
     }
 
@@ -137,6 +147,55 @@ impl IrohDocsSync {
             }
         }
         Ok(())
+    }
+
+    /// 本人の書込みの record を、保護参照を付けて保護所有先へも置く(#1221 R5-I)。backup・restore と相手への
+    /// 再提供(`DocReadProtocol` の exact)に使う。他人の author の領域(`author::<他人>` とその author bucket)へ
+    /// 置く行は、読み直し・hydration で手元へ置いた他人の内容なので置かない。
+    async fn protect_own_record(
+        &self,
+        replica_id: &ReplicaId,
+        key: &str,
+        author: AuthorId,
+        value: Vec<u8>,
+        content_hash: iroh_blobs::Hash,
+    ) -> Result<()> {
+        let Some(cache) = self.remote_cache.as_ref() else {
+            return Ok(());
+        };
+        let Some(owner) = self
+            .account_docs_author
+            .lock()
+            .await
+            .as_ref()
+            .map(|account| account.owner.clone())
+        else {
+            return Ok(());
+        };
+        let author_scope = match replica_id.as_str().strip_prefix("author::") {
+            Some(pubkey) => Some(pubkey.to_string()),
+            None if replica_id.as_str().starts_with("bucket::") => {
+                match crate::BucketReplica::parse(replica_id)?.scope() {
+                    crate::BucketScope::Author { author_pubkey } => Some(author_pubkey.clone()),
+                    _ => None,
+                }
+            }
+            None => None,
+        };
+        if author_scope.is_some_and(|pubkey| pubkey != owner) {
+            return Ok(());
+        }
+        let author = author.to_string();
+        let payload = serde_json::to_vec(&kukuri_iroh_node::DocReadRecord {
+            key: key.to_string(),
+            content_len: value.len() as u64,
+            value,
+            content_hash: content_hash.to_string(),
+            docs_author: author.clone(),
+        })?;
+        cache
+            .put_owned_record(replica_id.as_str(), key, &author, &payload)
+            .await
     }
 
     pub async fn shutdown(&self) {
@@ -529,6 +588,8 @@ impl DocsSync for IrohDocsSync {
                     .await?;
                 self.supersede_legacy_entry(&doc, &legacy, key.as_str())
                     .await?;
+                self.protect_own_record(replica_id, &key, author, payload, content_hash)
+                    .await?;
                 let _ = sender.send(ReplicaNotice::Entry(DocEvent {
                     replica_id: replica_id.clone(),
                     key,
@@ -539,9 +600,11 @@ impl DocsSync for IrohDocsSync {
             }
             DocOp::SetBytes { key, value } => {
                 let content_hash = doc
-                    .set_bytes(author, key.as_bytes().to_vec(), value)
+                    .set_bytes(author, key.as_bytes().to_vec(), value.clone())
                     .await?;
                 self.supersede_legacy_entry(&doc, &legacy, key.as_str())
+                    .await?;
+                self.protect_own_record(replica_id, &key, author, value, content_hash)
                     .await?;
                 let _ = sender.send(ReplicaNotice::Entry(DocEvent {
                     replica_id: replica_id.clone(),

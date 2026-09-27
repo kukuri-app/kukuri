@@ -88,16 +88,23 @@ impl AppService {
             epoch_id,
             &serde_json::to_vec(envelope)?,
         )?;
+        let dm_id = format!("{EPOCH_CONTROL_OUTBOX_PREFIX}{}", sealed.epoch_key_id);
+        let message_id = envelope.id.as_str().to_string();
+        // #1221 R5-I: 送信待ちの保護参照で置く(ACK で外れる)。
         let stored = self
             .services
             .blob_service
-            .put_blob(sealed.encode()?, EPOCH_CONTROL_MIME)
+            .put_owned_blob(
+                sealed.encode()?,
+                EPOCH_CONTROL_MIME,
+                &format!("dm_outbox:{dm_id}/{message_id}"),
+            )
             .await?;
         self.services
             .projection_store
             .put_direct_message_outbox(DirectMessageOutboxRow {
-                dm_id: format!("{EPOCH_CONTROL_OUTBOX_PREFIX}{}", sealed.epoch_key_id),
-                message_id: envelope.id.as_str().to_string(),
+                dm_id,
+                message_id,
                 peer_pubkey: recipient.to_string(),
                 frame_blob_hash: stored.hash,
                 created_at: Utc::now().timestamp_millis(),

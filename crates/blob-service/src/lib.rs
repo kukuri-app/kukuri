@@ -50,6 +50,16 @@ pub enum BlobStatus {
 #[async_trait]
 pub trait BlobService: Send + Sync {
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+    /// 本人の書込みを、保護参照 `reference` を付けて置く(#1221 R5-I。参照を外すと保護が解ける)。
+    /// 保護所有先の無い実装は `put_blob` と同じ。
+    async fn put_owned_blob(
+        &self,
+        data: Vec<u8>,
+        mime: &str,
+        _reference: &str,
+    ) -> Result<StoredBlob> {
+        self.put_blob(data, mime).await
+    }
     /// Store verified remote content in the reclaimable cache. In-memory adapters
     /// have no separate protected store, so their default uses the ordinary write.
     async fn put_remote_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
@@ -443,10 +453,32 @@ impl BlobService for IrohBlobService {
         remote_fetch::fetch_verified_receive_offer_payload(&self.node, offer, provider).await
     }
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        let reference = format!("own_blob:{}", iroh_blobs::Hash::new(&data));
+        self.put_owned_blob(data, mime, &reference).await
+    }
+
+    async fn put_owned_blob(
+        &self,
+        data: Vec<u8>,
+        mime: &str,
+        reference: &str,
+    ) -> Result<StoredBlob> {
+        let hash = iroh_blobs::Hash::new(&data);
         let byte_len = data.len() as u64;
-        let temp_tag = self.node.blobs().blobs().add_bytes(data).await?;
+        match &self.remote_cache {
+            // #1221 R5-I: 本人の書込みは保護所有先へ直接入れる(iroh の store には置かない)。相手へは
+            // `RemoteBlobProtocol` が保護所有先から提供する。
+            Some(cache) => {
+                cache
+                    .put_owned_blob(reference, &hash.to_string(), &data)
+                    .await?
+            }
+            None => {
+                self.node.blobs().blobs().add_bytes(data).await?;
+            }
+        }
         Ok(StoredBlob {
-            hash: BlobHash::new(temp_tag.hash.to_string()),
+            hash: BlobHash::new(hash.to_string()),
             mime: mime.to_string(),
             bytes: byte_len,
         })

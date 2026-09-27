@@ -397,7 +397,7 @@ impl DesktopRuntime {
         let keys = load_or_create_keys(&db_path, identity_mode)?;
         // docs へ何かを書く前に、書き込みの名義をアカウントの docs author にする(ADR 0053 §1)。
         iroh_stack
-            .use_account_docs_author(keys.derive_docs_author_seed())
+            .use_account_docs_author(keys.derive_docs_author_seed(), keys.public_key_hex())
             .await?;
         iroh_stack
             .use_account_receive_binding(Arc::new(keys.clone()))
