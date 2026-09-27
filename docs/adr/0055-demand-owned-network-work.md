@@ -437,6 +437,12 @@ private/manifestに必要な情報だけを版付きで追加し、旧locator不
   cached peerと失敗期限は件数/bytes上限内で読み、古いendpoint世代を成功として復元しない。
 - GCは保護object/依存blobの参照を確認して最大128件ずつ進め、進捗を永続化する。
   namespaceに本人投稿があるという理由だけで全remote cacheを保護しない。
+- 保護所有先への直接の書込み（#1221 R5-I、2026-09-27）: 本人の書込みは書いたときに保護参照つきで保護所有先
+  （`remote_content_cache`の保護行と`kukuri.remote-blobs/`のfile）へ入れる。blobは`BlobService::put_owned_blob`
+  （既定の参照は`own_blob:<hash>`、送信待ちは`dm_outbox:`、DM履歴は`dm_message:`）、docs recordは`apply_doc_op`が
+  本人の書込みを`own_docs`の参照で置く（他人のauthorの領域へ置いた読み直し・hydrationの行は置かない）。60秒ごとに
+  旧領域を写す保護移行の常駐は、旧storeの移行を終えて退役させると止まる。相手への再提供は、`DocReadProtocol`
+  （新しいstoreのentryと保護所有先のrecord）と、blobのSDK提供・`RemoteBlobProtocol`（保護所有先）で行う。
 - 移行順序はCN reader → client reader/受信route/common owner → writer切替。
   readinessを確認せず新形式へ書かず、CN不使用のP2P経路も成立させる。
 - 更新案内に旧版との新着相互運用の終了を明記する。切替後に新規操作を旧形式へ二重書込みしない。

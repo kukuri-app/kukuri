@@ -108,7 +108,8 @@ pub(crate) async fn run_device_backup_restore(
         source_db.with_extension("community-node.json"),
         serde_json::to_vec(&node_config)?,
     )?;
-    let iroh_dir = source_db.with_extension("iroh-data");
+    // #1221 R5-I: node は新しい store(`iroh-store`)で動く。
+    let iroh_dir = source_db.with_extension("iroh-store");
     anyhow::ensure!(
         iroh_dir.join("endpoint-secret.json").is_file(),
         "source endpoint secret was not created"
@@ -198,7 +199,7 @@ pub(crate) async fn run_device_backup_restore(
     anyhow::ensure!(result.frontend_state == frontend_state);
     anyhow::ensure!(
         !restored_db
-            .with_extension("iroh-data")
+            .with_extension("iroh-store")
             .join("endpoint-secret.json")
             .exists(),
         "device-bound endpoint secret was restored"
