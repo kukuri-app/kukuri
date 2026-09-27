@@ -83,30 +83,60 @@ export const DEFAULT_SYNC_STATUS: SyncStatus = {
   pending_events: 0,
   status_detail: '',
   last_error: null,
-  configured_peers: [],
+  configured_peer_count: 0,
   subscribed_topics: [],
   active_path: 'direct_p2p',
-  fallback_peer_ids: [],
+  fallback_peer_count: 0,
   topic_diagnostics: [],
   local_author_pubkey: '',
   discovery: {
     mode: 'seeded_dht',
     connect_mode: 'direct_only',
     active_path: 'direct_p2p',
-    fallback_peer_ids: [],
     env_locked: false,
-    configured_seed_peer_ids: [],
-    bootstrap_seed_peer_ids: [],
-    manual_ticket_peer_ids: [],
-    connected_peer_ids: [],
-    docs_assist_peer_ids: [],
-    blob_assist_peer_ids: [],
+    configured_seed_peer_count: 0,
+    bootstrap_seed_peer_count: 0,
+    connected_peer_count: 0,
+    docs_assist_peer_count: 0,
+    blob_assist_peer_count: 0,
     local_endpoint_id: '',
     last_discovery_error: null,
   },
   gossip_disabled_topics: [],
   gossip_disabled_channels: [],
 };
+
+// 差分の event を適用する(#1221 R2-D)。`delta.topic_diagnostics` は変わった topic だけを持つ。
+export function applySyncStatusDelta(
+  current: SyncStatus,
+  delta: SyncStatus,
+  removedTopics: string[]
+): SyncStatus {
+  const replaced = new Set([...removedTopics, ...delta.topic_diagnostics.map((topic) => topic.topic)]);
+  return {
+    ...delta,
+    topic_diagnostics: [
+      ...current.topic_diagnostics.filter((topic) => !replaced.has(topic.topic)),
+      ...delta.topic_diagnostics,
+    ].sort((left, right) => left.topic.localeCompare(right.topic)),
+  };
+}
+
+// 読み直した状態へ、読む間に差分で変わった topic と件数を重ねる。
+export function mergePulledSyncStatus(
+  pulled: SyncStatus,
+  baseline: SyncStatus,
+  current: SyncStatus
+): SyncStatus {
+  if (current === baseline) return pulled;
+  const before = new Map(baseline.topic_diagnostics.map((topic) => [topic.topic, topic]));
+  const kept = new Set(current.topic_diagnostics.map((topic) => topic.topic));
+  return applySyncStatusDelta(
+    pulled,
+    { ...current, topic_diagnostics: current.topic_diagnostics.filter((topic) => before.get(topic.topic) !== topic) },
+    [...before.keys()].filter((topic) => !kept.has(topic))
+  );
+}
 
 export function createInitialConnectivitySlice(): ConnectivitySliceState {
   return {

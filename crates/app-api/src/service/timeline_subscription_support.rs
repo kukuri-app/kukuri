@@ -66,7 +66,7 @@ impl AppService {
             projection_row_from_post(&post, content),
         )
         .await?;
-        *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(())
     }
 

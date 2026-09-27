@@ -227,6 +227,32 @@ policyとconsentのGET、全nodeの合成と全topicへのjoin、30秒不健全�
   `repair_community_node_connectivity`、全ready nodeのforce refresh、forceの全体再適用・作り直し、
   `reapply_community_node_connectivity`（本番の呼出しなし）、再接続の状態とguard、前回の適用状態と版。
 
+### 3.2 通信状態の集計・表示（R2-D、2026-09-27）
+
+2026-09-27のユーザー決定「R2-D 通信状態の表示」に従う。旧来の3秒ごとの全体の作り直し（desktop-runtimeの
+`sync_status_observer`が`get_sync_status`と全CNの状態を作り、前回値と全体を等値比較する）は、次の形へ置き換えた。
+`sync_status_observer.rs`にあったWP-B13のDecision（3秒pullの恒久採用）は失効した。
+
+- **通常の状態は件数と稼働中のtopic**: `get_sync_status`は、件数（接続中・設定済み・seed・補助の数）と、
+  稼働中のtopic（leaseの64件と短期の送信先16件）の診断だけを返す。transportとapp-apiが保持している状態から作り、
+  seed・台帳・SQLite・keyringを読まず、取得の候補のcursor（`account_cursor`・`fetch_cursor`）を進めない。
+  gossipの停止は、保存済みの設定を全件、手元の集合から返す（2026-09-27ユーザー判断。列を開いていないtopicの停止も
+  表示する）。設定が履歴とともに増えないよう、topicをやめる（`unsubscribe_topic`）とそのtopicとchannelの停止設定を消す。
+- **補助のpeer**: docs・blobの補助は、取得の成功を観測し、待機中でも切断中でもないpeer（`preferred`、最大2件）とする。
+  `remote_info`の`Active`（保持中のpath）では数えない。docsの読取りは成功したproviderを記録する。
+  未確認（neighborが無い）・延期（CNの再試行中など）は、Live・DurableReady・Readyとして表示しない。
+- **peerの一覧はページ**: 設定済み・接続中・不足・docs/blobの補助・取り込んだticket・seedの一覧は、設定画面の詳細を
+  開いたときだけ`list_connectivity_peers { kind, topic, cursor, limit }`で、idの順に1回64件まで読む。
+- **変化点での差分**: transport（topicの購読・neighborの成立と喪失・受信・受信taskの失敗・discoveryの設定）、
+  app-api（同期の時刻・docsの活動）、CNのsessionの書込みが、変わった所に印（`StatusChanges`）を付ける。
+  observerは印が付くまで待ち、印の付いたtopicとnodeだけを作り直して差分のevent（件数、変わったtopic、抜けたtopic、
+  変わったnode、外したnode）を送る。変化の無い間は仕事をしない。同じ種類の頻繁な変化（受信の時刻・`last_sync_ts`）は
+  1秒に1回までにまとめる。印は読み手が待ち始めてから溜め、256件を超えたら全体の作り直しの印にまとめる。
+- **後から購読した側**: hostは最新のeventを保持して再送しない。frontendは表示の開始時と60秒ごとに状態を読み直し
+  （pushの取りこぼしの補い）、読む間に届いた差分を重ねる。
+- 撤去: 3秒ごとの全体のpullと全体の等値比較、hostの最新eventの再送、状態の表示を流用した読取り
+  （投稿のたびの全体の状態・private channelの退出での全peer・rendezvousの更新での全peer・背景通知の公開鍵）。
+
 ### 実装前に固定する境界と負例
 
 #1221の固定head監査では、登録中のcancel、旧世代の遅い終了、権限確認後の別helperによる保存、
@@ -504,7 +530,7 @@ quiet/read/self/種類設定と成人向けpreview gateを従来どおりOS表�
 
 以下のtest名は追加予定のcontract識別子であり、成功済みの証拠ではない。
 inventoryの各行から同じ契約へ接続し、差分を実装する段階で実test名と証跡を記録する。
-NW-5・NW-6はR2-B（§3.1）で実試験へ接続した（表の試験名）。
+NW-5・NW-6はR2-B（§3.1）で、NW-11はR2-D（§3.2）で実試験へ接続した（表の試験名）。
 
 | ID | sequence | 許可/禁止する結果 | contract |
 | --- | --- | --- | --- |
@@ -518,6 +544,7 @@ NW-5・NW-6はR2-B（§3.1）で実試験へ接続した（表の試験名）。
 | NW-8 | 非表示topic通知、offline旧DM、同一sourceの重複受信、endpoint更新、CNなし | 署名bindingで到達、outboxの新輸送先/ACK維持、二重toast 0 | `account_receive_preserves_scope` |
 | NW-9 | private参照を公開routeで受信、未許可epoch/偽署名、非表示中のrotation | 秘密metadata露出0、不許可provider取得0、旧epoch grantからのみ更新 | `sealed_receive_requires_scope` |
 | NW-10 | 移行各段階の中断/restart/restore/rollback | 保護データ保持、冪等再開、旧常時同期0 | CN/client移行contract |
+| NW-11 | 休止したtopic・peer・seed・gossip停止の設定・CNのnodeを10倍、変化なし／1件の変化、状態の読取り | 変化なしのevent 0・読取り0、1変化は差分1件で大きさ不変、読取りはSQLite 0・仕事不変、候補のcursorを進めない、未確認・延期を成功にしない、詳細のページは全件を1回ずつ64件以内 | desktop-runtime `status_push_work_does_not_grow_with_dormant_history`・`sync_status_events_carry_only_the_changed_parts_and_stop_on_shutdown`・`frequent_changes_are_pushed_at_most_once_per_second`、transport `status_read_work_does_not_grow_with_dormant_history`・`peer_pages_return_every_peer_once_within_the_limit`・`topic_changes_mark_only_the_changed_topic`・`status_reads_do_not_advance_candidate_cursors`、app-api `status_read_does_not_touch_sqlite_or_grow_with_history`・`connectivity_peer_pages_cover_every_peer_once` |
 
 P3では表示→受付→接続/取得→停止を先に一往復させ、同じ契約で旧管理経路を順次撤去する。
 P4でwriter/private/CN/保存の切替を完成する。各段階は登録件数10倍に対する処理回数をassertする。

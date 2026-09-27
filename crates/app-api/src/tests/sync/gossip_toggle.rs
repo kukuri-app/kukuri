@@ -67,7 +67,6 @@ async fn get_sync_status_reports_disabled_channels() {
     app.set_channel_gossip_enabled(topic, channel, false)
         .await
         .expect("disable channel gossip");
-
     let status = app.get_sync_status().await.expect("sync status");
     assert_eq!(
         status.gossip_disabled_channels,

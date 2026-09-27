@@ -231,53 +231,69 @@ async fn discovery_status_separates_bootstrap_seed_peers_from_manual_tickets() {
     let app = AppService::new(store, transport);
 
     let discovery = app.get_discovery_status().await.expect("discovery status");
-
-    assert_eq!(
-        discovery.configured_seed_peer_ids,
-        vec!["configured-peer".to_string()]
-    );
-    assert_eq!(
-        discovery.bootstrap_seed_peer_ids,
-        vec!["bootstrap-peer".to_string()]
-    );
-    assert_eq!(
-        discovery.manual_ticket_peer_ids,
-        vec!["manual-ticket-peer".to_string()]
-    );
-    assert!(discovery.docs_assist_peer_ids.is_empty());
-    assert!(discovery.blob_assist_peer_ids.is_empty());
+    assert_eq!(discovery.configured_seed_peer_count, 1);
+    assert_eq!(discovery.bootstrap_seed_peer_count, 1);
+    assert_eq!(discovery.docs_assist_peer_count, 0);
+    assert_eq!(discovery.blob_assist_peer_count, 0);
+    for (kind, expected) in [
+        (
+            ConnectivityPeerKind::ConfiguredSeed,
+            vec!["configured-peer"],
+        ),
+        (ConnectivityPeerKind::BootstrapSeed, vec!["bootstrap-peer"]),
+        (
+            ConnectivityPeerKind::ManualTicket,
+            vec!["manual-ticket-peer"],
+        ),
+        (ConnectivityPeerKind::DocsAssist, vec![]),
+    ] {
+        assert_eq!(
+            peer_ids(&app, kind, None).await,
+            expected,
+            "{kind:?} is listed on its own page"
+        );
+    }
 }
 
+async fn peer_ids(
+    app: &AppService,
+    kind: ConnectivityPeerKind,
+    topic: Option<&str>,
+) -> Vec<String> {
+    app.list_connectivity_peers(ConnectivityPeersRequest {
+        kind,
+        topic: topic.map(str::to_string),
+        cursor: None,
+        limit: None,
+    })
+    .await
+    .expect("peer page")
+    .peer_ids
+}
+
+fn relay_assisted_snapshot(configured: usize) -> PeerSnapshot {
+    PeerSnapshot {
+        configured_peer_count: configured,
+        subscribed_topics: vec!["kukuri:topic:relay-assisted".into()],
+        status_detail: "No peers configured".into(),
+        topic_diagnostics: vec![TopicPeerSnapshot {
+            topic: "kukuri:topic:relay-assisted".into(),
+            configured_peer_count: configured,
+            missing_peer_count: configured,
+            status_detail: "No peers configured".into(),
+            ..TopicPeerSnapshot::default()
+        }],
+        ..PeerSnapshot::default()
+    }
+}
+
+/// 未確認(neighbor の無い topic、docs の補助はあるが取得の活動が無い)は、成功(Live・DurableReady)として
+/// 表示しない(#1221 R2-D AC-1・AC-6)。
 #[tokio::test]
 async fn docs_assisted_peers_do_not_mark_live_sync_connected() {
     let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot {
-        connected: false,
-        peer_count: 0,
-        connected_peers: Vec::new(),
-        configured_peers: vec!["peer-a".into(), "peer-b".into()],
-        subscribed_topics: vec!["kukuri:topic:relay-assisted".into()],
-        active_path: Default::default(),
-        fallback_peer_ids: Vec::new(),
-        pending_events: 0,
-        status_detail: "No peers configured".into(),
-        last_error: None,
-        topic_diagnostics: vec![TopicPeerSnapshot {
-            topic: "kukuri:topic:relay-assisted".into(),
-            joined: false,
-            peer_count: 0,
-            connected_peers: Vec::new(),
-            configured_peer_ids: vec!["peer-a".into(), "peer-b".into()],
-            missing_peer_ids: vec!["peer-a".into(), "peer-b".into()],
-            active_path: Default::default(),
-            rendezvous_peer_ids: Vec::new(),
-            fallback_peer_ids: Vec::new(),
-            last_received_at: None,
-            status_detail: "No peers configured".into(),
-            last_error: None,
-        }],
-    }));
-    let docs_sync = Arc::new(AssistedDocsSync::new(vec!["peer-a", "peer-b"]));
+    let transport = Arc::new(StaticTransport::new(relay_assisted_snapshot(2)));
+    let docs_sync = Arc::new(AssistedDocsSync::new(vec!["peer-b", "peer-a"]));
     let blob_service = Arc::new(AssistedBlobService::new(vec!["peer-b", "peer-c"]));
     let app = app_service_from_dependencies(
         store.clone(),
@@ -298,12 +314,14 @@ async fn docs_assisted_peers_do_not_mark_live_sync_connected() {
         status.status_detail,
         "docs-assisted recovery is in progress via 2 peer(s); live topic delivery is unavailable"
     );
+    assert_eq!(status.discovery.docs_assist_peer_count, 2);
+    assert_eq!(status.discovery.blob_assist_peer_count, 2);
     assert_eq!(
-        status.discovery.docs_assist_peer_ids,
+        peer_ids(&app, ConnectivityPeerKind::DocsAssist, None).await,
         vec!["peer-a".to_string(), "peer-b".to_string()]
     );
     assert_eq!(
-        status.discovery.blob_assist_peer_ids,
+        peer_ids(&app, ConnectivityPeerKind::BlobAssist, None).await,
         vec!["peer-b".to_string(), "peer-c".to_string()]
     );
     assert_eq!(status.topic_diagnostics.len(), 1);
@@ -313,10 +331,7 @@ async fn docs_assisted_peers_do_not_mark_live_sync_connected() {
         DeliveryState::DurableRecovering
     );
     assert_eq!(status.topic_diagnostics[0].peer_count, 0);
-    assert_eq!(
-        status.topic_diagnostics[0].docs_assist_peer_ids,
-        vec!["peer-a".to_string(), "peer-b".to_string()]
-    );
+    assert_eq!(status.topic_diagnostics[0].missing_peer_count, 2);
     assert_eq!(
         status.topic_diagnostics[0].status_detail,
         "docs-assisted recovery is in progress via 2 peer(s); live topic delivery is unavailable"
@@ -326,32 +341,7 @@ async fn docs_assisted_peers_do_not_mark_live_sync_connected() {
 #[tokio::test]
 async fn blob_only_assist_peers_do_not_mark_sync_healthy() {
     let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(StaticTransport::new(PeerSnapshot {
-        connected: false,
-        peer_count: 0,
-        connected_peers: Vec::new(),
-        configured_peers: vec!["peer-a".into()],
-        subscribed_topics: vec!["kukuri:topic:relay-assisted".into()],
-        active_path: Default::default(),
-        fallback_peer_ids: Vec::new(),
-        pending_events: 0,
-        status_detail: "No peers configured".into(),
-        last_error: None,
-        topic_diagnostics: vec![TopicPeerSnapshot {
-            topic: "kukuri:topic:relay-assisted".into(),
-            joined: false,
-            peer_count: 0,
-            connected_peers: Vec::new(),
-            configured_peer_ids: vec!["peer-a".into()],
-            missing_peer_ids: vec!["peer-a".into()],
-            active_path: Default::default(),
-            rendezvous_peer_ids: Vec::new(),
-            fallback_peer_ids: Vec::new(),
-            last_received_at: None,
-            status_detail: "No peers configured".into(),
-            last_error: None,
-        }],
-    }));
+    let transport = Arc::new(StaticTransport::new(relay_assisted_snapshot(1)));
     let app = app_service_from_dependencies(
         store.clone(),
         store,
@@ -368,11 +358,8 @@ async fn blob_only_assist_peers_do_not_mark_sync_healthy() {
     assert_eq!(status.delivery_state, DeliveryState::Offline);
     assert_eq!(status.peer_count, 0);
     assert_eq!(status.status_detail, "No peers configured");
-    assert!(status.discovery.docs_assist_peer_ids.is_empty());
-    assert_eq!(
-        status.discovery.blob_assist_peer_ids,
-        vec!["peer-b".to_string()]
-    );
+    assert_eq!(status.discovery.docs_assist_peer_count, 0);
+    assert_eq!(status.discovery.blob_assist_peer_count, 1);
     assert_eq!(status.topic_diagnostics.len(), 1);
     assert!(!status.topic_diagnostics[0].joined);
     assert_eq!(
@@ -380,9 +367,195 @@ async fn blob_only_assist_peers_do_not_mark_sync_healthy() {
         DeliveryState::Offline
     );
     assert_eq!(status.topic_diagnostics[0].peer_count, 0);
-    assert!(status.topic_diagnostics[0].docs_assist_peer_ids.is_empty());
     assert_eq!(
         status.topic_diagnostics[0].status_detail,
         "No peers configured"
     );
+}
+
+/// #1221 R2-D: gossip の停止設定は、列を開いていない topic の分も状態に載る(手元の集合から作る)。
+/// topic をやめると、その topic と channel の停止設定が消える。再開でも消える。
+#[tokio::test]
+async fn gossip_disabled_settings_are_listed_and_forgotten_with_the_topic() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
+    let app = AppService::new(store, transport);
+    let (closed, other) = ("kukuri:topic:not-open", "kukuri:topic:other");
+    for topic in [closed, other] {
+        app.set_topic_gossip_enabled(topic, false)
+            .await
+            .expect("disable");
+        app.set_channel_gossip_enabled(topic, "channel", false)
+            .await
+            .expect("disable channel");
+    }
+    let status = app.get_sync_status().await.expect("status");
+    assert_eq!(status.gossip_disabled_topics, vec![closed, other]);
+    assert_eq!(
+        status.gossip_disabled_channels,
+        vec![format!("{closed}::channel"), format!("{other}::channel")]
+    );
+
+    app.unsubscribe_topic(closed)
+        .await
+        .expect("remove the topic");
+    let status = app.get_sync_status().await.expect("status");
+    assert_eq!(status.gossip_disabled_topics, vec![other]);
+    assert_eq!(
+        status.gossip_disabled_channels,
+        vec![format!("{other}::channel")]
+    );
+    app.set_topic_gossip_enabled(other, true)
+        .await
+        .expect("enable");
+    assert!(
+        app.get_sync_status()
+            .await
+            .expect("status")
+            .gossip_disabled_topics
+            .is_empty()
+    );
+}
+
+/// #1221 R2-D AC-3: 詳細のページは、重複も欠落も無く全件を返し、1 回は上限(64)以内。
+#[tokio::test]
+async fn connectivity_peer_pages_cover_every_peer_once() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
+    let seeds = (0..150)
+        .map(|index| SeedPeer {
+            endpoint_id: format!("seed-{index:03}"),
+            addr_hint: None,
+        })
+        .collect::<Vec<_>>();
+    transport
+        .configure_discovery(DiscoveryMode::StaticPeer, false, seeds, Vec::new())
+        .await
+        .expect("seeds");
+    let app = AppService::new(store, transport);
+    for limit in [None, Some(1_000), Some(7)] {
+        let mut cursor = None;
+        let mut seen = Vec::new();
+        loop {
+            let page = app
+                .list_connectivity_peers(ConnectivityPeersRequest {
+                    kind: ConnectivityPeerKind::ConfiguredSeed,
+                    topic: None,
+                    cursor: cursor.clone(),
+                    limit,
+                })
+                .await
+                .expect("page");
+            assert!(page.peer_ids.len() <= limit.unwrap_or(64).min(CONNECTIVITY_PEER_PAGE_LIMIT));
+            seen.extend(page.peer_ids);
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let expected = (0..150)
+            .map(|index| format!("seed-{index:03}"))
+            .collect::<Vec<_>>();
+        assert_eq!(seen, expected, "limit {limit:?}");
+    }
+}
+
+/// #1221 R2-D AC-4: 差分は印の付いた topic だけを持ち、抜けた topic を別に返す。
+#[tokio::test]
+async fn sync_status_delta_keeps_only_marked_topics() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
+    let app = AppService::new(store, transport);
+    for topic in ["kukuri:topic:a", "kukuri:topic:b"] {
+        display_topic(&app, topic).await.expect("open");
+    }
+    let keys = BTreeSet::from([
+        StatusKey::Summary,
+        StatusKey::Topic("hint/kukuri:topic:b".into()),
+        StatusKey::Topic("hint/kukuri:topic:gone".into()),
+    ]);
+    let (status, removed) = app.sync_status_delta(Some(&keys)).await.expect("delta");
+    assert_eq!(
+        status
+            .topic_diagnostics
+            .iter()
+            .map(|topic| topic.topic.as_str())
+            .collect::<Vec<_>>(),
+        vec!["kukuri:topic:b"]
+    );
+    assert_eq!(removed, vec!["kukuri:topic:gone".to_string()]);
+    assert_eq!(
+        status.subscribed_topics.len(),
+        2,
+        "the summary keeps the counts"
+    );
+}
+
+/// #1221 R2-D AC-1・AC-6: 状態の読取りは SQLite を読まない。休止した topic・gossip を止めた設定・seed を
+/// 10 倍にしても、返す topic の数は稼働中の分のまま。
+#[tokio::test]
+async fn status_read_does_not_touch_sqlite_or_grow_with_history() {
+    let steps = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let store = Arc::new(
+        kukuri_store::SqliteStore::connect_memory_counting_vm_steps(steps.clone())
+            .await
+            .expect("store"),
+    );
+    let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
+    let app = AppService::new(store, transport.clone());
+    display_topic(&app, "kukuri:topic:leased")
+        .await
+        .expect("leased");
+    let mut dormant = 0;
+    let mut add_history = async |count: usize| {
+        for _ in 0..count {
+            let topic = format!("kukuri:topic:dormant-{dormant}");
+            display_topic(&app, &topic).await.expect("dormant");
+            app.set_scope_display(crate::ScopeDisplayRequest {
+                observer: format!("test-topic:{topic}"),
+                target: crate::ScopeDisplayTarget::Timeline {
+                    topic: topic.clone(),
+                    scope: TimelineScope::Public,
+                },
+                visible: false,
+            })
+            .await
+            .expect("close dormant");
+            app.set_topic_gossip_enabled(&topic, false)
+                .await
+                .expect("disable dormant");
+            // 一覧から削除した topic(停止設定の履歴は topic とともに消える)。
+            app.unsubscribe_topic(&topic).await.expect("remove dormant");
+            dormant += 1;
+        }
+        let seeds = (0..dormant * 10)
+            .map(|index| SeedPeer {
+                endpoint_id: format!("seed-{index}"),
+                addr_hint: None,
+            })
+            .collect::<Vec<_>>();
+        transport
+            .configure_discovery(DiscoveryMode::StaticPeer, false, seeds, Vec::new())
+            .await
+            .expect("seeds");
+    };
+    let measure = async || {
+        let before = steps.load(std::sync::atomic::Ordering::Relaxed);
+        let status = app.get_sync_status().await.expect("status");
+        assert_eq!(
+            steps.load(std::sync::atomic::Ordering::Relaxed),
+            before,
+            "no SQLite read"
+        );
+        (
+            status.topic_diagnostics.len(),
+            status.subscribed_topics.len(),
+            status.gossip_disabled_topics.len(),
+        )
+    };
+    add_history(1).await;
+    let once = measure().await;
+    add_history(9).await;
+    assert_eq!(once, (1, 1, 0));
+    assert_eq!(measure().await, once);
 }

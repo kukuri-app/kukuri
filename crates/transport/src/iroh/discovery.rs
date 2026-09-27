@@ -92,36 +92,25 @@ impl IrohGossipTransport {
             self.candidates_added.send_modify(|version| *version += 1);
         }
         *self.last_error.lock().await = None;
+        self.status_changes.mark(StatusKey::Summary);
         Ok(())
     }
 
+    /// 件数だけを返す。seed・取り込んだ ticket の一覧は詳細のページで読む(#1221 R2-D)。
     pub(crate) async fn transport_discovery_impl(&self) -> Result<DiscoverySnapshot> {
-        let configured_seed_peer_ids = self.configured_seed_peer_ids().await;
-        let bootstrap_seed_peer_ids = self.bootstrap_seed_peer_ids().await;
-        let manual_ticket_peer_ids = if let Some(store) = &self.account_store {
-            store
-                .peer_candidate_window("gossip", "imported", None, 4, Utc::now().timestamp_millis())
-                .await?
-                .into_iter()
-                .map(|(id, _, _)| id)
-                .collect()
-        } else {
-            self.imported_peers.lock().await.keys().cloned().collect()
-        };
+        let bootstrap_seed_peer_count = self.bootstrap_seed_peers.lock().await.len();
         Ok(DiscoverySnapshot {
             mode: self.discovery_mode.lock().await.clone(),
             connect_mode: self.connect_mode.lock().await.clone(),
-            active_path: if bootstrap_seed_peer_ids.is_empty() {
+            active_path: if bootstrap_seed_peer_count == 0 {
                 ConnectionPath::DirectP2p
             } else {
                 ConnectionPath::RelaySupportedP2p
             },
-            fallback_peer_ids: Vec::new(),
             env_locked: *self.env_locked.lock().await,
-            configured_seed_peer_ids,
-            bootstrap_seed_peer_ids,
-            manual_ticket_peer_ids,
-            connected_peer_ids: self.connected_peer_ids().await,
+            configured_seed_peer_count: self.configured_seed_peers.lock().await.len(),
+            bootstrap_seed_peer_count,
+            connected_peer_count: self.connected_peer_count().await,
             local_endpoint_id: self.endpoint.id().to_string(),
             last_discovery_error: self.last_error.lock().await.clone(),
         })

@@ -426,10 +426,11 @@ impl DesktopRuntime {
         base_url: &str,
         access_token: &str,
     ) -> std::result::Result<(), CommunityNodeRequestError> {
-        let snapshot = self
+        // 購読している topic だけを読む(通信状態の全体は作らない。#1221 R2-D)。
+        let subscribed_topics = self
             .iroh_stack
             .transport
-            .peers()
+            .subscribed_topics()
             .await
             .map_err(CommunityNodeRequestError::Other)?;
         let private_topic_keys = self.app_service.private_channel_rendezvous_keys().await;
@@ -438,7 +439,7 @@ impl DesktopRuntime {
         // rendezvous の鍵 → 購読している topic。応答の peer は、その topic だけへ join する(#1221 R2-B)。
         let mut topic_keys = std::collections::BTreeMap::new();
         let mut skipped_private_topics = 0usize;
-        for topic in &snapshot.subscribed_topics {
+        for topic in &subscribed_topics {
             if topic == account_receive_route.as_str() {
                 continue;
             }

@@ -17,7 +17,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1166,
+      "lines": 1167,
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
@@ -77,16 +77,8 @@
       "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
-      "lines": 1016,
-      "path": "apps/desktop/src/shell/presentation.test.ts"
-    },
-    {
       "lines": 1000,
       "path": "apps/desktop/tests/playwright/shell.smoke.spec.ts"
-    },
-    {
-      "lines": 1000,
-      "path": "crates/desktop-runtime/src/tests/community_node/metadata.rs"
     }
   ]
 }

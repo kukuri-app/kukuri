@@ -162,11 +162,15 @@ async fn restart_restores_seeded_dht_config_and_endpoint_identity() {
     assert_eq!(status_a.discovery.local_endpoint_id, endpoint_a);
     assert_eq!(status_b.discovery.local_endpoint_id, endpoint_b);
     assert_eq!(
-        status_a.discovery.configured_seed_peer_ids,
+        restarted_a
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ConfiguredSeed)
+            .await,
         vec![endpoint_b]
     );
     assert_eq!(
-        status_b.discovery.configured_seed_peer_ids,
+        restarted_b
+            .connectivity_peer_ids(kukuri_transport::ConnectivityPeerKind::ConfiguredSeed)
+            .await,
         vec![endpoint_a]
     );
     assert!(status_a.subscribed_topics.iter().any(|item| item == topic));

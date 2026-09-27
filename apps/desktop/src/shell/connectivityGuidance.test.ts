@@ -15,7 +15,7 @@ for (const locale of ['ja', 'en', 'zh-CN']) {
         await i18n.changeLanguage(locale);
         const base = await createDesktopMockApi().getSyncStatus();
         const sync = { ...base, connected: delivery === 'Live', peer_count: delivery === 'Live' ? 1 : 0,
-          active_path: path, delivery_state: delivery, last_error: timeout, configured_peers: ['candidate'] };
+          active_path: path, delivery_state: delivery, last_error: timeout, configured_peer_count: 1 };
         const before = JSON.stringify(sync);
         const view = connectivityGuidance(sync, ready, t);
         const state = { Live: 'live', DurableReady: 'durable', DurableRecovering: 'recovering', Offline: 'offline' }[delivery];
@@ -53,7 +53,7 @@ test('stale and unavailable reads do not pretend to be an unused topic', async (
 
 test('discovery does not inherit the live topic result and unknown errors retain a neutral explanation', async () => {
   const sync = await createDesktopMockApi().getSyncStatus();
-  sync.discovery.connected_peer_ids = [];
+  sync.discovery.connected_peer_count = 0;
   sync.discovery.last_discovery_error = 'do not translate <raw> failure';
   const view = discoveryGuidance(sync, ready, t);
   expect(view.label).toBe('Waiting for discovery connections');

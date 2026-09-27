@@ -150,7 +150,6 @@ pub struct ClientHost {
     runtime: RwLock<Arc<DesktopRuntime>>,
     app_data_dir: PathBuf,
     events: broadcast::Sender<RuntimeEvent>,
-    event_state: Arc<std::sync::Mutex<ClientEventState>>,
     event_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     operation_guard: tokio::sync::Mutex<()>,
     shutdown_guard: tokio::sync::Mutex<()>,
@@ -162,25 +161,9 @@ pub enum ClientHostStart {
     ConsentRequired(ClientStartupStatus),
 }
 
-#[derive(Default)]
-struct ClientEventState {
-    latest_sync_status: Option<RuntimeEvent>,
-}
-
-/// 新規購読者には直近のsync状態を一度再送し、その後のeventをbroadcastで配信する。
-pub struct ClientEventReceiver {
-    initial: Option<RuntimeEvent>,
-    receiver: broadcast::Receiver<RuntimeEvent>,
-}
-
-impl ClientEventReceiver {
-    pub async fn recv(&mut self) -> Result<RuntimeEvent, broadcast::error::RecvError> {
-        if let Some(initial) = self.initial.take() {
-            return Ok(initial);
-        }
-        self.receiver.recv().await
-    }
-}
+/// 購読した後の event を受け取る。通信状態は差分の event なので再送しない。購読した側は、状態を読み直してから
+/// 差分を適用する(#1221 R2-D)。
+pub type ClientEventReceiver = broadcast::Receiver<RuntimeEvent>;
 
 impl ClientHost {
     pub async fn start_if_consented(
@@ -218,7 +201,6 @@ impl ClientHost {
             runtime: RwLock::new(runtime.clone()),
             app_data_dir,
             events,
-            event_state: Arc::new(std::sync::Mutex::new(ClientEventState::default())),
             event_task: tokio::sync::Mutex::new(None),
             operation_guard: tokio::sync::Mutex::new(()),
             shutdown_guard: tokio::sync::Mutex::new(()),
@@ -257,7 +239,7 @@ impl ClientHost {
     }
 
     pub fn subscribe_events(&self) -> ClientEventReceiver {
-        subscribe_host_events(&self.events, &self.event_state)
+        self.events.subscribe()
     }
 
     pub async fn replace_runtime(
@@ -446,16 +428,15 @@ impl ClientHost {
         }
         let mut events = runtime.subscribe_events();
         let sender = self.events.clone();
-        let event_state = self.event_state.clone();
         *task = Some(tokio::spawn(async move {
             loop {
                 match events.recv().await {
-                    Ok(event) => forward_host_event(&sender, &event_state, event),
-                    Err(broadcast::error::RecvError::Lagged(_)) => forward_host_event(
-                        &sender,
-                        &event_state,
-                        RuntimeEvent::AdultMediaLabelEvicted { hash: None },
-                    ),
+                    Ok(event) => {
+                        let _ = sender.send(event);
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -493,32 +474,6 @@ impl ClientHost {
     }
 }
 
-fn subscribe_host_events(
-    sender: &broadcast::Sender<RuntimeEvent>,
-    event_state: &std::sync::Mutex<ClientEventState>,
-) -> ClientEventReceiver {
-    let state = event_state
-        .lock()
-        .expect("client event state lock poisoned");
-    let receiver = sender.subscribe();
-    let initial = state.latest_sync_status.clone();
-    ClientEventReceiver { initial, receiver }
-}
-
-fn forward_host_event(
-    sender: &broadcast::Sender<RuntimeEvent>,
-    event_state: &std::sync::Mutex<ClientEventState>,
-    event: RuntimeEvent,
-) {
-    let mut state = event_state
-        .lock()
-        .expect("client event state lock poisoned");
-    if matches!(event, RuntimeEvent::SyncStatusChanged { .. }) {
-        state.latest_sync_status = Some(event.clone());
-    }
-    let _ = sender.send(event);
-}
-
 pub fn distribution_community_node_config() -> Result<CommunityNodeConfig, serde_json::Error> {
     serde_json::from_str(include_str!(
         "../../../../apps/desktop/src-tauri/distribution/community-nodes.json"
@@ -528,31 +483,6 @@ pub fn distribution_community_node_config() -> Result<CommunityNodeConfig, serde
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn late_subscriber_receives_latest_sync_status_once() {
-        let (sender, _) = broadcast::channel(4);
-        let event_state = std::sync::Mutex::new(ClientEventState::default());
-        forward_host_event(
-            &sender,
-            &event_state,
-            RuntimeEvent::SyncStatusChanged {
-                sync_status: None,
-                community_node_statuses: None,
-            },
-        );
-
-        let mut receiver = subscribe_host_events(&sender, &event_state);
-        assert!(matches!(
-            receiver.recv().await,
-            Ok(RuntimeEvent::SyncStatusChanged { .. })
-        ));
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(10), receiver.recv())
-                .await
-                .is_err()
-        );
-    }
 
     #[tokio::test]
     async fn consent_gate_does_not_initialize_account_or_runtime() {

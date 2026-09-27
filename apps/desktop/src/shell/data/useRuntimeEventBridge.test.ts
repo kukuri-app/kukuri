@@ -56,22 +56,24 @@ describe('useRuntimeEventBridge', () => {
     capturedCallback?.({ payload: { type: 'notification_status_changed' } });
     expect(onNotificationStatusChanged).toHaveBeenCalledTimes(1);
 
-    capturedCallback?.({
-      payload: {
-        type: 'sync_status_changed',
-        sync_status: syncStatus,
-        community_node_statuses: null,
-      },
-    });
-    capturedCallback?.({
-      payload: {
-        type: 'sync_status_changed',
-        sync_status: null,
-        community_node_statuses: communityNodeStatuses,
-      },
-    });
-    expect(onSyncStatusChanged).toHaveBeenNthCalledWith(1, syncStatus, null);
-    expect(onSyncStatusChanged).toHaveBeenNthCalledWith(2, null, communityNodeStatuses);
+    const statusDelta = {
+      type: 'sync_status_changed' as const,
+      sync_status: syncStatus,
+      removed_topics: ['kukuri:topic:gone'],
+      community_node_statuses: [],
+      removed_community_nodes: [],
+    };
+    const nodeDelta = {
+      type: 'sync_status_changed' as const,
+      sync_status: null,
+      removed_topics: [],
+      community_node_statuses: communityNodeStatuses,
+      removed_community_nodes: ['https://gone.example'],
+    };
+    capturedCallback?.({ payload: statusDelta });
+    capturedCallback?.({ payload: nodeDelta });
+    expect(onSyncStatusChanged).toHaveBeenNthCalledWith(1, statusDelta);
+    expect(onSyncStatusChanged).toHaveBeenNthCalledWith(2, nodeDelta);
     capturedCallback?.({ payload: { type: 'adult_media_label_evicted', hash: 'hash-1' } });
     capturedCallback?.({ payload: { type: 'adult_media_label_evicted', hash: null } });
     expect(onAdultMediaLabelEvicted).toHaveBeenNthCalledWith(1, 'hash-1');

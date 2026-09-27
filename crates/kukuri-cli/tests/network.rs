@@ -60,7 +60,14 @@ async fn network_commands_preserve_identity_and_subscription_changes_after_resta
             .expect("topics")
             .contains(&json!(topic))
     );
+    // #1221 R2-D: 通常の状態は件数だけを持ち、peer の一覧は詳細のページで読む。
+    assert!(before["configured_peer_count"].is_u64());
+    assert!(before.get("configured_peers").is_none());
     for (command, payload) in [
+        (
+            "list_connectivity_peers",
+            json!({"kind": "configured_seed", "limit": 64}),
+        ),
         ("get_discovery_config", json!({})),
         ("get_local_peer_ticket", json!({})),
         (

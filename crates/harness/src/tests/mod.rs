@@ -45,35 +45,30 @@ fn sync_status_with_topic(
         pending_events: 0,
         status_detail: "test".to_string(),
         last_error: None,
-        configured_peers: Vec::new(),
+        configured_peer_count: 0,
         subscribed_topics: vec![topic.to_string()],
         active_path: Default::default(),
-        fallback_peer_ids: Vec::new(),
+        fallback_peer_count: 0,
         topic_diagnostics: vec![kukuri_app_api::TopicSyncStatus {
             topic: topic.to_string(),
             joined: connected,
             delivery_state,
             peer_count: connected_peers.len(),
-            connected_peers: connected_peers
-                .iter()
-                .map(|peer| peer.to_string())
-                .collect(),
-            docs_assist_peer_ids: docs_assist_peer_ids
-                .iter()
-                .map(|peer| peer.to_string())
-                .collect(),
-            configured_peer_ids: Vec::new(),
-            missing_peer_ids: Vec::new(),
+            configured_peer_count: 0,
+            missing_peer_count: 0,
             active_path: Default::default(),
-            rendezvous_peer_ids: Vec::new(),
-            fallback_peer_ids: Vec::new(),
+            rendezvous_peer_count: 0,
+            fallback_peer_count: 0,
             last_received_at: None,
             last_docs_activity_at: None,
             status_detail: "test".to_string(),
             last_error: None,
         }],
         local_author_pubkey: "author".to_string(),
-        discovery: Default::default(),
+        discovery: kukuri_app_api::DiscoveryStatus {
+            docs_assist_peer_count: docs_assist_peer_ids.len(),
+            ..Default::default()
+        },
         gossip_disabled_topics: Vec::new(),
         gossip_disabled_channels: Vec::new(),
     }

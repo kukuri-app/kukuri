@@ -91,7 +91,7 @@ impl AppService {
                                 ) {
                                     Ok(Some(view)) => {
                                         push_metaverse_room_event_buffer(&metaverse_room_events, view).await;
-                                        *last_sync.lock().await = Some(now);
+                                        last_sync.set(now).await;
                                     }
                                     Ok(None) => {}
                                     Err(error) => warn!(%error, "failed to parse metaverse room event hint"),
@@ -106,7 +106,7 @@ impl AppService {
                                 });
                                 if replace {
                                     heartbeats.insert(instance_id.clone(), heartbeat.as_ref().clone());
-                                    *last_sync.lock().await = Some(now);
+                                    last_sync.set(now).await;
                                 }
                             }
                             GossipHint::LivePresence { session_id, author, ttl_ms, .. } => {
@@ -122,12 +122,12 @@ impl AppService {
                                     )
                                     .await;
                                 let _ = projection_store.clear_expired_live_presence(now).await;
-                                *last_sync.lock().await = Some(now);
+                                last_sync.set(now).await;
                             }
                             hint => {
                                 let applied = reader.apply_content_hint(&topic, &scope, hint).await;
                                 if applied > 0 {
-                                    *last_sync.lock().await = Some(now);
+                                    last_sync.set(now).await;
                                     if let Some(generation) = generation {
                                         record_public_topic_docs_activity_if_current(
                                             &public_topic_delivery,
@@ -136,6 +136,11 @@ impl AppService {
                                             now,
                                         )
                                         .await;
+                                        // topic の届き方(docs の活動)が変わった(#1221 R2-D)。
+                                        last_sync.mark(StatusKey::Topic(format!(
+                                            "{}{topic}",
+                                            kukuri_core::wire::HINT_TOPIC_PREFIX
+                                        )));
                                     }
                                 }
                             }
@@ -171,7 +176,7 @@ impl AppService {
                 .await
                 {
                     Ok(count) if count > 0 => {
-                        *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                        last_sync.set(Utc::now().timestamp_millis()).await;
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -182,7 +187,7 @@ impl AppService {
                     .await
                 {
                     Ok(placed) if placed > 0 => {
-                        *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                        last_sync.set(Utc::now().timestamp_millis()).await;
                     }
                     Ok(_) => {}
                     Err(error) => {

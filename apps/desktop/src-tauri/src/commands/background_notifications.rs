@@ -312,12 +312,7 @@ async fn resolve_local_pubkey(
             return cached.clone();
         }
     }
-    let resolved = state
-        .runtime()
-        .get_sync_status()
-        .await
-        .map(|status| status.local_author_pubkey)
-        .unwrap_or_default();
+    let resolved = state.runtime().local_author_pubkey();
     if !resolved.is_empty() {
         *background
             .local_pubkey

@@ -113,8 +113,17 @@ impl IrohDocsSync {
             Some(secret) => secret.clone(),
             None => self.replica_secret(replica).await?,
         };
-        self.node
-            .query_remote_docs(peer, replica, &secret, query)
-            .await
+        let started = std::time::Instant::now();
+        let response = self
+            .node
+            .query_remote_docs(peer.clone(), replica, &secret, query)
+            .await;
+        // 読めた provider を、補助に使える peer の観測として残す(ADR 0055 §3、#1221 R2-D)。
+        if response.is_ok() {
+            self.peers
+                .record_fetch_success(peer.id, started.elapsed())
+                .await;
+        }
+        response
     }
 }

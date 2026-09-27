@@ -22,9 +22,9 @@ function DiagnosticStory({ state, width = 'wide', operationError = false }:
   const live = state === 'live' || refreshed;
   const sync: SyncStatus = { ...base, connected: live, peer_count: live ? 1 : 0,
     delivery_state: live ? 'Live' as const : state === 'durable' ? 'DurableReady' as const : 'DurableRecovering' as const,
-    configured_peers: ['candidate-peer'], subscribed_topics: ['general'], gossip_disabled_topics: ['test'],
+    configured_peer_count: 1, subscribed_topics: ['general'], gossip_disabled_topics: ['test'],
     last_error: live ? null : 'topic join pending: timed out waiting for initial topic join',
-    discovery: { ...base.discovery, docs_assist_peer_ids: ['assistance-peer'] } };
+    discovery: { ...base.discovery, docs_assist_peer_count: 1 } };
   if (state === 'offline') sync.delivery_state = base.delivery_state;
   const view = useSettingsViewModels({ ...initial, syncStatus: sync,
     error: operationError ? 'failed to import peer ticket: invalid endpoint id' : null,

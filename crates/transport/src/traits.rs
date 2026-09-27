@@ -9,7 +9,9 @@ use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::config::{ConnectionPath, DiscoveryMode, DiscoverySnapshot, SeedPeer};
+use crate::config::{
+    ConnectionPath, ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, SeedPeer,
+};
 
 pub type HintStream = Pin<Box<dyn Stream<Item = HintEnvelope> + Send>>;
 pub type ReceiveOfferStream = Pin<Box<dyn Stream<Item = ReceiveOfferEnvelope> + Send>>;
@@ -79,14 +81,15 @@ pub struct HintEnvelope {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// 通常の通信状態。件数と、稼働中の topic(lease と短期の送信先)の診断だけを持つ(#1221 R2-D)。
+/// peer の一覧は [`Transport::peer_page`] でページとして読む。
 pub struct PeerSnapshot {
     pub connected: bool,
     pub peer_count: usize,
-    pub connected_peers: Vec<String>,
-    pub configured_peers: Vec<String>,
+    pub configured_peer_count: usize,
     pub subscribed_topics: Vec<String>,
     pub active_path: ConnectionPath,
-    pub fallback_peer_ids: Vec<String>,
+    pub fallback_peer_count: usize,
     pub pending_events: usize,
     pub status_detail: String,
     pub last_error: Option<String>,
@@ -98,12 +101,11 @@ pub struct TopicPeerSnapshot {
     pub topic: String,
     pub joined: bool,
     pub peer_count: usize,
-    pub connected_peers: Vec<String>,
-    pub configured_peer_ids: Vec<String>,
-    pub missing_peer_ids: Vec<String>,
+    pub configured_peer_count: usize,
+    pub missing_peer_count: usize,
     pub active_path: ConnectionPath,
-    pub rendezvous_peer_ids: Vec<String>,
-    pub fallback_peer_ids: Vec<String>,
+    pub rendezvous_peer_count: usize,
+    pub fallback_peer_count: usize,
     pub last_received_at: Option<i64>,
     pub status_detail: String,
     pub last_error: Option<String>,
@@ -125,6 +127,53 @@ pub trait Transport: Send + Sync {
     }
     async fn discovery(&self) -> Result<DiscoverySnapshot> {
         Ok(DiscoverySnapshot::default())
+    }
+    /// 購読している topic(lease の 64 件以内。#1221 R2-D)。
+    async fn subscribed_topics(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    /// peer の一覧を id の順に `cursor` の後から最大 `limit` 件読む。取得の候補の cursor は進めない(#1221 R2-D)。
+    async fn peer_page(
+        &self,
+        _kind: ConnectivityPeerKind,
+        _topic: Option<&str>,
+        _cursor: Option<&str>,
+        _limit: usize,
+    ) -> Result<PeerPage> {
+        Ok(PeerPage::default())
+    }
+}
+
+/// peer の一覧の 1 ページ。`next_cursor` は続きがあるときだけ、最後の id を返す。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct PeerPage {
+    pub peer_ids: Vec<String>,
+    pub next_cursor: Option<String>,
+}
+
+impl PeerPage {
+    /// 昇順の `ids` から、`cursor` より後の最大 `limit` 件を取る。
+    pub fn from_sorted<'a>(
+        ids: impl IntoIterator<Item = &'a String>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Self {
+        let mut peer_ids = ids
+            .into_iter()
+            .filter(|id| cursor.is_none_or(|cursor| id.as_str() > cursor))
+            .take(limit + 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next_cursor = (peer_ids.len() > limit).then(|| {
+            peer_ids.truncate(limit);
+            peer_ids.last().cloned().unwrap_or_default()
+        });
+        Self {
+            peer_ids,
+            next_cursor,
+        }
     }
 }
 

@@ -14,6 +14,7 @@ import { type MockRuntime } from '../mockRuntime';
 type ConnectivityMock = Pick<
   DesktopApi,
   | 'getSyncStatus'
+  | 'listConnectivityPeers'
   | 'getDiscoveryConfig'
   | 'getCommunityNodeConfig'
   | 'getCommunityNodeStatuses'
@@ -122,6 +123,16 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
   return {
     async getSyncStatus() {
       return cloneSyncStatus(syncStatus);
+    },
+    async listConnectivityPeers(request) {
+      const limit = Math.min(request.limit ?? 64, 64);
+      const ids = runtime.connectivityPeers[request.kind].filter(
+        (id) => !request.cursor || id > request.cursor
+      );
+      return {
+        peer_ids: ids.slice(0, limit),
+        next_cursor: ids.length > limit ? ids[limit - 1] : null,
+      };
     },
     async getDiscoveryConfig() {
       return runtime.discoveryConfig;
@@ -557,9 +568,10 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
           };
         }),
       };
-      syncStatus.discovery.configured_seed_peer_ids = runtime.discoveryConfig.seed_peers.map(
-        (peer) => peer.endpoint_id
-      );
+      runtime.connectivityPeers.configured_seed = runtime.discoveryConfig.seed_peers
+        .map((peer) => peer.endpoint_id)
+        .sort();
+      syncStatus.discovery.configured_seed_peer_count = runtime.connectivityPeers.configured_seed.length;
       return runtime.discoveryConfig;
     },
     async unsubscribeTopic(topic) {

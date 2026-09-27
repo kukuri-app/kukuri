@@ -85,7 +85,7 @@ async fn transport_custom_relay_static_peer_seed_peers_with_addr_hints_sync_hint
     let snapshot_a =
         wait_for_topic_active_path(&transport_a, &ConnectionPath::DirectP2p, "transport a").await;
     assert_eq!(snapshot_a.active_path, ConnectionPath::DirectP2p);
-    assert!(snapshot_a.fallback_peer_ids.is_empty());
+    assert_eq!(snapshot_a.fallback_peer_count, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -501,12 +501,17 @@ async fn transport_peer_snapshot_reports_seeded_dht_mode() {
 
     assert_eq!(snapshot.mode, DiscoveryMode::SeededDht);
     assert_eq!(snapshot.connect_mode, ConnectMode::DirectOnly);
+    assert_eq!(snapshot.configured_seed_peer_count, 1);
+    assert_eq!(snapshot.bootstrap_seed_peer_count, 0);
+    assert_eq!(peers.configured_peer_count, 1);
     assert_eq!(
-        snapshot.configured_seed_peer_ids,
-        vec![local_endpoint_id.clone()]
+        transport
+            .peer_page(ConnectivityPeerKind::ConfiguredSeed, None, None, 64)
+            .await
+            .expect("configured seed page")
+            .peer_ids,
+        vec![local_endpoint_id]
     );
-    assert!(snapshot.bootstrap_seed_peer_ids.is_empty());
-    assert_eq!(peers.configured_peers, vec![local_endpoint_id]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -529,8 +534,8 @@ async fn transport_empty_seed_list_stays_idle_without_error() {
     let peers = transport.peers().await.expect("peers");
 
     assert_eq!(discovery.mode, DiscoveryMode::SeededDht);
-    assert!(discovery.configured_seed_peer_ids.is_empty());
-    assert!(discovery.bootstrap_seed_peer_ids.is_empty());
+    assert_eq!(discovery.configured_seed_peer_count, 0);
+    assert_eq!(discovery.bootstrap_seed_peer_count, 0);
     assert!(discovery.last_discovery_error.is_none());
     assert_eq!(peers.peer_count, 0);
     assert!(peers.last_error.is_none());
@@ -641,15 +646,16 @@ async fn topic_hint_late_subscriber_eventually_clears_missing_peer_ids_over_rela
     timeout(join_timeout, async {
         loop {
             let peers_c = transport_c.peers().await.expect("peers c before b");
-            let diag_c = peers_c
-                .topic_diagnostics
-                .iter()
-                .find(|topic| topic.topic == "hint/kukuri:topic:late-peer")
-                .expect("diag c before b");
-            if diag_c
-                .missing_peer_ids
-                .iter()
-                .any(|peer_id| peer_id == &discovery_b.local_endpoint_id)
+            assert!(
+                peers_c
+                    .topic_diagnostics
+                    .iter()
+                    .any(|topic| topic.topic == "hint/kukuri:topic:late-peer"),
+                "diag c before b"
+            );
+            if missing_peer_ids(&transport_c, "hint/kukuri:topic:late-peer")
+                .await
+                .contains(&discovery_b.local_endpoint_id)
             {
                 return;
             }
@@ -683,15 +689,16 @@ async fn topic_hint_late_subscriber_eventually_clears_missing_peer_ids_over_rela
     match timeout(join_timeout, async {
         loop {
             let peers_c = transport_c.peers().await.expect("peers c after b");
-            let diag_c = peers_c
-                .topic_diagnostics
-                .iter()
-                .find(|topic| topic.topic == "hint/kukuri:topic:late-peer")
-                .expect("diag c after b");
-            if !diag_c
-                .missing_peer_ids
-                .iter()
-                .any(|peer_id| peer_id == &discovery_b.local_endpoint_id)
+            assert!(
+                peers_c
+                    .topic_diagnostics
+                    .iter()
+                    .any(|topic| topic.topic == "hint/kukuri:topic:late-peer"),
+                "diag c after b"
+            );
+            if !missing_peer_ids(&transport_c, "hint/kukuri:topic:late-peer")
+                .await
+                .contains(&discovery_b.local_endpoint_id)
             {
                 return;
             }
@@ -844,4 +851,12 @@ async fn transport_static_peer_can_connect_endpoint() {
     .await
     .expect("connect timeout")
     .expect("connect");
+}
+
+async fn missing_peer_ids(transport: &IrohGossipTransport, topic: &str) -> Vec<String> {
+    transport
+        .peer_page(ConnectivityPeerKind::Missing, Some(topic), None, 64)
+        .await
+        .expect("missing page")
+        .peer_ids
 }

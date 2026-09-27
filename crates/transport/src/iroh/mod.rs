@@ -39,15 +39,18 @@ use tokio::time::{sleep, timeout};
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, info, warn};
 
+use crate::config::ConnectivityPeerKind;
 use crate::config::{
     ConnectMode, ConnectionPath, DhtDiscoveryOptions, DiscoveryMode, DiscoverySnapshot, SeedPeer,
     TransportNetworkConfig, TransportRelayConfig,
 };
 use crate::diagnostics::{peer_status_detail, topic_status_detail};
 use crate::discovery::prepare_endpoint_for_discovery;
+use crate::status_changes::{StatusChanges, StatusKey};
 use crate::tickets::{
     encode_endpoint_ticket, endpoint_addr_with_relays, parse_endpoint_ticket, ticket_network_config,
 };
+use crate::traits::PeerPage;
 use crate::traits::{
     HintEnvelope, HintStream, HintTransport, PeerSnapshot, ReceiveCandidateFence,
     ReceiveOfferEnvelope, ReceiveOfferLease, ReceiveOfferStop, ReceiveOfferStream,
@@ -158,6 +161,11 @@ pub struct IrohGossipTransport {
     connect_mode: Arc<Mutex<ConnectMode>>,
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
     env_locked: Arc<Mutex<bool>>,
+    /// 通信状態の変わった部分の印(#1221 R2-D)。
+    status_changes: StatusChanges,
+    /// 状態の読取りで見た topic・peer と `remote_info` の数(計測用。#1221 R2-D)。
+    #[cfg(any(test, feature = "test-support"))]
+    status_read_steps: Arc<AtomicU64>,
 }
 
 mod discovery;
@@ -233,6 +241,24 @@ impl Transport for IrohGossipTransport {
     }
     async fn discovery(&self) -> Result<DiscoverySnapshot> {
         self.transport_discovery_impl().await
+    }
+    async fn subscribed_topics(&self) -> Result<Vec<String>> {
+        Ok(self
+            .subscribed_topics
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect())
+    }
+    async fn peer_page(
+        &self,
+        kind: ConnectivityPeerKind,
+        topic: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<PeerPage> {
+        self.peer_page_impl(kind, topic, cursor, limit).await
     }
 }
 

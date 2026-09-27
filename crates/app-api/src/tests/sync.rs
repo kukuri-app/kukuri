@@ -1,4 +1,5 @@
 use super::*;
+use crate::{CONNECTIVITY_PEER_PAGE_LIMIT, ConnectivityPeersRequest};
 use kukuri_core::{BlobHash, ChannelAudienceKind, CreatePrivateChannelInput, KukuriKeys, TopicId};
 use std::collections::HashMap;
 

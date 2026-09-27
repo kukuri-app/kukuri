@@ -126,7 +126,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
         panic!(
             "heartbeat did not continue after deadline expiry\n  hits={} sessions={:?} now={} task_finished={:?}",
             state.heartbeat_hits.load(Ordering::SeqCst),
-            sessions,
+            &**sessions,
             Utc::now().timestamp(),
             task_finished,
         );

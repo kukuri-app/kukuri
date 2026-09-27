@@ -106,23 +106,21 @@ pub(crate) fn format_peer_snapshot(snapshot: &PeerSnapshot) -> String {
         .iter()
         .map(|topic| {
             format!(
-                "{}: joined={}, peer_count={}, connected_peers={:?}, missing_peer_ids={:?}, status_detail={}, last_error={:?}",
+                "{}: joined={}, peer_count={}, missing_peer_count={}, status_detail={}, last_error={:?}",
                 topic.topic,
                 topic.joined,
                 topic.peer_count,
-                topic.connected_peers,
-                topic.missing_peer_ids,
+                topic.missing_peer_count,
                 topic.status_detail,
                 topic.last_error
             )
         })
         .collect::<Vec<_>>();
     format!(
-        "connected={}, peer_count={}, connected_peers={:?}, configured_peers={:?}, status_detail={}, last_error={:?}, topics={topics:?}",
+        "connected={}, peer_count={}, configured_peer_count={}, status_detail={}, last_error={:?}, topics={topics:?}",
         snapshot.connected,
         snapshot.peer_count,
-        snapshot.connected_peers,
-        snapshot.configured_peers,
+        snapshot.configured_peer_count,
         snapshot.status_detail,
         snapshot.last_error
     )

@@ -214,6 +214,19 @@ pub async fn get_sync_status(
     state.runtime().get_sync_status().await.map_err(map_error)
 }
 
+/// 設定画面の詳細が開いたときに読む peer の一覧の 1 ページ(#1221 R2-D)。
+#[tauri::command]
+pub async fn list_connectivity_peers(
+    state: tauri::State<'_, DesktopState>,
+    request: kukuri_desktop_runtime::ConnectivityPeersRequest,
+) -> Result<kukuri_desktop_runtime::PeerPage, CommandError> {
+    state
+        .runtime()
+        .list_connectivity_peers(request)
+        .await
+        .map_err(map_error)
+}
+
 #[tauri::command]
 pub async fn get_discovery_config(
     state: tauri::State<'_, DesktopState>,

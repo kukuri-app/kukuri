@@ -393,7 +393,7 @@ export function MetaverseRoomPanel({
         remoteAnimationSummary={session.remoteAnimationSummary}
         avatarAssetStatus={avatarAssetStatus}
         localAvatarAssetRef={localAvatarAssetRef}
-        communityAssistAvailable={syncStatus.discovery.bootstrap_seed_peer_ids.length > 0}
+        communityAssistAvailable={syncStatus.discovery.bootstrap_seed_peer_count > 0}
         locale={locale}
         pending={pending}
         isOwner={session.selectedRoom?.host_pubkey === syncStatus.local_author_pubkey}

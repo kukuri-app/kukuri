@@ -30,6 +30,30 @@ impl DesktopRuntime {
         self.app_service.get_sync_status().await
     }
 
+    /// 設定画面の詳細が開いたときに読む peer の一覧の 1 ページ(#1221 R2-D)。
+    pub async fn list_connectivity_peers(
+        &self,
+        request: crate::ConnectivityPeersRequest,
+    ) -> Result<crate::PeerPage> {
+        self.app_service.list_connectivity_peers(request).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn connectivity_peer_ids(
+        &self,
+        kind: kukuri_transport::ConnectivityPeerKind,
+    ) -> Vec<String> {
+        self.list_connectivity_peers(kukuri_app_api::ConnectivityPeersRequest {
+            kind,
+            topic: None,
+            cursor: None,
+            limit: None,
+        })
+        .await
+        .expect("peer page")
+        .peer_ids
+    }
+
     pub async fn has_topic_timeline_doc_index_entry(
         &self,
         topic: &str,

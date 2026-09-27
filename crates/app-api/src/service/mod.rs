@@ -81,8 +81,8 @@ pub(crate) use kukuri_store::{
     WithdrawalWriteRow,
 };
 pub(crate) use kukuri_transport::{
-    ConnectionPath, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerSnapshot,
-    ReceiveOfferLease, SeedPeer, TopicPeerSnapshot, Transport,
+    ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerPage, PeerSnapshot,
+    ReceiveOfferLease, SeedPeer, StatusKey, TopicPeerSnapshot, Transport,
 };
 pub(crate) use serde::{Serialize, de::DeserializeOwned};
 pub(crate) use tokio::sync::Mutex;
@@ -200,7 +200,7 @@ pub(crate) use attachment_support::{
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
     joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
-    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topics,
+    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
     register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
     validate_game_room_scores, validate_game_room_transition,
 };
@@ -275,8 +275,6 @@ pub(crate) use timeline_view_support::{
 };
 
 // テストからのみ参照される再輸出(依存の可視化。WP-H5 PR1)。
-#[cfg(test)]
-pub(crate) use attachment_support::normalize_topic_name;
 #[cfg(test)]
 pub(crate) use kukuri_core::{build_post_envelope_with_payload_in_channel, build_repost_envelope};
 #[cfg(test)]
@@ -504,7 +502,7 @@ pub struct AppService {
     pub(crate) dome_host_sessions: Arc<Mutex<HashMap<String, DomeSessionRuntime>>>,
     pub(crate) metaverse_blob_cache: Arc<Mutex<MetaverseBlobCacheIndex>>,
     pub(crate) metaverse_resource_budget: kukuri_core::MetaverseResourceBudgetConfig,
-    pub(crate) last_sync_ts: Arc<Mutex<Option<i64>>>,
+    pub(crate) last_sync_ts: Arc<session_projection::SyncClock>,
     pub(crate) public_topic_delivery: Arc<Mutex<HashMap<String, PublicTopicDeliveryStatus>>>,
     pub(crate) gossip_disabled_topics: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_channels: Arc<Mutex<HashSet<String>>>,
@@ -656,6 +654,12 @@ impl AppService {
     /// 復元前に接続すると復元途中の部分リストが永続化される。
     pub fn set_private_channel_capability_persist(&self, persist: PrivateChannelCapabilityPersist) {
         let _ = self.private_channel_capability_persist.set(persist);
+    }
+
+    /// 通信状態の変わった部分の印を、この印へ付ける(#1221 R2-D。transport と同じ印を渡す)。
+    pub fn with_status_changes(self, changes: kukuri_transport::StatusChanges) -> Self {
+        self.last_sync_ts.watch(changes);
+        self
     }
 
     pub fn notification_inserted_notify(&self) -> Arc<tokio::sync::Notify> {

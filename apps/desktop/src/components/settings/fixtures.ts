@@ -73,10 +73,6 @@ export function createConnectivityPanelFixture(): ConnectivityPanelView {
         expectedPeerCount: 2,
         missingPeerCount: 0,
         statusDetail: 'Connected to all configured peers for this topic',
-        connectedPeersLabel: 'peer-a, peer-b',
-        relayAssistedPeersLabel: 'relay-peer',
-        configuredPeersLabel: 'peer-a, peer-b',
-        missingPeersLabel: i18n.t('common:fallbacks.none'),
         lastError: null,
       },
       {
@@ -90,10 +86,6 @@ export function createConnectivityPanelFixture(): ConnectivityPanelView {
         missingPeerCount: 0,
         statusDetail:
           'docs-assisted recovery is in progress via 1 peer(s); live topic delivery is unavailable',
-        connectedPeersLabel: i18n.t('common:fallbacks.none'),
-        relayAssistedPeersLabel: 'relay-peer',
-        configuredPeersLabel: i18n.t('common:fallbacks.none'),
-        missingPeersLabel: i18n.t('common:fallbacks.none'),
         lastError: diagnosticErrorLabel('topic join pending: timed out waiting for initial topic join', fixtureTranslate),
       },
     ],

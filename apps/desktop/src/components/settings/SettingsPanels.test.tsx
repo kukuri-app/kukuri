@@ -107,6 +107,8 @@ test('connectivity panel renders loading and topic detail states', async () => {
   const user = userEvent.setup();
   const onImportPeer = vi.fn();
   const connectivityPanelFixture = createConnectivityPanelFixture();
+  const loadPeers = vi.fn(async (_query: unknown, cursor: string | null) =>
+    cursor ? { peer_ids: ['peer-c'], next_cursor: null } : { peer_ids: ['peer-a', 'peer-b'], next_cursor: 'peer-b' });
 
   render(
     <ConnectivityPanel
@@ -117,12 +119,25 @@ test('connectivity panel renders loading and topic detail states', async () => {
       }}
       onPeerTicketInputChange={() => {}}
       onImportPeer={onImportPeer}
+      loadPeers={loadPeers}
     />
   );
 
   expect(screen.getByText('Loading connectivity diagnostics…')).toBeInTheDocument();
   expect(screen.getByText('Topic Connectivity Detail')).toBeInTheDocument();
-  expect(screen.getByText('The initial topic join timed out. (Diagnostic details: topic join pending: timed out waiting for initial topic join)')).toBeInTheDocument();
+  // #1221 R2-D: peer の一覧は、詳細を開くまで読まない。開いたら 1 ページ目を読み、続きは「さらに読み込む」で読む。
+  expect(loadPeers).not.toHaveBeenCalled();
+  await user.click(screen.getAllByText('Technical diagnostic details')[2]);
+  expect(await screen.findByText('The initial topic join timed out. (Diagnostic details: topic join pending: timed out waiting for initial topic join)')).toBeInTheDocument();
+  await waitFor(() => expect(loadPeers).toHaveBeenCalledTimes(4));
+  expect(loadPeers).toHaveBeenCalledWith({ kind: 'connected', topic: 'kukuri:topic:relay' }, null);
+  expect(loadPeers).toHaveBeenCalledWith({ kind: 'missing', topic: 'kukuri:topic:relay' }, null);
+  const loadMore = await screen.findAllByRole('button', { name: 'Load more' });
+  expect(loadMore).toHaveLength(4);
+  await user.click(loadMore[0]);
+  expect(loadPeers).toHaveBeenLastCalledWith({ kind: 'connected', topic: 'kukuri:topic:relay' }, 'peer-b');
+  expect(await screen.findByText('peer-a, peer-b, peer-c')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Load more' })).toHaveLength(3);
 
   await user.click(screen.getByRole('button', { name: 'Import Peer' }));
   expect(onImportPeer).toHaveBeenCalledTimes(1);

@@ -11,6 +11,11 @@ use crate::requests::ExportAccountKeyRequest;
 use super::DesktopRuntime;
 
 impl DesktopRuntime {
+    /// この account の公開鍵(hex)。
+    pub fn local_author_pubkey(&self) -> String {
+        self.author_keys.public_key_hex()
+    }
+
     /// 同期 API。argon2id の鍵導出で数百 ms ブロックするため、呼び出し側
     /// (Tauri コマンド)は `spawn_blocking` で包む。
     pub fn export_account_key(&self, request: ExportAccountKeyRequest) -> Result<AccountKeyExport> {

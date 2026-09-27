@@ -357,6 +357,74 @@ pub(crate) enum CommunityNodeSessionOutcome {
     ConsentRequired,
 }
 
+/// node ごとの session。書き換えた node に通信状態の差分の印を付ける(#1221 R2-D)。
+/// 読むだけなら `HashMap` として読める。書き換えは下の method だけを通す。
+#[derive(Default)]
+pub(crate) struct CommunityNodeSessions {
+    sessions: std::collections::HashMap<String, CommunityNodeSessionState>,
+    changes: kukuri_transport::StatusChanges,
+}
+
+impl std::ops::Deref for CommunityNodeSessions {
+    type Target = std::collections::HashMap<String, CommunityNodeSessionState>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sessions
+    }
+}
+
+impl CommunityNodeSessions {
+    pub(crate) fn new(changes: kukuri_transport::StatusChanges) -> Self {
+        Self {
+            sessions: Default::default(),
+            changes,
+        }
+    }
+
+    fn mark(&self, base_url: &str) {
+        self.changes
+            .mark(kukuri_transport::StatusKey::CommunityNode(
+                base_url.to_string(),
+            ));
+    }
+
+    pub(crate) fn get_mut(&mut self, base_url: &str) -> Option<&mut CommunityNodeSessionState> {
+        self.mark(base_url);
+        self.sessions.get_mut(base_url)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        base_url: String,
+        session: CommunityNodeSessionState,
+    ) -> Option<CommunityNodeSessionState> {
+        self.mark(&base_url);
+        self.sessions.insert(base_url, session)
+    }
+
+    pub(crate) fn remove(&mut self, base_url: &str) -> Option<CommunityNodeSessionState> {
+        self.mark(base_url);
+        self.sessions.remove(base_url)
+    }
+
+    pub(crate) fn entry(
+        &mut self,
+        base_url: String,
+    ) -> std::collections::hash_map::Entry<'_, String, CommunityNodeSessionState> {
+        self.mark(&base_url);
+        self.sessions.entry(base_url)
+    }
+
+    pub(crate) fn values_mut(
+        &mut self,
+    ) -> std::collections::hash_map::ValuesMut<'_, String, CommunityNodeSessionState> {
+        for base_url in self.sessions.keys() {
+            self.mark(base_url);
+        }
+        self.sessions.values_mut()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CommunityNodeSessionState {
     pub(crate) heartbeat_deadline: i64,

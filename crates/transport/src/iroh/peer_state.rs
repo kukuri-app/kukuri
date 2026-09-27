@@ -24,7 +24,7 @@ impl ObservedPeerPath {
 /// (部分 fallback の可視化。判定 2/3 の結果には影響しない)。
 fn topic_connection_path(
     connected_peers: &[String],
-    rendezvous_peer_ids: &[String],
+    rendezvous_peer_count: usize,
     observed_paths: &BTreeMap<String, ObservedPeerPath>,
 ) -> (ConnectionPath, Vec<String>) {
     let fallback_peer_ids = connected_peers
@@ -39,7 +39,7 @@ fn topic_connection_path(
     let active_path =
         if !connected_peers.is_empty() && fallback_peer_ids.len() == connected_peers.len() {
             ConnectionPath::RelayFallback
-        } else if !rendezvous_peer_ids.is_empty() {
+        } else if rendezvous_peer_count > 0 {
             ConnectionPath::RelaySupportedP2p
         } else {
             ConnectionPath::DirectP2p
@@ -65,14 +65,14 @@ fn aggregate_connection_path(topic_diagnostics: &[TopicPeerSnapshot]) -> Connect
         .unwrap_or_default()
 }
 
-/// 集約 fallback_peer_ids は全 topic の union(sorted dedup)。
-fn aggregate_fallback_peer_ids(topic_diagnostics: &[TopicPeerSnapshot]) -> Vec<String> {
-    topic_diagnostics
-        .iter()
-        .flat_map(|topic| topic.fallback_peer_ids.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+/// 状態の読取りで使う topic の部品(topic の lock を持ち続けないため、共有の部品だけを clone する)。
+struct TopicStateView {
+    topic: String,
+    configured: BTreeSet<String>,
+    neighbors: Arc<RwLock<BTreeSet<String>>>,
+    last_received_at: Arc<Mutex<Option<i64>>>,
+    last_error: Arc<Mutex<Option<String>>>,
+    rendezvous: Arc<Mutex<Vec<(String, EndpointAddr)>>>,
 }
 
 /// seed・ticket の候補を 4 件ずつ読む部品。neighbor の無い topic の再 join の task からも読むため、
@@ -190,141 +190,95 @@ impl IrohGossipTransport {
             .await
     }
 
-    pub(crate) async fn configured_seed_peer_ids(&self) -> Vec<String> {
-        self.configured_seed_peers
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
+    /// 計測用: 状態の読取りで見た topic・peer と `remote_info` の数を足す(#1221 R2-D)。
+    fn count_status_read_steps(&self, _steps: usize) {
+        #[cfg(any(test, feature = "test-support"))]
+        self.status_read_steps
+            .fetch_add(_steps as u64, Ordering::Relaxed);
     }
 
-    pub(crate) async fn bootstrap_seed_peer_ids(&self) -> Vec<String> {
-        self.bootstrap_seed_peers
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn status_read_steps(&self) -> u64 {
+        self.status_read_steps.load(Ordering::Relaxed)
     }
 
-    async fn configured_peer_ids(&self) -> Result<Vec<String>> {
-        let mut ids = self
-            .configured_seed_peers
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        ids.extend(self.bootstrap_seed_peers.lock().await.keys().cloned());
-        if let Some(store) = &self.account_store {
-            ids.extend(
-                store
-                    .peer_candidate_window(
-                        "gossip",
-                        "imported",
-                        None,
-                        4,
-                        Utc::now().timestamp_millis(),
-                    )
-                    .await?
-                    .into_iter()
-                    .map(|(id, _, _)| id),
-            );
-        } else {
-            ids.extend(self.imported_peers.lock().await.keys().cloned());
-        }
-        Ok(ids.into_iter().collect())
-    }
-
-    pub(crate) async fn connected_peer_ids(&self) -> Vec<String> {
-        let mut connected = BTreeSet::new();
-        for (_, state) in self.topic_states.lock().await.iter() {
-            for peer in state.neighbors.read().await.iter() {
-                connected.insert(peer.clone());
-            }
-        }
-        connected.into_iter().collect::<Vec<_>>()
-    }
-
-    pub(crate) async fn transport_peers_impl(&self) -> Result<PeerSnapshot> {
-        let topic_states = self
+    /// 稼働中の topic(lease と短期の送信先)の部品。seed・台帳・SQLite は読まない(#1221 R2-D)。
+    async fn topic_state_views(&self) -> Vec<TopicStateView> {
+        let states = self
             .topic_states
             .lock()
             .await
             .iter()
-            .map(|(topic, state)| {
-                (
-                    topic.clone(),
-                    state.bootstrap_peer_ids.iter().cloned().collect::<Vec<_>>(),
-                    Arc::clone(&state.neighbors),
-                    Arc::clone(&state.last_received_at),
-                    Arc::clone(&state.last_error),
-                    Arc::clone(&state.rendezvous),
-                )
+            .map(|(topic, state)| TopicStateView {
+                topic: topic.clone(),
+                configured: state.bootstrap_peer_ids.clone(),
+                neighbors: Arc::clone(&state.neighbors),
+                last_received_at: Arc::clone(&state.last_received_at),
+                last_error: Arc::clone(&state.last_error),
+                rendezvous: Arc::clone(&state.rendezvous),
             })
             .collect::<Vec<_>>();
+        self.count_status_read_steps(states.len());
+        states
+    }
+
+    async fn connected_peer_set(&self, states: &[TopicStateView]) -> BTreeSet<String> {
         let mut connected = BTreeSet::new();
-        let configured_peers = self.configured_peer_ids().await?;
-        let bootstrap_seed_peer_ids = self.bootstrap_seed_peer_ids().await;
-        let mut topic_entries = Vec::with_capacity(topic_states.len());
-        for (topic, configured_peer_ids, neighbors, last_received_at, last_error, rendezvous) in
-            topic_states
-        {
-            let peers = neighbors.read().await.iter().cloned().collect::<Vec<_>>();
-            let last_received_at = *last_received_at.lock().await;
-            let last_error = last_error.lock().await.clone();
-            let rendezvous = rendezvous
+        for state in states {
+            connected.extend(state.neighbors.read().await.iter().cloned());
+        }
+        self.count_status_read_steps(connected.len());
+        connected
+    }
+
+    pub(crate) async fn connected_peer_count(&self) -> usize {
+        let states = self.topic_state_views().await;
+        self.connected_peer_set(&states).await.len()
+    }
+
+    /// 設定済みの peer の数(設定した seed と CN の seed)。取り込んだ ticket は詳細のページで読む。
+    pub(crate) async fn configured_peer_count(&self) -> usize {
+        self.configured_seed_peers.lock().await.len() + self.bootstrap_seed_peers.lock().await.len()
+    }
+
+    pub(crate) async fn transport_peers_impl(&self) -> Result<PeerSnapshot> {
+        let states = self.topic_state_views().await;
+        let connected = self.connected_peer_set(&states).await;
+        let observed_paths = self.observed_peer_paths(&connected).await;
+        let mut topic_diagnostics = Vec::with_capacity(states.len());
+        let mut fallback = BTreeSet::new();
+        for state in states {
+            let peers = state.neighbors.read().await.clone();
+            let rendezvous = state
+                .rendezvous
                 .lock()
                 .await
                 .iter()
                 .map(|(_, peer)| peer.id.to_string())
-                .collect::<Vec<_>>();
-            for peer in &peers {
-                connected.insert(peer.clone());
-            }
-            topic_entries.push((
-                topic,
-                configured_peer_ids,
-                peers,
-                last_received_at,
-                last_error,
-                rendezvous,
-            ));
-        }
-        let observed_paths = self.observed_peer_paths(&connected).await;
-        let mut topic_diagnostics = Vec::with_capacity(topic_entries.len());
-        for (topic, configured_peer_ids, peers, last_received_at, last_error, rendezvous) in
-            topic_entries
-        {
-            let configured_peer_count = configured_peer_ids.len();
-            let connected_peer_count = peers.len();
-            let missing_peer_ids = configured_peer_ids
+                .collect::<BTreeSet<_>>();
+            let bootstrap = self.bootstrap_seed_peers.lock().await;
+            let rendezvous_peer_count = peers
                 .iter()
-                .filter(|peer| !peers.iter().any(|connected_peer| connected_peer == *peer))
-                .cloned()
-                .collect::<Vec<_>>();
-            let rendezvous_peer_ids = peers
-                .iter()
-                .filter(|peer| bootstrap_seed_peer_ids.contains(peer) || rendezvous.contains(peer))
-                .cloned()
-                .collect::<Vec<_>>();
+                .filter(|peer| bootstrap.contains_key(*peer) || rendezvous.contains(*peer))
+                .count();
+            drop(bootstrap);
+            let connected_peers = peers.iter().cloned().collect::<Vec<_>>();
             let (active_path, fallback_peer_ids) =
-                topic_connection_path(&peers, &rendezvous_peer_ids, &observed_paths);
+                topic_connection_path(&connected_peers, rendezvous_peer_count, &observed_paths);
             topic_diagnostics.push(TopicPeerSnapshot {
-                topic,
                 joined: !peers.is_empty(),
-                peer_count: connected_peer_count,
-                connected_peers: peers,
-                configured_peer_ids,
-                missing_peer_ids,
+                peer_count: peers.len(),
+                configured_peer_count: state.configured.len(),
+                missing_peer_count: state.configured.difference(&peers).count(),
                 active_path,
-                rendezvous_peer_ids,
-                fallback_peer_ids,
-                last_received_at,
-                status_detail: topic_status_detail(configured_peer_count, connected_peer_count),
-                last_error,
+                rendezvous_peer_count,
+                fallback_peer_count: fallback_peer_ids.len(),
+                last_received_at: *state.last_received_at.lock().await,
+                status_detail: topic_status_detail(state.configured.len(), peers.len()),
+                last_error: state.last_error.lock().await.clone(),
+                topic: state.topic,
             });
+            fallback.extend(fallback_peer_ids);
         }
         topic_diagnostics.sort_by(|left, right| left.topic.cmp(&right.topic));
         let subscribed_topics = self
@@ -334,38 +288,94 @@ impl IrohGossipTransport {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let connected_peers = connected.into_iter().collect::<Vec<_>>();
-        let configured_peer_count = configured_peers.len();
-        let connected_peer_count = connected_peers.len();
-        let subscribed_topic_count = topic_diagnostics.len();
-        let active_path = aggregate_connection_path(&topic_diagnostics);
-        let fallback_peer_ids = aggregate_fallback_peer_ids(&topic_diagnostics);
-
+        let configured_peer_count = self.configured_peer_count().await;
         Ok(PeerSnapshot {
-            connected: !connected_peers.is_empty(),
-            peer_count: connected_peer_count,
-            connected_peers,
-            configured_peers,
-            subscribed_topics,
-            active_path,
-            fallback_peer_ids,
+            connected: !connected.is_empty(),
+            peer_count: connected.len(),
+            configured_peer_count,
+            active_path: aggregate_connection_path(&topic_diagnostics),
+            fallback_peer_count: fallback.len(),
             pending_events: 0,
             status_detail: peer_status_detail(
                 configured_peer_count,
-                connected_peer_count,
-                subscribed_topic_count,
+                connected.len(),
+                topic_diagnostics.len(),
             ),
+            subscribed_topics,
             last_error: self.last_error.lock().await.clone(),
             topic_diagnostics,
         })
     }
 
+    /// 詳細のページ。seed と topic の集合は id の順の範囲から読み、取り込んだ ticket は索引の順に SQLite から
+    /// 1 ページだけ読む。取得の候補の cursor は進めない(#1221 R2-D)。
+    pub(crate) async fn peer_page_impl(
+        &self,
+        kind: ConnectivityPeerKind,
+        topic: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<PeerPage> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let after = cursor.map_or(Unbounded, |cursor| Excluded(cursor.to_string()));
+        let page_of_map = |map: &BTreeMap<String, EndpointAddr>| {
+            PeerPage::from_sorted(
+                map.range((after.clone(), Unbounded)).map(|(id, _)| id),
+                None,
+                limit,
+            )
+        };
+        match kind {
+            ConnectivityPeerKind::ConfiguredSeed => {
+                Ok(page_of_map(&*self.configured_seed_peers.lock().await))
+            }
+            ConnectivityPeerKind::BootstrapSeed => {
+                Ok(page_of_map(&*self.bootstrap_seed_peers.lock().await))
+            }
+            ConnectivityPeerKind::ManualTicket => match &self.account_store {
+                Some(store) => {
+                    let ids = store
+                        .imported_peer_candidate_ids("gossip", cursor, limit + 1)
+                        .await?;
+                    Ok(PeerPage::from_sorted(&ids, None, limit))
+                }
+                None => Ok(page_of_map(&*self.imported_peers.lock().await)),
+            },
+            ConnectivityPeerKind::Connected
+            | ConnectivityPeerKind::Configured
+            | ConnectivityPeerKind::Missing => {
+                let mut ids = BTreeSet::new();
+                for state in self.topic_state_views().await {
+                    if topic.is_some_and(|topic| state.topic != topic) {
+                        continue;
+                    }
+                    let neighbors = state.neighbors.read().await;
+                    match kind {
+                        ConnectivityPeerKind::Connected => ids.extend(neighbors.iter().cloned()),
+                        ConnectivityPeerKind::Configured => ids.extend(state.configured),
+                        _ => ids.extend(state.configured.difference(&neighbors).cloned()),
+                    }
+                }
+                Ok(PeerPage::from_sorted(
+                    ids.range((after, Unbounded)),
+                    None,
+                    limit,
+                ))
+            }
+            ConnectivityPeerKind::DocsAssist | ConnectivityPeerKind::BlobAssist => {
+                Ok(PeerPage::default())
+            }
+        }
+    }
+
     /// connected peer ごとに remote_info を観測し、active な transport addr の種別を集計する。
     /// endpoint id が parse できない / remote_info が無い peer は観測なし(map に載せない)。
+    /// 経路の種別(relay だけか)を見るためで、接続の生存の判定には使わない(ADR 0055 §3)。
     async fn observed_peer_paths(
         &self,
         peer_ids: &BTreeSet<String>,
     ) -> BTreeMap<String, ObservedPeerPath> {
+        self.count_status_read_steps(peer_ids.len());
         let mut observed = BTreeMap::new();
         for peer_id in peer_ids {
             let Ok(endpoint_id) = peer_id.parse::<EndpointId>() else {
@@ -434,10 +444,9 @@ mod tests {
             .collect()
     }
 
-    fn topic_with_path(path: ConnectionPath, fallback_peer_ids: &[&str]) -> TopicPeerSnapshot {
+    fn topic_with_path(path: ConnectionPath) -> TopicPeerSnapshot {
         TopicPeerSnapshot {
             active_path: path,
-            fallback_peer_ids: peers(fallback_peer_ids),
             ..TopicPeerSnapshot::default()
         }
     }
@@ -446,25 +455,22 @@ mod tests {
 
     #[test]
     fn topic_path_without_rendezvous_is_direct() {
-        let (path, fallback) = topic_connection_path(&peers(&["peer-a"]), &[], &BTreeMap::new());
+        let (path, fallback) = topic_connection_path(&peers(&["peer-a"]), 0, &BTreeMap::new());
         assert_eq!(path, ConnectionPath::DirectP2p);
         assert!(fallback.is_empty());
     }
 
     #[test]
     fn topic_path_with_rendezvous_is_relay_supported() {
-        let (path, fallback) = topic_connection_path(
-            &peers(&["seed-a", "peer-b"]),
-            &peers(&["seed-a"]),
-            &BTreeMap::new(),
-        );
+        let (path, fallback) =
+            topic_connection_path(&peers(&["seed-a", "peer-b"]), 1, &BTreeMap::new());
         assert_eq!(path, ConnectionPath::RelaySupportedP2p);
         assert!(fallback.is_empty());
     }
 
     #[test]
     fn topic_path_without_peers_is_direct_even_with_rendezvous_config() {
-        let (path, fallback) = topic_connection_path(&[], &[], &BTreeMap::new());
+        let (path, fallback) = topic_connection_path(&[], 0, &BTreeMap::new());
         assert_eq!(path, ConnectionPath::DirectP2p);
         assert!(fallback.is_empty());
     }
@@ -472,20 +478,18 @@ mod tests {
     #[test]
     fn aggregate_any_relay_supported_topic_is_relay_supported() {
         let topics = vec![
-            topic_with_path(ConnectionPath::DirectP2p, &[]),
-            topic_with_path(ConnectionPath::RelaySupportedP2p, &[]),
+            topic_with_path(ConnectionPath::DirectP2p),
+            topic_with_path(ConnectionPath::RelaySupportedP2p),
         ];
         assert_eq!(
             aggregate_connection_path(&topics),
             ConnectionPath::RelaySupportedP2p
         );
-        assert!(aggregate_fallback_peer_ids(&topics).is_empty());
     }
 
     #[test]
     fn aggregate_without_topics_is_direct() {
         assert_eq!(aggregate_connection_path(&[]), ConnectionPath::DirectP2p);
-        assert!(aggregate_fallback_peer_ids(&[]).is_empty());
     }
 
     // --- relay fallback 判定 ---
@@ -494,7 +498,7 @@ mod tests {
     fn topic_path_all_peers_relay_carried_is_relay_fallback() {
         let (path, fallback) = topic_connection_path(
             &peers(&["peer-a", "peer-b"]),
-            &[],
+            0,
             &observed(&[("peer-a", false, true), ("peer-b", false, true)]),
         );
         assert_eq!(path, ConnectionPath::RelayFallback);
@@ -507,7 +511,7 @@ mod tests {
         // rendezvous なしなので旧判定どおり direct。fallback_peer_ids は relay-only 側のみ列挙。
         let (path, fallback) = topic_connection_path(
             &peers(&["peer-a", "peer-b"]),
-            &[],
+            0,
             &observed(&[("peer-a", false, true), ("peer-b", true, false)]),
         );
         assert_eq!(path, ConnectionPath::DirectP2p);
@@ -516,7 +520,7 @@ mod tests {
         // 同じ構成で rendezvous peer がいれば旧判定どおり relay_supported。
         let (path, fallback) = topic_connection_path(
             &peers(&["peer-a", "peer-b"]),
-            &peers(&["peer-b"]),
+            1,
             &observed(&[("peer-a", false, true), ("peer-b", true, false)]),
         );
         assert_eq!(path, ConnectionPath::RelaySupportedP2p);
@@ -526,11 +530,8 @@ mod tests {
     #[test]
     fn topic_path_with_holepunched_peer_is_not_relay_carried() {
         // relay と IP の両方が active(holepunch 済み)な peer は relay_carried ではない。
-        let (path, fallback) = topic_connection_path(
-            &peers(&["peer-a"]),
-            &[],
-            &observed(&[("peer-a", true, true)]),
-        );
+        let (path, fallback) =
+            topic_connection_path(&peers(&["peer-a"]), 0, &observed(&[("peer-a", true, true)]));
         assert_eq!(path, ConnectionPath::DirectP2p);
         assert!(fallback.is_empty());
     }
@@ -540,7 +541,7 @@ mod tests {
         // remote_info が観測できない peer は relay_carried 扱いにしない(旧判定へ倒す)。
         let (path, fallback) = topic_connection_path(
             &peers(&["peer-a", "peer-b"]),
-            &[],
+            0,
             &observed(&[("peer-a", false, true)]),
         );
         assert_eq!(path, ConnectionPath::DirectP2p);
@@ -550,17 +551,13 @@ mod tests {
     #[test]
     fn aggregate_any_relay_fallback_topic_is_relay_fallback() {
         let topics = vec![
-            topic_with_path(ConnectionPath::RelaySupportedP2p, &[]),
-            topic_with_path(ConnectionPath::RelayFallback, &["peer-b", "peer-a"]),
-            topic_with_path(ConnectionPath::RelayFallback, &["peer-a"]),
+            topic_with_path(ConnectionPath::RelaySupportedP2p),
+            topic_with_path(ConnectionPath::RelayFallback),
+            topic_with_path(ConnectionPath::RelayFallback),
         ];
         assert_eq!(
             aggregate_connection_path(&topics),
             ConnectionPath::RelayFallback
-        );
-        assert_eq!(
-            aggregate_fallback_peer_ids(&topics),
-            peers(&["peer-a", "peer-b"])
         );
     }
 }

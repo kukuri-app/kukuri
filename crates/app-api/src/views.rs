@@ -845,6 +845,9 @@ pub struct ChannelAccessTokenPreview {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+/// 通常の通信状態。件数と稼働中の topic(lease の 64 件以内)の診断だけを持つ(#1221 R2-D)。
+/// peer の一覧は `list_connectivity_peers` のページで読む。差分の event では、`topic_diagnostics` は
+/// 変わった topic だけを持つ。
 pub struct SyncStatus {
     pub connected: bool,
     pub delivery_state: DeliveryState,
@@ -853,10 +856,10 @@ pub struct SyncStatus {
     pub pending_events: usize,
     pub status_detail: String,
     pub last_error: Option<String>,
-    pub configured_peers: Vec<String>,
+    pub configured_peer_count: usize,
     pub subscribed_topics: Vec<String>,
     pub active_path: ConnectionPath,
-    pub fallback_peer_ids: Vec<String>,
+    pub fallback_peer_count: usize,
     pub topic_diagnostics: Vec<TopicSyncStatus>,
     pub local_author_pubkey: String,
     pub discovery: DiscoveryStatus,
@@ -881,14 +884,13 @@ pub struct DiscoveryStatus {
     pub mode: DiscoveryMode,
     pub connect_mode: ConnectMode,
     pub active_path: ConnectionPath,
-    pub fallback_peer_ids: Vec<String>,
     pub env_locked: bool,
-    pub configured_seed_peer_ids: Vec<String>,
-    pub bootstrap_seed_peer_ids: Vec<String>,
-    pub manual_ticket_peer_ids: Vec<String>,
-    pub connected_peer_ids: Vec<String>,
-    pub docs_assist_peer_ids: Vec<String>,
-    pub blob_assist_peer_ids: Vec<String>,
+    pub configured_seed_peer_count: usize,
+    pub bootstrap_seed_peer_count: usize,
+    pub connected_peer_count: usize,
+    /// 補助に使える peer(直近に取得の成功を観測した peer)の数。
+    pub docs_assist_peer_count: usize,
+    pub blob_assist_peer_count: usize,
     pub local_endpoint_id: String,
     pub last_discovery_error: Option<String>,
 }
@@ -901,13 +903,11 @@ pub struct TopicSyncStatus {
     pub joined: bool,
     pub delivery_state: DeliveryState,
     pub peer_count: usize,
-    pub connected_peers: Vec<String>,
-    pub docs_assist_peer_ids: Vec<String>,
-    pub configured_peer_ids: Vec<String>,
-    pub missing_peer_ids: Vec<String>,
+    pub configured_peer_count: usize,
+    pub missing_peer_count: usize,
     pub active_path: ConnectionPath,
-    pub rendezvous_peer_ids: Vec<String>,
-    pub fallback_peer_ids: Vec<String>,
+    pub rendezvous_peer_count: usize,
+    pub fallback_peer_count: usize,
     pub last_received_at: Option<i64>,
     pub last_docs_activity_at: Option<i64>,
     pub status_detail: String,

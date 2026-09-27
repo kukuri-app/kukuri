@@ -122,10 +122,8 @@ pub fn gated_env_url(gate_name: &str, url_name: &str, default_url: &str) -> Opti
 pub struct TopicSyncSnapshot {
     pub topic: String,
     pub peer_count: usize,
-    pub connected_peers: Vec<String>,
-    pub docs_assist_peer_ids: Vec<String>,
-    pub configured_peer_ids: Vec<String>,
-    pub missing_peer_ids: Option<Vec<String>>,
+    pub configured_peer_count: usize,
+    pub missing_peer_count: usize,
     pub delivery_state: String,
     pub status_detail: String,
 }
@@ -136,7 +134,8 @@ pub struct SyncSnapshot {
     pub peer_count: usize,
     pub status_detail: String,
     pub last_error: Option<String>,
-    pub discovery_connected_peers: Vec<String>,
+    pub discovery_connected_peer_count: usize,
+    pub docs_assist_peer_count: usize,
     pub topics: Vec<TopicSyncSnapshot>,
 }
 
@@ -153,29 +152,24 @@ pub fn format_sync_snapshot(snapshot: &SyncSnapshot, topic: &str) -> String {
         .iter()
         .find(|entry| entry.topic == topic)
         .map(|entry| {
-            let missing = entry
-                .missing_peer_ids
-                .as_ref()
-                .map(|ids| format!(", missing_peer_ids={ids:?}"))
-                .unwrap_or_default();
             format!(
-                "topic_peers={}, connected_peers={:?}, docs_assist_peer_ids={:?}, configured_peer_ids={:?}{missing}, delivery_state={}, status_detail={}",
+                "topic_peers={}, configured_peer_count={}, missing_peer_count={}, delivery_state={}, status_detail={}",
                 entry.peer_count,
-                entry.connected_peers,
-                entry.docs_assist_peer_ids,
-                entry.configured_peer_ids,
+                entry.configured_peer_count,
+                entry.missing_peer_count,
                 entry.delivery_state,
                 entry.status_detail
             )
         })
         .unwrap_or_else(|| "topic_status=missing".to_string());
     format!(
-        "connected={}, peer_count={}, status_detail={}, last_error={:?}, discovery_connected_peers={:?}, {}",
+        "connected={}, peer_count={}, status_detail={}, last_error={:?}, discovery_connected_peer_count={}, docs_assist_peer_count={}, {}",
         snapshot.connected,
         snapshot.peer_count,
         snapshot.status_detail,
         snapshot.last_error,
-        snapshot.discovery_connected_peers,
+        snapshot.discovery_connected_peer_count,
+        snapshot.docs_assist_peer_count,
         topic_status
     )
 }

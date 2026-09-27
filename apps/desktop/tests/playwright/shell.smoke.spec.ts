@@ -871,22 +871,22 @@ test('browser mock connectivity settings keep long identifiers within the conten
             const status = await getSyncStatus();
             return {
               ...status,
-              configured_peers: [peerId],
+              configured_peer_count: 1,
               status_detail: endpointDetail,
               discovery: {
                 ...status.discovery,
-                connected_peer_ids: [peerId],
+                connected_peer_count: 1,
                 local_endpoint_id: peerId,
               },
               topic_diagnostics: status.topic_diagnostics.map((diagnostic) => ({
                 ...diagnostic,
-                connected_peers: [peerId],
-                configured_peer_ids: [peerId],
-                docs_assist_peer_ids: [peerId],
+                configured_peer_count: 1,
                 status_detail: endpointDetail,
               })),
             };
           };
+          // 詳細の peer の一覧は、開いたときにページとして読む(#1221 R2-D)。続きのボタンも幅に収まるかを見る。
+          api.listConnectivityPeers = async () => ({ peer_ids: [peerId], next_cursor: peerId });
           api.getLocalPeerTicket = async () => peerTicket;
         },
       });

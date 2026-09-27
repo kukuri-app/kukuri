@@ -9,7 +9,7 @@ async fn wait_for_neighbor(transport: &IrohGossipTransport, topic: &str, expecte
             .expect("peers")
             .topic_diagnostics
             .iter()
-            .any(|diag| diag.topic == topic && !diag.connected_peers.is_empty())
+            .any(|diag| diag.topic == topic && diag.peer_count > 0)
             != expected
         {
             sleep(Duration::from_millis(50)).await;

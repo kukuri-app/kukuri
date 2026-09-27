@@ -12,7 +12,6 @@ import type {
   DesktopApi,
   BlobMediaPayload,
   GameRoomView,
-  SyncStatus,
 } from '@/lib/api';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import type { ShellChromeProjection } from '@/components/shell/types';
@@ -39,10 +38,11 @@ import { activeWorkspaceScope } from '@/shell/slices/workspace';
 import { setRecordEntry } from '@/shell/stateUpdates';
 import {
   createGameEditorDraft,
-  mergeCommunityNodeStatuses,
   profileInputFromProfile,
+  upsertCommunityNodeStatus,
 } from '@/shell/presentation';
-import { useRuntimeEventBridge } from '@/shell/data/useRuntimeEventBridge';
+import { applySyncStatusDelta } from '@/shell/slices/connectivity';
+import { useRuntimeEventBridge, type SyncStatusDelta } from '@/shell/data/useRuntimeEventBridge';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 
 function payloadByteLength(base64: string): number {
@@ -304,21 +304,21 @@ export function useDesktopShellDataEffects({
   ]);
 
   const applySyncStatusChange = useCallback(
-    (
-      syncStatus: SyncStatus | null,
-      communityNodeStatuses: CommunityNodeNodeStatus[] | null
-    ) => {
+    (delta: SyncStatusDelta) => {
       startTransition(() => {
-        if (syncStatus) {
-          setSyncStatus(syncStatus);
+        if (delta.sync_status) {
+          setSyncStatus(applySyncStatusDelta(
+            storeApi.getState().syncStatus, delta.sync_status, delta.removed_topics
+          ));
           storeApi.getState().patchState({ syncStatusRead: {
             ...storeApi.getState().syncStatusRead, loaded: true, error: false,
           } });
         }
-        if (communityNodeStatuses) {
-          setCommunityNodeStatuses((current) =>
-            mergeCommunityNodeStatuses(current, communityNodeStatuses)
-          );
+        if (delta.community_node_statuses.length > 0 || delta.removed_community_nodes.length > 0) {
+          setCommunityNodeStatuses((current) => delta.community_node_statuses.reduce(
+            upsertCommunityNodeStatus,
+            current.filter((status) => !delta.removed_community_nodes.includes(status.base_url))
+          ));
           storeApi.getState().patchState({
             communityNodeStatusesLoaded: true, communityNodeStatusError: null,
           });

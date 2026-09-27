@@ -737,36 +737,43 @@ impl AppService {
             );
         }
         if effective_channel_id.is_none() {
-            match self.get_sync_status().await {
-                Ok(status) => {
-                    if let Some(topic_status) = status
-                        .topic_diagnostics
-                        .iter()
-                        .find(|entry| entry.topic == topic_id)
-                    {
-                        let connectivity_shape = match topic_status.delivery_state {
-                            DeliveryState::Live => "live",
-                            DeliveryState::DurableReady => "durable-ready",
-                            DeliveryState::DurableRecovering => "durable-recovering",
-                            DeliveryState::Offline => "offline",
-                        };
-                        info!(
-                            topic = %topic_id,
-                            connectivity_shape,
-                            direct_peer_count = topic_status.connected_peers.len(),
-                            docs_assist_peer_count = topic_status.docs_assist_peer_ids.len(),
-                            "public topic connectivity snapshot after local post"
-                        );
-                    }
-                }
-                Err(error) => {
-                    warn!(
-                        topic = %topic_id,
-                        error = %error,
-                        "failed to load public topic connectivity snapshot after local post"
-                    );
-                }
-            }
+            // この topic の neighbor と補助の数だけを読む(通信状態の全体は作らない。#1221 R2-D)。
+            let direct_peer_count = self
+                .services
+                .transport
+                .peer_page(
+                    ConnectivityPeerKind::Connected,
+                    Some(kukuri_core::wire::hint_topic_id(&topic).as_str()),
+                    None,
+                    crate::CONNECTIVITY_PEER_PAGE_LIMIT,
+                )
+                .await
+                .map_or(0, |page| page.peer_ids.len());
+            let docs_assist_peer_count = self
+                .docs_assisted_peer_ids()
+                .await
+                .map_or(0, |peers| peers.len());
+            let last_docs_activity_at = self
+                .public_topic_delivery_status(topic_id)
+                .await
+                .and_then(|status| status.last_docs_activity_at);
+            let connectivity_shape = match delivery_state_for_topic(
+                direct_peer_count,
+                docs_assist_peer_count,
+                last_docs_activity_at,
+            ) {
+                DeliveryState::Live => "live",
+                DeliveryState::DurableReady => "durable-ready",
+                DeliveryState::DurableRecovering => "durable-recovering",
+                DeliveryState::Offline => "offline",
+            };
+            info!(
+                topic = %topic_id,
+                connectivity_shape,
+                direct_peer_count,
+                docs_assist_peer_count,
+                "public topic connectivity snapshot after local post"
+            );
         }
         self.queue_post_offer(
             &write_replica,
@@ -814,7 +821,7 @@ impl AppService {
                 .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit, true)
                 .await?;
             if reconcile.hydrated > 0 {
-                *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+                self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
             }
             // 照合した範囲に、最初のページより多くの object が projection に在ると分かったときだけ、ページを
             // 読み直す(今回反映した、または購読タスクが同じ範囲を先に反映していた)。それ以外は読み直さない。
@@ -836,9 +843,8 @@ impl AppService {
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
-        let mut last_sync = self.last_sync_ts.lock().await;
-        if !view.items.is_empty() && last_sync.is_none() {
-            *last_sync = Some(Utc::now().timestamp_millis());
+        if !view.items.is_empty() && self.last_sync_ts.get().await.is_none() {
+            self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         }
         Ok(view)
     }
@@ -873,7 +879,7 @@ impl AppService {
         let unavailable = reconcile.unavailable;
         if page_is_stale || page.items.is_empty() {
             if reconcile.hydrated > 0 {
-                *self.last_sync_ts.lock().await = Some(Utc::now().timestamp_millis());
+                self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
             }
             // 照合した範囲に、最初のページより多くの object が在ると分かったときだけ読み直す
             // (`list_timeline_scoped` と同じ)。
@@ -906,9 +912,8 @@ impl AppService {
         self.reflect_reply_targets_for_rows(&page.items).await;
         let mut view = self.page_to_view(page).await?;
         view.unavailable_count = u32::try_from(unavailable).unwrap_or(u32::MAX);
-        let mut last_sync = self.last_sync_ts.lock().await;
-        if !view.items.is_empty() && last_sync.is_none() {
-            *last_sync = Some(Utc::now().timestamp_millis());
+        if !view.items.is_empty() && self.last_sync_ts.get().await.is_none() {
+            self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         }
         Ok(view)
     }

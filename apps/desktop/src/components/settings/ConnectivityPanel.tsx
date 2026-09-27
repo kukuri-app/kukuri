@@ -11,11 +11,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { SettingsActionRow } from './SettingsActionRow';
 import { SettingsDiagnosticList } from './SettingsDiagnosticList';
 import { SettingsMetricGrid } from './SettingsMetricGrid';
-import { type ConnectivityPanelView } from './types';
+import { SettingsDetails } from './SettingsDetails';
+import { type ConnectivityPanelView, type LoadConnectivityPeers } from './types';
 import { topicDisplayName } from '@/lib/topicId';
 
 type ConnectivityPanelProps = DiagnosticActions & {
   view: ConnectivityPanelView;
+  loadPeers?: LoadConnectivityPeers;
   onPeerTicketInputChange: (value: string) => void;
   onImportPeer: () => void;
   showDiagnostics?: boolean;
@@ -28,6 +30,7 @@ export function ConnectivityPanel({
   onPeerTicketInputChange,
   onImportPeer,
   showDiagnostics = true,
+  loadPeers,
 }: ConnectivityPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
 
@@ -48,10 +51,9 @@ export function ConnectivityPanel({
           <>
             <SettingsMetricGrid items={view.metrics} />
             <p className='text-sm text-muted-foreground'>{t('settings:connectionGuidance.candidates')}</p>
-            <details className='min-w-0'>
-              <summary className='cursor-pointer py-2'>{t('settings:connectionGuidance.details')}</summary>
-            <SettingsDiagnosticList items={view.diagnostics} columns={2} />
-            </details>
+            <SettingsDetails summary={t('settings:connectionGuidance.details')}>
+              <SettingsDiagnosticList items={view.diagnostics} columns={2} loadPeers={loadPeers} />
+            </SettingsDetails>
           </>
         ) : null}
       </Card>
@@ -124,8 +126,7 @@ export function ConnectivityPanel({
 
               <div className='mt-3'><ConnectivityGuidanceNotice guidance={topic.guidance} /></div>
               {showDiagnostics && topic.guidance?.loaded !== false && topic.expectedPeerCount !== null ? (
-                <details className='min-w-0'>
-                  <summary className='cursor-pointer py-2'>{t('settings:connectionGuidance.details')}</summary>
+                <SettingsDetails summary={t('settings:connectionGuidance.details')}>
                   <div className='mt-4'>
                     <SettingsMetricGrid
                       items={[
@@ -155,23 +156,27 @@ export function ConnectivityPanel({
                         },
                         {
                           label: t('settings:connectivity.diagnostics.connectedPeers'),
-                          value: topic.connectedPeersLabel,
+                          value: '',
                           monospace: true,
+                          peers: { kind: 'connected', topic: topic.topic },
                         },
                         {
                           label: t('settings:connectivity.diagnostics.relayAssistedPeers'),
-                          value: topic.relayAssistedPeersLabel,
+                          value: '',
                           monospace: true,
+                          peers: { kind: 'docs_assist' },
                         },
                         {
                           label: t('settings:connectivity.diagnostics.configuredPeers'),
-                          value: topic.configuredPeersLabel,
+                          value: '',
                           monospace: true,
+                          peers: { kind: 'configured', topic: topic.topic },
                         },
                         {
                           label: t('settings:connectivity.diagnostics.missingPeers'),
-                          value: topic.missingPeersLabel,
+                          value: '',
                           monospace: true,
+                          peers: { kind: 'missing', topic: topic.topic },
                         },
                         {
                           label: t('settings:connectivity.diagnostics.lastError'),
@@ -180,9 +185,10 @@ export function ConnectivityPanel({
                         },
                       ]}
                       columns={2}
+                      loadPeers={loadPeers}
                     />
                   </div>
-                </details>
+                </SettingsDetails>
               ) : null}
             </section>
           ))}

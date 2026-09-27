@@ -6,37 +6,23 @@
   "pending_events": 0,
   "status_detail": "durable recovering",
   "last_error": "previous error",
-  "configured_peers": [
-    "peer-a"
-  ],
+  "configured_peer_count": 1,
   "subscribed_topics": [
     "kukuri:topic:demo"
   ],
   "active_path": "relay_supported_p2p",
-  "fallback_peer_ids": [],
+  "fallback_peer_count": 0,
   "topic_diagnostics": [
     {
       "topic": "kukuri:topic:demo",
       "joined": true,
       "delivery_state": "Live",
       "peer_count": 2,
-      "connected_peers": [
-        "peer-a",
-        "peer-b"
-      ],
-      "docs_assist_peer_ids": [
-        "peer-b"
-      ],
-      "configured_peer_ids": [
-        "peer-a"
-      ],
-      "missing_peer_ids": [],
+      "configured_peer_count": 1,
+      "missing_peer_count": 0,
       "active_path": "relay_fallback",
-      "rendezvous_peer_ids": [],
-      "fallback_peer_ids": [
-        "peer-a",
-        "peer-b"
-      ],
+      "rendezvous_peer_count": 0,
+      "fallback_peer_count": 2,
       "last_received_at": 1700000090,
       "last_docs_activity_at": 1700000095,
       "status_detail": "live",
@@ -48,24 +34,12 @@
     "mode": "seeded_dht",
     "connect_mode": "direct_or_relay",
     "active_path": "relay_supported_p2p",
-    "fallback_peer_ids": [],
     "env_locked": false,
-    "configured_seed_peer_ids": [
-      "seed-1"
-    ],
-    "bootstrap_seed_peer_ids": [
-      "seed-2"
-    ],
-    "manual_ticket_peer_ids": [
-      "manual-1"
-    ],
-    "connected_peer_ids": [
-      "peer-a"
-    ],
-    "docs_assist_peer_ids": [
-      "peer-b"
-    ],
-    "blob_assist_peer_ids": [],
+    "configured_seed_peer_count": 1,
+    "bootstrap_seed_peer_count": 1,
+    "connected_peer_count": 1,
+    "docs_assist_peer_count": 1,
+    "blob_assist_peer_count": 0,
     "local_endpoint_id": "endpoint-1",
     "last_discovery_error": "dht timeout"
   },

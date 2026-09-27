@@ -163,7 +163,8 @@ test('diagnostic shortcuts preserve unsaved input and show connection errors wit
   await user.click(within(drawer).getByRole('checkbox', { name: 'Enable developer mode' }));
   await user.click(within(drawer).getByRole('button', { name: 'Connection diagnostics' }));
   expect(within(drawer).getByRole('textbox', { name: 'Peer Ticket' })).toHaveValue('unsaved ticket');
-  expect(within(drawer).getByText(/Connection unavailable/)).not.toBeVisible();
+  // 詳細は開くまで描かない(#1221 R2-D。peer の一覧を開いたときだけ読む)。
+  expect(within(drawer).queryByText(/Connection unavailable/)).toBeNull();
   await user.click(within(drawer).getAllByText('Technical diagnostic details')[0]);
   expect(within(drawer).getByText('Connected peers and assistance candidates')).toBeVisible();
   expect(within(drawer).getAllByText(/Connection unavailable/).length).toBeGreaterThan(0);

@@ -16,6 +16,7 @@ use kukuri_docs_sync::{
 };
 use kukuri_iroh_node::IrohDocsNode;
 use kukuri_store::SqliteStore;
+use kukuri_transport::StatusChanges;
 use kukuri_transport::{
     ConnectMode, DhtDiscoveryOptions, DiscoveryMode, DiscoverySnapshot, EndpointAddr, HintStream,
     HintTransport, IrohGossipTransport, PeerSnapshot, ReceiveCandidateFence, ReceiveOfferLease,
@@ -35,9 +36,10 @@ pub(crate) struct BoundIrohStack {
     pub(crate) blob_service: Arc<IrohBlobService>,
 }
 
+/// 候補の台帳と、通信状態の変わった部分の印(#1221 R2-D。作り直しても同じ印へ付ける)。
 enum StackOpen {
-    Initial(Arc<SqliteStore>),
-    Reopen(Arc<SqliteStore>),
+    Initial(Arc<SqliteStore>, StatusChanges),
+    Reopen(Arc<SqliteStore>, StatusChanges),
 }
 
 /// ホットスワップ可能なサービスラッパーを 1 つ生成する。
@@ -113,6 +115,14 @@ reloadable_service! {
             bootstrap_seed_peers: Vec<SeedPeer>,
         ) -> Result<()>;
         async fn discovery() -> Result<DiscoverySnapshot>;
+        // #1221 R2-D: 宣言が無いと trait の既定実装(空)に落ちる。
+        async fn subscribed_topics() -> Result<Vec<String>>;
+        async fn peer_page(
+            kind: kukuri_transport::ConnectivityPeerKind,
+            topic: Option<&str>,
+            cursor: Option<&str>,
+            limit: usize,
+        ) -> Result<kukuri_transport::PeerPage>;
     }
 
     #[async_trait]
@@ -235,6 +245,8 @@ reloadable_service! {
 
 pub(crate) struct SharedIrohStack {
     pub(crate) current: Mutex<Option<BoundIrohStack>>,
+    /// 通信状態の変わった部分の印(#1221 R2-D)。作り直した transport も同じ印へ付ける。
+    pub(crate) status_changes: StatusChanges,
     generation: AtomicU64,
     pub(crate) transport: Arc<ReloadableTransport>,
     pub(crate) docs_sync: Arc<ReloadableDocsSync>,
@@ -304,6 +316,7 @@ impl SharedIrohStack {
             Some(store) => store,
             None => Arc::new(SqliteStore::connect_memory().await?),
         };
+        let status_changes = StatusChanges::default();
         let current = BoundIrohStack::new(
             root,
             network_config.clone(),
@@ -311,7 +324,7 @@ impl SharedIrohStack {
             bootstrap_seed_peers,
             dht_options.clone(),
             relay_config,
-            StackOpen::Initial(candidate_store.clone()),
+            StackOpen::Initial(candidate_store.clone(), status_changes.clone()),
         )
         .await?;
         let transport = Arc::new(ReloadableTransport::new(current.transport.clone()));
@@ -337,6 +350,7 @@ impl SharedIrohStack {
         });
         Ok(Self {
             current: Mutex::new(Some(current)),
+            status_changes,
             generation: AtomicU64::new(0),
             transport,
             docs_sync,
@@ -429,7 +443,7 @@ impl SharedIrohStack {
             bootstrap_seed_peers,
             dht_options,
             relay_config,
-            StackOpen::Reopen(self.candidate_store.clone()),
+            StackOpen::Reopen(self.candidate_store.clone(), self.status_changes.clone()),
         )
         .await?;
         // 差し替える前に設定する。設定の無い stack が、端末ごとの docs author で書くことが無いようにする。
@@ -601,9 +615,9 @@ impl BoundIrohStack {
         relay_config: TransportRelayConfig,
         open: StackOpen,
     ) -> Result<Self> {
-        let (reopening, candidate_store) = match open {
-            StackOpen::Initial(store) => (false, store),
-            StackOpen::Reopen(store) => (true, store),
+        let (reopening, candidate_store, status_changes) = match open {
+            StackOpen::Initial(store, changes) => (false, store, changes),
+            StackOpen::Reopen(store, changes) => (true, store, changes),
         };
         let relay_config = relay_config.normalized();
         let node = if reopening {
@@ -632,7 +646,8 @@ impl BoundIrohStack {
                 network_config,
                 relay_config.clone(),
             )?
-            .with_account_store(candidate_store.clone()),
+            .with_account_store(candidate_store.clone())
+            .with_status_changes(status_changes),
         );
         let docs_sync = Arc::new(IrohDocsSync::with_account_store(
             node.clone(),

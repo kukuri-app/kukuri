@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-09-26-1221-r2-c-scope-display-v1",
+  "scope_revision": "2026-09-27-1221-r2-d-connectivity-peers-v1",
   "entries": [
     {"tauri":"commands::startup::get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -90,6 +90,7 @@
     {"tauri":"commands::direct_messages::clear_direct_message","cli":"clear_direct_message","inventory":"INV-3"},
     {"tauri":"commands::direct_messages::get_direct_message_status","cli":"get_direct_message_status","inventory":"INV-3"},
     {"tauri":"commands::community_node::get_sync_status","cli":"get_sync_status","inventory":"INV-7"},
+    {"tauri":"commands::community_node::list_connectivity_peers","cli":"list_connectivity_peers","inventory":"INV-7"},
     {"tauri":"commands::community_node::get_discovery_config","cli":"get_discovery_config","inventory":"INV-7"},
     {"tauri":"commands::live_game::list_live_sessions","cli":"list_live_sessions","inventory":"INV-5"},
     {"tauri":"commands::live_game::list_session_candidates","cli":"list_session_candidates","inventory":"INV-5"},

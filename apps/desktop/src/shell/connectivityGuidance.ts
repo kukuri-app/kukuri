@@ -48,7 +48,7 @@ export function connectivityGuidance(
 }
 
 export function discoveryGuidance(sync: SyncStatus, read: SyncStatusRead, t: Translate): ConnectivityGuidance {
-  const connected = sync.discovery.connected_peer_ids.length > 0;
+  const connected = sync.discovery.connected_peer_count > 0;
   const base = connectivityGuidance(sync, read, t);
   const error = sync.discovery.last_discovery_error;
   return {

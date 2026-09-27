@@ -429,6 +429,7 @@ pub fn run() {
             commands::direct_messages::clear_direct_message,
             commands::direct_messages::get_direct_message_status,
             commands::community_node::get_sync_status,
+            commands::community_node::list_connectivity_peers,
             commands::community_node::get_discovery_config,
             commands::live_game::list_live_sessions,
             commands::live_game::list_session_candidates,

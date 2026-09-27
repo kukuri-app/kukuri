@@ -5,9 +5,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    DesiredSubscription, DesiredSubscriptionScope, ImportPeerTicketRequest,
-    SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest, SetTopicGossipEnabledRequest,
-    UnsubscribeTopicRequest,
+    ConnectivityPeersRequest, DesiredSubscription, DesiredSubscriptionScope,
+    ImportPeerTicketRequest, SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest,
+    SetTopicGossipEnabledRequest, UnsubscribeTopicRequest,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -25,6 +25,12 @@ impl CommandHandler for Handler {
         let runtime = runtime(&context)?;
         match self.0 {
             "get_sync_status" => encode(runtime.get_sync_status().await.map_err(command_error)?),
+            "list_connectivity_peers" => encode(
+                runtime
+                    .list_connectivity_peers(decode::<ConnectivityPeersRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             "get_discovery_config" => encode(
                 runtime
                     .get_discovery_config()
@@ -82,19 +88,17 @@ impl CommandHandler for Handler {
                     .iter()
                     .filter(|subscription| subscription.topic == request.topic)
                     .collect::<Vec<_>>();
-                if subscriptions.is_empty() {
-                    runtime
-                        .unsubscribe_topic(request)
+                // 保存済みの購読も解除し、再起動で意図せず再購読しない。
+                for subscription in subscriptions {
+                    host.remove_desired_subscription(subscription)
                         .await
-                        .map_err(command_error)?;
-                } else {
-                    // 保存済みの購読も解除し、再起動で意図せず再購読しない。
-                    for subscription in subscriptions {
-                        host.remove_desired_subscription(subscription)
-                            .await
-                            .map_err(|error| command_error(error.into()))?;
-                    }
+                        .map_err(|error| command_error(error.into()))?;
                 }
+                // topic の停止設定も消す(#1221 R2-D)。
+                runtime
+                    .unsubscribe_topic(request)
+                    .await
+                    .map_err(command_error)?;
                 encode(())
             }
             _ => unreachable!("登録済みのnetwork command"),
@@ -106,6 +110,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
     use CommandEffect::{Read, Write};
     [
         ("get_sync_status", Read),
+        ("list_connectivity_peers", Read),
         ("get_discovery_config", Read),
         ("get_local_peer_ticket", Read),
         ("import_peer_ticket", Write),

@@ -28,13 +28,11 @@ import {
   communityNodeSessionPhaseLabel,
   formatBytes,
   formatCount,
-  formatListLabel,
   isHex64,
   joinedChannelFromAccessTokenPreview,
   localizeAudienceLabel,
   mergeAuthorView,
   mergeCommunityNodeStatus,
-  mergeCommunityNodeStatuses,
   mergeKnownAuthors,
   patchReactionStateIntoPosts,
   privateComposeTarget,
@@ -275,34 +273,6 @@ describe('mergeKnownAuthors', () => {
     // 入力 record は破壊されない
     expect(current['author-a'].muted).toBe(false);
     expect(current['author-b']).toBeUndefined();
-  });
-});
-
-describe('mergeCommunityNodeStatuses', () => {
-  it('keeps only nodes present in next, merging each with its previous status', () => {
-    const resolvedUrls = {
-      public_base_url: 'https://a.example',
-      connectivity_urls: ['https://a.example/connect'],
-    };
-    const previous = [
-      baseStatus({ base_url: 'https://a.example', resolved_urls: resolvedUrls }),
-      baseStatus({ base_url: 'https://b.example' }),
-    ];
-    const next = [
-      baseStatus({ base_url: 'https://c.example' }),
-      baseStatus({ base_url: 'https://a.example' }),
-    ];
-
-    const merged = mergeCommunityNodeStatuses(previous, next);
-    // next の並び順で、next に無い b は落ちる
-    expect(merged.map((status) => status.base_url)).toEqual([
-      'https://c.example',
-      'https://a.example',
-    ]);
-    // previous があるものは resolved URL を引き継ぎ、無いものは merge の defaults
-    expect(merged[1].resolved_urls).toEqual(resolvedUrls);
-    expect(merged[0].session_phase).toBe('idle');
-    expect(merged[0].retry_after).toBeNull();
   });
 });
 
@@ -989,13 +959,6 @@ describe('isHex64', () => {
     expect(isHex64('a'.repeat(65))).toBe(false);
     expect(isHex64('')).toBe(false);
     expect(isHex64(`g${'a'.repeat(63)}`)).toBe(false);
-  });
-});
-
-describe('formatListLabel', () => {
-  it('joins values with a comma and falls back to none for an empty list', () => {
-    expect(formatListLabel(['alpha', 'beta'])).toBe('alpha, beta');
-    expect(formatListLabel([])).toBe('none');
   });
 });
 

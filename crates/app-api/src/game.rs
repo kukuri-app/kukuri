@@ -226,7 +226,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(now);
+        self.last_sync_ts.set(now).await;
         Ok(room_id)
     }
 
@@ -366,7 +366,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(now);
+        self.last_sync_ts.set(now).await;
         Ok(room_id)
     }
 
@@ -434,7 +434,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(manifest.updated_at);
+        self.last_sync_ts.set(manifest.updated_at).await;
         Ok(())
     }
 
@@ -535,7 +535,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(manifest.updated_at);
+        self.last_sync_ts.set(manifest.updated_at).await;
         Ok(())
     }
 
@@ -666,7 +666,7 @@ impl AppService {
                 },
             )
             .await?;
-        *self.last_sync_ts.lock().await = Some(now);
+        self.last_sync_ts.set(now).await;
         Ok(view)
     }
 

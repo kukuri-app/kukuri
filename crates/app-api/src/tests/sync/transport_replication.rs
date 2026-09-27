@@ -466,14 +466,10 @@ async fn seeded_dht_updates_existing_topic_subscription_after_seed_update() {
             let status_a = app_a.get_sync_status().await.expect("status a");
             let status_b = app_b.get_sync_status().await.expect("status b");
             let ready_a = status_a.topic_diagnostics.iter().any(|topic_status| {
-                topic_status.topic == topic
-                    && topic_status.joined
-                    && !topic_status.connected_peers.is_empty()
+                topic_status.topic == topic && topic_status.joined && topic_status.peer_count > 0
             });
             let ready_b = status_b.topic_diagnostics.iter().any(|topic_status| {
-                topic_status.topic == topic
-                    && topic_status.joined
-                    && !topic_status.connected_peers.is_empty()
+                topic_status.topic == topic && topic_status.joined && topic_status.peer_count > 0
             });
             Ok::<_, std::convert::Infallible>(if ready_a && ready_b {
                 PollState::Ready(())
