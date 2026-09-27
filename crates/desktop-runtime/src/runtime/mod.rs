@@ -380,7 +380,9 @@ impl DesktopRuntime {
             runtime_connectivity_assist_state(&discovery_config, &active_community_node_config);
         let initial_effective_seed_peer_state =
             effective_seed_peer_apply_state(&discovery_config, &active_community_node_config);
-        let docs_root = db_path.with_extension("iroh-data");
+        // #1221 R5-I: node は新しい store で動く。旧 `iroh-data` の endpoint secret を写して endpoint ID を保つ。
+        let docs_root = db_path.with_extension("iroh-store");
+        kukuri_iroh_node::adopt_endpoint_secret(&db_path.with_extension("iroh-data"), &docs_root)?;
         let store = Arc::new(SqliteStore::connect_file(&db_path).await?);
         let iroh_stack = SharedIrohStack::new(
             &docs_root,
