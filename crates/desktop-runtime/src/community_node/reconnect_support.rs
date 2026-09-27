@@ -98,12 +98,7 @@ impl DesktopRuntime {
     pub(crate) async fn repair_community_node_connectivity(&self) -> Result<()> {
         // A missing remote peer is not a failed local actor. Reapply discovery
         // and subscriptions first; only a failed local probe warrants rebuilding.
-        if self.iroh_stack.local_docs_available().await? {
-            self.force_apply_runtime_connectivity_assist().await?;
-        } else {
-            self.force_rebuild_runtime_connectivity_assist().await?;
-        }
-        self.force_apply_effective_seed_peers().await?;
+        self.apply_community_node_connectivity(None).await?;
         Ok(())
     }
 

@@ -29,7 +29,7 @@ async fn idle_actor_repair_does_not_replace_an_unreadable_canonical_store() {
     let original = std::fs::read(&docs).expect("original docs");
     let damaged = b"unreadable canonical store";
     std::fs::write(&docs, damaged).expect("inject unreadable store");
-    let result = runtime.apply_runtime_connectivity_assist().await;
+    let result = runtime.apply_community_node_connectivity(None).await;
     runtime.shutdown().await;
     let retained = std::fs::read(&docs).expect("retained store");
     // Restore only the test fixture so cleanup/retry can use the same profile.
@@ -99,13 +99,9 @@ async fn idle_repair_of_closed_actor_restores_private_capability_with_unchanged_
         .await
         .expect("inject closed actor");
     runtime
-        .apply_runtime_connectivity_assist()
+        .apply_community_node_connectivity(None)
         .await
         .expect("repair without input changes");
-    runtime
-        .apply_effective_seed_peers()
-        .await
-        .expect("restore subscriptions despite unchanged seeds");
     let after = runtime
         .iroh_stack
         .current

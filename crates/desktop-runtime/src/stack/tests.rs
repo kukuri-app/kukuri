@@ -104,33 +104,54 @@ async fn reloadable_blob_service_keeps_ephemeral_fetch_and_local_status_non_pers
     );
 }
 
-#[test]
-fn runtime_connectivity_rebuild_helper_skips_rebuild_when_relay_urls_are_unchanged() {
-    let relay_url = "https://relay.example.com".to_string();
-    assert!(!should_rebuild_runtime_connectivity(
-        std::slice::from_ref(&relay_url),
-        std::slice::from_ref(&relay_url),
-    ));
-}
-
-#[test]
-fn runtime_connectivity_rebuild_helper_rebuilds_for_static_peer_relay_change() {
-    let current = "https://relay-a.example.com".to_string();
-    let next = "https://relay-b.example.com".to_string();
-    assert!(should_rebuild_runtime_connectivity(
-        std::slice::from_ref(&current),
-        std::slice::from_ref(&next),
-    ));
-}
-
-#[test]
-fn runtime_connectivity_rebuild_helper_rebuilds_for_non_static_peer_relay_change() {
-    let current = "https://relay-a.example.com".to_string();
-    let next = "https://relay-b.example.com".to_string();
-    assert!(should_rebuild_runtime_connectivity(
-        std::slice::from_ref(&current),
-        std::slice::from_ref(&next),
-    ));
+// #1221 R2-B: relay の集合の変化はその場で足し引きし、endpoint を作り直すのは、直接だけと relay つきを
+// 切り替えるときだけにする。
+#[tokio::test]
+async fn relay_set_changes_in_place_and_only_a_connect_mode_switch_rebuilds() {
+    let dir = tempdir().expect("tempdir");
+    let discovery_config = DiscoveryConfig::static_peer_default();
+    let stack = SharedIrohStack::new(
+        &dir.path().join("stack"),
+        TransportNetworkConfig::loopback(),
+        &discovery_config,
+        &[],
+        DhtDiscoveryOptions::disabled(),
+        TransportRelayConfig::default(),
+        None,
+    )
+    .await
+    .expect("stack");
+    for (relays, generation) in [
+        (vec!["https://relay-a.invalid"], 1),
+        (
+            vec!["https://relay-a.invalid", "https://relay-b.invalid"],
+            1,
+        ),
+        (vec!["https://relay-b.invalid"], 1),
+        (Vec::new(), 2),
+    ] {
+        let relay_config = TransportRelayConfig {
+            iroh_relay_urls: relays.iter().map(|url| url.to_string()).collect(),
+        };
+        timeout(
+            Duration::from_secs(60),
+            stack.apply_runtime_connectivity(&discovery_config, &[], relay_config),
+        )
+        .await
+        .expect("apply timeout")
+        .expect("apply");
+        assert_eq!(stack.generation(), generation, "{relays:?}");
+        let current = stack
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .expect("stack")
+            .node
+            .clone();
+        assert_eq!(current.relay_urls().await.len(), relays.len());
+    }
+    stack.shutdown_checked().await.expect("shutdown");
 }
 
 #[tokio::test]

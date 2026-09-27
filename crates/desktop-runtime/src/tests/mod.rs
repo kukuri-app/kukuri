@@ -41,8 +41,7 @@ use tokio::time::{Duration, sleep, timeout};
 use crate::attachments::{normalize_custom_reaction_gif, normalize_custom_reaction_static};
 use crate::community_node::{
     BootstrapNodesResponse, StoredCommunityNodeToken, load_community_node_config_from_file,
-    normalize_community_node_config, persist_community_node_token,
-    relay_config_from_community_node_config, save_community_node_config,
+    normalize_community_node_config, persist_community_node_token, save_community_node_config,
 };
 use crate::discovery::resolve_discovery_config_from_env;
 use crate::identity::IdentityStorageMode;

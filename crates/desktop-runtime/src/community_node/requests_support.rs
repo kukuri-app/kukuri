@@ -244,10 +244,6 @@ impl DesktopRuntime {
         access_token: &str,
     ) -> std::result::Result<CommunityNodeNodeConfig, CommunityNodeRequestError> {
         let base_url = normalize_http_url(base_url).map_err(CommunityNodeRequestError::Other)?;
-        let local_seed_peer_before = self
-            .local_community_node_seed_peer("metadata-refresh-baseline")
-            .await
-            .ok();
         self.require_community_node(&base_url)
             .await
             .map_err(CommunityNodeRequestError::Other)?;
@@ -321,32 +317,9 @@ impl DesktopRuntime {
             .map_err(CommunityNodeRequestError::Other)?;
         *current_config = normalized.clone();
         drop(current_config);
-        self.apply_runtime_connectivity_assist()
+        self.sync_community_node_connectivity(base_url.as_str())
             .await
             .map_err(CommunityNodeRequestError::Other)?;
-        self.apply_effective_seed_peers()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
-        let local_seed_peer_after = self
-            .local_community_node_seed_peer("metadata-refresh-post-apply")
-            .await
-            .ok();
-        if local_seed_peer_before != local_seed_peer_after {
-            if let Some(entry) = self
-                .community_node_sessions
-                .lock()
-                .await
-                .get_mut(base_url.as_str())
-            {
-                entry.heartbeat_deadline = 0;
-            }
-            debug!(
-                %base_url,
-                before = ?local_seed_peer_before,
-                after = ?local_seed_peer_after,
-                "scheduled immediate community-node heartbeat after local seed peer changed during metadata sync"
-            );
-        }
         normalized
             .nodes
             .iter()
@@ -462,7 +435,8 @@ impl DesktopRuntime {
         let private_topic_keys = self.app_service.private_channel_rendezvous_keys().await;
         let account_receive_route = receive_route_for_account(&self.author_keys.public_key())
             .map_err(CommunityNodeRequestError::Other)?;
-        let mut topic_keys = std::collections::BTreeSet::new();
+        // rendezvous の鍵 → 購読している topic。応答の peer は、その topic だけへ join する(#1221 R2-B)。
+        let mut topic_keys = std::collections::BTreeMap::new();
         let mut skipped_private_topics = 0usize;
         for topic in &snapshot.subscribed_topics {
             if topic == account_receive_route.as_str() {
@@ -473,13 +447,16 @@ impl DesktopRuntime {
                 .is_some_and(|topic| topic.starts_with(PRIVATE_CHANNEL_TOPIC_PREFIX));
             if is_private_channel_hint {
                 if let Some(key) = private_topic_keys.get(topic) {
-                    topic_keys.insert(key.clone());
+                    topic_keys.insert(key.clone(), topic.clone());
                 } else {
                     skipped_private_topics += 1;
                 }
                 continue;
             }
-            topic_keys.insert(public_topic_rendezvous_key(&TopicId::new(topic.clone())));
+            topic_keys.insert(
+                public_topic_rendezvous_key(&TopicId::new(topic.clone())),
+                topic.clone(),
+            );
         }
         if skipped_private_topics > 0 {
             warn!(
@@ -487,7 +464,6 @@ impl DesktopRuntime {
                 "現在世代の秘密がない非公開チャンネルのランデブー話題を除外しました"
             );
         }
-        let topic_keys = topic_keys.into_iter().collect::<Vec<_>>();
         if topic_keys.is_empty() {
             return Ok(());
         }
@@ -503,7 +479,7 @@ impl DesktopRuntime {
                 endpoint_id: seed_peer.endpoint_id,
                 addr_hint: seed_peer.addr_hint,
                 joins: Vec::new(),
-                refreshes: topic_keys,
+                refreshes: topic_keys.keys().cloned().collect(),
                 leaves: Vec::new(),
             })
             .send()
@@ -540,29 +516,24 @@ impl DesktopRuntime {
             (response.expires_in_seconds.min(i64::MAX as u64) as i64)
                 .saturating_sub(COMMUNITY_NODE_TOPIC_RENDEZVOUS_REFRESH_MARGIN_SECONDS),
         );
-        let mut peers_by_endpoint = std::collections::BTreeMap::new();
-        for topic in response.topics {
-            for peer in topic.peers {
-                peers_by_endpoint.insert(
-                    peer.endpoint_id.clone(),
-                    SeedPeer {
-                        endpoint_id: peer.endpoint_id,
-                        addr_hint: peer.addr_hint,
-                    },
-                );
-            }
+        for response_topic in response.topics {
+            let Some(topic) = topic_keys.get(&response_topic.topic_key) else {
+                continue;
+            };
+            let peers = response_topic
+                .peers
+                .into_iter()
+                .map(|peer| SeedPeer {
+                    endpoint_id: peer.endpoint_id,
+                    addr_hint: peer.addr_hint,
+                })
+                .collect();
+            self.iroh_stack
+                .transport
+                .join_topic_peers(base_url, &TopicId::new(topic.clone()), peers)
+                .await
+                .map_err(CommunityNodeRequestError::Other)?;
         }
-        let rendezvous_peers = peers_by_endpoint.into_values().collect::<Vec<_>>();
-        self.community_node_rendezvous_seed_peers
-            .lock()
-            .await
-            .insert(base_url.to_string(), rendezvous_peers);
-        self.apply_runtime_connectivity_assist()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
-        self.apply_effective_seed_peers()
-            .await
-            .map_err(CommunityNodeRequestError::Other)?;
         Ok(())
     }
 

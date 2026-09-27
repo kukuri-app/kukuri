@@ -216,32 +216,18 @@ async fn community_node_connectivity_assist_backfills_public_timeline_with_relay
     mark_community_node_session_ready_for_test(&runtime_b, base_url).await;
     timeout(
         Duration::from_secs(30),
-        runtime_a.apply_runtime_connectivity_assist(),
+        runtime_a.sync_community_node_connectivity(base_url),
     )
     .await
-    .expect("apply assist a timeout")
-    .expect("apply assist a");
-    timeout(
-        Duration::from_secs(15),
-        runtime_a.apply_effective_seed_peers(),
-    )
-    .await
-    .expect("apply seed peers a timeout")
-    .expect("apply seed peers a");
+    .expect("apply connectivity a timeout")
+    .expect("apply connectivity a");
     timeout(
         Duration::from_secs(30),
-        runtime_b.apply_runtime_connectivity_assist(),
+        runtime_b.sync_community_node_connectivity(base_url),
     )
     .await
-    .expect("apply assist b timeout")
-    .expect("apply assist b");
-    timeout(
-        Duration::from_secs(15),
-        runtime_b.apply_effective_seed_peers(),
-    )
-    .await
-    .expect("apply seed peers b timeout")
-    .expect("apply seed peers b");
+    .expect("apply connectivity b timeout")
+    .expect("apply connectivity b");
 
     let topic = "kukuri:topic:community-node-relay-only";
     let scope = TimelineScope::Public;
@@ -378,32 +364,18 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
 
     timeout(
         Duration::from_secs(30),
-        runtime_a.apply_runtime_connectivity_assist(),
+        runtime_a.sync_community_node_connectivity(base_url),
     )
     .await
-    .expect("apply assist a timeout")
-    .expect("apply assist a");
-    timeout(
-        Duration::from_secs(15),
-        runtime_a.apply_effective_seed_peers(),
-    )
-    .await
-    .expect("apply seed peers a timeout")
-    .expect("apply seed peers a");
+    .expect("apply connectivity a timeout")
+    .expect("apply connectivity a");
     timeout(
         Duration::from_secs(30),
-        runtime_b.apply_runtime_connectivity_assist(),
+        runtime_b.sync_community_node_connectivity(base_url),
     )
     .await
-    .expect("apply assist b timeout")
-    .expect("apply assist b");
-    timeout(
-        Duration::from_secs(15),
-        runtime_b.apply_effective_seed_peers(),
-    )
-    .await
-    .expect("apply seed peers b timeout")
-    .expect("apply seed peers b");
+    .expect("apply connectivity b timeout")
+    .expect("apply connectivity b");
 
     let topic = "kukuri:topic:external-relay-desktop";
     let scope = TimelineScope::Public;
@@ -737,13 +709,9 @@ async fn runtime_starts_with_unreachable_community_node_and_recovers_via_manual_
     // #857: local consentだけでは保存済みrelayを有効化しない。到達不能Nodeはpreflightを完了できないためDirectOnlyを維持する。
     seed_local_community_node_consents(&runtime_a, community_base_url, 1);
     runtime_a
-        .apply_runtime_connectivity_assist()
+        .sync_community_node_connectivity(community_base_url)
         .await
         .expect("apply consented connectivity");
-    runtime_a
-        .apply_effective_seed_peers()
-        .await
-        .expect("apply consented seeds");
     assert_eq!(
         runtime_a
             .get_sync_status()

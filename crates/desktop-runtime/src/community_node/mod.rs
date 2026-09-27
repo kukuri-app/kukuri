@@ -22,7 +22,7 @@ use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::discovery::{DiscoveryConfig, normalize_seed_peers};
+use crate::discovery::normalize_seed_peers;
 use crate::identity::{IdentityStorageMode, load_optional_secret, persist_optional_secret};
 use crate::paths::community_node_config_path;
 use crate::runtime::DesktopRuntime;
@@ -323,21 +323,19 @@ pub struct CommunityNodeAuthState {
     pub expires_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RuntimeConnectivityAssistState {
-    pub(crate) discovery_mode: kukuri_transport::DiscoveryMode,
-    pub(crate) discovery_env_locked: bool,
-    pub(crate) configured_seed_peers: Vec<SeedPeer>,
-    pub(crate) bootstrap_seed_peers: Vec<SeedPeer>,
+/// 1 node が足している relay と seed(#1221 R2-B)。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NodeConnectivity {
     pub(crate) relay_urls: Vec<String>,
+    pub(crate) seed_peers: Vec<SeedPeer>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct EffectiveSeedPeerApplyState {
-    pub(crate) discovery_mode: kukuri_transport::DiscoveryMode,
-    pub(crate) discovery_env_locked: bool,
-    pub(crate) configured_seed_peers: Vec<SeedPeer>,
-    pub(crate) bootstrap_seed_peers: Vec<SeedPeer>,
+/// node ごとの寄与と、endpoint・transport・docs・blob へ適用した和。
+#[derive(Debug, Default)]
+pub(crate) struct AppliedConnectivity {
+    pub(crate) nodes: std::collections::BTreeMap<String, NodeConnectivity>,
+    pub(crate) relay_urls: Vec<String>,
+    pub(crate) seed_peers: Vec<SeedPeer>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
