@@ -153,7 +153,8 @@ impl AppService {
         })
     }
 
-    /// author の lease: 開始時と日の境界で、制御領域の現在値の key と author bucket を R5-C の有界な読みで反映する。
+    /// author の lease: 開始時と日の境界で、制御領域の現在値の key を R5-C の有界な読みで反映し、現在と直前の
+    /// author bucket の索引を 1 ページ読み直して手元へ置く(R5-H)。
     pub(crate) async fn spawn_author_subscription(&self, author_pubkey: &str) -> Result<ScopeTask> {
         let services = self.services.clone();
         let last_sync = Arc::clone(&self.last_sync_ts);
@@ -175,6 +176,17 @@ impl AppService {
                     Ok(_) => {}
                     Err(error) => {
                         warn!(author_pubkey = %author, %error, "failed to hydrate author state")
+                    }
+                }
+                match super::profile_timeline_support::reread_author_buckets(&services, &author)
+                    .await
+                {
+                    Ok(placed) if placed > 0 => {
+                        *last_sync.lock().await = Some(Utc::now().timestamp_millis());
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(author_pubkey = %author, %error, "failed to reread author buckets")
                     }
                 }
                 tokio::time::sleep(until_next_bucket(Utc::now().timestamp())).await;

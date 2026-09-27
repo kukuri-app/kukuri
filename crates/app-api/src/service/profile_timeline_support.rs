@@ -578,10 +578,11 @@ pub(crate) async fn profile_timeline_page(
         if !services.docs_sync.has_local_replica(replica).await? {
             continue;
         }
+        // 手元の bucket は自分の書込みと、author の lease が検証して置いた行だけなので、名義で絞らない。
         let (entries, frontier) = remote_profile_index(
             services.docs_sync.as_ref(),
             replica,
-            docs_author,
+            None,
             before.as_ref(),
             rows_per_source,
         )
@@ -705,6 +706,126 @@ fn profile_source(
             .collect(),
         frontier,
     }
+}
+
+/// author の lease の読み直し(開始時と日の境界。#1221 R5-H): 現在と直前の author bucket の索引を、provider から
+/// 毎回先頭の 1 ページ(合わせて `PROFILE_REMOTE_ROWS` 行まで)読み、検証した行を手元の同じ bucket へ置く。手元の
+/// プロフィールのページ(`profile_timeline_page`)が、この行も合わせる。戻り値は置いた行の数。
+pub(crate) async fn reread_author_buckets(
+    services: &ServiceHandles,
+    author_pubkey: &str,
+) -> Result<usize> {
+    let readers = writer_readers(
+        services,
+        &author_replica_id(author_pubkey),
+        &[author_pubkey],
+        None,
+    )
+    .await;
+    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let now = TimeBucket::from_unix_seconds(Utc::now().timestamp())?;
+    let mut budget = PROFILE_REMOTE_ROWS;
+    let mut placed = 0;
+    for bucket in [Some(now), now.previous()].into_iter().flatten() {
+        let replica = BucketReplica::new(
+            BucketScope::Author {
+                author_pubkey: author_pubkey.to_owned(),
+            },
+            bucket,
+        )?
+        .replica_id();
+        for reader in &readers {
+            let read = tokio::time::timeout_at(
+                deadline,
+                place_remote_profile_rows(
+                    services,
+                    reader.as_ref(),
+                    &replica,
+                    author_pubkey,
+                    budget,
+                ),
+            )
+            .await;
+            reader.finish_remote_object().await;
+            match read {
+                Ok(Ok((read, count))) => {
+                    budget = budget.saturating_sub(read);
+                    placed += count;
+                    break;
+                }
+                Ok(Err(error)) => warn!(%error, "author bucket reread failed"),
+                Err(_) => return Ok(placed),
+            }
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    Ok(placed)
+}
+
+/// 1 provider の 1 author bucket の索引の先頭 `limit` 行を読み、手元に無い行を検証して置く。戻り値は読んだ行と置いた行の数。
+async fn place_remote_profile_rows(
+    services: &ServiceHandles,
+    reader: &dyn DocsSync,
+    replica: &ReplicaId,
+    author_pubkey: &str,
+    limit: usize,
+) -> Result<(usize, usize)> {
+    let (rows, _) = remote_profile_index(reader, replica, None, None, limit).await?;
+    let local = services.docs_sync.as_ref();
+    let mut placed = 0;
+    for (_, object_id) in &rows {
+        if local.has_local_replica(replica).await?
+            && load_profile_item(
+                local,
+                replica,
+                author_pubkey,
+                object_id,
+                None,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
+            .is_some()
+        {
+            continue;
+        }
+        let item = load_profile_item(
+            reader,
+            replica,
+            author_pubkey,
+            object_id,
+            None,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await?;
+        let envelope_id = match &item {
+            Some(ProfileTimelineItem::Post(post)) => &post.envelope_id,
+            Some(ProfileTimelineItem::Repost(repost)) => &repost.envelope_id,
+            None => continue,
+        };
+        let Some(envelope) = fetch_author_envelope_by_id(
+            reader,
+            replica,
+            envelope_id,
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await?
+        else {
+            continue;
+        };
+        match &item {
+            Some(ProfileTimelineItem::Post(post)) => {
+                persist_profile_post_doc(local, replica, post, &envelope).await?
+            }
+            Some(ProfileTimelineItem::Repost(repost)) => {
+                persist_profile_repost_doc(local, replica, repost, &envelope).await?
+            }
+            None => {}
+        }
+        placed += 1;
+    }
+    Ok((rows.len(), placed))
 }
 
 #[derive(Clone)]

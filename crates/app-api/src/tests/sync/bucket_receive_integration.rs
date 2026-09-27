@@ -261,3 +261,90 @@ async fn the_day_boundary_reread_takes_in_a_post_whose_hint_was_dropped_the_day_
     reader.finish().await?;
     writer.finish().await
 }
+
+/// `keys` の旧 `author::` へ、`created_at` のプロフィールの行を 1 件置く(手元に残る更新前の行)。
+async fn put_legacy_profile_row(docs_sync: &dyn DocsSync, keys: &KukuriKeys, created_at: i64) {
+    let author = keys.public_key_hex();
+    let envelope = build_profile_post_envelope(
+        keys,
+        &KukuriProfilePostEnvelopeContentV1 {
+            author_pubkey: Pubkey::from(author.as_str()),
+            profile_topic_id: author_profile_topic_id(author.as_str()),
+            published_topic_id: TopicId::new("kukuri:topic:r5h-author-lease"),
+            object_id: EnvelopeId::from(generate_keys().public_key_hex().as_str()),
+            created_at,
+            object_kind: "post".into(),
+            content: format!("legacy {created_at}"),
+            attachments: Vec::new(),
+            reply_to_object_id: None,
+            root_id: None,
+            content_labels: Vec::new(),
+        },
+    )
+    .expect("profile post envelope");
+    let post = parse_profile_post(&envelope)
+        .expect("parse")
+        .expect("profile post");
+    persist_profile_post_doc(
+        docs_sync,
+        &author_replica_id(author.as_str()),
+        &post,
+        &envelope,
+    )
+    .await
+    .expect("persist legacy row");
+}
+
+async fn page_one(app: &AppService, author: &str) -> Vec<String> {
+    app.list_profile_timeline(author, None, 2)
+        .await
+        .expect("profile")
+        .items
+        .into_iter()
+        .map(|item| item.object_id)
+        .collect()
+}
+
+// 手元の旧行が limit 件以上ある他人のプロフィールは、lease を始める前は remote を読まず、切替後の投稿は 1 ページ目に
+// 出ない。profile を開いて author の lease が始まると、現在と直前の author bucket を 1 ページ読み直して手元へ置き、
+// 1 ページ目に出る(#1221 R5-H)。
+#[tokio::test]
+async fn the_author_lease_reread_brings_another_authors_switched_posts_to_page_one() -> Result<()> {
+    let network = FakeNetwork::default();
+    let writer = Peer::new(&network, "writer").await?;
+    let reader = Peer::new(&network, "reader").await?;
+    reader.learn(&writer).await?;
+    writer.learn(&reader).await?;
+    let author = writer.app.current_author_pubkey();
+    let now = Utc::now().timestamp();
+    for offset in 1..=3 {
+        put_legacy_profile_row(
+            reader.docs.as_ref(),
+            writer.app.keys(),
+            now - 3_600 - offset,
+        )
+        .await;
+    }
+    let switched = writer
+        .app
+        .create_post("kukuri:topic:r5h-author-lease", "after the switch", None)
+        .await?;
+    assert_eq!(page_one(&reader.app, &author).await.len(), 2);
+    assert!(
+        !page_one(&reader.app, &author).await.contains(&switched),
+        "without the lease the page does not read the provider"
+    );
+    display_author(&reader.app, author.as_str()).await?;
+    let reached = timeout(Duration::from_secs(20), async {
+        while !page_one(&reader.app, &author).await.contains(&switched) {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    assert!(
+        reached.is_ok(),
+        "the lease reread places the author bucket rows"
+    );
+    reader.finish().await?;
+    writer.finish().await
+}
