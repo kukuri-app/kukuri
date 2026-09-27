@@ -71,6 +71,8 @@ hash は消えて本人の分は残る、退役の後は参加状態が変わっ
   本人の entry を写さない(iroh-node と退役の試験)、1 回の上限を外す・file の削除の上限を外す(iroh-node)、名前を変えずに退役する
   (退役の試験)、最近の他人の行を台帳へ移さない(store と退役の試験)、参照の残る成人向けの hash も回収する・切替の後の終端を待たない
   (store)、CN の旧 store を移さない・保守の巡回で消さない(cn-indexer)。14 通りすべてで失敗した。
+- Tauri crate: worktree では workspace 解決のため、一時的に `[workspace]` を足して `cargo check --locked` が成功(manifest は戻した)。
+- 未実行: frontend の test(IPC 型は変えていない)、全体の CI。
 - `cargo clippy --all-targets -D warnings`(store・iroh-node・docs-sync・blob-service・app-api・desktop-runtime・cn-indexer・harness・
   kukuri-cli)、`cargo fmt --check`、`cargo xtask oversized-files`(違反 0。baseline は `dome_hosting.rs` の縮小を反映)成功。
 
@@ -85,4 +87,6 @@ hash は消えて本人の分は残る、退役の後は参加状態が変わっ
 - 他人の旧投稿のうち予算に入らないもの・最近でないものは手元から消える(ユーザー判断)。対象は投稿の projection 行と成人向けの hash。
   他の派生表(reaction・live/game の cache など)の旧同期の行は対象外。
 - 退役の条件は writer の切替の後の保護移行の終端なので、切替から最短で 1 回の待ち(60 秒)の後に退役する。
+- account 一覧の avatar は保護所有先だけから読む。更新の後に一度も開いていない account(R5-G の移行が済んでいない)の avatar は、
+  その account を開いて移すまで一覧に出ない。
 - CN は safety provider を構成しない起動では node と保守の巡回を作らないため、`legacy.retiring/` は構成した起動まで残る。
