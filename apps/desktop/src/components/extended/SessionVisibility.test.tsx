@@ -26,7 +26,9 @@ describe('session manifest visibility', () => {
     const context = { api, topic: 'topic', scope: { kind: 'public' as const } };
     const initial = {};
     const view = render(<PendingSessionCards context={context} kind='live' refreshToken={initial} knownIds={[]} />);
-    await waitFor(() => expect(screen.getByRole('button')).toBeVisible());
+    // 候補の card は背景の render で、observer はその後の effect で作られる。card の表示ではなく observer の登録を待つ。
+    await waitFor(() => expect(observers).toHaveLength(1));
+    expect(screen.getByRole('button')).toBeVisible();
     expect(setSessionDisplay).not.toHaveBeenCalled();
     expect(screen.queryByText('verified session')).not.toBeInTheDocument();
     await intersect(true);
