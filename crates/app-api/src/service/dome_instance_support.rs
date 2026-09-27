@@ -775,3 +775,81 @@ pub(crate) async fn persist_dome_locator(
         .await?;
     Ok(bucket)
 }
+
+// DEBUG(#1221 一時): 受諾で instance が見つからないときの読取りの内訳を stderr へ出す。原因の特定後に消す。
+impl AppService {
+    pub(crate) async fn debug_dome_instance_read(
+        &self,
+        context: &SpatialContextV1,
+        owner: &Pubkey,
+    ) {
+        let short = &owner.as_str()[..8];
+        let key = dome_instance_state_key(&dome_instance_id(context, owner));
+        let author = author_replica_id(owner.as_str());
+        let local = self
+            .read_dome_instance(
+                self.services.docs_sync.as_ref(),
+                &author,
+                &key,
+                owner,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await;
+        eprintln!(
+            "DBG1221 owner={short} local={:?}",
+            local
+                .as_ref()
+                .map(|value| value.as_ref().map(|(_, m)| m.generation))
+                .map_err(|e| e.to_string())
+        );
+        let resolved = self
+            .services
+            .hint_transport
+            .resolve_receive_destination(owner)
+            .await;
+        eprintln!(
+            "DBG1221 owner={short} resolved={:?}",
+            resolved
+                .as_ref()
+                .map(|a| a.as_ref().map(|a| format!(
+                    "{}@{:?}",
+                    &a.id.to_string()[..8],
+                    a.ip_addrs().collect::<Vec<_>>()
+                )))
+                .map_err(|e| e.to_string())
+        );
+        let readers = super::remote_read_support::writer_readers(
+            &self.services,
+            &author,
+            &[owner.as_str()],
+            None,
+        )
+        .await;
+        eprintln!(
+            "DBG1221 owner={short} readers={:?}",
+            readers
+                .iter()
+                .map(|r| r.remote_reader_id().map(|id| id[..8].to_string()))
+                .collect::<Vec<_>>()
+        );
+        for reader in readers {
+            let read = self
+                .read_dome_instance(
+                    reader.as_ref(),
+                    &author,
+                    &key,
+                    owner,
+                    DocFetchPolicy::LocalThenRemote,
+                )
+                .await;
+            reader.finish_remote_object().await;
+            eprintln!(
+                "DBG1221 owner={short} reader={:?} read={:?}",
+                reader.remote_reader_id().map(|id| id[..8].to_string()),
+                read.as_ref()
+                    .map(|value| value.as_ref().map(|(_, m)| m.generation))
+                    .map_err(|e| format!("{e:#}"))
+            );
+        }
+    }
+}

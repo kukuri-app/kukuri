@@ -342,8 +342,27 @@ impl AppService {
             proposal_state.proposal.receiver.owner_pubkey.clone(),
         ];
         let instances = self
-            .list_context_dome_instances(&input.spatial_context, owners)
+            .list_context_dome_instances(&input.spatial_context, owners.clone())
             .await?;
+        if current_instance_for_endpoint(&instances, &proposal_state.proposal.proposer).is_err()
+            || current_instance_for_endpoint(&instances, &proposal_state.proposal.receiver).is_err()
+        {
+            eprintln!(
+                "DBG1221 instances={:?} proposer={}:{} receiver={}:{}",
+                instances
+                    .iter()
+                    .map(|i| (&i.owner_pubkey.as_str()[..8], i.generation))
+                    .collect::<Vec<_>>(),
+                &proposal_state.proposal.proposer.owner_pubkey.as_str()[..8],
+                proposal_state.proposal.proposer.instance_generation,
+                &proposal_state.proposal.receiver.owner_pubkey.as_str()[..8],
+                proposal_state.proposal.receiver.instance_generation,
+            );
+            for owner in &owners {
+                self.debug_dome_instance_read(&input.spatial_context, owner)
+                    .await;
+            }
+        }
         let proposer =
             current_instance_for_endpoint(&instances, &proposal_state.proposal.proposer)?;
         let receiver =
