@@ -119,6 +119,27 @@ impl DesktopRuntime {
         Ok(token)
     }
 
+    /// 401 の後の再認証。失敗したら認証の失効として、その node の relay と seed を外す(#1221 R2-B)。
+    /// 5xx・通信失敗などの一時的な失敗だけでは外さない。
+    async fn reauthenticate_community_node(
+        &self,
+        base_url: &str,
+    ) -> Result<StoredCommunityNodeToken> {
+        self.set_community_node_session_phase(base_url, CommunityNodeSessionPhase::Authenticating)
+            .await;
+        let result = self
+            .request_community_node_authentication_token(base_url)
+            .await;
+        if result.is_err() {
+            if let Some(session) = self.community_node_sessions.lock().await.get_mut(base_url) {
+                session.current_policy_verified_for = None;
+            }
+            self.deactivate_community_node_connectivity(base_url)
+                .await?;
+        }
+        result
+    }
+
     /// 認証不要の公開 policy カタログ取得(#857)。同意判断に必要な文書一覧・本文・版
     /// のみで、Node 同意前に許可される通信(公開 manifest / 法務文書)に含まれる。
     pub(crate) async fn request_community_node_policies(
@@ -557,14 +578,7 @@ impl DesktopRuntime {
         {
             Ok(status) => Ok(status),
             Err(CommunityNodeRequestError::AuthRequired) if allow_reauthenticate => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 self.request_community_node_consent_status(base_url, token.access_token.as_str())
                     .await
                     .map_err(CommunityNodeRequestError::into_anyhow)
@@ -591,14 +605,7 @@ impl DesktopRuntime {
         {
             Ok(status) => Ok(status),
             Err(CommunityNodeRequestError::AuthRequired) => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 self.request_accept_community_node_consents(
                     base_url,
                     token.access_token.as_str(),
@@ -843,14 +850,7 @@ impl DesktopRuntime {
         {
             Ok(()) => Ok(true),
             Err(CommunityNodeRequestError::AuthRequired) => {
-                self.set_community_node_session_phase(
-                    base_url,
-                    CommunityNodeSessionPhase::Authenticating,
-                )
-                .await;
-                *token = self
-                    .request_community_node_authentication_token(base_url)
-                    .await?;
+                *token = self.reauthenticate_community_node(base_url).await?;
                 let consent_status = self
                     .fetch_community_node_consent_status_with_retry(base_url, token, false)
                     .await?;

@@ -11,11 +11,10 @@ impl DesktopRuntime {
             .entry(base_url.to_string())
             .or_insert_with(CommunityNodeSessionState::default);
         entry.session_phase = phase;
+        // 一時的な失敗(Retrying)では認証・同意の確認を捨てない。relay と seed を使い続ける(#1221 R2-B)。
         if matches!(
             phase,
-            CommunityNodeSessionPhase::Idle
-                | CommunityNodeSessionPhase::Retrying
-                | CommunityNodeSessionPhase::AwaitingAdmission
+            CommunityNodeSessionPhase::Idle | CommunityNodeSessionPhase::AwaitingAdmission
         ) {
             entry.current_policy_verified_for = None;
         }
