@@ -818,7 +818,9 @@ impl SqliteStore {
         )?);
         Ok(ProtectedRefUpdate {
             _gate: gate,
-            tx: self.pool.begin().await?,
+            // 読んでから書く transaction なので、書込みの lock を先に取る(#1221 R5-I)。読取りで始めると、途中の書込みへの
+            // 格上げが別の接続の書込みと競合したとき busy_timeout を待たずに `database is locked` で失敗する。
+            tx: self.pool.begin_with("BEGIN IMMEDIATE").await?,
             budget,
             label_evictions: Vec::new(),
             removed_files: Vec::new(),
