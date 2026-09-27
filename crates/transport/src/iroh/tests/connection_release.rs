@@ -131,6 +131,88 @@ async fn gossip_keeps_other_topic_when_one_lease_ends() {
     right._router.take().unwrap().shutdown().await.unwrap();
 }
 
+async fn bind_gossip_endpoint() -> Endpoint {
+    EndpointBuilder::new(presets::Minimal)
+        .relay_mode(RelayMode::Disabled)
+        .alpns(vec![GOSSIP_ALPN.to_vec()])
+        .bind_addr("127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap())
+        .unwrap()
+        .bind()
+        .await
+        .unwrap()
+}
+
+async fn connect_gossip(
+    from: &Endpoint,
+    to: &Endpoint,
+) -> (iroh::endpoint::Connection, iroh::endpoint::Connection) {
+    let (dialed, accepted) = tokio::join!(from.connect(to.addr(), GOSSIP_ALPN), async {
+        to.accept().await.unwrap().await
+    });
+    (dialed.unwrap(), accepted.unwrap())
+}
+
+// Two peers that dial each other at once can each keep a different connection.
+// Here the right peer adopts the left's dial only after both sides opened their
+// topic streams on the right's dial, which the left had already stopped sending on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gossip_keeps_connection_a_peer_switched_to_after_joining() {
+    let left = bind_gossip_endpoint().await;
+    let right = bind_gossip_endpoint().await;
+    let left_gossip = Gossip::builder().spawn(left.clone());
+    let right_gossip = Gossip::builder().spawn(right.clone());
+    let (left_dial, right_accept) = connect_gossip(&left, &right).await;
+    let (right_dial, left_accept) = connect_gossip(&right, &left).await;
+    let switched = right_accept.weak_handle();
+    left_gossip.handle_connection(left_dial).await.unwrap();
+    left_gossip.handle_connection(left_accept).await.unwrap();
+    right_gossip.handle_connection(right_dial).await.unwrap();
+    let topic = topic_to_gossip_id(&TopicId::new("late-switch"));
+    let mut left_topic = left_gossip
+        .subscribe(topic, vec![right.id()])
+        .await
+        .unwrap();
+    let mut right_topic = right_gossip
+        .subscribe(topic, vec![left.id()])
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(10), async {
+        tokio::try_join!(left_topic.joined(), right_topic.joined())
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    right_gossip.handle_connection(right_accept).await.unwrap();
+
+    // The left closes a connection it stopped sending on once the right keeps no
+    // stream open on it for the idle grace (5s). The right now sends on it.
+    let closed = timeout(Duration::from_secs(7), switched.closed())
+        .await
+        .is_ok();
+    assert!(!closed, "closed the connection the peer switched to");
+    left_topic
+        .broadcast(b"still-needed".to_vec().into())
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match right_topic.next().await.unwrap().unwrap() {
+                GossipEvent::NeighborDown(_) => panic!("the peer lost its neighbor"),
+                GossipEvent::Received(message) if message.content.as_ref() == b"still-needed" => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(left_topic);
+    drop(right_topic);
+    left_gossip.shutdown().await.unwrap();
+    right_gossip.shutdown().await.unwrap();
+}
+
 #[derive(Debug)]
 struct CountGossipConnections {
     gossip: Gossip,

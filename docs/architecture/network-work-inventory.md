@@ -81,7 +81,8 @@ iroh-docs 0.101.0（pin `e7233d14853cb4db9966e30050bac1e689cdeec8`）。
 ### U06/U07の回収漏れ修正
 
 採用候補を固定して再現・回帰を確認した。irohは`adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155`
-（上流#4447）、gossipは`c42f40a1346200ae2b18d41596a2a8a02047e600`（#161を含む#162）。
+（上流#4447）、gossipは`KingYoSun/iroh-gossip`の`4501c0433d6e7f3d9d81a37985ec243957af2c32`
+（#161を含む#162の`c42f40a1`に、#1376の修正1件を加えたもの）。
 rootとstandalone Tauriの5packageを同じsourceへ揃え、型の二重化を避ける。
 package version、MSRV、wire、永続形式を変更せず、両lockの無関係な依存edgeも維持する。
 
@@ -89,6 +90,9 @@ package version、MSRV、wire、永続形式を変更せず、両lockの無関�
   active peerのmapping、relay逆引きの整理、再利用時の新mappingも`harness/upstream`のcontractで確認。
 - gossip: topic lease終了後の実QUIC closeをweak handleで確認。元コードは12秒でも未終了、候補は約5秒で終了。
   別topic継続、同時dial、pending joinのquitと再joinも関連contractで確認する。
+- gossip（#1376）: 同時dialで各端末が別の接続を主に選び、一方が全topicのstreamを開いた後で
+  主を切り替えると、切替先にstreamが無いまま相手のidle回収（5秒）で閉じられ`NeighborDown`になる。
+  切替時に近傍であるtopicのstreamを開き直す。`gossip_keeps_connection_a_peer_switched_to_after_joining`で確認。
 - これは協調peerの退役漏れの修正。64は全active actor込みの絶対上限ではなく、actor idleの60秒も別にある。
   relay mapのretain走査、remoteがstream/headerを終わらせない場合、pending joinの容量は共通ownerに残す。
   現行で未使用のcustom transportを、この修正で対応済みとは扱わない。
