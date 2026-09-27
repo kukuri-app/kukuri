@@ -1,3 +1,4 @@
+import type { ConnectivityPeerKind, PeerPage } from '@/lib/api';
 import { type CommunityNodeAdmissionRejectionCode } from '@/lib/api';
 import { type DesktopTheme } from '@/lib/theme';
 import { type SupportedLocale } from '@/i18n';
@@ -18,7 +19,15 @@ export type SettingsDiagnosticItemView = {
   value: string;
   tone?: 'default' | 'danger';
   monospace?: boolean;
+  // peer の一覧は、詳細を開いたときに cursor でページ送りして読む(#1221 R2-D)。
+  peers?: ConnectivityPeerQuery;
 };
+
+export type ConnectivityPeerQuery = { kind: ConnectivityPeerKind; topic?: string };
+export type LoadConnectivityPeers = (
+  query: ConnectivityPeerQuery,
+  cursor: string | null
+) => Promise<PeerPage>;
 
 export type ConnectivityTopicDetailView = {
   guidance?: ConnectivityGuidance;
@@ -28,10 +37,6 @@ export type ConnectivityTopicDetailView = {
   expectedPeerCount: number | null;
   missingPeerCount: number | null;
   statusDetail: string;
-  connectedPeersLabel: string;
-  relayAssistedPeersLabel: string;
-  configuredPeersLabel: string;
-  missingPeersLabel: string;
   lastError?: string | null;
 };
 

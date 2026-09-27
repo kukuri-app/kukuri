@@ -1,5 +1,6 @@
 import {
   type AuthorSocialView,
+  type ConnectivityPeerKind,
   type BlobMediaPayload,
   type BookmarkedCustomReactionView,
   type BookmarkedPostView,
@@ -54,6 +55,8 @@ export interface MockRuntime {
   metaverseAssetPayloads: Record<string, BlobMediaPayload>;
   joinedChannelsByTopic: Record<string, JoinedPrivateChannelView[]>;
   syncStatus: SyncStatus;
+  // 詳細のページで返す peer の一覧(#1221 R2-D)。
+  connectivityPeers: Record<ConnectivityPeerKind, string[]>;
   authorSocialViews: Record<string, AuthorSocialView>;
   directMessageMessagesByPeer: Record<string, DirectMessageMessageView[]>;
   openedDirectMessagePeers: Set<string>;
@@ -165,22 +168,20 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
     pending_events: 0,
     status_detail: 'Connected to all configured peers',
     last_error: options?.globalLastError ?? null,
-    configured_peers: ['peer-a'],
+    configured_peer_count: 1,
     subscribed_topics: [...starterTopics],
     active_path: 'direct_p2p',
-    fallback_peer_ids: [],
+    fallback_peer_count: 0,
     topic_diagnostics: starterTopics.map((topic) => ({
       topic,
       joined: true,
       delivery_state: 'Live',
       peer_count: effectivePeerIds.length,
-      connected_peers: ['peer-a'],
-      docs_assist_peer_ids: assistPeerIds,
-      configured_peer_ids: ['peer-a'],
-      missing_peer_ids: [],
+      configured_peer_count: 1,
+      missing_peer_count: 0,
       active_path: 'direct_p2p',
-      rendezvous_peer_ids: [],
-      fallback_peer_ids: [],
+      rendezvous_peer_count: 0,
+      fallback_peer_count: 0,
       last_received_at: topic === 'kukuri:topic:general' ? 1 : null,
       last_docs_activity_at: topic === 'kukuri:topic:general' ? 1 : null,
       status_detail: 'Connected to all configured peers for this topic',
@@ -191,14 +192,12 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
       mode: 'seeded_dht',
       connect_mode: 'direct_only',
       active_path: 'direct_p2p',
-      fallback_peer_ids: [],
       env_locked: false,
-      configured_seed_peer_ids: [],
-      bootstrap_seed_peer_ids: [],
-      manual_ticket_peer_ids: [],
-      connected_peer_ids: ['peer-a'],
-      docs_assist_peer_ids: assistPeerIds,
-      blob_assist_peer_ids: assistPeerIds,
+      configured_seed_peer_count: 0,
+      bootstrap_seed_peer_count: 0,
+      connected_peer_count: 1,
+      docs_assist_peer_count: assistPeerIds.length,
+      blob_assist_peer_count: assistPeerIds.length,
       local_endpoint_id: 'local-endpoint-a',
       last_discovery_error: null,
     },
@@ -329,6 +328,16 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
     bookmarkedCustomReactionAssets,
     bookmarkedPosts,
     sequence: 0,
+    connectivityPeers: {
+      connected: ['peer-a'],
+      configured: ['peer-a'],
+      missing: [],
+      docs_assist: [...assistPeerIds],
+      blob_assist: [...assistPeerIds],
+      manual_ticket: [],
+      bootstrap_seed: [],
+      configured_seed: [],
+    },
     discoveryConfig: {
       mode: 'seeded_dht',
       connect_mode: 'direct_only',

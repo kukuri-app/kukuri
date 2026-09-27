@@ -17,6 +17,8 @@ for (const locale of ['ja', 'en', 'zh-CN'] as const) for (const theme of ['dark'
     const raw = drawer.getByText(/topic join pending/).first();
     await expect(raw).toBeHidden();
     await drawer.getByText(copy[locale].details, { exact: true }).first().click();
+    // 設定済み・不足の peer の一覧は、topic の詳細を開いたときにページで読む(#1221 R2-D)。
+    await drawer.getByText(copy[locale].details, { exact: true }).nth(1).click();
     await expect(drawer.getByText('candidate-peer', { exact: true }).first()).toBeVisible();
     await expect(raw).toBeVisible();
     await drawer.locator('input').first().fill('preserved-ticket');

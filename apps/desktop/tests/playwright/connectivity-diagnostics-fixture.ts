@@ -24,15 +24,22 @@ export async function seedConnectivityDiagnostics(page: Page, locale = 'ja', the
           const error = 'topic join pending: timed out waiting for initial topic join';
           return { ...s, connected: control.live, peer_count: control.live ? 1 : 0,
             delivery_state: control.live ? 'Live' : 'DurableRecovering', last_error: error, status_detail: error,
-            configured_peers: ['candidate-peer'], subscribed_topics: ['kukuri:topic:general'], gossip_disabled_topics: ['kukuri:topic:test'],
+            configured_peer_count: 1, subscribed_topics: ['kukuri:topic:general'], gossip_disabled_topics: ['kukuri:topic:test'],
             topic_diagnostics: [{ ...s.topic_diagnostics[0], topic: 'kukuri:topic:general', joined: control.live,
-              peer_count: control.live ? 1 : 0, connected_peers: control.live ? ['peer-a'] : [],
-              configured_peer_ids: ['candidate-peer'], missing_peer_ids: control.live ? [] : ['candidate-peer'],
-              docs_assist_peer_ids: ['assist-peer'], delivery_state: control.live ? 'Live' : 'DurableRecovering',
+              peer_count: control.live ? 1 : 0,
+              configured_peer_count: 1, missing_peer_count: control.live ? 0 : 1,
+              delivery_state: control.live ? 'Live' : 'DurableRecovering',
               active_path: 'direct_p2p', last_error: error, status_detail: error }],
-            discovery: { ...s.discovery, connected_peer_ids: [], docs_assist_peer_ids: ['assist-peer'], last_discovery_error: error },
+            discovery: { ...s.discovery, connected_peer_count: 0, docs_assist_peer_count: 1, last_discovery_error: error },
           };
         };
+        // 詳細の peer の一覧は、開いたときにページで読む(#1221 R2-D)。
+        api.listConnectivityPeers = async ({ kind }) => ({
+          peer_ids: kind === 'docs_assist' ? ['assist-peer']
+            : kind === 'connected' ? (control.live ? ['peer-a'] : [])
+            : kind === 'configured' || (kind === 'missing' && !control.live) ? ['candidate-peer'] : [],
+          next_cursor: null,
+        });
         for (const name of ['authenticateCommunityNode', 'acceptCommunityNodeConsents', 'setDiscoverySeeds', 'importPeerTicket', 'setTopicGossipEnabled'] as const) {
           // Diagnostics and settings navigation must never invoke mutation APIs.
           const original = api[name] as (...args: unknown[]) => unknown;

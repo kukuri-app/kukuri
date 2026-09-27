@@ -3,6 +3,8 @@
 // DesktopApi interface と、生成型に front 専用フィールドを交差させる PostView を扱う。
 export * from './types.generated';
 import type {
+  ConnectivityPeersRequest,
+  PeerPage,
   ScopeDisplayRequest,
   SessionCandidateView,
   SessionDisplayRequest,
@@ -541,6 +543,8 @@ export interface DesktopApi {
     dataBase64: string
   ): Promise<MetaverseAssetRef>;
   getSyncStatus(): Promise<SyncStatus>;
+  // 設定画面の詳細が開いたときに読む peer の一覧の 1 ページ(#1221 R2-D)。
+  listConnectivityPeers(request: ConnectivityPeersRequest): Promise<PeerPage>;
   getDiscoveryConfig(): Promise<DiscoveryConfig>;
   getCommunityNodeConfig(): Promise<CommunityNodeConfig>;
   getCommunityNodeStatuses(): Promise<CommunityNodeNodeStatus[]>;

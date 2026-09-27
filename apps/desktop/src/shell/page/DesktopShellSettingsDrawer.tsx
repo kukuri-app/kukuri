@@ -1,3 +1,5 @@
+import { useCallback } from 'react';
+
 import { AboutPanel } from '@/components/settings/AboutPanel';
 import { AccountKeyPanel } from '@/components/settings/AccountKeyPanel';
 import { AppearancePanel } from '@/components/settings/AppearancePanel';
@@ -6,6 +8,7 @@ import { ConnectivityPanel } from '@/components/settings/ConnectivityPanel';
 import { DeveloperPanel } from '@/components/settings/DeveloperPanel';
 import { DeviceBackupPanel } from '@/components/settings/DeviceBackupPanel';
 import { DiscoveryPanel } from '@/components/settings/DiscoveryPanel';
+import type { LoadConnectivityPeers } from '@/components/settings/types';
 import { NotificationsPanel } from '@/components/settings/NotificationsPanel';
 import { ReleasePanel } from '@/components/settings/ReleasePanel';
 import { ReactionsPanel } from '@/components/settings/ReactionsPanel';
@@ -114,6 +117,11 @@ export function DesktopShellSettingsDrawer({
     communityNodePanelView,
     reactionsPanelView,
   } = viewModels;
+  const loadConnectivityPeers = useCallback<LoadConnectivityPeers>(
+    ({ kind, topic }, cursor) =>
+      api.listConnectivityPeers({ kind, topic: topic ?? null, cursor, limit: null }),
+    [api]
+  );
   const {
     adultContentEnabled,
     communityNodeConfig,
@@ -249,6 +257,7 @@ export function DesktopShellSettingsDrawer({
       ...sectionCopy('connectivity'),
       content: (
         <ConnectivityPanel
+          loadPeers={loadConnectivityPeers}
           onRefreshDiagnostics={onRefreshDiagnostics}
           onOpenCommunityNode={() => openDiagnosticSettings('community-node')}
           view={connectivityPanelView}
@@ -262,6 +271,7 @@ export function DesktopShellSettingsDrawer({
       ...sectionCopy('discovery'),
       content: (
         <DiscoveryPanel
+          loadPeers={loadConnectivityPeers}
           onRefreshDiagnostics={onRefreshDiagnostics}
           onOpenCommunityNode={() => openDiagnosticSettings('community-node')}
           view={discoveryPanelView}

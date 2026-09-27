@@ -2,6 +2,7 @@ import { startTransition, useCallback, useRef } from 'react';
 
 import type { CommunityNodeNodeStatus, DesktopApi } from '@/lib/api';
 import { mergeCommunityNodeStatus } from '@/shell/presentation';
+import { mergePulledSyncStatus } from '@/shell/slices/connectivity';
 import { useDesktopShellStoreApi, type DesktopShellState, type DesktopShellStateValue } from '@/shell/store';
 
 type Setter<K extends keyof DesktopShellState> = (
@@ -28,10 +29,11 @@ export function useConnectivityStatusRefresh(
         api.getCommunityNodeStatuses(),
       ]);
       startTransition(() => {
-        // A runtime event or another operation owns any newer snapshot.
-        const unchanged = store.getState().syncStatus === syncBaseline;
-        if (unchanged && syncStatusResult.status === 'fulfilled') {
-          setSyncStatus(syncStatusResult.value);
+        // 読む間に届いた差分の event(#1221 R2-D)は、読み直した状態へ重ねて残す。
+        const current = store.getState().syncStatus;
+        const unchanged = current === syncBaseline;
+        if (syncStatusResult.status === 'fulfilled') {
+          setSyncStatus(mergePulledSyncStatus(syncStatusResult.value, syncBaseline, current));
         }
         const read = store.getState().syncStatusRead;
         store.getState().patchState({ syncStatusRead: {

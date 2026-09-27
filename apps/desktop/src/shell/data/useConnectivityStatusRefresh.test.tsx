@@ -4,6 +4,7 @@ import { expect, test, vi } from 'vitest';
 import type { CommunityNodeNodeStatus } from '@/lib/api';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
+import { applySyncStatusDelta } from '@/shell/slices/connectivity';
 import { createDeferred } from '@/shell/DesktopShellPage.testHelpers';
 import { useConnectivityStatusRefresh } from './useConnectivityStatusRefresh';
 
@@ -50,7 +51,8 @@ test('a failed old sync read cannot mark a newer event snapshot as failed', asyn
   expect(store.getState().syncStatusRead).toEqual({ loaded: true, refreshing: false, error: false });
 });
 
-test('a newer sync snapshot survives an older pending read', async () => {
+// #1221 R2-D: 読む間に届いた差分(件数と変わった topic)は、読み直した状態へ重ねて残す。
+test('changes pushed during a pending read survive the read', async () => {
   const api = createDesktopMockApi();
   const store = createDesktopShellStore();
   const before = await api.getSyncStatus();
@@ -62,10 +64,20 @@ test('a newer sync snapshot survives an older pending read', async () => {
   });
   let refresh!: ReturnType<typeof result.current>;
   act(() => { refresh = result.current(); });
-  const newer = { ...before, connected: true, peer_count: 99 };
-  act(() => store.getState().setField('syncStatus', newer));
+  const [changed, ...untouched] = before.topic_diagnostics;
+  const pushed = { ...changed, peer_count: 99 };
+  act(() => store.getState().setField('syncStatus', applySyncStatusDelta(
+    store.getState().syncStatus, { ...before, peer_count: 99, topic_diagnostics: [pushed] }, []
+  )));
   await act(async () => { response.resolve(before); await refresh; });
-  expect(store.getState().syncStatus).toBe(newer);
+  const merged = store.getState().syncStatus;
+  expect(merged.peer_count).toBe(99);
+  expect(merged.topic_diagnostics.find((topic) => topic.topic === changed.topic)).toBe(pushed);
+  for (const topic of untouched) {
+    expect(merged.topic_diagnostics.find((entry) => entry.topic === topic.topic)).toBe(topic);
+  }
+  const removed = applySyncStatusDelta(merged, { ...merged, topic_diagnostics: [] }, [changed.topic]);
+  expect(removed.topic_diagnostics.map((topic) => topic.topic)).toEqual(untouched.map((topic) => topic.topic).sort());
 });
 
 test('an in-flight poll preserves a newer per-node event and refreshes untouched nodes', async () => {

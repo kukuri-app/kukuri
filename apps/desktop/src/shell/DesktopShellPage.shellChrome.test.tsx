@@ -315,6 +315,7 @@ test('desktop shell surfaces docs-assisted topic recovery in diagnostics', async
   await user.click(within(controlCenter).getByRole('button', { name: 'Add Topic' }));
 
   const drawer = await openSettingsSection(user, 'discovery');
+  await user.click(within(drawer).getByText('Technical diagnostic details'));
   await waitFor(() => {
     expect(within(drawer).getByText('Stored-data sync assistance candidates')).toBeInTheDocument();
     expect(within(drawer).getAllByText('relay-peer').length).toBeGreaterThan(0);
@@ -323,6 +324,7 @@ test('desktop shell surfaces docs-assisted topic recovery in diagnostics', async
   await user.click(within(drawer).getByTestId('settings-section-connectivity'));
   const relayHeading = await within(drawer).findByRole('heading', { name: 'relay' });
   const relaySection = closestSection(relayHeading);
+  await user.click(within(relaySection).getByText('Technical diagnostic details'));
   expect(
     within(relaySection).getByText(
       'Connection details (Diagnostic details: docs-assisted recovery is in progress via 1 peer(s); live topic delivery is unavailable)'
@@ -342,6 +344,7 @@ test('desktop shell renders diagnostics error reasons', async () => {
   );
 
   const drawer = await openSettingsSection(user, 'connectivity');
+  await user.click(within(drawer).getAllByText('Technical diagnostic details')[0]);
   await waitFor(() => {
     expect(
       within(drawer).getByText('An error occurred. (Diagnostic details: failed to import peer ticket: invalid endpoint id)')
@@ -350,6 +353,7 @@ test('desktop shell renders diagnostics error reasons', async () => {
 
   const topicHeading = await within(drawer).findByRole('heading', { name: 'general' });
   const topicSection = closestSection(topicHeading);
+  await user.click(within(topicSection).getByText('Technical diagnostic details'));
   expect(within(topicSection).getByText('An error occurred. (Diagnostic details: timed out waiting for gossip topic join)')).toBeInTheDocument();
 });
 

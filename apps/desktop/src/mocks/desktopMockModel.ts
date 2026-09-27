@@ -332,24 +332,11 @@ export function cloneNotification(view: NotificationView): NotificationView {
 export function cloneSyncStatus(syncStatus: SyncStatus): SyncStatus {
   return {
     ...syncStatus,
-    configured_peers: [...syncStatus.configured_peers],
     subscribed_topics: [...syncStatus.subscribed_topics],
-    topic_diagnostics: syncStatus.topic_diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      connected_peers: [...diagnostic.connected_peers],
-      docs_assist_peer_ids: [...diagnostic.docs_assist_peer_ids],
-      configured_peer_ids: [...diagnostic.configured_peer_ids],
-      missing_peer_ids: [...diagnostic.missing_peer_ids],
-    })),
-    discovery: {
-      ...syncStatus.discovery,
-      configured_seed_peer_ids: [...syncStatus.discovery.configured_seed_peer_ids],
-      bootstrap_seed_peer_ids: [...syncStatus.discovery.bootstrap_seed_peer_ids],
-      manual_ticket_peer_ids: [...syncStatus.discovery.manual_ticket_peer_ids],
-      connected_peer_ids: [...syncStatus.discovery.connected_peer_ids],
-      docs_assist_peer_ids: [...syncStatus.discovery.docs_assist_peer_ids],
-      blob_assist_peer_ids: [...syncStatus.discovery.blob_assist_peer_ids],
-    },
+    topic_diagnostics: syncStatus.topic_diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    discovery: { ...syncStatus.discovery },
+    gossip_disabled_topics: [...syncStatus.gossip_disabled_topics],
+    gossip_disabled_channels: [...syncStatus.gossip_disabled_channels],
   };
 }
 

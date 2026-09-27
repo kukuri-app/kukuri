@@ -125,10 +125,6 @@ export function isQuoteRepost(
   return post.object_kind === 'repost' && Boolean(post.repost_commentary?.trim());
 }
 
-export function formatListLabel(values: string[]): string {
-  return values.length > 0 ? values.join(', ') : translate('common:fallbacks.none');
-}
-
 export function formatLastReceivedLabel(
   timestamp?: number | null,
   locale?: string | null
@@ -574,18 +570,6 @@ export function mergeCommunityNodeStatus(
     session_phase: next.session_phase ?? previous?.session_phase ?? 'idle',
     retry_after: next.retry_after ?? previous?.retry_after ?? null,
   };
-}
-
-export function mergeCommunityNodeStatuses(
-  previous: CommunityNodeNodeStatus[],
-  next: CommunityNodeNodeStatus[]
-): CommunityNodeNodeStatus[] {
-  const previousByBaseUrl = Object.fromEntries(
-    previous.map((status) => [status.base_url, status])
-  ) as Record<string, CommunityNodeNodeStatus>;
-  return next.map((status) =>
-    mergeCommunityNodeStatus(previousByBaseUrl[status.base_url], status)
-  );
 }
 
 export function upsertCommunityNodeStatus(

@@ -25,7 +25,6 @@ import {
   communityNodeSessionActivationLabel,
   formatCount,
   formatLastReceivedLabel,
-  formatListLabel,
 } from '@/shell/presentation';
 import type { DesktopShellState } from '@/shell/store';
 
@@ -122,22 +121,6 @@ export function useSettingsViewModels({
     [communityNodeStatuses]
   );
 
-  const effectivePeerIds = useMemo(
-    () =>
-      [
-        ...new Set([
-          ...syncStatus.topic_diagnostics.flatMap((diagnostic) => diagnostic.connected_peers),
-          ...syncStatus.discovery.docs_assist_peer_ids,
-          ...syncStatus.discovery.blob_assist_peer_ids,
-        ]),
-      ],
-    [
-      syncStatus.discovery.blob_assist_peer_ids,
-      syncStatus.discovery.docs_assist_peer_ids,
-      syncStatus.topic_diagnostics,
-    ]
-  );
-
   const connectivityPanelView = useMemo<ConnectivityPanelView>(
     () => ({
       status: syncStatusRead.refreshing && !syncStatusRead.loaded ? 'loading' : 'ready',
@@ -163,8 +146,7 @@ export function useSettingsViewModels({
       diagnostics: [
         {
           label: t('settings:connectivity.diagnostics.configuredPeers'),
-          value: formatListLabel(syncStatus.configured_peers),
-          monospace: true,
+          value: formatCount(syncStatus.configured_peer_count),
         },
         {
           label: t('settings:connectivity.diagnostics.connectionDetail'),
@@ -172,8 +154,9 @@ export function useSettingsViewModels({
         },
         {
           label: t('settings:connectivity.diagnostics.effectivePeers'),
-          value: formatListLabel(effectivePeerIds),
+          value: '',
           monospace: true,
+          peers: { kind: 'connected' },
         },
         {
           label: t('settings:connectivity.diagnostics.lastError'),
@@ -190,20 +173,15 @@ export function useSettingsViewModels({
           guidance: connectivityGuidance(syncStatus, syncStatusRead, t, { id: topic, diagnostic }),
           summary: connectivityGuidance(syncStatus, syncStatusRead, t, { id: topic, diagnostic }).label,
           lastReceivedLabel: formatLastReceivedLabel(diagnostic?.last_received_at, locale),
-          expectedPeerCount: diagnostic?.configured_peer_ids.length ?? null,
-          missingPeerCount: diagnostic?.missing_peer_ids.length ?? null,
+          expectedPeerCount: diagnostic?.configured_peer_count ?? null,
+          missingPeerCount: diagnostic?.missing_peer_count ?? null,
           statusDetail:
             localizeConnectivityStatusDetail(diagnostic?.status_detail, t),
-          connectedPeersLabel: formatListLabel(diagnostic?.connected_peers ?? []),
-          relayAssistedPeersLabel: formatListLabel(diagnostic?.docs_assist_peer_ids ?? []),
-          configuredPeersLabel: formatListLabel(diagnostic?.configured_peer_ids ?? []),
-          missingPeersLabel: formatListLabel(diagnostic?.missing_peer_ids ?? []),
           lastError: diagnosticErrorLabel(diagnostic?.last_error, t),
         };
       }),
     }),
     [
-      effectivePeerIds,
       error,
       localPeerTicket,
       locale,
@@ -263,33 +241,39 @@ export function useSettingsViewModels({
         },
         {
           label: t('settings:discovery.diagnostics.connectedPeers'),
-          value: formatListLabel(syncStatus.discovery.connected_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'connected' },
         },
         {
           label: t('settings:discovery.diagnostics.docsAssistPeers'),
-          value: formatListLabel(syncStatus.discovery.docs_assist_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'docs_assist' },
         },
         {
           label: t('settings:discovery.diagnostics.blobAssistPeers'),
-          value: formatListLabel(syncStatus.discovery.blob_assist_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'blob_assist' },
         },
         {
           label: t('settings:discovery.diagnostics.manualTicketPeers'),
-          value: formatListLabel(syncStatus.discovery.manual_ticket_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'manual_ticket' },
         },
         {
           label: t('settings:discovery.diagnostics.communityBootstrapPeers'),
-          value: formatListLabel(syncStatus.discovery.bootstrap_seed_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'bootstrap_seed' },
         },
         {
           label: t('settings:discovery.diagnostics.configuredSeedIds'),
-          value: formatListLabel(syncStatus.discovery.configured_seed_peer_ids),
+          value: '',
           monospace: true,
+          peers: { kind: 'configured_seed' },
         },
         {
           label: t('settings:discovery.diagnostics.discoveryError'),
@@ -430,7 +414,6 @@ export function useSettingsViewModels({
 
   return {
     communityNodeStatusByBaseUrl,
-    effectivePeerIds,
     connectivityPanelView,
     appearancePanelView,
     discoveryPanelView,

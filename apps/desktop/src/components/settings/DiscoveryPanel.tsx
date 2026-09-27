@@ -10,10 +10,12 @@ import { SettingsActionRow } from './SettingsActionRow';
 import { SettingsDiagnosticList } from './SettingsDiagnosticList';
 import { SettingsEditorField } from './SettingsEditorField';
 import { SettingsMetricGrid } from './SettingsMetricGrid';
-import { type DiscoveryPanelView } from './types';
+import { SettingsDetails } from './SettingsDetails';
+import { type DiscoveryPanelView, type LoadConnectivityPeers } from './types';
 
 type DiscoveryPanelProps = DiagnosticActions & {
   view: DiscoveryPanelView;
+  loadPeers?: LoadConnectivityPeers;
   saveDisabled: boolean;
   resetDisabled: boolean;
   onSeedPeersChange: (value: string) => void;
@@ -32,6 +34,7 @@ export function DiscoveryPanel({
   onSave,
   onReset,
   showDiagnostics = true,
+  loadPeers,
 }: DiscoveryPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
 
@@ -47,11 +50,10 @@ export function DiscoveryPanel({
 
       <ConnectivityGuidanceNotice guidance={view.guidance} onRefreshDiagnostics={onRefreshDiagnostics} onOpenCommunityNode={onOpenCommunityNode} />
       {showDiagnostics && view.guidance?.loaded !== false ? (
-        <details className='min-w-0'>
-          <summary className='cursor-pointer py-2'>{t('settings:connectionGuidance.details')}</summary>
+        <SettingsDetails summary={t('settings:connectionGuidance.details')}>
           <SettingsMetricGrid items={view.metrics} />
-          <SettingsDiagnosticList items={view.diagnostics} columns={2} />
-        </details>
+          <SettingsDiagnosticList items={view.diagnostics} columns={2} loadPeers={loadPeers} />
+        </SettingsDetails>
       ) : null}
 
       <SettingsEditorField

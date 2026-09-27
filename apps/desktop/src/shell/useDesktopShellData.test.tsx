@@ -252,10 +252,37 @@ describe('useDesktopShellData characterization', () => {
     expect(eventCall).toBeDefined();
     const listener = eventCall![1] as (event: { payload: RuntimeEvent }) => void;
     act(() => listener({ payload: {
-      type: 'sync_status_changed', community_node_statuses: [ready],
+      type: 'sync_status_changed', removed_topics: [], community_node_statuses: [ready],
+      removed_community_nodes: [],
     } }));
     expect(harness.store.getState().communityIndexNodeBaseUrl).toBe(node);
     expect(harness.store.getState().communityIndexNodePreference).toEqual({ mode: 'auto' });
+    view.unmount();
+  });
+
+  // #1221 R2-D: 差分の event は、変わった topic と外した node だけを store へ適用する。
+  test('a sync status delta replaces only the changed parts', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    const api = createDesktopMockApi();
+    await api.setCommunityNodeConfig([{ base_url: 'https://a.example' }, { base_url: 'https://b.example' }]);
+    const { harness, view } = renderDataHook(api);
+    await flushAsyncWork();
+    const before = harness.store.getState().syncStatus;
+    const [changed, removed, ...kept] = before.topic_diagnostics;
+    const listener = listenMock.mock.calls.find(([name]) => name === 'kukuri://runtime-event')![1] as
+      (event: { payload: RuntimeEvent }) => void;
+    const pushed = { ...changed, peer_count: 42 };
+    act(() => listener({ payload: {
+      type: 'sync_status_changed',
+      sync_status: { ...before, peer_count: 42, topic_diagnostics: [pushed] },
+      removed_topics: [removed.topic],
+      community_node_statuses: [],
+      removed_community_nodes: ['https://b.example'],
+    } }));
+    const after = harness.store.getState();
+    expect(after.syncStatus.peer_count).toBe(42);
+    expect(after.syncStatus.topic_diagnostics).toEqual([pushed, ...kept].sort((left, right) => left.topic.localeCompare(right.topic)));
+    expect(after.communityNodeStatuses.map((status) => status.base_url)).toEqual(['https://a.example']);
     view.unmount();
   });
 

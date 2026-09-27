@@ -1,15 +1,18 @@
 import { cn } from '@/lib/utils';
 
-import { type SettingsDiagnosticItemView } from './types';
+import { PeerPageList } from './PeerPageList';
+import { type LoadConnectivityPeers, type SettingsDiagnosticItemView } from './types';
 
 type SettingsDiagnosticListProps = {
   items: SettingsDiagnosticItemView[];
   columns?: 1 | 2;
+  loadPeers?: LoadConnectivityPeers;
 };
 
 export function SettingsDiagnosticList({
   items,
   columns = 1,
+  loadPeers,
 }: SettingsDiagnosticListProps) {
   return (
     <dl
@@ -38,7 +41,11 @@ export function SettingsDiagnosticList({
               item.tone === 'danger' && 'text-[var(--destructive)]'
             )}
           >
-            {item.value}
+            {item.peers && loadPeers ? (
+              <PeerPageList query={item.peers} loadPeers={loadPeers} />
+            ) : (
+              item.value
+            )}
           </dd>
         </div>
       ))}

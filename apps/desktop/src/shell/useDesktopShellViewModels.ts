@@ -231,7 +231,6 @@ export function useDesktopShellViewModels({
 
   const {
     communityNodeStatusByBaseUrl,
-    effectivePeerIds,
     connectivityPanelView,
     appearancePanelView,
     discoveryPanelView,
@@ -380,7 +379,6 @@ export function useDesktopShellViewModels({
     profileEditorHasPicture,
     communityNodeStatusByBaseUrl,
     topicDiagnostics,
-    effectivePeerIds,
     activeTimelinePostViews,
     bookmarkedTimelinePostViews,
     profileTimelinePostViews,

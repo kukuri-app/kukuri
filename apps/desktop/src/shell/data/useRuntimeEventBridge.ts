@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { CommunityNodeNodeStatus, RuntimeEvent, SyncStatus } from '@/lib/api';
+import type { RuntimeEvent } from '@/lib/api';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
+
+// 通信状態の差分(#1221 R2-D)。変わった部分だけを持つ。
+export type SyncStatusDelta = Extract<RuntimeEvent, { type: 'sync_status_changed' }>;
 
 export function useRuntimeEventBridge(
   onNotificationStatusChanged: () => void,
-  onSyncStatusChanged: (
-    syncStatus: SyncStatus | null,
-    communityNodeStatuses: CommunityNodeNodeStatus[] | null
-  ) => void,
+  onSyncStatusChanged: (delta: SyncStatusDelta) => void,
   onAdultMediaLabelEvicted: (hash: string | null) => void
 ): void {
   const notificationCallbackRef = useRef(onNotificationStatusChanged);
@@ -45,10 +45,7 @@ export function useRuntimeEventBridge(
               notificationCallbackRef.current();
               break;
             case 'sync_status_changed':
-              syncStatusCallbackRef.current(
-                event.payload.sync_status ?? null,
-                event.payload.community_node_statuses ?? null
-              );
+              syncStatusCallbackRef.current(event.payload);
               break;
             case 'adult_media_label_evicted':
               adultLabelCallbackRef.current(event.payload.hash ?? null);
