@@ -144,6 +144,9 @@ cn-indexer 全件(Postgres)、`cargo xtask cn-e2e` 13 件成功。cn-core の re
   (切替前と回転前の Dome の作成時刻を前日にし、hosting の記録が前日の bucket にあり、行を持つ参加者が読め、owner が閉じる)。
 - B6 CLI の 3 台の daemon の試験: 参加 record が outbox の周期(約 2 秒)で届く前に回転し、b に grant が送られなかった。
   直前の epoch の参加 record に現 epoch の grant を送る。試験 `a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant`。
+  再監査 B7: 送るのは、その record で参加者の表の行が新しく入った・更新され(退出済みの行を古い参加 record で戻せない)、
+  参加の時刻が回転の時刻(現 epoch の開始)より前のときだけ。試験 `a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record`
+  (退出した人が回転の後の時刻・遡らせた時刻で送り直しても grant 0 件)。
   Linux(Docker)で回転の伝播は通るようになった。後段の Dome の接続(`process_e2e.rs:475`)は下の決定 1 で直した。
 - 検証: app-api(`iroh-integration-tests`)lib 506 件、desktop-runtime lib 319 件、harness 23 件、kukuri-cli(Windows)、docs-sync 成功。`cargo xtask rust-check`・fmt・oversized-files・`ipc-types --check` 成功。Linux の `process_e2e` は Docker で回転の伝播まで通り、Dome の接続で失敗(未決)。1 回だけ `private_live_session_reaches_a_member_through_the_channel_hint` が全件実行の負荷で時間切れ(単独 4 回と全件の再実行は成功)。
 - 時刻の注入: app-api に時計の抽象は無く、envelope の署名時刻は core が現在時刻で付ける。日をまたぐ場面は、前日の

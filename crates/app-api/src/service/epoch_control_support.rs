@@ -285,11 +285,21 @@ impl AppService {
                     && participant.participant_pubkey.as_str() == sender,
                 "participant record does not belong to this owner's epoch"
             );
-            services
+            let placed = services
                 .projection_store
                 .put_private_channel_participant(participant_row(&participant))
                 .await?;
-            if participant.left_at.is_none() && epoch_id != state.current_epoch_id {
+            // 回転の前に参加したのに record の到着が遅れた人だけに、回転後の grant を送る(#1221 R5-H B7)。この record で
+            // 表の行が新しく入った・更新された(退出済みの行を古い参加 record で戻せない)うえで、参加の時刻が回転の時刻
+            // (現 epoch の開始)より前のものに限る。回転の時点で退出していた人・回転の後に参加した人には送らない。
+            let joined_before_rotation =
+                super::remote_read_support::epoch_start_millis(&state.current_epoch_id)
+                    .is_some_and(|rotated_at| participant.joined_at < rotated_at);
+            if placed
+                && participant.left_at.is_none()
+                && epoch_id != state.current_epoch_id
+                && joined_before_rotation
+            {
                 AppService::from_handles(services.clone())
                     .grant_current_epoch_to_late_participant(&state, &epoch_id, sender)
                     .await?;

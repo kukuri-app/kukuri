@@ -821,7 +821,7 @@ impl AppService {
     }
 }
 
-fn epoch_start_millis(id: &str) -> Option<i64> {
+pub(super) fn epoch_start_millis(id: &str) -> Option<i64> {
     id.strip_prefix("epoch-")?.split('-').next()?.parse().ok()
 }
 

@@ -304,3 +304,117 @@ async fn a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant(
     .await
     .expect("the member moves to the rotated epoch");
 }
+
+/// #1221 R5-H B7: 退出して回転で外れた参加者が、保持していた直前の epoch の secret で参加 record を送り直しても、owner は
+/// 回転後の epoch の grant を送らない。参加の時刻を「今」(回転の後)にしても、回転の前へ遡らせても同じ。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record() {
+    let _guard = iroh_integration_test_lock().lock_owned().await;
+    let dir = tempdir().expect("tempdir");
+    let stack_a = TestIrohStack::new(&dir.path().join("rejoin-owner")).await;
+    let stack_b = TestIrohStack::new(&dir.path().join("rejoin-member")).await;
+    let store_a = Arc::new(MemoryStore::default());
+    let store_b = Arc::new(MemoryStore::default());
+    let app_a = app_with_iroh_services(store_a.clone(), &stack_a);
+    let app_b = app_with_iroh_services(store_b.clone(), &stack_b);
+    stack_a.bind_account(&app_a).await;
+    stack_b.bind_account(&app_b).await;
+    let topic = "kukuri:topic:private-channel-rejoin";
+    let ticket_a = app_a.peer_ticket().await.unwrap().unwrap();
+    let ticket_b = app_b.peer_ticket().await.unwrap().unwrap();
+    app_a.import_peer_ticket(&ticket_b).await.expect("import b");
+    app_b.import_peer_ticket(&ticket_a).await.expect("import a");
+    let channel = app_a
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "rejoin".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create");
+    let invite = app_a
+        .export_private_channel_invite(topic, channel.channel_id.as_str(), None)
+        .await
+        .expect("invite");
+    let joined_at = Utc::now().timestamp_millis();
+    app_b
+        .import_private_channel_invite(invite.as_str())
+        .await
+        .expect("import invite");
+    wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 2).await;
+    let old = app_a
+        .get_private_channel_capability(topic, &channel.channel_id)
+        .await
+        .expect("capability")
+        .expect("owner capability");
+    app_b
+        .leave_private_channel(topic, channel.channel_id.as_str())
+        .await
+        .expect("leave");
+    wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 1).await;
+    let rotated = app_a
+        .rotate_private_channel(topic, &channel.channel_id)
+        .await
+        .expect("rotate");
+    assert_ne!(rotated.current_epoch_id, old.current_epoch_id);
+    let b_pubkey = app_b.current_author_pubkey();
+    let old_replica = private_channel_epoch_replica_id(
+        channel.channel_id.as_str(),
+        old.current_epoch_id.as_str(),
+    );
+    app_b
+        .services
+        .docs_sync
+        .register_private_replica_secret(&old_replica, old.current_epoch_secret_hex.as_str())
+        .await
+        .expect("register old secret");
+    // 退出した端末(改変したもの)が、回転の後の時刻と、回転の前へ遡らせた時刻の参加 record を送り直す。
+    for forged_joined_at in [Utc::now().timestamp_millis(), joined_at] {
+        app_b
+            .record_private_channel_participant(
+                &PrivateChannelParticipantDocV1 {
+                    channel_id: ChannelId::new(channel.channel_id.clone()),
+                    topic_id: TopicId::new(topic),
+                    epoch_id: old.current_epoch_id.clone(),
+                    participant_pubkey: Pubkey::from(b_pubkey.clone()),
+                    joined_at: forged_joined_at,
+                    is_owner: false,
+                    join_mode: None,
+                    sponsor_pubkey: None,
+                    share_token_id: None,
+                    left_at: None,
+                },
+                app_a.current_author_pubkey().as_str(),
+                old.current_epoch_secret_hex.as_str(),
+                &old_replica,
+            )
+            .await
+            .expect("forged late join");
+        // owner の ACK で b の outbox が空になる(owner が record を処理し終えた)まで待つ。
+        timeout(p2p_replication_timeout(), async {
+            while !store_b
+                .list_direct_message_outbox()
+                .await
+                .unwrap()
+                .is_empty()
+            {
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("the owner handled the forged record");
+        let grants = store_a
+            .list_direct_message_outbox()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|row| {
+                row.peer_pubkey == b_pubkey && row.dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX)
+            })
+            .count();
+        assert_eq!(
+            grants, 0,
+            "no grant for the member who left ({forged_joined_at})"
+        );
+    }
+}
