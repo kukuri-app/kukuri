@@ -339,6 +339,8 @@ async fn profile_page_one_shows_posts_written_after_the_switch() {
             .expect("old post");
     }
     writer.switch_writer(1);
+    // 行の並びは署名の秒と object id。旧い投稿と別の秒にする。
+    sleep(Duration::from_millis(1_100)).await;
     let new_post = writer
         .create_post(TOPIC, "after the switch", None)
         .await
