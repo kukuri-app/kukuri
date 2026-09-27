@@ -8,8 +8,6 @@ pub const REMOTE_CACHE_UNUSED_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 pub const REMOTE_CACHE_RECLAIM_STEP: usize = 128;
 /// これ以下の blob は SQLite の行に、超えるものは `kukuri.remote-blobs/` の file に置く。
 pub const OWNED_INLINE_BLOB_BYTES: u64 = 1024 * 1024;
-/// 本人が書いた docs record の保護参照(#1221 R5-I)。
-const OWN_DOCS_REF: &str = "own_docs";
 const REMOTE_CACHE_TOUCH_INTERVAL_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Clone, Copy)]
@@ -52,7 +50,7 @@ pub(super) fn now_ms() -> Result<i64> {
     )?)
 }
 
-async fn delete_cache_item(
+pub(super) async fn delete_cache_item(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     kind: &str,
     key: &str,
@@ -340,11 +338,13 @@ impl SqliteStore {
         Ok(count)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn charge_remote_projection(
         &self,
         tx: &mut sqlx::Transaction<'_, Sqlite>,
         row: &ObjectProjectionRow,
         budget: i64,
+        last_used_at: i64,
         label_evictions: &mut Vec<String>,
         removed_files: &mut Vec<String>,
     ) -> Result<bool> {
@@ -358,7 +358,7 @@ impl SqliteStore {
             None,
             None,
             budget,
-            now_ms()?,
+            last_used_at,
             Some(charge),
             label_evictions,
             removed_files,
@@ -936,53 +936,6 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// `reference` の保護参照を 1 件足す。内容がまだ無くても参照を先に置き、後から置く内容を容量の計数と回収の外にする。
-    pub async fn add_protected_ref(&self, reference: &str, kind: &str, key: &str) -> Result<()> {
-        let _gate = self.remote_cache_gate.lock().await;
-        let mut tx = self.pool.begin().await?;
-        Self::add_remote_protected_ref(&mut tx, kind, key, reference).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// 本人の書込みの blob を、保護参照 `reference` を付けて保護所有先へ置く(#1221 R5-I)。
-    pub async fn put_owned_blob(&self, reference: &str, hash: &str, bytes: &[u8]) -> Result<()> {
-        self.add_protected_ref(reference, "blob", hash).await?;
-        if bytes.len() as u64 <= OWNED_INLINE_BLOB_BYTES {
-            anyhow::ensure!(
-                self.put_remote_content("blob", hash, "blob", bytes).await?,
-                "owned blob was not stored"
-            );
-            return Ok(());
-        }
-        let root = self
-            .remote_cache_files
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("file-backed remote cache is unavailable"))?;
-        let staging = tempfile::NamedTempFile::new_in(root)?;
-        tokio::fs::write(staging.path(), bytes).await?;
-        self.put_remote_blob_file(hash, staging.path()).await
-    }
-
-    /// 本人が書いた docs record を、保護参照を付けて保護所有先へ置く(#1221 R5-I)。同じ key の書き直しは同じ行を置き換える。
-    pub async fn put_owned_record(
-        &self,
-        replica: &str,
-        key: &str,
-        author: &str,
-        payload: &[u8],
-    ) -> Result<()> {
-        let cache_key = Self::remote_record_cache_key(replica, key, author);
-        self.add_protected_ref(OWN_DOCS_REF, "record", &cache_key)
-            .await?;
-        anyhow::ensure!(
-            self.put_remote_record(replica, key, author, payload)
-                .await?,
-            "owned record was not stored"
-        );
-        Ok(())
-    }
-
     pub async fn remove_remote_content(&self, kind: &str, key: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         let mut label_evictions = Vec::new();
@@ -1016,6 +969,7 @@ impl SqliteStore {
 }
 
 mod files;
+mod owned;
 
 #[cfg(test)]
 mod tests;

@@ -14,6 +14,7 @@ mod author_docs_authors;
 mod backend_parity;
 mod content_observations;
 mod direct_messages;
+mod legacy_store_retirement;
 mod migrations;
 mod migrations_roundtrip;
 mod notifications_dispatch;

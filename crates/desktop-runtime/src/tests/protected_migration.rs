@@ -18,6 +18,7 @@ use kukuri_store::{
     SqliteStore, Store,
 };
 
+use super::legacy_store_retirement::{create_empty_legacy_store, into_legacy_layout};
 use crate::accounts::ensure_accounts_initialized;
 use crate::backup::{
     CreateDeviceBackupRequest, DeviceBackupCancellation, RestoreDeviceBackupRequest,
@@ -26,7 +27,7 @@ use crate::backup::{
     mark_device_restore_awaiting_consent, prepare_device_restore,
 };
 
-const TOPIC: &str = "kukuri:topic:protected-migration";
+pub(super) const TOPIC: &str = "kukuri:topic:protected-migration";
 
 async fn open_runtime(db: &Path) -> DesktopRuntime {
     DesktopRuntime::new_with_config_and_identity(
@@ -38,11 +39,10 @@ async fn open_runtime(db: &Path) -> DesktopRuntime {
     .expect("runtime")
 }
 
+/// runtime が読むだけに開いた旧 store の blob(#1221 R5-I: node は新しい store)。旧 store が無ければ `None`。
 async fn legacy_blob(runtime: &DesktopRuntime, hash: &str) -> Option<Vec<u8>> {
-    let current = runtime.iroh_stack.current.lock().await;
-    let node = current.as_ref().expect("stack").node.clone();
-    drop(current);
-    node.read_local_blob(hash).await.expect("legacy blob read")
+    let legacy = runtime.legacy_store.lock().await.clone()?;
+    legacy.read_blob(hash).await.expect("legacy blob read")
 }
 
 async fn is_protected(store: &SqliteStore, hash: &str) -> bool {
@@ -57,7 +57,11 @@ async fn is_protected(store: &SqliteStore, hash: &str) -> bool {
 }
 
 /// backup を作り、`target` の新しい account として復元する。archive の entry 名と、復元した db の path を返す。
-fn backup_and_restore(source: &Path, db: &Path, target: &Path) -> (Vec<String>, PathBuf) {
+pub(super) fn backup_and_restore(
+    source: &Path,
+    db: &Path,
+    target: &Path,
+) -> (Vec<String>, PathBuf) {
     let archive_dir = tempdir().expect("archive dir");
     let archive = archive_dir.path().join("account.kukuri-backup");
     create_device_backup(
@@ -106,22 +110,22 @@ fn backup_and_restore(source: &Path, db: &Path, target: &Path) -> (Vec<String>, 
 }
 
 /// 旧領域に置いた本人データ。hash は旧 blob store(`iroh-data`)にある。
-struct Fixture {
-    post_id: String,
-    attachment: (String, Vec<u8>),
-    body_hash: String,
-    avatar: (String, String),
-    reaction_asset: String,
-    reaction_bookmark: String,
-    frame_hash: String,
-    encrypted_attachment: String,
-    plain_attachment: String,
-    dome_pin: String,
-    live_manifest: String,
-    channel_id: String,
+pub(super) struct Fixture {
+    pub(super) post_id: String,
+    pub(super) attachment: (String, Vec<u8>),
+    pub(super) body_hash: String,
+    pub(super) avatar: (String, String),
+    pub(super) reaction_asset: String,
+    pub(super) reaction_bookmark: String,
+    pub(super) frame_hash: String,
+    pub(super) encrypted_attachment: String,
+    pub(super) plain_attachment: String,
+    pub(super) dome_pin: String,
+    pub(super) live_manifest: String,
+    pub(super) channel_id: String,
 }
 
-async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
+pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
     // 索引の先頭 128 行を他人の envelope にし、本人の投稿を 2 ページ目に置く。
     let remote = KukuriKeys::generate();
     for index in 0..200 {
@@ -363,8 +367,14 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     let source = tempdir().expect("source dir");
     let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
         .expect("source account");
+    // #1221 R5-I: 更新前の端末の保存状態(旧 store に本人のデータ、保護所有先は空)を作る。
+    create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let fixture = seed_legacy_data(&runtime).await;
+    runtime.shutdown().await;
+    drop(runtime);
+    into_legacy_layout(&db).await;
+    let runtime = open_runtime(&db).await;
     let own_record = format!("objects/{}/envelope", fixture.post_id);
     let topic_replica = format!("topic::{TOPIC}");
 
@@ -604,51 +614,30 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     restored.shutdown().await;
 }
 
-// pin の tag は hash の順に並ぶ。追いついた後に pin した asset も、hash の大小に関わらず読み直して移す(監査の指摘)。
+/// #1221 R5-I: pin した asset は、pin したときに `dome_pin:` の保護参照で保護所有先に置く(保護移行の手順を使わない)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn assets_pinned_after_catch_up_are_moved_whatever_their_hash() {
+async fn a_pinned_asset_is_protected_when_pinned() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
     let db =
         ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
     let runtime = open_runtime(&db).await;
     let blobs = runtime.iroh_stack.blob_service.clone();
-    let first = blobs
-        .put_blob(b"first pinned asset".to_vec(), "model/gltf-binary")
+    let asset = blobs
+        .put_remote_blob(b"visited dome asset".to_vec(), "model/gltf-binary")
         .await
-        .expect("first asset");
-    blobs.pin_blob(&first.hash).await.expect("pin first");
-    runtime
-        .finish_protected_migration()
-        .await
-        .expect("catch up");
-    assert!(is_protected(&runtime.store, first.hash.as_str()).await);
-    let mut later = Vec::new();
-    for index in 0..8 {
-        let asset = blobs
-            .put_blob(
-                format!("later pinned asset {index}").into_bytes(),
-                "model/gltf-binary",
-            )
-            .await
-            .expect("later asset");
-        blobs.pin_blob(&asset.hash).await.expect("pin later");
-        later.push(asset.hash);
-    }
-    assert!(
-        later.iter().any(|hash| hash.as_str() < first.hash.as_str()),
-        "at least one later hash sorts before the caught-up cursor"
-    );
-    runtime
-        .finish_protected_migration()
-        .await
-        .expect("read pins again");
-    for hash in &later {
-        assert!(
-            is_protected(&runtime.store, hash.as_str()).await,
-            "{hash:?}"
-        );
-    }
+        .expect("cached asset");
+    assert!(!is_protected(&runtime.store, asset.hash.as_str()).await);
+    blobs.pin_blob(&asset.hash).await.expect("pin");
+    assert!(is_protected(&runtime.store, asset.hash.as_str()).await);
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM remote_content_cache_protected_ref WHERE ref_id = ?1",
+    )
+    .bind(format!("dome_pin:{}", asset.hash.as_str()))
+    .fetch_one(runtime.store.pool())
+    .await
+    .expect("refs");
+    assert_eq!(refs, 1);
     runtime.shutdown().await;
 }
 
@@ -659,6 +648,7 @@ async fn own_envelope_waits_for_its_docs_records() {
     let dir = tempdir().expect("dir");
     let db =
         ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let envelope = build_post_envelope(
         runtime.author_keys.as_ref(),
@@ -697,6 +687,7 @@ async fn the_writer_switches_once_after_the_migration_and_keeps_it_across_restar
     let dir = tempdir().expect("dir");
     let db =
         ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     assert_eq!(runtime.app_service.writer_switched_at(), None);
     runtime

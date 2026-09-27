@@ -84,6 +84,9 @@ use crate::stack::SharedIrohStack;
 mod community_node_api;
 mod content_profile_api;
 mod identity_api;
+mod legacy_store_retirement;
+#[cfg(test)]
+pub(crate) use legacy_store_retirement::LegacyStoreProgress;
 mod notifications_messages_api;
 mod private_channels_game_api;
 mod protected_migration;
@@ -130,12 +133,12 @@ pub struct DesktopRuntime {
     pub(crate) community_node_reconnect_guard: Arc<Mutex<()>>,
     pub(crate) community_node_scheduler_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// #1221 R5-G: 旧 `iroh-data` から保護所有先への移行。背景 task と backup 前の drain を直列にする。
-    pub(crate) protected_migration_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// #1221 R5-G・R5-I: 旧 `iroh-data` の保護移行と退役の背景 task。backup 前の drain と直列にする。
+    pub(crate) legacy_store_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) protected_migration_guard: Mutex<()>,
     pub(crate) private_migration_dirty: Arc<AtomicBool>,
-    /// 最後に読み直した pin の世代。起動時は読み直すため、あり得ない値から始める。
-    pub(crate) dome_pin_generation: std::sync::atomic::AtomicU64,
+    /// #1221 R5-I: 読むだけに開いた旧 iroh store。退役させたら(または初めから無ければ)`None`。
+    pub(crate) legacy_store: Mutex<Option<Arc<kukuri_iroh_node::LegacyStore>>>,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
     notification_event_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) active_connectivity_urls: Arc<Mutex<Vec<String>>>,
@@ -384,6 +387,12 @@ impl DesktopRuntime {
         let docs_root = db_path.with_extension("iroh-store");
         kukuri_iroh_node::adopt_endpoint_secret(&db_path.with_extension("iroh-data"), &docs_root)?;
         let store = Arc::new(SqliteStore::connect_file(&db_path).await?);
+        // #1221 R5-I: 旧 store は読むだけの別の instance として開く。中身の無い旧 root は退役の手順へ回す。
+        let legacy_root = db_path.with_extension("iroh-data");
+        let legacy_store = kukuri_iroh_node::LegacyStore::open(&legacy_root).await?;
+        if legacy_store.is_none() && legacy_root.exists() {
+            std::fs::rename(&legacy_root, db_path.with_extension("iroh-data.retiring"))?;
+        }
         let iroh_stack = SharedIrohStack::new(
             &docs_root,
             network_config.clone(),
@@ -516,10 +525,10 @@ impl DesktopRuntime {
             community_node_reconnect_guard: Arc::new(Mutex::new(())),
             community_node_scheduler_task: Mutex::new(None),
             sync_status_observer_task: Mutex::new(None),
-            protected_migration_task: Mutex::new(None),
+            legacy_store_task: Mutex::new(None),
             protected_migration_guard: Mutex::new(()),
             private_migration_dirty,
-            dome_pin_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
+            legacy_store: Mutex::new(legacy_store.map(Arc::new)),
             notification_event_task: StdMutex::new(Some(notification_event_task)),
             active_connectivity_urls: Arc::new(Mutex::new(relay_config.iroh_relay_urls.clone())),
             last_runtime_connectivity_assist_state: Arc::new(Mutex::new(Some(

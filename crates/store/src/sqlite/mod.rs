@@ -42,6 +42,7 @@ mod bookmarks;
 mod connection;
 mod direct_messages;
 mod envelopes;
+mod legacy_store_retirement;
 pub(crate) mod live_game;
 mod notifications;
 mod observations;
@@ -54,6 +55,7 @@ mod social;
 mod withdrawals;
 
 pub use connection::StoreStartupError;
+pub use legacy_store_retirement::{LEGACY_STORE_KINDS, LEGACY_STORE_PAGE, LegacyProjectionPage};
 pub use private_index_grants::PrivateIndexGrant;
 pub use protected_migration::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,

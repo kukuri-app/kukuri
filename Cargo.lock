@@ -3561,6 +3561,7 @@ dependencies = [
  "futures-util",
  "image",
  "iroh",
+ "iroh-docs",
  "iroh-mainline-address-lookup",
  "keyring",
  "kukuri-app-api",

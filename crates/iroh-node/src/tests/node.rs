@@ -38,18 +38,6 @@ async fn cancelled_shutdown_caller_still_waits_for_owned_cleanup_on_retry() {
     reopened.shutdown().await.unwrap();
 }
 
-#[tokio::test]
-async fn offline_blob_read_does_not_create_a_node_or_missing_store() {
-    let dir = tempdir().unwrap();
-    assert!(
-        crate::read_offline_blob(dir.path(), &"0".repeat(64))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
-}
-
 fn recovery_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = fs::read_dir(root)
         .expect("read root")

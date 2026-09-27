@@ -135,58 +135,22 @@ impl AppService {
         Ok(state)
     }
 
-    /// owner の Dome Instance。記録の場所(`read_dome_record`)を exact に読み、無ければ更新前に旧 context replica へ
-    /// 置いた分を手元から読む。
+    /// owner の Dome Instance。記録の場所(`read_dome_record`)を exact に読む(#1221 R5-I: 更新前に旧 context replica
+    /// へ置いた Instance は読まない。ユーザー判断で消失を受け入れた)。
     pub(crate) async fn fetch_dome_instance_manifest(
         &self,
         spatial_context: &SpatialContextV1,
         owner_pubkey: &Pubkey,
     ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
         let key = dome_instance_state_key(&dome_instance_id(spatial_context, owner_pubkey));
-        let current = self
-            .read_dome_record(spatial_context, owner_pubkey, |docs, replica, policy| {
-                let key = &key;
-                async move {
-                    self.read_dome_instance(docs.as_ref(), &replica, key, owner_pubkey, policy)
-                        .await
-                }
-            })
-            .await?;
-        if current.is_some() {
-            return Ok(current);
-        }
-        let Some(legacy) = self.legacy_dome_replica(spatial_context).await else {
-            return Ok(None);
-        };
-        let key = stable_key(
-            "metaverse/dome-instances",
-            &format!("{}/state", owner_pubkey.as_str()),
-        );
-        self.read_dome_instance(
-            self.services.docs_sync.as_ref(),
-            &legacy,
-            &key,
-            owner_pubkey,
-            DocFetchPolicy::LocalOnly,
-        )
+        self.read_dome_record(spatial_context, owner_pubkey, |docs, replica, policy| {
+            let key = &key;
+            async move {
+                self.read_dome_instance(docs.as_ref(), &replica, key, owner_pubkey, policy)
+                    .await
+            }
+        })
         .await
-    }
-
-    /// 更新前に Dome の記録を置いていた旧 context replica。読むだけなので、private は参加中の現 epoch を回転なしで使う。
-    pub(crate) async fn legacy_dome_replica(
-        &self,
-        context: &SpatialContextV1,
-    ) -> Option<ReplicaId> {
-        match context {
-            SpatialContextV1::Topic { topic_id } => Some(topic_replica_id(topic_id.as_str())),
-            SpatialContextV1::Channel {
-                topic_id,
-                channel_id,
-            } => self
-                .joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
-                .await
-                .map(|state| current_private_channel_replica_id(&state)),
-        }
     }
 
     async fn read_dome_instance(
@@ -578,14 +542,12 @@ impl AppService {
         Ok(anchors)
     }
 
-    /// owner だけが書く記録を読む手元の replica(記録の場所と、更新前の旧 context replica)。
+    /// owner だけが書く記録を読む手元の replica(記録の場所)。
     pub(crate) async fn owned_dome_record_replicas(
         &self,
         instance: &DomeInstanceManifestV1,
     ) -> Result<Vec<ReplicaId>> {
-        let mut replicas = vec![self.dome_record_replica(instance).await?];
-        replicas.extend(self.legacy_dome_replica(&instance.spatial_context).await);
-        Ok(replicas)
+        Ok(vec![self.dome_record_replica(instance).await?])
     }
 
     pub(crate) async fn find_dome_layout_commit(

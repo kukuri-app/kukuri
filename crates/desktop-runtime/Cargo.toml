@@ -56,6 +56,7 @@ tempfile.workspace = true
 iroh-mainline-address-lookup.workspace = true
 n0-mainline.workspace = true
 iroh = { workspace = true, features = ["test-utils"] }
+iroh-docs.workspace = true
 kukuri-cn-iroh-relay = { path = "../cn-iroh-relay" }
 # WP-S3 T6: manifest round-trip contract テスト(server 実出力 -> slim 型)のため。
 kukuri-cn-operator = { path = "../cn-operator" }

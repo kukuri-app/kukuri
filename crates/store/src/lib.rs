@@ -22,10 +22,10 @@ pub use models::{
     adult_media_hashes_for_row,
 };
 pub use sqlite::{
-    OWNED_INLINE_BLOB_BYTES, PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE,
-    PrivateIndexGrant, ProtectedCandidate, ProtectedMigrationPage, ProtectedSource,
-    REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, SqliteStore,
-    StoreStartupError,
+    LEGACY_STORE_KINDS, LEGACY_STORE_PAGE, LegacyProjectionPage, OWNED_INLINE_BLOB_BYTES,
+    PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, PrivateIndexGrant, ProtectedCandidate,
+    ProtectedMigrationPage, ProtectedSource, REMOTE_CACHE_CAPACITY_BYTES,
+    REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, SqliteStore, StoreStartupError,
 };
 pub use traits::{
     BOOKMARKED_CUSTOM_REACTION_LIMIT, ContentObservationStore, DirectMessageStore,

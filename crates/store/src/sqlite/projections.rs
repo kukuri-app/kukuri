@@ -207,6 +207,7 @@ impl SqliteStore {
                         &mut tx,
                         &row,
                         budget,
+                        super::remote_cache::now_ms()?,
                         &mut label_evictions,
                         &mut removed_files
                     )
@@ -282,6 +283,7 @@ impl SqliteStore {
                     .await?;
             } else {
                 // Own/protected projections keep their gate marker beyond remote cache eviction.
+                // #1221 R5-I: 行の参照も置き、旧領域の保護を外した後も行がある間は残す。
                 for hash in adult_media_hashes_for_row(&row) {
                     sqlx::query(
                         "INSERT INTO adult_media_hashes (blob_hash, marked_at, is_protected) \
@@ -289,6 +291,14 @@ impl SqliteStore {
                     )
                     .bind(hash)
                     .bind(row.derived_at)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO remote_adult_media_hash_refs (object_id, blob_hash) \
+                         VALUES (?1, ?2)",
+                    )
+                    .bind(row.object_id.as_str())
+                    .bind(hash)
                     .execute(&mut *tx)
                     .await?;
                 }

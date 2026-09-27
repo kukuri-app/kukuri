@@ -156,8 +156,6 @@ pub struct IrohBlobService {
     // 台帳変化の bool は blob-service では使わない(レプリカへの配り直しが無いため)。
     peers: Arc<PeerAddrBook>,
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
-    /// pin するたびに増える(#1221 R5-G。保護所有先への移行が pin の tag を読み直す合図)。
-    pin_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Clone, Default)]
@@ -167,12 +165,6 @@ pub struct MemoryBlobService {
 }
 
 impl IrohBlobService {
-    /// pin した回数(この process の中で単調に増える)。
-    pub fn pin_generation(&self) -> u64 {
-        self.pin_generation
-            .load(std::sync::atomic::Ordering::SeqCst)
-    }
-
     pub fn new(node: Arc<IrohDocsNode>) -> Self {
         let peers = Arc::new(PeerAddrBook::with_fetch_health(
             node.endpoint().clone(),
@@ -185,7 +177,6 @@ impl IrohBlobService {
             pinned: Arc::new(RwLock::new(HashSet::new())),
             peers,
             remote_fetch_retries: Arc::new(Mutex::new(RemoteFetchRetryState::default())),
-            pin_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -341,10 +332,7 @@ impl BlobService for IrohBlobService {
         {
             return Ok(());
         }
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
-        if self.node.blobs().blobs().has(parsed).await? {
-            return Ok(());
-        }
+        iroh_blobs::Hash::from_str(hash.as_str())?;
         let cache = self
             .remote_cache
             .as_ref()
@@ -465,18 +453,14 @@ impl BlobService for IrohBlobService {
     ) -> Result<StoredBlob> {
         let hash = iroh_blobs::Hash::new(&data);
         let byte_len = data.len() as u64;
-        match &self.remote_cache {
-            // #1221 R5-I: 本人の書込みは保護所有先へ直接入れる(iroh の store には置かない)。相手へは
-            // `RemoteBlobProtocol` が保護所有先から提供する。
-            Some(cache) => {
-                cache
-                    .put_owned_blob(reference, &hash.to_string(), &data)
-                    .await?
-            }
-            None => {
-                self.node.blobs().blobs().add_bytes(data).await?;
-            }
+        // #1221 R5-I: 本人の書込みは、書いたときに保護参照つきで保護所有先へも入れる(backup・restore の対象)。
+        // iroh の store にも置き、SQLite を失っても docs から戻せるようにする。
+        if let Some(cache) = &self.remote_cache {
+            cache
+                .put_owned_blob(reference, &hash.to_string(), &data)
+                .await?;
         }
+        self.node.blobs().blobs().add_bytes(data).await?;
         Ok(StoredBlob {
             hash: BlobHash::new(hash.to_string()),
             mime: mime.to_string(),
@@ -489,9 +473,7 @@ impl BlobService for IrohBlobService {
             return self.put_blob(data, mime).await;
         };
         let hash = iroh_blobs::Hash::new(&data);
-        if data.len() as i64 <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES
-            && !self.node.blobs().blobs().has(hash).await?
-        {
+        if data.len() as i64 <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES {
             anyhow::ensure!(
                 cache
                     .put_remote_content("blob", &hash.to_string(), "blob", &data)
@@ -554,23 +536,30 @@ impl BlobService for IrohBlobService {
 
     async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
         let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
-        if let Some(cache) = &self.remote_cache
-            && !self.node.blobs().blobs().has(parsed).await?
-            && let Some(bytes) = cache.get_remote_content("blob", hash.as_str()).await?
-        {
-            self.node.blobs().blobs().add_bytes(bytes).await?;
+        if let Some(cache) = &self.remote_cache {
+            // #1221 R5-I: pin した asset は pin したときに `dome_pin:` の保護参照で保護所有先に置く(backup・restore)。
+            let reference = format!("dome_pin:{}", hash.as_str());
+            if cache.has_remote_content("blob", hash.as_str()).await? {
+                cache
+                    .add_protected_ref(&reference, "blob", hash.as_str())
+                    .await?;
+            } else if let Ok(bytes) = self.node.blobs().blobs().get_bytes(parsed).await {
+                cache
+                    .put_owned_blob(&reference, hash.as_str(), &bytes)
+                    .await?;
+            }
+            if !self.node.blobs().blobs().has(parsed).await?
+                && let Some(bytes) = cache.get_remote_content("blob", hash.as_str()).await?
+            {
+                self.node.blobs().blobs().add_bytes(bytes).await?;
+            }
         }
         self.node
             .blobs()
             .tags()
             .set(metaverse_pin_tag(hash), parsed)
             .await?;
-        self.pin_generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.pinned.write().await.insert(hash.as_str().to_string());
-        if let Some(cache) = &self.remote_cache {
-            cache.remove_remote_content("blob", hash.as_str()).await?;
-        }
         Ok(())
     }
 

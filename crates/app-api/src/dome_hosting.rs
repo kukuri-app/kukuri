@@ -755,7 +755,7 @@ impl AppService {
     }
 
     /// hosting の記録(owner が最後に始めた epoch の分)。Dome の記録の場所(公開は owner の制御領域、private は
-    /// anchor)を exact に読み(#1221 R5-H)、無ければ更新前に旧 context replica へ置いた分を手元から読む。
+    /// anchor)を exact に読む(#1221 R5-H。更新前に旧 context replica へ置いた分は R5-I で読まない)。
     pub(crate) async fn list_dome_hosting_records(
         &self,
         instance: &DomeInstanceManifestV1,
@@ -778,20 +778,7 @@ impl AppService {
                 },
             )
             .await?;
-        if let Some(records) = current {
-            return Ok(records);
-        }
-        let Some(legacy) = self.legacy_dome_replica(&instance.spatial_context).await else {
-            return Ok(Vec::new());
-        };
-        let prefix = stable_key(HOSTING_RECORD_PREFIX, &format!("{}/", instance.instance_id));
-        self.services
-            .docs_sync
-            .query_replica(&legacy, DocQuery::Prefix(prefix))
-            .await?
-            .into_iter()
-            .map(|record| serde_json::from_slice(&record.value).map_err(Into::into))
-            .collect()
+        Ok(current.unwrap_or_default())
     }
 
     /// 最後の epoch の記録だけを、Dome の記録の場所の instance の 1 key へ置く(旧 topic/channel replica へは書かない)。
