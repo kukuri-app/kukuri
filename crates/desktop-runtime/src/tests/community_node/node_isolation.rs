@@ -57,6 +57,8 @@ struct FlakyNode {
     unreachable: Arc<AtomicBool>,
     token: StdMutex<String>,
     hits: AtomicUsize,
+    /// 公開 policy と同意の状態の GET。
+    consent_checks: AtomicUsize,
     /// topic の rendezvous 鍵 → 返す peer。
     rendezvous: StdMutex<Vec<(String, String)>>,
     /// rendezvous の要求ごとの refresh の件数。
@@ -76,6 +78,7 @@ impl FlakyNode {
             unreachable: unreachable.clone(),
             token: StdMutex::new(String::new()),
             hits: AtomicUsize::new(0),
+            consent_checks: AtomicUsize::new(0),
             rendezvous: StdMutex::new(Vec::new()),
             rendezvous_refreshes: StdMutex::new(Vec::new()),
             server: StdMutex::new(None),
@@ -123,6 +126,9 @@ async fn flaky_node_request(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let path = uri.path();
+    if matches!(path, "/v1/policies" | "/v1/consents/status") {
+        node.consent_checks.fetch_add(1, Ordering::SeqCst);
+    }
     match (method, path) {
         (Method::GET, "/v1/policies") => return mock_current_policies().await.into_response(),
         (Method::POST, "/v1/auth/challenge") => {
@@ -544,18 +550,27 @@ async fn tick_work_does_not_grow_with_failure_or_dormant_history() {
         runtime.run_community_node_session_maintenance_once().await;
         let idle_http = (a.hits() - hits.0, b.hits() - hits.1);
         a.rendezvous_refreshes.lock().unwrap().clear();
-        let before = a.hits();
+        let before = (a.hits(), a.consent_checks.load(Ordering::SeqCst));
         run_due(runtime, &a).await;
-        let due_http = a.hits() - before;
+        let due_http = a.hits() - before.0;
+        let due_consent_checks = a.consent_checks.load(Ordering::SeqCst) - before.1;
         let mut refreshes = a.rendezvous_refreshes.lock().unwrap().clone();
         refreshes.sort();
-        (idle_jobs, idle_http, due_http, refreshes)
+        (
+            idle_jobs,
+            idle_http,
+            due_http,
+            due_consent_checks,
+            refreshes,
+        )
     };
     add_history(&runtime, 1).await;
     let once = measure(&runtime).await;
     add_history(&runtime, 10).await;
     let tenfold = measure(&runtime).await;
+    assert_eq!(once.0.len(), 2, "only the observation lanes: {:?}", once.0);
     assert_eq!(once.1, (0, 0), "no HTTP before due");
+    assert_eq!(once.3, 0, "a due registration does not recheck consent");
     assert_eq!(once, tenfold);
     runtime.shutdown().await;
 }
