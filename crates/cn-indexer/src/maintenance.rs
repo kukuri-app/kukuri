@@ -28,6 +28,8 @@ pub struct IndexMaintenance {
     entries: Arc<dyn IndexEntryStore>,
     projection: Arc<dyn IndexProjection>,
     cipher: ChannelSecretCipher,
+    /// 退役させる旧 iroh store の directory(#1221 R5-I)。
+    legacy_store: Option<std::path::PathBuf>,
 }
 
 impl IndexMaintenance {
@@ -42,7 +44,15 @@ impl IndexMaintenance {
             entries,
             projection,
             cipher,
+            legacy_store: None,
         }
+    }
+
+    /// 巡回ごとに、退役させる旧 iroh store の file を 128 件まで消す(#1221 R5-I)。消した分は戻らないので、
+    /// 再起動しても残った分から続ける。
+    pub fn with_legacy_store(mut self, retiring: std::path::PathBuf) -> Self {
+        self.legacy_store = Some(retiring);
+        self
     }
 
     /// 1 回の巡回: 索引済みの scope を永続 cursor で最大 32 件照合し、support・秘密鍵を失ったものを合わせて
@@ -84,6 +94,20 @@ impl IndexMaintenance {
         {
             warn!(error = %format!("{error:#}"), "failed to reclaim expired index state; will retry");
             state.record_error(None, &format!("{error:#}"));
+        }
+        if let Some(retiring) = self.legacy_store.clone()
+            && retiring.exists()
+        {
+            let removed = tokio::task::spawn_blocking(move || {
+                kukuri_iroh_node::remove_dir_step(&retiring, RECLAIM_BUDGET)
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result);
+            if let Err(error) = removed {
+                warn!(error = %format!("{error:#}"), "failed to remove the retired iroh store; will retry");
+                state.record_error(None, &format!("{error:#}"));
+            }
         }
     }
 

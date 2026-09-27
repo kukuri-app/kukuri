@@ -680,3 +680,145 @@ async fn configured_seed_peer_is_a_public_bucket_provider() -> Result<()> {
     pool.close().await;
     database.cleanup().await
 }
+
+fn entries_under(path: &std::path::Path) -> usize {
+    std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .map(|entry| {
+                    let entry = entry.expect("entry");
+                    1 + if entry.file_type().expect("type").is_dir() {
+                        entries_under(&entry.path())
+                    } else {
+                        0
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+/// #1221 R5-I AC-5: 旧 store(data dir の直下の旧 topic replica と内容 blob)を endpoint secret を残して退役の
+/// directory へ移すと、新しい空の store の node も同じ endpoint ID で動き、bucket reader の索引が続く。退役の
+/// directory の file は保守の巡回が 1 回 128 件以内で消し、作り直した保守(再起動)も残りから続ける。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_legacy_store_keeps_the_endpoint_and_the_bucket_reader() -> Result<()> {
+    let Some(admin) = kukuri_test_support::gated_env_url(
+        "KUKURI_CN_RUN_INTEGRATION_TESTS",
+        "COMMUNITY_NODE_DATABASE_URL",
+        "postgres://cn:cn_password@127.0.0.1:15432/cn",
+    ) else {
+        return Ok(());
+    };
+    let database = TestDatabase::create(&admin, "cn_legacy_store_retirement").await?;
+    let pool = connect_postgres(&database.database_url).await?;
+    initialize_database(&pool).await?;
+    add_supported_topic(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+    mark_index_demand(&pool, IndexScopeKind::PublicTopic, "rust").await?;
+
+    let dir = tempfile::tempdir()?;
+    let data_dir = dir.path().join("cn-indexer");
+    let legacy = IrohDocsNode::persistent(&data_dir).await?;
+    let endpoint_id = legacy.endpoint().id();
+    let legacy_docs = IrohDocsSync::new(legacy.clone());
+    publish(
+        &legacy_docs,
+        &kukuri_docs_sync::topic_replica_id("rust"),
+        &TopicId::new("rust"),
+        "synced before the update",
+        None,
+    )
+    .await?;
+    legacy_docs.shutdown().await;
+    legacy.shutdown().await?;
+
+    let store_root = data_dir.join("iroh-store");
+    let retiring = data_dir.join("legacy.retiring");
+    kukuri_iroh_node::retire_legacy_layout(&data_dir, &store_root, &retiring)?;
+    // 再起動で呼び直しても、残すものは動かさない。
+    kukuri_iroh_node::retire_legacy_layout(&data_dir, &store_root, &retiring)?;
+    let mut names = std::fs::read_dir(&data_dir)?
+        .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>>>()?;
+    names.sort();
+    assert_eq!(
+        names,
+        ["endpoint-secret.json", "iroh-store", "legacy.retiring"]
+    );
+    // 退役させる file が 1 回の上限より多いこと(blob の file を模す)。
+    let extra = retiring.join("data").join("extra");
+    std::fs::create_dir_all(&extra)?;
+    for index in 0..300 {
+        std::fs::write(extra.join(format!("{index}.data")), b"legacy blob")?;
+    }
+
+    let cn_node = IrohDocsNode::persistent(&store_root).await?;
+    assert_eq!(cn_node.endpoint().id(), endpoint_id);
+    let cn_docs = Arc::new(IrohDocsSync::new(cn_node.clone()));
+    let node_a = IrohDocsNode::memory().await?;
+    let docs_a = Arc::new(IrohDocsSync::new(node_a.clone()));
+    let now = chrono::Utc::now().timestamp();
+    let posted = publish(
+        &docs_a,
+        &topic_bucket("rust", now)?,
+        &TopicId::new("rust"),
+        "after the retirement",
+        None,
+    )
+    .await?;
+    register_provider(&pool, &"a".repeat(64), &node_a).await?;
+    let (safety, artifacts) = ingest_support::allow_service();
+    let entries = Arc::new(MemoryIndexEntryStore::new(artifacts));
+    let projection = Arc::new(MemoryIndexProjection::default());
+    let cipher = ChannelSecretCipher::from_key_material("legacy-retirement-cipher-key-0123456789")?;
+    let reader = BucketReader::new(
+        pool.clone(),
+        cn_docs.clone(),
+        entries.clone(),
+        IngestPipeline::new(
+            cn_docs.clone(),
+            safety.clone(),
+            entries.clone(),
+            projection.clone(),
+        ),
+        cipher.clone(),
+    );
+    assert_eq!(reader.poll_once(now, true).await?.0.indexed, 1);
+    assert!(
+        projection
+            .contains_object(IndexScopeKind::PublicTopic, "rust", &posted)
+            .await?
+    );
+
+    let state = IndexerRuntimeState::default();
+    let mut passes = 0;
+    while retiring.exists() {
+        // 巡回ごとに作り直す(再起動しても、消した分は戻らず残りから続く)。
+        let maintenance = IndexMaintenance::new(
+            pool.clone(),
+            entries.clone(),
+            projection.clone(),
+            cipher.clone(),
+        )
+        .with_legacy_store(retiring.clone());
+        let before = entries_under(&retiring);
+        maintenance.run_pass(now, &state).await;
+        assert!(
+            before - entries_under(&retiring) <= 128,
+            "one pass removes at most 128 files"
+        );
+        passes += 1;
+        assert!(passes < 10, "retirement does not converge");
+    }
+    assert!(passes >= 3, "300 files need at least three passes");
+    assert!(store_root.join("endpoint-secret.json").is_file());
+    assert!(data_dir.join("endpoint-secret.json").is_file());
+
+    cn_docs.shutdown().await;
+    docs_a.shutdown().await;
+    cn_node.shutdown().await?;
+    node_a.shutdown().await?;
+    pool.close().await;
+    database.cleanup().await?;
+    Ok(())
+}
