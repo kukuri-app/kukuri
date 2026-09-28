@@ -18,6 +18,18 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.3.1-preview.1] - 2026-09-28
+
+### Fixes
+
+- 本文の取り直しを node の取得の予算で待ち、応答しない peer の後ろの peer から取る (#1390 AC-1) ([#1391](https://github.com/kukuri-app/kukuri/pull/1391))
+
+### Other
+
+- v0.3.1-preview.1 の版へ同期する (#1390 AC-2) ([#1392](https://github.com/kukuri-app/kukuri/pull/1392))
+- Store 版 1.3.0.0 の審査通過を記録する ([#1384](https://github.com/kukuri-app/kukuri/pull/1384), [#1389](https://github.com/kukuri-app/kukuri/pull/1389))
+- v0.3.0-preview.2 の公開を CHANGELOG・LP・作業記録へ反映する (#1384 AC-7) ([#1388](https://github.com/kukuri-app/kukuri/pull/1388))
+
 ## [v0.3.0-preview.2] - 2026-09-28
 
 ### Features
