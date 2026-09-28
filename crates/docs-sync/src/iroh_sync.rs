@@ -30,6 +30,8 @@ use crate::types::{
 mod lifecycle;
 #[path = "iroh_local_source.rs"]
 mod local_source;
+#[path = "iroh_namespace_reclaim.rs"]
+mod namespace_reclaim;
 #[path = "iroh_own_records.rs"]
 mod own_records;
 #[path = "iroh_remote_source.rs"]
@@ -222,7 +224,7 @@ impl IrohDocsSync {
                 .import_namespace(Capability::Write(secret))
                 .await?
         } else {
-            let Some(doc) = self.open_existing(&secret).await? else {
+            let Some(doc) = self.open_existing(secret.id()).await? else {
                 return Ok(None);
             };
             doc
@@ -524,7 +526,7 @@ impl DocsSync for IrohDocsSync {
             return Ok(true);
         }
         let secret = self.replica_secret(replica_id).await?;
-        match self.open_existing(&secret).await? {
+        match self.open_existing(secret.id()).await? {
             Some(doc) => {
                 doc.close().await?;
                 Ok(true)

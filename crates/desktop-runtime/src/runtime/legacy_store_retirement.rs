@@ -3,12 +3,13 @@
 //! node は新しい store で動き、旧 store は読むだけの別の instance として開く。背景 task が 1 回 128 対象以内で、
 //! 保護移行(R5-G)の残りと、旧 store から新しい store・cache への移行(本人の docs entry・Dome の pin・最近の
 //! 他人の projection と内容)を台帳の位置から進める。移し終えたら(ADR 0048 §7)旧 store を閉じて名前を変え、
-//! 中の file を 1 回 128 件以内で消す。消し終えたら task は止まり、以後は常駐しない。
+//! 中の file を 1 回 128 件以内で消す。その後、更新前の版が読取りで作った空の namespace を 1 回 128 件以内で回収する
+//! (#1407)。終えたら task は止まり、以後は常駐しない。
 
 use std::time::Duration;
 
 use kukuri_iroh_node::remove_dir_step;
-use kukuri_store::{LEGACY_STORE_KINDS, LEGACY_STORE_PAGE};
+use kukuri_store::{EMPTY_NAMESPACES_KIND, LEGACY_STORE_KINDS, LEGACY_STORE_PAGE};
 
 use super::protected_migration::DOME_PIN_TAG_PREFIX;
 use super::*;
@@ -30,16 +31,12 @@ impl DesktopRuntime {
         if self.legacy_store.lock().await.is_none() {
             if !retiring.exists() {
                 self.protected_migration_step().await?;
-                return Ok(LegacyStoreProgress::Retired);
+                return self.empty_namespaces_step().await;
             }
-            let removed =
-                tokio::task::spawn_blocking(move || remove_dir_step(&retiring, LEGACY_STORE_PAGE))
-                    .await??;
-            return Ok(if removed {
-                LegacyStoreProgress::Retired
-            } else {
-                LegacyStoreProgress::More
-            });
+            // 消し終えたら、次のステップで空の namespace の回収へ進む。
+            tokio::task::spawn_blocking(move || remove_dir_step(&retiring, LEGACY_STORE_PAGE))
+                .await??;
+            return Ok(LegacyStoreProgress::More);
         }
         let migrated = self.protected_migration_step().await?;
         let _guard = self.protected_migration_guard.lock().await;
@@ -123,7 +120,40 @@ impl DesktopRuntime {
         Ok(LegacyStoreProgress::More)
     }
 
-    /// 起動後の背景 task。続きがある間は 100ms、退役の条件を待つ間は 60 秒ごとに進め、旧 store が無くなれば止まる。
+    /// 旧 store の退役の後に、更新前の版が読取りで作った空の namespace を 1 回 128 件以内で回収する(#1407)。
+    /// 終端を記録した後は namespace を列挙しない。
+    async fn empty_namespaces_step(&self) -> Result<LegacyStoreProgress> {
+        let (cursor, done) = self
+            .store
+            .legacy_store_position(EMPTY_NAMESPACES_KIND)
+            .await?;
+        if done {
+            return Ok(LegacyStoreProgress::Retired);
+        }
+        let docs_sync = self
+            .iroh_stack
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .context("missing active iroh stack")?
+            .docs_sync
+            .clone();
+        let (next, done) = docs_sync
+            .drop_empty_namespaces_step(&cursor, LEGACY_STORE_PAGE)
+            .await?;
+        self.store
+            .finish_legacy_store_page(EMPTY_NAMESPACES_KIND, &next, done)
+            .await?;
+        Ok(if done {
+            LegacyStoreProgress::Retired
+        } else {
+            LegacyStoreProgress::More
+        })
+    }
+
+    /// 起動後の背景 task。続きがある間は 100ms、退役の条件を待つ間は 60 秒ごとに進め、空の namespace の回収を
+    /// 終えれば止まる。
     /// shutdown で止める。
     pub async fn start_legacy_store_retirement(self: &Arc<Self>) {
         let mut task = self.legacy_store_task.lock().await;

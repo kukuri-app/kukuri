@@ -9,6 +9,8 @@
 //!   旧 store から cache へ写す)、それ以外は回収する。本人の行には成人向けの hash の参照を置く。
 //! - `adult_marker`: `legacy_projection` の後に、旧領域の移行まで保護していた成人向けの hash の行を、参照が残るものは
 //!   保護を外し、残らないものは回収する。
+//! - `empty_namespaces`(#1407): 旧 store の退役の後に、更新前の版が読取りで作った空の namespace を回収する(呼出し元)。
+//!   位置は最後に調べた namespace の id。退役の判定(`legacy_store_retirable`)には数えない。
 
 use super::remote_cache::{delete_cache_item, now_ms};
 use super::*;
@@ -22,6 +24,7 @@ pub const LEGACY_STORE_KINDS: [&str; 4] = [
     "legacy_projection",
     "adult_marker",
 ];
+pub const EMPTY_NAMESPACES_KIND: &str = "empty_namespaces";
 
 /// `legacy_projection` の 1 ページ。
 #[derive(Clone, Debug)]
@@ -76,8 +79,9 @@ impl SqliteStore {
             return Ok(false);
         };
         let done: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM legacy_store_retirement WHERE done_at IS NOT NULL",
+            "SELECT COUNT(*) FROM legacy_store_retirement WHERE done_at IS NOT NULL AND kind <> ?1",
         )
+        .bind(EMPTY_NAMESPACES_KIND)
         .fetch_one(&self.pool)
         .await?;
         Ok(caught_up > switched && usize::try_from(done)? == LEGACY_STORE_KINDS.len())

@@ -74,6 +74,7 @@ Accepted
 - 退役できる条件: writerの切替の時刻より後に全kindの`caught_up_at`があり（本節の前提）、`legacy_store_retirement`の全kindが終端へ達している（`SqliteStore::legacy_store_retirable`）。満たせば旧storeを閉じ、`iroh-data`を`iroh-data.retiring`へ1回のrenameで名前を変え、中のfileを`read_dir`を少しずつ進めて1回128件以内で消す。全fileの一覧を先に作らない。途中で止まっても残った分から続ける。
 - 旧storeが無いaccount（新規・退役済み・復元）は、保護移行を済んだものとして新形式のwriterへ切り替え、保護移行の台帳のページを読まない。退役を終えると背景taskは止まり、以後は常駐しない。
 - 他人の旧投稿のうち予算に入らないものは手元から消え、表示時にproviderから取り直す（取れなければ取得不能）。更新前に旧context replicaへ置いたDome instanceの読取りは撤去した（2026-09-27ユーザー決定）。
+- 空のnamespaceの回収（#1407、2026-09-28ユーザー決定）: 退役を終えた後（旧storeが無いaccountを含む）、同じ背景taskが、更新前の版が読取りで作った空のnamespaceを回収する。新しいstoreのnamespaceをidの順に1回128件以内で調べ、中身が0件で`IrohDocsSync`が開いていないものを`drop_doc`で消す（idはハッシュで元のreplicaを逆算できないため、空で閉じたものを対象にする。失うデータは無い）。位置は`legacy_store_retirement`の`empty_namespaces`に保存し、`legacy_store_retirable`はこのkindを数えない。iroh-docsの列挙に開始位置の指定が無いので、再開のときは保存した位置まで読み飛ばす（namespaceの総数に比例する一度きりの走査。2026-09-28ユーザー承認）。終端を記録した後は列挙せず、背景taskは止まる。
 
 ## Consequences
 

@@ -6,9 +6,9 @@ impl IrohDocsSync {
     /// 手元にある namespace だけを開く(import しない)。無ければ `None`。
     pub(super) async fn open_existing(
         &self,
-        secret: &iroh_docs::NamespaceSecret,
+        namespace: iroh_docs::NamespaceId,
     ) -> Result<Option<iroh_docs::api::Doc>> {
-        match self.node.docs().open(secret.id()).await {
+        match self.node.docs().open(namespace).await {
             Ok(doc) => Ok(doc),
             // Pinned iroh-docs serializes OpenError through RPC instead of returning None.
             // Only its explicit NotFound result is a miss; actor/I/O failures stay errors.
@@ -177,7 +177,7 @@ impl IrohDocsSync {
                         .is_some_and(|handle| handle.closing),
                     "replica close is pending"
                 );
-                let Some(doc) = this.open_existing(&secret).await? else {
+                let Some(doc) = this.open_existing(secret.id()).await? else {
                     return Ok(Vec::new());
                 };
                 let read = async {
