@@ -105,6 +105,33 @@ R5-Bではclientのtimeline/thread、CN source、返信先・投稿・sessionの
 参加中のchannelのgossip scopeに限り、過去epochは保持するcapabilityと時刻から選ぶ。
 remote recordは既存の署名・scope・bucket時刻・取り下げ検証を通した後に対象別cacheへ保存する。
 旧writerのsyncはR5-Hまで移行用に残す。
+
+#1395（2026-09-28）で、公開topic bucketの提供者を書き手本人に限らないことにした。書き手がオフラインでも、
+その内容を検証して保持する同じtopicの参加者から、後から来た参加者が取得できるようにするためである。
+上の「稼働中providerのローカルkey索引」は、公開topic bucket（`bucket::v1::topic::`と旧`topic::`）では
+「providerのローカルkey索引と、providerが検証して保持するrecordを合わせた索引」に改める。
+author bucketとprivate bucketは、従来どおりローカルkey索引だけを読む。
+
+- 保持するもの: providerが既存のgateで検証して反映した内容だけを、remote cacheの`record`行（名義つき）として保持する。
+  - 投稿のenvelopeと、そこから書き手と同じ関数で導いたtimeline・thread索引
+  - 取り下げのrecord
+  - reactionのenvelope
+  - live/game sessionのstate・署名済みenvelope・manifest blob（署名済みmanifestの無い旧Domeは除く）
+  - 更新されるもの（reaction、session）は、projectionがより新しい版として受け入れたときだけ保持を上書きし、古い版を提供しない。
+- 一覧の提供:
+  - 索引`(scope_key, record_key, record_author)`の範囲を`limit + 1`行だけ読み、手元のentryの先頭と合わせて返す。
+  - 一覧の提供では、保持の利用時刻を更新しない。
+  - 保持の上限と回収は[ADR 0055](0055-demand-owned-network-work.md)のremote cache（3GiB・非利用7日）に従う。
+- namespaceを持たないprovider:
+  - 公開topic bucketでは、手元のentryを空として、保持分だけで答える。
+  - author bucket等では、保持分が無ければ読取りの失敗にする。readerが次のprovider（書き手本人）へ進めるようにするためである。
+- readerの扱い:
+  - 中継された行をhintとして扱い、既存の署名・scope・bucket時刻・取り下げ検証を通してから反映する。
+  - 取り下げを反映した投稿は一覧に載せたまま、取り下げのrecordをExactで返す（一覧から除くと、既に投稿を持つ参加者が取り下げを知る手段がなくなる）。
+- 読み取り候補:
+  - 公開topicの候補は、同じtopicのgossip neighbor（`topic_read_candidates`）とする。neighborが無いときだけ、全体の台帳から選ぶ。
+  - remoteのページ照合は、新しく反映した投稿のうち、provider 1台あたり最大8件の投稿のreactionも読む。
+- 本文・添付・manifestの取得: 見出し・reaction・stateを返したpeerを、そのhashの取得候補に必ず入れる（hashから取得元への表は上限256件）。
 R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
 `author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
 author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。

@@ -506,6 +506,11 @@ private/manifestに必要な情報だけを版付きで追加し、旧locator不
   本人の書込みを`own_docs`の参照で置く（他人のauthorの領域へ置いた読み直し・hydrationの行は置かない）。60秒ごとに
   旧領域を写す保護移行の常駐は、旧storeの移行を終えて退役させると止まる。相手への再提供は、`DocReadProtocol`
   （新しいstoreのentryと保護所有先のrecord）と、blobのSDK提供・`RemoteBlobProtocol`（保護所有先）で行う。
+- 他人の内容の再提供（#1395、2026-09-28）: `DocReadProtocol`は、remote cacheに保持する他人の検証済みrecord
+  （保護されない行）もExactで返し、公開topic bucketではKeysの一覧にも合わせる。`RemoteBlobProtocol`は、表示・反映で
+  保持した他人のblobも返す。保持と提供は3GiB・非利用7日の同じ台帳の内で行い、一覧の提供では利用時刻を更新しない。
+  上の段落の再提供は本人の書込みに限る記述だが、再提供の範囲の記述としては、この項で置き換える（保護の有無の区別は
+  上の段落のまま）。保持の対象と検証の位置付けは[ADR 0054 §4](0054-time-bucketed-docs-replicas.md#4-lifecycle-と-1224-の接点)に従う。
 - 移行順序はCN reader → client reader/受信route/common owner → writer切替。
   readinessを確認せず新形式へ書かず、CN不使用のP2P経路も成立させる。
 - 更新案内に旧版との新着相互運用の終了を明記する。切替後に新規操作を旧形式へ二重書込みしない。
