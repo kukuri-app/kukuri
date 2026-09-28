@@ -971,7 +971,10 @@ impl SqliteStore {
 }
 
 mod files;
+mod listing;
 mod owned;
+
+pub use listing::RemoteRecordKey;
 
 #[cfg(test)]
 mod tests;

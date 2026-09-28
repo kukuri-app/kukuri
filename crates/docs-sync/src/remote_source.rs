@@ -235,6 +235,7 @@ impl DocsSync for RemoteDocsSource {
         replica: &ReplicaId,
         key: &str,
         author: Option<&str>,
+        derived: &[(String, Vec<u8>)],
     ) -> Result<()> {
         let Some(cache) = self.inner.remote_cache() else {
             return Ok(());
@@ -282,6 +283,24 @@ impl DocsSync for RemoteDocsSource {
                 .await?,
             "remote record cache capacity exceeded"
         );
+        if self.private.is_some() {
+            return Ok(());
+        }
+        for (key, value) in derived {
+            let payload = serde_json::to_vec(&DocReadRecord {
+                key: key.clone(),
+                value: value.clone(),
+                content_hash: iroh_blobs::Hash::new(value).to_string(),
+                content_len: value.len() as u64,
+                docs_author: docs_author.to_string(),
+            })?;
+            ensure!(
+                cache
+                    .put_remote_record(replica.as_str(), key, docs_author, &payload)
+                    .await?,
+                "remote record cache capacity exceeded"
+            );
+        }
         Ok(())
     }
     async fn open_replica(&self, replica: &ReplicaId) -> Result<()> {

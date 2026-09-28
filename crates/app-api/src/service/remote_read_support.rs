@@ -781,7 +781,12 @@ impl AppService {
             (PostReplicaKind::PublicTopic { topic_id: source }, None, None)
                 if source == topic_id =>
             {
-                (None, Vec::new())
+                // 同じ topic の参加者(gossip の neighbor)から読む。まだ居なければ全体の台帳から選ぶ(#1395)。
+                let peers = self
+                    .hint_transport()
+                    .topic_read_candidates(&TopicId::new(topic_id))
+                    .await?;
+                (None, peers)
             }
             (
                 PostReplicaKind::PrivateChannel { channel_id: source },

@@ -1,12 +1,48 @@
 use super::*;
 
+/// 投稿の timeline と thread の索引の key と値。書き手と、検証後に索引を保持する中継者(#1395)が同じものを使う。
+pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serde_json::Value); 2] {
+    let sort_key = timeline_sort_key(object.created_at, &object.object_id);
+    let root_id = object
+        .root
+        .clone()
+        .unwrap_or_else(|| object.object_id.clone());
+    [
+        (
+            stable_key(
+                "indexes/timeline",
+                &format!("{sort_key}/{}", object.object_id.as_str()),
+            ),
+            serde_json::json!({
+                "object_id": object.object_id,
+                "created_at": object.created_at,
+                "object_kind": object.object_kind,
+            }),
+        ),
+        (
+            stable_key(
+                "indexes/thread",
+                &format!(
+                    "{}/{sort_key}/{}",
+                    root_id.as_str(),
+                    object.object_id.as_str()
+                ),
+            ),
+            serde_json::json!({
+                "object_id": object.object_id,
+                "root_id": root_id,
+                "reply_to": object.reply_to,
+            }),
+        ),
+    ]
+}
+
 pub(crate) async fn persist_post_object(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     object: CanonicalPostHeader,
     envelope: KukuriEnvelope,
 ) -> Result<()> {
-    let sort_key = timeline_sort_key(object.created_at, &object.object_id);
     let object_json = serde_json::to_value(&object)?;
     docs_sync.open_replica(replica).await?;
     docs_sync
@@ -30,46 +66,11 @@ pub(crate) async fn persist_post_object(
             },
         )
         .await?;
-    docs_sync
-        .apply_doc_op(
-            replica,
-            DocOp::SetJson {
-                key: stable_key(
-                    "indexes/timeline",
-                    &format!("{sort_key}/{}", object.object_id.as_str()),
-                ),
-                value: serde_json::json!({
-                    "object_id": object.object_id,
-                    "created_at": object.created_at,
-                    "object_kind": object.object_kind,
-                }),
-            },
-        )
-        .await?;
-    let root_id = object
-        .root
-        .clone()
-        .unwrap_or_else(|| object.object_id.clone());
-    docs_sync
-        .apply_doc_op(
-            replica,
-            DocOp::SetJson {
-                key: stable_key(
-                    "indexes/thread",
-                    &format!(
-                        "{}/{sort_key}/{}",
-                        root_id.as_str(),
-                        object.object_id.as_str()
-                    ),
-                ),
-                value: serde_json::json!({
-                    "object_id": object.object_id,
-                    "root_id": root_id,
-                    "reply_to": object.reply_to,
-                }),
-            },
-        )
-        .await?;
+    for (key, value) in post_index_records(&object) {
+        docs_sync
+            .apply_doc_op(replica, DocOp::SetJson { key, value })
+            .await?;
+    }
     Ok(())
 }
 

@@ -438,3 +438,93 @@ async fn author_replica_keys_are_read_by_the_requested_docs_author() -> Result<(
     provider.shutdown().await?;
     Ok(())
 }
+
+/// #1395: namespace を持たない参加者も、保持している公開 topic の record を一覧で返し、保持していない key の
+/// exact には「無い」と答える(エラーにしない)。private の bucket は保持分を一覧に使わない。
+#[tokio::test]
+async fn held_topic_records_are_listed_without_the_local_namespace() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let cache = Arc::new(SqliteStore::connect_memory().await?);
+    provider.install_remote_cache(cache.clone())?;
+    let replica = ReplicaId::new("bucket::v1::topic::72656c6179::1");
+    let private = ReplicaId::new("bucket::v1::channel::6368::6570::1");
+    let author = provider.docs().author_default().await?.to_string();
+    for (scope, key) in [
+        (&replica, "indexes/timeline/0001/older"),
+        (&replica, "indexes/timeline/0002/newer"),
+        (&private, "indexes/timeline/0003/private"),
+    ] {
+        let record = DocReadRecord {
+            key: key.into(),
+            value: b"index".to_vec(),
+            content_hash: iroh_blobs::Hash::new(b"index").to_string(),
+            content_len: 5,
+            docs_author: author.clone(),
+        };
+        anyhow::ensure!(
+            cache
+                .put_remote_record(scope.as_str(), key, &author, &serde_json::to_vec(&record)?)
+                .await?,
+            "fixture must fit"
+        );
+    }
+    let secret = NamespaceSecret::from_bytes(
+        blake3::hash(format!("kukuri-docs:{}", replica.as_str()).as_bytes()).as_bytes(),
+    );
+    let keys = DocReadQuery::Keys {
+        prefix: "indexes/timeline/".into(),
+        descending: true,
+        limit: 1,
+        author: None,
+    };
+    let response = requester
+        .query_remote_docs(provider.endpoint().addr(), &replica, &secret, keys.clone())
+        .await?;
+    let DocReadResponse::Keys {
+        entries,
+        reached_limit,
+    } = response
+    else {
+        anyhow::bail!("expected keys")
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].key, "indexes/timeline/0002/newer");
+    assert_eq!(entries[0].docs_author, author);
+    assert_eq!(
+        entries[0].content_hash,
+        iroh_blobs::Hash::new(b"index").to_string()
+    );
+    assert!(reached_limit);
+    let response = requester
+        .query_remote_docs(
+            provider.endpoint().addr(),
+            &replica,
+            &secret,
+            DocReadQuery::Exact {
+                key: "withdrawals/newer/state".into(),
+                limit: 1,
+                author: Some(author.clone()),
+            },
+        )
+        .await?;
+    let DocReadResponse::Records(records) = response else {
+        anyhow::bail!("expected records")
+    };
+    assert!(records.is_empty());
+    assert!(
+        requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                &private,
+                &NamespaceSecret::from_bytes(&[9; 32]),
+                keys,
+            )
+            .await
+            .is_err(),
+        "a private bucket is not listed from held records"
+    );
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
