@@ -329,7 +329,7 @@ async fn apply_first_verified_withdrawal(
             );
             continue;
         }
-        candidates.push(envelope);
+        candidates.push((envelope, record.docs_author.as_deref()));
     }
     if candidates.is_empty() {
         return Ok(PostWithdrawalHydration::Invalid);
@@ -350,7 +350,7 @@ async fn apply_first_verified_withdrawal(
         })
     });
     let mut outcome = PostWithdrawalHydration::Invalid;
-    for envelope in &candidates {
+    for (envelope, docs_author) in &candidates {
         if bucket.is_some_and(|bucket| !target_in_bucket && !bucket.contains(envelope.created_at)) {
             warn_invalid_post_withdrawal(
                 replica,
@@ -367,6 +367,10 @@ async fn apply_first_verified_withdrawal(
                     continue;
                 }
                 apply_verified_post_withdrawal(projection_store, replica, *withdrawal, object_id)
+                    .await?;
+                // remote から読んだ取り下げは、検証済みの記録として保持し、他の参加者へ提供する(#1395)。
+                docs_sync
+                    .persist_verified_record(replica, key.as_str(), *docs_author, &[])
                     .await?;
                 return Ok(PostWithdrawalHydration::Applied);
             }

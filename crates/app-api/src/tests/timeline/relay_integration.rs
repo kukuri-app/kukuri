@@ -99,6 +99,36 @@ impl Author {
         Ok(post)
     }
 
+    /// 自分の投稿を取り下げ、投稿の bucket へ書く。
+    async fn withdraw(&self, post: &KukuriEnvelope) -> Result<()> {
+        let envelope = build_post_withdrawal_envelope(
+            &self.keys,
+            post,
+            1,
+            None,
+            WithdrawalReasonVisibility::Public,
+            Some(PostWithdrawalReason::AuthorRequest),
+        )?;
+        let replica = BucketReplica::new(
+            BucketScope::Topic {
+                topic_id: post.topic_id().expect("topic").as_str().into(),
+            },
+            TimeBucket::from_unix_seconds(post.created_at)?,
+        )?
+        .replica_id();
+        persist_post_withdrawal(
+            &self.docs,
+            &WithdrawalWriteRow {
+                withdrawal_envelope_id: envelope.id.clone(),
+                replica_id: replica,
+                target_object_id: post.id.clone(),
+                envelope,
+                target_replica_id: None,
+            },
+        )
+        .await
+    }
+
     async fn go_offline(self) -> Result<()> {
         self.docs.shutdown().await;
         self.node.shutdown().await
@@ -183,13 +213,14 @@ async fn later_reader_lists_an_offline_authors_posts_from_a_topic_peer() -> Resu
     relay.finish().await
 }
 
-/// 条件が成り立つまで待つ(本文の取り直しは背景で進む)。
+/// 条件が成り立つまで待つ。本文の取り直しは背景で進み、照合済みの範囲の読み直しは同じ提供者に対して
+/// `RANGE_CHECK_INTERVAL_MS`(30 秒)の間隔を置くので、その 2 倍まで待つ。
 async fn eventually<F, Fut>(mut check: F) -> Result<bool>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<bool>>,
 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     while tokio::time::Instant::now() < deadline {
         if check().await? {
             return Ok(true);
@@ -273,6 +304,58 @@ async fn later_reader_fetches_the_body_and_image_from_the_peer_that_listed_them(
         .await?
         .expect("the image must be fetched from the peer that listed the post");
     assert_eq!(payload.mime, "image/png");
+
+    reader.finish().await?;
+    relay.finish().await
+}
+
+fn withdrawn(page: &TimelineView, post: &KukuriEnvelope) -> bool {
+    page.items
+        .iter()
+        .any(|item| item.object_id == post.id.as_str() && item.withdrawal.is_some())
+}
+
+/// AC-5: A の取り下げを反映した B は、A がオフラインでも、既に投稿を持つ C へ取り下げの記録を返す。
+#[tokio::test]
+async fn reader_learns_an_offline_authors_withdrawal_from_a_topic_peer() -> Result<()> {
+    let topic = TopicId::new("relay-offline-withdrawal");
+    let author = Author::new().await?;
+    let post = author.post(&topic, "to be withdrawn", None).await?;
+    let author_ticket = ticket(&author.node);
+
+    let relay = Relay::new(Arc::new(NoopHintTransport)).await?;
+    relay.docs.import_peer_ticket(&author_ticket).await?;
+    assert!(has(
+        &relay.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    let reader = Relay::new(Arc::new(ScopedReadHints(seed(&relay.node)))).await?;
+    reader.docs.import_peer_ticket(&author_ticket).await?;
+    let page = reader.app.list_timeline(topic.as_str(), None, 20).await?;
+    assert!(has(&page, &post) && !withdrawn(&page, &post));
+
+    author.withdraw(&post).await?;
+    assert!(
+        eventually(|| async {
+            Ok(withdrawn(
+                &relay.app.list_timeline(topic.as_str(), None, 20).await?,
+                &post,
+            ))
+        })
+        .await?
+    );
+    author.go_offline().await?;
+
+    assert!(
+        eventually(|| async {
+            Ok(withdrawn(
+                &reader.app.list_timeline(topic.as_str(), None, 20).await?,
+                &post,
+            ))
+        })
+        .await?,
+        "the withdrawal must reach the reader from the topic peer"
+    );
 
     reader.finish().await?;
     relay.finish().await
