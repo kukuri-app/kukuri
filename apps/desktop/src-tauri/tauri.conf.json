@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "kukuri",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "identifier": "app.kukuri.desktop",
   "build": {
     "beforeDevCommand": "npx pnpm@10.16.1 vite --host 127.0.0.1 --port 5173 --strictPort",
