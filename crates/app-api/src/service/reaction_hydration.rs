@@ -30,6 +30,7 @@ pub(crate) async fn hydrate_reaction_cache_from_reaction(
 pub(crate) async fn hydrate_reaction_cache_from_key(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
+    blob_service: &dyn BlobService,
     topic_id: &str,
     replica: &ReplicaId,
     key: &str,
@@ -50,12 +51,33 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     } else {
         replica.clone()
     };
-    let Some(reaction) =
+    let Some((reaction, docs_author)) =
         load_verified_reaction(docs_sync, replica, &identity, topic_id, &key, policy).await?
     else {
         return Ok(false);
     };
-    hydrate_reaction_cache_from_reaction(projection_store, &reaction).await
+    if !hydrate_reaction_cache_from_reaction(projection_store, &reaction).await? {
+        return Ok(false);
+    }
+    // remote から読んで受け入れた版(反映済みより古くない版)だけを保持し、他の参加者へ提供する(#1395)。
+    docs_sync
+        .persist_verified_record(
+            replica,
+            key.envelope_key().as_str(),
+            docs_author.as_deref(),
+            &[],
+        )
+        .await?;
+    // custom reaction の画像は、この reaction を返した peer が持つと分かっている(候補の順序の手がかりだけ)。
+    if let (Some(provider), Some(asset)) = (
+        docs_sync.remote_reader_id(),
+        reaction.doc().custom_asset_snapshot.as_ref(),
+    ) {
+        let _ = blob_service
+            .learn_content_source(&asset.blob_hash, &provider)
+            .await;
+    }
+    Ok(true)
 }
 
 /// reaction id の先頭の 1 文字ごとの一覧で読む key の数(reaction 4 件ぶん)。
@@ -69,6 +91,7 @@ pub(crate) const REACTION_KEYS_PER_LEAD: usize = 8;
 pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
+    blob_service: &dyn BlobService,
     topic_id: &str,
     replica: &ReplicaId,
     target_object_id: &EnvelopeId,
@@ -133,6 +156,7 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
         hydrated += hydrate_reaction_cache_from_key(
             docs_sync,
             projection_store,
+            blob_service,
             topic_id,
             replica,
             key.envelope_key().as_str(),

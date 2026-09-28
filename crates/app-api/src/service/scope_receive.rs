@@ -504,6 +504,7 @@ impl AppService {
                     hydrate_reaction_cache_for_target_bounded(
                         reader.as_ref(),
                         self.services.projection_store.as_ref(),
+                        self.services.blob_service.as_ref(),
                         topic_id,
                         &replica,
                         target,

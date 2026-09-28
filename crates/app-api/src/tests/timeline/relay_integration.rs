@@ -129,6 +129,38 @@ impl Author {
         .await
     }
 
+    /// 投稿に reaction を付け、投稿の bucket へ書く。
+    async fn react(&self, post: &KukuriEnvelope) -> Result<()> {
+        let topic = post.topic_id().expect("topic");
+        let replica = BucketReplica::new(
+            BucketScope::Topic {
+                topic_id: topic.as_str().into(),
+            },
+            TimeBucket::from_unix_seconds(post.created_at)?,
+        )?
+        .replica_id();
+        let reaction_key = ReactionKeyV1::Emoji {
+            emoji: "👍".into()
+        };
+        let reaction_id = deterministic_reaction_id(
+            &replica,
+            &post.id,
+            &self.keys.public_key(),
+            reaction_key.normalized_key()?.as_str(),
+        );
+        let envelope = build_reaction_envelope(
+            &self.keys,
+            &topic,
+            None,
+            &post.id,
+            reaction_key,
+            &reaction_id,
+            ObjectStatus::Active,
+        )?;
+        let reaction = parse_reaction(&envelope)?.expect("reaction doc");
+        persist_reaction_doc(&self.docs, &replica, &reaction, &envelope).await
+    }
+
     async fn go_offline(self) -> Result<()> {
         self.docs.shutdown().await;
         self.node.shutdown().await
@@ -355,6 +387,47 @@ async fn reader_learns_an_offline_authors_withdrawal_from_a_topic_peer() -> Resu
         })
         .await?,
         "the withdrawal must reach the reader from the topic peer"
+    );
+
+    reader.finish().await?;
+    relay.finish().await
+}
+
+fn reacted(page: &TimelineView, post: &KukuriEnvelope) -> bool {
+    page.items.iter().any(|item| {
+        item.object_id == post.id.as_str()
+            && item
+                .reaction_summary
+                .iter()
+                .any(|reaction| reaction.emoji.as_deref() == Some("👍"))
+    })
+}
+
+/// AC-6: B が保持する reaction は、操作者がオフラインでも、後から来た C が投稿を B から取ったときに B から反映される。
+#[tokio::test]
+async fn later_reader_gets_an_offline_authors_reaction_from_a_topic_peer() -> Result<()> {
+    let topic = TopicId::new("relay-offline-reaction");
+    let author = Author::new().await?;
+    let post = author.post(&topic, "reacted", None).await?;
+    author.react(&post).await?;
+    let author_ticket = ticket(&author.node);
+
+    let relay = Relay::new(Arc::new(NoopHintTransport)).await?;
+    relay.docs.import_peer_ticket(&author_ticket).await?;
+    assert!(reacted(
+        &relay.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    author.go_offline().await?;
+
+    let reader = Relay::new(Arc::new(ScopedReadHints(seed(&relay.node)))).await?;
+    reader.docs.import_peer_ticket(&author_ticket).await?;
+    assert!(
+        reacted(
+            &reader.app.list_timeline(topic.as_str(), None, 20).await?,
+            &post
+        ),
+        "the reaction must reach the later reader from the topic peer"
     );
 
     reader.finish().await?;

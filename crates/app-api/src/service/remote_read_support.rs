@@ -251,7 +251,8 @@ impl AppService {
                 let mut position = resume_from.or_else(|| range.start.cloned());
                 let mut outcome = super::replica_window::RangeCheckOutcome::default();
                 let mut read_past = None;
-                let mut reaction_targets_left = 0;
+                let mut reaction_targets_left =
+                    super::replica_window::REMOTE_RANGE_CHECK_REACTION_TARGETS;
                 loop {
                     let wanted = range
                         .limit
