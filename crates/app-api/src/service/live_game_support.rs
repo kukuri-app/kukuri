@@ -643,6 +643,11 @@ impl AppService {
                 {
                     continue;
                 }
+                if let Some(relay) = verified.relay() {
+                    relay
+                        .keep(docs.as_ref(), self.services.blob_service.as_ref(), &replica)
+                        .await?;
+                }
                 return Ok(Some(verified));
             }
             if tokio::time::Instant::now() >= deadline {
@@ -714,6 +719,11 @@ impl AppService {
                         .is_some_and(|projected| projected > revision)
                 {
                     continue;
+                }
+                if let Some(relay) = verified.relay() {
+                    relay
+                        .keep(docs.as_ref(), self.services.blob_service.as_ref(), &replica)
+                        .await?;
                 }
                 return Ok(Some(verified));
             }
