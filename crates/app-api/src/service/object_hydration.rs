@@ -69,7 +69,8 @@ pub(crate) async fn hydrate_object_projection_from_post(
             .into_iter()
             .chain(header.attachments.iter().map(|asset| &asset.hash))
         {
-            blob_service.learn_content_source(hash, &provider).await?;
+            // 候補の順序の手がかりにすぎない。記録できない hash でも反映は続ける。
+            let _ = blob_service.learn_content_source(hash, &provider).await;
         }
     }
     let mut fetched_body = None;
