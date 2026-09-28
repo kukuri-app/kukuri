@@ -242,7 +242,9 @@ impl DocReadProtocol {
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
         // R5-H: 書き手の docs handle は上限(128)で閉じるので、提供する namespace は読む間だけ開く。
-        // 手元に無い namespace は開けない。そのときは手元の entry を空とし、保持している record だけで答える(#1395)。
+        // 手元に無い namespace は開けない。公開 topic の bucket では手元の entry を空とし、保持している record だけで
+        // 答える(#1395)。それ以外(author の bucket 等)は、保持分が無ければ読取りの失敗にして、呼出元が次の provider
+        // (書き手本人)へ進めるようにする。
         let opened = self.sync.open(namespace, OpenOpts::default()).await;
         let response = self.respond(request, namespace, opened.is_ok()).await;
         if opened.is_ok() {
@@ -312,6 +314,10 @@ impl DocReadProtocol {
                     )
                     .await?
                 } else {
+                    ensure!(
+                        topic_replica(&request.replica),
+                        "docs namespace is not held"
+                    );
                     Vec::new()
                 };
                 let mut reached_limit = stream.len() > limit;
@@ -396,6 +402,10 @@ impl DocReadProtocol {
                     )
                     .await?
                 } else {
+                    ensure!(
+                        topic_replica(&request.replica) || !cached.is_empty(),
+                        "docs namespace is not held"
+                    );
                     Vec::new()
                 };
                 let mut records = Vec::new();

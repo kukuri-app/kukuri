@@ -518,11 +518,29 @@ async fn held_topic_records_are_listed_without_the_local_namespace() -> Result<(
                 provider.endpoint().addr(),
                 &private,
                 &NamespaceSecret::from_bytes(&[9; 32]),
-                keys,
+                keys.clone(),
             )
             .await
             .is_err(),
         "a private bucket is not listed from held records"
+    );
+    // author の bucket は保持分を一覧に使わない。持たない namespace は空ではなく失敗と答え、読む側が次の provider
+    // (書き手本人)へ進めるようにする。
+    let author_bucket = ReplicaId::new("bucket::v1::author::616263::1");
+    let author_secret = NamespaceSecret::from_bytes(
+        blake3::hash(format!("kukuri-docs:{}", author_bucket.as_str()).as_bytes()).as_bytes(),
+    );
+    assert!(
+        requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                &author_bucket,
+                &author_secret,
+                keys
+            )
+            .await
+            .is_err(),
+        "an author bucket that is not held must not answer an empty page"
     );
     requester.shutdown().await?;
     provider.shutdown().await?;
