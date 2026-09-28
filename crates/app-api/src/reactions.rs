@@ -67,6 +67,7 @@ impl AppService {
             hydrate_reaction_cache_from_key(
                 self.services.docs_sync.as_ref(),
                 self.services.projection_store.as_ref(),
+                self.services.blob_service.as_ref(),
                 target_topic_id.as_str(),
                 &target.source_replica_id,
                 stable_key(

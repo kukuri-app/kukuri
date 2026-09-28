@@ -28,6 +28,9 @@ pub(crate) const RANGE_CHECK_REACTIONS_PER_OBJECT: usize = 32;
 /// 1 回の照合・追いつきで、reaction を読む投稿の数の上限。超えた投稿の reaction は、その reaction の docs の
 /// event でしか入らない(best effort)。1 回の読み出しの最悪の量を抑える。
 pub(crate) const RANGE_CHECK_REACTION_TARGETS: usize = 64;
+/// remote の提供者 1 台のページの照合で、reaction を読む投稿の数の上限。表示を待たせる経路なので手元の照合より
+/// 小さくする。後から来た参加者が、その時点で提供者が持つ reaction を得られるようにする(#1395)。
+pub(crate) const REMOTE_RANGE_CHECK_REACTION_TARGETS: usize = 8;
 
 #[derive(Clone, Debug, Default)]
 struct RangeCheckState {
@@ -295,10 +298,13 @@ async fn ensure_index_entry_projected(
                     outcome.hydrated += 1;
                     if *reaction_targets_left > 0 {
                         *reaction_targets_left -= 1;
-                        // Newly projected objects can bring a bounded reaction window.
+                        // Newly projected objects can bring a bounded reaction window. The object
+                        // records are settled, so a remote lease starts over for its reactions.
+                        docs_sync.finish_remote_object().await;
                         hydrate_reaction_cache_for_target_bounded(
                             docs_sync,
                             projection_store,
+                            services.blob_service.as_ref(),
                             topic_id,
                             replica,
                             &object_id,

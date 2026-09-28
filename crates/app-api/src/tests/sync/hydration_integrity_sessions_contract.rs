@@ -34,6 +34,7 @@ async fn reaction_hint(app: &AppService, topic: &TopicId, target: &str) {
     hydrate_reaction_cache_for_target_bounded(
         app.services.docs_sync.as_ref(),
         app.services.projection_store.as_ref(),
+        app.services.blob_service.as_ref(),
         topic.as_str(),
         &topic_replica_id(topic.as_str()),
         &EnvelopeId::from(target),
@@ -133,6 +134,56 @@ async fn replayed_older_reaction_envelope_does_not_revive_a_removed_reaction() {
         reaction_count(&app, &topic, &target).await,
         0,
         "an older signed envelope revived a reaction its author removed"
+    );
+}
+
+// #1395 INVAR-6: 受け入れた版だけを保持し、他の参加者へ提供する。反映済みより古い envelope は保持しない。
+#[tokio::test]
+async fn only_an_accepted_reaction_version_is_kept_for_other_readers() {
+    let docs_sync = Arc::new(ShadowingDocsSync::default());
+    let app = fresh_viewer(docs_sync.clone(), Arc::new(MemoryBlobService::default()));
+    let topic = TopicId::new("kukuri:topic:integrity-contract-reaction-kept");
+    let replica = topic_replica_id(topic.as_str());
+    let target = app
+        .create_post(topic.as_str(), "a post", None)
+        .await
+        .expect("create post");
+    app.toggle_reaction(topic.as_str(), target.as_str(), thumbs_up(), None)
+        .await
+        .expect("add reaction");
+    let (envelope_key, _) = reaction_keys_for(docs_sync.as_ref(), &replica, &target).await;
+    let active_envelope: serde_json::Value = serde_json::from_slice(
+        &record_value(docs_sync.as_ref(), &replica, envelope_key.as_str()).await,
+    )
+    .expect("envelope json");
+    sleep(Duration::from_millis(5)).await;
+    app.toggle_reaction(topic.as_str(), target.as_str(), thumbs_up(), None)
+        .await
+        .expect("remove reaction");
+
+    docs_sync.persisted.lock().await.clear();
+    reaction_hint(&app, &topic, &target).await;
+    assert_eq!(
+        *docs_sync.persisted.lock().await,
+        vec![envelope_key.clone()],
+        "the accepted (current) version is kept"
+    );
+
+    docs_sync.persisted.lock().await.clear();
+    docs_sync
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: envelope_key,
+                value: active_envelope,
+            },
+        )
+        .await
+        .expect("replay the older envelope");
+    reaction_hint(&app, &topic, &target).await;
+    assert!(
+        docs_sync.persisted.lock().await.is_empty(),
+        "an older version must not replace the kept one"
     );
 }
 

@@ -149,7 +149,8 @@ impl VerifiedReaction {
     }
 }
 
-/// 同じ reaction の envelope の record(複数ありうる)から、検証に通るもののうち最も新しい 1 件を選ぶ。docs は読まない。
+/// 同じ reaction の envelope の record(複数ありうる)から、検証に通るもののうち最も新しい 1 件を、その record と
+/// 一緒に選ぶ。docs は読まない。
 ///
 /// 通るものが無ければ、最後に見た record の理由を返す。record が 1 件も無ければ `Ok(None)`。
 pub(crate) fn select_verified_reaction<'a>(
@@ -157,9 +158,9 @@ pub(crate) fn select_verified_reaction<'a>(
     key: &ReactionKey,
     replica: &ReplicaId,
     scope: &ReplicaPostScope,
-) -> std::result::Result<Option<VerifiedReaction>, ReactionRejection> {
+) -> std::result::Result<Option<(VerifiedReaction, &'a DocRecord)>, ReactionRejection> {
     let mut rejection = None;
-    let mut newest: Option<VerifiedReaction> = None;
+    let mut newest: Option<(VerifiedReaction, &'a DocRecord)> = None;
     for record in records.into_iter().take(MAX_ENVELOPE_RECORDS_PER_OBJECT) {
         let verified = serde_json::from_slice::<KukuriEnvelope>(&record.value)
             .map_err(|_| ReactionRejection::NotAnEnvelope)
@@ -168,16 +169,16 @@ pub(crate) fn select_verified_reaction<'a>(
             Ok(reaction) => {
                 if newest
                     .as_ref()
-                    .is_none_or(|current| reaction.doc.updated_at > current.doc.updated_at)
+                    .is_none_or(|(current, _)| reaction.doc.updated_at > current.doc.updated_at)
                 {
-                    newest = Some(reaction);
+                    newest = Some((reaction, record));
                 }
             }
             Err(reason) => rejection = Some(reason),
         }
     }
     match (newest, rejection) {
-        (Some(reaction), _) => Ok(Some(reaction)),
+        (Some(newest), _) => Ok(Some(newest)),
         (None, Some(reason)) => Err(reason),
         (None, None) => Ok(None),
     }
@@ -186,6 +187,7 @@ pub(crate) fn select_verified_reaction<'a>(
 /// reaction を 1 件、署名つき envelope から読んで検証する。
 ///
 /// 読む docs の record は、その reaction の `envelope` の key の最大 `MAX_ENVELOPE_RECORDS_PER_OBJECT` 件だけ。
+/// 選んだ envelope を書いた docs author(provider の申告)も返す。
 /// 検証に通る envelope が無ければ `Ok(None)`(warn)。docs の読み出しの失敗は `Err`。
 pub(crate) async fn load_verified_reaction(
     docs_sync: &dyn DocsSync,
@@ -194,7 +196,7 @@ pub(crate) async fn load_verified_reaction(
     subscription_topic_id: &str,
     key: &ReactionKey,
     policy: DocFetchPolicy,
-) -> Result<Option<VerifiedReaction>> {
+) -> Result<Option<(VerifiedReaction, Option<String>)>> {
     let Some(scope) = ReplicaPostScope::for_replica(replica, subscription_topic_id) else {
         warn_rejected_reaction(replica, key, ReactionRejection::UnsupportedReplica);
         return Ok(None);
@@ -208,7 +210,9 @@ pub(crate) async fn load_verified_reaction(
         )
         .await?;
     match select_verified_reaction(records.iter(), key, identity, &scope) {
-        Ok(reaction) => Ok(reaction),
+        Ok(selected) => {
+            Ok(selected.map(|(reaction, record)| (reaction, record.docs_author.clone())))
+        }
         Err(reason) => {
             warn_rejected_reaction(replica, key, reason);
             Ok(None)

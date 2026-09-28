@@ -17,6 +17,8 @@ pub(crate) struct ShadowingDocsSync {
     pub(super) account_docs_author: Option<String>,
     /// 「docs author と key の組」の読み出しの記録(#1258)。
     pub(super) author_reads: Arc<TokioMutex<Vec<(String, String)>>>,
+    /// 検証済みとして保持を求められた key の記録(#1395)。
+    pub(super) persisted: Arc<TokioMutex<Vec<String>>>,
 }
 
 /// `ShadowingDocsSync` が n 番目の shadow の名義として返す docs author の id。
@@ -51,6 +53,17 @@ impl ShadowingDocsSync {
 impl DocsSync for ShadowingDocsSync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         self.inner.open_replica(replica_id).await
+    }
+
+    async fn persist_verified_record(
+        &self,
+        _replica: &ReplicaId,
+        key: &str,
+        _author: Option<&str>,
+        _derived: &[(String, Vec<u8>)],
+    ) -> Result<()> {
+        self.persisted.lock().await.push(key.to_string());
+        Ok(())
     }
 
     async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()> {
