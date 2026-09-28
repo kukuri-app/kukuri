@@ -36,12 +36,13 @@ class WorkflowTests(unittest.TestCase):
         dependencies = next(step for step in steps if step.get("name") == "Linux build dependencies")
         bundle = next(step for step in steps if step.get("name") == "Build and verify AppImage and Deb")
         self.assertLess(steps.index(dependencies), steps.index(bundle))
-        commands = dependencies["run"].replace("\\\n", " ").splitlines()
-        installs = [shlex.split(command) for command in commands if command.strip().startswith("sudo apt-get install ")]
-        # Runner images keep superseded versions whose exact source leaves the APT index (#907, #1094).
-        for package in ("libgcrypt20", "libsqlite3-0"):
-            self.assertTrue(any(package in command and "--no-upgrade" not in command for command in installs),
-                            f"refresh the runner's preinstalled {package} before collecting exact matching source")
+        commands = [shlex.split(command) for command in dependencies["run"].replace("\\\n", " ").splitlines()]
+        # Runner images keep superseded versions whose exact source leaves the APT index
+        # (#907, #1094, #1384), so every preinstalled package is refreshed after the index update.
+        update = commands.index(["sudo", "apt-get", "update"])
+        upgrade = next(i for i, command in enumerate(commands) if "apt-get" in command and "upgrade" in command)
+        self.assertLess(update, upgrade)
+        self.assertIn("APT::Get::Always-Include-Phased-Updates=true", commands[upgrade])
 
     def test_release_verify_installs_every_fast_cn_system_dependency(self):
         # linux-verify reruns the CN tests, including real ffmpeg video extraction (#1060).
