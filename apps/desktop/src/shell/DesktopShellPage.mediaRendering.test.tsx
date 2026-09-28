@@ -23,6 +23,9 @@ import {
 
 // #1207: 上限到達までに取得の往復を複数回はさむ。全体実行の負荷でも待てる長さにする。
 const FAILURE_WAIT = { timeout: 10_000 };
+// 起動直後の media 表示は、採用 node の advisory 照会の確定を待つため、起動時の再描画の連鎖が終わった後に出る。
+// 待ち時間は起動全体の CPU 量で決まり runner の速さに比例するので、既定の 1 秒ではなくこの上限で待つ。
+const BOOT_WAIT = { timeout: 10_000 };
 
 beforeEach(() => {
   // #1207: 自動再試行の待ち時間を 0 にし、実時間を待たずに上限到達まで進める。
@@ -55,7 +58,9 @@ test('timeline image stops loading and shows the fetch failure after null respon
 
   render(<App api={api} />);
 
-  expect(await within(getActiveColumn('Timeline')).findByTestId('media-skeleton-image-post')).toBeInTheDocument();
+  expect(
+    await within(getActiveColumn('Timeline')).findByTestId('media-skeleton-image-post', {}, BOOT_WAIT)
+  ).toBeInTheDocument();
   await waitFor(() => expect(getBlobMediaPayload).toHaveBeenCalledWith('a'.repeat(64), 'image/png', 'image-post'));
   act(() => payload.resolve(null));
 

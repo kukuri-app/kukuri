@@ -24,6 +24,9 @@ import {
 // #1056 / ADR 0046 §6.3: タイムライン系の表示経路で、採用 node の content advisory を成人向けゲートへ
 // 合成する。照会中はメディアを取得せずスケルトン、確定後は見つけると同じ代替表示 + 説明 + 申し立て。
 
+// 照会の確定後の表示は、起動時の再描画の連鎖と照会の debounce が終わった後に出る。待ち時間は起動全体の
+// CPU 量で決まり runner の速さに比例するので、既定の 1 秒ではなくこの上限で待つ。
+const LOOKUP_WAIT = { timeout: 10_000 };
 const IMAGE_HASH = 'a'.repeat(64);
 const NODE_BASE_URL = 'https://api.kukuri.app';
 const ISSUER_NODE_ID = 'd'.repeat(64);
@@ -85,7 +88,11 @@ test('advisory-labeled timeline posts stay gated and never request their media',
   render(<App api={api} />);
 
   const column = getActiveColumn('Timeline');
-  const placeholder = await within(column).findByTestId('media-adult-gated-timeline-image-post');
+  const placeholder = await within(column).findByTestId(
+    'media-adult-gated-timeline-image-post',
+    {},
+    LOOKUP_WAIT
+  );
   expect(within(column).queryByRole('button', { name: 'Reload post' })).not.toBeInTheDocument();
   expect(within(column).queryByTestId('post-advisory-gated-timeline-image-post')).not.toBeInTheDocument();
   expect(screen.queryByText('timeline image caption')).not.toBeInTheDocument();
@@ -300,7 +307,7 @@ test('object notifications hide their preview when the target has an advisory', 
   renderAtHash('#/notifications?topic=kukuri%3Atopic%3Ageneral', api);
 
   expect(
-    await screen.findByText(/Community Node you configured estimates this post/)
+    await screen.findByText(/Community Node you configured estimates this post/, {}, LOOKUP_WAIT)
   ).toBeInTheDocument();
   expect(screen.queryByText('advisory notification raw preview')).not.toBeInTheDocument();
 });
