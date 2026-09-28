@@ -16,6 +16,8 @@ pub(crate) const OVERSIZED_FILE_EXCLUDED_PATH_PREFIXES: &[&str] = &[
     "apps/desktop/src-tauri/icons/",
 ];
 pub(crate) const OVERSIZED_FILE_EXCLUDED_EXACT_PATHS: &[&str] = &[
+    // release workflow が公開のたびに section を追記する生成物 (#1410)。
+    "CHANGELOG.md",
     "Cargo.lock",
     "apps/desktop/pnpm-lock.yaml",
     "apps/desktop/src-tauri/Cargo.lock",

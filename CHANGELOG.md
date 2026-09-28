@@ -18,6 +18,30 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.3.2-preview.1] - 2026-09-28
+
+### Features
+
+- 読取りで作られた空の namespace を、旧 store の退役の後に小分けに回収する (#1407 AC-2) ([#1409](https://github.com/kukuri-app/kukuri/pull/1409))
+- 検証済みの live session・game room を保持し、同じ topic の参加者へ提供する (#1395 AC-7) ([#1402](https://github.com/kukuri-app/kukuri/pull/1402))
+- 検証済みの reaction を保持し、同じ topic の参加者へ提供する (#1395 AC-6) ([#1401](https://github.com/kukuri-app/kukuri/pull/1401))
+- 検証済みの取り下げを保持し、同じ topic の参加者へ提供する (#1395 AC-5) ([#1400](https://github.com/kukuri-app/kukuri/pull/1400))
+- 本文・添付の取得で、見出しを返した peer を候補に入れる (#1395 AC-2) ([#1399](https://github.com/kukuri-app/kukuri/pull/1399))
+- 本人がオフラインでも同じ topic の参加者から一覧を取得する (#1395 AC-1) ([#1398](https://github.com/kukuri-app/kukuri/pull/1398))
+- remote cache の上限を 3 GiB にする (#1395 AC-4) ([#1397](https://github.com/kukuri-app/kukuri/pull/1397))
+
+### Fixes
+
+- docs の読取りで手元に無い namespace を作らない (#1407 AC-1) ([#1408](https://github.com/kukuri-app/kukuri/pull/1408))
+- CN 検索結果で解決できなかった投稿の文言を「投稿を取得できませんでした。」にする (#1403 AC-2) ([#1405](https://github.com/kukuri-app/kukuri/pull/1405))
+- CN 検索結果の解決で、手元の投稿を先に確かめ、remote 読取りを group 共通にして候補ごとに打ち切る (#1403 AC-1) ([#1404](https://github.com/kukuri-app/kukuri/pull/1404))
+
+### Other
+
+- v0.3.2-preview.1 の版へ同期する (#1410 AC-1) ([#1411](https://github.com/kukuri-app/kukuri/pull/1411))
+- 同じ topic の参加者による中継を ADR 0054・0055 に記録する (#1395 AC-3) ([#1406](https://github.com/kukuri-app/kukuri/pull/1406))
+- v0.3.1-preview.1 の公開を CHANGELOG・LP・作業記録へ反映する (#1390 AC-4) ([#1394](https://github.com/kukuri-app/kukuri/pull/1394))
+
 ## [v0.3.1-preview.1] - 2026-09-28
 
 ### Fixes
