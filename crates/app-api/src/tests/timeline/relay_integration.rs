@@ -187,6 +187,10 @@ impl Relay {
             node.clone(),
             store.clone(),
         ));
+        // 本番と同じく、アカウントの鍵から導いた docs author で書く(ADR 0053)。
+        let keys = generate_keys();
+        docs.use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
+            .await?;
         let app = app_service_from_dependencies(
             store.clone(),
             store,
@@ -194,7 +198,7 @@ impl Relay {
             hints,
             docs.clone(),
             blobs,
-            generate_keys(),
+            keys,
         );
         Ok(Self { node, docs, app })
     }
@@ -511,4 +515,92 @@ async fn later_reader_gets_an_offline_owners_sessions_from_a_topic_peer() -> Res
 
     reader.finish().await?;
     relay.finish().await
+}
+
+async fn send_chat(app: &AppService, topic: &TopicId, room_id: &str, seq: u64) -> Result<String> {
+    let message_id = format!("chat-{seq}");
+    app.publish_metaverse_room_event(
+        topic.as_str(),
+        PublishMetaverseRoomEventInput {
+            room_id: room_id.to_string(),
+            peer_id: "visitor".into(),
+            seq,
+            event: kukuri_core::MetaverseRoomEventV1::ChatMessage {
+                message: kukuri_core::MetaverseRoomChatMessageV1 {
+                    room_id: room_id.to_string(),
+                    message_id: message_id.clone(),
+                    author_peer_id: "visitor".into(),
+                    display_name: None,
+                    body: message_id.clone(),
+                    created_at: Utc::now().timestamp_millis(),
+                },
+            },
+        },
+    )
+    .await?;
+    Ok(message_id)
+}
+
+/// AC-7 の Regression の固定: 他の参加者へ提供するための保持を、自分の書込みと取り違えない。他人の Dome の訪問者が
+/// chat を続けて送っても、前の chat は履歴に残る(訪問者が書いた state は手元が正本)。
+#[tokio::test]
+async fn a_visitor_keeps_its_own_dome_chat_history() -> Result<()> {
+    let topic = TopicId::new("relay-visitor-chat");
+    let author = Author::new().await?;
+    let store = Arc::new(MemoryStore::default());
+    let owner = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        Arc::new(author.docs.clone()),
+        Arc::new(author.blobs.clone()),
+        author.keys.clone(),
+    );
+    let room_id = owner
+        .create_metaverse_room(
+            topic.as_str(),
+            CreateMetaverseRoomInput {
+                title: "dome".into(),
+                description: String::new(),
+                max_peers: Some(4),
+            },
+        )
+        .await?;
+    let visitor = Relay::new(Arc::new(ScopedReadHints(seed(&author.node)))).await?;
+    visitor
+        .app
+        .import_peer_ticket(&ticket(&author.node))
+        .await?;
+    visitor
+        .app
+        .read_session(
+            topic.as_str(),
+            &TimelineScope::Public,
+            &room_id,
+            "game-session",
+        )
+        .await?;
+    let first = send_chat(&visitor.app, &topic, &room_id, 1).await?;
+    let second = send_chat(&visitor.app, &topic, &room_id, 2).await?;
+    let history = visitor
+        .app
+        .services
+        .projection_store
+        .get_game_room(topic.as_str(), &room_id)
+        .await?
+        .and_then(|room| room.metaverse)
+        .map(|metaverse| {
+            metaverse
+                .chat_history
+                .into_iter()
+                .map(|message| message.message_id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert_eq!(history, vec![first, second]);
+
+    owner.shutdown().await;
+    visitor.finish().await?;
+    author.go_offline().await
 }

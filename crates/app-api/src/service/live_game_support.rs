@@ -649,9 +649,7 @@ impl AppService {
                     continue;
                 }
                 let newer = projected.is_none_or(|revision| revision < verified.revision());
-                if !newer
-                    && self.holds_relayed_copy(policy, verified.manifest().owner_pubkey.as_str())
-                {
+                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
                     settled.get_or_insert(verified);
                     continue;
                 }
@@ -742,9 +740,7 @@ impl AppService {
                     (Some(row), Some(revision)) => row.score_revision.is_none_or(|p| p < revision),
                     (Some(row), None) => row.updated_at < verified.state().updated_at,
                 };
-                if !newer
-                    && self.holds_relayed_copy(policy, verified.manifest().owner_pubkey.as_str())
-                {
+                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
                     settled.get_or_insert(verified);
                     continue;
                 }
@@ -763,11 +759,26 @@ impl AppService {
 }
 
 impl AppService {
-    /// 手元の読み取りが返した他人の session か。手元の読み取りは、他の参加者へ提供するために保持した版も返す(#1395)。
+    /// 手元の読み取りが返した、他の参加者へ提供するために保持した版か(#1395)。手元の読み取りは保持した版も返す。
     /// 反映済みと同じ版なら、それで打ち切らずに提供者の新しい版を先に探す(見つからなければその版を使う)。
-    /// 自分の session は手元が正本なので、従来どおり手元で打ち切る。
-    fn holds_relayed_copy(&self, policy: DocFetchPolicy, owner_pubkey: &str) -> bool {
-        policy == DocFetchPolicy::LocalOnly && owner_pubkey != self.current_author_pubkey()
+    /// 自分の docs author が書いた state(自分の session、訪問者として書いた Dome の state)は手元が正本なので、
+    /// 従来どおり手元で打ち切る。
+    async fn holds_relayed_copy(
+        &self,
+        policy: DocFetchPolicy,
+        relay: Option<&SessionRelay>,
+    ) -> bool {
+        let Some(relay) = relay.filter(|_| policy == DocFetchPolicy::LocalOnly) else {
+            return false;
+        };
+        let own = self
+            .services
+            .docs_sync
+            .local_docs_author()
+            .await
+            .ok()
+            .flatten();
+        relay.state_author() != own.as_deref()
     }
 
     /// 反映する session の版を保持する。保持は他の参加者への提供のためで、失敗しても反映は続ける。

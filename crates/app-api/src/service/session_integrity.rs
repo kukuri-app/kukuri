@@ -165,6 +165,11 @@ pub(crate) struct SessionRelay {
 }
 
 impl SessionRelay {
+    /// state の record を書いた docs author(provider の申告)。
+    pub(crate) fn state_author(&self) -> Option<&str> {
+        self.state_author.as_deref()
+    }
+
     /// remote の reader から読んだときだけ、state と署名つき envelope の record と manifest blob を保持する。
     pub(crate) async fn keep(
         &self,
