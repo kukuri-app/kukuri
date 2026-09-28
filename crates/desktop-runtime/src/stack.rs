@@ -238,6 +238,7 @@ reloadable_service! {
         async fn local_blob_status(hash: &BlobHash) -> Result<BlobStatus>;
         async fn import_peer_ticket(ticket: &str) -> Result<()>;
         async fn learn_peer(endpoint_id: &str) -> Result<()>;
+        async fn learn_content_source(hash: &BlobHash, endpoint_id: &str) -> Result<()>;
         async fn set_seed_peers(peers: Vec<SeedPeer>) -> Result<()>;
         async fn assist_peer_ids() -> Result<Vec<String>>;
     }

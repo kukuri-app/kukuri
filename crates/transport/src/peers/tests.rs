@@ -441,3 +441,46 @@ async fn status_reads_do_not_advance_candidate_cursors() {
     assert_eq!(book.sampled_peer_count.load(Ordering::Relaxed), 0);
     endpoint.close().await;
 }
+
+/// #1395: 内容の取得元は、巡回する窓の外や台帳の外にいても、その hash の候補の先頭に入る。他の hash の候補は変えず、
+/// 覚える hash の数には上限がある。
+#[tokio::test]
+async fn content_source_is_a_candidate_for_its_hash_outside_the_window_and_book() {
+    let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+    let book = PeerAddrBook::new(endpoint.clone(), Arc::new(MemoryLookup::new()));
+    let make_peer = |index: u64| {
+        let mut key = [0; 32];
+        key[..8].copy_from_slice(&index.to_be_bytes());
+        iroh::SecretKey::from_bytes(&key).public()
+    };
+    for index in 0..100 {
+        book.insert_learned_peer_addr(EndpointAddr::new(make_peer(index)))
+            .await
+            .unwrap();
+    }
+    book.recent_peers.lock().await.clear();
+    let source = make_peer(9_999);
+    book.note_content_source("listed-hash", source).await;
+    let selected = book.ranked_peers_for("listed-hash").await;
+    assert_eq!(selected[0].id, source);
+    assert_eq!(selected.len(), 4);
+    assert!(
+        book.ranked_peers_for("other-hash")
+            .await
+            .iter()
+            .all(|peer| peer.id != source)
+    );
+    for index in 0..=MAX_CONTENT_SOURCES as u64 {
+        book.note_content_source(&format!("hash-{index}"), make_peer(index))
+            .await;
+    }
+    assert_eq!(book.content_sources.lock().await.len(), MAX_CONTENT_SOURCES);
+    assert!(
+        book.ranked_peers_for("listed-hash")
+            .await
+            .iter()
+            .all(|peer| peer.id != source),
+        "the oldest source is forgotten past the bound"
+    );
+    endpoint.close().await;
+}
