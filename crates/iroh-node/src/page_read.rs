@@ -27,6 +27,11 @@ fn private_replica(replica: &str) -> bool {
     replica.starts_with("bucket::v1::channel::") || replica.starts_with("channel::")
 }
 
+/// 公開 topic の bucket(と旧形式)。保持している他の参加者の record も一覧で提供する(#1395)。
+fn topic_replica(replica: &str) -> bool {
+    replica.starts_with("bucket::v1::topic::") || replica.starts_with("topic::")
+}
+
 fn public_replica(replica: &str) -> bool {
     replica.starts_with("bucket::v1::topic::")
         || replica.starts_with("topic::")
@@ -237,9 +242,11 @@ impl DocReadProtocol {
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
         // R5-H: 書き手の docs handle は上限(128)で閉じるので、提供する namespace は読む間だけ開く。
-        // 手元に無い namespace は開けず、読取りが失敗する(exact は従来どおり cache へ戻る)。
+        // 手元に無い namespace は開けない。公開 topic の bucket では手元の entry を空とし、保持している record だけで
+        // 答える(#1395)。それ以外(author の bucket 等)は、保持分が無ければ読取りの失敗にして、呼出元が次の provider
+        // (書き手本人)へ進めるようにする。
         let opened = self.sync.open(namespace, OpenOpts::default()).await;
-        let response = self.respond(request, namespace).await;
+        let response = self.respond(request, namespace, opened.is_ok()).await;
         if opened.is_ok() {
             let _ = self.sync.close(namespace).await;
         }
@@ -254,7 +261,12 @@ impl DocReadProtocol {
         Ok(())
     }
 
-    async fn respond(&self, request: Request, namespace: NamespaceId) -> Result<DocReadResponse> {
+    async fn respond(
+        &self,
+        request: Request,
+        namespace: NamespaceId,
+        opened: bool,
+    ) -> Result<DocReadResponse> {
         if private_replica(&request.replica) {
             let secret = self.sync.export_secret_key(namespace).await?;
             let expected = private_capability_proof(
@@ -289,19 +301,26 @@ impl DocReadProtocol {
                     SortDirection::Asc
                 };
                 let builder = match author.as_deref() {
-                    Some(author) => Query::author(author.parse()?).key_prefix(prefix),
-                    None => Query::key_prefix(prefix),
+                    Some(author) => Query::author(author.parse()?).key_prefix(&prefix),
+                    None => Query::key_prefix(&prefix),
                 };
-                let stream = self
-                    .local_entries(
+                let stream = if opened {
+                    self.local_entries(
                         namespace,
                         builder
                             .sort_by(SortBy::KeyAuthor, direction)
                             .limit((limit + 1) as u64)
                             .build(),
                     )
-                    .await?;
-                let reached_limit = stream.len() > limit;
+                    .await?
+                } else {
+                    ensure!(
+                        topic_replica(&request.replica),
+                        "docs namespace is not held"
+                    );
+                    Vec::new()
+                };
+                let mut reached_limit = stream.len() > limit;
                 let mut entries = Vec::new();
                 for entry in stream.into_iter().take(limit) {
                     let Ok(key) = String::from_utf8(entry.key().to_vec()) else {
@@ -316,6 +335,44 @@ impl DocReadProtocol {
                         content_len: entry.content_len(),
                         docs_author: entry.author_bytes().to_string(),
                     });
+                }
+                if topic_replica(&request.replica)
+                    && let Some(cache) = self.remote_cache.get()
+                {
+                    // 手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせれば、和集合の先頭 `limit` 件が決まる。
+                    let (held, more) = cache
+                        .remote_record_keys(
+                            &request.replica,
+                            &prefix,
+                            descending,
+                            author.as_deref(),
+                            limit,
+                        )
+                        .await?;
+                    reached_limit |= more;
+                    entries.extend(
+                        held.into_iter()
+                            .filter(|held| held.key.len() <= MAX_KEY_BYTES)
+                            .map(|held| DocReadKey {
+                                key: held.key,
+                                content_hash: held.content_hash,
+                                content_len: held.content_len,
+                                docs_author: held.author,
+                            }),
+                    );
+                    entries.sort_by(|left, right| {
+                        (&left.key, &left.docs_author).cmp(&(&right.key, &right.docs_author))
+                    });
+                    entries.dedup_by(|left, right| {
+                        left.key == right.key && left.docs_author == right.docs_author
+                    });
+                    if descending {
+                        entries.reverse();
+                    }
+                    if entries.len() > limit {
+                        entries.truncate(limit);
+                        reached_limit = true;
+                    }
                 }
                 DocReadResponse::Keys {
                     entries,
@@ -335,19 +392,21 @@ impl DocReadProtocol {
                     Some(author) => Query::author(author.parse()?).key_exact(&key),
                     None => Query::key_exact(&key),
                 };
-                let stream = self
-                    .local_entries(
+                let stream = if opened {
+                    self.local_entries(
                         namespace,
                         builder
                             .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
                             .limit(limit as u64)
                             .build(),
                     )
-                    .await;
-                let stream = match stream {
-                    Ok(stream) => stream,
-                    Err(_) if !cached.is_empty() => Vec::new(),
-                    Err(error) => return Err(error),
+                    .await?
+                } else {
+                    ensure!(
+                        topic_replica(&request.replica) || !cached.is_empty(),
+                        "docs namespace is not held"
+                    );
+                    Vec::new()
                 };
                 let mut records = Vec::new();
                 for entry in stream {

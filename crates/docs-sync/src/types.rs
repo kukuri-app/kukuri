@@ -127,11 +127,14 @@ pub trait DocsSync: Send + Sync {
     async fn finish_remote_object(&self) {}
     /// Commit the exact record already read by a demand lease after the caller
     /// verifies its signed content and scope under its save guard.
+    /// `derived` は、検証済みの内容から書き手と同じ関数で導いた同じ名義の record(投稿の索引)。公開の replica だけで
+    /// 一緒に保持し、他の参加者の一覧の要求に答える(#1395)。
     async fn persist_verified_record(
         &self,
         _replica: &ReplicaId,
         _key: &str,
         _author: Option<&str>,
+        _derived: &[(String, Vec<u8>)],
     ) -> Result<()> {
         Ok(())
     }

@@ -4,7 +4,7 @@ use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 use kukuri_store::PostWithdrawalStore;
 
 #[cfg(feature = "iroh-integration-tests")]
-struct ScopedReadHints(SeedPeer);
+pub(super) struct ScopedReadHints(pub(super) SeedPeer);
 
 #[cfg(feature = "iroh-integration-tests")]
 struct RealPublicPair {

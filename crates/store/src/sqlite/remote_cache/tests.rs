@@ -613,3 +613,94 @@ async fn remote_cache_reclaims_at_most_128_expired_items_per_write() {
     assert_eq!(store.reclaim_remote_cache_step().await.unwrap(), 1);
     assert_eq!(store.reclaim_remote_cache_step().await.unwrap(), 0);
 }
+
+/// #1395: 保持している record の一覧は、prefix の範囲を `limit` 件まで key の順に読み、失効した行を返さず、
+/// 利用の時刻を更新しない。
+#[tokio::test]
+async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    let replica = "bucket::v1::topic::746f706963::1";
+    let record = |key: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "key": key, "value": "", "content_hash": format!("hash-{key}"),
+            "content_len": 3, "docs_author": "author",
+        }))
+        .unwrap()
+    };
+    for (scope, key) in [
+        (replica, "indexes/timeline/1/a"),
+        (replica, "indexes/timeline/2/b"),
+        (replica, "indexes/timeline/3/c"),
+        (replica, "indexes/timelinez"),
+        (replica, "indexes/thread/a/1/a"),
+        ("bucket::v1::topic::6f74686572::1", "indexes/timeline/4/d"),
+    ] {
+        assert!(
+            store
+                .put_remote_record(scope, key, "author", &record(key))
+                .await
+                .unwrap()
+        );
+    }
+    let keys =
+        |page: &[RemoteRecordKey]| page.iter().map(|row| row.key.clone()).collect::<Vec<_>>();
+
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        keys(&page),
+        ["indexes/timeline/1/a", "indexes/timeline/2/b"]
+    );
+    assert!(more);
+    assert_eq!(page[0].author, "author");
+    assert_eq!(page[0].content_hash, "hash-indexes/timeline/1/a");
+    assert_eq!(page[0].content_len, 3);
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", true, None, 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        keys(&page),
+        [
+            "indexes/timeline/3/c",
+            "indexes/timeline/2/b",
+            "indexes/timeline/1/a"
+        ]
+    );
+    assert!(!more);
+    let (page, _) = store
+        .remote_record_keys(replica, "indexes/timeline/", true, Some("other"), 5)
+        .await
+        .unwrap();
+    assert!(page.is_empty());
+
+    let stale = now_ms().unwrap() - REMOTE_CACHE_TOUCH_INTERVAL_MS * 2;
+    sqlx::query("UPDATE remote_content_cache SET last_used_at = ?1 WHERE kind = 'record'")
+        .bind(stale)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE remote_content_cache SET last_used_at = 0 \
+         WHERE kind = 'record' AND record_key = 'indexes/timeline/2/b'",
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(keys(&page), ["indexes/timeline/1/a"]);
+    assert!(more, "an expired row still counts toward the read window");
+    let untouched: i64 = sqlx::query_scalar(
+        "SELECT last_used_at FROM remote_content_cache \
+         WHERE kind = 'record' AND record_key = 'indexes/timeline/1/a'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(untouched, stale);
+}

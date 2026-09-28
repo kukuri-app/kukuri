@@ -245,7 +245,7 @@ async fn fetched_public_record_remains_local_and_can_be_reprovided() -> Result<(
         "remote read must not persist before the caller's save guard"
     );
     lease
-        .persist_verified_record(&replica, key, fetched[0].docs_author.as_deref())
+        .persist_verified_record(&replica, key, fetched[0].docs_author.as_deref(), &[])
         .await?;
     assert_eq!(
         reader.query_local_source(&replica, key, None, 1).await?[0].value,

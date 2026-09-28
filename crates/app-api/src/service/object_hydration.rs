@@ -121,12 +121,17 @@ pub(crate) async fn hydrate_object_projection_from_post(
         return Ok(true);
     }
     if remote_record {
+        let indexes = post_index_records(header)
+            .into_iter()
+            .map(|(key, value)| Ok((key, serde_json::to_vec(&value)?)))
+            .collect::<Result<Vec<_>>>()?;
         services
             .docs_sync
             .persist_verified_record(
                 post.replica(),
                 post_envelope_key(&header.object_id).as_str(),
                 post.docs_author(),
+                &indexes,
             )
             .await?;
     }

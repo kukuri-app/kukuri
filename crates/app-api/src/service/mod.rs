@@ -228,10 +228,10 @@ pub(crate) use object_persistence_support::{
     persist_live_session_state, persist_media_manifest, persist_post_object,
     persist_private_channel_epoch_handoff_grant, persist_private_channel_metadata,
     persist_private_channel_participant, persist_private_channel_policy, persist_session_envelope,
-    post_withdrawal_row, projection_blob_fetch_timeout, projection_row_from_post,
-    reaction_cache_key, reaction_projection_row, reaction_state_view_from_rows,
-    read_private_epoch_snapshot, recent_reaction_view_from_projection, search_key_or_asset_id,
-    store_manifest_blob,
+    post_index_records, post_withdrawal_row, projection_blob_fetch_timeout,
+    projection_row_from_post, reaction_cache_key, reaction_projection_row,
+    reaction_state_view_from_rows, read_private_epoch_snapshot,
+    recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,

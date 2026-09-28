@@ -6,6 +6,8 @@ mod bucket_writer;
 mod posts;
 mod profile;
 #[cfg(feature = "iroh-integration-tests")]
+mod relay_integration;
+#[cfg(feature = "iroh-integration-tests")]
 mod remote_reader_integration;
 mod replies;
 mod reposts;
