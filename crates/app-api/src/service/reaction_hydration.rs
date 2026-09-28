@@ -88,6 +88,7 @@ pub(crate) const REACTION_KEYS_PER_LEAD: usize = 8;
 /// 読むのは、`reactions/<target>/` の key だけの上限つきの一覧(`max_reactions` 件ぶん)と、見つかった reaction ごとの
 /// envelope の key(#1252 の検証)。読む量は対象の reaction の総数に依存しない。上限を超える reaction は、ここでは
 /// 反映しない(docs の event と、購読タスクの反映が拾う)。検証に通らない reaction は飛ばす。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
