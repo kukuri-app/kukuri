@@ -1,6 +1,9 @@
 use crate::service::*;
 use std::time::Duration;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::{Instant, timeout, timeout_at};
+
+/// 1 候補 peer への試行の上限。batch 全体の 30 秒の内に、候補 4 peer を順に試せる長さ(ADR 0055 §3)。
+const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(7);
 
 impl AppService {
     pub async fn resolve_community_index_posts(
@@ -62,8 +65,12 @@ impl AppService {
                 .push(input);
         }
 
+        // #1403: 手元で確かめられる entry は、期限の外で先に解決する。remote から読む entry は group をまたいで
+        // 1 本の stream にまとめ、ある group の読取りの待ちが後ろの group の読取りを止めないようにする。
+        let mut failed_entries = HashSet::new();
+        let mut remote_requests = Vec::new();
+        let mut ready_groups = Vec::new();
         for ((_, source), (topic, scope, entries)) in groups {
-            let mut failed_entries = HashSet::new();
             // #1239: scope を走査しない。解決対象の object だけを、projection に無いときに key 指定で反映する。
             let mut scope_ready = source.is_some()
                 || self
@@ -71,36 +78,25 @@ impl AppService {
                     .await
                     .is_ok();
             if scope_ready && let Some(source) = source.as_deref() {
-                let topic_ref = topic.as_str();
-                let scope_ref = &scope;
-                let mut unverified = entries
-                    .iter()
-                    .map(|input| input.key.clone())
-                    .collect::<HashSet<_>>();
-                let requests = entries
-                    .iter()
-                    .map(|input| (input.key.clone(), input.object_id.clone()))
-                    .collect::<Vec<_>>();
-                let mut reads = futures_util::stream::iter(requests.into_iter().map(
-                    |(key, object_id)| async move {
-                        (
-                            key,
-                            self.resolve_index_source(topic_ref, scope_ref, source, &object_id)
-                                .await,
-                        )
-                    },
-                ))
-                .buffer_unordered(8);
-                while let Ok(Some((key, resolved))) =
-                    timeout_at(remote_deadline, reads.next()).await
-                {
-                    unverified.remove(&key);
-                    if !matches!(resolved, Ok(true)) {
+                for input in &entries {
+                    match self
+                        .resolve_index_source(&topic, &scope, source, &input.object_id, false)
+                        .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => remote_requests.push((
+                            input.key.clone(),
+                            topic.clone(),
+                            scope.clone(),
+                            source.to_string(),
+                            input.object_id.clone(),
+                        )),
                         // A bad locator does not hide another result from the same bucket.
-                        failed_entries.insert(key);
+                        Err(_) => {
+                            failed_entries.insert(input.key.clone());
+                        }
                     }
                 }
-                failed_entries.extend(unverified);
             } else if scope_ready {
                 for input in &entries {
                     if self
@@ -131,7 +127,32 @@ impl AppService {
                 }
                 continue;
             }
+            ready_groups.push((source, topic, scope, entries));
+        }
 
+        let mut unverified = remote_requests
+            .iter()
+            .map(|(key, ..)| key.clone())
+            .collect::<HashSet<_>>();
+        let mut reads = futures_util::stream::iter(remote_requests.into_iter().map(
+            |(key, topic, scope, source, object_id)| async move {
+                let resolved = self
+                    .resolve_index_source(&topic, &scope, &source, &object_id, true)
+                    .await;
+                (key, resolved)
+            },
+        ))
+        .buffer_unordered(8);
+        while let Ok(Some((key, resolved))) = timeout_at(remote_deadline, reads.next()).await {
+            unverified.remove(&key);
+            if !matches!(resolved, Ok(true)) {
+                failed_entries.insert(key);
+            }
+        }
+        drop(reads);
+        failed_entries.extend(unverified);
+
+        for (source, topic, scope, entries) in ready_groups {
             let write_allowed = match &scope {
                 TimelineScope::Channel { channel_id } => self
                     .private_channel_write_state(topic.as_str(), channel_id)
@@ -247,12 +268,15 @@ impl AppService {
         })
     }
 
+    /// `remote` が false なら手元(projection と手元の docs)だけで確かめ、network I/O をしない。false を返した
+    /// entry は、呼出元が `remote` を true にして候補 peer から読む。
     async fn resolve_index_source(
         &self,
         topic: &str,
         scope: &TimelineScope,
         source: &str,
         object_id: &str,
+        remote: bool,
     ) -> Result<bool> {
         let object_id = EnvelopeId::from(object_id.to_string());
         let (channel, channel_ref) = match scope {
@@ -271,59 +295,63 @@ impl AppService {
         else {
             return Ok(false);
         };
-        if let Some(cached) = self
-            .services
-            .projection_store
-            .get_object_projection(&object_id)
-            .await?
-        {
-            anyhow::ensure!(
-                cached.topic_id == topic
-                    && cached.channel_id == channel
-                    && valid_index_source(topic, &channel_ref, cached.source_replica_id.as_str()),
-                "cached post does not belong to the requested source"
-            );
-            if matches!(scope, TimelineScope::Public) {
-                let reader = LocalSourceReader {
-                    docs: self.services.docs_sync.clone(),
-                    replica: cached.source_replica_id.clone(),
-                };
-                hydrate_post_withdrawal_for_object_with_hints(
-                    &reader,
-                    self.services.projection_store.as_ref(),
-                    &cached.source_replica_id,
-                    &object_id,
-                    WithdrawalReadHints {
-                        target_docs_author: cached.source_docs_author.as_deref(),
-                        writer_docs_author: None,
-                    },
-                    DocFetchPolicy::LocalOnly,
-                )
-                .await?;
-            }
-            return Ok(true);
-        }
         let replica = ReplicaId::new(source);
         let mut services = self.services.clone();
-        if matches!(scope, TimelineScope::Public) {
-            services.docs_sync = Arc::new(LocalSourceReader {
-                docs: self.services.docs_sync.clone(),
-                replica: replica.clone(),
-            });
-            if hydrate_object_in_topic_with(
-                &services,
-                topic,
-                &replica,
-                &object_id,
-                None,
-                DocFetchPolicy::LocalOnly,
-                BodyFetch::LocalOnly,
-            )
-            .await?
-                == ObjectHydration::Hydrated
+        if !remote {
+            if let Some(cached) = self
+                .services
+                .projection_store
+                .get_object_projection(&object_id)
+                .await?
             {
+                anyhow::ensure!(
+                    cached.topic_id == topic
+                        && cached.channel_id == channel
+                        && valid_index_source(
+                            topic,
+                            &channel_ref,
+                            cached.source_replica_id.as_str()
+                        ),
+                    "cached post does not belong to the requested source"
+                );
+                if matches!(scope, TimelineScope::Public) {
+                    let reader = LocalSourceReader {
+                        docs: self.services.docs_sync.clone(),
+                        replica: cached.source_replica_id.clone(),
+                    };
+                    hydrate_post_withdrawal_for_object_with_hints(
+                        &reader,
+                        self.services.projection_store.as_ref(),
+                        &cached.source_replica_id,
+                        &object_id,
+                        WithdrawalReadHints {
+                            target_docs_author: cached.source_docs_author.as_deref(),
+                            writer_docs_author: None,
+                        },
+                        DocFetchPolicy::LocalOnly,
+                    )
+                    .await?;
+                }
                 return Ok(true);
             }
+            if matches!(scope, TimelineScope::Public) {
+                services.docs_sync = Arc::new(LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: replica.clone(),
+                });
+                return Ok(hydrate_object_in_topic_with(
+                    &services,
+                    topic,
+                    &replica,
+                    &object_id,
+                    None,
+                    DocFetchPolicy::LocalOnly,
+                    BodyFetch::LocalOnly,
+                )
+                .await?
+                    == ObjectHydration::Hydrated);
+            }
+            return Ok(false);
         }
         let private_epoch = match scope {
             TimelineScope::Public => None,
@@ -359,14 +387,18 @@ impl AppService {
                     topic,
                     channel,
                     scope_generation,
-                    hydrate_object_in_topic_with(
-                        &services,
-                        topic,
-                        &replica,
-                        &object_id,
-                        None,
-                        DocFetchPolicy::LocalThenRemote,
-                        BodyFetch::LocalOnly,
+                    // #1403: 応答しない候補で batch の期限を使い切らず、次の候補へ進む。
+                    timeout(
+                        PROVIDER_READ_TIMEOUT,
+                        hydrate_object_in_topic_with(
+                            &services,
+                            topic,
+                            &replica,
+                            &object_id,
+                            None,
+                            DocFetchPolicy::LocalThenRemote,
+                            BodyFetch::LocalOnly,
+                        ),
                     ),
                 )
                 .await
@@ -374,9 +406,10 @@ impl AppService {
                 return Ok(false);
             };
             match result {
-                Ok(ObjectHydration::Hydrated) => return Ok(true),
-                Ok(ObjectHydration::Missing | ObjectHydration::Invalid) => {}
-                Err(error) => warn!(%error, "source provider read failed"),
+                Ok(Ok(ObjectHydration::Hydrated)) => return Ok(true),
+                Ok(Ok(ObjectHydration::Missing | ObjectHydration::Invalid)) => {}
+                Ok(Err(error)) => warn!(%error, "source provider read failed"),
+                Err(_) => warn!("source provider read timed out"),
             }
         }
         Ok(false)

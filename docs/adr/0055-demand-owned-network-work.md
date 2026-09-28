@@ -621,6 +621,10 @@ queueに保持する診断ラベルはsubject128byte/error4,096byte、hash/fligh
 公開bucketの明示的なQUIC key/exact読取りは、1要求ごとにDocs workとして同じ64scope・8実行枠と
 30秒deadlineへ登録する。clientのCN検索結果では候補最大4peer、8対象並列、batch全体30秒に制限し、
 期限/取消後のQUIC要求を継続しない。署名・scope・取り下げはapp-apiの既存gateで検証する。
+CN検索結果の解決（#1403、2026-09-28）は、手元のprojectionと手元のdocsで確かめられるentryを期限の外で先に解決し、
+残りだけを全group共通の1本の読取り（8対象並列・batch全体30秒）へ入れる。groupを順に処理しないので、
+あるgroupの読取りの待ちが後ろのgroupの読取りを止めない。1候補peerへの試行は7秒で打ち切り次の候補へ進む
+（4候補を30秒の内に試せる長さ）。打ち切った試行の結果は解決に使わない。
 native docsの自動downloader、gossip、peer台帳、意味上のscope世代/需要理由の全caller接続は未完了。
 このadapterを通る取得の合計上限を、SDK内部を含む全通信の上限達成と読み替えない。
 
