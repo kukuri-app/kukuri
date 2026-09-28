@@ -55,6 +55,7 @@ mod accounts_migration;
 mod attachments;
 mod community_node;
 mod device_backup;
+mod empty_namespace_reclaim;
 mod identity_restart;
 mod legacy_store_retirement;
 mod media_blob_restore;

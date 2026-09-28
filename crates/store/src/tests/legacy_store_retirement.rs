@@ -214,6 +214,11 @@ async fn retirement_waits_for_the_migration_after_the_switch() -> anyhow::Result
             .await?;
     }
     assert!(store.legacy_store_retirable().await?);
+    // #1407: 空の namespace の回収の kind は、退役の判定に数えない(終端でも未終端でも結果が変わらない)。
+    store
+        .finish_legacy_store_page(crate::EMPTY_NAMESPACES_KIND, "ff", true)
+        .await?;
+    assert!(store.legacy_store_retirable().await?);
     store
         .finish_legacy_store_page("own_entries", "e00", false)
         .await?;
