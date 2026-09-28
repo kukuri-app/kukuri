@@ -228,7 +228,8 @@ async fn signed_reaction_moved_to_another_target_key_is_not_counted() {
     assert_eq!(reaction_count(&app, &topic, &liked).await, 1);
 }
 
-// #1395 INVAR-6: remote から読んで受け入れた session の版だけを保持する。反映済みより古い revision は保持しない。
+// #1395 INVAR-6: session は、反映の経路で projection より新しい版を受け入れたときだけ保持する。同じ revision の
+// 読み直し、操作が読んだ版、反映済みより古い revision は保持しない(保持した版を後退させない)。
 #[tokio::test]
 async fn only_an_accepted_session_revision_is_kept_for_other_readers() {
     let docs_sync = Arc::new(ShadowingDocsSync::default());
@@ -251,51 +252,56 @@ async fn only_an_accepted_session_revision_is_kept_for_other_readers() {
         &record_value(docs_sync.as_ref(), &replica, state_key.as_str()).await,
     )
     .expect("first state");
-    owner
-        .end_live_session(topic.as_str(), session_id.as_str())
-        .await
-        .expect("end live session");
 
     let reader = Arc::new(docs_sync.as_remote_reader("provider"));
     let viewer = fresh_viewer(reader.clone(), blob_service);
-    assert!(
-        viewer
-            .read_session(
-                topic.as_str(),
-                &TimelineScope::Public,
-                session_id.as_str(),
-                "live-session",
-            )
-            .await
-            .expect("read the current revision")
-    );
-    assert!(
-        reader.persisted.lock().await.contains(&state_key),
-        "the accepted revision is kept"
-    );
-
-    reader.persisted.lock().await.clear();
-    docs_sync
-        .apply_doc_op(
-            &replica,
-            DocOp::SetJson {
-                key: state_key,
-                value: first_state,
-            },
-        )
-        .await
-        .expect("replay the older state");
-    viewer
-        .read_session(
+    let read = || {
+        viewer.read_session(
             topic.as_str(),
             &TimelineScope::Public,
             session_id.as_str(),
             "live-session",
         )
+    };
+    let kept = || async {
+        let kept = reader.persisted.lock().await.contains(&state_key);
+        reader.persisted.lock().await.clear();
+        kept
+    };
+    assert!(read().await.expect("read revision 1"));
+    assert!(kept().await, "the first accepted revision is kept");
+    read().await.expect("read revision 1 again");
+    assert!(!kept().await, "the same revision is not kept again");
+
+    owner
+        .end_live_session(topic.as_str(), session_id.as_str())
         .await
-        .expect("read the older revision");
+        .expect("end live session");
+    viewer
+        .fetch_live_session_state_and_manifest(topic.as_str(), session_id.as_str())
+        .await
+        .expect("operation read")
+        .expect("live session");
     assert!(
-        reader.persisted.lock().await.is_empty(),
+        !kept().await,
+        "a version read by an operation is not kept (the projection did not accept it)"
+    );
+    assert!(read().await.expect("read revision 2"));
+    assert!(kept().await, "the newer accepted revision is kept");
+
+    docs_sync
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: state_key.clone(),
+                value: first_state,
+            },
+        )
+        .await
+        .expect("replay the older state");
+    read().await.expect("read the older revision");
+    assert!(
+        !kept().await,
         "an older revision must not replace the kept one"
     );
 }

@@ -399,6 +399,7 @@ impl AppService {
             topic,
             row.channel_id.as_str(),
             row.room_id.as_str(),
+            false,
         ));
         Ok(session.await?.map(|verified| verified.state().created_at))
     }
