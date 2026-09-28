@@ -2,10 +2,14 @@ use super::super::*;
 use kukuri_core::{BlobHash, build_post_envelope};
 use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
+mod resolve_order;
+
 #[derive(Default)]
 struct LocalReadDocs {
     inner: MemoryDocsSync,
-    remote: std::sync::Mutex<Option<Arc<dyn DocsSync>>>,
+    /// replica ごとの provider の列。key の無い replica は `remote` を使う。
+    remote_by_replica: std::sync::Mutex<HashMap<String, Vec<Arc<dyn DocsSync>>>>,
+    remote: std::sync::Mutex<Vec<Arc<dyn DocsSync>>>,
     reads: std::sync::atomic::AtomicUsize,
     remote_requests: std::sync::atomic::AtomicUsize,
     forbidden: Arc<std::sync::atomic::AtomicUsize>,
@@ -86,18 +90,20 @@ impl BlobService for LocalReadBlobs {
 impl DocsSync for LocalReadDocs {
     async fn remote_readers(
         &self,
-        _: &ReplicaId,
+        replica: &ReplicaId,
         _: Option<[u8; 32]>,
         _: Vec<kukuri_transport::SeedPeer>,
     ) -> Result<Vec<Arc<dyn DocsSync>>> {
         self.remote_requests.fetch_add(1, Ordering::SeqCst);
-        Ok(self
-            .remote
+        if let Some(readers) = self
+            .remote_by_replica
             .lock()
             .expect("remote source poisoned")
-            .iter()
-            .cloned()
-            .collect())
+            .get(replica.as_str())
+        {
+            return Ok(readers.clone());
+        }
+        Ok(self.remote.lock().expect("remote source poisoned").clone())
     }
     async fn query_local_source(
         &self,
@@ -107,6 +113,8 @@ impl DocsSync for LocalReadDocs {
         limit: usize,
     ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        // 実際の docs の読取りは 1 回の poll では終わらない。期限切れの後の poll で完了したように見せない。
+        tokio::task::yield_now().await;
         self.inner
             .query_local_source(replica, key, author, limit)
             .await
@@ -223,7 +231,7 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
         post.clone(),
     )
     .await?;
-    *docs.remote.lock().unwrap() = Some(remote);
+    *docs.remote.lock().unwrap() = vec![remote];
     let input = CommunityIndexPostResolveInput {
         key: "private-hit".into(),
         topic: topic.as_str().into(),
@@ -424,6 +432,13 @@ async fn seed_bucket_post(
     docs: &LocalReadDocs,
     envelope: &KukuriEnvelope,
 ) -> (ReplicaId, CommunityIndexPostResolveInput) {
+    seed_bucket_post_in(&docs.inner, envelope).await
+}
+
+async fn seed_bucket_post_in(
+    docs: &MemoryDocsSync,
+    envelope: &KukuriEnvelope,
+) -> (ReplicaId, CommunityIndexPostResolveInput) {
     let header = envelope.to_post_object().expect("header").expect("post");
     let replica = BucketReplica::new(
         BucketScope::Topic {
@@ -441,7 +456,7 @@ async fn seed_bucket_post(
         channel_ref: ChannelRef::Public,
         source_replica_id: Some(replica.as_str().into()),
     };
-    persist_post_object(&docs.inner, &replica, header, envelope.clone())
+    persist_post_object(docs, &replica, header, envelope.clone())
         .await
         .expect("seed");
     (replica, input)
@@ -738,7 +753,7 @@ async fn community_index_fetches_a_public_bucket_post_from_a_remote_provider() {
         )
         .await
         .expect("remote withdrawal");
-    *docs.remote.lock().expect("remote source poisoned") = Some(remote);
+    *docs.remote.lock().expect("remote source poisoned") = vec![remote];
     let response = app
         .resolve_community_index_posts(
             [
@@ -770,65 +785,6 @@ async fn community_index_fetches_a_public_bucket_post_from_a_remote_provider() {
     assert!(tombstone.content.is_empty());
     assert_eq!(docs.reads.load(Ordering::SeqCst), 2);
     assert_eq!(docs.forbidden.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test(start_paused = true)]
-async fn expired_remote_batch_does_not_return_an_unchecked_cached_post() {
-    let (app, docs) = observed_app();
-    let topic = TopicId::new("timeout-topic");
-    let keys = generate_keys();
-    let post = build_post_envelope(&keys, &topic, "old content", None).expect("post");
-    let (replica, cached_input) = seed_bucket_post(&docs, &post).await;
-    assert!(
-        app.resolve_community_index_posts(vec![cached_input.clone()])
-            .await
-            .expect("initial cache")
-            .entries[0]
-            .post
-            .is_some()
-    );
-    let withdrawal = build_post_withdrawal_envelope(
-        &keys,
-        &post,
-        1,
-        None,
-        WithdrawalReasonVisibility::Public,
-        Some(PostWithdrawalReason::AuthorRequest),
-    )
-    .expect("withdrawal");
-    docs.inner
-        .apply_doc_op(
-            &replica,
-            DocOp::SetJson {
-                key: format!("withdrawals/{}/state", post.id.as_str()),
-                value: serde_json::to_value(withdrawal).expect("json"),
-            },
-        )
-        .await
-        .expect("arrived withdrawal");
-    *docs.remote.lock().expect("remote source poisoned") = Some(Arc::new(PendingRemoteDocs));
-    let mut inputs = (0..8)
-        .map(|index| CommunityIndexPostResolveInput {
-            key: format!("slow-{index}"),
-            topic: topic.as_str().into(),
-            object_id: format!("missing-{index}"),
-            author_pubkey: "author".into(),
-            channel_ref: ChannelRef::Public,
-            source_replica_id: Some(replica.as_str().into()),
-        })
-        .collect::<Vec<_>>();
-    inputs.push(cached_input);
-    let response = tokio::time::timeout(
-        Duration::from_secs(31),
-        app.resolve_community_index_posts(inputs),
-    )
-    .await
-    .expect("batch should return by its deadline")
-    .expect("resolve");
-    assert!(
-        response.entries[8].post.is_none(),
-        "an input whose withdrawal check did not run must remain unresolved"
-    );
 }
 
 #[tokio::test]
