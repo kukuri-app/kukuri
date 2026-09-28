@@ -192,6 +192,18 @@ impl IrohDocsSync {
     /// 書き続けても、開いている handle と event の task は増え続けない。閉じた namespace の提供は、読む間だけ開く
     /// (`DocReadProtocol`)。
     pub(crate) async fn ensure_replica(&self, replica_id: &ReplicaId) -> Result<Arc<Doc>> {
+        self.open_handle(replica_id, true)
+            .await?
+            .context("created replica handle is missing")
+    }
+
+    /// 読取り用に開く。手元に無い namespace は import せずに `None` を返す(#1407: 読むだけで他人の namespace を
+    /// 作らない)。namespace を作るのは書込みと購読だけ。
+    pub(crate) async fn read_replica(&self, replica_id: &ReplicaId) -> Result<Option<Arc<Doc>>> {
+        self.open_handle(replica_id, false).await
+    }
+
+    async fn open_handle(&self, replica_id: &ReplicaId, create: bool) -> Result<Option<Arc<Doc>>> {
         // openの競合で同じnamespaceのtaskを複数作らない。
         let mut replicas = self.replicas.lock().await;
         // revokeとopenを直列化する。mapのlock前にsecretをコピーすると、revoke完了後に再openできてしまう。
@@ -201,14 +213,20 @@ impl IrohDocsSync {
                 anyhow::bail!("replica close is pending; retry close before reopening");
             }
             handle.last_used = std::time::Instant::now();
-            return Ok(handle.doc.clone());
+            return Ok(Some(handle.doc.clone()));
         }
 
-        let doc = self
-            .node
-            .docs()
-            .import_namespace(Capability::Write(secret))
-            .await?;
+        let doc = if create {
+            self.node
+                .docs()
+                .import_namespace(Capability::Write(secret))
+                .await?
+        } else {
+            let Some(doc) = self.open_existing(&secret).await? else {
+                return Ok(None);
+            };
+            doc
+        };
         let (tx, _) = broadcast::channel(256);
         let mut live = doc.subscribe().await?;
         let live_replica = replica_id.clone();
@@ -293,7 +311,7 @@ impl IrohDocsSync {
                 warn!(replica = %idle, error = %error, "failed to close an idle docs replica");
             }
         }
-        Ok(doc)
+        Ok(Some(doc))
     }
 
     async fn sender(&self, replica_id: &ReplicaId) -> Result<broadcast::Sender<ReplicaNotice>> {
@@ -345,7 +363,9 @@ impl IrohDocsSync {
         query: Query,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
-        let doc = self.ensure_replica(replica_id).await?;
+        let Some(doc) = self.read_replica(replica_id).await? else {
+            return Ok(Vec::new());
+        };
         let stream = doc.get_many(query).await?;
         tokio::pin!(stream);
         let mut records = Vec::new();
@@ -419,7 +439,9 @@ impl IrohDocsSync {
         query: DocKeyQuery,
     ) -> Result<DocKeyPage> {
         // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
-        let doc = self.ensure_replica(replica_id).await?;
+        let Some(doc) = self.read_replica(replica_id).await? else {
+            return Ok(DocKeyPage::default());
+        };
         if query.limit == 0 {
             return Ok(DocKeyPage::default());
         }
@@ -599,7 +621,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<Vec<DocRecord>> {
         if limit == 0 {
             // 読む件数にかかわらず replica は開く(権限の無い private replica は失敗する)。
-            let _ = self.ensure_replica(replica_id).await?;
+            let _ = self.read_replica(replica_id).await?;
             return Ok(Vec::new());
         }
         let records = self.collect_records(replica_id, bounded_exact_query(key, limit), policy);
@@ -624,7 +646,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<DocKeyPage> {
         // 手がかりは信用しない入力。docs author の id として読めない値は「無い」として扱う。
         let Ok(author) = AuthorId::from_str(docs_author) else {
-            self.ensure_replica(replica_id).await?;
+            self.read_replica(replica_id).await?;
             return Ok(DocKeyPage::default());
         };
         self.key_page(replica_id, Some(author), query).await
@@ -650,7 +672,9 @@ impl DocsSync for IrohDocsSync {
         let Ok(author) = AuthorId::from_str(docs_author) else {
             return Ok(None);
         };
-        let doc = self.ensure_replica(replica_id).await?;
+        let Some(doc) = self.read_replica(replica_id).await? else {
+            return Ok(None);
+        };
         // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
         let Some(entry) = doc.get_exact(author, key.as_bytes(), false).await? else {
             return Ok(None);
@@ -723,6 +747,10 @@ impl DocsSync for IrohDocsSync {
 #[cfg(test)]
 #[path = "iroh_sync_key_query_tests.rs"]
 mod key_query_tests;
+
+#[cfg(test)]
+#[path = "iroh_sync_read_tests.rs"]
+mod read_tests;
 
 #[cfg(test)]
 mod tests {

@@ -340,6 +340,7 @@ fn app_with_hanging_remote_docs(
 
 mod author_docs_author;
 mod author_key_reflection;
+mod author_namespace_reads;
 mod author_remote_reads;
 mod bucket_integrity;
 #[cfg(feature = "iroh-integration-tests")]

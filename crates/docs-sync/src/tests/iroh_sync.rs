@@ -22,12 +22,11 @@ async fn local_only_bucket_lookup_does_not_start_replica_sync() -> Result<()> {
     let namespace = crate::replicas::public_replica_secret(&replica)
         .unwrap()
         .id();
-    let doc = node.docs().open(namespace).await?.expect("local namespace");
-    let syncing = doc.status().await?.sync;
-    doc.close().await?;
+    // #1407: 手元に無い namespace は読取りで作らない(作られなければ同期も始まらない)。
+    let created = node.docs().open(namespace).await.is_ok();
     docs.shutdown().await;
     node.shutdown().await?;
-    assert!(!syncing, "a LocalOnly lookup must not start docs sync");
+    assert!(!created, "a LocalOnly lookup must not create the namespace");
     Ok(())
 }
 
@@ -65,12 +64,11 @@ async fn local_bucket_reads_stay_idle_after_seed_reapply_and_close_preserves_dat
     )
     .await?;
     docs.set_seed_peers(Vec::new()).await?;
-    let probe = node.docs().open(namespace).await?.unwrap();
+    // #1407: 手元に無い namespace は読取りで作らない。
     assert!(
-        !probe.status().await?.sync,
-        "read or peer reapply started idle sync"
+        node.docs().open(namespace).await.is_err(),
+        "reads must not create the namespace"
     );
-    probe.close().await?;
     docs.open_replica(&replica).await?;
     docs.apply_doc_op(
         &replica,
