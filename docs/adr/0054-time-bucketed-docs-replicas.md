@@ -118,6 +118,9 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - reactionのenvelope
   - live/game sessionのstate・署名済みenvelope・manifest blob（署名済みmanifestの無い旧Domeは除く）
   - 更新されるもの（reaction、session）は、projectionがより新しい版として受け入れたときだけ保持を上書きし、古い版を提供しない。
+    sessionは反映の経路（読み直し・hint）で受け入れたときだけ保持し、操作（参加・終了・Domeなど）が読んだ版は保持しない。
+  - 手元の読み取りは、保持した他人の版も返す。自分のdocs authorが書いていないsessionの版が反映済みより新しくなければ、
+    それで打ち切らずにproviderの新しい版を先に探し、見つからなければその版を使う。
 - 一覧の提供:
   - 索引`(scope_key, record_key, record_author)`の範囲を`limit + 1`行だけ読み、手元のentryの先頭と合わせて返す。
   - 一覧の提供では、保持の利用時刻を更新しない。
