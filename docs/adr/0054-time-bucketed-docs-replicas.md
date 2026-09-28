@@ -135,6 +135,7 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - 公開topicの候補は、同じtopicのgossip neighbor（`topic_read_candidates`）とする。neighborが無いときだけ、全体の台帳から選ぶ。
   - remoteのページ照合は、新しく反映した投稿のうち、provider 1台あたり最大8件の投稿のreactionも読む。
 - 本文・添付・manifestの取得: 見出し・reaction・stateを返したpeerを、そのhashの取得候補に必ず入れる（hashから取得元への表は上限256件）。
+
 R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
 `author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
 author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。
