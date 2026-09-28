@@ -18,6 +18,232 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.3.0-preview.2] - 2026-09-28
+
+### Features
+
+- 通信状態を件数と稼働 topic にし、変化点の差分を push、詳細は有限ページで読む (#1221 R2-D) ([#1380](https://github.com/kukuri-app/kukuri/pull/1380))
+- CN session の期限処理と回復を node ごとの差分にする (#1221 R2-B) ([#1379](https://github.com/kukuri-app/kukuri/pull/1379))
+- 旧 iroh store を新しい store と cache へ有界に移して退役させる (#1221 R5-I) ([#1378](https://github.com/kukuri-app/kukuri/pull/1378))
+- 新形式の writer へ切り替え、旧 namespace 定常同期・暫定 selector・旧 queue を撤去する (#1221 R5-H) ([#1375](https://github.com/kukuri-app/kukuri/pull/1375))
+- client の購読を 64 件の scope lease へ統合する (#1221 R2-C) ([#1374](https://github.com/kukuri-app/kukuri/pull/1374))
+- 旧 iroh-data の本人データを保護所有先へ移し、backup を切り替える (#1221 R5-G) ([#1372](https://github.com/kukuri-app/kukuri/pull/1372))
+- CN の保存物を受入下限・容量・保持期間で有界に回収する (#1221 R5-F) ([#1371](https://github.com/kukuri-app/kukuri/pull/1371))
+- CN の手動全件取込を撤去し、関係解析を 2 者間のアクションの差分へ移す (#1221 R5-E) ([#1370](https://github.com/kukuri-app/kukuri/pull/1370))
+- DM を account route だけにし、関係を edge から読むときに求める (R4-D) ([#1369](https://github.com/kukuri-app/kukuri/pull/1369))
+- private の通知を account の受信経路へ接続する (R4-C) ([#1368](https://github.com/kukuri-app/kukuri/pull/1368))
+- complete R5-B bounded client bucket readers
+- deliver public notifications on account receive route
+- 投稿カードのフォロー関係・公開範囲をアイコン表示にする ([#1345](https://github.com/kukuri-app/kukuri/pull/1345))
+- consolidate outbox retries under bounded account owner
+- deliver protected outbox and ACK over account route
+- resolve account receive endpoints from bounded peer windows
+- 時間bucketと同期停止の基盤を追加 ([#1297](https://github.com/kukuri-app/kukuri/pull/1297))
+- 遡った範囲でまだ取得できていない投稿の数を示し、その先へ進めるようにする ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1285](https://github.com/kukuri-app/kukuri/pull/1285))
+- replica の購読が、event の取りこぼしと同期の区切りを受け取れるようにする ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1266](https://github.com/kukuri-app/kukuri/pull/1266))
+- 更新がある間はコントロールクラスタから更新導線を出す ([#1231](https://github.com/kukuri-app/kukuri/pull/1231))
+- add Microsoft Store MSIX packaging ([#1191](https://github.com/kukuri-app/kukuri/pull/1191))
+
+### Fixes
+
+- bundle 前に runner の既存 package をまとめて更新し、notices を更新する ([#1384](https://github.com/kukuri-app/kukuri/pull/1384), [#1387](https://github.com/kukuri-app/kukuri/pull/1387))
+- 復元した非 active の DM の列を、選ぶ前に読み込む (#1221 R6-C) ([#1382](https://github.com/kukuri-app/kukuri/pull/1382))
+- 動作確認の所見を補修する（表示名の背景読取り・profile 列の読み直し・CLI の policy_kind） (#1221 R6-B) ([#1381](https://github.com/kukuri-app/kukuri/pull/1381))
+- gossip の接続の切替後に topic の stream を開き直し、相手の idle 回収で切られないようにする ([#1376](https://github.com/kukuri-app/kukuri/pull/1376), [#1377](https://github.com/kukuri-app/kukuri/pull/1377))
+- 深いスレッド返信のカード幅を保ち、カラム本文を横スクロールさせる ([#1373](https://github.com/kukuri-app/kukuri/pull/1373))
+- preserve local session reads after shutdown
+- keep legacy reply targets on local docs reader
+- preserve bounded client reads across sources and gaps
+- context action menu の再描画で矢印キーの focus を先頭へ戻さない ([#1365](https://github.com/kukuri-app/kukuri/pull/1365))
+- use the latest intersection entry for media demand
+- stop restarting live subscriptions for sessions without viewers
+- close every pooled connection and take write locks first
+- keep topic membership symmetric across warmup and restarts
+- bound public offer queue and reject private source
+- avoid remote cache write locks on fresh reads
+- retain protected remote blobs across temporary pins
+- sync due-index migration golden and version contracts
+- bound legacy hint wait and sync migration contracts
+- inline account offer references to avoid unbounded blobs
+- fence receive lookup shutdown and invalidation races
+- point Windows downloads to Microsoft Store
+- verify session manifest hash before blob fetch ([#1261](https://github.com/kukuri-app/kukuri/pull/1261), [#1302](https://github.com/kukuri-app/kukuri/pull/1302))
+- sessionの反映を到着イベントと表示要求に分離する ([#1262](https://github.com/kukuri-app/kukuri/pull/1262))
+- prevent signed session state rollback
+- Metaverse avatarの再取得を有限化する ([#1242](https://github.com/kukuri-app/kukuri/pull/1242))
+- blobを投稿単位で再読み込みできるようにする ([#1284](https://github.com/kukuri-app/kukuri/pull/1284))
+- live・game一覧をchannel別の上限付き取得にする ([#1292](https://github.com/kukuri-app/kukuri/pull/1292))
+- 複数の channel をまたぐタイムライン(AllJoined scope)を CLI・API から閉じ、複数 channel のページ取得を無くす ([#1280](https://github.com/kukuri-app/kukuri/pull/1280), [#1291](https://github.com/kukuri-app/kukuri/pull/1291))
+- iroh stack rebuild の shutdown 印を取消に強くする ([#1287](https://github.com/kukuri-app/kukuri/pull/1287))
+- paginate profile timelines ([#1289](https://github.com/kukuri-app/kukuri/pull/1289))
+- view の生成で返信先を docs から読まず、projection の読み書きと新着の受信も件数で数える (#1239, #1277) ([#1283](https://github.com/kukuri-app/kukuri/pull/1283))
+- 利用者が必要としない同期・復旧(自分の replica の全件の読み出しと索引の補完)を外す ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1282](https://github.com/kukuri-app/kukuri/pull/1282))
+- プロフィールのタイムラインを、author replica の索引からページの行だけを読む形にする ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1276](https://github.com/kukuri-app/kukuri/pull/1276))
+- author 購読が replica を走査せず、docs author と key の組・上限つきの一覧で反映する ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1275](https://github.com/kukuri-app/kukuri/pull/1275))
+- ページの取得を索引の範囲の読み出しにし、非表示の著者の読み飛ばしに上限を置く (#1239, #1274) ([#1270](https://github.com/kukuri-app/kukuri/pull/1270))
+- カラム本文を一段内側で包むだけの枠を外す ([#1271](https://github.com/kukuri-app/kukuri/pull/1271), [#1273](https://github.com/kukuri-app/kukuri/pull/1273))
+- live / game の一覧が replica を走査せず、全件走査の関数を削除する ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1268](https://github.com/kukuri-app/kukuri/pull/1268))
+- 購読タスクが replica を走査せず、窓の追いつきで反映する ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1267](https://github.com/kukuri-app/kukuri/pull/1267))
+- 照合が、上限で止まった索引の読み出しを読み継ぎ、thread もページの範囲だけを読む ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1265](https://github.com/kukuri-app/kukuri/pull/1265))
+- アカウントの署名鍵から導出した docs author で、著者の投稿と取り下げを読む ([#1258](https://github.com/kukuri-app/kukuri/pull/1258), [#1264](https://github.com/kukuri-app/kukuri/pull/1264))
+- タイムラインと thread の取得を、replica を走査しないページの範囲の照合へ置き換える (#1239, #1257) ([#1247](https://github.com/kukuri-app/kukuri/pull/1247))
+- reaction・live session・game room の反映で署名と replica を確かめる ([#1252](https://github.com/kukuri-app/kukuri/pull/1252), [#1259](https://github.com/kukuri-app/kukuri/pull/1259))
+- 取り下げの key に不正な record が先にあっても、著者の取り下げを反映する ([#1250](https://github.com/kukuri-app/kukuri/pull/1250), [#1256](https://github.com/kukuri-app/kukuri/pull/1256))
+- UTF-8 でない key の entry で docs の読み出し全体を失敗させない ([#1253](https://github.com/kukuri-app/kukuri/pull/1253), [#1255](https://github.com/kukuri-app/kukuri/pull/1255))
+- 投稿の反映で署名つき envelope と replica を確かめる ([#1248](https://github.com/kukuri-app/kukuri/pull/1248), [#1249](https://github.com/kukuri-app/kukuri/pull/1249))
+- 利用者の操作と view の生成で replica を走査しない ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1246](https://github.com/kukuri-app/kukuri/pull/1246))
+- docs の読み出しを key の索引で行い、上限つきの読み出しを追加する ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1245](https://github.com/kukuri-app/kukuri/pull/1245))
+- コミュニティノード規約を文書の役割どおりの場所で提示する ([#1238](https://github.com/kukuri-app/kukuri/pull/1238))
+- 欠損した本文や変化の無い replica で全件走査を繰り返さない ([#1225](https://github.com/kukuri-app/kukuri/pull/1225), [#1237](https://github.com/kukuri-app/kukuri/pull/1237))
+- runtime image に対象 binary だけを含める ([#1138](https://github.com/kukuri-app/kukuri/pull/1138), [#1236](https://github.com/kukuri-app/kukuri/pull/1236))
+- 同一ログ行の連発を集約し、relay 受信集中後の復旧を test で固定する ([#1206](https://github.com/kukuri-app/kukuri/pull/1206), [#1233](https://github.com/kukuri-app/kukuri/pull/1233))
+- blob 取得の自動再試行を有限化し、失敗表示と再取得を追加する ([#1207](https://github.com/kukuri-app/kukuri/pull/1207), [#1230](https://github.com/kukuri-app/kukuri/pull/1230))
+- topic 追加ボタンの tooltip を「トピックを追加」にする ([#1229](https://github.com/kukuri-app/kukuri/pull/1229))
+- 新しい Linux で AppImage が真っ白になる不具合を修正する ([#1222](https://github.com/kukuri-app/kukuri/pull/1222), [#1228](https://github.com/kukuri-app/kukuri/pull/1228))
+- overlay 配下で tooltip を手前に描画する ([#1226](https://github.com/kukuri-app/kukuri/pull/1226))
+- accelerate community index recovery ([#1223](https://github.com/kukuri-app/kukuri/pull/1223))
+- refresh indexer peers before event ingest ([#1209](https://github.com/kukuri-app/kukuri/pull/1209))
+- 無操作時のCN維持とdocs接続の復旧を安定化する ([#1208](https://github.com/kukuri-app/kukuri/pull/1208))
+- changelog の起点を公開済み Release の最も近い祖先にする ([#1186](https://github.com/kukuri-app/kukuri/pull/1186), [#1187](https://github.com/kukuri-app/kukuri/pull/1187))
+
+### Other
+
+- v0.3.0-preview.1 の版へ同期する (#1384 AC-1) ([#1386](https://github.com/kukuri-app/kukuri/pull/1386))
+- 不足候補の card の test で observer の登録を待ってから交差させる ([#1385](https://github.com/kukuri-app/kukuri/pull/1385))
+- 完成版の動作確認を記録する (#1221 R6-A) ([#1383](https://github.com/kukuri-app/kukuri/pull/1383))
+- #1221 R5-C: author と private の制御参照を有界な reader で解決する ([#1367](https://github.com/kukuri-app/kukuri/pull/1367))
+- update Tauri lockfile for client reader dependency
+- scale_independence の fixture で購読タスクの起動完了を観測してから数える ([#1363](https://github.com/kukuri-app/kukuri/pull/1363))
+- wait for the lost neighbor before B subscribes again
+- remove nondeterminism from reaction, cn-indexer and browser tests
+- Align store migration generation assertions with grant ledger
+- Align CLI registry counts with indexing revoke command
+- Bound CN candidate admission before eligibility checks
+- Keep private CN indexing consent across epoch rotation
+- Unify bounded CN bucket reads for public and registered private epochs
+- Wait for visibility-owned media attempts in browser tests
+- Classify native preview commands and preserve padded media payloads
+- Release offscreen attachment previews and preserve large media display
+- Bound desktop attachment previews with file-backed media
+- Complete R5-A cache ownership and fail-closed label eviction
+- WIP R5-A app-owned remote cache and guarded content paths
+- Preserve ephemeral retry admission through desktop wrapper
+- Retry peer candidate writes after pending SQLite rollback
+- Reject cancelled bounded hydration before any projection write
+- Limit content save lock to remotely fetched bodies
+- Propagate optional media source through harness requests
+- Fence content fetches by account and permission generation
+- Keep session retry tests within file size guard
+- Drive post retry notifications from Rust attempt deadlines
+- Count display retries only after network admission
+- Unify visible display retries across bodies replies and sessions
+- Checkpoint shared display retry budgets
+- Use connected and learned peers for account destinations ([#1355](https://github.com/kukuri-app/kukuri/pull/1355))
+- Bound visible author and advisory lookups to display references ([#1354](https://github.com/kukuri-app/kukuri/pull/1354))
+- Route bounded docs and blob demand through one network owner ([#1353](https://github.com/kukuri-app/kukuri/pull/1353))
+- Bound account peer candidate history and selection ([#1352](https://github.com/kukuri-app/kukuri/pull/1352))
+- bound R1-D notification inbox work ([#1351](https://github.com/kukuri-app/kukuri/pull/1351))
+- 投稿カードの icon test を別ファイルへ分ける ([#1345](https://github.com/kukuri-app/kukuri/pull/1345))
+- 視覚回帰 baseline を再生成 (Kukuri Visual Baseline 35997528208)
+- bound R1-A display and bookmark windows ([#1349](https://github.com/kukuri-app/kukuri/pull/1349))
+- 投稿カードの icon 表示に合わせて既存 test を更新する ([#1345](https://github.com/kukuri-app/kukuri/pull/1345))
+- require one planned PR per acceptance condition
+- Reconcile removed CN scopes through bounded index seeks
+- Wait for CN event completion before reading metrics
+- Reserve CN scope slots before partial opens
+- Admit bounded legacy CN scopes by demand and fair cursor
+- Update CN rollout checks for bounded scope review
+- Bound private CN periodic and unknown-key ingestion
+- Preserve known CN object events in mixed batches
+- Bound unknown public CN events to the current index window
+- Own bounded resolver requests across crate boundaries
+- Forward client bucket readers and suppress unchecked timeout results
+- Resolve public CN bucket locators through bounded peer reads
+- Persist withdrawals found during CN safety scans
+- Keep verified CN withdrawals across provider changes
+- Connect bounded public bucket reads to CN indexer
+- Make CN E2E publisher write timeline index like desktop
+- Bound CN public periodic ingest to current index window
+- query CN withdrawals by changed object
+- avoid unchanged timeline snapshot updates
+- remove unused account locator discovery path
+- 計画・構造整理・UI設計を新原則へ整合
+- 初回の重複集約migrationの通報影響確認を維持
+- 作業原則と設計原則に沿ってrunbookを整理
+- 作業の完了範囲・最終コード量・エッジケースの原則を定義
+- Validate full locator page in fake resolver
+- Probe signed receive locator pages over live QUIC
+- Add signed account receive locator claim
+- Define change-driven account locator contract
+- Prioritize current design principles over older ADRs
+- Use one monotonic revision for CN clear and invalidation
+- Fence in-flight bindings on every CN source clear
+- Bind CN queries to due sessions and cache provenance
+- Fence CN candidates and page recipient discovery fairly
+- Add bounded CN candidates for account receive destinations
+- Document pre-PR boundary checks for network work
+- Recover account receive route after stack replacement
+- Prevent superseded account offer receivers from reclaiming route
+- Fence account offer teardown and attachment reflection
+- Keep account route teardown generation-safe
+- Connect authenticated account offers to DM receive
+- Keep CLI DM schemas in sync with bounded status
+- Bound DM status outbox count and show lower bound
+- Bound DM outbox retry cycles against new sends
+- Page protected DM outbox retries by peer
+- Guard gossip topic replacement by generation
+- Own gossip topic warmup tasks through shutdown
+- Bound gossip peer warmup to a moving window
+- Move blob-service tests out of production module
+- Reject retained expired offers before provider I/O
+- Add provider-verified bounded receive offer payload fetch
+- Fence account offer transport shutdown and drain holds
+- Recreate stopped account offer receiver on resubscribe
+- Own offer tasks before cancellation and close fake account streams
+- Add bounded account receive offer transport route
+- Expose production docs sync handle from shared engine
+- Bound CN rendezvous Redis response timeout under load
+- Make rendezvous bucket insertion and expiry atomic
+- Bound CN rendezvous candidates with expiring topic windows
+- Own notification event forwarding with account runtime
+- Update store migration generation contract
+- Format notification dispatch regression test
+- Page OS notification dispatch by insertion sequence
+- Update Tauri lockfile for node binding dependency
+- Classify receive binding test lock and report Store dirty paths
+- Register account receive binding on desktop node lifecycle
+- Bound blob peer health and fetch candidate selection
+- Keep fetch service generations unique through retirement
+- Share bounded fetch work across node services
+- Admit display fetches through bounded node-owned work
+- Bind signed DM acknowledgements to their conversation
+- Verify owned gossip I/O with public topic state
+- Bound network work admission and cancellation by scope
+- [codex][fix] 終了したgossip接続とpeer address台帳を回収する
+- [codex][feat] アカウント宛の受信参照とprivate manifestを暗号化する
+- [codex][feat] アカウント受信先を署名とQUIC identityで確認する
+- [codex][docs] #1221の共通通信設計と受信方針を記録
+- 公開bucketの検索結果を安全にローカル解決する ([#1303](https://github.com/kukuri-app/kukuri/pull/1303))
+- separate replica close operation from task dispatch ([#1305](https://github.com/kukuri-app/kukuri/pull/1305))
+- session表示command追加後のCLI件数を更新する
+- Issue1262の差分監査と最終検証を記録する
+- CNの公開topicで時間bucketの読取りと停止を準備する ([#1300](https://github.com/kukuri-app/kukuri/pull/1300))
+- avatar取得選定をbackend hookへ寄せる
+- Dome読出し件数の計測を同期lookupに限定する
+- live・game一覧の再取得回数を固定する ([#1292](https://github.com/kukuri-app/kukuri/pull/1292))
+- [codex][fix] Dome Instance の読み出しを上限つきにする ([#1263](https://github.com/kukuri-app/kukuri/pull/1263))
+- タスクトレイへの格納を明示選択にする ([#1288](https://github.com/kukuri-app/kukuri/pull/1288))
+- worktreeincludeとdocs追加 ([#1286](https://github.com/kukuri-app/kukuri/pull/1286))
+- replica の件数を 10 万件まで増やしても読む量が増えないことを数で確かめ、文書を整理する ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1279](https://github.com/kukuri-app/kukuri/pull/1279))
+- 実 Iroh の結合 test の添付 view 状態の期待を #1152 の仕様へ合わせる ([#1251](https://github.com/kukuri-app/kukuri/pull/1251), [#1254](https://github.com/kukuri-app/kukuri/pull/1254))
+- タイムラインの反映と復旧を総件数に依存させない設計を ADR 0052 に定める ([#1239](https://github.com/kukuri-app/kukuri/pull/1239), [#1244](https://github.com/kukuri-app/kukuri/pull/1244))
+- 件数に依存しない処理を設計原則として AGENTS.md に定め、#1225 の結論を訂正する ([#1240](https://github.com/kukuri-app/kukuri/pull/1240))
+- src-tauri の lib 単体 test に xtask の入口 tauri-test を追加する ([#1234](https://github.com/kukuri-app/kukuri/pull/1234), [#1235](https://github.com/kukuri-app/kukuri/pull/1235))
+- record community indexer OOM recovery ([#1227](https://github.com/kukuri-app/kukuri/pull/1227))
+- 誤って追跡した __pycache__ を外し、ignore する ([#1188](https://github.com/kukuri-app/kukuri/pull/1188))
+- CHANGELOG に v0.2.7 / v0.2.8 を追加し、LP の案内を v0.2.8-preview.2 に更新する ([#1185](https://github.com/kukuri-app/kukuri/pull/1185))
+- v0.2.8-preview.2 の公開結果と release の所要時間を記録する ([#1180](https://github.com/kukuri-app/kukuri/pull/1180), [#1184](https://github.com/kukuri-app/kukuri/pull/1184))
+
 ## [v0.2.8-preview.2] - 2026-09-19
 
 ### Features
