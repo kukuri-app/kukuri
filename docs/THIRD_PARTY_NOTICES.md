@@ -52,7 +52,7 @@ None.
 
 ## Rust crates
 
-Total packages: 1074
+Total packages: 1075
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -400,6 +400,7 @@ Total packages: 1074
 | http-body | 1.1.0 | MIT | https://crates.io/crates/http-body |
 | http-body-util | 0.1.3 | MIT | https://crates.io/crates/http-body-util |
 | http-body-util | 0.1.4 | MIT | https://crates.io/crates/http-body-util |
+| http-range | 0.1.5 | MIT | https://crates.io/crates/http-range |
 | httparse | 1.10.1 | MIT OR Apache-2.0 | https://crates.io/crates/httparse |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 | https://crates.io/crates/httpdate |
 | hybrid-array | 0.4.12 | MIT OR Apache-2.0 | https://crates.io/crates/hybrid-array |
@@ -1230,7 +1231,7 @@ Total packages: 136
 | isexe | 2.0.0 | ISC | https://github.com/isaacs/isexe#readme |
 | its-fine | 2.0.0 | MIT | https://github.com/pmndrs/its-fine |
 | lie | 3.3.0 | MIT | https://github.com/calvinmetcalf/lie#readme |
-| lucide-react | 1.31.0 | ISC | https://lucide.dev |
+| lucide-react | 1.48.0 | ISC | https://lucide.dev |
 | maath | 0.10.8 | MIT | - |
 | meshline | 3.3.1 | MIT | https://github.com/pmndrs/meshline#readme |
 | meshoptimizer | 1.1.1 | MIT | https://github.com/zeux/meshoptimizer |

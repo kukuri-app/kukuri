@@ -71,12 +71,14 @@ jobs:
       - name: Linux build dependencies
         run: |
           sudo apt-get update
-          # Refresh the runner's preinstalled bundled libraries too (libgcrypt20 #907,
-          # libsqlite3-0 #1094): superseded binary versions can outlive their exact
-          # source entry in the current APT index.
+          # Refresh every preinstalled package to the current APT candidate before bundling:
+          # superseded runner versions lose their exact source entry in the APT index
+          # (libgcrypt20 #907, libsqlite3-0 #1094, libxml2 #1384).
+          sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+            -o Dpkg::Options::=--force-confold -o APT::Get::Always-Include-Phased-Updates=true
           sudo apt-get install -y pkg-config libdbus-1-dev libglib2.0-dev libgtk-3-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
-            libfuse2 libgcrypt20 libsqlite3-0 file desktop-file-utils dbus binutils python3
+            libfuse2 file desktop-file-utils dbus binutils python3
       - uses: pnpm/action-setup@v4
         with:
           version: 10.16.1

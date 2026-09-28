@@ -101,7 +101,7 @@ Linux配布署名jobは最終AppImageのruntime inventoryを採取し、`native_
 
 収集は使い捨てCI runnerで`deb-src`を有効にして行う。開発端末のAPT設定を変える必要はない。取得・照合・notice生成の失敗時は配布packageを完成扱いにしない。`--verify-static-only`／`--verify-ubuntu-only`は部品検査で、公開条件を満たした結果ではない。最終archiveには対応source、patch、build／再リンク手順、共有libraryの差し替え手順を含める。詳細は[同梱物の引渡し条件](./linux-appimage-runtime-evidence.md)。
 
-runnerに既存の間接依存がある場合、依存packageのinstallだけではそのlibraryが更新されないことがある。Linux workflowは`libgcrypt20`（#907）と`libsqlite3-0`（#1094）も明示installし、現APT indexに対応する候補へ更新してからbundleを作る。exact sourceが取得できない場合は別版sourceで代替せず停止する。runner既存版とAPT候補／source indexを使い捨て環境で比較し、変更済みbundleを同一候補へ混在させない。
+runnerに既存の間接依存がある場合、依存packageのinstallだけではそのlibraryが更新されないことがある。Linux workflowはAPT indexの更新後に、runner既存の全packageを現APT indexの候補へ更新（phased updateを含む`apt-get upgrade`）してからbundleを作る（`libgcrypt20` #907、`libsqlite3-0` #1094、`libxml2` #1384）。exact sourceが取得できない場合は別版sourceで代替せず停止する。runner既存版とAPT候補／source indexを使い捨て環境で比較し、変更済みbundleを同一候補へ混在させない。
 
 ## Changelog
 
