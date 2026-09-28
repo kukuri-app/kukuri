@@ -105,6 +105,10 @@ R5-Bではclientのtimeline/thread、CN source、返信先・投稿・sessionの
 参加中のchannelのgossip scopeに限り、過去epochは保持するcapabilityと時刻から選ぶ。
 remote recordは既存の署名・scope・bucket時刻・取り下げ検証を通した後に対象別cacheへ保存する。
 旧writerのsyncはR5-Hまで移行用に残す。
+手元の読取り（`IrohDocsSync`のrecord・key・docs author指定の読取り）も、手元に無いnamespaceをimportせず空を返す。
+namespaceを作るのは書込みと購読だけ（#1407、2026-09-28）。表示名の背景読取り・authorのlease・プロフィールの列が、
+表示した他人の`author::<pubkey>`の空のnamespaceを作り、他の端末の読取りに「持っていない」ではなく「0件」と
+答えていたため。
 
 #1395（2026-09-28）で、公開topic bucketの提供者を書き手本人に限らないことにした。書き手がオフラインでも、
 その内容を検証して保持する同じtopicの参加者から、後から来た参加者が取得できるようにするためである。
