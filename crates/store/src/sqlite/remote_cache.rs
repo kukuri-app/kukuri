@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 1024 * 1024 * 1024;
+pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 3 * 1024 * 1024 * 1024;
 pub const REMOTE_CACHE_UNUSED_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 pub const REMOTE_CACHE_RECLAIM_STEP: usize = 128;
 /// これ以下の blob は SQLite の行に、超えるものは `kukuri.remote-blobs/` の file に置く。
