@@ -406,7 +406,7 @@
     "run": "結果を表示",
     "loading": "読み込み中…",
     "contentResolving": "安全情報を確認してから投稿を表示します…",
-    "contentUnavailable": "安全情報を確認できないため、投稿本文を表示できません。",
+    "contentUnavailable": "投稿を取得できませんでした。",
     "empty": "該当する投稿は見つかりませんでした。",
     "emptyState": {
       "scope": {

@@ -406,7 +406,7 @@
     "run": "Show results",
     "loading": "Loading…",
     "contentResolving": "Checking the post before showing its content…",
-    "contentUnavailable": "Post content is unavailable because its safety labels could not be verified.",
+    "contentUnavailable": "Could not retrieve this post.",
     "empty": "No matching posts found.",
     "emptyState": {
       "scope": {

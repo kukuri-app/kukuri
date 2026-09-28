@@ -247,7 +247,7 @@ test('unresolved results stay fail-closed and expose only reporting and identifi
   await waitFor(() => expect(api.resolveCommunityIndexPosts).toHaveBeenCalledTimes(1));
   expect(screen.queryByText(entry.text)).not.toBeInTheDocument();
   const safePlaceholder = await screen.findByText(
-    'Post content is unavailable because its safety labels could not be verified.'
+    'Could not retrieve this post.'
   );
   const card = safePlaceholder.closest('article');
   if (!(card instanceof HTMLElement)) throw new Error('Explore result card not found');
@@ -292,7 +292,7 @@ test('node-provided result text stays hidden when canonical resolution fails', a
   expect(screen.queryByText(entry.text)).not.toBeInTheDocument();
   expect(
     await screen.findByText(
-      'Post content is unavailable because its safety labels could not be verified.'
+      'Could not retrieve this post.'
     )
   ).toBeInTheDocument();
 });
