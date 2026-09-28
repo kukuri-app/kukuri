@@ -59,7 +59,9 @@ impl IrohDocsSync {
         };
         doc.close().await?;
         if empty && let Err(error) = self.node.docs().drop_doc(namespace).await {
-            // 読取りの提供(`DocReadProtocol`)が開いている間は消せない。次の回収の対象にはしない(一度きり)。
+            // lock の外で同時に開かれている(`DocReadProtocol` の提供など)と、`drop_doc` が失敗することがある。
+            // 開いていたのが 1 つなら消えて、その読取りが失敗するだけで、失うデータは無い。失敗した namespace は次の回収の
+            // 対象にはしない(一度きり)。
             warn!(%namespace, %error, "an empty namespace was not reclaimed");
         }
         drop(replicas);
