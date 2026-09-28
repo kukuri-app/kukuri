@@ -655,6 +655,9 @@ impl BlobService for HangingBlobService {
     }
 }
 
+#[path = "hydration_limits_budget.rs"]
+mod hydration_limits_budget;
+
 #[path = "hydration_limits_cancel.rs"]
 mod hydration_limits_cancel;
 

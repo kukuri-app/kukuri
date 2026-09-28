@@ -339,7 +339,9 @@ impl AppService {
             let channel_id = row.channel_id.clone();
             let task = tokio::spawn(async move {
                 let _permit = permit;
-                let deadline = tokio::time::Instant::now() + projection_blob_fetch_timeout();
+                // 背景の取得なので、node の取得の予算で待つ。応答しない peer の接続待ちで打ち切ると、次の peer を試せない(#1390)。
+                let deadline =
+                    tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
                 let Some(Ok(Ok(fetch))) = services
                     .until_content_invalid(
                         &topic_id,
