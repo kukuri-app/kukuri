@@ -139,6 +139,10 @@ pub trait BlobService: Send + Sync {
     async fn learn_peer(&self, _endpoint_id: &str) -> Result<()> {
         Ok(())
     }
+    /// `hash` の内容を持つと分かっている peer(その内容を含む見出しを返した peer)を、取得候補に必ず入れる(#1395)。
+    async fn learn_content_source(&self, _hash: &BlobHash, _endpoint_id: &str) -> Result<()> {
+        Ok(())
+    }
     async fn set_seed_peers(&self, _peers: Vec<SeedPeer>) -> Result<()> {
         Ok(())
     }
@@ -609,6 +613,15 @@ impl BlobService for IrohBlobService {
 
     async fn learn_peer(&self, endpoint_id: &str) -> Result<()> {
         self.record_learned_peer(endpoint_id).await
+    }
+
+    async fn learn_content_source(&self, hash: &BlobHash, endpoint_id: &str) -> Result<()> {
+        let hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let peer = iroh::EndpointId::from_str(endpoint_id.trim())?;
+        self.peers
+            .note_content_source(&hash.to_string(), peer)
+            .await;
+        Ok(())
     }
 
     async fn set_seed_peers(&self, peers: Vec<SeedPeer>) -> Result<()> {

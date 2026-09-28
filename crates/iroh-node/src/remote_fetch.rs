@@ -677,7 +677,7 @@ async fn fetch_bytes_from_remote(
     mode: FetchMode,
     file_path: Option<&std::path::Path>,
 ) -> Result<Option<Vec<u8>>> {
-    let imported_peers = peers.ranked_peers().await;
+    let imported_peers = peers.ranked_peers_for(hash_text).await;
     let mut had_transport_failure = false;
     info!(
         subject,

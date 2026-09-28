@@ -59,6 +59,19 @@ pub(crate) async fn hydrate_object_projection_from_post(
             .await?;
         return Ok(true);
     }
+    // 見出しを返した peer は、その本文・添付を持つと分かっている。取得候補の窓の外にいても候補に入れる(#1395)。
+    if let Some(provider) = services.docs_sync.remote_reader_id() {
+        let body = match &header.payload_ref {
+            PayloadRef::BlobText { hash, .. } => Some(hash),
+            PayloadRef::InlineText { .. } => None,
+        };
+        for hash in body
+            .into_iter()
+            .chain(header.attachments.iter().map(|asset| &asset.hash))
+        {
+            blob_service.learn_content_source(hash, &provider).await?;
+        }
+    }
     let mut fetched_body = None;
     let content = match &header.payload_ref {
         PayloadRef::InlineText { text } => Some(text.clone()),
