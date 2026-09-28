@@ -262,8 +262,8 @@ pub(crate) use public_notification_offer_support::PublicNotificationSource;
 pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};
 pub(crate) use session_integrity::dome_instance_id;
 pub(crate) use session_integrity::{
-    VerifiedGameRoom, VerifiedLiveSession, load_verified_game_room, load_verified_live_session,
-    owner_bound_id_suffix,
+    SessionRelay, VerifiedGameRoom, VerifiedLiveSession, load_verified_game_room,
+    load_verified_live_session, owner_bound_id_suffix,
 };
 #[cfg(test)]
 pub(crate) use session_integrity::{verify_game_room_record, verify_live_session_record};

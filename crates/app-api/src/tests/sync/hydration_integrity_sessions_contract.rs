@@ -228,6 +228,84 @@ async fn signed_reaction_moved_to_another_target_key_is_not_counted() {
     assert_eq!(reaction_count(&app, &topic, &liked).await, 1);
 }
 
+// #1395 INVAR-6: session は、反映の経路で projection より新しい版を受け入れたときだけ保持する。同じ revision の
+// 読み直し、操作が読んだ版、反映済みより古い revision は保持しない(保持した版を後退させない)。
+#[tokio::test]
+async fn only_an_accepted_session_revision_is_kept_for_other_readers() {
+    let docs_sync = Arc::new(ShadowingDocsSync::default());
+    let blob_service = Arc::new(MemoryBlobService::default());
+    let owner = fresh_viewer(docs_sync.clone(), blob_service.clone());
+    let topic = TopicId::new("kukuri:topic:integrity-contract-live-kept");
+    let replica = topic_replica_id(topic.as_str());
+    let session_id = owner
+        .create_live_session(
+            topic.as_str(),
+            CreateLiveSessionInput {
+                title: "kept".into(),
+                description: String::new(),
+            },
+        )
+        .await
+        .expect("create live session");
+    let state_key = stable_key("sessions/live", &format!("{session_id}/state"));
+    let first_state: serde_json::Value = serde_json::from_slice(
+        &record_value(docs_sync.as_ref(), &replica, state_key.as_str()).await,
+    )
+    .expect("first state");
+
+    let reader = Arc::new(docs_sync.as_remote_reader("provider"));
+    let viewer = fresh_viewer(reader.clone(), blob_service);
+    let read = || {
+        viewer.read_session(
+            topic.as_str(),
+            &TimelineScope::Public,
+            session_id.as_str(),
+            "live-session",
+        )
+    };
+    let kept = || async {
+        let kept = reader.persisted.lock().await.contains(&state_key);
+        reader.persisted.lock().await.clear();
+        kept
+    };
+    assert!(read().await.expect("read revision 1"));
+    assert!(kept().await, "the first accepted revision is kept");
+    read().await.expect("read revision 1 again");
+    assert!(!kept().await, "the same revision is not kept again");
+
+    owner
+        .end_live_session(topic.as_str(), session_id.as_str())
+        .await
+        .expect("end live session");
+    viewer
+        .fetch_live_session_state_and_manifest(topic.as_str(), session_id.as_str())
+        .await
+        .expect("operation read")
+        .expect("live session");
+    assert!(
+        !kept().await,
+        "a version read by an operation is not kept (the projection did not accept it)"
+    );
+    assert!(read().await.expect("read revision 2"));
+    assert!(kept().await, "the newer accepted revision is kept");
+
+    docs_sync
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: state_key.clone(),
+                value: first_state,
+            },
+        )
+        .await
+        .expect("replay the older state");
+    read().await.expect("read the older revision");
+    assert!(
+        !kept().await,
+        "an older revision must not replace the kept one"
+    );
+}
+
 // AC-2 / AC-3: fresh viewer と操作は unsigned updated_at ではなく署名済み revision で候補を選ぶ。
 #[tokio::test]
 async fn live_session_selection_uses_signed_revision() {

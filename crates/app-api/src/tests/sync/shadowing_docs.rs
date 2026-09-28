@@ -19,6 +19,8 @@ pub(crate) struct ShadowingDocsSync {
     pub(super) author_reads: Arc<TokioMutex<Vec<(String, String)>>>,
     /// 検証済みとして保持を求められた key の記録(#1395)。
     pub(super) persisted: Arc<TokioMutex<Vec<String>>>,
+    /// remote の provider の lease として振る舞うときの provider の id(#1395)。
+    remote_reader: Option<String>,
 }
 
 /// `ShadowingDocsSync` が n 番目の shadow の名義として返す docs author の id。
@@ -44,6 +46,14 @@ impl ShadowingDocsSync {
             .push(serde_json::to_vec(&value).expect("shadow json"));
     }
 
+    /// 同じ docs を、`provider` の lease として読む reader(#1395)。
+    pub(super) fn as_remote_reader(&self, provider: &str) -> Self {
+        Self {
+            remote_reader: Some(provider.to_string()),
+            ..self.clone()
+        }
+    }
+
     pub(crate) async fn fail_on_key(&self, key: &str) {
         *self.failing_key.lock().await = Some(key.to_string());
     }
@@ -53,6 +63,10 @@ impl ShadowingDocsSync {
 impl DocsSync for ShadowingDocsSync {
     async fn open_replica(&self, replica_id: &ReplicaId) -> Result<()> {
         self.inner.open_replica(replica_id).await
+    }
+
+    fn remote_reader_id(&self) -> Option<String> {
+        self.remote_reader.clone()
     }
 
     async fn persist_verified_record(

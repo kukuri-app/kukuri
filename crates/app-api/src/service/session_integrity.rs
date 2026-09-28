@@ -48,6 +48,19 @@ async fn read_session_blob<T: DeserializeOwned>(
     }
 }
 
+/// manifest blob は、その session の state を返した peer が持つと分かっている(候補の順序の手がかりだけ。#1395)。
+async fn learn_manifest_source(
+    docs_sync: &dyn DocsSync,
+    blob_service: &dyn BlobService,
+    blob: &ManifestBlobRef,
+) {
+    if let Some(provider) = docs_sync.remote_reader_id() {
+        let _ = blob_service
+            .learn_content_source(&blob.hash, &provider)
+            .await;
+    }
+}
+
 /// 新しく作る session id の末尾に置く、owner の pubkey の先頭の桁数(64 bit)。
 const OWNER_BOUND_ID_SUFFIX_LEN: usize = 16;
 /// 読む側が受け付ける最小の桁数。修正前の id(`short_id_suffix` の 8 桁)を通すための下限。
@@ -139,18 +152,85 @@ fn session_id_from_key<'a>(key: &'a str, prefix: &str) -> Option<&'a str> {
     (!id.is_empty() && !id.contains('/')).then_some(id)
 }
 
-/// 署名と id と kind が正しい envelope の署名者、manifest、署名された生 bytes の hash。
+/// 検証した session の record と manifest の中身(#1395)。remote から読んで受け入れた版を保持し、他の参加者へ提供する。
+#[derive(Clone, Debug)]
+pub(crate) struct SessionRelay {
+    state_key: String,
+    state_author: Option<String>,
+    envelope_key: String,
+    envelope_author: Option<String>,
+    /// 署名された content(manifest blob の bytes と同じ)と mime。
+    manifest: Vec<u8>,
+    mime: String,
+}
+
+impl SessionRelay {
+    /// state の record を書いた docs author(provider の申告)。
+    pub(crate) fn state_author(&self) -> Option<&str> {
+        self.state_author.as_deref()
+    }
+
+    /// remote の reader から読んだときだけ、state と署名つき envelope の record と manifest blob を保持する。
+    pub(crate) async fn keep(
+        &self,
+        docs_sync: &dyn DocsSync,
+        blob_service: &dyn BlobService,
+        replica: &ReplicaId,
+    ) -> Result<()> {
+        if docs_sync.remote_reader_id().is_none() {
+            return Ok(());
+        }
+        for (key, author) in [
+            (&self.state_key, &self.state_author),
+            (&self.envelope_key, &self.envelope_author),
+        ] {
+            docs_sync
+                .persist_verified_record(replica, key, author.as_deref(), &[])
+                .await?;
+        }
+        blob_service
+            .put_remote_blob(self.manifest.clone(), &self.mime)
+            .await?;
+        Ok(())
+    }
+}
+
+/// 署名と id と kind が正しい envelope の署名者、manifest、署名された生 bytes の hash と、その record の名義と content。
+struct SignedManifest<T> {
+    signer: Pubkey,
+    manifest: T,
+    hash: kukuri_core::BlobHash,
+    signed_at: i64,
+    envelope_key: String,
+    envelope_author: Option<String>,
+    content: String,
+}
+
+impl<T> SignedManifest<T> {
+    fn relay(&self, state: &DocRecord, mime: &str) -> SessionRelay {
+        SessionRelay {
+            state_key: state.key.clone(),
+            state_author: state.docs_author.clone(),
+            envelope_key: self.envelope_key.clone(),
+            envelope_author: self.envelope_author.clone(),
+            manifest: self.content.clone().into_bytes(),
+            mime: mime.to_string(),
+        }
+    }
+}
+
 async fn load_signed_manifest<T: DeserializeOwned>(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     envelope_id: &EnvelopeId,
     expected_kind: &str,
     policy: DocFetchPolicy,
-) -> Result<SessionRead<(Pubkey, T, kukuri_core::BlobHash, i64)>> {
+) -> Result<SessionRead<SignedManifest<T>>> {
+    let envelope_key = stable_key("envelopes", envelope_id.as_str());
     let records = docs_sync
         .query_replica_exact_bounded(
             replica,
-            stable_key("envelopes", envelope_id.as_str()).as_str(),
+            envelope_key.as_str(),
             MAX_ENVELOPE_RECORDS_PER_OBJECT,
             policy,
         )
@@ -162,8 +242,15 @@ async fn load_signed_manifest<T: DeserializeOwned>(
             && envelope.kind == expected_kind)
             .then_some(())?;
         let manifest = serde_json::from_str::<T>(envelope.content.as_str()).ok()?;
-        let hash = kukuri_core::blob_hash(envelope.content.as_bytes());
-        Some((envelope.pubkey, manifest, hash, envelope.created_at))
+        Some(SignedManifest {
+            signer: envelope.pubkey,
+            manifest,
+            hash: kukuri_core::blob_hash(envelope.content.as_bytes()),
+            signed_at: envelope.created_at,
+            envelope_key: envelope_key.clone(),
+            envelope_author: record.docs_author.clone(),
+            content: envelope.content,
+        })
     });
     Ok(match verified {
         Some(value) => SessionRead::Ready(value),
@@ -179,6 +266,7 @@ pub(crate) struct VerifiedLiveSession {
     manifest: LiveSessionManifestBlobV1,
     topic_id: String,
     replica: ReplicaId,
+    relay: Option<SessionRelay>,
 }
 
 impl VerifiedLiveSession {
@@ -221,7 +309,12 @@ impl VerifiedLiveSession {
             manifest,
             topic_id: subscription_topic_id.to_string(),
             replica: replica.clone(),
+            relay: None,
         })
+    }
+
+    pub(crate) fn relay(&self) -> Option<&SessionRelay> {
+        self.relay.as_ref()
     }
 
     pub(crate) fn state(&self) -> &LiveSessionStateDocV1 {
@@ -302,26 +395,29 @@ pub(crate) async fn inspect_live_session_record(
         policy,
     )
     .await?;
-    let (signer, manifest, signed_hash, signed_at) = match signed {
+    let signed = match signed {
         SessionRead::Ready(value) => value,
         SessionRead::MissingDocs => return Ok(SessionRead::MissingDocs),
         _ => return rejected(SessionRejection::SignedManifestUnavailable),
     };
     let current_manifest = state.current_manifest.clone();
-    let verified = match VerifiedLiveSession::verify(
+    let relay = signed.relay(record, &current_manifest.mime);
+    let mut verified = match VerifiedLiveSession::verify(
         state,
-        &signer,
-        signed_at,
-        manifest,
+        &signed.signer,
+        signed.signed_at,
+        signed.manifest,
         replica,
         subscription_topic_id,
     ) {
         Ok(verified) => verified,
         Err(reason) => return rejected(reason),
     };
-    if current_manifest.hash != signed_hash {
+    if current_manifest.hash != signed.hash {
         return rejected(SessionRejection::ManifestMismatch);
     }
+    verified.relay = Some(relay);
+    learn_manifest_source(docs_sync, blob_service, &current_manifest).await;
     match read_session_blob::<LiveSessionManifestBlobV1>(blob_service, &current_manifest, policy)
         .await
     {
@@ -376,6 +472,7 @@ pub(crate) struct VerifiedGameRoom {
     manifest: GameRoomManifestBlobV1,
     topic_id: String,
     replica: ReplicaId,
+    relay: Option<SessionRelay>,
 }
 
 impl VerifiedGameRoom {
@@ -448,7 +545,12 @@ impl VerifiedGameRoom {
             manifest,
             topic_id: subscription_topic_id.to_string(),
             replica: replica.clone(),
+            relay: None,
         })
+    }
+
+    pub(crate) fn relay(&self) -> Option<&SessionRelay> {
+        self.relay.as_ref()
     }
 
     pub(crate) fn state(&self) -> &GameRoomStateDocV1 {
@@ -528,20 +630,23 @@ pub(crate) async fn inspect_game_room_record(
     .await?;
     let current_manifest = state.current_manifest.clone();
     match signed {
-        SessionRead::Ready((signer, manifest, signed_hash, signed_at)) => {
-            let verified = match VerifiedGameRoom::verify(
+        SessionRead::Ready(signed) => {
+            let relay = signed.relay(record, &current_manifest.mime);
+            let mut verified = match VerifiedGameRoom::verify(
                 state,
-                Some((&signer, signed_at)),
-                manifest,
+                Some((&signed.signer, signed.signed_at)),
+                signed.manifest,
                 replica,
                 subscription_topic_id,
             ) {
                 Ok(verified) => verified,
                 Err(reason) => return rejected(reason),
             };
-            if current_manifest.hash != signed_hash {
+            if current_manifest.hash != signed.hash {
                 return rejected(SessionRejection::ManifestMismatch);
             }
+            verified.relay = Some(relay);
+            learn_manifest_source(docs_sync, blob_service, &current_manifest).await;
             match read_session_blob::<GameRoomManifestBlobV1>(
                 blob_service,
                 &current_manifest,

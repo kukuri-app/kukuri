@@ -298,7 +298,7 @@ impl AppService {
                     .lock(session_id)
                     .await;
                 match self
-                    .fetch_verified_live_session(topic_id, channel, session_id)
+                    .fetch_verified_live_session(topic_id, channel, session_id, true)
                     .await?
                 {
                     Some(verified) => projection_store
@@ -311,7 +311,7 @@ impl AppService {
             "game-session" => {
                 let _lock = self.services.game_room_projections.lock(session_id).await;
                 match self
-                    .fetch_verified_game_room(topic_id, channel, session_id)
+                    .fetch_verified_game_room(topic_id, channel, session_id, true)
                     .await?
                 {
                     Some(verified) => projection_store
@@ -531,7 +531,7 @@ impl AppService {
         session_id: &str,
     ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
         Ok(self
-            .fetch_verified_live_session(topic_id, PUBLIC_CHANNEL_ID, session_id)
+            .fetch_verified_live_session(topic_id, PUBLIC_CHANNEL_ID, session_id, false)
             .await?
             .map(VerifiedLiveSession::into_parts))
     }
@@ -543,7 +543,7 @@ impl AppService {
         room_id: &str,
     ) -> Result<Option<(ReplicaId, GameRoomStateDocV1, GameRoomManifestBlobV1)>> {
         Ok(self
-            .fetch_verified_game_room(topic_id, PUBLIC_CHANNEL_ID, room_id)
+            .fetch_verified_game_room(topic_id, PUBLIC_CHANNEL_ID, room_id, false)
             .await?
             .map(VerifiedGameRoom::into_parts))
     }

@@ -582,11 +582,15 @@ impl AppService {
     }
 
     /// 手元 → 有界な provider の順に読み、検証した版。projection より古い版は返さない。
+    ///
+    /// `keep` は、呼出元がこの版を projection へ反映する経路(`read_session`)か。そのときだけ、remote から読んだ
+    /// projection より新しい版を保持し、他の参加者へ提供する(#1395、INVAR-6)。操作が読んだ版は保持しない。
     pub(crate) async fn fetch_verified_live_session(
         &self,
         topic_id: &str,
         channel: &str,
         session_id: &str,
+        keep: bool,
     ) -> Result<Option<VerifiedLiveSession>> {
         let projected = self
             .services
@@ -609,6 +613,7 @@ impl AppService {
             .session_target_readers(topic_id, channel, source, session_id, "live")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut settled = None;
         for (replica, docs, policy) in readers {
             let read = tokio::time::timeout_at(
                 deadline,
@@ -634,14 +639,23 @@ impl AppService {
                 return Ok(None);
             };
             if let Ok(Ok(Some(verified))) = result {
-                if self
+                let projected = self
                     .services
                     .projection_store
                     .get_live_session(topic_id, session_id)
                     .await?
-                    .is_some_and(|row| row.revision > verified.revision())
-                {
+                    .map(|row| row.revision);
+                if projected.is_some_and(|revision| revision > verified.revision()) {
                     continue;
+                }
+                let newer = projected.is_none_or(|revision| revision < verified.revision());
+                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
+                    settled.get_or_insert(verified);
+                    continue;
+                }
+                if keep && newer {
+                    self.keep_relayed_session(verified.relay(), docs.as_ref(), &replica)
+                        .await;
                 }
                 return Ok(Some(verified));
             }
@@ -649,14 +663,16 @@ impl AppService {
                 break;
             }
         }
-        Ok(None)
+        Ok(settled)
     }
 
+    /// `keep` は `fetch_verified_live_session` と同じ。
     pub(crate) async fn fetch_verified_game_room(
         &self,
         topic_id: &str,
         channel: &str,
         room_id: &str,
+        keep: bool,
     ) -> Result<Option<VerifiedGameRoom>> {
         let projected = self
             .services
@@ -679,6 +695,7 @@ impl AppService {
             .session_target_readers(topic_id, channel, source, room_id, "game")
             .await?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut settled = None;
         for (replica, docs, policy) in readers {
             let read = tokio::time::timeout_at(
                 deadline,
@@ -704,16 +721,32 @@ impl AppService {
                 return Ok(None);
             };
             if let Ok(Ok(Some(verified))) = result {
+                let projected = self
+                    .services
+                    .projection_store
+                    .get_game_room(topic_id, room_id)
+                    .await?;
                 if let Some(revision) = verified.score_revision()
-                    && self
-                        .services
-                        .projection_store
-                        .get_game_room(topic_id, room_id)
-                        .await?
+                    && projected
+                        .as_ref()
                         .and_then(|row| row.score_revision)
                         .is_some_and(|projected| projected > revision)
                 {
                     continue;
+                }
+                // 新旧の比べ方は、1 つの provider の中で版を選ぶ規則(`load_verified_game_room`)と同じ。
+                let newer = match (&projected, verified.score_revision()) {
+                    (None, _) => true,
+                    (Some(row), Some(revision)) => row.score_revision.is_none_or(|p| p < revision),
+                    (Some(row), None) => row.updated_at < verified.state().updated_at,
+                };
+                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
+                    settled.get_or_insert(verified);
+                    continue;
+                }
+                if keep && newer {
+                    self.keep_relayed_session(verified.relay(), docs.as_ref(), &replica)
+                        .await;
                 }
                 return Ok(Some(verified));
             }
@@ -721,7 +754,49 @@ impl AppService {
                 break;
             }
         }
-        Ok(None)
+        Ok(settled)
+    }
+}
+
+impl AppService {
+    /// 手元の読み取りが返した、他の参加者へ提供するために保持した版か(#1395)。手元の読み取りは保持した版も返す。
+    /// 反映済みと同じ版なら、それで打ち切らずに提供者の新しい版を先に探す(見つからなければその版を使う)。
+    /// 自分の docs author が書いた state(自分の session、訪問者として書いた Dome の state)は手元が正本なので、
+    /// 従来どおり手元で打ち切る。
+    async fn holds_relayed_copy(
+        &self,
+        policy: DocFetchPolicy,
+        relay: Option<&SessionRelay>,
+    ) -> bool {
+        let Some(relay) = relay.filter(|_| policy == DocFetchPolicy::LocalOnly) else {
+            return false;
+        };
+        let own = self
+            .services
+            .docs_sync
+            .local_docs_author()
+            .await
+            .ok()
+            .flatten();
+        relay.state_author() != own.as_deref()
+    }
+
+    /// 反映する session の版を保持する。保持は他の参加者への提供のためで、失敗しても反映は続ける。
+    async fn keep_relayed_session(
+        &self,
+        relay: Option<&SessionRelay>,
+        docs: &dyn DocsSync,
+        replica: &ReplicaId,
+    ) {
+        let Some(relay) = relay else {
+            return;
+        };
+        if let Err(error) = relay
+            .keep(docs, self.services.blob_service.as_ref(), replica)
+            .await
+        {
+            warn!(%error, "failed to keep a relayed session");
+        }
     }
 }
 
