@@ -174,7 +174,7 @@ exit 1
         )
         self.assertIn("version: v0.6.1", source)
         self.assertIn("Expected WinApp CLI 0.6.1", source)
-        self.assertIn("run: cargo xtask windows-store-package", source)
+        self.assertIn("run: cargo xtask-lite windows-store-package", source)
         self.assertNotIn("--sign-local", source)
 
 

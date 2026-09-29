@@ -19,14 +19,40 @@ on:
       - 'xtask/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+  # #1413: main の run が PR の検証の run に cache を残す（PR の run は保存しない）。
+  push:
+    branches: [main]
+    paths:
+      - '.gitattributes'
+      - '.github/workflows/kukuri-windows-store-package.yml'
+      - 'apps/desktop/package.json'
+      - 'apps/desktop/pnpm-lock.yaml'
+      - 'apps/desktop/src/**'
+      - 'apps/desktop/src-tauri/**'
+      - 'crates/**'
+      - 'scripts/release/build-windows-store-msix.ps1'
+      - 'scripts/release/windows-store-assets.ps1'
+      - 'scripts/release/windows-store-version.ps1'
+      - 'scripts/release/test_windows_store_package.py'
+      - 'scripts/release/test-windows-store-updater.ps1'
+      - 'scripts/release/windows-test-runtime.manifest'
+      - 'xtask/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# #1413: 同じ PR に続けて push したときは古い head の run を取り消す。push / workflow_dispatch
+# （release 用の MSIX）は run ごとに別 group にして取り消さない。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   store-package:
-    runs-on: namespace-profile-kukuri-win
+    runs-on: windows-2022
     timeout-minutes: 60
     env:
       WINAPP_CLI_TELEMETRY_OPTOUT: '1'
@@ -45,6 +71,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      # #1413: release 用の MSIX を作る dispatch の run では、PR が書いた cache を使わない。
+      # src-tauri の target は updater の lib test、target/microsoft-store は Store 用の build。
+      - name: Cache Rust
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/desktop/src-tauri -> ../../../target/microsoft-store
       - name: Setup WinApp CLI
         uses: microsoft/setup-WinAppCli@cc8ea9a08b3ee3db43d5aa6bddda4a0e87d800f7
         with:
@@ -64,7 +100,7 @@ jobs:
         run: ./scripts/release/test-windows-store-updater.ps1
       - name: Build unsigned Store package
         shell: pwsh
-        run: cargo xtask windows-store-package
+        run: cargo xtask-lite windows-store-package
       - name: Upload unsigned Store candidate
         uses: actions/upload-artifact@v4
         with:

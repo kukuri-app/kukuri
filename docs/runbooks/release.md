@@ -64,12 +64,11 @@ python scripts/release/test_verify_public_preview.py
 
 ### Runnerとcache（#1180）
 
-- build／verifyと署名するjob（`validate-release-inputs`、`linux-verify`、`windows-package`、Linux GUI package、CLI package）は、Cache Volumeのないrelease用のNamespace profileで動かす。Linuxは`namespace-profile-kukuri-linux-release`（Ubuntu 22.04、8 vCPU／16 GB）で、配布物のglibcの下限をUbuntu 22.04に保つ。Windowsは`namespace-profile-kukuri-win-release`（Windows Server 2022、8 vCPU／16 GB）。
-- `linux-verify`の中身は`kukuri-release-verify.yml`（reusable workflow）に置き、そのfileを変えたPRでも同じprofileで流す。release用profileの環境差（Ubuntu 22.04 imageにPowerShellが無い等）をtag前に確かめるため。
-- Cache Volume付きのprofile（`namespace-profile-kukuri`／`-kukuri-win`）は、cache actionを置かなくてもvolumeとtool／Git cacheが付き、PRのrunと共有される。releaseでは使わない。
-- 配布用の署名鍵はNamespaceのrunnerへ渡る。2026-09-19のユーザー判断で、#1148の「配布鍵を渡すrunはGitHub-hosted」を改めた。PRのrunには引き続き渡さない。Windowsでは鍵を`Build Windows package` stepのenvにだけ渡す。
-- releaseの経路ではbuild cache（sccache、rust-cache、pnpm cache、Cache Volume）を使わない。tagのrunは他のrunのcacheを読めず、復元・保存の時間だけかかっていた。PRのrunが書いた成果物を署名付きの配布物へ持ち込まない目的もある。
-- 公開まわりの末尾のjob（`changelog`、`release-assets`、`publish-draft`、`verify-published`）はGitHub-hostedのまま。
+- すべてのjobはGitHub-hostedの標準runner（4 CPU）で動く（#1413）。build／verifyと署名するjob（`validate-release-inputs`、`linux-verify`、`windows-package`、Linux GUI package、CLI package）は、Linuxが`ubuntu-22.04`で配布物のglibcの下限をUbuntu 22.04に保ち、Windowsは`windows-2022`。
+- `linux-verify`の中身は`kukuri-release-verify.yml`（reusable workflow）に置き、そのfileを変えたPRでも同じrunnerで流す。releaseの環境差をtag前に確かめるため。
+- 配布用の署名鍵はPRのrunには渡さない。Windowsでは鍵を`Build Windows package` stepのenvにだけ渡す。
+- releaseの経路ではbuild cache（sccache、rust-cache、pnpm cache）を使わない。tagのrunは既定branchのcacheを読めるため、cacheのstepを置かないことで、PRのrunが書いた成果物を署名付きの配布物へ持ち込まない。Linux packageのdistributionのrunもcacheのstepを飛ばす。
+- `ubuntu-22.04`のlabelは2027-04-17に廃止される（2027-03以降にbrownoutあり、actions/runner-images#14254）。それまでにUbuntu 22.04基盤を保つ別の形へ移す。
 
 GitHub上の`prerelease` flagは既存互換のため`false`、公開時`make_latest=true`を維持する。製品としてはPreviewだが、`prerelease=true`へ変えると既存clientの`/releases/latest/download/latest-preview.json`に出なくなる。
 

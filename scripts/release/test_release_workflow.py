@@ -8,10 +8,9 @@ import unittest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-# Ubuntu 22.04、Cache Volume なしの Namespace profile（#1180）。
-LINUX_RELEASE_PROFILE = "namespace-profile-kukuri-linux-release"
-# Windows Server 2022、Cache Volume なし（#1180）。
-WINDOWS_RELEASE_PROFILE = "namespace-profile-kukuri-win-release"
+# 配布物を build する runner。Linux は配布物の glibc の下限の Ubuntu 22.04（#1180 / #1413）。
+LINUX_RELEASE_RUNNER = "ubuntu-22.04"
+WINDOWS_RELEASE_RUNNER = "windows-2022"
 
 
 def workflow(name):
@@ -113,39 +112,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("secrets", cli["on"].get("workflow_call", {}))
 
     def test_linux_package_distribution_builds_on_ubuntu_22_04_without_cache(self):
-        # 検証の run は Namespace の Cache Volume。配布鍵を渡す run は Ubuntu 22.04 の release 用
-        # profile（Cache Volume なし）で、PR の run が書いた cache を配布物へ持ち込まない（#1180）。
+        # 検証の run は Ubuntu 24.04 で cache を使う。配布鍵を渡す run は Ubuntu 22.04 で cache を使わず、
+        # PR の run が書いた cache を配布物へ持ち込まない（#1180 / #1413）。
         job = workflow("kukuri-linux-package.yml")["jobs"]["linux-appimage"]
         signing = next(step for step in job["steps"] if step.get("name") == "Build and verify AppImage and Deb")
         distribution = signing["env"]["SIGNING_MODE"].removesuffix(" && 'distribution' || 'test' }}")
-        self.assertEqual(job["runs-on"], distribution + " && '" + LINUX_RELEASE_PROFILE
-                         + "' || 'namespace-profile-kukuri;overrides.cache-tag=kukuri-linux-package' }}")
+        self.assertEqual(job["runs-on"], distribution + " && '" + LINUX_RELEASE_RUNNER + "' || 'ubuntu-24.04' }}")
         not_distribution = "${{ !(" + distribution.removeprefix("${{ ") + ") }}"
-        cached = [step for step in job["steps"] if step.get("uses", "").startswith("namespacelabs/nscloud-cache-action@")]
-        self.assertEqual(len(cached), 1)
+        cached = [step for step in job["steps"] if "cache" in step.get("uses", "")]
+        self.assertEqual([step["uses"] for step in cached], ["Swatinem/rust-cache@v2"])
         self.assertEqual(cached[0]["if"], not_distribution)
-        self.assertIn("apps/desktop/src-tauri/target", cached[0]["with"]["path"])
-        prune = next(step for step in job["steps"] if step.get("name") == "Prune workspace build artifacts")
-        self.assertEqual(prune["if"], not_distribution)
         # `A && '' || B` は空文字が偽のため常に B になる。配布の run で空文字になる形だけを許す。
         node = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@"))
         self.assertEqual(node["with"]["cache"], not_distribution.removesuffix(" }}") + " && 'pnpm' || '' }}")
-        self.assertFalse(any("rust-cache" in step.get("uses", "") for step in job["steps"]))
 
-    def test_release_build_jobs_run_on_namespace_and_publish_jobs_stay_github_hosted(self):
-        # #1180: build / verify は Cache Volume のない release 用 profile。公開まわりの末尾の job は
-        # GitHub-hosted のまま。Cache Volume 付きの profile（kukuri / kukuri-win）は mount だけで
-        # tool cache 等が PR の run と共有されるため使わない。
+    def test_release_build_jobs_run_on_the_release_runners(self):
+        # #1180 / #1413: build / verify と署名する job は、配布物の build 基盤の runner で動く。
         jobs = workflow("kukuri-release.yml")["jobs"]
-        self.assertEqual(jobs["validate-release-inputs"]["runs-on"], LINUX_RELEASE_PROFILE)
+        self.assertEqual(jobs["validate-release-inputs"]["runs-on"], LINUX_RELEASE_RUNNER)
         verify = workflow("kukuri-release-verify.yml")["jobs"]["linux-verify"]
-        self.assertEqual(verify["runs-on"], LINUX_RELEASE_PROFILE)
-        self.assertEqual(jobs["windows-package"]["runs-on"], WINDOWS_RELEASE_PROFILE)
-        for name in ("changelog", "release-assets", "publish-draft", "verify-published"):
-            self.assertFalse(jobs[name]["runs-on"].startswith("namespace-"), name)
+        self.assertEqual(verify["runs-on"], LINUX_RELEASE_RUNNER)
+        self.assertEqual(jobs["windows-package"]["runs-on"], WINDOWS_RELEASE_RUNNER)
         # CLI も配布物なので、Ubuntu 22.04 の glibc で build する（ADR 0049）。
         cli = workflow("kukuri-cli-package.yml")["jobs"]["cli-package"]
-        self.assertEqual(cli["runs-on"], LINUX_RELEASE_PROFILE)
+        self.assertEqual(cli["runs-on"], LINUX_RELEASE_RUNNER)
 
     def test_release_path_uses_no_build_cache(self):
         # release は不定期で他 run の cache を読めず、保存と復元の時間だけかかっていた（#1180）。
@@ -159,7 +149,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertFalse({"RUSTC_WRAPPER", "SCCACHE_GHA_ENABLED"} & set(job.get("env", {})), name)
             for step in job.get("steps", []):
                 uses = step.get("uses", "")
-                for action in ("sccache", "rust-cache", "nscloud-cache-action", "actions/cache"):
+                for action in ("sccache", "rust-cache", "actions/cache"):
                     self.assertNotIn(action, uses, f"{name}: {uses}")
                 if uses.startswith(("actions/setup-node@", "actions/setup-python@")):
                     self.assertNotIn("cache", step.get("with", {}), name)
@@ -177,15 +167,6 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("release_assets.py previous-release", previous["run"])
         self.assertEqual(generate["env"]["PREVIOUS_TAG"], "${{ steps.previous.outputs.previous_tag }}")
         self.assertIn("-PreviousTag $env:PREVIOUS_TAG", generate["run"])
-
-    def test_release_verify_installs_powershell_before_using_it(self):
-        # Namespace の Ubuntu 22.04 image には pwsh が無い（#1180、run 35415877964）。
-        steps = workflow("kukuri-release-verify.yml")["jobs"]["linux-verify"]["steps"]
-        install = next(i for i, step in enumerate(steps) if step.get("name") == "Install PowerShell")
-        users = [i for i, step in enumerate(steps) if step.get("shell") == "pwsh"]
-        self.assertTrue(users)
-        self.assertLess(install, min(users))
-        self.assertIn("apt-get install -y powershell", steps[install]["run"])
 
     def test_windows_signing_key_reaches_only_the_package_build_step(self):
         # #1180: 外部 runner では依存 package の install script や setup 系 action から鍵を見せない。

@@ -2,9 +2,4 @@
 # #1413 で標準 runner へ移していない Namespace の runner profile（#1073）だけを登録する。
 self-hosted-runner:
   labels:
-    - namespace-profile-kukuri-win
     - namespace-profile-kukuri-cn-images
-    # Ubuntu 22.04、Cache Volume なし。配布物を build する release 用（#1180）。
-    - namespace-profile-kukuri-linux-release
-    # Windows Server 2022、Cache Volume なし。署名する Windows package の release 用（#1180）。
-    - namespace-profile-kukuri-win-release

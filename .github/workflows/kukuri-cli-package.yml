@@ -22,11 +22,18 @@ on:
 permissions:
   contents: read
 
+# #1413: 同じ PR に続けて push したときは古い head の run を取り消す。reusable workflow では
+# github.workflow と run_id が呼出元の値になるため、group は file ごとの固定の名前で分ける
+# （release から呼ばれた 3 つが同じ group に入らない）。PR 以外は run ごとに別 group で取り消さない。
+concurrency:
+  group: kukuri-cli-package-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   cli-package:
-    # #1180: 配布物の CLI は Ubuntu 22.04 の glibc で build する（ADR 0049）。Cache Volume のない
-    # release 用 profile を使い、他の run の cache を持ち込まない。
-    runs-on: namespace-profile-kukuri-linux-release
+    # #1180 / #1413: 配布物の CLI は Ubuntu 22.04 の glibc で build する（ADR 0049）。cache を使わず、
+    # 他の run の cache を持ち込まない。
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
