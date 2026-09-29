@@ -309,15 +309,7 @@ test('native media preview uses a file URL and releases its lease on view exit',
   await waitFor(() => expect(releaseBlobMediaFile).toHaveBeenCalledWith(expect.any(String)));
 });
 
-test('scrolling an image card out of view releases its native file URL', async () => {
-  let visibilityChanged: IntersectionObserverCallback | null = null;
-  vi.stubGlobal('IntersectionObserver', class {
-    constructor(private callback: IntersectionObserverCallback) {}
-    observe(target: Element) {
-      if (target.classList.contains('media-frame')) visibilityChanged = this.callback;
-    }
-    disconnect() {}
-  });
+function installNativeMediaRuntime() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
     configurable: true,
     value: {
@@ -330,6 +322,19 @@ test('scrolling an image card out of view releases its native file URL', async (
     configurable: true,
     value: { unregisterListener: () => undefined },
   });
+}
+
+// #1419 AC-3: 画面外へ出た画像は直近の表示として残し、戻したときに取り直さない。
+test('scrolling an image card back into view shows it without fetching it again', async () => {
+  let visibilityChanged: IntersectionObserverCallback | null = null;
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) {
+      if (target.classList.contains('media-frame')) visibilityChanged = this.callback;
+    }
+    disconnect() {}
+  });
+  installNativeMediaRuntime();
   const post = buildImagePost({ content: 'caption', content_status: 'Available' });
   const api = createDesktopMockApi({ seedPosts: { 'kukuri:topic:general': [post] } });
   const releaseBlobMediaFile = vi.fn(async () => undefined);
@@ -337,15 +342,49 @@ test('scrolling an image card out of view releases its native file URL', async (
     path: 'kukuri-display/preview.png', request_id: requestId, bytes: 4096,
   }));
   api.releaseBlobMediaFile = releaseBlobMediaFile;
+  const setVisible = (isIntersecting: boolean) =>
+    act(() => visibilityChanged?.([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver));
 
   const { unmount } = render(<App api={api} />);
   await within(getActiveColumn('Timeline')).findByTestId('media-skeleton-image-post');
   expect(api.getBlobMediaFile).not.toHaveBeenCalled();
-  act(() => visibilityChanged?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+  setVisible(true);
   await within(getActiveColumn('Timeline')).findByTestId('media-preview-image-post');
-  act(() => visibilityChanged?.([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
+  setVisible(false);
+  setVisible(true);
+  expect(within(getActiveColumn('Timeline')).getByTestId('media-preview-image-post')).toHaveAttribute(
+    'src',
+    'asset://localhost/kukuri-display/preview.png'
+  );
+  expect(api.getBlobMediaFile).toHaveBeenCalledOnce();
+  expect(releaseBlobMediaFile).not.toHaveBeenCalled();
+  unmount();
   await waitFor(() => expect(releaseBlobMediaFile).toHaveBeenCalledOnce());
-  expect(within(getActiveColumn('Timeline')).queryByTestId('media-preview-image-post')).not.toBeInTheDocument();
+});
+
+// #1419 AC-3: 手元にある画像の要求を、他の画像の取得待ち(remote は最大 30 秒)の後ろに並べない。
+test('native display requests are not held back by other pending requests', async () => {
+  installNativeMediaRuntime();
+  const posts = Array.from({ length: 9 }, (_, index) =>
+    buildImagePost({
+      object_id: `image-post-${index}`,
+      root_id: `image-post-${index}`,
+      envelope_id: `envelope-image-post-${index}`,
+      content: `caption ${index}`,
+      content_status: 'Available',
+      created_at: 10 - index,
+      attachments: [
+        { hash: index.toString(16).repeat(64), mime: 'image/png', bytes: 2048, role: 'image_original', status: 'Available' },
+      ],
+    })
+  );
+  const api = createDesktopMockApi({ seedPosts: { 'kukuri:topic:general': posts } });
+  const pending = createDeferred<null>();
+  api.getBlobMediaFile = vi.fn(async () => pending.promise);
+  api.releaseBlobMediaFile = vi.fn(async () => undefined);
+
+  const { unmount } = render(<App api={api} />);
+  await waitFor(() => expect(api.getBlobMediaFile).toHaveBeenCalledTimes(posts.length), BOOT_WAIT);
   unmount();
 });
 

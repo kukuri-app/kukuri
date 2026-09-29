@@ -1,11 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::Arc;
 
 use anyhow::{Result, ensure};
 use tokio::sync::watch;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const MAX_PREVIEW_LEASES: usize = 256;
 
@@ -18,7 +16,6 @@ pub(crate) struct MediaPreviewFiles {
     root: Option<PathBuf>,
     leases: Mutex<HashMap<String, PreviewLease>>,
     cancelled: Mutex<VecDeque<String>>,
-    permits: Arc<Semaphore>,
 }
 
 impl MediaPreviewFiles {
@@ -30,7 +27,6 @@ impl MediaPreviewFiles {
             root,
             leases: Mutex::new(HashMap::new()),
             cancelled: Mutex::new(VecDeque::new()),
-            permits: Arc::new(Semaphore::new(8)),
         }
     }
 
@@ -38,14 +34,13 @@ impl MediaPreviewFiles {
         &self,
         request_id: &str,
         mime: &str,
-    ) -> Result<(PathBuf, watch::Receiver<bool>, OwnedSemaphorePermit)> {
+    ) -> Result<(PathBuf, watch::Receiver<bool>)> {
         ensure!(mime.starts_with("image/") || mime.starts_with("video/"), "unsupported media display MIME");
         ensure!(
             valid_request_id(request_id),
             "invalid media display request id"
         );
         let root = self.root.as_ref().ok_or_else(|| anyhow::anyhow!("app cache path unavailable"))?;
-        let permit = self.permits.clone().try_acquire_owned()?;
         std::fs::create_dir_all(root)?;
         let mut leases = self.leases.lock().expect("media previews poisoned");
         let mut cancelled = self.cancelled.lock().expect("media previews poisoned");
@@ -58,7 +53,7 @@ impl MediaPreviewFiles {
         let path = root.join(format!("{}.{}", uuid::Uuid::new_v4(), extension(mime)));
         let (cancel, cancelled) = watch::channel(false);
         leases.insert(request_id.to_string(), PreviewLease { path: path.clone(), cancel });
-        Ok((path, cancelled, permit))
+        Ok((path, cancelled))
     }
 
     pub(crate) fn contains(&self, request_id: &str) -> bool {
@@ -144,8 +139,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("kukuri-display");
         let previews = MediaPreviewFiles::new(Some(root.clone()));
-        let (first, _, _) = previews.begin("first", "video/mp4").unwrap();
-        let (second, _, _) = previews.begin("second", "image/png").unwrap();
+        let (first, _) = previews.begin("first", "video/mp4").unwrap();
+        let (second, _) = previews.begin("second", "image/png").unwrap();
         std::fs::write(&first, b"first").unwrap();
         std::fs::write(&second, b"second").unwrap();
         let outside = dir.path().join("outside");
@@ -156,5 +151,19 @@ mod tests {
         assert!(!second.exists() && outside.exists());
         previews.release("early-cancel");
         assert!(previews.begin("early-cancel", "image/png").is_err());
+    }
+
+    // #1419 AC-3: 他の表示要求が取得待ち(remote は最大 30 秒)で残っていても、次の要求を断らない。
+    // 手元 cache にある画像は、この要求の中ですぐ返る。
+    #[test]
+    fn pending_requests_do_not_refuse_the_next_display_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let previews = MediaPreviewFiles::new(Some(dir.path().join("kukuri-display")));
+        let pending = (0..16)
+            .map(|index| previews.begin(&format!("pending-{index}"), "image/png"))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert!(previews.begin("local", "image/png").is_ok());
+        drop(pending);
     }
 }

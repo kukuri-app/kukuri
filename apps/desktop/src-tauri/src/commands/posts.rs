@@ -224,7 +224,7 @@ pub async fn get_blob_media_file(
     request: GetBlobMediaRequest,
     request_id: String,
 ) -> Result<Option<BlobMediaFile>, CommandError> {
-    let (path, mut cancelled, _permit) = state
+    let (path, mut cancelled) = state
         .media_previews
         .begin(&request_id, &request.mime)
         .map_err(map_error)?;

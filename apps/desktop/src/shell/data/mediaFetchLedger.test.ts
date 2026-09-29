@@ -5,6 +5,8 @@ import {
   MEDIA_MEMORY_BUDGET_BYTES,
   MEDIA_FETCH_MAX_AUTO_ATTEMPTS,
   MEDIA_FETCH_RETRY_DELAYS_MS,
+  MEDIA_HIDDEN_RETAIN_BYTES,
+  MEDIA_HIDDEN_RETAIN_LIMIT,
   MediaFetchLedger,
 } from './mediaFetchLedger';
 
@@ -131,4 +133,34 @@ test('display demand owns reservations, cancellation, and URL release within 128
   ledger.clear();
   expect(released).toBe(1);
   expect(ledger.memoryBytes).toBe(0);
+});
+
+// #1419: 画面外へ出た取得済みの画像は、最後に表示の対象だった順に上限まで残し、取得中は止める。
+test('hidden releases keep the most recently shown images within the count and byte bounds', () => {
+  const ledger = new MediaFetchLedger();
+  const show = (hash: string, memoryBytes = 0) => {
+    expect(ledger.decide(hash, 'Missing', 0).kind).toBe('fetch');
+    ledger.succeed(hash, { url: `blob:${hash}`, memoryBytes, release: () => undefined });
+  };
+  const release = (visible: string[]) => {
+    const released = ledger.hiddenReleases(new Set(visible));
+    released.forEach((hash) => ledger.forget(hash));
+    return released;
+  };
+  const hashes = Array.from({ length: MEDIA_HIDDEN_RETAIN_LIMIT + 2 }, (_, index) => `shown-${index}`);
+  hashes.forEach((hash) => show(hash));
+  expect(release(hashes)).toEqual([]);
+  // 最初の 1 件は最後まで表示の対象だったので、画面外の中で最も新しい扱いになり、次に古い 1 件が解放される。
+  expect(release([hashes[0]])).toEqual([hashes[1]]);
+  expect(ledger.decide('pending', 'Missing', 0).kind).toBe('fetch');
+  expect(release([])).toEqual(['pending', hashes[2]]);
+  expect(ledger.decide(hashes[0], 'Missing', 0)).toEqual({ kind: 'skip' });
+
+  const bounded = new MediaFetchLedger();
+  const large = MEDIA_HIDDEN_RETAIN_BYTES / 2 + 1;
+  expect(bounded.decide('old', 'Missing', 0).kind).toBe('fetch');
+  bounded.succeed('old', { url: 'blob:old', memoryBytes: large, release: () => undefined });
+  expect(bounded.decide('new', 'Missing', 0).kind).toBe('fetch');
+  bounded.succeed('new', { url: 'blob:new', memoryBytes: large, release: () => undefined });
+  expect(bounded.hiddenReleases(new Set())).toEqual(['old']);
 });
