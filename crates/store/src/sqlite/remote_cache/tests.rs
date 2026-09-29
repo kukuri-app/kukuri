@@ -91,6 +91,51 @@ async fn file_backed_remote_blob_survives_restart_and_reclaim_removes_its_file()
     assert_eq!(tokio::fs::read(display).await.unwrap(), bytes);
 }
 
+// #1419 AC-4: 成人向けの印を付けた blob だけを、上限つきの段階で消す。他の blob と保護された blob は残す。
+#[tokio::test]
+async fn forgetting_adult_blobs_removes_only_marked_unprotected_blobs_in_bounded_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("store.db");
+    let store = SqliteStore::connect_file(&database).await.unwrap();
+    let put = |index: usize| {
+        let store = &store;
+        let source = dir.path().join(format!("source-{index}.bin"));
+        async move {
+            let bytes = index.to_le_bytes().repeat(4);
+            tokio::fs::write(&source, &bytes).await.unwrap();
+            let hash = blake3::hash(&bytes).to_hex().to_string();
+            store.put_remote_blob_file(&hash, &source).await.unwrap();
+            hash
+        }
+    };
+    let mut adult = Vec::new();
+    for index in 0..REMOTE_CACHE_RECLAIM_STEP + 1 {
+        let hash = put(index).await;
+        store.mark_remote_blob_adult(&hash).await.unwrap();
+        adult.push(hash);
+    }
+    let unmarked = put(REMOTE_CACHE_RECLAIM_STEP + 1).await;
+    let protected = put(REMOTE_CACHE_RECLAIM_STEP + 2).await;
+    store.mark_remote_blob_adult(&protected).await.unwrap();
+    store
+        .add_protected_ref("bookmark:post", "blob", &protected)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.forget_adult_remote_blobs_step().await.unwrap(),
+        REMOTE_CACHE_RECLAIM_STEP
+    );
+    assert_eq!(store.forget_adult_remote_blobs_step().await.unwrap(), 1);
+    assert_eq!(store.forget_adult_remote_blobs_step().await.unwrap(), 0);
+    for hash in &adult {
+        assert!(!store.has_remote_content("blob", hash).await.unwrap());
+        assert!(!database.with_extension("remote-blobs").join(hash).exists());
+    }
+    assert!(store.has_remote_content("blob", &unmarked).await.unwrap());
+    assert!(store.has_remote_content("blob", &protected).await.unwrap());
+}
+
 #[tokio::test]
 async fn rolled_back_reclaim_keeps_the_file_backed_blob_readable() {
     let dir = tempfile::tempdir().unwrap();

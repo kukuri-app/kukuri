@@ -10,7 +10,7 @@ ADR 0002 (`docs/adr/0002-feature-data-classification-template.md`) に基づく�
 - Rebuildable From: 再構築不可(ユーザーの設定行為そのもの)。喪失時・新規端末では既定 OFF に戻る。
 - Public Replica / Private Replica / Local Only: Local Only
 - Gossip Hint 必要有無: 不要
-- Blob 必要有無: 不要(設定 OFF 中は成人向けラベル付き添付の blob 取得自体を行わない。ON 中の取得は ephemeral fetch で永続化しない)
+- Blob 必要有無: 不要(設定 OFF 中は成人向けラベル付き添付の blob 取得自体を行わない。ON 中に表示した添付は remote cache に成人向けの印を付けて置き、OFF へ戻したら背景で消す。#1419)
 - SQLite projection 必要有無: 必要(成人向けラベルの hash 逆引き `adult_media_hashes`、object projection と object-backed notification projection の `content_labels`。取得・表示ゲートの判定に使う)
 - 必須 contract: Tauri command `get_content_display_settings` / `set_adult_content_display_enabled` の payload 形状。`blob_media_payload` が「成人向けラベル付き hash かつ設定 OFF」で blob 取得を行わないこと。object-backed 通知が署名済み envelope 由来の `content_labels` を保持し、未解決の既存通知を設定 OFF で fail-closed に扱うこと。
 - 必須 scenario: 取得ゲート(既定 OFF → 成人向けラベル付き添付の blob 取得・プリフェッチが発生しない → ON で ephemeral 取得 → OFF へ戻すと以後の取得停止 + 表示破棄)。取得の起点にはタイムライン系に加えて「見つける」の解決済み投稿(#1052)を含み、表示中の結果に限る一時状態として扱う(永続 projection にしない)。設定済み Community Node の content advisory が付いた添付も同じゲートで扱う(#1055。判定は self-label とは別欄で、`content_labels` へ書き戻さない)。表示ゲート(タイムライン・引用/埋め込み・返信プレビュー・Community Index の canonical 解決待ち/失敗/成功と解決済み投稿の添付メディア・in-app/OS 通知で raw text を露出しない)。frontend は `DesktopShellPage` / `CommunityIndexWorkspace` の vitest、backend は `crates/app-api` / Tauri のユニットテストで担保。
@@ -21,7 +21,7 @@ ADR 0002 (`docs/adr/0002-feature-data-classification-template.md`) に基づく�
 
 ## 2026-09-15 改訂（#1051、ADR 0046 §6）: Community Node content advisory の合成
 - ラベル源に、設定済み / 購読 Community Node が発行した `content_advisories`（ADR 0028 §8.6。`label = adult` / `sensitive`、issuer_node_id / category / confidence / signal_id / basis 付き）を第 2 の源として加える。node-local な advisory であり canonical でも署名対象でもない。`content_labels` へ書き戻さない。
-- Blob: 設定 OFF 中は advisory 付き添付の blob 取得も行わない。ON 中は ephemeral fetch で永続化しない（self-label と同一ゲート）。
+- Blob: 設定 OFF 中は advisory 付き添付の blob 取得も行わない。ON 中に表示した添付は、self-label と同じく印を付けて remote cache に置き、OFF で消す（#1419）。
 - SQLite projection: advisory 付き blob hash の集合を取得ゲート判定に使う。永続 projection にするか in-memory にするかは実装（#1051 child C3 / C4）で決定し、本節へ追記する。
 - 実装の決定（#1055 = C3、2026-09-16）: **in-memory とする。永続 projection を作らない**。`AppService` がプロセス内の集合（`advisory_media_hashes`）として保持し、`adult_media_hashes` テーブルへは書かない。advisory は node-local かつ失効しうる判定であり、client 側は transient 分類（ADR 0028 §8.10）に従う。再起動で集合は空になるが、「見つける」は表示前に必ず index 照会を通るため、表示より先に再登録される。登録は insert-only で、表示設定 OFF / ON の切り替えでは集合を変えず、ゲートの可否は表示設定側で決める。
 - 実装の決定（#1055 = C3、2026-09-16）: client は index 応答を受けた時点で issuer を照合する。desktop-runtime が `query_community_node_index` の応答後処理で、index を返した設定済み node の manifest `node_id` と `issuer_node_id` が一致する advisory だけを残し、manifest を取得できない場合は採用しない（fail-closed）。frontend へ渡る `content_advisories` は照合済みのみ。

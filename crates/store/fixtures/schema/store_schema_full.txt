@@ -588,6 +588,11 @@ index remote_adult_media_hash_refs_hash table=remote_adult_media_hash_refs uniqu
   key seqno=0 cid=1 name=Some("blob_hash")
   key seqno=1 cid=0 name=Some("object_id")
   sql=Some("CREATE INDEX remote_adult_media_hash_refs_hash ON remote_adult_media_hash_refs(blob_hash, object_id)")
+index remote_content_cache_adult_blob table=remote_content_cache unique=0 origin=c partial=1
+  key seqno=0 cid=2 name=Some("scope_key")
+  key seqno=1 cid=7 name=Some("is_protected")
+  key seqno=2 cid=1 name=Some("cache_key")
+  sql=Some("CREATE INDEX remote_content_cache_adult_blob ON remote_content_cache(scope_key, is_protected, cache_key) WHERE kind = 'blob'")
 index remote_content_cache_lru table=remote_content_cache unique=0 origin=c partial=0
   key seqno=0 cid=7 name=Some("is_protected")
   key seqno=1 cid=8 name=Some("last_used_at")

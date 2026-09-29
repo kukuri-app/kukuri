@@ -43,6 +43,7 @@ cacheの回収から除外し、旧保存分の整理はR5-Iで行う。
   - Rust: `blob_media_payload` は、対象 hash が成人向けラベル付き投稿の添付として保持中のprojection・表示cache・保護記録から観測済みで、設定 OFF の場合、blob 取得を行わず `None` を返す。元投稿のprojectionが回収され再検証できない要求も、bytes取得前に `None` を返す。
 - 表示設定 ON で成人向けメディアを取得する場合は ephemeral fetch(`fetch_blob_ephemeral`)を使い、ローカル blob store(`blobs.db`)へ永続化しない。
 - 設定を OFF へ戻した場合、以後の取得を停止し、frontend の in-memory object URL(デコード済み表示)を破棄する。ephemeral fetch のためディスク上に成人向けメディアのキャッシュ残余は発生しない(ラベル付与前に通常経路で取得済みの blob は本 ADR の対象外)。
+  （2026-09-30 superseded（#1419 AC-4）: 表示設定 ON の間に表示した成人向けの添付は、通常の添付と同じ remote cache（3 GiB・非利用 7 日）に「成人向け」の印を付けて置く。スクロールで再表示するたびに作者から取り直し、作者に届かないと表示できなかったため。同じ topic の ON の参加者へも提供する。OFF へ戻したら、印の付いた非保護の blob を索引で選び、1 回 128 件以内で消す。削除は OFF の反映と起動時に背景で始め、途中で止まっても次の反映で再開する。上の「ephemeral fetch で永続化しない」「キャッシュ残余は発生しない」は、この範囲で失効した。OFF の間の取得・保存・デコードを行わない点は変えない。）
 - remoteのラベル根拠を回収した場合も、該当hashの表示済みobject URLを破棄する。通知を取りこぼしたときは全remote URLを破棄し、次の表示需要で元投稿を再検証する。
 
 ### 5. 表示
@@ -73,6 +74,7 @@ cacheの回収から除外し、旧保存分の整理はR5-Iで行う。
   （`advisory_labeled_media_respects_adult_display_gate`）。
 - 表示設定 ON では ephemeral fetch で取得し、ローカル blob store へ永続化しない。OFF へ戻した場合は以後の取得を
   停止し表示済み object URL を破棄する（§4 と同一）。
+  （2026-09-30: advisory 付きの添付も §4 の #1419 の改訂と同じく、ON の間の表示は印付きで remote cache に置き、OFF で消す。）
 - advisory 付き hash の集合は表示 state と取得ゲート判定のための一時状態であり、永続 projection にするか
   in-memory にするかは実装 child（C3 / C4）で決めて `docs/legal/adult-content-display-data-classification.md` に記録する。
 
