@@ -37,7 +37,7 @@ on:
         default: true
         type: boolean
 
-# #1117: 同じ PR に続けて push したときは古い head の run を取り消し、Namespace の
+# #1117: 同じ PR に続けて push したときは古い head の run を取り消し、runner の
 # 同時実行枠を空ける。push / workflow_dispatch は run ごとに別 group にして取り消さない。
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
@@ -53,9 +53,7 @@ env:
 jobs:
   build:
     name: Build community node images
-    # #1117: 専用 profile（同時 runner 1）で動かし、Kukuri Fast の同時実行枠を食い尽くさない。
-    # cargo の Cache Volume は使わないので cache-tag は付けない。
-    runs-on: namespace-profile-kukuri-cn-images
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
 
     steps:
@@ -115,6 +113,14 @@ jobs:
             sed "s/^/  ${image}: /" "${RUNNER_TEMP}/cn-image-tags/${image}"
           done
 
+      # #1413: `type=gha` の cache と、attestation つきの OCI の書き出しには docker-container driver が要る。
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # buildx が GitHub Actions cache を直接読み書きするための token を後続の step へ渡す。
+      - name: Expose GitHub Actions runtime
+        uses: crazy-max/ghaction-github-runtime@v3
+
       # #1122: 4 image を 1 回の build session で作る。builder stage を共有するので
       # 共通の依存 crate の compile は 1 回だけになる。ここでは registry へ出さず、
       # OCI layout（と smoke 用の docker archive）へ書き出す。
@@ -127,8 +133,15 @@ jobs:
           set -euo pipefail
           docker buildx version
           mkdir -p "${OUT_DIR}"
+          # #1413: 依存の layer を GitHub Actions cache から読む。書くのは PR 以外の run だけにする
+          # （PR ごとの cache で容量を使い切らない）。5 target は builder stage を共有するので、
+          # 1 target から mode=max で書けば依存の layer がそろう。
+          cache=(--set '*.cache-from=type=gha,scope=cn-images')
+          if [[ "${GITHUB_EVENT_NAME}" != pull_request ]]; then
+            cache+=(--set 'indexer.cache-to=type=gha,mode=max,scope=cn-images')
+          fi
           # context の外へ書き出すため、書き込み先を明示して許可する（buildx の filesystem entitlement）。
-          docker buildx bake --file docker/cn/docker-bake.hcl --set '*.platform=linux/amd64' --progress plain --allow "fs.write=${OUT_DIR}"
+          docker buildx bake --file docker/cn/docker-bake.hcl --set '*.platform=linux/amd64' --progress plain --allow "fs.write=${OUT_DIR}" "${cache[@]}"
 
       # Inspect every production layer and smoke the exact checked images before publish.
       - name: Check image contents, sizes and entrypoints

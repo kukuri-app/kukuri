@@ -96,7 +96,7 @@ Cargoの共有source cacheを変更せず、`target/upstream-contracts`内の一
 ローカルの関連検証で実装を確認し、全体の確認が必要になった段階でPRを作成してCIを使う。同じ未変更範囲の全suiteをローカルとCIで反復しない。CI固有の失敗は原因と必要な再実行範囲を確定してから修正する。
 
 - 関連validationとその結果、CI・別環境で補う必要な範囲を記録する。未実行の検証は成功と区別する。
-- workflow を変えるときは `actionlint <対象 file>` を実行する。runner label を増やす場合は `.github/actionlint.yaml` にも追加する。
+- workflow を変えるときは `actionlint <対象 file>` を実行する。self-hosted の runner label を使う場合は `.github/actionlint.yaml` に登録する（#1413 以降、CI は GitHub-hosted の runner だけで動く）。
 - `docker/cn/**` やimageのbuild手順を変えるときは、ローカルで変更した設定・script・対象imageの関連検証を行い、全imageのbuild/smokeはPR CIで確認する。全体のlocal再現が必要な場合のcommandは `docker buildx bake --file docker/cn/docker-bake.hcl --allow "fs.write=<出力先>"`。
   - `OUT_DIR=<出力先>` を設定し、`--set '*.platform=linux/amd64'` を付けて比較対象を固定する。出力先は build context の外に置く。
   - bake 後に `python scripts/ci/cn_image_check.py <出力先>`（Linux は `python3`）を実行する。Python 3.11 以上、Docker、PATH 上の Bash が必要。Windows は Git Bash の `bin` を PATH の先頭へ加える。
