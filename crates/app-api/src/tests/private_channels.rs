@@ -8,3 +8,4 @@ mod invite;
 mod leave;
 mod legacy_participants;
 mod persist_callback;
+mod scope_change_wait;
