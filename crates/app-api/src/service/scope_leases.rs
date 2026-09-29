@@ -1,3 +1,4 @@
+// #1413 AC-1 の cache 復元の確認用（merge しない、a）。
 //! 購読する scope の lease(#1221 R2-C、ADR 0055 §1)。
 //!
 //! 購読の task・gossip hint の購読・docs replica の購読は、lease を持つ key だけに置く。key は account 全体で
