@@ -34,7 +34,7 @@ on:
       - '.github/workflows/kukuri-release.yml'
   workflow_dispatch:
 
-# #1117: 同じ PR に続けて push したときは古い head の run を取り消し、Namespace の
+# #1117: 同じ PR に続けて push したときは古い head の run を取り消し、runner の
 # 同時実行枠を空ける。push / workflow_dispatch は run ごとに別 group にして取り消さない。
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
@@ -42,14 +42,16 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # #1120: CI の dev / test build は行番号だけの debuginfo にし、link 時間と Cache Volume の容量を減らす。
+  # #1120: CI の dev / test build は行番号だけの debuginfo にし、link 時間と cache の容量を減らす。
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# #1120: cache-tag の `-v2` は、debuginfo を line-tables-only にする前の依存 crate の成果物を含む
-# 旧 volume を捨てるために付けた。依存の build 設定を大きく変えたときは同じ方法で入れ替える。
+# #1413: Rust の依存の build 成果物は rust-cache で GitHub Actions cache に置く。key は job id・
+# toolchain・Cargo.lock / Cargo.toml・CARGO_* の環境で分かれ、同じ job id の Nightly と共有する。
+# workspace crate は保存前に除かれる。保存は PR 以外（main push・dispatch）の run だけにし、
+# PR は main の cache を復元するだけにする（PR ごとの cache で容量を使い切らないため）。
 jobs:
   linux-rust-static:
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-rust-static-v2
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -79,10 +81,14 @@ jobs:
         with:
           node-version: 22
 
+      # tauri-check は root workspace の外にある src-tauri を、その target へ build する。
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            .
+            apps/desktop/src-tauri
 
       - name: Doctor
         run: cargo xtask-lite doctor
@@ -102,12 +108,8 @@ jobs:
       - name: Tauri compile check
         run: cargo xtask-lite tauri-check
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
   linux-rust-tests:
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-rust-tests-v2
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -132,9 +134,9 @@ jobs:
           patchelf
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -150,12 +152,8 @@ jobs:
       - name: Pinned iroh resource contract
         run: python tools/check_iroh_resource_contract.py
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
   linux-desktop-ui:
-    runs-on: namespace-profile-kukuri-4v;overrides.cache-tag=kukuri-desktop
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -193,9 +191,9 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -207,15 +205,11 @@ jobs:
       - name: Desktop Vitest
         run: cargo xtask-lite desktop-test
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
   linux-desktop-browser:
-    # #1121: Playwright は CPU を使い切るため、4 vCPU では worker を増やしても速くならず
-    # metaverse の 3D test が timeout で落ちた。8 vCPU に戻すと既定で 4 worker になり、
-    # 1 run あたりの vCPU × 分はほぼ同じまま所要時間が半分になる。cache-tag は据え置き。
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-desktop
+    # #1121 / #1413: Playwright は CPU を使い切る。4 CPU では既定の 2 worker で動かし、worker を
+    # 増やさない（4 CPU に 4 worker を載せると metaverse の 3D test が timeout で落ちた）。
+    # baseline を作る kukuri-visual-baseline.yml も同じ runner image で動かす。
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -254,9 +248,9 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -283,12 +277,8 @@ jobs:
           path: apps/desktop/test-results/
           if-no-files-found: ignore
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
   linux-cn:
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-cn-v2
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -314,9 +304,9 @@ jobs:
           patchelf
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Community-node checks
         run: cargo xtask-lite cn-check
@@ -324,94 +314,14 @@ jobs:
       - name: Community-node integration tests
         run: cargo xtask-lite cn-test
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
-  linux-cn-e2e:
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-cn-e2e-v2
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust 1.92
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-
-      - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
-
-      - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: rust
-
+      # #1413: 同じ setup と依存の build を別 job で繰り返さないよう、linux-cn の中で続けて流す。
       - name: Community-node full-stack E2E
         run: cargo xtask-lite cn-e2e
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask-lite ci-prune-target
-
-  linux-smoke:
-    runs-on: namespace-profile-kukuri-4v;overrides.cache-tag=kukuri-harness-v2
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust 1.92
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.92.0
-
-      - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
-
-      - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: rust
-
-      - name: E2E smoke
-        run: cargo xtask e2e-smoke
-
-      - name: Upload smoke artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kukuri-fast-smoke-artifacts
-          path: test-results/kukuri/
-          if-no-files-found: warn
-
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask ci-prune-target
-
+  # #1413: Linux の `e2e-smoke`（desktop_smoke_post_persist）は、linux-rust-tests の nextest が
+  # harness の test（crates/harness/src/tests/desktop_smoke.rs）として同じ scenario を流す。
   linux-community-node:
-    runs-on: namespace-profile-kukuri-4v;overrides.cache-tag=kukuri-harness-v2
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -436,9 +346,9 @@ jobs:
           patchelf
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Community-node connectivity scenario
         env:
@@ -462,12 +372,8 @@ jobs:
           path: test-results/kukuri/
           if-no-files-found: warn
 
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask ci-prune-target
-
   windows-fast:
-    runs-on: namespace-profile-kukuri-win;overrides.cache-tag=kukuri-windows-v2
+    runs-on: windows-2022
     timeout-minutes: 75
     steps:
       - name: Checkout
@@ -492,15 +398,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      # #1073: Windows profile も Cache Volume を使う（Windows では junction で mount される）。
-      # `cache: rust` は Cargo registry / git と root の target を扱う。配布物を build する
-      # src-tauri 側の target は別 directory なので path で明示する。
+      # root の target は harness 入りの xtask、src-tauri の target は tauri-check と配布物の build。
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
-          path: |
-            ${{ github.workspace }}/apps/desktop/src-tauri/target
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            .
+            apps/desktop/src-tauri
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -540,7 +445,3 @@ jobs:
           name: kukuri-windows-nsis
           path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
           if-no-files-found: warn
-
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      - name: Prune workspace build artifacts
-        run: cargo xtask ci-prune-target

@@ -3,12 +3,8 @@ use anyhow::{Context, Result, bail};
 #[allow(unused_imports)]
 use crate::*;
 
-pub(crate) const TAURI_CHECK_TARGET_DIR: &str = "target/desktop-tauri-check";
-
 pub(crate) fn tauri_check() -> Result<()> {
-    let target_dir = root_dir().join(TAURI_CHECK_TARGET_DIR);
-    let target_dir_value = target_dir.to_string_lossy().into_owned();
-    run_with_env(
+    run(
         "cargo",
         [
             "check",
@@ -16,7 +12,6 @@ pub(crate) fn tauri_check() -> Result<()> {
             "apps/desktop/src-tauri/Cargo.toml",
         ],
         &root_dir(),
-        &[("CARGO_TARGET_DIR", target_dir_value.as_str())],
     )
 }
 

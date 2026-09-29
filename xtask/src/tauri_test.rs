@@ -70,39 +70,25 @@ fn cargo_test_args(package_build: bool, host_os: &str) -> Result<Vec<String>> {
 
 pub(crate) fn tauri_test(args: impl Iterator<Item = String>) -> Result<()> {
     let options = parse_options(args)?;
-    let cargo_args = cargo_test_args(options.package_build, std::env::consts::OS)?;
-    // package の build は `src-tauri/target` に出る。それ以外は `tauri-check` と同じ場所を使う。
-    let target_dir = root_dir().join(TAURI_CHECK_TARGET_DIR);
-    let target_dir_value = target_dir.to_string_lossy().into_owned();
-    let envs: &[(&str, &str)] = if options.package_build {
-        &[]
-    } else {
-        &[("CARGO_TARGET_DIR", target_dir_value.as_str())]
-    };
+    let mut cargo_args = cargo_test_args(options.package_build, std::env::consts::OS)?;
 
     if cfg!(windows) {
-        return run_with_external_manifest(cargo_args, &options.test_args, envs);
+        return run_with_external_manifest(cargo_args, &options.test_args);
     }
 
-    let mut cargo_args = cargo_args;
     if !options.test_args.is_empty() {
         cargo_args.push("--".to_string());
         cargo_args.extend(options.test_args);
     }
-    run_with_env("cargo", cargo_args, &root_dir(), envs)
+    run("cargo", cargo_args, &root_dir())
 }
 
-fn run_with_external_manifest(
-    mut cargo_args: Vec<String>,
-    test_args: &[String],
-    envs: &[(&str, &str)],
-) -> Result<()> {
+fn run_with_external_manifest(mut cargo_args: Vec<String>, test_args: &[String]) -> Result<()> {
     cargo_args.extend(["--no-run", "--message-format=json"].map(String::from));
     println!("[xtask] cargo {}", cargo_args.join(" "));
     let output = child_command("cargo")
         .args(&cargo_args)
         .current_dir(root_dir())
-        .envs(envs.iter().copied())
         .stderr(std::process::Stdio::inherit())
         .output()
         .context("failed to execute cargo")?;

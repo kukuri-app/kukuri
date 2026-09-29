@@ -3,7 +3,7 @@ name: Kukuri Flake Probe
 # #1121: test の並列度を上げる変更の前後で、同じ suite を繰り返し実行して失敗率を測る。
 # 手動起動のみ。lane ごとに 2 shard を並行させ、各 shard が `repeats` 回だけ suite を回す
 # （既定は 2 shard × 10 回 = 20 回）。失敗しても最後まで回し、失敗回数を要約に出す。
-# Cache Volume は通常の CI と別 tag を使い、本番の cache を上書きしない。
+# rust-cache の key は job id（rust / vitest / playwright）で分かれ、通常の CI の cache を上書きしない。
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ env:
 jobs:
   rust:
     if: ${{ inputs.lane == 'all' || inputs.lane == 'rust' }}
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-probe-rust
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -64,9 +64,7 @@ jobs:
           patchelf
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: rust
+        uses: Swatinem/rust-cache@v2
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -77,13 +75,9 @@ jobs:
           KUKURI_PROBE_LABEL: rust (shard ${{ matrix.shard }})
         run: bash scripts/ci/flake_probe.sh cargo xtask-lite rust-test
 
-      - name: Prune workspace build artifacts
-        if: always()
-        run: cargo xtask-lite ci-prune-target
-
   vitest:
     if: ${{ inputs.lane == 'all' || inputs.lane == 'vitest' }}
-    runs-on: namespace-profile-kukuri-4v;overrides.cache-tag=kukuri-probe-desktop
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -112,9 +106,7 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: rust
+        uses: Swatinem/rust-cache@v2
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -126,14 +118,10 @@ jobs:
           KUKURI_PROBE_LABEL: vitest (shard ${{ matrix.shard }})
         run: bash scripts/ci/flake_probe.sh cargo xtask-lite desktop-test
 
-      - name: Prune workspace build artifacts
-        if: always()
-        run: cargo xtask-lite ci-prune-target
-
   playwright:
     if: ${{ inputs.lane == 'all' || inputs.lane == 'playwright' }}
-    # #1121: CI 本体の linux-desktop-browser と同じ 8 vCPU で測る。
-    runs-on: namespace-profile-kukuri;overrides.cache-tag=kukuri-probe-desktop
+    # #1121: CI 本体の linux-desktop-browser と同じ runner で測る。
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -175,9 +163,7 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: rust
+        uses: Swatinem/rust-cache@v2
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -192,7 +178,3 @@ jobs:
           KUKURI_PROBE_REPEATS: ${{ inputs.repeats }}
           KUKURI_PROBE_LABEL: playwright (shard ${{ matrix.shard }})
         run: bash scripts/ci/flake_probe.sh cargo xtask-lite desktop-browser-test
-
-      - name: Prune workspace build artifacts
-        if: always()
-        run: cargo xtask-lite ci-prune-target

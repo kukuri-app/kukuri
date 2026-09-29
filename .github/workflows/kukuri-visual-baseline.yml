@@ -19,10 +19,9 @@ permissions:
 
 jobs:
   generate-baseline:
-    # #1073 / #1117: 比較側（kukuri-fast.yml の linux-desktop-browser）と同じ runner profile で生成する。
-    # profile を変えるときは両方を同時に変える（フォント / AA 差で baseline が一斉に割れる）。
-    # cargo を使わないので cache-tag は専用にし、他 job の Cache Volume を上書きしない。
-    runs-on: namespace-profile-kukuri-4v;overrides.cache-tag=kukuri-visual-baseline
+    # #1413: 比較側（kukuri-fast.yml の linux-desktop-browser）と同じ runner image で生成する。
+    # image を変えるときは両方を同時に変える（フォント / AA 差で baseline が一斉に割れる）。
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
