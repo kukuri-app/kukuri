@@ -36,7 +36,7 @@ const PEER_FETCH_SUCCESS_TTL: Duration = Duration::from_secs(600);
 const PEER_FETCH_REQUEST_LIMIT: u64 = 16;
 const PEER_FETCH_REQUEST_WINDOW: Duration = Duration::from_secs(1);
 const RECENT_PEER_FETCH_WINDOW: Duration = Duration::from_secs(30);
-/// 本文・添付の取得元として覚える hash の数。超えたら古いものから捨てる(#1395)。
+/// 本文・添付の取得元として覚える(hash, peer)の数。超えたら古いものから捨てる(#1395)。
 const MAX_CONTENT_SOURCES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -334,7 +334,8 @@ pub struct PeerAddrBook {
     health: Arc<BlobPeerHealth>,
     fetch_cursor: Mutex<[Option<String>; 3]>,
     recent_peers: Mutex<VecDeque<RecentPeer>>,
-    /// hash ごとの取得元(その内容を含む見出しを返した peer)。新しいものが先頭(#1395)。
+    /// hash ごとの取得元(その内容を含む見出しを返した peer と、表示時の同じ topic の参加者)。1 つの hash に複数の
+    /// peer を持ち、新しいものが先頭(#1395、#1419)。
     content_sources: Mutex<VecDeque<(String, EndpointId)>>,
     #[cfg(test)]
     sampled_peer_count: std::sync::atomic::AtomicUsize,
@@ -458,29 +459,32 @@ impl PeerAddrBook {
     /// `hash` の内容の取得元を覚える。台帳の外の peer でもよい(`ranked_peers_for` で候補に入る)。
     pub async fn note_content_source(&self, hash: &str, peer: EndpointId) {
         let mut sources = self.content_sources.lock().await;
-        sources.retain(|(known, _)| known != hash);
+        sources.retain(|(known, known_peer)| !(known == hash && *known_peer == peer));
         sources.push_front((hash.to_string(), peer));
         sources.truncate(MAX_CONTENT_SOURCES);
     }
 
-    /// `ranked_peers` に、`hash` の取得元を必ず含めた候補。取得元は巡回する窓の外や台帳の外にいても先頭に置く(#1395)。
+    /// `ranked_peers` に、`hash` の取得元を必ず含めた候補(最大 4)。取得元は巡回する窓の外や台帳の外にいても、新しい順に
+    /// 先頭へ置く(#1395、#1419)。
     pub async fn ranked_peers_for(&self, hash: &str) -> Vec<EndpointAddr> {
         let mut peers = self.ranked_peers().await;
-        let source = self
+        let sources = self
             .content_sources
             .lock()
             .await
             .iter()
-            .find(|(known, _)| known == hash)
-            .map(|(_, peer)| *peer);
-        if let Some(source) = source {
+            .filter(|(known, _)| known == hash)
+            .map(|(_, peer)| *peer)
+            .take(4)
+            .collect::<Vec<_>>();
+        for source in sources.into_iter().rev() {
             let addr = match peers.iter().position(|peer| peer.id == source) {
                 Some(position) => peers.remove(position),
                 None => EndpointAddr::new(source),
             };
             peers.insert(0, addr);
-            peers.truncate(4);
         }
+        peers.truncate(4);
         peers
     }
 

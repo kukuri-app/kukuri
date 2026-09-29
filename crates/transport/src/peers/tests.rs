@@ -464,6 +464,21 @@ async fn content_source_is_a_candidate_for_its_hash_outside_the_window_and_book(
     let selected = book.ranked_peers_for("listed-hash").await;
     assert_eq!(selected[0].id, source);
     assert_eq!(selected.len(), 4);
+    // #1419: 同じ hash に複数の取得元を持ち、新しい順に先頭へ置く。同じ組は 1 つにまとめる。
+    let neighbor = make_peer(9_998);
+    book.note_content_source("listed-hash", neighbor).await;
+    book.note_content_source("listed-hash", neighbor).await;
+    let selected = book.ranked_peers_for("listed-hash").await;
+    assert_eq!(
+        selected
+            .iter()
+            .take(2)
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        vec![neighbor, source]
+    );
+    assert_eq!(selected.len(), 4);
+    assert_eq!(book.content_sources.lock().await.len(), 2);
     assert!(
         book.ranked_peers_for("other-hash")
             .await
