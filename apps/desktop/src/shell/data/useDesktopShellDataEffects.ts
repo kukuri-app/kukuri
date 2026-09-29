@@ -349,9 +349,9 @@ export function useDesktopShellDataEffects({
   );
 
   useEffect(() => {
-    void refreshConnectivityStatus()
-      .then(() => loadCommunityIndexCapability())
-      .catch(() => undefined);
+    // 設定の読込はCN状態を使わないので、状態の反映を待たずに並べて始める(#1416)。
+    void refreshConnectivityStatus();
+    void loadCommunityIndexCapability();
     const intervalMs = isTauriRuntime()
       ? CONNECTIVITY_STATUS_FALLBACK_INTERVAL_MS
       : REFRESH_INTERVAL_MS;

@@ -15,6 +15,20 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
+// #1416: 起動時の設定の読込は、CN 状態の取得・反映の完了を待たずに始める。
+test('startup requests the node config while the node statuses are still pending', async () => {
+  const api = createDesktopMockApi();
+  const statuses = vi.spyOn(api, 'getCommunityNodeStatuses').mockReturnValue(new Promise(() => undefined));
+  const config = vi.spyOn(api, 'getCommunityNodeConfig').mockReturnValue(new Promise(() => undefined));
+
+  render(<App api={api} />);
+
+  await waitFor(() => {
+    expect(statuses).toHaveBeenCalled();
+    expect(config).toHaveBeenCalled();
+  });
+});
+
 test('turning adoption off and saving stores the setting and stops lookups', async () => {
   const user = userEvent.setup();
   const api = createDesktopMockApi({
