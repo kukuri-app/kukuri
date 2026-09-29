@@ -60,10 +60,17 @@ pub(crate) fn desktop_package() -> Result<()> {
         // Tauri bundlerには同梱除外の設定がないため、AppImage出力の直前で除く（#1222）。
         crate::linuxdeploy::install_wrapper()?;
         let host_libraries = crate::linuxdeploy::host_libraries_env_value();
+        // #1431: 同梱する runtime は審査済みの版を渡す。渡さないと appimagetool が上流の
+        // continuous を取得し、上流の差し替えで native compliance の照合が落ちる。
+        let runtime = root_dir().join("packaging/linux/appimage/type2-runtime-x86_64");
+        let runtime = runtime.to_string_lossy();
         run_pnpm_with_env(
             args,
             &desktop_dir(),
-            &[(crate::linuxdeploy::HOST_LIBRARIES_ENV, &host_libraries)],
+            &[
+                (crate::linuxdeploy::HOST_LIBRARIES_ENV, &host_libraries),
+                ("LDAI_RUNTIME_FILE", &runtime),
+            ],
         )?;
         crate::appimage::verify_package()?;
     } else {
