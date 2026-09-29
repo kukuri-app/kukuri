@@ -433,7 +433,18 @@ impl ServiceHandles {
         let mut changed = self.content_scope_changes.subscribe();
         tokio::pin!(future);
         loop {
-            if self.active_content_scope_generation(topic, channel).await != Some(generation) {
+            // #1423: 世代の確認も参加状態の lock を待つ。読み取りが同じ lock の列の先に居ると、確認の間に
+            // 読み取りを poll しなければ、渡された lock を誰も取らずに止まるため、確認の間も poll する。
+            let check = self.active_content_scope_generation(topic, channel);
+            tokio::pin!(check);
+            let current = tokio::select! {
+                biased;
+                current = &mut check => current,
+                result = &mut future => {
+                    return (check.await == Some(generation)).then_some(result);
+                },
+            };
+            if current != Some(generation) {
                 return None;
             }
             tokio::select! {
@@ -441,11 +452,9 @@ impl ServiceHandles {
                 _ = closed.changed() => {},
                 _ = changed.changed() => {},
                 result = &mut future => {
-                    return if self.active_content_scope_generation(topic, channel).await != Some(generation) {
-                        None
-                    } else {
-                        Some(result)
-                    };
+                    return (self.active_content_scope_generation(topic, channel).await
+                        == Some(generation))
+                    .then_some(result);
                 },
             }
         }
