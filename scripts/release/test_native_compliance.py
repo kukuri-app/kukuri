@@ -53,6 +53,14 @@ class NativeTests(unittest.TestCase):
             else: self.assertRegex(row["sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(len(seen), 31)
 
+    def test_bundled_runtime_is_the_reviewed_binary(self):
+        # #1431: build が渡す runtime は、source を固定した審査済みの版そのもの。
+        runtime = native.SPEC_FILE.parents[2] / "packaging/linux/appimage/type2-runtime-x86_64"
+        spec = json.loads(native.SPEC_FILE.read_text())["runtime"]
+        data = runtime.read_bytes()
+        self.assertEqual(len(data), spec["runtime_size"])
+        self.assertEqual(hashlib.sha256(data).hexdigest(), spec["normalized_prefix_sha256"])
+
 
 if __name__ == "__main__":
     unittest.main()

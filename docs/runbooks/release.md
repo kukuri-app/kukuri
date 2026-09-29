@@ -96,7 +96,7 @@ cargo xtask asset-check
 ./scripts/release/generate-third-party-notices.ps1 -Check
 ```
 
-Linux配布署名jobは最終AppImageのruntime inventoryを採取し、`native_compliance.py`で対応するUbuntu sourceをexact versionで取得、DSCのsize／SHA-256と照合する。外側runtimeは`native-runtime-sources.json`の固定source／patch／build recipe／noticeをhash検証し、AppImageのruntime prefixが固定binaryと一致することも確認する。未確定の由来を推定だけで承認しない。
+Linux配布署名jobは最終AppImageのruntime inventoryを採取し、`native_compliance.py`で対応するUbuntu sourceをexact versionで取得、DSCのsize／SHA-256と照合する。外側runtimeは`native-runtime-sources.json`の固定source／patch／build recipe／noticeをhash検証し、AppImageのruntime prefixが固定binaryと一致することも確認する。未確定の由来を推定だけで承認しない。build（`desktop-package`）は、この固定binaryを`packaging/linux/appimage/type2-runtime-x86_64`から`LDAI_RUNTIME_FILE`で渡し、上流の`continuous`を取得しない（#1431）。runtimeを更新するときは、そのfile、`native-runtime-sources.json`、対応するsourceの記録を同じPRで変える。
 
 収集は使い捨てCI runnerで`deb-src`を有効にして行う。開発端末のAPT設定を変える必要はない。取得・照合・notice生成の失敗時は配布packageを完成扱いにしない。`--verify-static-only`／`--verify-ubuntu-only`は部品検査で、公開条件を満たした結果ではない。最終archiveには対応source、patch、build／再リンク手順、共有libraryの差し替え手順を含める。詳細は[同梱物の引渡し条件](./linux-appimage-runtime-evidence.md)。
 
