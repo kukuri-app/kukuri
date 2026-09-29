@@ -51,16 +51,17 @@ cargo xtask desktop-visual-test
 `cargo xtask desktop-ui-check` は `apps/desktop` の `lint`, `typecheck`, `test`, `storybook:build`, `test:e2e:browser`, `test:e2e:visual` をまとめて流す browser-aware frontend gate。`test:e2e:visual`(視覚回帰)は Windows などの非 CI 環境では `ignoreSnapshots` により比較が skip され、到達操作の smoke としてのみ流れる（下記「視覚回帰」を参照）。
 
 - `cargo xtask rust-test` は `cargo-nextest` を優先して non-CN package を流し、`kukuri-harness` は serial 実行、doctest は `cargo test --doc` で補完する。local で `cargo-nextest` が無い場合だけ `cargo test` に fallback する。
-- `cargo xtask tauri-check` は `CARGO_TARGET_DIR=target/desktop-tauri-check` を使って `apps/desktop/src-tauri` を warm cache 向けに compile する。
-- `cargo xtask tauri-test` は `apps/desktop/src-tauri` の lib 単体 test を実行する（#1234）。この crate は root workspace の `exclude` に入っており、`cargo xtask rust-test` / `cargo xtask test` の対象にならない。target は `tauri-check` と同じ `target/desktop-tauri-check`。`-- <filter>` 以降は test binary へ渡す（例: `cargo xtask tauri-test -- tracing::tests`）。
+- `cargo xtask tauri-check` は `apps/desktop/src-tauri` を、その workspace の既定の target（`apps/desktop/src-tauri/target`）へ compile する。root の `target` と分けることで、CI の rust-cache が両方の依存を保存できる（#1413）。
+- `cargo xtask tauri-test` は `apps/desktop/src-tauri` の lib 単体 test を実行する（#1234）。この crate は root workspace の `exclude` に入っており、`cargo xtask rust-test` / `cargo xtask test` の対象にならない。target は `tauri-check` と同じ `apps/desktop/src-tauri/target`。`-- <filter>` 以降は test binary へ渡す（例: `cargo xtask tauri-test -- tracing::tests`）。
   - CI では `Kukuri Linux Package` の `linux-appimage` job だけが `cargo xtask-lite tauri-test --package-build` で実行する。`--package-build` は `desktop-package` と同じ release profile / target で build し、package の成果物を再利用する。`Kukuri Fast` は `tauri-check`（compile のみ）で、lib test を実行しない。
   - Windows の test exe は Common Controls v6 の manifest を持たず、そのままでは `STATUS_ENTRYPOINT_NOT_FOUND`（`TaskDialogIndirect`）で起動に失敗する。`tauri-test` は Windows で test exe の隣に外部 manifest（`<exe>.manifest`）を書いてから実行する。Windows は manifest の解決結果を exe の path と更新時刻で cache するため、exe の更新時刻も更新する（manifest なしで一度起動した exe は、manifest を置くだけでは失敗し続ける）。`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib` を直接実行すると同じ失敗になるので、Windows では `tauri-test` を使う。製品 binary の manifest と `build.rs` は変えていない。
   - `cfg(windows)` の test（`commands/os_notification_windows.rs` など）は CI で実行されない。該当 file を変えたときは Windows ローカルで `cargo xtask tauri-test` を実行する。
 - `cargo xtask desktop-lint` / `desktop-test` / `desktop-storybook` / `desktop-browser-test` / `desktop-visual-test` は targeted rerun 用。workflow とローカル rerun のどちらでも同じ entrypoint を使う。
 - `cargo xtask cn-check` / `cargo xtask cn-test` は `cn-*` server slice の compile/test 用。
 - `cargo xtask-lite <command>` は xtask を `harness` feature なしで build して実行する alias（`.cargo/config.toml`）。`e2e-smoke` / `scenario` 以外の command は `cargo xtask` と同じ動作で、xtask 自体の build が軽い。CI の harness を使わない job はこちらを使う（#1120）。
-- `cargo xtask ci-prune-target` は `target/` と `apps/desktop/src-tauri/target/` から workspace crate の build 成果物だけを削除し、依存 crate の成果物は残す。CI の Cache Volume の容量対策として各 job の最後に実行する（#1120）。ローカルで実行すると workspace crate が次回再 compile される。
-- `Kukuri Flake Probe`（`.github/workflows/kukuri-flake-probe.yml`、手動起動のみ）は、同じ suite を繰り返し実行して失敗率を測る。lane（`rust` / `vitest` / `playwright` / `all`）と 1 shard あたりの回数を指定し、2 shard を並行させる（既定は 2 × 10 = 20 回）。test の並列度を上げる変更の前後で使う（#1121）。実体は `scripts/ci/flake_probe.sh` で、失敗しても最後まで回し、失敗回数と各回の所要秒を step summary に出す。CI 本体とは別の Cache Volume tag（`kukuri-probe-*`）を使う。
+- `cargo xtask ci-prune-target` は `target/` と `apps/desktop/src-tauri/target/` から workspace crate の build 成果物だけを削除し、依存 crate の成果物は残す。Namespace の Cache Volume を使う `Kukuri Linux Package` が job の最後に実行する（#1120）。ローカルで実行すると workspace crate が次回再 compile される。
+- `Kukuri Fast` / `Kukuri Nightly` / `Kukuri Flake Probe` は GitHub-hosted の標準 runner（`ubuntu-24.04` / `windows-2022`）で動き、Rust の依存を `Swatinem/rust-cache` で GitHub Actions cache に置く（#1413）。key は job id・toolchain・`Cargo.lock` / `Cargo.toml`・`CARGO_*` 等の環境で分かれ、同じ job id の Fast と Nightly は同じ cache を使う。workspace crate の成果物は保存前に除かれる。`Kukuri Fast` は PR の run では保存せず、main push などの run が保存した cache を復元するだけにする。cache の総量は repository の設定で 100GB（保持 7 日）。
+- `Kukuri Flake Probe`（`.github/workflows/kukuri-flake-probe.yml`、手動起動のみ）は、同じ suite を繰り返し実行して失敗率を測る。lane（`rust` / `vitest` / `playwright` / `all`）と 1 shard あたりの回数を指定し、2 shard を並行させる（既定は 2 × 10 = 20 回）。test の並列度を上げる変更の前後で使う（#1121）。実体は `scripts/ci/flake_probe.sh` で、失敗しても最後まで回し、失敗回数と各回の所要秒を step summary に出す。rust-cache の key は job id（`rust` / `vitest` / `playwright`）で分かれ、CI 本体の cache を上書きしない。
 - `cargo xtask cn-test` は `docker-compose.community-node.yml` の `cn-postgres` を自動起動し、`KUKURI_CN_RUN_INTEGRATION_TESTS=1` を付けて contract/integration test を流す。
 - `cargo xtask scenario community_node_public_connectivity` も `cn-postgres` を自動起動し、in-process の `cn-user-api` / `cn-iroh-relay` を立てて 2 desktop scenario を流す。
 - `cargo xtask scenario community_node_multi_device_connectivity` は same-author 2 desktop の endpoint-bound bootstrap で `post -> reply/thread -> reconnect` を確認する。
@@ -101,8 +102,8 @@ Cargoの共有source cacheを変更せず、`target/upstream-contracts`内の一
   - `OUT_DIR=<出力先>` を設定し、`--set '*.platform=linux/amd64'` を付けて比較対象を固定する。出力先は build context の外に置く。
   - bake 後に `python scripts/ci/cn_image_check.py <出力先>`（Linux は `python3`）を実行する。Python 3.11 以上、Docker、PATH 上の Bash が必要。Windows は Git Bash の `bin` を PATH の先頭へ加える。
   - 4 本番 OCI の全 layer・圧縮サイズ・entrypoint を検査し、同じ config/layer を Docker に読み込んで起動確認する。PostgreSQL/Valkey は専用 internal network と一時 container を使い、終了時にその資源だけを除去する。既存 indexer の正負 smoke は `scripts/ci/cn_indexer_smoke.sh` を共用する。結果は出力先の `image-check-results.json` に残る。
-- CI 専用の設定（runner profile、Cache Volume、同時実行枠）を変えるときは、変更前後の計測値と根拠を Issue に記録する。
-- ローカルで再現できない項目（実 runner の版差、Cache Volume の当たり外れ、registry への push）は、PR の run か merge 後の run で確認する。その項目を PR 本文の「検証」に明記する。
+- CI 専用の設定（runner、cache、同時実行枠）を変えるときは、変更前後の計測値と根拠を Issue に記録する。
+- ローカルで再現できない項目（実 runner の版差、cache の当たり外れ、registry への push）は、PR の run か merge 後の run で確認する。その項目を PR 本文の「検証」に明記する。
 - 反復して失敗率を測るときは `Kukuri Flake Probe` を使い、通常の CI を繰り返し起動しない。
 
 PR作成後は `gh pr checks <番号>` で実際に発生したcheckの成功を確認してからmergeする。文書のみ等でパス条件に該当せずcheckが0件の場合は、その事実を確認して完了できる。CIを発火させるためだけの変更や手動の全suite実行は不要。
@@ -173,7 +174,7 @@ WP-H8（CSS 改名・整理）の安全網として、主要 14 サーフェス�
   - CLI 例: `gh workflow run kukuri-visual-baseline.yml --ref <branch>` → 完了後 `gh run download <run-id> -n kukuri-desktop-visual-baseline -D <tmp>`。
   - artifact をダウンロードできない環境（egress 制限のある remote session 等）では、dispatch 時に input `commit_to_branch=true` を指定すると workflow が対象ブランチへ baseline を commit / push する。`GITHUB_TOKEN` による push は他の workflow を起動しないため、その後に別の commit を push して CI を流す。
 - optional（ローカルで Linux baseline を再生成したい場合）: Playwright 公式 Docker イメージ `mcr.microsoft.com/playwright:v1.62.1-jammy`（`pnpm-lock.yaml` の `@playwright/test` バージョンと一致させる）内で `pnpm test:e2e:visual --update-snapshots` を実行する。
-- `@playwright/test`（同梱 Chromium）更新や runner イメージ更新でフォント/AA が変わると baseline が一斉に割れることがある。その場合は deps 更新 PR に baseline 再生成を同梱する。baseline 生成（`kukuri-visual-baseline.yml`）と比較（`kukuri-fast.yml` の `linux-desktop-browser`）は同じ Namespace runner profile（`namespace-profile-kukuri-4v`、#1073 / #1117）で動かし、profile を変えるときは両方を同じ PR で変える。
+- `@playwright/test`（同梱 Chromium）更新や runner イメージ更新でフォント/AA が変わると baseline が一斉に割れることがある。その場合は deps 更新 PR に baseline 再生成を同梱する。baseline 生成（`kukuri-visual-baseline.yml`）と比較（`kukuri-fast.yml` の `linux-desktop-browser`）は同じ runner image（`ubuntu-24.04`、#1413）で動かし、image を変えるときは両方を同じ PR で変える。
 - baseline の置き場は `apps/desktop/tests/playwright/__screenshots__/`（`.gitignore` 済みの `test-results/` とは別。混同しない）。
 
 ## community-node compose
