@@ -108,6 +108,12 @@ jobs:
       - name: Tauri compile check
         run: cargo xtask-lite tauri-check
 
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
+
   linux-rust-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -151,6 +157,12 @@ jobs:
 
       - name: Pinned iroh resource contract
         run: python tools/check_iroh_resource_contract.py
+
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
 
   linux-desktop-ui:
     runs-on: ubuntu-24.04
@@ -204,6 +216,12 @@ jobs:
 
       - name: Desktop Vitest
         run: cargo xtask-lite desktop-test
+
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
 
   linux-desktop-browser:
     # #1121 / #1413: Playwright は CPU を使い切る。4 CPU では既定の 2 worker で動かし、worker を
@@ -277,6 +295,12 @@ jobs:
           path: apps/desktop/test-results/
           if-no-files-found: ignore
 
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
+
   linux-cn:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -317,6 +341,13 @@ jobs:
       # #1413: 同じ setup と依存の build を別 job で繰り返さないよう、linux-cn の中で続けて流す。
       - name: Community-node full-stack E2E
         run: cargo xtask-lite cn-e2e
+
+
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
 
   # #1413: Linux の `e2e-smoke`（desktop_smoke_post_persist）は、linux-rust-tests の nextest が
   # harness の test（crates/harness/src/tests/desktop_smoke.rs）として同じ scenario を流す。
@@ -371,6 +402,12 @@ jobs:
           name: kukuri-fast-community-node-artifacts
           path: test-results/kukuri/
           if-no-files-found: warn
+
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
 
   windows-fast:
     runs-on: windows-2022
@@ -445,3 +482,10 @@ jobs:
           name: kukuri-windows-nsis
           path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
           if-no-files-found: warn
+
+      # #1413 計測用（merge 前に削除する）
+      - name: Disk usage
+        if: always()
+        shell: bash
+        run: df -h
+
