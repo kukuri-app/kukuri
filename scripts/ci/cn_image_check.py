@@ -111,8 +111,9 @@ def check_image(root, name, tag):
     # containerd image stores may report the manifest digest as Id. Compare the
     # actual runtime configuration and uncompressed layer identities instead.
     assert loaded["RootFS"]["Layers"] == config["rootfs"]["diff_ids"]
+    # #1413: Docker の版により、未設定の値を省く（OCI）か空で返す（inspect）かが違う。同じ意味として比べる。
     for key in ("Entrypoint", "Cmd", "Env", "User", "WorkingDir", "Labels"):
-        assert loaded["Config"].get(key) == config["config"].get(key), key
+        assert (loaded["Config"].get(key) or None) == (config["config"].get(key) or None), key
     actual_app_hash = run("docker", "run", "--rm", "--entrypoint", "sha256sum", tag,
                           "/usr/local/bin/app").split()[0]
     assert actual_app_hash == app_hash
