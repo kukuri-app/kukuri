@@ -15,6 +15,22 @@ on:
       - 'scripts/release/native*'
       - 'scripts/release/test_native_compliance.py'
       - 'scripts/release/*deb*'
+  # #1413: main の run が PR の検証の run に cache を残す（PR の run は保存しない）。
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kukuri-linux-package.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'xtask/**'
+      - 'crates/**'
+      - 'apps/desktop/**'
+      - 'scripts/release/*appimage_runtime_inventory.py'
+      - 'scripts/release/release_assets.py'
+      - 'scripts/release/native*'
+      - 'scripts/release/test_native_compliance.py'
+      - 'scripts/release/*deb*'
   workflow_call:
     inputs:
       source_ref:
@@ -41,17 +57,23 @@ on:
 permissions:
   contents: read
 
+# #1413: 同じ PR に続けて push したときは古い head の run を取り消す。reusable workflow では
+# github.workflow と run_id が呼出元の値になるため、group は file ごとの固定の名前で分ける
+# （release から呼ばれた 3 つが同じ group に入らない）。PR 以外は run ごとに別 group で取り消さない。
+concurrency:
+  group: kukuri-linux-package-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
-  # #1160: debug build は行番号だけの debuginfo にし、Cache Volume の容量を減らす（Fast と同じ）。
+  # #1160: debug build は行番号だけの debuginfo にし、cache の容量を減らす（Fast と同じ）。
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   linux-appimage:
-    # #1148: 検証の run は Namespace の Cache Volume で build する（Ubuntu 24.04 でも配布物の
-    # 互換性は実機で確認済み）。
-    # #1180: 配布用の署名鍵を渡す run は、Ubuntu 22.04（ADR 0049 の build 基盤）で Cache Volume の
-    # ない release 用 profile で build する。PR の run が書いた cache を配布物へ持ち込まない。
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution' && 'namespace-profile-kukuri-linux-release' || 'namespace-profile-kukuri;overrides.cache-tag=kukuri-linux-package' }}
+    # #1148: 検証の run は Ubuntu 24.04 で cache を使って build する（配布物の互換性は実機で確認済み）。
+    # #1180 / #1413: 配布用の署名鍵を渡す run は、Ubuntu 22.04（ADR 0049 の build 基盤）で cache を
+    # 使わずに build する。PR の run が書いた cache を配布物へ持ち込まない。
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution' && 'ubuntu-22.04' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -90,15 +112,15 @@ jobs:
           # 常に B になる。空文字は必ず `||` の右に置く。
           cache: ${{ !((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution') && 'pnpm' || '' }}
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
-      # `cache: rust` は Cargo registry / git と root の target を扱う。配布物を build する
-      # src-tauri 側の target は別 directory なので path で明示する。
+      # root の target は xtask、src-tauri の target は配布物の build と lib test。
       - name: Cache Rust
         if: ${{ !((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution') }}
-        uses: namespacelabs/nscloud-cache-action@v1
+        uses: Swatinem/rust-cache@v2
         with:
-          cache: rust
-          path: |
-            ${{ github.workspace }}/apps/desktop/src-tauri/target
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            .
+            apps/desktop/src-tauri
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
@@ -138,8 +160,6 @@ jobs:
             config.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY.trim();
             fs.writeFileSync(file, JSON.stringify(config, null, 2));
           '
-          # Cache Volume に前回の bundle が残っていると、後続の glob が複数の版に当たる。
-          rm -rf apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
           cargo xtask-lite desktop-package
           bundle=apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage
           bash xtask/tests/appimage/gio-isolation.sh "$bundle/kukuri.AppDir"
@@ -239,12 +259,3 @@ jobs:
           name: kukuri-linux-x86_64-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution' && 'distribution' || 'test' }}
           if-no-files-found: error
           path: ${{ runner.temp }}/kukuri-linux-package/
-      # #1120: workspace crate の成果物は checkout ごとに再 compile されるため、Cache Volume に残さない。
-      # 配布物の bundle も次の run では使わない。
-      - name: Prune workspace build artifacts
-        if: ${{ !((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution') }}
-        run: |
-          rm -rf apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
-          cargo xtask-lite ci-prune-target
-          # 保存量が profile の上限（20 GB）を超えると cache はリセットされる（#1160）。
-          du -sh ~/.cargo/registry ~/.cargo/git target apps/desktop/src-tauri/target 2>/dev/null || true

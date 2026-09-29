@@ -1,7 +1,7 @@
 name: Kukuri Release Verify
 
-# #1180: release の linux-verify を切り出した reusable workflow。release 用 profile（Ubuntu 22.04、
-# Cache Volume なし）の環境差は tag を切るまで表に出ないため、この file を変えた PR でも同じ検証を流す。
+# #1180: release の linux-verify を切り出した reusable workflow。release の環境（Ubuntu 22.04、
+# cache なし）の差は tag を切るまで表に出ないため、この file を変えた PR でも同じ検証を流す。
 on:
   pull_request:
     paths:
@@ -18,13 +18,20 @@ on:
 permissions:
   contents: read
 
+# #1413: 同じ PR に続けて push したときは古い head の run を取り消す。reusable workflow では
+# github.workflow と run_id が呼出元の値になるため、group は file ごとの固定の名前で分ける
+# （release から呼ばれた 3 つが同じ group に入らない）。PR 以外は run ごとに別 group で取り消さない。
+concurrency:
+  group: kukuri-release-verify-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   PNPM_VERSION: 10.16.1
 
 jobs:
   linux-verify:
-    runs-on: namespace-profile-kukuri-linux-release
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
       - name: Checkout release source
@@ -60,21 +67,6 @@ jobs:
           libayatana-appindicator3-dev
           librsvg2-dev
           patchelf
-
-      # #1180: Namespace の Ubuntu 22.04 image には PowerShell が無い（v0.2.8-preview.1 の run
-      # 35415877964 で `pwsh: command not found`）。Microsoft の apt repository から入れる。
-      - name: Install PowerShell
-        run: |
-          set -euo pipefail
-          if ! command -v pwsh >/dev/null; then
-            . /etc/os-release
-            curl -fsSL -o "$RUNNER_TEMP/packages-microsoft-prod.deb" \
-              "https://packages.microsoft.com/config/ubuntu/${VERSION_ID}/packages-microsoft-prod.deb"
-            sudo dpkg -i "$RUNNER_TEMP/packages-microsoft-prod.deb"
-            sudo apt-get update
-            sudo apt-get install -y powershell
-          fi
-          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -117,7 +109,7 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: apps/desktop
-        # #1180: Ubuntu 22.04 の release 用 profile では Chromium の依存 library を前提にしない。
+        # #1180: Ubuntu 22.04 の runner では Chromium の依存 library を前提にしない。
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Rust tests

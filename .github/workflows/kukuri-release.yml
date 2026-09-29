@@ -20,13 +20,13 @@ env:
   CARGO_TERM_COLOR: always
   PNPM_VERSION: 10.16.1
 
-# #1180: release は不定期で、tag の run は他の run の cache を読めない。cache の復元・保存は
-# 時間だけかかるため使わない。build / verify と署名する job は Cache Volume のない release 用の
-# Namespace profile（Linux は Ubuntu 22.04）で動かし、PR の run が書いた cache を署名付きの
-# 配布物へ持ち込まない。公開まわりの末尾の短い job は GitHub-hosted のまま。
+# #1180 / #1413: release は不定期で、cache の復元・保存は時間だけかかるため使わない。PR の run が
+# 書いた cache を署名付きの配布物へ持ち込まないよう、release の経路に cache の step を置かない。
+# build / verify と署名する job は Linux が Ubuntu 22.04（配布物の glibc の下限）、Windows が
+# Windows Server 2022 の GitHub-hosted runner で動く。
 jobs:
   validate-release-inputs:
-    runs-on: namespace-profile-kukuri-linux-release
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
@@ -113,7 +113,7 @@ jobs:
 
   windows-package:
     needs: validate-release-inputs
-    runs-on: namespace-profile-kukuri-win-release
+    runs-on: windows-2022
     timeout-minutes: 90
     permissions:
       contents: read
@@ -144,7 +144,7 @@ jobs:
         with:
           node-version: 22
 
-      # package の記録 step が python を使う。Namespace の Windows image に入っている前提にしない。
+      # package の記録 step が python を使う。runner の image に入っている版を前提にしない。
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
