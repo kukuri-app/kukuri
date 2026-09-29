@@ -207,12 +207,11 @@ export function useDesktopShellDataEffects({
     gatedMediaHashesRef.current = new Set(gatedAdultMediaHashes);
     revokeMediaHashes(gatedAdultMediaHashes);
   }, [gatedAdultMediaHashes, revokeMediaHashes]);
-  // A reclaimed source is no longer a displayable attachment. Release its URL
-  // when the bounded visible view drops the reference; a later view revalidates it.
+  // 表示の対象から外れた取得は止め、取得済みの URL は直近の上限つきの分だけ残して、戻したときに取り直さない(#1419)。
+  // 残した URL は、同じ attachment が再び表示の対象になったときだけ使う(gate は上の effect が解放する)。
   useEffect(() => {
     const visible = new Set(previewableMediaAttachments.map((attachment) => attachment.hash));
-    const stale = mediaFetchLedgerRef.current.demandHashes().filter((hash) => !visible.has(hash));
-    revokeMediaHashes(stale);
+    revokeMediaHashes(mediaFetchLedgerRef.current.hiddenReleases(visible));
   }, [previewableMediaAttachments, revokeMediaHashes]);
   const handleAdultLabelEvicted = useCallback(
     (hash: string | null) => revokeMediaHashes(hash ? [hash] : mediaFetchLedgerRef.current.demandHashes()),
@@ -618,7 +617,9 @@ export function useDesktopShellDataEffects({
         continue;
       }
       const nativeFile = isTauriRuntime() && Boolean(api.getBlobMediaFile && api.releaseBlobMediaFile);
-      const reservedBytes = nativeFile ? 16 * 1024 * 1024 : Math.max(1, attachment.bytes) * 4;
+      // file 表示は bytes を JS のメモリへ持たない。remote 取得の同時数は backend の受付が上限を持つので、
+      // ここで件数を絞らない(手元にある画像の要求を、remote の取得待ちの後ろに並べない。#1419)。
+      const reservedBytes = nativeFile ? 0 : Math.max(1, attachment.bytes) * 4;
       const decision = ledger.decide(attachment.hash, attachment.status ?? null, now, reservedBytes);
       if (decision.kind === 'wait') {
         earliestRetryAt =

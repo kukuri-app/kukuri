@@ -21,6 +21,9 @@ export const MEDIA_FETCH_MANUAL_ATTEMPTS = 1;
 export const MEDIA_FETCH_LEDGER_LIMIT = DISPLAY_RETRY_LIMIT;
 export const MEDIA_FETCH_FAILURE_KEY_MAX_BYTES = 256;
 export const MEDIA_MEMORY_BUDGET_BYTES = 128 * 1024 * 1024;
+/// #1419: 画面外へ出た取得済みの画像を、戻したときに取り直さないよう残す上限(件数とメモリ)。
+export const MEDIA_HIDDEN_RETAIN_LIMIT = 48;
+export const MEDIA_HIDDEN_RETAIN_BYTES = MEDIA_MEMORY_BUDGET_BYTES / 2;
 export type MediaResource = { url: string; memoryBytes: number; release: () => void };
 const encoder = new TextEncoder();
 
@@ -182,6 +185,32 @@ export class MediaFetchLedger {
     const entry = this.entries.get(hash);
     if (entry?.inFlight) entry.cancel = cancel;
     else cancel();
+  }
+
+  /// 表示の対象から外れた hash のうち、解放するもの(#1419)。取得中は止める。取得済みは、最後に表示の対象だった順に
+  /// `MEDIA_HIDDEN_RETAIN_LIMIT` 件・`MEDIA_HIDDEN_RETAIN_BYTES` まで残し、残りを古い順に解放する。
+  hiddenReleases(visible: ReadonlySet<string>): string[] {
+    for (const hash of visible) {
+      const entry = this.entries.get(hash);
+      if (entry?.resource) {
+        this.entries.delete(hash);
+        this.entries.set(hash, entry);
+      }
+    }
+    const released: string[] = [];
+    let kept = 0;
+    let keptBytes = 0;
+    for (const [hash, entry] of [...this.entries].reverse()) {
+      if (visible.has(hash) || !(entry.inFlight || entry.resource)) continue;
+      const bytes = entry.resource?.memoryBytes ?? 0;
+      if (entry.resource && kept < MEDIA_HIDDEN_RETAIN_LIMIT && keptBytes + bytes <= MEDIA_HIDDEN_RETAIN_BYTES) {
+        kept += 1;
+        keptBytes += bytes;
+        continue;
+      }
+      released.push(hash);
+    }
+    return released;
   }
 
   demandHashes(): string[] {
