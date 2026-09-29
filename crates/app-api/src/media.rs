@@ -143,6 +143,7 @@ impl AppService {
         else {
             return Ok(None);
         };
+        self.learn_topic_media_sources(&blob_hash, &access).await;
         let fetch = self
             .services
             .blob_service
@@ -252,11 +253,39 @@ impl AppService {
                 .is_some_and(|source| source.adult_labeled))
     }
 
+    /// 公開 topic の投稿の添付は、その topic の参加者を取得候補に入れる。画像は表示した参加者だけが持ち、見出しを返した
+    /// peer や記録した取得元が持つとは限らないため(#1419)。private の添付は変えない。
+    async fn learn_topic_media_sources(&self, hash: &kukuri_core::BlobHash, access: &MediaAccess) {
+        let Some(source) = access
+            .source
+            .as_ref()
+            .filter(|source| source.channel == PUBLIC_CHANNEL_ID)
+        else {
+            return;
+        };
+        let Ok(neighbors) = self
+            .services
+            .hint_transport
+            .topic_read_candidates(&TopicId::new(source.topic.as_str()))
+            .await
+        else {
+            return;
+        };
+        for neighbor in neighbors {
+            let _ = self
+                .services
+                .blob_service
+                .learn_content_source(hash, &neighbor.endpoint_id)
+                .await;
+        }
+    }
+
     async fn fetch_display_media_bytes(
         &self,
         hash: &kukuri_core::BlobHash,
         access: &MediaAccess,
     ) -> Result<Option<Vec<u8>>> {
+        self.learn_topic_media_sources(hash, access).await;
         if let Some(source) = &access.source {
             match self
                 .services

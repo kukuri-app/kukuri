@@ -741,3 +741,100 @@ async fn a_visitor_keeps_its_own_dome_chat_history() -> Result<()> {
     visitor.finish().await?;
     author.go_offline().await
 }
+
+/// 同じ topic の neighbor を途中で入れ替えられる hint(neighbor は時間とともに変わる)。
+struct ChangingNeighbors(std::sync::Mutex<Vec<SeedPeer>>);
+
+#[async_trait]
+impl HintTransport for ChangingNeighbors {
+    async fn subscribe_hints(&self, _: &TopicId) -> Result<kukuri_transport::HintStream> {
+        Ok(Box::pin(futures_util::stream::empty()))
+    }
+    async fn unsubscribe_hints(&self, _: &TopicId) -> Result<()> {
+        Ok(())
+    }
+    async fn publish_hint(&self, _: &TopicId, _: GossipHint) -> Result<()> {
+        Ok(())
+    }
+    async fn topic_read_candidates(&self, _: &TopicId) -> Result<Vec<SeedPeer>> {
+        Ok(self.0.lock().expect("neighbors").clone())
+    }
+}
+
+/// #1419 AC-2: C の取得元の記録は、見出しを返した D(画像を表示していないので画像を持たない)だけを指す。
+/// 画像を表示して持つ B が後から同じ topic の neighbor になれば、C は画像を B から取る。
+#[tokio::test]
+async fn reader_fetches_an_image_from_a_topic_neighbor_that_holds_it() -> Result<()> {
+    let topic = TopicId::new("relay-image-neighbor");
+    let author = Author::new().await?;
+    let image = author
+        .blobs
+        .put_blob(b"neighbor image bytes".to_vec(), "image/png")
+        .await?;
+    let post = author
+        .post_with(
+            &topic,
+            PayloadRef::InlineText {
+                text: "image post".into(),
+            },
+            vec![AssetRef {
+                hash: image.hash.clone(),
+                mime: "image/png".into(),
+                bytes: image.bytes,
+                role: AssetRole::ImageOriginal,
+            }],
+            None,
+        )
+        .await?;
+    let author_ticket = ticket(&author.node);
+
+    let holder = Relay::new(Arc::new(NoopHintTransport)).await?;
+    holder.app.import_peer_ticket(&author_ticket).await?;
+    assert!(has(
+        &holder.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    assert!(
+        holder
+            .app
+            .blob_media_payload_for_post(image.hash.as_str(), "image/png", Some(post.id.as_str()))
+            .await?
+            .is_some()
+    );
+    let lister = Relay::new(Arc::new(NoopHintTransport)).await?;
+    lister.app.import_peer_ticket(&author_ticket).await?;
+    assert!(has(
+        &lister.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    author.go_offline().await?;
+
+    let neighbors = Arc::new(ChangingNeighbors(std::sync::Mutex::new(vec![seed(
+        &lister.node,
+    )])));
+    let reader = Relay::new(neighbors.clone()).await?;
+    reader.app.import_peer_ticket(&author_ticket).await?;
+    assert!(has(
+        &reader.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    *neighbors.0.lock().expect("neighbors") = vec![seed(&lister.node), seed(&holder.node)];
+    // 表示中の timeline の読み直しで、新しい neighbor とも接続する(本番では gossip で接続済み)。
+    assert!(has(
+        &reader.app.list_timeline(topic.as_str(), None, 20).await?,
+        &post
+    ));
+    let payload = reader
+        .app
+        .blob_media_payload_for_post(image.hash.as_str(), "image/png", Some(post.id.as_str()))
+        .await?
+        .expect("the image must be fetched from the topic neighbor that holds it");
+    assert_eq!(
+        BASE64_STANDARD.decode(payload.bytes_base64)?,
+        b"neighbor image bytes"
+    );
+
+    reader.finish().await?;
+    lister.finish().await?;
+    holder.finish().await
+}

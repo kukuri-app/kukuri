@@ -139,6 +139,9 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - 公開topicの候補は、同じtopicのgossip neighbor（`topic_read_candidates`）とする。neighborが無いときだけ、全体の台帳から選ぶ。
   - remoteのページ照合は、新しく反映した投稿のうち、provider 1台あたり最大8件の投稿のreactionも読む。
 - 本文・添付・manifestの取得: 見出し・reaction・stateを返したpeerを、そのhashの取得候補に必ず入れる（hashから取得元への表は上限256件）。
+  - #1419: 画像は表示した参加者だけが持ち、見出しを返したpeerが持つとは限らない。公開topicの投稿の添付を表示するときは、
+    そのtopicの参加者（`topic_read_candidates`、最大4）も取得候補に入れる。表は1つのhashに複数のpeerを持ち、新しい順に
+    最大4件を候補の先頭に置く（上限は(hash, peer)の組で256件）。privateの添付は変えない。
 
 #1419（2026-09-30）で、authorのprofileも同じtopicの参加者が中継する。authorがオフラインでも、後から来た参加者の
 timelineに表示名とアバターが出るようにするためである。
