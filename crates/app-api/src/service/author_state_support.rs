@@ -324,7 +324,7 @@ pub(crate) async fn hydrate_author_state(
 }
 
 /// author の profile の key だけを、手元の次に有界な provider から読んで反映する(timeline の表示名。#1221 R6-B)。
-/// `topic` は author の投稿が載る公開 topic で、その参加者を最後の provider に加える(#1419)。
+/// `topic` は author の投稿が載る公開 topic で、その参加者を author 本人の宛先の次・全体の候補窓の前の provider に加える(#1419)。
 pub(crate) async fn hydrate_author_profile(
     services: &ServiceHandles,
     local_author_pubkey: &str,
