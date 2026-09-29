@@ -65,8 +65,19 @@ pub trait BlobService: Send + Sync {
     async fn put_remote_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
         self.put_blob(data, mime).await
     }
-    async fn put_remote_blob_file(&self, _path: &Path, _hash: &BlobHash) -> Result<()> {
+    /// 表示用ファイルを cache へ置く。`adult` は成人向け表示 ON の間に表示した添付で、OFF に戻したときに
+    /// `forget_adult_media_step` が消す(#1419)。
+    async fn put_remote_blob_file(
+        &self,
+        _path: &Path,
+        _hash: &BlobHash,
+        _adult: bool,
+    ) -> Result<()> {
         anyhow::bail!("file-backed remote blob cache is not supported")
+    }
+    /// 成人向けとして置いた cache の blob を上限つきで消し、消した件数を返す(#1419)。0 になるまで呼ぶ。
+    async fn forget_adult_media_step(&self) -> Result<usize> {
+        Ok(0)
     }
     async fn fetch_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>>;
     /// Reserve shared network capacity before the caller spends a retry attempt.
@@ -242,7 +253,7 @@ impl IrohBlobService {
 
 #[async_trait]
 impl BlobService for MemoryBlobService {
-    async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash) -> Result<()> {
+    async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, _adult: bool) -> Result<()> {
         let bytes = tokio::fs::read(path).await?;
         anyhow::ensure!(
             blake3::hash(&bytes).to_hex().as_str() == hash.as_str(),
@@ -331,7 +342,7 @@ impl BlobService for MemoryBlobService {
 
 #[async_trait]
 impl BlobService for IrohBlobService {
-    async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash) -> Result<()> {
+    async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, adult: bool) -> Result<()> {
         if tokio::fs::metadata(path).await?.len() > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64
         {
             return Ok(());
@@ -341,7 +352,17 @@ impl BlobService for IrohBlobService {
             .remote_cache
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("remote cache is unavailable"))?;
-        cache.put_remote_blob_file(hash.as_str(), path).await
+        cache.put_remote_blob_file(hash.as_str(), path).await?;
+        if adult {
+            cache.mark_remote_blob_adult(hash.as_str()).await?;
+        }
+        Ok(())
+    }
+    async fn forget_adult_media_step(&self) -> Result<usize> {
+        match &self.remote_cache {
+            Some(cache) => cache.forget_adult_remote_blobs_step().await,
+            None => Ok(0),
+        }
     }
     async fn fetch_blob_ephemeral_to_file(
         &self,

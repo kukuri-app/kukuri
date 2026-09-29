@@ -221,7 +221,8 @@ reloadable_service! {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
         async fn put_owned_blob(data: Vec<u8>, mime: &str, reference: &str) -> Result<StoredBlob>;
         async fn put_remote_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
-        async fn put_remote_blob_file(path: &std::path::Path, hash: &BlobHash) -> Result<()>;
+        async fn put_remote_blob_file(path: &std::path::Path, hash: &BlobHash, adult: bool) -> Result<()>;
+        async fn forget_adult_media_step() -> Result<usize>;
         async fn fetch_blob(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
         async fn fetch_local_blob(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
         async fn prepare_display_fetch(hash: &BlobHash) -> Result<kukuri_blob_service::DisplayBlobFetch>;

@@ -15,9 +15,32 @@ struct MediaAccess {
 impl AppService {
     /// #858: 成人向け表現の表示設定(既定 OFF)。desktop-runtime が永続値を起動時に
     /// 反映し、設定変更時にも呼ぶ。
+    ///
+    /// #1419: OFF では、ON の間に cache へ置いた成人向けの添付を背景で上限つきに消す。起動時の反映でも走るので、
+    /// 途中で止まった削除はそこで再開する。tokio runtime の中から呼ぶ(desktop の Tauri command は async)。
     pub fn set_adult_content_display_enabled(&self, enabled: bool) {
         self.adult_content_display_enabled
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
+        if enabled {
+            return;
+        }
+        let flag = self.adult_content_display_enabled.clone();
+        let blob_service = self.services.blob_service.clone();
+        let save_access = self.services.content_save_access.clone();
+        tokio::spawn(async move {
+            // 設定を見てから保存を終えるまでの表示取得(保存用の lock の中)を待ち、その保存も消す。
+            drop(save_access.lock().await);
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                match blob_service.forget_adult_media_step().await {
+                    Ok(0) => break,
+                    Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to forget cached adult media");
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     pub fn adult_content_display_enabled(&self) -> bool {
@@ -142,7 +165,9 @@ impl AppService {
         if !self.media_access_still_valid(&blob_hash, &access).await? {
             return Ok(None);
         }
-        if !self.media_is_adult(&blob_hash, &access).await?
+        // #1419: 成人向けの添付は、表示設定 ON の間だけ印を付けて置く(OFF に戻したら消す)。
+        let adult = self.media_is_adult(&blob_hash, &access).await?;
+        if (!adult || self.adult_content_display_enabled())
             && self
                 .services
                 .blob_service
@@ -152,7 +177,7 @@ impl AppService {
         {
             self.services
                 .blob_service
-                .put_remote_blob_file(path, &blob_hash)
+                .put_remote_blob_file(path, &blob_hash, adult)
                 .await?;
         }
         Ok(Some(length))

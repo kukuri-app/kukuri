@@ -31,7 +31,10 @@ async fn remote_display_file_larger_than_cache_budget_remains_displayable() {
         .unwrap();
     let hash = kukuri_core::BlobHash::new("a".repeat(64));
 
-    service.put_remote_blob_file(&display, &hash).await.unwrap();
+    service
+        .put_remote_blob_file(&display, &hash, false)
+        .await
+        .unwrap();
     assert_eq!(
         tokio::fs::metadata(&display).await.unwrap().len(),
         kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64 + 1
