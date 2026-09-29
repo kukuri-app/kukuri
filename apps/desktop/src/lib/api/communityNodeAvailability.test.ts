@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 import type { CommunityNodeNodeStatus } from './types';
-import { communityIndexAvailability, firstUnconsentedCommunityNode } from './communityNodeAvailability';
+import { communityIndexAvailability, firstUnconsentedCommunityNode, reconsentPendingCommunityNodes } from './communityNodeAvailability';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import type { CommunityIndexManifestEntry, CommunityIndexNodePreference } from './communityIndex';
 
@@ -39,6 +39,17 @@ describe('first community node explanation', () => {
     }], true)).toBe(A);
     expect(firstUnconsentedCommunityNode({ nodes: [{ base_url: A }] }, [{ ...pending, auth_state: ready.auth_state }], true)).toBe(A);
   });
+});
+
+// #1420: 再同意の自動提示は同意済みNodeだけ。未同意・撤回済みは初回案内・手動の同意の対象。
+test('policy updates are prompted only for nodes with active consent, in list order', () => {
+  const updated = { ...ready, consent_update_pending: true };
+  expect(reconsentPendingCommunityNodes(config, [{ ...updated, base_url: B }, updated])).toEqual([A, B]);
+  expect(reconsentPendingCommunityNodes(config, [
+    { ...pending, consent_update_pending: true },
+    { ...updated, base_url: B, local_consent: { ...ready.local_consent!, withdrawn_at: 42 } },
+  ])).toEqual([]);
+  expect(reconsentPendingCommunityNodes({ nodes: [{ base_url: A }] }, [ready, { ...updated, base_url: B }])).toEqual([]);
 });
 
 function availability(status: CommunityNodeNodeStatus, preference: CommunityIndexNodePreference = { mode: 'auto' }) {

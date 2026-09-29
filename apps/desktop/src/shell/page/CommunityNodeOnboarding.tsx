@@ -10,7 +10,7 @@ import { CommunityNodeOnboardingDialog } from '@/components/settings/CommunityNo
 import { CommunityIndexAvailabilityNotice } from '@/components/core/CommunityIndexAvailabilityNotice';
 import { useCommunityNodeConsentFlow, type AcceptCommunityNodeConsents } from '@/shell/actions/useCommunityNodeConsentFlow';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
-import { useCommunityNodeOnboarding } from './useCommunityNodeOnboarding';
+import { useCommunityNodeOnboarding, useCommunityNodeReconsent } from './useCommunityNodeOnboarding';
 
 export function CommunityNodeOnboarding({ api, onAccept, onOpenSettings, onRetry }: {
   api: DesktopApi;
@@ -37,6 +37,7 @@ export function CommunityNodeOnboarding({ api, onAccept, onOpenSettings, onRetry
     onDismiss: () => { if (initialReview.current) { initialReview.current = false; if (profileRequired) intro.resume(); } },
   });
   const baseUrl = intro.baseUrl;
+  useCommunityNodeReconsent(consent.open, Boolean(baseUrl || consent.dialog));
   const availability = communityIndexAvailability(state);
   const loaded = state.configLoaded && state.statusesLoaded && !state.statusError;
   const nodeReady = resolvedFor === state.author || (loaded && !firstUnconsentedCommunityNode(state.config, state.statuses, true));
