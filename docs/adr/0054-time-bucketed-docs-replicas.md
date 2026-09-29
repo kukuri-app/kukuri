@@ -140,6 +140,18 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - remoteのページ照合は、新しく反映した投稿のうち、provider 1台あたり最大8件の投稿のreactionも読む。
 - 本文・添付・manifestの取得: 見出し・reaction・stateを返したpeerを、そのhashの取得候補に必ず入れる（hashから取得元への表は上限256件）。
 
+#1419（2026-09-30）で、authorのprofileも同じtopicの参加者が中継する。authorがオフラインでも、後から来た参加者の
+timelineに表示名とアバターが出るようにするためである。
+
+- 保持するもの: providerが`author::<pubkey>`から読んで検証した（署名とauthorの一致）`profile/latest`と、その指す
+  `envelopes/<id>`のrecordを、remote cacheの`record`行として保持する。上の「author bucket等では、保持分が無ければ読取りの
+  失敗にする」とおり、保持分があればExactに答える。
+- 読み取り候補: profileの無いauthorは、その投稿が載る公開topicの参加者（`topic_read_candidates`）を、author本人の
+  検証済み宛先の次、全体の候補窓の前に置いて読む。author本人がオンラインで宛先が分かれば、従来どおり本人の最新版を読む。
+- 版の後退をさせない: `profile/latest`は更新されるので、readerは自分の保持分で打ち切らずproviderに問う。反映済みの
+  profileより古い版は反映せず、次のproviderへ進む。
+- アバター: profileを返したpeerを、アバターのhashの取得候補に入れる。
+
 R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
 `author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
 author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。

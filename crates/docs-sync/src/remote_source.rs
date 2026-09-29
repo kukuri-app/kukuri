@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     DocEventStream, DocFetchPolicy, DocKeyEntry, DocKeyOrder, DocKeyPage, DocKeyQuery, DocOp,
-    DocQuery, DocRecord, DocsSync, IrohDocsSync,
+    DocQuery, DocRecord, DocsSync, IrohDocsSync, stable_key,
 };
 
 const MAX_LEASE_BYTES: usize = 1024 * 1024;
@@ -82,7 +82,11 @@ impl RemoteDocsSource {
         if policy == DocFetchPolicy::LocalOnly {
             return Ok(Vec::new());
         }
-        if let (Some(cache), Some(author)) = (self.inner.remote_cache(), author) {
+        // 保持した record で提供者への問い合わせを省く。ただし更新される現在値(`profile/latest`)は、保持した旧い版で
+        // 提供者の新しい版を隠さないよう、提供者に問う(#1419)。
+        if let (Some(cache), Some(author)) = (self.inner.remote_cache(), author)
+            && key != stable_key("profile", "latest")
+        {
             let cached = cache
                 .get_remote_records(replica.as_str(), key, Some(author), 1)
                 .await?;

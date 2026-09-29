@@ -104,12 +104,14 @@ fn self_edge_keys(local_author_pubkey: &str) -> [String; 2] {
 ///
 /// 手元で読めない key だけを remote から読む。provider はその最初の key で一度だけ選び、同じ操作の後続の key で使い回す。
 /// `LocalOnly` と自分の replica は手元だけを読む。remote の読取りは namespace を import・sync しない。
+/// `relays` は、author の投稿が載る公開 topic の参加者(profile を中継する)。author 本人の検証済み宛先の次に読む(#1419)。
 struct AuthorKeyReader<'a> {
     services: &'a ServiceHandles,
     local_author_pubkey: &'a str,
     author_pubkey: &'a str,
     replica: ReplicaId,
     docs_author: Option<String>,
+    relays: Vec<SeedPeer>,
     remote: Option<Vec<Arc<dyn DocsSync>>>,
     deadline: Option<tokio::time::Instant>,
 }
@@ -120,6 +122,7 @@ impl<'a> AuthorKeyReader<'a> {
         local_author_pubkey: &'a str,
         author_pubkey: &'a str,
         policy: DocFetchPolicy,
+        relays: Vec<SeedPeer>,
     ) -> Result<Self> {
         let remote =
             policy == DocFetchPolicy::LocalThenRemote && author_pubkey != local_author_pubkey;
@@ -129,6 +132,7 @@ impl<'a> AuthorKeyReader<'a> {
             author_pubkey,
             replica: author_replica_id(author_pubkey),
             docs_author: known_docs_author(services, local_author_pubkey, author_pubkey).await?,
+            relays,
             remote: (!remote).then(Vec::new),
             deadline: None,
         })
@@ -189,7 +193,14 @@ impl<'a> AuthorKeyReader<'a> {
         if self.remote.is_none() {
             self.deadline = Some(tokio::time::Instant::now() + REMOTE_READ_DEADLINE);
             self.remote = Some(
-                writer_readers(self.services, &self.replica, &[self.author_pubkey], None).await,
+                writer_readers(
+                    self.services,
+                    &self.replica,
+                    &[self.author_pubkey],
+                    None,
+                    std::mem::take(&mut self.relays),
+                )
+                .await,
             );
         }
         self.deadline.unwrap_or_else(tokio::time::Instant::now)
@@ -226,8 +237,14 @@ async fn hydrate_author_keys(
     author_pubkey: &str,
     policy: DocFetchPolicy,
 ) -> Result<AuthorHydration> {
-    let mut reader =
-        AuthorKeyReader::new(services, local_author_pubkey, author_pubkey, policy).await?;
+    let mut reader = AuthorKeyReader::new(
+        services,
+        local_author_pubkey,
+        author_pubkey,
+        policy,
+        Vec::new(),
+    )
+    .await?;
     // profile を先に読む。docs author がまだ分からない著者でも、profile の envelope の tag から覚えれば、
     // 同じ回の follow・block の窓と読み出しから docs author と key の組で読める。
     let mut outcome = reader
@@ -307,16 +324,27 @@ pub(crate) async fn hydrate_author_state(
 }
 
 /// author の profile の key だけを、手元の次に有界な provider から読んで反映する(timeline の表示名。#1221 R6-B)。
+/// `topic` は author の投稿が載る公開 topic で、その参加者を author 本人の宛先の次・全体の候補窓の前の provider に加える(#1419)。
 pub(crate) async fn hydrate_author_profile(
     services: &ServiceHandles,
     local_author_pubkey: &str,
     author_pubkey: &str,
+    topic: Option<&str>,
 ) -> Result<usize> {
+    let relays = match topic {
+        Some(topic) => services
+            .hint_transport
+            .topic_read_candidates(&TopicId::new(topic))
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
     let mut reader = AuthorKeyReader::new(
         services,
         local_author_pubkey,
         author_pubkey,
         DocFetchPolicy::LocalThenRemote,
+        relays,
     )
     .await?;
     Ok(reader
@@ -422,6 +450,40 @@ async fn verified_author_envelope(
     Ok(edge_matches.then_some(envelope))
 }
 
+/// remote から読んで検証した profile(`profile/latest` と envelope の record)を保持し、同じ topic の参加者へ提供する。
+/// アバターは、この profile を返した peer が持つと分かっているので、取得候補に入れる(#1419)。
+async fn relay_author_profile(
+    services: &ServiceHandles,
+    replica: &ReplicaId,
+    key: &str,
+    record_author: Option<&str>,
+    envelope: &KukuriEnvelope,
+) {
+    let docs_sync = services.docs_sync.as_ref();
+    let Some(provider) = docs_sync.remote_reader_id() else {
+        return;
+    };
+    for key in [
+        key.to_string(),
+        stable_key("envelopes", envelope.id.as_str()),
+    ] {
+        if let Err(error) = docs_sync
+            .persist_verified_record(replica, &key, record_author, &[])
+            .await
+        {
+            warn!(%error, "failed to keep a relayed author profile");
+        }
+    }
+    if let Ok(Some(profile)) = parse_profile(envelope)
+        && let Some(asset) = profile.picture_asset
+    {
+        let _ = services
+            .blob_service
+            .learn_content_source(&asset.hash, &provider)
+            .await;
+    }
+}
+
 /// `profile/latest`・`graph/follows/<target>`・`graph/blocks/<target>` の key を 1 つ読んで反映する。
 /// それ以外の key は何もしない。
 ///
@@ -444,6 +506,7 @@ async fn hydrate_author_record(
     };
     let docs_sync = services.docs_sync.as_ref();
     let mut newest: Option<KukuriEnvelope> = None;
+    let mut record_author = docs_author.map(str::to_string);
     if let Some(docs_author) = docs_author
         && let Some(record) = docs_sync
             .query_replica_by_author(replica, docs_author, key, policy)
@@ -481,12 +544,25 @@ async fn hydrate_author_record(
                 })
             {
                 newest = Some(envelope);
+                record_author = record.docs_author.clone();
             }
         }
     }
     let Some(envelope) = newest else {
         return Ok(AuthorHydration::default());
     };
+    if kind == AuthorKeyKind::Profile {
+        // 中継された旧い版で、反映済みの新しい profile を戻さない。次の provider へ進む(#1419)。
+        if services
+            .store
+            .get_profile(author_pubkey)
+            .await?
+            .is_some_and(|known| known.updated_at > envelope.created_at)
+        {
+            return Ok(AuthorHydration::default());
+        }
+        relay_author_profile(services, replica, key, record_author.as_deref(), &envelope).await;
+    }
     if let Some(declared) = envelope.docs_author()
         && Some(declared) != docs_author
     {
