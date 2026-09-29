@@ -270,8 +270,9 @@ pub fn get_content_display_settings(
     Ok(state.runtime().get_content_display_settings())
 }
 
+/// #1419: 成人向けの cache の削除を tokio runtime で始めるため、async の command にする。
 #[tauri::command]
-pub fn set_adult_content_display_enabled(
+pub async fn set_adult_content_display_enabled(
     state: tauri::State<'_, DesktopState>,
     enabled: bool,
 ) -> Result<kukuri_app_api::ContentDisplaySettings, CommandError> {

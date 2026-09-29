@@ -17,19 +17,19 @@ impl AppService {
     /// 反映し、設定変更時にも呼ぶ。
     ///
     /// #1419: OFF では、ON の間に cache へ置いた成人向けの添付を背景で上限つきに消す。起動時の反映でも走るので、
-    /// 途中で止まった削除はそこで再開する。
+    /// 途中で止まった削除はそこで再開する。tokio runtime の中から呼ぶ(desktop の Tauri command は async)。
     pub fn set_adult_content_display_enabled(&self, enabled: bool) {
         self.adult_content_display_enabled
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
         if enabled {
             return;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
         let flag = self.adult_content_display_enabled.clone();
         let blob_service = self.services.blob_service.clone();
-        runtime.spawn(async move {
+        let save_access = self.services.content_save_access.clone();
+        tokio::spawn(async move {
+            // 設定を見てから保存を終えるまでの表示取得(保存用の lock の中)を待ち、その保存も消す。
+            drop(save_access.lock().await);
             while !flag.load(std::sync::atomic::Ordering::SeqCst) {
                 match blob_service.forget_adult_media_step().await {
                     Ok(0) => break,
