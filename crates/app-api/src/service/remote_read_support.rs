@@ -55,13 +55,15 @@ where
 /// author と private の制御参照を読む provider(#1221 R5-C)。最大 4 件。
 ///
 /// 書き手(author 本人、channel owner、token の発行者)の検証済み宛先(R4-A の account 宛先解決)を先に置き、
-/// 公開は全体の候補窓、private は呼び出し側が渡す当該 channel の gossip scope で残りを埋める。
-/// private の要求は capability の証明つきで、書き手と scope の peer だけへ送る。
+/// 呼び出し側が渡す `scope` の peer(private は当該 channel の gossip scope、公開 author の profile は投稿が載る
+/// topic の参加者。#1419)を続け、公開は全体の候補窓で残りを埋める。
+/// private(`secret` あり)の要求は capability の証明つきで、書き手と scope の peer だけへ送る。
 pub(crate) async fn writer_readers(
     services: &ServiceHandles,
     replica: &ReplicaId,
     writers: &[&str],
-    private: Option<([u8; 32], Vec<SeedPeer>)>,
+    secret: Option<[u8; 32]>,
+    scope: Vec<SeedPeer>,
 ) -> Vec<Arc<dyn DocsSync>> {
     let mut peers: Vec<SeedPeer> = Vec::new();
     for writer in writers {
@@ -79,8 +81,6 @@ pub(crate) async fn writer_readers(
             });
         }
     }
-    let (secret, scope) =
-        private.map_or((None, Vec::new()), |(secret, scope)| (Some(secret), scope));
     for peer in scope {
         if !peers
             .iter()

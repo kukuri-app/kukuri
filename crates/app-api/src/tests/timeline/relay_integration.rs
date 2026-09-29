@@ -161,6 +161,24 @@ impl Author {
         persist_reaction_doc(&self.docs, &replica, &reaction, &envelope).await
     }
 
+    /// 表示名とアバターの profile を自分の author replica へ書く。
+    async fn set_profile(&self, display_name: &str, avatar: AssetRef) -> Result<()> {
+        let envelope = build_profile_envelope_with_docs_author(
+            &self.keys,
+            &KukuriProfileEnvelopeContentV1 {
+                author_pubkey: self.keys.public_key(),
+                name: None,
+                display_name: Some(display_name.into()),
+                about: None,
+                picture_asset: Some(avatar),
+            },
+            Some(&self.docs_author),
+        )?;
+        let profile = parse_profile(&envelope)?.expect("profile");
+        crate::service::profile_docs_support::persist_profile_doc(&self.docs, &profile, &envelope)
+            .await
+    }
+
     async fn go_offline(self) -> Result<()> {
         self.docs.shutdown().await;
         self.node.shutdown().await
@@ -343,6 +361,125 @@ async fn later_reader_fetches_the_body_and_image_from_the_peer_that_listed_them(
 
     reader.finish().await?;
     relay.finish().await
+}
+
+fn display_name_of(page: &TimelineView, post: &KukuriEnvelope) -> Option<String> {
+    page.items
+        .iter()
+        .find(|item| item.object_id == post.id.as_str())
+        .and_then(|item| item.author_display_name.clone())
+}
+
+async fn shows_author(app: &AppService, topic: &TopicId, post: &KukuriEnvelope) -> Result<bool> {
+    let page = app.list_timeline(topic.as_str(), None, 20).await?;
+    Ok(display_name_of(&page, post).as_deref() == Some("Relayed Author"))
+}
+
+/// #1419 AC-1: A の投稿と profile を表示した B は、A がオフラインでも、後から来た C へ A の表示名とアバターを返す。
+/// C の全体の台帳にはオフラインの A だけがあり、B は同じ topic の参加者としてだけ分かる。
+#[tokio::test]
+async fn later_reader_gets_an_offline_authors_profile_and_avatar_from_a_topic_peer() -> Result<()> {
+    let topic = TopicId::new("relay-offline-profile");
+    let author = Author::new().await?;
+    let avatar = author
+        .blobs
+        .put_blob(b"relayed avatar bytes".to_vec(), "image/png")
+        .await?;
+    author
+        .set_profile(
+            "Relayed Author",
+            AssetRef {
+                hash: avatar.hash.clone(),
+                mime: "image/png".into(),
+                bytes: avatar.bytes,
+                role: AssetRole::ProfileAvatar,
+            },
+        )
+        .await?;
+    let post = author.post(&topic, "post with a profile", None).await?;
+    let author_ticket = ticket(&author.node);
+
+    let relay = Relay::new(Arc::new(NoopHintTransport)).await?;
+    relay.app.import_peer_ticket(&author_ticket).await?;
+    assert!(eventually(|| shows_author(&relay.app, &topic, &post)).await?);
+    assert!(
+        relay
+            .app
+            .blob_media_payload(avatar.hash.as_str(), "image/png")
+            .await?
+            .is_some()
+    );
+    author.go_offline().await?;
+
+    let reader = Relay::new(Arc::new(ScopedReadHints(seed(&relay.node)))).await?;
+    reader.app.import_peer_ticket(&author_ticket).await?;
+    assert!(
+        eventually(|| shows_author(&reader.app, &topic, &post)).await?,
+        "the display name must come from the topic peer"
+    );
+    let payload = reader
+        .app
+        .blob_media_payload(avatar.hash.as_str(), "image/png")
+        .await?
+        .expect("the avatar must be fetched from the peer that returned the profile");
+    assert_eq!(
+        BASE64_STANDARD.decode(payload.bytes_base64)?,
+        b"relayed avatar bytes"
+    );
+
+    reader.finish().await?;
+    relay.finish().await
+}
+
+/// #1419 INVAR-4: 読んだ profile を中継のために保持した C も、A がオンラインなら A が更新した profile を反映する
+/// (保持した旧い版で提供者の新しい版を隠さない)。
+#[tokio::test]
+async fn a_relayed_profile_copy_does_not_hide_the_authors_update() -> Result<()> {
+    let author = Author::new().await?;
+    let avatar = author
+        .blobs
+        .put_blob(b"updated avatar bytes".to_vec(), "image/png")
+        .await?;
+    let avatar = AssetRef {
+        hash: avatar.hash.clone(),
+        mime: "image/png".into(),
+        bytes: avatar.bytes,
+        role: AssetRole::ProfileAvatar,
+    };
+    author.set_profile("Before Update", avatar.clone()).await?;
+    let reader = Relay::new(Arc::new(NoopHintTransport)).await?;
+    reader.app.import_peer_ticket(&ticket(&author.node)).await?;
+    let author_pubkey = author.keys.public_key_hex();
+    let local = reader.app.current_author_pubkey();
+    let display_name = || async {
+        crate::service::author_state_support::hydrate_author_profile(
+            &reader.app.services,
+            &local,
+            &author_pubkey,
+            None,
+        )
+        .await?;
+        Ok::<_, anyhow::Error>(
+            reader
+                .app
+                .services
+                .store
+                .get_profile(&author_pubkey)
+                .await?
+                .and_then(|profile| profile.display_name),
+        )
+    };
+    assert_eq!(display_name().await?.as_deref(), Some("Before Update"));
+
+    author.set_profile("After Update", avatar).await?;
+    assert_eq!(
+        display_name().await?.as_deref(),
+        Some("After Update"),
+        "the reader must ask the author instead of stopping at its own relayed copy"
+    );
+
+    reader.finish().await?;
+    author.go_offline().await
 }
 
 fn withdrawn(page: &TimelineView, post: &KukuriEnvelope) -> bool {

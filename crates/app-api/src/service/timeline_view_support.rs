@@ -83,11 +83,21 @@ impl AppService {
     ) -> Result<TimelineView> {
         let local_author = self.current_author_pubkey();
         let mut author_pubkeys = BTreeSet::new();
+        // profile の無い author を、その投稿が載る公開 topic の参加者からも読む(#1419)。
+        let mut author_topics = HashMap::<String, String>::new();
         let mut targets_by_replica = BTreeMap::<String, Vec<EnvelopeId>>::new();
         for row in &page.items {
             author_pubkeys.insert(row.author_pubkey.clone());
+            if row.channel_id == PUBLIC_CHANNEL_ID {
+                author_topics
+                    .entry(row.author_pubkey.clone())
+                    .or_insert_with(|| row.topic_id.clone());
+            }
             if let Some(repost_of) = row.repost_of.as_ref() {
                 author_pubkeys.insert(repost_of.source_author_pubkey.as_str().to_string());
+                author_topics
+                    .entry(repost_of.source_author_pubkey.as_str().to_string())
+                    .or_insert_with(|| repost_of.source_topic_id.as_str().to_string());
             }
             targets_by_replica
                 .entry(row.source_replica_id.as_str().to_string())
@@ -101,7 +111,7 @@ impl AppService {
             author_pubkeys
                 .iter()
                 .filter(|author| !profiles.contains_key(*author) && **author != local_author)
-                .cloned(),
+                .map(|author| (author.clone(), author_topics.remove(author))),
         )
         .await;
         let relationships = self

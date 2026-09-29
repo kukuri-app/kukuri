@@ -635,7 +635,7 @@ pub(crate) async fn profile_timeline_page(
     let readers = if items.len() >= limit {
         Vec::new()
     } else {
-        writer_readers(services, &legacy, &[author_pubkey], None).await
+        writer_readers(services, &legacy, &[author_pubkey], None, Vec::new()).await
     };
     if readers.is_empty() {
         return Ok(profile_page(items, next));
@@ -720,6 +720,7 @@ pub(crate) async fn reread_author_buckets(
         &author_replica_id(author_pubkey),
         &[author_pubkey],
         None,
+        Vec::new(),
     )
     .await;
     let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;

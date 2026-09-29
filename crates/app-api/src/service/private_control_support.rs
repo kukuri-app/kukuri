@@ -47,7 +47,7 @@ impl AppService {
                 .copied()
                 .filter(|writer| *writer != local)
                 .collect::<Vec<_>>();
-            writer_readers(&self.services, replica, &writers, Some((secret, scope))).await
+            writer_readers(&self.services, replica, &writers, Some(secret), scope).await
         };
         read_local_then_remote(self.services.docs_sync.clone(), readers, read).await
     }

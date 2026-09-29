@@ -181,7 +181,7 @@ impl AppService {
             if own {
                 return Vec::new();
             }
-            writer_readers(&self.services, &replica, &[author_pubkey], None).await
+            writer_readers(&self.services, &replica, &[author_pubkey], None, Vec::new()).await
         };
         read_local_then_remote(self.services.docs_sync.clone(), readers, read).await
     }

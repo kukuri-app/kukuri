@@ -2,6 +2,7 @@
 //!
 //! 読取りは購読しない(R2-C)。1 回の表示で渡すのはページの author だけで、queue と台帳は上限つき。
 //! 同じ author は `MISSING_PROFILE_RETRY` の間は読み直さない(profile の無い author を読み続けない)。
+//! 投稿が載る公開 topic が分かれば、その topic の参加者(profile を中継する)も読む(#1419)。
 
 use std::collections::{HashMap, VecDeque};
 
@@ -14,12 +15,14 @@ use super::*;
 pub(crate) const MISSING_PROFILE_QUEUE: usize = 64;
 pub(crate) const MISSING_PROFILE_LEDGER: usize = 1024;
 const MISSING_PROFILE_RETRY: Duration = Duration::from_secs(10 * 60);
+/// 読む author と、その投稿が載る公開 topic。
+type ProfileRequest = (String, Option<String>);
 
 #[derive(Default)]
 pub(crate) struct MissingProfiles {
     next_read_at: HashMap<String, Instant>,
     order: VecDeque<String>,
-    worker: Option<(tokio::sync::mpsc::Sender<String>, AbortOnDropTask)>,
+    worker: Option<(tokio::sync::mpsc::Sender<ProfileRequest>, AbortOnDropTask)>,
 }
 
 impl MissingProfiles {
@@ -50,7 +53,10 @@ impl MissingProfiles {
 
 impl AppService {
     /// 手元に profile の無い author を、背景の読取りへ渡す。queue が満ちていれば残りは渡さない(次の表示で渡る)。
-    pub(crate) async fn request_missing_profiles(&self, authors: impl IntoIterator<Item = String>) {
+    pub(crate) async fn request_missing_profiles(
+        &self,
+        authors: impl IntoIterator<Item = ProfileRequest>,
+    ) {
         let mut missing = self.subscription_registry.missing_profiles.lock().await;
         if missing
             .worker
@@ -58,13 +64,18 @@ impl AppService {
             .is_none_or(|(_, task)| task.is_finished())
         {
             let (sender, mut receiver) =
-                tokio::sync::mpsc::channel::<String>(MISSING_PROFILE_QUEUE);
+                tokio::sync::mpsc::channel::<ProfileRequest>(MISSING_PROFILE_QUEUE);
             let services = self.services.clone();
             let local = self.current_author_pubkey();
             let task = AbortOnDropTask::new(tokio::spawn(async move {
-                while let Some(author) = receiver.recv().await {
-                    if let Err(error) =
-                        hydrate_author_profile(&services, local.as_str(), author.as_str()).await
+                while let Some((author, topic)) = receiver.recv().await {
+                    if let Err(error) = hydrate_author_profile(
+                        &services,
+                        local.as_str(),
+                        author.as_str(),
+                        topic.as_deref(),
+                    )
+                    .await
                     {
                         tracing::debug!(author_pubkey = %author, %error, "missing profile read deferred");
                     }
@@ -73,7 +84,7 @@ impl AppService {
             missing.worker = Some((sender, task));
         }
         let now = Instant::now();
-        for author in authors {
+        for (author, topic) in authors {
             let Some(sender) = missing.worker.as_ref().map(|(sender, _)| sender.clone()) else {
                 return;
             };
@@ -81,7 +92,7 @@ impl AppService {
                 return;
             }
             if missing.admit(&author, now) {
-                let _ = sender.try_send(author);
+                let _ = sender.try_send((author, topic));
             }
         }
     }

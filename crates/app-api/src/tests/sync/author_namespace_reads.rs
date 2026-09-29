@@ -26,7 +26,7 @@ async fn reading_another_author_does_not_create_its_namespace() {
     );
     let other = generate_keys().public_key_hex();
 
-    hydrate_author_profile(&app.services, &local_pubkey, &other)
+    hydrate_author_profile(&app.services, &local_pubkey, &other, None)
         .await
         .expect("background profile read");
     hydrate_author_state(
