@@ -38,6 +38,18 @@ export function firstUnconsentedCommunityNode(
   return config.nodes[0].base_url;
 }
 
+// #1420: 同意済みで、規約の更新により再同意を待つNode。一覧の順。
+export function reconsentPendingCommunityNodes(
+  config: CommunityNodeConfig,
+  statuses: readonly CommunityNodeNodeStatus[]
+): string[] {
+  const byUrl = new Map(statuses.map((status) => [status.base_url, status]));
+  return config.nodes.map((node) => node.base_url).filter((baseUrl) => {
+    const status = byUrl.get(baseUrl);
+    return Boolean(status?.consent_update_pending && hasActiveCommunityNodeConsent(status));
+  });
+}
+
 export function communityIndexAvailability({
   config, statuses, manifests, preference, configLoaded, statusesLoaded, statusError,
 }: {

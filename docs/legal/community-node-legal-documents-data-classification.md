@@ -30,6 +30,12 @@ ADR 0002 (`docs/adr/0002-feature-data-classification-template.md`) に基づく�
 
 説明Dialogを出すことはNode利用への同意ではない。規約確認操作では既存の公開policy取得を使い、明示受諾後だけ既存のlocal記録→認証→server同期へ進む。app-level同意・年齢/restore gate、Node別の現行policy preflight、撤回、他Node/Direct P2Pとの境界は維持する。
 
+### 規約更新時の再同意モーダル（#1420）
+
+- 対象: 有効なlocal consentを持ち、runtimeのpreflightまたは403で`consent_update_pending`になったNode。未同意・撤回済みのNodeは初回説明と手動の同意の対象とし、ここでは開かない。
+- 表示: 検知を受けたstatusの更新で、他のDialogが無いときに既存の同意Dialogを一覧順に1つずつ開く。開いた記録はアカウント×Nodeの起動中のメモリだけ（Transient・Local Only）に置き、pendingが解消するまで再表示しない。
+- 外部I/O: 表示ごとに同意済みNodeの公開policy取得が1回。同意mutationは明示受諾だけで、閉じる・Escapeは同意にならない。
+
 - 対象は当該 community node の運用だけであり、kukuri クライアント本体の規約・プライバシーポリシーとは別である。
 - node が扱わない Direct P2P、他 node、peer が保持する copy は当該 node の削除・送信防止の権限外である。
 - 生成物は法的助言・完全性保証ではない。第三者 operator も同じ schema と検証を使えるが、自らの実態、契約する provider、補足記述を確認する責任を負う。
