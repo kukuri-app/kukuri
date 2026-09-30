@@ -275,3 +275,76 @@ async fn fetched_public_record_remains_local_and_can_be_reprovided() -> Result<(
     provider.shutdown().await?;
     Ok(())
 }
+
+// 相手へ private の保持分を返すのは、要求の replica に手元で登録した capability で証明を確かめられたときだけ。
+// 別の private replica の namespace の証明では、要求の replica の保持分を返さない(#1459)。
+#[tokio::test]
+async fn private_held_records_require_the_requested_replica_capability() -> Result<()> {
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let cache = Arc::new(SqliteStore::connect_memory().await?);
+    provider.install_remote_cache(cache.clone())?;
+    let docs = IrohDocsSync::with_account_store(provider.clone(), cache.clone());
+    let joined = crate::private_channel_epoch_replica_id("joined", "e1");
+    let other = crate::private_channel_epoch_replica_id("other", "e1");
+    let joined_secret = iroh_docs::NamespaceSecret::from_bytes(&[7; 32]);
+    let other_secret = iroh_docs::NamespaceSecret::from_bytes(&[8; 32]);
+    for (replica, secret) in [(&joined, &joined_secret), (&other, &other_secret)] {
+        docs.register_private_replica_secret(replica, &hex::encode(secret.to_bytes()))
+            .await?;
+        docs.apply_doc_op(
+            replica,
+            DocOp::SetBytes {
+                key: "channels/metadata".into(),
+                value: b"{}".to_vec(),
+            },
+        )
+        .await?;
+    }
+    let key = "objects/post/envelope";
+    let value = b"other channel post".to_vec();
+    let record = kukuri_iroh_node::DocReadRecord {
+        key: key.into(),
+        value: value.clone(),
+        content_hash: blake3::hash(&value).to_hex().to_string(),
+        content_len: value.len() as u64,
+        docs_author: "other-author".into(),
+    };
+    cache
+        .put_remote_record(
+            other.as_str(),
+            key,
+            "other-author",
+            &serde_json::to_vec(&record)?,
+        )
+        .await?;
+    let query = kukuri_iroh_node::DocReadQuery::Exact {
+        key: key.into(),
+        limit: 8,
+        author: None,
+    };
+    let response = requester
+        .query_remote_docs(
+            provider.endpoint().addr(),
+            &other,
+            &other_secret,
+            query.clone(),
+        )
+        .await?;
+    let kukuri_iroh_node::DocReadResponse::Records(records) = response else {
+        anyhow::bail!("expected records")
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].value, value);
+    let crossed = requester
+        .query_remote_docs(provider.endpoint().addr(), &other, &joined_secret, query)
+        .await;
+    assert!(
+        crossed.is_err(),
+        "another replica's capability must not read held records: {crossed:?}"
+    );
+    docs.shutdown().await;
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
