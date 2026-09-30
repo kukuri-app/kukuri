@@ -26,7 +26,7 @@ multi-thread runtime に依存する。基準 commit `8bd3badcf`（main、2026-0
 実行時の制約（wasm32-unknown-unknown）:
 
 - `std::time::Instant::now` と `SystemTime::now` は panic する。tokio の time driver と `tokio::spawn` は tokio runtime を要する。`chrono::Utc::now` は既定の `wasmbind` で動く。
-- 共有 crate の非 test の使用数: `Instant::now` 67 行、`SystemTime::now` 12 行、tokio の `timeout` 73 行・`sleep` 18 行、`spawn` 47 行（transport・iroh-node・docs-sync・app-api が大半）。
+- 共有 crate の非 test の使用数（数え方で数行の幅がある）: `Instant::now` 約 70 行、`SystemTime::now` 約 10 行、tokio の `timeout` 約 70 行・`sleep` 約 20 行、`spawn` 約 40 行（transport・iroh-node・docs-sync・app-api が大半）。
 - iroh（`Endpoint`・`Router`・`Gossip`・`MemStore`・`DocsApi`）は wasm32 でも `Send + Sync` で、`connect`・`subscribe`・`bind` の future も `Send`（wasm32 で assert を check して確認）。
 - iroh の wasm は UDP・DNS・portmapper・`bind_addr`・`bound_sockets` を持たない。relay には WebSocket で接続する。Custom Transport（`unstable-custom-transports`）は wasm でも有効。
 - `RTCPeerConnection` は Window だけで使える（WebRTC 1.0 の IDL が `[Exposed=Window]`）。`RTCDataChannel` は Dedicated Worker へ transfer できるが、生成した task の中で `postMessage` したときに限る。
@@ -82,7 +82,8 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | projection（`Store`・`ProjectionStore`） | `SqliteStore` | W4 AC-1 が IndexedDB の実装か、メモリと再構築かを決める（D-4・D-5）。W1 の転送試験は既存の `MemoryStore` を使い、これを永続化の証拠にしない | W4 |
 | docs の replica | redb（persistent） | W3 の fork の保存 API | W3 |
 | blobs | `FsStore` | W2 の fork の backend | W2 |
-| remote read の cache・peer candidate（`SqliteStore` の直接保持。transport・iroh-node・docs-sync・blob-service） | `SqliteStore` | 持たない（型ごと `cfg` で外す）。有界な remote reader は cache 無しで動く | W1 AC-2 |
+| remote read の cache（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 持たない（型ごと `cfg` で外す）。有界な remote reader は cache 無しで動く | W1 AC-2 |
+| peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない。store を持たない経路の learned・imported の台帳と `MemoryLookup` は、今は上限も削除も無い（`PeerAddrBook::insert_learned_peer_addr`・`insert_imported_peer_addr`、`remember_hot_endpoint` が store の無いときに上限を飛ばす）。Web の本番経路にする前に、native と同じ件数の上限と古いものからの削除を持たせる | W1 AC-2 |
 | file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-4・W8 |
 
 保存・復元・cache の回収は、key・cursor・chunk で有界な単位にする（#1213「作業・設計原則を適用する境界」）。
@@ -92,11 +93,12 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - `web-runtime` が JS へ公開するのは、`start(config)`・`shutdown()`・`invoke(command, args)`・`listen(callback)` の 4 つに限る。
   `invoke` は Tauri と同じ command 名・DTO（ts-rs の生成型）を受け取り、同じ形の結果・エラーを返す。`listen` は `RuntimeEvent`（`ClientHost::subscribe_events`）を渡す。
   既存の page・cursor つきの DTO をそのまま使い、上限の無い配列や namespace 全体の export を ABI にしない。
-- frontend は `invokeDesktop`（`apps/desktop/src/lib/api/invoke/desktop.ts`）を唯一の差し替え点にし、Web の build ではそれを `web-runtime` の `invoke` へ向ける。
+- frontend の差し替え点は 2 つに限る。command は `invokeDesktop`（`apps/desktop/src/lib/api/invoke/desktop.ts`）、`RuntimeEvent` は `useRuntimeEventBridge`（`apps/desktop/src/shell/data/useRuntimeEventBridge.ts`。今は Tauri の `listen` を直接使う）。
+  Web の build では、それぞれを `web-runtime` の `invoke` と `listen` へ向ける。
   Tauri の API を直接使う file（updater・OS 通知・dialog・deep-link・`convertFileSrc`）は Web では使わない。対応状況は W8 の capability matrix で示す。
 - `DesktopRuntime` の method へ委譲するだけの command は、`desktop-runtime` に置く 1 つの dispatch 表（command 名 → request の型 → method）から呼ぶ。
   `web-runtime` の `invoke` と Tauri の invoke handler の両方がこの表を使い、Tauri 側の約 140 の委譲 wrapper を消す（W1 AC-4）。
-  Tauri 側に処理がある command のうち Web でも要るもの（起動・同意・アカウント切替の調停）は `desktop-runtime` の host へ移す（W1 AC-3・AC-4）。Tauri 専用の処理（updater・tray・window・OS 通知・file dialog）は `src-tauri` に残す。
+  Tauri 側に処理がある command のうち Web でも要るもの（起動・同意・アカウント切替の調停。起動中・終了中の command を拒む `src-tauri/src/invoke_gate.rs` の gate を含む）は `desktop-runtime` の host へ移す（W1 AC-3・AC-4）。Tauri 専用の処理（updater・tray・window・OS 通知・file dialog）は `src-tauri` に残す。
 - Web で使えない command は、共通の error code で「この platform では使えない」と返し、frontend が capability として判別できるようにする（W1 AC-4）。
 
 ### 7. 起動・停止・アカウント切替
