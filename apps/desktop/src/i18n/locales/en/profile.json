@@ -169,6 +169,7 @@
     "blockedBadge": "Blocked"
   },
   "feed": {
+    "loadingAuthorPosts": "Loading posts…",
     "noAuthorPosts": "This user hasn't posted publicly yet.",
     "noOwnPosts": "No public posts published yet.",
     "openOriginalTopic": "Open original topic",

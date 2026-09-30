@@ -169,6 +169,7 @@
     "blockedBadge": "已屏蔽"
   },
   "feed": {
+    "loadingAuthorPosts": "正在加载帖子…",
     "noAuthorPosts": "这位用户还没有公开帖子。",
     "noOwnPosts": "还没有公开帖子。",
     "openOriginalTopic": "打开原始主题",
