@@ -23,7 +23,7 @@ tokio = { workspace = true, features = ["io-util", "net", "process", "signal"] }
 
 [dev-dependencies]
 axum.workspace = true
-syn = { version = "=2.0.117", features = ["full", "visit"] }
+syn = { version = "=3.0.6", features = ["full", "visit"] }
 tempfile.workspace = true
 
 [lints]

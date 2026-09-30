@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result, ensure};
-use secp256k1::{SECP256K1, XOnlyPublicKey, schnorr::Signature};
+use secp256k1::{XOnlyPublicKey, schnorr::Signature};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{sha256_digest, validate_pubkey};
@@ -126,8 +126,8 @@ impl ReceiveEndpointBindingV1 {
         let signature =
             Signature::from_str(&self.signature).context("invalid binding signature")?;
         let account = XOnlyPublicKey::from_str(self.account.as_str())?;
-        SECP256K1
-            .verify_schnorr(&signature, &self.digest()?, &account)
+        signature
+            .verify(&self.digest()?, &account)
             .context("receive binding signature verification failed")?;
         Ok(VerifiedReceiveEndpointBinding {
             binding: self.clone(),

@@ -32,7 +32,7 @@ pub(crate) fn live_session_list_query<'a>(
     topic_id: &'a str,
     channel_id: &'a str,
     limit: usize,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(LIVE_SESSION_SELECT);
     builder.push(" WHERE lsc.topic_id = ");
@@ -50,7 +50,7 @@ pub(crate) fn game_room_list_query<'a>(
     topic_id: &'a str,
     channel_id: &'a str,
     limit: usize,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(GAME_ROOM_SELECT);
     builder.push(" WHERE topic_id = ");
@@ -137,9 +137,9 @@ impl LiveGameProjectionStore for SqliteStore {
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<LiveSessionProjectionRow>> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{LIVE_SESSION_SELECT} WHERE lsc.topic_id = ?1 AND lsc.session_id = ?2 LIMIT 1"
-        ))
+        )))
         .bind(topic_id)
         .bind(session_id)
         .fetch_optional(&self.pool)
@@ -230,9 +230,9 @@ impl LiveGameProjectionStore for SqliteStore {
         topic_id: &str,
         room_id: &str,
     ) -> Result<Option<GameRoomProjectionRow>> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{GAME_ROOM_SELECT} WHERE topic_id = ?1 AND room_id = ?2 LIMIT 1"
-        ))
+        )))
         .bind(topic_id)
         .bind(room_id)
         .fetch_optional(&self.pool)

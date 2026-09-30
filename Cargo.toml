@@ -42,65 +42,65 @@ version = "0.3.3"
 
 [workspace.dependencies]
 anyhow = "1.0.104"
-argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
 async-trait = "0.1.92"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
-bao-tree = "0.16.0"
+bao-tree = "0.16.1"
 bech32 = "0.12.0"
-blake3 = "1.8.6"
+blake3 = "1.8.7"
 chrono = { version = "0.4.45", features = ["serde"] }
-clap = { version = "4.6.6", features = ["derive", "env"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "gif", "jpeg", "webp"] }
-iroh = "1.0.3"
+iroh = "1.3.0"
 iroh-docs = "0.101.0"
 iroh-blobs = "0.103.0"
 iroh-gossip = "0.101.0"
-iroh-mainline-address-lookup = "0.4.0"
-iroh-relay = { version = "1.0.3", features = ["server"] }
-jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
-keyring = { version = "4.1.6", default-features = false }
-libc = "0.2.183"
+iroh-mainline-address-lookup = "0.6.0"
+iroh-relay = { version = "1.3.0", features = ["server"] }
+jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
+keyring = { version = "4.2.0", default-features = false }
+libc = "0.2.189"
 chacha20poly1305 = "0.11.0"
-n0-mainline = "0.5.0"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "rustls"] }
-rapier3d = { version = "0.35.2", features = ["enhanced-determinism"] }
-redis = { version = "1.5.0", default-features = false, features = ["tokio-comp"] }
-rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
-secp256k1 = { version = "0.31.1", features = ["global-context", "rand", "serde"] }
+n0-mainline = "0.7.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls"] }
+rapier3d = { version = "0.36.0", features = ["enhanced-determinism"] }
+redis = { version = "1.7.1", default-features = false, features = ["tokio-comp"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+secp256k1 = { version = "0.33.1", features = ["global-context", "rand", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_yaml = "0.9.34"
 sha2 = "0.11.0"
-sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "sqlite", "postgres", "json", "migrate", "chrono"] }
-thiserror = "2.0.20"
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls-ring-webpki", "sqlite", "postgres", "json", "migrate", "chrono"] }
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time", "fs"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tempfile = "3.27.0"
-pkarr = { version = "=5.0.2", default-features = false, features = ["relays", "dht"] }
-tower-http = { version = "0.7.0", features = ["trace"] }
+pkarr = { version = "=8.0.2", default-features = false, features = ["relays", "dht"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
 tower_governor = "0.8.0"
 ts-rs = "12"
 url = "2.5.8"
-uuid = { version = "1.24.0", features = ["serde", "v4", "v7"] }
+uuid = { version = "1.26.1", features = ["serde", "v4", "v7"] }
 wiremock = "0.6"
 
 [patch.crates-io]
-netwatch = { git = "https://github.com/n0-computer/net-tools", rev = "e9afb4dda300dda06193b5046ba7a05e5d176e22" }
 # Upstream #114: sync_process_message error must not panic the whole docs actor.
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d14853cb4db9966e30050bac1e689cdeec8" }
 # Upstream #4447: release inactive endpoint/relay address mappings.
+# The fork rev is upstream v1.3.0 with #4447 rebased on top (#1450).
 # Keep the shared public types on the same source as the endpoint crate.
-iroh = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
-iroh-base = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
-iroh-dns = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
-iroh-relay = { git = "https://github.com/n0-computer/iroh", rev = "adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "4d7b079c124fae615c456c97a592a3c067ef8a27" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "4d7b079c124fae615c456c97a592a3c067ef8a27" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "4d7b079c124fae615c456c97a592a3c067ef8a27" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "4d7b079c124fae615c456c97a592a3c067ef8a27" }
 # Upstream #162 includes #161: release idle connections and retired peer state.
 # The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376).
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c0433d6e7f3d9d81a37985ec243957af2c32" }

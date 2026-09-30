@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow, ensure};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use secp256k1::rand::{RngCore, rng};
-use secp256k1::{SECP256K1, XOnlyPublicKey, schnorr::Signature};
+use secp256k1::{XOnlyPublicKey, schnorr::Signature};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{derive_hkdf_key, pairwise_shared_secret, sha256_digest, validate_pubkey};
@@ -218,7 +218,12 @@ fn seal_signed_offer(signed: &SignedReceiveOffer) -> Result<SealedReceiveOfferV1
     let ephemeral_pubkey = ephemeral.public_key();
     let aad = offer_aad(&ephemeral_pubkey, &signed.recipient)?;
     let shared = pairwise_shared_secret(&ephemeral, &signed.recipient)?;
-    let key = derive_hkdf_key(OFFER_KEY_DOMAIN, shared.as_ref(), &aad, "receive offer")?;
+    let key = derive_hkdf_key(
+        OFFER_KEY_DOMAIN,
+        &shared.to_secret_bytes(),
+        &aad,
+        "receive offer",
+    )?;
     let (nonce_hex, ciphertext_hex) = encrypt(&key, &aad, &plaintext)?;
     let sealed = SealedReceiveOfferV1 {
         version: 1,
@@ -264,7 +269,12 @@ impl SealedReceiveOfferV1 {
         let recipient_pubkey = recipient.public_key();
         let aad = offer_aad(&self.ephemeral_pubkey, &recipient_pubkey)?;
         let shared = pairwise_shared_secret(recipient, &self.ephemeral_pubkey)?;
-        let key = derive_hkdf_key(OFFER_KEY_DOMAIN, shared.as_ref(), &aad, "receive offer")?;
+        let key = derive_hkdf_key(
+            OFFER_KEY_DOMAIN,
+            &shared.to_secret_bytes(),
+            &aad,
+            "receive offer",
+        )?;
         let plaintext = decrypt(&key, &aad, &self.nonce_hex, &self.ciphertext_hex)?;
         let signed: SignedReceiveOffer =
             serde_json::from_slice(&plaintext).context("invalid signed receive offer")?;
@@ -304,9 +314,8 @@ impl SignedReceiveOffer {
         );
         fixed_hex::<64>(&self.signature)?;
         let signature = Signature::from_str(&self.signature)?;
-        SECP256K1
-            .verify_schnorr(
-                &signature,
+        signature
+            .verify(
                 &self.digest()?,
                 &XOnlyPublicKey::from_str(self.sender.as_str())?,
             )

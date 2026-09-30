@@ -20,8 +20,8 @@ use std::str::FromStr;
 use kukuri_cn_safety::ModerationEventSigner;
 use kukuri_cn_safety::event::{ModerationEventBody, SignedModerationEvent};
 use kukuri_core::KukuriKeys;
+use secp256k1::XOnlyPublicKey;
 use secp256k1::schnorr::Signature;
-use secp256k1::{SECP256K1, XOnlyPublicKey};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -185,7 +185,7 @@ pub fn verify_signed_event(event: &SignedModerationEvent) -> Result<(), Signatur
     let signature = Signature::from_str(event.signature.as_str())
         .map_err(|_| SignatureError::InvalidSignature)?;
     let digest = canonical_digest(&event.body);
-    SECP256K1
-        .verify_schnorr(&signature, &digest, &public_key)
+    signature
+        .verify(&digest, &public_key)
         .map_err(|_| SignatureError::VerificationFailed)
 }

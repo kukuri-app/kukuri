@@ -5,15 +5,11 @@
       "path": "crates/cn-operator/src/config.rs"
     },
     {
-      "lines": 1276,
-      "path": "docs/THIRD_PARTY_NOTICES.md"
-    },
-    {
       "lines": 1218,
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1191,
+      "lines": 1194,
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
@@ -41,12 +37,12 @@
       "path": "crates/app-api/src/private_channels.rs"
     },
     {
-      "lines": 1093,
-      "path": "crates/app-api/src/dome_hosting.rs"
+      "lines": 1095,
+      "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
-      "lines": 1078,
-      "path": "crates/app-api/src/tests/media.rs"
+      "lines": 1093,
+      "path": "crates/app-api/src/dome_hosting.rs"
     },
     {
       "lines": 1056,

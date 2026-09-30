@@ -49,7 +49,7 @@ fn reply(
 
 const EXPLAIN: &str = "EXPLAIN QUERY PLAN ";
 
-async fn plan(store: &SqliteStore, mut builder: sqlx::QueryBuilder<'_, sqlx::Sqlite>) -> String {
+async fn plan(store: &SqliteStore, mut builder: sqlx::QueryBuilder<sqlx::Sqlite>) -> String {
     builder
         .build()
         .fetch_all(store.pool())

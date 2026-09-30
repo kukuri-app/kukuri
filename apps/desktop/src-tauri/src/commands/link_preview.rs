@@ -573,13 +573,13 @@ impl TokenSink for MetadataSink {
 
     fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<()> {
         match token {
-            TagToken(tag) if tag.kind == StartTag && tag.name.as_ref() == "title" => {
+            TagToken(tag) if tag.kind == StartTag && &*tag.name == "title" => {
                 self.in_title.set(true);
             }
-            TagToken(tag) if tag.kind == EndTag && tag.name.as_ref() == "title" => {
+            TagToken(tag) if tag.kind == EndTag && &*tag.name == "title" => {
                 self.in_title.set(false);
             }
-            TagToken(tag) if tag.kind == StartTag && tag.name.as_ref() == "meta" => {
+            TagToken(tag) if tag.kind == StartTag && &*tag.name == "meta" => {
                 let mut key = None;
                 let mut content = None;
                 for attribute in tag.attrs {

@@ -196,11 +196,11 @@ fn categories(advisories: &[ContentAdvisory]) -> Vec<(SafetyCategory, String)> {
 }
 
 async fn count(pool: &PgPool, table: &str) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM cn_safety.{table}"))
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM cn_safety.{table}"
+    )))
+    .fetch_one(pool)
+    .await?)
 }
 
 /// 著者の trust read が消費する入力（nsfw は basis に寄与 0 で並ぶ）。

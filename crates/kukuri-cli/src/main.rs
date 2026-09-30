@@ -1,3 +1,6 @@
+// Rust 1.98 needs more query depth for the layout of `daemon::run()`'s async body.
+#![recursion_limit = "256"]
+
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
