@@ -50,7 +50,8 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - 既存 crate を target 別の依存で Web と共用する: `core`・`store`・`transport`・`iroh-node`・`docs-sync`・`blob-service`・`app-api`・`metaverse-host`・`desktop-runtime`。Web 用に同じ責務の runtime を別に作らない。
   `desktop-runtime` の名前は変えない（#886 で native の共通 host になっており、改名は利用箇所の書き換えだけを増やす）。
 - `crates/web-runtime`（新規、`cdylib`、wasm-bindgen）を Web の入口にする。JS へ公開するのは §6 の API だけとし、業務ロジック・署名・権限判定を持たない。
-  ブラウザ専用の保存 adapter（IndexedDB）もここに置く（実装は #1217 W4）。docs・blobs の保存 backend は各 fork（#1216 W3・#1215 W2）に置く。
+  ブラウザ専用の保存 adapter（IndexedDB）もここに置く。vault と設定は #1217 W4、blob の保護・cache と自分の docs record は #1215 W2・#1216 W3 が実装する（ADR 0058）。
+  iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。
 - QUIC over WebRTC DataChannel の transport crate は `crates/webrtc-transport`（ADR 0057、#1421 W9 AC-1）。
 - `desktop-runtime` の platform 固有 module（keyring・fs・sqlx を直接使うもの）は file 単位で `cfg(not(target_family = "wasm"))` にする。
   fs を一部で直接書く module の読み書きは、既存の `KeyringStore`（`identity.rs`）と同じ形の保存 trait 1 つへ寄せる。native の実装は今の file 読み書きを移す。Web の実装は W4 が IndexedDB で作る。
@@ -65,7 +66,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - uuid は wasm で `js` を有効にする。getrandom の backend は `.cargo/config.toml` の wasm32 target の rustflags（`getrandom_backend="wasm_js"`）で指定する。
 - secp256k1 はそのまま使う。wasm の build には clang が要る（CI の Linux runner。Windows のローカルでは clang 入りの Docker image。手順は W1 AC-2 で `docs/runbooks/dev.md` に書く）。wasm だけ pure Rust の実装へ替えると、同じ鍵・署名の処理が 2 つになる。
 - iroh は fork rev `4d7b079c` を使い、Web 固有の差分を fork へ加えない（#1213 D-2）。上流 PR #4565（接続中に custom path を追加する `Endpoint::add_remote_addrs`）を fork へ載せるかは W9 AC-1 で決め、載せる作業の所有は最初に使う Issue に置く。
-  iroh-docs・iroh-blobs の版は W2・W3 の fork まで変えない。
+  iroh-docs・iroh-blobs は fork せず、上流の版（iroh-docs は root `Cargo.toml` の patch rev）を使う（#1213 D-3 の改訂）。
 
 ### 4. `Send`・`Sync` の境界
 
@@ -80,9 +81,9 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | アカウント秘密鍵・private capability・世代・退会・採用済み version・設定・同意・CN の token | keyring・file | IndexedDB の durable 領域（cache の削除と分ける） | W4 AC-1〜2 |
 | iroh の endpoint 秘密鍵（端末固有 identity） | file | IndexedDB の durable 領域。ブラウザごとに生成し、アカウント同期・移行で複製しない | W4 |
 | projection（`Store`・`ProjectionStore`） | `SqliteStore` | W4 AC-1 が IndexedDB の実装か、メモリと再構築かを決める（D-4・D-5）。W1 の転送試験は既存の `MemoryStore` を使い、これを永続化の証拠にしない | W4 |
-| docs の replica | redb（persistent） | W3 の fork の保存 API | W3 |
-| blobs | `FsStore` | W2 の fork の backend | W2 |
-| remote read の cache（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 持たない（型ごと `cfg` で外す）。有界な remote reader は cache 無しで動く | W1 AC-2 |
+| docs の replica | redb（persistent） | 上流の `Store::memory()`。自分の record は保存 trait の IndexedDB 実装（ADR 0058） | W3 |
+| blobs | `FsStore` | 上流の `MemStore`（blob-service は書かない）と、保存 trait の IndexedDB 実装（ADR 0058） | W2 |
+| remote read の cache と本人の書込みの保護（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 保存 trait（ADR 0058）の IndexedDB 実装。trait の切り出しと native の呼出元の切替は W1 AC-2 | W1 AC-2・W2・W3 |
 | peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない。store を持たない経路の learned・imported の台帳と `MemoryLookup` は、今は上限も削除も無い（`PeerAddrBook::insert_learned_peer_addr`・`insert_imported_peer_addr`、`remember_hot_endpoint` が store の無いときに上限を飛ばす）。Web の本番経路にする前に、native と同じ件数の上限と古いものからの削除を持たせる | W1 AC-2 |
 | file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-4・W8 |
 
@@ -117,7 +118,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 2. W1 AC-2（共用 crate の wasm build・依存の分離・Endpoint の組立てへの transport の注入口・ブラウザ↔native の有界な読み出し）→ W10 AC-1
 3. W1 AC-3（起動・停止・切替の世代）→ W1 AC-4（command の dispatch 表と capability）
 
-W2・W3・W4 の AC-1（保存の判断）は本 ADR の後に並行して進める。W5・W6 の規則は native で先に実装できる。
+W2・W3 の AC-1（保存 trait の操作の固定。ADR 0058）は W1 AC-2 より前に行う。W4 の AC-1 は本 ADR の後に並行して進める。W5・W6 の規則は native で先に実装できる。
 
 ## 採らない方式
 
