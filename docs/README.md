@@ -98,6 +98,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - iroh の QUIC を WebRTC DataChannel で運ぶ transport: `docs/adr/0057-quic-over-webrtc-datachannel-transport.md`（#1421。str0m と web-sys の backend、session の上限、custom path の追加、STUN は Community Node の基盤で自前運用）
 - Web の blob と docs の保存（上流の memory store と kukuri 層の保存 trait。fork しない）: `docs/adr/0058-web-blob-and-docs-storage.md`（#1215・#1216。保存 trait の操作、IndexedDB の形、容量・回収・予約）
 - Web の鍵・設定・projection の保存と、複数 tab・lifecycle: `docs/adr/0059-web-browser-storage-tabs-lifecycle.md`（#1217。非同期の保存 trait、device・vault・cache の 3 つの IndexedDB、projection の IndexedDB 実装、origin で 1 つの runtime、共通の復帰の入口）
+- Web クライアントの entry・capability・配信条件と実ブラウザの検証環境: `docs/adr/0060-web-client-entry-capability-and-verification.md`（#1220。apps/desktop の Web の build mode、CSP と別 origin、174 command の分類、CI の Chromium・Firefox・実 Safari・Android emulator）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）
 - community node trust / relation foundation: `docs/adr/0026-community-node-trust-relation-foundation.md`
