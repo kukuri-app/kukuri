@@ -95,6 +95,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - replica の読み出しの inventory: `docs/architecture/replica-read-inventory.md`（prefix の全件読みの全 caller、比例する総数、解消する段階）
 - 通信の需要・容量・停止の統合設計: `docs/adr/0055-demand-owned-network-work.md`（#1221、Proposed。画面外の通知対象を維持する受信経路と移行を含む）。調査中の入口・連鎖・上流APIは `docs/architecture/network-work-inventory.md`。
 - Web クライアント（ブラウザ内の Rust/WASM）の実行境界: `docs/adr/0056-web-client-execution-boundary.md`（#1214。main thread の単一 WASM instance、既存 crate の target 別共用、保存の境界、JS への公開 API と command の dispatch 表）
+- iroh の QUIC を WebRTC DataChannel で運ぶ transport: `docs/adr/0057-quic-over-webrtc-datachannel-transport.md`（#1421。str0m と web-sys の backend、session の上限、custom path の追加、STUN は Community Node の基盤で自前運用）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）
 - community node trust / relation foundation: `docs/adr/0026-community-node-trust-relation-foundation.md`
