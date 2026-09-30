@@ -83,7 +83,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - iroh の既定の path selector を使う。独自の selector は作らない。browser と native・browser の間では custom（primary）が relay（backup）より優先される。
   native 同士では custom の session を作らないので、既存の UDP（primary）がそのまま使われる（#1213 D-16）。
 - relay で始めた接続へ、後から custom path を足すには上流 #4565 の `Endpoint::add_remote_addrs` が要る。
-  これを iroh の fork（`KingYoSun/iroh`）へ載せる（上流の汎用 API であり、Web 固有の差分ではない。#1213 D-2）。載せる作業は、最初に使う W10 AC-1 が所有する。fork の rev は「上流 v1.3.0＋#4447＋#4565」になる。
+  これを iroh の fork（`KingYoSun/iroh`）へ載せた（上流の汎用 API であり、Web 固有の差分ではない。#1213 D-2）。W10 AC-1 で、fork の branch `kukuri/add-remote-addrs-v1.3.0` の rev `c47e860f`（上流 v1.3.0＋#4447＋#4565 の cherry-pick）へ更新した。
 - W9 AC-2 の試験は、custom のアドレスだけで接続する（relay を使わない）ので #4565 に依存しない。
 - 経路の削除は、session の close で行う。閉じた session の addr は `is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
   iroh はその path を検証の失敗・idle で閉じ、既定の selector が relay 等の残りの path へ移る。iroh 側に path を消す API は要らない。
@@ -103,7 +103,16 @@ W10 は認証済みの iroh 接続上の専用 ALPN で SDP と候補を交換�
 - `offer(remote: EndpointId) -> (SessionId, SDP)`・`answer(remote, SessionId, SDP) -> SDP`・`accept_answer(SessionId, SDP)`。ICE の候補は SDP に含め、trickle しない（接続交渉を 1 往復にする）。
   browser は候補を集め終えるまで最大 3 秒待ち、過ぎたら集まった候補で返す。native は session の socket の host の候補を含める（server reflexive の候補は W10 が STUN と一緒に足す）。
 - `close(SessionId)`、session の event（`Opened { session, remote, addr: CustomAddr }`・`Closed { session, reason }`）、診断と試験の数（`stats`）
-- 専用 ALPN の値・同時の交渉数・期限・再試行・需要との接続は W10 AC-1 が決める。
+- 専用 ALPN の値・同時の交渉数・期限・再試行は W10 AC-1 で次のとおり決めた（`crates/webrtc-transport/src/signaling.rs`）。需要・経路選択・診断との接続と STUN は W10 AC-2。
+  - ALPN は `/kukuri/webrtc-signal/1`。既存の iroh の接続（relay 等）で届く相手へ、1 本の bi stream で要求（版 1 byte・宛先の EndpointId・session id・offer の SDP）と応答（answer の SDP か、拒否の理由）を 1 往復させる。要求は SDP の上限（§4）＋49 byte まで。
+  - session は、QUIC の TLS で認証された接続の相手の EndpointId・session id・交渉の世代へ束縛する。要求の中の送り手の値は使わず、宛先が自分でない要求は拒否する。拒否の理由は版・宛先違い・満杯・同時開始・offer の不正・世代の終了。
+  - 同時の交渉は両方向あわせて 4、自分から始める交渉は相手ごとに 1。期限は交渉の開始から DataChannel が開くまで 15 秒。満杯・期限切れ・拒否では session を残さない。自動の再試行はしない（需要の owner が決める）。
+  - 両端が同時に始めたら、EndpointId が小さい側が受けた要求を拒否し、大きい側は受けた要求に答える。拒否された側は、相手が始めた session が開くのを期限まで待つ。
+  - `reset` で世代を終え、この交渉が作った session をすべて閉じる。古い世代の応答では session を作らない（W1 AC-3 の世代・W4 の freeze から呼ぶ）。
+  - DataChannel が開いたら、両端で `Endpoint::add_remote_addrs(相手, {custom addr})` を呼び、相手への生きた接続に custom path を足す（選ばれた path が custom へ移る）。
+    生きた接続が無いときは path が開かず、後の接続がその custom path を使う保証も無い（手元の試験で、交渉の後に張った接続の 27/400 回が期限までに custom へ移らなかった。未使用のアドレスの対応は #4447 で回収される）。
+    このため交渉は、需要の接続がある相手に対して行う（需要の owner への接続は AC-2）。需要の接続を先に張った試験では 400/400 回、接続が custom へ移り、以後の読み出しの実データも custom path を通った。
+  - `IrohDocsNode` は `NodeOptions::webrtc` を渡したときだけ、この ALPN を Router に登録する。
 
 ### 8. AC-2 の固定 workload と判定
 

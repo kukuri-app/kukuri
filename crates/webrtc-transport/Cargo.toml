@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 # 試験だけの接続交渉（src/signaling_fixture.rs）。browser↔native の試験の相手と page が使う。
-test-signaling = ["dep:axum", "web-sys/Window", "web-sys/RequestInit", "web-sys/Response"]
+test-signaling = ["dep:axum", "dep:iroh-relay", "web-sys/Window", "web-sys/RequestInit", "web-sys/Response"]
 
 [dependencies]
 anyhow.workspace = true
@@ -22,6 +22,7 @@ tracing.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 axum = { workspace = true, optional = true }
+iroh-relay = { workspace = true, optional = true }
 str0m = { version = "0.24.0", default-features = false, features = ["rust-crypto"] }
 tokio = { version = "1.53.1", default-features = false, features = ["net", "rt", "time"] }
 

@@ -9,7 +9,6 @@ use web_time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::StreamExt;
 use iroh::address_lookup::MemoryLookup;
-use iroh::endpoint::transports::CustomTransport;
 use iroh::endpoint::{Builder as EndpointBuilder, presets};
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayUrl, Watcher};
@@ -28,6 +27,7 @@ use kukuri_transport::{
     TransportNetworkConfig, TransportRelayConfig, build_endpoint_builder,
     prepare_endpoint_for_discovery, sync_endpoint_relay_config,
 };
+use kukuri_webrtc_transport::{NEGOTIATION_DEADLINE, SIGNALING_ALPN, Signaling, WebRtcTransport};
 use n0_future::time::timeout;
 #[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
@@ -194,6 +194,7 @@ pub struct IrohDocsNode {
     discovery: Arc<MemoryLookup>,
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
     router: Arc<Router>,
+    signaling: Option<Arc<Signaling>>,
     docs: DocsApi,
     blobs: BlobStore,
     remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
@@ -227,8 +228,8 @@ pub struct NodeOptions {
     pub relay_config: TransportRelayConfig,
     /// 端末の endpoint の秘密鍵。無ければ新しく作る。
     pub secret_key: Option<iroh::SecretKey>,
-    /// Endpoint に足す custom transport（QUIC over WebRTC DataChannel など。ADR 0057）。
-    pub custom_transports: Vec<Arc<dyn CustomTransport>>,
+    /// ブラウザとの直接経路（QUIC over WebRTC DataChannel。ADR 0057）。渡すと接続交渉の ALPN も受ける（#1422）。
+    pub webrtc: Option<Arc<WebRtcTransport>>,
 }
 
 impl Default for NodeOptions {
@@ -237,7 +238,7 @@ impl Default for NodeOptions {
             network_config: TransportNetworkConfig::loopback(),
             relay_config: TransportRelayConfig::default(),
             secret_key: None,
-            custom_transports: Vec::new(),
+            webrtc: None,
         }
     }
 }
@@ -340,7 +341,7 @@ impl IrohDocsNode {
                 network_config,
                 relay_config,
                 secret_key: None,
-                custom_transports: Vec::new(),
+                webrtc: None,
             },
             dht_options,
             recover_corrupt_docs,
@@ -367,7 +368,7 @@ impl IrohDocsNode {
             network_config,
             relay_config,
             secret_key,
-            custom_transports,
+            webrtc,
         } = options;
         let blobs = store.into();
         let discovery = Arc::new(MemoryLookup::new());
@@ -392,8 +393,8 @@ impl IrohDocsNode {
         if let Some(secret_key) = secret_key {
             endpoint_builder = endpoint_builder.secret_key(secret_key);
         }
-        for transport in custom_transports {
-            endpoint_builder = endpoint_builder.add_custom_transport(transport);
+        if let Some(transport) = &webrtc {
+            endpoint_builder = endpoint_builder.add_custom_transport(transport.clone());
         }
         // ブラウザには UDP の socket が無い（ADR 0056 §8）。
         #[cfg(not(target_family = "wasm"))]
@@ -463,7 +464,10 @@ impl IrohDocsNode {
             private_capabilities.clone(),
         );
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
-        let router = Router::builder(endpoint.clone())
+        let signaling = webrtc
+            .map(|transport| Signaling::new(transport, endpoint.clone(), NEGOTIATION_DEADLINE))
+            .transpose()?;
+        let mut router = Router::builder(endpoint.clone())
             .accept(
                 iroh_blobs::ALPN,
                 iroh_blobs::BlobsProtocol::new(&blobs, None),
@@ -472,8 +476,11 @@ impl IrohDocsNode {
             .accept(iroh_gossip::ALPN, gossip.clone())
             .accept(RECEIVE_BINDING_ALPN, receive_binding.clone())
             .accept(DOC_READ_ALPN, page_read)
-            .accept(REMOTE_BLOB_ALPN, remote_blob)
-            .spawn();
+            .accept(REMOTE_BLOB_ALPN, remote_blob);
+        if let Some(signaling) = &signaling {
+            router = router.accept(SIGNALING_ALPN, signaling.clone());
+        }
+        let router = router.spawn();
 
         let node = Arc::new(Self {
             endpoint,
@@ -481,6 +488,7 @@ impl IrohDocsNode {
             discovery,
             relay_urls,
             router: Arc::new(router),
+            signaling,
             docs: docs.protocol.api().clone(),
             blobs,
             remote_cache,
@@ -499,6 +507,11 @@ impl IrohDocsNode {
 
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
+    }
+
+    /// ブラウザとの直接経路の接続交渉（`NodeOptions::webrtc` を渡したときだけ）。
+    pub fn webrtc_signaling(&self) -> Option<&Arc<Signaling>> {
+        self.signaling.as_ref()
     }
 
     pub fn install_remote_cache(&self, cache: Arc<dyn ContentCacheStore>) -> Result<()> {

@@ -1,5 +1,6 @@
 //! ADR 0057 §8 の browser の固定 workload（E1〜E4）。headless の Chromium で
 //! `scripts/ci/browser_peer_test.sh` から実行する。browser↔native の相手は `examples/webrtc_peer.rs`。
+//! 末尾は #1422 W10 AC-1 の browser↔browser の専用 ALPN の交渉（相手の手元の iroh relay で始めた接続の上）。
 
 use std::{future::poll_fn, time::Duration};
 
@@ -218,4 +219,60 @@ async fn e4_browser_closing_a_session_releases_its_resources() {
         .shared
         .deliver(pair.session, Bytes::from_static(b"late"));
     assert_eq!(pair.transport.stats().sessions, 0);
+}
+
+/// 相手の手元の iroh relay だけで届き、custom transport と専用 ALPN の交渉を持つ endpoint。
+async fn relay_node(relay: &iroh::RelayUrl) -> (Endpoint, Arc<Signaling>, Router) {
+    let transport = WebRtcTransport::new(config());
+    let endpoint = Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .secret_key(SecretKey::generate())
+        .relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([
+            relay.clone()
+        ])))
+        .add_custom_transport(transport.clone())
+        .bind()
+        .await
+        .expect("bind endpoint");
+    endpoint.online().await;
+    let signaling = Signaling::new(transport, endpoint.clone(), crate::NEGOTIATION_DEADLINE)
+        .expect("signaling");
+    let router = Router::builder(endpoint.clone())
+        .accept(ECHO_ALPN, Echo)
+        .accept(crate::SIGNALING_ALPN, signaling.clone())
+        .spawn();
+    (endpoint, signaling, router)
+}
+
+/// W10 AC-1（browser↔browser）: relay で始めた接続の上で、どちらの端から交渉しても、同じ接続の選ばれた
+/// path が custom へ移り、1 MiB の往復が一致する。
+#[wasm_bindgen_test]
+async fn browser_to_browser_negotiation_moves_the_connection_to_the_custom_path() {
+    let relay = crate::signaling_fixture::relay_url().await.expect("relay");
+    for from_client in [true, false] {
+        let client = relay_node(&relay).await;
+        let server = relay_node(&relay).await;
+        let relay_addr = |endpoint: &Endpoint| {
+            EndpointAddr::from_parts(endpoint.id(), [TransportAddr::Relay(relay.clone())])
+        };
+        let connection = client
+            .0
+            .connect(relay_addr(&server.0), ECHO_ALPN)
+            .await
+            .expect("connect over the relay");
+        let (from, to) = if from_client {
+            (&client, &server)
+        } else {
+            (&server, &client)
+        };
+        from.1.connect(relay_addr(&to.0)).await.expect("negotiate");
+        n0_future::time::timeout(WAIT, async {
+            while !selected_path_is_custom(&connection) {
+                n0_future::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the connection moves to the custom path");
+        let data = payload(1024 * 1024);
+        assert_eq!(echo(&connection, &data).await, data);
+    }
 }

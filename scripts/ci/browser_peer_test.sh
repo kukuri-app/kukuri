@@ -27,5 +27,7 @@ if [ -z "$url" ]; then
   exit 1
 fi
 
-KUKURI_PEER_URL="$url" \
+# wasm-bindgen-test-runner は試験全体を既定 20 秒で打ち切る。各試験は自前の期限を持つので、全体の上限は
+# 件数分の余裕をとる。
+KUKURI_PEER_URL="$url" WASM_BINDGEN_TEST_TIMEOUT="${WASM_BINDGEN_TEST_TIMEOUT:-180}" \
   cargo test -p "$package" --target wasm32-unknown-unknown --lib "$@"

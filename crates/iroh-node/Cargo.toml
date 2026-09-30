@@ -26,6 +26,7 @@ tracing.workspace = true
 kukuri-core = { path = "../core" }
 kukuri-store = { path = "../store" }
 kukuri-transport = { path = "../transport" }
+kukuri-webrtc-transport = { path = "../webrtc-transport" }
 
 # 永続 store・rpc・file は native だけ（ADR 0056 §3、ADR 0058）。
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

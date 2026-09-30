@@ -1,7 +1,8 @@
 //! browser↔native の試験（ADR 0057 §8 の E1・E3・E4）の native 側。
 //!
 //! 試験だけの HTTP（`signaling_fixture`）で offer と answer を受け渡し、custom transport だけを持つ
-//! iroh の Endpoint で echo を返す。native だけで動く。
+//! iroh の Endpoint で echo を返す。専用 ALPN の交渉の browser↔browser の試験のために手元の iroh relay も起動し、
+//! `POST /relay` で URL を返す。native だけで動く。
 
 #![cfg(not(target_family = "wasm"))]
 
@@ -49,5 +50,9 @@ async fn main() -> Result<()> {
     let _router = Router::builder(endpoint.clone())
         .accept(ECHO_ALPN, Echo)
         .spawn();
-    signaling_fixture::serve(signaling_fixture::offer_routes(transport, endpoint.id())).await
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let relay = relay.to_string();
+    let app = signaling_fixture::offer_routes(transport, endpoint.id())
+        .route("/relay", axum::routing::post(move || async move { relay }));
+    signaling_fixture::serve(app).await
 }
