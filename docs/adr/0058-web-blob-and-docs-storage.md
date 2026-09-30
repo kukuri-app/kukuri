@@ -13,7 +13,9 @@ docs では redb の `StorageBackend` が同期 I/O で、IndexedDB で実装す
 
 native には、同じ責務を持つ kukuri の層が既にある（`docs/architecture/blob-cache.md`、#1221 R5-A・G・I）。
 
-- account の SQLite の remote cache（`crates/store/src/sqlite/remote_cache*`）が、検証済みの remote blob と record、本人の書込みの保護（`own_blob:`・`dm_outbox:`・`dm_message:`・`dome_pin:`・`own_docs`）を持つ。
+- account の SQLite の remote cache（`crates/store/src/sqlite/remote_cache*`）が、検証済みの remote blob と record、本人の書込みと bookmark の保護（`own_blob:`・`dm_outbox:`・`dm_message:`・`dome_pin:`・`own_docs`・`bookmark:`・`reaction_bookmark:`）を持つ。
+  保護参照の付け外しは、DM の ACK・手元の削除、bookmark の追加・解除のときに、projection の更新と同じ SQLite transaction の中で行う（`set_refs_in`・`replace_remote_protected_refs`）。
+  remote の投稿 projection と表示用ラベルの根拠も同じ台帳で容量を計数・回収する（`charge_remote_projection`）。
 - 非保護分は合計 3 GiB・非利用 7 日・1 処理 128 件で回収し、取得中は 1 MiB 単位で予約する（`REMOTE_CACHE_CAPACITY_BYTES` など）。
 - 通常の remote 取得は一時 bytes を返し、consumer が gate を確かめてから cache へ書く。cache の blob は `/kukuri/remote-blob/1`（`crates/iroh-node/src/remote_blob.rs`）で 1 MiB ずつ別 peer へ再提供でき、iroh-blobs の取得が Missing のときの fallback になる（`remote_fetch.rs`）。
 - 上流の `MemStore` は wasm で動く（`src/store/mem.rs`、時刻は `n0_future::time`）。
@@ -39,10 +41,13 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 | --- | --- | --- | --- |
 | 予約 | `reserve_remote_cache_bytes`（予約の guard を返す。`empty_remote_cache_reservation`） | iroh-node | W2 |
 | 内容 | `put_remote_content`・`get_remote_content`・`has_remote_content`・`remote_content_len`・`remote_content_chunk` | blob-service・iroh-node・desktop-runtime | W2 |
-| 保護 | `add_protected_ref`・`put_owned_blob` | blob-service・app-api | W2 |
+| 保護 | `add_protected_ref`・`put_owned_blob`（app-api は `BlobService::put_owned_blob` 経由） | blob-service | W2 |
+| 保護の置き換え | `replace_remote_protected_refs`（参照を `desired` の集合へ置き換える。外れた内容は容量の内なら非保護へ戻し、超えるなら消す） | projection の更新（DM の ACK・手元の削除、bookmark・reaction bookmark の追加・解除）。native は `SqliteStore` の中で同じ transaction | W2（意味）・W4（Web の呼出元） |
 | 回収 | `reclaim_remote_cache_step`・`mark_remote_blob_adult`・`forget_adult_remote_blobs_step`・`subscribe_adult_label_evictions` | desktop-runtime・blob-service | W2 |
 | record | `put_remote_record`・`get_remote_records`・`remote_record_keys`・`put_owned_record`（`remote_record_cache_key` は key の組立ての関数） | docs-sync・iroh-node・desktop-runtime | W3 |
 
+- Web の projection（ADR 0056 §5、W4 AC-1 が方式を決める）は、DM・bookmark の更新のときに「保護の置き換え」を呼ぶ。projection を IndexedDB に置く場合は、本 ADR の cache と同じ database に置き、
+  projection の更新と `refs` の更新を同じ transaction で行う（native と同じ原子性）。remote の投稿 projection の容量の計数も、そのとき同じ database の `meta` に含める。
 - file path を受け取る操作（`put_remote_blob_file`・`copy_remote_content_to_file`）は trait に入れず、native の `SqliteStore` だけに残す。Web は file を使わない（ADR 0056 §5）。
 - peer candidate の操作（`put_peer_candidate` など）は trait に入れない。Web は端末に保存しない（ADR 0056 §5）。
 
@@ -50,7 +55,7 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 
 - account ごとに 1 つの database（名前は `kukuri-cache-v1-` に account の公開鍵の hex を続ける）。account の切替で別の database を開き、別 account の内容を混ぜない。
 - object store:
-  - `contents`: key は `[kind, key]`。値は長さ・`scope`（成人向けの印）・最後に使った時刻・保護参照の数。索引は「非保護か・最後に使った時刻」（回収の順）と `scope`（成人向けの回収）。
+  - `contents`: key は `[kind, key]`。値は長さ・`scope`（成人向けの印）・最後に使った時刻・保護参照の数。索引は「非保護か・最後に使った時刻」（回収の順）と「`scope`・非保護か」（成人向けの回収。保護行で 1 処理の窓が埋まらないよう、native の `scope_key = 'adult' AND is_protected = 0` と同じ条件にする）。
   - `chunks`: key は `[kind, key, 連番]`。値は最大 1 MiB の bytes（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
   - `refs`: key は `[保護参照, kind, key]`。`[kind, key]` の索引で参照の有無を数える。
   - `meta`: 非保護分の合計 bytes など、1 行ずつの集計。
