@@ -138,6 +138,17 @@ async fn wait_for_owner_participant_count(
     .unwrap_or_else(|_| panic!("owner participant count did not become {expected}"));
 }
 
+/// 送った制御 record がすべて相手の ACK で outbox から消えるまで待つ。
+async fn wait_for_empty_outbox(store: &MemoryStore, message: &str) {
+    timeout(p2p_replication_timeout(), async {
+        while !store.list_direct_message_outbox().await.unwrap().is_empty() {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect(message);
+}
+
 /// #1221 R5-H AC-5: owner が offline の間の退出 record は参加者の outbox に残り、owner の再起動後に account 経路で
 /// 届いて人数と rotation の宛先に入る(旧 sync なし)。届いたら owner の ACK で outbox から消える。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -186,7 +197,8 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
         .import_private_channel_invite(invite.as_str())
         .await
         .expect("import invite");
-    wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 2).await;
+    // owner は参加者の表へ置いてから ACK を返す。ACK が届く前に止めると参加 record も outbox に残る(#1447)。
+    wait_for_empty_outbox(&store_b, "the owner's ACK removes the join record").await;
     let capability = app_a
         .get_private_channel_capability(topic, &channel.channel_id)
         .await
@@ -226,18 +238,7 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
         .await
         .expect("import restarted owner");
     wait_for_owner_participant_count(&app_a, topic, &channel.channel_id, 1).await;
-    timeout(p2p_replication_timeout(), async {
-        while !store_b
-            .list_direct_message_outbox()
-            .await
-            .unwrap()
-            .is_empty()
-        {
-            sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("the owner's ACK removes the leave record");
+    wait_for_empty_outbox(&store_b, "the owner's ACK removes the leave record").await;
     assert!(
         store_a
             .list_private_channel_participants(&channel.channel_id, None, "", 8)
@@ -394,18 +395,7 @@ async fn a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record() {
             .await
             .expect("forged late join");
         // owner の ACK で b の outbox が空になる(owner が record を処理し終えた)まで待つ。
-        timeout(p2p_replication_timeout(), async {
-            while !store_b
-                .list_direct_message_outbox()
-                .await
-                .unwrap()
-                .is_empty()
-            {
-                sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .expect("the owner handled the forged record");
+        wait_for_empty_outbox(&store_b, "the owner handled the forged record").await;
         let grants = store_a
             .list_direct_message_outbox()
             .await
