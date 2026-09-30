@@ -60,7 +60,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 
 - 時刻と task は、共用 crate で `n0_future::{time, task}` に一律で置き換える（`tokio::time`・`tokio::spawn`・`std::time::Instant::now`・`SystemTime::now` の使用箇所）。
   n0-future は native では tokio、wasm では web-time と wasm-bindgen-futures を使う（lockfile に既にある）。呼出箇所ごとの `cfg` 分岐は作らない。`tokio::sync` と `tokio::select!` はそのまま使う。
-- workspace の tokio の共通 feature は `macros`・`sync`・`rt`・`time` にし、`rt-multi-thread`・`fs`・`net` は使う crate が native の target 節で有効にする。`time` は wasm32 でも compile でき、native だけの crate が使うので共通に残す（W1 AC-2）。
+- workspace の tokio の共通 feature は `macros`・`sync`・`rt`・`time` にし、`rt-multi-thread`・`fs`・`net` は、共用 crate では native の target 節で、native だけの crate では通常の依存で有効にする。`time` は wasm32 でも compile でき、native だけの crate が使うので共通に残す（W1 AC-2）。
   そのため共用 crate が tokio・std の時刻と task を直接使っても wasm32 の build は通り、ブラウザで実行時に止まる。`clippy.toml` の `disallowed-methods` を共用 crate の lib.rs で wasm32 の時だけ warn にし、CI の wasm32 の clippy で検出する（native では `n0_future`・`web_time` がそれらの再公開なので検出しない）。
 - iroh-docs・iroh-blobs は workspace で `default-features = false` とし、native だけ `fs-store` 等の必要な feature を有効にする。iroh は workspace で `unstable-custom-transports`（ADR 0057）を有効にし、既定の feature のまま wasm32 で build できる（W1 AC-2）。
 - n0-mainline・iroh-mainline-address-lookup（DHT）は native だけで使う。ブラウザには UDP が無いので DHT は成り立たない。Web の接続先の発見は relay・Community Node の rendezvous・peer ticket に限る。未使用の pkarr 依存は W1 AC-2 で消した。

@@ -21,7 +21,8 @@ impl IrohDocsSync {
     ) -> Result<()> {
         // registry変更より前のcancelは無変更。変更を始めた後はownerのtaskが完了まで持つ。
         let mut tasks = self.close_tasks.lock().await;
-        while futures_util::FutureExt::now_or_never(tasks.join_next())
+        // tokio の try_join_next と同じく coop の budget に左右されずに回収する（wasm の JoinSet には無い）。
+        while futures_util::FutureExt::now_or_never(tokio::task::unconstrained(tasks.join_next()))
             .flatten()
             .is_some()
         {}
