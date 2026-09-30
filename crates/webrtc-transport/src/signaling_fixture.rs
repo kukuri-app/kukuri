@@ -1,8 +1,9 @@
-//! 試験だけの接続交渉（feature `test-signaling`）。製品の交渉は W10（#1422）の専用 ALPN で行う。
+//! 試験だけの接続交渉と relay（feature `test-signaling`）。製品の交渉は `signaling`（専用 ALPN）。
 //!
 //! native の相手は `POST /offer` で offer を受けて answer を返し、browser の試験はそこへ offer を送る。
 //! 本文は `<送り手の endpoint id>\n<session id の hex>\n<SDP>`、応答は `<相手の endpoint id>\n<SDP>`。
 //! 相手の URL は `scripts/ci/browser_peer_test.sh` が `KUKURI_PEER_URL` で試験の build に渡す。
+//! 専用 ALPN の交渉の試験では、native の相手が手元の iroh relay（平文の HTTP）を起動し、`POST /relay` で URL を返す。
 
 use anyhow::{Context as _, Result};
 use iroh::EndpointId;
@@ -10,10 +11,10 @@ use iroh::EndpointId;
 use crate::SessionId;
 
 #[cfg(not(target_family = "wasm"))]
-pub use native::{offer_routes, reachable_ip, serve};
+pub use native::{offer_routes, reachable_ip, serve, spawn_relay};
 
 #[cfg(target_family = "wasm")]
-pub use browser::{post, post_offer};
+pub use browser::{post, post_offer, relay_url};
 
 #[cfg(not(target_family = "wasm"))]
 mod native {
@@ -36,6 +37,20 @@ mod native {
             })
             .map(|addr| addr.ip())
             .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+
+    /// 手元の iroh relay を平文の HTTP で起動する。返した `Server` を持っている間だけ動く。
+    pub async fn spawn_relay() -> Result<(iroh::RelayUrl, iroh_relay::server::Server)> {
+        let mut relay = iroh_relay::server::RelayConfig::new(std::net::SocketAddr::from((
+            Ipv4Addr::LOCALHOST,
+            0,
+        )));
+        relay.access = Arc::new(iroh_relay::server::AllowAll);
+        let mut config = iroh_relay::server::ServerConfig::default();
+        config.relay = Some(relay);
+        let server = iroh_relay::server::Server::spawn(config).await?;
+        let addr = server.http_addr().context("relay http addr")?;
+        Ok((format!("http://{addr}").parse()?, server))
     }
 
     /// `POST /offer` の route。`local` は応答に載せる相手（この端）の endpoint id。
@@ -120,6 +135,11 @@ mod browser {
             .map_err(|error| anyhow!("read {path}: {error:?}"))?
             .as_string()
             .context("response text")
+    }
+
+    /// native の相手が起動した iroh relay の URL。
+    pub async fn relay_url() -> Result<iroh::RelayUrl> {
+        Ok(post("/relay", "").await?.parse()?)
     }
 
     /// offer を native の相手へ送り、相手の endpoint id と answer を受け取る。

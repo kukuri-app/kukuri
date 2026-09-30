@@ -32,6 +32,11 @@ use browser as backend;
 mod native;
 #[cfg(not(target_family = "wasm"))]
 use native as backend;
+mod signaling;
+
+pub use signaling::{
+    MAX_NEGOTIATIONS, NEGOTIATION_DEADLINE, Rejected, Rejection, SIGNALING_ALPN, Signaling,
+};
 
 /// `CustomAddr` の transport id（ASCII の `KKWR`）。kukuri の中だけで使う。
 pub const TRANSPORT_ID: u64 = 0x4B4B_5752;
