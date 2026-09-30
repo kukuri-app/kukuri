@@ -46,11 +46,12 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - 送れる datagram（segment）の最大は 16 KiB（DataChannel の相互運用で安全な上限）。これを超える datagram は送らずに破棄する（UDP の MTU 超過と同じ扱いで、QUIC の MTU discovery が下げる）。
   QUIC の MTU は Endpoint 全体の設定なので変えない。SCTP の分割による損失の増え方は AC-2 の固定 workload で計測し、記録する。
 - SCTP の輻輳制御と DTLS の暗号化は QUIC と重複する。二重の暗号化は受け入れ、AC-2 で転送量と CPU を記録する（W8 の固定 workload でも計測する）。
+- native（str0m）では、SCTP の送信 buffer（約 128 KiB）が `bufferedAmount` の高水位より先に満ちる。`write` が受け付けなかった datagram は捨てて数える（§4 と同じく QUIC の再送に任せる）。
 
 ### 3. アドレスと session
 
 - `CustomAddr` の id は `0x4B4B5752`（ASCII の `KKWR`、kukuri WebRTC）。kukuri の中だけで使う値で、iroh の登録簿へは出さない。
-- `CustomAddr` の data は session id（16 byte の乱数）だけとする。秘密鍵・capability・account 由来の値・SDP・ICE の credential を入れない（#1421 INVAR-2）。
+- `CustomAddr` の data は session id（16 byte の乱数）と、session を始めた側か受けた側かの 1 byte（両端の addr を区別するため）の 17 byte だけとする。秘密鍵・capability・account 由来の値・SDP・ICE の credential を入れない（#1421 INVAR-2）。
 - session は（相手の EndpointId、session id、runtime の世代）に束縛する。`is_valid_send_addr` は開いている session の addr だけを受け付ける。
 - 相手の本人確認は QUIC が行う（新しい接続は TLS の EndpointId 認証、既存の接続への path 追加は接続の鍵で暗号化された path の検証）。DataChannel の相手が誰でも、QUIC の外で届いた bytes は信用しない。
   Endpoint の認証を account・audience の認可の代わりにしない（#1421 INVAR-1）。
@@ -66,7 +67,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 | 受信の待ち | Endpoint ごとに 256 datagram | 捨てる（UDP の損失と同じ扱い）。捨てた数を診断に出す |
 | 1 datagram | 16 KiB | 送らない・受け取らない |
 | SDP | 16 KiB | session を作らない |
-| ICE の候補（相手から・手元で集めるもの） | session ごとに各 32 件、1 件 512 byte | それ以上は無視する。手元の候補を W10 へ渡す stream も 32 件で終わる |
+| 相手の SDP の ICE の候補 | session ごとに 32 件、1 件 512 byte | 超える SDP を受け付けない（session を作らない） |
 | session の event（`Opened`・`Closed`） | transport ごとに 64 件の channel | session の上限（16）の 2 倍を超えるので溢れない |
 
 - 送信が満杯のときは、UDP の送信 buffer が溢れたときと同じく datagram を捨てる。iroh は custom の sender が `Pending` を返してもその datagram を捨てて `Ok` を返す（`socket/transports.rs` の `poll_send`、`"transport pending, dropped transmit"`）ので、
@@ -99,9 +100,9 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 
 W10 は認証済みの iroh 接続上の専用 ALPN で SDP と候補を交換し、次の API を呼ぶ。API は上限（§4）を検査し、超えた入力を拒否する。
 
-- `offer(remote: EndpointId) -> (SessionId, LocalDescription)`・`answer(remote, SessionId, RemoteDescription) -> LocalDescription`・`accept_answer(SessionId, RemoteDescription)`
-- `add_remote_candidate(SessionId, Candidate)`、候補の収集は session ごとの有界な stream で渡す
-- `close(SessionId)`、session の event（`Opened { session, remote, addr: CustomAddr }`・`Closed { session, reason }`）
+- `offer(remote: EndpointId) -> (SessionId, SDP)`・`answer(remote, SessionId, SDP) -> SDP`・`accept_answer(SessionId, SDP)`。ICE の候補は SDP に含め、trickle しない（接続交渉を 1 往復にする）。
+  browser は候補を集め終えるまで最大 3 秒待ち、過ぎたら集まった候補で返す。native は session の socket の host の候補を含める（server reflexive の候補は W10 が STUN と一緒に足す）。
+- `close(SessionId)`、session の event（`Opened { session, remote, addr: CustomAddr }`・`Closed { session, reason }`）、診断と試験の数（`stats`）
 - 専用 ALPN の値・同時の交渉数・期限・再試行・需要との接続は W10 AC-1 が決める。
 
 ### 8. AC-2 の固定 workload と判定

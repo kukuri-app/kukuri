@@ -152,6 +152,39 @@ jobs:
       - name: Pinned iroh resource contract
         run: python tools/check_iroh_resource_contract.py
 
+  # #1421: QUIC over WebRTC DataChannel の transport を headless の Chrome で試す（ADR 0057 §8 の E1〜E4）。
+  linux-web-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: wasm32-unknown-unknown
+
+      - name: Install LLVM tools for the wasm C build
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install wasm-bindgen test runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Browser transport tests
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/webrtc_transport_browser_test.sh
+
   linux-desktop-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

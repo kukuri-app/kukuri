@@ -8,6 +8,7 @@ members = [
     "crates/iroh-node",
     "crates/cn-protocol",
     "crates/docs-sync",
+    "crates/webrtc-transport",
     "crates/blob-service",
     "crates/harness",
     "crates/app-api",
