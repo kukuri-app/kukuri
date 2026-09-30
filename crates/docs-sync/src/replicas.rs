@@ -3,7 +3,12 @@ use iroh_docs::NamespaceSecret;
 use kukuri_core::{ReplicaId, TopicId, blob_hash};
 
 pub(crate) fn public_replica_secret(replica_id: &ReplicaId) -> Option<NamespaceSecret> {
-    if replica_id.as_str().starts_with("channel::") {
+    // private channel と、本人の端末間の account 同期（ADR 0061）は、replica id から namespace を導出しない。
+    if replica_id.as_str().starts_with("channel::")
+        || replica_id
+            .as_str()
+            .starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX)
+    {
         return None;
     }
     if replica_id.as_str().starts_with("bucket::") {
