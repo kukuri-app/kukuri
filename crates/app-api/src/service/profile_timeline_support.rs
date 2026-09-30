@@ -598,12 +598,13 @@ pub(crate) async fn profile_timeline_page(
             frontier,
         ));
     }
-    // 同じ object は先の source の行を使う。author replica の行を優先し、無い投稿だけを projection の行で補う。
+    // 手元の投稿の行(#1442)。閲覧者が持つ一部分なので、remote を読むかの判断には数えず、最後の組み立てにだけ加える。
+    // 同じ object は先の source の行を使うので、最後に置き、author replica の行を優先する。
     let held = services
         .projection_store
         .list_author_timeline_in_channel(author_pubkey, PUBLIC_CHANNEL_ID, cursor.clone(), limit)
         .await?;
-    sources.push(ProfileSourceRows {
+    let held = ProfileSourceRows {
         frontier: held
             .next_cursor
             .map(|cursor| (cursor.created_at, cursor.object_id.as_str().to_owned())),
@@ -615,7 +616,7 @@ pub(crate) async fn profile_timeline_page(
                 (item_position(&item), ProfileRow::Local(Box::new(item)))
             })
             .collect(),
-    });
+    };
     let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
     let load = |row| async move {
         let (reader, replica, position, policy) = match row {
@@ -661,7 +662,7 @@ pub(crate) async fn profile_timeline_page(
     } else {
         writer_readers(services, &legacy, &[author_pubkey], None, Vec::new()).await
     };
-    if readers.is_empty() {
+    if readers.is_empty() && held.rows.is_empty() {
         return Ok(profile_page(items, next));
     }
     'replicas: for replica in replicas {
@@ -693,6 +694,7 @@ pub(crate) async fn profile_timeline_page(
             }
         }
     }
+    sources.push(held);
     let (items, next) = assemble_profile_page(sources, limit, load).await?;
     Ok(profile_page(items, next))
 }

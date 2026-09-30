@@ -399,3 +399,79 @@ async fn timeline_authors_without_a_local_profile_are_read_once_in_the_backgroun
     );
     assert_eq!(app.subscription_registry.scope_leases.lock().await.len(), 0);
 }
+
+// #1442: 手元の投稿の行(projection)でページが埋まっても、作者に届くなら provider の行を読む。閲覧者が参加していない
+// topic への投稿も、ページを送れば全件が 1 回ずつ出る(手元の行は閲覧者が持つ一部分で、remote を読むかの判断に数えない)。
+#[tokio::test]
+async fn held_projection_rows_do_not_stop_the_provider_read() {
+    let author = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    let mut other_topic = Vec::new();
+    let mut held = Vec::new();
+    for index in 0..20 {
+        other_topic.push(put_profile_post(provider.as_ref(), &author, BASE_TIME + 2 * index).await);
+        let at = BASE_TIME + 2 * index + 1;
+        held.push((at, put_profile_post(provider.as_ref(), &author, at).await));
+    }
+    let docs = Arc::new(CountingDocsSync::reading_from(provider.clone()));
+    let (app, store) = app_over(docs.clone(), generate_keys());
+    let author_pubkey = author.public_key_hex();
+    persist_test_post_with_labels(
+        docs.as_ref(),
+        Some(store.as_ref()),
+        &author,
+        &TopicId::new(TOPIC),
+        PayloadRef::InlineText { text: "t".into() },
+        Vec::new(),
+        None,
+        Vec::new(),
+    )
+    .await;
+    let template = ObjectProjectionStore::list_topic_timeline(store.as_ref(), TOPIC, None, 1)
+        .await
+        .expect("topic page")
+        .items
+        .remove(0);
+    // 雛形の行は非公開の行に置き換え、プロフィールに出さない。
+    let mut hidden = template.clone();
+    hidden.channel_id = "private-channel".into();
+    store
+        .put_object_projection(hidden)
+        .await
+        .expect("hide the template");
+    for (at, id) in &held {
+        let mut row = template.clone();
+        row.object_id = EnvelopeId::from(id.as_str());
+        row.created_at = *at;
+        store.put_object_projection(row).await.expect("held row");
+    }
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    for _ in 0..40 {
+        let page = profile_timeline_page(
+            &app.services,
+            author_pubkey.as_str(),
+            None,
+            cursor,
+            20,
+            &BTreeSet::new(),
+        )
+        .await
+        .expect("profile page");
+        seen.extend(
+            page.items
+                .iter()
+                .map(|item| item.object_id().as_str().to_string()),
+        );
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let mut expected = other_topic;
+    expected.extend(held.into_iter().map(|(_, id)| id));
+    expected.sort();
+    seen.sort();
+    assert_eq!(seen, expected);
+}
