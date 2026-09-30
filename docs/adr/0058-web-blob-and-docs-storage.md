@@ -86,12 +86,14 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 
 事実（基準 commit は統合 branch の同じ head）:
 
-- kukuri が使う iroh-docs の API は、author の import と既定の設定、namespace の import・open・close・drop、`set_bytes`・`get_exact`・`get_many`（`Query` の limit）・`del`、`subscribe`（InsertLocal）、private の証明の `export_secret_key`、`DOC_READ_ALPN` の応答である。
+- kukuri が使う iroh-docs の API は、author の import と既定の設定、namespace の import・open・close・drop・`list`（native の 1 回だけの回収。#1407）、`set_bytes`・`get_exact`・`get_many`（`Query` の limit）・`del`、`subscribe`（InsertLocal）、private の証明の `export_secret_key`、`DOC_READ_ALPN` の応答である。
   ranger による同期・ticket・`start_sync` は使わない（#1221 R5-H）。旧 store の退役（`legacy.rs`）は native だけ。
 - 本人の record の正本は、native でも docs store ではなく保護所有先（`protect_own_record` → `put_owned_record`、参照 `own_docs`）にある。端末バックアップは docs store を含めず、空の docs から本人の投稿を戻せることを test が確かめている。
 - 保持分（held）の record を合わせる範囲は経路で違う。
-  - exact の読み出し: 手元（`iroh_local_source.rs` の `with_cached_records`）と相手への応答（`page_read.rs`）の両方で、全 replica について合わせる。
-  - key の一覧: 相手への応答（`page_read.rs` の Keys）は公開 topic の replica だけで合わせる（#1395）。手元の一覧（`iroh_sync.rs` の `key_page`）はどの replica でも合わせない。
+  - 手元の読み出し: `query_local_source`（LocalSourceReader）は全 replica で合わせる。`query_replica_exact_bounded`・`query_replica_with_policy` は private の replica だけで合わせる（`iroh_local_source.rs` の `public_replica_secret` の判定）。
+    `query_replica_by_author` と手元の key の一覧（`iroh_sync.rs` の `key_page`）は合わせない。`key_page` は namespace が無いと空を返す（#1407 の「読むだけでは namespace を作らない」）。
+  - 相手への応答（`page_read.rs`）: Exact は全 replica で合わせ、Keys は公開 topic の replica だけで合わせる（#1395）。
+    private の証明は、要求の namespace の secret で（replica、namespace、query）に鍵をかけたものを確かめるが、要求の replica の文字列と namespace の対応は確かめず、保持分は要求の replica の文字列で引いている。
 - iroh の entry の timestamp は kukuri のどこからも読まない。更新の ID と時刻は署名済み envelope の値を使う。
 
 決定:
@@ -101,14 +103,18 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
   - 索引は `[replica, key]`（exact）、`[replica, author, key]`（author を指定した一覧）、「非保護か・最後に使った時刻」（回収の順）。
   - 自分の record は `own_docs` の参照で保護し、remote の record は §4 と同じ規則で回収する。
 - 起動時に record を読まない。docs author はアカウント鍵から導出し直し（ADR 0053）、namespace は需要があるときに開く（公開は replica id から導出、private は W4・W5 が保存する capability から登録する）。全 replica の export・import を起動の条件にしない。
-- 保持分を合わせる範囲を、手元の key の一覧（`key_page`）と相手への key の一覧（page_read の Keys）の両方で、全 replica（topic・author・author bucket・private）へ広げる。
-  手元の一覧は、手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせて先頭 `limit` 件を取る（page_read の Keys と同じ方法で、読む量は `2 × limit` を超えない）。
-  Web は起動のたびに docs store が空なので、これが無いと自分の author replica・private の一覧から自分の record が消える。native の restore の直後にも効く。実装は W3 AC-3 が所有する。
+- 保持分を合わせる範囲を、手元の読み出しのすべての経路（exact・author を指定した exact・key の一覧）と相手への key の一覧で、全 replica（topic・author・author bucket・private）へ広げる。
+  一覧は、手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせて先頭 `limit` 件を取る（page_read の Keys と同じ方法で、読む量は `2 × limit` を超えない）。exact は今の上限（8 件）のまま。
+  保持分は replica の文字列で引くので、namespace が手元に無くても合わせる（namespace を読むためだけには作らない。#1407）。
+  Web は起動のたびに docs store が空なので、これが無いと reload の後に自分の author replica・private の record が手元で読めず、相手への一覧からも消える。native の restore の直後にも効く。実装は W3 AC-3 が所有する。
+- 相手へ private の保持分を返すのは、要求の replica に手元で登録した capability の secret で証明を確かめられたときだけにする（要求の namespace がその secret の namespace と一致することも確かめる）。
+  docs の namespace ではなく登録した capability で確かめるので、drop した replica にも答えられ、証明に使った namespace と別の replica の保持分を返すことはない。実装は W3 AC-3 が所有する。
 - memory store の保持: replica は需要の間だけ開く（既存の lease と close）。Web では、需要が終わって閉じた replica を drop し、その replica でこの session に書いた entry の内容の hash を `MemStore` から消す（書いた record は保存 trait に確定しており、保持分として読める）。
   memory に残るのは、開いている replica のこの session の書込みと、転送中の temp tag だけになる。開いている replica の数は既存の需要の上限に従う。
-  drop した replica への読み出し（手元・相手への exact と一覧、private の証明）は、起動直後と同じく namespace を登録し直してから保持分で答える。これを AC-3 の reload・peer 不在の試験で確かめる。
+  同じ内容の hash を開いている別の replica も参照しうるので、`MemStore` から消すのは、開いている replica のどれもこの session の書込みで参照していない hash に限る（hash ごとに参照する replica の数を数える。数えるのはこの session の書込みだけなので有界）。
+  drop した replica への読み出しは、namespace を作り直さずに保持分で答える（上の 2 項目）。これを AC-3 の reload・peer 不在の試験で確かめる。
 - 再構築・再送は、保存 trait の record をそのまま提供する。docs へ書き直さないので、更新の ID と時刻は変わらない。
-- 保存 trait への書込みに失敗したら、書込み全体を失敗として返す（native の `protect_own_record` の失敗と同じ扱い）。偽の保存成功を返さない。
+- 保存 trait への書込みに失敗したら、書込み全体を失敗として返し、偽の保存成功を返さない。native の `protect_own_record` は cache や account が無いと何もせずに成功を返すが、Web には常に保存 trait があるので、この分岐を Web の保護の成功として扱わない。
 - 上流 iroh-docs の patch rev を更新するときの互換検証（native の保存互換、WASM の build と動作）の手順を AC-4 で `docs/runbooks/dev.md` に書く。
 
 採らない方式:
