@@ -51,7 +51,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
   `desktop-runtime` の名前は変えない（#886 で native の共通 host になっており、改名は利用箇所の書き換えだけを増やす）。
 - `crates/web-runtime`（新規、`cdylib`、wasm-bindgen）を Web の入口にする。JS へ公開するのは §6 の API だけとし、業務ロジック・署名・権限判定を持たない。
   ブラウザ専用の保存 adapter（IndexedDB）もここに置く（実装は #1217 W4）。docs・blobs の保存 backend は各 fork（#1216 W3・#1215 W2）に置く。
-- QUIC over WebRTC DataChannel の transport crate の配置と名前は #1421 W9 AC-1 で決める。
+- QUIC over WebRTC DataChannel の transport crate は `crates/webrtc-transport`（ADR 0057、#1421 W9 AC-1）。
 - `desktop-runtime` の platform 固有 module（keyring・fs・sqlx を直接使うもの）は file 単位で `cfg(not(target_family = "wasm"))` にする。
   fs を一部で直接書く module の読み書きは、既存の `KeyringStore`（`identity.rs`）と同じ形の保存 trait 1 つへ寄せる。native の実装は今の file 読み書きを移す。Web の実装は W4 が IndexedDB で作る。
 

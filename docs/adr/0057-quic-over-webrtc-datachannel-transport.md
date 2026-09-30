@@ -16,7 +16,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - 送受信の単位は datagram。`Transmit::segment_size` がある場合は複数の datagram に分かれる。`max_transmit_segments` の既定は 1（GSO なし）。custom transport 専用の MTU の設定は無く、QUIC の MTU discovery に任せる。
 - アドレスは `TransportAddr::Custom(CustomAddr)`（u64 の id と任意長の bytes）。`Endpoint::addr()` と address lookup には載らない。id の登録簿（`TRANSPORTS.md`）は 0x00〜0x1F が予約、0x20 が Test。
 - 既定の path selector は、custom を IP と同じ primary（優遇なし、RTT で比較）、relay を backup として扱う。selector が見るのは開いている path だけで、
-  既存の接続の途中で custom path を開く公開 API は 1.3.0 に無い。上流 PR #4565（`Endpoint::add_remote_addrs`、追加のみ・約 130 行、open）がその API を足す。
+  既存の接続の途中で custom path を開く公開 API は 1.3.0 に無い。上流 PR #4565（`Endpoint::add_remote_addrs`、+134 −1、open）がその API を足す。
 - ブラウザの `RTCPeerConnection` は Window だけで使える。SDP に `max-message-size` が無ければ 64 KiB とみなされ、libwebrtc の SCTP は 1 packet の user payload が約 1160 byte である（推定）。
   QUIC の datagram（1200 byte 以上）は SCTP で 2 つの chunk に分かれうるので、再送しない設定では片方を失うと datagram ごと失う。
 - str0m 0.24.0（MIT / Apache-2.0、Sans-IO）は、`rust-crypto` backend で Windows 上に build・実行できた（2026-09-30）。DataChannel の `ordered=false`・`Reliability::MaxRetransmits { retransmits: 0 }`・`negotiated`、
@@ -40,7 +40,9 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 ### 2. DataChannel と datagram の形
 
 - session ごとに DataChannel を 1 本だけ持つ。binary、`ordered=false`、`maxRetransmits=0`、`negotiated=true`（stream id 0）、label `kukuri-quic/1`。順序と再送は QUIC の stream が担う。
-- DataChannel の 1 message に QUIC の datagram を 1 つだけ載せる。`max_transmit_segments` は 1 にし、分割・再組立ての層を足さない。
+  `negotiated=true` では label は相手へ送られないので、transport の版の互換は W10 の専用 ALPN の値で判定する。
+- DataChannel の 1 message に QUIC の datagram を 1 つだけ載せる。`segment_size` のある `Transmit` は segment ごとに 1 message へ分けて送る（各 segment は独立した QUIC の datagram なので、再組立ては要らない）。
+  `max_transmit_segments` は 64 にする。iroh は Endpoint の GSO の batch 数を全 transport の最小値にする（`socket/transports.rs` の `max_transmit_segments`）ので、1 にすると native の UDP の GSO まで止まる。
 - 送れる datagram の最大は 16 KiB（DataChannel の相互運用で安全な上限）。これを超える `Transmit` は送らずに破棄する（UDP の MTU 超過と同じ扱いで、QUIC の MTU discovery が下げる）。
   QUIC の MTU は Endpoint 全体の設定なので変えない。SCTP の分割による損失の増え方は AC-2 の固定 workload で計測し、記録する。
 - SCTP の輻輳制御と DTLS の暗号化は QUIC と重複する。二重の暗号化は受け入れ、AC-2 で転送量と CPU を記録する（W8 の固定 workload でも計測する）。
@@ -59,12 +61,17 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 | 資源 | 上限 | 満杯・超過時 |
 | --- | --- | --- |
 | 1 つの Endpoint が同時に持つ session | 16 | 新しい session を作らず、既存の経路（relay 等）を使う（受付は W10 の需要の owner が判定） |
-| 送信の待ち（Rust 側） | session ごとに 64 datagram | `poll_send` が Pending を返す（QUIC の送信が止まる） |
-| DataChannel の未送信 bytes（`bufferedAmount`） | 高水位 1 MiB、低水位 256 KiB | 高水位以上で Pending、`bufferedamountlow`（str0m は `ChannelBufferedAmountLow`）で再開 |
+| 送信の待ち（Rust 側） | session ごとに 64 datagram | その `Transmit` を捨てて `Ok` を返す。捨てた数を診断に出す |
+| DataChannel の未送信 bytes（`bufferedAmount`） | 高水位 1 MiB、低水位 256 KiB | 高水位に達したら低水位を下回る（`bufferedamountlow`、str0m は `ChannelBufferedAmountLow`）まで、送る datagram を捨てる |
 | 受信の待ち | Endpoint ごとに 256 datagram | 捨てる（UDP の損失と同じ扱い）。捨てた数を診断に出す |
 | 1 datagram | 16 KiB | 送らない・受け取らない |
 | SDP | 16 KiB | session を作らない |
-| ICE の候補 | session ごとに 32 件、1 件 512 byte | それ以上は無視する |
+| ICE の候補（相手から・手元で集めるもの） | session ごとに各 32 件、1 件 512 byte | それ以上は無視する。手元の候補を W10 へ渡す stream も 32 件で終わる |
+| session の event（`Opened`・`Closed`） | transport ごとに 64 件の channel | session の上限（16）の 2 倍を超えるので溢れない |
+
+- 送信が満杯のときは、UDP の送信 buffer が溢れたときと同じく datagram を捨てる。iroh は custom の sender が `Pending` を返してもその datagram を捨てて `Ok` を返す（`socket/transports.rs` の `poll_send`、`"transport pending, dropped transmit"`）ので、
+  `Pending` で QUIC の送信を止めることはできない。QUIC は捨てた datagram を損失として再送し、輻輳制御が送信量を下げる。
+  このため backend は `Pending` を返さず、自分で捨てて `Ok` を返し、捨てた数を数える。
 
 - session の close・cancel・runtime の世代の終了で、PeerConnection・DataChannel・socket・task・待ちの buffer を解放し、登録簿から消す。
   閉じた session の JS callback が後から届いても、登録簿に無い session には何もしない。未送信の datagram を送信成功として扱わない（QUIC の再送に任せる）。
@@ -103,7 +110,7 @@ W10 は認証済みの iroh 接続上の専用 ALPN で SDP と候補を交換�
 | --- | --- | --- | --- |
 | E1 | native↔native（str0m 同士）、browser↔browser（同じ page の 2 つの PeerConnection）、browser↔native | custom のアドレスだけで接続し、1 MiB の bi stream を往復 | bytes が一致、相手の EndpointId が一致 |
 | E2 | 同上 | 1452 byte の datagram を transport へ 1000 回渡す | 受け取った datagram の境界と中身が一致。損失数を記録する |
-| E3 | native↔native、browser↔native | 受信側の読み出しを止めて 8 MiB を送る | Rust 側の待ちが 64 以下、`bufferedAmount` が 1 MiB＋1 datagram 以下、読み出しの再開で完走 |
+| E3 | native↔native、browser↔native | 受信側の読み出しを止めて 8 MiB を送る | Rust 側の待ちが 64 以下、`bufferedAmount` が 1 MiB＋1 datagram 以下。捨てた datagram の数を記録し、読み出しの再開後に QUIC の再送で完走して bytes が一致 |
 | E4 | 同上 | 転送の途中で session を close | session・socket・task が 0 に戻る。閉じた session の callback で何も再登録されない |
 | E5 | native の既存の transport の test | 既存の UDP・relay の試験 | 変更前と同じく成功 |
 | E6 | native↔native | fixture で DataChannel の送信の 5% を捨てて、1 MiB の bi stream を往復 | 完走して bytes が一致。所要時間と QUIC の再送数を記録する |
@@ -131,7 +138,7 @@ Firefox・Safari の実測は W8 の matrix が扱う。
 ## Consequences
 
 - iroh の Custom Transport は不安定な API なので、iroh の fork rev を更新するときは本 crate の build と AC-2 の試験を必ず通す。
-- 同じ Endpoint に transport が 1 つ増える。native 同士の通信は変わらない。
+- 同じ Endpoint に transport が 1 つ増える。native 同士では custom の session を作らないので経路は変わらない。GSO の batch 数は custom が 64 を返すので、UDP の値（platform により 1〜64）がそのまま使われる。
 - DataChannel の上で QUIC を運ぶため、暗号化と輻輳制御が重なる。計測値は AC-2 と W8 に記録する。
 
 ## Data classification
@@ -147,7 +154,7 @@ ADR 0002 の template に従う。
 - Gossip Hint 必要有無: なし。
 - Blob 必要有無: なし。
 - SQLite projection 必要有無: なし。
-- 必須 contract: §8 の E1〜E5。
+- 必須 contract: §8 の E1〜E6（S1〜S3 は W10 AC-2）。
 - 必須 scenario: W8（#1220）の native↔Web・Web↔Web の直接経路と fallback。
 - 新しい外部送信: STUN の要求（IP とポートが STUN の運用者、すなわち Community Node の運用者へ届く）、ICE の候補（IP とポートが接続交渉の相手へ届く）。
   外部送信の一覧（`docs/legal/app-data-flow-inventory.md`・`docs/legal/external-transmission-notice.md`）への反映は W10 と W8 AC-6 が行う。
