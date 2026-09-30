@@ -16,7 +16,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - Tauri の command は 174 件（`apps/desktop/src-tauri/src/lib.rs` の `generate_handler!`）。
   - (a) `DesktopRuntime` の method を呼ぶだけ: 134 件（profile・投稿・反応・DM・private channel・topic・Community Node・live/game/Dome など）
   - (b) 端末固有: 19 件（updater・window・OS 通知・外部 URL・developer log・system locale・link preview の HTTP 取得・file の media）
-  - (c) Web でも要るが処理が Tauri 側にある: 21 件（identity 10、同意 2、起動 1、device backup 6、ほか）と `invoke_gate.rs` の起動中・終了中の gate
+  - (c) Web でも要るが処理が Tauri 側にある: 21 件（identity 10、同意 2、起動 1、device backup 6、app の版を AppHandle から読む `accept_community_node_consents`・`enable_community_node_observation_sharing` の 2）と `invoke_gate.rs` の起動中・終了中の gate
 - `wasm-bindgen --target web` の出力は、Vite が plugin 無しで asset として読む。`WebAssembly.instantiateStreaming` には CSP の `'wasm-unsafe-eval'` と `application/wasm` の MIME が要る。
 - LP（`kukuri.app`）は Cloudflare Pages で `_headers` の CSP を付けて配信している。Pages の 1 file の上限は 25 MiB。
 - CI の runner: ubuntu-24.04 には Chrome・Firefox と各 driver、macOS 15 arm64 には Safari と safaridriver がある。標準の Linux runner は KVM を使えるので Android の emulator を動かせる。
@@ -33,7 +33,8 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 
 ### 2. 配信の条件
 
-- CSP（`_headers`）: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: wss:; img-src 'self' blob: data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`。
+- CSP（`_headers`）: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: wss:; img-src 'self' blob: data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`。
+  `style-src` の inline は、依存の UI 部品が `<style>` を差し込むため（Tauri の CSP と同じ）。script の inline は許さない。
   `connect-src` の `https:`・`wss:` は Community Node の API と iroh relay（WebSocket）のため。第三者の script・analytics を読み込まない。
 - `.wasm` は `Content-Type: application/wasm` で配る。COOP・COEP は付けない（SharedArrayBuffer・thread を使わない）。
 - secret を扱う Web クライアントは LP と別の origin に置く（同じ origin の第三者 script から IndexedDB の vault を守るため。ADR 0059 §1 の信頼境界）。公開の URL・DNS・公開の時期は artifact の完成と別の操作とする（#1220 の Non-goals）。
@@ -54,13 +55,18 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 
 | browser | 実行先 | 判定する範囲 |
 | --- | --- | --- |
-| desktop Chromium | ubuntu-24.04 の CI（Playwright） | 主要導線・復帰・native↔Web と Web↔Web の直接経路と fallback |
-| desktop Firefox | ubuntu-24.04 の CI（Playwright の Firefox） | 主要導線・復帰 |
-| Safari | macOS 15 arm64 の CI の実 Safari（safaridriver。WebKit の build や Node.js で代替しない） | 主要導線・復帰 |
-| Android Chrome | ubuntu-24.04 の CI の Android emulator の Chrome | 主要導線 |
+| desktop Chromium | ubuntu-24.04 の CI（Chrome と chromedriver） | 主要導線・復帰・native↔Web と Web↔Web の直接経路・fallback |
+| desktop Firefox | ubuntu-24.04 の CI（Firefox と geckodriver） | 主要導線・復帰・native↔Web の直接経路・fallback |
+| Safari | macOS 15 arm64 の CI の実 Safari（safaridriver。WebKit の build や Node.js で代替しない） | 主要導線・復帰・native↔Web の直接経路・fallback |
+| Android Chrome | ubuntu-24.04 の CI の Android emulator の Chrome（chromedriver の Android の操作） | 主要導線・復帰・native↔Web の直接経路・fallback |
+
+- どの browser でも、直接経路は「同じ job の中で起動した native の node との、host の候補での接続」（到達できる固定 fixture）で判定し、fallback は W10 の T2（UDP の遮断・ICE の失敗）の fixture で判定する。
+  relay だけで主要導線が通ったことを、直接経路の判定の PASS にしない（実データの経路と bytes で判定する。ADR 0057 §8）。
+- 4 つの browser を、W3C WebDriver の 1 つの driver（WebdriverIO。chromedriver・geckodriver・safaridriver・Android の chromedriver を同じ API で操作できる）で操作し、同じ scenario の手順を流す。既存の desktop の Playwright の試験はそのまま残す。
+- job の中で作れない組（emulator の NAT で UDP が通らない等）は、実測した結果を未確認の制約として matrix に記録し、PASS にしない。
 
 - 2026-09-30 のユーザー決定: Safari は CI の実 Safari、Android は CI の emulator で判定する。手元の Mac・Android の実機は使わない。
-- CI で作れない条件（同じ LAN の直接経路、実回線の切替、モバイル回線）は、Chromium と Linux 実機（`local2`）で確かめ、Safari・Android では確かめない制約として matrix に記録する。未確認を PASS にしない。
+- CI で作れない条件（別の機器との同じ LAN の直接経路、実回線の切替、モバイル回線）は、Chromium と Linux 実機（`local2`）で確かめ、Firefox・Safari・Android では確かめない制約として matrix に記録する。未確認を PASS にしない。
 - native の相手は、CI の job の中で起動する kukuri の native の node とする。direct と fallback の判定は実データの経路と bytes で行う（ADR 0057 §8、W10）。
 
 ### 5. 測定の workload と STUN
