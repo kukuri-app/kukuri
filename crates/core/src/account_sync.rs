@@ -132,6 +132,10 @@ impl AccountSyncKeys {
                 },
             )
             .map_err(|_| anyhow!("account sync item failed authentication"))?;
+        ensure!(
+            plaintext.len() <= MAX_ACCOUNT_SYNC_ITEM_BYTES,
+            "account sync item exceeds {MAX_ACCOUNT_SYNC_ITEM_BYTES} bytes"
+        );
         let item: AccountSyncItem =
             serde_json::from_slice(&plaintext).context("invalid account sync item")?;
         item.validate()?;
@@ -226,7 +230,8 @@ impl AccountSyncItemKey {
 }
 
 /// 同期する 1 つの item。`value` が無い item は削除（tombstone）。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// `value` は channel の鍵を含みうるので、`Debug` へ出さない。
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountSyncItem {
     pub key: AccountSyncItemKey,
@@ -235,6 +240,17 @@ pub struct AccountSyncItem {
     /// 編集した端末での編集時刻（ミリ秒）。再受信・restore の時刻を入れない。
     pub updated_at: i64,
     pub value: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for AccountSyncItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountSyncItem")
+            .field("key", &self.key)
+            .field("op_id", &self.op_id)
+            .field("updated_at", &self.updated_at)
+            .field("tombstone", &self.value.is_none())
+            .finish_non_exhaustive()
+    }
 }
 
 impl AccountSyncItem {

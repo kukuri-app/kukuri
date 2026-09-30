@@ -115,6 +115,8 @@ fn a_sealed_item_opens_only_for_the_same_account_and_key() {
     let original = item(capability());
     let docs_key = original.key.docs_key();
     let sealed = derived.seal(&account, &original).expect("seal");
+    // 鍵を含む value を Debug へ出さない。
+    assert!(!format!("{original:?}").contains("secret_hex"));
     assert!(!sealed.ciphertext_hex.contains(&hex::encode("secret_hex")));
     assert_eq!(
         derived.open(&account, &docs_key, &sealed).expect("open"),
