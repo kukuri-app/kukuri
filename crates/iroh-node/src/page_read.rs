@@ -15,11 +15,11 @@ use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
 use irpc::channel::mpsc;
-use kukuri_store::SqliteStore;
+use kukuri_store::ContentCacheStore;
+use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Semaphore;
-use tokio::time::timeout;
 
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
 
@@ -197,7 +197,7 @@ impl Request {
 pub(crate) struct DocReadProtocol {
     sync: SyncHandle,
     blobs: BlobStore,
-    remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     permits: Arc<Semaphore>,
 }
 
@@ -211,7 +211,7 @@ impl DocReadProtocol {
     pub(crate) fn new(
         sync: SyncHandle,
         blobs: BlobStore,
-        remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+        remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     ) -> Self {
         Self {
             sync,

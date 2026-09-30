@@ -29,13 +29,14 @@ use iroh::tls::CaTlsConfig;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayConfig, RelayUrl, SecretKey};
 use iroh_gossip::api::{Event as GossipEvent, GossipSender};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, Gossip, TopicId as GossipTopicId};
+#[cfg(not(target_family = "wasm"))]
 use iroh_mainline_address_lookup::DhtAddressLookup;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId};
 #[cfg(test)]
 use kukuri_core::{HintObjectRef, KukuriEnvelope, build_post_envelope, generate_keys};
+use n0_future::task::JoinHandle;
+use n0_future::time::{sleep, timeout};
 use tokio::sync::{Mutex, Notify, RwLock, Semaphore, broadcast, watch};
-use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, info, warn};
 
@@ -92,7 +93,7 @@ struct ReceiveOfferTopicState {
 static NEXT_RECEIVE_OFFER_TRANSPORT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 struct OutboundOfferHold {
-    expires_at: tokio::time::Instant,
+    expires_at: n0_future::time::Instant,
     task: JoinHandle<()>,
 }
 
@@ -127,7 +128,7 @@ pub struct IrohGossipTransport {
     configured_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     bootstrap_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     imported_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
-    account_store: Option<Arc<kukuri_store::SqliteStore>>,
+    account_store: Option<Arc<crate::PeerCandidateStore>>,
     imported_cursor: Arc<Mutex<Option<(i64, String)>>>,
     hot_peer_ids: Arc<Mutex<VecDeque<EndpointId>>>,
     gossip_health: Arc<crate::peers::BlobPeerHealth>,

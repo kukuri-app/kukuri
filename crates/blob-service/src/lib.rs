@@ -165,7 +165,7 @@ pub trait BlobService: Send + Sync {
 #[derive(Clone)]
 pub struct IrohBlobService {
     node: Arc<IrohDocsNode>,
-    remote_cache: Option<Arc<kukuri_store::SqliteStore>>,
+    remote_cache: Option<Arc<dyn kukuri_store::ContentCacheStore>>,
     pinned: Arc<RwLock<HashSet<String>>>,
     // ピア台帳・接続候補・リトライ状態は kukuri-transport の共通実装(WP-H2)。
     // 台帳変化の bool は blob-service では使わない(レプリカへの配り直しが無いため)。
@@ -209,6 +209,8 @@ impl IrohBlobService {
         self.peers.ranked_peers().await
     }
 
+    /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
+    #[cfg(not(target_family = "wasm"))]
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
         store: Arc<kukuri_store::SqliteStore>,

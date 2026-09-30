@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;

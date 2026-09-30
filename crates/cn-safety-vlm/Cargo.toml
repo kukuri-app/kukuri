@@ -19,7 +19,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 kukuri-cn-safety-runtime = { path = "../cn-safety-runtime" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 wiremock.workspace = true
 
 [lints]

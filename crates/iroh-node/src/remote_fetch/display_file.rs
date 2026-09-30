@@ -28,7 +28,7 @@ pub async fn prepare_display_file_fetch(
         let result = tokio::select! {
             biased;
             _ = lease.cancelled() => Ok(None),
-            result = tokio::time::timeout_at(deadline, walk) => result.unwrap_or(Ok(None)),
+            result = n0_future::time::timeout(deadline.saturating_duration_since(Instant::now()), walk) => result.unwrap_or(Ok(None)),
         };
         if !lease.finish() {
             return Ok(None);

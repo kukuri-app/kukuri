@@ -8,8 +8,24 @@ use kukuri_transport::work_admission::{
     NetworkWorkOwner, WorkAdmission, WorkCompletion, WorkId, WorkKey, WorkLane, WorkLimits,
     WorkMode, WorkPersistence, WorkProtocol, WorkScope, WorkWaiter,
 };
+use n0_future::time::{Instant, timeout};
+
+/// 実行の時刻（n0_future。native は tokio）から、受付の方針の時刻（web-time。native は std）へ。wasm では同じ型。
+pub(crate) fn policy_instant(instant: Instant) -> web_time::Instant {
+    #[cfg(not(target_family = "wasm"))]
+    return instant.into_std();
+    #[cfg(target_family = "wasm")]
+    return instant;
+}
+
+/// 受付の方針の時刻から、実行の時刻へ。
+pub(crate) fn runtime_instant(instant: web_time::Instant) -> Instant {
+    #[cfg(not(target_family = "wasm"))]
+    return Instant::from_std(instant);
+    #[cfg(target_family = "wasm")]
+    return instant;
+}
 use tokio::sync::Notify;
-use tokio::time::{Instant, timeout_at};
 
 mod fetch;
 pub(crate) use fetch::{FetchIdentity, FetchRequest};
@@ -43,7 +59,7 @@ struct State {
 
 impl State {
     fn advance(&mut self) {
-        let now = Instant::now().into_std();
+        let now = crate::network_work::policy_instant(Instant::now());
         self.policy.expire(now);
         while let Some(id) = self.policy.next_cancellation() {
             self.cancelled.insert(id);
@@ -59,7 +75,7 @@ impl State {
 pub(crate) struct NetworkWorkRuntime {
     state: Mutex<State>,
     changed: Arc<Notify>,
-    driver: Mutex<Option<tokio::task::AbortHandle>>,
+    driver: Mutex<Option<n0_future::task::AbortHandle>>,
 }
 
 impl Default for NetworkWorkRuntime {
@@ -150,10 +166,14 @@ impl NetworkWorkRuntime {
                 mode,
                 persistence: WorkPersistence::Ephemeral,
                 byte_limit,
-                deadline: deadline.into_std(),
+                deadline: crate::network_work::policy_instant(deadline),
                 lane,
             };
-            let waiter = match state.policy.admit(key, &hash, Instant::now().into_std()) {
+            let waiter = match state.policy.admit(
+                key,
+                &hash,
+                crate::network_work::policy_instant(Instant::now()),
+            ) {
                 WorkAdmission::Admitted(waiter) => waiter,
                 _ => {
                     state.policy.revoke_scope(scope);
@@ -188,7 +208,7 @@ impl NetworkWorkRuntime {
                     return Ok(lease);
                 }
             }
-            timeout_at(deadline, notified)
+            timeout(deadline.saturating_duration_since(Instant::now()), notified)
                 .await
                 .map_err(|_| NetworkAdmissionError::Expired)?;
         }
@@ -218,7 +238,9 @@ impl NetworkWorkRuntime {
                 state.policy.release_waiter(waiter);
                 state.policy.revoke_scope(scope);
             }
-            let disposition = state.policy.complete(id, Instant::now().into_std());
+            let disposition = state
+                .policy
+                .complete(id, crate::network_work::policy_instant(Instant::now()));
             state.policy.revoke_scope(scope);
             state.scopes.remove(&id);
             state.ready.remove(&id);
@@ -265,7 +287,13 @@ impl DisplayWorkLease {
                     return;
                 }
             }
-            if timeout_at(self.deadline, notified).await.is_err() {
+            if timeout(
+                self.deadline.saturating_duration_since(Instant::now()),
+                notified,
+            )
+            .await
+            .is_err()
+            {
                 return;
             }
         }

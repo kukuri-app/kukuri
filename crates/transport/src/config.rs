@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use iroh::{RelayMap, RelayMode, RelayUrl};
+#[cfg(not(target_family = "wasm"))]
 use n0_mainline::DhtBuilder;
 use serde::{Deserialize, Serialize};
 
@@ -129,6 +130,7 @@ pub enum ConnectivityPeerKind {
 #[derive(Clone, Debug, Default)]
 pub struct DhtDiscoveryOptions {
     pub enabled: bool,
+    #[cfg(not(target_family = "wasm"))]
     pub dht_builder: Option<DhtBuilder>,
 }
 
@@ -140,10 +142,12 @@ impl DhtDiscoveryOptions {
     pub fn seeded_dht() -> Self {
         Self {
             enabled: true,
+            #[cfg(not(target_family = "wasm"))]
             dht_builder: None,
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub fn with_bootstrap<T: ToString>(bootstrap: &[T]) -> Self {
         let mut dht_builder = DhtBuilder::default();
         dht_builder.bootstrap(bootstrap);
@@ -153,6 +157,7 @@ impl DhtDiscoveryOptions {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn resolved_dht_builder(&self) -> Option<DhtBuilder> {
         if !self.enabled {
             return None;

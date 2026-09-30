@@ -20,6 +20,8 @@ mod iroh;
 mod peers;
 mod receive_binding;
 mod status_changes;
+#[cfg(target_family = "wasm")]
+mod storeless;
 #[cfg(test)]
 mod test_support;
 mod tickets;
@@ -35,3 +37,9 @@ pub use receive_binding::*;
 pub use status_changes::*;
 pub use tickets::*;
 pub use traits::*;
+
+/// 端末に保存する peer candidate の保存先。native は account の SQLite、Web は保存しない（ADR 0056 §5）。
+#[cfg(not(target_family = "wasm"))]
+pub type PeerCandidateStore = kukuri_store::SqliteStore;
+#[cfg(target_family = "wasm")]
+pub use storeless::PeerCandidateStore;

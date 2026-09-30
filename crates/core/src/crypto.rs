@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use bech32::{Bech32, Hrp};

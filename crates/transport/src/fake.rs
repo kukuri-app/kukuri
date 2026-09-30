@@ -19,9 +19,9 @@ use chrono::Utc;
 use futures_util::{StreamExt, stream};
 use iroh::EndpointAddr;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId, receive_route_for_account};
-use tokio::sync::{Mutex, broadcast, watch};
 #[cfg(test)]
-use tokio::time::timeout;
+use n0_future::time::timeout;
+use tokio::sync::{Mutex, broadcast, watch};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::config::{
@@ -729,7 +729,7 @@ mod tests {
                 if peers_a.peer_count >= 1 && peers_b.peer_count >= 1 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -757,7 +757,7 @@ mod tests {
                 if demo_diag.peer_count == 1 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -795,7 +795,7 @@ mod tests {
                 if demo_diag.peer_count == 1 && test7_diag.peer_count == 0 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -843,7 +843,7 @@ mod tests {
                 if test7_diag.peer_count == 1 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await
@@ -875,7 +875,7 @@ mod tests {
                 if test7_diag.peer_count == 0 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                n0_future::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await

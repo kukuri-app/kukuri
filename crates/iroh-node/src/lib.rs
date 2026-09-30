@@ -6,6 +6,8 @@
 //! かつては docs-sync が置き場所だったが、「docs-sync が基盤の持ち主」という歪みを
 //! 解消するため独立させた(挙動不変の移動)。
 
+// 旧 store の退役は native だけ（file を使う）。
+#[cfg(not(target_family = "wasm"))]
 mod legacy;
 mod network_work;
 mod node;
@@ -16,10 +18,11 @@ pub mod remote_fetch;
 #[cfg(test)]
 mod tests;
 
+#[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;
 pub type DisplayAdmissionError = NetworkAdmissionError;
-pub use node::IrohDocsNode;
+pub use node::{IrohDocsNode, MemoryNodeOptions};
 pub use page_read::{DOC_READ_ALPN, DocReadKey, DocReadQuery, DocReadRecord, DocReadResponse};
 
 impl IrohDocsNode {

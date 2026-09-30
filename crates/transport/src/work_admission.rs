@@ -8,7 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 static OWNER_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const LANES: [usize; 7] = [0, 0, 0, 0, 1, 1, 2];

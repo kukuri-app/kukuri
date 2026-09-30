@@ -10,12 +10,12 @@ use iroh_docs::api::Doc;
 use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::{Author, AuthorId, Capability, NamespaceSecret};
 use kukuri_core::{DocsAuthorSeed, ReplicaId};
-use kukuri_store::SqliteStore;
+use kukuri_store::ContentCacheStore;
 use kukuri_transport::{
     BlobPeerHealth, PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket,
 };
+use n0_future::task::{JoinHandle, JoinSet};
 use tokio::sync::{Mutex, broadcast};
-use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
 
 use crate::access::parse_namespace_secret_hex;
@@ -47,13 +47,13 @@ struct ReplicaHandle {
     events: broadcast::Sender<ReplicaNotice>,
     closing: bool,
     live_task: Option<JoinHandle<()>>,
-    last_used: std::time::Instant,
+    last_used: web_time::Instant,
 }
 
 #[derive(Clone)]
 pub struct IrohDocsSync {
     node: Arc<IrohDocsNode>,
-    remote_cache: Option<Arc<SqliteStore>>,
+    remote_cache: Option<Arc<dyn ContentCacheStore>>,
     replicas: Arc<Mutex<HashMap<String, ReplicaHandle>>>,
     close_tasks: Arc<Mutex<JoinSet<()>>>,
     #[cfg(test)]
@@ -214,7 +214,7 @@ impl IrohDocsSync {
             if handle.closing {
                 anyhow::bail!("replica close is pending; retry close before reopening");
             }
-            handle.last_used = std::time::Instant::now();
+            handle.last_used = web_time::Instant::now();
             return Ok(Some(handle.doc.clone()));
         }
 
@@ -234,7 +234,7 @@ impl IrohDocsSync {
         let live_replica = replica_id.clone();
         let live_events = tx.clone();
         let peer_observations = self.peers.clone();
-        let task = tokio::spawn(async move {
+        let task = n0_future::task::spawn(async move {
             while let Some(item) = live.next().await {
                 if let Ok(event) = item {
                     match event {
@@ -292,7 +292,7 @@ impl IrohDocsSync {
                 events: tx,
                 closing: false,
                 live_task: Some(task),
-                last_used: std::time::Instant::now(),
+                last_used: web_time::Instant::now(),
             },
         );
         while replicas.len() > MAX_OPEN_REPLICAS {

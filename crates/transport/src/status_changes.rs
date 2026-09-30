@@ -71,7 +71,7 @@ mod tests {
     async fn marks_are_kept_only_while_watched_and_collapse_past_the_limit() {
         let changes = StatusChanges::default();
         changes.mark(StatusKey::Summary);
-        let waiter = tokio::spawn({
+        let waiter = n0_future::task::spawn({
             let changes = changes.clone();
             async move { changes.changed().await }
         });

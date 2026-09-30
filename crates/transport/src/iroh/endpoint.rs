@@ -192,7 +192,7 @@ impl IrohGossipTransport {
         self
     }
 
-    pub fn with_account_store(mut self, store: Arc<kukuri_store::SqliteStore>) -> Self {
+    pub fn with_account_store(mut self, store: Arc<crate::PeerCandidateStore>) -> Self {
         self.account_store = Some(store);
         self
     }
@@ -219,7 +219,13 @@ pub(crate) async fn bind_endpoint_with_options(
     {
         builder = builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
     }
-    builder = apply_bind(builder, bind_addr)?;
+    // ブラウザには UDP の socket が無い（ADR 0056 §8）。
+    #[cfg(not(target_family = "wasm"))]
+    {
+        builder = apply_bind(builder, bind_addr)?;
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = bind_addr;
     let endpoint = builder
         .bind()
         .await
@@ -251,6 +257,7 @@ async fn bind_endpoint_relay_only(
     Ok((endpoint, discovery))
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn apply_bind(builder: EndpointBuilder, bind_addr: SocketAddr) -> Result<EndpointBuilder> {
     match bind_addr {
         SocketAddr::V4(addr) => builder

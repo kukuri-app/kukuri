@@ -5,8 +5,8 @@ use std::pin::Pin;
 use std::sync::Weak;
 
 use kukuri_transport::SharedRemoteFetchResult;
+use n0_future::task::{AbortHandle, Id, JoinSet};
 use tokio::sync::watch;
-use tokio::task::{AbortHandle, Id, JoinSet};
 
 pub(crate) type FetchFuture = Pin<Box<dyn Future<Output = anyhow::Result<Option<Vec<u8>>>> + Send>>;
 pub(crate) type FetchFinished =
@@ -96,10 +96,13 @@ impl NetworkWorkRuntime {
                 {
                     return Err(NetworkAdmissionError::ConflictingRequest);
                 }
-                if key.deadline <= now.into_std() {
+                if key.deadline <= crate::network_work::policy_instant(now) {
                     return Err(NetworkAdmissionError::Expired);
                 }
-                match state.policy.admit(key, &object, now.into_std()) {
+                match state
+                    .policy
+                    .admit(key, &object, crate::network_work::policy_instant(now))
+                {
                     WorkAdmission::Joined(waiter) => FetchWaiter {
                         owner: self.clone(),
                         waiter,
@@ -123,15 +126,21 @@ impl NetworkWorkRuntime {
                     persistence,
                     byte_limit,
                     lane: WorkLane::Interactive,
-                    deadline: (now + crate::remote_fetch::REMOTE_FETCH_TOTAL_TIMEOUT).into_std(),
+                    deadline: crate::network_work::policy_instant(
+                        now + crate::remote_fetch::REMOTE_FETCH_TOTAL_TIMEOUT,
+                    ),
                 };
-                let waiter = match state.policy.admit(key, &object, now.into_std()) {
-                    WorkAdmission::Admitted(waiter) => waiter,
-                    _ => {
-                        state.policy.revoke_scope(scope);
-                        return Err(NetworkAdmissionError::Deferred);
-                    }
-                };
+                let waiter =
+                    match state
+                        .policy
+                        .admit(key, &object, crate::network_work::policy_instant(now))
+                    {
+                        WorkAdmission::Admitted(waiter) => waiter,
+                        _ => {
+                            state.policy.revoke_scope(scope);
+                            return Err(NetworkAdmissionError::Deferred);
+                        }
+                    };
                 let id = waiter.work_id();
                 let (sender, receiver) = watch::channel(None);
                 state.scopes.insert(id, scope);
@@ -164,7 +173,7 @@ impl NetworkWorkRuntime {
         if driver.is_none() {
             let weak = Arc::downgrade(self);
             let changed = self.changed.clone();
-            *driver = Some(tokio::spawn(run(weak, changed)).abort_handle());
+            *driver = Some(n0_future::task::spawn(run(weak, changed)).abort_handle());
         }
     }
 
@@ -200,7 +209,10 @@ impl NetworkWorkRuntime {
 
 fn take_entry(state: &mut State, id: WorkId) -> Option<(FetchEntry, bool)> {
     let entry = state.fetches.remove(&id)?;
-    let publish = state.policy.complete(id, Instant::now().into_std()) == WorkCompletion::Publish
+    let publish = state
+        .policy
+        .complete(id, crate::network_work::policy_instant(Instant::now()))
+        == WorkCompletion::Publish
         && !state.closed;
     state.policy.revoke_scope(entry.key.scope);
     state.identities.remove(&entry.identity);
@@ -292,7 +304,11 @@ async fn run(owner: Weak<NetworkWorkRuntime>, changed: Arc<Notify>) {
                     if let Some(entry) = state.fetches.get_mut(&id)
                         && let Some(future) = entry.future.take()
                     {
-                        starts.push((id, Instant::from_std(entry.key.deadline), future));
+                        starts.push((
+                            id,
+                            crate::network_work::runtime_instant(entry.key.deadline),
+                            future,
+                        ));
                         state.ready.remove(&id);
                     }
                 }
@@ -300,7 +316,10 @@ async fn run(owner: Weak<NetworkWorkRuntime>, changed: Arc<Notify>) {
             (
                 starts,
                 retired,
-                state.policy.next_deadline().map(Instant::from_std),
+                state
+                    .policy
+                    .next_deadline()
+                    .map(crate::network_work::runtime_instant),
                 state.closed,
             )
         };
@@ -315,7 +334,7 @@ async fn run(owner: Weak<NetworkWorkRuntime>, changed: Arc<Notify>) {
                 let result = tokio::select! {
                     biased;
                     _ = cancelled(weak, id, signal) => Ok(None),
-                    result = timeout_at(deadline, future) => result.unwrap_or(Ok(None)),
+                    result = timeout(deadline.saturating_duration_since(Instant::now()), future) => result.unwrap_or(Ok(None)),
                 };
                 (
                     id,
@@ -329,7 +348,7 @@ async fn run(owner: Weak<NetworkWorkRuntime>, changed: Arc<Notify>) {
         }
         let timer = async {
             match deadline {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                Some(deadline) => n0_future::time::sleep_until(deadline).await,
                 None => std::future::pending().await,
             }
         };

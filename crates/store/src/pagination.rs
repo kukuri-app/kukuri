@@ -1,67 +1,6 @@
-use anyhow::Result;
 use kukuri_core::{EnvelopeId, KukuriEnvelope};
 
 use crate::models::{DirectMessageMessageRow, ObjectProjectionRow, Page, TimelineCursor};
-use crate::row_mapping::{
-    row_to_direct_message_message, row_to_envelope, row_to_object_projection,
-};
-
-pub(crate) fn envelope_page_from_rows(
-    rows: Vec<sqlx::sqlite::SqliteRow>,
-    limit: usize,
-) -> Result<Page<KukuriEnvelope>> {
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(row_to_envelope(row)?);
-    }
-    let next_cursor = if items.len() == limit {
-        items.last().map(|envelope| TimelineCursor {
-            created_at: envelope.created_at,
-            object_id: envelope.id.clone(),
-        })
-    } else {
-        None
-    };
-    Ok(Page { items, next_cursor })
-}
-
-pub(crate) fn object_projection_page_from_rows(
-    rows: Vec<sqlx::sqlite::SqliteRow>,
-    limit: usize,
-) -> Result<Page<ObjectProjectionRow>> {
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(row_to_object_projection(row)?);
-    }
-    let next_cursor = if items.len() == limit {
-        items.last().map(|row| TimelineCursor {
-            created_at: row.created_at,
-            object_id: row.object_id.clone(),
-        })
-    } else {
-        None
-    };
-    Ok(Page { items, next_cursor })
-}
-
-pub(crate) fn direct_message_page_from_rows(
-    rows: Vec<sqlx::sqlite::SqliteRow>,
-    limit: usize,
-) -> Result<Page<DirectMessageMessageRow>> {
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(row_to_direct_message_message(row)?);
-    }
-    let next_cursor = if items.len() == limit {
-        items.last().map(|row| TimelineCursor {
-            created_at: row.created_at,
-            object_id: EnvelopeId::from(row.message_id.clone()),
-        })
-    } else {
-        None
-    };
-    Ok(Page { items, next_cursor })
-}
 
 pub(crate) fn apply_desc_cursor(
     items: Vec<KukuriEnvelope>,

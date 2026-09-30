@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
 [lints]
 workspace = true

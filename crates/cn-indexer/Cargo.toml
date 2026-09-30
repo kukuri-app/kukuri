@@ -27,7 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 # 常駐ワーカーの停止シグナル（signal）と状態エンドポイントの待ち受け（net）に使う。
-tokio = { workspace = true, features = ["signal", "net"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "signal", "net"] }
 tracing.workspace = true
 kukuri-blob-service = { path = "../blob-service" }
 kukuri-cn-runtime-support = { path = "../cn-runtime-support" }

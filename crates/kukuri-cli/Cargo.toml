@@ -14,12 +14,12 @@ kukuri-core = { path = "../core" }
 kukuri-desktop-runtime = { path = "../desktop-runtime" }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 uuid.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
-tokio = { workspace = true, features = ["io-util", "net", "process", "signal"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "io-util", "net", "process", "signal"] }
 
 [dev-dependencies]
 axum.workspace = true

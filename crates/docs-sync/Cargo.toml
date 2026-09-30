@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+web-time.workspace = true
+n0-future.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true

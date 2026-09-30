@@ -47,7 +47,8 @@ argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
 async-trait = "0.1.92"
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
-bao-tree = "0.16.1"
+# `fs` は native で iroh-blobs の fs-store が有効にする（wasm には file が無い）。
+bao-tree = { version = "0.16.1", default-features = false, features = ["serde", "tokio_fsm", "validate"] }
 bech32 = "0.12.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -57,9 +58,11 @@ hex = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "gif", "jpeg", "webp"] }
-iroh = "1.3.0"
-iroh-docs = "0.101.0"
-iroh-blobs = "0.103.0"
+# Custom Transport（QUIC over WebRTC DataChannel。ADR 0057）を Endpoint の組立てへ注入する。
+iroh = { version = "1.3.0", features = ["unstable-custom-transports"] }
+# 永続 store（fs-store）と rpc は native の節で足す（ADR 0056 §3、ADR 0058）。
+iroh-docs = { version = "0.101.0", default-features = false }
+iroh-blobs = { version = "0.103.0", default-features = false }
 iroh-gossip = "0.101.0"
 iroh-mainline-address-lookup = "0.6.0"
 iroh-relay = { version = "1.3.0", features = ["server"] }
@@ -67,6 +70,7 @@ jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 keyring = { version = "4.2.0", default-features = false }
 libc = "0.2.189"
 chacha20poly1305 = "0.11.0"
+n0-future = "0.3.2"
 n0-mainline = "0.7.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls"] }
 rapier3d = { version = "0.36.0", features = ["enhanced-determinism"] }
@@ -79,17 +83,18 @@ serde_yaml = "0.9.34"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls-ring-webpki", "sqlite", "postgres", "json", "migrate", "chrono"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time", "fs"] }
+# 共用 crate は wasm でも build する（ADR 0056 §3）。rt-multi-thread・fs 等は使う crate が native の節で足す。
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tempfile = "3.27.0"
-pkarr = { version = "=8.0.2", default-features = false, features = ["relays", "dht"] }
 tower-http = { version = "0.7.1", features = ["trace"] }
 tower_governor = "0.8.0"
 ts-rs = "12"
 url = "2.5.8"
 uuid = { version = "1.26.1", features = ["serde", "v4", "v7"] }
+web-time = "1.1.0"
 wiremock = "0.6"
 
 [patch.crates-io]

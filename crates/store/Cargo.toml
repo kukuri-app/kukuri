@@ -5,17 +5,22 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+web-time.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 kukuri-core = { path = "../core" }
 ts-rs = { workspace = true, optional = true }
+
+# SQLite の実装は native だけ（ADR 0056 §5）。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+sqlx.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効)。

@@ -18,8 +18,8 @@ use kukuri_transport::{
     EndpointAddr, PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchRetryState,
     RequestRateDecision, SharedRemoteFetchResult, fetch_receive_endpoint_binding,
 };
+use n0_future::time::{Instant, timeout};
 use tokio::sync::Mutex;
-use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 
 use crate::IrohDocsNode;
@@ -42,7 +42,10 @@ async fn within_remote_fetch_budget<T>(future: impl Future<Output = T>) -> Optio
 pub type DisplayBlobFetch = std::pin::Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send>>;
 pub type DisplayBlobFileFetch = std::pin::Pin<Box<dyn Future<Output = Result<Option<u64>>> + Send>>;
 
+// 表示用の file への取得は native だけ（ADR 0056 §5）。
+#[cfg(not(target_family = "wasm"))]
 mod display_file;
+#[cfg(not(target_family = "wasm"))]
 pub use display_file::prepare_display_file_fetch;
 
 pub async fn prepare_display_fetch(
@@ -72,7 +75,7 @@ pub async fn prepare_display_fetch(
         let result = tokio::select! {
             biased;
             _ = lease.cancelled() => Ok(None),
-            result = tokio::time::timeout_at(deadline, walk) => result.unwrap_or(Ok(None)),
+            result = n0_future::time::timeout(deadline.saturating_duration_since(Instant::now()), walk) => result.unwrap_or(Ok(None)),
         };
         if lease.finish() { result } else { Ok(None) }
     }))
@@ -177,7 +180,7 @@ pub async fn fetch_verified_receive_offer_payload(
     let result = tokio::select! {
         biased;
         _ = lease.cancelled() => anyhow::bail!("receive offer payload fetch cancelled"),
-        result = tokio::time::timeout_at(deadline, work) => {
+        result = n0_future::time::timeout(deadline.saturating_duration_since(Instant::now()), work) => {
             result.context("receive offer payload fetch timed out")?
         }
     };
@@ -214,8 +217,8 @@ async fn fetch_offer_sdk_bytes(
 }
 
 fn current_time_ms() -> Result<i64> {
-    Ok(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
+    Ok(web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)?
         .as_millis()
         .try_into()?)
 }
@@ -279,7 +282,7 @@ async fn fetch_ephemeral(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     mode: FetchMode,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
 ) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     fetch_ephemeral_into(
@@ -297,7 +300,7 @@ async fn fetch_ephemeral_to_file(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     path: &std::path::Path,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
 ) -> Result<u64> {
     let mut file = tokio::fs::File::create(path).await?;
     fetch_ephemeral_into(
@@ -319,7 +322,7 @@ async fn fetch_ephemeral_into(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     mode: FetchMode,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
     mut output: BlobOutput<'_>,
 ) -> Result<u64> {
     use bao_tree::io::BaoContentItem;
@@ -334,7 +337,7 @@ async fn fetch_ephemeral_into(
     let mut stream = get_blob(connection, hash);
     let mut received = 0u64;
     let mut hasher = blake3::Hasher::new();
-    let mut reservation = cache.map(kukuri_store::SqliteStore::empty_remote_cache_reservation);
+    let mut reservation = cache.map(|cache| cache.empty_remote_cache_reservation());
     while let Some(item) = stream.next().await {
         match item {
             GetBlobItem::Item(BaoContentItem::Leaf(leaf)) => {

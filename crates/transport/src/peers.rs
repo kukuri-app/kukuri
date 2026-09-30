@@ -10,14 +10,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::PeerCandidateStore;
 use anyhow::Result;
 use chrono::Utc;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use kukuri_store::SqliteStore;
 use tokio::sync::{Mutex, watch};
 // 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
-use tokio::time::Instant;
+use n0_future::time::Instant;
 
 mod health;
 pub use health::{BlobPeerAttempt, BlobPeerHealth, MAX_BLOB_PEER_RECORDS};
@@ -28,6 +28,9 @@ use crate::tickets::relay_assisted_endpoint_addr;
 pub const REMOTE_FETCH_RETRY_COOLDOWN: Duration = Duration::from_secs(3);
 pub const REMOTE_FETCH_MAX_COOLDOWNS: usize = 1_024;
 const REMOTE_FETCH_MAX_COOLDOWN_KEY_BYTES: usize = 256;
+/// store を持たない経路（Web など）で、learned と imported の台帳が持つ件数の上限（ADR 0056 §5）。
+/// 超えたら古いものから台帳と `MemoryLookup` から外す。
+pub(crate) const STORELESS_PEER_LIMIT: usize = 256;
 static REMOTE_FETCH_STATE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const PEER_FETCH_BACKOFF_BASE: Duration = Duration::from_secs(2);
 const PEER_FETCH_BACKOFF_MAX: Duration = Duration::from_secs(60);
@@ -329,7 +332,9 @@ pub struct PeerAddrBook {
     learned_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     seed_peers: Mutex<BTreeMap<String, EndpointAddr>>,
     imported_peers: Mutex<BTreeMap<String, EndpointAddr>>,
-    account_store: Option<(Arc<SqliteStore>, &'static str)>,
+    /// store を持たない経路の learned・imported の挿入順（古いものから外すため）。
+    storeless_order: Mutex<[VecDeque<String>; 2]>,
+    account_store: Option<(Arc<PeerCandidateStore>, &'static str)>,
     account_cursor: Mutex<[Option<(i64, String)>; 3]>,
     health: Arc<BlobPeerHealth>,
     fetch_cursor: Mutex<[Option<String>; 3]>,
@@ -363,6 +368,7 @@ impl PeerAddrBook {
             learned_peers: Mutex::new(BTreeMap::new()),
             seed_peers: Mutex::new(BTreeMap::new()),
             imported_peers: Mutex::new(BTreeMap::new()),
+            storeless_order: Mutex::new([VecDeque::new(), VecDeque::new()]),
             account_store: None,
             account_cursor: Mutex::new([None, None, None]),
             health,
@@ -378,7 +384,7 @@ impl PeerAddrBook {
         endpoint: Endpoint,
         discovery: Arc<MemoryLookup>,
         health: Arc<BlobPeerHealth>,
-        store: Arc<SqliteStore>,
+        store: Arc<PeerCandidateStore>,
         scope: &'static str,
     ) -> Self {
         let mut book = Self::with_fetch_health(endpoint, discovery, health);
@@ -490,7 +496,7 @@ impl PeerAddrBook {
 
     async fn ranked_account_peers(
         &self,
-        store: &SqliteStore,
+        store: &PeerCandidateStore,
         scope: &str,
     ) -> Result<Vec<EndpointAddr>> {
         let now = Utc::now().timestamp_millis();
@@ -624,12 +630,10 @@ impl PeerAddrBook {
         }
         let changed = {
             let mut learned_peers = self.learned_peers.lock().await;
-            if learned_peers.get(key.as_str()) == Some(&endpoint_addr) {
-                false
-            } else {
-                learned_peers.insert(key.clone(), endpoint_addr);
-                true
-            }
+            let changed = learned_peers.get(key.as_str()) != Some(&endpoint_addr);
+            self.insert_storeless(&mut learned_peers, 0, key.clone(), endpoint_addr)
+                .await;
+            changed
         };
         self.note_recent_peer(key, false).await;
         Ok(changed)
@@ -653,12 +657,37 @@ impl PeerAddrBook {
             self.note_recent_peer(key, true).await;
             return Ok(());
         }
-        self.imported_peers
-            .lock()
-            .await
-            .insert(key.clone(), endpoint_addr);
+        {
+            let mut imported_peers = self.imported_peers.lock().await;
+            self.insert_storeless(&mut imported_peers, 1, key.clone(), endpoint_addr)
+                .await;
+        }
         self.note_recent_peer(key, true).await;
         Ok(())
+    }
+
+    /// store を持たない経路で台帳へ入れ、上限を超えた古いものを台帳と `MemoryLookup` から外す。
+    async fn insert_storeless(
+        &self,
+        peers: &mut BTreeMap<String, EndpointAddr>,
+        order: usize,
+        key: String,
+        endpoint_addr: EndpointAddr,
+    ) {
+        let mut orders = self.storeless_order.lock().await;
+        if peers.insert(key.clone(), endpoint_addr).is_none() {
+            orders[order].push_back(key);
+        }
+        while peers.len() > STORELESS_PEER_LIMIT {
+            let Some(oldest) = orders[order].pop_front() else {
+                break;
+            };
+            if peers.remove(&oldest).is_some()
+                && let Ok(id) = EndpointId::from_str(&oldest)
+            {
+                self.discovery.remove_endpoint_info(id);
+            }
+        }
     }
 
     async fn note_recent_peer(&self, peer: String, imported: bool) {

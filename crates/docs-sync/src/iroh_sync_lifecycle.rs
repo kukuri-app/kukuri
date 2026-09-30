@@ -21,7 +21,10 @@ impl IrohDocsSync {
     ) -> Result<()> {
         // registry変更より前のcancelは無変更。変更を始めた後はownerのtaskが完了まで持つ。
         let mut tasks = self.close_tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
+        while futures_util::FutureExt::now_or_never(tasks.join_next())
+            .flatten()
+            .is_some()
+        {}
         if tasks.len() >= 32 {
             tasks.join_next().await;
         }

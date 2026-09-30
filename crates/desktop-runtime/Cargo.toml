@@ -16,7 +16,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
@@ -50,7 +50,7 @@ keyring = { workspace = true, features = ["v1"] }
 
 [dev-dependencies]
 kukuri-transport = { path = "../transport", features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "test-util"] }
 kukuri-test-support = { path = "../test-support" }
 axum.workspace = true
 tempfile.workspace = true

@@ -162,7 +162,10 @@ impl IrohDocsSync {
         }
         // lifecycle ownerの既存32枠を共有。callerがcancelしてもopen後のcloseを完了させる。
         let mut tasks = self.close_tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
+        while futures_util::FutureExt::now_or_never(tasks.join_next())
+            .flatten()
+            .is_some()
+        {}
         anyhow::ensure!(tasks.len() < 32, "local source reader is at capacity");
         let this = self.clone();
         let replica_key = replica.as_str().to_owned();
