@@ -18,7 +18,8 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio::time::{Instant, timeout, timeout_at};
 
 pub const RECEIVE_BINDING_ALPN: &[u8] = b"/kukuri/receive-binding/1";
-const RECEIVE_BINDING_CONCURRENT_REQUESTS: usize = 2;
+/// 1 endpoint が同時に応じる binding 要求の数。超えた要求は待たせずに接続を閉じる。
+pub const RECEIVE_BINDING_CONCURRENT_REQUESTS: usize = 2;
 const RECEIVE_BINDING_SERVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// account runtimeに組み込む際はownerがbinding更新とRouter終了を所有する。

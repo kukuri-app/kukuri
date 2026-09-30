@@ -8,7 +8,9 @@ use super::direct_messages_delivery_support::DirectMessageHintServices;
 use super::*;
 
 const RECEIVE_OFFER_RESTART_DELAY: Duration = Duration::from_secs(3);
-const RECEIVE_OFFER_MAX_IN_FLIGHT: usize = 4;
+/// offer の取得は送り手の binding を照合する。送り手は同時に応じる数を超えた要求の接続を閉じるので、同じ送り手から
+/// 続けて届いた offer を捨てないよう、同時に処理する数をその数に合わせる(#1426)。
+const RECEIVE_OFFER_MAX_IN_FLIGHT: usize = kukuri_transport::RECEIVE_BINDING_CONCURRENT_REQUESTS;
 
 impl AppService {
     async fn unsubscribe_account_receive_offer_lease(&self, recipient: &Pubkey) -> Result<()> {
