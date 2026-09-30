@@ -2,3 +2,8 @@
 xtask = "run --package xtask --"
 # harness を使わない command 用（e2e-smoke / scenario 以外）。CI の build 量を減らす（#1120）。
 xtask-lite = "run --package xtask --no-default-features --"
+
+# ブラウザ（wasm32-unknown-unknown）の乱数源と試験の実行（ADR 0056 §3）。
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+runner = "wasm-bindgen-test-runner"
