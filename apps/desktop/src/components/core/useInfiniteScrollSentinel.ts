@@ -37,8 +37,11 @@ export function useInfiniteScrollSentinel(options: {
           setManualFallback(false);
         } else if (!intersectingRef.current) {
           intersectingRef.current = true;
-          setManualFallback(true);
           onLoadMore?.();
+        } else {
+          // 読み込んだ後も見えたままなら、同じ位置で自動の読み込みを続けず、明示的な続きの操作を出す。
+          // 読み込みの開始時に出すと、読み込みで sentinel が画面外へ出る通常の場合にも一瞬出る(#1425)。
+          setManualFallback(true);
         }
       },
       { rootMargin: '200px 0px' }

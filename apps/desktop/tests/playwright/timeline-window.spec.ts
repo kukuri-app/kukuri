@@ -39,16 +39,15 @@ test('an older 200-row timeline window returns to latest through refresh', async
   const cards = column.locator('.post-list article');
   await expect(cards).toHaveCount(20);
   const scroll = column.locator('.shell-column-body');
+  const button = column.getByRole('button', { name: 'Load more' });
   for (let pageIndex = 1; pageIndex <= 10; pageIndex++) {
-    const button = column.getByRole('button', { name: 'Load more' });
-    if (await button.isVisible()) {
-      await button.click();
-    } else {
-      await scroll.evaluate((body) => { body.scrollTop = 0; });
-      await scroll.evaluate((body) => { body.scrollTop = body.scrollHeight; });
-    }
-    await expect(column.getByText(`window-post-${pageIndex * 20 + 19}`, { exact: true }))
-      .toBeVisible();
+    const lastPost = column.getByText(`window-post-${pageIndex * 20 + 19}`, { exact: true });
+    await scroll.evaluate((body) => { body.scrollTop = body.scrollHeight; });
+    // 末尾が見えれば自動で読む。前の読み込みの直後で末尾が見えたままと判定されたときは、
+    // 自動では続けず「Load more」を出すので、それを押す。
+    await expect(lastPost.or(button)).toBeVisible();
+    if (!(await lastPost.isVisible())) await button.click();
+    await expect(lastPost).toBeVisible();
     await expect(cards).toHaveCount(Math.min(200, (pageIndex + 1) * 20));
   }
   await expect(column.getByText('window-post-219', { exact: true })).toBeVisible();
