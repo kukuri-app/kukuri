@@ -18,6 +18,31 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.3.3-preview.1] - 2026-09-30
+
+### Features
+
+- 添付の表示取得で、同じ topic の参加者を取得候補に入れる (#1419 AC-2) ([#1438](https://github.com/kukuri-app/kukuri/pull/1438))
+- 同じ topic の参加者が作者の profile を中継し、作者がオフラインでも表示名とアバターを出す (#1419 AC-1) ([#1437](https://github.com/kukuri-app/kukuri/pull/1437))
+- 成人向け表示 ON の間に表示した添付を cache に置き、OFF に戻したら消す (#1419 AC-4) ([#1435](https://github.com/kukuri-app/kukuri/pull/1435))
+- 同意済みのコミュニティノードの規約更新を検知したら再同意のモーダルを開く (#1420 AC-1) ([#1433](https://github.com/kukuri-app/kukuri/pull/1433))
+
+### Fixes
+
+- 起動時の CN 設定の読込を、CN 状態の反映の完了を待たずに始める (#1416 AC-1) ([#1436](https://github.com/kukuri-app/kukuri/pull/1436))
+- 手元にある画像を他の取得待ちに並べず、画面外へ出た直近の画像を残す (#1419 AC-3) ([#1434](https://github.com/kukuri-app/kukuri/pull/1434))
+- AppImage の runtime を上流の continuous から取らず、審査済みの版を固定して使う (#1431 AC-1) ([#1432](https://github.com/kukuri-app/kukuri/pull/1432))
+- 世代の確認の間も読み取りを poll し、参加状態の lock の自己デッドロックを防ぐ (#1423 AC-1) ([#1424](https://github.com/kukuri-app/kukuri/pull/1424))
+
+### Other
+
+- v0.3.3-preview.1 の版へ同期する (#1439 AC-1) ([#1440](https://github.com/kukuri-app/kukuri/pull/1440))
+- CN image を標準 runner と BuildKit の cache へ移し、依存の layer を分ける (#1413 AC-3) ([#1430](https://github.com/kukuri-app/kukuri/pull/1430))
+- package・release を標準 runner へ移し、PR の古い run を取り消す (#1413 AC-2) ([#1429](https://github.com/kukuri-app/kukuri/pull/1429))
+- 通常 CI を標準 runner と GitHub Actions cache へ移し、重複 job を削る (#1413 AC-1) ([#1418](https://github.com/kukuri-app/kukuri/pull/1418))
+- 起動直後に advisory 照会の確定を待つ query に上限を渡す (#1414 AC-1) ([#1415](https://github.com/kukuri-app/kukuri/pull/1415))
+- v0.3.2-preview.1 の公開を CHANGELOG・LP・作業記録へ反映する (#1410 AC-5) ([#1412](https://github.com/kukuri-app/kukuri/pull/1412))
+
 ## [v0.3.2-preview.1] - 2026-09-28
 
 ### Features
