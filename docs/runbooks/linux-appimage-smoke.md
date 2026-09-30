@@ -78,7 +78,7 @@ GNU build IDがhost上のELFと一致する場合だけdpkg packageを対応付�
 
 ホスト側libraryの削除・差替えや追加package導入を一般的な解決手順にしない。AppImageの同梱構成とモジュール探索先を確認する。画面の起動成功とOS連携の正常動作は別に検証する。
 
-同梱モジュールはTauriが配置する `usr/lib/x86_64-linux-gnu/gio/modules/libgiognutls.so` を使用する。これが欠落したAppImageはGTK起動前にerrorとして終了し、ホスト側へ黙って切り替えない。ホストの任意GIO拡張は読み込まないため、GVfsを使うネットワーク共有等の動作をローカルファイル参照の成功から推定しない。
+同梱モジュールはTauriが配置する `usr/lib/gio/modules/libgiognutls.so` を使用する。これが欠落したAppImageはGTK起動前にerrorとして終了し、ホスト側へ黙って切り替えない。ホストの任意GIO拡張は読み込まないため、GVfsを使うネットワーク共有等の動作をローカルファイル参照の成功から推定しない。
 
 生成後に実際の同梱GIOと初期化処理を使う回帰検査を実行する。生成環境のC compiler、`pkg-config gio-2.0`、Rust compilerを使い、GUI・外部通信・ユーザーprofileは使用しない。
 

@@ -19,7 +19,7 @@ rustc --edition=2024 "$test_source/env-probe.rs" -o "$fixture/env-probe" \
 
 # 修正前に問題を起こすfixtureであることも確認し、検査の空振りを防ぐ。
 env LD_LIBRARY_PATH="$appdir/usr/lib" GIO_MODULE_DIR="$test_dir/host-modules" \
-    GIO_EXTRA_MODULES="$appdir/usr/lib/x86_64-linux-gnu/gio/modules" \
+    GIO_EXTRA_MODULES="$appdir/usr/lib/gio/modules" \
     "$fixture/AppRun.wrapped" >"$test_dir/before.out" 2>"$test_dir/before.err" || true
 grep -q 'undefined symbol: kukuri_fixture_missing_gio_symbol' "$test_dir/before.err"
 
@@ -35,7 +35,7 @@ grep -q '^local=1 tls=1$' "$test_dir/after.out"
 
 # 通常起動では既存環境を変更しないため、同じ不整合fixtureは引き続き失敗する。
 env -u APPDIR LD_LIBRARY_PATH="$appdir/usr/lib" GIO_MODULE_DIR="$test_dir/host-modules" \
-    GIO_EXTRA_MODULES="$appdir/usr/lib/x86_64-linux-gnu/gio/modules" \
+    GIO_EXTRA_MODULES="$appdir/usr/lib/gio/modules" \
     "$fixture/env-probe" >"$test_dir/native.out" 2>"$test_dir/native.err" || true
 grep -q 'undefined symbol: kukuri_fixture_missing_gio_symbol' "$test_dir/native.err"
 

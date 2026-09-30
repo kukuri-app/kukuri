@@ -1,4 +1,4 @@
-use tauri::{Runtime, ipc::Invoke};
+use tauri::{Manager, Runtime, ipc::Invoke};
 
 use crate::state::{CommandError, DesktopStartupState, DesktopStartupStatus};
 
@@ -37,8 +37,8 @@ where
         let command = invoke.message.command().to_string();
         let stopping = invoke
             .message
-            .state_ref()
-            .try_get::<crate::desktop_lifecycle::DesktopLifecycle>()
+            .webview_ref()
+            .try_state::<crate::desktop_lifecycle::DesktopLifecycle>()
             .is_some_and(|lifecycle| lifecycle.requested());
         if !command_allowed_during_exit(&command, stopping) {
             invoke
@@ -48,8 +48,8 @@ where
         }
         let status = invoke
             .message
-            .state_ref()
-            .try_get::<DesktopStartupState>()
+            .webview_ref()
+            .try_state::<DesktopStartupState>()
             .map(|startup| startup.status());
         let allowed = status
             .as_ref()
