@@ -8,7 +8,7 @@ pub(crate) unsafe fn configure() -> io::Result<()> {
     let Some(app_dir) = std::env::var_os("APPDIR") else {
         return Ok(());
     };
-    let modules = PathBuf::from(app_dir).join("usr/lib/x86_64-linux-gnu/gio/modules");
+    let modules = PathBuf::from(app_dir).join("usr/lib/gio/modules");
     if !modules.is_absolute() || !modules.join("libgiognutls.so").is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
