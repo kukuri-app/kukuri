@@ -43,7 +43,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
   `negotiated=true` では label は相手へ送られないので、transport の版の互換は W10 の専用 ALPN の値で判定する。
 - DataChannel の 1 message に QUIC の datagram を 1 つだけ載せる。`segment_size` のある `Transmit` は segment ごとに 1 message へ分けて送る（各 segment は独立した QUIC の datagram なので、再組立ては要らない）。
   `max_transmit_segments` は 64 にする。iroh は Endpoint の GSO の batch 数を全 transport の最小値にする（`socket/transports.rs` の `max_transmit_segments`）ので、1 にすると native の UDP の GSO まで止まる。
-- 送れる datagram の最大は 16 KiB（DataChannel の相互運用で安全な上限）。これを超える `Transmit` は送らずに破棄する（UDP の MTU 超過と同じ扱いで、QUIC の MTU discovery が下げる）。
+- 送れる datagram（segment）の最大は 16 KiB（DataChannel の相互運用で安全な上限）。これを超える datagram は送らずに破棄する（UDP の MTU 超過と同じ扱いで、QUIC の MTU discovery が下げる）。
   QUIC の MTU は Endpoint 全体の設定なので変えない。SCTP の分割による損失の増え方は AC-2 の固定 workload で計測し、記録する。
 - SCTP の輻輳制御と DTLS の暗号化は QUIC と重複する。二重の暗号化は受け入れ、AC-2 で転送量と CPU を記録する（W8 の固定 workload でも計測する）。
 
@@ -138,7 +138,7 @@ Firefox・Safari の実測は W8 の matrix が扱う。
 ## Consequences
 
 - iroh の Custom Transport は不安定な API なので、iroh の fork rev を更新するときは本 crate の build と AC-2 の試験を必ず通す。
-- 同じ Endpoint に transport が 1 つ増える。native 同士では custom の session を作らないので経路は変わらない。GSO の batch 数は custom が 64 を返すので、UDP の値（platform により 1〜64）がそのまま使われる。
+- 同じ Endpoint に transport が 1 つ増える。native 同士では custom の session を作らないので経路は変わらない。GSO の batch 数は全 transport の最小値なので、UDP の値が 64 以下（Linux の GSO 等）ならそのまま使われ、Windows で USO が使える場合（512）は 64 に下がる。影響は性能だけで、E5 と W8 の計測で確認する。
 - DataChannel の上で QUIC を運ぶため、暗号化と輻輳制御が重なる。計測値は AC-2 と W8 に記録する。
 
 ## Data classification
