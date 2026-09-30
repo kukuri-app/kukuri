@@ -103,8 +103,10 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
   - 索引は `[replica, key]`（exact）、`[replica, author, key]`（author を指定した一覧）、「非保護か・最後に使った時刻」（回収の順）。
   - 自分の record は `own_docs` の参照で保護し、remote の record は §4 と同じ規則で回収する。
 - 起動時に record を読まない。docs author はアカウント鍵から導出し直し（ADR 0053）、namespace は需要があるときに開く（公開は replica id から導出、private は W4・W5 が保存する capability から登録する）。全 replica の export・import を起動の条件にしない。
-- 保持分を合わせる範囲を、手元の読み出しのすべての経路（exact・author を指定した exact・key の一覧）と相手への key の一覧で、全 replica（topic・author・author bucket・private）へ広げる。
+- 自分の record（`own_docs` で保護した行）を合わせる範囲を、手元の読み出しのすべての経路（exact・author を指定した exact・key の一覧）と相手への key の一覧で、全 replica（topic・author・author bucket・private）へ広げる。
+  他人の record の保持分を合わせる範囲は今のまま変えない（手元の exact の公開 replica では合わせない。上書きされる他人の record の古い版が、書き手本人への読み出しを止めないため。#1395・#1419）。
   一覧は、手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせて先頭 `limit` 件を取る（page_read の Keys と同じ方法で、読む量は `2 × limit` を超えない）。exact は今の上限（8 件）のまま。
+  §2 の record の読み出しの操作は、自分の record だけに絞る指定を持つ（native は保護参照 `own_docs` の索引、Web は `records` の保護の有無の索引で絞る）。
   保持分は replica の文字列で引くので、namespace が手元に無くても合わせる（namespace を読むためだけには作らない。#1407）。
   Web は起動のたびに docs store が空なので、これが無いと reload の後に自分の author replica・private の record が手元で読めず、相手への一覧からも消える。native の restore の直後にも効く。実装は W3 AC-3 が所有する。
 - 相手へ private の保持分を返すのは、要求の replica に手元で登録した capability の secret で証明を確かめられたときだけにする（要求の namespace がその secret の namespace と一致することも確かめる）。
