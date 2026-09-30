@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（§1〜§6 は Issue #1215 W2 AC-1。docs の自分の record は #1216 W3 AC-1 が本 ADR へ追記する）
+Accepted（§1〜§6 は Issue #1215 W2 AC-1、§7 は #1216 W3 AC-1）
 
 ## Context
 
@@ -82,10 +82,46 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 - `MemStore` の内容を定期的に IndexedDB へ書き出す: 起動時に全件を戻すことになり、件数に比例する。
 - partial を IndexedDB に保存して再開する: kukuri の大きな remote blob の取得は ephemeral で、bao 単位の部分再開を使っていない。
 
+### 7. docs の自分の record（#1216 W3 AC-1）
+
+事実（基準 commit は統合 branch の同じ head）:
+
+- kukuri が使う iroh-docs の API は、author の import と既定の設定、namespace の import・open・close・drop、`set_bytes`・`get_exact`・`get_many`（`Query` の limit）・`del`、`subscribe`（InsertLocal）、private の証明の `export_secret_key`、`DOC_READ_ALPN` の応答である。
+  ranger による同期・ticket・`start_sync` は使わない（#1221 R5-H）。旧 store の退役（`legacy.rs`）は native だけ。
+- 本人の record の正本は、native でも docs store ではなく保護所有先（`protect_own_record` → `put_owned_record`、参照 `own_docs`）にある。端末バックアップは docs store を含めず、空の docs から本人の投稿を戻せることを test が確かめている。
+- 保持分（held）の record を合わせる範囲は経路で違う。
+  - exact の読み出し: 手元（`iroh_local_source.rs` の `with_cached_records`）と相手への応答（`page_read.rs`）の両方で、全 replica について合わせる。
+  - key の一覧: 相手への応答（`page_read.rs` の Keys）は公開 topic の replica だけで合わせる（#1395）。手元の一覧（`iroh_sync.rs` の `key_page`）はどの replica でも合わせない。
+- iroh の entry の timestamp は kukuri のどこからも読まない。更新の ID と時刻は署名済み envelope の値を使う。
+
+決定:
+
+- 自分の record の保存は §2 の「record」の操作で行う。Web の実装は §3 の database に object store `records` を足す。
+  - key は `[replica, key, author]`。値は `DocReadRecord` の bytes・保護の有無・最後に使った時刻。
+  - 索引は `[replica, key]`（exact）、`[replica, author, key]`（author を指定した一覧）、「非保護か・最後に使った時刻」（回収の順）。
+  - 自分の record は `own_docs` の参照で保護し、remote の record は §4 と同じ規則で回収する。
+- 起動時に record を読まない。docs author はアカウント鍵から導出し直し（ADR 0053）、namespace は需要があるときに開く（公開は replica id から導出、private は W4・W5 が保存する capability から登録する）。全 replica の export・import を起動の条件にしない。
+- 保持分を合わせる範囲を、手元の key の一覧（`key_page`）と相手への key の一覧（page_read の Keys）の両方で、全 replica（topic・author・author bucket・private）へ広げる。
+  手元の一覧は、手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせて先頭 `limit` 件を取る（page_read の Keys と同じ方法で、読む量は `2 × limit` を超えない）。
+  Web は起動のたびに docs store が空なので、これが無いと自分の author replica・private の一覧から自分の record が消える。native の restore の直後にも効く。実装は W3 AC-3 が所有する。
+- memory store の保持: replica は需要の間だけ開く（既存の lease と close）。Web では、需要が終わって閉じた replica を drop し、その replica でこの session に書いた entry の内容の hash を `MemStore` から消す（書いた record は保存 trait に確定しており、保持分として読める）。
+  memory に残るのは、開いている replica のこの session の書込みと、転送中の temp tag だけになる。開いている replica の数は既存の需要の上限に従う。
+  drop した replica への読み出し（手元・相手への exact と一覧、private の証明）は、起動直後と同じく namespace を登録し直してから保持分で答える。これを AC-3 の reload・peer 不在の試験で確かめる。
+- 再構築・再送は、保存 trait の record をそのまま提供する。docs へ書き直さないので、更新の ID と時刻は変わらない。
+- 保存 trait への書込みに失敗したら、書込み全体を失敗として返す（native の `protect_own_record` の失敗と同じ扱い）。偽の保存成功を返さない。
+- 上流 iroh-docs の patch rev を更新するときの互換検証（native の保存互換、WASM の build と動作）の手順を AC-4 で `docs/runbooks/dev.md` に書く。
+
+採らない方式:
+
+- redb の `StorageBackend` を IndexedDB で実装する: backend は同期 I/O で、main thread から非同期の IndexedDB を使うには DB 全体をメモリに写すことになり、起動時に全件を読む。書き戻しの途中で止まると壊れた状態が残る。
+- iroh-docs を fork して非同期の store を足す: store・actor・同期 protocol の約 5,500 行に手が入り、使わない同期 protocol まで書き直すことになる。
+- docs store の内容を定期的に IndexedDB へ書き出す: 起動時に全件を戻すことになる。
+
 ## Consequences
 
 - Web の blob は、iroh-blobs の protocol ではなく `/kukuri/remote-blob/1` で相手へ届く。native から見ると、既存の fallback の経路を通る。
 - 保存 trait が native と Web の両方の正本になり、`SqliteStore` の該当 method は trait の実装へ移る。
+- 手元と相手への key の一覧が、全 replica で保持分を合わせるようになる（§7）。native でも docs store を失った後の一覧が変わる。
 - 上流 iroh-blobs の版を上げるときは、`MemStore` の API と protocol の互換を AC-4 の手順で確かめる。
 
 ## Data classification
@@ -107,6 +143,6 @@ ADR 0002 の template に従う。native の remote cache（ADR 0048・`docs/arc
 
 ## References
 
-- Issue #1213（D-3 の改訂）、#1215（本 ADR）、#1216、#1217、#1221（R5-A・G・I）
+- Issue #1213（D-3 の改訂）、#1215・#1216（本 ADR）、#1217、#1221（R5-A・G・I・H）、#1395
 - ADR 0048、ADR 0056、`docs/architecture/blob-cache.md`
 - iroh-blobs PR #259・#86（open、採らない）
