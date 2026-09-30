@@ -6,12 +6,21 @@ use std::sync::Arc;
 
 use crate::{DocReadQuery, DocReadRecord, DocReadResponse, IrohDocsNode};
 
+/// 相手への private の応答は、登録した capability で確かめる(登録簿は docs-sync が書く)。
+async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &NamespaceSecret) {
+    node.private_replica_secrets(|replica, secrets| secrets.get(replica.as_str()).cloned())
+        .lock()
+        .await
+        .insert(replica.as_str().into(), secret.clone());
+}
+
 #[tokio::test]
 async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
     let provider = IrohDocsNode::memory().await?;
     let requester = IrohDocsNode::memory().await?;
     let replica = ReplicaId::new("bucket::v1::channel::6368::6570::1");
     let secret = NamespaceSecret::from_bytes(&[9; 32]);
+    register_private(&provider, &replica, &secret).await;
     let doc = provider
         .docs()
         .import_namespace(Capability::Write(secret.clone()))
@@ -103,6 +112,7 @@ async fn legacy_topic_and_private_epoch_use_the_same_bounded_reader() -> Result<
     );
     let private = ReplicaId::new("channel::room::epoch::e1");
     let private_secret = NamespaceSecret::from_bytes(&[42; 32]);
+    register_private(&provider, &private, &private_secret).await;
     let mut docs = Vec::new();
     for (secret, body) in [
         (&public_secret, b"public".as_slice()),

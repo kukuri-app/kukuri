@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock as StdRwLock};
@@ -31,7 +31,7 @@ use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::page_read::{DOC_READ_ALPN, DocReadProtocol};
+use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
 #[cfg(test)]
@@ -191,6 +191,7 @@ pub struct IrohDocsNode {
     docs: DocsApi,
     blobs: BlobStore,
     remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
+    private_capabilities: PrivateCapabilities,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
     receive_binding: ReceiveBindingSlot,
     pub(crate) network_work: Arc<crate::network_work::NetworkWorkRuntime>,
@@ -443,7 +444,13 @@ impl IrohDocsNode {
         };
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
         let remote_cache = Arc::new(OnceLock::new());
-        let page_read = DocReadProtocol::new(docs.sync, blobs.clone(), remote_cache.clone());
+        let private_capabilities = PrivateCapabilities::default();
+        let page_read = DocReadProtocol::new(
+            docs.sync,
+            blobs.clone(),
+            remote_cache.clone(),
+            private_capabilities.clone(),
+        );
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
         let router = Router::builder(endpoint.clone())
             .accept(
@@ -466,6 +473,7 @@ impl IrohDocsNode {
             docs: docs.protocol.api().clone(),
             blobs,
             remote_cache,
+            private_capabilities,
             fetch_peer_health: Arc::new(kukuri_transport::BlobPeerHealth::default()),
             receive_binding,
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
@@ -486,6 +494,15 @@ impl IrohDocsNode {
         self.remote_cache
             .set(cache)
             .map_err(|_| anyhow!("remote cache already installed"))
+    }
+
+    /// private の capability の登録簿。相手への private の応答も、要求の replica をこの登録簿で `lookup` に引いて確かめる。
+    pub fn private_replica_secrets(
+        &self,
+        lookup: PrivateSecretLookup,
+    ) -> Arc<tokio::sync::Mutex<HashMap<String, iroh_docs::NamespaceSecret>>> {
+        let _ = self.private_capabilities.lookup.set(lookup);
+        self.private_capabilities.secrets.clone()
     }
 
     pub(crate) fn remote_cache(&self) -> Option<&Arc<dyn ContentCacheStore>> {

@@ -18,7 +18,7 @@ use n0_future::task::{JoinHandle, JoinSet};
 use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
-use crate::access::parse_namespace_secret_hex;
+use crate::access::{parse_namespace_secret_hex, registered_private_secret};
 use crate::notices::{entry_stream, notice_stream};
 use crate::replicas::public_replica_secret;
 use crate::types::{
@@ -77,6 +77,7 @@ struct AccountDocsAuthor {
 impl IrohDocsSync {
     pub fn new(node: Arc<IrohDocsNode>) -> Self {
         let peers = Arc::new(PeerAddrBook::new(node.endpoint().clone(), node.discovery()));
+        let private_replica_secrets = node.private_replica_secrets(registered_private_secret);
         Self {
             node,
             remote_cache: None,
@@ -85,7 +86,7 @@ impl IrohDocsSync {
             #[cfg(test)]
             close_hook: Arc::new(Mutex::new(None)),
             peers,
-            private_replica_secrets: Arc::new(Mutex::new(HashMap::new())),
+            private_replica_secrets,
             remote_fetch_retries: Arc::new(Mutex::new(RemoteFetchRetryState::default())),
             account_docs_author: Arc::new(Mutex::new(None)),
         }
@@ -178,10 +179,9 @@ impl IrohDocsSync {
         if replica_id.as_str().starts_with("bucket::") {
             crate::BucketReplica::parse(replica_id)?;
         }
-        if let Some(secret) = crate::access::registered_private_secret(
-            replica_id,
-            &*self.private_replica_secrets.lock().await,
-        ) {
+        if let Some(secret) =
+            registered_private_secret(replica_id, &*self.private_replica_secrets.lock().await)
+        {
             return Ok(secret);
         }
         public_replica_secret(replica_id)

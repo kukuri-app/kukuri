@@ -23,7 +23,9 @@ pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_leg
 pub use network_work::NetworkAdmissionError;
 pub type DisplayAdmissionError = NetworkAdmissionError;
 pub use node::{IrohDocsNode, MemoryNodeOptions};
-pub use page_read::{DOC_READ_ALPN, DocReadKey, DocReadQuery, DocReadRecord, DocReadResponse};
+pub use page_read::{
+    DOC_READ_ALPN, DocReadKey, DocReadQuery, DocReadRecord, DocReadResponse, PrivateSecretLookup,
+};
 
 impl IrohDocsNode {
     pub async fn query_remote_docs(
