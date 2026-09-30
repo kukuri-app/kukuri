@@ -76,7 +76,9 @@ fn assert_range_read(name: &str, plan: &str) {
 // 並べ替えのための一時的な木を作る plan は、条件に合う行の総数に比例する。
 #[tokio::test]
 async fn page_queries_are_index_range_reads() {
-    use crate::sqlite::projections::{ThreadPagePart, thread_page_query, timeline_page_query};
+    use crate::sqlite::projections::{
+        ThreadPagePart, author_timeline_page_query, thread_page_query, timeline_page_query,
+    };
 
     let store = SqliteStore::connect_memory().await.expect("sqlite store");
     let cursor = TimelineCursor {
@@ -137,6 +139,100 @@ async fn page_queries_are_index_range_reads() {
             !plan.contains("SCAN"),
             "thread root, channel={channel:?}: {plan}"
         );
+    }
+    // #1442: 著者のページは (著者, channel, 時刻, id) の索引の範囲を読み、他の著者・channel の行を読み飛ばさない。
+    for with_cursor in [false, true] {
+        let cursor = with_cursor.then_some(&cursor);
+        let builder = author_timeline_page_query(EXPLAIN, "a", "public", cursor, 20);
+        let plan = plan(&store, builder).await;
+        let name = format!("author timeline, cursor={with_cursor}");
+        assert_range_read(name.as_str(), plan.as_str());
+        assert!(
+            plan.contains(
+                "idx_object_index_cache_author_created (author_pubkey=? AND channel_id=?"
+            ),
+            "{name}: the page must read the index range of the author and channel: {plan}"
+        );
+        if with_cursor {
+            assert!(
+                plan.contains("(created_at,object_id)<(?,?)"),
+                "{name}: the cursor must bound the index range: {plan}"
+            );
+        }
+    }
+}
+
+// #1442: 著者のページを継いで読むと、topic をまたいだその著者の 1 つの channel の行を新しい順に 1 回ずつ読める。
+// 他の著者の行と、他の channel(private)の行は入らない。
+#[tokio::test]
+async fn author_pages_list_every_row_of_the_author_and_channel_once() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    assert_author_pages(&sqlite).await;
+    assert_author_pages(&MemoryStore::default()).await;
+}
+
+async fn assert_author_pages(store: &dyn ObjectProjectionStore) {
+    let author = "a".repeat(64);
+    let mut expected = Vec::new();
+    for index in 0..30_i64 {
+        let id = format!("post-{index:02}");
+        let topic = format!("kukuri:topic:author-{}", index % 3);
+        // 同じ時刻の行も混ぜる。
+        let created_at = 1_000 + index / 2;
+        let mut public = row(topic.as_str(), "public", id.as_str(), created_at);
+        public.author_pubkey = author.clone();
+        ObjectProjectionStore::put_object_projection(store, public)
+            .await
+            .expect("public row");
+        expected.push((created_at, id));
+        let mut private = row(
+            topic.as_str(),
+            "private:a",
+            format!("private-{index:02}").as_str(),
+            created_at,
+        );
+        private.author_pubkey = author.clone();
+        ObjectProjectionStore::put_object_projection(store, private)
+            .await
+            .expect("private row");
+        let mut other = row(
+            topic.as_str(),
+            "public",
+            format!("other-{index:02}").as_str(),
+            created_at,
+        );
+        other.author_pubkey = "b".repeat(64);
+        ObjectProjectionStore::put_object_projection(store, other)
+            .await
+            .expect("other author row");
+    }
+    expected.sort();
+    expected.reverse();
+    for limit in [1usize, 7, 50] {
+        let mut listed = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = ObjectProjectionStore::list_author_timeline_in_channel(
+                store,
+                author.as_str(),
+                "public",
+                cursor,
+                limit,
+            )
+            .await
+            .expect("author page");
+            assert!(page.items.len() <= limit);
+            listed.extend(
+                page.items
+                    .iter()
+                    .map(|row| (row.created_at, row.object_id.as_str().to_string())),
+            );
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(listed, expected, "limit={limit}");
     }
 }
 

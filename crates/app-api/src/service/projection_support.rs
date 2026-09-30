@@ -187,6 +187,9 @@ pub(crate) fn profile_timeline_item_is_hidden(
             hidden_author_pubkeys.contains(repost.author_pubkey.as_str())
                 || hidden_author_pubkeys.contains(repost.repost_of.source_author_pubkey.as_str())
         }
+        ProfileTimelineItem::Projection(row) => {
+            object_projection_row_is_hidden(row, hidden_author_pubkeys)
+        }
     }
 }
 

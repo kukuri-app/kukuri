@@ -5,6 +5,7 @@ mod bucket_locators;
 mod bucket_writer;
 mod posts;
 mod profile;
+mod profile_held_posts;
 #[cfg(feature = "iroh-integration-tests")]
 mod relay_integration;
 #[cfg(feature = "iroh-integration-tests")]

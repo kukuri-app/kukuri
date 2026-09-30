@@ -39,6 +39,14 @@ impl AppService {
                 ProfileTimelineItem::Repost(repost) => {
                     views.push(self.profile_repost_to_view(repost).await?)
                 }
+                ProfileTimelineItem::Projection(row) => views.extend(
+                    self.page_to_view(Page {
+                        items: vec![*row],
+                        next_cursor: None,
+                    })
+                    .await?
+                    .items,
+                ),
             }
         }
         Ok(TimelineView {

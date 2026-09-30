@@ -107,6 +107,16 @@ pub trait ObjectProjectionStore: Send + Sync {
         cursor: Option<TimelineCursor>,
         limit: usize,
     ) -> Result<Page<ObjectProjectionRow>>;
+    /// 1 人の著者の、1 つの channel の行の 1 ページ(#1442。topic をまたいで新しい順)。
+    ///
+    /// 実装は著者と channel ごとの索引の範囲を読む。他の著者・channel の行の数に比例して読み飛ばさない。
+    async fn list_author_timeline_in_channel(
+        &self,
+        author_pubkey: &str,
+        channel_id: &str,
+        cursor: Option<TimelineCursor>,
+        limit: usize,
+    ) -> Result<Page<ObjectProjectionRow>>;
     async fn list_thread(
         &self,
         topic_id: &str,

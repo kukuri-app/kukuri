@@ -155,6 +155,13 @@ v1 の read surface は `list_profile_timeline(author_pubkey, cursor, limit)` �
 
 v1 では new dedicated SQLite projection は入れず、author replica query を canonical read path とする。
 
+#### 手元に持つ投稿の表示（#1442）
+
+相手の author replica は手元に無いことが多く、作者がオフラインなら読めない。そのときも、閲覧者が topic で受け取り署名を検証した
+その作者の公開の投稿・返信・repost（既存の object projection の公開の行）をプロフィールに出す。プロフィール専用の projection は
+増やさず、object projection を (著者, channel, 時刻, id) の索引の範囲で 1 ページだけ読み、author replica の行と合わせる。同じ投稿は
+author replica の行を使う。private channel の行は出さない。手元の行だけで 1 ページが埋まらないときの remote の読み出しは変えない。
+
 #### ローカル投稿後の表示（#913）
 
 自分の端末で正常に保存された公開投稿・公開返信は、ピアが0台でもローカルのauthor replicaからプロフィールに表示する。ピア接続や遠隔への伝播を自己投稿の表示条件にしない。

@@ -47,10 +47,39 @@ pub(crate) fn timeline_page_query<'a>(
     cursor: Option<&TimelineCursor>,
     limit: usize,
 ) -> QueryBuilder<'a, Sqlite> {
+    object_page_query(prefix, "topic_id", topic_id, channel_id, cursor, limit)
+}
+
+/// 1 人の著者の、1 つの channel の行のページを読む SQL(#1442)。(著者, channel, 時刻, id) の索引の範囲を読む。
+pub(crate) fn author_timeline_page_query<'a>(
+    prefix: &str,
+    author_pubkey: &'a str,
+    channel_id: &'a str,
+    cursor: Option<&TimelineCursor>,
+    limit: usize,
+) -> QueryBuilder<'a, Sqlite> {
+    object_page_query(
+        prefix,
+        "author_pubkey",
+        author_pubkey,
+        Some(channel_id),
+        cursor,
+        limit,
+    )
+}
+
+fn object_page_query<'a>(
+    prefix: &str,
+    column: &'static str,
+    value: &'a str,
+    channel_id: Option<&'a str>,
+    cursor: Option<&TimelineCursor>,
+    limit: usize,
+) -> QueryBuilder<'a, Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(TIMELINE_SELECT);
-    builder.push(" FROM object_index_cache WHERE topic_id = ");
-    builder.push_bind(topic_id);
+    builder.push(format!(" FROM object_index_cache WHERE {column} = "));
+    builder.push_bind(value);
     if let Some(channel_id) = channel_id {
         builder.push(" AND channel_id = ");
         builder.push_bind(channel_id);
@@ -480,6 +509,29 @@ impl ObjectProjectionStore for SqliteStore {
             .build()
             .fetch_all(&self.pool)
             .await?;
+        let mut page = object_projection_page_from_rows(rows, limit)?;
+        page.items = self.available_remote_projections(page.items).await?;
+        Ok(page)
+    }
+
+    async fn list_author_timeline_in_channel(
+        &self,
+        author_pubkey: &str,
+        channel_id: &str,
+        cursor: Option<TimelineCursor>,
+        limit: usize,
+    ) -> Result<Page<ObjectProjectionRow>> {
+        if limit == 0 {
+            return Ok(Page {
+                items: Vec::new(),
+                next_cursor: cursor,
+            });
+        }
+        let rows =
+            author_timeline_page_query("", author_pubkey, channel_id, cursor.as_ref(), limit)
+                .build()
+                .fetch_all(&self.pool)
+                .await?;
         let mut page = object_projection_page_from_rows(rows, limit)?;
         page.items = self.available_remote_projections(page.items).await?;
         Ok(page)

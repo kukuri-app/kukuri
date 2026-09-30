@@ -11,6 +11,9 @@
 //! #1221 R5-C: 手元のページが埋まらないとき、author bucket と旧 replica の索引を有界な provider から読んで合わせる。
 //! author bucket の key は旧 replica のプロフィールの key(`indexes/profile/`・`profile/posts/`・`profile/reposts/`・
 //! `envelopes/`)と同じで、行の時刻はその bucket の日に属する。
+//!
+//! #1442: 手元の source には、topic で受け取り検証した投稿の行(projection の公開の行)も加える。作者の replica が手元に
+//! 無く、作者にも届かないときも、手元にある投稿を出す。読むのは (著者, channel, 時刻, id) の索引の範囲の 1 ページだけ。
 
 use super::remote_read_support::{REMOTE_READ_DEADLINE, writer_readers};
 use super::*;
@@ -595,10 +598,31 @@ pub(crate) async fn profile_timeline_page(
             frontier,
         ));
     }
+    // 同じ object は先の source の行を使う。author replica の行を優先し、無い投稿だけを projection の行で補う。
+    let held = services
+        .projection_store
+        .list_author_timeline_in_channel(author_pubkey, PUBLIC_CHANNEL_ID, cursor.clone(), limit)
+        .await?;
+    sources.push(ProfileSourceRows {
+        frontier: held
+            .next_cursor
+            .map(|cursor| (cursor.created_at, cursor.object_id.as_str().to_owned())),
+        rows: held
+            .items
+            .into_iter()
+            .map(|row| {
+                let item = ProfileTimelineItem::Projection(Box::new(row));
+                (item_position(&item), ProfileRow::Local(Box::new(item)))
+            })
+            .collect(),
+    });
     let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
     let load = |row| async move {
         let (reader, replica, position, policy) = match row {
-            ProfileRow::Local(item) => return Ok(Some(*item)),
+            ProfileRow::Local(item) => {
+                return Ok(Some(*item)
+                    .filter(|item| !profile_timeline_item_is_hidden(item, hidden_author_pubkeys)));
+            }
             ProfileRow::Indexed(reader, replica, position, policy) => {
                 (reader, replica, position, policy)
             }
@@ -803,7 +827,7 @@ async fn place_remote_profile_rows(
         let envelope_id = match &item {
             Some(ProfileTimelineItem::Post(post)) => &post.envelope_id,
             Some(ProfileTimelineItem::Repost(repost)) => &repost.envelope_id,
-            None => continue,
+            Some(ProfileTimelineItem::Projection(_)) | None => continue,
         };
         let Some(envelope) = fetch_author_envelope_by_id(
             reader,
@@ -822,7 +846,7 @@ async fn place_remote_profile_rows(
             Some(ProfileTimelineItem::Repost(repost)) => {
                 persist_profile_repost_doc(local, replica, repost, &envelope).await?
             }
-            None => {}
+            Some(ProfileTimelineItem::Projection(_)) | None => {}
         }
         placed += 1;
     }
