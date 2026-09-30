@@ -1,6 +1,7 @@
 //! Demand-owned, bounded reads from an already local docs namespace.
 //! Bounded bucket pages are served without starting docs sync. Private reads prove the epoch capability.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -15,10 +16,11 @@ use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
 use irpc::channel::mpsc;
+use kukuri_core::ReplicaId;
 use kukuri_store::SqliteStore;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::time::timeout;
 
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
@@ -193,11 +195,23 @@ impl Request {
     }
 }
 
+/// 登録簿から replica の secret を引く(private bucket の secret は epoch の capability から導出する)。
+pub type PrivateSecretLookup =
+    fn(&ReplicaId, &HashMap<String, NamespaceSecret>) -> Option<NamespaceSecret>;
+
+/// 手元で登録した private の capability。登録・削除と引き方は docs-sync が持ち、相手への private の応答もこれで確かめる。
+#[derive(Clone, Default)]
+pub(crate) struct PrivateCapabilities {
+    pub(crate) secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
+    pub(crate) lookup: Arc<OnceLock<PrivateSecretLookup>>,
+}
+
 #[derive(Clone)]
 pub(crate) struct DocReadProtocol {
     sync: SyncHandle,
     blobs: BlobStore,
     remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    capabilities: PrivateCapabilities,
     permits: Arc<Semaphore>,
 }
 
@@ -212,11 +226,13 @@ impl DocReadProtocol {
         sync: SyncHandle,
         blobs: BlobStore,
         remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+        capabilities: PrivateCapabilities,
     ) -> Self {
         Self {
             sync,
             blobs,
             remote_cache,
+            capabilities,
             permits: Arc::new(Semaphore::new(8)),
         }
     }
@@ -268,7 +284,20 @@ impl DocReadProtocol {
         opened: bool,
     ) -> Result<DocReadResponse> {
         if private_replica(&request.replica) {
-            let secret = self.sync.export_secret_key(namespace).await?;
+            // 保持分は要求の replica の文字列で引くので、証明は docs の namespace ではなく、要求の replica に登録した
+            // capability で確かめる(#1459)。
+            let secrets = self.capabilities.secrets.lock().await;
+            let secret = self
+                .capabilities
+                .lookup
+                .get()
+                .and_then(|lookup| lookup(&ReplicaId::new(request.replica.as_str()), &secrets))
+                .context("private replica capability is not registered")?;
+            drop(secrets);
+            ensure!(
+                secret.id() == namespace,
+                "docs namespace is not the requested private replica"
+            );
             let expected = private_capability_proof(
                 &secret,
                 &request.replica,
