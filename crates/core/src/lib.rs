@@ -1,3 +1,4 @@
+mod account_sync;
 mod crypto;
 mod device_backup;
 mod direct_messages;
@@ -28,6 +29,10 @@ pub mod wire;
 #[cfg(test)]
 mod tests;
 
+pub use account_sync::{
+    AccountSyncItem, AccountSyncItemKey, AccountSyncKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES,
+    MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
+};
 pub use crypto::{
     DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,
     is_placeholder_secret,
