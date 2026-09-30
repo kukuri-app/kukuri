@@ -232,7 +232,7 @@ impl IndexQuery for MemoryIndexProjection {
             })
             .cloned()
             .collect();
-        hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        hits.sort_by_key(|hit| std::cmp::Reverse(hit.created_at));
         hits.truncate(limit);
         Ok(hits)
     }
@@ -246,7 +246,7 @@ impl IndexQuery for MemoryIndexProjection {
             .filter(|entry| memory_text_matches(&entry.text, query))
             .cloned()
             .collect();
-        hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        hits.sort_by_key(|hit| std::cmp::Reverse(hit.created_at));
         hits.truncate(limit);
         Ok(hits)
     }
@@ -267,7 +267,7 @@ impl IndexQuery for MemoryIndexProjection {
             })
             .cloned()
             .collect();
-        hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        hits.sort_by_key(|hit| std::cmp::Reverse(hit.created_at));
         hits.truncate(limit);
         Ok(hits)
     }

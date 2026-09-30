@@ -29,7 +29,7 @@ pub async fn list_content_advisories_for_subjects(
     if post_ids.is_empty() && blob_hashes.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT DISTINCT ON (target, target_id, category) {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
          WHERE issuer_node_id = $1
@@ -41,7 +41,7 @@ pub async fn list_content_advisories_for_subjects(
            AND (expires_at IS NULL OR expires_at::timestamptz > $4::timestamptz)
            AND retention_expires_at > NOW()
          ORDER BY target, target_id, category, persisted_at DESC, id"
-    ))
+    )))
     .bind(issuer_node_id)
     .bind(post_ids)
     .bind(blob_hashes)

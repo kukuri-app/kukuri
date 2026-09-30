@@ -603,9 +603,9 @@ impl DirectMessageStore for SqliteStore {
     ) -> Result<()> {
         let mut update = self.begin_protected_ref_update().await?;
         for table in ["dm_messages", "dm_outbox"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE dm_id = ?1 AND message_id = ?2"
-            ))
+            )))
             .bind(dm_id)
             .bind(message_id)
             .execute(&mut *update.tx)

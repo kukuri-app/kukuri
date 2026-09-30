@@ -142,7 +142,7 @@ pub async fn upsert_scan_verdict(
     let id = Uuid::new_v4().to_string();
     let derived_tags = serde_json::to_value(&meta.derived_tags)?;
     let advisory_labels = serde_json::to_value(&meta.advisories)?;
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO cn_safety.scan_verdicts
             (id, subject_kind, subject_id, action, critical, reason_code, confidence, provider,
              policy_version, scanned_at, source_fingerprint, scan_config_fingerprint, derived_tags,
@@ -162,7 +162,7 @@ pub async fn upsert_scan_verdict(
              advisory_labels = EXCLUDED.advisory_labels,
              updated_at = NOW()
          RETURNING {SCAN_VERDICT_COLUMNS}"
-    ))
+    )))
     .bind(&id)
     .bind(to_db_enum(&subject_kind)?)
     .bind(subject_id)
@@ -213,11 +213,11 @@ pub async fn get_scan_verdict(
     subject_kind: SubjectKind,
     subject_id: &str,
 ) -> Result<Option<StoredScanVerdict>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {SCAN_VERDICT_COLUMNS}
          FROM cn_safety.scan_verdicts
          WHERE subject_kind = $1 AND subject_id = $2"
-    ))
+    )))
     .bind(to_db_enum(&subject_kind)?)
     .bind(subject_id)
     .fetch_optional(pool)

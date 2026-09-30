@@ -4,9 +4,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
+use secp256k1::XOnlyPublicKey;
 use secp256k1::rand::{RngCore, rng};
 use secp256k1::schnorr::Signature;
-use secp256k1::{SECP256K1, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -100,8 +100,8 @@ impl DirectMessageFrameV1 {
         let sender =
             XOnlyPublicKey::from_str(self.sender.as_str()).context("invalid frame sender")?;
         let digest = sha256_digest(canonical_direct_message_frame_payload(self)?.as_bytes());
-        SECP256K1
-            .verify_schnorr(&signature, &digest, &sender)
+        signature
+            .verify(&digest, &sender)
             .context("direct message frame signature verification failed")?;
         Ok(())
     }
@@ -124,8 +124,8 @@ impl DirectMessageAckV1 {
         let sender =
             XOnlyPublicKey::from_str(self.sender.as_str()).context("invalid ack sender")?;
         let digest = sha256_digest(canonical_direct_message_ack_payload(self)?.as_bytes());
-        SECP256K1
-            .verify_schnorr(&signature, &digest, &sender)
+        signature
+            .verify(&digest, &sender)
             .context("direct message ack signature verification failed")?;
         Ok(())
     }
@@ -156,7 +156,7 @@ pub(crate) fn derive_direct_message_secret(
     participants.sort();
     let hkdf = Hkdf::<Sha256>::new(
         Some(b"kukuri/direct-message/root"),
-        shared.secret_bytes().as_slice(),
+        shared.to_secret_bytes().as_slice(),
     );
     let mut secret = [0u8; 32];
     hkdf.expand(

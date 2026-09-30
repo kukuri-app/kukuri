@@ -2,8 +2,8 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use secp256k1::XOnlyPublicKey;
 use secp256k1::schnorr::Signature;
-use secp256k1::{SECP256K1, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::sha256_digest;
@@ -113,8 +113,8 @@ impl KukuriEnvelope {
         let signature = Signature::from_str(self.sig.as_str()).context("invalid envelope sig")?;
         let public_key =
             XOnlyPublicKey::from_str(self.pubkey.as_str()).context("invalid envelope pubkey")?;
-        SECP256K1
-            .verify_schnorr(&signature, &digest, &public_key)
+        signature
+            .verify(&digest, &public_key)
             .context("envelope signature verification failed")?;
         Ok(())
     }

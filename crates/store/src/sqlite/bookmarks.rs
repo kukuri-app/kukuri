@@ -338,7 +338,7 @@ impl ReactionBookmarkStore for SqliteStore {
                 String::new()
             }
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(cursor) = cursor {
             query = query
                 .bind(cursor.bookmarked_at)

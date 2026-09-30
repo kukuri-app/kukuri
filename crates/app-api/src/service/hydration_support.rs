@@ -156,13 +156,12 @@ pub(crate) async fn hydrate_session_key_for_fetch(
                         missing.push(hash);
                     }
                 }
-                SessionRead::Ready(verified) => {
+                SessionRead::Ready(verified)
                     if newest_live
                         .as_ref()
-                        .is_none_or(|(revision, _)| *revision < verified.revision())
-                    {
-                        newest_live = Some((verified.revision(), record));
-                    }
+                        .is_none_or(|(revision, _)| *revision < verified.revision()) =>
+                {
+                    newest_live = Some((verified.revision(), record));
                 }
                 _ => {}
             }

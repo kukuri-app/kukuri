@@ -44,7 +44,7 @@ jobs:
         run: python -m pip install -r scripts/refactoring-audit/requirements.txt
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.92.0
+          toolchain: 1.98.1
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: refactoring-audit-light

@@ -23,7 +23,7 @@ const THREAD_SELECT: &str = r#"
 ///
 /// 行の値の比較で書く。`created_at < ? OR (created_at = ? AND object_id < ?)` の形や、`? IS NULL OR …` と
 /// 1 つの SQL にまとめた形は、索引の範囲の読み出しにならず、遡った深さに比例して行を読み飛ばす。
-fn push_timeline_cursor(builder: &mut QueryBuilder<'_, Sqlite>, cursor: Option<&TimelineCursor>) {
+fn push_timeline_cursor(builder: &mut QueryBuilder<Sqlite>, cursor: Option<&TimelineCursor>) {
     if let Some(cursor) = cursor {
         builder.push(" AND (created_at, object_id) < (");
         builder.push_bind(cursor.created_at);
@@ -46,7 +46,7 @@ pub(crate) fn timeline_page_query<'a>(
     channel_id: Option<&'a str>,
     cursor: Option<&TimelineCursor>,
     limit: usize,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     object_page_query(prefix, "topic_id", topic_id, channel_id, cursor, limit)
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn author_timeline_page_query<'a>(
     channel_id: &'a str,
     cursor: Option<&TimelineCursor>,
     limit: usize,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     object_page_query(
         prefix,
         "author_pubkey",
@@ -75,7 +75,7 @@ fn object_page_query<'a>(
     channel_id: Option<&'a str>,
     cursor: Option<&TimelineCursor>,
     limit: usize,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(TIMELINE_SELECT);
     builder.push(format!(" FROM object_index_cache WHERE {column} = "));
@@ -97,7 +97,7 @@ pub(crate) fn thread_page_query<'a>(
     root_id: &'a str,
     channel_id: Option<&'a str>,
     part: ThreadPagePart<'_>,
-) -> QueryBuilder<'a, Sqlite> {
+) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
     builder.push(THREAD_SELECT);
     builder.push(" WHERE tc.topic_id = ");

@@ -177,12 +177,9 @@ async fn state_fingerprint(pool: &PgPool) -> Result<Vec<String>> {
         "cn_index.supported_topics",
         "cn_index.indexing_requests",
     ] {
-        let fingerprint: Option<String> = sqlx::query_scalar(
-            format!(
-                "SELECT md5(COALESCE(string_agg(t::text, '|' ORDER BY t::text), '')) FROM {table} t"
-            )
-            .as_str(),
-        )
+        let fingerprint: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT md5(COALESCE(string_agg(t::text, '|' ORDER BY t::text), '')) FROM {table} t"
+        )))
         .fetch_one(pool)
         .await?;
         fingerprints.push(format!("{table}:{}", fingerprint.unwrap_or_default()));

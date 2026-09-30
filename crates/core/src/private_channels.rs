@@ -736,7 +736,7 @@ fn derive_epoch_handoff_grant_key(
     let shared = pairwise_shared_secret(local_keys, remote_pubkey)?;
     derive_hkdf_key(
         b"kukuri/private-channel/rotation-grant",
-        shared.secret_bytes().as_slice(),
+        shared.to_secret_bytes().as_slice(),
         epoch_handoff_grant_aad(payload).as_bytes(),
         "channel epoch handoff grant key",
     )

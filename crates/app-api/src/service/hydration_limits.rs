@@ -159,13 +159,8 @@ impl MissingBodyLedger {
             let evictable = entries
                 .iter()
                 .find(|(_, entry)| !entry.in_flight)
-                .map(|(key, _)| key.clone());
-            match evictable {
-                Some(key) => {
-                    entries.remove(&key);
-                }
-                None => return None,
-            }
+                .map(|(key, _)| key.clone())?;
+            entries.remove(&evictable);
         }
         let entry = entries.entry(key.to_string()).or_insert(MissingBodyEntry {
             attempts: 0,

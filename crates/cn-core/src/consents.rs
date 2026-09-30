@@ -28,9 +28,9 @@ const POLICY_SELECT: &str =
 
 /// 公開 policy カタログ(#857)。認証不要の同意提示用で、ユーザー固有情報を含まない。
 pub async fn list_policies(pool: &PgPool) -> Result<Vec<CommunityNodePolicyDocument>> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{POLICY_SELECT} WHERE p.is_current = TRUE ORDER BY p.policy_slug ASC"
-    ))
+    )))
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(|row| policy_from_row(&row)).collect()
@@ -66,11 +66,11 @@ pub async fn list_policy_revisions(
     pool: &PgPool,
     policy_slug: &str,
 ) -> Result<Vec<CommunityNodePolicyDocument>> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{POLICY_SELECT}
          WHERE p.policy_slug = $1
          ORDER BY p.published_at DESC, p.policy_version DESC"
-    ))
+    )))
     .bind(policy_slug)
     .fetch_all(pool)
     .await?;
@@ -83,12 +83,12 @@ pub async fn get_policy_revision(
     policy_version: i32,
     requested_language: Option<&str>,
 ) -> Result<Option<CommunityNodePolicyDocument>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{POLICY_SELECT}
          WHERE p.policy_slug = $1 AND p.policy_version = $2
          ORDER BY p.is_current DESC, p.published_at DESC
          LIMIT 1"
-    ))
+    )))
     .bind(policy_slug)
     .bind(policy_version)
     .fetch_optional(pool)
@@ -112,10 +112,10 @@ pub async fn get_policy_snapshot_revision(
     policy_snapshot_revision: &str,
     requested_language: Option<&str>,
 ) -> Result<Option<CommunityNodePolicyDocument>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{POLICY_SELECT}
          WHERE p.policy_slug = $1 AND p.policy_snapshot_revision = $2"
-    ))
+    )))
     .bind(policy_slug)
     .bind(policy_snapshot_revision)
     .fetch_optional(pool)

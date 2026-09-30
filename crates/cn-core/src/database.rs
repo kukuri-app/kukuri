@@ -235,7 +235,7 @@ impl TestDatabase {
             })?;
         let create_sql = format!("CREATE DATABASE \"{}\"", database_name.replace('"', "\"\""));
         admin_pool
-            .execute(create_sql.as_str())
+            .execute(sqlx::AssertSqlSafe(create_sql))
             .await
             .with_context(|| format!("failed to create test database `{database_name}`"))?;
 
@@ -278,7 +278,7 @@ impl TestDatabase {
             self.database_name.replace('"', "\"\"")
         );
         admin_pool
-            .execute(drop_sql.as_str())
+            .execute(sqlx::AssertSqlSafe(drop_sql))
             .await
             .with_context(|| format!("failed to drop test database `{}`", self.database_name))?;
         Ok(())

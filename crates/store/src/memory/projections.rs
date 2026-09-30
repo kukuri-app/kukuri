@@ -82,7 +82,7 @@ impl ObjectProjectionStore for MemoryStore {
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-        rows.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.created_at));
         rows.truncate(limit);
         Ok(rows)
     }

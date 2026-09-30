@@ -425,7 +425,7 @@ pub(crate) fn merge_seed_peers(
     let mut deduped = BTreeMap::new();
     for seed_peer in configured_seed_peers
         .into_iter()
-        .chain(bootstrap_seed_peers.into_iter())
+        .chain(bootstrap_seed_peers)
     {
         let key = match seed_peer.addr_hint.as_deref() {
             Some(addr_hint) => format!("{}@{}", seed_peer.endpoint_id, addr_hint),

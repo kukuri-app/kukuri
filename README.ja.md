@@ -114,7 +114,7 @@ kukuri は、興味のある話題から人やコミュニティにつながる�
 必要な環境:
 
 - Git
-- `rust-toolchain.toml` で固定された Rust `1.92.0`
+- `rust-toolchain.toml` で固定された Rust `1.98.1`
 - Node.js `^20.19.0` または `>=22.12.0`
 - 以下のコマンドから利用する pnpm `10.16.1`
 - [開発手順書](./docs/runbooks/dev.md)に記載された環境別の依存パッケージ。Windows 開発には [Tauri の事前要件](https://v2.tauri.app/start/prerequisites/#windows) も必要です

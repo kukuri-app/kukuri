@@ -340,11 +340,12 @@ async fn unverified_reaction_and_session_projections_are_dropped() {
         ("live_session_cache", "session_id"),
         ("game_room_cache", "room_id"),
     ] {
-        let remaining =
-            sqlx::query_scalar::<_, String>(&format!("SELECT {column} FROM {table} ORDER BY 1"))
-                .fetch_all(migrated.pool())
-                .await
-                .expect("list projection rows");
+        let remaining = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+            "SELECT {column} FROM {table} ORDER BY 1"
+        )))
+        .fetch_all(migrated.pool())
+        .await
+        .expect("list projection rows");
         assert_eq!(remaining, vec!["verified".to_string()], "{table}");
     }
 }

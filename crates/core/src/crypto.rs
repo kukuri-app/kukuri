@@ -7,7 +7,7 @@ use hkdf::Hkdf;
 use secp256k1::ecdh::SharedSecret;
 use secp256k1::rand::rng;
 use secp256k1::schnorr::Signature;
-use secp256k1::{Keypair, Parity, PublicKey, SECP256K1, SecretKey, XOnlyPublicKey};
+use secp256k1::{Keypair, Parity, PublicKey, SecretKey, XOnlyPublicKey};
 use sha2::{Digest, Sha256};
 
 use crate::Pubkey;
@@ -38,7 +38,7 @@ impl KukuriKeys {
     }
 
     pub fn public_key_hex(&self) -> String {
-        let keypair = Keypair::from_secret_key(SECP256K1, &self.secret_key);
+        let keypair = Keypair::from_secret_key(&self.secret_key);
         let (pubkey, _) = keypair.x_only_public_key();
         pubkey.to_string()
     }
@@ -48,12 +48,12 @@ impl KukuriKeys {
     }
 
     pub fn export_secret_hex(&self) -> String {
-        hex::encode(self.secret_key.secret_bytes())
+        hex::encode(self.secret_key.to_secret_bytes())
     }
 
     pub fn sign_schnorr(&self, message: &[u8]) -> Signature {
-        let keypair = Keypair::from_secret_key(SECP256K1, &self.secret_key);
-        SECP256K1.sign_schnorr(message, &keypair)
+        let keypair = Keypair::from_secret_key(&self.secret_key);
+        keypair.sign_schnorr(message)
     }
 
     /// docs(iroh-docs)の書き込みに使う docs author の秘密鍵の種を、アカウントの署名鍵から導出する(ADR 0053)。
@@ -63,7 +63,7 @@ impl KukuriKeys {
     pub fn derive_docs_author_seed(&self) -> DocsAuthorSeed {
         DocsAuthorSeed(blake3::derive_key(
             DOCS_AUTHOR_DERIVATION_CONTEXT,
-            &self.secret_key.secret_bytes(),
+            &self.secret_key.to_secret_bytes(),
         ))
     }
 }
@@ -96,7 +96,7 @@ fn parse_secret_key(secret: &str) -> Result<SecretKey> {
         let bytes: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow!("invalid hex secret key length"))?;
-        return SecretKey::from_byte_array(bytes).context("invalid hex secret key");
+        return SecretKey::from_secret_bytes(bytes).context("invalid hex secret key");
     }
 
     let (hrp, bytes) = bech32::decode(trimmed).context("failed to decode secret key")?;
@@ -106,7 +106,7 @@ fn parse_secret_key(secret: &str) -> Result<SecretKey> {
     let bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| anyhow!("invalid bech32 secret key length"))?;
-    SecretKey::from_byte_array(bytes).context("invalid bech32 secret key")
+    SecretKey::from_secret_bytes(bytes).context("invalid bech32 secret key")
 }
 
 pub fn encode_secret_key_bech32(secret_key_hex: &str, hrp: &str) -> Result<String> {
@@ -149,7 +149,7 @@ pub(crate) fn pairwise_shared_secret(
     let remote_xonly = XOnlyPublicKey::from_str(remote_pubkey.as_str())
         .context("invalid remote x-only public key")?;
     let remote_public = PublicKey::from_x_only_public_key(remote_xonly, Parity::Even);
-    let keypair = Keypair::from_secret_key(SECP256K1, &local_keys.secret_key);
+    let keypair = Keypair::from_secret_key(&local_keys.secret_key);
     let (_, parity) = keypair.x_only_public_key();
     let local_secret = if parity == Parity::Odd {
         local_keys.secret_key.negate()

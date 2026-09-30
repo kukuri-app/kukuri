@@ -93,7 +93,7 @@ impl NotificationStore for SqliteStore {
             },
             NOTIFICATION_PAGE_SIZE + 1,
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(cursor) = cursor {
             query = query
                 .bind(cursor.received_at)

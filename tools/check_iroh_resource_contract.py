@@ -16,7 +16,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
     patch = manifest["patch"]["crates-io"]["iroh"]
-    repository = "https://github.com/n0-computer/iroh"
+    repository = "https://github.com/KingYoSun/iroh"
     if patch["git"] != repository:
         raise ValueError("Unexpected upstream repository")
     revision = args.revision or patch["rev"]

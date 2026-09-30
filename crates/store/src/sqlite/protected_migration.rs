@@ -243,10 +243,10 @@ impl SqliteStore {
                 };
                 let (derived_at, last_id) = serde_json::from_str::<(i64, String)>(&cursor)
                     .unwrap_or((i64::MIN, String::new()));
-                let rows = sqlx::query(&format!(
+                let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
                     "SELECT {id} AS id, derived_at, source_replica_id, source_key, manifest_blob_hash \
                      FROM {table} WHERE (derived_at, {id}) > (?1, ?2) ORDER BY derived_at, {id} LIMIT ?3"
-                ))
+                )))
                 .bind(derived_at)
                 .bind(last_id)
                 .bind(limit)

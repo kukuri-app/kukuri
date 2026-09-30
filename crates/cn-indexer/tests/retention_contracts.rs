@@ -199,9 +199,11 @@ fn projected(scope: &str, object: &str, created_at: i64) -> IndexedEntry {
 }
 
 async fn count(pool: &PgPool, table: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 /// 計数が 5 表の実際の行数と一致することを確かめて返す。

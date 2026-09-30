@@ -8,9 +8,12 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-blake3 = "1.8.6"
+blake3 = "1.8.7"
 iroh-docs = "=0.101.0"
 serde_json = "1"
+# iroh-blobs (via iroh-docs) uses the multi-thread runtime without enabling it itself;
+# it used to arrive only through feature unification from iroh <1.3 dependencies.
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 tempfile = "3"
