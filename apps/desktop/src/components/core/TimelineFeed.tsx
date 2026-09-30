@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import { type ReactNode, useRef } from 'react';
+import { memo, type ReactNode, useInsertionEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -21,6 +21,39 @@ import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
 import { useWindowScrollAnchor } from './useWindowScrollAnchor';
+
+// 行の props が変わらない限り、既存の行を描き直さない。続きの読み込みや定期更新のたびに窓の全行
+// (最大 200 行)を描き直すと、その処理が行数に比例して操作の応答を遅らせる(#1425)。
+const TimelineFeedRow = memo(PostCard);
+const NO_MEDIA_OBJECT_URLS: Record<string, string | null> = {};
+const NO_ITEMS: never[] = [];
+
+type Callback = (...args: never[]) => unknown;
+
+/**
+ * 行へ渡す callback を、描画のたびに作り直されても同じ参照に保つ(呼ばれたときは最新の callback を使う)。
+ * 未指定の callback は未指定のまま渡し、操作の有無の表示を変えない。
+ */
+function useStableCallbacks<T extends Record<string, Callback | undefined>>(callbacks: T): T {
+  const [{ latest, wrappers }] = useState(() => ({
+    latest: new Map<string, Callback | undefined>(),
+    wrappers: new Map<string, Callback>(),
+  }));
+  useInsertionEffect(() => {
+    for (const [key, callback] of Object.entries(callbacks)) latest.set(key, callback);
+  });
+  return Object.fromEntries(
+    Object.entries(callbacks).map(([key, callback]) => {
+      if (!callback) return [key, callback];
+      let wrapper = wrappers.get(key);
+      if (!wrapper) {
+        wrapper = (...args: never[]) => (latest.get(key) as Callback)(...args);
+        wrappers.set(key, wrapper);
+      }
+      return [key, wrapper];
+    })
+  ) as T;
+}
 
 type TimelineFeedProps = {
   posts: PostCardView[];
@@ -92,10 +125,10 @@ export function TimelineFeed({
   readOnly = false,
   onOpenOriginalTopic,
   localAuthorPubkey,
-  mediaObjectUrls = {},
-  ownedReactionAssets = [],
-  bookmarkedReactionAssets = [],
-  recentReactions = [],
+  mediaObjectUrls = NO_MEDIA_OBJECT_URLS,
+  ownedReactionAssets = NO_ITEMS,
+  bookmarkedReactionAssets = NO_ITEMS,
+  recentReactions = NO_ITEMS,
   onToggleReaction,
   onBookmarkCustomReaction,
   onReactionPickerOpen,
@@ -130,6 +163,29 @@ export function TimelineFeed({
     hasMore: hasMore && !loadMoreError,
     loadingMore,
     onLoadMore: loadMore,
+  });
+  const rowCallbacks = useStableCallbacks({
+    onOpenAuthor,
+    onOpenThread,
+    onOpenThreadInTopic,
+    onReply,
+    onRepost,
+    onQuoteRepost,
+    onOpenOriginalTopic,
+    onToggleReaction,
+    onBookmarkCustomReaction,
+    onReactionPickerOpen,
+    onToggleBookmark,
+    onWithdraw,
+    onRetryLocalPost,
+    onRestoreLocalPost,
+    onActivateReference,
+    onCopyLink: onCopyPostLink,
+    onSubmitReport,
+    onCopyReportContact,
+    onFetchReportManifest,
+    onFetchNodePolicies,
+    onMuteReportAuthor,
   });
   const overscrollAccumulationRef = useRef(0);
   const touchStartYRef = useRef<number | null>(null);
@@ -209,40 +265,20 @@ export function TimelineFeed({
       ) : null}
       {posts.map((view) => (
         <li key={view.post.object_id} className={itemClassName} data-post-id={view.post.object_id}>
-        <PostCard
+        <TimelineFeedRow
+          {...rowCallbacks}
           enableLinkPreview
-            view={view}
-            onOpenAuthor={onOpenAuthor}
-            onOpenThread={onOpenThread}
-            onOpenThreadInTopic={onOpenThreadInTopic}
-            onReply={onReply}
-            onRepost={onRepost}
-            onQuoteRepost={onQuoteRepost}
-            readOnly={readOnly}
-            onOpenOriginalTopic={onOpenOriginalTopic}
-            localAuthorPubkey={localAuthorPubkey}
-            mediaObjectUrls={mediaObjectUrls}
-            ownedReactionAssets={ownedReactionAssets}
-            bookmarkedReactionAssets={bookmarkedReactionAssets}
-            recentReactions={recentReactions}
-            onToggleReaction={onToggleReaction}
-            onBookmarkCustomReaction={onBookmarkCustomReaction}
-            onReactionPickerOpen={onReactionPickerOpen}
-            showBookmarkAction={showBookmarkAction}
-            isBookmarked={bookmarkedPostIds?.has(view.post.object_id) ?? false}
-            onToggleBookmark={onToggleBookmark}
-            onWithdraw={onWithdraw}
-            onRetryLocalPost={onRetryLocalPost}
-            onRestoreLocalPost={onRestoreLocalPost}
-            onActivateReference={onActivateReference}
-            onCopyLink={onCopyPostLink}
-            isFocused={focusedPostObjectId === view.post.object_id}
-            onSubmitReport={onSubmitReport}
-            onCopyReportContact={onCopyReportContact}
-            onFetchReportManifest={onFetchReportManifest}
-            onFetchNodePolicies={onFetchNodePolicies}
-            onMuteReportAuthor={onMuteReportAuthor}
-          />
+          view={view}
+          readOnly={readOnly}
+          localAuthorPubkey={localAuthorPubkey}
+          mediaObjectUrls={mediaObjectUrls}
+          ownedReactionAssets={ownedReactionAssets}
+          bookmarkedReactionAssets={bookmarkedReactionAssets}
+          recentReactions={recentReactions}
+          showBookmarkAction={showBookmarkAction}
+          isBookmarked={bookmarkedPostIds?.has(view.post.object_id) ?? false}
+          isFocused={focusedPostObjectId === view.post.object_id}
+        />
         </li>
       ))}
       {unavailableCount > 0 ? (

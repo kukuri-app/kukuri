@@ -658,7 +658,11 @@ export function useDesktopShellData({
         }
 
         if (joinedChannelsResult.status === 'fulfilled') {
-          setJoinedChannelsByTopic(setRecordEntry(topic, joinedChannelsResult.value));
+          // 同じ内容なら配列を差し替えない。差し替えると表示中の全行の view を作り直す(#1425)。
+          setJoinedChannelsByTopic(updateRecordEntry(topic, (prev) =>
+            prev && JSON.stringify(prev) === JSON.stringify(joinedChannelsResult.value)
+              ? prev
+              : joinedChannelsResult.value));
           setChannelPanelStateByTopic(setRecordEntry(topic, {
               status: 'ready',
               error: null,

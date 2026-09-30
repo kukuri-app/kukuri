@@ -4,6 +4,7 @@ import { Link2 } from 'lucide-react';
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
 import { PagedList } from '@/components/core/PagedList';
 import { TimelineFeed } from '@/components/core/TimelineFeed';
+import type { PostCardView } from '@/components/core/types';
 import { CommunityIndexWorkspace } from '@/components/core/CommunityIndexWorkspace';
 import type { CommunityIndexingTarget } from '@/components/core/CommunityIndexingRequestDialog';
 import { MetaverseRoomPanel } from '@/components/extended/MetaverseRoomPanel';
@@ -386,12 +387,26 @@ export function DesktopShellPrimarySurface({
     () => joinedChannelsByTopic[surfaceTopic] ?? [],
     [joinedChannelsByTopic, surfaceTopic]
   );
+  // 表示の材料が同じ間は、同じ投稿の view を作り直さない。続きの読み込みで増えた行だけを作り、
+  // 既存の行の描き直しを避ける(#1425)。
+  const { buildPostCardView } = viewModels;
+  const [postCardViews] = useState(() => new WeakMap<PostView, {
+    build: typeof buildPostCardView;
+    joinedChannels: typeof surfaceJoinedChannels;
+    view: PostCardView;
+  }>());
   const surfaceTimelinePostViews = useMemo(
     () =>
-      (timelinesByKey[activeTimelineKey] ?? []).map((post) =>
-        viewModels.buildPostCardView(post, 'timeline', surfaceJoinedChannels)
-      ),
-    [activeTimelineKey, surfaceJoinedChannels, timelinesByKey, viewModels]
+      (timelinesByKey[activeTimelineKey] ?? []).map((post) => {
+        const cached = postCardViews.get(post);
+        if (cached?.build === buildPostCardView && cached.joinedChannels === surfaceJoinedChannels) {
+          return cached.view;
+        }
+        const view = buildPostCardView(post, 'timeline', surfaceJoinedChannels);
+        postCardViews.set(post, { build: buildPostCardView, joinedChannels: surfaceJoinedChannels, view });
+        return view;
+      }),
+    [activeTimelineKey, buildPostCardView, postCardViews, surfaceJoinedChannels, timelinesByKey]
   );
   const surfaceScopeKey = timelineStorageKeyForChannel(surfaceTopic, surfaceChannelId);
   const [pendingLiveCount, setPendingLiveCount] = useState(0);
