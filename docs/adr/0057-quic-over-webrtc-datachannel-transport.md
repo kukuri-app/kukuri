@@ -86,7 +86,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - W9 AC-2 の試験は、custom のアドレスだけで接続する（relay を使わない）ので #4565 に依存しない。
 - 経路の削除は、session の close で行う。閉じた session の addr は `is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
   iroh はその path を検証の失敗・idle で閉じ、既定の selector が relay 等の残りの path へ移る。iroh 側に path を消す API は要らない。
-- 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs の fork は W2・W3 が所有し、本 crate はそれらに依存しない。
+- 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 
 ### 6. STUN
