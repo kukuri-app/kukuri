@@ -15,7 +15,7 @@ impl IrohDocsSync {
         docs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
-            Arc::new(BlobPeerHealth::default()),
+            Arc::new(kukuri_transport::BlobPeerHealth::default()),
             store.clone(),
             "docs",
         ));

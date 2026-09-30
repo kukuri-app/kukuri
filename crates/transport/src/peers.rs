@@ -16,7 +16,7 @@ use chrono::Utc;
 use iroh::address_lookup::MemoryLookup;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use tokio::sync::{Mutex, watch};
-// 元実装(docs-sync / blob-service)と同じ tokio の Instant を使う(テストでの時間制御と互換)。
+// n0_future の Instant（native は tokio の Instant。テストでの時間制御と互換）。
 use n0_future::time::Instant;
 
 mod health;

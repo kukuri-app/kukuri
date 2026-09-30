@@ -3544,6 +3544,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305 0.11.0",
  "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hex",
  "hkdf 0.13.0",
  "hmac 0.13.0",
@@ -3656,6 +3657,7 @@ name = "kukuri-iroh-node"
 version = "0.3.3"
 dependencies = [
  "anyhow",
+ "axum",
  "bao-tree",
  "base64 0.23.1",
  "blake3",
@@ -3669,6 +3671,7 @@ dependencies = [
  "kukuri-core",
  "kukuri-store",
  "kukuri-transport",
+ "kukuri-webrtc-transport",
  "n0-future",
  "serde",
  "serde_json",
@@ -3676,6 +3679,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "wasm-bindgen-test",
  "web-time",
 ]
 

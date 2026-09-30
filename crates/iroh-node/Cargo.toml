@@ -34,8 +34,20 @@ iroh-docs = { workspace = true, features = ["fs-store", "metrics", "redb-v2-migr
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
 [dev-dependencies]
+kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+axum.workspace = true
 iroh = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+# browser↔native の有界な読み出しの native 側（scripts/ci/browser_peer_test.sh）。
+[[example]]
+name = "web_peer"
+test = false
 
 [lints]
 workspace = true

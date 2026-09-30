@@ -314,4 +314,5 @@ impl Drop for DisplayWorkLease {
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests;

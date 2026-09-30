@@ -1,6 +1,7 @@
 //! Read a hash-addressed cached blob in bounded chunks without importing it
 //! into the legacy iroh-blobs store.
 
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -13,7 +14,6 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::Hash;
 use kukuri_store::ContentCacheStore;
 use n0_future::time::timeout;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 
 use crate::remote_fetch::{BlobTooLarge, RemoteCacheDeferred};
@@ -136,9 +136,31 @@ pub(crate) async fn fetch_to_file(
     .await
 }
 
-enum BlobOutput<'a> {
+/// 取得した blob の書き先。
+pub(crate) enum BlobOutput<'a> {
     Memory(&'a mut Vec<u8>),
+    /// 表示用の file への取得は native だけ（ADR 0056 §5）。
+    #[cfg(not(target_family = "wasm"))]
     File(&'a mut tokio::fs::File),
+}
+
+impl BlobOutput<'_> {
+    pub(crate) async fn write(&mut self, chunk: &[u8]) -> Result<()> {
+        match self {
+            Self::Memory(bytes) => bytes.extend_from_slice(chunk),
+            #[cfg(not(target_family = "wasm"))]
+            Self::File(file) => tokio::io::AsyncWriteExt::write_all(*file, chunk).await?,
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn flush(&mut self) -> Result<()> {
+        #[cfg(not(target_family = "wasm"))]
+        if let Self::File(file) = self {
+            tokio::io::AsyncWriteExt::flush(*file).await?;
+        }
+        Ok(())
+    }
 }
 
 async fn fetch_into(
@@ -183,10 +205,7 @@ async fn fetch_into(
         let mut chunk = vec![0; CHUNK_BYTES.min(usize::try_from(length - received)?)];
         recv.read_exact(&mut chunk).await?;
         hasher.update(&chunk);
-        match &mut output {
-            BlobOutput::Memory(bytes) => bytes.extend_from_slice(&chunk),
-            BlobOutput::File(file) => file.write_all(&chunk).await?,
-        }
+        output.write(&chunk).await?;
         received += u64::try_from(chunk.len())?;
     }
     ensure!(
@@ -198,6 +217,7 @@ async fn fetch_into(
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests {
     use super::*;
     use crate::IrohDocsNode;

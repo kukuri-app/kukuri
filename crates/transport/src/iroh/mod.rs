@@ -17,7 +17,9 @@ use chrono::Utc;
 use futures_util::{StreamExt, stream};
 #[cfg(test)]
 use iroh::RelayMode;
-use iroh::address_lookup::{AddrFilter, AddressLookup, Item as AddressLookupItem, MemoryLookup};
+#[cfg(not(target_family = "wasm"))]
+use iroh::address_lookup::AddrFilter;
+use iroh::address_lookup::{AddressLookup, Item as AddressLookupItem, MemoryLookup};
 use iroh::endpoint::{
     Builder as EndpointBuilder, MtuDiscoveryConfig, QuicTransportConfig, TransportAddrUsage,
     presets,

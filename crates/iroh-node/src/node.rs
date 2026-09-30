@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock as StdRwLock};
 use std::time::Duration;
+#[cfg(not(target_family = "wasm"))]
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -28,6 +29,7 @@ use kukuri_transport::{
     prepare_endpoint_for_discovery, sync_endpoint_relay_config,
 };
 use n0_future::time::timeout;
+#[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -35,10 +37,14 @@ use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, Priv
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 use iroh::tls::CaTlsConfig;
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) const ENDPOINT_SECRET_FILE_NAME: &str = "endpoint-secret.json";
+#[cfg(not(target_family = "wasm"))]
 const DOCS_STORE_FILE_NAME: &str = "docs.redb";
+#[cfg(not(target_family = "wasm"))]
 const DEFAULT_AUTHOR_FILE_NAME: &str = "default-author";
 
 fn relay_activation_timeout() -> Duration {
@@ -199,6 +205,7 @@ pub struct IrohDocsNode {
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 const ENDPOINT_SECRET_FORMAT_VERSION: u32 = 1;
 
 /// endpoint secret の自前永続形式(WP-C5)。iroh::SecretKey の serde 表現
@@ -207,14 +214,15 @@ const ENDPOINT_SECRET_FORMAT_VERSION: u32 = 1;
 /// 旧形式(`{"secret_key":[..]}`)の読み込み fallback は置かない — 本リリース前の
 /// 破壊的変更。旧ファイルは parse 失敗で起動エラーになり、ファイルを削除すれば
 /// 新しい endpoint ID で再生成される。
+#[cfg(not(target_family = "wasm"))]
 #[derive(Serialize, Deserialize)]
 struct StoredEndpointSecret {
     version: u32,
     secret_key_hex: String,
 }
 
-/// メモリの store で起動するときの入力（Web と試験）。
-pub struct MemoryNodeOptions {
+/// 起動の入力。メモリの store では外から渡す（Web と試験）。
+pub struct NodeOptions {
     pub network_config: TransportNetworkConfig,
     pub relay_config: TransportRelayConfig,
     /// 端末の endpoint の秘密鍵。無ければ新しく作る。
@@ -223,7 +231,7 @@ pub struct MemoryNodeOptions {
     pub custom_transports: Vec<Arc<dyn CustomTransport>>,
 }
 
-impl Default for MemoryNodeOptions {
+impl Default for NodeOptions {
     fn default() -> Self {
         Self {
             network_config: TransportNetworkConfig::loopback(),
@@ -236,21 +244,18 @@ impl Default for MemoryNodeOptions {
 
 impl IrohDocsNode {
     pub async fn memory() -> Result<Arc<Self>> {
-        Self::memory_with(MemoryNodeOptions::default()).await
+        Self::memory_with(NodeOptions::default()).await
     }
 
     /// メモリの store で起動する。endpoint の秘密鍵と custom transport を外から渡す（ADR 0056 §2・§8）。
-    pub async fn memory_with(options: MemoryNodeOptions) -> Result<Arc<Self>> {
+    pub async fn memory_with(options: NodeOptions) -> Result<Arc<Self>> {
         let store = MemStore::new();
         Self::spawn(
             (*store).clone(),
             None,
-            options.network_config,
+            options,
             DhtDiscoveryOptions::disabled(),
-            options.relay_config,
             false,
-            options.secret_key,
-            options.custom_transports,
         )
         .await
     }
@@ -331,12 +336,14 @@ impl IrohDocsNode {
         let result = Self::spawn(
             (*store).clone(),
             Some(root.to_path_buf()),
-            network_config,
+            NodeOptions {
+                network_config,
+                relay_config,
+                secret_key: None,
+                custom_transports: Vec::new(),
+            },
             dht_options,
-            relay_config,
             recover_corrupt_docs,
-            None,
-            Vec::new(),
         )
         .await;
         if result.is_err() {
@@ -352,13 +359,16 @@ impl IrohDocsNode {
     async fn spawn(
         store: impl Into<BlobStore>,
         root: Option<PathBuf>,
-        network_config: TransportNetworkConfig,
+        options: NodeOptions,
         dht_options: DhtDiscoveryOptions,
-        relay_config: TransportRelayConfig,
         recover_corrupt_docs: bool,
-        secret_key: Option<iroh::SecretKey>,
-        custom_transports: Vec<Arc<dyn CustomTransport>>,
     ) -> Result<Arc<Self>> {
+        let NodeOptions {
+            network_config,
+            relay_config,
+            secret_key,
+            custom_transports,
+        } = options;
         let blobs = store.into();
         let discovery = Arc::new(MemoryLookup::new());
         #[cfg(not(target_family = "wasm"))]
@@ -375,6 +385,7 @@ impl IrohDocsNode {
             Arc::clone(&relay_urls),
         )?;
         #[cfg(test)]
+        #[cfg(not(target_family = "wasm"))]
         {
             endpoint_builder = endpoint_builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
         }

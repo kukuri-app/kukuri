@@ -24,7 +24,7 @@ use tracing::{info, warn};
 
 use crate::IrohDocsNode;
 use crate::network_work::{FetchIdentity, FetchRequest, NetworkWorkRuntime};
-use crate::remote_blob;
+use crate::remote_blob::{self, BlobOutput};
 use kukuri_transport::work_admission::WorkPersistence;
 
 pub const REMOTE_FETCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -296,6 +296,7 @@ async fn fetch_ephemeral(
     Ok(bytes)
 }
 
+#[cfg(not(target_family = "wasm"))]
 async fn fetch_ephemeral_to_file(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
@@ -313,11 +314,6 @@ async fn fetch_ephemeral_to_file(
     .await
 }
 
-enum BlobOutput<'a> {
-    Memory(&'a mut Vec<u8>),
-    File(&'a mut tokio::fs::File),
-}
-
 async fn fetch_ephemeral_into(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
@@ -328,7 +324,6 @@ async fn fetch_ephemeral_into(
     use bao_tree::io::BaoContentItem;
     use futures_util::StreamExt;
     use iroh_blobs::get::request::{GetBlobItem, get_blob};
-    use tokio::io::AsyncWriteExt;
 
     let max_bytes = match mode {
         FetchMode::EphemeralBounded(limit) => limit,
@@ -367,10 +362,7 @@ async fn fetch_ephemeral_into(
                     }
                 }
                 hasher.update(&leaf.data);
-                match &mut output {
-                    BlobOutput::Memory(bytes) => bytes.extend_from_slice(&leaf.data),
-                    BlobOutput::File(file) => file.write_all(&leaf.data).await?,
-                }
+                output.write(&leaf.data).await?;
                 received = incoming;
             }
             GetBlobItem::Item(_) => {}
@@ -379,9 +371,7 @@ async fn fetch_ephemeral_into(
                     hasher.finalize().as_bytes() == hash.as_bytes(),
                     "ephemeral blob hash mismatch"
                 );
-                if let BlobOutput::File(file) = &mut output {
-                    file.flush().await?;
-                }
+                output.flush().await?;
                 return Ok(received);
             }
             GetBlobItem::Error(error) => return Err(error.into()),
@@ -733,9 +723,12 @@ async fn fetch_bytes_from_remote(
                     match mode {
                         FetchMode::Store => {
                             let transfer_started = Instant::now();
+                            let blobs = node.blobs().clone();
                             match timeout(
                                 REMOTE_FETCH_TRANSFER_TIMEOUT,
-                                node.blobs().remote().fetch(conn, hash),
+                                crate::confine_local(async move {
+                                    blobs.remote().fetch(conn, hash).await
+                                }),
                             )
                             .await
                             {
@@ -806,6 +799,7 @@ async fn fetch_bytes_from_remote(
                             let transfer_started = Instant::now();
                             match timeout(REMOTE_FETCH_TRANSFER_TIMEOUT, async {
                                 match file_path {
+                                    #[cfg(not(target_family = "wasm"))]
                                     Some(path) => fetch_ephemeral_to_file(
                                         conn,
                                         hash,
@@ -814,7 +808,7 @@ async fn fetch_bytes_from_remote(
                                     )
                                     .await
                                     .map(|_| Vec::new()),
-                                    None => {
+                                    _ => {
                                         fetch_ephemeral(
                                             conn,
                                             hash,
@@ -859,6 +853,7 @@ async fn fetch_bytes_from_remote(
                                                     + REMOTE_FETCH_TRANSFER_TIMEOUT,
                                                 async {
                                                     match file_path {
+                                                        #[cfg(not(target_family = "wasm"))]
                                                         Some(path) => remote_blob::fetch_to_file(
                                                             node.endpoint(),
                                                             peer.clone(),
@@ -867,7 +862,7 @@ async fn fetch_bytes_from_remote(
                                                         )
                                                         .await
                                                         .map(|found| found.map(|_| Vec::new())),
-                                                        None => {
+                                                        _ => {
                                                             remote_blob::fetch(
                                                                 node.endpoint(),
                                                                 peer.clone(),
@@ -973,4 +968,5 @@ async fn fetch_bytes_from_remote(
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests;

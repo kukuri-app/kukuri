@@ -114,6 +114,7 @@ impl IrohDocsSync {
     /// 旧 store(`iroh-data`)に残る 1 key の record(#1221 R5-G・R5-I の移行)。旧 store に無ければ、新しい store の
     /// 手元の record を namespace を import せずに読む(移行の途中に書いた本人の record)。private は登録済みの
     /// capability で namespace を求める。
+    #[cfg(not(target_family = "wasm"))]
     pub async fn read_legacy_records(
         &self,
         legacy: &kukuri_iroh_node::LegacyStore,

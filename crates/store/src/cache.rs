@@ -43,11 +43,6 @@ pub struct RemoteRecordKey {
     pub content_len: u64,
 }
 
-/// record の cache の key（replica・key・docs author の組）。
-pub fn remote_record_cache_key(replica: &str, key: &str, author: &str) -> String {
-    format!("{replica}\0{key}\0{author}")
-}
-
 #[async_trait]
 pub trait ContentCacheStore: Send + Sync {
     fn subscribe_adult_label_evictions(&self) -> tokio::sync::broadcast::Receiver<String>;

@@ -1,3 +1,9 @@
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 mod cache;
 mod memory;
 mod models;
@@ -14,7 +20,7 @@ mod tests;
 
 pub use cache::{
     ContentCacheStore, OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES,
-    REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, RemoteRecordKey, remote_record_cache_key,
+    REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, RemoteRecordKey,
 };
 pub use memory::MemoryStore;
 pub use models::{

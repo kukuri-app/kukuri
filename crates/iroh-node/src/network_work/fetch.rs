@@ -198,6 +198,7 @@ impl NetworkWorkRuntime {
     }
 
     #[cfg(test)]
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn fetch_count(&self) -> usize {
         self.state
             .lock()

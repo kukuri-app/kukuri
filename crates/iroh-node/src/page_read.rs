@@ -443,13 +443,19 @@ impl DocReadProtocol {
                         entry.content_len() <= MAX_RECORD_BYTES as u64,
                         "docs record too large"
                     );
-                    let mut reader = self
-                        .blobs
-                        .blobs()
-                        .reader(entry.content_hash())
-                        .take((MAX_RECORD_BYTES + 1) as u64);
-                    let mut value = Vec::new();
-                    reader.read_to_end(&mut value).await?;
+                    let blobs = self.blobs.clone();
+                    let hash = entry.content_hash();
+                    let value = crate::confine_local(async move {
+                        let mut value = Vec::new();
+                        blobs
+                            .blobs()
+                            .reader(hash)
+                            .take((MAX_RECORD_BYTES + 1) as u64)
+                            .read_to_end(&mut value)
+                            .await
+                            .map(|_| value)
+                    })
+                    .await?;
                     ensure!(value.len() <= MAX_RECORD_BYTES, "docs record too large");
                     records.push(DocReadRecord {
                         key: String::from_utf8(entry.key().to_vec())?,

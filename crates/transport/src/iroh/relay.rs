@@ -71,6 +71,8 @@ pub fn build_endpoint_builder(
     }
     builder = builder.address_lookup(RelayFallbackLookup::new(relay_urls));
     // DHT は UDP を使うので native だけ（ADR 0056 §3）。
+    #[cfg(target_family = "wasm")]
+    let _ = dht_options;
     #[cfg(not(target_family = "wasm"))]
     if let Some(dht_options) = dht_options.filter(|options| options.enabled) {
         let mut dht_builder = DhtAddressLookup::builder().addr_filter(AddrFilter::unfiltered());

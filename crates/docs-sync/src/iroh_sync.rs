@@ -11,9 +11,7 @@ use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::{Author, AuthorId, Capability, NamespaceSecret};
 use kukuri_core::{DocsAuthorSeed, ReplicaId};
 use kukuri_store::ContentCacheStore;
-use kukuri_transport::{
-    BlobPeerHealth, PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket,
-};
+use kukuri_transport::{PeerAddrBook, RemoteFetchRetryState, SeedPeer, parse_endpoint_ticket};
 use n0_future::task::{JoinHandle, JoinSet};
 use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};

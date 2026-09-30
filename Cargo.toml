@@ -113,3 +113,5 @@ iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c04
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
+# clippy.toml の一覧。共用 crate の lib.rs だけで warn にする（ADR 0056 §3）。
+disallowed_methods = "allow"
