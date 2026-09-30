@@ -31,8 +31,10 @@ impl FixtureServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        // updater 2.13 以降は、署名に記録された版と告知する版の一致を要求する。
+        // fixture は同じ crate の版で build・署名した bundle なので、その版を告知する。
         let manifest = serde_json::to_vec(&serde_json::json!({
-            "version": "99.0.0",
+            "version": env!("CARGO_PKG_VERSION"),
             "platforms": { target: {
                 "url": format!("{base}/bundle"), "signature": signature.trim()
             }}
