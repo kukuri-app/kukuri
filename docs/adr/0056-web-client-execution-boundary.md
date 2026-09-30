@@ -79,7 +79,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | データ | native | Web | 所有 |
 | --- | --- | --- | --- |
 | アカウント秘密鍵・private capability・世代・退会・採用済み version・設定・同意・CN の token | keyring・file | IndexedDB の durable 領域（cache の削除と分ける） | W4 AC-1〜2 |
-| iroh の endpoint 秘密鍵（端末固有 identity） | file | IndexedDB の durable 領域。ブラウザごとに生成し、アカウント同期・移行で複製しない | W4 |
+| iroh の endpoint 秘密鍵（端末固有 identity） | account ごとの file | IndexedDB の durable 領域（account ごとの vault。ADR 0059 §1）。ブラウザと account ごとに生成し、アカウント同期・移行で複製しない | W4 |
 | projection（`Store`・`ProjectionStore`） | `SqliteStore` | W4 AC-1 が IndexedDB の実装か、メモリと再構築かを決める（D-4・D-5）。W1 の転送試験は既存の `MemoryStore` を使い、これを永続化の証拠にしない | W4 |
 | docs の replica | redb（persistent） | 上流の `Store::memory()`。自分の record は保存 trait の IndexedDB 実装（ADR 0058） | W3 |
 | blobs | `FsStore` | 上流の `MemStore`（blob-service は書かない）と、保存 trait の IndexedDB 実装（ADR 0058） | W2 |

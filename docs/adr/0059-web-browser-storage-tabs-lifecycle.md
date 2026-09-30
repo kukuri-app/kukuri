@@ -31,24 +31,27 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 
 ### 1. 保存 trait と IndexedDB の database
 
-- `KeyringStore` を、同じ 3 つの操作（`purpose` と `key` で引く get・set・delete）の**非同期**の trait 1 つに置き換える。desktop-runtime の file で書く設定・状態の読み書きも同じ trait へ寄せる（ADR 0056 §2）。
+- `KeyringStore` を、同じ 3 つの操作（`service` と `account` で引く get・set・delete）の**非同期**の trait 1 つに置き換える。desktop-runtime の file で書く設定・状態の読み書きも同じ trait へ寄せる（ADR 0056 §2）。
   native の実装は今の keyring・file の読み書きを移したもので、Web の実装は IndexedDB で作る。新旧の経路を並べて残さない。
   trait の切り出しと native の呼出元の切替は W1 AC-4（desktop-runtime の command の接続）で行い、Web の実装は W4 AC-2 が作る。
 - IndexedDB の database は 3 種類に分ける。
 
 | database | 中身 | durability | 回収 |
 | --- | --- | --- | --- |
-| `kukuri-device-v1`（origin に 1 つ） | account の一覧、端末の iroh endpoint 秘密鍵、アプリの同意、秘密を包む AES-GCM の `CryptoKey`（non-extractable） | strict | しない |
-| `kukuri-vault-v1-<account の公開鍵>` | `secrets[purpose, key]`（アカウント鍵・capability・token 等を AES-GCM で包んだもの）、`settings[name]`（設定と最小状態） | strict | しない（明示の削除だけ） |
+| `kukuri-device-v1`（origin に 1 つ） | account の一覧、アプリの同意、秘密を包む AES-GCM の `CryptoKey`（non-extractable） | strict | しない |
+| `kukuri-vault-v1-<account の公開鍵>` | `secrets[service, account]`（アカウント鍵・この account の iroh endpoint 秘密鍵・capability・token 等を AES-GCM で包んだもの）、`settings[name]`（設定と最小状態。gossip の購読状態、private index の grant と停止、W6 の鍵更新の担当・journal・配布の cursor を含む） | strict | しない（明示の削除だけ） |
 | `kukuri-cache-v1-<account の公開鍵>`（ADR 0058） | blob・docs の record の保護と cache、projection（§2） | relaxed | ADR 0058 §4 の規則 |
 
 - 保存の成功は transaction の `complete` を基準にする（`beforeunload` に頼らない）。quota・拒否・破損・schema の更新・部分的な保存を区別して返し、既存の identity を失敗の隠蔽のために作り直さない。
 - 秘密の保護: vault の秘密は、device の database の non-extractable な `CryptoKey` で包む。これは profile の file を持ち出されたときの保護で、origin の中で動くコード（XSS・供給網）からは守れない（信頼境界）。常時のパスワード入力は加えない。
 - 起動時に vault を全件読まない。起動に要るもの（アカウント鍵、有効な需要の capability、設定）を key で読む。
+- iroh の endpoint 秘密鍵は、native と同じく account ごとに持つ（同じブラウザの別の account と EndpointId を共有しない）。account の切替は runtime を作り直すので、その account の鍵で Endpoint を作る。
+- v1 には移行の対象が無い。schema の版を上げるときは、key と cursor で有界な単位に分けて進める（起動の条件にしない）。
 
 ### 2. projection
 
 - Web の projection（`Store` と `ProjectionStore` のすべての trait）は、ADR 0058 の cache の database に IndexedDB で実装する。SQLite の実装と同じ意味・同じ窓（件数・順序・上限）を、複合索引と cursor で作る。
+  SQLite の実装にある全件を対象にする処理（例: 参照の無い行の一括削除）は、同じ意味で移さず、索引と 1 回の件数の上限つきで行う（設計原則）。
 - 端末だけのデータ（DM の履歴と outbox、通知の既読、bookmark、mute、取り下げと epoch 制御の outbox、owner の参加者の記録）は保護し、再取得できる行（remote の投稿の projection 等）は ADR 0058 §4 の規則で回収する。
   projection の更新と保護参照の置き換え（ADR 0058 §2）は同じ transaction で行う。
 - Web の capability の外の機能（W1 AC-4・W8 の capability matrix で非対応とするもの）の trait の method は、共通の「この platform では使えない」error を返す。
@@ -65,7 +68,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - origin の中で runtime を動かす tab を 1 つに限る。Web Locks の `kukuri-runtime-v1` を `ifAvailable` で取れた tab だけが runtime を起動する。account の切替は同じ tab の runtime の中で行う（ADR 0056 §7）。
 - lock を取れなかった tab は「別のタブで使用中」を示し、利用者の明示の操作でだけ `steal` する。奪われた tab は lock の request の reject を受けて runtime を止め（世代の終了。旧世代の callback は反映しない）、同じ表示へ戻る。
 - tab 間で状態を同期する仕組み（BroadcastChannel 等）は作らない。runtime を持つ tab が 1 つなので要らない。
-- 端末固有の ID と iroh の endpoint 秘密鍵は device の database に 1 つで、tab ごとに複製しない。WebRTC の session も runtime の所有に従う（W9・W10）。
+- 端末固有の ID と、account ごとの iroh の endpoint 秘密鍵は、tab ごとに複製しない。WebRTC の session も runtime の所有に従う（W9・W10）。
 
 ### 5. lifecycle と通信の復帰
 
@@ -74,6 +77,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   - Community Node の期限・同意の判定を 1 回
   - DM・取り下げ・epoch 制御の outbox の due を、実行枠の分だけ同じ ID で再送
   - W10 への世代の通知（接続交渉は有効な需要だけ）
+- 経路の世代を進めて旧世代の接続交渉・候補・callback を破棄するのは、`pagehide`・`freeze`・offline・account の切替・停止のとき。可視・online・`pageshow`・`resume` では世代を進めた後に、有効な需要の分だけ交渉し直す（#1422 T4）。
 - Web の adapter（`crates/web-runtime`）は browser の event をこの入口へ渡すだけで、Web だけの retry の loop を作らない。Android（#1196）も同じ入口を使う。
 - 全 topic・author・epoch の列挙や一括の再購読をしない。freeze・閉じた tab の間の接続の維持は約束しない。
 
@@ -93,6 +97,8 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 | 複数 tab の lock と引継ぎ | W4 AC-4 |
 | persist の要求、喪失時の復旧の導線 | W4 AC-5 |
 | capability の行ごとの保存（native と Web） | W5 AC-4 |
+
+順序: W4 AC-2 は、capability の行ごとの保存（W5 AC-4）と保存 trait の切り出し（W1 AC-4）の後に行う（1 つの key の registry を Web に持ち込まないため）。
 
 ## Consequences
 
