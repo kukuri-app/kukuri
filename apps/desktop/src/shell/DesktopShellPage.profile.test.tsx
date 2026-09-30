@@ -491,3 +491,36 @@ test('a restored author profile column re-reads a failed read until the name arr
   });
   await waitFor(() => expect(within(column).getAllByText('carol').length).toBeGreaterThan(0));
 });
+
+// #1442: 作者の投稿の最初の取得が終わるまでは、作者列で「公開投稿がありません」と言わない。
+test('an author column reports loading, not an empty public feed, until its first read ends', async () => {
+  const authorPubkey = 'e'.repeat(64);
+  const scope = { topicId: 'kukuri:topic:general', channelId: null };
+  const timelineId = columnIdentityId('timeline', scope);
+  const authorColumnId = columnIdentityId('profile', scope, authorPubkey);
+  window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify({
+    version: 1,
+    activeColumnId: timelineId,
+    columns: [
+      { id: timelineId, kind: 'timeline', scope, pinned: true, preferredDesktopSpan: 1 },
+      { id: authorColumnId, kind: 'profile', scope, entityId: authorPubkey, pinned: true, preferredDesktopSpan: 1 },
+    ],
+  }));
+  const api = createDesktopMockApi({ authorSocialViews: { [authorPubkey]: { name: 'erin' } } });
+  const pending = createDeferred<TimelineView>();
+  const original = api.listProfileTimeline.bind(api);
+  vi.spyOn(api, 'listProfileTimeline').mockImplementation((pubkey, cursor, limit) =>
+    pubkey === authorPubkey ? pending.promise : original(pubkey, cursor, limit));
+  render(<App api={api} />);
+  const column = await waitFor(() => {
+    const found = document.querySelector(`[data-column-id="${authorColumnId}"]`);
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  await waitFor(() => expect(within(column).getByText('Loading posts…')).toBeInTheDocument());
+  expect(within(column).queryByText("This user hasn't posted publicly yet.")).not.toBeInTheDocument();
+  await act(async () => pending.resolve({ items: [], next_cursor: null }));
+  await waitFor(() =>
+    expect(within(column).getByText("This user hasn't posted publicly yet.")).toBeInTheDocument());
+  expect(within(column).queryByText('Loading posts…')).not.toBeInTheDocument();
+});

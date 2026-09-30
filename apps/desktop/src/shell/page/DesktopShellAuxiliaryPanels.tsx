@@ -973,7 +973,9 @@ export function DesktopShellDetailSurfaceStack({
       <div className='shell-column-content'>
         <TimelineFeed
           posts={effectiveAuthorTimelinePostViews}
-          emptyCopy={t('profile:feed.noAuthorPosts')}
+          // #1442: 最初の取得が終わるまでは「投稿が無い」と言わない(作者に届かないと取得は数十秒かかりうる)。
+          emptyCopy={t(effectiveAuthorPubkey && !(effectiveAuthorPubkey in authorTimelinesByPubkey) &&
+            !authorErrorsByPubkey[effectiveAuthorPubkey] ? 'profile:feed.loadingAuthorPosts' : 'profile:feed.noAuthorPosts')}
           hasMore={Boolean(
             effectiveAuthorPubkey && authorTimelineNextCursorByPubkey[effectiveAuthorPubkey]
           )}

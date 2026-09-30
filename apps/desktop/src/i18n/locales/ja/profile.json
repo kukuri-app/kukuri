@@ -169,6 +169,7 @@
     "blockedBadge": "ブロック中"
   },
   "feed": {
+    "loadingAuthorPosts": "投稿を読み込み中…",
     "noAuthorPosts": "このユーザーにはまだ公開投稿がありません。",
     "noOwnPosts": "まだ公開投稿がありません。",
     "openOriginalTopic": "元のトピックを開く",
