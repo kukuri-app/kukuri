@@ -177,6 +177,8 @@ pub struct TransportStats {
     pub dropped_send: u64,
     pub dropped_recv: u64,
     pub max_buffered_bytes: u64,
+    /// custom path で受け取り、QUIC へ渡した bytes（経路ごとの実データの判別。#1422）。
+    pub received_bytes: u64,
 }
 
 /// transport の設定。
@@ -229,6 +231,7 @@ struct Shared {
     dropped_send: AtomicU64,
     dropped_recv: AtomicU64,
     max_buffered: AtomicU64,
+    received: AtomicU64,
     #[cfg(test)]
     test_send_loss: (AtomicU64, AtomicU64),
 }
@@ -290,6 +293,7 @@ impl Shared {
             Some(entry) if entry.open => entry.role,
             _ => return,
         };
+        let len = data.len() as u64;
         if data.len() > MAX_DATAGRAM_BYTES
             || self
                 .recv_tx
@@ -301,6 +305,8 @@ impl Shared {
                 .is_err()
         {
             self.dropped_recv.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.received.fetch_add(len, Ordering::Relaxed);
         }
     }
 
@@ -359,6 +365,7 @@ impl WebRtcTransport {
                 dropped_send: AtomicU64::new(0),
                 dropped_recv: AtomicU64::new(0),
                 max_buffered: AtomicU64::new(0),
+                received: AtomicU64::new(0),
                 #[cfg(test)]
                 test_send_loss: (AtomicU64::new(0), AtomicU64::new(0)),
             }),
@@ -381,6 +388,7 @@ impl WebRtcTransport {
             dropped_send: self.shared.dropped_send.load(Ordering::Relaxed),
             dropped_recv: self.shared.dropped_recv.load(Ordering::Relaxed),
             max_buffered_bytes: self.shared.max_buffered.load(Ordering::Relaxed),
+            received_bytes: self.shared.received.load(Ordering::Relaxed),
         }
     }
 

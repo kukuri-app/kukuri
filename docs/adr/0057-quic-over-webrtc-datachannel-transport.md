@@ -109,7 +109,9 @@ W10 は認証済みの iroh 接続上の専用 ALPN で SDP と候補を交換�
   - 同時の交渉は両方向あわせて 4、自分から始める交渉は相手ごとに 1。期限は交渉の開始から DataChannel が開くまで 15 秒。満杯・期限切れ・拒否では session を残さない。自動の再試行はしない（需要の owner が決める）。
   - 両端が同時に始めたら、EndpointId が小さい側が受けた要求を拒否し、大きい側は受けた要求に答える。拒否された側は、相手が始めた session が開くのを期限まで待つ。
   - `reset` で世代を終え、この交渉が作った session をすべて閉じる。古い世代の応答では session を作らない（W1 AC-3 の世代・W4 の freeze から呼ぶ）。
-  - DataChannel が開いたら、両端で `Endpoint::add_remote_addrs(相手, {custom addr})` を呼び、相手への既存の接続と以後の接続に custom path を足す。
+  - DataChannel が開いたら、両端で `Endpoint::add_remote_addrs(相手, {custom addr})` を呼び、相手への生きた接続に custom path を足す（選ばれた path が custom へ移る）。
+    生きた接続が無いときは path が開かず、後の接続がその custom path を使う保証も無い（手元の試験で、交渉の後に張った接続の 27/400 回が期限までに custom へ移らなかった。未使用のアドレスの対応は #4447 で回収される）。
+    このため交渉は、需要の接続がある相手に対して行う（需要の owner への接続は AC-2）。需要の接続を先に張った試験では 400/400 回、接続が custom へ移り、以後の読み出しの実データも custom path を通った。
   - `IrohDocsNode` は `NodeOptions::webrtc` を渡したときだけ、この ALPN を Router に登録する。
 
 ### 8. AC-2 の固定 workload と判定

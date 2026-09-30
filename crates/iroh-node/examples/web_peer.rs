@@ -3,8 +3,9 @@
 //! 手元の iroh relay を起動し、QUIC over WebRTC DataChannel（ADR 0057）を渡した `IrohDocsNode` を relay 付きで
 //! 起動して、公開の replica に 3 件を置く。試験だけの HTTP（`signaling_fixture`）で次を受ける。
 //! - `POST /info`: node の endpoint id と relay の URL
-//! - `POST /read-back`（本文は browser の endpoint id）: browser の node の replica を同じ有界な reader で読む
-//! - `POST /connect`（同上）: native から専用 ALPN で交渉を始め、その後に `/read-back` と同じく読む
+//! - `POST /read-back`（本文は browser の endpoint id）: browser への需要の接続を張り、その接続が custom path へ
+//!   移ってから browser の node の replica を同じ有界な reader で読み、custom path を通ったかを添える
+//! - `POST /connect`（同上）: 需要の接続を張ってから native から専用 ALPN で交渉を始め、`/read-back` と同じく読む
 //!
 //! native だけで動く。
 
@@ -15,25 +16,26 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::{extract::State, routing::post};
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
-use kukuri_iroh_node::{DocReadQuery, DocReadResponse, IrohDocsNode, NodeOptions};
+use kukuri_iroh_node::{DOC_READ_ALPN, DocReadQuery, DocReadResponse, IrohDocsNode, NodeOptions};
 use kukuri_transport::TransportRelayConfig;
 use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport, signaling_fixture};
 
 #[path = "../tests/support/web_e2e.rs"]
 mod web_e2e;
 
-type Peer = (Arc<IrohDocsNode>, RelayUrl);
+type Peer = (Arc<IrohDocsNode>, RelayUrl, Arc<WebRtcTransport>);
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let transport = WebRtcTransport::new(WebRtcConfig {
+        bind_ip: signaling_fixture::reachable_ip(),
+    });
     let node = IrohDocsNode::memory_with(NodeOptions {
         relay_config: TransportRelayConfig {
             iroh_relay_urls: vec![relay.to_string()],
         },
-        webrtc: Some(WebRtcTransport::new(WebRtcConfig {
-            bind_ip: signaling_fixture::reachable_ip(),
-        })),
+        webrtc: Some(transport.clone()),
         ..NodeOptions::default()
     })
     .await?;
@@ -44,11 +46,11 @@ async fn main() -> Result<()> {
         .route("/info", post(info))
         .route("/read-back", post(read_back))
         .route("/connect", post(connect))
-        .with_state((node, relay));
+        .with_state((node, relay, transport));
     signaling_fixture::serve(app).await
 }
 
-async fn info(State((node, relay)): State<Peer>) -> String {
+async fn info(State((node, relay, _)): State<Peer>) -> String {
     format!("{}\n{relay}", node.endpoint().id())
 }
 
@@ -61,18 +63,23 @@ fn browser(body: &str, relay: &RelayUrl) -> Result<EndpointAddr> {
     ))
 }
 
-async fn read_back(State((node, relay)): State<Peer>, body: String) -> String {
-    let read = async { web_e2e::read_newest(&node, browser(&body, &relay)?, "browser").await };
+async fn read_back(State((node, relay, transport)): State<Peer>, body: String) -> String {
+    let read = async {
+        let peer = browser(&body, &relay)?;
+        let demand = web_e2e::demand(&node, peer.clone()).await?;
+        web_e2e::read_over_custom(&node, &transport, &demand, peer, "browser").await
+    };
     read.await
         .unwrap_or_else(|error| format!("error: {error:#}"))
 }
 
-async fn connect(State((node, relay)): State<Peer>, body: String) -> String {
+async fn connect(State((node, relay, transport)): State<Peer>, body: String) -> String {
     let read = async {
         let peer = browser(&body, &relay)?;
+        let demand = web_e2e::demand(&node, peer.clone()).await?;
         let signaling = node.webrtc_signaling().expect("webrtc is enabled");
         signaling.connect(peer.clone()).await?;
-        web_e2e::read_newest(&node, peer, "browser").await
+        web_e2e::read_over_custom(&node, &transport, &demand, peer, "browser").await
     };
     read.await
         .unwrap_or_else(|error| format!("error: {error:#}"))
