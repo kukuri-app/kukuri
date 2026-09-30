@@ -318,6 +318,8 @@ pub(crate) async fn record_public_topic_docs_activity_if_current(
 pub(crate) enum ProfileTimelineItem {
     Post(ProfilePost),
     Repost(ProfileRepost),
+    /// topic で受け取り検証した、手元の公開の投稿の行(#1442。author replica に無くても出す)。
+    Projection(Box<ObjectProjectionRow>),
 }
 
 impl ProfileTimelineItem {
@@ -325,6 +327,7 @@ impl ProfileTimelineItem {
         match self {
             Self::Post(post) => post.created_at,
             Self::Repost(repost) => repost.created_at,
+            Self::Projection(row) => row.created_at,
         }
     }
 
@@ -332,6 +335,7 @@ impl ProfileTimelineItem {
         match self {
             Self::Post(post) => &post.object_id,
             Self::Repost(repost) => &repost.object_id,
+            Self::Projection(row) => &row.object_id,
         }
     }
 }

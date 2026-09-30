@@ -510,6 +510,12 @@ index idx_notifications_unread table=notifications unique=0 origin=c partial=1
   key seqno=0 cid=13 name=Some("received_at")
   key seqno=1 cid=0 name=Some("notification_id")
   sql=Some("CREATE INDEX idx_notifications_unread ON notifications(received_at DESC, notification_id DESC) WHERE read_at IS NULL")
+index idx_object_index_cache_author_created table=object_index_cache unique=0 origin=c partial=0
+  key seqno=0 cid=2 name=Some("author_pubkey")
+  key seqno=1 cid=14 name=Some("channel_id")
+  key seqno=2 cid=3 name=Some("created_at")
+  key seqno=3 cid=0 name=Some("object_id")
+  sql=Some("CREATE INDEX idx_object_index_cache_author_created ON object_index_cache(author_pubkey, channel_id, created_at DESC, object_id DESC)")
 index idx_object_index_cache_repost_source table=object_index_cache unique=0 origin=c partial=1
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=2 name=Some("author_pubkey")

@@ -134,6 +134,30 @@ impl ObjectProjectionStore for MemoryStore {
         Ok(apply_desc_projection_cursor(items, cursor, limit))
     }
 
+    async fn list_author_timeline_in_channel(
+        &self,
+        author_pubkey: &str,
+        channel_id: &str,
+        cursor: Option<TimelineCursor>,
+        limit: usize,
+    ) -> Result<Page<ObjectProjectionRow>> {
+        let mut items = self
+            .object_projection_rows
+            .read()
+            .await
+            .values()
+            .filter(|row| row.author_pubkey == author_pubkey && row.channel_id == channel_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.object_id.cmp(&left.object_id))
+        });
+        Ok(apply_desc_projection_cursor(items, cursor, limit))
+    }
+
     async fn list_thread(
         &self,
         topic_id: &str,

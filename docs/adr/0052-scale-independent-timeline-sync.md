@@ -66,6 +66,8 @@ Accepted
   follow・block の key の上限つきの一覧（各 512 件）から反映する。follow の通知の起点は、自分を指す follow の key 1 件だけを読む。
 - プロフィールのタイムラインは projection を持たず、author replica の `indexes/profile/<sort key>/<object id>` の索引を cursor から読み、ページの行の key だけを読む
   （1 回の取得が読む量は、ページの件数と非表示の著者の読み飛ばしの上限で決まり、投稿の総数に依存しない）。
+  #1442 で、topic で受け取った手元の投稿の行（object projection の公開の行）も合わせる。読むのは (著者, channel, 時刻, id) の
+  索引の範囲の 1 ページで、author replica が手元に無く作者に届かないときも、手元にある投稿を出す（ADR 0015 §4.2）。
 - reaction の上限つきの読み出し（1 対象あたり 32 件）は、key の一覧が上限で打ち切られたとき、reaction id（16 進）の先頭の 1 文字ごとに少しずつ（8 key）読んで混ぜる。
   先頭に並ぶ key だけを見ていると、正しい reaction より先に並ぶ key を置くだけで、その投稿の reaction を隠せてしまう。読む量は定数（16 回の一覧）で、reaction の総数に依存しない。
   hint の個別反映（対象の reaction）も、同じ上限つきの読み出しを使う。32 件を超える reaction は、docs の event の個別反映でしか入らない（best effort）。

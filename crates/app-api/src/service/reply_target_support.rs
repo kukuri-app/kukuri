@@ -11,6 +11,17 @@ struct ReplyTargetSource {
     channel_id: String,
 }
 
+fn row_reply_source(row: &ObjectProjectionRow) -> Option<ReplyTargetSource> {
+    row.reply_to_object_id
+        .as_ref()
+        .map(|target| ReplyTargetSource {
+            target: target.clone(),
+            source_replica_id: row.source_replica_id.clone(),
+            topic_id: row.topic_id.clone(),
+            channel_id: row.channel_id.clone(),
+        })
+}
+
 impl AppService {
     /// 取得側(#1239 AC-6、#1277): ページの行の返信先が projection に無ければ、view の生成の前に反映する。
     ///
@@ -21,19 +32,7 @@ impl AppService {
     /// 本文は手元の blob だけを読む(取得の経路で remote を待たない)。本文が手元に無い返信先は、ここでは反映せず、
     /// remote から本文を取る背景の反映へ出す。
     pub(crate) async fn reflect_reply_targets_for_rows(&self, rows: &[ObjectProjectionRow]) {
-        let sources = rows
-            .iter()
-            .filter_map(|row| {
-                row.reply_to_object_id
-                    .as_ref()
-                    .map(|target| ReplyTargetSource {
-                        target: target.clone(),
-                        source_replica_id: row.source_replica_id.clone(),
-                        topic_id: row.topic_id.clone(),
-                        channel_id: row.channel_id.clone(),
-                    })
-            })
-            .collect::<Vec<_>>();
+        let sources = rows.iter().filter_map(row_reply_source).collect::<Vec<_>>();
         self.reflect_reply_targets_for_sources(&sources).await;
     }
 
@@ -55,6 +54,7 @@ impl AppService {
                         })
                 }
                 ProfileTimelineItem::Repost(_) => None,
+                ProfileTimelineItem::Projection(row) => row_reply_source(row),
             })
             .collect::<Vec<_>>();
         self.reflect_reply_targets_for_sources(&sources).await;
