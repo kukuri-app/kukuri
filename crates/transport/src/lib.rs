@@ -11,6 +11,12 @@
 //! (bool 返却 / reapply 等)は呼び出し側 crate に残す(`peers.rs` の doc 参照)。
 //! endpoint 構築部品を足すときは本 crate、ノードの起動・停止・再構成に関わるもの
 //! を足すときは `kukuri-iroh-node` が置き場。
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 
 mod config;
 mod diagnostics;
@@ -20,6 +26,8 @@ mod iroh;
 mod peers;
 mod receive_binding;
 mod status_changes;
+#[cfg(target_family = "wasm")]
+mod storeless;
 #[cfg(test)]
 mod test_support;
 mod tickets;
@@ -35,3 +43,9 @@ pub use receive_binding::*;
 pub use status_changes::*;
 pub use tickets::*;
 pub use traits::*;
+
+/// 端末に保存する peer candidate の保存先。native は account の SQLite、Web は保存しない（ADR 0056 §5）。
+#[cfg(not(target_family = "wasm"))]
+pub type PeerCandidateStore = kukuri_store::SqliteStore;
+#[cfg(target_family = "wasm")]
+pub use storeless::PeerCandidateStore;

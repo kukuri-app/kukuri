@@ -1,36 +1,19 @@
 use super::*;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
-pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 3 * 1024 * 1024 * 1024;
+pub use crate::cache::{
+    OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
+    RemoteCacheReservation, RemoteRecordKey,
+};
 pub const REMOTE_CACHE_UNUSED_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-pub const REMOTE_CACHE_RECLAIM_STEP: usize = 128;
-/// これ以下の blob は SQLite の行に、超えるものは `kukuri.remote-blobs/` の file に置く。
-pub const OWNED_INLINE_BLOB_BYTES: u64 = 1024 * 1024;
 const REMOTE_CACHE_TOUCH_INTERVAL_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Clone, Copy)]
 enum CachePayload<'a> {
     Bytes(&'a [u8]),
     File { name: &'a str, bytes: u64 },
-}
-
-pub struct RemoteCacheReservation {
-    counter: Arc<AtomicU64>,
-    bytes: u64,
-}
-
-impl RemoteCacheReservation {
-    pub fn bytes(&self) -> u64 {
-        self.bytes
-    }
-}
-
-impl Drop for RemoteCacheReservation {
-    fn drop(&mut self) {
-        self.counter.fetch_sub(self.bytes, Ordering::AcqRel);
-    }
 }
 
 /// 保護参照の変更の途中。gate を持ったまま、行の変更と同じ transaction で参照を変える。
@@ -44,8 +27,8 @@ pub(super) struct ProtectedRefUpdate<'a> {
 
 pub(super) fn now_ms() -> Result<i64> {
     Ok(i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)?
             .as_millis(),
     )?)
 }
@@ -927,12 +910,11 @@ impl SqliteStore {
     }
 }
 
+mod content_cache_store;
 mod files;
 mod listing;
 mod owned;
 mod reclaim;
-
-pub use listing::RemoteRecordKey;
 
 #[cfg(test)]
 mod tests;

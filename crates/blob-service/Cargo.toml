@@ -18,6 +18,9 @@ kukuri-iroh-node = { path = "../iroh-node" }
 kukuri-transport = { path = "../transport" }
 kukuri-store = { path = "../store" }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["fs"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 

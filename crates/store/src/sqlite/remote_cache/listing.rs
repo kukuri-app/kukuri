@@ -6,14 +6,7 @@
 
 use super::*;
 
-/// 一覧の 1 行。値は読まず、record の hash と長さだけを返す。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RemoteRecordKey {
-    pub key: String,
-    pub author: String,
-    pub content_hash: String,
-    pub content_len: u64,
-}
+// 一覧の 1 行（`RemoteRecordKey`）は値を読まず、record の hash と長さだけを返す。
 
 /// `prefix` で始まる key の上界(これ未満が範囲)。末尾の文字を次の文字に置き換える。
 fn prefix_upper_bound(prefix: &str) -> Option<String> {

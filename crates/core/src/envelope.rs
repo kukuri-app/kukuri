@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use secp256k1::XOnlyPublicKey;

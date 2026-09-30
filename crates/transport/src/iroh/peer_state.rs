@@ -83,7 +83,7 @@ pub(crate) struct BootstrapCandidates {
     configured_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     bootstrap_seed_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
     imported_peers: Arc<Mutex<BTreeMap<String, EndpointAddr>>>,
-    account_store: Option<Arc<kukuri_store::SqliteStore>>,
+    account_store: Option<Arc<crate::PeerCandidateStore>>,
     imported_cursor: Arc<Mutex<Option<(i64, String)>>>,
     hot_peer_ids: Arc<Mutex<VecDeque<EndpointId>>>,
     gossip_health: Arc<crate::peers::BlobPeerHealth>,
@@ -148,11 +148,8 @@ impl BootstrapCandidates {
         Ok(peers)
     }
 
+    /// 最近使った endpoint を `MemoryLookup` に 16 件まで置き、古いものから外す（store の有無にかかわらない。ADR 0056 §5）。
     pub(crate) async fn remember_hot_endpoint(&self, peer: EndpointAddr) {
-        if self.account_store.is_none() {
-            self.discovery.add_endpoint_info(peer);
-            return;
-        }
         let mut hot = self.hot_peer_ids.lock().await;
         hot.retain(|id| id != &peer.id);
         self.discovery.add_endpoint_info(peer.clone());
@@ -402,11 +399,12 @@ impl IrohGossipTransport {
 
     pub(crate) async fn transport_export_ticket_impl(&self) -> Result<Option<String>> {
         let endpoint_addr = self.endpoint.addr();
-        let ticket_config = ticket_network_config(
-            &endpoint_addr,
-            &self.endpoint.bound_sockets(),
-            &self.network_config,
-        );
+        #[cfg(not(target_family = "wasm"))]
+        let bound_sockets = self.endpoint.bound_sockets();
+        #[cfg(target_family = "wasm")]
+        let bound_sockets = Vec::new();
+        let ticket_config =
+            ticket_network_config(&endpoint_addr, &bound_sockets, &self.network_config);
         match encode_endpoint_ticket(&endpoint_addr, &ticket_config) {
             Ok(ticket) => Ok(Some(ticket)),
             Err(error)

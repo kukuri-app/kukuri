@@ -271,19 +271,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-compat"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c97d7ff3c25d6c10d64170c12acaf5d4245e76dece3779c1d92b153a64f11df"
-dependencies = [
- "futures-core",
- "futures-io",
- "once_cell",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "async-executor"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -563,12 +550,6 @@ name = "base16ct"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
-
-[[package]]
-name = "base32"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "022dfe9eb35f19ebbcb51e0b40a5ab759f46ad60cadf7297e0bd085afb50e076"
 
 [[package]]
 name = "base64"
@@ -1415,15 +1396,6 @@ dependencies = [
  "libc",
  "once_cell",
  "winapi",
-]
-
-[[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
 ]
 
 [[package]]
@@ -2903,7 +2875,7 @@ dependencies = [
  "iroh-base",
  "iroh-dns",
  "iroh-metrics",
- "lru 0.18.5",
+ "lru",
  "n0-error",
  "n0-future",
  "noq",
@@ -3571,6 +3543,8 @@ dependencies = [
  "bech32",
  "blake3",
  "chacha20poly1305 0.11.0",
+ "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hex",
  "hkdf 0.13.0",
  "hmac 0.13.0",
@@ -3580,6 +3554,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "ts-rs",
+ "web-time",
 ]
 
 [[package]]
@@ -3640,12 +3615,14 @@ dependencies = [
  "kukuri-iroh-node",
  "kukuri-store",
  "kukuri-transport",
+ "n0-future",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-stream",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -3680,6 +3657,7 @@ name = "kukuri-iroh-node"
 version = "0.3.3"
 dependencies = [
  "anyhow",
+ "axum",
  "bao-tree",
  "base64 0.23.1",
  "blake3",
@@ -3693,12 +3671,16 @@ dependencies = [
  "kukuri-core",
  "kukuri-store",
  "kukuri-transport",
+ "kukuri-webrtc-transport",
+ "n0-future",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "wasm-bindgen-test",
+ "web-time",
 ]
 
 [[package]]
@@ -3728,6 +3710,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "ts-rs",
+ "web-time",
 ]
 
 [[package]]
@@ -3755,7 +3738,6 @@ dependencies = [
  "kukuri-store",
  "n0-future",
  "n0-mainline",
- "pkarr",
  "postcard",
  "rand 0.10.3",
  "serde",
@@ -3765,6 +3747,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "ts-rs",
+ "web-time",
 ]
 
 [[package]]
@@ -3832,12 +3815,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3867,12 +3844,6 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.16.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
-
-[[package]]
-name = "lru"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
@@ -3891,28 +3862,6 @@ name = "mac-addr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3d25b0e0b648a86960ac23b7ad4abb9717601dec6f66c165f5b037f3f03065f"
-
-[[package]]
-name = "mainline"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d32eaee3dcba6e0bbbefe8bd896a8bd6039d5e74b199c0fe248e9feb547c2a26"
-dependencies = [
- "crc",
- "document-features",
- "dyn-clone",
- "ed25519-dalek",
- "flume",
- "futures-lite",
- "getrandom 0.4.3",
- "lru 0.16.4",
- "serde",
- "serde_bencode",
- "serde_bytes",
- "sha1_smol",
- "thiserror 2.0.21",
- "tracing",
-]
 
 [[package]]
 name = "matchers"
@@ -4042,7 +3991,7 @@ dependencies = [
  "derive_more",
  "ipconfig",
  "jni 0.22.4",
- "lru 0.18.5",
+ "lru",
  "n0-error",
  "n0-future",
  "ndk-context",
@@ -4111,7 +4060,7 @@ dependencies = [
  "dyn-clone",
  "ed25519-dalek",
  "futures-core",
- "lru 0.18.5",
+ "lru",
  "n0-error",
  "noq-udp",
  "rand 0.10.3",
@@ -4444,21 +4393,6 @@ dependencies = [
  "socket2",
  "tracing",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ntimestamp"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c50f94c405726d3e0095e89e72f75ce7f6587b94a8bd8dc8054b73f65c0fd68c"
-dependencies = [
- "base32",
- "document-features",
- "getrandom 0.2.17",
- "httpdate",
- "js-sys",
- "once_cell",
- "serde",
 ]
 
 [[package]]
@@ -4946,37 +4880,6 @@ dependencies = [
  "atomic-waker",
  "fastrand",
  "futures-io",
-]
-
-[[package]]
-name = "pkarr"
-version = "8.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26c043ed867b3152b7b0eb3e0121048c522bfe2e0e8368c7a5e91c042c78a2a5"
-dependencies = [
- "async-compat",
- "base32",
- "bytes",
- "cfg_aliases",
- "document-features",
- "dyn-clone",
- "ed25519-dalek",
- "futures-buffered",
- "futures-lite",
- "getrandom 0.4.3",
- "log",
- "lru 0.18.5",
- "mainline",
- "ntimestamp",
- "reqwest",
- "self_cell",
- "serde",
- "sha1_smol",
- "simple-dns",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]

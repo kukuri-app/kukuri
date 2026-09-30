@@ -1,5 +1,12 @@
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -67,6 +74,7 @@ pub trait BlobService: Send + Sync {
     }
     /// 表示用ファイルを cache へ置く。`adult` は成人向け表示 ON の間に表示した添付で、OFF に戻したときに
     /// `forget_adult_media_step` が消す(#1419)。
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(
         &self,
         _path: &Path,
@@ -109,6 +117,7 @@ pub trait BlobService: Send + Sync {
     }
     /// Write display bytes in bounded chunks. Unsupported adapters must not
     /// fall back to a whole-blob allocation on the desktop path.
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         _hash: &BlobHash,
@@ -165,7 +174,7 @@ pub trait BlobService: Send + Sync {
 #[derive(Clone)]
 pub struct IrohBlobService {
     node: Arc<IrohDocsNode>,
-    remote_cache: Option<Arc<kukuri_store::SqliteStore>>,
+    remote_cache: Option<Arc<dyn kukuri_store::ContentCacheStore>>,
     pinned: Arc<RwLock<HashSet<String>>>,
     // ピア台帳・接続候補・リトライ状態は kukuri-transport の共通実装(WP-H2)。
     // 台帳変化の bool は blob-service では使わない(レプリカへの配り直しが無いため)。
@@ -209,6 +218,8 @@ impl IrohBlobService {
         self.peers.ranked_peers().await
     }
 
+    /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
+    #[cfg(not(target_family = "wasm"))]
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
         store: Arc<kukuri_store::SqliteStore>,
@@ -253,6 +264,7 @@ impl IrohBlobService {
 
 #[async_trait]
 impl BlobService for MemoryBlobService {
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, _adult: bool) -> Result<()> {
         let bytes = tokio::fs::read(path).await?;
         anyhow::ensure!(
@@ -262,6 +274,7 @@ impl BlobService for MemoryBlobService {
         self.put_blob(bytes, "application/octet-stream").await?;
         Ok(())
     }
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         hash: &BlobHash,
@@ -342,6 +355,7 @@ impl BlobService for MemoryBlobService {
 
 #[async_trait]
 impl BlobService for IrohBlobService {
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, adult: bool) -> Result<()> {
         if tokio::fs::metadata(path).await?.len() > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64
         {
@@ -364,6 +378,7 @@ impl BlobService for IrohBlobService {
             None => Ok(0),
         }
     }
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         hash: &BlobHash,
@@ -425,21 +440,24 @@ impl BlobService for IrohBlobService {
     ) -> Result<Option<Vec<u8>>> {
         use tokio::io::AsyncReadExt;
         let expected = iroh_blobs::Hash::from_str(hash.as_str())?;
-        let mut bytes = Vec::new();
-        let mut reader = self
-            .node
-            .blobs()
-            .blobs()
-            .reader(expected)
-            .take(max_bytes.saturating_add(1));
-        let result = match reader.read_to_end(&mut bytes).await {
-            Ok(_) if bytes.len() as u64 > max_bytes => {
+        let blobs = self.node.blobs().clone();
+        let local = kukuri_iroh_node::confine_local(async move {
+            let mut bytes = Vec::new();
+            blobs
+                .blobs()
+                .reader(expected)
+                .take(max_bytes.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .await
+                .map(|_| bytes)
+        });
+        let result = match local.await {
+            Ok(bytes) if bytes.len() as u64 > max_bytes => {
                 return Err(remote_fetch::BlobTooLarge { limit: max_bytes }.into());
             }
-            Ok(_) => Some(bytes),
+            Ok(bytes) => Some(bytes),
+            // 途中まで読んだ手元の分は、有界な remote の取得を始める前に解放済み。
             Err(_) => {
-                // Free any partial local read before beginning a bounded remote transfer.
-                drop(bytes);
                 remote_fetch::fetch_bytes_ephemeral_bounded_with_cooldown(
                     &self.node,
                     &self.peers,

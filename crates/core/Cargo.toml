@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+web-time.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 base64.workspace = true
@@ -20,6 +21,12 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 ts-rs = { workspace = true, optional = true }
+
+# ブラウザの乱数源（ADR 0056 §3。`.cargo/config.toml` の getrandom_backend と対）。
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+# chacha20poly1305 の crypto-common が使う版。
+getrandom_04 = { package = "getrandom", version = "0.4.3", features = ["wasm_js"] }
 
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効)。

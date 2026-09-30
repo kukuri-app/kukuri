@@ -17,11 +17,11 @@ use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
 use irpc::channel::mpsc;
 use kukuri_core::ReplicaId;
-use kukuri_store::SqliteStore;
+use kukuri_store::ContentCacheStore;
+use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{Mutex, Semaphore};
-use tokio::time::timeout;
 
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
 
@@ -210,7 +210,7 @@ pub(crate) struct PrivateCapabilities {
 pub(crate) struct DocReadProtocol {
     sync: SyncHandle,
     blobs: BlobStore,
-    remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     capabilities: PrivateCapabilities,
     permits: Arc<Semaphore>,
 }
@@ -225,7 +225,7 @@ impl DocReadProtocol {
     pub(crate) fn new(
         sync: SyncHandle,
         blobs: BlobStore,
-        remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+        remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
         capabilities: PrivateCapabilities,
     ) -> Self {
         Self {
@@ -443,13 +443,19 @@ impl DocReadProtocol {
                         entry.content_len() <= MAX_RECORD_BYTES as u64,
                         "docs record too large"
                     );
-                    let mut reader = self
-                        .blobs
-                        .blobs()
-                        .reader(entry.content_hash())
-                        .take((MAX_RECORD_BYTES + 1) as u64);
-                    let mut value = Vec::new();
-                    reader.read_to_end(&mut value).await?;
+                    let blobs = self.blobs.clone();
+                    let hash = entry.content_hash();
+                    let value = crate::confine_local(async move {
+                        let mut value = Vec::new();
+                        blobs
+                            .blobs()
+                            .reader(hash)
+                            .take((MAX_RECORD_BYTES + 1) as u64)
+                            .read_to_end(&mut value)
+                            .await
+                            .map(|_| value)
+                    })
+                    .await?;
                     ensure!(value.len() <= MAX_RECORD_BYTES, "docs record too large");
                     records.push(DocReadRecord {
                         key: String::from_utf8(entry.key().to_vec())?,

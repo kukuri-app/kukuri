@@ -5,7 +5,15 @@
 //! docs-sync / blob-service / transport(部品借用)/ desktop-runtime はここに依存する。
 //! かつては docs-sync が置き場所だったが、「docs-sync が基盤の持ち主」という歪みを
 //! 解消するため独立させた(挙動不変の移動)。
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 
+// 旧 store の退役は native だけ（file を使う）。
+#[cfg(not(target_family = "wasm"))]
 mod legacy;
 mod network_work;
 mod node;
@@ -13,16 +21,49 @@ mod page_read;
 mod remote_blob;
 pub mod remote_fetch;
 
+#[cfg(all(test, target_family = "wasm"))]
+mod browser_tests;
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests;
 
+#[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;
 pub type DisplayAdmissionError = NetworkAdmissionError;
-pub use node::IrohDocsNode;
+pub use node::{IrohDocsNode, NodeOptions};
 pub use page_read::{
     DOC_READ_ALPN, DocReadKey, DocReadQuery, DocReadRecord, DocReadResponse, PrivateSecretLookup,
 };
+
+/// wasm の iroh-blobs は Send でない future を返す。ブラウザでは呼んだ時点で main thread の task へ
+/// 移し、結果だけを channel で受け取る（ADR 0056 §4）。待つのをやめたら task も止める。
+#[cfg(target_family = "wasm")]
+pub fn confine_local<T: Send + 'static>(
+    future: impl Future<Output = T> + 'static,
+) -> impl Future<Output = T> + Send {
+    let (mut sender, receiver) = tokio::sync::oneshot::channel();
+    n0_future::task::spawn(async move {
+        tokio::select! {
+            value = future => {
+                let _ = sender.send(value);
+            }
+            _ = sender.closed() => {}
+        }
+    });
+    // ブラウザの task は panic で module ごと止まるので、送らずに終わることはない。
+    async move {
+        receiver
+            .await
+            .expect("a local task always sends its result")
+    }
+}
+
+/// native の future は Send なので、そのまま返す。
+#[cfg(not(target_family = "wasm"))]
+pub fn confine_local<F: Future>(future: F) -> F {
+    future
+}
 
 impl IrohDocsNode {
     pub async fn query_remote_docs(

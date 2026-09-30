@@ -60,9 +60,10 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 
 - 時刻と task は、共用 crate で `n0_future::{time, task}` に一律で置き換える（`tokio::time`・`tokio::spawn`・`std::time::Instant::now`・`SystemTime::now` の使用箇所）。
   n0-future は native では tokio、wasm では web-time と wasm-bindgen-futures を使う（lockfile に既にある）。呼出箇所ごとの `cfg` 分岐は作らない。`tokio::sync` と `tokio::select!` はそのまま使う。
-- workspace の tokio の共通 feature は `macros`・`sync`・`rt` にし、`rt-multi-thread`・`fs`・`time` は native の target 節で有効にする。
-- iroh-docs・iroh-blobs は workspace で `default-features = false` とし、native だけ `fs-store` 等の必要な feature を有効にする。iroh は wasm で `default-features = false` とし、TLS の preset に要る feature は W1 AC-2 の build で確定する。
-- n0-mainline・iroh-mainline-address-lookup（DHT）は native だけで使う。ブラウザには UDP が無いので DHT は成り立たない。Web の接続先の発見は relay・Community Node の rendezvous・peer ticket に限る。未使用の pkarr 依存は W1 AC-2 で消す。
+- workspace の tokio の共通 feature は `macros`・`sync`・`rt`・`time` にし、`rt-multi-thread`・`fs`・`net` は、共用 crate では native の target 節で、native だけの crate では通常の依存で有効にする。`time` は wasm32 でも compile でき、native だけの crate が使うので共通に残す（W1 AC-2）。
+  そのため共用 crate が tokio・std の時刻と task を直接使っても wasm32 の build は通り、ブラウザで実行時に止まる。`clippy.toml` の `disallowed-methods` を共用 crate の lib.rs で wasm32 の時だけ warn にし、CI の wasm32 の clippy で検出する（native では `n0_future`・`web_time` がそれらの再公開なので検出しない）。
+- iroh-docs・iroh-blobs は workspace で `default-features = false` とし、native だけ `fs-store` 等の必要な feature を有効にする。iroh は workspace で `unstable-custom-transports`（ADR 0057）を有効にし、既定の feature のまま wasm32 で build できる（W1 AC-2）。
+- n0-mainline・iroh-mainline-address-lookup（DHT）は native だけで使う。ブラウザには UDP が無いので DHT は成り立たない。Web の接続先の発見は relay・Community Node の rendezvous・peer ticket に限る。未使用の pkarr 依存は W1 AC-2 で消した。
 - uuid は wasm で `js` を有効にする。getrandom の backend は `.cargo/config.toml` の wasm32 target の rustflags（`getrandom_backend="wasm_js"`）で指定する。
 - secp256k1 はそのまま使う。wasm の build には clang が要る（CI の Linux runner。Windows のローカルでは clang 入りの Docker image。手順は W1 AC-2 で `docs/runbooks/dev.md` に書く）。wasm だけ pure Rust の実装へ替えると、同じ鍵・署名の処理が 2 つになる。
 - iroh は fork rev `4d7b079c` を使い、Web 固有の差分を fork へ加えない（#1213 D-2）。上流 PR #4565（接続中に custom path を追加する `Endpoint::add_remote_addrs`）を fork へ載せるかは W9 AC-1 で決め、載せる作業の所有は最初に使う Issue に置く。
@@ -73,6 +74,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - kukuri の trait（`Store`・projection の各 trait・`Transport`・`HintTransport`・`DocsSync`・`BlobService`）の `Send + Sync` と、`async_trait` の `Send` future を変えない。`?Send` へは切り替えない（`spawn` の `Send` 要求が連鎖する）。
 - ブラウザの JS オブジェクト（IndexedDB の handle、`RTCPeerConnection`、`RTCDataChannel`）は、`spawn_local` で起こした 1 つの task の中だけで持つ。Rust 側の型は、その task と channel でやり取りする `Send` の handle だけを持つ。
   `unsafe impl Send`・`SendWrapper` による偽装はしない（誤って別 thread から触れたときに panic へ変わるだけで、境界が型に残らない）。iroh の Custom Transport の trait も `Send + Sync` を要求するので、W9 の browser backend も同じ形にする。
+- iroh-blobs は wasm で `Send` でない future・stream（blob の reader、remote の fetch）を返す。`kukuri_iroh_node::confine_local` が呼んだ時点で `spawn_local` の task へ移し、結果だけを channel で受け取る。待つ側が止めたら task も止める。native ではそのまま返す（W1 AC-2）。
 
 ### 5. 保存の境界（W2〜W4 の所有）
 
@@ -83,8 +85,8 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | projection（`Store`・`ProjectionStore`） | `SqliteStore` | W4 AC-1 が IndexedDB の実装か、メモリと再構築かを決める（D-4・D-5）。W1 の転送試験は既存の `MemoryStore` を使い、これを永続化の証拠にしない | W4 |
 | docs の replica | redb（persistent） | 上流の `Store::memory()`。自分の record は保存 trait の IndexedDB 実装（ADR 0058） | W3 |
 | blobs | `FsStore` | 上流の `MemStore`（blob-service は書かない）と、保存 trait の IndexedDB 実装（ADR 0058） | W2 |
-| remote read の cache と本人の書込みの保護（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 保存 trait（ADR 0058）の IndexedDB 実装。trait の切り出しと native の呼出元の切替は W1 AC-2 | W1 AC-2・W2・W3 |
-| peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない。store を持たない経路の learned・imported の台帳と `MemoryLookup` は、今は上限も削除も無い（`PeerAddrBook::insert_learned_peer_addr`・`insert_imported_peer_addr`、`remember_hot_endpoint` が store の無いときに上限を飛ばす）。Web の本番経路にする前に、native と同じ件数の上限と古いものからの削除を持たせる | W1 AC-2 |
+| remote read の cache と本人の書込みの保護（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 保存 trait（ADR 0058。`ContentCacheStore`）の IndexedDB 実装。W1 AC-2 で trait を切り出し、native の呼出元を trait object へ切り替えた | W1 AC-2・W2・W3 |
+| peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない（transport の `PeerCandidateStore` は wasm で値を持てない型）。store を持たない経路の learned・imported の台帳は、それぞれ 256 件（`STORELESS_PEER_LIMIT`）を超えたら古いものから台帳と `MemoryLookup` から外す。hot endpoint は store の有無によらず 16 件（W1 AC-2） | W1 AC-2 |
 | file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-4・W8 |
 
 保存・復元・cache の回収は、key・cursor・chunk で有界な単位にする（#1213「作業・設計原則を適用する境界」）。
@@ -116,6 +118,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 
 1. W1 AC-1（本 ADR）→ W9 AC-1（transport の判断）→ W9 AC-2（transport crate と、ブラウザでの試験環境）
 2. W1 AC-2（共用 crate の wasm build・依存の分離・Endpoint の組立てへの transport の注入口・ブラウザ↔native の有界な読み出し）→ W10 AC-1
+   W1 AC-2 の wasm build は Endpoint と有界な reader までの crate（core・store・transport・iroh-node・docs-sync・blob-service・webrtc-transport）。app-api・metaverse-host・desktop-runtime は command を接続する W1 AC-3・AC-4 で加える。
 3. W1 AC-3（起動・停止・切替の世代）→ W1 AC-4（command の dispatch 表と capability）
 
 W2・W3 の AC-1（保存 trait の操作の固定。ADR 0058）は W1 AC-2 より前に行う。W4 の AC-1 は本 ADR の後に並行して進める。W5・W6 の規則は native で先に実装できる。
@@ -131,9 +134,9 @@ W2・W3 の AC-1（保存 trait の操作の固定。ADR 0058）は W1 AC-2 よ�
 
 ## Consequences
 
-- 共用 crate は wasm32 の build を保つ必要がある。W1 AC-2 で CI に wasm32 の check を足す。
+- 共用 crate は wasm32 の build を保つ必要がある。W1 AC-2 で CI（`linux-web-transport`）に wasm32 の clippy と、ブラウザ↔native の読み出しの browser 試験を足した。
 - main thread の占有は、1 回の処理の上限で抑える。重い処理の Worker への移動を、件数依存の解消の手段にしない（`AGENTS.md`）。
-- 共用 crate で `tokio::time`・`tokio::spawn`・`Instant::now` を直接使わない規則が増える。W1 AC-2 で置き換え、wasm32 の check で新しい使用を検出する。
+- 共用 crate で `tokio::time`・`tokio::spawn`・`Instant::now` を直接使わない規則が増える。W1 AC-2 で置き換え、wasm32 の clippy（§3 の `disallowed-methods`）で新しい使用を検出する。
 - `desktop-runtime` は Web でも使う。platform 固有の module は file 単位の `cfg` で分かる形にする。
 
 ## Data classification

@@ -280,8 +280,8 @@ impl AuthorRelationshipProjectionRow {
             mutual: following && followed_by,
             friend_of_friend: !via.is_empty(),
             friend_of_friend_via_pubkeys: via,
-            derived_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            derived_at: web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_millis() as i64)
                 .unwrap_or_default(),
         })

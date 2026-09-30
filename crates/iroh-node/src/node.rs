@@ -2,39 +2,49 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock as StdRwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(not(target_family = "wasm"))]
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::StreamExt;
 use iroh::address_lookup::MemoryLookup;
+use iroh::endpoint::transports::CustomTransport;
 use iroh::endpoint::{Builder as EndpointBuilder, presets};
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayUrl, Watcher};
 use iroh_blobs::api::Store as BlobStore;
-use iroh_blobs::store::{fs::options::Options as BlobStoreOptions, mem::MemStore};
+#[cfg(not(target_family = "wasm"))]
+use iroh_blobs::store::fs::options::Options as BlobStoreOptions;
+use iroh_blobs::store::mem::MemStore;
 use iroh_docs::actor::SyncHandle;
 use iroh_docs::api::DocsApi;
 use iroh_docs::engine::{DefaultAuthorStorage, Engine};
 use iroh_docs::store::Store as DocsStore;
 use iroh_gossip::net::Gossip;
-use kukuri_store::SqliteStore;
+use kukuri_store::ContentCacheStore;
 use kukuri_transport::{
     ConnectMode, DhtDiscoveryOptions, RECEIVE_BINDING_ALPN, ReceiveBindingSlot,
     TransportNetworkConfig, TransportRelayConfig, build_endpoint_builder,
     prepare_endpoint_for_discovery, sync_endpoint_relay_config,
 };
+use n0_future::time::timeout;
+#[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
-use tokio::time::timeout;
 use tracing::warn;
 
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 use iroh::tls::CaTlsConfig;
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) const ENDPOINT_SECRET_FILE_NAME: &str = "endpoint-secret.json";
+#[cfg(not(target_family = "wasm"))]
 const DOCS_STORE_FILE_NAME: &str = "docs.redb";
+#[cfg(not(target_family = "wasm"))]
 const DEFAULT_AUTHOR_FILE_NAME: &str = "default-author";
 
 fn relay_activation_timeout() -> Duration {
@@ -58,11 +68,15 @@ async fn spawn_docs(
     // Keep the high-level API and its persistent store layout while retaining
     // the SyncHandle for the bounded page reader (`DocReadProtocol`). The
     // high-level Docs::Builder discards this handle after creating the Engine.
+    // Web は docs を memory store で持つ（ADR 0058 §1）。永続の store は native だけ。
     let (replica_store, author_store) = match root {
+        #[cfg(not(target_family = "wasm"))]
         Some(path) => (
             DocsStore::persistent(path.join(DOCS_STORE_FILE_NAME))?,
             DefaultAuthorStorage::Persistent(path.join(DEFAULT_AUTHOR_FILE_NAME)),
         ),
+        #[cfg(target_family = "wasm")]
+        Some(_) => anyhow::bail!("a persistent docs store is not available in the browser"),
         None => (DocsStore::memory(), DefaultAuthorStorage::Mem),
     };
     let downloader = blobs.downloader(&endpoint);
@@ -88,6 +102,7 @@ struct SpawnedDocs {
     sync: SyncHandle,
 }
 
+#[cfg(not(target_family = "wasm"))]
 async fn recover_persistent_docs(
     root: &Path,
     endpoint: Endpoint,
@@ -118,6 +133,7 @@ async fn recover_persistent_docs(
     })
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn move_corrupt_docs_store(root: &Path) -> Result<PathBuf> {
     let recovery_dir = unique_recovery_dir(root)?;
     std::fs::create_dir_all(&recovery_dir).with_context(|| {
@@ -151,6 +167,7 @@ fn move_corrupt_docs_store(root: &Path) -> Result<PathBuf> {
     Ok(recovery_dir)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn unique_recovery_dir(root: &Path) -> Result<PathBuf> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -179,7 +196,7 @@ pub struct IrohDocsNode {
     router: Arc<Router>,
     docs: DocsApi,
     blobs: BlobStore,
-    remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     private_capabilities: PrivateCapabilities,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
     receive_binding: ReceiveBindingSlot,
@@ -188,6 +205,7 @@ pub struct IrohDocsNode {
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 const ENDPOINT_SECRET_FORMAT_VERSION: u32 = 1;
 
 /// endpoint secret の自前永続形式(WP-C5)。iroh::SecretKey の serde 表現
@@ -196,30 +214,58 @@ const ENDPOINT_SECRET_FORMAT_VERSION: u32 = 1;
 /// 旧形式(`{"secret_key":[..]}`)の読み込み fallback は置かない — 本リリース前の
 /// 破壊的変更。旧ファイルは parse 失敗で起動エラーになり、ファイルを削除すれば
 /// 新しい endpoint ID で再生成される。
+#[cfg(not(target_family = "wasm"))]
 #[derive(Serialize, Deserialize)]
 struct StoredEndpointSecret {
     version: u32,
     secret_key_hex: String,
 }
 
+/// 起動の入力。メモリの store では外から渡す（Web と試験）。
+pub struct NodeOptions {
+    pub network_config: TransportNetworkConfig,
+    pub relay_config: TransportRelayConfig,
+    /// 端末の endpoint の秘密鍵。無ければ新しく作る。
+    pub secret_key: Option<iroh::SecretKey>,
+    /// Endpoint に足す custom transport（QUIC over WebRTC DataChannel など。ADR 0057）。
+    pub custom_transports: Vec<Arc<dyn CustomTransport>>,
+}
+
+impl Default for NodeOptions {
+    fn default() -> Self {
+        Self {
+            network_config: TransportNetworkConfig::loopback(),
+            relay_config: TransportRelayConfig::default(),
+            secret_key: None,
+            custom_transports: Vec::new(),
+        }
+    }
+}
+
 impl IrohDocsNode {
     pub async fn memory() -> Result<Arc<Self>> {
+        Self::memory_with(NodeOptions::default()).await
+    }
+
+    /// メモリの store で起動する。endpoint の秘密鍵と custom transport を外から渡す（ADR 0056 §2・§8）。
+    pub async fn memory_with(options: NodeOptions) -> Result<Arc<Self>> {
         let store = MemStore::new();
         Self::spawn(
             (*store).clone(),
             None,
-            TransportNetworkConfig::loopback(),
+            options,
             DhtDiscoveryOptions::disabled(),
-            TransportRelayConfig::default(),
             false,
         )
         .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn persistent(root: impl AsRef<Path>) -> Result<Arc<Self>> {
         Self::persistent_with_config(root, TransportNetworkConfig::loopback()).await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn persistent_with_config(
         root: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
@@ -233,6 +279,7 @@ impl IrohDocsNode {
         .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn persistent_with_discovery_config(
         root: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
@@ -251,6 +298,7 @@ impl IrohDocsNode {
 
     /// Runtime repair reopens canonical data; it must never turn a failed open
     /// into an empty replacement store or generate a new endpoint identity.
+    #[cfg(not(target_family = "wasm"))]
     pub async fn reopen_with_discovery_config(
         root: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
@@ -271,6 +319,7 @@ impl IrohDocsNode {
         Self::load_persistent(root, network_config, dht_options, relay_config, false).await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     async fn load_persistent(
         root: &Path,
         network_config: TransportNetworkConfig,
@@ -287,9 +336,13 @@ impl IrohDocsNode {
         let result = Self::spawn(
             (*store).clone(),
             Some(root.to_path_buf()),
-            network_config,
+            NodeOptions {
+                network_config,
+                relay_config,
+                secret_key: None,
+                custom_transports: Vec::new(),
+            },
             dht_options,
-            relay_config,
             recover_corrupt_docs,
         )
         .await;
@@ -306,18 +359,23 @@ impl IrohDocsNode {
     async fn spawn(
         store: impl Into<BlobStore>,
         root: Option<PathBuf>,
-        network_config: TransportNetworkConfig,
+        options: NodeOptions,
         dht_options: DhtDiscoveryOptions,
-        relay_config: TransportRelayConfig,
         recover_corrupt_docs: bool,
     ) -> Result<Arc<Self>> {
+        let NodeOptions {
+            network_config,
+            relay_config,
+            secret_key,
+            custom_transports,
+        } = options;
         let blobs = store.into();
         let discovery = Arc::new(MemoryLookup::new());
-        let endpoint_secret = root
-            .as_deref()
-            .map(load_endpoint_secret)
-            .transpose()?
-            .flatten();
+        #[cfg(not(target_family = "wasm"))]
+        let secret_key = match root.as_deref() {
+            Some(root) => load_endpoint_secret(root)?,
+            None => secret_key,
+        };
         let relay_config = relay_config.normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
         let mut endpoint_builder = build_endpoint_builder(
@@ -327,20 +385,31 @@ impl IrohDocsNode {
             Arc::clone(&relay_urls),
         )?;
         #[cfg(test)]
+        #[cfg(not(target_family = "wasm"))]
         {
             endpoint_builder = endpoint_builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
         }
-        if let Some(secret_key) = endpoint_secret {
+        if let Some(secret_key) = secret_key {
             endpoint_builder = endpoint_builder.secret_key(secret_key);
         }
-        endpoint_builder = match network_config.bind_addr {
-            std::net::SocketAddr::V4(addr) => endpoint_builder.bind_addr(addr)?,
-            std::net::SocketAddr::V6(addr) => endpoint_builder.bind_addr(addr)?,
-        };
+        for transport in custom_transports {
+            endpoint_builder = endpoint_builder.add_custom_transport(transport);
+        }
+        // ブラウザには UDP の socket が無い（ADR 0056 §8）。
+        #[cfg(not(target_family = "wasm"))]
+        {
+            endpoint_builder = match network_config.bind_addr {
+                std::net::SocketAddr::V4(addr) => endpoint_builder.bind_addr(addr)?,
+                std::net::SocketAddr::V6(addr) => endpoint_builder.bind_addr(addr)?,
+            };
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = &network_config;
         let endpoint = endpoint_builder
             .bind()
             .await
             .context("failed to bind iroh endpoint for docs node")?;
+        #[cfg(not(target_family = "wasm"))]
         if let Some(root) = root.as_deref() {
             save_endpoint_secret(root, endpoint.secret_key())?;
         }
@@ -356,6 +425,7 @@ impl IrohDocsNode {
         {
             Ok(docs) => docs,
             Err(error) => {
+                #[cfg(not(target_family = "wasm"))]
                 let error = if let Some(root) = root.as_deref().filter(|_| recover_corrupt_docs) {
                     recover_persistent_docs(
                         root,
@@ -366,6 +436,11 @@ impl IrohDocsNode {
                     )
                     .await
                 } else {
+                    Err(error).context("failed to spawn iroh docs")
+                };
+                #[cfg(target_family = "wasm")]
+                let error: Result<SpawnedDocs> = {
+                    let _ = recover_corrupt_docs;
                     Err(error).context("failed to spawn iroh docs")
                 };
                 match error {
@@ -426,7 +501,7 @@ impl IrohDocsNode {
         &self.endpoint
     }
 
-    pub fn install_remote_cache(&self, cache: Arc<SqliteStore>) -> Result<()> {
+    pub fn install_remote_cache(&self, cache: Arc<dyn ContentCacheStore>) -> Result<()> {
         self.remote_cache
             .set(cache)
             .map_err(|_| anyhow!("remote cache already installed"))
@@ -441,7 +516,7 @@ impl IrohDocsNode {
         self.private_capabilities.secrets.clone()
     }
 
-    pub(crate) fn remote_cache(&self) -> Option<&Arc<SqliteStore>> {
+    pub(crate) fn remote_cache(&self) -> Option<&Arc<dyn ContentCacheStore>> {
         self.remote_cache.get()
     }
 
@@ -480,7 +555,7 @@ impl IrohDocsNode {
         if !next_relay_urls.is_empty() && current_relay_urls != next_relay_urls {
             if current_relay_urls.is_empty() {
                 let endpoint = self.endpoint.clone();
-                tokio::spawn(async move {
+                n0_future::task::spawn(async move {
                     endpoint.online().await;
                 });
             }
@@ -543,7 +618,7 @@ impl IrohDocsNode {
         if !self.shutdown_started.swap(true, Ordering::AcqRel) {
             let node = self.clone();
             // The owned task survives cancellation of a caller or outer timeout.
-            tokio::spawn(async move {
+            n0_future::task::spawn(async move {
                 let outcome = node
                     .shutdown_owned()
                     .await
@@ -607,10 +682,12 @@ impl Drop for IrohDocsNode {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn endpoint_secret_path(root: &Path) -> PathBuf {
     root.join(ENDPOINT_SECRET_FILE_NAME)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn load_endpoint_secret(root: &Path) -> Result<Option<iroh::SecretKey>> {
     let path = endpoint_secret_path(root);
     if !path.exists() {
@@ -638,6 +715,7 @@ fn load_endpoint_secret(root: &Path) -> Result<Option<iroh::SecretKey>> {
     Ok(Some(iroh::SecretKey::from_bytes(&secret_bytes)))
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn save_endpoint_secret(root: &Path, secret_key: &iroh::SecretKey) -> Result<()> {
     let path = endpoint_secret_path(root);
     let bytes = serde_json::to_vec(&StoredEndpointSecret {

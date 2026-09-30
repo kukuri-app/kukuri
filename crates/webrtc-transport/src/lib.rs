@@ -625,6 +625,8 @@ impl WebRtcSender {
 
 #[cfg(all(test, target_family = "wasm"))]
 mod browser_tests;
+#[cfg(feature = "test-signaling")]
+pub mod signaling_fixture;
 #[cfg(test)]
 mod test_support;
 #[cfg(all(test, not(target_family = "wasm")))]

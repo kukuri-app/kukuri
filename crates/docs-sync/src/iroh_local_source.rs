@@ -114,6 +114,7 @@ impl IrohDocsSync {
     /// 旧 store(`iroh-data`)に残る 1 key の record(#1221 R5-G・R5-I の移行)。旧 store に無ければ、新しい store の
     /// 手元の record を namespace を import せずに読む(移行の途中に書いた本人の record)。private は登録済みの
     /// capability で namespace を求める。
+    #[cfg(not(target_family = "wasm"))]
     pub async fn read_legacy_records(
         &self,
         legacy: &kukuri_iroh_node::LegacyStore,
@@ -162,7 +163,11 @@ impl IrohDocsSync {
         }
         // lifecycle ownerの既存32枠を共有。callerがcancelしてもopen後のcloseを完了させる。
         let mut tasks = self.close_tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
+        // tokio の try_join_next と同じく coop の budget に左右されずに回収する（wasm の JoinSet には無い）。
+        while futures_util::FutureExt::now_or_never(tokio::task::unconstrained(tasks.join_next()))
+            .flatten()
+            .is_some()
+        {}
         anyhow::ensure!(tasks.len() < 32, "local source reader is at capacity");
         let this = self.clone();
         let replica_key = replica.as_str().to_owned();

@@ -1,13 +1,11 @@
 //! ADR 0057 §8 の browser の固定 workload（E1〜E4）。headless の Chromium で
-//! `scripts/ci/webrtc_transport_browser_test.sh` から実行する。browser↔native の相手は `examples/webrtc_peer.rs`。
+//! `scripts/ci/browser_peer_test.sh` から実行する。browser↔native の相手は `examples/webrtc_peer.rs`。
 
 use std::{future::poll_fn, time::Duration};
 
 use iroh::{
     Endpoint, EndpointAddr, SecretKey, TransportAddr, endpoint::Connection, protocol::Router,
 };
-use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::{console_log, wasm_bindgen_test, wasm_bindgen_test_configure};
 
 use super::*;
@@ -20,10 +18,6 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 fn config() -> WebRtcConfig {
     WebRtcConfig {}
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 async fn connect(endpoint: &Endpoint, remote: EndpointId, addr: CustomAddr) -> Connection {
@@ -132,31 +126,6 @@ async fn e2_browser_datagram_boundaries_survive() {
     assert!(seen > 0, "no datagram arrived");
 }
 
-/// native の相手（`examples/webrtc_peer.rs`）と、試験だけの HTTP で offer・answer を受け渡す。
-async fn native_answer(local: EndpointId, session: SessionId, offer: &str) -> (EndpointId, String) {
-    let url = option_env!("KUKURI_WEBRTC_PEER_URL")
-        .expect("run the browser tests through scripts/ci/webrtc_transport_browser_test.sh");
-    let init = web_sys::RequestInit::new();
-    init.set_method("POST");
-    init.set_body(&JsValue::from_str(&format!(
-        "{local}\n{}\n{offer}",
-        hex(session.as_bytes())
-    )));
-    let window = web_sys::window().expect("window");
-    let response = JsFuture::from(window.fetch_with_str_and_init(&format!("{url}/offer"), &init))
-        .await
-        .expect("post the offer");
-    let response: web_sys::Response = response.dyn_into().expect("response");
-    assert!(response.ok(), "the native peer rejected the offer");
-    let text = JsFuture::from(response.text().expect("text"))
-        .await
-        .expect("read the answer")
-        .as_string()
-        .expect("answer text");
-    let (remote, answer) = text.split_once('\n').expect("endpoint id and answer");
-    (remote.parse().expect("endpoint id"), answer.to_string())
-}
-
 struct NativePair {
     transport: Arc<WebRtcTransport>,
     session: SessionId,
@@ -173,7 +142,9 @@ async fn native_pair() -> NativePair {
         .offer(SecretKey::generate().public())
         .await
         .expect("offer");
-    let (remote, answer) = native_answer(endpoint.id(), session, &offer).await;
+    let (remote, answer) = crate::signaling_fixture::post_offer(endpoint.id(), session, &offer)
+        .await
+        .expect("native answer");
     transport
         .accept_answer(session, &answer)
         .await

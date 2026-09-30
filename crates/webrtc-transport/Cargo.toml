@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# 試験だけの接続交渉（src/signaling_fixture.rs）。browser↔native の試験の相手と page が使う。
+test-signaling = ["dep:axum", "web-sys/Window", "web-sys/RequestInit", "web-sys/Response"]
+
 [dependencies]
 anyhow.workspace = true
 bytes = "1.12.1"
@@ -17,6 +21,7 @@ tokio = { version = "1.53.1", default-features = false, features = ["macros", "s
 tracing.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+axum = { workspace = true, optional = true }
 str0m = { version = "0.24.0", default-features = false, features = ["rust-crypto"] }
 tokio = { version = "1.53.1", default-features = false, features = ["net", "rt", "time"] }
 
@@ -41,16 +46,15 @@ web-sys = { version = "0.3.106", features = [
 ] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
-axum.workspace = true
 tokio = { version = "1.53.1", default-features = false, features = ["macros", "rt-multi-thread", "time"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen-test = "0.3.79"
-web-sys = { version = "0.3.106", features = ["Window", "RequestInit", "Response"] }
 
 [[example]]
 name = "webrtc_peer"
 test = false
+required-features = ["test-signaling"]
 
 [lints]
 workspace = true

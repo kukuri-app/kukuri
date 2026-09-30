@@ -29,7 +29,7 @@ ts-rs = { workspace = true, optional = true }
 # 自分自身を mock feature 付きで dev-dependency にすることで、tests/ から mock を使える
 # （feature unification によりテストビルド時のみ mock が有効になる）。
 kukuri-cn-safety = { path = ".", features = ["mock"] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
 [lints]
 workspace = true

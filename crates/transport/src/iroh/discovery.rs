@@ -55,7 +55,7 @@ impl IrohGossipTransport {
             .clone();
         if !relay_urls.is_empty() {
             let endpoint = self.endpoint.clone();
-            tokio::spawn(async move {
+            n0_future::task::spawn(async move {
                 endpoint.online().await;
             });
         }

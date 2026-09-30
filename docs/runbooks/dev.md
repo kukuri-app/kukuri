@@ -337,6 +337,26 @@ npx pnpm@10.16.1 tauri:dev
 - desktop shell UI の primary route は hash-based (`#/timeline`, `#/channels`, `#/live`, `#/game`, `#/messages`, `#/profile`, `#/notifications`) に固定されている。settings / context deep-link も hash search param で復元する。
 - desktop の Tauri backend は `mainline::rpc::socket`, `noq_proto::connection`, `iroh::socket::remote_map::remote_state`, `iroh_docs::engine::live`, `iroh_gossip::net` を既定で `error` へ落としている。community-node connectivity assist / DHT / docs sync の内部 warning を調べたいときだけ `RUST_LOG=warn,mainline::rpc::socket=warn,noq_proto::connection=warn,iroh::socket::remote_map::remote_state=warn,iroh_docs::engine::live=warn,iroh_gossip::net=warn` を明示する。
 
+## Web（wasm32）の build と browser 試験
+ブラウザでも動く共用 crate（ADR 0056 §2・§3）の wasm32 の clippy と、headless の Chromium での browser 試験は CI の `linux-web-transport` が行う。
+browser 試験は native の相手（example）を起動し、その URL を試験の build に渡す（`scripts/ci/browser_peer_test.sh <package> <example> [cargo の引数]`）。
+
+- Linux: `clang`・`llvm`（`llvm-ar`）、`rustup target add wasm32-unknown-unknown`、`Cargo.lock` の wasm-bindgen と同じ版の `wasm-bindgen-cli`、chromedriver が要る。
+  `CC_wasm32_unknown_unknown=clang AR_wasm32_unknown_unknown=llvm-ar CHROMEDRIVER=<chromedriver の path>` を付けて実行する。
+- Windows: host に clang が無い（secp256k1 の C の build が通らない）ので、`docker/wasm-dev/Dockerfile` の image を使う。Git Bash では次のとおり。
+
+```bash
+docker build -t kukuri-wasm-dev docker/wasm-dev
+```
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm-cargo:/usr/local/cargo/registry -v kukuri-wasm-git:/usr/local/cargo/git -v kukuri-wasm-target:/target -e CARGO_TARGET_DIR=/target -w /src kukuri-wasm-dev bash scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer
+```
+
+- 共用 crate の wasm32 の clippy は `cargo clippy --target wasm32-unknown-unknown -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport -- -D warnings`（image では `rustup component add clippy` を先に行う）。
+  共用 crate では tokio・std の時刻と task を直接使わず `n0_future`・`web_time` を使う。直接使うと wasm32 の clippy が `disallowed_methods` で止める。
+- W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
+
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>
 - 初回 Windows cut の対象は `x86_64-pc-windows-msvc` のみ

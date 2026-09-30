@@ -5,12 +5,17 @@ use crate::replicas::{PostReplicaKind, post_replica_kind};
 use kukuri_iroh_node::{DocReadQuery, DocReadResponse};
 
 impl IrohDocsSync {
-    pub fn with_account_store(node: Arc<IrohDocsNode>, store: Arc<SqliteStore>) -> Self {
+    /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
+    #[cfg(not(target_family = "wasm"))]
+    pub fn with_account_store(
+        node: Arc<IrohDocsNode>,
+        store: Arc<kukuri_store::SqliteStore>,
+    ) -> Self {
         let mut docs = Self::new(node.clone());
         docs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
-            Arc::new(BlobPeerHealth::default()),
+            Arc::new(kukuri_transport::BlobPeerHealth::default()),
             store.clone(),
             "docs",
         ));
@@ -18,7 +23,7 @@ impl IrohDocsSync {
         docs
     }
 
-    pub(crate) fn remote_cache(&self) -> Option<&SqliteStore> {
+    pub(crate) fn remote_cache(&self) -> Option<&dyn ContentCacheStore> {
         self.remote_cache.as_deref()
     }
 
@@ -113,7 +118,7 @@ impl IrohDocsSync {
             Some(secret) => secret.clone(),
             None => self.replica_secret(replica).await?,
         };
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let response = self
             .node
             .query_remote_docs(peer.clone(), replica, &secret, query)

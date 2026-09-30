@@ -1,6 +1,7 @@
 //! Read a hash-addressed cached blob in bounded chunks without importing it
 //! into the legacy iroh-blobs store.
 
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -11,10 +12,9 @@ use iroh::EndpointAddr;
 use iroh::endpoint::{Connection, Endpoint};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::Hash;
-use kukuri_store::SqliteStore;
-use tokio::io::AsyncWriteExt;
+use kukuri_store::ContentCacheStore;
+use n0_future::time::timeout;
 use tokio::sync::Semaphore;
-use tokio::time::timeout;
 
 use crate::remote_fetch::{BlobTooLarge, RemoteCacheDeferred};
 
@@ -24,7 +24,7 @@ const DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub(crate) struct RemoteBlobProtocol {
-    cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     permits: Arc<Semaphore>,
 }
 
@@ -35,7 +35,7 @@ impl std::fmt::Debug for RemoteBlobProtocol {
 }
 
 impl RemoteBlobProtocol {
-    pub(crate) fn new(cache: Arc<OnceLock<Arc<SqliteStore>>>) -> Self {
+    pub(crate) fn new(cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>) -> Self {
         Self {
             cache,
             permits: Arc::new(Semaphore::new(8)),
@@ -102,7 +102,7 @@ pub(crate) async fn fetch(
     peer: EndpointAddr,
     hash: Hash,
     max_bytes: Option<u64>,
-    local_cache: Option<&SqliteStore>,
+    local_cache: Option<&dyn ContentCacheStore>,
 ) -> Result<Option<Vec<u8>>> {
     let mut bytes = Vec::new();
     let found = fetch_into(
@@ -117,6 +117,7 @@ pub(crate) async fn fetch(
     Ok(found.map(|_| bytes))
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn fetch_to_file(
     endpoint: &Endpoint,
     peer: EndpointAddr,
@@ -135,9 +136,31 @@ pub(crate) async fn fetch_to_file(
     .await
 }
 
-enum BlobOutput<'a> {
+/// 取得した blob の書き先。
+pub(crate) enum BlobOutput<'a> {
     Memory(&'a mut Vec<u8>),
+    /// 表示用の file への取得は native だけ（ADR 0056 §5）。
+    #[cfg(not(target_family = "wasm"))]
     File(&'a mut tokio::fs::File),
+}
+
+impl BlobOutput<'_> {
+    pub(crate) async fn write(&mut self, chunk: &[u8]) -> Result<()> {
+        match self {
+            Self::Memory(bytes) => bytes.extend_from_slice(chunk),
+            #[cfg(not(target_family = "wasm"))]
+            Self::File(file) => tokio::io::AsyncWriteExt::write_all(*file, chunk).await?,
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn flush(&mut self) -> Result<()> {
+        #[cfg(not(target_family = "wasm"))]
+        if let Self::File(file) = self {
+            tokio::io::AsyncWriteExt::flush(*file).await?;
+        }
+        Ok(())
+    }
 }
 
 async fn fetch_into(
@@ -145,7 +168,7 @@ async fn fetch_into(
     peer: EndpointAddr,
     hash: Hash,
     max_bytes: Option<u64>,
-    local_cache: Option<&SqliteStore>,
+    local_cache: Option<&dyn ContentCacheStore>,
     mut output: BlobOutput<'_>,
 ) -> Result<Option<u64>> {
     let connection = endpoint.connect(peer, REMOTE_BLOB_ALPN).await?;
@@ -167,7 +190,7 @@ async fn fetch_into(
     {
         return Err(BlobTooLarge { limit }.into());
     }
-    let mut reservation = local_cache.map(SqliteStore::empty_remote_cache_reservation);
+    let mut reservation = local_cache.map(|cache| cache.empty_remote_cache_reservation());
     if length <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64
         && let (Some(cache), Some(reservation)) = (local_cache, reservation.as_mut())
         && !cache
@@ -182,10 +205,7 @@ async fn fetch_into(
         let mut chunk = vec![0; CHUNK_BYTES.min(usize::try_from(length - received)?)];
         recv.read_exact(&mut chunk).await?;
         hasher.update(&chunk);
-        match &mut output {
-            BlobOutput::Memory(bytes) => bytes.extend_from_slice(&chunk),
-            BlobOutput::File(file) => file.write_all(&chunk).await?,
-        }
+        output.write(&chunk).await?;
         received += u64::try_from(chunk.len())?;
     }
     ensure!(
@@ -197,6 +217,7 @@ async fn fetch_into(
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests {
     use super::*;
     use crate::IrohDocsNode;
@@ -205,7 +226,7 @@ mod tests {
     async fn cached_blob_is_reprovided_without_legacy_store_import() -> Result<()> {
         let provider = IrohDocsNode::memory().await?;
         let requester = IrohDocsNode::memory().await?;
-        let cache = Arc::new(SqliteStore::connect_memory().await?);
+        let cache = Arc::new(kukuri_store::SqliteStore::connect_memory().await?);
         provider.install_remote_cache(cache.clone())?;
         let bytes = b"cached remote bytes";
         let hash = Hash::new(bytes);
@@ -250,7 +271,8 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let provider = IrohDocsNode::memory().await?;
         let requester = IrohDocsNode::memory().await?;
-        let cache = Arc::new(SqliteStore::connect_file(dir.path().join("cache.db")).await?);
+        let cache =
+            Arc::new(kukuri_store::SqliteStore::connect_file(dir.path().join("cache.db")).await?);
         provider.install_remote_cache(cache.clone())?;
         let bytes = vec![5u8; 2 * 1024 * 1024 + 7];
         let source = dir.path().join("source.bin");

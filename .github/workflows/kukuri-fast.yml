@@ -165,6 +165,7 @@ jobs:
         with:
           toolchain: 1.98.1
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - name: Install LLVM tools for the wasm C build
         run: sudo apt-get update && sudo apt-get install -y clang llvm
@@ -179,11 +180,29 @@ jobs:
         with:
           tool: wasm-bindgen@0.2.129
 
+      # ブラウザでも動く共用 crate（ADR 0056 §2・§3）。時刻・task の直接使用も clippy が検出する。
+      - name: Shared crates wasm32 clippy
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+        run: >-
+          cargo clippy --target wasm32-unknown-unknown
+          -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node
+          -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport
+          -- -D warnings
+
       - name: Browser transport tests
         env:
           CC_wasm32_unknown_unknown: clang
           AR_wasm32_unknown_unknown: llvm-ar
-        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/webrtc_transport_browser_test.sh
+        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling
+
+      # ブラウザ↔native の有界な読み出し（W1 AC-2）。
+      - name: Browser node tests
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer
 
   linux-desktop-ui:
     runs-on: ubuntu-24.04
