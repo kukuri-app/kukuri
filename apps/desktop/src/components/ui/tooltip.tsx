@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components */
 import * as React from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
