@@ -443,6 +443,8 @@ impl DesktopRuntime {
         if let Err(error) = app_service.resume_withdrawal_writes().await {
             tracing::warn!(%error, "queued withdrawal writes stay pending");
         }
+        // 本人の端末間の同期（ADR 0061）。private channel の復元より前に scope の枠を取る。
+        app_service.start_account_sync().await?;
         for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
             app_service
                 .restore_private_channel_capability(capability)

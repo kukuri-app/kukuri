@@ -55,6 +55,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -180,6 +181,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -257,6 +259,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
         Arc::new(Mutex::new("near-expiry-token".into())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -783,6 +786,10 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
     let missing_private_topic = kukuri_core::wire::hint_topic_id(&missing_private_base);
     let forbidden_missing_private =
         kukuri_core::public_topic_rendezvous_key(&missing_private_topic);
+    // 本人の端末間の account 同期の hint（ADR 0061 §6）は、秘密から導出した topic の鍵で本人の端末どうしを会わせる。
+    let account_hint =
+        kukuri_core::wire::hint_topic_id(runtime.author_keys.derive_account_sync().hint_topic());
+    let expected_account = kukuri_core::public_topic_rendezvous_key(&account_hint);
     let _missing_private_stream = kukuri_transport::HintTransport::subscribe_hints(
         runtime.iroh_stack.transport.as_ref(),
         &missing_private_base,
@@ -865,6 +872,18 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             .any(|request| request.refreshes.contains(&expected_public)),
         "公開話題のランデブー鍵は変わらない"
     );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.refreshes.contains(&expected_account)),
+        "account 同期の hint のランデブー鍵が更新される"
+    );
+    assert!(requests.iter().all(|request| {
+        !request
+            .refreshes
+            .iter()
+            .any(|key| key == account_hint.as_str())
+    }));
     assert!(requests.iter().all(|request| {
         !request.refreshes.contains(&forbidden_public_private)
             && !request.refreshes.contains(&forbidden_missing_private)

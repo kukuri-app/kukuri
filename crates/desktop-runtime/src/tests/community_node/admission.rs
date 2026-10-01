@@ -153,6 +153,7 @@ async fn spawn_admission_mock(
         heartbeat_unauthorized: Arc::new(AtomicBool::new(false)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(admission_challenge))
         .route("/v1/auth/verify", post(admission_verify))
         .route("/v1/consents/status", get(admission_consent_status))

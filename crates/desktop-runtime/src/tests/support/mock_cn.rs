@@ -184,6 +184,16 @@ pub(crate) struct MockRendezvousCommunityNodeState {
     pub(crate) rendezvous_failure: Arc<AtomicBool>,
 }
 
+/// topic の rendezvous に、会う相手のいない応答を返す。起動から account 同期の hint を購読するので（ADR 0061 §7）、
+/// session を確立する試験の node は必ずこの要求を受ける。
+pub(crate) async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse>
+{
+    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
+        expires_in_seconds: 45,
+        topics: Vec::new(),
+    })
+}
+
 pub(crate) async fn mock_rendezvous_bootstrap_heartbeat(
     State(state): State<Arc<MockRendezvousCommunityNodeState>>,
     Json(_request): Json<serde_json::Value>,

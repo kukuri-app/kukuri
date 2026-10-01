@@ -49,6 +49,10 @@
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
+      "lines": 1052,
+      "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
+    },
+    {
       "lines": 1048,
       "path": "crates/store/src/tests/backend_parity/lists.rs"
     },
@@ -59,10 +63,6 @@
     {
       "lines": 1042,
       "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
-    },
-    {
-      "lines": 1024,
-      "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
       "lines": 1018,

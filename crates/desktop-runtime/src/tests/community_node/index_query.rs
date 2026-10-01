@@ -646,6 +646,34 @@ async fn community_node_index_client_rejects_half_scope_before_http() {
     server.abort();
 }
 
+// 本人の端末間の account 同期の hint（ADR 0061 §6）は、公開 topic として node へ送らない。
+#[tokio::test]
+async fn community_node_indexing_request_rejects_the_account_sync_topic_before_http() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let (runtime, base_url, _managed, state, server, _dir) = index_runtime(None).await;
+    let hint = runtime
+        .author_keys
+        .derive_account_sync()
+        .hint_topic()
+        .clone();
+    for topic_id in [hint.clone(), kukuri_core::wire::hint_topic_id(&hint)] {
+        let error = runtime
+            .submit_community_node_indexing_request(CommunityNodeIndexingRequest {
+                base_url: base_url.clone(),
+                scope_kind: IndexScopeKind::PublicTopic,
+                topic_id: topic_id.as_str().to_string(),
+                channel_id: None,
+                confirm_private_channel_secret_disclosure: false,
+            })
+            .await
+            .expect_err("account sync topic is not public");
+        assert_eq!(error.code, "INVALID_INDEXING_REQUEST");
+    }
+    assert!(state.indexing_requests.lock().await.is_empty());
+    runtime.shutdown().await;
+    server.abort();
+}
+
 #[tokio::test]
 async fn community_node_indexing_request_preserves_public_and_private_contracts() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;

@@ -247,6 +247,10 @@ fn validate_public_topic_id(value: &str) -> Result<&str> {
     if value.chars().any(char::is_control) {
         bail!("supported topic id must not contain control characters");
     }
+    // 公開ではない topic（account 同期の hint 等）は対応 topic にしない（ADR 0061 §6）。
+    if kukuri_core::wire::is_non_public_topic(value) {
+        bail!("supported topic id is not a public topic");
+    }
     Ok(value)
 }
 
@@ -276,6 +280,9 @@ mod tests {
             validate_public_topic_id(" kukuri:topic:demo ").unwrap(),
             "kukuri:topic:demo"
         );
+        // 本人の端末間の account 同期の hint（ADR 0061 §6）は公開 topic ではない。
+        assert!(validate_public_topic_id("kukuri:account:00ff").is_err());
+        assert!(validate_public_topic_id("hint/kukuri:account:00ff").is_err());
     }
 
     #[test]

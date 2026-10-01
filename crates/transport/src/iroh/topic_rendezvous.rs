@@ -11,9 +11,9 @@ pub(super) fn topic_rejoin_delay(step: u32) -> Duration {
     Duration::from_secs(1 << step.min(6))
 }
 
-/// 再 join の窓: この topic の rendezvous の候補と、seed・ticket の窓から最大 4 件。
+/// 再 join の窓: この topic の rendezvous の候補と、seed・ticket の窓（`candidates` があるとき）から最大 4 件。
 pub(super) async fn topic_rejoin_window(
-    candidates: &BootstrapCandidates,
+    candidates: Option<&BootstrapCandidates>,
     rendezvous: &Mutex<Vec<(String, EndpointAddr)>>,
     step: u32,
 ) -> Vec<EndpointAddr> {
@@ -23,7 +23,11 @@ pub(super) async fn topic_rejoin_window(
         .iter()
         .map(|(_, peer)| peer.clone())
         .collect::<Vec<_>>();
-    for peer in candidates.window().await.unwrap_or_default() {
+    let window = match candidates {
+        Some(candidates) => candidates.window().await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    for peer in window {
         if !peers.iter().any(|known| known.id == peer.id) {
             peers.push(peer);
         }

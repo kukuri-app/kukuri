@@ -29,6 +29,15 @@ pub(crate) fn initial_topic_join_timeout() -> Duration {
     }
 }
 
+/// 本人の端末間の account 同期の hint の topic は、rendezvous が返した本人の端末とだけ合流する（ADR 0061 §7）。
+/// bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（合流できないまま warmup を繰り返し、
+/// 他人に topic を知らせることになる）。
+fn joins_own_devices_only(hint_topic: &str) -> bool {
+    hint_topic
+        .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
+        .is_some_and(|topic| topic.starts_with(kukuri_core::wire::ACCOUNT_SYNC_TOPIC_PREFIX))
+}
+
 fn topic_warmup_retry_delay(attempt: usize, relay_backed: bool) -> Duration {
     if relay_backed {
         return relay_topic_warmup_retry_delay(attempt);
@@ -306,7 +315,8 @@ impl IrohGossipTransport {
         true
     }
 
-    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。
+    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。指定しないときは、本人の端末とだけ
+    /// 合流する topic を除く。
     pub(crate) async fn extend_topic_peers(
         &self,
         only: Option<&str>,
@@ -322,10 +332,10 @@ impl IrohGossipTransport {
             if self.hint_closed.load(Ordering::Acquire) {
                 return;
             }
-            for (topic, state) in topic_states
-                .iter_mut()
-                .filter(|(topic, _)| only.is_none_or(|only| only == topic.as_str()))
-            {
+            for (topic, state) in topic_states.iter_mut().filter(|(topic, _)| match only {
+                Some(only) => only == topic.as_str(),
+                None => !joins_own_devices_only(topic),
+            }) {
                 let mut join_peer_ids = Vec::new();
                 let mut added_peer_ids = Vec::new();
                 let mut join_endpoint_addrs = Vec::new();
@@ -487,7 +497,12 @@ impl IrohGossipTransport {
                 .await;
         }
 
-        let bootstrap_peers = self.bootstrap_peers().await?;
+        let own_devices_only = joins_own_devices_only(topic.as_str());
+        let bootstrap_peers = if own_devices_only {
+            Vec::new()
+        } else {
+            self.bootstrap_peers().await?
+        };
         let bootstrap_peer_ids = bootstrap_peers
             .iter()
             .map(|peer| peer.id.to_string())
@@ -518,7 +533,7 @@ impl IrohGossipTransport {
         let rejoin_sender = Arc::clone(&sender);
         let rejoin_rendezvous = Arc::clone(&rendezvous);
         let rejoin_joins = Arc::clone(&joins);
-        let rejoin_candidates = self.bootstrap_candidates();
+        let rejoin_candidates = (!own_devices_only).then(|| self.bootstrap_candidates());
         let rejoin_endpoint = self.endpoint.clone();
         let rejoin_gossip = self.gossip.clone();
         let rejoin_warmups = Arc::clone(&self.topic_warmups);
@@ -633,7 +648,7 @@ impl IrohGossipTransport {
                     }
                     () = n0_future::time::sleep_until(rejoin_at), if idle => {
                         let peers =
-                            topic_rejoin_window(&rejoin_candidates, &rejoin_rendezvous, rejoin_step)
+                            topic_rejoin_window(rejoin_candidates.as_ref(), &rejoin_rendezvous, rejoin_step)
                                 .await;
                         rejoin_step = rejoin_step.saturating_add(1);
                         rejoin_at = n0_future::time::Instant::now() + topic_rejoin_delay(rejoin_step);

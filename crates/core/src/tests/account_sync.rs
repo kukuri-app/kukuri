@@ -86,6 +86,18 @@ fn each_purpose_uses_a_separate_value() {
     assert!(![replica, topic, namespace].contains(&author));
 }
 
+// 診断の一覧・Community Node の公開 topic の索引と対応 topic は、この判定で account 同期の hint を外す（ADR 0061 §6）。
+#[test]
+fn the_account_hint_topic_is_not_a_public_topic() {
+    let hint = keys(SECRET).derive_account_sync().hint_topic().clone();
+    assert!(crate::wire::is_non_public_topic(hint.as_str()));
+    assert!(crate::wire::is_non_public_topic(
+        crate::wire::hint_topic_id(&hint).as_str()
+    ));
+    assert!(!crate::wire::is_non_public_topic("kukuri:topic:rust"));
+    assert!(!crate::wire::is_non_public_topic("hint/kukuri:topic:rust"));
+}
+
 #[test]
 fn the_account_route_is_separate_from_the_public_receive_route() {
     let account_keys = keys(SECRET);

@@ -89,6 +89,7 @@ async fn tester_feedback_runtime(
         unauthorized_remaining: Arc::new(AtomicUsize::new(usize::from(unauthorized_first))),
     };
     let managed_router = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/policies", get(mock_managed_policies))

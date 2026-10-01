@@ -61,7 +61,9 @@ async fn heartbeat() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "expires_at": 4_102_444_800_i64 }))
 }
 
-async fn rendezvous_heartbeat() -> Json<serde_json::Value> {
+/// 会う相手のいない rendezvous の応答。起動から account 同期の hint を購読するので（ADR 0061 §7）、session を確立する
+/// scenario の node は必ずこの要求を受ける。
+pub(crate) async fn rendezvous_heartbeat() -> Json<serde_json::Value> {
     Json(serde_json::json!({"expires_in_seconds": 45, "topics": []}))
 }
 

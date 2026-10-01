@@ -125,6 +125,14 @@ async fn idle_repair_of_closed_actor_restores_private_capability_with_unchanged_
         .expect("private capability restored");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].value, b"private retained");
+    // 本人の端末間の account 同期の replica も、作り直した stack で開ける（#1218 AC-2）。
+    let account = runtime.author_keys.derive_account_sync();
+    runtime
+        .iroh_stack
+        .docs_sync
+        .query_replica(account.replica_id(), DocQuery::All)
+        .await
+        .expect("account sync capability restored");
     runtime.shutdown().await;
 }
 
@@ -349,6 +357,7 @@ async fn idle_maintenance_merges_node_metadata_and_retains_consent_boundaries() 
             bootstrap_hits: Arc::new(AtomicUsize::new(0)),
         });
         let app = Router::new()
+            .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
             .route("/v1/policies", get(mock_current_policies))
             .route("/v1/consents/status", get(mock_bootstrap_consent_status))
             .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
