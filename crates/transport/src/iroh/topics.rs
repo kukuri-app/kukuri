@@ -487,7 +487,18 @@ impl IrohGossipTransport {
                 .await;
         }
 
-        let bootstrap_peers = self.bootstrap_peers().await?;
+        // 本人の端末間の account 同期の hint は、rendezvous が返した本人の端末とだけ合流する（ADR 0061 §7）。
+        // bootstrap の peer（他人の端末・node）へ topic の join を送らない（合流できないまま warmup を繰り返し、
+        // 他人に topic を知らせることになる）。
+        let own_devices_only = topic
+            .as_str()
+            .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
+            .is_some_and(|topic| topic.starts_with(kukuri_core::wire::ACCOUNT_SYNC_TOPIC_PREFIX));
+        let bootstrap_peers = if own_devices_only {
+            Vec::new()
+        } else {
+            self.bootstrap_peers().await?
+        };
         let bootstrap_peer_ids = bootstrap_peers
             .iter()
             .map(|peer| peer.id.to_string())
@@ -518,7 +529,7 @@ impl IrohGossipTransport {
         let rejoin_sender = Arc::clone(&sender);
         let rejoin_rendezvous = Arc::clone(&rendezvous);
         let rejoin_joins = Arc::clone(&joins);
-        let rejoin_candidates = self.bootstrap_candidates();
+        let rejoin_candidates = (!own_devices_only).then(|| self.bootstrap_candidates());
         let rejoin_endpoint = self.endpoint.clone();
         let rejoin_gossip = self.gossip.clone();
         let rejoin_warmups = Arc::clone(&self.topic_warmups);
@@ -633,7 +644,7 @@ impl IrohGossipTransport {
                     }
                     () = n0_future::time::sleep_until(rejoin_at), if idle => {
                         let peers =
-                            topic_rejoin_window(&rejoin_candidates, &rejoin_rendezvous, rejoin_step)
+                            topic_rejoin_window(rejoin_candidates.as_ref(), &rejoin_rendezvous, rejoin_step)
                                 .await;
                         rejoin_step = rejoin_step.saturating_add(1);
                         rejoin_at = n0_future::time::Instant::now() + topic_rejoin_delay(rejoin_step);
