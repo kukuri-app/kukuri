@@ -100,13 +100,6 @@ async fn mock_evaluations(
     .into_response()
 }
 
-async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse> {
-    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
-        expires_in_seconds: 45,
-        topics: Vec::new(),
-    })
-}
-
 struct GateNode {
     base_url: String,
     state: MockTrustGateNode,

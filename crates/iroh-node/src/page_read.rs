@@ -26,7 +26,9 @@ use tokio::sync::{Mutex, Semaphore};
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
 
 fn private_replica(replica: &str) -> bool {
-    replica.starts_with("bucket::v1::channel::") || replica.starts_with("channel::")
+    replica.starts_with("bucket::v1::channel::")
+        || replica.starts_with("channel::")
+        || replica.starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX)
 }
 
 /// 公開 topic の bucket(と旧形式)。保持している他の参加者の record も一覧で提供する(#1395)。

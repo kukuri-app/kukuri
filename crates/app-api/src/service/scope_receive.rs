@@ -10,6 +10,9 @@ use super::subscription_catch_up::REPLICA_WINDOW_ENTRIES;
 use super::*;
 use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
 
+/// account 同期の scope の holder。
+const ACCOUNT_SYNC_HOLDER: &str = "account-sync";
+
 /// lease の読み直しで、replica ごとに種類ごとに読む session の索引の上限(判断 5)。
 const SESSION_REREAD_LIMIT: usize = 64;
 
@@ -200,6 +203,43 @@ impl AppService {
         Ok(ScopeTask {
             handle: AbortOnDropTask::new(handle),
             hint_topic: None,
+        })
+    }
+
+    /// 本人の端末間の account 同期を始める（ADR 0061）。replica の namespace の秘密を登録し、hint の topic を購読する。
+    /// 購読は account の runtime と一緒に止まる（停止・切替で runtime を作り直す）。
+    pub async fn start_account_sync(&self) -> Result<()> {
+        let keys = self.services.keys.derive_account_sync();
+        self.services
+            .docs_sync
+            .register_private_replica_secret(
+                keys.replica_id(),
+                keys.expose_namespace_secret_hex().as_str(),
+            )
+            .await?;
+        self.set_scope_holder(
+            ACCOUNT_SYNC_HOLDER,
+            [ScopeKey::AccountSync(
+                keys.hint_topic().as_str().to_string(),
+            )],
+        )
+        .await
+    }
+
+    /// hint の購読だけを持つ。hint を受けた差分の取得は W5 AC-5 が足す。
+    pub(crate) async fn spawn_account_sync_subscription(
+        &self,
+        hint_topic: TopicId,
+    ) -> Result<ScopeTask> {
+        let mut hints = self
+            .services
+            .hint_transport
+            .subscribe_hints(&hint_topic)
+            .await?;
+        let handle = n0_future::task::spawn(async move { while hints.next().await.is_some() {} });
+        Ok(ScopeTask {
+            handle: AbortOnDropTask::new(handle),
+            hint_topic: Some(hint_topic),
         })
     }
 

@@ -28,6 +28,19 @@ pub const ACCOUNT_SYNC_TOPIC_PREFIX: &str = "kukuri:account:";
 /// 公開の namespace の導出の対象外。
 pub const ACCOUNT_SYNC_REPLICA_PREFIX: &str = "account::v1::";
 
+/// 公開の topic として扱わない topic（private channel・DM・account 同期の hint。`hint/` の有無によらない）。
+/// 診断の topic の一覧と、Community Node の公開 topic の索引・対応 topic から外す（ADR 0061 §6）。
+pub fn is_non_public_topic(topic: &str) -> bool {
+    let topic = topic.strip_prefix(HINT_TOPIC_PREFIX).unwrap_or(topic);
+    [
+        PRIVATE_CHANNEL_TOPIC_PREFIX,
+        DM_TOPIC_PREFIX,
+        ACCOUNT_SYNC_TOPIC_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| topic.starts_with(prefix))
+}
+
 /// topic に対応する gossip hint topic id を返す。
 pub fn hint_topic_id(topic: &TopicId) -> TopicId {
     TopicId::new(format!("{HINT_TOPIC_PREFIX}{}", topic.as_str()))

@@ -15,13 +15,15 @@ pub(crate) enum ScopeKey {
     Topic(String),
     Channel(String, String),
     Author(String),
+    /// 本人の端末間の account 同期の hint の topic（ADR 0061）。公開の topic ではない。
+    AccountSync(String),
 }
 
 impl ScopeKey {
     fn topic(&self) -> Option<&str> {
         match self {
             Self::Topic(topic) | Self::Channel(topic, _) => Some(topic),
-            Self::Author(_) => None,
+            Self::Author(_) | Self::AccountSync(_) => None,
         }
     }
 }
@@ -326,6 +328,10 @@ impl AppService {
                 .await
             }
             ScopeKey::Author(author) => self.spawn_author_subscription(author).await,
+            ScopeKey::AccountSync(hint_topic) => {
+                self.spawn_account_sync_subscription(TopicId::new(hint_topic))
+                    .await
+            }
         };
         started
             .inspect_err(|error| warn!(?key, %error, "failed to start a scope subscription"))

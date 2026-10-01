@@ -31,6 +31,7 @@ async fn community_node_status_refresh_updates_bootstrap_seed_peers() {
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -124,6 +125,7 @@ async fn community_node_session_maintenance_updates_bootstrap_seed_peers() {
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -212,6 +214,7 @@ async fn community_node_metadata_refresh_heartbeats_before_bootstrap_sync_even_w
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -330,6 +333,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_before_nex
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -441,6 +445,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_only_once_
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -519,6 +524,7 @@ async fn community_node_status_retries_bootstrap_metadata_when_seed_peers_are_em
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -638,6 +644,7 @@ async fn refresh_community_node_metadata_refreshes_registration_before_bootstrap
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -732,6 +739,7 @@ async fn refresh_community_node_metadata_requeues_heartbeat_when_runtime_connect
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route(
@@ -841,6 +849,7 @@ async fn manual_refresh_stops_before_protected_requests_on_snapshot_update() {
     ));
     state.simulate_snapshot_update.store(true, Ordering::SeqCst);
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))

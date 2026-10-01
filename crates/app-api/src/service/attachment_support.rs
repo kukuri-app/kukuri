@@ -340,16 +340,14 @@ pub(crate) fn short_id_suffix(author_pubkey: &str) -> &str {
 }
 
 pub(crate) fn normalize_topic_name(topic: String) -> Option<String> {
-    let normalized = topic
-        .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
-        .map_or(topic.clone(), ToOwned::to_owned);
-    if normalized.starts_with(kukuri_core::wire::PRIVATE_CHANNEL_TOPIC_PREFIX)
-        || normalized.starts_with(kukuri_core::wire::DM_TOPIC_PREFIX)
-    {
-        None
-    } else {
-        Some(normalized)
+    if kukuri_core::wire::is_non_public_topic(&topic) {
+        return None;
     }
+    Some(
+        topic
+            .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
+            .map_or(topic.clone(), ToOwned::to_owned),
+    )
 }
 
 pub(crate) fn normalize_topics(topics: Vec<String>) -> Vec<String> {

@@ -213,6 +213,15 @@ impl DesktopRuntime {
                 "topic_id is required",
             ));
         }
+        // 公開ではない topic（account 同期の hint 等）は公開 topic として送らない（ADR 0061 §6）。
+        if request.scope_kind == IndexScopeKind::PublicTopic
+            && kukuri_core::wire::is_non_public_topic(topic_id)
+        {
+            return Err(CommunityNodeIndexingRequestError::new(
+                "INVALID_INDEXING_REQUEST",
+                "topic_id is not a public topic",
+            ));
+        }
         // セッション確立と同意確認は秘密値を組み立てる前に行う。必須同意が未承認のノードへは
         // 非公開チャンネルの秘密値を含む申請を送らない(#698)。
         let session_outcome = self

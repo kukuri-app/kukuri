@@ -666,9 +666,11 @@ mod tests {
             .await
             .expect("status")
             .subscribed_topics;
-        assert_eq!(subscribed.len(), kukuri_app_api::MAX_ACTIVE_SCOPES);
+        // 1 枠は本人の端末間の account 同期が使う（ADR 0061 §7）。診断の topic の一覧には出ない。
+        assert_eq!(subscribed.len(), kukuri_app_api::MAX_ACTIVE_SCOPES - 1);
         assert!(subscribed.contains(&"kukuri:topic:column".to_string()));
-        assert!(!subscribed.contains(&"kukuri:topic:desired-63".to_string()));
+        assert!(subscribed.contains(&"kukuri:topic:desired-61".to_string()));
+        assert!(!subscribed.contains(&"kukuri:topic:desired-62".to_string()));
         let error = host
             .add_desired_subscription(public("kukuri:topic:extra"))
             .await

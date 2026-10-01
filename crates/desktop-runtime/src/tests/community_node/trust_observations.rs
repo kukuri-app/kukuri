@@ -160,13 +160,6 @@ async fn mock_revoke(State(state): State<MockObservationState>, headers: HeaderM
     Json(TrustObservationsRevokeResponse { deleted: 0 }).into_response()
 }
 
-async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse> {
-    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
-        expires_in_seconds: 45,
-        topics: Vec::new(),
-    })
-}
-
 struct Harness {
     runtime: DesktopRuntime,
     base_url: String,

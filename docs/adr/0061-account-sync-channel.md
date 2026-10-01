@@ -85,6 +85,20 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 起動・復帰・通知の欠落の差分の有限 page と durable な cursor | W5 AC-5 |
 | Web と native の 2 端末の統合 | W5 AC-6 |
 
+### 7. 新しい種別の分類（W5 AC-2 の実装）
+
+公開ではない topic の判定は `kukuri_core::wire::is_non_public_topic`（private channel・DM・account 同期の hint。`hint/` の有無によらない）の 1 つで行う。入口ごとの扱い:
+
+| 入口 | 扱い |
+| --- | --- |
+| 起動・import・切替・復帰 | runtime の起動で `AppService::start_account_sync` が replica の namespace の秘密を登録し、scope の lease（`ScopeKey::AccountSync`）で hint を購読する。private channel の復元より前に取る（scope の上限 64 の 1 つ）。import は account の追加・切替と同じ runtime の起動を通る。停止・切替は runtime の停止で lease ごと外れ、新しい runtime は新しい account の値だけを持つ。endpoint の作り直しは、lease の task の作り直しで同じ購読へ戻る |
+| hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。hint を受けた差分の取得は AC-5 |
+| rendezvous | 購読中の account の hint は、秘密から導出した topic の rendezvous の鍵（`public_topic_rendezvous_key(hint/kukuri:account:<hex>)`）で Community Node へ送り、本人の端末どうしを Relay Supported P2P で会わせる。鍵はアカウント鍵を持つ端末だけが計算でき、node が受け取るのは不透明な鍵だけ。node が同じ account の端末を結び付けられることは、既存の受信 route の rendezvous（公開鍵から導出）と同じで、新しい情報を加えない |
+| 診断 | sync status の topic の一覧と topic の診断から外す（`normalize_topic_name`） |
+| 有界な読み出し（page_read） | `account::v1::` は private の replica として、登録した capability の証明がある要求にだけ応える |
+| Community Node の索引・対応 topic | client の索引の依頼・`cn-user-api` の索引の依頼の受付・運用の対応 topic の追加と削除で、公開 topic として拒否する。account の replica は公開の導出で開けないので、indexer は読めない（§1） |
+| 検索・発見・推薦 | 索引した投稿だけを返す。上の入口で索引に入らないので出ない |
+
 ## 採らない方式
 
 - 公開鍵から同期先を導出する: 公開鍵を知る誰もが同期先を知れる（ADR 0055 の受信 route と同じになる）。

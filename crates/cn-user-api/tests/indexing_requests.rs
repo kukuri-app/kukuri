@@ -426,7 +426,7 @@ async fn private_channel_request_rejected_when_encryption_key_unset() -> Result<
 }
 
 #[tokio::test]
-async fn invalid_kind_is_rejected() -> Result<()> {
+async fn invalid_kind_and_non_public_topic_are_rejected() -> Result<()> {
     let Some(admin_database_url) = integration_test_admin_database_url() else {
         eprintln!("skipping cn-user-api indexing test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
         return Ok(());
@@ -450,6 +450,19 @@ async fn invalid_kind_is_rejected() -> Result<()> {
     assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
     let body = rejected.json::<serde_json::Value>().await?;
     assert_eq!(body["code"], "INVALID_INDEXING_REQUEST");
+
+    // 本人の端末間の account 同期の hint（ADR 0061 §6）は公開 topic の索引にしない。
+    let account_hint = format!("kukuri:account:{}", "ab".repeat(32));
+    let rejected = client
+        .post(format!("{}/v1/indexing/requests", server.base_url))
+        .bearer_auth(token.as_str())
+        .json(&serde_json::json!({ "kind": "public_topic", "target_id": account_hint }))
+        .send()
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+    let body = rejected.json::<serde_json::Value>().await?;
+    assert_eq!(body["code"], "INVALID_INDEXING_REQUEST");
+    assert_nothing_stored(&server).await?;
 
     server.shutdown().await
 }

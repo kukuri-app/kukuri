@@ -14,49 +14,53 @@ async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &Nam
         .insert(replica.as_str().into(), secret.clone());
 }
 
+/// private の bucket と本人の端末間の account 同期の replica（ADR 0061）は、登録した capability でだけ読める。
 #[tokio::test]
-async fn private_bucket_page_requires_the_epoch_capability() -> Result<()> {
-    let provider = IrohDocsNode::memory().await?;
-    let requester = IrohDocsNode::memory().await?;
-    let replica = ReplicaId::new("bucket::v1::channel::6368::6570::1");
-    let secret = NamespaceSecret::from_bytes(&[9; 32]);
-    register_private(&provider, &replica, &secret).await;
-    let doc = provider
-        .docs()
-        .import_namespace(Capability::Write(secret.clone()))
+async fn private_pages_require_the_registered_capability() -> Result<()> {
+    let account = format!("account::v1::{}", "ab".repeat(32));
+    for replica in ["bucket::v1::channel::6368::6570::1", account.as_str()] {
+        let provider = IrohDocsNode::memory().await?;
+        let requester = IrohDocsNode::memory().await?;
+        let replica = ReplicaId::new(replica);
+        let secret = NamespaceSecret::from_bytes(&[9; 32]);
+        register_private(&provider, &replica, &secret).await;
+        let doc = provider
+            .docs()
+            .import_namespace(Capability::Write(secret.clone()))
+            .await?;
+        doc.set_bytes(
+            provider.docs().author_default().await?,
+            b"indexes/timeline/0001/private".to_vec(),
+            b"private".to_vec(),
+        )
         .await?;
-    doc.set_bytes(
-        provider.docs().author_default().await?,
-        b"indexes/timeline/0001/private".to_vec(),
-        b"private".to_vec(),
-    )
-    .await?;
-    let query = DocReadQuery::Keys {
-        prefix: "indexes/timeline/".into(),
-        descending: true,
-        limit: 1,
-        author: None,
-    };
-    let response = requester
-        .query_remote_docs(provider.endpoint().addr(), &replica, &secret, query.clone())
-        .await?;
-    let DocReadResponse::Keys { entries, .. } = response else {
-        anyhow::bail!("expected private page")
-    };
-    assert_eq!(entries[0].key, "indexes/timeline/0001/private");
-    assert!(
-        requester
-            .query_remote_docs(
-                provider.endpoint().addr(),
-                &replica,
-                &NamespaceSecret::from_bytes(&[8; 32]),
-                query,
-            )
-            .await
-            .is_err()
-    );
-    requester.shutdown().await?;
-    provider.shutdown().await?;
+        let query = DocReadQuery::Keys {
+            prefix: "indexes/timeline/".into(),
+            descending: true,
+            limit: 1,
+            author: None,
+        };
+        let response = requester
+            .query_remote_docs(provider.endpoint().addr(), &replica, &secret, query.clone())
+            .await?;
+        let DocReadResponse::Keys { entries, .. } = response else {
+            anyhow::bail!("expected private page")
+        };
+        assert_eq!(entries[0].key, "indexes/timeline/0001/private");
+        assert!(
+            requester
+                .query_remote_docs(
+                    provider.endpoint().addr(),
+                    &replica,
+                    &NamespaceSecret::from_bytes(&[8; 32]),
+                    query,
+                )
+                .await
+                .is_err()
+        );
+        requester.shutdown().await?;
+        provider.shutdown().await?;
+    }
     Ok(())
 }
 

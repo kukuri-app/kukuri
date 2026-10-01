@@ -132,3 +132,42 @@ async fn a_replaced_runtime_restores_only_the_desired_subscriptions_whatever_the
     assert_eq!(subscribed, desired);
     host.shutdown().await;
 }
+
+// #1218 AC-2: 切替の後は、新しい account の同期の hint だけを購読し、前の account の同期の replica は開けない。
+#[tokio::test]
+async fn switching_accounts_moves_the_account_sync_scope() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().unwrap();
+    let host = test_host(dir.path()).await;
+    let hint = |runtime: &DesktopRuntime| {
+        let sync = runtime.author_keys.derive_account_sync();
+        kukuri_core::wire::hint_topic_id(sync.hint_topic())
+            .as_str()
+            .to_string()
+    };
+    let subscribed = |runtime: Arc<DesktopRuntime>| async move {
+        kukuri_transport::Transport::subscribed_topics(runtime.iroh_stack.transport.as_ref())
+            .await
+            .unwrap()
+    };
+    let first = host.runtime();
+    let first_hint = hint(&first);
+    let first_replica = first.author_keys.derive_account_sync().replica_id().clone();
+    assert!(subscribed(first).await.contains(&first_hint));
+
+    replace_runtime(&host, &new_account_db(dir.path()).await).await;
+    let second = host.runtime();
+    let topics = subscribed(second.clone()).await;
+    assert!(topics.contains(&hint(&second)));
+    assert!(!topics.contains(&first_hint));
+    assert!(
+        kukuri_docs_sync::DocsSync::query_replica(
+            second.iroh_stack.docs_sync.as_ref(),
+            &first_replica,
+            kukuri_docs_sync::DocQuery::All,
+        )
+        .await
+        .is_err()
+    );
+    host.shutdown().await;
+}

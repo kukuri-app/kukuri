@@ -349,6 +349,7 @@ async fn idle_maintenance_merges_node_metadata_and_retains_consent_boundaries() 
             bootstrap_hits: Arc::new(AtomicUsize::new(0)),
         });
         let app = Router::new()
+            .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
             .route("/v1/policies", get(mock_current_policies))
             .route("/v1/consents/status", get(mock_bootstrap_consent_status))
             .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
