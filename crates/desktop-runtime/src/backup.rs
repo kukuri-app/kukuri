@@ -24,9 +24,9 @@ use crate::identity::{
     IdentityStorageMode, delete_optional_secret_keyring_entry_with_storage, load_existing_keys,
     load_existing_keys_with_storage, load_optional_secret, load_optional_secret_with_storage,
     persist_keys, persist_keys_with_storage, persist_optional_secret,
-    persist_optional_secret_with_storage, write_private_file_atomically,
+    persist_optional_secret_with_storage,
 };
-use crate::storage::ClientStorage;
+use crate::storage::{ClientStorage, write_private_file_atomically};
 // backup・restore は native だけの同期の処理。native の保存先の future は I/O を待たずに終わるので block_on で呼ぶ。
 use crate::paths::DB_FILE_NAME;
 use crate::runtime::{

@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use kukuri_core::KukuriKeys;
 
-#[cfg(not(target_family = "wasm"))]
-pub(crate) use crate::storage::write_private_file_atomically;
 use crate::storage::{ClientStorage, FILE_SERVICE, KeyringUnavailable, path_key, platform_storage};
 
 const KEYRING_SERVICE: &str = "org.kukuri.desktop";

@@ -91,11 +91,24 @@ mod native {
 
     pub(crate) struct NativeStorage;
 
-    fn keyring_error(error: KeyringError) -> anyhow::Error {
+    // 既定の provider が無いことは `Entry::new` の失敗（`NoDefaultStore`）として返る。
+    fn entry(service: &str, account: &str) -> Result<Entry> {
+        Entry::new(service, account)
+            .map_err(entry_error)
+            .context("failed to initialize keyring entry")
+    }
+
+    fn entry_error(error: KeyringError) -> anyhow::Error {
         match error {
             KeyringError::NoDefaultStore => anyhow!(KeyringUnavailable),
             error => anyhow!(error),
         }
+    }
+
+    #[test]
+    fn missing_default_keyring_is_reported_as_unavailable() {
+        let error = entry_error(KeyringError::NoDefaultStore).context("wrapped");
+        assert!(error.chain().any(|cause| cause.is::<KeyringUnavailable>()));
     }
 
     #[async_trait]
@@ -108,14 +121,10 @@ mod native {
                     Err(error) => Err(error).with_context(|| format!("failed to read `{account}`")),
                 };
             }
-            let entry =
-                Entry::new(service, account).context("failed to initialize keyring entry")?;
-            match entry.get_password() {
+            match entry(service, account)?.get_password() {
                 Ok(secret) => Ok(Some(secret.into_bytes())),
                 Err(KeyringError::NoEntry) => Ok(None),
-                Err(error) => {
-                    Err(keyring_error(error)).context("failed to read secret from keyring")
-                }
+                Err(error) => Err(anyhow!(error)).context("failed to read secret from keyring"),
             }
         }
 
@@ -132,11 +141,8 @@ mod native {
                 return write_private_file_atomically(path, value);
             }
             let secret = std::str::from_utf8(value).context("a keyring secret is not UTF-8")?;
-            let entry =
-                Entry::new(service, account).context("failed to initialize keyring entry")?;
-            entry
+            entry(service, account)?
                 .set_password(secret)
-                .map_err(keyring_error)
                 .context("failed to persist secret into keyring")
         }
 
@@ -150,13 +156,9 @@ mod native {
                     }
                 };
             }
-            let entry =
-                Entry::new(service, account).context("failed to initialize keyring entry")?;
-            match entry.delete_credential() {
+            match entry(service, account)?.delete_credential() {
                 Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-                Err(error) => {
-                    Err(keyring_error(error)).context("failed to delete secret from keyring")
-                }
+                Err(error) => Err(anyhow!(error)).context("failed to delete secret from keyring"),
             }
         }
     }
