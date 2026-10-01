@@ -1,7 +1,6 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -186,8 +185,8 @@ pub fn app_consent_satisfied(store: &AppConsentStore) -> bool {
 }
 
 pub fn current_unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
 }

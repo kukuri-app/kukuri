@@ -258,8 +258,8 @@ impl AppService {
         let session_key = session_id.to_string();
         let task_key_for_task = task_key.clone();
         let author = Pubkey::from(self.current_author_pubkey());
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        let handle = n0_future::task::spawn(async move {
+            let mut interval = n0_future::time::interval(std::time::Duration::from_secs(10));
             loop {
                 interval.tick().await;
                 if matches!(

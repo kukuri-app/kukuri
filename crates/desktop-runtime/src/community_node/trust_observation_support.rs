@@ -191,7 +191,7 @@ enum SubmitOutcome {
 }
 
 impl DesktopRuntime {
-    fn sign_observation(
+    async fn sign_observation(
         &self,
         state: &mut TrustObservationState,
         target: &Pubkey,
@@ -225,7 +225,7 @@ impl DesktopRuntime {
                 state.last_signed_at.insert(key, envelope.created_at);
                 return Ok(envelope);
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            n0_future::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         Err(anyhow!("failed to sign a newer trust observation"))
     }
@@ -249,7 +249,9 @@ impl DesktopRuntime {
             return Ok(());
         }
         let target = Pubkey::from(normalize_pubkey(target_pubkey)?);
-        let envelope = self.sign_observation(&mut state, &target, kind, active)?;
+        let envelope = self
+            .sign_observation(&mut state, &target, kind, active)
+            .await?;
         let key = pending_key(target.as_str(), kind);
         for node in state.nodes.values_mut() {
             if node.enabled && !node.revocation_pending {
@@ -650,7 +652,9 @@ impl DesktopRuntime {
             if request.include_existing {
                 for key in &current {
                     let (target, kind) = parse_pending_key(key)?;
-                    let envelope = self.sign_observation(&mut state, &target, kind, true)?;
+                    let envelope = self
+                        .sign_observation(&mut state, &target, kind, true)
+                        .await?;
                     pending.insert(key.clone(), envelope);
                 }
             }

@@ -1,3 +1,9 @@
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio・std の時刻と task を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 

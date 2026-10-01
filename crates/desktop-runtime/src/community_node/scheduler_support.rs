@@ -86,9 +86,9 @@ impl DesktopRuntime {
         // Weak 参照で runtime の所有権を持たない: 最後の Arc が drop されたら tick 側から
         // 自然終了する(shutdown 忘れでもリークしない)。upgrade した Arc は tick 実行中のみ保持。
         let weak: Weak<Self> = Arc::downgrade(self);
-        *task = Some(tokio::spawn(async move {
-            let mut timer = tokio::time::interval(tick);
-            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        *task = Some(n0_future::task::spawn(async move {
+            let mut timer = n0_future::time::interval(tick);
+            timer.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
             let mut tasks = MaintenanceTasks::default();
             info!(target: "kukuri_connectivity", "community-node maintenance scheduler started");
             loop {

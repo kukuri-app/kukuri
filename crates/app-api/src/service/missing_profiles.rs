@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use tokio::time::{Duration, Instant};
+use n0_future::time::{Duration, Instant};
 
 use super::author_state_support::hydrate_author_profile;
 use super::subscription_registry::AbortOnDropTask;
@@ -67,7 +67,7 @@ impl AppService {
                 tokio::sync::mpsc::channel::<ProfileRequest>(MISSING_PROFILE_QUEUE);
             let services = self.services.clone();
             let local = self.current_author_pubkey();
-            let task = AbortOnDropTask::new(tokio::spawn(async move {
+            let task = AbortOnDropTask::new(n0_future::task::spawn(async move {
                 while let Some((author, topic)) = receiver.recv().await {
                     if let Err(error) = hydrate_author_profile(
                         &services,

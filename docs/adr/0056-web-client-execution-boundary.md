@@ -61,6 +61,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - 時刻と task は、共用 crate で `n0_future::{time, task}` に一律で置き換える（`tokio::time`・`tokio::spawn`・`std::time::Instant::now`・`SystemTime::now` の使用箇所）。
   n0-future は native では tokio、wasm では web-time と wasm-bindgen-futures を使う（lockfile に既にある）。呼出箇所ごとの `cfg` 分岐は作らない。`tokio::sync` と `tokio::select!` はそのまま使う。
 - workspace の tokio の共通 feature は `macros`・`sync`・`rt`・`time` にし、`rt-multi-thread`・`fs`・`net` は、共用 crate では native の target 節で、native だけの crate では通常の依存で有効にする。`time` は wasm32 でも compile でき、native だけの crate が使うので共通に残す（W1 AC-2）。
+  `n0_future::time` に無い `timeout_at` は、期限までの残りを `timeout` に渡す helper で置き換える（W1 AC-4a。app-api の `timeout_at`）。
   そのため共用 crate が tokio・std の時刻と task を直接使っても wasm32 の build は通り、ブラウザで実行時に止まる。`clippy.toml` の `disallowed-methods` を共用 crate の lib.rs で wasm32 の時だけ warn にし、CI の wasm32 の clippy で検出する（native では `n0_future`・`web_time` がそれらの再公開なので検出しない）。
 - iroh-docs・iroh-blobs は workspace で `default-features = false` とし、native だけ `fs-store` 等の必要な feature を有効にする。iroh は workspace で `unstable-custom-transports`（ADR 0057）を有効にし、既定の feature のまま wasm32 で build できる（W1 AC-2）。
 - n0-mainline・iroh-mainline-address-lookup（DHT）は native だけで使う。ブラウザには UDP が無いので DHT は成り立たない。Web の接続先の発見は relay・Community Node の rendezvous・peer ticket に限る。未使用の pkarr 依存は W1 AC-2 で消した。
@@ -119,7 +120,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 
 1. W1 AC-1（本 ADR）→ W9 AC-1（transport の判断）→ W9 AC-2（transport crate と、ブラウザでの試験環境）
 2. W1 AC-2（共用 crate の wasm build・依存の分離・Endpoint の組立てへの transport の注入口・ブラウザ↔native の有界な読み出し）→ W10 AC-1
-   W1 AC-2 の wasm build は Endpoint と有界な reader までの crate（core・store・transport・iroh-node・docs-sync・blob-service・webrtc-transport）。app-api・metaverse-host・desktop-runtime は W1 AC-4 で加える。
+   W1 AC-2 の wasm build は Endpoint と有界な reader までの crate（core・store・transport・iroh-node・docs-sync・blob-service・webrtc-transport）。app-api・metaverse-host は W1 AC-4a、desktop-runtime は W1 AC-4d で加える（2026-10-01 に W1 AC-4 を 4a〜4d に分割）。
 3. W1 AC-3（host の世代・event の隔離・gate の移設・交渉の世代。native で完結）→ W1 AC-4（desktop-runtime・app-api の wasm 化と保存 trait）→ W1 AC-5（command の dispatch 表・web-runtime・capability）（2026-10-01 のユーザー判断で旧 AC-4 を AC-4・AC-5 に分割）
 
 W2・W3 の AC-1（保存 trait の操作の固定。ADR 0058）は W1 AC-2 より前に行う。W4 の AC-1 は本 ADR の後に並行して進める。W5・W6 の規則は native で先に実装できる。

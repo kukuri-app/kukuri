@@ -223,9 +223,9 @@ pub(crate) fn participation_keys(topic: &str, channel: Option<&ChannelId>) -> Ve
 /// task を止め、hint の購読を抜ける。
 pub(crate) async fn stop_scope_task(services: &ServiceHandles, task: ScopeTask) {
     task.handle.abort();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task.handle.wait()).await;
+    let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), task.handle.wait()).await;
     if let Some(hint_topic) = &task.hint_topic {
-        match tokio::time::timeout(
+        match n0_future::time::timeout(
             std::time::Duration::from_secs(2),
             services.hint_transport.unsubscribe_hints(hint_topic),
         )

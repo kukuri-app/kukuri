@@ -15,7 +15,7 @@ pub(crate) mod create;
 pub(crate) mod display;
 pub(crate) mod lifecycle;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use kukuri_core::KukuriKeys;

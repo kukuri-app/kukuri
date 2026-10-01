@@ -182,7 +182,7 @@ impl AppService {
         {
             readers.push((reader, DocFetchPolicy::LocalThenRemote));
         }
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         for (reader, policy) in readers {
             let read = async {
                 if load_verified_post(
@@ -225,7 +225,7 @@ impl AppService {
                     projection.topic_id.as_str(),
                     channel,
                     generation,
-                    tokio::time::timeout_at(deadline, read),
+                    crate::timeout_at(deadline, read),
                 )
                 .await;
             match result {
@@ -337,17 +337,17 @@ impl AppService {
             let hash = hash.clone();
             let topic_id = row.topic_id.clone();
             let channel_id = row.channel_id.clone();
-            let task = tokio::spawn(async move {
+            let task = n0_future::task::spawn(async move {
                 let _permit = permit;
                 // 背景の取得なので、node の取得の予算で待つ。応答しない peer の接続待ちで打ち切ると、次の peer を試せない(#1390)。
                 let deadline =
-                    tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
+                    n0_future::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
                 let Some(Ok(Ok(fetch))) = services
                     .until_content_invalid(
                         &topic_id,
                         &channel_id,
                         scope_generation,
-                        tokio::time::timeout_at(
+                        crate::timeout_at(
                             deadline,
                             services.blob_service.prepare_retry_fetch(&hash),
                         ),
@@ -367,7 +367,7 @@ impl AppService {
                         &topic_id,
                         &channel_id,
                         scope_generation,
-                        tokio::time::timeout_at(deadline, fetch),
+                        crate::timeout_at(deadline, fetch),
                     )
                     .await
                 else {
@@ -439,7 +439,7 @@ impl AppService {
         // 多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く
         // (台帳があるので、次の表示が同じ本文を重ねて取りに行くことはない)。
         let (indexes, tasks): (Vec<_>, Vec<_>) = started.into_iter().unzip();
-        let _ = tokio::time::timeout(
+        let _ = n0_future::time::timeout(
             std::time::Duration::from_millis(hydration_limits::MISSING_BODY_DISPLAY_GRACE_MS),
             futures_util::future::join_all(tasks),
         )
@@ -518,7 +518,7 @@ impl AppService {
         else {
             return Ok(false);
         };
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, epoch) in self
             .remote_page_replicas(topic_id, scope, None, false, false)
             .await?
@@ -536,7 +536,7 @@ impl AppService {
             for reader in readers {
                 let mut services = self.services.clone();
                 services.docs_sync = reader;
-                let read = tokio::time::timeout_at(
+                let read = crate::timeout_at(
                     deadline,
                     hydrate_object_in_topic(
                         &services,
@@ -588,7 +588,7 @@ impl AppService {
         }
         let services = self.services.clone();
         let object_id = object_id.clone();
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             let _permit = permit;
             let checked = async {
                 let projection_store = services.projection_store.as_ref();

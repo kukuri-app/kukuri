@@ -377,7 +377,7 @@ impl AppService {
             .remove(key.as_str());
         if let Some(handle) = handle {
             handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+            let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
         self.release_scope_holder(&live_holder(&key)).await;
     }
@@ -612,10 +612,10 @@ impl AppService {
         let readers = self
             .session_target_readers(topic_id, channel, source, session_id, "live")
             .await?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut settled = None;
         for (replica, docs, policy) in readers {
-            let read = tokio::time::timeout_at(
+            let read = crate::timeout_at(
                 deadline,
                 load_verified_live_session(
                     docs.as_ref(),
@@ -659,7 +659,7 @@ impl AppService {
                 }
                 return Ok(Some(verified));
             }
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 break;
             }
         }
@@ -694,10 +694,10 @@ impl AppService {
         let readers = self
             .session_target_readers(topic_id, channel, source, room_id, "game")
             .await?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut settled = None;
         for (replica, docs, policy) in readers {
-            let read = tokio::time::timeout_at(
+            let read = crate::timeout_at(
                 deadline,
                 load_verified_game_room(
                     docs.as_ref(),
@@ -750,7 +750,7 @@ impl AppService {
                 }
                 return Ok(Some(verified));
             }
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 break;
             }
         }

@@ -84,9 +84,9 @@ pub(crate) use kukuri_transport::{
     ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerPage, PeerSnapshot,
     ReceiveOfferLease, SeedPeer, StatusKey, TopicPeerSnapshot, Transport,
 };
+pub(crate) use n0_future::task::JoinHandle;
 pub(crate) use serde::{Serialize, de::DeserializeOwned};
 pub(crate) use tokio::sync::Mutex;
-pub(crate) use tokio::task::JoinHandle;
 pub(crate) use tracing::{info, warn};
 
 /// 自分の既存の repost を探すときに見る行数の上限(#1239)。引用つきの repost は同じ元に複数ありうる。

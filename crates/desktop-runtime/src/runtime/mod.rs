@@ -131,19 +131,19 @@ pub struct DesktopRuntime {
     pub(crate) community_node_session_guard: crate::community_node::SessionLocks,
     /// node ごとの relay と seed、適用した和(#1221 R2-B)。適用はこの lock の中で直列にする。
     pub(crate) community_node_connectivity: Mutex<crate::community_node::AppliedConnectivity>,
-    pub(crate) community_node_scheduler_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    pub(crate) sync_status_observer_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) community_node_scheduler_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
+    pub(crate) sync_status_observer_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     /// 計測用: 差分を作った回数(#1221 R2-D)。
     #[cfg(test)]
     pub(crate) sync_status_delta_reads: std::sync::atomic::AtomicUsize,
     /// #1221 R5-G・R5-I: 旧 `iroh-data` の保護移行と退役の背景 task。backup 前の drain と直列にする。
-    pub(crate) legacy_store_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) legacy_store_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     pub(crate) protected_migration_guard: Mutex<()>,
     pub(crate) private_migration_dirty: Arc<AtomicBool>,
     /// #1221 R5-I: 読むだけに開いた旧 iroh store。退役させたら(または初めから無ければ)`None`。
     pub(crate) legacy_store: Mutex<Option<Arc<kukuri_iroh_node::LegacyStore>>>,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
-    notification_event_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
+    notification_event_task: StdMutex<Option<n0_future::task::JoinHandle<()>>>,
     /// #1055: Community Node の content advisory を成人向けゲートへ合成するかどうか。
     /// ADR 0046 §6.4 の利用規約改訂と再同意(C4 = #1056)で既定 ON にした。
     pub(crate) content_advisory_synthesis_enabled: Arc<AtomicBool>,
@@ -475,7 +475,7 @@ impl DesktopRuntime {
             let notify = app_service.notification_inserted_notify();
             let mut label_evictions = store.subscribe_adult_label_evictions();
             let sender = event_sender.clone();
-            tokio::spawn(async move {
+            n0_future::task::spawn(async move {
                 loop {
                     tokio::select! {
                         _ = notify.notified() => {
@@ -565,7 +565,7 @@ impl DesktopRuntime {
         let _ = self.event_sender.send(event);
     }
 
-    pub(crate) fn take_notification_event_task(&self) -> Option<tokio::task::JoinHandle<()>> {
+    pub(crate) fn take_notification_event_task(&self) -> Option<n0_future::task::JoinHandle<()>> {
         self.notification_event_task
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

@@ -963,7 +963,7 @@ impl AppService {
             .await
             .is_ok_and(|discovery| discovery.connected_peer_count > 0);
         if has_peers {
-            let publish_result = tokio::time::timeout(
+            let publish_result = n0_future::time::timeout(
                 std::time::Duration::from_secs(2),
                 self.hint_transport().publish_hint(
                     &channel_hint_topic_for(topic_id, Some(&state.channel_id)),

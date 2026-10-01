@@ -100,7 +100,7 @@ impl DesktopRuntime {
         }
         let changes = self.iroh_stack.status_changes.clone();
         let weak: Weak<Self> = Arc::downgrade(self);
-        *task = Some(tokio::spawn(async move {
+        *task = Some(n0_future::task::spawn(async move {
             let mut emitted = Emitted::default();
             loop {
                 let keys = changes.changed().await;
@@ -109,7 +109,7 @@ impl DesktopRuntime {
                 };
                 runtime.emit_sync_status_delta(keys, &mut emitted).await;
                 drop(runtime);
-                tokio::time::sleep(SYNC_STATUS_COALESCE).await;
+                n0_future::time::sleep(SYNC_STATUS_COALESCE).await;
             }
         }));
     }

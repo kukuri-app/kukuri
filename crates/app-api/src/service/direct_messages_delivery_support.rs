@@ -331,7 +331,7 @@ impl AppService {
             now,
             now + 60_000,
         )?;
-        tokio::time::timeout(
+        n0_future::time::timeout(
             ACCOUNT_DM_OFFER_TIMEOUT,
             services.hint_transport.publish_receive_offer(
                 &Pubkey::from(peer_pubkey),
@@ -458,7 +458,7 @@ impl AppService {
             now,
             now + 60_000,
         )?;
-        let sent = tokio::time::timeout(
+        let sent = n0_future::time::timeout(
             ACCOUNT_DM_OFFER_TIMEOUT,
             services.hint_transport.publish_receive_offer(
                 &Pubkey::from(row.peer_pubkey.as_str()),

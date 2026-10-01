@@ -189,6 +189,7 @@ jobs:
           cargo clippy --target wasm32-unknown-unknown
           -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node
           -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport
+          -p kukuri-app-api -p kukuri-metaverse-host
           -- -D warnings
 
       - name: Browser transport tests

@@ -27,13 +27,13 @@ impl AppService {
         let flag = self.adult_content_display_enabled.clone();
         let blob_service = self.services.blob_service.clone();
         let save_access = self.services.content_save_access.clone();
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             // 設定を見てから保存を終えるまでの表示取得(保存用の lock の中)を待ち、その保存も消す。
             drop(save_access.lock().await);
             while !flag.load(std::sync::atomic::Ordering::SeqCst) {
                 match blob_service.forget_adult_media_step().await {
                     Ok(0) => break,
-                    Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                    Ok(_) => n0_future::time::sleep(std::time::Duration::from_millis(100)).await,
                     Err(error) => {
                         tracing::warn!(%error, "failed to forget cached adult media");
                         break;
@@ -126,6 +126,8 @@ impl AppService {
         }))
     }
 
+    /// 表示用の file への取得は native だけ（Web は file を使わない。ADR 0056 §5）。
+    #[cfg(not(target_family = "wasm"))]
     pub async fn blob_media_file_for_post(
         &self,
         hash: &str,
