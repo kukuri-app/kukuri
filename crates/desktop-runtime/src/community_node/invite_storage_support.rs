@@ -1,14 +1,14 @@
 use super::*;
 
-pub(crate) fn load_community_node_invite_code(
+pub(crate) async fn load_community_node_invite_code(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
 ) -> Result<Option<String>> {
-    load_optional_secret(db_path, mode, COMMUNITY_NODE_INVITE_CODE_PURPOSE, base_url)
+    load_optional_secret(db_path, mode, COMMUNITY_NODE_INVITE_CODE_PURPOSE, base_url).await
 }
 
-pub(crate) fn persist_community_node_invite_code(
+pub(crate) async fn persist_community_node_invite_code(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
@@ -21,9 +21,10 @@ pub(crate) fn persist_community_node_invite_code(
         base_url,
         invite_code,
     )
+    .await
 }
 
-pub(crate) fn delete_community_node_invite_code(
+pub(crate) async fn delete_community_node_invite_code(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
@@ -34,4 +35,5 @@ pub(crate) fn delete_community_node_invite_code(
         COMMUNITY_NODE_INVITE_CODE_PURPOSE,
         base_url,
     )
+    .await
 }

@@ -172,13 +172,14 @@ impl DesktopRuntime {
         let base_url = self
             .require_dome_hosting_community_node_consent(raw_base_url)
             .await?;
-        let token = match load_community_node_token(&self.db_path, self.identity_mode, &base_url)? {
-            Some(token) => token,
-            None => {
-                self.request_community_node_authentication_token(&base_url)
-                    .await?
-            }
-        };
+        let token =
+            match load_community_node_token(&self.db_path, self.identity_mode, &base_url).await? {
+                Some(token) => token,
+                None => {
+                    self.request_community_node_authentication_token(&base_url)
+                        .await?
+                }
+            };
         match send_get(&base_url, path, &token.access_token).await {
             Err(DomeHostingHttpError::Unauthorized) => {
                 let refreshed = self
@@ -206,13 +207,14 @@ impl DesktopRuntime {
         let base_url = self
             .require_dome_hosting_community_node_consent(raw_base_url)
             .await?;
-        let token = match load_community_node_token(&self.db_path, self.identity_mode, &base_url)? {
-            Some(token) => token,
-            None => {
-                self.request_community_node_authentication_token(&base_url)
-                    .await?
-            }
-        };
+        let token =
+            match load_community_node_token(&self.db_path, self.identity_mode, &base_url).await? {
+                Some(token) => token,
+                None => {
+                    self.request_community_node_authentication_token(&base_url)
+                        .await?
+                }
+            };
         match send_json(&base_url, path, request, &token.access_token).await {
             Err(DomeHostingHttpError::Unauthorized) => {
                 let refreshed = self

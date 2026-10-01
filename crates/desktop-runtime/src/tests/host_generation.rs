@@ -7,7 +7,7 @@ use crate::accounts::{add_account, ensure_accounts_initialized};
 const MODE: IdentityStorageMode = IdentityStorageMode::FileOnly;
 
 async fn test_host(dir: &Path) -> Arc<ClientHost> {
-    let db = ensure_accounts_initialized(dir, MODE).unwrap();
+    let db = ensure_accounts_initialized(dir, MODE).await.unwrap();
     let runtime =
         DesktopRuntime::new_with_config_and_identity(&db, TransportNetworkConfig::loopback(), MODE)
             .await
@@ -17,8 +17,10 @@ async fn test_host(dir: &Path) -> Arc<ClientHost> {
         .unwrap()
 }
 
-fn new_account_db(dir: &Path) -> std::path::PathBuf {
-    let account = add_account(dir, MODE, &KukuriKeys::generate(), None, false).unwrap();
+async fn new_account_db(dir: &Path) -> std::path::PathBuf {
+    let account = add_account(dir, MODE, &KukuriKeys::generate(), None, false)
+        .await
+        .unwrap();
     account_db_path(dir, &account.id)
 }
 
@@ -52,7 +54,7 @@ async fn replacing_and_stopping_the_runtime_advance_the_generation_and_drop_stal
 
     // 差し替えの前に host まで届き、まだ受け取っていない event は、差し替えの後に届かない。
     emit_and_forward(&host, RuntimeEvent::NotificationStatusChanged).await;
-    replace_runtime(&host, &new_account_db(dir.path())).await;
+    replace_runtime(&host, &new_account_db(dir.path()).await).await;
     assert_eq!(host.generation(), 2);
     let current = RuntimeEvent::AdultMediaLabelEvicted {
         hash: Some("current".into()),
@@ -118,7 +120,7 @@ async fn a_replaced_runtime_restores_only_the_desired_subscriptions_whatever_the
     drop(runtime);
 
     // 別の account へ切り替えてから、履歴のある account へ戻す。
-    replace_runtime(&host, &new_account_db(dir.path())).await;
+    replace_runtime(&host, &new_account_db(dir.path()).await).await;
     replace_runtime(&host, &history).await;
     let mut subscribed = host
         .runtime()

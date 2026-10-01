@@ -49,6 +49,7 @@ async fn community_node_status_refresh_updates_bootstrap_seed_peers() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -60,7 +61,7 @@ async fn community_node_status_refresh_updates_bootstrap_seed_peers() {
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // WP-Q2: registration refresh はスケジューラ tick が駆動し、getter は読み取り専用。
     runtime.run_community_node_session_maintenance_once().await;
@@ -141,6 +142,7 @@ async fn community_node_session_maintenance_updates_bootstrap_seed_peers() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -152,7 +154,7 @@ async fn community_node_session_maintenance_updates_bootstrap_seed_peers() {
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
 
@@ -228,6 +230,7 @@ async fn community_node_metadata_refresh_heartbeats_before_bootstrap_sync_even_w
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -239,7 +242,7 @@ async fn community_node_metadata_refresh_heartbeats_before_bootstrap_sync_even_w
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
     assert_eq!(state.heartbeat_hits.load(Ordering::SeqCst), 1);
@@ -345,6 +348,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_before_nex
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -356,7 +360,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_before_nex
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
     assert_eq!(state.heartbeat_hits.load(Ordering::SeqCst), 1);
@@ -455,6 +459,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_only_once_
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -466,7 +471,7 @@ async fn community_node_ready_transition_refreshes_bootstrap_metadata_only_once_
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
     assert_eq!(state.heartbeat_hits.load(Ordering::SeqCst), 1);
@@ -532,6 +537,7 @@ async fn community_node_status_retries_bootstrap_metadata_when_seed_peers_are_em
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -543,7 +549,7 @@ async fn community_node_status_retries_bootstrap_metadata_when_seed_peers_are_em
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // WP-Q2: metadata refresh はスケジューラ tick が駆動し、getter は読み取り専用。
     runtime.run_community_node_session_maintenance_once().await;
@@ -650,6 +656,7 @@ async fn refresh_community_node_metadata_refreshes_registration_before_bootstrap
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -661,7 +668,7 @@ async fn refresh_community_node_metadata_refreshes_registration_before_bootstrap
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let status = runtime
         .refresh_community_node_metadata(CommunityNodeTargetRequest {
@@ -749,6 +756,7 @@ async fn refresh_community_node_metadata_requeues_heartbeat_when_runtime_connect
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -760,7 +768,7 @@ async fn refresh_community_node_metadata_requeues_heartbeat_when_runtime_connect
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let initial_seed_peer = runtime
         .local_community_node_seed_peer("initial")
@@ -857,6 +865,7 @@ async fn manual_refresh_stops_before_protected_requests_on_snapshot_update() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -873,7 +882,8 @@ async fn manual_refresh_stops_before_protected_requests_on_snapshot_update() {
         base_url.as_str(),
         1,
         Some("snapshot-1"),
-    );
+    )
+    .await;
 
     let status = runtime
         .refresh_community_node_metadata(crate::CommunityNodeTargetRequest {

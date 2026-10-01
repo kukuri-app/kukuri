@@ -295,11 +295,11 @@ fn spawn_runtime_event_bridge(app_handle: &tauri::AppHandle, host: &Arc<ClientHo
     });
 }
 
-pub(crate) fn reset_app_consent_after_device_restore(
+pub(crate) async fn reset_app_consent_after_device_restore(
     app_handle: &tauri::AppHandle,
 ) -> Result<DesktopStartupStatus, String> {
     let db_path = resolve_db_path(app_handle)?;
-    reset_app_consent_at_path(&db_path)
+    reset_app_consent_at_path(&db_path).await
 }
 
 #[cfg(test)]
@@ -517,8 +517,8 @@ mod tests {
 
     // #857: 旧形式(bundle 単一フラグ)の記録は読み替えず、全文書未同意として
     // 再同意を求める。
-    #[test]
-    fn legacy_bundle_consent_file_requires_reconsent() {
+    #[tokio::test]
+    async fn legacy_bundle_consent_file_requires_reconsent() {
         let dir = std::env::temp_dir().join(format!(
             "kukuri-consent-legacy-test-{}",
             current_unix_seconds()
@@ -531,7 +531,7 @@ mod tests {
         )
         .expect("write legacy consent file");
 
-        let store = load_app_consent_store(&db_path);
+        let store = load_app_consent_store(&db_path).await;
         assert!(store.records.is_empty());
         assert!(!app_consent_satisfied(&store));
 
@@ -709,14 +709,14 @@ mod tests {
         assert!(!image_sources.contains(&"https:"));
     }
 
-    #[test]
-    fn app_consent_round_trips_through_disk() {
+    #[tokio::test]
+    async fn app_consent_round_trips_through_disk() {
         let dir =
             std::env::temp_dir().join(format!("kukuri-consent-test-{}", current_unix_seconds()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let db_path = dir.join("kukuri.db");
 
-        assert!(load_app_consent_store(&db_path).records.is_empty());
+        assert!(load_app_consent_store(&db_path).await.records.is_empty());
 
         let store = AppConsentStore {
             records: vec![
@@ -725,9 +725,11 @@ mod tests {
             ],
             age_attestations: vec![attestation(AGE_ATTESTATION_VERSION, 1_700_000_000)],
         };
-        save_app_consent_store(&db_path, &store).expect("save consent");
+        save_app_consent_store(&db_path, &store)
+            .await
+            .expect("save consent");
 
-        let loaded = load_app_consent_store(&db_path);
+        let loaded = load_app_consent_store(&db_path).await;
         assert_eq!(loaded.records.len(), 2);
         assert_eq!(loaded.records[0].slug, "terms");
         assert_eq!(loaded.records[0].language, "ja");

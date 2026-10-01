@@ -37,12 +37,13 @@ impl CommunityNodeLocalConsentState {
     }
 }
 
-pub(crate) fn load_community_node_local_consents(
+pub(crate) async fn load_community_node_local_consents(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
 ) -> Result<CommunityNodeLocalConsentState> {
-    let Some(raw) = load_optional_secret(db_path, mode, COMMUNITY_NODE_CONSENT_PURPOSE, base_url)?
+    let Some(raw) =
+        load_optional_secret(db_path, mode, COMMUNITY_NODE_CONSENT_PURPOSE, base_url).await?
     else {
         return Ok(CommunityNodeLocalConsentState::default());
     };
@@ -50,7 +51,7 @@ pub(crate) fn load_community_node_local_consents(
         .context("failed to decode persisted community-node consents")
 }
 
-pub(crate) fn persist_community_node_local_consents(
+pub(crate) async fn persist_community_node_local_consents(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
@@ -65,6 +66,7 @@ pub(crate) fn persist_community_node_local_consents(
         base_url,
         encoded.as_str(),
     )
+    .await
 }
 
 /// 公開カタログ(`GET /v1/policies`)の required 文書すべてを、現行版・snapshotで

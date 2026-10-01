@@ -45,7 +45,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         if !local_consent.has_active_consent() {
             return Ok(CommunityNodeConsentPreflight::Required {
                 base_url,

@@ -8,7 +8,6 @@
 //! - 著者ごとの「常に表示する」例外は端末内（`<db>.trust-display.json`）に保存する。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -101,28 +100,23 @@ fn state_path(db_path: &Path) -> PathBuf {
     db_path.with_extension(TRUST_DISPLAY_STATE_FILE_EXTENSION)
 }
 
-fn load_state(db_path: &Path) -> Result<TrustDisplayState> {
+async fn load_state(db_path: &Path) -> Result<TrustDisplayState> {
     let path = state_path(db_path);
-    if !path.exists() {
+    let Some(raw) = crate::storage::read_file(&path)
+        .await
+        .with_context(|| format!("failed to read trust display state `{}`", path.display()))?
+    else {
         return Ok(TrustDisplayState::default());
-    }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read trust display state `{}`", path.display()))?;
-    serde_json::from_str(&raw)
+    };
+    serde_json::from_slice(&raw)
         .with_context(|| format!("failed to parse trust display state `{}`", path.display()))
 }
 
-fn save_state(db_path: &Path, state: &TrustDisplayState) -> Result<()> {
+async fn save_state(db_path: &Path, state: &TrustDisplayState) -> Result<()> {
     let path = state_path(db_path);
     let json = serde_json::to_vec_pretty(state).context("failed to encode trust display state")?;
-    let temporary = path.with_extension(format!("{TRUST_DISPLAY_STATE_FILE_EXTENSION}.tmp"));
-    fs::write(&temporary, json).with_context(|| {
-        format!(
-            "failed to write trust display state `{}`",
-            temporary.display()
-        )
-    })?;
-    fs::rename(&temporary, &path)
+    crate::storage::write_file(&path, &json)
+        .await
         .with_context(|| format!("failed to replace trust display state `{}`", path.display()))
 }
 
@@ -156,7 +150,7 @@ impl DesktopRuntime {
         }
         targets.sort();
         targets.dedup();
-        let always_visible = load_state(&self.db_path)?.always_visible;
+        let always_visible = load_state(&self.db_path).await?.always_visible;
         if targets.is_empty() {
             return Ok(AuthorTrustGateResult { gates: Vec::new() });
         }
@@ -318,13 +312,13 @@ impl DesktopRuntime {
         let author_pubkey = normalize_pubkey(request.author_pubkey.as_str())?;
         {
             let _guard = self.trust_display_guard.lock().await;
-            let mut state = load_state(&self.db_path)?;
+            let mut state = load_state(&self.db_path).await?;
             if request.always_visible {
                 state.always_visible.insert(author_pubkey.clone());
             } else {
                 state.always_visible.remove(author_pubkey.as_str());
             }
-            save_state(&self.db_path, &state)?;
+            save_state(&self.db_path, &state).await?;
         }
         let mut result = self
             .evaluate_author_trust_gates(AuthorTrustGateRequest {
@@ -340,7 +334,8 @@ impl DesktopRuntime {
     /// 「常に表示する」例外の一覧（管理導線用）。
     pub async fn list_author_trust_display_exceptions(&self) -> Result<Vec<String>> {
         let _guard = self.trust_display_guard.lock().await;
-        Ok(load_state(&self.db_path)?
+        Ok(load_state(&self.db_path)
+            .await?
             .always_visible
             .into_iter()
             .collect())

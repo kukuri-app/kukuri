@@ -21,8 +21,9 @@ impl ClientHost {
             &self.app_data_dir,
             crate::identity::IdentityStorageMode::from_env(),
             &request,
-        )?;
-        if list_accounts(&self.app_data_dir)?.active_account_id == pending.next.id {
+        )
+        .await?;
+        if list_accounts(&self.app_data_dir).await?.active_account_id == pending.next.id {
             return Ok(pending.next);
         }
         let next =
@@ -33,7 +34,7 @@ impl ClientHost {
             .replace_runtime_locked(next)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let commit = commit_account_creation(&self.app_data_dir, &pending);
+        let commit = commit_account_creation(&self.app_data_dir, &pending).await;
         self.finish_account_change(previous, &pending.previous, pending.next, false, commit)
             .await
     }
@@ -45,17 +46,17 @@ impl ClientHost {
         if self.shutdown_started.load(Ordering::Acquire) {
             anyhow::bail!("client host is shutting down");
         }
-        lifecycle::profile_setup_required(&self.app_data_dir, &request.account_id)?;
+        lifecycle::profile_setup_required(&self.app_data_dir, &request.account_id).await?;
         let request_hash = blake3::hash(&serde_json::to_vec(&request.profile)?)
             .to_hex()
             .to_string();
         let journal = account_db_path(&self.app_data_dir, &request.account_id)
             .with_extension("initial-profile.json");
-        if journal.exists() {
-            let pending: InitialProfileSave = serde_json::from_slice(&std::fs::read(&journal)?)?;
+        if let Some(bytes) = crate::storage::read_file(&journal).await? {
+            let pending: InitialProfileSave = serde_json::from_slice(&bytes)?;
             let recovered = self.runtime().commit_my_profile(pending.envelope).await?;
             if pending.request_hash == request_hash {
-                lifecycle::complete_profile_setup(&self.app_data_dir, &request.account_id)?;
+                lifecycle::complete_profile_setup(&self.app_data_dir, &request.account_id).await?;
                 return Ok(recovered);
             }
             // A user may edit after an error. Recover the old operation first,
@@ -66,9 +67,9 @@ impl ClientHost {
             request_hash,
             envelope: envelope.clone(),
         };
-        crate::identity::write_private_file_atomically(&journal, &serde_json::to_vec(&pending)?)?;
+        crate::storage::write_file(&journal, &serde_json::to_vec(&pending)?).await?;
         let profile = self.runtime().commit_my_profile(envelope).await?;
-        lifecycle::complete_profile_setup(&self.app_data_dir, &request.account_id)?;
+        lifecycle::complete_profile_setup(&self.app_data_dir, &request.account_id).await?;
         Ok(profile)
     }
 
@@ -77,19 +78,19 @@ impl ClientHost {
         if self.is_stopped() {
             anyhow::bail!("client host is shut down");
         }
-        if !lifecycle::profile_setup_required(&self.app_data_dir, account_id)? {
+        if !lifecycle::profile_setup_required(&self.app_data_dir, account_id).await? {
             return Ok(false);
         }
         let journal =
             account_db_path(&self.app_data_dir, account_id).with_extension("initial-profile.json");
-        if journal.exists() {
-            let pending: InitialProfileSave = serde_json::from_slice(&std::fs::read(journal)?)?;
+        if let Some(bytes) = crate::storage::read_file(&journal).await? {
+            let pending: InitialProfileSave = serde_json::from_slice(&bytes)?;
             self.runtime().commit_my_profile(pending.envelope).await?;
-            lifecycle::complete_profile_setup(&self.app_data_dir, account_id)?;
+            lifecycle::complete_profile_setup(&self.app_data_dir, account_id).await?;
             return Ok(false);
         }
         if self.runtime().get_my_profile().await?.updated_at > 0 {
-            lifecycle::complete_profile_setup(&self.app_data_dir, account_id)?;
+            lifecycle::complete_profile_setup(&self.app_data_dir, account_id).await?;
             return Ok(false);
         }
         Ok(true)
@@ -98,7 +99,7 @@ impl ClientHost {
     pub async fn account_display(&self) -> anyhow::Result<Vec<crate::AccountDisplay>> {
         use crate::accounts::display::{read_profile, set_picture};
         let _guard = self.operation_guard.lock().await;
-        let snapshot = list_accounts(&self.app_data_dir)?;
+        let snapshot = list_accounts(&self.app_data_dir).await?;
         let mut result = Vec::new();
         for account in snapshot.accounts {
             let entry = read_profile(&self.app_data_dir, &account).await;
@@ -133,7 +134,8 @@ impl ClientHost {
             &self.app_data_dir,
             crate::identity::IdentityStorageMode::from_env(),
             account_id,
-        )?;
+        )
+        .await?;
         let next =
             Self::build_detached_runtime(account_db_path(&self.app_data_dir, &prepared.next.id))
                 .await
@@ -142,7 +144,7 @@ impl ClientHost {
             .replace_runtime_locked(next)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let commit = lifecycle::commit_logout(&self.app_data_dir, &prepared);
+        let commit = lifecycle::commit_logout(&self.app_data_dir, &prepared).await;
         self.finish_account_change(previous, &prepared.target, prepared.next, true, commit)
             .await
     }
@@ -165,7 +167,9 @@ impl ClientHost {
                 previous_id,
                 &next.id,
                 logout,
-            ) {
+            )
+            .await
+            {
                 Ok(true) => {
                     if let Err(error) = previous.shutdown_checked().await {
                         self.stop_failed_account_change(previous).await;
@@ -220,12 +224,18 @@ impl ClientHost {
         }
         let dir = self.app_data_dir.clone();
         // passphrase の鍵の導出（argon2）は重いので、native では blocking の thread で行う。ブラウザには無い。
+        // native の保存先の future は I/O を待たずに終わるので、その thread の中で block_on で進める。
         #[cfg(not(target_family = "wasm"))]
         return tokio::task::spawn_blocking(move || {
-            crate::import_account_key_from_env(&dir, &export, &passphrase, label)
+            n0_future::future::block_on(crate::import_account_key_from_env(
+                &dir,
+                &export,
+                &passphrase,
+                label,
+            ))
         })
         .await?;
         #[cfg(target_family = "wasm")]
-        return crate::import_account_key_from_env(&dir, &export, &passphrase, label);
+        return crate::import_account_key_from_env(&dir, &export, &passphrase, label).await;
     }
 }

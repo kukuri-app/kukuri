@@ -145,6 +145,7 @@ impl CommandHandler for Handler {
                 encode(
                     runtime
                         .set_adult_content_display_enabled(request.enabled)
+                        .await
                         .map_err(command_error)?,
                 )
             }

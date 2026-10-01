@@ -54,6 +54,7 @@ pub async fn preview_account_key_import(
     request: PreviewAccountKeyImportRequest,
 ) -> Result<AccountKeyImportPreview, CommandError> {
     kukuri_desktop_runtime::preview_account_key_import(&state.app_data_dir, &request.export)
+        .await
         .map_err(map_error)
 }
 
@@ -157,7 +158,9 @@ pub async fn save_initial_profile(
 pub async fn list_accounts(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<AccountsSnapshot, CommandError> {
-    kukuri_desktop_runtime::list_accounts(&state.app_data_dir).map_err(map_error)
+    kukuri_desktop_runtime::list_accounts(&state.app_data_dir)
+        .await
+        .map_err(map_error)
 }
 
 /// アクティブアカウントを切り替える。新しい runtime の構築に成功してから registry と
@@ -174,7 +177,9 @@ pub async fn switch_account(
     let startup = app_handle.state::<DesktopStartupState>();
     require_runtime_operation_ready(&startup.status()).map_err(CommandError::from)?;
 
-    let snapshot = kukuri_desktop_runtime::list_accounts(&state.app_data_dir).map_err(map_error)?;
+    let snapshot = kukuri_desktop_runtime::list_accounts(&state.app_data_dir)
+        .await
+        .map_err(map_error)?;
     let record = snapshot
         .accounts
         .iter()

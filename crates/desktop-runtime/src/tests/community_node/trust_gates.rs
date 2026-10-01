@@ -170,6 +170,7 @@ async fn spawn_node(db_path: &std::path::Path, token: &str) -> GateNode {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     GateNode {
         base_url,
@@ -205,7 +206,7 @@ async fn open_runtime(
             .collect(),
     };
     for node in nodes {
-        seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1);
+        seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1).await;
         // mock は既定でこの runtime の閲覧者として応答する（照合の対象は別テストで確認する）。
         *node.state.viewer_override.lock().await = Some(runtime.author_keys.public_key_hex());
     }
@@ -403,7 +404,7 @@ async fn priority_and_display_exceptions_restore_after_restart() {
     )
     .await
     .expect("runtime");
-    seed_local_community_node_consents(&restarted, node.base_url.as_str(), 1);
+    seed_local_community_node_consents(&restarted, node.base_url.as_str(), 1).await;
     assert_eq!(
         restarted
             .community_node_config
@@ -469,7 +470,7 @@ async fn unusable_priority_entries_are_dropped_without_blocking_startup() {
     )
     .await
     .expect("runtime starts with a broken priority");
-    seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1).await;
     *node.state.viewer_override.lock().await = Some(runtime.author_keys.public_key_hex());
 
     assert_eq!(

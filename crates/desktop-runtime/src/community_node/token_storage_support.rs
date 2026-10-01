@@ -1,11 +1,12 @@
 use super::*;
 
-pub(crate) fn load_community_node_token(
+pub(crate) async fn load_community_node_token(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
 ) -> Result<Option<StoredCommunityNodeToken>> {
-    let Some(raw) = load_optional_secret(db_path, mode, COMMUNITY_NODE_TOKEN_PURPOSE, base_url)?
+    let Some(raw) =
+        load_optional_secret(db_path, mode, COMMUNITY_NODE_TOKEN_PURPOSE, base_url).await?
     else {
         return Ok(None);
     };
@@ -14,7 +15,7 @@ pub(crate) fn load_community_node_token(
     Ok(Some(token))
 }
 
-pub(crate) fn persist_community_node_token(
+pub(crate) async fn persist_community_node_token(
     db_path: &Path,
     mode: IdentityStorageMode,
     base_url: &str,
@@ -28,4 +29,5 @@ pub(crate) fn persist_community_node_token(
         base_url,
         encoded.as_str(),
     )
+    .await
 }

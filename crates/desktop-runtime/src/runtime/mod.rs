@@ -165,7 +165,7 @@ pub struct DesktopRuntime {
     event_sender: tokio::sync::broadcast::Sender<RuntimeEvent>,
 }
 
-fn load_private_channel_capabilities(
+async fn load_private_channel_capabilities(
     db_path: &Path,
     mode: IdentityStorageMode,
 ) -> Result<Vec<PrivateChannelCapability>> {
@@ -174,14 +174,15 @@ fn load_private_channel_capabilities(
         mode,
         PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
         PRIVATE_CHANNEL_CAPABILITIES_KEY,
-    )?
+    )
+    .await?
     else {
         return Ok(Vec::new());
     };
     serde_json::from_str(&raw).context("failed to decode private channel capabilities")
 }
 
-fn persist_private_channel_capabilities(
+async fn persist_private_channel_capabilities(
     db_path: &Path,
     mode: IdentityStorageMode,
     capabilities: &[PrivateChannelCapability],
@@ -195,6 +196,7 @@ fn persist_private_channel_capabilities(
         PRIVATE_CHANNEL_CAPABILITIES_KEY,
         encoded.as_str(),
     )
+    .await
 }
 
 /// #858: 成人向け表現の表示設定の永続形。`<db_path>.content-display.json` に保存する
@@ -212,24 +214,23 @@ fn content_display_settings_path(db_path: &Path) -> PathBuf {
 }
 
 /// 欠落・破損は既定値(表示 OFF)として扱う(fail-closed)。
-pub(crate) fn load_content_display_settings(db_path: &Path) -> ContentDisplaySettingsState {
-    let Ok(bytes) = std::fs::read(content_display_settings_path(db_path)) else {
+pub(crate) async fn load_content_display_settings(db_path: &Path) -> ContentDisplaySettingsState {
+    let Ok(Some(bytes)) = crate::storage::read_file(&content_display_settings_path(db_path)).await
+    else {
         return ContentDisplaySettingsState::default();
     };
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
-pub(crate) fn save_content_display_settings(
+pub(crate) async fn save_content_display_settings(
     db_path: &Path,
     state: &ContentDisplaySettingsState,
 ) -> Result<()> {
-    let path = content_display_settings_path(db_path);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).context("failed to create content display settings dir")?;
-    }
     let bytes =
         serde_json::to_vec_pretty(state).context("failed to encode content display settings")?;
-    std::fs::write(&path, bytes).context("failed to write content display settings")
+    crate::storage::write_file(&content_display_settings_path(db_path), &bytes)
+        .await
+        .context("failed to write content display settings")
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -240,7 +241,7 @@ struct GossipSubscriptionState {
     disabled_channels: Vec<String>,
 }
 
-fn load_gossip_subscription_state(
+async fn load_gossip_subscription_state(
     db_path: &Path,
     mode: IdentityStorageMode,
 ) -> Result<GossipSubscriptionState> {
@@ -249,18 +250,19 @@ fn load_gossip_subscription_state(
         mode,
         GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
         GOSSIP_SUBSCRIPTION_STATE_KEY,
-    )?
+    )
+    .await?
     else {
         return Ok(GossipSubscriptionState::default());
     };
     serde_json::from_str(&raw).context("failed to decode gossip subscription state")
 }
 
-pub(crate) fn validate_persisted_runtime_state(
+pub(crate) async fn validate_persisted_runtime_state(
     db_path: &Path,
     mode: IdentityStorageMode,
 ) -> Result<()> {
-    for capability in load_private_channel_capabilities(db_path, mode)? {
+    for capability in load_private_channel_capabilities(db_path, mode).await? {
         let current_epoch_id = if capability.current_epoch_id.trim().is_empty() {
             "legacy"
         } else {
@@ -279,7 +281,7 @@ pub(crate) fn validate_persisted_runtime_state(
             }
         }
     }
-    load_gossip_subscription_state(db_path, mode)?;
+    load_gossip_subscription_state(db_path, mode).await?;
     Ok(())
 }
 
@@ -291,7 +293,7 @@ fn validate_private_channel_namespace_secret(secret: &str) -> Result<()> {
     Ok(())
 }
 
-fn persist_gossip_subscription_state(
+async fn persist_gossip_subscription_state(
     db_path: &Path,
     mode: IdentityStorageMode,
     state: &GossipSubscriptionState,
@@ -305,6 +307,7 @@ fn persist_gossip_subscription_state(
         GOSSIP_SUBSCRIPTION_STATE_KEY,
         encoded.as_str(),
     )
+    .await
 }
 
 impl DesktopRuntime {
@@ -361,13 +364,13 @@ impl DesktopRuntime {
         initial_community_node_config: Option<CommunityNodeConfig>,
     ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
-        let community_node_config = match load_community_node_config_from_file(&db_path)? {
+        let community_node_config = match load_community_node_config_from_file(&db_path).await? {
             Some(config) => config,
             None if initial_community_node_config.is_some() => {
                 let config = normalize_community_node_config(
                     initial_community_node_config.expect("checked as present"),
                 )?;
-                save_community_node_config(&db_path, &config)?;
+                save_community_node_config(&db_path, &config).await?;
                 config
             }
             None => CommunityNodeConfig::default(),
@@ -394,7 +397,7 @@ impl DesktopRuntime {
             Some(store.clone()),
         )
         .await?;
-        let keys = load_or_create_keys(&db_path, identity_mode)?;
+        let keys = load_or_create_keys(&db_path, identity_mode).await?;
         // docs へ何かを書く前に、書き込みの名義をアカウントの docs author にする(ADR 0053 §1)。
         iroh_stack
             .use_account_docs_author(keys.derive_docs_author_seed(), keys.public_key_hex())
@@ -429,7 +432,7 @@ impl DesktopRuntime {
         if let Err(error) = app_service.resume_withdrawal_writes().await {
             tracing::warn!(%error, "queued withdrawal writes stay pending");
         }
-        for capability in load_private_channel_capabilities(&db_path, identity_mode)? {
+        for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
             app_service
                 .restore_private_channel_capability(capability)
                 .await?;
@@ -444,16 +447,17 @@ impl DesktopRuntime {
             let persist_db_path = db_path.clone();
             let dirty = private_migration_dirty.clone();
             app_service.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-                persist_private_channel_capabilities(
-                    &persist_db_path,
-                    identity_mode,
-                    capabilities,
-                )?;
-                dirty.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
+                let (db_path, dirty) = (persist_db_path.clone(), dirty.clone());
+                Box::pin(async move {
+                    persist_private_channel_capabilities(&db_path, identity_mode, &capabilities)
+                        .await?;
+                    dirty.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                })
             }));
         }
-        let gossip_subscription_state = load_gossip_subscription_state(&db_path, identity_mode)?;
+        let gossip_subscription_state =
+            load_gossip_subscription_state(&db_path, identity_mode).await?;
         app_service
             .restore_gossip_disabled_state(
                 gossip_subscription_state.disabled_topics,
@@ -463,7 +467,9 @@ impl DesktopRuntime {
         // #858: 成人向け表現の表示設定(既定 OFF)を起動時に反映する。設定が読めない
         // 場合も OFF のまま(fail-closed)。
         app_service.set_adult_content_display_enabled(
-            load_content_display_settings(&db_path).adult_content_enabled,
+            load_content_display_settings(&db_path)
+                .await
+                .adult_content_enabled,
         );
         app_service
             .reconcile_blocked_dome_connections_at_start()
@@ -542,7 +548,7 @@ impl DesktopRuntime {
         initial_community_node_config: CommunityNodeConfig,
     ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
-        let discovery_config = resolve_discovery_config_from_env(&db_path)?;
+        let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
         let dht_options = match discovery_config.mode {
             DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
             DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
@@ -586,6 +592,7 @@ impl DesktopRuntime {
                 disabled_channels: self.app_service.list_gossip_disabled_channels().await,
             },
         )
+        .await
     }
 }
 

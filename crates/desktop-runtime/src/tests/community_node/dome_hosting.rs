@@ -108,6 +108,7 @@ async fn dome_requests_stop_before_auth_and_http_without_active_local_consent() 
             IdentityStorageMode::FileOnly,
             base_url.as_str(),
         )
+        .await
         .expect("load token state")
         .is_none(),
         "Dome consent rejection must not persist a JWT"
@@ -121,7 +122,7 @@ async fn dome_requests_stop_before_auth_and_http_without_active_local_consent() 
 async fn dome_requests_stop_before_auth_and_http_after_consent_withdrawal() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = dome_runtime().await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     runtime
         .withdraw_community_node_consents(crate::CommunityNodeTargetRequest {
             base_url: base_url.clone(),
@@ -153,7 +154,7 @@ async fn dome_requests_stop_before_auth_and_http_after_consent_withdrawal() {
 async fn dome_requests_stop_before_auth_and_http_when_current_policy_changed() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = dome_runtime().await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     state.simulate_pending_update.store(true, Ordering::SeqCst);
 
     let error = runtime
@@ -217,7 +218,7 @@ async fn dome_requests_reject_unconfigured_nodes_before_any_http() {
 async fn dome_get_and_post_succeed_only_after_current_local_consent() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = dome_runtime().await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let status = runtime
         .get_dome_hosting_status_from_community_node(base_url.as_str(), "instance-1")
@@ -250,7 +251,7 @@ async fn dome_get_and_post_succeed_only_after_current_local_consent() {
 async fn dome_get_reauthenticates_after_unauthorized_only_with_current_consent() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = dome_runtime().await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     persist_community_node_token(
         &runtime.db_path,
         IdentityStorageMode::FileOnly,
@@ -260,6 +261,7 @@ async fn dome_get_reauthenticates_after_unauthorized_only_with_current_consent()
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist stale token");
 
     let status = runtime

@@ -3197,6 +3197,7 @@ dependencies = [
  "kukuri-core",
  "kukuri-desktop-runtime",
  "libc",
+ "n0-future",
  "serde",
  "serde_json",
  "syn 3.0.6",

@@ -33,13 +33,14 @@ impl ClientSession {
             host: RwLock::new(None),
             operation: ClientOperationState::default(),
         });
-        let consent = app_consent_status(&session.consent_db_path());
+        let consent = app_consent_status(&session.consent_db_path()).await;
         match restore_startup_action(pending, consent.satisfied) {
             RestoreStartupAction::ResetConsent => {
                 let status = advance_committed_restore_to_consent(
                     &session.app_data_dir,
                     &session.consent_db_path(),
                 )
+                .await
                 .map_err(|_| failed())?;
                 session.startup.set_status(status);
             }
@@ -115,6 +116,7 @@ impl ClientSession {
             age_attested,
             env!("CARGO_PKG_VERSION"),
         )
+        .await
         .map_err(|_| invalid_consent())?;
         self.startup.set_status(ClientStartupStatus::Initializing);
         let result = if pending == Some(DeviceRestorePhase::AwaitingConsent) {

@@ -1,14 +1,9 @@
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use keyring::{Entry, Error as KeyringError};
 use kukuri_core::KukuriKeys;
+
+use crate::storage::{ClientStorage, FILE_SERVICE, KeyringUnavailable, path_key, platform_storage};
 
 const KEYRING_SERVICE: &str = "org.kukuri.desktop";
 const BACKEND_FILE: &str = "file";
@@ -31,86 +26,98 @@ impl IdentityStorageMode {
     }
 }
 
-pub(crate) fn load_or_create_keys(db_path: &Path, mode: IdentityStorageMode) -> Result<KukuriKeys> {
-    load_or_create_keys_with_keyring(db_path, mode, &SystemKeyringStore)
+pub(crate) async fn load_or_create_keys(
+    db_path: &Path,
+    mode: IdentityStorageMode,
+) -> Result<KukuriKeys> {
+    load_or_create_keys_with_storage(db_path, mode, platform_storage()).await
 }
 
 /// 既存の identity を「生成せずに」読み込む(accounts 移行の検出・再開用)。
 /// backend marker があるのに実体へ到達できない場合は fail-loud で Err を返す。
-pub(crate) fn load_existing_keys(
+pub(crate) async fn load_existing_keys(
     db_path: &Path,
     mode: IdentityStorageMode,
 ) -> Result<Option<KukuriKeys>> {
-    load_existing_keys_with_keyring(db_path, mode, &SystemKeyringStore)
+    load_existing_keys_with_storage(db_path, mode, platform_storage()).await
 }
 
 /// 既知の鍵を db_path 配下の identity storage へ保存する(accounts 移行 / import 用)。
 /// `load_or_create_keys` の新規生成分岐と同じ backend 選択(Auto: keyring 優先、
 /// 失敗時 file)で永続化し、backend marker まで書き切る。
-pub(crate) fn persist_keys(
+pub(crate) async fn persist_keys(
     db_path: &Path,
     mode: IdentityStorageMode,
     keys: &KukuriKeys,
 ) -> Result<()> {
-    persist_keys_with_keyring(db_path, mode, keys, &SystemKeyringStore)
+    persist_keys_with_storage(db_path, mode, keys, platform_storage()).await
 }
 
 /// db_path 配下の identity 実体(keyring entry / key file / legacy nsec / marker)を
 /// すべて削除する(accounts 移行完了後の旧 flat レイアウト掃除用)。
-pub(crate) fn delete_identity(db_path: &Path, mode: IdentityStorageMode) -> Result<()> {
-    delete_identity_with_keyring(db_path, mode, &SystemKeyringStore)
+pub(crate) async fn delete_identity(db_path: &Path, mode: IdentityStorageMode) -> Result<()> {
+    let storage = platform_storage();
+    if mode == IdentityStorageMode::Auto {
+        for account in keyring_account_candidates(db_path) {
+            storage.delete(KEYRING_SERVICE, account.as_str()).await?;
+        }
+    }
+    delete_file(storage, &key_file_path(db_path)).await?;
+    delete_file(storage, &legacy_key_file_path(db_path)).await?;
+    delete_file(storage, &backend_marker_path(db_path)).await
 }
 
-pub(crate) fn load_optional_secret(
+pub(crate) async fn load_optional_secret(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
 ) -> Result<Option<String>> {
-    load_optional_secret_with_keyring(db_path, mode, purpose, key, &SystemKeyringStore)
+    load_optional_secret_with_storage(db_path, mode, purpose, key, platform_storage()).await
 }
 
-pub(crate) fn persist_optional_secret(
+pub(crate) async fn persist_optional_secret(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
     secret: &str,
 ) -> Result<()> {
-    persist_optional_secret_with_keyring(db_path, mode, purpose, key, secret, &SystemKeyringStore)
+    persist_optional_secret_with_storage(db_path, mode, purpose, key, secret, platform_storage())
+        .await
 }
 
-pub(crate) fn delete_optional_secret(
+pub(crate) async fn delete_optional_secret(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
 ) -> Result<()> {
-    delete_optional_secret_with_keyring(db_path, mode, purpose, key, &SystemKeyringStore)
+    let storage = platform_storage();
+    if mode == IdentityStorageMode::Auto {
+        delete_optional_secret_keyring_entry_with_storage(db_path, purpose, key, storage).await?;
+    }
+    delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await
 }
 
-fn load_or_create_keys_with_keyring(
+pub(crate) async fn load_or_create_keys_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<KukuriKeys> {
-    if let Some(backend) = load_backend_marker(db_path)? {
-        return load_keys_with_backend(db_path, backend.as_str(), mode, keyring);
+    if let Some(backend) = load_backend_marker(storage, db_path).await? {
+        return load_keys_with_backend(db_path, backend.as_str(), mode, storage).await;
     }
 
-    if mode == IdentityStorageMode::Auto {
-        match load_secret_from_keyring(db_path, keyring) {
-            Ok(Some(secret)) => {
-                write_backend_marker(db_path, BACKEND_KEYRING)?;
-                return parse_keys(secret.as_str());
-            }
-            Ok(None) => {}
-            Err(_) => {}
-        }
+    if mode == IdentityStorageMode::Auto
+        && let Ok(Some(secret)) = load_secret_from_keyring(db_path, storage).await
+    {
+        write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
+        return parse_keys(secret.as_str());
     }
 
-    if let Some(secret) = load_secret_from_file(db_path)? {
-        write_backend_marker(db_path, BACKEND_FILE)?;
+    if let Some(secret) = load_secret_from_file(storage, db_path).await? {
+        write_backend_marker(storage, db_path, BACKEND_FILE).await?;
         return parse_keys(secret.as_str());
     }
 
@@ -118,83 +125,73 @@ fn load_or_create_keys_with_keyring(
     let encoded = keys.export_secret_hex();
 
     if mode == IdentityStorageMode::Auto
-        && persist_secret_to_keyring(db_path, encoded.as_str(), keyring).is_ok()
+        && persist_secret_to_keyring(db_path, encoded.as_str(), storage)
+            .await
+            .is_ok()
     {
-        write_backend_marker(db_path, BACKEND_KEYRING)?;
+        write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
     } else {
-        persist_secret_to_file(db_path, encoded.as_str())?;
-        write_backend_marker(db_path, BACKEND_FILE)?;
+        persist_secret_to_file(storage, db_path, encoded.as_str()).await?;
+        write_backend_marker(storage, db_path, BACKEND_FILE).await?;
     }
 
     Ok(keys)
 }
 
-pub(crate) fn load_existing_keys_with_keyring(
+pub(crate) async fn load_existing_keys_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<Option<KukuriKeys>> {
-    if let Some(backend) = load_backend_marker(db_path)? {
-        return load_keys_with_backend(db_path, backend.as_str(), mode, keyring).map(Some);
+    if let Some(backend) = load_backend_marker(storage, db_path).await? {
+        return load_keys_with_backend(db_path, backend.as_str(), mode, storage)
+            .await
+            .map(Some);
     }
     if mode == IdentityStorageMode::Auto
-        && let Ok(Some(secret)) = load_secret_from_keyring(db_path, keyring)
+        && let Ok(Some(secret)) = load_secret_from_keyring(db_path, storage).await
     {
         return parse_keys(secret.as_str()).map(Some);
     }
-    if let Some(secret) = load_secret_from_file(db_path)? {
+    if let Some(secret) = load_secret_from_file(storage, db_path).await? {
         return parse_keys(secret.as_str()).map(Some);
     }
     Ok(None)
 }
 
-pub(crate) fn persist_keys_with_keyring(
+pub(crate) async fn persist_keys_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,
     keys: &KukuriKeys,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<()> {
     let encoded = keys.export_secret_hex();
     if mode == IdentityStorageMode::Auto
-        && persist_secret_to_keyring(db_path, encoded.as_str(), keyring).is_ok()
+        && persist_secret_to_keyring(db_path, encoded.as_str(), storage)
+            .await
+            .is_ok()
     {
-        write_backend_marker(db_path, BACKEND_KEYRING)?;
+        write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
         // 旧 file 実体が残ると marker=keyring と実体が食い違うため掃除する。
-        let _ = delete_file_if_exists(key_file_path(db_path).as_path());
-        let _ = delete_file_if_exists(legacy_key_file_path(db_path).as_path());
+        let _ = delete_file(storage, &key_file_path(db_path)).await;
+        let _ = delete_file(storage, &legacy_key_file_path(db_path)).await;
         return Ok(());
     }
-    persist_secret_to_file(db_path, encoded.as_str())?;
-    write_backend_marker(db_path, BACKEND_FILE)?;
+    persist_secret_to_file(storage, db_path, encoded.as_str()).await?;
+    write_backend_marker(storage, db_path, BACKEND_FILE).await?;
     if mode == IdentityStorageMode::Auto {
         for account in keyring_account_candidates(db_path) {
-            let _ = keyring.delete_password(KEYRING_SERVICE, account.as_str());
+            let _ = storage.delete(KEYRING_SERVICE, account.as_str()).await;
         }
     }
     Ok(())
 }
 
-fn delete_identity_with_keyring(
-    db_path: &Path,
-    mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
-) -> Result<()> {
-    if mode == IdentityStorageMode::Auto {
-        for account in keyring_account_candidates(db_path) {
-            keyring.delete_password(KEYRING_SERVICE, account.as_str())?;
-        }
-    }
-    delete_file_if_exists(key_file_path(db_path).as_path())?;
-    delete_file_if_exists(legacy_key_file_path(db_path).as_path())?;
-    delete_file_if_exists(backend_marker_path(db_path).as_path())?;
-    Ok(())
-}
-
-fn load_keys_with_backend(
+async fn load_keys_with_backend(
     db_path: &Path,
     backend: &str,
     mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<KukuriKeys> {
     match backend {
         BACKEND_KEYRING => {
@@ -203,12 +200,14 @@ fn load_keys_with_backend(
                     "persisted identity is stored in keyring, but keyring is disabled"
                 ));
             }
-            let secret = load_secret_from_keyring(db_path, keyring)?
+            let secret = load_secret_from_keyring(db_path, storage)
+                .await?
                 .ok_or_else(|| anyhow!("persisted keyring identity is unavailable"))?;
             parse_keys(secret.as_str())
         }
         BACKEND_FILE => {
-            let secret = load_secret_from_file(db_path)?
+            let secret = load_secret_from_file(storage, db_path)
+                .await?
                 .ok_or_else(|| anyhow!("persisted identity file is unavailable"))?;
             parse_keys(secret.as_str())
         }
@@ -220,16 +219,16 @@ fn parse_keys(secret: &str) -> Result<KukuriKeys> {
     KukuriKeys::parse(secret).context("failed to parse persisted secret key")
 }
 
-pub(crate) fn load_optional_secret_with_keyring(
+pub(crate) async fn load_optional_secret_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<Option<String>> {
     if mode == IdentityStorageMode::Auto {
         for account in optional_secret_account_candidates(db_path, purpose, key) {
-            match keyring.get_password(KEYRING_SERVICE, account.as_str()) {
+            match keyring_get(storage, account.as_str()).await {
                 Ok(Some(secret)) => return Ok(Some(secret)),
                 Ok(None) => {}
                 // Headless Linux environments can have no default keyring provider at all.
@@ -243,72 +242,57 @@ pub(crate) fn load_optional_secret_with_keyring(
         }
     }
 
-    load_secret_from_file_path(optional_secret_file_path(db_path, purpose, key).as_path())
+    read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await
 }
 
 fn is_missing_default_keyring(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<KeyringError>(),
-            Some(KeyringError::NoDefaultStore)
-        )
-    })
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<KeyringUnavailable>().is_some())
 }
 
-pub(crate) fn persist_optional_secret_with_keyring(
+pub(crate) async fn persist_optional_secret_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
     secret: &str,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<()> {
     let account = optional_secret_account(db_path, purpose, key);
     if mode == IdentityStorageMode::Auto {
-        if keyring
-            .set_password(KEYRING_SERVICE, account.as_str(), secret)
+        if storage
+            .set(KEYRING_SERVICE, account.as_str(), secret.as_bytes())
+            .await
             .is_ok()
         {
-            let _ =
-                delete_file_if_exists(optional_secret_file_path(db_path, purpose, key).as_path());
+            let _ = delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await;
             return Ok(());
         }
         // set 失敗時に旧 entry を残すと、load が keyring を優先するため file へ書いた
         // 新しい値が恒久的にシャドウされる(例: Windows Credential Manager の blob 上限
         // 超過で set が失敗し始めるケース)。best effort で削除してから file へ倒す。
         for account in optional_secret_account_candidates(db_path, purpose, key) {
-            let _ = keyring.delete_password(KEYRING_SERVICE, account.as_str());
+            let _ = storage.delete(KEYRING_SERVICE, account.as_str()).await;
         }
     }
 
-    persist_secret_to_file_path(
-        optional_secret_file_path(db_path, purpose, key).as_path(),
+    write_secret_file(
+        storage,
+        &optional_secret_file_path(db_path, purpose, key),
         secret,
     )
+    .await
 }
 
-fn delete_optional_secret_with_keyring(
-    db_path: &Path,
-    mode: IdentityStorageMode,
-    purpose: &str,
-    key: &str,
-    keyring: &dyn KeyringStore,
-) -> Result<()> {
-    if mode == IdentityStorageMode::Auto {
-        delete_optional_secret_keyring_entry_with_keyring(db_path, purpose, key, keyring)?;
-    }
-    delete_file_if_exists(optional_secret_file_path(db_path, purpose, key).as_path())?;
-    Ok(())
-}
-
-pub(crate) fn delete_optional_secret_keyring_entry_with_keyring(
+pub(crate) async fn delete_optional_secret_keyring_entry_with_storage(
     db_path: &Path,
     purpose: &str,
     key: &str,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<()> {
     for account in optional_secret_account_candidates(db_path, purpose, key) {
-        match keyring.delete_password(KEYRING_SERVICE, account.as_str()) {
+        match storage.delete(KEYRING_SERVICE, account.as_str()).await {
             Ok(()) => {}
             Err(error) if is_missing_default_keyring(&error) => return Ok(()),
             Err(error) => {
@@ -319,10 +303,21 @@ pub(crate) fn delete_optional_secret_keyring_entry_with_keyring(
     Ok(())
 }
 
-fn load_secret_from_keyring(db_path: &Path, keyring: &dyn KeyringStore) -> Result<Option<String>> {
+async fn keyring_get(storage: &dyn ClientStorage, account: &str) -> Result<Option<String>> {
+    storage
+        .get(KEYRING_SERVICE, account)
+        .await?
+        .map(|secret| String::from_utf8(secret).context("a keyring secret is not UTF-8"))
+        .transpose()
+}
+
+async fn load_secret_from_keyring(
+    db_path: &Path,
+    storage: &dyn ClientStorage,
+) -> Result<Option<String>> {
     for account in keyring_account_candidates(db_path) {
-        if let Some(secret) = keyring
-            .get_password(KEYRING_SERVICE, account.as_str())
+        if let Some(secret) = keyring_get(storage, account.as_str())
+            .await
             .context("failed to read secret from keyring")?
         {
             return Ok(Some(secret));
@@ -331,137 +326,89 @@ fn load_secret_from_keyring(db_path: &Path, keyring: &dyn KeyringStore) -> Resul
     Ok(None)
 }
 
-fn persist_secret_to_keyring(
+async fn persist_secret_to_keyring(
     db_path: &Path,
     secret: &str,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<()> {
-    keyring
-        .set_password(KEYRING_SERVICE, keyring_account(db_path).as_str(), secret)
+    storage
+        .set(
+            KEYRING_SERVICE,
+            keyring_account(db_path).as_str(),
+            secret.as_bytes(),
+        )
+        .await
         .context("failed to persist secret into keyring")
 }
 
-fn load_secret_from_file(db_path: &Path) -> Result<Option<String>> {
-    let primary = key_file_path(db_path);
-    if let Some(secret) = load_secret_from_file_path(primary.as_path())? {
+async fn load_secret_from_file(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+) -> Result<Option<String>> {
+    if let Some(secret) = read_text(storage, &key_file_path(db_path)).await? {
         return Ok(Some(secret));
     }
-    load_secret_from_file_path(legacy_key_file_path(db_path).as_path())
+    read_text(storage, &legacy_key_file_path(db_path)).await
 }
 
-fn load_secret_from_file_path(path: &Path) -> Result<Option<String>> {
-    if !path.exists() {
+/// file の中身を前後の空白を除いた文字列で読む。無ければ `None`。
+pub(crate) async fn read_text(storage: &dyn ClientStorage, path: &Path) -> Result<Option<String>> {
+    let Some(bytes) = storage.get(FILE_SERVICE, &path_key(path)?).await? else {
         return Ok(None);
-    }
-    let mut secret = String::new();
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("failed to open identity file `{}`", path.display()))?;
-    file.read_to_string(&mut secret)
-        .with_context(|| format!("failed to read identity file `{}`", path.display()))?;
-    Ok(Some(secret.trim().to_string()))
+    };
+    let text = String::from_utf8(bytes)
+        .with_context(|| format!("failed to read `{}` as UTF-8", path.display()))?;
+    Ok(Some(text.trim().to_string()))
 }
 
-fn persist_secret_to_file(db_path: &Path, secret: &str) -> Result<()> {
-    persist_secret_to_file_path(key_file_path(db_path).as_path(), secret)?;
-    delete_file_if_exists(legacy_key_file_path(db_path).as_path())
+async fn persist_secret_to_file(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+    secret: &str,
+) -> Result<()> {
+    write_secret_file(storage, &key_file_path(db_path), secret).await?;
+    delete_file(storage, &legacy_key_file_path(db_path)).await
 }
 
-fn persist_secret_to_file_path(path: &Path, secret: &str) -> Result<()> {
-    write_private_file_atomically(path, secret.as_bytes())
+async fn write_secret_file(storage: &dyn ClientStorage, path: &Path, secret: &str) -> Result<()> {
+    storage
+        .set(FILE_SERVICE, &path_key(path)?, secret.as_bytes())
+        .await
         .with_context(|| format!("failed to persist identity file `{}`", path.display()))
 }
 
-fn load_backend_marker(db_path: &Path) -> Result<Option<String>> {
+async fn load_backend_marker(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+) -> Result<Option<String>> {
+    read_text(storage, &backend_marker_path(db_path))
+        .await
+        .context("failed to read identity backend marker")
+}
+
+async fn write_backend_marker(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+    backend: &str,
+) -> Result<()> {
     let path = backend_marker_path(db_path);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let mut backend = String::new();
-    let mut file = std::fs::File::open(&path).with_context(|| {
-        format!(
-            "failed to open identity backend marker `{}`",
-            path.display()
-        )
-    })?;
-    file.read_to_string(&mut backend).with_context(|| {
-        format!(
-            "failed to read identity backend marker `{}`",
-            path.display()
-        )
-    })?;
-    Ok(Some(backend.trim().to_string()))
+    storage
+        .set(FILE_SERVICE, &path_key(&path)?, backend.as_bytes())
+        .await
+        .with_context(|| {
+            format!(
+                "failed to persist identity backend marker `{}`",
+                path.display()
+            )
+        })
 }
 
-fn write_backend_marker(db_path: &Path, backend: &str) -> Result<()> {
-    let path = backend_marker_path(db_path);
-    write_private_file_atomically(&path, backend.as_bytes()).with_context(|| {
-        format!(
-            "failed to persist identity backend marker `{}`",
-            path.display()
-        )
-    })
+async fn delete_file(storage: &dyn ClientStorage, path: &Path) -> Result<()> {
+    storage
+        .delete(FILE_SERVICE, &path_key(path)?)
+        .await
+        .with_context(|| format!("failed to delete secret file `{}`", path.display()))
 }
-
-// 途中クラッシュで既存内容が破損しないよう、同一ディレクトリの temp ファイルへ
-// write → fsync → rename で置換する(issue #574)。失敗は fail-loud で伝播させる。
-pub(crate) fn write_private_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow!("invalid private file path `{}`", path.display()))?;
-    let temp_path = path.with_file_name(format!("{file_name}.tmp"));
-    let mut file = open_private_write_file(&temp_path)
-        .with_context(|| format!("failed to create temp file `{}`", temp_path.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("failed to write temp file `{}`", temp_path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync temp file `{}`", temp_path.display()))?;
-    drop(file);
-    std::fs::rename(&temp_path, path).with_context(|| {
-        format!(
-            "failed to rename temp file `{}` to `{}`",
-            temp_path.display(),
-            path.display()
-        )
-    })?;
-    sync_parent_dir(path)
-}
-
-// rename 自体の durability を確保するため、unix では親ディレクトリも fsync する。
-// Windows は std にディレクトリ fsync の手段がないため rename の atomic 置換のみ。
-#[cfg(unix)]
-fn sync_parent_dir(path: &Path) -> Result<()> {
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => return Ok(()),
-    };
-    let dir = std::fs::File::open(parent)
-        .with_context(|| format!("failed to open directory `{}`", parent.display()))?;
-    dir.sync_all()
-        .with_context(|| format!("failed to sync directory `{}`", parent.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_parent_dir(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-fn open_private_write_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.create(true).write(true).truncate(true);
-    configure_private_file_options(&mut options);
-    options
-        .open(path)
-        .with_context(|| format!("failed to open writable file `{}`", path.display()))
-}
-
-#[cfg(unix)]
-fn configure_private_file_options(options: &mut OpenOptions) {
-    options.mode(0o600);
-}
-
-#[cfg(not(unix))]
-fn configure_private_file_options(_options: &mut OpenOptions) {}
 
 fn keyring_account(db_path: &Path) -> String {
     format!("db:{}", resolve_db_path(db_path).display())
@@ -545,49 +492,6 @@ fn optional_secret_file_path(db_path: &Path, purpose: &str, key: &str) -> PathBu
 
 fn optional_secret_suffix(key: &str) -> String {
     blake3::hash(key.as_bytes()).to_hex().to_string()
-}
-
-fn delete_file_if_exists(path: &Path) -> Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path)
-            .with_context(|| format!("failed to delete secret file `{}`", path.display()))?;
-    }
-    Ok(())
-}
-
-pub(crate) trait KeyringStore: Send + Sync {
-    fn get_password(&self, service: &str, account: &str) -> Result<Option<String>>;
-    fn set_password(&self, service: &str, account: &str, secret: &str) -> Result<()>;
-    fn delete_password(&self, service: &str, account: &str) -> Result<()>;
-}
-
-pub(crate) struct SystemKeyringStore;
-
-impl KeyringStore for SystemKeyringStore {
-    fn get_password(&self, service: &str, account: &str) -> Result<Option<String>> {
-        let entry = Entry::new(service, account).context("failed to initialize keyring entry")?;
-        match entry.get_password() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(error) => Err(anyhow!(error)).context("failed to read secret from keyring"),
-        }
-    }
-
-    fn set_password(&self, service: &str, account: &str, secret: &str) -> Result<()> {
-        let entry = Entry::new(service, account).context("failed to initialize keyring entry")?;
-        entry
-            .set_password(secret)
-            .map_err(|error| anyhow!(error))
-            .context("failed to persist secret into keyring")
-    }
-
-    fn delete_password(&self, service: &str, account: &str) -> Result<()> {
-        let entry = Entry::new(service, account).context("failed to initialize keyring entry")?;
-        match entry.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(error) => Err(anyhow!(error)).context("failed to delete secret from keyring"),
-        }
-    }
 }
 
 #[cfg(test)]

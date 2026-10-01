@@ -65,14 +65,14 @@ pub fn validate_app_consent_documents(
     Ok(())
 }
 
-pub fn record_app_consents(
+pub async fn record_app_consents(
     db_path: &Path,
     documents: &[AcceptedAppConsentDocument],
     language: &str,
     age_attested: bool,
     app_version: &str,
 ) -> Result<(), String> {
-    let mut store = load_app_consent_store(db_path);
+    let mut store = load_app_consent_store(db_path).await;
 
     // #858: 18歳以上の自己申告は文書同意とは別の必須行為。今回のリクエストで
     // 申告されたか、過去に現行版で申告済みのどちらかが必要(fail-closed)。
@@ -125,13 +125,13 @@ pub fn record_app_consents(
             });
         }
     }
-    save_app_consent_store(db_path, &store)?;
+    save_app_consent_store(db_path, &store).await?;
 
     Ok(())
 }
 
-pub fn app_consent_status(db_path: &Path) -> AppConsentStatus {
-    let store = load_app_consent_store(db_path);
+pub async fn app_consent_status(db_path: &Path) -> AppConsentStatus {
+    let store = load_app_consent_store(db_path).await;
     AppConsentStatus {
         satisfied: app_consent_satisfied(&store),
         age_attestation: age_attestation_status(&store),
@@ -160,8 +160,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_age_attestation_does_not_create_or_mutate_consent_file() {
+    #[tokio::test]
+    async fn missing_age_attestation_does_not_create_or_mutate_consent_file() {
         let directory = tempfile::tempdir().expect("tempdir");
         let db_path = directory.path().join("kukuri.db");
         let consent_path = crate::host::app_consent_path(&db_path);
@@ -173,31 +173,42 @@ mod tests {
             })
             .collect::<Vec<_>>();
         validate_app_consent_documents(&documents).expect("current documents");
-        assert!(record_app_consents(&db_path, &documents, "en", false, "test").is_err());
+        assert!(
+            record_app_consents(&db_path, &documents, "en", false, "test")
+                .await
+                .is_err()
+        );
         assert!(!consent_path.exists());
 
         // 壊れた保存状態でも失敗前に書き直さない。
         let original = b"invalid consent record";
         std::fs::write(&consent_path, original).expect("write fixture");
-        assert!(record_app_consents(&db_path, &documents, "en", false, "test").is_err());
+        assert!(
+            record_app_consents(&db_path, &documents, "en", false, "test")
+                .await
+                .is_err()
+        );
         assert_eq!(
             std::fs::read(&consent_path).expect("read fixture"),
             original
         );
 
         record_app_consents(&db_path, &documents, "en", true, "test")
+            .await
             .expect("explicit attestation");
-        let saved = app_consent_status(&db_path);
+        let saved = app_consent_status(&db_path).await;
         assert!(saved.satisfied);
         let attested_at = saved.age_attestation.attested_at;
-        record_app_consents(&db_path, &documents, "ja", false, "test").expect("renewed consent");
-        let renewed = app_consent_status(&db_path);
+        record_app_consents(&db_path, &documents, "ja", false, "test")
+            .await
+            .expect("renewed consent");
+        let renewed = app_consent_status(&db_path).await;
         assert!(renewed.satisfied);
         assert_eq!(renewed.age_attestation.attested_at, attested_at);
     }
 
-    #[test]
-    fn recorded_consent_keeps_build_profile() {
+    #[tokio::test]
+    async fn recorded_consent_keeps_build_profile() {
         let directory = tempfile::tempdir().expect("tempdir");
         let db_path = directory.path().join("kukuri.db");
         let documents = crate::host::APP_LEGAL_DOCUMENTS
@@ -207,9 +218,11 @@ mod tests {
                 version: *version,
             })
             .collect::<Vec<_>>();
-        record_app_consents(&db_path, &documents, "en", true, "test").expect("consent");
+        record_app_consents(&db_path, &documents, "en", true, "test")
+            .await
+            .expect("consent");
 
-        let store = crate::host::load_app_consent_store(&db_path);
+        let store = crate::host::load_app_consent_store(&db_path).await;
         let expected = Some(AppBuildProfile::current().as_str().to_string());
         assert_eq!(store.records.len(), documents.len());
         assert!(
@@ -222,8 +235,8 @@ mod tests {
         assert_eq!(store.age_attestations[0].build_profile, expected);
     }
 
-    #[test]
-    fn consent_version_check_ignores_build_profile() {
+    #[tokio::test]
+    async fn consent_version_check_ignores_build_profile() {
         let directory = tempfile::tempdir().expect("tempdir");
         let db_path = directory.path().join("kukuri.db");
         let consent_path = crate::host::app_consent_path(&db_path);
@@ -257,12 +270,12 @@ mod tests {
             (current - 1, Some("development"), false),
         ] {
             std::fs::write(&consent_path, fixture(version, build_profile)).expect("fixture");
-            let status = app_consent_status(&db_path);
+            let status = app_consent_status(&db_path).await;
             assert_eq!(
                 status.satisfied, satisfied,
                 "version {version}, build profile {build_profile:?}"
             );
-            let store = crate::host::load_app_consent_store(&db_path);
+            let store = crate::host::load_app_consent_store(&db_path).await;
             assert_eq!(store.records.len(), crate::host::APP_LEGAL_DOCUMENTS.len());
             assert!(
                 store

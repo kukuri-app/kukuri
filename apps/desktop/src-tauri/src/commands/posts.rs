@@ -283,5 +283,6 @@ pub async fn set_adult_content_display_enabled(
     state
         .runtime()
         .set_adult_content_display_enabled(enabled)
+        .await
         .map_err(map_error)
 }

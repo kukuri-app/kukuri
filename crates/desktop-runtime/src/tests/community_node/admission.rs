@@ -175,7 +175,7 @@ async fn admission_runtime(db_path: &Path, nodes: Vec<String>) -> DesktopRuntime
     .await
     .expect("runtime");
     for base_url in &nodes {
-        seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+        seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     }
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -191,8 +191,8 @@ async fn admission_runtime(db_path: &Path, nodes: Vec<String>) -> DesktopRuntime
     runtime
 }
 
-#[test]
-fn invite_code_storage_is_scoped_by_normalized_node_url() {
+#[tokio::test]
+async fn invite_code_storage_is_scoped_by_normalized_node_url() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("invite-storage.db");
     persist_community_node_invite_code(
@@ -201,6 +201,7 @@ fn invite_code_storage_is_scoped_by_normalized_node_url() {
         "https://a.example",
         "invite-a",
     )
+    .await
     .expect("persist invite code");
 
     assert_eq!(
@@ -209,6 +210,7 @@ fn invite_code_storage_is_scoped_by_normalized_node_url() {
             IdentityStorageMode::FileOnly,
             "https://a.example"
         )
+        .await
         .expect("load invite code")
         .as_deref(),
         Some("invite-a")
@@ -219,6 +221,7 @@ fn invite_code_storage_is_scoped_by_normalized_node_url() {
             IdentityStorageMode::FileOnly,
             "https://b.example"
         )
+        .await
         .expect("load other invite code"),
         None
     );
@@ -237,6 +240,7 @@ async fn removing_or_clearing_node_config_deletes_its_invite_code() {
         base_url.as_str(),
         "first-code",
     )
+    .await
     .expect("persist invite code before removal");
 
     runtime
@@ -248,6 +252,7 @@ async fn removing_or_clearing_node_config_deletes_its_invite_code() {
         .expect("remove node config");
     assert_eq!(
         load_community_node_invite_code(&db_path, IdentityStorageMode::FileOnly, base_url.as_str())
+            .await
             .expect("load removed invite code"),
         None
     );
@@ -260,13 +265,14 @@ async fn removing_or_clearing_node_config_deletes_its_invite_code() {
             resolved_urls: None,
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     persist_community_node_invite_code(
         &db_path,
         IdentityStorageMode::FileOnly,
         base_url.as_str(),
         "second-code",
     )
+    .await
     .expect("persist invite code before clear");
     runtime
         .clear_community_node_config()
@@ -274,6 +280,7 @@ async fn removing_or_clearing_node_config_deletes_its_invite_code() {
         .expect("clear node config");
     assert_eq!(
         load_community_node_invite_code(&db_path, IdentityStorageMode::FileOnly, base_url.as_str())
+            .await
             .expect("load cleared invite code"),
         None
     );
@@ -295,6 +302,7 @@ async fn authentication_sends_invite_only_to_its_node() {
         base_url_a.as_str(),
         "invite-a",
     )
+    .await
     .expect("persist invite code");
 
     runtime
@@ -534,6 +542,7 @@ async fn banned_member_with_stored_token_stops_self_heal_reauthentication() {
             IdentityStorageMode::FileOnly,
             base_url.as_str()
         )
+        .await
         .expect("load token")
         .is_none(),
         "stored token must be discarded on admission rejection"

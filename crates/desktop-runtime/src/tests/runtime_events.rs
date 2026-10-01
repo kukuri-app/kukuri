@@ -192,7 +192,7 @@ async fn sync_status_events_carry_only_the_changed_parts_and_stop_on_shutdown() 
     );
 
     let base_url = "http://127.0.0.1:9";
-    seed_local_community_node_consents(&runtime, base_url, 1);
+    seed_local_community_node_consents(&runtime, base_url, 1).await;
     runtime
         .set_community_node_config(SetCommunityNodeConfigRequest {
             nodes: vec![SetCommunityNodeConfigNode::new(base_url.to_string())],

@@ -119,7 +119,7 @@ impl DesktopRuntime {
         )
         .await;
         let mut token =
-            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())?;
+            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str()).await?;
 
         if token
             .as_ref()
@@ -216,7 +216,8 @@ impl DesktopRuntime {
         }
         let now = Utc::now().timestamp();
         Ok(
-            load_community_node_token(&self.db_path, self.identity_mode, base_url)?
+            load_community_node_token(&self.db_path, self.identity_mode, base_url)
+                .await?
                 .filter(|token| !Self::community_node_token_requires_refresh(token, now)),
         )
     }
@@ -290,6 +291,7 @@ impl DesktopRuntime {
     async fn community_node_connectivity(&self, base_url: &str) -> Option<NodeConnectivity> {
         let local_consent =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .ok()
                 .filter(|consent| consent.has_active_consent())?;
         let verified = self
@@ -434,7 +436,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             node.base_url.as_str(),
-        )?;
+        )
+        .await?;
         let sessions = self.community_node_sessions.lock().await;
         let session = sessions.get(node.base_url.as_str());
         let consent_state =
@@ -458,7 +461,8 @@ impl DesktopRuntime {
         // status生成自体が、retry／参加承認待ちでpreflightを終えた後のtoken読込を
         // 迂回させない。認証状態はcurrent policy照合済みevidenceがある場合だけ復元する。
         let token = if current_policy_verified {
-            load_community_node_token(&self.db_path, self.identity_mode, node.base_url.as_str())?
+            load_community_node_token(&self.db_path, self.identity_mode, node.base_url.as_str())
+                .await?
         } else {
             None
         };
@@ -477,7 +481,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             node.base_url.as_str(),
-        )?
+        )
+        .await?
         .is_some();
         // 確かめ済みの relay のうち、まだ endpoint へ入っていないものがある。
         let restart_required = match self.community_node_connectivity(&node.base_url).await {

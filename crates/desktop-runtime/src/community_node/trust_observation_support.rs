@@ -10,7 +10,6 @@
 //! 状態は account DB の隣のファイル（`<db>.trust-observations.json`）に保存する。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -103,18 +102,18 @@ fn state_path(db_path: &Path) -> PathBuf {
     db_path.with_extension(TRUST_OBSERVATION_STATE_FILE_EXTENSION)
 }
 
-fn load_state(db_path: &Path) -> Result<TrustObservationState> {
+async fn load_state(db_path: &Path) -> Result<TrustObservationState> {
     let path = state_path(db_path);
-    if !path.exists() {
-        return Ok(TrustObservationState::default());
-    }
-    let raw = fs::read_to_string(&path).with_context(|| {
+    let Some(raw) = crate::storage::read_file(&path).await.with_context(|| {
         format!(
             "failed to read trust observation state `{}`",
             path.display()
         )
-    })?;
-    serde_json::from_str(&raw).with_context(|| {
+    })?
+    else {
+        return Ok(TrustObservationState::default());
+    };
+    serde_json::from_slice(&raw).with_context(|| {
         format!(
             "failed to parse trust observation state `{}`",
             path.display()
@@ -122,23 +121,18 @@ fn load_state(db_path: &Path) -> Result<TrustObservationState> {
     })
 }
 
-fn save_state(db_path: &Path, state: &TrustObservationState) -> Result<()> {
+async fn save_state(db_path: &Path, state: &TrustObservationState) -> Result<()> {
     let path = state_path(db_path);
     let json =
         serde_json::to_vec_pretty(state).context("failed to encode trust observation state")?;
-    let temporary = path.with_extension(format!("{TRUST_OBSERVATION_STATE_FILE_EXTENSION}.tmp"));
-    fs::write(&temporary, json).with_context(|| {
-        format!(
-            "failed to write trust observation state `{}`",
-            temporary.display()
-        )
-    })?;
-    fs::rename(&temporary, &path).with_context(|| {
-        format!(
-            "failed to replace trust observation state `{}`",
-            path.display()
-        )
-    })
+    crate::storage::write_file(&path, &json)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to replace trust observation state `{}`",
+                path.display()
+            )
+        })
 }
 
 fn pending_key(target: &str, kind: TrustObservationKind) -> String {
@@ -240,7 +234,7 @@ impl DesktopRuntime {
         active: bool,
     ) -> Result<()> {
         let _guard = self.trust_observation_guard.lock().await;
-        let mut state = load_state(&self.db_path)?;
+        let mut state = load_state(&self.db_path).await?;
         if !state
             .nodes
             .values()
@@ -258,7 +252,7 @@ impl DesktopRuntime {
                 node.pending.insert(key.clone(), envelope.clone());
             }
         }
-        save_state(&self.db_path, &state)
+        save_state(&self.db_path, &state).await
     }
 
     /// 1 node の送信待ちの観測を送り、未完了の削除要求を再送する(scheduler の node ごとの lane。
@@ -266,7 +260,7 @@ impl DesktopRuntime {
     pub(crate) async fn flush_community_node_trust_observations_for(&self, base_url: &str) {
         let node = {
             let _guard = self.trust_observation_guard.lock().await;
-            match load_state(&self.db_path) {
+            match load_state(&self.db_path).await {
                 Ok(mut state) => state.nodes.remove(base_url),
                 Err(error) => {
                     warn!(error = %error, "failed to load trust observation state");
@@ -359,7 +353,7 @@ impl DesktopRuntime {
 
     async fn apply_submit_outcome(&self, base_url: &str, outcome: SubmitOutcome) -> Result<()> {
         let _guard = self.trust_observation_guard.lock().await;
-        let mut state = load_state(&self.db_path)?;
+        let mut state = load_state(&self.db_path).await?;
         let Some(node) = state.nodes.get_mut(base_url) else {
             return Ok(());
         };
@@ -391,20 +385,21 @@ impl DesktopRuntime {
             }
             SubmitOutcome::Retry => return Ok(()),
         }
-        save_state(&self.db_path, &state)
+        save_state(&self.db_path, &state).await
     }
 
     /// 保存済み観測の削除と提供同意の取消を CN に要求する。完了したら削除要求の印を外す。
     ///
     /// 取消は必須同意の状態によらず受け付けられる（本人認証だけ）ため、session の Ready は要求しない。
     async fn complete_trust_observation_revocation(&self, base_url: &str) -> Result<()> {
-        let token = match load_community_node_token(&self.db_path, self.identity_mode, base_url)? {
-            Some(token) => token,
-            None => {
-                self.request_community_node_authentication_token(base_url)
-                    .await?
-            }
-        };
+        let token =
+            match load_community_node_token(&self.db_path, self.identity_mode, base_url).await? {
+                Some(token) => token,
+                None => {
+                    self.request_community_node_authentication_token(base_url)
+                        .await?
+                }
+            };
         let mut status = self
             .send_trust_observation_revocation(base_url, token.access_token.as_str())
             .await?;
@@ -423,11 +418,11 @@ impl DesktopRuntime {
             ));
         }
         let _guard = self.trust_observation_guard.lock().await;
-        let mut state = load_state(&self.db_path)?;
+        let mut state = load_state(&self.db_path).await?;
         if let Some(node) = state.nodes.get_mut(base_url) {
             node.revocation_pending = false;
         }
-        save_state(&self.db_path, &state)
+        save_state(&self.db_path, &state).await
     }
 
     async fn send_trust_observation_revocation(
@@ -456,7 +451,7 @@ impl DesktopRuntime {
     ) -> Result<()> {
         {
             let _guard = self.trust_observation_guard.lock().await;
-            let mut state = load_state(&self.db_path)?;
+            let mut state = load_state(&self.db_path).await?;
             let Some(node) = state.nodes.get_mut(base_url) else {
                 return Ok(());
             };
@@ -467,7 +462,7 @@ impl DesktopRuntime {
             node.needs_reconsent = false;
             node.pending.clear();
             node.revocation_pending = true;
-            save_state(&self.db_path, &state)?;
+            save_state(&self.db_path, &state).await?;
         }
         if let Err(error) = self.complete_trust_observation_revocation(base_url).await {
             warn!(base_url = %base_url, error = %error, "trust observation revocation will be retried");
@@ -483,13 +478,13 @@ impl DesktopRuntime {
         self.revoke_community_node_trust_observations(base_url)
             .await?;
         let _guard = self.trust_observation_guard.lock().await;
-        let mut state = load_state(&self.db_path)?;
+        let mut state = load_state(&self.db_path).await?;
         if let Some(node) = state.nodes.remove(base_url)
             && node.revocation_pending
         {
             warn!(base_url = %base_url, "removed community node before trust observation revocation completed");
         }
-        save_state(&self.db_path, &state)
+        save_state(&self.db_path, &state).await
     }
 
     pub async fn get_community_node_observation_sharing(
@@ -518,7 +513,8 @@ impl DesktopRuntime {
     ) -> Result<CommunityNodeObservationSharingStatus> {
         let node = {
             let _guard = self.trust_observation_guard.lock().await;
-            load_state(&self.db_path)?
+            load_state(&self.db_path)
+                .await?
                 .nodes
                 .get(&base_url)
                 .cloned()
@@ -546,7 +542,8 @@ impl DesktopRuntime {
         // 以前の削除要求が終わるまで再開しない。
         let revocation_pending = {
             let _guard = self.trust_observation_guard.lock().await;
-            load_state(&self.db_path)?
+            load_state(&self.db_path)
+                .await?
                 .nodes
                 .get(&base_url)
                 .is_some_and(|node| node.revocation_pending)
@@ -580,7 +577,8 @@ impl DesktopRuntime {
             ));
         }
         let mut token =
-            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())?
+            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
+                .await?
                 .ok_or_else(|| anyhow!("community node authentication is required"))?;
         self.accept_community_node_consents_with_retry(
             base_url.as_str(),
@@ -593,7 +591,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         let withdrawn_at = consents.withdrawn_at;
         let verified_before = consents.clone();
         record_community_node_local_consents(
@@ -614,7 +613,8 @@ impl DesktopRuntime {
             self.identity_mode,
             base_url.as_str(),
             &consents,
-        )?;
+        )
+        .await?;
         // 任意文書の追記は、確認済みの必須の同意を変えない。確認済みの状態も同じ操作で揃え、
         // 次の期限の登録でその CN の relay と seed を外さない(#1221 R2-B)。
         if let Some(session) = self
@@ -647,7 +647,7 @@ impl DesktopRuntime {
         }
         {
             let _guard = self.trust_observation_guard.lock().await;
-            let mut state = load_state(&self.db_path)?;
+            let mut state = load_state(&self.db_path).await?;
             let mut pending = BTreeMap::new();
             if request.include_existing {
                 for key in &current {
@@ -668,7 +668,7 @@ impl DesktopRuntime {
             node.revocation_pending = false;
             // 再同意までの間に積んだ送信待ちは捨てない。既存分（同じ対象・種別）は新しい署名で置き換える。
             node.pending.extend(pending);
-            save_state(&self.db_path, &state)?;
+            save_state(&self.db_path, &state).await?;
         }
         self.flush_community_node_trust_observations_for(&base_url)
             .await;
@@ -698,6 +698,7 @@ pub(crate) async fn load_trust_observation_pending_count(
 ) -> usize {
     let _guard = runtime.trust_observation_guard.lock().await;
     load_state(&runtime.db_path)
+        .await
         .expect("trust observation state")
         .nodes
         .get(base_url)

@@ -317,7 +317,7 @@ fn validate_or_create_marker(profile: &ClientProfile) -> Result<(), ProfileError
             format!("failed to encode profile marker: {error}"),
         )
     })?;
-    crate::identity::write_private_file_atomically(&marker_path, &bytes).map_err(|error| {
+    crate::storage::write_private_file_atomically(&marker_path, &bytes).map_err(|error| {
         ProfileError::new(
             ProfileErrorKind::ProfilePathUnavailable,
             format!(

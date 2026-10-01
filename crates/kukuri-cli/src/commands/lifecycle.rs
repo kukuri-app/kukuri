@@ -97,9 +97,9 @@ impl CommandHandler for Handler {
                     .map_err(command_error)?,
             ),
             "get_desktop_startup_status" => encode(session.status()),
-            "get_app_consent_status" => encode(kukuri_desktop_runtime::app_consent_status(
-                &session.consent_db_path(),
-            )),
+            "get_app_consent_status" => {
+                encode(kukuri_desktop_runtime::app_consent_status(&session.consent_db_path()).await)
+            }
             "accept_app_consents" => {
                 let request: ConsentInput = decode(payload)?;
                 encode(
@@ -110,6 +110,7 @@ impl CommandHandler for Handler {
             }
             "list_accounts" => encode(
                 kukuri_desktop_runtime::list_accounts(&session.app_data_dir)
+                    .await
                     .map_err(command_error)?,
             ),
             "switch_account" => {
@@ -142,6 +143,7 @@ impl CommandHandler for Handler {
                     &session.app_data_dir,
                     &secret_text(secret)?,
                 )
+                .await
                 .map_err(command_error)?,
             ),
             "import_account_key" => {

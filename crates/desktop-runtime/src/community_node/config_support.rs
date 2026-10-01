@@ -1,20 +1,21 @@
 use super::*;
 
-pub(crate) fn load_community_node_config_from_file(
+pub(crate) async fn load_community_node_config_from_file(
     db_path: &Path,
 ) -> Result<Option<CommunityNodeConfig>> {
     let path = community_node_config_path(db_path);
-    if !path.exists() {
+    let Some(raw) = crate::storage::read_file(&path)
+        .await
+        .with_context(|| format!("failed to read community-node config `{}`", path.display()))?
+    else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read community-node config `{}`", path.display()))?;
-    let config = serde_json::from_str::<CommunityNodeConfig>(&raw)
+    };
+    let config = serde_json::from_slice::<CommunityNodeConfig>(&raw)
         .with_context(|| format!("failed to parse community-node config `{}`", path.display()))?;
     Ok(Some(normalize_community_node_config(config)?))
 }
 
-pub(crate) fn save_community_node_config(
+pub(crate) async fn save_community_node_config(
     db_path: &Path,
     config: &CommunityNodeConfig,
 ) -> Result<()> {
@@ -26,7 +27,8 @@ pub(crate) fn save_community_node_config(
             path.display()
         )
     })?;
-    fs::write(&path, json)
+    crate::storage::write_file(&path, &json)
+        .await
         .with_context(|| format!("failed to write community-node config `{}`", path.display()))
 }
 

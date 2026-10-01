@@ -1026,7 +1026,7 @@ impl DesktopRuntime {
             bail!("discovery configuration is locked by environment variables");
         }
         next_config.seed_peers = parse_seed_entries(&request.seed_entries)?;
-        save_discovery_config(&self.db_path, &next_config.stored())?;
+        save_discovery_config(&self.db_path, &next_config.stored()).await?;
         *self.discovery_config.lock().await = next_config.clone();
         self.apply_community_node_connectivity(None).await?;
         Ok(next_config)

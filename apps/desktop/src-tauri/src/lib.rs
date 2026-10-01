@@ -260,7 +260,9 @@ pub fn run() {
                             {
                                 None
                             } else {
-                                Some(load_app_consent_store(&db_path))
+                                Some(tauri::async_runtime::block_on(
+                                    load_app_consent_store(&db_path),
+                                ))
                             };
                             let consent_satisfied = consent_store
                                 .as_ref()
@@ -271,9 +273,8 @@ pub fn run() {
                             let initialize_runtime = action.initializes_runtime();
                             let status = match action {
                             RestoreStartupAction::ResetConsent => {
-                                match advance_committed_restore_to_consent(
-                                    &app_data_dir,
-                                    &db_path,
+                                match tauri::async_runtime::block_on(
+                                    advance_committed_restore_to_consent(&app_data_dir, &db_path),
                                 ) {
                                     Ok(status) => {
                                         info!("device restore awaits explicit app consent; deferring runtime startup");

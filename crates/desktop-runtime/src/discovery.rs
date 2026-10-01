@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -71,29 +70,34 @@ pub(crate) struct StoredDiscoveryConfig {
     seed_peers: Vec<SeedPeer>,
 }
 
-pub(crate) fn load_discovery_config_from_file(
+pub(crate) async fn load_discovery_config_from_file(
     db_path: &Path,
 ) -> Result<Option<StoredDiscoveryConfig>> {
     let path = discovery_config_path(db_path);
-    if !path.exists() {
+    let Some(raw) = crate::storage::read_file(&path)
+        .await
+        .with_context(|| format!("failed to read discovery config `{}`", path.display()))?
+    else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read discovery config `{}`", path.display()))?;
-    let config = serde_json::from_str::<StoredDiscoveryConfig>(&raw)
+    };
+    let config = serde_json::from_slice::<StoredDiscoveryConfig>(&raw)
         .with_context(|| format!("failed to parse discovery config `{}`", path.display()))?;
     Ok(Some(config))
 }
 
-pub(crate) fn save_discovery_config(db_path: &Path, config: &StoredDiscoveryConfig) -> Result<()> {
+pub(crate) async fn save_discovery_config(
+    db_path: &Path,
+    config: &StoredDiscoveryConfig,
+) -> Result<()> {
     let path = discovery_config_path(db_path);
     let json = serde_json::to_vec_pretty(config)
         .with_context(|| format!("failed to encode discovery config `{}`", path.display()))?;
-    fs::write(&path, json)
+    crate::storage::write_file(&path, &json)
+        .await
         .with_context(|| format!("failed to write discovery config `{}`", path.display()))
 }
 
-pub(crate) fn resolve_discovery_config_from_env(db_path: &Path) -> Result<DiscoveryConfig> {
+pub(crate) async fn resolve_discovery_config_from_env(db_path: &Path) -> Result<DiscoveryConfig> {
     let env_mode = std::env::var(DISCOVERY_MODE_ENV).ok();
     let env_seeds = std::env::var(DISCOVERY_SEEDS_ENV).ok();
     let env_locked = env_mode.is_some() || env_seeds.is_some();
@@ -112,7 +116,7 @@ pub(crate) fn resolve_discovery_config_from_env(db_path: &Path) -> Result<Discov
         });
     }
 
-    if let Some(stored) = load_discovery_config_from_file(db_path)? {
+    if let Some(stored) = load_discovery_config_from_file(db_path).await? {
         return Ok(DiscoveryConfig::from_stored(stored, false));
     }
 

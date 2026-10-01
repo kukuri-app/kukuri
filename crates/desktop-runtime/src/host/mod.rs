@@ -188,7 +188,7 @@ impl ClientHost {
     pub async fn start_if_consented(
         app_data_dir: PathBuf,
     ) -> Result<ClientHostStart, ClientStartupError> {
-        let consent = load_app_consent_store(&app_data_dir.join(crate::paths::DB_FILE_NAME));
+        let consent = load_app_consent_store(&app_data_dir.join(crate::paths::DB_FILE_NAME)).await;
         if !app_consent_satisfied(&consent) {
             return Ok(ClientHostStart::ConsentRequired(consent_required_status(
                 &consent,
@@ -199,6 +199,7 @@ impl ClientHost {
 
     async fn start(app_data_dir: PathBuf) -> Result<Arc<Self>, ClientStartupError> {
         let db_path = ensure_accounts_initialized_from_env(&app_data_dir)
+            .await
             .map_err(ClientStartupError::from_error)?;
         let runtime = Self::build_detached_runtime(db_path).await?;
         Self::from_runtime(app_data_dir, runtime).await
@@ -208,7 +209,7 @@ impl ClientHost {
         app_data_dir: PathBuf,
         runtime: Arc<DesktopRuntime>,
     ) -> Result<Arc<Self>, ClientStartupError> {
-        let desired = match subscriptions::load_desired_subscriptions(runtime.db_path()) {
+        let desired = match subscriptions::load_desired_subscriptions(runtime.db_path()).await {
             Ok(desired) => desired,
             Err(error) => {
                 runtime.shutdown().await;
@@ -287,7 +288,7 @@ impl ClientHost {
         &self,
         next: Arc<DesktopRuntime>,
     ) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
-        let desired = match subscriptions::load_desired_subscriptions(next.db_path()) {
+        let desired = match subscriptions::load_desired_subscriptions(next.db_path()).await {
             Ok(desired) => desired,
             Err(error) => {
                 next.shutdown().await;
@@ -337,7 +338,7 @@ impl ClientHost {
         if self.shutdown_started.load(Ordering::Acquire) {
             anyhow::bail!("client host is shutting down");
         }
-        let snapshot = list_accounts(&self.app_data_dir)?;
+        let snapshot = list_accounts(&self.app_data_dir).await?;
         let record = snapshot
             .accounts
             .iter()
@@ -353,7 +354,8 @@ impl ClientHost {
             &db_path,
             crate::identity::IdentityStorageMode::from_env(),
             &record.pubkey,
-        )?;
+        )
+        .await?;
         let next = Self::build_detached_runtime(db_path)
             .await
             .map_err(|error| anyhow::anyhow!("failed to start the account runtime: {error}"))?;
@@ -361,15 +363,17 @@ impl ClientHost {
             .replace_runtime_locked(next)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let commit = set_active_account(&self.app_data_dir, account_id).map(|_| ());
+        let commit = set_active_account(&self.app_data_dir, account_id)
+            .await
+            .map(|_| ());
         self.finish_account_change(previous, &snapshot.active_account_id, record, false, commit)
             .await
     }
 
-    pub fn desired_subscriptions(
+    pub async fn desired_subscriptions(
         &self,
     ) -> Result<Vec<DesiredSubscription>, SubscriptionStateError> {
-        subscriptions::load_desired_subscriptions(self.runtime().db_path())
+        subscriptions::load_desired_subscriptions(self.runtime().db_path()).await
     }
 
     pub async fn add_desired_subscription(
@@ -385,7 +389,7 @@ impl ClientHost {
             ));
         }
         let runtime = self.runtime();
-        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path())?;
+        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path()).await?;
         if desired.contains(&subscription) {
             return runtime
                 .set_desired_subscription(&subscription, true)
@@ -400,7 +404,9 @@ impl ClientHost {
             .await
             .map_err(SubscriptionStateError::activation)?;
         desired.push(subscription.clone());
-        if let Err(error) = subscriptions::save_desired_subscriptions(runtime.db_path(), &desired) {
+        if let Err(error) =
+            subscriptions::save_desired_subscriptions(runtime.db_path(), &desired).await
+        {
             let _ = runtime.set_desired_subscription(&subscription, false).await;
             return Err(error);
         }
@@ -420,12 +426,12 @@ impl ClientHost {
             ));
         }
         let runtime = self.runtime();
-        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path())?;
+        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path()).await?;
         if !desired.iter().any(|current| current == subscription) {
             return Ok(());
         }
         desired.retain(|current| current != subscription);
-        subscriptions::save_desired_subscriptions(runtime.db_path(), &desired)?;
+        subscriptions::save_desired_subscriptions(runtime.db_path(), &desired).await?;
         runtime
             .set_desired_subscription(subscription, false)
             .await
@@ -547,7 +553,7 @@ mod tests {
             .await
             .expect("add desired subscription");
         assert_eq!(
-            first.desired_subscriptions().expect("list desired"),
+            first.desired_subscriptions().await.expect("list desired"),
             vec![desired.clone()]
         );
         let first_status = first
@@ -580,6 +586,7 @@ mod tests {
         assert!(
             second
                 .desired_subscriptions()
+                .await
                 .expect("list desired")
                 .is_empty()
         );
@@ -621,7 +628,9 @@ mod tests {
         let desired = (0..70)
             .map(|index| public(&format!("kukuri:topic:desired-{index:02}")))
             .collect::<Vec<_>>();
-        subscriptions::save_desired_subscriptions(&db_path, &desired).expect("seventy desired");
+        subscriptions::save_desired_subscriptions(&db_path, &desired)
+            .await
+            .expect("seventy desired");
         let runtime = Arc::new(DesktopRuntime::new(&db_path).await.expect("runtime"));
         runtime
             .set_scope_display(column("kukuri:topic:column"))
@@ -631,7 +640,7 @@ mod tests {
             .await
             .expect("startup continues over the limit");
         assert_eq!(
-            host.desired_subscriptions().expect("desired"),
+            host.desired_subscriptions().await.expect("desired"),
             desired[..kukuri_app_api::MAX_ACTIVE_SCOPES].to_vec()
         );
         let subscribed = host

@@ -47,11 +47,11 @@ impl ScenarioRuntime {
         }
         let persisted_capabilities = self.private_channel_capabilities.clone();
         app.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-            *persisted_capabilities
+            let stored = persisted_capabilities
                 .lock()
-                .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"))? =
-                capabilities.to_vec();
-            Ok(())
+                .map(|mut persisted| *persisted = capabilities)
+                .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"));
+            Box::pin(async move { stored })
         }));
         self.app = Some(app);
         Ok(())
