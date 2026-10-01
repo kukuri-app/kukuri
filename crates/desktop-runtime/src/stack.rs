@@ -15,6 +15,7 @@ use kukuri_docs_sync::{
     IrohDocsSync, ReplicaNoticeStream,
 };
 use kukuri_iroh_node::IrohDocsNode;
+#[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
 use kukuri_transport::StatusChanges;
 use kukuri_transport::{
@@ -37,6 +38,7 @@ pub(crate) struct BoundIrohStack {
 }
 
 /// 候補の台帳と、通信状態の変わった部分の印(#1221 R2-D。作り直しても同じ印へ付ける)。
+#[cfg(not(target_family = "wasm"))]
 enum StackOpen {
     Initial(Arc<SqliteStore>, StatusChanges),
     Reopen(Arc<SqliteStore>, StatusChanges),
@@ -60,6 +62,7 @@ macro_rules! reloadable_service {
             $(#[$impl_meta:meta])*
             impl $trait:path {
                 $(
+                    $(#[$method_meta:meta])*
                     async fn $method:ident ( $( $arg:ident : $arg_ty:ty ),* $(,)? ) -> $ret:ty;
                 )*
             }
@@ -91,6 +94,7 @@ macro_rules! reloadable_service {
             $(#[$impl_meta])*
             impl $trait for $name {
                 $(
+                    $(#[$method_meta])*
                     async fn $method(&self, $( $arg : $arg_ty ),* ) -> $ret {
                         self.current().await.$method($( $arg ),*).await
                     }
@@ -221,6 +225,7 @@ reloadable_service! {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
         async fn put_owned_blob(data: Vec<u8>, mime: &str, reference: &str) -> Result<StoredBlob>;
         async fn put_remote_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+        #[cfg(not(target_family = "wasm"))]
         async fn put_remote_blob_file(path: &std::path::Path, hash: &BlobHash, adult: bool) -> Result<()>;
         async fn forget_adult_media_step() -> Result<usize>;
         async fn fetch_blob(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
@@ -229,6 +234,7 @@ reloadable_service! {
         // #1152: trait の既定実装は永続化する `fetch_blob` へ委譲するため、必ず実体へ転送する
         // (成人向け表示 ON の取得は ephemeral で永続化しない。ADR 0046 §6.2)。
         async fn fetch_blob_ephemeral(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
+        #[cfg(not(target_family = "wasm"))]
         async fn fetch_blob_ephemeral_to_file(hash: &BlobHash, path: &std::path::Path) -> Result<Option<u64>>;
         async fn fetch_verified_receive_offer_payload(
             offer: &VerifiedReceiveOffer, provider: EndpointAddr,
@@ -253,12 +259,15 @@ pub(crate) struct SharedIrohStack {
     pub(crate) transport: Arc<ReloadableTransport>,
     pub(crate) docs_sync: Arc<ReloadableDocsSync>,
     pub(crate) blob_service: Arc<ReloadableBlobService>,
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) root: PathBuf,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
     /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
     dht_enabled: AtomicBool,
+    #[cfg(not(target_family = "wasm"))]
     candidate_store: Arc<SqliteStore>,
+    #[cfg(not(target_family = "wasm"))]
     remote_cache_reaper: n0_future::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
     docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
@@ -304,6 +313,8 @@ impl SharedIrohStack {
         self.generation.load(Ordering::Relaxed)
     }
 
+    // 永続の node と SQLite の候補の台帳で組み立てる。Web の組み立ては W1 AC-5。
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn new(
         root: &Path,
         network_config: TransportNetworkConfig,
@@ -404,6 +415,7 @@ impl SharedIrohStack {
         Ok(())
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn rebuild(
         &self,
         discovery_config: &DiscoveryConfig,
@@ -534,9 +546,12 @@ impl SharedIrohStack {
                 discovery_mode = ?discovery_config.mode,
                 "runtime relay connectivity change requires stack rebuild"
             );
+            #[cfg(not(target_family = "wasm"))]
             return self
                 .rebuild(discovery_config, bootstrap_seed_peers, relay_config)
                 .await;
+            #[cfg(target_family = "wasm")]
+            anyhow::bail!("rebuilding the iroh stack is not available on the web yet");
         }
         let current = self.current.lock().await;
         let current = current
@@ -569,6 +584,7 @@ impl SharedIrohStack {
     }
 
     pub(crate) async fn shutdown_checked(&self) -> Result<()> {
+        #[cfg(not(target_family = "wasm"))]
         self.remote_cache_reaper.abort();
         if let Some(current) = self.current.lock().await.take() {
             current.transport.shutdown().await;
@@ -601,6 +617,7 @@ impl SharedIrohStack {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Drop for SharedIrohStack {
     fn drop(&mut self) {
         self.remote_cache_reaper.abort();
@@ -608,6 +625,7 @@ impl Drop for SharedIrohStack {
 }
 
 impl BoundIrohStack {
+    #[cfg(not(target_family = "wasm"))]
     async fn new(
         root: &Path,
         network_config: TransportNetworkConfig,

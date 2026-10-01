@@ -39,6 +39,7 @@ use kukuri_core::{
     verify_signed_dome_physics_snapshot,
 };
 use kukuri_docs_sync::{DocQuery, DocsSync};
+#[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
 use kukuri_transport::{
     DhtDiscoveryOptions, DiscoveryMode, TransportNetworkConfig, TransportRelayConfig,
@@ -83,11 +84,13 @@ use crate::stack::SharedIrohStack;
 mod community_node_api;
 mod content_profile_api;
 mod identity_api;
+#[cfg(not(target_family = "wasm"))]
 mod legacy_store_retirement;
 #[cfg(test)]
 pub(crate) use legacy_store_retirement::LegacyStoreProgress;
 mod notifications_messages_api;
 mod private_channels_game_api;
+#[cfg(not(target_family = "wasm"))]
 mod protected_migration;
 mod sync_live_api;
 mod sync_status_observer;
@@ -140,10 +143,14 @@ pub struct DesktopRuntime {
     #[cfg(test)]
     pub(crate) sync_status_delta_reads: std::sync::atomic::AtomicUsize,
     /// #1221 R5-G・R5-I: 旧 `iroh-data` の保護移行と退役の背景 task。backup 前の drain と直列にする。
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) legacy_store_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) protected_migration_guard: Mutex<()>,
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) private_migration_dirty: Arc<AtomicBool>,
     /// #1221 R5-I: 読むだけに開いた旧 iroh store。退役させたら(または初めから無ければ)`None`。
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) legacy_store: Mutex<Option<Arc<kukuri_iroh_node::LegacyStore>>>,
     /// Notification forwarding belongs to this account runtime, including Drop without shutdown.
     notification_event_task: StdMutex<Option<n0_future::task::JoinHandle<()>>>,
@@ -310,7 +317,9 @@ async fn persist_gossip_subscription_state(
     .await
 }
 
+// runtime の構築（永続の node・SQLite・旧 store）は native だけ。Web の構築は web-runtime と一緒に足す（W1 AC-5）。
 impl DesktopRuntime {
+    #[cfg(not(target_family = "wasm"))]
     pub async fn new(db_path: impl AsRef<Path>) -> Result<Self> {
         Self::new_with_config_and_identity_and_discovery(
             db_path,
@@ -323,6 +332,7 @@ impl DesktopRuntime {
         .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn new_with_config(
         db_path: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
@@ -355,6 +365,7 @@ impl DesktopRuntime {
         .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn new_with_config_and_identity_and_discovery(
         db_path: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
@@ -543,6 +554,7 @@ impl DesktopRuntime {
         })
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn from_env(
         db_path: impl AsRef<Path>,
         initial_community_node_config: CommunityNodeConfig,

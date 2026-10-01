@@ -55,6 +55,15 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - QUIC over WebRTC DataChannel の transport crate は `crates/webrtc-transport`（ADR 0057、#1421 W9 AC-1）。
 - `desktop-runtime` の platform 固有 module（keyring・fs・sqlx を直接使うもの）は file 単位で `cfg(not(target_family = "wasm"))` にする。
   fs を一部で直接書く module の読み書きは、既存の `KeyringStore`（`identity.rs`）と同じ形の保存 trait 1 つへ寄せる。native の実装は今の file 読み書きを移す。Web の実装は W4 が IndexedDB で作る。
+- W1 AC-4d の実装: desktop-runtime は wasm32 で build できる（CI の wasm32 の clippy に入る）。native だけにしたもの:
+  - device backup・restore と restore の調停（`backup`・`host/restore_lifecycle`）、旧 store の退役と保護データの移行
+  - profile の dir と lock（`host/profile`）、他の account の DB を読む表示（`account_display`）、file path を受け取る media の読み出し（`get_blob_media_file`）
+  - 通報の送信（ブラウザの fetch は転送を止められず、通報本文を別の host へ再送しない保証（#703）を保てない）
+  - runtime と stack の組み立て（永続の node・SQLite の候補の台帳。`DesktopRuntime::new`・`from_env`、`SharedIrohStack::new`・`rebuild`）と、それを呼ぶ host の起動・切替・作成・logout
+- W1 AC-5 へ引き継ぐもの:
+  - Web の runtime と stack の組み立て。それまで wasm では lib.rs で `dead_code`・`unused_imports` を許し、wasm での stack の作り直しは error を返す。
+  - Community Node の HTTP の期限。ブラウザの reqwest の client には期限が無い。
+  - 上の native だけの command を、capability（「この platform では使えない」）として返すこと。
 
 ### 3. 依存と feature
 

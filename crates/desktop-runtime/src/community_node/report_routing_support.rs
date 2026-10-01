@@ -148,6 +148,7 @@ pub(crate) fn ensure_report_endpoint_origin(
     Ok(())
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl DesktopRuntime {
     /// 解決済みの通報先 node の report endpoint へ通報を POST する（#310）。
     ///

@@ -4,8 +4,11 @@
     all(target_family = "wasm", not(test)),
     warn(clippy::disallowed_methods)
 )]
+// wasm では runtime と host をまだ組み立てない（native だけの構築を外した残り）。Web の構築を足す W1 AC-5 で外す。
+#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 mod accounts;
 mod attachments;
+#[cfg(not(target_family = "wasm"))]
 mod backup;
 mod community_node;
 mod discovery;
@@ -22,6 +25,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
+#[cfg(not(target_family = "wasm"))]
 pub use accounts::display::AccountDisplay;
 pub use accounts::lifecycle::profile_setup_required;
 pub use accounts::{
@@ -29,6 +33,7 @@ pub use accounts::{
     add_account_from_env, ensure_accounts_initialized_from_env, import_account_key_from_env,
     list_accounts, preview_account_key_import, set_active_account,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use backup::{
     CreateDeviceBackupRequest, DeviceBackupCancellation, DeviceBackupPhase, DeviceBackupPreview,
     DeviceBackupProgress, DeviceBackupRestoreResult, DeviceBackupSummary, DeviceRestorePhase,
@@ -71,25 +76,29 @@ pub use host::{
     AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
     APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AgeAttestationStatus, AppConsentDocumentRecord,
     AppConsentDocumentStatus, AppConsentStore, ClientEventReceiver, ClientHost, ClientHostStart,
-    ClientProfile, ClientProfileKind, ClientStartupError, ClientStartupErrorKind,
-    ClientStartupErrorView, ClientStartupState, ClientStartupStatus, DesiredSubscription,
-    DesiredSubscriptionScope, LEGAL_BUNDLE_VERSION, ProfileError, ProfileErrorKind, ProfileLease,
+    ClientStartupError, ClientStartupErrorKind, ClientStartupErrorView, ClientStartupState,
+    ClientStartupStatus, DesiredSubscription, DesiredSubscriptionScope, LEGAL_BUNDLE_VERSION,
     SubscriptionStateError, SubscriptionStateErrorKind, age_attestation_satisfied,
     age_attestation_status, app_consent_documents_satisfied, app_consent_documents_status,
     app_consent_path, app_consent_satisfied, consent_required_status, current_unix_seconds,
     desired_subscriptions_path, distribution_community_node_config, failed_startup_status,
-    gui_profile, load_app_consent_store, reset_app_consent_at_path, resolve_cli_profile,
-    save_app_consent_store,
+    load_app_consent_store, reset_app_consent_at_path, save_app_consent_store,
 };
 pub use host::{
     AcceptedAppConsentDocument, AppConsentStatus, app_consent_status, record_app_consents,
     require_consent_acceptance_state, validate_app_consent_documents,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use host::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
     persist_restore_activation_phase, recover_device_restore_before_startup,
     require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use host::{
+    ClientProfile, ClientProfileKind, ProfileError, ProfileErrorKind, ProfileLease, gui_profile,
+    resolve_cli_profile,
 };
 pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
 pub use kukuri_app_api::SessionDisplayRequest;
@@ -103,6 +112,7 @@ pub use requests::CreateAccountRequest;
 pub use storage::install_platform_storage;
 pub use storage::{ClientStorage, KeyringUnavailable};
 // 起動エラーの typed 分類(WP-Q2)。src-tauri は downcast で DatabaseOpen/Migration を判定する。
+#[cfg(not(target_family = "wasm"))]
 pub use kukuri_store::StoreStartupError;
 pub use paths::{
     AppBuildProfile, default_app_data_dir, resolve_app_data_dir_from_env, resolve_db_path_from_env,

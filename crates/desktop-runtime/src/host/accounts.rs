@@ -8,6 +8,7 @@ struct InitialProfileSave {
 }
 
 impl ClientHost {
+    #[cfg(not(target_family = "wasm"))]
     pub async fn create_account(
         &self,
         request: crate::CreateAccountRequest,
@@ -96,6 +97,7 @@ impl ClientHost {
         Ok(true)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn account_display(&self) -> anyhow::Result<Vec<crate::AccountDisplay>> {
         use crate::accounts::display::{read_profile, set_picture};
         let _guard = self.operation_guard.lock().await;
@@ -125,6 +127,7 @@ impl ClientHost {
         Ok(result)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn logout_account(&self, account_id: &str) -> anyhow::Result<AccountRecord> {
         let _guard = self.operation_guard.lock().await;
         if self.shutdown_started.load(Ordering::Acquire) {
