@@ -25,7 +25,8 @@ impl AppService {
             std::mem::take(&mut *self.subscription_registry.dome_heartbeats.lock().await);
         for (_, heartbeat) in heartbeats {
             heartbeat.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), heartbeat.wait()).await;
+            let _ =
+                n0_future::time::timeout(std::time::Duration::from_secs(2), heartbeat.wait()).await;
         }
         self.dome_host_sessions.lock().await.clear();
         let presence_handles = {
@@ -34,7 +35,7 @@ impl AppService {
         };
         for handle in presence_handles {
             handle.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+            let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
     }
 }

@@ -17,7 +17,7 @@ pub struct SessionCandidateView {
 struct Running {
     token: u64,
     hash: BlobHash,
-    task: tokio::task::JoinHandle<()>,
+    task: n0_future::task::JoinHandle<()>,
 }
 struct Entry {
     topic: String,
@@ -66,7 +66,7 @@ struct State {
     stopped: bool,
     entries: VecDeque<Entry>,
     pending_docs: VecDeque<(String, ReplicaId, String, Option<String>)>,
-    retry_timer: Option<tokio::task::JoinHandle<()>>,
+    retry_timer: Option<n0_future::task::JoinHandle<()>>,
     retry_due_ms: Option<i64>,
 }
 impl State {
@@ -326,10 +326,10 @@ impl SessionProjections {
                 let services = services.clone();
                 let task_hash = hash.clone();
                 let deadline =
-                    tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
-                let task = tokio::spawn(async move {
+                    n0_future::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
+                let task = n0_future::task::spawn(async move {
                     let _permit = permit;
-                    let prepared = tokio::time::timeout_at(
+                    let prepared = crate::timeout_at(
                         deadline,
                         services.blob_service.prepare_display_fetch(&task_hash),
                     )
@@ -344,7 +344,7 @@ impl SessionProjections {
                                     && e.running.as_ref().is_some_and(|r| r.token == token)
                                     && !e.observers.is_empty()
                                     && !*services.content_closed.borrow()
-                                    && tokio::time::Instant::now() < deadline
+                                    && n0_future::time::Instant::now() < deadline
                             }) {
                                 // 内側の共通walk枠も取得済み。待機取消には予算を使わない。
                                 registry
@@ -355,7 +355,7 @@ impl SessionProjections {
                             }
                         };
                         let fetched = if attempt.is_some() {
-                            tokio::time::timeout_at(deadline, fetch)
+                            crate::timeout_at(deadline, fetch)
                                 .await
                                 .ok()
                                 .and_then(Result::ok)
@@ -451,9 +451,9 @@ impl SessionProjections {
                 {
                     let registry_for_timer = registry.clone();
                     let services_for_timer = services.clone();
-                    state.retry_timer = Some(tokio::spawn(async move {
+                    state.retry_timer = Some(n0_future::task::spawn(async move {
                         let delay = due.saturating_sub(Utc::now().timestamp_millis()).max(0) as u64;
-                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        n0_future::time::sleep(std::time::Duration::from_millis(delay)).await;
                         {
                             let mut state = registry_for_timer.state.lock().await;
                             state.retry_timer = None;
@@ -501,7 +501,7 @@ impl SessionProjections {
     }
     #[cfg(test)]
     pub(crate) async fn wait_idle(&self) {
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        n0_future::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 if self
                     .state
@@ -513,7 +513,7 @@ impl SessionProjections {
                 {
                     break;
                 }
-                tokio::task::yield_now().await;
+                n0_future::future::yield_now().await;
             }
         })
         .await

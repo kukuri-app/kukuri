@@ -175,7 +175,8 @@ impl AppService {
             if let Some(deadline) = state.record.lifecycle_deadline_at {
                 let remaining = deadline.saturating_sub(Utc::now().timestamp_millis());
                 if remaining > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(remaining as u64)).await;
+                    n0_future::time::sleep(std::time::Duration::from_millis(remaining as u64))
+                        .await;
                 }
                 state = self
                     .fetch_dome_connection_state(&stores, connection_id)

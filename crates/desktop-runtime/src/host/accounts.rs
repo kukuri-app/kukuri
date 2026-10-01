@@ -219,9 +219,13 @@ impl ClientHost {
             anyhow::bail!("client host is shutting down");
         }
         let dir = self.app_data_dir.clone();
-        tokio::task::spawn_blocking(move || {
+        // passphrase の鍵の導出（argon2）は重いので、native では blocking の thread で行う。ブラウザには無い。
+        #[cfg(not(target_family = "wasm"))]
+        return tokio::task::spawn_blocking(move || {
             crate::import_account_key_from_env(&dir, &export, &passphrase, label)
         })
-        .await?
+        .await?;
+        #[cfg(target_family = "wasm")]
+        return crate::import_account_key_from_env(&dir, &export, &passphrase, label);
     }
 }

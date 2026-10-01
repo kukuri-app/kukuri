@@ -16,10 +16,8 @@ use std::{
     },
 };
 
-use tokio::{
-    sync::{broadcast, watch},
-    task::JoinHandle,
-};
+use n0_future::task::JoinHandle;
+use tokio::sync::{broadcast, watch};
 
 use crate::{
     AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, StoreStartupError,
@@ -462,7 +460,7 @@ impl ClientHost {
         let mut events = runtime.subscribe_events();
         let sender = self.events.clone();
         let generation = self.generation();
-        *task = Some(tokio::spawn(async move {
+        *task = Some(n0_future::task::spawn(async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {

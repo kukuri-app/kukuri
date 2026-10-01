@@ -29,11 +29,11 @@ impl AppService {
         self.subscription_registry
             .dm_outbox_retry_starts
             .fetch_add(1, Ordering::SeqCst);
-        *owner = Some(AbortOnDropTask::new(tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+        *owner = Some(AbortOnDropTask::new(n0_future::task::spawn(async move {
+            let mut interval = n0_future::time::interval(std::time::Duration::from_millis(
                 DIRECT_MESSAGE_RETRY_INTERVAL_MS,
             ));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
                 if closed.load(Ordering::Acquire) {
@@ -64,7 +64,7 @@ impl AppService {
             .take();
         if let Some(task) = task {
             task.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task.wait()).await;
+            let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), task.wait()).await;
         }
     }
 }

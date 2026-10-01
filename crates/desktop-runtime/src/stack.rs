@@ -259,7 +259,7 @@ pub(crate) struct SharedIrohStack {
     /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
     dht_enabled: AtomicBool,
     candidate_store: Arc<SqliteStore>,
-    remote_cache_reaper: tokio::task::JoinHandle<()>,
+    remote_cache_reaper: n0_future::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
     docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
@@ -333,7 +333,7 @@ impl SharedIrohStack {
         let docs_sync = Arc::new(ReloadableDocsSync::new(current.docs_sync.clone()));
         let blob_service = Arc::new(ReloadableBlobService::new(current.blob_service.clone()));
         let reaper_store = candidate_store.clone();
-        let remote_cache_reaper = tokio::spawn(async move {
+        let remote_cache_reaper = n0_future::task::spawn(async move {
             loop {
                 let full_step = match reaper_store.reclaim_remote_cache_step().await {
                     Ok(reclaimed) => reclaimed == kukuri_store::REMOTE_CACHE_RECLAIM_STEP,
@@ -342,7 +342,7 @@ impl SharedIrohStack {
                         false
                     }
                 };
-                tokio::time::sleep(if full_step {
+                n0_future::time::sleep(if full_step {
                     std::time::Duration::from_millis(100)
                 } else {
                     std::time::Duration::from_secs(60 * 60)
@@ -485,7 +485,7 @@ impl SharedIrohStack {
             namespaces.try_next().await?;
             Ok::<_, anyhow::Error>(())
         };
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), probe)
+        let result = n0_future::time::timeout(std::time::Duration::from_secs(2), probe)
             .await
             .context("local docs actor health probe timed out")?;
         if let Err(error) = &result {

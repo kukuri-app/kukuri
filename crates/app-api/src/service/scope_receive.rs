@@ -63,10 +63,10 @@ impl AppService {
             .hint_transport
             .subscribe_hints(&hint_topic)
             .await?;
-        let handle = tokio::spawn(async move {
+        let handle = n0_future::task::spawn(async move {
             reader.reread_scope(&topic, &scope).await;
             loop {
-                let boundary = tokio::time::sleep(until_next_bucket(Utc::now().timestamp()));
+                let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
                 tokio::select! {
                     Some(event) = hint_stream.next() => {
                         if !hint_targets_topic(&event.hint, topic.as_str()) {
@@ -165,7 +165,7 @@ impl AppService {
         let last_sync = Arc::clone(&self.last_sync_ts);
         let author = normalize_author_pubkey(author_pubkey)?;
         let local_author = self.current_author_pubkey();
-        let handle = tokio::spawn(async move {
+        let handle = n0_future::task::spawn(async move {
             loop {
                 match hydrate_author_state(
                     &services,
@@ -194,7 +194,7 @@ impl AppService {
                         warn!(author_pubkey = %author, %error, "failed to reread author buckets")
                     }
                 }
-                tokio::time::sleep(until_next_bucket(Utc::now().timestamp())).await;
+                n0_future::time::sleep(until_next_bucket(Utc::now().timestamp())).await;
             }
         });
         Ok(ScopeTask {
@@ -243,7 +243,7 @@ impl AppService {
                 ("sessions/game/", "game-session"),
             ] {
                 for reader in &readers {
-                    let page = tokio::time::timeout(
+                    let page = n0_future::time::timeout(
                         super::remote_read_support::REMOTE_READ_DEADLINE,
                         reader.query_replica_keys(
                             &replica,
@@ -443,7 +443,7 @@ impl AppService {
             )
             .await?
         {
-            let read = tokio::time::timeout(
+            let read = n0_future::time::timeout(
                 super::remote_read_support::REMOTE_READ_DEADLINE,
                 hydrate_post_withdrawal_for_object(
                     reader.as_ref(),
@@ -499,7 +499,7 @@ impl AppService {
                 )
                 .await?
             {
-                let read = tokio::time::timeout(
+                let read = n0_future::time::timeout(
                     super::remote_read_support::REMOTE_READ_DEADLINE,
                     hydrate_reaction_cache_for_target_bounded(
                         reader.as_ref(),

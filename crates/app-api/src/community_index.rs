@@ -1,6 +1,7 @@
 use crate::service::*;
+use crate::timeout_at;
+use n0_future::time::{Instant, timeout};
 use std::time::Duration;
-use tokio::time::{Instant, timeout, timeout_at};
 
 /// 1 候補 peer への試行の上限。batch 全体の 30 秒の内に、候補 4 peer を順に試せる長さ(ADR 0055 §3)。
 const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(7);

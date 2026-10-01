@@ -34,9 +34,9 @@ where
     if let Some(value) = read(local, DocFetchPolicy::LocalOnly).await? {
         return Ok(Some(value));
     }
-    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
     for reader in readers.await {
-        let result = tokio::time::timeout_at(
+        let result = crate::timeout_at(
             deadline,
             read(reader.clone(), DocFetchPolicy::LocalThenRemote),
         )
@@ -67,7 +67,7 @@ pub(crate) async fn writer_readers(
 ) -> Vec<Arc<dyn DocsSync>> {
     let mut peers: Vec<SeedPeer> = Vec::new();
     for writer in writers {
-        let resolved = tokio::time::timeout(
+        let resolved = n0_future::time::timeout(
             WRITER_DESTINATION_TIMEOUT,
             services
                 .hint_transport
@@ -195,10 +195,10 @@ impl AppService {
         if count_sources == 0 {
             return Ok(RangeReconcile::default());
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + Duration::from_secs(30);
         let mut total = RangeReconcile::default();
         for (source_index, (replica, reader, provider_slot)) in sources.into_iter().enumerate() {
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 break;
             }
             let budget = max_entries
@@ -341,7 +341,7 @@ impl AppService {
                     topic_id,
                     channel,
                     generation,
-                    tokio::time::timeout_at(deadline, read),
+                    crate::timeout_at(deadline, read),
                 )
                 .await
             {

@@ -168,7 +168,7 @@ impl AppService {
             let (sender, mut receiver) = tokio::sync::mpsc::channel(PUBLIC_OFFER_QUEUE_CAPACITY);
             let services = self.services.clone();
             let closed = Arc::clone(&self.subscription_registry.account_receive_offer_closed);
-            let task = AbortOnDropTask::new(tokio::spawn(async move {
+            let task = AbortOnDropTask::new(n0_future::task::spawn(async move {
                 while let Some((payload, recipients, scope)) = receiver.recv().await {
                     if closed.load(Ordering::Acquire) {
                         break;
@@ -468,7 +468,7 @@ async fn publish_public_notification_offer(
         now,
         now + 60_000,
     )?;
-    tokio::time::timeout(
+    n0_future::time::timeout(
         PUBLIC_OFFER_TIMEOUT,
         services
             .hint_transport
