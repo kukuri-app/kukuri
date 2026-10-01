@@ -49,7 +49,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 | (c) Tauri 側に処理がある | 21 | 起動・同意・account 切替・identity の処理と起動 gate を host へ移して Web でも使う（起動 gate は W1 AC-3、残りは W1 AC-5）。device backup（完全な端末 backup）は Web では使えないとし、鍵の export・import（ADR 0047）と QR・リンクの移行（#1211）で代える |
 
 - 必須の主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、設定）は、すべて (a) のうち Web で使う command と (c) の移設で成り立つ。matrix だけで省略しない。
-- 最終の matrix は W1 AC-5 の capability の実装と一緒に確定し、AC-5 の実測の結果と合わせて記録する。
+- 最終の matrix は W1 AC-5 の capability の実装と一緒に確定し、W8 AC-5 の実測の結果と合わせて記録する。
 
 ### 4. 実ブラウザの検証環境
 

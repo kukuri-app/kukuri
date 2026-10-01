@@ -66,6 +66,10 @@ mod tests {
             assert!(admit_command(command, READY, true).is_err(), "{command}");
             assert!(admit_command(command, READY, false).is_ok(), "{command}");
         }
+        assert_eq!(
+            EXIT_COMMAND_ALLOWLIST,
+            ["cancel_device_backup", "get_desktop_startup_status"]
+        );
         for command in EXIT_COMMAND_ALLOWLIST {
             assert!(admit_command(command, READY, true).is_ok(), "{command}");
         }
