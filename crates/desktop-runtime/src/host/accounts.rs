@@ -203,6 +203,7 @@ impl ClientHost {
             task.abort();
             let _ = task.await;
         }
+        self.generation.send_modify(|generation| *generation += 1);
         self.runtime().shutdown().await;
         previous.shutdown().await;
     }

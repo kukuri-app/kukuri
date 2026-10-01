@@ -627,6 +627,10 @@ impl IrohDocsNode {
     pub async fn shutdown(self: Arc<Self>) -> Result<()> {
         self.network_work.close();
         self.receive_binding.reject_new_requests();
+        // WebRTC の交渉の世代も終え、交渉中・開いた session を閉じる（#1214 AC-3）。
+        if let Some(signaling) = &self.signaling {
+            signaling.reset();
+        }
         let mut result = self.shutdown_result.subscribe();
         if !self.shutdown_started.swap(true, Ordering::AcqRel) {
             let node = self.clone();

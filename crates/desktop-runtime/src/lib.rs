@@ -84,6 +84,7 @@ pub use host::{
     persist_restore_activation_phase, recover_device_restore_before_startup,
     require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
 };
+pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
 pub use kukuri_app_api::SessionDisplayRequest;
 pub use kukuri_app_api::{
     ConnectivityPeersRequest, MAX_ACTIVE_SCOPES, ScopeDisplayRequest, ScopeDisplayTarget,

@@ -87,7 +87,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | blobs | `FsStore` | 上流の `MemStore`（blob-service は書かない）と、保存 trait の IndexedDB 実装（ADR 0058） | W2 |
 | remote read の cache と本人の書込みの保護（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 保存 trait（ADR 0058。`ContentCacheStore`）の IndexedDB 実装。W1 AC-2 で trait を切り出し、native の呼出元を trait object へ切り替えた | W1 AC-2・W2・W3 |
 | peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない（transport の `PeerCandidateStore` は wasm で値を持てない型）。store を持たない経路の learned・imported の台帳は、それぞれ 256 件（`STORELESS_PEER_LIMIT`）を超えたら古いものから台帳と `MemoryLookup` から外す。hot endpoint は store の有無によらず 16 件（W1 AC-2） | W1 AC-2 |
-| file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-4・W8 |
+| file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-5・W8 |
 
 保存・復元・cache の回収は、key・cursor・chunk で有界な単位にする（#1213「作業・設計原則を適用する境界」）。
 
@@ -100,14 +100,15 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
   Web の build では、それぞれを `web-runtime` の `invoke` と `listen` へ向ける。
   Tauri の API を直接使う file（updater・OS 通知・dialog・deep-link・`convertFileSrc`）は Web では使わない。対応状況は W8 の capability matrix で示す。
 - `DesktopRuntime` の method へ委譲するだけの command は、`desktop-runtime` に置く 1 つの dispatch 表（command 名 → request の型 → method）から呼ぶ。
-  `web-runtime` の `invoke` と Tauri の invoke handler の両方がこの表を使い、Tauri 側の約 140 の委譲 wrapper を消す（W1 AC-4）。
-  Tauri 側に処理がある command のうち Web でも要るもの（起動・同意・アカウント切替の調停。起動中・終了中の command を拒む `src-tauri/src/invoke_gate.rs` の gate を含む）は `desktop-runtime` の host へ移す（W1 AC-3・AC-4）。Tauri 専用の処理（updater・tray・window・OS 通知・file dialog）は `src-tauri` に残す。
-- Web で使えない command は、共通の error code で「この platform では使えない」と返し、frontend が capability として判別できるようにする（W1 AC-4）。
+  `web-runtime` の `invoke` と Tauri の invoke handler の両方がこの表を使い、Tauri 側の約 140 の委譲 wrapper を消す（W1 AC-5）。
+  起動中・終了中の command の受付の判定は、W1 AC-3 で host（`admit_command`）へ移した（src-tauri の `invoke_gate.rs` は Tauri の invoke をこの判定へ通すだけ）。Tauri 側に処理がある command のうち Web でも要るもの（起動・同意・アカウント切替の調停）は `desktop-runtime` の host へ移す（W1 AC-5）。Tauri 専用の処理（updater・tray・window・OS 通知・file dialog）は `src-tauri` に残す。
+- Web で使えない command は、共通の error code で「この platform では使えない」と返し、frontend が capability として判別できるようにする（W1 AC-5）。
 
 ### 7. 起動・停止・アカウント切替
 
 - runtime の世代・需要の owner・停止は、既存の `desktop-runtime` の host（restore lifecycle）と `NetworkWorkRuntime`（ADR 0055）を使う。Web のための独立した retry や全再購読を作らない。
 - JS から入る callback（event、IndexedDB の完了、WebRTC の event）は runtime の世代を持ち、停止・切替の後に届いた旧世代の callback は反映しない（W1 AC-3）。W10（#1422）の接続交渉と候補の登録も同じ世代に属する。
+- W1 AC-3 の実装: `ClientHost` が runtime の世代を持つ（起動で 1、runtime の差し替え（切替・restore・restart）と停止のたびに進む。`generation()`）。event は差し替えの時点の世代を付けて配り、`ClientEventReceiver::recv` は今の世代でない event を返さない（差し替え・停止の前に host まで届き、まだ受け取っていない event も含む）。node の停止（`IrohDocsNode::shutdown`）は WebRTC の交渉の世代も終え（`Signaling::reset`）、交渉中・開いた session を閉じる。command の結果の世代の照合は、Tauri と web-runtime が共用する dispatch 表で行う（W1 AC-5）。
 
 ### 8. 通信経路
 
@@ -118,8 +119,8 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 
 1. W1 AC-1（本 ADR）→ W9 AC-1（transport の判断）→ W9 AC-2（transport crate と、ブラウザでの試験環境）
 2. W1 AC-2（共用 crate の wasm build・依存の分離・Endpoint の組立てへの transport の注入口・ブラウザ↔native の有界な読み出し）→ W10 AC-1
-   W1 AC-2 の wasm build は Endpoint と有界な reader までの crate（core・store・transport・iroh-node・docs-sync・blob-service・webrtc-transport）。app-api・metaverse-host・desktop-runtime は command を接続する W1 AC-3・AC-4 で加える。
-3. W1 AC-3（起動・停止・切替の世代）→ W1 AC-4（command の dispatch 表と capability）
+   W1 AC-2 の wasm build は Endpoint と有界な reader までの crate（core・store・transport・iroh-node・docs-sync・blob-service・webrtc-transport）。app-api・metaverse-host・desktop-runtime は W1 AC-4 で加える。
+3. W1 AC-3（host の世代・event の隔離・gate の移設・交渉の世代。native で完結）→ W1 AC-4（desktop-runtime・app-api の wasm 化と保存 trait）→ W1 AC-5（command の dispatch 表・web-runtime・capability）（2026-10-01 のユーザー判断で旧 AC-4 を AC-4・AC-5 に分割）
 
 W2・W3 の AC-1（保存 trait の操作の固定。ADR 0058）は W1 AC-2 より前に行う。W4 の AC-1 は本 ADR の後に並行して進める。W5・W6 の規則は native で先に実装できる。
 
@@ -152,7 +153,7 @@ ADR 0002 の template に従う。対象は「ブラウザ内の Web クライ�
 - Gossip Hint 必要有無: native と同じ。
 - Blob 必要有無: native と同じ。
 - SQLite projection 必要有無: native だけ。Web の projection は W4 AC-1 で決める。
-- 必須 contract: 共用 crate の wasm32 build（CI）、ブラウザ↔native の有界な読み出し（W1 AC-2）、世代の隔離（W1 AC-3）、command の capability（W1 AC-4）。
+- 必須 contract: 共用 crate の wasm32 build（CI）、ブラウザ↔native の有界な読み出し（W1 AC-2）、世代の隔離（W1 AC-3）、command の capability（W1 AC-5）。
 - 必須 scenario: W8（#1220）の実ブラウザの主要導線と復帰。
 - 新しい外部送信: Web の配布物の取得（静的 host。W8 AC-6）、STUN（W9・W10）。relay・Community Node への通信は native と同じ。
 

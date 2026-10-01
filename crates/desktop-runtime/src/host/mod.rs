@@ -1,6 +1,7 @@
 mod accounts;
 #[cfg(test)]
 mod accounts_tests;
+mod command_gate;
 mod consent;
 mod consent_acceptance;
 mod profile;
@@ -15,13 +16,17 @@ use std::{
     },
 };
 
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, watch},
+    task::JoinHandle,
+};
 
 use crate::{
     AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, StoreStartupError,
     account_db_path, ensure_accounts_initialized_from_env, list_accounts, set_active_account,
 };
 
+pub use command_gate::{NON_READY_COMMAND_ALLOWLIST, admit_command};
 pub use consent::{
     AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
     APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AgeAttestationStatus, AppConsentDocumentRecord,
@@ -146,10 +151,12 @@ impl ClientStartupState {
 }
 
 /// UI adapterに依存せず、一つのactive account runtimeとevent転送を所有する。
+/// runtime の世代は起動で 1、runtime の差し替え（切替・restore・restart）と停止のたびに進む（#1214 AC-3）。
 pub struct ClientHost {
     runtime: RwLock<Arc<DesktopRuntime>>,
     app_data_dir: PathBuf,
-    events: broadcast::Sender<RuntimeEvent>,
+    events: broadcast::Sender<(u64, RuntimeEvent)>,
+    generation: watch::Sender<u64>,
     event_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     operation_guard: tokio::sync::Mutex<()>,
     shutdown_guard: tokio::sync::Mutex<()>,
@@ -162,8 +169,22 @@ pub enum ClientHostStart {
 }
 
 /// 購読した後の event を受け取る。通信状態は差分の event なので再送しない。購読した側は、状態を読み直してから
-/// 差分を適用する(#1221 R2-D)。
-pub type ClientEventReceiver = broadcast::Receiver<RuntimeEvent>;
+/// 差分を適用する(#1221 R2-D)。差し替え・停止の前の世代の event は返さない（#1214 AC-3）。
+pub struct ClientEventReceiver {
+    events: broadcast::Receiver<(u64, RuntimeEvent)>,
+    generation: watch::Receiver<u64>,
+}
+
+impl ClientEventReceiver {
+    pub async fn recv(&mut self) -> Result<RuntimeEvent, broadcast::error::RecvError> {
+        loop {
+            let (generation, event) = self.events.recv().await?;
+            if generation == *self.generation.borrow() {
+                return Ok(event);
+            }
+        }
+    }
+}
 
 impl ClientHost {
     pub async fn start_if_consented(
@@ -201,6 +222,7 @@ impl ClientHost {
             runtime: RwLock::new(runtime.clone()),
             app_data_dir,
             events,
+            generation: watch::channel(1).0,
             event_task: tokio::sync::Mutex::new(None),
             operation_guard: tokio::sync::Mutex::new(()),
             shutdown_guard: tokio::sync::Mutex::new(()),
@@ -239,7 +261,15 @@ impl ClientHost {
     }
 
     pub fn subscribe_events(&self) -> ClientEventReceiver {
-        self.events.subscribe()
+        ClientEventReceiver {
+            events: self.events.subscribe(),
+            generation: self.generation.subscribe(),
+        }
+    }
+
+    /// 今の runtime の世代。
+    pub fn generation(&self) -> u64 {
+        *self.generation.borrow()
     }
 
     pub async fn replace_runtime(
@@ -271,12 +301,14 @@ impl ClientHost {
             &mut *self.runtime.write().expect("runtime lock poisoned"),
             next.clone(),
         );
+        self.generation.send_modify(|generation| *generation += 1);
         self.replace_event_task(next.clone()).await;
         if let Err(error) = self.restore_desired_subscriptions(&desired).await {
             let failed = std::mem::replace(
                 &mut *self.runtime.write().expect("runtime lock poisoned"),
                 previous.clone(),
             );
+            self.generation.send_modify(|generation| *generation += 1);
             self.replace_event_task(previous).await;
             failed.shutdown().await;
             return Err(ClientStartupError::from_subscription_error(error));
@@ -417,6 +449,7 @@ impl ClientHost {
             task.abort();
             let _ = task.await;
         }
+        self.generation.send_modify(|generation| *generation += 1);
         self.runtime().shutdown().await;
     }
 
@@ -428,14 +461,18 @@ impl ClientHost {
         }
         let mut events = runtime.subscribe_events();
         let sender = self.events.clone();
+        let generation = self.generation();
         *task = Some(tokio::spawn(async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
-                        let _ = sender.send(event);
+                        let _ = sender.send((generation, event));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                        let _ = sender.send((
+                            generation,
+                            RuntimeEvent::AdultMediaLabelEvicted { hash: None },
+                        ));
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
