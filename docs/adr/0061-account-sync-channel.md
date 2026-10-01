@@ -92,7 +92,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 入口 | 扱い |
 | --- | --- |
 | 起動・import・切替・復帰 | runtime の起動で `AppService::start_account_sync` が scope の lease（`ScopeKey::AccountSync`）を取る。lease の task が replica の namespace の秘密を登録し、hint を購読する。private channel の復元より前に取る（scope の上限 64 の 1 つ）。import は account の追加・切替と同じ runtime の起動を通る。停止・切替は runtime の停止で lease ごと外れ、新しい runtime は新しい account の値だけを持つ。endpoint の作り直し（docs も新しくなる）は、lease の task の作り直しで秘密の登録と購読へ戻る |
-| hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。gossip は rendezvous が返した本人の端末とだけ合流し、bootstrap の peer（他人の端末・node）へ topic の join を送らない（送ると、合流できないまま warmup の接続を繰り返して他の通信を乱し、他人に topic を知らせる）。hint を受けた差分の取得は AC-5 |
+| hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。gossip は rendezvous が返した本人の端末とだけ合流し、bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（送ると、合流できないまま warmup の接続を繰り返して他の通信を乱し、他人に topic を知らせる）。hint を受けた差分の取得は AC-5 |
 | rendezvous | 購読中の account の hint は、秘密から導出した topic の rendezvous の鍵（`public_topic_rendezvous_key(hint/kukuri:account:<hex>)`）で Community Node へ送り、本人の端末どうしを Relay Supported P2P で会わせる。鍵はアカウント鍵を持つ端末だけが計算でき、node が受け取るのは不透明な鍵だけ。node が同じ account の端末を結び付けられることは、既存の受信 route の rendezvous（公開鍵から導出）と同じで、新しい情報を加えない |
 | 診断 | sync status の topic の一覧と topic の診断から外す（`normalize_topic_name`） |
 | 有界な読み出し（page_read） | `account::v1::` は private の replica として、登録した capability の証明がある要求にだけ応える |
