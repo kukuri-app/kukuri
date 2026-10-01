@@ -329,6 +329,10 @@ pub(crate) async fn run_community_node_trust_relation_client(
         .route("/v1/policies", get(public_policies))
         .route("/v1/bootstrap/heartbeat", post(heartbeat))
         .route("/v1/bootstrap/nodes", get(bootstrap_nodes))
+        .route(
+            "/v1/rendezvous/topics/heartbeat",
+            post(super::community_node_index::rendezvous_heartbeat),
+        )
         .route("/v1/trust/users/{target}", get(trust_user))
         .route("/v1/relation/users/{target}", get(relation_user))
         .route("/v1/relation/neighbors", get(relation_neighbors))
