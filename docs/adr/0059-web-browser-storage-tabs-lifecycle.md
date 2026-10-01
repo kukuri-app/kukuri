@@ -33,7 +33,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 
 - `KeyringStore` を、同じ 3 つの操作（`service` と `account` で引く get・set・delete）の**非同期**の trait 1 つに置き換える。desktop-runtime の file で書く設定・状態の読み書きも同じ trait へ寄せる（ADR 0056 §2）。
   native の実装は今の keyring・file の読み書きを移したもので、Web の実装は IndexedDB で作る。新旧の経路を並べて残さない。
-  trait の切り出しと native の呼出元の切替は W1 AC-4（desktop-runtime の command の接続）で行い、Web の実装は W4 AC-2 が作る。
+  trait の切り出しと native の呼出元の切替は W1 AC-4（desktop-runtime の wasm 化）で行い、Web の実装は W4 AC-2 が作る。
 - IndexedDB の database は 3 種類に分ける。
 
 | database | 中身 | durability | 回収 |
@@ -54,7 +54,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   SQLite の実装にある全件を対象にする処理（例: 参照の無い行の一括削除）は、同じ意味で移さず、索引と 1 回の件数の上限つきで行う（設計原則）。
 - 端末だけのデータ（DM の履歴と outbox、通知の既読、bookmark、mute、取り下げと epoch 制御の outbox、owner の参加者の記録）は保護し、再取得できる行（remote の投稿の projection 等）は ADR 0058 §4 の規則で回収する。
   projection の更新と保護参照の置き換え（ADR 0058 §2）は同じ transaction で行う。
-- Web の capability の外の機能（W1 AC-4・W8 の capability matrix で非対応とするもの）の trait の method は、共通の「この platform では使えない」error を返す。
+- Web の capability の外の機能（W1 AC-5・W8 の capability matrix で非対応とするもの）の trait の method は、共通の「この platform では使えない」error を返す。
 - 採らない方式: `MemoryStore` で動かして reload で作り直す（端末だけのデータを失い、全行の収集と整列が件数に比例する）。一部の trait だけを IndexedDB にする（実装が 2 つになり、メモリ側も上限と索引を作り直すことになる）。
 
 ### 3. capability と件数

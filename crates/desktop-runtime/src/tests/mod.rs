@@ -69,3 +69,4 @@ mod seeded_dht;
 mod static_peer;
 
 mod account_logout;
+mod host_generation;

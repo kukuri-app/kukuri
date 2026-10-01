@@ -255,3 +255,39 @@ async fn adopting_the_legacy_endpoint_secret_keeps_the_endpoint_id() {
     assert!(!fresh.exists());
     assert!(!dir.path().join("fresh.iroh-data").exists());
 }
+
+/// #1214 AC-3: node の停止で WebRTC の交渉の世代も終わり、交渉で開いた session が閉じる。
+#[tokio::test]
+async fn shutting_down_the_node_closes_its_webrtc_sessions() -> anyhow::Result<()> {
+    use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport};
+    let start = || async {
+        let transport = WebRtcTransport::new(WebRtcConfig {
+            bind_ip: std::net::Ipv4Addr::LOCALHOST.into(),
+        });
+        let node = IrohDocsNode::memory_with(crate::NodeOptions {
+            webrtc: Some(transport.clone()),
+            ..crate::NodeOptions::default()
+        })
+        .await?;
+        anyhow::Ok((node, transport))
+    };
+    let (node, transport) = start().await?;
+    let (peer, peer_transport) = start().await?;
+    // 交渉は需要の接続がある相手に行う（ADR 0057 §7）。
+    let _demand = node
+        .endpoint()
+        .connect(peer.endpoint().addr(), crate::DOC_READ_ALPN)
+        .await?;
+    node.webrtc_signaling()
+        .expect("webrtc")
+        .connect(peer.endpoint().addr())
+        .await?;
+    assert_eq!(
+        (transport.stats().sessions, peer_transport.stats().sessions),
+        (1, 1)
+    );
+    node.shutdown().await?;
+    assert_eq!(transport.stats().sessions, 0);
+    peer.shutdown().await?;
+    Ok(())
+}
