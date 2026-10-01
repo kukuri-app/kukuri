@@ -3855,6 +3855,7 @@ dependencies = [
  "kukuri-metaverse-host",
  "kukuri-store",
  "kukuri-transport",
+ "n0-future",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3946,6 +3947,7 @@ dependencies = [
  "kukuri-iroh-node",
  "kukuri-store",
  "kukuri-transport",
+ "n0-future",
  "reqwest",
  "serde",
  "serde_json",
@@ -3954,6 +3956,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
