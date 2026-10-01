@@ -211,6 +211,7 @@ impl DesktopRuntime {
             None
         };
         let token = load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
+            .await
             .map_err(|error| {
                 CommunityNodeIndexQueryError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
             })?

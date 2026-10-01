@@ -347,8 +347,14 @@ pub(crate) struct ResolvedRepostSource {
 
 /// private channel capability registry の write-through 永続化 callback。
 /// 実体(identity storage への保存)は desktop-runtime が注入する。未接続なら no-op。
-pub type PrivateChannelCapabilityPersist =
-    Arc<dyn Fn(&[crate::PrivateChannelCapability]) -> Result<()> + Send + Sync>;
+/// 保存は非同期（Web は IndexedDB。ADR 0059 §1）。
+pub type PrivateChannelCapabilityPersist = Arc<
+    dyn Fn(
+            Vec<crate::PrivateChannelCapability>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
 
 #[derive(Clone)]
 pub struct ServiceHandles {

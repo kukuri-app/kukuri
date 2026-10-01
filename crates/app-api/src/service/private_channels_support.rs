@@ -389,7 +389,7 @@ impl AppService {
                 .map(private_channel_capability_snapshot)
                 .collect::<Vec<_>>()
         };
-        persist(&snapshot)
+        persist(snapshot).await
     }
 
     /// 参加を登録する。新しい参加は参加の holder で channel key を取る。上限なら何も保存しない(#1221 R2-C)。

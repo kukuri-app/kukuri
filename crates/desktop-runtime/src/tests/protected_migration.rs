@@ -57,7 +57,7 @@ async fn is_protected(store: &SqliteStore, hash: &str) -> bool {
 }
 
 /// backup を作り、`target` の新しい account として復元する。archive の entry 名と、復元した db の path を返す。
-pub(super) fn backup_and_restore(
+pub(super) async fn backup_and_restore(
     source: &Path,
     db: &Path,
     target: &Path,
@@ -87,7 +87,9 @@ pub(super) fn backup_and_restore(
         .iter()
         .map(|entry| entry.name.clone())
         .collect::<Vec<_>>();
-    ensure_accounts_initialized(target, IdentityStorageMode::FileOnly).expect("target account");
+    ensure_accounts_initialized(target, IdentityStorageMode::FileOnly)
+        .await
+        .expect("target account");
     let prepared = prepare_device_restore(
         target,
         &RestoreDeviceBackupRequest {
@@ -366,6 +368,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
     let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("source account");
     // #1221 R5-I: 更新前の端末の保存状態(旧 store に本人のデータ、保護所有先は空)を作る。
     create_empty_legacy_store(&db).await;
@@ -493,7 +496,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
 
     // backup は旧 `iroh-data` を含めず、保護所有先を含める。
     let target = tempdir().expect("target dir");
-    let (names, restored_db) = backup_and_restore(source.path(), &db, target.path());
+    let (names, restored_db) = backup_and_restore(source.path(), &db, target.path()).await;
     assert!(
         names.iter().all(|name| !name.contains("iroh-data")),
         "{names:?}"
@@ -619,8 +622,9 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
 async fn a_pinned_asset_is_protected_when_pinned() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let blobs = runtime.iroh_stack.blob_service.clone();
     let asset = blobs
@@ -646,8 +650,9 @@ async fn a_pinned_asset_is_protected_when_pinned() {
 async fn own_envelope_waits_for_its_docs_records() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let envelope = build_post_envelope(
@@ -685,8 +690,9 @@ async fn own_envelope_waits_for_its_docs_records() {
 async fn the_writer_switches_once_after_the_migration_and_keeps_it_across_restarts() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     assert_eq!(runtime.app_service.writer_switched_at(), None);
@@ -713,6 +719,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
     let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("source account");
     let runtime = open_runtime(&db).await;
     let channel = runtime
@@ -804,7 +811,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
     drop(runtime);
 
     let target = tempdir().expect("target dir");
-    let (_, restored_db) = backup_and_restore(source.path(), &db, target.path());
+    let (_, restored_db) = backup_and_restore(source.path(), &db, target.path()).await;
     let restored = open_runtime(&restored_db).await;
     for (replica, key) in &protected_records {
         assert!(

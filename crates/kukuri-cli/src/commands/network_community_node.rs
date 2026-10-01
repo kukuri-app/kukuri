@@ -83,6 +83,7 @@ impl CommandHandler for Handler {
                 let host = context.host.expect("runtime取得済み");
                 let desired = host
                     .desired_subscriptions()
+                    .await
                     .map_err(|error| command_error(error.into()))?;
                 let subscriptions = desired
                     .iter()

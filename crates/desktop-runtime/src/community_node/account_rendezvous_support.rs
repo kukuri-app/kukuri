@@ -17,6 +17,7 @@ impl DesktopRuntime {
     ) -> std::result::Result<(), CommunityNodeRequestError> {
         let consent_at_request =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .map_err(CommunityNodeRequestError::Other)?;
         if !consent_at_request.has_active_consent() {
             return Err(CommunityNodeRequestError::Other(anyhow!(
@@ -117,6 +118,7 @@ impl DesktopRuntime {
         // consent status and compare the local consent across the HTTP await.
         let consent_now =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .map_err(CommunityNodeRequestError::Other)?;
         let configured = self
             .community_node_config

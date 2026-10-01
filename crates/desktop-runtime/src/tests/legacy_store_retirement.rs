@@ -123,8 +123,9 @@ async fn node_blob(runtime: &DesktopRuntime, hash: &str) -> Option<Vec<u8>> {
 async fn own_writes_go_to_the_protected_owner_when_written() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let attachment = vec![7u8; 1024 * 1024 + 5];
     let post_id = runtime
@@ -320,8 +321,9 @@ async fn count(store: &SqliteStore, table: &str) -> i64 {
 async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
-    let db =
-        ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let endpoint_id = runtime.iroh_stack.endpoint().await.id();
@@ -638,7 +640,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     // backup → restore でも戻る。
     let target = tempdir().expect("target dir");
     let (names, restored_db) =
-        super::protected_migration::backup_and_restore(source.path(), &db, target.path());
+        super::protected_migration::backup_and_restore(source.path(), &db, target.path()).await;
     assert!(
         names.iter().all(|name| !name.contains("iroh-")),
         "{names:?}"

@@ -29,11 +29,11 @@ fn set_activation_failed(
 }
 
 #[tauri::command]
-pub fn get_app_consent_status(
+pub async fn get_app_consent_status(
     app_handle: tauri::AppHandle,
 ) -> Result<AppConsentStatus, CommandError> {
     let db_path = resolve_db_path(&app_handle)?;
-    Ok(app_consent_status(&db_path))
+    Ok(app_consent_status(&db_path).await)
 }
 
 #[tauri::command]
@@ -68,7 +68,7 @@ pub async fn accept_app_consents(
 
     let db_path = resolve_db_path(&app_handle)?;
     let app_version = app_handle.package_info().version.to_string();
-    record_app_consents(&db_path, &documents, &language, age_attested, &app_version)?;
+    record_app_consents(&db_path, &documents, &language, age_attested, &app_version).await?;
 
     if pending_restore == Some(DeviceRestorePhase::AwaitingConsent) {
         startup_state.set_status(DesktopStartupStatus::Initializing);

@@ -244,6 +244,7 @@ async fn trust_relation_runtime(
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -256,7 +257,7 @@ async fn trust_relation_runtime(
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     (runtime, base_url, trust_relation, managed, server, dir)
 }
 

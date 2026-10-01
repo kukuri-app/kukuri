@@ -29,7 +29,7 @@ pub(crate) async fn run_device_backup_restore(
     let mut steps = Vec::new();
 
     let started = Instant::now();
-    let source_db = ensure_accounts_initialized_from_env(&source_dir)?;
+    let source_db = ensure_accounts_initialized_from_env(&source_dir).await?;
     let source_runtime = DesktopRuntime::new(&source_db).await?;
     let topic = scenario.fixtures.topic.clone();
     let post_content = "offline backup post";
@@ -144,10 +144,10 @@ pub(crate) async fn run_device_backup_restore(
     anyhow::ensure!(backup_path.is_file(), "one-file backup was not created");
     push_named_step(&mut steps, "encrypted_backup_created", started);
 
-    let target_db = ensure_accounts_initialized_from_env(&target_dir)?;
+    let target_db = ensure_accounts_initialized_from_env(&target_dir).await?;
     let target_store = SqliteStore::connect_file(&target_db).await?;
     target_store.close().await;
-    let target_before = list_accounts(&target_dir)?;
+    let target_before = list_accounts(&target_dir).await?;
 
     let started = Instant::now();
     let wrong_passphrase = prepare_device_restore(
@@ -163,7 +163,7 @@ pub(crate) async fn run_device_backup_restore(
     );
     anyhow::ensure!(wrong_passphrase.is_err(), "wrong passphrase was accepted");
     anyhow::ensure!(
-        list_accounts(&target_dir)? == target_before,
+        list_accounts(&target_dir).await? == target_before,
         "failed restore changed the target registry"
     );
     push_named_step(&mut steps, "wrong_passphrase_preserved_target", started);
@@ -204,7 +204,7 @@ pub(crate) async fn run_device_backup_restore(
             .exists(),
         "device-bound endpoint secret was restored"
     );
-    anyhow::ensure!(list_accounts(&target_dir)?.active_account_id == result.account.id);
+    anyhow::ensure!(list_accounts(&target_dir).await?.active_account_id == result.account.id);
 
     let restored_runtime = DesktopRuntime::new(&restored_db).await?;
     let restored_timeline = restored_runtime

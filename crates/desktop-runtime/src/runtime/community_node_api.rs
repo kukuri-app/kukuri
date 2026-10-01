@@ -215,11 +215,12 @@ impl DesktopRuntime {
                 &self.db_path,
                 self.identity_mode,
                 removed_node.base_url.as_str(),
-            )?;
+            )
+            .await?;
             self.forget_community_node(removed_node.base_url.as_str())
                 .await?;
         }
-        save_community_node_config(&self.db_path, &next_config)?;
+        save_community_node_config(&self.db_path, &next_config).await?;
         *self.community_node_config.lock().await = next_config.clone();
         self.content_advisory_issuer_cache.lock().await.clear();
         self.invalidate_author_trust_gate_cache().await;
@@ -247,16 +248,18 @@ impl DesktopRuntime {
                 &self.db_path,
                 self.identity_mode,
                 node.base_url.as_str(),
-            )?;
+            )
+            .await?;
             delete_optional_secret(
                 &self.db_path,
                 self.identity_mode,
                 COMMUNITY_NODE_TOKEN_PURPOSE,
                 node.base_url.as_str(),
-            )?;
+            )
+            .await?;
             self.forget_community_node(node.base_url.as_str()).await?;
         }
-        save_community_node_config(&self.db_path, &CommunityNodeConfig::default())?;
+        save_community_node_config(&self.db_path, &CommunityNodeConfig::default()).await?;
         *self.community_node_config.lock().await = CommunityNodeConfig::default();
         self.content_advisory_issuer_cache.lock().await.clear();
         self.invalidate_author_trust_gate_cache().await;
@@ -391,17 +394,23 @@ impl DesktopRuntime {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            Some(invite_code) => persist_community_node_invite_code(
-                &self.db_path,
-                self.identity_mode,
-                base_url.as_str(),
-                invite_code,
-            )?,
-            None => delete_community_node_invite_code(
-                &self.db_path,
-                self.identity_mode,
-                base_url.as_str(),
-            )?,
+            Some(invite_code) => {
+                persist_community_node_invite_code(
+                    &self.db_path,
+                    self.identity_mode,
+                    base_url.as_str(),
+                    invite_code,
+                )
+                .await?
+            }
+            None => {
+                delete_community_node_invite_code(
+                    &self.db_path,
+                    self.identity_mode,
+                    base_url.as_str(),
+                )
+                .await?
+            }
         }
         self.clear_community_node_retry_state(base_url.as_str())
             .await;
@@ -421,7 +430,8 @@ impl DesktopRuntime {
             self.identity_mode,
             COMMUNITY_NODE_TOKEN_PURPOSE,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         self.community_node_sessions.lock().await.insert(
             base_url.clone(),
             CommunityNodeSessionState {
@@ -470,7 +480,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         // #1061: 観測提供の任意文書は専用の操作でだけ同意する（一括受諾の対象にしない）。
         let documents = without_observation_sharing_document(&request.documents);
         record_community_node_local_consents(
@@ -485,7 +496,8 @@ impl DesktopRuntime {
             self.identity_mode,
             base_url.as_str(),
             &state,
-        )?;
+        )
+        .await?;
         self.set_community_node_local_consent_update_pending(base_url.as_str(), false)
             .await;
         self.clear_community_node_retry_state(base_url.as_str())
@@ -510,7 +522,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         // #1061: token を消す前に、観測提供を止めて保存済み観測の削除を要求する。
         self.revoke_community_node_trust_observations(base_url.as_str())
             .await?;
@@ -523,7 +536,8 @@ impl DesktopRuntime {
             self.identity_mode,
             base_url.as_str(),
             &state,
-        )?;
+        )
+        .await?;
         self.set_community_node_local_consent_update_pending(base_url.as_str(), false)
             .await;
         self.clear_community_node_token(CommunityNodeTargetRequest {

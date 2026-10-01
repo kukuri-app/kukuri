@@ -194,7 +194,8 @@ fn run_consent(
     let consent_db_path = lease.profile().app_data_dir.join("kukuri.db");
     match command {
         ConsentCommand::Status => {
-            let store = load_app_consent_store(&consent_db_path);
+            // 同意の file は daemon の外で読み書きする。native の保存先の future は I/O を待たずに終わる。
+            let store = n0_future::future::block_on(load_app_consent_store(&consent_db_path));
             println!(
                 "{}",
                 if app_consent_satisfied(&store) {
@@ -248,7 +249,7 @@ fn accept_consents(path: &Path, args: ConsentAcceptArgs) -> Result<(), CliError>
             build_profile,
         }],
     };
-    save_app_consent_store(path, &store)
+    n0_future::future::block_on(save_app_consent_store(path, &store))
         .map_err(|error| CliError::new("consent_persist_failed", error, 1))?;
     println!("accepted");
     Ok(())
@@ -695,7 +696,9 @@ mod tests {
             },
         )
         .expect("accept consent");
-        assert!(app_consent_satisfied(&load_app_consent_store(&path)));
+        assert!(app_consent_satisfied(&n0_future::future::block_on(
+            load_app_consent_store(&path)
+        )));
     }
 
     #[cfg(target_os = "linux")]

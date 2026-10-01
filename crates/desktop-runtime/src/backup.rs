@@ -21,17 +21,20 @@ use crate::community_node::{
 };
 use crate::discovery::load_discovery_config_from_file;
 use crate::identity::{
-    IdentityStorageMode, KeyringStore, delete_optional_secret_keyring_entry_with_keyring,
-    load_existing_keys, load_existing_keys_with_keyring, load_optional_secret,
-    load_optional_secret_with_keyring, persist_keys, persist_keys_with_keyring,
-    persist_optional_secret, persist_optional_secret_with_keyring, write_private_file_atomically,
+    IdentityStorageMode, delete_optional_secret_keyring_entry_with_storage, load_existing_keys,
+    load_existing_keys_with_storage, load_optional_secret, load_optional_secret_with_storage,
+    persist_keys, persist_keys_with_storage, persist_optional_secret,
+    persist_optional_secret_with_storage, write_private_file_atomically,
 };
+use crate::storage::ClientStorage;
+// backup・restore は native だけの同期の処理。native の保存先の future は I/O を待たずに終わるので block_on で呼ぶ。
 use crate::paths::DB_FILE_NAME;
 use crate::runtime::{
     GOSSIP_SUBSCRIPTION_STATE_KEY, GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
     PRIVATE_CHANNEL_CAPABILITIES_KEY, PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
     validate_persisted_runtime_state,
 };
+use n0_future::future::block_on;
 
 const SECRETS_ENTRY: &str = "secret-bundle.json";
 const FRONTEND_STATE_ENTRY: &str = "frontend-state.json";
@@ -122,7 +125,7 @@ pub use restore_recovery::{
 #[cfg(test)]
 pub(crate) use restore_recovery::{
     DeviceRestoreTestFailurePoint, fail_device_restore_at,
-    install_prepared_device_restore_with_keyring,
+    install_prepared_device_restore_with_storage,
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,14 +303,15 @@ pub async fn validate_prepared_device_restore(prepared: &PreparedDeviceRestore) 
     // stagingはprepare時にFileOnlyへ自己完結させる。Autoにすると同じpathへ残った
     // keyring entryが復元fileをshadowし、端末環境によって検証結果が変わる。
     let identity_mode = IdentityStorageMode::FileOnly;
-    let keys = load_existing_keys(&db_path, identity_mode)?
+    let keys = load_existing_keys(&db_path, identity_mode)
+        .await?
         .ok_or_else(|| anyhow!("restored account identity is missing"))?;
     if keys.public_key_hex() != prepared.public_key {
         bail!("restored account identity does not match the backup manifest");
     }
-    let _ = load_community_node_config_from_file(&db_path)?;
-    let _ = load_discovery_config_from_file(&db_path)?;
-    validate_persisted_runtime_state(&db_path, identity_mode)?;
+    let _ = load_community_node_config_from_file(&db_path).await?;
+    let _ = load_discovery_config_from_file(&db_path).await?;
+    validate_persisted_runtime_state(&db_path, identity_mode).await?;
     Ok(())
 }
 
@@ -333,7 +337,7 @@ pub fn preview_device_backup(
             .checked_add(entry.bytes)
             .ok_or_else(|| anyhow!("device backup total size overflow"))
     })?;
-    let existing_account_id = list_accounts(app_data_dir)?
+    let existing_account_id = block_on(list_accounts(app_data_dir))?
         .accounts
         .into_iter()
         .find(|account| account.pubkey == manifest.public_key)
@@ -377,7 +381,7 @@ where
             .checked_add(entry.bytes)
             .ok_or_else(|| anyhow!("device backup total size overflow"))
     })?;
-    let snapshot = list_accounts(app_data_dir)?;
+    let snapshot = block_on(list_accounts(app_data_dir))?;
     let existing = snapshot
         .accounts
         .iter()
@@ -486,9 +490,13 @@ where
         if !staging_db.is_file() {
             bail!("device backup does not contain its SQLite database");
         }
-        crate::host::load_desired_subscriptions(&staging_db)
+        block_on(crate::host::load_desired_subscriptions(&staging_db))
             .context("device backup desired subscription state is invalid")?;
-        persist_keys(&staging_db, IdentityStorageMode::FileOnly, &keys)?;
+        block_on(persist_keys(
+            &staging_db,
+            IdentityStorageMode::FileOnly,
+            &keys,
+        ))?;
         persist_restored_secrets(&staging_db, &secret_bundle)
     })();
     if let Err(error) = validation {
@@ -510,7 +518,7 @@ where
 }
 
 fn active_account_for_db(app_data_dir: &Path, db_path: &Path) -> Result<AccountRecord> {
-    let snapshot = list_accounts(app_data_dir)?;
+    let snapshot = block_on(list_accounts(app_data_dir))?;
     let active = snapshot
         .accounts
         .into_iter()
@@ -549,29 +557,29 @@ fn ensure_backup_path_outside_app_data(app_data_dir: &Path, path: &Path) -> Resu
 }
 
 fn collect_secret_bundle(db_path: &Path) -> Result<SecretBundleV1> {
-    let keys = load_existing_keys(db_path, IdentityStorageMode::from_env())?
+    let keys = block_on(load_existing_keys(db_path, IdentityStorageMode::from_env()))?
         .ok_or_else(|| anyhow!("active account identity is unavailable"))?;
-    let private_channel_capabilities = load_optional_secret(
+    let private_channel_capabilities = block_on(load_optional_secret(
         db_path,
         IdentityStorageMode::from_env(),
         PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
         PRIVATE_CHANNEL_CAPABILITIES_KEY,
-    )?;
-    let gossip_subscription_state = load_optional_secret(
+    ))?;
+    let gossip_subscription_state = block_on(load_optional_secret(
         db_path,
         IdentityStorageMode::from_env(),
         GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
         GOSSIP_SUBSCRIPTION_STATE_KEY,
-    )?;
+    ))?;
     let mut community_node_invite_codes = BTreeMap::new();
-    if let Some(config) = load_community_node_config_from_file(db_path)? {
+    if let Some(config) = block_on(load_community_node_config_from_file(db_path))? {
         for node in config.nodes {
-            if let Some(value) = load_optional_secret(
+            if let Some(value) = block_on(load_optional_secret(
                 db_path,
                 IdentityStorageMode::from_env(),
                 COMMUNITY_NODE_INVITE_CODE_PURPOSE,
                 &node.base_url,
-            )? {
+            ))? {
                 community_node_invite_codes.insert(node.base_url, value);
             }
         }
@@ -587,31 +595,31 @@ fn collect_secret_bundle(db_path: &Path) -> Result<SecretBundleV1> {
 
 fn persist_restored_secrets(db_path: &Path, bundle: &SecretBundleV1) -> Result<()> {
     if let Some(value) = &bundle.private_channel_capabilities {
-        persist_optional_secret(
+        block_on(persist_optional_secret(
             db_path,
             IdentityStorageMode::FileOnly,
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
             PRIVATE_CHANNEL_CAPABILITIES_KEY,
             value,
-        )?;
+        ))?;
     }
     if let Some(value) = &bundle.gossip_subscription_state {
-        persist_optional_secret(
+        block_on(persist_optional_secret(
             db_path,
             IdentityStorageMode::FileOnly,
             GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
             GOSSIP_SUBSCRIPTION_STATE_KEY,
             value,
-        )?;
+        ))?;
     }
     for (base_url, value) in &bundle.community_node_invite_codes {
-        persist_optional_secret(
+        block_on(persist_optional_secret(
             db_path,
             IdentityStorageMode::FileOnly,
             COMMUNITY_NODE_INVITE_CODE_PURPOSE,
             base_url,
             value,
-        )?;
+        ))?;
     }
     Ok(())
 }
@@ -627,7 +635,7 @@ fn known_optional_secret_locators(db_path: &Path) -> Result<BTreeSet<OptionalSec
             key: GOSSIP_SUBSCRIPTION_STATE_KEY.to_string(),
         },
     ]);
-    if let Some(config) = load_community_node_config_from_file(db_path)? {
+    if let Some(config) = block_on(load_community_node_config_from_file(db_path))? {
         for node in config.nodes {
             for purpose in [
                 COMMUNITY_NODE_TOKEN_PURPOSE,
@@ -647,18 +655,18 @@ fn known_optional_secret_locators(db_path: &Path) -> Result<BTreeSet<OptionalSec
 fn load_optional_secrets(
     db_path: &Path,
     mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
     locators: &BTreeSet<OptionalSecretLocator>,
 ) -> Result<Vec<OptionalSecretValue>> {
     let mut values = Vec::new();
     for locator in locators {
-        if let Some(value) = load_optional_secret_with_keyring(
+        if let Some(value) = block_on(load_optional_secret_with_storage(
             db_path,
             mode,
             &locator.purpose,
             &locator.key,
-            keyring,
-        )? {
+            storage,
+        ))? {
             values.push(OptionalSecretValue {
                 purpose: locator.purpose.clone(),
                 key: locator.key.clone(),
@@ -672,22 +680,27 @@ fn load_optional_secrets(
 fn make_account_file_self_contained(
     db_path: &Path,
     mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
     locators: &BTreeSet<OptionalSecretLocator>,
 ) -> Result<()> {
-    if let Some(keys) = load_existing_keys_with_keyring(db_path, mode, keyring)? {
-        persist_keys_with_keyring(db_path, IdentityStorageMode::FileOnly, &keys, keyring)?;
+    if let Some(keys) = block_on(load_existing_keys_with_storage(db_path, mode, storage))? {
+        block_on(persist_keys_with_storage(
+            db_path,
+            IdentityStorageMode::FileOnly,
+            &keys,
+            storage,
+        ))?;
     }
-    let secrets = load_optional_secrets(db_path, mode, keyring, locators)?;
+    let secrets = load_optional_secrets(db_path, mode, storage, locators)?;
     for secret in &secrets {
-        persist_optional_secret_with_keyring(
+        block_on(persist_optional_secret_with_storage(
             db_path,
             IdentityStorageMode::FileOnly,
             &secret.purpose,
             &secret.key,
             &secret.value,
-            keyring,
-        )?;
+            storage,
+        ))?;
     }
     Ok(())
 }
@@ -695,15 +708,15 @@ fn make_account_file_self_contained(
 fn scrub_keyring_optional_secrets(
     db_path: &Path,
     locators: &BTreeSet<OptionalSecretLocator>,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<()> {
     for locator in locators {
-        delete_optional_secret_keyring_entry_with_keyring(
+        block_on(delete_optional_secret_keyring_entry_with_storage(
             db_path,
             &locator.purpose,
             &locator.key,
-            keyring,
-        )?;
+            storage,
+        ))?;
     }
     Ok(())
 }

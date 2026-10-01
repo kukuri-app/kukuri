@@ -92,6 +92,7 @@ impl DesktopRuntime {
     pub(crate) async fn community_node_required_consent_is_pending(&self, base_url: &str) -> bool {
         let local_consent_active =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .map(|state| state.has_active_consent())
                 .unwrap_or(false);
         if !local_consent_active {
@@ -144,7 +145,9 @@ impl DesktopRuntime {
             self.identity_mode,
             COMMUNITY_NODE_TOKEN_PURPOSE,
             base_url,
-        ) {
+        )
+        .await
+        {
             warn!(
                 error = %error,
                 base_url,

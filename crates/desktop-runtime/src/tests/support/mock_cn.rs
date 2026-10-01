@@ -6,7 +6,7 @@ pub(crate) async fn apply_relay_backed_community_node_seed_peers(
     relay_url: &str,
     seed_peers: Vec<CommunityNodeSeedPeer>,
 ) {
-    seed_local_community_node_consents(runtime, base_url, 1);
+    seed_local_community_node_consents(runtime, base_url, 1).await;
     mark_community_node_session_ready_for_test(runtime, base_url).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -37,6 +37,7 @@ pub(crate) async fn mark_community_node_session_ready_for_test(
         runtime.identity_mode,
         base_url,
     )
+    .await
     .expect("load local consent");
     runtime
         .set_community_node_session_ready(base_url, false, local_consent)
@@ -334,15 +335,15 @@ pub(crate) const MOCK_MANAGED_POLICY_SLUG: &str = "builder-preview";
 
 /// #857: ユーザーが同意モーダルで受諾した状態をローカル同意記録として直接シードする。
 /// version は同意した版(mock カタログの現行版は 1、pending update 時は 2)。
-pub(crate) fn seed_local_community_node_consents(
+pub(crate) async fn seed_local_community_node_consents(
     runtime: &DesktopRuntime,
     base_url: &str,
     version: i32,
 ) {
-    seed_local_community_node_consents_with_snapshot(runtime, base_url, version, None);
+    seed_local_community_node_consents_with_snapshot(runtime, base_url, version, None).await;
 }
 
-pub(crate) fn seed_local_community_node_consents_with_snapshot(
+pub(crate) async fn seed_local_community_node_consents_with_snapshot(
     runtime: &DesktopRuntime,
     base_url: &str,
     version: i32,
@@ -366,6 +367,7 @@ pub(crate) fn seed_local_community_node_consents_with_snapshot(
         base_url,
         &state,
     )
+    .await
     .expect("persist local community-node consents");
 }
 

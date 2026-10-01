@@ -366,8 +366,9 @@ async fn idle_maintenance_merges_node_metadata_and_retains_consent_boundaries() 
                 expires_at: Utc::now().timestamp() + 3600,
             },
         )
+        .await
         .expect("token");
-        seed_local_community_node_consents(&runtime, &base_url, 1);
+        seed_local_community_node_consents(&runtime, &base_url, 1).await;
         nodes.push(CommunityNodeNodeConfig::new(base_url, None));
         states.push(state);
     }
@@ -413,6 +414,7 @@ async fn idle_maintenance_merges_node_metadata_and_retains_consent_boundaries() 
     assert!(other.resolved_urls.is_none());
     assert!(
         load_community_node_token(&runtime.db_path, runtime.identity_mode, &unconsented)
+            .await
             .expect("read token")
             .is_none()
     );

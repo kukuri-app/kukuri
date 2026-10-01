@@ -47,8 +47,9 @@ async fn empty_namespace(runtime: &DesktopRuntime, name: &str) -> ReplicaId {
 async fn empty_namespaces_are_reclaimed_in_bounded_steps_and_once() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
-    let db =
-        ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let docs = runtime.iroh_stack.docs_sync.clone();
     let written = ReplicaId::new("author::written-before-the-update");

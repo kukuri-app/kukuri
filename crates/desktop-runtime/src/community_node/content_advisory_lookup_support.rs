@@ -357,6 +357,7 @@ impl DesktopRuntime {
             }
         }
         load_community_node_token(&self.db_path, self.identity_mode, base_url)
+            .await
             .map_err(|error| {
                 CommunityNodeContentAdvisoryLookupError::new(
                     "AUTH_TOKEN_LOAD_FAILED",

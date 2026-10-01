@@ -127,6 +127,7 @@ impl DesktopRuntime {
                 })?;
         }
         let token = load_community_node_token(&self.db_path, self.identity_mode, &base_url)
+            .await
             .map_err(|error| {
                 CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
             })?
@@ -177,6 +178,7 @@ impl DesktopRuntime {
                 PRIVATE_INDEX_GRANT_SECRET_PURPOSE,
                 &grant_secret_key(&grant),
             )
+            .await
             .map_err(|error| {
                 CommunityNodeIndexingRequestError::new(
                     "INDEXING_GRANT_SAVE_FAILED",
@@ -284,6 +286,7 @@ impl DesktopRuntime {
         };
 
         let token = load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
+            .await
             .map_err(|error| {
                 CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
             })?
@@ -346,6 +349,7 @@ impl DesktopRuntime {
                     .as_deref()
                     .unwrap_or_default(),
             )
+            .await
             .map_err(|error| {
                 CommunityNodeIndexingRequestError::new(
                     "INDEXING_GRANT_SAVE_FAILED",
@@ -405,9 +409,11 @@ impl DesktopRuntime {
             self.identity_mode,
             PRIVATE_INDEX_GRANT_SECRET_PURPOSE,
             &grant_secret_key(&grant),
-        )?
+        )
+        .await?
         .ok_or_else(|| anyhow::anyhow!("private indexing grant secret is missing"))?;
-        let token = load_community_node_token(&self.db_path, self.identity_mode, base_url)?
+        let token = load_community_node_token(&self.db_path, self.identity_mode, base_url)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("community node token is missing"))?;
         let result = self
             .send_community_node_indexing_request(
@@ -439,7 +445,8 @@ impl DesktopRuntime {
             PRIVATE_INDEX_GRANT_SECRET_PURPOSE,
             &grant_secret_key(&grant),
             &secret,
-        )?;
+        )
+        .await?;
         self.store
             .mark_private_index_grant_applied(&grant, &epoch_id)
             .await?;

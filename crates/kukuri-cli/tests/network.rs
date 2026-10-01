@@ -84,7 +84,9 @@ async fn network_commands_preserve_identity_and_subscription_changes_after_resta
         assert!(result.ok, "{command}: {:?}", result.error);
     }
     assert_eq!(
-        host.desired_subscriptions().expect("desired subscriptions"),
+        host.desired_subscriptions()
+            .await
+            .expect("desired subscriptions"),
         vec![DesiredSubscription {
             topic: enabled.into(),
             scope: DesiredSubscriptionScope::Public,

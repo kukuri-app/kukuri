@@ -17,6 +17,7 @@ mod paths;
 mod requests;
 mod runtime;
 mod stack;
+mod storage;
 
 #[cfg(test)]
 mod tests;
@@ -98,6 +99,9 @@ pub use kukuri_app_api::{
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 pub use requests::CreateAccountRequest;
+#[cfg(target_family = "wasm")]
+pub use storage::install_platform_storage;
+pub use storage::{ClientStorage, KeyringUnavailable};
 // 起動エラーの typed 分類(WP-Q2)。src-tauri は downcast で DatabaseOpen/Migration を判定する。
 pub use kukuri_store::StoreStartupError;
 pub use paths::{

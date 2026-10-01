@@ -354,6 +354,7 @@ pub(super) async fn index_runtime(
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -366,7 +367,7 @@ pub(super) async fn index_runtime(
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     (runtime, base_url, managed, index, server, dir)
 }
 
@@ -926,6 +927,7 @@ async fn awaiting_admission_manual_refresh_rechecks_policy_and_blocks_protected_
         base_url.as_str(),
         "invalid persisted token",
     )
+    .await
     .expect("persist invalid token sentinel");
 
     let status = runtime

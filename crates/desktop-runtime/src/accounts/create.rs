@@ -9,13 +9,15 @@ pub(crate) struct PreparedAccountCreation {
     pub next: AccountRecord,
 }
 
-pub(crate) fn prepare_account_creation(
+pub(crate) async fn prepare_account_creation(
     dir: &Path,
     mode: IdentityStorageMode,
     request: &CreateAccountRequest,
 ) -> Result<PreparedAccountCreation> {
     let operation = uuid::Uuid::parse_str(&request.operation_id)?.to_string();
-    let mut registry = load_registry(dir)?.ok_or_else(|| anyhow!("accounts not initialized"))?;
+    let mut registry = load_registry(dir)
+        .await?
+        .ok_or_else(|| anyhow!("accounts not initialized"))?;
     if let Some(completed) = registry.completed_creations.get(&operation) {
         if completed.previous != request.account_id
             || registry.active_account_id != completed.next.id
@@ -30,7 +32,8 @@ pub(crate) fn prepare_account_creation(
             &account_db_path(dir, &completed.next.id),
             mode,
             &completed.next.pubkey,
-        )?;
+        )
+        .await?;
         return Ok(completed.clone());
     }
     if let Some(pending) = &registry.pending_creation
@@ -49,7 +52,8 @@ pub(crate) fn prepare_account_creation(
             &account_db_path(dir, &pending.next.id),
             mode,
             &pending.next.pubkey,
-        )?;
+        )
+        .await?;
         return Ok(pending.clone());
     }
     if registry.active_account_id != request.account_id {
@@ -59,7 +63,7 @@ pub(crate) fn prepare_account_creation(
         .join("account-transitions")
         .join(format!("create-{operation}"))
         .join(DB_FILE_NAME);
-    let next = lifecycle::generate_account(dir, mode, &staging)?;
+    let next = lifecycle::generate_account(dir, mode, &staging).await?;
     if registry
         .accounts
         .iter()
@@ -74,12 +78,17 @@ pub(crate) fn prepare_account_creation(
         next,
     };
     registry.pending_creation = Some(pending.clone());
-    save_registry(dir, &registry)?;
+    save_registry(dir, &registry).await?;
     Ok(pending)
 }
 
-pub(crate) fn commit_account_creation(dir: &Path, pending: &PreparedAccountCreation) -> Result<()> {
-    let mut registry = load_registry(dir)?.ok_or_else(|| anyhow!("accounts not initialized"))?;
+pub(crate) async fn commit_account_creation(
+    dir: &Path,
+    pending: &PreparedAccountCreation,
+) -> Result<()> {
+    let mut registry = load_registry(dir)
+        .await?
+        .ok_or_else(|| anyhow!("accounts not initialized"))?;
     if registry.pending_creation.as_ref() != Some(pending)
         || registry.active_account_id != pending.previous
     {
@@ -103,5 +112,5 @@ pub(crate) fn commit_account_creation(dir: &Path, pending: &PreparedAccountCreat
         },
     );
     registry.pending_creation = None;
-    save_registry(dir, &registry)
+    save_registry(dir, &registry).await
 }

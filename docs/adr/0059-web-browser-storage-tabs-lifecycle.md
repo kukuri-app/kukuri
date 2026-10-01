@@ -34,6 +34,10 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - `KeyringStore` を、同じ 3 つの操作（`service` と `account` で引く get・set・delete）の**非同期**の trait 1 つに置き換える。desktop-runtime の file で書く設定・状態の読み書きも同じ trait へ寄せる（ADR 0056 §2）。
   native の実装は今の keyring・file の読み書きを移したもので、Web の実装は IndexedDB で作る。新旧の経路を並べて残さない。
   trait の切り出しと native の呼出元の切替は W1 AC-4（desktop-runtime の wasm 化）で行い、Web の実装は W4 AC-2 が作る。
+- 実装（W1 AC-4c）: trait は `ClientStorage`。`service` が `"file"` のときは `account` が保存先の path（Web では仮想の path）、それ以外は keyring の service。
+  既定の保存先は `platform_storage()` で引く（Web は起動前に `install_platform_storage` で入れる）。
+  native の file の書き込みは、どの設定・状態も権限 0600・fsync・rename の原子的な置換 1 つに揃えた（同意の file だけの書き込み経路は廃止）。
+  device backup・restore と CLI の同意は native だけの同期の処理なので、trait の future を `block_on` で待つ。native の実装は I/O を待たずに終わるため、待ちは増えない。
 - IndexedDB の database は 3 種類に分ける。
 
 | database | 中身 | durability | 回収 |

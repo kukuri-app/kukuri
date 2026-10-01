@@ -1,6 +1,6 @@
 use super::*;
 
-fn save_single_node_config(db_path: &Path, base_url: &str) {
+async fn save_single_node_config(db_path: &Path, base_url: &str) {
     save_community_node_config(
         db_path,
         &CommunityNodeConfig {
@@ -12,17 +12,18 @@ fn save_single_node_config(db_path: &Path, base_url: &str) {
             }],
         },
     )
+    .await
     .expect("save single-node config");
 }
 
-fn persist_fake_keyring_secret(
+async fn persist_fake_keyring_secret(
     db_path: &Path,
     purpose: &str,
     key: &str,
     value: &str,
     keyring: &FakeDeviceBackupKeyring,
 ) {
-    persist_optional_secret_with_keyring(
+    persist_optional_secret_with_storage(
         db_path,
         IdentityStorageMode::Auto,
         purpose,
@@ -30,17 +31,19 @@ fn persist_fake_keyring_secret(
         value,
         keyring,
     )
+    .await
     .expect("persist fake keyring secret");
 }
 
-fn load_fake_keyring_secret(
+async fn load_fake_keyring_secret(
     db_path: &Path,
     mode: IdentityStorageMode,
     purpose: &str,
     key: &str,
     keyring: &FakeDeviceBackupKeyring,
 ) -> Option<String> {
-    load_optional_secret_with_keyring(db_path, mode, purpose, key, keyring)
+    load_optional_secret_with_storage(db_path, mode, purpose, key, keyring)
+        .await
         .expect("load fake keyring secret")
 }
 
@@ -136,7 +139,9 @@ async fn registry_commit_stop_recovers_old_active_account_before_path_resolution
     create_restore_fixture(source.path(), &source_db, &archive_path);
 
     let (target, old_db) = initialized_app_data().await;
-    let registry_before = list_accounts(target.path()).expect("old account registry");
+    let registry_before = list_accounts(target.path())
+        .await
+        .expect("old account registry");
     let prepared = prepare_restore_fixture(target.path(), &archive_path, false);
     let installed =
         install_prepared_device_restore(target.path(), prepared).expect("install restored account");
@@ -148,7 +153,9 @@ async fn registry_commit_stop_recovers_old_active_account_before_path_resolution
         commit_device_restore(&installed).expect_err("simulated process stop must fail commit");
     assert!(error.to_string().contains("simulated process stop"));
     drop(failure);
-    let interrupted_registry = list_accounts(target.path()).expect("interrupted registry");
+    let interrupted_registry = list_accounts(target.path())
+        .await
+        .expect("interrupted registry");
     assert_ne!(
         interrupted_registry.active_account_id,
         registry_before.active_account_id
@@ -160,10 +167,13 @@ async fn registry_commit_stop_recovers_old_active_account_before_path_resolution
 
     recover_interrupted_restore(target.path()).expect("recover registry commit cutpoint");
     assert_eq!(
-        list_accounts(target.path()).expect("recovered registry"),
+        list_accounts(target.path())
+            .await
+            .expect("recovered registry"),
         registry_before
     );
     let resolved_db = ensure_accounts_initialized(target.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("resolve recovered active account db path");
     assert_eq!(resolved_db, old_db);
     assert!(!restored_db.exists());
@@ -300,6 +310,7 @@ async fn replacement_stop_after_existing_directory_move_recovers_identity() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let (app_data, db_path) = initialized_app_data().await;
     let identity_before = load_existing_keys(&db_path, IdentityStorageMode::FileOnly)
+        .await
         .expect("load identity before restore")
         .expect("identity exists")
         .public_key_hex();
@@ -318,6 +329,7 @@ async fn replacement_stop_after_existing_directory_move_recovers_identity() {
     recover_interrupted_restore(app_data.path()).expect("recover moved existing directory");
     assert_eq!(app_data_snapshot(app_data.path()), before);
     let identity_after = load_existing_keys(&db_path, IdentityStorageMode::FileOnly)
+        .await
         .expect("load identity after recovery")
         .expect("recovered identity exists")
         .public_key_hex();
@@ -507,7 +519,7 @@ async fn validation_only_checks_all_restored_inputs_without_creating_runtime_art
         PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
         PRIVATE_CHANNEL_CAPABILITIES_KEY,
         r#"[{"topic_id":"topic","channel_id":"channel","label":"label","creator_pubkey":"creator","namespace_secret_hex":"abcd"}]"#,
-    )
+    ).await
     .expect("persist corrupt capability state");
     assert!(validate_prepared_device_restore(&prepared).await.is_err());
     persist_optional_secret(
@@ -517,6 +529,7 @@ async fn validation_only_checks_all_restored_inputs_without_creating_runtime_art
         PRIVATE_CHANNEL_CAPABILITIES_KEY,
         "[]",
     )
+    .await
     .expect("restore capability state");
 
     persist_optional_secret(
@@ -526,6 +539,7 @@ async fn validation_only_checks_all_restored_inputs_without_creating_runtime_art
         GOSSIP_SUBSCRIPTION_STATE_KEY,
         "{",
     )
+    .await
     .expect("persist corrupt gossip state");
     assert!(validate_prepared_device_restore(&prepared).await.is_err());
     persist_optional_secret(
@@ -535,6 +549,7 @@ async fn validation_only_checks_all_restored_inputs_without_creating_runtime_art
         GOSSIP_SUBSCRIPTION_STATE_KEY,
         "{}",
     )
+    .await
     .expect("restore gossip state");
 
     let database_bytes = fs::read(&staging_db).expect("read staged database");
@@ -600,7 +615,7 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
     let (app_data, db_path) = initialized_app_data().await;
     let restored_node = "https://restored-node.example";
     let existing_node = "https://existing-node.example";
-    save_single_node_config(&db_path, restored_node);
+    save_single_node_config(&db_path, restored_node).await;
     for (purpose, key, value) in [
         (
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
@@ -619,6 +634,7 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
         ),
     ] {
         persist_optional_secret(&db_path, IdentityStorageMode::FileOnly, purpose, key, value)
+            .await
             .expect("persist portable restore fixture");
     }
     let archive_dir = tempdir().expect("archive tempdir");
@@ -627,7 +643,7 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
         .join("stale-keyring-replace.kukuri-backup");
     create_restore_fixture(app_data.path(), &db_path, &archive_path);
 
-    save_single_node_config(&db_path, existing_node);
+    save_single_node_config(&db_path, existing_node).await;
     let keyring = FakeDeviceBackupKeyring::default();
     for (purpose, key, value) in [
         (
@@ -661,12 +677,12 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             "existing-node-token",
         ),
     ] {
-        persist_fake_keyring_secret(&db_path, purpose, key, value, &keyring);
+        persist_fake_keyring_secret(&db_path, purpose, key, value, &keyring).await;
     }
 
     let prepared = prepare_restore_fixture(app_data.path(), &archive_path, true);
     let failure = fail_device_restore_at(DeviceRestoreTestFailurePoint::FailInstalledJournalWrite);
-    install_prepared_device_restore_with_keyring(
+    install_prepared_device_restore_with_storage(
         app_data.path(),
         prepared,
         IdentityStorageMode::Auto,
@@ -700,7 +716,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
                 purpose,
                 key,
                 &keyring,
-            ),
+            )
+            .await,
             Some(expected.to_string()),
             "rollback must restore the previous value without keyring"
         );
@@ -712,9 +729,10 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
         existing_node,
         "retry-existing-node-token",
         &keyring,
-    );
+    )
+    .await;
     let prepared = prepare_restore_fixture(app_data.path(), &archive_path, true);
-    let installed = install_prepared_device_restore_with_keyring(
+    let installed = install_prepared_device_restore_with_storage(
         app_data.path(),
         prepared,
         IdentityStorageMode::Auto,
@@ -730,7 +748,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             COMMUNITY_NODE_TOKEN_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         None
     );
     assert_eq!(
@@ -740,7 +759,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             COMMUNITY_NODE_CONSENT_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         None
     );
     assert_eq!(
@@ -750,7 +770,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             COMMUNITY_NODE_TOKEN_PURPOSE,
             existing_node,
             &keyring,
-        ),
+        )
+        .await,
         None
     );
     assert_eq!(
@@ -760,7 +781,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             COMMUNITY_NODE_INVITE_CODE_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-invite".to_string())
     );
     assert_eq!(
@@ -770,7 +792,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
             PRIVATE_CHANNEL_CAPABILITIES_KEY,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-private-capabilities".to_string())
     );
     assert_eq!(
@@ -780,7 +803,8 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
             GOSSIP_SUBSCRIPTION_STATE_KEY,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-gossip-state".to_string())
     );
 }
@@ -790,7 +814,7 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let (source, source_db) = initialized_app_data().await;
     let restored_node = "https://new-account-node.example";
-    save_single_node_config(&source_db, restored_node);
+    save_single_node_config(&source_db, restored_node).await;
     for (purpose, key, value) in [
         (
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
@@ -815,9 +839,11 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             key,
             value,
         )
+        .await
         .expect("persist new-account backup fixture");
     }
     let source_public_key = load_existing_keys(&source_db, IdentityStorageMode::FileOnly)
+        .await
         .expect("load source identity")
         .expect("source identity")
         .public_key_hex();
@@ -859,12 +885,12 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             "stale-new-account-consent",
         ),
     ] {
-        persist_fake_keyring_secret(&restored_db, purpose, key, value, &keyring);
+        persist_fake_keyring_secret(&restored_db, purpose, key, value, &keyring).await;
     }
     fs::remove_dir_all(restored_dir).expect("remove prior account directory");
 
     let prepared = prepare_restore_fixture(target.path(), &archive_path, false);
-    let installed = install_prepared_device_restore_with_keyring(
+    let installed = install_prepared_device_restore_with_storage(
         target.path(),
         prepared,
         IdentityStorageMode::Auto,
@@ -880,7 +906,8 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             COMMUNITY_NODE_TOKEN_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         None
     );
     assert_eq!(
@@ -890,7 +917,8 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             COMMUNITY_NODE_CONSENT_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         None
     );
     assert_eq!(
@@ -900,7 +928,8 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             COMMUNITY_NODE_INVITE_CODE_PURPOSE,
             restored_node,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-new-account-invite".to_string())
     );
     assert_eq!(
@@ -910,7 +939,8 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
             PRIVATE_CHANNEL_CAPABILITIES_KEY,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-new-account-private".to_string())
     );
     assert_eq!(
@@ -920,7 +950,8 @@ async fn new_account_restore_scrubs_stale_keyring_at_reused_canonical_path() {
             GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
             GOSSIP_SUBSCRIPTION_STATE_KEY,
             &keyring,
-        ),
+        )
+        .await,
         Some("restored-new-account-gossip".to_string())
     );
 }

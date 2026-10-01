@@ -46,7 +46,7 @@ impl DesktopRuntime {
         }
     }
 
-    pub fn set_adult_content_display_enabled(
+    pub async fn set_adult_content_display_enabled(
         &self,
         enabled: bool,
     ) -> Result<kukuri_app_api::ContentDisplaySettings> {
@@ -55,7 +55,8 @@ impl DesktopRuntime {
             &ContentDisplaySettingsState {
                 adult_content_enabled: enabled,
             },
-        )?;
+        )
+        .await?;
         self.app_service.set_adult_content_display_enabled(enabled);
         Ok(kukuri_app_api::ContentDisplaySettings {
             adult_content_enabled: enabled,

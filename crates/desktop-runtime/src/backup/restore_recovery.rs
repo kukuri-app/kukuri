@@ -14,7 +14,9 @@ use super::{
     scrub_keyring_optional_secrets, unique_account_work_dir, validate_frontend_state,
     write_private_file_atomically,
 };
-use crate::identity::{IdentityStorageMode, KeyringStore, SystemKeyringStore};
+use crate::identity::IdentityStorageMode;
+use crate::storage::{ClientStorage, platform_storage};
+use n0_future::future::block_on;
 
 const RESTORE_JOURNAL_FILE: &str = "device-restore-journal.json";
 const RESTORE_FRONTEND_STATE_FILE: &str = "device-restore-frontend-state.json";
@@ -116,19 +118,19 @@ pub fn install_prepared_device_restore(
     app_data_dir: &Path,
     prepared: PreparedDeviceRestore,
 ) -> Result<InstalledDeviceRestore> {
-    install_prepared_device_restore_with_keyring(
+    install_prepared_device_restore_with_storage(
         app_data_dir,
         prepared,
         IdentityStorageMode::from_env(),
-        &SystemKeyringStore,
+        platform_storage(),
     )
 }
 
-pub(crate) fn install_prepared_device_restore_with_keyring(
+pub(crate) fn install_prepared_device_restore_with_storage(
     app_data_dir: &Path,
     prepared: PreparedDeviceRestore,
     identity_mode: IdentityStorageMode,
-    keyring: &dyn KeyringStore,
+    storage: &dyn ClientStorage,
 ) -> Result<InstalledDeviceRestore> {
     recover_interrupted_restore_inner(app_data_dir, Some(&prepared.staging_dir))?;
     if let Some(phase) = pending_device_restore_phase(app_data_dir)? {
@@ -140,7 +142,7 @@ pub(crate) fn install_prepared_device_restore_with_keyring(
         .parent()
         .ok_or_else(|| anyhow!("invalid restored account path"))?
         .to_path_buf();
-    let snapshot = list_accounts(app_data_dir)?;
+    let snapshot = block_on(list_accounts(app_data_dir))?;
     let existing = snapshot
         .accounts
         .iter()
@@ -161,7 +163,7 @@ pub(crate) fn install_prepared_device_restore_with_keyring(
     let mut secret_locators = known_optional_secret_locators(&staging_db)?;
     let rollback_dir = if final_dir.exists() {
         secret_locators.extend(known_optional_secret_locators(&final_db)?);
-        make_account_file_self_contained(&final_db, identity_mode, keyring, &secret_locators)?;
+        make_account_file_self_contained(&final_db, identity_mode, storage, &secret_locators)?;
         Some(unique_account_work_dir(
             app_data_dir,
             RESTORE_ROLLBACK_WORK_PREFIX,
@@ -232,7 +234,7 @@ pub(crate) fn install_prepared_device_restore_with_keyring(
     // optional secretのkeyring accountはcanonical DB pathに紐づく。Windowsでも過去の
     // entryと同じpathを解決でき、かつ復元fileを消さないよう、final DB配置後に
     // keyring entryだけを削除する。runtimeはこのinstall完了前には構築されない。
-    if let Err(error) = scrub_keyring_optional_secrets(&final_db, &secret_locators, keyring) {
+    if let Err(error) = scrub_keyring_optional_secrets(&final_db, &secret_locators, storage) {
         return Err(error_with_restore_rollback(
             app_data_dir,
             &journal,
@@ -287,11 +289,11 @@ pub fn commit_device_restore(
         );
     }
 
-    let account = match register_restored_account(
+    let account = match block_on(register_restored_account(
         &installed.app_data_dir,
         &installed.public_key,
         installed.account_label.clone(),
-    ) {
+    )) {
         Ok(account) => account,
         Err(error) => {
             return Err(error_with_restore_rollback(

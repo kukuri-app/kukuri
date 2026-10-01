@@ -73,6 +73,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -85,7 +86,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // トレイ常駐相当: get_sync_status / get_community_node_statuses は一切呼ばない。
     runtime
@@ -197,6 +198,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -209,7 +211,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // heartbeat deadline 未設定(= 常に due)の状態でも、getter は refresh を駆動しない。
     let _status = runtime.get_sync_status().await.expect("sync status");
@@ -279,6 +281,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
             expires_at: Utc::now().timestamp() + 60,
         },
     )
+    .await
     .expect("persist near-expiry token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -291,7 +294,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // トレイ常駐相当: getter を一切呼ばない。
     runtime
@@ -306,6 +309,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
         IdentityStorageMode::FileOnly,
         base_url.as_str(),
     )
+    .await
     .expect("load token")
     .expect("stored token");
     assert_ne!(stored.access_token, "near-expiry-token");
@@ -391,6 +395,7 @@ async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -403,7 +408,7 @@ async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // 1 回目: セッション確立(heartbeat 1 発 + 便乗 rendezvous refresh)。
     // 2 回目: ready 遷移で立った ready_refresh_pending の metadata refresh(便乗 refresh)を消化。
@@ -569,6 +574,7 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .unwrap();
     persist_community_node_token(
         &db_path,
@@ -579,6 +585,7 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .unwrap();
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -593,8 +600,8 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             })
             .collect(),
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
-    seed_local_community_node_consents(&runtime, base_url_b.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
+    seed_local_community_node_consents(&runtime, base_url_b.as_str(), 1).await;
     for _ in 0..4 {
         runtime.run_community_node_session_maintenance_once().await;
         if state
@@ -827,6 +834,7 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("コミュニティノードの認証情報を保存できる");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -839,7 +847,7 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
     runtime.run_community_node_session_maintenance_once().await;
