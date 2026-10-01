@@ -1151,6 +1151,7 @@ impl DesktopRuntime {
             .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn get_blob_media_file(
         &self,
         request: GetBlobMediaRequest,

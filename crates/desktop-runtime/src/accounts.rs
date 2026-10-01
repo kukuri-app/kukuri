@@ -12,6 +12,7 @@
 
 use std::fs;
 pub(crate) mod create;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod display;
 pub(crate) mod lifecycle;
 use std::path::{Path, PathBuf};

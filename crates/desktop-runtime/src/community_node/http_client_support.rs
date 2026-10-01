@@ -1,11 +1,15 @@
 use super::*;
 
 pub(crate) fn community_node_http_client() -> Result<Client> {
-    Client::builder()
-        // Includes response bodies. A connected socket that never completes its
-        // response must not retain the node's session lock indefinitely.
+    let builder = Client::builder();
+    // Includes response bodies. A connected socket that never completes its
+    // response must not retain the node's session lock indefinitely.
+    // ブラウザの reqwest の client には期限が無い。Web の期限は runtime を組み立てる W1 AC-5 で入れる。
+    #[cfg(not(target_family = "wasm"))]
+    let builder = builder
         .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10));
+    builder
         .build()
         .context("failed to build community-node http client")
 }
@@ -13,7 +17,8 @@ pub(crate) fn community_node_http_client() -> Result<Client> {
 /// 通報送信専用の HTTP クライアント(#703)。
 ///
 /// 通報本文(詳細・連絡先)が転送応答で別ホストへ再送されないよう、転送を追跡しない。
-/// 3xx は呼び出し側で `REPORT_REDIRECT_REJECTED` として扱う。
+/// 3xx は呼び出し側で `REPORT_REDIRECT_REJECTED` として扱う。ブラウザの fetch は転送を止められないので native だけ。
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn community_node_report_http_client() -> Result<Client> {
     Client::builder()
         .redirect(reqwest::redirect::Policy::none())

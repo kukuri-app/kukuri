@@ -4,7 +4,9 @@ mod accounts_tests;
 mod command_gate;
 mod consent;
 mod consent_acceptance;
+#[cfg(not(target_family = "wasm"))]
 mod profile;
+#[cfg(not(target_family = "wasm"))]
 mod restore_lifecycle;
 mod subscriptions;
 
@@ -19,9 +21,11 @@ use std::{
 use n0_future::task::JoinHandle;
 use tokio::sync::{broadcast, watch};
 
+#[cfg(not(target_family = "wasm"))]
+use crate::StoreStartupError;
 use crate::{
-    AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, StoreStartupError,
-    account_db_path, ensure_accounts_initialized_from_env, list_accounts, set_active_account,
+    AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, account_db_path,
+    ensure_accounts_initialized_from_env, list_accounts, set_active_account,
 };
 
 pub use command_gate::{NON_READY_COMMAND_ALLOWLIST, admit_command};
@@ -38,10 +42,12 @@ pub use consent_acceptance::{
     AcceptedAppConsentDocument, AppConsentStatus, app_consent_status, record_app_consents,
     require_consent_acceptance_state, validate_app_consent_documents,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use profile::{
     ClientProfile, ClientProfileKind, ProfileError, ProfileErrorKind, ProfileLease, gui_profile,
     resolve_cli_profile,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use restore_lifecycle::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
@@ -71,17 +77,21 @@ impl ClientStartupError {
     }
 
     pub fn from_error(error: anyhow::Error) -> Self {
+        #[cfg(not(target_family = "wasm"))]
         let kind = match error.downcast_ref::<StoreStartupError>() {
             Some(StoreStartupError::Migration(_)) => ClientStartupErrorKind::DatabaseMigration,
             Some(StoreStartupError::Open { .. }) => ClientStartupErrorKind::DatabaseOpen,
             None => ClientStartupErrorKind::Unknown,
         };
+        #[cfg(target_family = "wasm")]
+        let kind = ClientStartupErrorKind::Unknown;
         Self {
             kind,
             message: format!("{error:#}"),
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub fn from_profile_error(error: ProfileError) -> Self {
         let kind = match error.kind {
             ProfileErrorKind::ProfileInUse => ClientStartupErrorKind::ProfileInUse,
@@ -185,6 +195,7 @@ impl ClientEventReceiver {
 }
 
 impl ClientHost {
+    #[cfg(not(target_family = "wasm"))]
     pub async fn start_if_consented(
         app_data_dir: PathBuf,
     ) -> Result<ClientHostStart, ClientStartupError> {
@@ -197,6 +208,7 @@ impl ClientHost {
         Self::start(app_data_dir).await.map(ClientHostStart::Ready)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     async fn start(app_data_dir: PathBuf) -> Result<Arc<Self>, ClientStartupError> {
         let db_path = ensure_accounts_initialized_from_env(&app_data_dir)
             .await
@@ -234,12 +246,14 @@ impl ClientHost {
             return Err(ClientStartupError::from_subscription_error(error));
         }
         host.runtime().start_sync_status_observer().await;
+        #[cfg(not(target_family = "wasm"))]
         host.runtime().start_legacy_store_retirement().await;
         Ok(host)
     }
 
     /// runtimeを構築するが、schedulerとobserverはまだ開始しない。
     /// `from_runtime`または`replace_runtime`へ渡してhostのevent購読後に有効化する。
+    #[cfg(not(target_family = "wasm"))]
     pub async fn build_detached_runtime(
         db_path: impl AsRef<Path>,
     ) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
@@ -313,10 +327,12 @@ impl ClientHost {
             return Err(ClientStartupError::from_subscription_error(error));
         }
         next.start_sync_status_observer().await;
+        #[cfg(not(target_family = "wasm"))]
         next.start_legacy_store_retirement().await;
         Ok(previous)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn restart_runtime(
         &self,
         db_path: impl AsRef<Path>,
@@ -333,6 +349,7 @@ impl ClientHost {
         Ok(())
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn switch_account(&self, account_id: &str) -> anyhow::Result<AccountRecord> {
         let _guard = self.operation_guard.lock().await;
         if self.shutdown_started.load(Ordering::Acquire) {
