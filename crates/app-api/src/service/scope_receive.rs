@@ -206,9 +206,28 @@ impl AppService {
         })
     }
 
-    /// 本人の端末間の account 同期を始める（ADR 0061）。replica の namespace の秘密を登録し、hint の topic を購読する。
+    /// 本人の端末間の account 同期を始める（ADR 0061）。scope の lease で hint を購読する。
     /// 購読は account の runtime と一緒に止まる（停止・切替で runtime を作り直す）。
     pub async fn start_account_sync(&self) -> Result<()> {
+        let hint_topic = self
+            .services
+            .keys
+            .derive_account_sync()
+            .hint_topic()
+            .clone();
+        self.set_scope_holder(
+            ACCOUNT_SYNC_HOLDER,
+            [ScopeKey::AccountSync(hint_topic.as_str().to_string())],
+        )
+        .await
+    }
+
+    /// replica の namespace の秘密を登録し、hint の購読を持つ。endpoint の作り直しで docs が新しくなっても、
+    /// task の作り直しで登録し直す。hint を受けた差分の取得は W5 AC-5 が足す。
+    pub(crate) async fn spawn_account_sync_subscription(
+        &self,
+        hint_topic: TopicId,
+    ) -> Result<ScopeTask> {
         let keys = self.services.keys.derive_account_sync();
         self.services
             .docs_sync
@@ -217,20 +236,6 @@ impl AppService {
                 keys.expose_namespace_secret_hex().as_str(),
             )
             .await?;
-        self.set_scope_holder(
-            ACCOUNT_SYNC_HOLDER,
-            [ScopeKey::AccountSync(
-                keys.hint_topic().as_str().to_string(),
-            )],
-        )
-        .await
-    }
-
-    /// hint の購読だけを持つ。hint を受けた差分の取得は W5 AC-5 が足す。
-    pub(crate) async fn spawn_account_sync_subscription(
-        &self,
-        hint_topic: TopicId,
-    ) -> Result<ScopeTask> {
         let mut hints = self
             .services
             .hint_transport
