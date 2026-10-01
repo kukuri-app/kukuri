@@ -56,7 +56,6 @@ pub use connection::StoreStartupError;
 pub use legacy_store_retirement::{
     EMPTY_NAMESPACES_KIND, LEGACY_STORE_KINDS, LEGACY_STORE_PAGE, LegacyProjectionPage,
 };
-pub use private_index_grants::PrivateIndexGrant;
 pub use protected_migration::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
     ProtectedMigrationPage, ProtectedSource,

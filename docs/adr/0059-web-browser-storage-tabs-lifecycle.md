@@ -50,6 +50,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 
 ### 2. projection
 
+- desktop-runtime は account の保存を `Arc<dyn AccountStore>`（`Store`・`ProjectionStore`・`ContentCacheStore`・`PrivateIndexGrantStore` を束ねた trait）で持つ（W1 AC-4b）。旧 store の退役・保護データの移行・backup など native だけの処理は、同じ store を `SqliteStore` の型で使う。
 - Web の projection（`Store` と `ProjectionStore` のすべての trait）は、ADR 0058 の cache の database に IndexedDB で実装する。SQLite の実装と同じ意味・同じ窓（件数・順序・上限）を、複合索引と cursor で作る。
   SQLite の実装にある全件を対象にする処理（例: 参照の無い行の一括削除）は、同じ意味で移さず、索引と 1 回の件数の上限つきで行う（設計原則）。
 - 端末だけのデータ（DM の履歴と outbox、通知の既読、bookmark、mute、取り下げと epoch 制御の outbox、owner の参加者の記録）は保護し、再取得できる行（remote の投稿の projection 等）は ADR 0058 §4 の規則で回収する。

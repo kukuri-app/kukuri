@@ -121,7 +121,10 @@ pub struct DesktopRuntime {
     pub(crate) author_keys: Arc<KukuriKeys>,
     pub(crate) db_path: PathBuf,
     pub(crate) identity_mode: IdentityStorageMode,
-    pub(crate) store: Arc<SqliteStore>,
+    pub(crate) store: Arc<dyn kukuri_store::AccountStore>,
+    /// 同じ store の SQLite の型。旧 store の退役・保護データの移行・停止の close など、native だけの処理が使う。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) sqlite: Arc<SqliteStore>,
     pub(crate) iroh_stack: SharedIrohStack,
     pub(crate) discovery_config: Arc<Mutex<DiscoveryConfig>>,
     pub(crate) community_node_config: Arc<Mutex<CommunityNodeConfig>>,
@@ -500,7 +503,9 @@ impl DesktopRuntime {
             author_keys,
             db_path,
             identity_mode,
-            store,
+            store: store.clone(),
+            #[cfg(not(target_family = "wasm"))]
+            sqlite: store,
             iroh_stack,
             discovery_config: Arc::new(Mutex::new(discovery_config)),
             community_node_config: Arc::new(Mutex::new(community_node_config)),

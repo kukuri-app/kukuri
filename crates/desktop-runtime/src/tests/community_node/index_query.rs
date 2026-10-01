@@ -426,8 +426,6 @@ async fn community_node_index_client_uses_session_and_preserves_query_contract()
 
 #[tokio::test]
 async fn community_node_index_records_and_restores_existing_local_subjects() {
-    use kukuri_store::ContentObservationStore;
-
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, _managed, state, server, dir) = index_runtime(None).await;
     let db_path = dir.path().join("community-index-query.db");
