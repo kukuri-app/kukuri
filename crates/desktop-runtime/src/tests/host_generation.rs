@@ -103,7 +103,7 @@ async fn a_replaced_runtime_restores_only_the_desired_subscriptions_whatever_the
     for _ in 0..300 {
         let id = iroh::SecretKey::generate().public();
         runtime
-            .store
+            .sqlite
             .put_peer_candidate(
                 "docs",
                 "learned",

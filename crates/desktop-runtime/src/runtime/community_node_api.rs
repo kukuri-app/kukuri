@@ -607,7 +607,8 @@ impl DesktopRuntime {
         }
         self.app_service.shutdown().await;
         self.iroh_stack.shutdown_checked().await?;
-        self.store.close().await;
+        #[cfg(not(target_family = "wasm"))]
+        self.sqlite.close().await;
         Ok(())
     }
 }

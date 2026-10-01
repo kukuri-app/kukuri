@@ -4,6 +4,7 @@
     all(target_family = "wasm", not(test)),
     warn(clippy::disallowed_methods)
 )]
+mod account_store;
 mod cache;
 mod memory;
 mod models;
@@ -18,6 +19,7 @@ mod traits;
 #[cfg(test)]
 mod tests;
 
+pub use account_store::{AccountStore, PrivateIndexGrant, PrivateIndexGrantStore};
 pub use cache::{
     ContentCacheStore, OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES,
     REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, RemoteRecordKey,
@@ -38,7 +40,7 @@ pub use models::{
 #[cfg(not(target_family = "wasm"))]
 pub use sqlite::{
     EMPTY_NAMESPACES_KIND, LEGACY_STORE_KINDS, LEGACY_STORE_PAGE, LegacyProjectionPage,
-    PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, PrivateIndexGrant, ProtectedCandidate,
+    PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
     ProtectedMigrationPage, ProtectedSource, SqliteStore, StoreStartupError,
 };
 pub use traits::{

@@ -47,7 +47,7 @@ async fn reclaimed_adult_label_reaches_runtime_event_subscribers() {
     let mut events = runtime.subscribe_events();
     let hash = BlobHash::new("e".repeat(64));
     kukuri_store::ObjectProjectionStore::mark_adult_media_hashes(
-        runtime.store.as_ref(),
+        runtime.sqlite.as_ref(),
         std::slice::from_ref(&hash),
     )
     .await
@@ -57,10 +57,10 @@ async fn reclaimed_adult_label_reaches_runtime_event_subscribers() {
          WHERE kind = 'adult_marker' AND cache_key = ?1",
     )
     .bind(hash.as_str())
-    .execute(runtime.store.pool())
+    .execute(runtime.sqlite.pool())
     .await
     .unwrap();
-    runtime.store.reclaim_remote_cache_step().await.unwrap();
+    runtime.sqlite.reclaim_remote_cache_step().await.unwrap();
     let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
         .unwrap()
@@ -292,7 +292,7 @@ async fn status_push_work_does_not_grow_with_dormant_history() {
                 let id = endpoint_id(1_000 + history * 10 + index);
                 let addr = iroh::EndpointAddr::new(id.parse().expect("id"));
                 runtime
-                    .store
+                    .sqlite
                     .put_peer_candidate(
                         "gossip",
                         "imported",
