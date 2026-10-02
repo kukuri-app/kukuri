@@ -129,12 +129,15 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 基準（統合 branch `74cc6a352`）の事実:
 
 - 参加中の全 channel の capability（過去の全 epoch の秘密を含む）を 1 つの JSON にして、optional secret（purpose `private-channel-capabilities`、key `registry`。keyring、使えなければ file）に置いている。
-  参加・世代の追加・退会のたびに全件を書き直し、起動時に全件を読んで全 epoch の秘密を docs へ登録する。
-- メモリの参加状態（`joined_private_channels`）は全 channel・全 epoch を持つ。通知・epoch 制御の offer の照合、owner の channel の巡回、topic ごとの一覧、rendezvous、endpoint の作り直しが、これを全件走査する。
+  参加・世代の追加・退会のたびに全件を書き直し、起動時に全件を読んで全 epoch の秘密を docs の登録簿へ入れる。
+- docs の登録簿（`register_private_replica_secret`）はメモリの表で、手元で replica を開くときと、相手からの private の読取り（`page_read`）への応答の両方がこれを引く。
+  登録は、参加の登録（起動時の復元では lease の無い channel も含む）と endpoint の作り直しで、全 channel・全 epoch に対して行う。外すのは退会のときだけ。
+- メモリの参加状態（`joined_private_channels`）は全 channel・全 epoch を持つ。通知・epoch 制御の offer の照合、owner の channel の巡回、topic ごとの一覧、rendezvous、Dome の context、endpoint の作り直しが、これを全件走査する。
+  live・game の session の一覧・表示（`scope_replicas`）は、channel の全 epoch の replica を列挙する。
 - device backup は、account の DB と秘密の bundle（`SecretBundleV1`。`private_channel_capabilities` は registry の文字列そのもの）を持つ。
   restore は bundle の registry を optional secret へ戻し、restore の検証（`validate_persisted_runtime_state`）は registry の秘密の形を確かめる。
 - harness は registry を `Vec` で持ち、再起動のときに戻す。
-- 画面は `JoinedPrivateChannelView.archived_epoch_ids` を使っていない（mock と story だけ）。
+- `JoinedPrivateChannelView.archived_epoch_ids` は、画面では使っていない（mock と story だけ）。CLI の出力の schema（必須の欄）と harness の試験が使う。
 
 #### 保存の形（AC-4b）
 
@@ -150,13 +153,20 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - AAD は用途の文字列・アカウントの公開鍵・channel id・epoch id。別の行・別の account へ移した封は開けない。
   - 保護の強さはアカウント鍵の置き場（keyring、使えなければ file。Web は vault）と同じで、今の registry と変わらない。DB の file だけを持ち出しても開けない。
   - keyring・vault の entry を世代ごとに作らない。作ると OS の keyring の entry が件数に比例して増え、行の索引と秘密が別の保存先に分かれて、書き込みの途中で食い違う。
-  - Web の vault は capability を持たない（ADR 0059 §1 を改める）。Web の行は保護行で、strict の transaction で書く。
+  - Web の vault は capability を持たない（ADR 0059 §1 を改める）。Web の行は cache の database の保護行で、strict の transaction で書き、容量の回収で消さない（ADR 0058 §4）。
 - 書き込みは対象の行だけにする。
   - 参加: 参加の行と、現在の世代の鍵の行。
   - 世代の追加: その鍵の行と、参加の行の現在の世代。
-  - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す。
+  - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す（その channel の行だけを page で消す）。
   - 全件の書き直しをしない。
 - 退会の tombstone と鍵の行は、容量の回収で消さない（§5）。
+
+#### docs の秘密の引き方（AC-4b）
+
+- 参加中の channel の世代の秘密は、docs の登録簿へ入れない。docs が replica の秘密を要するとき（手元で開く、相手からの private の読取りに応える）は、登録簿に無ければ、replica id から (channel id, epoch id) を求め、世代の鍵の行を key で 1 件読む。
+  - 引き方は、app-api が docs へ渡す非同期の参照にする（`page_read` の秘密の参照も非同期にする）。参加の行が tombstone の channel の鍵は返さない。
+  - lease の無い channel・過去の世代にも、今と同じく応える。起動時・endpoint の作り直しで秘密を登録し直さない。
+- 登録簿に残るのは、account 同期の replica と、参加の前の招待の preview の一時の秘密だけ。
 
 #### 読む範囲（AC-4b）
 
@@ -166,21 +176,20 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 起動:
   - 旧 registry を移す（下記）。
   - 参加中の行を key の順に読み、参加の holder の lease を取る。上限に達したら読むのをやめる。残りは今と同じく購読せず、行は残る。
-  - docs へ登録するのは、lease を取った channel の現在の世代の秘密だけ。
 - 各操作は対象の行だけを読む。
 
 | 操作 | 読むもの |
 | --- | --- |
-| 点の参照（書込み・共有・索引の依頼・Dome・remote read の現在の世代） | メモリ。無ければ参加の行と現在の世代の鍵の行を key で 1 件ずつ |
-| 保存の gate（`active_content_scope_generation`） | メモリだけ（lease の無い channel の内容は保存しない） |
+| 点の参照（書込み・共有・索引の依頼・Dome の locator・remote read の現在の世代、handoff の redeem の既知の世代の確認） | メモリ。無ければ参加の行と世代の鍵の行を key で 1 件ずつ |
+| 保存の gate（`active_content_scope_generation`） | メモリだけ。lease の無い channel（上限 64 を超えて参加しているもの）の内容は保存しない |
 | 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
-| 過去の bucket の読み出し | (channel id, 開始時刻) の索引で、bucket に掛かる世代を上限つきで読む。replica を開く直前に、その世代の秘密を docs へ登録する |
-| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ） |
+| 過去の bucket の読み出し、Dome の書込みの anchor | (channel id, 開始時刻) の索引で、bucket に掛かる世代を新しい順に 8 件まで |
+| 遅れた参加者への grant の直前の世代 | (channel id, 開始時刻) の索引で 1 件 |
+| live・game の session の一覧・表示、thread の窓（`scope_replicas`） | 全世代を列挙しない。候補の絞り込みと表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで（session の状態の更新は現在の世代へ書かれるので、続いている session は新しい世代に現れる） |
+| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ）。view の `archived_epoch_ids` は欄を残し、新しい順に 8 件まで |
 | owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
-| rendezvous、Dome の context、endpoint の作り直し | メモリ（lease のある channel）だけ |
+| rendezvous、Dome の context | メモリ（lease のある channel）だけ。lease の無い channel は含めない |
 | 退会 | その channel の世代の鍵の行を page で読みながら、replica の参照を外す |
-
-- `JoinedPrivateChannelView.archived_epoch_ids` は外す。
 
 #### 旧 registry・旧 backup の移行（AC-4b）
 
@@ -190,33 +199,38 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 担当の欄の無い自分の channel の移行（ADR 0018 §8）は、この変換で行う。
   - 移した行の `updated_at` は 0（どの編集よりも古い）。
 - 旧 backup: restore は今のまま bundle の registry を optional secret へ戻し、次の起動で上の移行により行になる。
-  - 新しい backup は、行を DB に持つ。bundle の `private_channel_capabilities` は空になる（形式は変えない）。
+  - 新しい backup は、行を DB に持つ。bundle の `private_channel_capabilities` は `None` になる（形式は変えない）。
 - restore の検証は、旧 registry があるときだけ秘密の形を確かめる（今のまま）。行は、store の migration と、読んだときの封の検査で確かめる。
 - 旧形式の単一 account からの移行（`accounts.rs`）と account の file の自己完結化は、旧 registry の locator をそのまま扱う。次の起動で行になる。
-- 行へ移した DB を、古い版で開くことは扱わない（store の migration は既に前方だけ）。
+- 行へ移した DB を、古い版で開くことは扱わない（store の migration は既に前方だけで、古い版は開くのを拒否する）。
 - 不要になるものは消す。
   - persist の callback（`set_private_channel_capability_persist`）と、registry の書き出し。
+  - 参加中の channel の秘密の docs への登録（`register_private_channel_replica_secrets`）。
   - harness の `Vec`（再起動では同じ store を使う）。
 - `PrivateChannelCapability` は、旧 registry の読み込みだけに使う。形の凍結の試験（`capability_registry_snapshot`）は残す。
 
 #### channel の item の merge（AC-4c）
 
-- `membership` の値は、参加の行のうち端末に依らない欄（topic id、label、作成者・owner・参加の経路の公開鍵、audience、書いた端末の現在の世代の ID）。値が無ければ退会・取消の tombstone。
+- `membership` を書くのは、参加（作成・招待による参加）、明示の退会、明示の再参加のときだけ。世代の追加（鍵更新・handoff の redeem）では書かない。
+  - 値は、参加の行のうち端末に依らない欄（topic id、label、作成者・owner・参加の経路の公開鍵、audience、参加したときの現在の世代の ID）。値が無ければ退会・取消の tombstone。
   - `(updated_at, op_id)` で採る（§4）。明示の再参加は、新しい `updated_at` の値のある版。
-  - 参加にするのは、値のある `membership` を採ったときだけ。他の端末の鍵が届いても、`membership` が届くまで参加にしない。
-  - 知らない channel の `membership` を採るとき、その現在の世代の鍵を持っていれば、それを現在の世代にする。
-    知っている channel では `membership` の現在の世代を使わず、ADR 0018 §8 の検証（policy の `previous_epoch_id`）でだけ進める（W6 AC-3）。
+- 参加にするのは、値のある `membership` を採ったときだけ。他の端末の鍵が届いても、`membership` が届くまで参加にしない。
+- 手元に参加の無い channel（行が無い、または tombstone）の値のある `membership` を採るときは、その版の現在の世代を手元の現在の世代にする。tombstone の行に残る世代は使わない。
+  - その世代の鍵の行がまだ無ければ、鍵待ちとする。参加の行だけを持ち、lease・購読・書込みをしない。その世代の鍵の item を保存したときに lease を取る。
+  - それより新しい世代へは、ADR 0018 §8 の検証（policy の `previous_epoch_id`）でだけ進める（W6 AC-3）。
+  - 参加中の channel では、`membership` の現在の世代を使わない。
   - 本人の端末の item は account の payload の鍵で封をされ、本人の端末しか書けない。そのため channel の replica の署名を読み直さずに、参加の行を作る。
 - 世代の鍵の item:
   - 追加だけ。同じ (channel, epoch) の行があれば何もしない。
   - 値の `epoch_id` と key の一致、秘密の形を確かめる。
   - tombstone の `membership` より古いか同じ `updated_at` の鍵は保存しない。
   - `op_id` は (channel id, epoch id) から決める（再送で変えない）。`updated_at` は、鍵を受け取った端末の時刻。
-- tombstone を採ったら、この端末の退会と同じく lease を外し、その `updated_at` 以下の世代の鍵の行を消す。
+- tombstone を採ったら、この端末の退会と同じく lease を外し、その channel の世代の鍵の行を消す。
+  - 退会と並行して別の端末が世代を追加した場合、tombstone より新しい鍵の行が残ることがある。参加にはならず、次の退会か再参加で扱う。
 - 担当の記録は、ADR 0018 §8 の規則（`generation`、同じなら `transfer_to`）で採る。書くのは W6。
 - 書き込み:
-  - 参加・世代の追加・退会・再参加では、行の保存と同じ所で封をして replica へ書く。
-  - AC-3 と同じく、replica へ書けなくても採用は戻さない。owner の鍵更新で作った世代も、同じ所を通る。
+  - 世代の鍵は追加のとき、`membership` は上の 3 つの操作のときに、行の保存と同じ所で封をして replica へ書く。owner の鍵更新で作った世代も、同じ所を通る。
+  - AC-3 と同じく、replica へ書けなくても採用は戻さない。
 - AC-5 が持つもの:
   - 移した行（`updated_at` 0）と書けなかった行の送り直し。
   - 本人の別の端末の版の取得。
@@ -227,12 +241,15 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - AC-4b:
   - 旧 registry の固定 fixture（複数の channel、過去の世代、担当の欄の無いもの）と旧 backup の bundle から行へ移る。
     移した後の参加状態の view と担当の移行の結果が、移す前と同じになり、registry は消える。
-  - 他の channel と過去の世代を 10 倍にしても、次の store の読み書きの行数が変わらない。
+  - 次の store の読み書きの行数が、他の channel を 10 倍にしても、対象の channel の過去の世代を 10 倍にしても変わらない（退会は、対象の channel の世代の数だけ消す）。
     - 書き込み: 参加・世代の追加・退会。
     - 起動の読み込み: lease を取る channel の参加の行と現在の世代の鍵だけ。上限を超える参加を加えても同じ。
-    - 照合と読み出し: offer の照合、過去の bucket の読み出し、一覧、巡回。
+    - 照合と読み出し: offer の照合、相手への private の応答、過去の bucket の読み出し、session の一覧、一覧、巡回。
+  - 投稿者が鍵を更新して再起動した後も、過去の世代の bucket の相手からの読取りに応える。
   - 既存の private channel の試験と、harness の scenario が通る。
 - AC-4c: #1218 の AC-4c の判定方法（join → 世代の追加 → 退会 → 旧 snapshot の再送、明示の再参加、容量の回収の後の固定の遷移。各操作は対象の項目だけを読む）。
+  - 退会と、別の端末の世代の追加（redeem）が並行しても、参加に戻らない。
+  - 退会の後に別の招待で再参加した `membership` を採ると、その版の現在の世代で参加する。
 
 ## 採らない方式
 

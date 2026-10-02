@@ -90,7 +90,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 ### 6. データの喪失と復旧
 
 - account の作成・import の後に `navigator.storage.persist()` を要求し、許可の状態を設定の画面に示す（W8）。
-- app による cache の回収は vault と device の database を消さない。利用者のサイトデータの削除・browser の eviction（Safari の 7 日間の削除を含む）で失われた鍵は、既存の暗号化 export（ADR 0047）と QR・リンクの移行（#1211）から戻す。保持を偽らない。
+- app による cache の回収は vault と device の database と、cache の database の保護行（private channel の鍵を含む）を消さない。利用者のサイトデータの削除・browser の eviction（Safari の 7 日間の削除を含む）で失われた鍵は、既存の暗号化 export（ADR 0047）と QR・リンクの移行（#1211）から戻す。保持を偽らない。
 - export の鍵の導出（argon2id 64 MiB）は main thread を数秒止めうる。明示の操作のときだけ行い、進行中を示す（W8）。
 
 ### 7. 所有する AC
@@ -102,9 +102,9 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 | 共通の復帰の入口と Web の lifecycle の adapter | W4 AC-3 |
 | 複数 tab の lock と引継ぎ | W4 AC-4 |
 | persist の要求、喪失時の復旧の導線 | W4 AC-5 |
-| capability の行ごとの保存（native と Web） | W5 AC-4 |
+| capability の行の形（ADR 0061 §9）と native の行ごとの保存 | W5 AC-4a・AC-4b（Web の IndexedDB の実装は W4 AC-2） |
 
-順序: W4 AC-2 は、capability の行ごとの保存（W5 AC-4）と保存 trait の切り出し（W1 AC-4）の後に行う（1 つの key の registry を Web に持ち込まないため）。
+順序: W4 AC-2 は、capability の行ごとの保存（W5 AC-4b）と保存 trait の切り出し（W1 AC-4）の後に行う（1 つの key の registry を Web に持ち込まないため）。
 
 ## Consequences
 
