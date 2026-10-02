@@ -701,3 +701,100 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     .await
     .expect("after the task is rebuilt, the device is fetched from again");
 }
+
+/// 本人の別の端末で参加した channel の、参加の版と世代の鍵を `channels` 件、手元の replica に書く。
+async fn write_channel_items(app: &AppService, channels: usize) {
+    for index in 0..channels {
+        let channel = ChannelId::new(format!("kept-{index:04}"));
+        app.write_account_sync_item(
+            &AccountSyncItem::channel_epoch(
+                &channel,
+                "epoch-86400000-x",
+                10,
+                serde_json::to_value(PrivateChannelEpochCapability {
+                    epoch_id: "epoch-86400000-x".into(),
+                    namespace_secret_hex: hex::encode([7_u8; 32]),
+                })
+                .expect("epoch"),
+            )
+            .expect("epoch item"),
+        )
+        .await
+        .expect("epoch item");
+        app.write_account_sync_item(&AccountSyncItem::edit(
+            AccountSyncItemKey::ChannelMembership {
+                channel_id: channel.clone(),
+            },
+            10,
+            Some(
+                serde_json::to_value(kukuri_core::ChannelMembershipV1 {
+                    topic_id: "kukuri:topic:rebuild".into(),
+                    label: channel.as_str().into(),
+                    creator_pubkey: "0".repeat(63) + "1",
+                    owner_pubkey: "0".repeat(63) + "1",
+                    joined_via_pubkey: None,
+                    audience_kind: ChannelAudienceKind::InviteOnly,
+                    current_epoch_id: "epoch-86400000-x".into(),
+                })
+                .expect("membership"),
+            ),
+        ))
+        .await
+        .expect("membership item");
+    }
+}
+
+/// #1218 AC-5c: DB を失った端末は、手元の replica を周回して参加と鍵を作り直す。周回の 1 回（1 page）の読取りは、
+/// 参加・世代の数を 10 倍にしても増えない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rebuild_page_does_not_grow_with_channels() {
+    let mut largest = Vec::new();
+    for channels in [10, 100] {
+        let keys = generate_keys();
+        let docs = DeviceDocs::new();
+        let before = MemoryStore::default();
+        let old = own_device(
+            &keys,
+            "device-a",
+            &docs,
+            Arc::new(before.clone()),
+            Arc::new(before),
+        )
+        .await;
+        write_channel_items(&old, channels).await;
+        drop(old);
+
+        // DB を失った: 同じ docs（replica）と、空の store。
+        let store = Arc::new(MemoryStore::default());
+        let app = own_device(&keys, "device-a", &docs, store.clone(), store).await;
+        app.restore_joined_private_channels()
+            .await
+            .expect("restore");
+        let mut prefix = Some("profile".to_string());
+        let mut most = 0;
+        while let Some(current) = prefix {
+            docs.work();
+            prefix = app
+                .account_sync_cycle_step(&docs, &current, true)
+                .await
+                .expect("rebuild step");
+            most = most.max(docs.work().0);
+        }
+        let mut cursor = None;
+        let mut joined = 0;
+        loop {
+            let page = app
+                .list_joined_private_channels("kukuri:topic:rebuild", cursor.as_deref())
+                .await
+                .expect("list");
+            joined += page.items.len();
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(joined, channels);
+        largest.push(most);
+    }
+    assert_eq!(largest[0], largest[1]);
+}
