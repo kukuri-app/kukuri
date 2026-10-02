@@ -9,6 +9,7 @@ members = [
     "crates/cn-protocol",
     "crates/docs-sync",
     "crates/webrtc-transport",
+    "crates/web-runtime",
     "crates/blob-service",
     "crates/harness",
     "crates/app-api",
