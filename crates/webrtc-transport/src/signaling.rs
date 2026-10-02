@@ -429,6 +429,11 @@ impl Signaling {
                 None => self.connect(self.route(remote).await).await.ok(),
             };
             if let Some(session) = session {
+                // 交渉の途中で需要が終わっていたら（登録の前で `demand_ended` が閉じられない）、ここで閉じる。
+                if !self.state().demand.contains_key(&remote) {
+                    self.transport.close(session);
+                    return;
+                }
                 self.closed(session).await;
             }
             n0_future::time::sleep(self.deadline).await;

@@ -281,3 +281,41 @@ async fn native_nodes_do_not_negotiate_with_each_other() -> Result<()> {
     );
     Ok(())
 }
+
+/// 監査 B-1: 交渉が始まった後、session を登録する前に需要の接続（1 回の reader 等）が閉じても、開いた session を残さない。
+/// 登録の前の待ちを、応答しない STUN（relay の host の 3478 番。応答を 500 ms 待つ）で作る。
+#[tokio::test]
+async fn a_demand_that_ends_during_the_negotiation_leaves_no_session() -> Result<()> {
+    let _silent_stun =
+        std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, kukuri_webrtc_transport::STUN_PORT));
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (native, native_transport) = node(&relay, false).await?;
+    let signaling = web.webrtc_signaling().context("webrtc")?;
+    let demand = web_e2e::demand(&web, via_relay(&native, &relay)).await?;
+    eventually("the negotiation starts", async || {
+        signaling.stats().attempts == 1
+    })
+    .await?;
+    demand.close(0u32.into(), b"done");
+    eventually("the demand ends", async || {
+        signaling.stats().demand_peers == 0
+    })
+    .await?;
+    eventually("no session is left on either side", async || {
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions,
+        ) == (0, 0)
+    })
+    .await?;
+    n0_future::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions
+        ),
+        (0, 0)
+    );
+    Ok(())
+}
