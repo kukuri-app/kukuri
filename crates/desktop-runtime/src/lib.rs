@@ -51,6 +51,10 @@ pub use command::{
     STALE_RUNTIME_CODE, UNSUPPORTED_PLATFORM_CODE, dispatch_command, dispatched_commands,
     map_error,
 };
+/// 通報の送信の HTTP（web-runtime の browser の試験が、転送の拒否を確かめる）。
+#[cfg(target_family = "wasm")]
+#[doc(hidden)]
+pub use community_node::post_report;
 pub use community_node::{
     AcceptCommunityNodeConsentsRequest, AuthorTrustGate, AuthorTrustGateRequest,
     AuthorTrustGateResult, CommunityNodeAdmissionRejection, CommunityNodeAdmissionRejectionCode,

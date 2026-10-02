@@ -66,6 +66,8 @@ pub use content_advisory_lookup_support::{
     CommunityNodeContentAdvisoryLookupResult, CommunityNodeContentAdvisoryNodeResult,
 };
 pub use dome_hosting_support::DomeHostingRequestError;
+#[cfg(target_family = "wasm")]
+pub use http_client_support::post_report;
 pub(crate) use http_client_support::*;
 pub(crate) use index_query_support::{CONTENT_ADVISORY_SYNTHESIS_DEFAULT, IndexOperation};
 pub use index_query_support::{CommunityNodeIndexQueryError, CommunityNodeIndexQueryRequest};

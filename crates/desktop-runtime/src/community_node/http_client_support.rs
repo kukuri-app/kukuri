@@ -66,7 +66,7 @@ pub(crate) async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, V
 /// Web はブラウザの fetch を `redirect: "error"` で呼び、転送を失敗にする（ブラウザの reqwest は転送を止められない）。
 /// 応答の本文まで期限で打ち切る。JS の object は 1 つの task の中だけで持つ（ADR 0056 §4）。
 #[cfg(target_family = "wasm")]
-pub(crate) async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, Vec<u8>)> {
+pub async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, Vec<u8>)> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
