@@ -34,6 +34,8 @@ impl AppService {
                 DIRECT_MESSAGE_RETRY_INTERVAL_MS,
             ));
             interval.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
+            // #1219 AC-2: private channel の鍵更新の配布の続きも、tick ごとに 1 操作 1 page ずつ進める。
+            let mut rotation_cursor = Default::default();
             loop {
                 interval.tick().await;
                 if closed.load(Ordering::Acquire) {
@@ -46,6 +48,12 @@ impl AppService {
                 .await
                 {
                     warn!(%error, "account DM outbox retry deferred");
+                }
+                if let Err(error) =
+                    AppService::step_private_channel_rotations(&services, &mut rotation_cursor)
+                        .await
+                {
+                    warn!(%error, "private channel rotation step deferred");
                 }
             }
         })));

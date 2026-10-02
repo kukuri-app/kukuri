@@ -1,5 +1,27 @@
 use super::*;
 
+/// 参加者の行の資格喪失の印(channel の owner と mutual でない。owner 自身と、owner の分からない行は 0)の式。
+macro_rules! participant_stale {
+    ($channel:literal, $pubkey:literal) => {
+        concat!(
+            "COALESCE((SELECT channel.owner_pubkey != ",
+            $pubkey,
+            " AND NOT (",
+            "EXISTS (SELECT 1 FROM follow_edges WHERE subject_pubkey = channel.owner_pubkey ",
+            "AND target_pubkey = ",
+            $pubkey,
+            " AND status = 'active') AND ",
+            "EXISTS (SELECT 1 FROM follow_edges WHERE subject_pubkey = ",
+            $pubkey,
+            " ",
+            "AND target_pubkey = channel.owner_pubkey AND status = 'active')) ",
+            "FROM private_channels AS channel WHERE channel.channel_id = ",
+            $channel,
+            " LIMIT 1), 0)"
+        )
+    };
+}
+
 impl SqliteStore {
     pub(super) async fn store_upsert_profile_impl(&self, profile: Profile) -> Result<()> {
         let existing = self.get_profile(profile.pubkey.as_str()).await?;
@@ -184,7 +206,17 @@ impl SqliteStore {
         .bind(edge.envelope_id.as_str())
         .execute(&self.pool)
         .await?;
-
+        // #1219 AC-2: 両端の公開鍵の参加者の行の資格喪失の印を読み直す(その公開鍵の行だけ。数は trigger が保つ)。
+        for pubkey in [edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()] {
+            sqlx::query(concat!(
+                "UPDATE private_channel_participants SET stale = ",
+                participant_stale!("private_channel_participants.channel_id", "?1"),
+                " WHERE participant_pubkey = ?1"
+            ))
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        }
         Ok(())
     }
 
@@ -492,13 +524,15 @@ impl SocialProjectionStore for SqliteStore {
         row: PrivateChannelParticipantRow,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
-        let changed = sqlx::query(
+        let changed = sqlx::query(concat!(
             "INSERT INTO private_channel_participants \
-             (channel_id, epoch_id, participant_pubkey, left_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT(channel_id, epoch_id, participant_pubkey) DO UPDATE SET \
+             (channel_id, epoch_id, participant_pubkey, left_at, updated_at, stale) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ",
+            participant_stale!("?1", "?3"),
+            ") ON CONFLICT(channel_id, epoch_id, participant_pubkey) DO UPDATE SET \
              left_at = excluded.left_at, updated_at = excluded.updated_at \
              WHERE excluded.updated_at > private_channel_participants.updated_at",
-        )
+        ))
         .bind(&row.channel_id)
         .bind(&row.epoch_id)
         .bind(&row.participant_pubkey)
@@ -558,20 +592,21 @@ impl SocialProjectionStore for SqliteStore {
         .await?)
     }
 
-    async fn count_private_channel_participants(
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM private_channel_participants \
-             WHERE channel_id = ?1 AND epoch_id = ?2 AND left_at IS NULL",
+    ) -> Result<(usize, usize)> {
+        let counts: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT active, stale FROM private_channel_participant_counts \
+             WHERE channel_id = ?1 AND epoch_id = ?2",
         )
         .bind(channel_id)
         .bind(epoch_id)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(usize::try_from(count)?)
+        let (active, stale) = counts.unwrap_or_default();
+        Ok((usize::try_from(active)?, usize::try_from(stale)?))
     }
 }
 

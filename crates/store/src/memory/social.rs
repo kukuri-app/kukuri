@@ -261,7 +261,7 @@ impl SocialProjectionStore for MemoryStore {
             }
         }
         rows.insert(key, row);
-        Ok(true)
+        Ok(self.touched(1, true))
     }
 
     async fn list_private_channel_participants(
@@ -282,7 +282,8 @@ impl SocialProjectionStore for MemoryStore {
             })
             .map(|row| row.participant_pubkey.clone())
             .collect::<BTreeSet<_>>();
-        Ok(pubkeys.into_iter().take(limit).collect())
+        let page = pubkeys.into_iter().take(limit).collect::<Vec<_>>();
+        Ok(self.touched(page.len(), page))
     }
 
     async fn has_private_channel_participant(
@@ -300,19 +301,40 @@ impl SocialProjectionStore for MemoryStore {
             }))
     }
 
-    async fn count_private_channel_participants(
+    /// 試験用の実装なので、数と資格喪失の印を読むときに求める(SQLite は書込みで保つ)。読んだ行は 1 行と数える。
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize> {
-        Ok(self
-            .private_channel_participants
+    ) -> Result<(usize, usize)> {
+        let owner = self
+            .private_channel_keys
             .read()
             .await
+            .channels
             .values()
-            .filter(|row| {
-                row.channel_id == channel_id && row.epoch_id == epoch_id && row.left_at.is_none()
-            })
-            .count())
+            .find(|row| row.channel_id == channel_id)
+            .map(|row| row.owner_pubkey.clone());
+        let follow_edges = self.follow_edges.read().await;
+        let active = |subject: &str, target: &str| {
+            follow_edges
+                .get(&(subject.to_string(), target.to_string()))
+                .is_some_and(|edge| edge.status == kukuri_core::FollowEdgeStatus::Active)
+        };
+        let rows = self.private_channel_participants.read().await;
+        let members = rows.values().filter(|row| {
+            row.channel_id == channel_id && row.epoch_id == epoch_id && row.left_at.is_none()
+        });
+        let (mut count, mut stale) = (0, 0);
+        for row in members {
+            count += 1;
+            let pubkey = row.participant_pubkey.as_str();
+            if owner.as_deref().is_some_and(|owner| {
+                owner != pubkey && !(active(owner, pubkey) && active(pubkey, owner))
+            }) {
+                stale += 1;
+            }
+        }
+        Ok(self.touched(1, (count, stale)))
     }
 }

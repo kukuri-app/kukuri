@@ -69,9 +69,10 @@ async fn legacy_participants_move_to_the_table_one_bounded_window_at_a_time() {
     }
     assert_eq!(
         store
-            .count_private_channel_participants(&channel.channel_id, &epoch_id)
+            .private_channel_participant_counts(&channel.channel_id, &epoch_id)
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         1,
         "only the owner is in the table before the migration"
     );
@@ -83,9 +84,10 @@ async fn legacy_participants_move_to_the_table_one_bounded_window_at_a_time() {
     );
     assert_eq!(
         store
-            .count_private_channel_participants(&channel.channel_id, &epoch_id)
+            .private_channel_participant_counts(&channel.channel_id, &epoch_id)
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         301
     );
 }

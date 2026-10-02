@@ -341,11 +341,13 @@ pub trait SocialProjectionStore: Send + Sync {
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>>;
-    async fn count_private_channel_participants(
+    /// (channel, epoch) の参加中の数と、そのうち資格喪失(channel の owner と mutual でない。#1219 AC-2)の数。
+    /// 行の書込みと follow の edge の書込みで保つ数を 1 件読む。
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize>;
+    ) -> Result<(usize, usize)>;
 }
 
 /// `list_author_relationships` の既定動作: 1 件ずつ `get_author_relationship` を呼ぶ。

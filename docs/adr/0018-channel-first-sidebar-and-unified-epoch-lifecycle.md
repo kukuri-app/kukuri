@@ -96,6 +96,16 @@ Accepted
 - 担当が不明な channel（記録の無いまま受け取った自分の channel）は、担当の記録が届くまで鍵更新を伴う操作を保留する。担当を移譲せずに失った channel は、復旧・強制移譲をせずに作り直す（#1219 S5）。
 - 移行: 担当の欄が無い本変更前の保存の自分の channel は、読み込んだ端末を generation 1 の担当にする（それまでの単一端末の利用を保つ）。本変更前に同じ channel を複数の端末へ写していた場合の重複は扱わない。
 
+鍵更新の操作（#1219 AC-2）:
+
+- 担当の判定を通ったら、まず新しい世代の epoch id と secret を作り、その世代の鍵の行（ADR 0061 §9）を「この端末の鍵更新が終わっていない」印（元の世代、配布の cursor）付きで 1 行書く。この世代の ID が操作 ID で、docs へはまだ何も書かない。
+- 段: 旧世代の凍結 → 新しい世代の metadata・Open policy・owner の参加 → 確定（参加の行の現在の世代を進め、世代の鍵の item を account 同期へ書く）→ handoff grant の配布。確定を配布より前に行い、確定と account 同期への記録が済むまで印の cursor を空（`NULL`）に保つ。
+- 再開: 確定の前に失敗・再起動したら、同じ入口の再送（担当の判定を通る）が、現在の世代から予約した確定前の世代を見つけて同じ世代を再開する。新しい世代を別に作らない。各段は同じ操作でやり直しても同じ世代を書く。確定の後に残った段（account 同期への記録と配布の続き）は、再送を待たずに背景で進める。
+- 配布: 宛先は参加者の表（ADR 0055）を公開鍵の順に 128 件の page で読み、cursor を印に置く。受付（rotate の呼び出し）は確定と最初の 1 page まで行い、残りは DM outbox の再送 owner の tick ごとに 1 操作 1 page ずつ進める。page の途中で失敗したら、その page を初めからやり直す（同じ相手への grant は docs の同じ key を上書きし、outbox の重複は ACK で消える）。
+- 終わり: 配布の終端で印を消す（完了の記録を残さない）。退会した channel の操作も印を消す（鍵の行は退会で消える）。
+- friend_only の資格: channel の owner と mutual でない参加者を資格喪失とする（関係が完全に無くなった参加者を含む。友達の友達の経路は使わない。2026-10-02 ユーザー判断）。資格喪失の印は参加者の行に持ち、follow の edge と参加者の行の書込みで更新する。現在の世代の参加者数と資格喪失の数は、(channel, epoch) ごとに保つ 1 行を読む。投稿・共有の前の auto rotate の判定と view は、参加者の数に比例して数えない。
+- Web の背景の配布は、DM outbox の再送 owner を Web で起動したときに動く（現在は未起動。受付の 1 page は動く）。
+
 account 同期（ADR 0061 §2）の記録の契約:
 
 - `channel/<channel id の hex>/controller` の値は上の記録の JSON（`{"device_id":"…","generation":1,"transfer_to":null}`）。書くのは担当端末と、#1219 AC-4 の引継ぎの遷移だけ。
@@ -122,7 +132,7 @@ account 同期（ADR 0061 §2）の記録の契約:
 
 ### Domain
 - `invite_only` を含む private audience はすべて `channel-policy` と `channel-participant` に参加する。
-- auto rotate は handoff grant の配布までを 1 operation として扱う。
+- auto rotate と明示の rotate は、予約した新しい世代を操作 ID とする 1 operation として扱う（#1219 AC-2。§8 の「鍵更新の操作」）。
 - participant redeem は read path から呼べる idempotent operation とする。
 
 ### 非公開チャンネルのランデブー

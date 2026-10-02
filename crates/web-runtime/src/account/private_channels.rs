@@ -39,6 +39,17 @@ fn epoch_key(channel_id: &str, epoch_id: &str) -> JsValue {
     key(&[text(channel_id), text(epoch_id)])
 }
 
+/// 鍵更新が終わっていない世代だけが載る索引の値（SQLite の `rotation_from IS NOT NULL` の部分索引）。
+fn epoch_extra(row: &PrivateChannelEpochRow) -> [(&'static str, JsValue); 1] {
+    [(
+        "rotation",
+        match row.rotation_from {
+            Some(_) => epoch_key(&row.channel_id, &row.epoch_id),
+            None => JsValue::UNDEFINED,
+        },
+    )]
+}
+
 #[async_trait]
 impl PrivateChannelKeyStore for IndexedDbCache {
     /// 参加の行を置き換え、まだ無い世代の鍵の行を足す（1 つの strict の transaction）。
@@ -57,7 +68,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
                     .await?
                     .is_none()
                 {
-                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch))?;
                 }
             }
             tx.commit().await
@@ -181,6 +192,46 @@ impl PrivateChannelKeyStore for IndexedDbCache {
                 limit,
             )
             .await
+        })
+        .await
+    }
+
+    async fn set_private_channel_rotation(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+        after: Option<&str>,
+    ) -> Result<()> {
+        let id = (channel_id.to_owned(), epoch_id.to_owned());
+        let after = after.map(str::to_owned);
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Strict)?;
+            let key = epoch_key(&id.0, &id.1);
+            if let Some(mut row) =
+                rows::get::<PrivateChannelEpochRow>(&tx, PRIVATE_EPOCHS, &key).await?
+            {
+                if after.is_none() {
+                    row.rotation_from = None;
+                }
+                row.rotation_after = after;
+                rows::put(&tx, PRIVATE_EPOCHS, &row, &epoch_extra(&row))?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn list_private_channel_rotations(
+        &self,
+        after: (&str, &str),
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        let after = epoch_key(after.0, after.1);
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Read)?;
+            let range =
+                web_sys::IdbKeyRange::lower_bound_with_open(&after, true).map_err(js_error)?;
+            rows::scan(&tx, PRIVATE_EPOCHS, Some("rotation"), &range, false, limit).await
         })
         .await
     }

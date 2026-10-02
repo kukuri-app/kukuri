@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use web_sys::IdbTransaction;
 
+use super::social::{PARTICIPANT_STORES, restale_participants};
 use super::{newest_first, next_cursor};
 use crate::IndexedDbCache;
 use crate::content_cache::{BLOCKS, ENVELOPES, FOLLOWS, PROFILES};
@@ -41,6 +42,21 @@ async fn put_edge<T: Serialize + DeserializeOwned>(
         return Ok(());
     }
     rows::put(tx, name, edge, &[])
+}
+
+/// follow の edge を置き、両端の公開鍵の参加者の資格喪失の印を読み直す（#1219 AC-2）。
+async fn put_follow_edge(tx: &IdbTransaction, edge: &FollowEdge) -> Result<()> {
+    let (subject, target) = (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str());
+    put_edge(
+        tx,
+        FOLLOWS,
+        (subject, target, edge.updated_at),
+        edge,
+        |edge: &FollowEdge| edge.updated_at,
+    )
+    .await?;
+    restale_participants(tx, subject).await?;
+    restale_participants(tx, target).await
 }
 
 async fn put_profile(tx: &IdbTransaction, profile: &Profile) -> Result<()> {
@@ -87,11 +103,9 @@ impl Store for IndexedDbCache {
         let follow = parse_follow_edge(&envelope)?;
         let block = parse_block_edge(&envelope)?;
         self.run(move |db| async move {
-            let tx = Txn::begin(
-                &db.idb,
-                &[ENVELOPES, PROFILES, FOLLOWS, BLOCKS],
-                Mode::Write,
-            )?;
+            let mut stores = vec![ENVELOPES, PROFILES, BLOCKS];
+            stores.extend(PARTICIPANT_STORES);
+            let tx = Txn::begin(&db.idb, &stores, Mode::Write)?;
             let topic = envelope.topic_id();
             let thread = envelope.thread_ref().unwrap_or(ThreadRef {
                 root: envelope.id.clone(),
@@ -112,12 +126,7 @@ impl Store for IndexedDbCache {
                 put_profile(&tx, &profile).await?;
             }
             if let Some(edge) = follow {
-                let id = (
-                    edge.subject_pubkey.as_str(),
-                    edge.target_pubkey.as_str(),
-                    edge.updated_at,
-                );
-                put_edge(&tx, FOLLOWS, id, &edge, |edge: &FollowEdge| edge.updated_at).await?;
+                put_follow_edge(&tx, &edge).await?;
             }
             if let Some(edge) = block {
                 let id = (
@@ -258,13 +267,8 @@ impl Store for IndexedDbCache {
 
     async fn upsert_follow_edge(&self, edge: FollowEdge) -> Result<()> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[FOLLOWS], Mode::Write)?;
-            let id = (
-                edge.subject_pubkey.as_str(),
-                edge.target_pubkey.as_str(),
-                edge.updated_at,
-            );
-            put_edge(&tx, FOLLOWS, id, &edge, |edge: &FollowEdge| edge.updated_at).await?;
+            let tx = Txn::begin(&db.idb, &PARTICIPANT_STORES, Mode::Write)?;
+            put_follow_edge(&tx, &edge).await?;
             tx.commit().await
         })
         .await
