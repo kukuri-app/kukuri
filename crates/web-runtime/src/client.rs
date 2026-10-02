@@ -121,8 +121,8 @@ fn to_js(value: &impl Serialize) -> Result<JsValue, JsValue> {
 }
 
 fn from_js(value: &JsValue) -> Result<Value, CommandError> {
-    if value.is_undefined() || value.is_null() {
-        return Ok(Value::Object(Default::default()));
+    if value.is_undefined() {
+        return Ok(Value::Null);
     }
     let json: String = js_sys::JSON::stringify(value)
         .map_err(|_| CommandError::from("args are not JSON".to_string()))?
@@ -258,9 +258,11 @@ async fn invoke_command(
 /// `config` は `{ communityNodeConfig }`（省略可）。
 #[wasm_bindgen]
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
-    let config: StartConfig =
-        serde_json::from_value(from_js(&config).map_err(|e| error_value(&e))?)
-            .map_err(|error| error_value(&CommandError::from(error.to_string())))?;
+    let config = match from_js(&config).map_err(|error| error_value(&error))? {
+        Value::Null => StartConfig::default(),
+        config => serde_json::from_value(config)
+            .map_err(|error| error_value(&CommandError::from(error.to_string())))?,
+    };
     if CLIENT.with_borrow(Option::is_some) {
         return Err(error_value(&CommandError::from(
             "the client is already started".to_string(),

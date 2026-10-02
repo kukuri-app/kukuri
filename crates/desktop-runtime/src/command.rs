@@ -253,14 +253,14 @@ async fn switch_account(
 
 macro_rules! dispatch_table {
     ($list:ident, $dispatch:ident ($receiver:ident : $receiver_ty:ty, $ctx:ident); $( $(#[$meta:meta])* $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
-        /// 表にある command の名前。
+        /// 表にある command の名前と、引数の top-level の key（snake_case。invoke では camelCase）。
         #[expect(
             clippy::vec_init_then_push,
             reason = "表の項目ごとに cfg（native だけの command）を付けるため"
         )]
-        fn $list() -> Vec<&'static str> {
+        pub(crate) fn $list() -> Vec<(&'static str, &'static [&'static str])> {
             let mut commands = Vec::new();
-            $( $(#[$meta])* commands.push(stringify!($name)); )*
+            $( $(#[$meta])* commands.push((stringify!($name), &[$(stringify!($arg)),*] as &[&str])); )*
             commands
         }
 
@@ -278,13 +278,14 @@ macro_rules! dispatch_table {
                         #[derive(serde::Deserialize)]
                         #[serde(rename_all = "camelCase")]
                         struct Args { $( $arg: $ty ),* }
-                        Ok(async {
+                        // 項目ごとの future を heap に置く（全項目の状態を 1 つの future に持つと stack を使い切る）。
+                        Ok(Box::pin(async {
                             let Args { $( $arg ),* } =
                                 serde_json::from_value(args).map_err(|error| invalid_args(command, error))?;
                             let value = $call?;
                             serde_json::to_value(value)
                                 .map_err(|error| CommandError::from(anyhow::Error::from(error)))
-                        }.await)
+                        }).await)
                     }
                 )*
                 _ => Err(args),
@@ -297,7 +298,7 @@ macro_rules! dispatch_table {
 pub fn dispatched_commands() -> Vec<&'static str> {
     let mut commands = gate_commands();
     commands.extend(runtime_commands());
-    commands
+    commands.into_iter().map(|(name, _)| name).collect()
 }
 
 /// command を表で呼ぶ。表に無ければ `unsupported_platform`。runtime へ委譲する command は、呼ぶ前と後で host の世代が
@@ -308,6 +309,12 @@ pub async fn dispatch_command(
     command: &str,
     args: Value,
 ) -> Result<Value, CommandError> {
+    // 引数の無い呼出し（Tauri の raw の body を含む）は、空の object と同じに扱う。
+    let args = if args.is_null() {
+        Value::Object(Default::default())
+    } else {
+        args
+    };
     let args = match dispatch_gate(gate, ctx, command, args).await {
         Ok(result) => return result,
         Err(args) => args,

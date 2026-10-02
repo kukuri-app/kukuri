@@ -112,6 +112,62 @@ mod tests {
     };
     use tauri::Manager;
 
+    // W1 AC-5: 表の command も受付の判定を先に通り、Ready の前は表へ届かない。起動の状態は表の command で読める。
+    #[test]
+    fn table_commands_pass_the_startup_gate_before_the_dispatch() {
+        let app = tauri::test::mock_builder()
+            .manage(DesktopStartupState::initializing())
+            .invoke_handler(with_desktop_startup_gate(with_runtime_dispatch(
+                |invoke: tauri::ipc::Invoke<tauri::test::MockRuntime>| {
+                    invoke.resolver.resolve(());
+                    true
+                },
+            )))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app without runtime");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "dispatch", Default::default())
+            .build()
+            .expect("mock webview");
+        let call = |command: &str| {
+            tauri::test::get_ipc_response(
+                &webview,
+                tauri::webview::InvokeRequest {
+                    cmd: command.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: if cfg!(windows) {
+                        "http://tauri.localhost"
+                    } else {
+                        "tauri://localhost"
+                    }
+                    .parse()
+                    .unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({})),
+                    headers: Default::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.into(),
+                },
+            )
+        };
+        let rejected = format!("{:?}", call("create_post").unwrap_err());
+        assert!(
+            rejected.contains("requires Ready startup state"),
+            "{rejected}"
+        );
+        let status: serde_json::Value = call("get_desktop_startup_status")
+            .expect("startup status before Ready")
+            .deserialize()
+            .unwrap();
+        assert_eq!(status, serde_json::json!({ "status": "initializing" }));
+
+        app.state::<DesktopStartupState>()
+            .set_status(DesktopStartupStatus::Ready);
+        let unpublished = format!("{:?}", call("create_post").unwrap_err());
+        assert!(
+            unpublished.contains("the runtime is not ready"),
+            "{unpublished}"
+        );
+    }
+
     #[test]
     fn locale_ipc_before_ready_does_not_construct_runtime_or_reach_protected_sinks() {
         let hits = Arc::new(AtomicUsize::new(0));
