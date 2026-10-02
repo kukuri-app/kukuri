@@ -16,14 +16,15 @@ export interface IconButtonProps
 type IconButtonTooltipProps = {
   children: React.ReactElement;
   label: string;
+  className?: string;
 };
 
-export function IconButtonTooltip({ children, label }: IconButtonTooltipProps) {
+export function IconButtonTooltip({ children, label, className }: IconButtonTooltipProps) {
   return (
     <TooltipProvider delayDuration={180}>
       <Tooltip>
         <TooltipTrigger asChild>{children}</TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
+        <TooltipContent className={className}>{label}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

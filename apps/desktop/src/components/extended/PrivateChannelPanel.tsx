@@ -5,7 +5,7 @@ import { Copy, Settings } from 'lucide-react';
 import { buildChannelAccessPreviewDeepLink } from '@/lib/internalLinks';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { IconButton } from '@/components/ui/icon-button';
+import { IconButton, IconButtonTooltip } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Notice } from '@/components/ui/notice';
@@ -137,16 +137,22 @@ export function PrivateChannelPanel({
                   <small>{t(`channels:audienceOptions.${channel.audience_kind}`)}</small>
                 </button>
                 {onOpenJoinedChannelSettings ? (
-                  <Button
-                    variant='ghost'
-                    size='sm'
-                    type='button'
-                    aria-label={t('channels:joinedList.settings', { channel: channel.label })}
-                    onClick={() => onOpenJoinedChannelSettings(channel.channel_id)}
+                  <IconButtonTooltip
+                    className='private-channel-joined-settings-tooltip'
+                    label={t('channels:joinedList.settings', { channel: channel.label })}
                   >
-                    <Settings className='size-4' aria-hidden='true' />
-                    {t('shell:workspace.channelSettingsEntry')}
-                  </Button>
+                    <Button
+                      className='private-channel-joined-settings'
+                      variant='ghost'
+                      size='sm'
+                      type='button'
+                      aria-label={t('channels:joinedList.settings', { channel: channel.label })}
+                      onClick={() => onOpenJoinedChannelSettings(channel.channel_id)}
+                    >
+                      <Settings className='size-4' aria-hidden='true' />
+                      <span>{t('shell:workspace.channelSettingsEntry')}</span>
+                    </Button>
+                  </IconButtonTooltip>
                 ) : null}
               </li>
             ))}
