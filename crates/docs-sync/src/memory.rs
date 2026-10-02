@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use iroh_docs::NamespaceSecret;
 use kukuri_core::ReplicaId;
 use tokio::sync::{Mutex, broadcast};
 
-use crate::access::{ensure_private_replica_access, parse_namespace_secret_hex};
+use crate::access::{
+    PrivateEpochSecrets, PrivateSecrets, ensure_private_replica_access, parse_namespace_secret_hex,
+};
 use crate::notices::{entry_stream, notice_stream};
 use crate::replicas::value_hash;
 use crate::types::{
@@ -22,7 +23,7 @@ type MemoryReplicaMap = HashMap<String, ReplicaRecords>;
 pub struct MemoryDocsSync {
     records: Arc<Mutex<MemoryReplicaMap>>,
     events: Arc<Mutex<HashMap<String, broadcast::Sender<ReplicaNotice>>>>,
-    private_replica_secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
+    private_replica_secrets: Arc<PrivateSecrets>,
     /// この docs が書き込みに使う docs author の id(ADR 0053)。既定は `None`(docs author を持たない docs)。
     docs_author: Option<String>,
 }
@@ -273,6 +274,7 @@ impl DocsSync for MemoryDocsSync {
     ) -> Result<()> {
         let secret = parse_namespace_secret_hex(namespace_secret_hex)?;
         self.private_replica_secrets
+            .registered
             .lock()
             .await
             .insert(replica_id.as_str().to_string(), secret);
@@ -281,9 +283,18 @@ impl DocsSync for MemoryDocsSync {
 
     async fn remove_private_replica_secret(&self, replica_id: &ReplicaId) -> Result<()> {
         self.private_replica_secrets
+            .registered
             .lock()
             .await
             .remove(replica_id.as_str());
+        Ok(())
+    }
+
+    async fn install_private_epoch_secrets(
+        &self,
+        source: Arc<dyn PrivateEpochSecrets>,
+    ) -> Result<()> {
+        self.private_replica_secrets.install_epoch_secrets(source);
         Ok(())
     }
 

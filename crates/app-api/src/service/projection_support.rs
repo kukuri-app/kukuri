@@ -218,10 +218,14 @@ pub(crate) fn initial_private_channel_epoch_id(
     format!("epoch-{now_ms}-{}", short_id_suffix(owner_pubkey))
 }
 
-pub(crate) fn next_private_channel_epoch_id(owner_pubkey: &str) -> String {
+/// 次の世代の epoch id。時刻は今と、現在の世代の開始時刻 + 1 ミリ秒の大きい方にし、開始時刻の順を世代の鎖の順と
+/// 一致させる(担当の端末が変わっても時計が戻っても。ADR 0061 §9)。
+pub(crate) fn next_private_channel_epoch_id(owner_pubkey: &str, current_epoch_id: &str) -> String {
     format!(
         "epoch-{}-{}",
-        Utc::now().timestamp_millis(),
+        Utc::now()
+            .timestamp_millis()
+            .max(epoch_started_at(current_epoch_id).saturating_add(1)),
         short_id_suffix(owner_pubkey)
     )
 }
@@ -230,22 +234,6 @@ pub(crate) use kukuri_docs_sync::private_channel_replica_for_epoch;
 
 pub(crate) fn current_private_channel_replica_id(state: &JoinedPrivateChannelState) -> ReplicaId {
     private_channel_replica_for_epoch(state.channel_id.as_str(), state.current_epoch_id.as_str())
-}
-
-pub(crate) fn private_channel_epoch_capabilities(
-    state: &JoinedPrivateChannelState,
-) -> Vec<PrivateChannelEpochCapability> {
-    let mut items = vec![PrivateChannelEpochCapability {
-        epoch_id: state.current_epoch_id.clone(),
-        namespace_secret_hex: state.current_epoch_secret_hex.clone(),
-    }];
-    for epoch in &state.archived_epochs {
-        if items.iter().any(|item| item.epoch_id == epoch.epoch_id) {
-            continue;
-        }
-        items.push(epoch.clone());
-    }
-    items
 }
 
 pub(crate) fn joined_private_channel_state_from_capability(
@@ -280,7 +268,6 @@ pub(crate) fn joined_private_channel_state_from_capability(
         audience_kind: capability.audience_kind,
         current_epoch_id,
         current_epoch_secret_hex,
-        archived_epochs: capability.archived_epochs,
         controller: capability.controller.flatten(),
     })
 }
@@ -298,22 +285,6 @@ pub(crate) fn merged_private_channel_state_from_epoch_join(
     epoch_id: &str,
     namespace_secret_hex: &str,
 ) -> JoinedPrivateChannelState {
-    let mut archived_epochs = existing
-        .as_ref()
-        .map(|state| state.archived_epochs.clone())
-        .unwrap_or_default();
-    archived_epochs.retain(|epoch| epoch.epoch_id != epoch_id);
-    if let Some(existing_state) = existing.as_ref()
-        && existing_state.current_epoch_id != epoch_id
-        && !archived_epochs
-            .iter()
-            .any(|epoch| epoch.epoch_id == existing_state.current_epoch_id)
-    {
-        archived_epochs.push(PrivateChannelEpochCapability {
-            epoch_id: existing_state.current_epoch_id.clone(),
-            namespace_secret_hex: existing_state.current_epoch_secret_hex.clone(),
-        });
-    }
     JoinedPrivateChannelState {
         generation: 0,
         topic_id: topic_id.to_string(),
@@ -325,27 +296,8 @@ pub(crate) fn merged_private_channel_state_from_epoch_join(
         audience_kind,
         current_epoch_id: epoch_id.to_string(),
         current_epoch_secret_hex: namespace_secret_hex.to_string(),
-        archived_epochs,
         controller: existing.and_then(|state| state.controller),
     }
-}
-
-pub(crate) fn archive_private_channel_epoch(
-    state: &mut JoinedPrivateChannelState,
-    epoch_id: &str,
-    namespace_secret_hex: &str,
-) {
-    if state
-        .archived_epochs
-        .iter()
-        .any(|epoch| epoch.epoch_id == epoch_id)
-    {
-        return;
-    }
-    state.archived_epochs.push(PrivateChannelEpochCapability {
-        epoch_id: epoch_id.to_string(),
-        namespace_secret_hex: namespace_secret_hex.to_string(),
-    });
 }
 
 #[cfg(test)]

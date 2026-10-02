@@ -439,7 +439,11 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         .finish_protected_migration()
         .await
         .expect("migrate the new channel");
-    let channels = runtime.app_service.joined_private_channel_replicas().await;
+    let channels = runtime
+        .app_service
+        .joined_private_channel_replicas("", 16)
+        .await
+        .unwrap();
     assert_eq!(channels.len(), 2);
     assert!(
         channels

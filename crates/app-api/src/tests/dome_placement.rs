@@ -323,6 +323,26 @@ async fn private_dome_hosting_records_stay_at_the_creation_day_anchor() {
         .expect("rotate")
         .current_epoch_id;
     let participant = peer_over(&owner, Arc::new(MemoryStore::default()));
+    // 参加者は自分の鍵の行で、両方の channel の現在と過去の世代を持つ(ADR 0061 §9)。
+    for channel_id in [&legacy.channel_id, &rotated.channel_id] {
+        let state = owner
+            .joined_private_channel_state(TOPIC, channel_id)
+            .await
+            .expect("joined");
+        let archived = owner
+            .archived_private_channel_epochs(&state, 8)
+            .await
+            .expect("archived")
+            .into_iter()
+            .map(
+                |(epoch_id, namespace_secret_hex)| PrivateChannelEpochCapability {
+                    epoch_id,
+                    namespace_secret_hex,
+                },
+            )
+            .collect::<Vec<_>>();
+        insert_joined_private_channel(&participant, state, &archived).await;
+    }
 
     for (channel_id, epoch_id, dome) in [
         (&legacy.channel_id, &legacy.current_epoch_id, &legacy_dome),

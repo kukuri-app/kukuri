@@ -621,8 +621,8 @@ impl AppService {
         });
     }
 
-    /// scope が読む replica。件数は「参加中の private channel × epoch」で決まり、投稿数に依存しない。
-    /// private channel は、参加状態の確認(`ensure_private_channel_access`)を通ったものだけを返す。
+    /// scope が読む replica。private channel は、参加状態の確認(`ensure_private_channel_access`)を通った channel の
+    /// 新しい順に 8 世代まで(全世代を列挙しない。ADR 0061 §9)。件数は投稿数にも世代の数にも依存しない。
     pub(crate) async fn scope_replicas(
         &self,
         topic_id: &str,
@@ -630,32 +630,72 @@ impl AppService {
     ) -> Result<Vec<ReplicaId>> {
         let scope = scope.into();
         let mut replicas = Vec::new();
-        let states = match &scope {
+        let channels = match &scope {
             ReplicaScope::Public => {
                 replicas.push(topic_replica_id(topic_id));
                 Vec::new()
             }
             ReplicaScope::AllJoined => {
                 replicas.push(topic_replica_id(topic_id));
-                self.joined_private_channel_states_for_topic(topic_id).await
+                self.joined_private_channel_states_for_topic(topic_id)
+                    .await?
+                    .into_iter()
+                    .map(|state| state.channel_id)
+                    .collect()
             }
             ReplicaScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
-                self.joined_private_channel_state(topic_id, channel_id.as_str())
-                    .await
-                    .into_iter()
-                    .collect()
+                vec![channel_id.clone()]
             }
         };
-        for state in states {
-            for epoch in private_channel_epoch_capabilities(&state) {
-                replicas.push(private_channel_replica_for_epoch(
-                    state.channel_id.as_str(),
-                    epoch.epoch_id.as_str(),
-                ));
+        for channel in channels {
+            for epoch in self
+                .services
+                .private_channel_epoch_ids(
+                    channel.as_str(),
+                    kukuri_store::PrivateChannelEpochRange::AtOrBefore(i64::MAX),
+                    PRIVATE_CHANNEL_EPOCH_WINDOW,
+                )
+                .await?
+            {
+                replicas.push(private_channel_replica_for_epoch(channel.as_str(), &epoch));
             }
         }
         Ok(replicas)
     }
+
+    /// session の replica が scope のものか。private は replica id の channel と、その世代の鍵の行の点読で確かめる。
+    pub(crate) async fn session_replica_in_scope(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        replica: &ReplicaId,
+    ) -> Result<bool> {
+        let TimelineScope::Channel { channel_id } = scope else {
+            return Ok(replica == &topic_replica_id(topic_id));
+        };
+        self.ensure_private_channel_access(topic_id, channel_id)
+            .await?;
+        let Some((channel, epoch)) = kukuri_docs_sync::private_channel_epoch_of(replica) else {
+            return Ok(false);
+        };
+        Ok(
+            session_replica_channel(replica).as_deref() == Some(channel_id.as_str())
+                && self
+                    .services
+                    .projection_store
+                    .get_private_channel_epoch(&channel, &epoch)
+                    .await?
+                    .is_some(),
+        )
+    }
+}
+
+/// session を置く private channel の replica(`channel::<c>`・`channel::<c>::epoch::<e>`。bucket は含めない)の channel。
+pub(crate) fn session_replica_channel(replica: &ReplicaId) -> Option<String> {
+    if replica.as_str().starts_with("bucket::") {
+        return None;
+    }
+    kukuri_docs_sync::private_channel_epoch_of(replica).map(|(channel, _)| channel)
 }

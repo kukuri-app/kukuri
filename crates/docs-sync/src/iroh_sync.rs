@@ -16,7 +16,7 @@ use n0_future::task::{JoinHandle, JoinSet};
 use tokio::sync::{Mutex, broadcast};
 use tracing::{info, warn};
 
-use crate::access::{parse_namespace_secret_hex, registered_private_secret};
+use crate::access::{PrivateEpochSecrets, PrivateSecrets, parse_namespace_secret_hex};
 use crate::notices::{entry_stream, notice_stream};
 use crate::replicas::public_replica_secret;
 use crate::types::{
@@ -59,7 +59,7 @@ pub struct IrohDocsSync {
     #[cfg(test)]
     close_hook: Arc<Mutex<Option<lifecycle::TestHook>>>,
     peers: Arc<PeerAddrBook>,
-    private_replica_secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
+    private_replica_secrets: Arc<PrivateSecrets>,
     remote_fetch_retries: Arc<Mutex<RemoteFetchRetryState>>,
     /// アカウントの署名鍵から導出した docs author(ADR 0053)。設定するまでは `None`。
     account_docs_author: Arc<Mutex<Option<AccountDocsAuthor>>>,
@@ -77,7 +77,8 @@ struct AccountDocsAuthor {
 impl IrohDocsSync {
     pub fn new(node: Arc<IrohDocsNode>) -> Self {
         let peers = Arc::new(PeerAddrBook::new(node.endpoint().clone(), node.discovery()));
-        let private_replica_secrets = node.private_replica_secrets(registered_private_secret);
+        let private_replica_secrets = Arc::new(PrivateSecrets::default());
+        node.set_private_secret_lookup(private_replica_secrets.clone());
         Self {
             node,
             remote_cache: None,
@@ -179,9 +180,7 @@ impl IrohDocsSync {
         if replica_id.as_str().starts_with("bucket::") {
             crate::BucketReplica::parse(replica_id)?;
         }
-        if let Some(secret) =
-            registered_private_secret(replica_id, &*self.private_replica_secrets.lock().await)
-        {
+        if let Some(secret) = self.private_replica_secrets.secret(replica_id).await {
             return Ok(secret);
         }
         public_replica_secret(replica_id)
@@ -485,6 +484,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<()> {
         let secret = parse_namespace_secret_hex(namespace_secret_hex)?;
         self.private_replica_secrets
+            .registered
             .lock()
             .await
             .insert(replica_id.as_str().to_string(), secret);
@@ -493,6 +493,14 @@ impl DocsSync for IrohDocsSync {
 
     async fn remove_private_replica_secret(&self, replica_id: &ReplicaId) -> Result<()> {
         self.close_replica_owned(replica_id, true).await
+    }
+
+    async fn install_private_epoch_secrets(
+        &self,
+        source: Arc<dyn PrivateEpochSecrets>,
+    ) -> Result<()> {
+        self.private_replica_secrets.install_epoch_secrets(source);
+        Ok(())
     }
 
     async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()> {

@@ -741,3 +741,88 @@ fn derive_epoch_handoff_grant_key(
         "channel epoch handoff grant key",
     )
 }
+
+/// 世代の鍵の行の封の導出の context（ADR 0061 §9）。変えると保存した行を開けなくなるので、変更してはならない。
+const KEY_ROW_CONTEXT: &str = "kukuri.app 2026-10-02 private channel key rows v1";
+const KEY_ROW_AAD_DOMAIN: &[u8] = b"kukuri private channel key row v1\0";
+
+/// private channel の世代の秘密を、端末の行へ置くための封（ADR 0061 §9）。アカウント鍵から導出するので、
+/// 保護の強さはアカウント鍵の置き場と同じ。秘密を含むので `Debug` へ中身を出さない。
+#[derive(Clone)]
+pub struct PrivateChannelKeyRowSeal {
+    account: Pubkey,
+    key: [u8; 32],
+}
+
+impl std::fmt::Debug for PrivateChannelKeyRowSeal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivateChannelKeyRowSeal")
+            .finish_non_exhaustive()
+    }
+}
+
+impl KukuriKeys {
+    pub fn derive_private_channel_key_row_seal(&self) -> PrivateChannelKeyRowSeal {
+        PrivateChannelKeyRowSeal {
+            account: Pubkey::from(self.public_key_hex()),
+            key: blake3::derive_key(KEY_ROW_CONTEXT, &self.secret_bytes()),
+        }
+    }
+}
+
+impl PrivateChannelKeyRowSeal {
+    /// 世代の秘密（32 byte の hex）を封じる。nonce（24 byte）と暗号文を続けたもの。
+    pub fn seal(&self, channel_id: &str, epoch_id: &str, secret_hex: &str) -> Result<Vec<u8>> {
+        validate_private_channel_secret_hex(secret_hex, "private channel epoch secret")?;
+        let secret = hex::decode(secret_hex.trim())?;
+        let mut nonce = [0u8; 24];
+        rng().fill_bytes(&mut nonce);
+        let aad = self.aad(channel_id, epoch_id);
+        let ciphertext = self
+            .cipher()?
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: secret.as_slice(),
+                    aad: aad.as_slice(),
+                },
+            )
+            .map_err(|_| anyhow!("failed to seal private channel key row"))?;
+        Ok([nonce.as_slice(), ciphertext.as_slice()].concat())
+    }
+
+    /// 封を開いて、世代の秘密の hex を返す。別の行・別の account へ移した封と改ざんは失敗にする。
+    pub fn open(&self, channel_id: &str, epoch_id: &str, sealed: &[u8]) -> Result<String> {
+        let (nonce, ciphertext) = sealed
+            .split_at_checked(24)
+            .ok_or_else(|| anyhow!("private channel key row is too short"))?;
+        let aad = self.aad(channel_id, epoch_id);
+        let secret = self
+            .cipher()?
+            .decrypt(
+                &XNonce::from(<[u8; 24]>::try_from(nonce)?),
+                Payload {
+                    msg: ciphertext,
+                    aad: aad.as_slice(),
+                },
+            )
+            .map_err(|_| anyhow!("private channel key row failed authentication"))?;
+        let secret = hex::encode(secret);
+        validate_private_channel_secret_hex(&secret, "private channel epoch secret")?;
+        Ok(secret)
+    }
+
+    fn aad(&self, channel_id: &str, epoch_id: &str) -> Vec<u8> {
+        let mut aad = KEY_ROW_AAD_DOMAIN.to_vec();
+        for part in [self.account.as_str(), channel_id, epoch_id] {
+            aad.extend_from_slice(part.as_bytes());
+            aad.push(0);
+        }
+        aad
+    }
+
+    fn cipher(&self) -> Result<XChaCha20Poly1305> {
+        XChaCha20Poly1305::new_from_slice(&self.key)
+            .map_err(|_| anyhow!("failed to initialize private channel key row cipher"))
+    }
+}

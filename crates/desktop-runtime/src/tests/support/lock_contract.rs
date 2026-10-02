@@ -75,7 +75,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("private_channels/friend_only.rs", "IrohNetwork", 1),
     ("private_channels/friend_plus.rs", "IrohNetwork", 1),
     ("private_channels/invite.rs", "IrohNetwork", 3),
-    ("private_channels/persistence.rs", "IrohNetwork", 2),
+    ("private_channels/persistence.rs", "IrohNetwork", 3),
     ("protected_migration.rs", "IdentityStorage", 5),
     ("receive_binding.rs", "IdentityStorage", 1),
     ("runtime_events.rs", "CommunityNodeServer", 4),
@@ -146,7 +146,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 193,
+        total, 194,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -162,6 +162,7 @@ fn lock_acquisitions_match_declared_classification() {
          #1221 R2-D で通信状態の差分の試験を 3 件追加し、旧 observer の試験を 1 件撤去、
          #1407 で空の namespace の回収の試験に IdentityStorage 取得を 1 件追加、
          #1214 AC-3 で host の世代の試験に IdentityStorage 取得を 2 件追加、
-         #1218 AC-2 で account 同期の切替の試験に IdentityStorage 取得を 1 件、索引の依頼の拒否の試験に CommunityNodeServer 取得を 1 件追加)"
+         #1218 AC-2 で account 同期の切替の試験に IdentityStorage 取得を 1 件、索引の依頼の拒否の試験に CommunityNodeServer 取得を 1 件追加、
+         #1218 AC-4b で旧 registry の行への移行の試験に IrohNetwork 取得を 1 件追加)"
     );
 }

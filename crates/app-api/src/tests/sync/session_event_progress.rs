@@ -535,7 +535,7 @@ async fn duplicate_candidate_sets_keep_shared_retry_history_and_candidate_memory
         }
         assert_eq!(
             registry
-                .candidates(f.topic, std::slice::from_ref(&f.replica))
+                .candidates(f.topic, |replica| replica == &f.replica)
                 .await
                 .len(),
             64
@@ -701,7 +701,7 @@ async fn private_channel_removal_cancels_displayed_fetch_and_rejects_stale_regis
         f.app
             .services
             .session_projections
-            .candidates(f.topic, &[replica])
+            .candidates(f.topic, |candidate| candidate == &replica)
             .await
             .is_empty()
     );

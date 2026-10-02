@@ -91,6 +91,26 @@ pub fn post_replica_kind(replica_id: &ReplicaId) -> Option<PostReplicaKind> {
     })
 }
 
+/// private channel の世代の replica(旧形式の `channel::<c>`・`channel::<c>::epoch::<e>`・private の bucket)の
+/// (channel id, epoch id)。`legacy` の世代は `channel::<c>`。
+pub fn private_channel_epoch_of(replica_id: &ReplicaId) -> Option<(String, String)> {
+    let raw = replica_id.as_str();
+    if raw.starts_with("bucket::") {
+        return match BucketReplica::parse(replica_id).ok()?.scope() {
+            BucketScope::PrivateChannel {
+                channel_id,
+                epoch_id,
+            } => Some((channel_id.clone(), epoch_id.clone())),
+            _ => None,
+        };
+    }
+    let rest = raw.strip_prefix("channel::")?;
+    let (channel_id, epoch_id) = rest.split_once("::epoch::").unwrap_or((rest, "legacy"));
+    let well_formed = |part: &str| !part.is_empty() && !part.contains("::");
+    (well_formed(channel_id) && well_formed(epoch_id))
+        .then(|| (channel_id.to_string(), epoch_id.to_string()))
+}
+
 pub fn private_channel_hint_topic(channel_id: &str) -> TopicId {
     TopicId::new(format!(
         "{}{channel_id}",

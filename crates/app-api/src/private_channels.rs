@@ -31,7 +31,6 @@ impl AppService {
             audience_kind: input.audience_kind.clone(),
             current_epoch_id: current_epoch_id.clone(),
             current_epoch_secret_hex: current_epoch_secret_hex.clone(),
-            archived_epochs: Vec::new(),
             // #1219 W6: 作成した端末が最初の担当。
             controller: Some(self.first_controller().await?),
         };
@@ -228,19 +227,18 @@ impl AppService {
             Ok::<(), anyhow::Error>(())
         }
         .await;
-        if import_result.is_err() {
-            let _ = self
-                .services
-                .docs_sync
-                .remove_private_replica_secret(&replica)
-                .await;
-            if newly_held {
-                self.release_scope_holder(&private_channel_holder(
-                    spec.topic_id.as_str(),
-                    spec.channel_id.as_str(),
-                ))
-                .await;
-            }
+        // 招待の一時の秘密は、参加の成否によらず外す(参加したら、docs は鍵の行から引く。ADR 0061 §9)。
+        let _ = self
+            .services
+            .docs_sync
+            .remove_private_replica_secret(&replica)
+            .await;
+        if import_result.is_err() && newly_held {
+            self.release_scope_holder(&private_channel_holder(
+                spec.topic_id.as_str(),
+                spec.channel_id.as_str(),
+            ))
+            .await;
         }
         import_result
     }
@@ -726,7 +724,10 @@ impl AppService {
         state: &JoinedPrivateChannelState,
         entry_dome_instance_id: Option<String>,
     ) -> Result<PrivateChannelNextEpoch> {
-        let epoch_id = next_private_channel_epoch_id(self.current_author_pubkey().as_str());
+        let epoch_id = next_private_channel_epoch_id(
+            self.current_author_pubkey().as_str(),
+            &state.current_epoch_id,
+        );
         let secret_hex = generate_keys().export_secret_hex();
         let replica =
             private_channel_epoch_replica_id(state.channel_id.as_str(), epoch_id.as_str());
@@ -869,7 +870,7 @@ impl AppService {
         )
         .await
     }
-    /// フェーズ 5: 旧 epoch を archive して現 epoch を差し替え、registry へ登録、
+    /// フェーズ 5: 新しい世代の鍵の行と現 epoch を 1 transaction で書き(旧 epoch の鍵の行は残る)、
     /// rotation hint を publish(失敗は warn のみ)して view を返す。
     async fn finalize_rotated_channel_state(
         &self,
@@ -877,16 +878,21 @@ impl AppService {
         mut state: JoinedPrivateChannelState,
         next: PrivateChannelNextEpoch,
     ) -> Result<JoinedPrivateChannelView> {
-        let archived_epoch_id = state.current_epoch_id.clone();
-        let archived_secret = state.current_epoch_secret_hex.clone();
-        archive_private_channel_epoch(
-            &mut state,
-            archived_epoch_id.as_str(),
-            archived_secret.as_str(),
-        );
-        state.current_epoch_id = next.epoch_id;
+        let previous_epoch_id = std::mem::replace(&mut state.current_epoch_id, next.epoch_id);
         state.current_epoch_secret_hex = next.secret_hex;
-        self.register_joined_private_channel(state.clone()).await?;
+        let committed = self
+            .commit_joined_private_channel_state(state.clone(), Some(&previous_epoch_id))
+            .await?;
+        // 準備と配布の間の一時の秘密は、行の commit の後に外す(失敗したときは巻き戻さず、再起動まで残す)。
+        self.docs_sync()
+            .remove_private_replica_secret(&private_channel_epoch_replica_id(
+                state.channel_id.as_str(),
+                &state.current_epoch_id,
+            ))
+            .await?;
+        if !committed {
+            anyhow::bail!("private channel is not joined");
+        }
         if let Err(error) = self
             .services
             .hint_transport
@@ -909,17 +915,24 @@ impl AppService {
         }
         self.joined_private_channel_view_for_state(&state).await
     }
+    /// 旧 registry の 1 件を、参加の行と世代の鍵の行へ移す(ADR 0061 §9。起動時の移行の入口で、試験も別の端末の
+    /// 状態をこれで作る)。移した行の時刻は 0(どの編集よりも古い)。
     pub async fn restore_private_channel_capability(
         &self,
         capability: PrivateChannelCapability,
     ) -> Result<()> {
         let unrecorded = capability.controller.is_none();
+        let archived = capability.archived_epochs.clone();
         let mut state = joined_private_channel_state_from_capability(capability)?;
         // #1219 W6: 担当の欄が無い本変更前の保存の自分の channel は、保存していた端末を担当にする。
         if unrecorded && state.owner_pubkey == self.current_author_pubkey() {
             state.controller = Some(self.first_controller().await?);
         }
-        self.restore_joined_private_channel(state).await
+        self.install_private_epoch_secrets().await?;
+        self.persist_private_channel(&state, 0, &archived).await?;
+        self.restore_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
+            .await;
+        Ok(())
     }
     pub async fn leave_private_channel(&self, topic_id: &str, channel_id: &str) -> Result<()> {
         let Some(state) = self
@@ -928,6 +941,8 @@ impl AppService {
         else {
             anyhow::bail!("private channel is not joined");
         };
+        // 退会の印を先に付ける(並行する世代の追加で参加に戻さない)。鍵の行は記録を書いた後に消す(ADR 0061 §9)。
+        self.tombstone_private_channel(&state).await?;
         let replica = current_private_channel_replica_id(&state);
         let local_author = self.current_author_pubkey();
         let local_pubkey = Pubkey::from(local_author.clone());
@@ -1017,12 +1032,18 @@ impl AppService {
         &self,
         topic_id: &str,
     ) -> Result<Vec<JoinedPrivateChannelView>> {
-        for state in self.joined_private_channel_states_for_topic(topic_id).await {
+        for state in self
+            .joined_private_channel_states_for_topic(topic_id)
+            .await?
+        {
             self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, state.channel_id.as_str())
                 .await?;
         }
         let mut items = Vec::new();
-        for state in self.joined_private_channel_states_for_topic(topic_id).await {
+        for state in self
+            .joined_private_channel_states_for_topic(topic_id)
+            .await?
+        {
             items.push(self.joined_private_channel_view_for_state(&state).await?);
         }
         Ok(items)

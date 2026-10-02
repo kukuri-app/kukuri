@@ -5,8 +5,9 @@ mod friend_only;
 mod friend_plus;
 #[cfg(feature = "iroh-integration-tests")]
 mod invite;
+mod key_rows;
 #[cfg(feature = "iroh-integration-tests")]
 mod leave;
 mod legacy_participants;
-mod persist_callback;
+mod rendezvous;
 mod scope_change_wait;

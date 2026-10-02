@@ -560,6 +560,7 @@ pub trait NotificationStore: Send + Sync {
 /// 場面では対応する sub-trait を直接使う。
 pub trait ProjectionStore:
     crate::AccountSyncStore
+    + crate::PrivateChannelKeyStore
     + ObjectProjectionStore
     + ContentObservationStore
     + PostWithdrawalStore
@@ -573,6 +574,7 @@ pub trait ProjectionStore:
 
 impl<T> ProjectionStore for T where
     T: crate::AccountSyncStore
+        + crate::PrivateChannelKeyStore
         + ObjectProjectionStore
         + ContentObservationStore
         + PostWithdrawalStore

@@ -592,8 +592,8 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         shutdown_runtime(runtime_b, "desktop b private-channel restart pre-shutdown")
             .await
             .context("failed to shut down desktop b before restart")?;
-        remove_sqlite_runtime_db(&db_b)
-            .with_context(|| format!("failed to remove {} before restart", db_b.display()))?;
+        // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す step は AC-5 で戻す
+        // (ADR 0061 §9)。
         runtime_b = DesktopRuntime::new_with_config(&db_b, TransportNetworkConfig::loopback())
             .await
             .context("failed to restart desktop b for private-channel scenario")?;

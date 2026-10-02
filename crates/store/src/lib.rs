@@ -10,6 +10,7 @@ mod cache;
 mod memory;
 mod models;
 mod pagination;
+mod private_channel_keys;
 // SQLite の実装は native だけ（ADR 0056 §5）。
 #[cfg(not(target_family = "wasm"))]
 mod row_mapping;
@@ -39,6 +40,9 @@ pub use models::{
     ReactionProjectionRow, TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION,
     VERIFIED_REACTION_PROJECTION_VERSION, VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow,
     adult_media_hashes_for_row,
+};
+pub use private_channel_keys::{
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use sqlite::{

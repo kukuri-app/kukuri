@@ -45,7 +45,7 @@ impl IrohDocsSync {
         tasks.spawn(async move {
             let result = close_replica_under_guard(
                 &mut replicas,
-                &secrets,
+                &secrets.registered,
                 id,
                 revoke,
                 #[cfg(test)]

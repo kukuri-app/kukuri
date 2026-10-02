@@ -1,19 +1,5 @@
 use super::*;
 
-pub(crate) async fn register_private_channel_replica_secrets(
-    docs_sync: &dyn DocsSync,
-    state: &JoinedPrivateChannelState,
-) -> Result<()> {
-    for epoch in private_channel_epoch_capabilities(state) {
-        let replica =
-            private_channel_replica_for_epoch(state.channel_id.as_str(), epoch.epoch_id.as_str());
-        docs_sync
-            .register_private_replica_secret(&replica, epoch.namespace_secret_hex.as_str())
-            .await?;
-    }
-    Ok(())
-}
-
 pub(crate) async fn blob_view_status_for_payload(
     blob_service: &dyn BlobService,
     payload_ref: &PayloadRef,

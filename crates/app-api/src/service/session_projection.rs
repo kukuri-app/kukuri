@@ -230,14 +230,14 @@ impl SessionProjections {
     pub(crate) async fn candidates(
         &self,
         topic: &str,
-        replicas: &[ReplicaId],
+        in_scope: impl Fn(&ReplicaId) -> bool,
     ) -> Vec<SessionCandidateView> {
         self.state
             .lock()
             .await
             .entries
             .iter()
-            .filter(|e| e.topic == topic && replicas.contains(&e.replica) && !e.hashes.is_empty())
+            .filter(|e| e.topic == topic && in_scope(&e.replica) && !e.hashes.is_empty())
             .map(Entry::candidate)
             .collect()
     }

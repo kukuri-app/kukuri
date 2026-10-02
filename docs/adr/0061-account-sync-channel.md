@@ -257,6 +257,13 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 本人の別の端末の版の取得と、DB を失ったときの作り直し（上記）。
   - 旧版から移した行は、replica の同じ key に版が無いときだけ書く（新しい退会を古い版で隠さない）。
 
+#### 実装（AC-4b）
+
+- 行: store の `PrivateChannelKeyStore`（SQLite の `private_channels`・`private_channel_epochs`、migration `20261003000000`）。封は core の `PrivateChannelKeyRowSeal`。
+- docs の秘密の参照: docs-sync の `PrivateEpochSecrets` を app-api が入れ、相手への応答は iroh-node の非同期の `PrivateSecretLookup` で同じ参照を引く。
+- 読む範囲の数: 起動時の復元と topic の一覧と退会の鍵の削除は 128 行の page、過去の世代は新しい順に 8 世代まで、bucket に掛かる世代は 2 件まで。
+- 参加の行の版（`updated_at`・`op_id`）は、AC-4c の `membership` の item の版になる。op_id は item と同じ形で作り、旧 registry から移した行の時刻は 0。
+
 #### 判定（AC-4b・AC-4c）
 
 - AC-4b:

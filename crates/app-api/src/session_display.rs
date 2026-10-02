@@ -1,5 +1,6 @@
 //! 表示要求だけがsession manifestのremote取得を開始する。
 pub use crate::service::session_projection::SessionCandidateView;
+use crate::service::session_replica_channel;
 use crate::service::*;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -22,12 +23,24 @@ impl AppService {
         topic: &str,
         scope: TimelineScope,
     ) -> Result<Vec<SessionCandidateView>> {
-        let replicas = self.scope_replicas(topic, &scope).await?;
         // 候補は購読event/固定窓から得た作業集合のみ。未検証情報でsession projectionを作らない。
+        // private channel は全世代を列挙せず、replica id の channel で絞る(ADR 0061 §9)。
+        let topic_replica = topic_replica_id(topic);
+        let channel = match &scope {
+            TimelineScope::Public => None,
+            TimelineScope::Channel { channel_id } => {
+                self.ensure_private_channel_access(topic, channel_id)
+                    .await?;
+                Some(channel_id.as_str())
+            }
+        };
         Ok(self
             .services
             .session_projections
-            .candidates(topic, &replicas)
+            .candidates(topic, |replica| match channel {
+                None => replica == &topic_replica,
+                Some(channel) => session_replica_channel(replica).as_deref() == Some(channel),
+            })
             .await)
     }
 
@@ -57,12 +70,12 @@ impl AppService {
                 .await;
             return Ok(());
         }
-        let allowed = self.scope_replicas(&request.topic, &request.scope).await?;
         let replicas = if request.replica_id.is_empty() {
-            allowed.clone()
+            self.scope_replicas(&request.topic, &request.scope).await?
         } else {
             anyhow::ensure!(
-                allowed.contains(&replica),
+                self.session_replica_in_scope(&request.topic, &request.scope, &replica)
+                    .await?,
                 "session replica is outside the requested scope"
             );
             vec![replica]

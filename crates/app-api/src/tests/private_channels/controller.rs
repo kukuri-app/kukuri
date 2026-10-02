@@ -75,7 +75,13 @@ async fn assert_nothing_written(
 ) {
     let after = state(app, channel_id).await;
     assert_eq!(after.current_epoch_id, epoch, "no new epoch");
-    assert!(after.archived_epochs.is_empty(), "no archived epoch");
+    assert!(
+        app.archived_private_channel_epochs(&after, 8)
+            .await
+            .unwrap()
+            .is_empty(),
+        "no archived epoch"
+    );
     assert!(
         fetch_private_channel_policy_from_replica(
             app.docs_sync(),
@@ -122,7 +128,15 @@ async fn only_the_controlling_device_creates_a_new_epoch() {
     );
     let rotated_a = rotated_a.expect("the controller rotates");
     assert_ne!(rotated_a.current_epoch_id, created.current_epoch_id);
-    assert_eq!(state(&app_a, &channel_id).await.archived_epochs.len(), 1);
+    let rotated = state(&app_a, &channel_id).await;
+    assert_eq!(
+        app_a
+            .archived_private_channel_epochs(&rotated, 8)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(is_pending(&rotated_b.expect_err("the other device waits")));
     assert_nothing_written(&app_b, &store_b, &channel_id, &created.current_epoch_id).await;
 

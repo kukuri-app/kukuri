@@ -3661,6 +3661,7 @@ name = "kukuri-iroh-node"
 version = "0.3.3"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bao-tree",
  "base64 0.23.1",

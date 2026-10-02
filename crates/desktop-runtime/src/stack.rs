@@ -168,6 +168,10 @@ reloadable_service! {
             namespace_secret_hex: &str,
         ) -> Result<()>;
         async fn remove_private_replica_secret(replica_id: &ReplicaId) -> Result<()>;
+        // ADR 0061 §9: 宣言が無いと trait の既定実装(何もしない)に落ち、参加中の channel の世代の秘密を引けない。
+        async fn install_private_epoch_secrets(
+            source: Arc<dyn kukuri_docs_sync::PrivateEpochSecrets>,
+        ) -> Result<()>;
         async fn apply_doc_op(replica_id: &ReplicaId, op: DocOp) -> Result<()>;
         async fn query_replica_with_policy(
             replica_id: &ReplicaId,

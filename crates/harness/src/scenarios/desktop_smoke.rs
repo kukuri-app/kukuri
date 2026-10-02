@@ -22,7 +22,6 @@ pub(crate) async fn run_desktop_smoke_scenario(
         docs_sync: Arc::new(MemoryDocsSync::default()),
         blob_service: Arc::new(MemoryBlobService::default()),
         keys: generate_keys(),
-        private_channel_capabilities: Arc::new(StdMutex::new(Vec::new())),
     };
     let overall_timeout = Duration::from_millis(scenario.timeouts.overall_ms);
     let step_timeout = Duration::from_millis(scenario.timeouts.step_ms);
