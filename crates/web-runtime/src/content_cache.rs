@@ -2,7 +2,9 @@
 //!
 //! native の `SqliteStore` と同じ意味・同じ定数で、account ごとの database `kukuri-cache-v1-<公開鍵の hex>` に置く。
 //! - `contents`: key は `[kind, key]`。長さ・`scope`・最後に使った時刻・容量の計数・保護の有無。非保護の行だけが
-//!   `reclaim`（回収の順）と `adult`（成人向けの回収）の索引に載る。
+//!   `reclaim`（回収の順）と `adult`（成人向けの回収）の索引に載る。docs の record（`kind` が `record`、key は native と
+//!   同じ `<replica>\0<key>\0<author>`）の行だけが `listing`（`[replica, key, author]`）と `by_author`
+//!   （`[replica, author, key]`）の索引に載る（ADR 0058 §7）。
 //! - `chunks`: key は `[kind, key, 連番]`。最大 1 MiB の bytes。
 //! - `refs`: key は `[保護参照, kind, key]`。`item`（`[kind, key]`）の索引で参照の有無を数える。
 //! - `meta`: 非保護分の合計 bytes（`usage`）。
@@ -28,8 +30,8 @@ use kukuri_store::{
 use tokio::sync::{broadcast, mpsc, oneshot};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
-    IdbDatabase, IdbKeyRange, IdbObjectStore, IdbObjectStoreParameters, IdbTransaction,
-    IdbTransactionMode, StorageEstimate,
+    IdbCursorDirection, IdbDatabase, IdbKeyRange, IdbObjectStore, IdbObjectStoreParameters,
+    IdbTransaction, IdbTransactionMode, StorageEstimate,
 };
 
 use crate::idb::{self, js_error};
@@ -43,6 +45,10 @@ const STORES: [&str; 4] = ["contents", "chunks", "refs", "meta"];
 const USAGE: &str = "usage";
 /// 表示設定 ON の間に置いた成人向けの blob の `scope`（native の `REMOTE_ADULT_BLOB_SCOPE`）。
 const ADULT: &str = "adult";
+/// 本人が書いた docs record の保護参照（native の `OWN_DOCS_REF`）。
+const OWN_DOCS: &str = "own_docs";
+/// 1 回の key 指定の record の読み出しの上限（native と同じ）。
+const EXACT_RECORDS: usize = 8;
 
 type Job = Box<dyn FnOnce(IdbDatabase) -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
@@ -119,6 +125,33 @@ impl IndexedDbCache {
         receiver.await.map_err(|_| closed())?
     }
 
+    /// 内容を 1 つ置く。偽は、容量に収まらなかったこと。
+    async fn put(
+        &self,
+        (kind, key, scope): (&str, &str, &str),
+        payload: &[u8],
+        record: Option<RecordMeta>,
+    ) -> Result<bool> {
+        let (kind, key, scope) = (kind.to_owned(), key.to_owned(), scope.to_owned());
+        let payload = payload.to_vec();
+        let (reserved, capacity) = (self.reserved.clone(), self.capacity);
+        self.run(move |db| async move {
+            let reserved = i64::try_from(reserved.load(Ordering::Acquire))?;
+            let budget = capacity.saturating_sub(reserved);
+            let item = (kind.as_str(), key.as_str(), scope.as_str());
+            match put_content(&db, item, &payload, record.clone(), budget, now_ms()?).await {
+                // quota 超過・中断で書けなかったときは、1 処理だけ回収して 1 回だけ書き直す。それでも書けなければ
+                // 保存の失敗として返す（ADR 0058 §4）。中断した transaction は何も残していない。
+                Err(_) => {
+                    make_room(&db, i64::try_from(payload.len())?).await?;
+                    put_content(&db, item, &payload, record, budget, now_ms()?).await
+                }
+                stored => stored,
+            }
+        })
+        .await
+    }
+
     /// 内容の chunk ごとの bytes（試験で chunk の上限を確かめる）。
     #[cfg(test)]
     pub(crate) async fn chunk_sizes(&self, kind: &str, key: &str) -> Result<Vec<usize>> {
@@ -143,7 +176,7 @@ impl IndexedDbCache {
     pub(crate) async fn put_used_at(&self, key: &str, payload: &[u8], used: i64) -> Result<bool> {
         let (key, payload, capacity) = (key.to_owned(), payload.to_vec(), self.capacity);
         self.run(move |db| async move {
-            put_content(&db, ("blob", &key, "blob"), &payload, capacity, used).await
+            put_content(&db, ("blob", &key, "blob"), &payload, None, capacity, used).await
         })
         .await
     }
@@ -191,6 +224,9 @@ fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
         db.create_object_store_with_optional_parameters("contents", &in_line(&["kind", "key"]))?;
     contents.create_index_with_str("reclaim", "reclaim")?;
     contents.create_index_with_str("adult", "adult")?;
+    contents.create_index_with_str_sequence("listing", &strings(&["replica", "rkey", "author"]))?;
+    contents
+        .create_index_with_str_sequence("by_author", &strings(&["replica", "author", "rkey"]))?;
     db.create_object_store("chunks")?;
     db.create_object_store_with_optional_parameters(
         "refs",
@@ -229,6 +265,37 @@ fn now_ms() -> Result<i64> {
     )?)
 }
 
+/// native の `remote_record_cache_key`。
+fn record_key(replica: &str, key: &str, author: &str) -> String {
+    format!("{replica}\0{key}\0{author}")
+}
+
+/// `prefix` で始まる key の上界（これ未満が範囲）。無ければ同じ replica のすべての key より大きい値（配列は文字列より
+/// 大きい）。
+fn prefix_upper_bound(prefix: &str) -> JsValue {
+    let mut chars = prefix.chars();
+    match chars
+        .next_back()
+        .and_then(|last| char::from_u32(last as u32 + 1))
+    {
+        Some(next) => format!("{}{next}", chars.as_str()).into(),
+        None => Array::new().into(),
+    }
+}
+
+/// docs record の行だけが持つ、索引と一覧の値（一覧は値を読まずに hash と長さを返す）。
+#[derive(Clone, serde::Deserialize)]
+struct RecordMeta {
+    #[serde(skip)]
+    replica: String,
+    #[serde(rename = "key")]
+    rkey: String,
+    #[serde(rename = "docs_author")]
+    author: String,
+    content_hash: String,
+    content_len: u64,
+}
+
 /// `contents` の 1 行。
 struct Row {
     kind: String,
@@ -238,6 +305,7 @@ struct Row {
     used: i64,
     charge: i64,
     protected: bool,
+    record: Option<RecordMeta>,
 }
 
 impl Row {
@@ -255,6 +323,13 @@ impl Row {
         set("used", (self.used as f64).into())?;
         set("charge", (self.charge as f64).into())?;
         set("protected", self.protected.into())?;
+        if let Some(record) = &self.record {
+            set("replica", record.replica.as_str().into())?;
+            set("rkey", record.rkey.as_str().into())?;
+            set("author", record.author.as_str().into())?;
+            set("hash", record.content_hash.as_str().into())?;
+            set("hlen", (record.content_len as f64).into())?;
+        }
         // 索引は値のある行だけを載せるので、保護した行は回収の対象に現れない。
         if !self.protected {
             set("reclaim", (self.used as f64).into())?;
@@ -287,6 +362,16 @@ impl Row {
             used: number("used")? as i64,
             charge: number("charge")? as i64,
             protected: get("protected")?.is_truthy(),
+            record: match get("replica")?.as_string() {
+                Some(replica) => Some(RecordMeta {
+                    replica,
+                    rkey: text("rkey")?,
+                    author: text("author")?,
+                    content_hash: text("hash")?,
+                    content_len: number("hlen")? as u64,
+                }),
+                None => None,
+            },
         })
     }
 
@@ -385,6 +470,49 @@ impl Tx {
         Ok(Some(row))
     }
 
+    /// 失効しておらず、長さの揃った内容の bytes。揃っていなければ（破損）消して取り直させる。
+    async fn payload(&self, mut row: Row, now: i64) -> Result<Option<Vec<u8>>> {
+        if !row.alive(now) {
+            return Ok(None);
+        }
+        let bytes = self
+            .read_chunks(&row.kind, &row.key, 0, u64::from(u32::MAX))
+            .await?;
+        if bytes.len() as u64 != row.len {
+            self.forget(&row).await?;
+            return Ok(None);
+        }
+        if row.used <= now - REMOTE_CACHE_TOUCH_INTERVAL_MS {
+            row.used = now;
+            self.put_row(&row)?;
+        }
+        Ok(Some(bytes))
+    }
+
+    /// `index` の `range` の行を、`direction` の順に `limit` 件まで読む。
+    async fn rows(
+        &self,
+        index: &str,
+        range: &IdbKeyRange,
+        direction: IdbCursorDirection,
+        limit: usize,
+    ) -> Result<Vec<Row>> {
+        let request = self
+            .contents
+            .index(index)
+            .map_err(js_error)?
+            .open_cursor_with_range_and_direction(range, direction)
+            .map_err(js_error)?;
+        let mut rows = Vec::new();
+        while rows.len() < limit
+            && let Some(cursor) = idb::next(&request).await?
+        {
+            rows.push(Row::from_js(&cursor.value().map_err(js_error)?)?);
+            cursor.continue_().map_err(js_error)?;
+        }
+        Ok(rows)
+    }
+
     /// 内容（行と chunk）を消す。保護参照は残す。
     async fn forget(&self, row: &Row) -> Result<()> {
         self.delete(&row.kind, &row.key)?;
@@ -481,6 +609,7 @@ async fn put_content(
     db: &IdbDatabase,
     (kind, key, scope): (&str, &str, &str),
     payload: &[u8],
+    record: Option<RecordMeta>,
     budget: i64,
     now: i64,
 ) -> Result<bool> {
@@ -517,6 +646,7 @@ async fn put_content(
         used: now,
         charge,
         protected,
+        record,
     })?;
     tx.set_used(used)?;
     #[cfg(test)]
@@ -548,11 +678,6 @@ async fn delete_step(db: &IdbDatabase, index: &str, expired_before: i64) -> Resu
     tx.set_used(used)?;
     tx.commit().await?;
     Ok(count)
-}
-
-/// record（docs の本人の書込みと remote の record）は #1216 W3 AC-2 が `records` に置く。
-fn records_unavailable() -> anyhow::Error {
-    anyhow!("the browser record cache is not available yet")
 }
 
 #[async_trait]
@@ -622,41 +747,19 @@ impl ContentCacheStore for IndexedDbCache {
         scope: &str,
         payload: &[u8],
     ) -> Result<bool> {
-        let (kind, key, scope) = (kind.to_owned(), key.to_owned(), scope.to_owned());
-        let payload = payload.to_vec();
-        let (reserved, capacity) = (self.reserved.clone(), self.capacity);
-        self.run(move |db| async move {
-            let reserved = i64::try_from(reserved.load(Ordering::Acquire))?;
-            let budget = capacity.saturating_sub(reserved);
-            let item = (kind.as_str(), key.as_str(), scope.as_str());
-            match put_content(&db, item, &payload, budget, now_ms()?).await {
-                // quota 超過・中断で書けなかったときは、1 処理だけ回収して 1 回だけ書き直す。それでも書けなければ
-                // 保存の失敗として返す（ADR 0058 §4）。中断した transaction は何も残していない。
-                Err(_) => {
-                    make_room(&db, i64::try_from(payload.len())?).await?;
-                    put_content(&db, item, &payload, budget, now_ms()?).await
-                }
-                stored => stored,
-            }
-        })
-        .await
+        self.put((kind, key, scope), payload, None).await
     }
 
     async fn get_remote_content(&self, kind: &str, key: &str) -> Result<Option<Vec<u8>>> {
         let (kind, key) = (kind.to_owned(), key.to_owned());
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
-            let Some(row) = tx.usable_row(&kind, &key, now_ms()?, true).await? else {
-                tx.commit().await?;
-                return Ok(None);
+            let bytes = match tx.row(&kind, &key).await? {
+                Some(row) => tx.payload(row, now_ms()?).await?,
+                None => None,
             };
-            let bytes = tx.read_chunks(&kind, &key, 0, u64::from(u32::MAX)).await?;
-            let complete = bytes.len() as u64 == row.len;
-            if !complete {
-                tx.forget(&row).await?;
-            }
             tx.commit().await?;
-            Ok(complete.then_some(bytes))
+            Ok(bytes)
         })
         .await
     }
@@ -716,33 +819,123 @@ impl ContentCacheStore for IndexedDbCache {
 
     async fn put_remote_record(
         &self,
-        _replica: &str,
-        _key: &str,
-        _author: &str,
-        _payload: &[u8],
+        replica: &str,
+        key: &str,
+        author: &str,
+        payload: &[u8],
     ) -> Result<bool> {
-        Err(records_unavailable())
+        let record = RecordMeta {
+            replica: replica.to_owned(),
+            ..serde_json::from_slice(payload)?
+        };
+        ensure!(
+            record.rkey == key && record.author == author,
+            "record payload does not match its key"
+        );
+        let cache_key = record_key(replica, key, author);
+        self.put(("record", &cache_key, replica), payload, Some(record))
+            .await
     }
 
     async fn get_remote_records(
         &self,
-        _replica: &str,
-        _key: &str,
-        _author: Option<&str>,
-        _limit: usize,
+        replica: &str,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<Vec<u8>>> {
-        Err(records_unavailable())
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        ensure!(limit <= EXACT_RECORDS, "remote record cache limit exceeded");
+        let (replica, key) = (replica.to_owned(), key.to_owned());
+        let author = author.map(str::to_owned);
+        self.run(move |db| async move {
+            let now = now_ms()?;
+            let tx = Tx::begin(&db)?;
+            let rows = match &author {
+                Some(author) => {
+                    let cache_key = record_key(&replica, &key, author);
+                    tx.row("record", &cache_key).await?.into_iter().collect()
+                }
+                None => {
+                    let lower = Array::of2(&replica.as_str().into(), &key.as_str().into());
+                    let upper = Array::of3(
+                        &replica.as_str().into(),
+                        &key.as_str().into(),
+                        &Array::new(),
+                    );
+                    let range = IdbKeyRange::bound(&lower, &upper).map_err(js_error)?;
+                    tx.rows("listing", &range, IdbCursorDirection::Next, limit)
+                        .await?
+                }
+            };
+            let mut records = Vec::with_capacity(rows.len());
+            for row in rows {
+                records.extend(tx.payload(row, now).await?);
+            }
+            tx.commit().await?;
+            Ok(records)
+        })
+        .await
     }
 
+    /// `replica` の `prefix` で始まる record を、(key, author)の順（`descending` なら逆順）に `limit` 件まで返す。
+    /// 索引の範囲を `limit + 1` 行だけ読み、最後に使った時刻を変えない（native と同じ）。
     async fn remote_record_keys(
         &self,
-        _replica: &str,
-        _prefix: &str,
-        _descending: bool,
-        _author: Option<&str>,
-        _limit: usize,
+        replica: &str,
+        prefix: &str,
+        descending: bool,
+        author: Option<&str>,
+        limit: usize,
     ) -> Result<(Vec<RemoteRecordKey>, bool)> {
-        Err(records_unavailable())
+        let (replica, prefix) = (replica.to_owned(), prefix.to_owned());
+        let author = author.map(str::to_owned);
+        self.run(move |db| async move {
+            let (index, scope) = match &author {
+                Some(author) => (
+                    "by_author",
+                    vec![replica.as_str().into(), author.as_str().into()],
+                ),
+                None => ("listing", vec![JsValue::from_str(&replica)]),
+            };
+            let bound = |last: JsValue| {
+                let parts = scope.iter().cloned().collect::<Array>();
+                parts.push(&last);
+                parts
+            };
+            let range = IdbKeyRange::bound_with_lower_open_and_upper_open(
+                &bound(prefix.as_str().into()),
+                &bound(prefix_upper_bound(&prefix)),
+                false,
+                true,
+            )
+            .map_err(js_error)?;
+            let direction = if descending {
+                IdbCursorDirection::Prev
+            } else {
+                IdbCursorDirection::Next
+            };
+            let tx = Tx::begin(&db)?;
+            let rows = tx.rows(index, &range, direction, limit + 1).await?;
+            let reached_limit = rows.len() > limit;
+            let now = now_ms()?;
+            let keys = rows
+                .into_iter()
+                .take(limit)
+                .filter(|row| row.alive(now))
+                .filter_map(|row| row.record)
+                .map(|record| RemoteRecordKey {
+                    key: record.rkey,
+                    author: record.author,
+                    content_hash: record.content_hash,
+                    content_len: record.content_len,
+                })
+                .collect();
+            Ok((keys, reached_limit))
+        })
+        .await
     }
 
     async fn add_protected_ref(&self, reference: &str, kind: &str, key: &str) -> Result<()> {
@@ -778,12 +971,20 @@ impl ContentCacheStore for IndexedDbCache {
 
     async fn put_owned_record(
         &self,
-        _replica: &str,
-        _key: &str,
-        _author: &str,
-        _payload: &[u8],
+        replica: &str,
+        key: &str,
+        author: &str,
+        payload: &[u8],
     ) -> Result<()> {
-        Err(records_unavailable())
+        let cache_key = record_key(replica, key, author);
+        self.add_protected_ref(OWN_DOCS, "record", &cache_key)
+            .await?;
+        ensure!(
+            self.put_remote_record(replica, key, author, payload)
+                .await?,
+            "owned record was not stored"
+        );
+        Ok(())
     }
 
     async fn reclaim_remote_cache_step(&self) -> Result<usize> {
