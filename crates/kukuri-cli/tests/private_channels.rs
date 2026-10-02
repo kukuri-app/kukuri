@@ -194,3 +194,79 @@ async fn invite_secret_and_namespace_never_reach_json_and_no_operation_history_i
             .exists()
     );
 }
+
+/// 129 件を超える参加を `next_cursor` で読み進めると、すべての channel に一度ずつ届く(#1218 AC-4d)。
+/// 新しい参加は購読の上限(64)で止まるので、上限を超える参加の行は凍結した旧 registry の移行で作る(ADR 0061 §9)。
+#[tokio::test]
+async fn joined_channel_list_reaches_every_channel_through_cursor_pages() {
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("kukuri.db");
+    let topic = "kukuri:topic:cli-joined-pages";
+    let owner = "11".repeat(32);
+    let registry = (0..130)
+        .map(|index| {
+            json!({
+                "topic_id": topic, "channel_id": format!("channel-{index:03}"),
+                "label": format!("channel {index}"), "creator_pubkey": owner, "owner_pubkey": owner,
+                "joined_via_pubkey": owner, "audience_kind": "invite_only",
+                "current_epoch_id": "epoch-86400000-x", "current_epoch_secret_hex": "22".repeat(32),
+            })
+        })
+        .collect::<Vec<_>>();
+    let registry_key = blake3::hash(b"registry").to_hex();
+    std::fs::write(
+        db.with_extension(format!("private-channel-capabilities-{registry_key}")),
+        Value::Array(registry).to_string(),
+    )
+    .unwrap();
+    let runtime = Arc::new(DesktopRuntime::new(&db).await.unwrap());
+    let host = ClientHost::from_runtime(root.path().to_path_buf(), runtime.clone())
+        .await
+        .unwrap();
+    let dispatcher = Dispatcher::builtin();
+    let mut listed = Vec::new();
+    let mut cursor = Value::Null;
+    let mut pages = 0;
+    loop {
+        let DispatchReply::Unary(reply, _) = dispatcher
+            .dispatch(
+                request(
+                    "list_joined_private_channels",
+                    json!({"topic": topic, "cursor": cursor}),
+                    None,
+                    false,
+                ),
+                None,
+                "test",
+                Some(&host),
+            )
+            .await
+        else {
+            panic!("JSON")
+        };
+        assert!(reply.ok, "{:?}", reply.error);
+        let page = reply.data.unwrap();
+        pages += 1;
+        listed.extend(
+            page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["channel_id"].as_str().unwrap().to_owned()),
+        );
+        cursor = page["next_cursor"].clone();
+        if cursor.is_null() {
+            break;
+        }
+    }
+    assert_eq!(pages, 2, "128 件の page の続きを 1 回読む");
+    assert_eq!(
+        listed,
+        (0..130)
+            .map(|index| format!("channel-{index:03}"))
+            .collect::<Vec<_>>(),
+        "すべての channel に重複なく届く"
+    );
+    dispatcher.finish_operations().await;
+    host.shutdown().await;
+}

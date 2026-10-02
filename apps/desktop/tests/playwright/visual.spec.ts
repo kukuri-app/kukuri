@@ -279,6 +279,52 @@ test('Explore Japanese long policy labels stay inside the Column', async ({ page
   await expect(page).toHaveScreenshot('explore-long-policies-ja-dark.png');
 });
 
+// #1218 AC-4d: 129 件を超える参加の一覧の末尾の「さらに表示」と、続きの読み込みの失敗の 1 行。
+for (const { locale, theme, width, controlCenter, entry, dialogName, more, failed } of [
+  { locale: 'ja', theme: 'dark', width: 1280, controlCenter: 'コントロールセンター', entry: 'チャンネル作成・参加',
+    dialogName: 'プライベートチャンネル作成 / 参加', more: 'さらに表示', failed: null },
+  { locale: 'en', theme: 'light', width: 390, controlCenter: 'Control Center', entry: 'Create or join a private channel',
+    dialogName: 'Create / Join Private Channel', more: 'Show more', failed: 'Failed to load private channels.' },
+] as const) {
+  test(`joined channel list more ${locale} ${theme}`, async ({ page }) => {
+    await page.addInitScript(({ locale, theme, failMore }) => {
+      localStorage.setItem('kukuri.desktop.locale', locale);
+      localStorage.setItem('kukuri.desktop.theme', theme);
+      let api: typeof window.__KUKURI_DESKTOP__;
+      Object.defineProperty(window, '__KUKURI_DESKTOP__', {
+        configurable: true, get: () => api,
+        set: (value: NonNullable<typeof api>) => {
+          api = value;
+          // The mock updates its projection synchronously before returning the Promise.
+          for (let index = 0; index < 130; index += 1) {
+            void value.createPrivateChannel('kukuri:topic:general', `channel ${String(index).padStart(3, '0')}`);
+          }
+          const list = value.listJoinedPrivateChannels.bind(value);
+          value.listJoinedPrivateChannels = async (topic, cursor) => {
+            if (failMore && cursor) throw new Error('offline');
+            return list(topic, cursor);
+          };
+        },
+      });
+    }, { locale, theme, failMore: failed !== null });
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
+    await page.getByTestId('control-center-trigger').click();
+    await page.getByRole('complementary', { name: controlCenter }).getByRole('button', { name: entry }).click();
+    const dialog = page.getByRole('dialog', { name: dialogName });
+    const button = dialog.getByRole('button', { name: more });
+    await button.scrollIntoViewIfNeeded();
+    if (failed) {
+      await button.click();
+      await expect(dialog.getByText(failed)).toBeVisible();
+    }
+    await settleForShot(page, theme);
+    await button.scrollIntoViewIfNeeded();
+    await page.mouse.move(0, 0);
+    await expect(dialog).toHaveScreenshot(`joined-channels-more-${locale}-${theme}.png`);
+  });
+}
+
 test('Control Center Japanese content density', async ({ page }) => {
   await seedIndexLayout(page);
   await page.setViewportSize({ width: 1280, height: 800 });

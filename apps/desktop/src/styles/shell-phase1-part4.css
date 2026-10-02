@@ -359,3 +359,11 @@
 .shell-phase1 .shell-control-center-place-list .topic-channel-empty-action:focus-visible {
   background: var(--surface-button-ghost-hover);
 }
+
+/* 参加中の channel の一覧の「さらに表示」と失敗の 1 行(#1218 AC-4d)。 */
+.private-channel-joined-more {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2xs);
+  margin-top: var(--space-xs);
+}
