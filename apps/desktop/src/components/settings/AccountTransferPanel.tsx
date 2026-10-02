@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encode } from 'uqr';
 import type { AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
@@ -32,14 +32,15 @@ export function AccountTransferPanel({ role, initialLink = '' }: {
   const [pending, setPending] = useState(false);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const started = useRef(false);
 
-  const issue = async () => {
+  // 開発時の StrictMode の再 mount では、取り消した側の結果を採らない。
+  const issue = async (active: () => boolean = () => true) => {
     setPending(true);
     setCopied(false);
     setError(null);
     try {
       const next = await createAccountTransferInvite();
+      if (!active()) return;
       setInvite(next);
       setStatus({ state: 'waiting', expires_at_ms: next.expires_at_ms });
       setNow(Date.now());
@@ -65,12 +66,10 @@ export function AccountTransferPanel({ role, initialLink = '' }: {
   };
 
   useEffect(() => {
-    if (role === 'source' && !started.current) {
-      started.current = true;
-      void issue();
-    }
-    return () => { void cancelAccountTransfer().catch(() => undefined); };
-    // 開いたときに 1 回だけ招待を出す。
+    let active = true;
+    if (role === 'source') void issue(() => active);
+    return () => { active = false; void cancelAccountTransfer().catch(() => undefined); };
+    // 開いたときに招待を出し、閉じたら取り消す。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

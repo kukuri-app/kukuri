@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -108,4 +109,13 @@ test('the source can prepare a new link after a failure', async () => {
   expect(await screen.findByText("Couldn't prepare the link. Please try again.")).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByLabelText('Transfer link')).toHaveValue(LINK);
+});
+
+test('the source still shows a link after the development re-mount cancels the first one', async () => {
+  identityApi.cancelAccountTransfer.mockImplementation(async () => { status = { state: 'idle' }; });
+  render(<StrictMode><AccountTransferPanel role='source' /></StrictMode>);
+  expect(await screen.findByLabelText('Transfer link')).toHaveValue(LINK);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(screen.getByLabelText('Transfer link')).toHaveValue(LINK);
+  expect(identityApi.createAccountTransferInvite).toHaveBeenCalledTimes(2);
 });
