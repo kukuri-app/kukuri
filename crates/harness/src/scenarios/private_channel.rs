@@ -595,23 +595,41 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         shutdown_runtime(runtime_b, "desktop b private-channel restart pre-shutdown")
             .await
             .context("failed to shut down desktop b before restart")?;
-        // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す step は AC-5 で戻す
-        // (ADR 0061 §9)。
+        // #1218 AC-5c: DB を消して再起動し、手元の account 同期の replica から参加と鍵を作り直す(ADR 0061 §9・§10)。
+        for path in [
+            db_b.clone(),
+            db_b.with_extension("db-shm"),
+            db_b.with_extension("db-wal"),
+        ] {
+            if path.exists() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("failed to remove {} before restart", path.display()))?;
+            }
+        }
         runtime_b = DesktopRuntime::new_with_config(&db_b, TransportNetworkConfig::loopback())
             .await
             .context("failed to restart desktop b for private-channel scenario")?;
-        let joined_after_restart = runtime_b
-            .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
-                topic: topic.to_string(),
-                cursor: None,
-            })
-            .await
-            .context("failed to list joined private channels after restart")?.items;
-        assert!(
-            joined_after_restart
-                .iter()
-                .any(|entry| entry.channel_id == channel.channel_id && entry.label == "core")
-        );
+        // 作り直しは起動の後に背景で進む。参加が戻るまで待つ。
+        tokio::time::timeout(step_timeout, async {
+            loop {
+                let joined = runtime_b
+                    .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
+                        topic: topic.to_string(),
+                        cursor: None,
+                    })
+                    .await?
+                    .items;
+                if joined
+                    .iter()
+                    .any(|entry| entry.channel_id == channel.channel_id && entry.label == "core")
+                {
+                    return anyhow::Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .context("desktop b did not rebuild the private channel after the db was lost")??;
         wait_for_timeline_object_in_scope(
             &runtime_b,
             topic,

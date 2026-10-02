@@ -259,7 +259,7 @@ impl AppService {
 
     /// 周回の 1 照会。上限に届かなければ、その prefix の key をすべて merge して次の prefix へ、届けば子の prefix へ
     /// 降りる。次に照会する prefix を返す（尽きたら `None`）。
-    async fn account_sync_cycle_step(
+    pub(crate) async fn account_sync_cycle_step(
         &self,
         source: &dyn DocsSync,
         prefix: &str,

@@ -557,7 +557,8 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
         .expect("runtime b shutdown timeout");
     drop(runtime_a);
     drop(runtime_b);
-    // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す試験は AC-5 で戻す(ADR 0061 §9)。
+    // #1218 AC-5c: DB を消して再起動し、手元の account 同期の replica から参加と鍵を作り直す(ADR 0061 §9・§10)。
+    delete_sqlite_artifacts(&db_b);
 
     let restarted_b = DesktopRuntime::new_with_config_and_identity(
         &db_b,
@@ -566,6 +567,16 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
     )
     .await
     .expect("restart runtime b");
+    // 作り直しは起動の後に背景で進む。参加が戻るまで待つ。
+    wait_for_joined_private_channel_epoch(
+        &restarted_b,
+        topic,
+        channel.channel_id.as_str(),
+        joined_before_restart[0].current_epoch_id.as_str(),
+        None,
+        "rebuild after the db is lost",
+    )
+    .await;
 
     let joined_after_restart = restarted_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {

@@ -228,7 +228,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - cursor も DB にあるので、最初の page から読む。page は有限で、途中で止まっても再開できる。参加が戻るのは、背景の取得がその item に届いた後。
   - 作り直せるのは replica へ書いた item だけ。書けなかった行・旧版から移した行は、AC-5 の送り直しで書いた後に作り直せる。
   - 担当の記録は `membership` に含まれない。作り直した行の担当の記録は、W6 が書く `controller` の item から戻る。それまでは担当が不明な channel として、鍵更新を伴う操作を保留する（ADR 0018 §8）。
-- 旧 registry の時の「DB を消しても再起動で参加が戻る」性質は、AC-4b から AC-5 までの間は失われる。
+- 旧 registry の時の「DB を消しても再起動で参加が戻る」性質は、AC-4b から AC-5 までの間は失われる（AC-5c で戻した。参加が戻るのは、起動の後の背景の作り直しがその item に届いた後）。
   DB を消して再起動する既存の試験（harness の `private_channel_invite_connectivity` の再起動の step、desktop-runtime の `private_channel_invite_restores_after_restart_without_reimport`・`friend_only_channel_restore_keeps_archived_epoch_history`・`friend_plus_channel_restore_accepts_fresh_share_after_restart`）は、AC-4b で DB を消さない再起動に改め、AC-5 で作り直しを確かめる試験に戻す。
 
 #### channel の item の merge（AC-4c）
@@ -400,6 +400,14 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - docs-sync: `remote_readers` の要求側の許可に account の replica を加えた。
 - store: `account_sync_items`・`private_channel_epochs` の `written` の欄と未書込みの部分索引、相手ごとの cursor の `account_sync_cursors`（migration `20261004000000`）。Web は IndexedDB の `account_sync`・`private_epochs` の `unwritten` の索引と `account_sync_cursors` の store。
 - app-api: `account_sync_fetch`（書込みと窓への追記、取得、周回、送り直し、作り直し、状態）。契機は account の lease の task（`account_sync_task`）。書込みの後の hint は、利用者の操作の経路で待たず、lease の task が送り直しの後に 2 秒の期限で送る。task の本体は `Send` の box に閉じる（取得の merge が channel の lease を取り、lease が task を作るため）。
+
+#### 実装（AC-5c）
+
+- 作り直しは AC-5b の `rebuild_account_sync`（lease の task の開始で、自分の cursor の行が無ければ手元の replica を周回する）。
+- DB を消して再起動する試験 4 件を戻した。参加が戻るまで待ってから確かめる。
+  - harness: `private_channel_invite_connectivity` の再起動の step
+  - desktop-runtime: `private_channel_invite_restores_after_restart_without_reimport`・`friend_only_channel_restore_keeps_archived_epoch_history`・`friend_plus_channel_restore_accepts_fresh_share_after_restart`
+- 1 page の仕事の試験は app-api の `a_rebuild_page_does_not_grow_with_channels`。
 
 #### 判定（AC-5b・AC-5c）
 
