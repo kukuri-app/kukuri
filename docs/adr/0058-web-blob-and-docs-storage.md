@@ -71,6 +71,8 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 - 回収は `contents` の索引を古い順に 1 処理 128 件まで歩き、保護参照のある行を消さない。全行を読んでから選ばない。回収の背景 task は native と同じ owner（desktop-runtime）から起こす。
 - 成人向けの印の付いた非保護分の回収も `scope` の索引で 1 処理 128 件まで。
 - quota 超過で書けないときは、回収を 1 処理行って 1 回だけ書き直す。それでも書けなければ保存の失敗として返し、取得を延期する（native の容量不足と同じ）。鍵・capability・設定は W4 の別の database にあり、この回収で消えない（#1215 INVAR-2）。
+- 実装（W2 AC-3）: 上限は保存 trait の `remote_cache_capacity` で返し（native は 3 GiB のまま）、取得の予約と cache へ置くかの判定（`remote_fetch`・`remote_blob`・blob-service）もこれを使う。
+  書けなかったとき（transaction の中断。quota 超過を含む）の回収は、書く内容の bytes の分を非保護の行の古い順に 128 件まで消す。chunk の数が長さと合わない（破損した）内容は完成と扱わず、行と chunk を消して取り直させる（保護参照は残す）。
 
 ### 5. 検証の範囲
 

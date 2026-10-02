@@ -8,6 +8,8 @@
 //! - `meta`: 非保護分の合計 bytes（`usage`）。
 //!
 //! 1 つの内容は 1 つの readwrite transaction で書き、確定した時点を完成とする。中断した transaction は何も残さない。
+//! quota 超過・中断で書けなければ 1 処理だけ回収して 1 回だけ書き直し、それでも書けなければ失敗を返す。chunk の欠けた
+//! （破損した）内容は完成と扱わず、消して取り直させる。非保護分の上限は quota の半分と 3 GiB の小さい方（ADR 0058 §4）。
 //! 起動時に内容を読まず、key を指定して読む。回収は索引を古い順に 1 処理 `REMOTE_CACHE_RECLAIM_STEP` 件まで歩く。
 
 use std::future::Future;
@@ -27,7 +29,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     IdbDatabase, IdbKeyRange, IdbObjectStore, IdbObjectStoreParameters, IdbTransaction,
-    IdbTransactionMode,
+    IdbTransactionMode, StorageEstimate,
 };
 
 use crate::idb::{self, js_error};
@@ -50,35 +52,52 @@ pub struct IndexedDbCache {
     jobs: mpsc::Sender<Job>,
     reserved: Arc<AtomicU64>,
     evictions: broadcast::Sender<String>,
+    /// 非保護分の上限。起動時の quota の半分と 3 GiB の小さい方（ADR 0058 §4）。
+    capacity: i64,
 }
 
 impl IndexedDbCache {
     /// `account`（公開鍵の hex）の database を開く。内容は読まない。
     pub async fn open(account: &str) -> Result<Self> {
+        Self::start(account, None).await
+    }
+
+    /// `capacity` を渡さなければ、quota から決める。
+    pub(crate) async fn start(account: &str, capacity: Option<i64>) -> Result<Self> {
         let name = format!("kukuri-cache-v1-{account}");
         let (jobs, mut queue) = mpsc::channel::<Job>(QUEUE);
         let (opened, receiver) = oneshot::channel();
         n0_future::task::spawn(async move {
-            let db = match idb::open(&name, VERSION, create_stores).await {
-                Ok(db) => db,
+            let opening = async {
+                let capacity = match capacity {
+                    Some(capacity) => capacity,
+                    None => quota_capacity().await?,
+                };
+                anyhow::Ok((idb::open(&name, VERSION, create_stores).await?, capacity))
+            };
+            let db = match opening.await {
+                Ok((db, capacity)) => {
+                    let _ = opened.send(Ok(capacity));
+                    db
+                }
                 Err(error) => {
                     let _ = opened.send(Err(error));
                     return;
                 }
             };
-            let _ = opened.send(Ok(()));
             while let Some(job) = queue.recv().await {
                 job(db.clone()).await;
             }
             db.close();
         });
-        receiver
+        let capacity = receiver
             .await
             .map_err(|_| anyhow!("indexeddb open dropped"))??;
         Ok(Self {
             jobs,
             reserved: Arc::default(),
             evictions: broadcast::channel(64).0,
+            capacity,
         })
     }
 
@@ -118,6 +137,48 @@ impl IndexedDbCache {
         })
         .await
     }
+
+    /// 最後に使った時刻を `used` として内容を置く（試験で失効した行を作る）。
+    #[cfg(test)]
+    pub(crate) async fn put_used_at(&self, key: &str, payload: &[u8], used: i64) -> Result<bool> {
+        let (key, payload, capacity) = (key.to_owned(), payload.to_vec(), self.capacity);
+        self.run(move |db| async move {
+            put_content(&db, ("blob", &key, "blob"), &payload, capacity, used).await
+        })
+        .await
+    }
+
+    /// 内容の 2 つ目の chunk を消す（試験で破損を作る）。
+    #[cfg(test)]
+    pub(crate) async fn drop_second_chunk(&self, key: &str) -> Result<()> {
+        let key = key.to_owned();
+        self.run(move |db| async move {
+            let tx = Tx::begin(&db)?;
+            tx.chunks
+                .delete(&chunk_key("blob", &key, 1))
+                .map_err(js_error)?;
+            tx.commit().await
+        })
+        .await
+    }
+}
+
+async fn quota_capacity() -> Result<i64> {
+    let estimate = web_sys::window()
+        .ok_or_else(|| anyhow!("the storage estimate needs a window"))?
+        .navigator()
+        .storage()
+        .estimate()
+        .map_err(js_error)?;
+    let estimate: StorageEstimate = wasm_bindgen_futures::JsFuture::from(estimate)
+        .await
+        .map_err(js_error)?
+        .unchecked_into();
+    Ok(estimate
+        .get_quota()
+        .map_or(REMOTE_CACHE_CAPACITY_BYTES, |quota| {
+            REMOTE_CACHE_CAPACITY_BYTES.min((quota / 2.0) as i64)
+        }))
 }
 
 fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
@@ -205,6 +266,8 @@ impl Row {
     }
 
     fn from_js(value: &JsValue) -> Result<Self> {
+        #[cfg(test)]
+        test_hooks::ROWS_READ.set(test_hooks::ROWS_READ.get() + 1);
         let get = |name: &str| Reflect::get(value, &name.into()).map_err(js_error);
         let text = |name: &str| {
             get(name)?
@@ -239,6 +302,14 @@ struct Tx {
     chunks: IdbObjectStore,
     refs: IdbObjectStore,
     meta: IdbObjectStore,
+}
+
+/// 確定を待たずに捨てた transaction（途中の失敗で返ったとき）は中断し、途中までの書込みを残さない。
+/// 確定した後の中断は何もしない。
+impl Drop for Tx {
+    fn drop(&mut self) {
+        let _ = self.transaction.abort();
+    }
 }
 
 impl Tx {
@@ -286,16 +357,41 @@ impl Tx {
             .transpose()
     }
 
-    /// 失効していない行。最後に使った時刻が古ければ書き直す。
-    async fn alive_row(&self, kind: &str, key: &str, now: i64) -> Result<Option<Row>> {
+    /// 失効しておらず、chunk が揃った行。chunk が欠けた（破損した）内容は完成と扱わず、消して取り直させる
+    /// （保護参照は残す）。`touch` なら、最後に使った時刻が古ければ書き直す。
+    async fn usable_row(
+        &self,
+        kind: &str,
+        key: &str,
+        now: i64,
+        touch: bool,
+    ) -> Result<Option<Row>> {
         let Some(mut row) = self.row(kind, key).await?.filter(|row| row.alive(now)) else {
             return Ok(None);
         };
-        if row.used <= now - REMOTE_CACHE_TOUCH_INTERVAL_MS {
+        let request = self
+            .chunks
+            .count_with_key(&chunk_range(kind, key, 0, u64::from(u32::MAX))?)
+            .map_err(js_error)?;
+        let expected = row.len.div_ceil(CHUNK_BYTES as u64) as f64;
+        if idb::done(&request).await?.as_f64() != Some(expected) {
+            self.forget(&row).await?;
+            return Ok(None);
+        }
+        if touch && row.used <= now - REMOTE_CACHE_TOUCH_INTERVAL_MS {
             row.used = now;
             self.put_row(&row)?;
         }
         Ok(Some(row))
+    }
+
+    /// 内容（行と chunk）を消す。保護参照は残す。
+    async fn forget(&self, row: &Row) -> Result<()> {
+        self.delete(&row.kind, &row.key)?;
+        if !row.protected {
+            self.set_used(self.used().await? - row.charge)?;
+        }
+        Ok(())
     }
 
     fn put_row(&self, row: &Row) -> Result<()> {
@@ -423,8 +519,23 @@ async fn put_content(
         protected,
     })?;
     tx.set_used(used)?;
+    #[cfg(test)]
+    if test_hooks::take_write_failure() {
+        tx.transaction.abort().map_err(js_error)?;
+    }
     tx.commit().await?;
     Ok(true)
+}
+
+/// 書けなかった内容の `bytes` の分を、非保護の行を古い順に消して空ける（1 処理 `REMOTE_CACHE_RECLAIM_STEP` 件まで）。
+async fn make_room(db: &IdbDatabase, bytes: i64) -> Result<()> {
+    let tx = Tx::begin(db)?;
+    let before = tx.used().await?;
+    let mut used = before;
+    tx.evict("reclaim", None, &mut used, |_, used| before - used < bytes)
+        .await?;
+    tx.set_used(used)?;
+    tx.commit().await
 }
 
 /// `index` の行を 1 処理消す（非利用の回収と、成人向けの回収）。
@@ -446,6 +557,10 @@ fn records_unavailable() -> anyhow::Error {
 
 #[async_trait]
 impl ContentCacheStore for IndexedDbCache {
+    fn remote_cache_capacity(&self) -> u64 {
+        self.capacity as u64
+    }
+
     fn subscribe_adult_label_evictions(&self) -> broadcast::Receiver<String> {
         self.evictions.subscribe()
     }
@@ -466,11 +581,10 @@ impl ContentCacheStore for IndexedDbCache {
             Arc::ptr_eq(&reservation.counter, &self.reserved),
             "reservation belongs to another cache"
         );
-        let reserved = self.reserved.clone();
+        let (reserved, capacity) = (self.reserved.clone(), self.remote_cache_capacity());
         // 予約は database の task で数え、待つのをやめた呼出元の分は返された予約の drop で戻る。
         let granted = self
             .run(move |db| async move {
-                let capacity = REMOTE_CACHE_CAPACITY_BYTES as u64;
                 let target = reserved.load(Ordering::Acquire).saturating_add(bytes);
                 if target > capacity {
                     return Ok(None);
@@ -486,6 +600,8 @@ impl ContentCacheStore for IndexedDbCache {
                     return Ok(None);
                 }
                 reserved.fetch_add(bytes, Ordering::AcqRel);
+                #[cfg(test)]
+                test_hooks::reserved().notify_one();
                 Ok(Some(RemoteCacheReservation {
                     counter: reserved,
                     bytes,
@@ -508,11 +624,20 @@ impl ContentCacheStore for IndexedDbCache {
     ) -> Result<bool> {
         let (kind, key, scope) = (kind.to_owned(), key.to_owned(), scope.to_owned());
         let payload = payload.to_vec();
-        let reserved = self.reserved.clone();
+        let (reserved, capacity) = (self.reserved.clone(), self.capacity);
         self.run(move |db| async move {
             let reserved = i64::try_from(reserved.load(Ordering::Acquire))?;
-            let budget = REMOTE_CACHE_CAPACITY_BYTES.saturating_sub(reserved);
-            put_content(&db, (&kind, &key, &scope), &payload, budget, now_ms()?).await
+            let budget = capacity.saturating_sub(reserved);
+            let item = (kind.as_str(), key.as_str(), scope.as_str());
+            match put_content(&db, item, &payload, budget, now_ms()?).await {
+                // quota 超過・中断で書けなかったときは、1 処理だけ回収して 1 回だけ書き直す。それでも書けなければ
+                // 保存の失敗として返す（ADR 0058 §4）。中断した transaction は何も残していない。
+                Err(_) => {
+                    make_room(&db, i64::try_from(payload.len())?).await?;
+                    put_content(&db, item, &payload, budget, now_ms()?).await
+                }
+                stored => stored,
+            }
         })
         .await
     }
@@ -521,12 +646,17 @@ impl ContentCacheStore for IndexedDbCache {
         let (kind, key) = (kind.to_owned(), key.to_owned());
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
-            if tx.alive_row(&kind, &key, now_ms()?).await?.is_none() {
+            let Some(row) = tx.usable_row(&kind, &key, now_ms()?, true).await? else {
+                tx.commit().await?;
                 return Ok(None);
-            }
+            };
             let bytes = tx.read_chunks(&kind, &key, 0, u64::from(u32::MAX)).await?;
+            let complete = bytes.len() as u64 == row.len;
+            if !complete {
+                tx.forget(&row).await?;
+            }
             tx.commit().await?;
-            Ok(Some(bytes))
+            Ok(complete.then_some(bytes))
         })
         .await
     }
@@ -534,9 +664,10 @@ impl ContentCacheStore for IndexedDbCache {
     async fn has_remote_content(&self, kind: &str, key: &str) -> Result<bool> {
         let (kind, key) = (kind.to_owned(), key.to_owned());
         self.run(move |db| async move {
-            let now = now_ms()?;
-            let row = Tx::begin(&db)?.row(&kind, &key).await?;
-            Ok(row.is_some_and(|row| row.alive(now)))
+            let tx = Tx::begin(&db)?;
+            let usable = tx.usable_row(&kind, &key, now_ms()?, false).await?;
+            tx.commit().await?;
+            Ok(usable.is_some())
         })
         .await
     }
@@ -546,7 +677,7 @@ impl ContentCacheStore for IndexedDbCache {
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
             let len = tx
-                .alive_row(&kind, &key, now_ms()?)
+                .usable_row(&kind, &key, now_ms()?, true)
                 .await?
                 .map(|row| row.len);
             tx.commit().await?;
@@ -678,5 +809,37 @@ impl ContentCacheStore for IndexedDbCache {
     async fn forget_adult_remote_blobs_step(&self) -> Result<usize> {
         self.run(|db| async move { delete_step(&db, "adult", i64::MAX).await })
             .await
+    }
+}
+
+/// 試験だけの観測と失敗の注入（ブラウザは 1 thread なので thread local で足りる）。
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use tokio::sync::Notify;
+
+    thread_local! {
+        /// 予約を認めたことの知らせ。
+        static RESERVED: Rc<Notify> = Rc::new(Notify::new());
+        /// deserialize した `contents` の行の数。
+        pub(crate) static ROWS_READ: Cell<usize> = const { Cell::new(0) };
+        /// 中断させる内容の書込みの数。
+        static WRITE_FAILURES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn reserved() -> Rc<Notify> {
+        RESERVED.with(Rc::clone)
+    }
+
+    pub(crate) fn fail_writes(count: usize) {
+        WRITE_FAILURES.set(count);
+    }
+
+    pub(super) fn take_write_failure() -> bool {
+        let remaining = WRITE_FAILURES.get();
+        WRITE_FAILURES.set(remaining.saturating_sub(1));
+        remaining > 0
     }
 }

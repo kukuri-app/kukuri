@@ -3773,6 +3773,7 @@ dependencies = [
  "n0-future",
  "tokio",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
  "web-time",

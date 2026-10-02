@@ -191,8 +191,8 @@ async fn fetch_into(
         return Err(BlobTooLarge { limit }.into());
     }
     let mut reservation = local_cache.map(|cache| cache.empty_remote_cache_reservation());
-    if length <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64
-        && let (Some(cache), Some(reservation)) = (local_cache, reservation.as_mut())
+    if let (Some(cache), Some(reservation)) = (local_cache, reservation.as_mut())
+        && length <= cache.remote_cache_capacity()
         && !cache
             .reserve_remote_cache_bytes(reservation, length)
             .await?

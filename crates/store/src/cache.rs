@@ -49,6 +49,10 @@ pub struct RemoteRecordKey {
 
 #[async_trait]
 pub trait ContentCacheStore: Send + Sync {
+    /// 非保護分の容量の上限。これを超える内容は予約せず、cache へ置かない（Web は quota の半分まで。ADR 0058 §4）。
+    fn remote_cache_capacity(&self) -> u64 {
+        REMOTE_CACHE_CAPACITY_BYTES as u64
+    }
     fn subscribe_adult_label_evictions(&self) -> tokio::sync::broadcast::Receiver<String>;
     fn empty_remote_cache_reservation(&self) -> RemoteCacheReservation;
     async fn reserve_remote_cache_bytes(
