@@ -42,7 +42,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | 公開 profile | `profile` | 既存の署名済みの profile の envelope（公開の正本と同じ ID。別の正本を作らない） |
 | 著者を常に表示する指定 | `trust/always-visible/<著者の公開鍵>` | 著者ごと。解除は tombstone |
 | private channel の受領済みの世代の鍵 | `channel/<channel id の hex>/epoch/<epoch id の hex>` | (channel, epoch) ごと。追加だけ |
-| private channel の明示の退会・取消 | `channel/<channel id の hex>/leave` | tombstone として保持する |
+| private channel の参加・明示の退会・取消 | `channel/<channel id の hex>/membership` | 参加の端末に依らない欄（§9）。退会・取消は tombstone として保持する |
 | private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味・値・採否は W6（#1219）が所有する（ADR 0018 §8） |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
@@ -60,7 +60,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 著者を常に表示する指定などの設定の item: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。再受信・再起動・restore の時刻を `updated_at` にしない。
 - private channel の鍵: (channel, epoch) ごとに追加し、相手に項目が無いことを削除と解釈しない。値の形と現在の世代への切替は、検証済みの遷移（W6、ADR 0018 §8）に従う。
 - 鍵更新の担当: 担当の世代（`generation`）で採り、`updated_at` では決めない（ADR 0018 §8）。
-- 退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の別の認証済みの更新として扱う。
+- 参加・退会・取消（`membership`）は `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の値のある版として扱う（§9）。
 - 採用した状態は item ごとに 1 行で持つ（操作の log を持たない）。同じ `op_id` と `updated_at` の再受信は何もしない（重複排除の台帳を別に持たない）。
 
 ### 5. 上限
@@ -82,7 +82,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 導出、payload の封、allowlist、wire の定数、公開の導出からの除外（本 ADR） | W5 AC-1 |
 | 起動・import・切替・復帰、hint・rendezvous・CN の索引・検索・推薦・診断での新しい種別の分類（page_read の private の判定を含む） | W5 AC-2 |
 | profile・設定の merge（§8） | W5 AC-3 |
-| (channel, epoch) の鍵の保持と退会（native と Web の行ごとの保存。ADR 0059 §3） | W5 AC-4 |
+| (channel, epoch) の鍵の保存と channel の item の merge の設計（§9） | W5 AC-4a |
+| native の行ごとの保存と旧 registry・旧 backup の移行（§9。Web の IndexedDB の実装は W4 AC-2） | W5 AC-4b |
+| channel の item の書き込みと merge（§9） | W5 AC-4c |
 | 起動・復帰・通知の欠落の差分の有限 page と durable な cursor | W5 AC-5 |
 | Web と native の 2 端末の統合 | W5 AC-6 |
 
@@ -122,12 +124,124 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 画面の「この端末だけの設定」の説明は、同じアカウントの端末で共有する旨に改めた（2026-10-02 ユーザー判断）。
   - 表示の判断は対象の作者ごとに 1 行を読む（全件を読まない）。
 
+### 9. private channel の鍵の保存と channel の item（W5 AC-4。AC-4a で固定し、AC-4b・AC-4c で実装）
+
+基準（統合 branch `74cc6a352`）の事実:
+
+- 参加中の全 channel の capability（過去の全 epoch の秘密を含む）を 1 つの JSON にして、optional secret（purpose `private-channel-capabilities`、key `registry`。keyring、使えなければ file）に置いている。
+  参加・世代の追加・退会のたびに全件を書き直し、起動時に全件を読んで全 epoch の秘密を docs へ登録する。
+- メモリの参加状態（`joined_private_channels`）は全 channel・全 epoch を持つ。通知・epoch 制御の offer の照合、owner の channel の巡回、topic ごとの一覧、rendezvous、endpoint の作り直しが、これを全件走査する。
+- device backup は、account の DB と秘密の bundle（`SecretBundleV1`。`private_channel_capabilities` は registry の文字列そのもの）を持つ。
+  restore は bundle の registry を optional secret へ戻し、restore の検証（`validate_persisted_runtime_state`）は registry の秘密の形を確かめる。
+- harness は registry を `Vec` で持ち、再起動のときに戻す。
+- 画面は `JoinedPrivateChannelView.archived_epoch_ids` を使っていない（mock と story だけ）。
+
+#### 保存の形（AC-4b）
+
+正本は account の store の 2 種類の行とする。store の trait は `ProjectionStore` の合成に入れ、native は SQLite、Web は W4 AC-2 の IndexedDB の保護行で実装する。
+
+| 行 | key | 欄 |
+| --- | --- | --- |
+| 参加 | channel id | topic id、label、作成者・owner・参加の経路の公開鍵、audience、現在の世代の ID、鍵更新の担当の記録（ADR 0018 §8）、参加か退会（tombstone）か、`membership` の item の `updated_at`・`op_id` |
+| 世代の鍵 | (channel id, epoch id) | 世代の開始時刻、受信 route の識別子（`receive_epoch_key_id`）、鍵を受け取った時刻（`updated_at`）、封をした秘密 |
+
+- 索引: 参加は (topic id, channel id) と (owner, channel id)。世代の鍵は受信 route の識別子と (channel id, 開始時刻)。
+- 秘密の置き場: 世代の秘密は、アカウント鍵から `blake3::derive_key`（context `kukuri.app 2026-10-02 private channel key rows v1`）で導出した鍵で、XChaCha20-Poly1305 の封をして行に置く。
+  - AAD は用途の文字列・アカウントの公開鍵・channel id・epoch id。別の行・別の account へ移した封は開けない。
+  - 保護の強さはアカウント鍵の置き場（keyring、使えなければ file。Web は vault）と同じで、今の registry と変わらない。DB の file だけを持ち出しても開けない。
+  - keyring・vault の entry を世代ごとに作らない。作ると OS の keyring の entry が件数に比例して増え、行の索引と秘密が別の保存先に分かれて、書き込みの途中で食い違う。
+  - Web の vault は capability を持たない（ADR 0059 §1 を改める）。Web の行は保護行で、strict の transaction で書く。
+- 書き込みは対象の行だけにする。
+  - 参加: 参加の行と、現在の世代の鍵の行。
+  - 世代の追加: その鍵の行と、参加の行の現在の世代。
+  - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す。
+  - 全件の書き直しをしない。
+- 退会の tombstone と鍵の行は、容量の回収で消さない（§5）。
+
+#### 読む範囲（AC-4b）
+
+- メモリの参加状態は、`Channel` の key に lease のある channel（ADR 0055 の上限 64 の内）の、参加の行と現在の世代の鍵だけを持つ。
+  - lease を取るときに行を読み、最後の lease が外れたら捨てる。
+  - 過去の世代の鍵はメモリに持たない。
+- 起動:
+  - 旧 registry を移す（下記）。
+  - 参加中の行を key の順に読み、参加の holder の lease を取る。上限に達したら読むのをやめる。残りは今と同じく購読せず、行は残る。
+  - docs へ登録するのは、lease を取った channel の現在の世代の秘密だけ。
+- 各操作は対象の行だけを読む。
+
+| 操作 | 読むもの |
+| --- | --- |
+| 点の参照（書込み・共有・索引の依頼・Dome・remote read の現在の世代） | メモリ。無ければ参加の行と現在の世代の鍵の行を key で 1 件ずつ |
+| 保存の gate（`active_content_scope_generation`） | メモリだけ（lease の無い channel の内容は保存しない） |
+| 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
+| 過去の bucket の読み出し | (channel id, 開始時刻) の索引で、bucket に掛かる世代を上限つきで読む。replica を開く直前に、その世代の秘密を docs へ登録する |
+| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ） |
+| owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
+| rendezvous、Dome の context、endpoint の作り直し | メモリ（lease のある channel）だけ |
+| 退会 | その channel の世代の鍵の行を page で読みながら、replica の参照を外す |
+
+- `JoinedPrivateChannelView.archived_epoch_ids` は外す。
+
+#### 旧 registry・旧 backup の移行（AC-4b）
+
+- 起動時に旧 registry があれば、1 回だけ行へ移し、成功したら registry を消す。
+  - 旧 registry は 1 つの値なので、分けて読めない（一度だけの変換）。
+  - 行の書き込みは 1 transaction で、冪等にする。途中で止まっても、次の起動でやり直す。
+  - 担当の欄の無い自分の channel の移行（ADR 0018 §8）は、この変換で行う。
+  - 移した行の `updated_at` は 0（どの編集よりも古い）。
+- 旧 backup: restore は今のまま bundle の registry を optional secret へ戻し、次の起動で上の移行により行になる。
+  - 新しい backup は、行を DB に持つ。bundle の `private_channel_capabilities` は空になる（形式は変えない）。
+- restore の検証は、旧 registry があるときだけ秘密の形を確かめる（今のまま）。行は、store の migration と、読んだときの封の検査で確かめる。
+- 旧形式の単一 account からの移行（`accounts.rs`）と account の file の自己完結化は、旧 registry の locator をそのまま扱う。次の起動で行になる。
+- 行へ移した DB を、古い版で開くことは扱わない（store の migration は既に前方だけ）。
+- 不要になるものは消す。
+  - persist の callback（`set_private_channel_capability_persist`）と、registry の書き出し。
+  - harness の `Vec`（再起動では同じ store を使う）。
+- `PrivateChannelCapability` は、旧 registry の読み込みだけに使う。形の凍結の試験（`capability_registry_snapshot`）は残す。
+
+#### channel の item の merge（AC-4c）
+
+- `membership` の値は、参加の行のうち端末に依らない欄（topic id、label、作成者・owner・参加の経路の公開鍵、audience、書いた端末の現在の世代の ID）。値が無ければ退会・取消の tombstone。
+  - `(updated_at, op_id)` で採る（§4）。明示の再参加は、新しい `updated_at` の値のある版。
+  - 参加にするのは、値のある `membership` を採ったときだけ。他の端末の鍵が届いても、`membership` が届くまで参加にしない。
+  - 知らない channel の `membership` を採るとき、その現在の世代の鍵を持っていれば、それを現在の世代にする。
+    知っている channel では `membership` の現在の世代を使わず、ADR 0018 §8 の検証（policy の `previous_epoch_id`）でだけ進める（W6 AC-3）。
+  - 本人の端末の item は account の payload の鍵で封をされ、本人の端末しか書けない。そのため channel の replica の署名を読み直さずに、参加の行を作る。
+- 世代の鍵の item:
+  - 追加だけ。同じ (channel, epoch) の行があれば何もしない。
+  - 値の `epoch_id` と key の一致、秘密の形を確かめる。
+  - tombstone の `membership` より古いか同じ `updated_at` の鍵は保存しない。
+  - `op_id` は (channel id, epoch id) から決める（再送で変えない）。`updated_at` は、鍵を受け取った端末の時刻。
+- tombstone を採ったら、この端末の退会と同じく lease を外し、その `updated_at` 以下の世代の鍵の行を消す。
+- 担当の記録は、ADR 0018 §8 の規則（`generation`、同じなら `transfer_to`）で採る。書くのは W6。
+- 書き込み:
+  - 参加・世代の追加・退会・再参加では、行の保存と同じ所で封をして replica へ書く。
+  - AC-3 と同じく、replica へ書けなくても採用は戻さない。owner の鍵更新で作った世代も、同じ所を通る。
+- AC-5 が持つもの:
+  - 移した行（`updated_at` 0）と書けなかった行の送り直し。
+  - 本人の別の端末の版の取得。
+  - 旧版から移した行は、replica の同じ key に版が無いときだけ書く（新しい退会を古い版で隠さない）。
+
+#### 判定（AC-4b・AC-4c）
+
+- AC-4b:
+  - 旧 registry の固定 fixture（複数の channel、過去の世代、担当の欄の無いもの）と旧 backup の bundle から行へ移る。
+    移した後の参加状態の view と担当の移行の結果が、移す前と同じになり、registry は消える。
+  - 他の channel と過去の世代を 10 倍にしても、次の store の読み書きの行数が変わらない。
+    - 書き込み: 参加・世代の追加・退会。
+    - 起動の読み込み: lease を取る channel の参加の行と現在の世代の鍵だけ。上限を超える参加を加えても同じ。
+    - 照合と読み出し: offer の照合、過去の bucket の読み出し、一覧、巡回。
+  - 既存の private channel の試験と、harness の scenario が通る。
+- AC-4c: #1218 の AC-4c の判定方法（join → 世代の追加 → 退会 → 旧 snapshot の再送、明示の再参加、容量の回収の後の固定の遷移。各操作は対象の項目だけを読む）。
+
 ## 採らない方式
 
 - 公開鍵から同期先を導出する: 公開鍵を知る誰もが同期先を知れる（ADR 0055 の受信 route と同じになる）。
 - 1 つの鍵を識別子・namespace・暗号化に使い回す: 1 つの値の漏れがすべてに及ぶ。
 - 操作の log を同期する: 件数に比例して増える。item ごとの現在の状態だけで収束する。
 - account の同期を通常の private channel として作る: epoch の更新と担当（W6）に巻き込まれ、bootstrap にならない。
+- private channel の鍵を世代ごとに keyring・vault の entry にする（§9）: entry が件数に比例して増え、行の索引と秘密が別の保存先に分かれる。
+- 知らない channel の参加を、その replica の署名済みの metadata・policy を読んで作る（§9）: 本人の端末の item で足り、replica を持つ相手が online になるまで参加にできない。
 
 ## Consequences
 

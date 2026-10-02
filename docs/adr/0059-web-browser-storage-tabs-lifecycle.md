@@ -43,12 +43,12 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 | database | 中身 | durability | 回収 |
 | --- | --- | --- | --- |
 | `kukuri-device-v1`（origin に 1 つ） | account の一覧、アプリの同意、秘密を包む AES-GCM の `CryptoKey`（non-extractable） | strict | しない |
-| `kukuri-vault-v1-<account の公開鍵>` | `secrets[service, account]`（アカウント鍵・この account の iroh endpoint 秘密鍵・capability・token 等を AES-GCM で包んだもの）、`settings[name]`（設定と最小状態。gossip の購読状態、private index の grant と停止、W6 の鍵更新の担当・journal・配布の cursor を含む） | strict | しない（明示の削除だけ） |
+| `kukuri-vault-v1-<account の公開鍵>` | `secrets[service, account]`（アカウント鍵・この account の iroh endpoint 秘密鍵・token 等を AES-GCM で包んだもの。private channel の鍵は持たない。§3）、`settings[name]`（設定と最小状態。gossip の購読状態、private index の grant と停止、W6 の鍵更新の担当・journal・配布の cursor を含む） | strict | しない（明示の削除だけ） |
 | `kukuri-cache-v1-<account の公開鍵>`（ADR 0058） | blob・docs の record の保護と cache、projection（§2） | relaxed | ADR 0058 §4 の規則 |
 
 - 保存の成功は transaction の `complete` を基準にする（`beforeunload` に頼らない）。quota・拒否・破損・schema の更新・部分的な保存を区別して返し、既存の identity を失敗の隠蔽のために作り直さない。
 - 秘密の保護: vault の秘密は、device の database の non-extractable な `CryptoKey` で包む。これは profile の file を持ち出されたときの保護で、origin の中で動くコード（XSS・供給網）からは守れない（信頼境界）。常時のパスワード入力は加えない。
-- 起動時に vault を全件読まない。起動に要るもの（アカウント鍵、有効な需要の capability、設定）を key で読む。
+- 起動時に vault を全件読まない。起動に要るもの（アカウント鍵、設定）を key で読む。
 - iroh の endpoint 秘密鍵は、native と同じく account ごとに持つ（同じブラウザの別の account と EndpointId を共有しない）。account の切替は runtime を作り直すので、その account の鍵で Endpoint を作る。
 - v1 には移行の対象が無い。schema の版を上げるときは、key と cursor で有界な単位に分けて進める（起動の条件にしない）。
 
@@ -65,7 +65,8 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 ### 3. capability と件数
 
 - private channel の capability は、channel（と epoch）ごとの行で保存し、有効な需要があるものだけを読む。起動時の全件の読み込み・登録し直しと、変更のたびの全件の書き直しを Web に持ち込まない。
-- native の registry（1 つの JSON の全件読み・全件書き）は設計原則に反する既存の欠陥である。行ごとの保存への移行は、同じ保存 trait を使う W5 AC-4（(channel, epoch) の鍵の保持。各操作は対象項目だけを読む）で native と Web を同時に行う。
+- native の registry（1 つの JSON の全件読み・全件書き）は設計原則に反する既存の欠陥である。行ごとの保存への移行は W5 AC-4 で行う（各操作は対象項目だけを読む）。
+- 行の形・秘密の置き場・読む範囲は ADR 0061 §9（W5 AC-4a）で決めた。行は account の store（projection と同じ trait の合成）に置き、世代の秘密はアカウント鍵から導出した鍵で封をする。Web は cache の database の保護行で、strict の transaction で書く。vault には置かない。
 - account の一覧・Community Node の設定も、key ごとの行で保存する（起動時は選択中の account と、起動に要る node の設定だけを読む）。
 
 ### 4. 複数 tab
