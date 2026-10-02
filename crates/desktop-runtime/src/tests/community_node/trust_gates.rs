@@ -458,6 +458,29 @@ async fn legacy_display_exceptions_are_imported_into_account_sync_items() {
     runtime.shutdown().await;
 }
 
+// 旧版の表示例外の file が読めなくても、表示設定にすぎないので起動を止めない。
+#[tokio::test]
+async fn an_unreadable_legacy_display_exception_file_does_not_block_startup() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("trust-gates.db");
+    std::fs::write(db_path.with_extension("trust-display.json"), b"{not json").expect("file");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        &db_path,
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("startup continues");
+    assert!(
+        runtime
+            .list_author_trust_display_exceptions()
+            .await
+            .expect("exceptions")
+            .is_empty()
+    );
+    runtime.shutdown().await;
+}
+
 /// 表示設定にすぎないため、読めない優先順位があっても起動を止めず、有効な分だけ復元する。
 #[tokio::test]
 async fn unusable_priority_entries_are_dropped_without_blocking_startup() {

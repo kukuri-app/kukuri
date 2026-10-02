@@ -239,3 +239,43 @@ async fn one_item_read_does_not_grow_with_other_items_or_history() {
     assert_eq!(reads[0], reads[1], "{reads:?}");
     assert_eq!(reads[0].0, 1, "{reads:?}");
 }
+
+// 旧版の端末内の設定の取り込みは、この端末だけで採用し、他の端末の新しい編集を account の replica で上書きしない。
+#[tokio::test]
+async fn importing_a_legacy_setting_does_not_overwrite_a_newer_edit_on_the_replica() {
+    let keys = generate_keys();
+    let author = generate_keys().public_key_hex();
+    let docs: Arc<dyn DocsSync> = Arc::new(MemoryDocsSync::with_docs_author(ACCOUNT_DOCS_AUTHOR));
+    let (edited, upgraded, third) = (
+        device(&keys, docs.clone()),
+        device(&keys, docs.clone()),
+        device(&keys, docs),
+    );
+    for app in [&edited, &upgraded, &third] {
+        app.start_account_sync().await.unwrap();
+    }
+    edited
+        .set_trust_always_visible(&author, true)
+        .await
+        .unwrap();
+    edited
+        .set_trust_always_visible(&author, false)
+        .await
+        .unwrap();
+    upgraded.import_trust_always_visible(&author).await.unwrap();
+    assert_eq!(
+        upgraded.list_trust_always_visible().await.unwrap(),
+        vec![author.clone()]
+    );
+    let item = third
+        .read_account_sync_item(
+            &AccountSyncItemKey::TrustAlwaysVisible {
+                author: Pubkey::from(author.as_str()),
+            },
+            DocFetchPolicy::LocalOnly,
+        )
+        .await
+        .unwrap()
+        .expect("the newer edit");
+    assert_eq!(item.value, None, "the replica keeps the newer tombstone");
+}

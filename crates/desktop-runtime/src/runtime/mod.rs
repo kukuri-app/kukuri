@@ -443,7 +443,12 @@ impl DesktopRuntime {
         }
         // 本人の端末間の同期（ADR 0061）。private channel の復元より前に scope の枠を取る。
         app_service.start_account_sync().await?;
-        crate::community_node::import_legacy_trust_display(&db_path, &app_service).await?;
+        // 表示設定にすぎないので、旧版の file を取り込めなくても起動を止めない（次の起動で取り込み直す）。
+        if let Err(error) =
+            crate::community_node::import_legacy_trust_display(&db_path, &app_service).await
+        {
+            tracing::warn!(%error, "legacy trust display exceptions were not imported");
+        }
         for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
             app_service
                 .restore_private_channel_capability(capability)

@@ -13,6 +13,20 @@ const TRUST_ALWAYS_VISIBLE_PREFIX: &str = "trust/always-visible/";
 /// 組の record が無い・開けないときに読む、key ごとの旧候補の上限（ADR 0053 §6 と同じ）。
 const ACCOUNT_SYNC_RECORDS_PER_KEY: usize = 8;
 
+fn trust_always_visible_item(
+    author: &str,
+    updated_at: i64,
+    visible: bool,
+) -> Result<AccountSyncItem> {
+    Ok(AccountSyncItem::edit(
+        AccountSyncItemKey::TrustAlwaysVisible {
+            author: Pubkey::from(normalize_author_pubkey(author)?),
+        },
+        updated_at,
+        visible.then_some(serde_json::Value::Bool(true)),
+    ))
+}
+
 fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
     Ok(AccountSyncRow {
         key: item.key.docs_key(),
@@ -122,7 +136,8 @@ impl AppService {
                 envelope.verify()?;
                 anyhow::ensure!(
                     envelope.pubkey.as_str() == self.current_author_pubkey()
-                        && AccountSyncItem::profile(&envelope)? == item,
+                        && AccountSyncItem::profile(&envelope)? == item
+                        && parse_profile(&envelope)?.is_some(),
                     "the profile item does not match its envelope"
                 );
                 // この版より前の profile（行の無いもの）は、手元の profile の時刻と比べる。
@@ -162,28 +177,24 @@ impl AppService {
 
     /// 著者を常に表示する指定を設定・解除する（本人の端末で共有する。ADR 0061 §2）。
     pub async fn set_trust_always_visible(&self, author: &str, visible: bool) -> Result<()> {
-        self.publish_trust_always_visible(author, Utc::now().timestamp_millis(), visible)
-            .await
+        self.publish_account_sync_item(trust_always_visible_item(
+            author,
+            Utc::now().timestamp_millis(),
+            visible,
+        )?)
+        .await
     }
 
     /// 旧版の端末内の設定を取り込む。編集した時刻は分からないので、どの編集よりも古い 0 にする。
+    /// この端末だけで採用し、account の replica へは書かない（replica は書いた時刻の新しい 1 件を残すので、古い版を
+    /// 書くと他の端末の新しい編集を隠す）。他の端末へは次の編集で届く。
     pub async fn import_trust_always_visible(&self, author: &str) -> Result<()> {
-        self.publish_trust_always_visible(author, 0, true).await
-    }
-
-    async fn publish_trust_always_visible(
-        &self,
-        author: &str,
-        updated_at: i64,
-        visible: bool,
-    ) -> Result<()> {
-        let author = Pubkey::from(normalize_author_pubkey(author)?);
-        self.publish_account_sync_item(AccountSyncItem::edit(
-            AccountSyncItemKey::TrustAlwaysVisible { author },
-            updated_at,
-            visible.then_some(serde_json::Value::Bool(true)),
-        ))
-        .await
+        let item = trust_always_visible_item(author, 0, true)?;
+        self.services
+            .projection_store
+            .adopt_account_sync_row(&row_of(&item)?)
+            .await?;
+        Ok(())
     }
 
     /// `authors` のうち、常に表示する著者（著者ごとに 1 行を読む）。
