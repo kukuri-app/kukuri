@@ -246,7 +246,7 @@ async fn participant_leave_while_the_owner_is_offline_arrives_after_the_owner_re
     wait_for_empty_outbox(&store_b, "the owner's ACK removes the leave record").await;
     assert!(
         store_a
-            .list_private_channel_participants(&channel.channel_id, None, "", 8)
+            .list_private_channel_participants(&channel.channel_id, "", 8)
             .await
             .unwrap()
             .iter()
@@ -418,7 +418,7 @@ async fn a_left_member_cannot_rejoin_the_rotated_epoch_with_a_late_record() {
         // 退出した人の行は有効へ戻らず、次の回転の宛先にも入らない。
         assert!(
             !store_a
-                .list_private_channel_participants(channel.channel_id.as_str(), None, "", 128)
+                .list_private_channel_participants(channel.channel_id.as_str(), "", 128)
                 .await
                 .unwrap()
                 .contains(&b_pubkey),

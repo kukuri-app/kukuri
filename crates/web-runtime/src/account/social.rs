@@ -5,13 +5,16 @@ use async_trait::async_trait;
 use kukuri_core::{FollowEdge, FollowEdgeStatus, Profile};
 use kukuri_store::{
     AuthorRelationshipProjectionRow, MutedAuthorRow, PrivateChannelParticipantRow,
-    SocialProjectionStore,
+    PrivateChannelRow, SocialProjectionStore,
 };
 use wasm_bindgen::JsValue;
+use web_sys::IdbTransaction;
 
 use super::now_ms;
 use crate::IndexedDbCache;
-use crate::content_cache::{DOCS_AUTHORS, FOLLOWS, MUTES, PARTICIPANTS};
+use crate::content_cache::{
+    DOCS_AUTHORS, FOLLOWS, MUTES, PARTICIPANT_COUNTS, PARTICIPANTS, PRIVATE_CHANNELS,
+};
 use crate::idb::Mode;
 use crate::rows::{self, Txn, between, key, only, prefix, text, top};
 
@@ -39,6 +42,133 @@ fn participant_extra(row: &PrivateChannelParticipantRow) -> [(&'static str, JsVa
         ("active", key(&[channel.clone(), pubkey.clone()])),
         ("active_epoch", key(&[channel, epoch, pubkey])),
     ]
+}
+
+/// 参加者の行と資格喪失の印（#1219 AC-2。channel の owner と mutual でない。owner 自身と、owner の分からない行は false）。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Participant {
+    #[serde(flatten)]
+    row: PrivateChannelParticipantRow,
+    #[serde(default)]
+    stale: bool,
+}
+
+/// (channel, epoch) の参加中の数と資格喪失の数（native は trigger で保つ）。
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct ParticipantCounts {
+    channel_id: String,
+    epoch_id: String,
+    active: usize,
+    stale: usize,
+}
+
+/// 参加者の行と数を書く transaction が触る object store。
+pub(super) const PARTICIPANT_STORES: [&str; 4] =
+    [PARTICIPANTS, PARTICIPANT_COUNTS, PRIVATE_CHANNELS, FOLLOWS];
+
+async fn mutual(tx: &IdbTransaction, left: &str, right: &str) -> Result<bool> {
+    for (subject, target) in [(left, right), (right, left)] {
+        let edge: Option<FollowEdge> =
+            rows::get(tx, FOLLOWS, &key(&[text(subject), text(target)])).await?;
+        if !edge.is_some_and(|edge| edge.status == FollowEdgeStatus::Active) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn is_stale(tx: &IdbTransaction, channel_id: &str, pubkey: &str) -> Result<bool> {
+    let channel: Option<PrivateChannelRow> = rows::scan(
+        tx,
+        PRIVATE_CHANNELS,
+        Some("channel_id"),
+        &only(&text(channel_id))?,
+        false,
+        1,
+    )
+    .await?
+    .pop();
+    Ok(match channel {
+        Some(channel) => {
+            channel.owner_pubkey != pubkey && !mutual(tx, &channel.owner_pubkey, pubkey).await?
+        }
+        None => false,
+    })
+}
+
+/// 行を置き換え、(channel, epoch) の数を前後の差で直す。
+async fn put_participant(
+    tx: &IdbTransaction,
+    old: Option<&Participant>,
+    new: &Participant,
+) -> Result<()> {
+    let weight = |value: Option<&Participant>| {
+        value
+            .filter(|value| value.row.left_at.is_none())
+            .map_or((0, 0), |value| (1, usize::from(value.stale)))
+    };
+    let (before, after) = (weight(old), weight(Some(new)));
+    rows::put(tx, PARTICIPANTS, new, &participant_extra(&new.row))?;
+    if before != after {
+        let id = key(&[text(&new.row.channel_id), text(&new.row.epoch_id)]);
+        let mut counts = rows::get::<ParticipantCounts>(tx, PARTICIPANT_COUNTS, &id)
+            .await?
+            .unwrap_or_else(|| ParticipantCounts {
+                channel_id: new.row.channel_id.clone(),
+                epoch_id: new.row.epoch_id.clone(),
+                ..ParticipantCounts::default()
+            });
+        counts.active = counts.active + after.0 - before.0;
+        counts.stale = counts.stale + after.1 - before.1;
+        rows::put(tx, PARTICIPANT_COUNTS, &counts, &[])?;
+    }
+    Ok(())
+}
+
+/// follow の edge が変わった公開鍵の参加者の行の印を読み直す。数を読むのは現在の世代だけなので、その公開鍵が参加
+/// する channel を索引で 1 件ずつ引き、現在の世代の行だけを直す（過去の世代の行の数に比例しない）。
+pub(super) async fn restale_participants(tx: &IdbTransaction, pubkey: &str) -> Result<()> {
+    let mut after = String::new();
+    loop {
+        let range = between(
+            &[text(pubkey), text(&after)],
+            &top(&[text(pubkey)]),
+            true,
+            false,
+        )?;
+        let Some(member) =
+            rows::scan::<Participant>(tx, PARTICIPANTS, Some("member"), &range, false, 1)
+                .await?
+                .pop()
+        else {
+            return Ok(());
+        };
+        after = member.row.channel_id;
+        let channel: Option<PrivateChannelRow> = rows::scan(
+            tx,
+            PRIVATE_CHANNELS,
+            Some("channel_id"),
+            &only(&text(&after))?,
+            false,
+            1,
+        )
+        .await?
+        .pop();
+        let Some(channel) = channel else { continue };
+        let id = key(&[text(&after), text(&channel.current_epoch_id), text(pubkey)]);
+        let Some(old) = rows::get::<Participant>(tx, PARTICIPANTS, &id).await? else {
+            continue;
+        };
+        let stale =
+            channel.owner_pubkey != pubkey && !mutual(tx, &channel.owner_pubkey, pubkey).await?;
+        if stale != old.stale {
+            let new = Participant {
+                row: old.row.clone(),
+                stale,
+            };
+            put_participant(tx, Some(&old), &new).await?;
+        }
+    }
 }
 
 fn participant_key(row: &PrivateChannelParticipantRow) -> JsValue {
@@ -182,23 +312,30 @@ impl SocialProjectionStore for IndexedDbCache {
         row: PrivateChannelParticipantRow,
     ) -> Result<bool> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Write)?;
-            let existing = rows::get::<PrivateChannelParticipantRow>(
-                &tx,
-                PARTICIPANTS,
-                &participant_key(&row),
-            )
-            .await?;
-            if existing.is_some_and(|existing| existing.updated_at >= row.updated_at) {
+            let tx = Txn::begin(&db.idb, &PARTICIPANT_STORES, Mode::Write)?;
+            let existing =
+                rows::get::<Participant>(&tx, PARTICIPANTS, &participant_key(&row)).await?;
+            if existing
+                .as_ref()
+                .is_some_and(|existing| existing.row.updated_at >= row.updated_at)
+            {
                 return Ok(false);
             }
-            rows::put(&tx, PARTICIPANTS, &row, &participant_extra(&row))?;
+            let stale = match &existing {
+                Some(existing) => existing.stale,
+                None => is_stale(&tx, &row.channel_id, &row.participant_pubkey).await?,
+            };
+            let new = Participant {
+                row: row.clone(),
+                stale,
+            };
+            put_participant(&tx, existing.as_ref(), &new).await?;
             if let Some(left_at) = row.left_at {
                 let active = only(&key(&[
                     text(&row.channel_id),
                     text(&row.participant_pubkey),
                 ]))?;
-                let earlier: Vec<PrivateChannelParticipantRow> = rows::scan(
+                let earlier: Vec<Participant> = rows::scan(
                     &tx,
                     PARTICIPANTS,
                     Some("active"),
@@ -207,11 +344,15 @@ impl SocialProjectionStore for IndexedDbCache {
                     usize::MAX,
                 )
                 .await?;
-                for mut other in earlier {
-                    if other.updated_at < left_at {
-                        other.left_at = Some(left_at);
-                        other.updated_at = left_at;
-                        rows::put(&tx, PARTICIPANTS, &other, &participant_extra(&other))?;
+                for other in earlier {
+                    if other.row.updated_at < left_at {
+                        let mut closed = Participant {
+                            row: other.row.clone(),
+                            stale: other.stale,
+                        };
+                        closed.row.left_at = Some(left_at);
+                        closed.row.updated_at = left_at;
+                        put_participant(&tx, Some(&other), &closed).await?;
                     }
                 }
             }
@@ -238,55 +379,57 @@ impl SocialProjectionStore for IndexedDbCache {
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
-        let (channel, epoch, after) = (
-            channel_id.to_owned(),
-            epoch_id.map(str::to_owned),
-            after.to_owned(),
-        );
+        let (channel, after) = (channel_id.to_owned(), after.to_owned());
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Read)?;
-            let mut head = vec![text(&channel)];
-            let index = match &epoch {
-                Some(epoch) => {
-                    head.push(text(epoch));
-                    "active_epoch"
-                }
-                None => "active",
-            };
-            let mut lower = head.clone();
-            lower.push(text(&after));
-            let range = between(&lower, &top(&head), true, false)?;
-            // 世代を問わないときは、同じ公開鍵の行（参加中の世代の数）が続くので重複を除く。
+            // 同じ公開鍵の行（参加中の世代の数）を読まずに、次の公開鍵を索引で 1 件ずつ引く。
             let mut pubkeys: Vec<String> = Vec::new();
-            if limit > 0 {
-                rows::walk(&tx, PARTICIPANTS, Some(index), &range, false, |value| {
-                    let row: PrivateChannelParticipantRow = rows::decode(value)?;
-                    if pubkeys.last() != Some(&row.participant_pubkey) {
-                        pubkeys.push(row.participant_pubkey);
-                    }
-                    Ok(pubkeys.len() < limit)
-                })
-                .await?;
+            while pubkeys.len() < limit {
+                let after = pubkeys.last().unwrap_or(&after);
+                let range = between(
+                    &[text(&channel), text(after)],
+                    &top(&[text(&channel)]),
+                    true,
+                    false,
+                )?;
+                let Some(row) = rows::scan::<PrivateChannelParticipantRow>(
+                    &tx,
+                    PARTICIPANTS,
+                    Some("active"),
+                    &range,
+                    false,
+                    1,
+                )
+                .await?
+                .pop() else {
+                    break;
+                };
+                pubkeys.push(row.participant_pubkey);
             }
             Ok(pubkeys)
         })
         .await
     }
 
-    async fn count_private_channel_participants(
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize> {
-        let (channel, epoch) = (channel_id.to_owned(), epoch_id.to_owned());
+    ) -> Result<(usize, usize)> {
+        let id = (channel_id.to_owned(), epoch_id.to_owned());
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Read)?;
-            let range = prefix(&[text(&channel), text(&epoch)])?;
-            rows::count(&tx, PARTICIPANTS, Some("active_epoch"), &range).await
+            let tx = Txn::begin(&db.idb, &[PARTICIPANT_COUNTS], Mode::Read)?;
+            let counts = rows::get::<ParticipantCounts>(
+                &tx,
+                PARTICIPANT_COUNTS,
+                &key(&[text(&id.0), text(&id.1)]),
+            )
+            .await?
+            .unwrap_or_default();
+            Ok((counts.active, counts.stale))
         })
         .await
     }

@@ -25,6 +25,7 @@ pub(crate) const POST_BOOKMARKS: &str = "post_bookmarks";
 pub(crate) const MUTES: &str = "mutes";
 pub(crate) const DOCS_AUTHORS: &str = "docs_authors";
 pub(crate) const PARTICIPANTS: &str = "participants";
+pub(crate) const PARTICIPANT_COUNTS: &str = "participant_counts";
 pub(crate) const DM_CONVERSATIONS: &str = "dm_conversations";
 pub(crate) const DM_MESSAGES: &str = "dm_messages";
 pub(crate) const DM_OUTBOX: &str = "dm_outbox";
@@ -205,10 +206,12 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         &["r.channel_id", "r.epoch_id", "r.participant_pubkey"],
         &[
             ("pubkey", &["r.channel_id", "r.participant_pubkey"]),
+            ("member", &["r.participant_pubkey", "r.channel_id"]),
             ("active", &["active"]),
             ("active_epoch", &["active_epoch"]),
         ],
     )?;
+    table(db, PARTICIPANT_COUNTS, &["r.channel_id", "r.epoch_id"], &[])?;
     let conversations = table(
         db,
         DM_CONVERSATIONS,
@@ -297,6 +300,7 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         &[
             ("receive", &["r.receive_key_id"]),
             ("started", &["r.channel_id", "r.started_at", "r.epoch_id"]),
+            ("rotation", &["rotation"]),
         ],
     )?;
     table(

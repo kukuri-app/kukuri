@@ -169,7 +169,8 @@ mod post_withdrawal_hydration;
 mod channel_sync_merge;
 mod private_channel_rows;
 pub(crate) use private_channel_rows::{
-    PRIVATE_CHANNEL_EPOCH_WINDOW, epoch_started_at, same_private_channel_state,
+    PRIVATE_CHANNEL_EPOCH_WINDOW, PrivateChannelRotation, epoch_started_at,
+    same_private_channel_state,
 };
 mod private_channels_support;
 pub(crate) use private_channels_support::ChannelCommit;

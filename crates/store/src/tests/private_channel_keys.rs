@@ -32,6 +32,8 @@ fn epoch(channel: &str, epoch: &str, started_at: i64, secret: u8) -> PrivateChan
         receive_key_id: format!("{channel}/{epoch}"),
         updated_at: 1,
         sealed_secret: vec![secret],
+        rotation_from: None,
+        rotation_after: None,
     }
 }
 
@@ -155,6 +157,77 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
     );
     assert_eq!(store.get_private_channel_by_id("z").await.unwrap(), None);
 
+    // #1219 AC-2: 鍵更新で予約した世代は、終わるまで (channel, epoch) の順に読め、確定の段の後は cursor を持つ。
+    // 参加の行の書き直し(確定)は予約の印を消さない。
+    for (channel, epoch_id) in [("z", "epoch-10"), ("a", "epoch-4")] {
+        let mut reserved = epoch(channel, epoch_id, 100, 4);
+        reserved.rotation_from = Some("epoch-3".into());
+        store.put_private_channel_epoch(&reserved).await.unwrap();
+    }
+    store
+        .put_private_channel(
+            &channel("t1", "a", "owner", true),
+            &[epoch("a", "epoch-4", 100, 4)],
+        )
+        .await
+        .unwrap();
+    let pending = |rows: Vec<PrivateChannelEpochRow>| {
+        rows.into_iter()
+            .map(|row| (row.channel_id, row.epoch_id, row.rotation_after))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        pending(
+            store
+                .list_private_channel_rotations(("", ""), 8)
+                .await
+                .unwrap()
+        ),
+        [
+            ("a".to_string(), "epoch-4".to_string(), None),
+            ("z".to_string(), "epoch-10".to_string(), None)
+        ]
+    );
+    store
+        .set_private_channel_rotation("a", "epoch-4", Some("p"))
+        .await
+        .unwrap();
+    assert_eq!(
+        pending(
+            store
+                .list_private_channel_rotations(("a", "epoch-3"), 1)
+                .await
+                .unwrap()
+        ),
+        [(
+            "a".to_string(),
+            "epoch-4".to_string(),
+            Some("p".to_string())
+        )]
+    );
+    store
+        .set_private_channel_rotation("a", "epoch-4", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        pending(
+            store
+                .list_private_channel_rotations(("a", "epoch-4"), 8)
+                .await
+                .unwrap()
+        ),
+        [("z".to_string(), "epoch-10".to_string(), None)]
+    );
+    let finished = store
+        .get_private_channel_epoch("a", "epoch-4")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (finished.rotation_from, finished.rotation_after),
+        (None, None)
+    );
+
     // 鍵の行は channel ごとに page で消す。
     assert_eq!(
         store
@@ -170,7 +243,7 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
             .await
             .unwrap()
             .len(),
-        1
+        2
     );
     assert!(
         store

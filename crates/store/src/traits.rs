@@ -333,19 +333,21 @@ pub trait SocialProjectionStore: Send + Sync {
         channel_id: &str,
         participant_pubkey: &str,
     ) -> Result<bool>;
-    /// 参加中の pubkey を `after` より後ろから昇順に最大 `limit` 件。`epoch_id` が `None` なら channel の全 epoch から重複なく。
+    /// いずれかの epoch で参加中の pubkey を、`after` より後ろから昇順に重複なく最大 `limit` 件。次の pubkey を索引で
+    /// 1 回ずつ引く(#1219 AC-2。参加者が過去の世代の行を持っていても、1 件の仕事は世代の数に比例しない)。
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>>;
-    async fn count_private_channel_participants(
+    /// (channel, epoch) の参加中の数と、そのうち資格喪失(channel の owner と mutual でない。#1219 AC-2)の数。
+    /// 行の書込みと follow の edge の書込みで保つ数を 1 件読む。
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize>;
+    ) -> Result<(usize, usize)>;
 }
 
 /// `list_author_relationships` の既定動作: 1 件ずつ `get_author_relationship` を呼ぶ。
