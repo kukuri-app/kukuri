@@ -10,6 +10,7 @@ mod accounts;
 mod attachments;
 #[cfg(not(target_family = "wasm"))]
 mod backup;
+mod command;
 mod community_node;
 mod discovery;
 mod host;
@@ -45,6 +46,11 @@ pub use backup::{
     pending_device_restore_frontend_state, pending_device_restore_phase, prepare_device_restore,
     preview_device_backup, recover_interrupted_restore, rollback_device_restore,
     rollback_pending_device_restore, validate_prepared_device_restore,
+};
+pub use command::{
+    COMMAND_FAILED_CODE, CommandError, DispatchContext, PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE,
+    SCOPE_LIMIT_REACHED_CODE, STALE_RUNTIME_CODE, UNSUPPORTED_PLATFORM_CODE, dispatch_command,
+    dispatched_commands, map_error,
 };
 pub use community_node::{
     AcceptCommunityNodeConsentsRequest, AuthorTrustGate, AuthorTrustGateRequest,

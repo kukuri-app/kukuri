@@ -33,6 +33,48 @@ where
     }
 }
 
+/// desktop-runtime の dispatch 表にある command をそこで呼び、それ以外（Tauri 専用・native だけの command）を
+/// `generate_handler!` の handler へ渡す（W1 AC-5、ADR 0056 §6）。旧世代の結果は表が `stale_runtime` にする。
+pub(crate) fn with_runtime_dispatch<R, F>(
+    handler: F,
+) -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static
+where
+    R: Runtime,
+    F: Fn(Invoke<R>) -> bool + Send + Sync + 'static,
+{
+    let dispatched = kukuri_desktop_runtime::dispatched_commands()
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    move |invoke| {
+        if !dispatched.contains(invoke.message.command()) {
+            return handler(invoke);
+        }
+        let command = invoke.message.command().to_string();
+        let args = match invoke.message.payload() {
+            tauri::ipc::InvokeBody::Json(args) => args.clone(),
+            tauri::ipc::InvokeBody::Raw(_) => serde_json::Value::Null,
+        };
+        let webview = invoke.message.webview_ref();
+        let Some(state) = webview.try_state::<crate::state::DesktopState>() else {
+            invoke
+                .resolver
+                .reject(CommandError::from("the runtime is not ready".to_string()));
+            return true;
+        };
+        let host = state.host();
+        let ctx = kukuri_desktop_runtime::DispatchContext {
+            app_version: webview.app_handle().package_info().version.to_string(),
+        };
+        invoke.resolver.respond_async(async move {
+            kukuri_desktop_runtime::dispatch_command(&host, &ctx, &command, args)
+                .await
+                .unwrap_or_else(|| Err(CommandError::from(format!("unknown command {command}"))))
+                .map_err(tauri::ipc::InvokeError::from)
+        });
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
