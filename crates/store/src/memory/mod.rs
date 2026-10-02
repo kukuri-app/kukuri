@@ -105,7 +105,7 @@ pub struct MemoryStore {
     post_withdrawal_rows: Arc<RwLock<HashMap<EnvelopeId, PostWithdrawalRow>>>,
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
     private_channel_participants: Arc<RwLock<MemoryPrivateChannelParticipants>>,
-    account_sync_rows: Arc<RwLock<BTreeMap<String, crate::AccountSyncRow>>>,
+    account_sync: Arc<RwLock<MemoryAccountSync>>,
     private_channel_keys: Arc<RwLock<MemoryPrivateChannelKeys>>,
     /// private channel の参加と鍵の行を読み書きした数(試験が、操作ごとに対象の行だけを触ることを確かめる)。
     private_channel_key_rows_touched: Arc<std::sync::atomic::AtomicUsize>,
@@ -122,6 +122,16 @@ impl MemoryStore {
 struct MemoryPrivateChannelKeys {
     channels: BTreeMap<String, crate::PrivateChannelRow>,
     epochs: BTreeMap<(String, String), crate::PrivateChannelEpochRow>,
+    /// replica へ未書込みの世代の鍵の行。
+    unwritten: BTreeSet<(String, String)>,
+}
+
+#[derive(Default)]
+struct MemoryAccountSync {
+    rows: BTreeMap<String, crate::AccountSyncRow>,
+    /// replica へ未書込みの行の key。
+    unwritten: BTreeSet<String>,
+    cursors: BTreeMap<String, crate::AccountSyncCursor>,
 }
 
 mod account_sync;

@@ -386,6 +386,13 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 各相手の cursor も失われるので、相手とは周回から始める。変更の窓の seq は replica の head から続く。
 - AC-4b で DB を消さない再起動に改めた試験 4 件を、DB を消して作り直しを確かめる試験に戻す。
 
+#### 実装（AC-5b）
+
+- core: 変更の窓の key `AccountSyncItemKey::ChangeSlot`・`ChangeHead`（値は `AccountSyncChangeV1`）、行の key から item の key を戻す `AccountSyncItemKey::from_docs_key`、hint の `GossipHint::AccountSyncChanged`。
+- docs-sync: `remote_readers` の要求側の許可に account の replica を加えた。
+- store: `account_sync_items`・`private_channel_epochs` の `written` の欄と未書込みの部分索引、相手ごとの cursor の `account_sync_cursors`（migration `20261004000000`）。
+- app-api: `account_sync_fetch`（書込みと窓への追記、取得、周回、送り直し、作り直し、状態）。契機は account の lease の task（`account_sync_task`）。task の本体は `Send` の box に閉じる（取得の merge が channel の lease を取り、lease が task を作るため）。
+
 #### 判定（AC-5b・AC-5c）
 
 - AC-5b:

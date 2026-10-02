@@ -223,7 +223,8 @@ impl AppService {
     }
 
     /// replica の namespace の秘密を登録し、hint の購読を持つ。endpoint の作り直しで docs が新しくなっても、
-    /// task の作り直しで登録し直す。hint を受けた差分の取得は W5 AC-5 が足す。
+    /// task の作り直しで登録し直す。差分の取得の契機（ADR 0061 §10）: task の開始（lease の開始・endpoint の世代の
+    /// 変化）と日の境界、hint、書込みの後の送り直しの要求。
     pub(crate) async fn spawn_account_sync_subscription(
         &self,
         hint_topic: TopicId,
@@ -236,12 +237,12 @@ impl AppService {
                 keys.expose_namespace_secret_hex().as_str(),
             )
             .await?;
-        let mut hints = self
+        let hints = self
             .services
             .hint_transport
             .subscribe_hints(&hint_topic)
             .await?;
-        let handle = n0_future::task::spawn(async move { while hints.next().await.is_some() {} });
+        let handle = n0_future::task::spawn(account_sync_task(self.scope_reader(), hints));
         Ok(ScopeTask {
             handle: AbortOnDropTask::new(handle),
             hint_topic: Some(hint_topic),
@@ -592,4 +593,34 @@ impl AppService {
             .await?
             .map(VerifiedGameRoom::into_parts))
     }
+}
+
+/// account 同期の lease の task の本体。取得の merge が channel の lease を取り、lease が task を作るので、型を
+/// `Send` の box に閉じて、task の作成の型が自分自身に戻らないようにする。
+fn account_sync_task(
+    reader: AppService,
+    mut hints: kukuri_transport::HintStream,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        reader.catch_up_account_sync().await;
+        loop {
+            let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
+            tokio::select! {
+                Some(event) = hints.next() => {
+                    if let GossipHint::AccountSyncChanged { device_id, .. } = &event.hint {
+                        reader
+                            .fetch_account_sync_for_hint(device_id, &event.source_peer)
+                            .await;
+                    }
+                }
+                _ = reader.services.account_sync.resend.notified() => {
+                    if let Err(error) = reader.resend_account_sync_items().await {
+                        warn!(%error, "account sync resend stopped; it resumes at the next trigger");
+                    }
+                }
+                _ = boundary => reader.catch_up_account_sync().await,
+                else => break,
+            }
+        }
+    })
 }

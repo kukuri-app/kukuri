@@ -96,6 +96,17 @@ pub trait PrivateChannelKeyStore: Send + Sync {
         range: PrivateChannelEpochRange,
         limit: usize,
     ) -> Result<Vec<PrivateChannelEpochRow>>;
+    /// 世代の鍵の行を、replica へ書いたとする（ADR 0061 §10）。足した行は未書込みで始まる。
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()>;
+    /// replica へ未書込みの世代の鍵の行を `limit` 件（未書込みの索引で読む）。
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>>;
     /// その channel の世代の鍵の行を `limit` 件まで消し、消した世代の ID を返す。
     async fn delete_private_channel_epochs(
         &self,

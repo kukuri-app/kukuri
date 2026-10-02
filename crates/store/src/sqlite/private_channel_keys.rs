@@ -250,6 +250,39 @@ impl PrivateChannelKeyStore for SqliteStore {
         Ok(rows.iter().map(epoch_row).collect())
     }
 
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE private_channel_epochs SET written = 1
+             WHERE channel_id = ? AND epoch_id = ? AND written = 0",
+        )
+        .bind(channel_id)
+        .bind(epoch_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        Ok(sqlx::query(concat!(
+            "SELECT ",
+            epoch_columns!(),
+            " FROM private_channel_epochs WHERE written = 0 ORDER BY channel_id, epoch_id LIMIT ?"
+        ))
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(epoch_row)
+        .collect())
+    }
+
     async fn delete_private_channel_epochs(
         &self,
         channel_id: &str,

@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod fetch;
+
 #[tokio::test]
 async fn account_sync_starts_privately_and_stops_with_the_runtime() {
     let store = Arc::new(MemoryStore::default());
@@ -58,6 +60,20 @@ use kukuri_docs_sync::DocFetchPolicy;
 
 const ACCOUNT_DOCS_AUTHOR: &str =
     "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac";
+
+/// account の replica の秘密だけを登録する（差分の取得・送り直しの task は起こさない。merge の規則の試験が、背景の
+/// 取得と競合しないように）。
+pub(super) async fn register_account_replica(app: &AppService) {
+    let keys = app.services.keys.derive_account_sync();
+    app.services
+        .docs_sync
+        .register_private_replica_secret(
+            keys.replica_id(),
+            keys.expose_namespace_secret_hex().as_str(),
+        )
+        .await
+        .expect("account replica secret");
+}
 
 fn device(keys: &KukuriKeys, docs: Arc<dyn DocsSync>) -> AppService {
     let store = Arc::new(MemoryStore::default());
@@ -173,7 +189,7 @@ async fn one_device_reads_and_merges_the_other_devices_edits() {
     let docs: Arc<dyn DocsSync> = Arc::new(MemoryDocsSync::with_docs_author(ACCOUNT_DOCS_AUTHOR));
     let (first, second) = (device(&keys, docs.clone()), device(&keys, docs));
     for app in [&first, &second] {
-        app.start_account_sync().await.unwrap();
+        register_account_replica(app).await;
     }
     first.set_trust_always_visible(&author, true).await.unwrap();
     first
@@ -215,7 +231,7 @@ async fn one_item_read_does_not_grow_with_other_items_or_history() {
     for scale in [1, 10] {
         let docs = Arc::new(CountingDocsSync::with_docs_author(ACCOUNT_DOCS_AUTHOR));
         let app = device(&keys, docs.clone());
-        app.start_account_sync().await.unwrap();
+        register_account_replica(&app).await;
         for _ in 0..scale {
             app.set_trust_always_visible(&target, true).await.unwrap();
             app.set_trust_always_visible(&target, false).await.unwrap();
@@ -252,7 +268,7 @@ async fn importing_a_legacy_setting_does_not_overwrite_a_newer_edit_on_the_repli
         device(&keys, docs),
     );
     for app in [&edited, &upgraded, &third] {
-        app.start_account_sync().await.unwrap();
+        register_account_replica(app).await;
     }
     edited
         .set_trust_always_visible(&author, true)

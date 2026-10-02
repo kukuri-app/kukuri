@@ -1,7 +1,7 @@
 //! 本人の別の端末の private channel の item（参加・世代の鍵・担当）の merge（ADR 0061 §9、#1218 AC-4c）。
 //!
 //! 参加・退会の版は採用の台帳（`AccountSyncStore`）の `(updated_at, op_id)` で採り、鍵は追加だけ、担当は ADR 0018 §8 の
-//! 規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は AC-5 の差分の取得。
+//! 規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
 
 use kukuri_core::{AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1};
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
@@ -47,7 +47,7 @@ impl AppService {
     }
 
     /// 参加（値）と退会・取消（tombstone）を `(updated_at, op_id)` で採る。採用済みの同じ版の再送でも、採用の後の
-    /// 処理をやり直す（途中で止まった鍵待ちの読み直しを、差分の取得の再送で再開する）。
+    /// 処理をやり直す（途中で止まった鍵待ちの読み直しを、差分の取得の再送で再開する）。採った（行を置き換えた）ら true。
     async fn merge_channel_membership(
         &self,
         channel_id: &ChannelId,
@@ -59,7 +59,8 @@ impl AppService {
             .map(serde_json::from_value::<ChannelMembershipV1>)
             .transpose()?;
         let store = &self.services.projection_store;
-        let current = store.adopt_account_sync_row(&row_of(item)?).await?
+        let adopted = store.adopt_account_sync_row(&row_of(item)?).await?;
+        let current = adopted
             || store
                 .get_account_sync_row(&item.key.docs_key())
                 .await?
@@ -74,7 +75,7 @@ impl AppService {
             let Some(row) = row else {
                 self.delete_private_channel_keys(channel_id.as_str())
                     .await?;
-                return Ok(true);
+                return Ok(adopted);
             };
             let (topic_id, channel) = (row.topic_id.clone(), row.channel_id.clone());
             if row.joined {
@@ -105,7 +106,7 @@ impl AppService {
             }
             self.forget_private_channel_keys(&topic_id, &channel)
                 .await?;
-            return Ok(true);
+            return Ok(adopted);
         };
         if let Some(row) = row.filter(|row| row.joined) {
             // 参加中の channel では membership の現在の世代を使わない。版だけを写し、鍵待ちなら読み直す。
@@ -130,7 +131,7 @@ impl AppService {
             if waiting {
                 self.refill_channel_keys(channel_id).await?;
             }
-            return Ok(true);
+            return Ok(adopted);
         }
         // 参加の無い channel: 鍵の行があれば開始時刻の最も新しい世代、無ければ membership の世代で鍵待ち。
         let newest = self
@@ -176,7 +177,7 @@ impl AppService {
             self.start_synced_channel(&topic_id, channel_id.as_str(), item.updated_at)
                 .await?;
         }
-        Ok(true)
+        Ok(adopted)
     }
 
     /// 世代の鍵は追加だけ。退会の版より古いか同じ鍵は保存しない。参加中の channel では、開始時刻の新しい鍵で現在の

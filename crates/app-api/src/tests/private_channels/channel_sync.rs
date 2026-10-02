@@ -28,12 +28,13 @@ fn device(
     )
 }
 
-/// 起動時の参加の行の読み直しと、account の replica の登録（本人の別の端末の item はこの replica から読む）。
+/// 起動時の参加の行の読み直しと、account の replica の秘密の登録（鍵待ちの読み直しはこの replica を読む）。
+/// 差分の取得・送り直しの task は起こさない（merge の規則だけを確かめる。取得は `account_sync_fetch` の試験）。
 async fn start(app: &AppService) {
     app.restore_joined_private_channels()
         .await
         .expect("restore");
-    app.start_account_sync().await.expect("account sync");
+    super::super::account_sync::register_account_replica(app).await;
 }
 
 fn epoch(day: i64) -> String {
@@ -309,8 +310,8 @@ async fn channels_over_the_scope_limit_are_listed_but_not_subscribed() {
         .await
         .insert(TOPIC.to_string());
     start(&app).await;
-    // account 同期が 1 枠を使うので、最後の 1 件が枠の外になる。
-    let channels = (0..MAX_ACTIVE_SCOPES)
+    // 枠より 1 件多く同期すると、最後の 1 件が枠の外になる。
+    let channels = (0..=MAX_ACTIVE_SCOPES)
         .map(|index| format!("room-{index:02}"))
         .collect::<Vec<_>>();
     for channel in &channels {
@@ -325,7 +326,7 @@ async fn channels_over_the_scope_limit_are_listed_but_not_subscribed() {
     let subscribed =
         |channel: &str| leases.contains(&ScopeKey::Channel(TOPIC.to_string(), channel.to_string()));
     assert!(subscribed(&channels[0]));
-    assert!(!subscribed(&channels[MAX_ACTIVE_SCOPES - 1]));
+    assert!(!subscribed(&channels[MAX_ACTIVE_SCOPES]));
     let mut listed = Vec::new();
     let mut cursor = None;
     loop {
@@ -339,7 +340,7 @@ async fn channels_over_the_scope_limit_are_listed_but_not_subscribed() {
             None => break,
         }
     }
-    assert_eq!(listed.len(), MAX_ACTIVE_SCOPES);
+    assert_eq!(listed.len(), MAX_ACTIVE_SCOPES + 1);
 }
 
 /// 退会の item と、この端末の redeem・別の端末の世代の追加が並行しても、参加に戻らない(ADR 0061 §9 の判定)。
