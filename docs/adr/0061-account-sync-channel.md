@@ -156,7 +156,10 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - Web の vault は capability を持たない（ADR 0059 §1 を改める）。Web の行は cache の database の保護行で、strict の transaction で書き、容量の回収で消さない（ADR 0058 §4）。
 - 書き込みは対象の行だけにする。
   - 参加: 参加の行と、現在の世代の鍵の行。
-  - 世代の追加: 検証（owner の鍵更新の準備、handoff の redeem の policy）の間、新しい世代の秘密は招待の preview と同じく docs の登録簿へ一時に入れる。検証を通ったら、その鍵の行と参加の行の現在の世代を 1 transaction で書く。検証を通らない世代の鍵の行は作らない（redeem は今と同じく、次の呼び出しでやり直せる。既知の世代の確認は鍵の行の有無で行う）。
+  - 世代の追加: 新しい世代の秘密は、行にするまで招待の preview と同じく docs の登録簿へ一時に入れる。検証を通らない世代の鍵の行は作らない。
+    - owner の鍵更新: 今と同じ順（担当の判定 → 旧世代の凍結 → 新しい世代の準備 → grant の配布 → 確定）で、鍵の行と参加の行の現在の世代は、最後の確定の段で 1 transaction で書く。準備と配布の間は一時の登録で応える。
+    - handoff の redeem: 止めるのは、grant の旧世代が手元の現在の世代でないときだけ。新しい世代の鍵の行の有無では止めない。policy の検証を通ったら、鍵の行が無ければ書き、参加の行の現在の世代を進める（1 transaction）。検証を通らなければ何も書かず、次の呼び出しでやり直す（今と同じ）。本人の別の端末から鍵の item が先に届いていても、同じ redeem で現在の世代が進む。
+    - 一時の秘密は、検証を通ったときは行の commit の後に外し、通らなかったときもすぐに外す。
   - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す（その channel の行だけを page で消す）。鍵の行を消してから replica を閉じる（閉じた後に開き直されても、秘密を引けない）。
   - 全件の書き直しをしない。
 - 退会の tombstone と鍵の行は、容量の回収で消さない（§5）。
@@ -166,7 +169,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 参加中の channel の世代の秘密は、docs の登録簿へ入れない。docs が replica の秘密を要するとき（手元で開く、相手からの private の読取りに応える）は、登録簿に無ければ、replica id から (channel id, epoch id) を求め、世代の鍵の行を key で 1 件読む。
   - 引き方は、app-api が docs へ渡す非同期の参照にする（`page_read` の秘密の参照も非同期にする）。参加の行が tombstone の channel の鍵は返さない。
   - lease の無い channel・過去の世代にも、今と同じく応える。起動時・endpoint の作り直しで秘密を登録し直さない。
-- 登録簿に残るのは、account 同期の replica と、一時の秘密（参加の前の招待の preview、世代の追加の検証中）だけ。一時の秘密は、参加・検証の成否によらず外す。
+- 登録簿に残るのは、account 同期の replica と、一時の秘密（参加の前の招待の preview、行にする前の新しい世代）だけ。一時の秘密は、成否によらず外す（成功のときは行の commit の後）。
 - endpoint の作り直しで docs が新しくなったら、参照も入れ直す。`MemoryDocsSync` の private の確認も同じ参照を使う。
 
 #### 読む範囲（AC-4b）
@@ -181,13 +184,13 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 | 操作 | 読むもの |
 | --- | --- |
-| 点の参照（書込み・共有・索引の依頼・Dome の locator・remote read の現在の世代、handoff の redeem の既知の世代の確認） | メモリ。無ければ参加の行と世代の鍵の行を key で 1 件ずつ |
+| 点の参照（書込み・共有・索引の依頼・Dome の locator・remote read の現在の世代） | メモリ。無ければ参加の行と世代の鍵の行を key で 1 件ずつ |
 | 保存の gate（`active_content_scope_generation`） | メモリだけ。lease の無い channel（上限 64 を超えて参加しているもの）の内容は保存しない |
 | 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
 | 過去の bucket の読み出し、Dome の書込みの anchor | (channel id, 開始時刻) の索引で、bucket に掛かる世代を新しい順に 8 件まで |
 | 遅れた参加者への grant の直前の世代 | (channel id, 開始時刻) の索引で 1 件 |
 | live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みと、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
-| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ）。view の `archived_epoch_ids` は欄を残し、新しい順に 8 件まで |
+| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ）。view の `archived_epoch_ids` は欄を残し、現在の世代より前に始まった世代を新しい順に 8 件まで（本人の別の端末から届いて、まだ現在の世代になっていない新しい世代は含めない） |
 | owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
 | rendezvous、Dome の context | メモリ（lease のある channel）だけ。lease の無い channel は含めない |
 | 退会 | その channel の世代の鍵の行を page で読みながら、replica の参照を外す |
