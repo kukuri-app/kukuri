@@ -2,6 +2,7 @@
 //! （#1215 W2 AC-2、ADR 0058 §5）。relay だけの経路と、QUIC over WebRTC DataChannel の custom path の両方で確かめる。
 //! reload は、node と cache を止めてから、同じ account の database を開き直した新しい node で表す。
 //! 中断・書込みの失敗・破損で未完了を完成と扱わず、保護した内容を残したまま非保護分を固定の窓で回収する（W2 AC-3）。
+//! Web の blob-service も取得 gate の前提（local-only・ephemeral・保護と cache の境界）を保つ（W2 AC-4）。
 //! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer` から実行する。
 
 use std::sync::Arc;
@@ -503,6 +504,48 @@ async fn a_transfer_abandoned_midway_stores_nothing_and_a_retry_completes() {
     })
     .await
     .expect("the reservations are returned");
+    session.stop().await.expect("stop");
+    delete_database(&account).await.expect("delete");
+}
+
+/// Web の blob-service も取得 gate の前提を保つ（W2 AC-4）。状態確認と手元の読み出しは remote から取らず、取得は
+/// 一時 bytes で、呼出元が gate を確かめて置くまで保存しない。置いた remote の内容は回収の対象で、本人の書込みは
+/// 保護される。
+#[wasm_bindgen_test]
+async fn the_blob_service_keeps_the_local_only_ephemeral_and_protection_boundaries() {
+    let native = native().await.expect("native peer");
+    let account = account("gates");
+    let session = start(&native, &account, false).await.expect("start");
+    session.learn(&native).await.expect("learn");
+    let blobs = &session.blobs;
+    let status =
+        |hash: BlobHash| async move { blobs.local_blob_status(&hash).await.expect("status") };
+
+    assert_eq!(status(native.blob.clone()).await, BlobStatus::Missing);
+    let local = blobs.fetch_local_blob(&native.blob).await;
+    assert_eq!(local.expect("local"), None);
+    let fetched = blobs.fetch_blob(&native.blob).await;
+    let fetched = fetched.expect("fetch").expect("native blob");
+    assert_eq!(fetched, blob_e2e::blob("native"));
+    let display = blobs.prepare_display_fetch(&native.blob).await;
+    let displayed = display.expect("display").await.expect("display fetch");
+    assert_eq!(displayed, Some(blob_e2e::blob("native")));
+    assert_eq!(status(native.blob.clone()).await, BlobStatus::Missing);
+    let memory = session.node.read_local_blob(native.blob.as_str()).await;
+    assert_eq!(memory.expect("memory store"), None);
+
+    blobs.put_remote_blob(fetched, MIME).await.expect("store");
+    assert_eq!(status(native.blob.clone()).await, BlobStatus::Available);
+    let own = blobs.put_blob(blob_e2e::blob("gates"), MIME).await;
+    let own = own.expect("own").hash;
+    // cache の容量をすべて予約すると、remote の内容は回収され、本人の書込みは残る。
+    let mut all = session.cache.empty_remote_cache_reservation();
+    let capacity = session.cache.remote_cache_capacity();
+    let reserved = session.cache.reserve_remote_cache_bytes(&mut all, capacity);
+    assert!(reserved.await.expect("reserve"));
+    assert_eq!(status(native.blob.clone()).await, BlobStatus::Missing);
+    assert_eq!(status(own).await, BlobStatus::Available);
+    drop(all);
     session.stop().await.expect("stop");
     delete_database(&account).await.expect("delete");
 }
