@@ -353,7 +353,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 周期処理を新設しない（ADR 0055 §6）。契機は ADR 0055 の受信と同じ。
   - account の lease の開始（起動・import・切替）、endpoint の世代の変化（復帰）、日の境界（UTC）: 本人の端末の候補（account の hint topic の rendezvous の候補、最大 4）それぞれから取得する。lease の開始の後に、hint を 1 回送る（offline の間の自分の変更を、online の端末に読ませる）。
   - hint を受けたとき: hint の端末 ID の端末から取得する（届かなければ、中継した peer から読む）。
-  - rendezvous の応答に、前回の応答に無かった本人の端末が現れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、gossip の候補は rendezvous の応答の後にしか入らない。そこで、新しく現れた端末から、gossip の合流を待たずに rendezvous の候補（endpoint ID と addr hint）で直接取得する。同じ端末が続く応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
+  - rendezvous の応答に、どの CN の前回の応答にも無かった本人の端末が現れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、gossip の候補は rendezvous の応答の後にしか入らない。そこで、新しく現れた端末から、gossip の合流を待たずに rendezvous の候補（endpoint ID と addr hint）で直接取得する。
+    - 前回の応答は CN ごとに持つ（CN の数 × 応答の上限）。同じ端末が続く応答と、その端末の居ない別の CN の応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
+    - account の lease の task の作り直し（起動・復帰）で前回の応答を忘れ、次の応答に居る端末から 1 回読む。
 - hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。

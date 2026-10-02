@@ -660,7 +660,8 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
         endpoint_id: "device-a".into(),
         addr_hint: None,
     }];
-    b.account_sync_peers_joined(topic.as_str(), &peers).await;
+    b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
+        .await;
     until(|status| !status.no_peers).await;
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while trusted(&b).await != authors {
@@ -670,9 +671,33 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     .await
     .expect("the appeared device is fetched from");
 
-    // 同じ端末が続く応答では読み直さない。
+    // 同じ端末が続く応答と、その端末の居ない別の CN の応答では読み直さない（CN ごとの更新で繰り返さない）。
     a_docs.work();
-    b.account_sync_peers_joined(topic.as_str(), &peers).await;
+    for _ in 0..2 {
+        b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
+            .await;
+        b.account_sync_peers_joined("cn-2", topic.as_str(), &[])
+            .await;
+    }
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(a_docs.work(), (0, 0, 0));
+
+    // 復帰（task の作り直し）の後は、次の応答に居る端末から 1 回読む。
+    let more = trust(&a, 1).await;
+    let mut authors = authors;
+    authors.extend(more);
+    authors.sort();
+    b.restart_scope_subscription(&ScopeKey::AccountSync(
+        keys.derive_account_sync().hint_topic().as_str().to_string(),
+    ))
+    .await;
+    b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
+        .await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while trusted(&b).await != authors {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("after the task is rebuilt, the device is fetched from again");
 }

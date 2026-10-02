@@ -64,11 +64,11 @@ pub(crate) struct AccountSyncState {
     fetch: std::sync::Mutex<FetchResults>,
 }
 
-/// 前回の rendezvous の応答の本人の端末と、まだ取得していない新しく現れた端末。応答ごとに置き換えるので、応答の
-/// 大きさ（CN の上限）を超えない。
+/// CN ごとの前回の rendezvous の応答の本人の端末と、まだ取得していない新しく現れた端末。CN ごとに応答で置き換える
+/// ので、CN の数 × 応答の上限を超えない。task の作り直し（起動・復帰）で空にする。
 #[derive(Default)]
 struct RendezvousPeers {
-    last: BTreeSet<String>,
+    last: BTreeMap<String, BTreeSet<String>>,
     pending: Vec<kukuri_transport::SeedPeer>,
 }
 
@@ -547,6 +547,7 @@ impl AppService {
     /// §10。応答ごとの再読込みはしない）。
     pub async fn account_sync_peers_joined(
         &self,
+        source: &str,
         topic: &str,
         peers: &[kukuri_transport::SeedPeer],
     ) {
@@ -564,16 +565,40 @@ impl AppService {
             .rendezvous
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // どの CN の前回の応答にも居なかった端末だけが「現れた」端末（片方の CN にだけ居る端末で繰り返さない）。
         let appeared = peers
             .iter()
-            .filter(|peer| !rendezvous.last.contains(&peer.endpoint_id))
+            .filter(|peer| {
+                !rendezvous
+                    .last
+                    .values()
+                    .any(|seen| seen.contains(&peer.endpoint_id))
+                    && !rendezvous
+                        .pending
+                        .iter()
+                        .any(|pending| pending.endpoint_id == peer.endpoint_id)
+            })
             .cloned()
             .collect::<Vec<_>>();
-        rendezvous.last = peers.iter().map(|peer| peer.endpoint_id.clone()).collect();
+        rendezvous.last.insert(
+            source.to_string(),
+            peers.iter().map(|peer| peer.endpoint_id.clone()).collect(),
+        );
         if !appeared.is_empty() {
-            rendezvous.pending = appeared;
+            rendezvous.pending.extend(appeared);
             state.peers.notify_one();
         }
+    }
+
+    /// task の作り直し（起動・復帰）で、rendezvous の前回の応答を忘れる。新しい gossip には候補がまだ無いので、次の
+    /// 応答に居る端末から 1 回読む。
+    pub(crate) fn forget_account_sync_rendezvous(&self) {
+        *self
+            .services
+            .account_sync
+            .rendezvous
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = RendezvousPeers::default();
     }
 
     /// rendezvous に新しく現れた本人の端末から取得する。

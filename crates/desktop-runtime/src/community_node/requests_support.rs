@@ -535,7 +535,7 @@ impl DesktopRuntime {
             // account の hint topic なら、新しく現れた本人の端末から差分を取る(起動・復帰の時点では gossip の候補が
             // まだ無い。ADR 0061 §10)。
             self.app_service
-                .account_sync_peers_joined(topic, &peers)
+                .account_sync_peers_joined(base_url, topic, &peers)
                 .await;
             self.iroh_stack
                 .transport
