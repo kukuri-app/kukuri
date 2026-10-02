@@ -353,6 +353,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 周期処理を新設しない（ADR 0055 §6）。契機は ADR 0055 の受信と同じ。
   - account の lease の開始（起動・import・切替）、endpoint の世代の変化（復帰）、日の境界（UTC）: 本人の端末の候補（account の hint topic の rendezvous の候補、最大 4）それぞれから取得する。lease の開始の後に、hint を 1 回送る（offline の間の自分の変更を、online の端末に読ませる）。
   - hint を受けたとき: hint の端末 ID の端末から取得する（届かなければ、中継した peer から読む）。
+  - rendezvous の応答で本人の端末の候補を account の hint topic へ入れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、候補は rendezvous の応答の後にしか入らない。そこで、候補が入ったら上の契機と同じ取得を行う。rendezvous の更新は既存の owner の仕事で、周期処理を新設しない。
 - hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
@@ -375,7 +376,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 - 採用済みの状態は、取得を待たずに使う。
 - 未同期は、次のどれか。これを有界に読める状態として返す（未書込みの索引の 1 件の有無、作り直しの行、相手ごとの取得の結果）。表示は W8（#1220）。
-  - 本人の端末の候補が無い。
+  - 本人の端末の候補が無い（候補が入った契機の取得か、いずれかの相手からの取得の成功で下りる）。
   - 最後の取得が失敗した。
   - 読み残しがある（相手の cursor が、最後に読んだ head より手前、または周回の途中）。
   - 送信待ちがある。

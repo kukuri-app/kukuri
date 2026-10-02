@@ -57,6 +57,9 @@ pub(crate) struct AccountSyncState {
     write: tokio::sync::Mutex<()>,
     /// 書込みが成功したら、lease の task に送り直しと hint の送信をさせる（利用者の操作の経路で送信を待たない）。
     pub(super) changed: tokio::sync::Notify,
+    /// rendezvous で本人の端末の候補が入ったら、lease の task に契機の取得をさせる（起動・復帰の時点では候補が
+    /// まだ無い）。
+    pub(super) peers: tokio::sync::Notify,
     fetch: std::sync::Mutex<FetchResults>,
 }
 
@@ -396,6 +399,7 @@ impl AppService {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if result.is_ok() {
             fetch.failed.remove(device_id);
+            fetch.no_candidates = false;
         } else {
             fetch.failed.insert(device_id.to_string());
         }
@@ -520,6 +524,20 @@ impl AppService {
             }
         }
         self.publish_account_sync_hint().await;
+    }
+
+    /// rendezvous の応答で、本人の端末の候補を account の hint topic へ入れたとき（desktop-runtime が呼ぶ）。lease の
+    /// task が契機の取得を行う（ADR 0061 §10）。
+    pub async fn account_sync_peers_joined(&self, topic: &str) {
+        let hint_topic = self
+            .services
+            .keys
+            .derive_account_sync()
+            .hint_topic()
+            .clone();
+        if topic == kukuri_core::wire::hint_topic_id(&hint_topic).as_str() {
+            self.services.account_sync.peers.notify_one();
+        }
     }
 
     /// hint を受けたとき: 書いた端末から取得し、届かなければ中継した peer から読む。

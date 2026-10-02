@@ -3,7 +3,10 @@
 //! 休止した履歴を 10 倍にしても 1 回の取得の仕事が増えないこと。
 
 use super::*;
-use kukuri_core::{ChannelAudienceKind, CreatePrivateChannelInput, TopicId};
+use kukuri_core::{
+    AccountSyncItem, AccountSyncItemKey, ChannelAudienceKind, ChannelId, CreatePrivateChannelInput,
+    TopicId,
+};
 use kukuri_store::SqliteStore;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -15,6 +18,9 @@ struct DeviceDocs {
     /// 0 になったら読取りが失敗する（相手が離れた）。
     reads_left: Arc<AtomicUsize>,
     reads: Arc<AtomicUsize>,
+    /// 読んだ record の値の bytes と、書込みの回数。
+    bytes: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
     remote: Arc<std::sync::Mutex<Option<Arc<dyn DocsSync>>>>,
 }
 
@@ -25,6 +31,8 @@ impl DeviceDocs {
             writes_down: Arc::default(),
             reads_left: Arc::new(AtomicUsize::new(usize::MAX)),
             reads: Arc::default(),
+            bytes: Arc::default(),
+            writes: Arc::default(),
             remote: Arc::default(),
         }
     }
@@ -41,6 +49,20 @@ impl DeviceDocs {
 
     fn reads(&self) -> usize {
         self.reads.swap(0, Ordering::SeqCst)
+    }
+
+    /// (読取り、読んだ bytes、書込み) を数え直す。
+    fn work(&self) -> (usize, usize, usize) {
+        (
+            self.reads.swap(0, Ordering::SeqCst),
+            self.bytes.swap(0, Ordering::SeqCst),
+            self.writes.swap(0, Ordering::SeqCst),
+        )
+    }
+
+    fn counted(&self, records: &[DocRecord]) {
+        let bytes = records.iter().map(|record| record.value.len()).sum();
+        self.bytes.fetch_add(bytes, Ordering::SeqCst);
     }
 
     fn reachable(&self, reads: usize) {
@@ -80,6 +102,7 @@ impl DocsSync for DeviceDocs {
             !self.writes_down.load(Ordering::SeqCst),
             "the device storage is failing"
         );
+        self.writes.fetch_add(1, Ordering::SeqCst);
         self.inner.apply_doc_op(replica_id, op).await
     }
     async fn query_replica_with_policy(
@@ -100,9 +123,12 @@ impl DocsSync for DeviceDocs {
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
         self.read()?;
-        self.inner
+        let records = self
+            .inner
             .query_replica_exact_bounded(replica_id, key, limit, policy)
-            .await
+            .await?;
+        self.counted(&records);
+        Ok(records)
     }
     async fn query_replica_keys(
         &self,
@@ -134,9 +160,12 @@ impl DocsSync for DeviceDocs {
         policy: DocFetchPolicy,
     ) -> Result<Option<DocRecord>> {
         self.read()?;
-        self.inner
+        let record = self
+            .inner
             .query_replica_by_author(replica_id, docs_author, key, policy)
-            .await
+            .await?;
+        self.counted(record.as_slice());
+        Ok(record)
     }
     async fn subscribe_replica(
         &self,
@@ -393,25 +422,130 @@ async fn a_channel_joined_on_one_device_is_joined_on_the_other() {
     );
 }
 
-/// 休止した履歴を 10 倍にしても、新しい 1 件の取得の読取りは増えない。
+/// 休止した channel・履歴を 10 倍にしても、新しい 1 件の取得の読取りの回数と bytes は増えない（変更の窓の seq の
+/// 桁がそろう規模で比べる。seq は 100 と 991）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn one_change_fetch_does_not_grow_with_idle_history() {
-    let mut reads = Vec::new();
-    for idle in [20, 200] {
+async fn one_change_fetch_does_not_grow_with_idle_channels_or_history() {
+    let mut work = Vec::new();
+    for idle in [33, 330] {
         let keys = generate_keys();
         let (a, a_docs) = memory_device(&keys, "device-a").await;
         let (b, b_docs) = memory_device(&keys, "device-b").await;
         b_docs.reading_from(&a_docs);
         trust(&a, idle).await;
+        // 休止した channel（参加の版と世代の鍵）。
+        for index in 0..idle {
+            let channel = ChannelId::new(format!("idle-{index:04}"));
+            a.write_account_sync_item(&AccountSyncItem::edit(
+                AccountSyncItemKey::ChannelMembership {
+                    channel_id: channel.clone(),
+                },
+                1,
+                None,
+            ))
+            .await
+            .expect("idle membership");
+            a.write_account_sync_item(
+                &AccountSyncItem::channel_epoch(
+                    &channel,
+                    "epoch-1-x",
+                    1,
+                    serde_json::to_value(PrivateChannelEpochCapability {
+                        epoch_id: "epoch-1-x".into(),
+                        namespace_secret_hex: hex::encode([1_u8; 32]),
+                    })
+                    .expect("epoch"),
+                )
+                .expect("epoch item"),
+            )
+            .await
+            .expect("idle epoch");
+        }
         b.fetch_account_sync_from("device-a")
             .await
             .expect("catch up");
         trust(&a, 1).await;
-        a_docs.reads();
+        a_docs.work();
         b.fetch_account_sync_from("device-a").await.expect("fetch");
-        reads.push(a_docs.reads());
+        let (reads, bytes, _) = a_docs.work();
+        work.push((reads, bytes));
     }
-    assert_eq!(reads[0], reads[1]);
+    assert_eq!(work[0], work[1]);
+}
+
+/// 送り直し: 書けた行を 10 倍にしても、1 件の送り直しの読み書きは増えない。1 page（64 件）を超える送信待ちは、
+/// 索引が空になるまで続けて送る。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resend_work_does_not_grow_and_continues_past_a_page() {
+    let mut work = Vec::new();
+    for written in [10, 100] {
+        let (a, a_docs) = memory_device(&generate_keys(), "device-a").await;
+        trust(&a, written).await;
+        a_docs.writes_down.store(true, Ordering::SeqCst);
+        trust(&a, 1).await;
+        a_docs.writes_down.store(false, Ordering::SeqCst);
+        a_docs.work();
+        a.resend_account_sync_items().await.expect("resend");
+        let (reads, _, writes) = a_docs.work();
+        work.push((reads, writes));
+    }
+    assert_eq!(work[0], work[1]);
+
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = memory_device(&keys, "device-b").await;
+    b_docs.reading_from(&a_docs);
+    a_docs.writes_down.store(true, Ordering::SeqCst);
+    let authors = trust(&a, 70).await;
+    a_docs.writes_down.store(false, Ordering::SeqCst);
+    a.resend_account_sync_items().await.expect("resend");
+    assert!(
+        !a.account_sync_status()
+            .await
+            .expect("status")
+            .pending_writes
+    );
+    b.fetch_account_sync_from("device-a").await.expect("fetch");
+    assert_eq!(trusted(&b).await, authors);
+}
+
+/// cursor の上限（自分を除いて 16 相手）で cursor を消された相手とは、周回で追い付く。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_device_whose_cursor_was_evicted_catches_up_by_a_cycle() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = memory_device(&keys, "device-b").await;
+    b_docs.reading_from(&a_docs);
+    let mut authors = trust(&a, 2).await;
+    b.fetch_account_sync_from("device-a").await.expect("first");
+    let store = &b.services.projection_store;
+    for index in 0..kukuri_store::ACCOUNT_SYNC_CURSOR_LIMIT {
+        store
+            .put_account_sync_cursor(
+                &kukuri_store::AccountSyncCursor {
+                    device_id: format!("device-{index:02}"),
+                    seq: 1,
+                    head: 1,
+                    cycle_prefix: None,
+                    cycle_head: 0,
+                    updated_at: Utc::now().timestamp_millis(),
+                },
+                "device-b",
+            )
+            .await
+            .expect("newer cursor");
+    }
+    assert!(
+        store
+            .get_account_sync_cursor("device-a")
+            .await
+            .expect("cursor")
+            .is_none()
+    );
+    authors.extend(trust(&a, 1).await);
+    authors.sort();
+    b.fetch_account_sync_from("device-a").await.expect("cycle");
+    assert_eq!(trusted(&b).await, authors);
 }
 
 /// 契機の取得: 本人の端末の候補が無ければ未同期を示し、作り直し（自分の replica の周回）は 1 回で終わる。
@@ -456,4 +590,89 @@ async fn a_hint_makes_the_other_device_fetch() {
     })
     .await
     .expect("the hint makes the other device fetch");
+}
+
+/// 本人の端末の候補を返す hint の transport（rendezvous の応答で入る候補を、試験が後から足す）。
+#[derive(Clone)]
+struct CandidateHints {
+    inner: Arc<FakeTransport>,
+    peers: Arc<std::sync::Mutex<Vec<kukuri_transport::SeedPeer>>>,
+}
+
+#[async_trait]
+impl HintTransport for CandidateHints {
+    async fn subscribe_hints(&self, topic: &TopicId) -> Result<kukuri_transport::HintStream> {
+        self.inner.subscribe_hints(topic).await
+    }
+    async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()> {
+        self.inner.unsubscribe_hints(topic).await
+    }
+    async fn publish_hint(&self, topic: &TopicId, hint: GossipHint) -> Result<()> {
+        self.inner.publish_hint(topic, hint).await
+    }
+    async fn topic_read_candidates(&self, _: &TopicId) -> Result<Vec<kukuri_transport::SeedPeer>> {
+        Ok(self.peers.lock().expect("peers").clone())
+    }
+}
+
+/// 起動・復帰の時点では本人の端末の候補がまだ無い。rendezvous で候補が入ったら、その端末から取得し、未同期の
+/// 「候補なし」を下ろす（#1218 AC-5b 監査 B-1）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_devices_found_after_start_are_fetched_from() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let b_docs = DeviceDocs::new();
+    b_docs.reading_from(&a_docs);
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("device-b", FakeNetwork::default()));
+    let hints = CandidateHints {
+        inner: transport.clone(),
+        peers: Arc::default(),
+    };
+    let b = app_service_from_dependencies(
+        store.clone(),
+        store,
+        transport,
+        Arc::new(hints.clone()),
+        Arc::new(b_docs.clone()),
+        Arc::new(MemoryBlobService::default()),
+        keys.clone(),
+    );
+    b.start_account_sync().await.expect("account sync");
+    let wait = |until: &'static str| {
+        let b = &b;
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let status = b.account_sync_status().await.expect("status");
+                    let done = match until {
+                        "no peers" => status.no_peers,
+                        _ => !status.no_peers,
+                    };
+                    if done {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect(until);
+        }
+    };
+    wait("no peers").await;
+    let authors = trust(&a, 2).await;
+    *hints.peers.lock().expect("peers") = vec![kukuri_transport::SeedPeer {
+        endpoint_id: "device-a".into(),
+        addr_hint: None,
+    }];
+    let topic = kukuri_core::wire::hint_topic_id(keys.derive_account_sync().hint_topic());
+    b.account_sync_peers_joined(topic.as_str()).await;
+    wait("peers").await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while trusted(&b).await != authors {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the joined device is fetched from");
 }
