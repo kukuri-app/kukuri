@@ -384,6 +384,34 @@ fn epoch_row(epoch: &str) -> PrivateChannelEpochRow {
     }
 }
 
+/// 参加の行の無い channel の鍵の行だけを足せる。同じ行は足さない（native の store と同じ意味。#1218 AC-4c）。
+#[wasm_bindgen_test]
+async fn a_key_row_without_a_channel_is_added_once() {
+    let cache = IndexedDbCache::start(&account_id(), None)
+        .await
+        .expect("cache");
+    assert!(
+        cache
+            .put_private_channel_epoch(&epoch_row("epoch-9"))
+            .await
+            .unwrap()
+    );
+    let mut again = epoch_row("epoch-9");
+    again.sealed_secret = vec![1];
+    assert!(!cache.put_private_channel_epoch(&again).await.unwrap());
+    assert_eq!(
+        cache
+            .get_private_channel_epoch("channel-1", "epoch-9")
+            .await
+            .unwrap(),
+        Some(epoch_row("epoch-9"))
+    );
+    assert_eq!(
+        cache.get_private_channel_by_id("channel-1").await.unwrap(),
+        None
+    );
+}
+
 #[wasm_bindgen_test]
 async fn a_cache_reclaim_keeps_keys_versions_and_device_rows() {
     let account = account_id();

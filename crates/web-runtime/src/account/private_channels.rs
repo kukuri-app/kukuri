@@ -76,6 +76,25 @@ impl PrivateChannelKeyStore for IndexedDbCache {
         .await
     }
 
+    /// 参加の行の無い channel の世代の鍵の行だけを足す。既にあれば何もしない。
+    async fn put_private_channel_epoch(&self, epoch: &PrivateChannelEpochRow) -> Result<bool> {
+        let epoch = epoch.clone();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Strict)?;
+            let id = epoch_key(&epoch.channel_id, &epoch.epoch_id);
+            if rows::get::<PrivateChannelEpochRow>(&tx, PRIVATE_EPOCHS, &id)
+                .await?
+                .is_some()
+            {
+                return Ok(false);
+            }
+            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+            tx.commit().await?;
+            Ok(true)
+        })
+        .await
+    }
+
     async fn get_private_channel(&self, channel_key: &str) -> Result<Option<PrivateChannelRow>> {
         let channel_key = channel_key.to_owned();
         self.run(move |db| async move {
