@@ -4,12 +4,11 @@
     all(target_family = "wasm", not(test)),
     warn(clippy::disallowed_methods)
 )]
-// wasm では runtime と host をまだ組み立てない（native だけの構築を外した残り）。Web の構築を足す W1 AC-5 で外す。
-#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 mod accounts;
 mod attachments;
 #[cfg(not(target_family = "wasm"))]
 mod backup;
+mod command;
 mod community_node;
 mod discovery;
 mod host;
@@ -46,6 +45,16 @@ pub use backup::{
     preview_device_backup, recover_interrupted_restore, rollback_device_restore,
     rollback_pending_device_restore, validate_prepared_device_restore,
 };
+pub use command::{
+    COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext,
+    PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE, PostRetryView, SCOPE_LIMIT_REACHED_CODE,
+    STALE_RUNTIME_CODE, UNSUPPORTED_PLATFORM_CODE, dispatch_command, dispatched_commands,
+    map_error,
+};
+/// 通報の送信の HTTP（web-runtime の browser の試験が、転送の拒否を確かめる）。
+#[cfg(target_family = "wasm")]
+#[doc(hidden)]
+pub use community_node::post_report;
 pub use community_node::{
     AcceptCommunityNodeConsentsRequest, AuthorTrustGate, AuthorTrustGateRequest,
     AuthorTrustGateResult, CommunityNodeAdmissionRejection, CommunityNodeAdmissionRejectionCode,
@@ -93,14 +102,17 @@ pub use host::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
     persist_restore_activation_phase, recover_device_restore_before_startup,
-    require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
+    restore_startup_action,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use host::{
     ClientProfile, ClientProfileKind, ProfileError, ProfileErrorKind, ProfileLease, gui_profile,
     resolve_cli_profile,
 };
-pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
+pub use host::{
+    NON_READY_COMMAND_ALLOWLIST, RuntimeBuilder, admit_command, require_runtime_operation_ready,
+    runtime_access_allowed,
+};
 pub use identity::{load_endpoint_secret, save_endpoint_secret};
 pub use kukuri_app_api::SessionDisplayRequest;
 pub use kukuri_app_api::{
@@ -109,6 +121,7 @@ pub use kukuri_app_api::{
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 pub use requests::CreateAccountRequest;
+pub use stack::{NodeSource, StackStore};
 #[cfg(target_family = "wasm")]
 pub use storage::install_platform_storage;
 pub use storage::{ClientStorage, KeyringUnavailable};

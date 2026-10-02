@@ -41,9 +41,7 @@ use kukuri_core::{
 use kukuri_docs_sync::{DocQuery, DocsSync};
 #[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
-use kukuri_transport::{
-    DhtDiscoveryOptions, DiscoveryMode, TransportNetworkConfig, TransportRelayConfig,
-};
+use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
 use tokio::sync::Mutex;
 
 use crate::attachments::{
@@ -246,6 +244,7 @@ async fn load_gossip_subscription_state(
     serde_json::from_str(&raw).context("failed to decode gossip subscription state")
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn validate_persisted_runtime_state(
     db_path: &Path,
     mode: IdentityStorageMode,
@@ -273,6 +272,7 @@ pub(crate) async fn validate_persisted_runtime_state(
     Ok(())
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn validate_private_channel_namespace_secret(secret: &str) -> Result<()> {
     let secret = secret.trim();
     if secret.len() != 64 || !secret.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -296,6 +296,22 @@ async fn persist_gossip_subscription_state(
         encoded.as_str(),
     )
     .await
+}
+
+/// 保存した Community Node の設定。無ければ `initial` を正規化して保存する（初回の起動）。
+async fn community_node_config_or_initial(
+    db_path: &Path,
+    initial: Option<CommunityNodeConfig>,
+) -> Result<CommunityNodeConfig> {
+    if let Some(config) = load_community_node_config_from_file(db_path).await? {
+        return Ok(config);
+    }
+    let Some(initial) = initial else {
+        return Ok(CommunityNodeConfig::default());
+    };
+    let config = normalize_community_node_config(initial)?;
+    save_community_node_config(db_path, &config).await?;
+    Ok(config)
 }
 
 // runtime の構築（永続の node・SQLite・旧 store）は native だけ。Web の構築は web-runtime と一緒に足す（W1 AC-5）。
@@ -356,17 +372,8 @@ impl DesktopRuntime {
         initial_community_node_config: Option<CommunityNodeConfig>,
     ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
-        let community_node_config = match load_community_node_config_from_file(&db_path).await? {
-            Some(config) => config,
-            None if initial_community_node_config.is_some() => {
-                let config = normalize_community_node_config(
-                    initial_community_node_config.expect("checked as present"),
-                )?;
-                save_community_node_config(&db_path, &config).await?;
-                config
-            }
-            None => CommunityNodeConfig::default(),
-        };
+        let community_node_config =
+            community_node_config_or_initial(&db_path, initial_community_node_config).await?;
         // 保存済みの Node relay / seed は、公開 policy とサーバ同意を確認する前の
         // 起動入力へ渡さない。設定と resolved_urls は保持し、node ごとに確かめてから足す。
         // #1221 R5-I: node は新しい store で動く。旧 `iroh-data` の endpoint secret を写して endpoint ID を保つ。
@@ -389,6 +396,94 @@ impl DesktopRuntime {
             Some(store.clone()),
         )
         .await?;
+        let writer_switched_at = store.writer_switched_at().await?;
+        Self::assemble(
+            db_path,
+            identity_mode,
+            store.clone(),
+            store,
+            legacy_store,
+            iroh_stack,
+            discovery_config,
+            community_node_config,
+            writer_switched_at,
+        )
+        .await
+    }
+
+    /// Web の runtime（ADR 0056 §2・§8）。保存先は呼び出し元（web-runtime）が開いた account の store。node はメモリの
+    /// store で、保存した endpoint の秘密鍵（無ければ作って保存する）と WebRTC の transport を渡して開く。DHT は使えない。
+    /// 旧 store は無いので、新形式の writer で始める。
+    pub async fn open_in_memory_node<S>(
+        db_path: PathBuf,
+        store: Arc<S>,
+        webrtc: Option<Arc<kukuri_webrtc_transport::WebRtcTransport>>,
+        initial_community_node_config: CommunityNodeConfig,
+    ) -> Result<Self>
+    where
+        S: kukuri_store::AccountStore + crate::stack::StackStore + 'static,
+    {
+        let storage = crate::storage::platform_storage();
+        let secret_key = match crate::identity::load_endpoint_secret(storage, &db_path).await? {
+            Some(secret) => iroh::SecretKey::from_bytes(&secret),
+            None => {
+                let secret_key = iroh::SecretKey::generate();
+                crate::identity::save_endpoint_secret(storage, &db_path, &secret_key.to_bytes())
+                    .await?;
+                secret_key
+            }
+        };
+        let community_node_config =
+            community_node_config_or_initial(&db_path, Some(initial_community_node_config)).await?;
+        let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
+        let iroh_stack = SharedIrohStack::open(
+            crate::stack::NodeSource::Memory {
+                secret_key: Box::new(secret_key),
+                webrtc,
+            },
+            TransportNetworkConfig::default(),
+            &discovery_config,
+            &[],
+            DhtDiscoveryOptions::disabled(),
+            TransportRelayConfig::default(),
+            store.clone(),
+        )
+        .await?;
+        Self::assemble(
+            db_path,
+            IdentityStorageMode::from_env(),
+            store,
+            #[cfg(not(target_family = "wasm"))]
+            Arc::new(SqliteStore::connect_memory().await?),
+            #[cfg(not(target_family = "wasm"))]
+            None,
+            iroh_stack,
+            discovery_config,
+            community_node_config,
+            Some(chrono::Utc::now().timestamp_millis()),
+        )
+        .await
+    }
+
+    /// native と Web の起動の共通部分: 鍵、docs author、AppService の再開、通知の event の転送。
+    #[cfg_attr(
+        not(target_family = "wasm"),
+        expect(
+            clippy::too_many_arguments,
+            reason = "native だけの保存先（SQLite・旧 store）を cfg の引数で渡すため"
+        )
+    )]
+    async fn assemble(
+        db_path: PathBuf,
+        identity_mode: IdentityStorageMode,
+        store: Arc<dyn kukuri_store::AccountStore>,
+        #[cfg(not(target_family = "wasm"))] sqlite: Arc<SqliteStore>,
+        #[cfg(not(target_family = "wasm"))] legacy_store: Option<kukuri_iroh_node::LegacyStore>,
+        iroh_stack: SharedIrohStack,
+        discovery_config: DiscoveryConfig,
+        community_node_config: CommunityNodeConfig,
+        writer_switched_at: Option<i64>,
+    ) -> Result<Self> {
         let keys = load_or_create_keys(&db_path, identity_mode).await?;
         // docs へ何かを書く前に、書き込みの名義をアカウントの docs author にする(ADR 0053 §1)。
         iroh_stack
@@ -417,7 +512,7 @@ impl DesktopRuntime {
             AppService::from_handles_with_metaverse_budget(services, metaverse_budget)?
                 .with_status_changes(status_changes.clone());
         // #1221 R5-H: 保存済みの切替状態は、最初の書込みより前に渡す(再起動で旧 writer へ戻らない)。
-        if let Some(switched_at) = store.writer_switched_at().await? {
+        if let Some(switched_at) = writer_switched_at {
             app_service.switch_writer(switched_at);
         }
         // 取り下げの書込みの outbox を、積んだ時の宛先へ再開する。
@@ -452,6 +547,7 @@ impl DesktopRuntime {
         }
         app_service.restore_joined_private_channels().await?;
         // #1221 R5-G: 参加状態は索引の順に並ばないため、起動時と変更時に現 epoch の記録の移行を先頭から読み直す。
+        #[cfg(not(target_family = "wasm"))]
         let private_migration_dirty = app_service.private_channel_rows_changed();
         let gossip_subscription_state =
             load_gossip_subscription_state(&db_path, identity_mode).await?;
@@ -506,9 +602,9 @@ impl DesktopRuntime {
             author_keys,
             db_path,
             identity_mode,
-            store: store.clone(),
+            store,
             #[cfg(not(target_family = "wasm"))]
-            sqlite: store,
+            sqlite,
             iroh_stack,
             discovery_config: Arc::new(Mutex::new(discovery_config)),
             community_node_config: Arc::new(Mutex::new(community_node_config)),
@@ -522,9 +618,13 @@ impl DesktopRuntime {
             sync_status_observer_task: Mutex::new(None),
             #[cfg(test)]
             sync_status_delta_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(not(target_family = "wasm"))]
             legacy_store_task: Mutex::new(None),
+            #[cfg(not(target_family = "wasm"))]
             protected_migration_guard: Mutex::new(()),
+            #[cfg(not(target_family = "wasm"))]
             private_migration_dirty,
+            #[cfg(not(target_family = "wasm"))]
             legacy_store: Mutex::new(legacy_store.map(Arc::new)),
             notification_event_task: StdMutex::new(Some(notification_event_task)),
             content_advisory_synthesis_enabled: Arc::new(AtomicBool::new(
@@ -547,8 +647,8 @@ impl DesktopRuntime {
         let db_path = db_path.as_ref().to_path_buf();
         let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
         let dht_options = match discovery_config.mode {
-            DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
-            DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
+            kukuri_transport::DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
+            kukuri_transport::DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
         };
         Self::new_with_config_and_identity_and_discovery(
             &db_path,

@@ -8,14 +8,18 @@
 //! - `POST /fetch`（2 行目は blob の hash）: browser から blob を取得し、`storage_e2e::describe` の 1 行を返す。
 //! - `POST /docs-read`（2 行目は replica）: browser の replica を `storage_e2e::read_newest` で読み、custom path で
 //!   record の埋め草以上を受け取ったか（`via_custom`）を添える。
+//! - `POST /report`・`POST /report-redirect`・`POST /report-count`: 通報の送信の試験（#1214 W1 AC-5）。`/report` は
+//!   受けた数を数え、`/report-redirect` は `/report` へ転送する。`/report-count` は受けた数を返す。
 //!
 //! native だけで動く。
 
 #![cfg(not(target_family = "wasm"))]
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context as _, Result};
+use axum::http::{StatusCode, header};
 use axum::{extract::State, routing::post};
 use iroh::{EndpointAddr, RelayUrl, TransportAddr, endpoint::Connection};
 use kukuri_blob_service::{BlobService, IrohBlobService};
@@ -35,6 +39,7 @@ struct Peer {
     blobs: IrohBlobService,
     docs: IrohDocsSync,
     blob: BlobHash,
+    reports: AtomicUsize,
 }
 
 #[tokio::main]
@@ -67,6 +72,9 @@ async fn main() -> Result<()> {
         .route("/info", post(info))
         .route("/fetch", post(fetch))
         .route("/docs-read", post(docs_read))
+        .route("/report", post(report).options(preflight))
+        .route("/report-redirect", post(report_redirect).options(preflight))
+        .route("/report-count", post(report_count))
         .with_state(Arc::new(Peer {
             node,
             relay,
@@ -74,8 +82,33 @@ async fn main() -> Result<()> {
             blobs,
             docs,
             blob,
+            reports: AtomicUsize::new(0),
         }));
     signaling_fixture::serve(app).await
+}
+
+/// 通報は JSON の本文を送るので、browser は送る前に CORS の確認をする。
+async fn preflight() -> impl axum::response::IntoResponse {
+    [
+        (header::ACCESS_CONTROL_ALLOW_METHODS, "POST"),
+        (header::ACCESS_CONTROL_ALLOW_HEADERS, "content-type"),
+    ]
+}
+
+async fn report(State(peer): State<Arc<Peer>>) -> &'static str {
+    peer.reports.fetch_add(1, Ordering::SeqCst);
+    "{}"
+}
+
+async fn report_redirect() -> impl axum::response::IntoResponse {
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, "/report")],
+    )
+}
+
+async fn report_count(State(peer): State<Arc<Peer>>) -> String {
+    peer.reports.load(Ordering::SeqCst).to_string()
 }
 
 async fn info(State(peer): State<Arc<Peer>>) -> String {

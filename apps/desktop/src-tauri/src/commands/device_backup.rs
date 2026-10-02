@@ -22,10 +22,7 @@ use crate::state::{
 
 const PROGRESS_EVENT: &str = "kukuri://device-backup-progress";
 
-async fn rebuild_runtime(
-    state: &DesktopState,
-    db_path: PathBuf,
-) -> Result<(), CommandError> {
+async fn rebuild_runtime(state: &DesktopState, db_path: PathBuf) -> Result<(), CommandError> {
     let runtime = build_runtime(db_path).await.map_err(|error| {
         CommandError::from(format!("failed to restart desktop runtime: {error}"))
     })?;

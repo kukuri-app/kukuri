@@ -383,6 +383,7 @@ pub async fn set_active_account(app_data_dir: &Path, account_id: &str) -> Result
 
 /// 検証とstagingを完了した復元先をregistryへ登録し、active accountにする。
 /// directoryとidentityの設置はbackup moduleが先に完了させる。
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn register_restored_account(
     app_data_dir: &Path,
     pubkey: &str,
@@ -420,6 +421,10 @@ pub(crate) async fn register_restored_account(
 }
 
 fn create_account_dir(db_path: &Path) -> Result<()> {
+    // Web の保存は path を key にするので、dir は無い。
+    if cfg!(target_family = "wasm") {
+        return Ok(());
+    }
     let dir = db_path
         .parent()
         .ok_or_else(|| anyhow!("invalid account db path `{}`", db_path.display()))?;

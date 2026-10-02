@@ -3938,6 +3938,8 @@ dependencies = [
  "chrono",
  "futures-util",
  "image",
+ "iroh",
+ "js-sys",
  "keyring",
  "kukuri-app-api",
  "kukuri-blob-service",
@@ -3947,6 +3949,7 @@ dependencies = [
  "kukuri-iroh-node",
  "kukuri-store",
  "kukuri-transport",
+ "kukuri-webrtc-transport",
  "n0-future",
  "reqwest",
  "serde",
@@ -3956,6 +3959,9 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "web-time",
 ]
 

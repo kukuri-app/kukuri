@@ -58,12 +58,15 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - W1 AC-4d の実装: desktop-runtime は wasm32 で build できる（CI の wasm32 の clippy に入る）。native だけにしたもの:
   - device backup・restore と restore の調停（`backup`・`host/restore_lifecycle`）、旧 store の退役と保護データの移行
   - profile の dir と lock（`host/profile`）、他の account の DB を読む表示（`account_display`）、file path を受け取る media の読み出し（`get_blob_media_file`）
-  - 通報の送信（ブラウザの fetch は転送を止められず、通報本文を別の host へ再送しない保証（#703）を保てない）
-  - runtime と stack の組み立て（永続の node・SQLite の候補の台帳。`DesktopRuntime::new`・`from_env`、`SharedIrohStack::new`・`rebuild`）と、それを呼ぶ host の起動・切替・作成・logout
-- W1 AC-5 へ引き継ぐもの:
-  - Web の runtime と stack の組み立て。それまで wasm では lib.rs で `dead_code`・`unused_imports` を許し、wasm での stack の作り直しは error を返す。
-  - Community Node の HTTP の期限。ブラウザの reqwest の client には期限が無い。
-  - 上の native だけの command を、capability（「この platform では使えない」）として返すこと。
+  - 通報の送信（ブラウザの fetch は転送を止められず、通報本文を別の host へ再送しない保証（#703）を保てない）。W1 AC-5 で Web でも送れるようにした（下記）
+  - runtime と stack の組み立て（永続の node・SQLite の候補の台帳。`DesktopRuntime::new`・`from_env`、`SharedIrohStack::new`・`rebuild`）と、それを呼ぶ host の起動・切替・作成・logout。W1 AC-5 で Web の組み立てを足した（下記）
+- W1 AC-5 の実装（2026-10-03）:
+  - Web の runtime と stack の組み立て: `SharedIrohStack::open` が node の出所（`NodeSource::Persistent`（native）・`NodeSource::Memory`（保存した endpoint の秘密鍵と WebRTC の transport を渡すメモリの node））と候補・cache の store（`StackStore`。Web は `IndexedDbCache`）を受ける。作り直しも同じ出所で行う。`DesktopRuntime::open_in_memory_node` が Web の runtime を作る（旧 store は無いので新形式の writer で始め、discovery は保存した設定、無ければ static peer）。
+  - host の起動・アカウントの作成・切替・logout・作り直しは、platform の組み立ての手順（`RuntimeBuilder`。native は `NativeRuntimeBuilder`、Web は web-runtime の IndexedDB とメモリの node）を受ける共通の処理にした（`ClientHost::start_if_consented_with`・`from_runtime_with_builder`）。
+  - wasm の lib.rs の `dead_code`・`unused_imports` の許可を外した。native だけの処理（restore の登録・backup の検証）は cfg で native にした。
+  - Community Node の HTTP は、応答の本文まで 10 秒の期限で打ち切る（native は client の期限、Web は request ごとの期限。`CommunityNodeHttpClient`）。
+  - 通報の送信は、HTTP の 1 回（`post_report`）だけを platform で分けた。native は reqwest で転送を追わず 3xx を `REPORT_REDIRECT_REJECTED` にする。Web はブラウザの fetch を `redirect: "error"` と期限（`AbortSignal.timeout`）で呼び、転送を失敗にする（本文を転送先へ送らない）。送信先の構成・origin・同意の確認と応答の解釈は共通。
+  - native だけの command（device backup・media file・他の account の表示）は、Web の dispatch で `unsupported_platform` を返す。
 
 ### 3. 依存と feature
 
@@ -113,6 +116,12 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
   `web-runtime` の `invoke` と Tauri の invoke handler の両方がこの表を使い、Tauri 側の約 140 の委譲 wrapper を消す（W1 AC-5）。
   起動中・終了中の command の受付の判定は、W1 AC-3 で host（`admit_command`）へ移した（src-tauri の `invoke_gate.rs` は Tauri の invoke をこの判定へ通すだけ）。Tauri 側に処理がある command のうち Web でも要るもの（起動・同意・アカウント切替の調停）は `desktop-runtime` の host へ移す（W1 AC-5）。Tauri 専用の処理（updater・tray・window・OS 通知・file dialog）は `src-tauri` に残す。
 - Web で使えない command は、共通の error code で「この platform では使えない」と返し、frontend が capability として判別できるようにする（W1 AC-5）。
+- W1 AC-5 の実装（2026-10-03）:
+  - dispatch 表は `desktop-runtime` の `command.rs`。`DesktopRuntime` へ委譲する表と、起動の状態・アカウントの操作（作成・秘密鍵の取込み・切替・logout・初期 profile・一覧）の表の 2 つで、どちらも command 名・引数の key（Tauri と同じ camelCase）・結果の型を持つ。表に無い command は `unsupported_platform`、呼ぶ前と後で host の世代が違う委譲の結果は `stale_runtime` にする。引数の無い呼出しは空の object と同じに扱う。項目ごとの future は heap に置く（全項目の状態を 1 つの future に持つと debug build の stack を使い切る）。
+  - アカウントの操作の調停（排他・終了中の確認・起動の状態の遷移・切替後の後始末）は、platform の状態を `ClientGate`（host・起動の状態・排他の lock・終了中の確認・切替後の hook）で受ける共通の関数にした。Tauri は app の state（切替後の hook は OS 通知の既読の位置）、Web は web-runtime の状態で実装する。
+  - アプリの同意（`get_app_consent_status`・`accept_app_consents`）は、端末の復元の再開（native だけ）と起動の手順が platform で違うので、検証・記録の共通の関数を platform 側の command から呼ぶ。
+  - Tauri の invoke handler は、受付の判定（`admit_command`）の後に表の command を表へ渡す。委譲の wrapper と identity・起動の状態・投稿の再試行の wrapper を消した（Tauri に残るのは Tauri 専用と native だけの command）。CLI の対応表の試験は、Tauri の登録と表の和を GUI の入口として数える。
+  - web-runtime の JS API: `start(config)`（`config.communityNodeConfig` は初回の起動で保存する Community Node の設定。省略可）は、端末の保存（`BrowserStorage`）を入れ、同意があればアクティブなアカウント（無ければ作る）の runtime を始めて、起動の状態を返す。`invoke` は受付の判定の後に同意の command か表を呼び、結果か `{ code, message }` の error を返す。`listen` の callback は `shutdown` で外れ、止めた後の event を受けない。`shutdown` は行っている操作の終わりを待ってから runtime を止める。
 
 ### 7. 起動・停止・アカウント切替
 

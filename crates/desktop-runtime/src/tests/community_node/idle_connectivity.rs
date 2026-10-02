@@ -24,7 +24,9 @@ async fn idle_actor_repair_does_not_replace_an_unreadable_canonical_store() {
         .shutdown()
         .await
         .expect("close before fault injection");
-    let root = &runtime.iroh_stack.root;
+    let crate::stack::NodeSource::Persistent(root) = &runtime.iroh_stack.source else {
+        unreachable!("the native runtime opens a persistent node")
+    };
     let docs = root.join("docs.redb");
     let original = std::fs::read(&docs).expect("original docs");
     let damaged = b"unreadable canonical store";

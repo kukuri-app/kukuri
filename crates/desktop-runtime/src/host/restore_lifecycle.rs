@@ -53,21 +53,6 @@ impl ClientOperationState {
     }
 }
 
-/// runtimeへ触れてよいのは、公開済みruntimeとstartup statusの両方がReadyの時だけ。
-pub fn runtime_access_allowed(status: &ClientStartupStatus) -> bool {
-    matches!(status, ClientStartupStatus::Ready)
-}
-
-pub fn require_runtime_operation_ready(status: &ClientStartupStatus) -> Result<(), String> {
-    if runtime_access_allowed(status) {
-        Ok(())
-    } else {
-        Err(format!(
-            "desktop runtime operation requires Ready startup state; current state is {status:?}"
-        ))
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreStartupAction {
     Normal,
@@ -230,6 +215,7 @@ mod tests {
         consent_required_status, failed_startup_status as failed_status, load_app_consent_store,
         reset_app_consent_at_path, save_app_consent_store,
     };
+    use crate::host::{require_runtime_operation_ready, runtime_access_allowed};
 
     #[test]
     fn runtime_access_is_allowed_only_for_ready() {

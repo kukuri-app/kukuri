@@ -1,29 +1,112 @@
 use super::*;
 
-pub(crate) fn community_node_http_client() -> Result<Client> {
+/// CN の HTTP の期限（応答の本文を含む）。
+const COMMUNITY_NODE_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// CN の HTTP client。接続したまま応答を返さない相手が node の session の lock を持ち続けないよう、応答の本文まで
+/// 期限で打ち切る。native は client の期限、Web（ブラウザの reqwest は client の期限を持たない）は request ごとの期限。
+pub(crate) struct CommunityNodeHttpClient(Client);
+
+impl CommunityNodeHttpClient {
+    pub(crate) fn get(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+        self.request(reqwest::Method::GET, url)
+    }
+
+    pub(crate) fn post(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+        self.request(reqwest::Method::POST, url)
+    }
+
+    pub(crate) fn delete(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
+        self.request(reqwest::Method::DELETE, url)
+    }
+
+    pub(crate) fn request(
+        &self,
+        method: reqwest::Method,
+        url: impl reqwest::IntoUrl,
+    ) -> reqwest::RequestBuilder {
+        let request = self.0.request(method, url);
+        #[cfg(target_family = "wasm")]
+        let request = request.timeout(COMMUNITY_NODE_HTTP_TIMEOUT);
+        request
+    }
+}
+
+pub(crate) fn community_node_http_client() -> Result<CommunityNodeHttpClient> {
     let builder = Client::builder();
-    // Includes response bodies. A connected socket that never completes its
-    // response must not retain the node's session lock indefinitely.
-    // ブラウザの reqwest の client には期限が無い。Web の期限は runtime を組み立てる W1 AC-5 で入れる。
     #[cfg(not(target_family = "wasm"))]
     let builder = builder
         .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10));
+        .timeout(COMMUNITY_NODE_HTTP_TIMEOUT);
     builder
         .build()
+        .map(CommunityNodeHttpClient)
         .context("failed to build community-node http client")
 }
 
-/// 通報送信専用の HTTP クライアント(#703)。
+/// 通報を POST し、応答の status と本文（読めなければ空）を返す(#703)。
 ///
-/// 通報本文(詳細・連絡先)が転送応答で別ホストへ再送されないよう、転送を追跡しない。
-/// 3xx は呼び出し側で `REPORT_REDIRECT_REJECTED` として扱う。ブラウザの fetch は転送を止められないので native だけ。
+/// 通報本文(詳細・連絡先)が転送応答で別ホストへ再送されないよう、転送を追跡しない。native は 3xx を返し、呼び出し側が
+/// `REPORT_REDIRECT_REJECTED` として扱う。
 #[cfg(not(target_family = "wasm"))]
-pub(crate) fn community_node_report_http_client() -> Result<Client> {
-    Client::builder()
+pub(crate) async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, Vec<u8>)> {
+    let response = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .context("failed to build community-node report http client")
+        .context("failed to build community-node report http client")?
+        .post(endpoint)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    let body = response.bytes().await.map(|bytes| bytes.to_vec());
+    Ok((status, body.unwrap_or_default()))
+}
+
+/// Web はブラウザの fetch を `redirect: "error"` で呼び、転送を失敗にする（ブラウザの reqwest は転送を止められない）。
+/// 応答の本文まで期限で打ち切る。JS の object は 1 つの task の中だけで持つ（ADR 0056 §4）。
+#[cfg(target_family = "wasm")]
+pub async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, Vec<u8>)> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let js = |error: wasm_bindgen::JsValue| anyhow!("{error:?}");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let endpoint = endpoint.to_string();
+    n0_future::task::spawn(async move {
+        let result = async {
+            let init = web_sys::RequestInit::new();
+            init.set_method("POST");
+            init.set_redirect(web_sys::RequestRedirect::Error);
+            let headers = web_sys::Headers::new().map_err(js)?;
+            headers
+                .set("content-type", "application/json")
+                .map_err(js)?;
+            init.set_headers(&headers);
+            init.set_body(&js_sys::Uint8Array::from(body.as_slice()));
+            let timeout = COMMUNITY_NODE_HTTP_TIMEOUT.as_millis() as u32;
+            init.set_signal(Some(&web_sys::AbortSignal::timeout_with_u32(timeout)));
+            let window = web_sys::window().context("no window")?;
+            let response: web_sys::Response =
+                JsFuture::from(window.fetch_with_str_and_init(&endpoint, &init))
+                    .await
+                    .map_err(js)?
+                    .dyn_into()
+                    .map_err(js)?;
+            let body = match response.array_buffer() {
+                Ok(buffer) => JsFuture::from(buffer)
+                    .await
+                    .map(|bytes| js_sys::Uint8Array::new(&bytes).to_vec())
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            Ok((response.status(), body))
+        }
+        .await;
+        let _ = sender.send(result);
+    });
+    receiver.await.context("the report request task stopped")?
 }
 
 #[derive(Debug)]

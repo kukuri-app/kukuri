@@ -119,7 +119,10 @@ pub(crate) async fn resolve_discovery_config_from_env(db_path: &Path) -> Result<
     if let Some(stored) = load_discovery_config_from_file(db_path).await? {
         return Ok(DiscoveryConfig::from_stored(stored, false));
     }
-
+    // ブラウザには UDP が無く、DHT が成り立たない（ADR 0056 §3）。
+    if cfg!(target_family = "wasm") {
+        return Ok(DiscoveryConfig::static_peer_default());
+    }
     Ok(DiscoveryConfig::seeded_dht_default())
 }
 

@@ -13,6 +13,7 @@ base64.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
+iroh.workspace = true
 image.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
@@ -27,6 +28,7 @@ kukuri-cn-protocol = { path = "../cn-protocol" }
 kukuri-core = { path = "../core" }
 kukuri-docs-sync = { path = "../docs-sync" }
 kukuri-iroh-node = { path = "../iroh-node" }
+kukuri-webrtc-transport = { path = "../webrtc-transport" }
 kukuri-store = { path = "../store" }
 kukuri-transport = { path = "../transport" }
 ts-rs = { workspace = true, optional = true }
@@ -47,6 +49,20 @@ ts = [
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
+
+# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）。
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys = "0.3.106"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = [
+  "AbortSignal",
+  "Headers",
+  "RequestInit",
+  "RequestRedirect",
+  "Response",
+  "Window",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { workspace = true, features = ["v1"] }

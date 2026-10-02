@@ -1,16 +1,10 @@
 pub mod app_consent;
 pub mod background_notifications;
-pub mod community_node;
 pub mod developer_logs;
 pub mod device_backup;
-pub mod direct_messages;
 pub mod external_url;
 pub mod identity;
 pub mod link_preview;
-pub mod live_game;
 pub mod os_notification;
 pub mod posts;
-pub mod profile;
-pub mod reactions;
-pub mod startup;
 pub mod system_locale;

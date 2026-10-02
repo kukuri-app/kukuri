@@ -5,6 +5,7 @@
 
 mod account;
 mod actor;
+mod client;
 mod content_cache;
 mod idb;
 mod rows;
@@ -14,6 +15,8 @@ mod vault;
 mod account_tests;
 #[cfg(test)]
 mod browser_tests;
+#[cfg(test)]
+mod client_tests;
 
 pub use content_cache::IndexedDbCache;
 pub use idb::StorageFailure;

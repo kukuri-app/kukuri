@@ -1,30 +1,24 @@
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
+use crate::media_previews::MediaPreviewFiles;
+#[cfg(test)]
+pub(crate) use kukuri_desktop_runtime::{
+    AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
+    APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AppConsentDocumentRecord, AppConsentStore,
+    ClientStartupErrorKind as DesktopStartupErrorKind, LEGAL_BUNDLE_VERSION,
+    age_attestation_satisfied, age_attestation_status, app_consent_documents_satisfied,
+    app_consent_documents_status, app_consent_path, current_unix_seconds, save_app_consent_store,
+};
 use kukuri_desktop_runtime::{
     AppBuildProfile, ClientHost, DesktopRuntime, default_app_data_dir,
     resolve_app_data_dir_from_env, resolve_db_path_from_env,
 };
 pub(crate) use kukuri_desktop_runtime::{
-    ClientStartupError as StartupError,
-    ClientStartupState as DesktopStartupState, ClientStartupStatus as DesktopStartupStatus,
-    app_consent_satisfied, consent_required_status,
+    ClientStartupError as StartupError, ClientStartupState as DesktopStartupState,
+    ClientStartupStatus as DesktopStartupStatus, app_consent_satisfied, consent_required_status,
     failed_startup_status as failed_status, load_app_consent_store, reset_app_consent_at_path,
 };
-#[cfg(test)]
-pub(crate) use kukuri_desktop_runtime::{
-    AGE_ATTESTATION_VERSION, APP_LEGAL_DOCUMENTS, AgeAttestationRecord, AppConsentDocumentRecord,
-    age_attestation_satisfied, age_attestation_status, app_consent_documents_status,
-    current_unix_seconds, save_app_consent_store,
-    APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_EFFECTIVE_DATE, AppConsentStore,
-    ClientStartupErrorKind as DesktopStartupErrorKind, LEGAL_BUNDLE_VERSION,
-    app_consent_documents_satisfied, app_consent_path,
-};
-use serde::Serialize;
 use tauri::{Emitter, Manager};
-use crate::media_previews::MediaPreviewFiles;
 
 /// `manage` 済みのTauri stateでは共有hostの参照だけを保持する。
 /// account runtimeの所有・差し替え・停止は`ClientHost`へ集約し、このlockは
@@ -37,8 +31,7 @@ pub(crate) struct DesktopState {
 
 impl DesktopState {
     pub(crate) fn runtime(&self) -> Arc<DesktopRuntime> {
-        self.host()
-            .runtime()
+        self.host().runtime()
     }
 
     pub(crate) fn host(&self) -> Arc<ClientHost> {
@@ -51,167 +44,8 @@ impl DesktopState {
     }
 }
 
-/// Tauri コマンドの構造化エラー封筒(WP-C3)。invoke 側には
-/// `{"code":"...","message":"..."}` の JSON で届く。message は従来の平文エラーと
-/// 同一で、code は機械判定用(ドメイン別 code の拡充は Q6 の領分)。
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct CommandError {
-    pub(crate) code: String,
-    pub(crate) message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) status: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) retry_after_seconds: Option<u64>,
-}
-
-pub(crate) const COMMAND_FAILED_CODE: &str = "command_failed";
-pub(crate) const SCOPE_LIMIT_REACHED_CODE: &str = "SCOPE_LIMIT_REACHED";
-pub(crate) const PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE: &str =
-    "PRIVATE_CHANNEL_CONTROLLER_PENDING";
-
-impl From<anyhow::Error> for CommandError {
-    fn from(error: anyhow::Error) -> Self {
-        Self {
-            code: COMMAND_FAILED_CODE.to_string(),
-            message: error_message(error),
-            status: None,
-            retry_after_seconds: None,
-        }
-    }
-}
-
-impl From<String> for CommandError {
-    fn from(message: String) -> Self {
-        Self {
-            code: COMMAND_FAILED_CODE.to_string(),
-            message,
-            status: None,
-            retry_after_seconds: None,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeIndexQueryError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeIndexQueryError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: error.retry_after_seconds,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeIndexingRequestError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeIndexingRequestError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: error.retry_after_seconds,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeTesterFeedbackError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeTesterFeedbackError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: error.retry_after_seconds,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeTrustRelationError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeTrustRelationError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: None,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeContentAdvisoryLookupError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeContentAdvisoryLookupError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: None,
-        }
-    }
-}
-
-impl From<kukuri_desktop_runtime::CommunityNodeReportError> for CommandError {
-    fn from(error: kukuri_desktop_runtime::CommunityNodeReportError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            status: error.status,
-            retry_after_seconds: None,
-        }
-    }
-}
-
-pub(crate) fn map_error(error: anyhow::Error) -> CommandError {
-    if let Some(rejection) = error.downcast_ref::<kukuri_core::MetaverseResourceRejection>() {
-        return CommandError {
-            code: rejection.code(),
-            message: rejection.to_string(),
-            status: Some(
-                if rejection.reason == kukuri_core::MetaverseResourceRejectionReason::RateExceeded {
-                    429
-                } else {
-                    422
-                },
-            ),
-            retry_after_seconds: None,
-        };
-    }
-    // 購読する scope の上限(#1221 R2-C)。画面は code で判別し、操作を取り消して説明する。
-    if error
-        .downcast_ref::<kukuri_desktop_runtime::ScopeLimitReached>()
-        .is_some()
-    {
-        return CommandError {
-            code: SCOPE_LIMIT_REACHED_CODE.to_string(),
-            message: error_message(error),
-            status: None,
-            retry_after_seconds: None,
-        };
-    }
-    // 鍵更新の担当端末でないための保留(#1219 W6)。画面は code で判別してダイアログを出す(W8)。
-    if error
-        .downcast_ref::<kukuri_desktop_runtime::PrivateChannelControllerPending>()
-        .is_some()
-    {
-        return CommandError {
-            code: PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE.to_string(),
-            message: error_message(error),
-            status: None,
-            retry_after_seconds: None,
-        };
-    }
-    if let Some(request_error) =
-        error.downcast_ref::<kukuri_desktop_runtime::DomeHostingRequestError>()
-    {
-        return CommandError {
-            code: request_error.code.clone(),
-            message: request_error.message.clone(),
-            status: Some(request_error.status),
-            retry_after_seconds: None,
-        };
-    }
-    CommandError::from(error)
-}
-
-fn error_message(error: anyhow::Error) -> String {
-    format!("{error:#}")
-}
+/// command の構造化エラー封筒と code の対応は desktop-runtime の dispatch 表と共用する（W1 AC-5）。
+pub(crate) use kukuri_desktop_runtime::{CommandError, map_error};
 
 /// build の種別ごとの既定 app data dir。開発ビルドは配布版と別の dir を使う(#1105)。
 /// `KUKURI_APP_DATA_DIR` / `KUKURI_INSTANCE` はこの dir を基準に解決する。
@@ -227,7 +61,8 @@ pub(crate) fn base_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf
 }
 
 pub(crate) fn resolve_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    resolve_app_data_dir_from_env(&base_app_data_dir(app_handle)?).map_err(error_message)
+    resolve_app_data_dir_from_env(&base_app_data_dir(app_handle)?)
+        .map_err(|error| format!("{error:#}"))
 }
 
 /// アプリ同意など端末レベルのファイルの命名基準となる flat db path。
@@ -235,7 +70,7 @@ pub(crate) fn resolve_app_data_dir(app_handle: &tauri::AppHandle) -> Result<Path
 /// 状態(同意・年齢申告)はアカウントに紐づけないため、従来どおり
 /// `<app_data>/kukuri.db` を基準にした兄弟ファイル名を使い続ける。
 pub(crate) fn resolve_db_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    resolve_db_path_from_env(&base_app_data_dir(app_handle)?).map_err(error_message)
+    resolve_db_path_from_env(&base_app_data_dir(app_handle)?).map_err(|error| format!("{error:#}"))
 }
 
 pub(crate) async fn build_desktop_state(
@@ -256,23 +91,24 @@ pub(crate) async fn build_desktop_state(
         host: std::sync::RwLock::new(host),
         app_data_dir,
         media_previews: MediaPreviewFiles::new(
-            app_handle.path().app_cache_dir().ok().map(|dir| dir.join("kukuri-display")),
+            app_handle
+                .path()
+                .app_cache_dir()
+                .ok()
+                .map(|dir| dir.join("kukuri-display")),
         ),
     })
 }
 
 /// backup／restore中に一時停止したruntimeの後継を構築する。
 /// 常駐タスクは`ClientHost::replace_runtime`がevent購読順序を保って開始する。
-pub(crate) async fn build_runtime(
-    db_path: PathBuf,
-) -> Result<Arc<DesktopRuntime>, StartupError> {
-    ClientHost::build_detached_runtime(db_path)
-        .await
+pub(crate) async fn build_runtime(db_path: PathBuf) -> Result<Arc<DesktopRuntime>, StartupError> {
+    ClientHost::build_detached_runtime(db_path).await
 }
 
 #[cfg(test)]
-fn distribution_community_node_config(
-) -> Result<kukuri_desktop_runtime::CommunityNodeConfig, serde_json::Error> {
+fn distribution_community_node_config()
+-> Result<kukuri_desktop_runtime::CommunityNodeConfig, serde_json::Error> {
     kukuri_desktop_runtime::distribution_community_node_config()
 }
 
@@ -292,19 +128,8 @@ fn spawn_runtime_event_bridge(app_handle: &tauri::AppHandle, host: &Arc<ClientHo
     let mut rx = host.subscribe_events();
     let app = app_handle.clone();
     tauri::async_runtime::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let _ = app.emit("kukuri://runtime-event", &event);
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    let _ = app.emit(
-                        "kukuri://runtime-event",
-                        &kukuri_desktop_runtime::RuntimeEvent::AdultMediaLabelEvicted { hash: None },
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
+        while let Some(event) = rx.next().await {
+            let _ = app.emit("kukuri://runtime-event", &event);
         }
     });
 }
@@ -325,85 +150,6 @@ mod tests {
         let config = distribution_community_node_config().expect("distribution config");
         assert_eq!(config.nodes.len(), 1);
         assert!(config.nodes[0].base_url.starts_with("https://"));
-    }
-
-    // IPC エラー封筒の wire 形状(WP-C3)。TS 側 normalizeInvokeError と対になる
-    // 同一バイナリ内契約 — 形状を変える場合は両側同時に変更する。
-    #[test]
-    fn command_error_serializes_to_code_message_envelope() {
-        let error = map_error(anyhow::anyhow!("outer").context("inner"));
-        let json = serde_json::to_string(&error).expect("serialize command error");
-        assert_eq!(
-            json,
-            r#"{"code":"command_failed","message":"inner: outer"}"#
-        );
-    }
-
-    #[test]
-    fn scope_limit_is_reported_by_its_code_through_context() {
-        let error = map_error(
-            anyhow::Error::from(kukuri_desktop_runtime::ScopeLimitReached).context("join"),
-        );
-        assert_eq!(error.code, SCOPE_LIMIT_REACHED_CODE);
-    }
-
-    #[test]
-    fn controller_pending_is_reported_by_its_code() {
-        let error = map_error(anyhow::Error::from(
-            kukuri_desktop_runtime::PrivateChannelControllerPending,
-        ));
-        assert_eq!(error.code, PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE);
-    }
-
-    #[test]
-    fn command_error_from_string_preserves_message() {
-        let error = CommandError::from("failed to resolve app data dir: boom".to_string());
-        assert_eq!(error.code, COMMAND_FAILED_CODE);
-        assert_eq!(error.message, "failed to resolve app data dir: boom");
-    }
-
-    #[test]
-    fn community_index_error_serializes_status_and_retry_after() {
-        let error = CommandError::from(kukuri_desktop_runtime::CommunityNodeIndexQueryError {
-            code: "RATE_LIMITED".to_string(),
-            message: "try again later".to_string(),
-            status: Some(429),
-            retry_after_seconds: Some(17),
-        });
-        let json = serde_json::to_string(&error).expect("serialize index error");
-        assert_eq!(
-            json,
-            r#"{"code":"RATE_LIMITED","message":"try again later","status":429,"retry_after_seconds":17}"#
-        );
-    }
-
-    #[test]
-    fn community_indexing_request_error_preserves_stable_conflict_code() {
-        let error = CommandError::from(kukuri_desktop_runtime::CommunityNodeIndexingRequestError {
-            code: "CHANNEL_SECRET_CONFLICT".to_string(),
-            message: "channel capability conflicts with the existing registration".to_string(),
-            status: Some(409),
-            retry_after_seconds: None,
-        });
-        let json = serde_json::to_string(&error).expect("serialize indexing request error");
-        assert_eq!(
-            json,
-            r#"{"code":"CHANNEL_SECRET_CONFLICT","message":"channel capability conflicts with the existing registration","status":409}"#
-        );
-    }
-
-    #[test]
-    fn trust_relation_error_preserves_stable_unavailable_code() {
-        let error = CommandError::from(kukuri_desktop_runtime::CommunityNodeTrustRelationError {
-            code: "RELATION_NOT_FOUND".to_string(),
-            message: "no relation observed for this pair".to_string(),
-            status: Some(404),
-        });
-        let json = serde_json::to_string(&error).expect("serialize trust relation error");
-        assert_eq!(
-            json,
-            r#"{"code":"RELATION_NOT_FOUND","message":"no relation observed for this pair","status":404}"#
-        );
     }
 
     fn record(slug: &str, version: i32, accepted_at: i64) -> AppConsentDocumentRecord {

@@ -31,6 +31,7 @@ async fn real_public_offer_reaches_offscreen_account_from_bounded_app_cache() {
         .unwrap();
     let sender_blob = Arc::new(IrohBlobService::with_account_store(
         sender_stack._node.clone(),
+        sender_store.clone().clone(),
         sender_store.clone(),
     ));
     let recipient_store = Arc::new(MemoryStore::default());
@@ -481,6 +482,7 @@ async fn real_private_offer_reaches_a_member_without_channel_sync() {
         sender_stack.docs_sync.clone(),
         Arc::new(IrohBlobService::with_account_store(
             sender_stack._node.clone(),
+            sender_store.clone().clone(),
             sender_store.clone(),
         )),
         generate_keys(),
