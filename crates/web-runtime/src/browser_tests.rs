@@ -111,11 +111,8 @@ async fn start(native: &Native, account: &str, webrtc: bool) -> Result<Session> 
     node.endpoint().online().await;
     let demand = match &transport {
         Some(_) => {
+            // 需要の接続を受けて、ブラウザの node が交渉を始める（#1422 AC-2）。
             let demand = blob_e2e::demand(&node, native.addr.clone()).await?;
-            node.webrtc_signaling()
-                .context("webrtc")?
-                .connect(native.addr.clone())
-                .await?;
             blob_e2e::on_custom(&demand).await?;
             Some(demand)
         }
