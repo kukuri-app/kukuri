@@ -356,7 +356,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm
 - 共用 crate の wasm32 の clippy は `cargo clippy --target wasm32-unknown-unknown -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport -p kukuri-app-api -p kukuri-metaverse-host -p kukuri-desktop-runtime -p kukuri-web-runtime -- -D warnings`（image では `rustup component add clippy` を先に行う）。
   共用 crate では tokio・std の時刻と task を直接使わず `n0_future`・`web_time` を使う。直接使うと wasm32 の clippy が `disallowed_methods` で止める。
 - W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
-- W2 の IndexedDB の blob の保存と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer`。
+- W2・W3 の IndexedDB の保存（blob と docs の record）と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`。
 
 ### 上流 iroh-blobs の版を上げるとき（ADR 0058 §5、#1215 W2 AC-4）
 iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。
@@ -364,7 +364,7 @@ iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供
 1. root `Cargo.toml` の `iroh-blobs` の版を上げ、`cargo update -p iroh-blobs` で lockfile を更新する。workspace では `default-features = false`、native だけの feature（`fs-store`・`rpc` 等）は `crates/iroh-node/Cargo.toml` の native の節にある。
 2. native の互換: `cargo test -p kukuri-iroh-node -p kukuri-blob-service`（remote の取得・`/kukuri/remote-blob/1`・`FsStore` の読み直し・取得 gate の契約）。
 3. WASM の build: 上の共用 crate の wasm32 の clippy。
-4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
+4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
 
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>

@@ -5,21 +5,28 @@ use crate::replicas::{PostReplicaKind, post_replica_kind};
 use kukuri_iroh_node::{DocReadQuery, DocReadResponse};
 
 impl IrohDocsSync {
+    /// 保存 trait を持つ。Web は IndexedDB の実装を渡し、peer candidate は保存しない（ADR 0056 §5、ADR 0058 §7）。
+    pub fn with_content_cache(node: Arc<IrohDocsNode>, cache: Arc<dyn ContentCacheStore>) -> Self {
+        Self {
+            remote_cache: Some(cache),
+            ..Self::new(node)
+        }
+    }
+
     /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
     #[cfg(not(target_family = "wasm"))]
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
         store: Arc<kukuri_store::SqliteStore>,
     ) -> Self {
-        let mut docs = Self::new(node.clone());
+        let mut docs = Self::with_content_cache(node.clone(), store.clone());
         docs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
             Arc::new(kukuri_transport::BlobPeerHealth::default()),
-            store.clone(),
+            store,
             "docs",
         ));
-        docs.remote_cache = Some(store);
         docs
     }
 

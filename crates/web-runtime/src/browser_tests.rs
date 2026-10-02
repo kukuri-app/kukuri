@@ -3,7 +3,9 @@
 //! reload は、node と cache を止めてから、同じ account の database を開き直した新しい node で表す。
 //! 中断・書込みの失敗・破損で未完了を完成と扱わず、保護した内容を残したまま非保護分を固定の窓で回収する（W2 AC-3）。
 //! Web の blob-service も取得 gate の前提（local-only・ephemeral・保護と cache の境界）を保つ（W2 AC-4）。
-//! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer` から実行する。
+//! docs の自分の record は IndexedDB に保護され、browser↔native の有界な key の一覧・record の読み出しが namespace の
+//! 同期を始めずに成り立ち、読んだ record は手元に保持される（#1216 W3 AC-2、ADR 0058 §7）。
+//! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer` から実行する。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -13,7 +15,8 @@ use anyhow::{Context as _, Result};
 use iroh::endpoint::Connection;
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use kukuri_blob_service::{BlobService, BlobStatus, IrohBlobService};
-use kukuri_core::BlobHash;
+use kukuri_core::{BlobHash, KukuriKeys};
+use kukuri_docs_sync::{DocFetchPolicy, DocsSync, IrohDocsSync};
 use kukuri_iroh_node::{IrohDocsNode, NodeOptions};
 use kukuri_store::{
     ContentCacheStore, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
@@ -26,8 +29,8 @@ use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use crate::IndexedDbCache;
 use crate::content_cache::test_hooks;
 
-#[path = "../tests/support/blob_e2e.rs"]
-mod blob_e2e;
+#[path = "../tests/support/storage_e2e.rs"]
+mod storage_e2e;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -92,6 +95,7 @@ struct Session {
     node: Arc<IrohDocsNode>,
     cache: Arc<IndexedDbCache>,
     blobs: IrohBlobService,
+    docs: IrohDocsSync,
     transport: Option<Arc<WebRtcTransport>>,
     _demand: Option<Connection>,
 }
@@ -109,12 +113,13 @@ async fn start(native: &Native, account: &str, webrtc: bool) -> Result<Session> 
     .await?;
     node.install_remote_cache(cache.clone())?;
     let blobs = IrohBlobService::with_content_cache(node.clone(), cache.clone());
+    let docs = IrohDocsSync::with_content_cache(node.clone(), cache.clone());
     node.endpoint().online().await;
     let demand = match &transport {
         Some(_) => {
             // 需要の接続を受けて、ブラウザの node が交渉を始める（#1422 AC-2）。
-            let demand = blob_e2e::demand(&node, native.addr.clone()).await?;
-            blob_e2e::on_custom(&demand).await?;
+            let demand = storage_e2e::demand(&node, native.addr.clone()).await?;
+            storage_e2e::on_custom(&demand).await?;
             Some(demand)
         }
         None => None,
@@ -123,6 +128,7 @@ async fn start(native: &Native, account: &str, webrtc: bool) -> Result<Session> 
         node,
         cache,
         blobs,
+        docs,
         transport,
         _demand: demand,
     })
@@ -150,7 +156,7 @@ impl Session {
             .fetch_blob(&native.blob)
             .await?
             .context("native blob")?;
-        let line = blob_e2e::describe(&bytes, self.received() - before);
+        let line = storage_e2e::describe(&bytes, self.received() - before);
         self.blobs.put_remote_blob(bytes, MIME).await?;
         Ok(line)
     }
@@ -164,6 +170,12 @@ impl Session {
             u8::from(webrtc)
         );
         signaling_fixture::post("/fetch", &body).await
+    }
+
+    /// native がこの端の replica を読んだ結果。
+    async fn read_back(&self, webrtc: bool) -> Result<String> {
+        let body = format!("{}\n{}", self.node.endpoint().id(), u8::from(webrtc));
+        signaling_fixture::post("/docs-read", &body).await
     }
 
     async fn stop(self) -> Result<()> {
@@ -184,13 +196,13 @@ async fn roundtrip(webrtc: bool) {
     let first = start(&native, &account, webrtc).await.expect("start");
     let own = first
         .blobs
-        .put_blob(blob_e2e::blob(side), MIME)
+        .put_blob(storage_e2e::blob(side), MIME)
         .await
         .expect("own blob")
         .hash;
     assert_eq!(
         first.receive(&native).await.expect("receive"),
-        blob_e2e::describe(&blob_e2e::blob("native"), custom)
+        storage_e2e::describe(&storage_e2e::blob("native"), custom)
     );
     // blob-service の内容は memory の store に残さない（W2 AC-3）。
     for hash in [&own, &native.blob] {
@@ -214,13 +226,13 @@ async fn roundtrip(webrtc: bool) {
         );
         assert_eq!(
             second.blobs.fetch_local_blob(hash).await.expect("read"),
-            Some(blob_e2e::blob(side))
+            Some(storage_e2e::blob(side))
         );
     }
     // native は reload 後の browser から `/kukuri/remote-blob/1` で取得する。
     assert_eq!(
         second.send(&own, webrtc).await.expect("send"),
-        blob_e2e::describe(&blob_e2e::blob(side), custom)
+        storage_e2e::describe(&storage_e2e::blob(side), custom)
     );
     second.stop().await.expect("stop");
     delete_database(&account).await.expect("delete");
@@ -273,7 +285,7 @@ async fn chunks_reservations_and_the_database_are_released() {
     drop(other);
 
     // 保存は 1 MiB の chunk に分かれ、1 回の読み出しも 1 MiB まで。
-    let blob = blob_e2e::blob("chunks");
+    let blob = storage_e2e::blob("chunks");
     let hash = blake3::hash(&blob).to_hex().to_string();
     assert!(
         cache
@@ -371,7 +383,7 @@ async fn a_blob_with_a_missing_chunk_is_not_complete_and_can_be_stored_again() {
     let cache = IndexedDbCache::start(&account, Some(capacity))
         .await
         .expect("open");
-    let blob = blob_e2e::blob("corrupt");
+    let blob = storage_e2e::blob("corrupt");
     let key = hash(&blob);
     cache
         .put_owned_blob("own_blob:corrupt", &key, &blob)
@@ -486,7 +498,7 @@ async fn a_transfer_abandoned_midway_stores_nothing_and_a_retry_completes() {
 
     let bytes = session.blobs.fetch_blob(&native.blob).await;
     let bytes = bytes.expect("retry").expect("native blob");
-    assert_eq!(bytes, blob_e2e::blob("native"));
+    assert_eq!(bytes, storage_e2e::blob("native"));
     session
         .blobs
         .put_remote_blob(bytes, MIME)
@@ -523,17 +535,17 @@ async fn the_blob_service_keeps_the_local_only_ephemeral_and_protection_boundari
     assert_eq!(local.expect("local"), None);
     let fetched = blobs.fetch_blob(&native.blob).await;
     let fetched = fetched.expect("fetch").expect("native blob");
-    assert_eq!(fetched, blob_e2e::blob("native"));
+    assert_eq!(fetched, storage_e2e::blob("native"));
     let display = blobs.prepare_display_fetch(&native.blob).await;
     let displayed = display.expect("display").await.expect("display fetch");
-    assert_eq!(displayed, Some(blob_e2e::blob("native")));
+    assert_eq!(displayed, Some(storage_e2e::blob("native")));
     assert_eq!(status(native.blob.clone()).await, BlobStatus::Missing);
     let memory = session.node.read_local_blob(native.blob.as_str()).await;
     assert_eq!(memory.expect("memory store"), None);
 
     blobs.put_remote_blob(fetched, MIME).await.expect("store");
     assert_eq!(status(native.blob.clone()).await, BlobStatus::Available);
-    let own = blobs.put_blob(blob_e2e::blob("gates"), MIME).await;
+    let own = blobs.put_blob(storage_e2e::blob("gates"), MIME).await;
     let own = own.expect("own").hash;
     // cache の容量をすべて予約すると、remote の内容は回収され、本人の書込みは残る。
     let mut all = session.cache.empty_remote_cache_reservation();
@@ -545,4 +557,118 @@ async fn the_blob_service_keeps_the_local_only_ephemeral_and_protection_boundari
     drop(all);
     session.stop().await.expect("stop");
     delete_database(&account).await.expect("delete");
+}
+
+/// `side` の replica の最新の 2 件を読んだときの 1 行（`storage_e2e::read_newest` の形）。
+fn newest(side: &str, newest: usize, author: &str) -> String {
+    let prefix = storage_e2e::PREFIX;
+    let value = format!("{side}-{newest}");
+    let bytes = value.len() + storage_e2e::PADDING;
+    format!(
+        "{prefix}{newest:04},{prefix}{:04} reached_limit=true value={value} bytes={bytes} author={author} namespace=false",
+        newest - 1
+    )
+}
+
+async fn docs_roundtrip(webrtc: bool) {
+    let native = native().await.expect("native peer");
+    let account = account(if webrtc { "docs-webrtc" } else { "docs-relay" });
+    let session = start(&native, &account, webrtc).await.expect("start");
+    let keys = KukuriKeys::generate();
+    let author = session
+        .docs
+        .use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
+        .await
+        .expect("docs author");
+    let replica = storage_e2e::replica("browser");
+    let prefix = storage_e2e::PREFIX;
+
+    // 自分の record は IndexedDB に保護され、native が有界な reader で読める。
+    storage_e2e::write_records(&session.docs, "browser", 1..=3)
+        .await
+        .expect("write");
+    let key = format!("{prefix}0003");
+    let own = session
+        .cache
+        .get_remote_records(replica.as_str(), &key, Some(&author), 1)
+        .await;
+    assert_eq!(own.expect("own record").len(), 1);
+    let via = format!(" via_custom={webrtc}");
+    let read = session.read_back(webrtc).await.expect("read back");
+    assert_eq!(read, newest("browser", 3, &author) + &via);
+
+    // 履歴を増やしても、同じ要求の読み出しは同じ上限（2 件と 1 件の record）に収まり、手元の一覧も読む行は上限 + 1 まで。
+    storage_e2e::write_records(&session.docs, "browser", 4..=30)
+        .await
+        .expect("write more");
+    let read = session.read_back(webrtc).await.expect("read back");
+    assert_eq!(read, newest("browser", 30, &author) + &via);
+    test_hooks::ROWS_READ.set(0);
+    let held = session
+        .cache
+        .remote_record_keys(replica.as_str(), prefix, true, None, 2)
+        .await;
+    let (held, more) = held.expect("held keys");
+    assert_eq!(held.len(), 2);
+    assert!(more);
+    assert!(test_hooks::ROWS_READ.get() <= 3);
+
+    // native の replica を読むと、確かめた record を IndexedDB に保持し、namespace を作らずに手元で読める。
+    let before = session.received();
+    let read = storage_e2e::read_newest(&session.docs, native.addr.clone(), "native")
+        .await
+        .expect("read native");
+    let native_author = read
+        .split(" author=")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .expect("native author")
+        .to_owned();
+    assert_eq!(read, newest("native", 3, &native_author));
+    let received = session.received() - before;
+    assert_eq!(received >= storage_e2e::PADDING as u64, webrtc);
+    let native_replica = storage_e2e::replica("native");
+    let local = session
+        .docs
+        .query_local_source(&native_replica, &key, Some(&native_author), 1)
+        .await
+        .expect("held record");
+    assert_eq!(local.len(), 1);
+    assert!(String::from_utf8_lossy(&local[0].value).starts_with("native-3."));
+    let namespace = session.docs.has_local_replica(&native_replica).await;
+    assert!(!namespace.expect("namespace"));
+    let offline = session
+        .docs
+        .query_replica_by_author(
+            &native_replica,
+            &native_author,
+            &key,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await;
+    assert!(offline.expect("local only").is_none());
+
+    // 自分の record は保護されているので、容量のすべての予約でも回収されない。
+    let mut all = session.cache.empty_remote_cache_reservation();
+    let capacity = session.cache.remote_cache_capacity();
+    let reserved = session.cache.reserve_remote_cache_bytes(&mut all, capacity);
+    assert!(reserved.await.expect("reserve"));
+    let own = session
+        .cache
+        .get_remote_records(replica.as_str(), &key, Some(&author), 1)
+        .await;
+    assert_eq!(own.expect("own record").len(), 1);
+    drop(all);
+    session.stop().await.expect("stop");
+    delete_database(&account).await.expect("delete");
+}
+
+#[wasm_bindgen_test]
+async fn own_records_are_protected_and_read_both_ways_with_native_over_the_relay() {
+    docs_roundtrip(false).await;
+}
+
+#[wasm_bindgen_test]
+async fn own_records_are_protected_and_read_both_ways_with_native_over_the_webrtc_path() {
+    docs_roundtrip(true).await;
 }
