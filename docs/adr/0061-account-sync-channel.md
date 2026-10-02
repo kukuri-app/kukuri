@@ -156,7 +156,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - Web の vault は capability を持たない（ADR 0059 §1 を改める）。Web の行は cache の database の保護行で、strict の transaction で書き、容量の回収で消さない（ADR 0058 §4）。
 - 書き込みは対象の行だけにする。
   - 参加: 参加の行と、現在の世代の鍵の行。
-  - 世代の追加: 先にその鍵の行を書き、検証（owner の鍵更新の準備、handoff の redeem の policy）を通った後に、参加の行の現在の世代を進める。新しい世代の replica を開くのは、鍵の行を書いた後。
+  - 世代の追加: 検証（owner の鍵更新の準備、handoff の redeem の policy）の間、新しい世代の秘密は招待の preview と同じく docs の登録簿へ一時に入れる。検証を通ったら、その鍵の行と参加の行の現在の世代を 1 transaction で書く。検証を通らない世代の鍵の行は作らない（redeem は今と同じく、次の呼び出しでやり直せる。既知の世代の確認は鍵の行の有無で行う）。
   - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す（その channel の行だけを page で消す）。鍵の行を消してから replica を閉じる（閉じた後に開き直されても、秘密を引けない）。
   - 全件の書き直しをしない。
 - 退会の tombstone と鍵の行は、容量の回収で消さない（§5）。
@@ -166,7 +166,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 参加中の channel の世代の秘密は、docs の登録簿へ入れない。docs が replica の秘密を要するとき（手元で開く、相手からの private の読取りに応える）は、登録簿に無ければ、replica id から (channel id, epoch id) を求め、世代の鍵の行を key で 1 件読む。
   - 引き方は、app-api が docs へ渡す非同期の参照にする（`page_read` の秘密の参照も非同期にする）。参加の行が tombstone の channel の鍵は返さない。
   - lease の無い channel・過去の世代にも、今と同じく応える。起動時・endpoint の作り直しで秘密を登録し直さない。
-- 登録簿に残るのは、account 同期の replica と、参加の前の招待の preview の一時の秘密だけ。preview の一時の秘密は、参加の成否によらず外す。
+- 登録簿に残るのは、account 同期の replica と、一時の秘密（参加の前の招待の preview、世代の追加の検証中）だけ。一時の秘密は、参加・検証の成否によらず外す。
 - endpoint の作り直しで docs が新しくなったら、参照も入れ直す。`MemoryDocsSync` の private の確認も同じ参照を使う。
 
 #### 読む範囲（AC-4b）
@@ -186,7 +186,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
 | 過去の bucket の読み出し、Dome の書込みの anchor | (channel id, 開始時刻) の索引で、bucket に掛かる世代を新しい順に 8 件まで |
 | 遅れた参加者への grant の直前の世代 | (channel id, 開始時刻) の索引で 1 件 |
-| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みと、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
+| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みと、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
 | topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ）。view の `archived_epoch_ids` は欄を残し、新しい順に 8 件まで |
 | owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
 | rendezvous、Dome の context | メモリ（lease のある channel）だけ。lease の無い channel は含めない |
@@ -208,19 +208,20 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - persist の callback（`set_private_channel_capability_persist`）と、registry の書き出し。
   - 参加中の channel の秘密の docs への登録（`register_private_channel_replica_secrets`）。
   - harness の `Vec`（再起動では同じ store を使う）。
-- `PrivateChannelCapability` は、旧 registry の読み込みだけに使う。形の凍結の試験（`capability_registry_snapshot`）は残す。
+- `PrivateChannelCapability` は、旧 registry の読み込みだけに使う。形の凍結の試験（`capability_registry_snapshot`）は残す。`restore_private_channel_capability` は旧 registry の移行の入口として残し、試験も別の端末の状態をこれで作る。
 
 #### DB を失ったとき（2026-10-02 ユーザー判断）
 
 - 行は account の DB に置く。DB の file を失ったら、手元の account 同期の replica（docs の保存で、DB とは別にある）の channel の item から、AC-5 の差分の取得で作り直す。
   - cursor も DB にあるので、最初の page から読む。page は有限で、途中で止まっても再開できる。参加が戻るのは、背景の取得がその item に届いた後。
   - 作り直せるのは replica へ書いた item だけ。書けなかった行・旧版から移した行は、AC-5 の送り直しで書いた後に作り直せる。
+  - 担当の記録は `membership` に含まれない。作り直した行の担当の記録は、W6 が書く `controller` の item から戻る。それまでは担当が不明な channel として、鍵更新を伴う操作を保留する（ADR 0018 §8）。
 - 旧 registry の時の「DB を消しても再起動で参加が戻る」性質は、AC-4b から AC-5 までの間は失われる。
   DB を消して再起動する既存の試験（harness の `private_channel_invite_connectivity` の再起動の step、desktop-runtime の `private_channel_invite_restores_after_restart_without_reimport`・`friend_only_channel_restore_keeps_archived_epoch_history`・`friend_plus_channel_restore_accepts_fresh_share_after_restart`）は、AC-4b で DB を消さない再起動に改め、AC-5 で作り直しを確かめる試験に戻す。
 
 #### channel の item の merge（AC-4c）
 
-- `membership` を書くのは、参加（作成・招待による参加）、明示の退会、明示の再参加のときだけ。世代の追加（鍵更新・handoff の redeem）では書かない。
+- `membership` を書くのは、参加（作成・招待による参加。既に参加中の channel への招待・grant の取り込み直しを含む）、明示の退会、明示の再参加のときだけ。世代の追加（鍵更新・handoff の redeem）では書かない。
   - 値は、参加の行のうち端末に依らない欄（topic id、label、作成者・owner・参加の経路の公開鍵、audience、参加したときの現在の世代の ID）。値が無ければ退会・取消の tombstone。
   - `(updated_at, op_id)` で採る（§4）。明示の再参加は、新しい `updated_at` の値のある版。
 - 参加にするのは、値のある `membership` を採ったときだけ。他の端末の鍵が届いても、`membership` が届くまで参加にしない。
