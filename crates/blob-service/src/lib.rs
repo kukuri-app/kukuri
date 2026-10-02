@@ -528,7 +528,7 @@ impl BlobService for IrohBlobService {
             return self.put_blob(data, mime).await;
         };
         let hash = iroh_blobs::Hash::new(&data);
-        if data.len() as i64 <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES {
+        if data.len() as u64 <= cache.remote_cache_capacity() {
             anyhow::ensure!(
                 cache
                     .put_remote_content("blob", &hash.to_string(), "blob", &data)
