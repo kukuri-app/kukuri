@@ -214,9 +214,9 @@ impl DesktopRuntime {
     pub async fn list_joined_private_channels(
         &self,
         request: ListJoinedPrivateChannelsRequest,
-    ) -> Result<Vec<JoinedPrivateChannelView>> {
+    ) -> Result<JoinedPrivateChannelPage> {
         self.app_service
-            .list_joined_private_channels(request.topic.as_str())
+            .list_joined_private_channels(request.topic.as_str(), request.cursor.as_deref())
             .await
     }
 

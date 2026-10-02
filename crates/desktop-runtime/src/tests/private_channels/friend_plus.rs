@@ -365,9 +365,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let joined_before_restart = runtime_c
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined channels before restart");
+        .expect("joined channels before restart")
+        .items;
     assert_eq!(joined_before_restart.len(), 1);
     assert_eq!(joined_before_restart[0].channel_id, channel.channel_id);
     let restored_epoch_id = joined_before_restart[0].current_epoch_id.clone();
@@ -381,7 +383,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         .await
         .expect("runtime c shutdown timeout");
     drop(runtime_c);
-    delete_sqlite_artifacts(&db_c);
+    // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す試験は AC-5 で戻す(ADR 0061 §9)。
 
     let restarted_c = DesktopRuntime::new_with_config_and_identity(
         &db_c,
@@ -453,9 +455,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let joined_after_restart = restarted_c
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined channels after restart");
+        .expect("joined channels after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(joined_after_restart[0].current_epoch_id, restored_epoch_id);
@@ -718,9 +722,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
             let joined = restarted_c
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.into(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .items;
             let private_timeline = restarted_c
                 .list_timeline(ListTimelineRequest {
                     topic: topic.into(),

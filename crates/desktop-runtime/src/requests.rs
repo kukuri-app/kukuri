@@ -675,6 +675,9 @@ pub struct LeavePrivateChannelRequest {
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct ListJoinedPrivateChannelsRequest {
     pub topic: String,
+    /// 前の page の `next_cursor`。無ければ最初の page。
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

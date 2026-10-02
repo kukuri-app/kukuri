@@ -46,9 +46,11 @@ async fn preview_channel_access_token_is_non_mutating() {
     let joined_before = runtime_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined before preview");
+        .expect("joined before preview")
+        .items;
     assert!(
         joined_before.is_empty(),
         "preview should not require pre-existing joined state"
@@ -65,9 +67,11 @@ async fn preview_channel_access_token_is_non_mutating() {
     let joined_after = runtime_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined after preview");
+        .expect("joined after preview")
+        .items;
     assert!(
         joined_after.is_empty(),
         "preview must not mutate runtime state"
@@ -158,9 +162,11 @@ async fn private_channel_import_without_local_posts_restores_after_restart() {
     let joined_before_restart = runtime_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined before restart");
+        .expect("list joined before restart")
+        .items;
     assert_eq!(joined_before_restart.len(), 1);
     assert_eq!(joined_before_restart[0].channel_id, channel.channel_id);
 
@@ -183,9 +189,11 @@ async fn private_channel_import_without_local_posts_restores_after_restart() {
     let joined_after_restart = restarted_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined after restart");
+        .expect("list joined after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(joined_after_restart[0].label, "no-post-import");
@@ -533,9 +541,11 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
     let joined_before_restart = runtime_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined channels before restart");
+        .expect("list joined channels before restart")
+        .items;
     assert_eq!(joined_before_restart.len(), 1);
     assert_eq!(joined_before_restart[0].channel_id, channel.channel_id);
 
@@ -547,7 +557,7 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
         .expect("runtime b shutdown timeout");
     drop(runtime_a);
     drop(runtime_b);
-    delete_sqlite_artifacts(&db_b);
+    // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す試験は AC-5 で戻す(ADR 0061 §9)。
 
     let restarted_b = DesktopRuntime::new_with_config_and_identity(
         &db_b,
@@ -560,9 +570,11 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
     let joined_after_restart = restarted_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined channels after restart");
+        .expect("list joined channels after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(joined_after_restart[0].label, "core");

@@ -204,6 +204,7 @@ pub async fn list_joined_private_channels(
         .runtime()
         .list_joined_private_channels(request)
         .await
+        .map(|page| page.items)
         .map_err(map_error)
 }
 

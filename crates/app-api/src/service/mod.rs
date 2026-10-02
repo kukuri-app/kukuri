@@ -67,8 +67,7 @@ pub(crate) use kukuri_core::{
 };
 pub(crate) use kukuri_docs_sync::{
     DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync, author_replica_id,
-    private_channel_epoch_replica_id, private_channel_hint_topic, private_channel_replica_id,
-    stable_key, topic_replica_id,
+    private_channel_epoch_replica_id, private_channel_hint_topic, stable_key, topic_replica_id,
 };
 pub(crate) use kukuri_metaverse_host::DomeSessionRuntime;
 pub(crate) use kukuri_store::{
@@ -110,14 +109,15 @@ pub(crate) use crate::views::{
     DirectMessageConversationView, DirectMessageMessageView, DirectMessageStatusView,
     DirectMessageTimelineView, DiscoveryStatus, DomeConnectionProposalView,
     DomeConnectionTopologyView, DomeConnectionView, DomeMoveView, GameRoomView, GameScoreView,
-    ImportMetaverseRoomAssetInput, JoinedPrivateChannelView, LiveSessionView,
-    MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput, NotificationStatusView,
-    NotificationView, PendingAttachment, PostView, PostWithdrawalView, PrivateChannelCapability,
-    PrivateChannelController, PrivateChannelEpochCapability, ProfileAssetView, ProfileInput,
-    PublishMetaverseRoomEventInput, ReactionKeyView, ReactionStateView, ReactionSummaryView,
-    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
-    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
-    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
+    ImportMetaverseRoomAssetInput, JoinedPrivateChannelPage, JoinedPrivateChannelView,
+    LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput,
+    NotificationStatusView, NotificationView, PendingAttachment, PostView, PostWithdrawalView,
+    PrivateChannelCapability, PrivateChannelController, PrivateChannelEpochCapability,
+    ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput, ReactionKeyView,
+    ReactionStateView, ReactionSummaryView, RecentReactionView, ReplyPreviewAuthorView,
+    ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput, SocialConnectionKind,
+    SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput, UpdateMetaverseRoomInput,
+    WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;
@@ -158,6 +158,10 @@ mod object_hydration;
 mod object_persistence_support;
 mod post_integrity;
 mod post_withdrawal_hydration;
+mod private_channel_rows;
+pub(crate) use private_channel_rows::{
+    PRIVATE_CHANNEL_EPOCH_WINDOW, epoch_started_at, same_private_channel_state,
+};
 mod private_channels_support;
 mod private_control_support;
 mod profile_docs_support;
@@ -189,7 +193,7 @@ pub(crate) use scope_leases::{
 mod shutdown_support;
 mod subscription_registry;
 mod timeline_subscription_support;
-pub(crate) use timeline_subscription_support::ReplicaScope;
+pub(crate) use timeline_subscription_support::{ReplicaScope, session_replica_channel};
 mod timeline_view_support;
 
 pub use errors::PrivateChannelControllerPending;
@@ -204,8 +208,8 @@ pub(crate) use attachment_support::{
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
     joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
     merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
-    register_private_channel_replica_secrets, sanitize_game_participants, short_id_suffix,
-    validate_game_room_scores, validate_game_room_transition,
+    sanitize_game_participants, short_id_suffix, validate_game_room_scores,
+    validate_game_room_transition,
 };
 pub(crate) use author_state_support::{hydrate_author_state, known_docs_author};
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
@@ -252,11 +256,10 @@ pub(crate) use profile_docs_support::{
 };
 pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
-    LIVE_GAME_LIST_LIMIT, archive_private_channel_epoch, bookmarked_post_row_is_hidden,
-    current_private_channel_replica_id, filtered_thread_page, filtered_timeline_page,
-    initial_private_channel_epoch_id, joined_private_channel_state_from_capability,
-    load_projection_rows_with_one_refresh, merged_private_channel_state_from_epoch_join,
-    next_private_channel_epoch_id, private_channel_epoch_capabilities,
+    LIVE_GAME_LIST_LIMIT, bookmarked_post_row_is_hidden, current_private_channel_replica_id,
+    filtered_thread_page, filtered_timeline_page, initial_private_channel_epoch_id,
+    joined_private_channel_state_from_capability, load_projection_rows_with_one_refresh,
+    merged_private_channel_state_from_epoch_join, next_private_channel_epoch_id,
     private_channel_is_epoch_aware, private_channel_replica_for_epoch,
     profile_timeline_item_is_hidden,
 };
@@ -346,17 +349,6 @@ impl ProfileTimelineItem {
 pub(crate) struct ResolvedRepostSource {
     pub(crate) repost_of: RepostSourceSnapshotV1,
 }
-
-/// private channel capability registry の write-through 永続化 callback。
-/// 実体(identity storage への保存)は desktop-runtime が注入する。未接続なら no-op。
-/// 保存は非同期（Web は IndexedDB。ADR 0059 §1）。
-pub type PrivateChannelCapabilityPersist = Arc<
-    dyn Fn(
-            Vec<crate::PrivateChannelCapability>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>
-        + Send
-        + Sync,
->;
 
 #[derive(Clone)]
 pub struct ServiceHandles {
@@ -528,9 +520,8 @@ pub struct AppService {
     pub(crate) public_topic_delivery: Arc<Mutex<HashMap<String, PublicTopicDeliveryStatus>>>,
     pub(crate) gossip_disabled_topics: Arc<Mutex<HashSet<String>>>,
     pub(crate) gossip_disabled_channels: Arc<Mutex<HashSet<String>>>,
-    pub(crate) private_channel_capability_persist:
-        std::sync::OnceLock<PrivateChannelCapabilityPersist>,
-    pub(crate) private_channel_capability_persist_guard: Arc<Mutex<()>>,
+    /// 参加の行が変わった印(#1221 R5-G の現 epoch の記録の移行を先頭から読み直す)。
+    pub(crate) private_channel_rows_changed: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) notification_inserted_notify: Arc<tokio::sync::Notify>,
     /// #858: 成人向け表現の表示設定(既定 OFF)。canonical source は desktop-runtime の
     /// ローカル JSON で、ここは blob 取得ゲートが参照する in-memory ミラー。
@@ -560,7 +551,6 @@ pub(crate) struct JoinedPrivateChannelState {
     pub(crate) audience_kind: ChannelAudienceKind,
     pub(crate) current_epoch_id: String,
     pub(crate) current_epoch_secret_hex: String,
-    pub(crate) archived_epochs: Vec<PrivateChannelEpochCapability>,
     /// 鍵更新の担当端末(#1219 W6)。`None` は担当が不明で、この端末は新しい世代を作らない。
     pub(crate) controller: Option<PrivateChannelController>,
 }
@@ -663,21 +653,16 @@ impl AppService {
             public_topic_delivery: Arc::new(Mutex::new(HashMap::new())),
             gossip_disabled_topics: Arc::new(Mutex::new(HashSet::new())),
             gossip_disabled_channels: Arc::new(Mutex::new(HashSet::new())),
-            private_channel_capability_persist: std::sync::OnceLock::new(),
-            private_channel_capability_persist_guard: Arc::new(Mutex::new(())),
+            private_channel_rows_changed: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             notification_inserted_notify,
             adult_content_display_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             advisory_media_hashes: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
-    /// capability registry の write-through 永続化 callback を接続する。
-    /// registry を変異させるメソッド(register/remove 経由の全経路)は、以後
-    /// persist 試行が完了するまで return しない。復元
-    /// (`restore_private_channel_capability`)完了後に 1 回だけ呼ぶこと —
-    /// 復元前に接続すると復元途中の部分リストが永続化される。
-    pub fn set_private_channel_capability_persist(&self, persist: PrivateChannelCapabilityPersist) {
-        let _ = self.private_channel_capability_persist.set(persist);
+    /// 参加の行が変わった印。起動時は立っている。読む側が下ろす。
+    pub fn private_channel_rows_changed(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.private_channel_rows_changed.clone()
     }
 
     /// 通信状態の変わった部分の印を、この印へ付ける(#1221 R2-D。transport と同じ印を渡す)。

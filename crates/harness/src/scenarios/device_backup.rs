@@ -261,8 +261,10 @@ pub(crate) async fn run_device_backup_restore(
         restored_runtime
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.clone(),
+                cursor: None,
             })
             .await?
+            .items
             .iter()
             .any(|channel| channel.channel_id == private_channel.channel_id),
         "restored private channel missing"

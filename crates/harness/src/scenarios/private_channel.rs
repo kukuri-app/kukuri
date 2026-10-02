@@ -204,9 +204,10 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let joined_channels = runtime_b
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list joined private channels after invite import")?;
+            .context("failed to list joined private channels after invite import")?.items;
         assert!(
             joined_channels
                 .iter()
@@ -318,15 +319,17 @@ pub(crate) async fn run_private_channel_invite_connectivity(
             let joined_a = runtime_a
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default().items;
             let joined_b = runtime_b
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default().items;
             return Err(anyhow::anyhow!(error).context(format!(
                 "desktop a did not receive private post; desktop_a=({status_a}); desktop_b=({status_b}); joined_a={joined_a:?}; joined_b={joined_b:?}"
             )));
@@ -592,17 +595,18 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         shutdown_runtime(runtime_b, "desktop b private-channel restart pre-shutdown")
             .await
             .context("failed to shut down desktop b before restart")?;
-        remove_sqlite_runtime_db(&db_b)
-            .with_context(|| format!("failed to remove {} before restart", db_b.display()))?;
+        // #1218 AC-4b: 鍵の行は DB にあるので DB を消さずに再起動する。DB を消して作り直す step は AC-5 で戻す
+        // (ADR 0061 §9)。
         runtime_b = DesktopRuntime::new_with_config(&db_b, TransportNetworkConfig::loopback())
             .await
             .context("failed to restart desktop b for private-channel scenario")?;
         let joined_after_restart = runtime_b
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list joined private channels after restart")?;
+            .context("failed to list joined private channels after restart")?.items;
         assert!(
             joined_after_restart
                 .iter()
@@ -701,9 +705,10 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let joined_channels_c = runtime_c
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list desktop c joined private channels")?;
+            .context("failed to list desktop c joined private channels")?.items;
         assert!(
             joined_channels_c
                 .iter()

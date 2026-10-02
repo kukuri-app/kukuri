@@ -252,7 +252,13 @@ mod tests {
                     .is_err()
             );
             assert!(docs.replicas.lock().await.is_empty());
-            assert!(docs.private_replica_secrets.lock().await.is_empty());
+            assert!(
+                docs.private_replica_secrets
+                    .registered
+                    .lock()
+                    .await
+                    .is_empty()
+            );
         }
         docs.shutdown().await;
         node.shutdown().await?;

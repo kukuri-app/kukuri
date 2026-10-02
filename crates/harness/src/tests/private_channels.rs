@@ -242,9 +242,11 @@ async fn friend_only_rotate_requires_fresh_grant() {
             let joined = runtime_a
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .expect("list joined channels on a");
+                .expect("list joined channels on a")
+                .items;
             if joined.iter().any(|entry| {
                 entry.channel_id == channel.channel_id
                     && entry.rotation_required
@@ -324,9 +326,11 @@ async fn friend_only_rotate_requires_fresh_grant() {
     let joined_c = runtime_c
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.to_string(),
+            cursor: None,
         })
         .await
-        .expect("list joined channels on c");
+        .expect("list joined channels on c")
+        .items;
     let channel_c = joined_c
         .iter()
         .find(|entry| entry.channel_id == channel.channel_id)
@@ -688,9 +692,11 @@ async fn friend_plus_share_freeze_rotate_connectivity() {
             let joined = runtime_c
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .expect("list joined channels on c");
+                .expect("list joined channels on c")
+                .items;
             if joined.iter().any(|entry| {
                 entry.channel_id == channel.channel_id
                     && entry.current_epoch_id == rotated.current_epoch_id

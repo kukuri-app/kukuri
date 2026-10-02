@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use kukuri_core::{
     PrivateReceivePayloadV1, RECEIVE_PAYLOAD_MAX_BYTES, ReceiveOfferReferenceV1,
-    ReceiveOfferScopeV1, VerifiedReceiveOffer, receive_epoch_key_id, seal_private_receive_payload,
-    seal_receive_offer,
+    ReceiveOfferScopeV1, VerifiedReceiveOffer, seal_private_receive_payload, seal_receive_offer,
 };
 use kukuri_transport::EndpointAddr;
 use serde::Deserialize;
@@ -253,22 +252,16 @@ impl AppService {
         offer: &VerifiedReceiveOffer,
         epoch_key_id: &str,
     ) -> Result<bool> {
-        let joined = services
-            .joined_private_channels
-            .lock()
-            .await
-            .values()
-            .find_map(|state| {
-                let mut secret = [0_u8; 32];
-                hex::decode_to_slice(&state.current_epoch_secret_hex, &mut secret).ok()?;
-                (receive_epoch_key_id(&secret, state.channel_id.as_str(), &state.current_epoch_id)
-                    .ok()?
-                    == epoch_key_id)
-                    .then(|| (state.clone(), secret))
-            });
-        let Some((state, secret)) = joined else {
+        // 受信 route の識別子の索引で 1 件引き、参加中の channel の現在の世代のときだけ受け取る(ADR 0061 §9)。
+        let Some((state, epoch_id, secret)) = services
+            .private_channel_epoch_by_receive_key(epoch_key_id)
+            .await?
+        else {
             return Ok(false);
         };
+        if epoch_id != state.current_epoch_id {
+            return Ok(false);
+        }
         let (topic, channel) = (state.topic_id.as_str(), state.channel_id.as_str());
         let provider = EndpointAddr::new(offer.reference().provider_endpoint_id.parse()?);
         let Some(payload) = services

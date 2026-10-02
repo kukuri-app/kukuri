@@ -109,9 +109,10 @@ async fn private_channel_invite_scopes_posts_and_replies() {
                 .await
                 .expect("private timeline diagnostics");
             let joined = app_b
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("joined private channels diagnostics");
+                .expect("joined private channels diagnostics")
+                .items;
             let status = app_b
                 .get_sync_status()
                 .await
@@ -190,9 +191,10 @@ async fn channel_access_preview_is_non_mutating_and_rejects_invalid_tokens() {
         .expect("export invite");
 
     let joined_before = app_b
-        .list_joined_private_channels(topic)
+        .list_joined_private_channels(topic, None)
         .await
-        .expect("joined before preview");
+        .expect("joined before preview")
+        .items;
     assert!(
         joined_before.is_empty(),
         "preview should start without joined channels"
@@ -207,9 +209,10 @@ async fn channel_access_preview_is_non_mutating_and_rejects_invalid_tokens() {
     assert_eq!(preview.channel_id.as_str(), channel.channel_id);
 
     let joined_after = app_b
-        .list_joined_private_channels(topic)
+        .list_joined_private_channels(topic, None)
         .await
-        .expect("joined after preview");
+        .expect("joined after preview")
+        .items;
     assert!(
         joined_after.is_empty(),
         "preview must not mutate joined channel state"

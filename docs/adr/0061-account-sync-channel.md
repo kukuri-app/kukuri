@@ -85,6 +85,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | (channel, epoch) の鍵の保存と channel の item の merge の設計（§9） | W5 AC-4a |
 | native の行ごとの保存と旧 registry・旧 backup の移行（§9。Web の IndexedDB の実装は W4 AC-2） | W5 AC-4b |
 | channel の item の書き込みと merge（§9） | W5 AC-4c |
+| 参加中の channel の一覧の続きの表示（画面・CLI） | W5 AC-4d |
 | 起動・復帰・通知の欠落の差分の有限 page と durable な cursor、DB を失ったときの作り直し（§9） | W5 AC-5 |
 | Web と native の 2 端末の統合 | W5 AC-6 |
 
@@ -191,8 +192,8 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
 | 過去の bucket の読み出し、Dome の書込みの anchor | (channel id, 開始時刻) の索引で、bucket に掛かる世代を新しい順に 8 件まで |
 | 遅れた参加者への grant の直前の世代 | (channel id, 開始時刻) の索引で 1 件 |
-| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みと、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
-| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件まで（ADR 0055 の参加者の page と同じ）。view の `archived_epoch_ids` は欄を残し、現在の世代より前に始まった世代を新しい順に 8 件まで（本人の別の端末から届いて、まだ現在の世代になっていない新しい世代は含めない） |
+| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みは replica id の channel で行い（候補は購読の event と固定の窓で集めた作業集合）、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
+| topic の参加中の一覧 | (topic id, channel id) の索引で 128 件の page（ADR 0055 の参加者の page と同じ）。続きは cursor から読む（2026-10-02 ユーザー判断。画面と CLI の続きの表示は AC-4d）。view の `archived_epoch_ids` は欄を残し、現在の世代より前に始まった世代を新しい順に 8 件まで（本人の別の端末から届いて、まだ現在の世代になっていない新しい世代は含めない） |
 | owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
 | rendezvous、Dome の context | メモリ（lease のある channel）だけ。lease の無い channel は含めない |
 | 退会 | その channel の世代の鍵の行を page で読みながら、replica の参照を外す |
@@ -256,6 +257,13 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 移した行（`updated_at` 0）と書けなかった行の送り直し。
   - 本人の別の端末の版の取得と、DB を失ったときの作り直し（上記）。
   - 旧版から移した行は、replica の同じ key に版が無いときだけ書く（新しい退会を古い版で隠さない）。
+
+#### 実装（AC-4b）
+
+- 行: store の `PrivateChannelKeyStore`（SQLite の `private_channels`・`private_channel_epochs`、migration `20261003000000`）。封は core の `PrivateChannelKeyRowSeal`。
+- docs の秘密の参照: docs-sync の `PrivateEpochSecrets` を app-api が入れ、相手への応答は iroh-node の非同期の `PrivateSecretLookup` で同じ参照を引く。
+- 読む範囲の数: 起動時の復元と topic の一覧（`list_joined_private_channels` の `next_cursor` で続く）と退会の鍵の削除は 128 行の page、過去の世代は新しい順に 8 世代まで、bucket に掛かる世代は 2 件まで。
+- 参加の行の版（`updated_at`・`op_id`）は、AC-4c の `membership` の item の版になる。op_id は item と同じ形で作り、旧 registry から移した行の時刻は 0。
 
 #### 判定（AC-4b・AC-4c）
 

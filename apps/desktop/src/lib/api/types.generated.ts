@@ -872,7 +872,11 @@ export type SetPrivateChannelEntryDomeRequest = { topic: string, channel_id: str
 
 export type LeavePrivateChannelRequest = { topic: string, channel_id: string, };
 
-export type ListJoinedPrivateChannelsRequest = { topic: string, };
+export type ListJoinedPrivateChannelsRequest = { topic: string, 
+/**
+ * 前の page の `next_cursor`。無ければ最初の page。
+ */
+cursor?: string | null, };
 
 export type UpdateGameRoomRequest = { topic: string, room_id: string, status: GameRoomStatus, phase_label?: string | null, scores: Array<GameScoreView>, };
 

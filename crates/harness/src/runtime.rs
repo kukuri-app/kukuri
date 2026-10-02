@@ -15,7 +15,6 @@ pub(crate) struct ScenarioRuntime {
     pub(crate) docs_sync: Arc<MemoryDocsSync>,
     pub(crate) blob_service: Arc<MemoryBlobService>,
     pub(crate) keys: KukuriKeys,
-    pub(crate) private_channel_capabilities: Arc<StdMutex<Vec<PrivateChannelCapability>>>,
 }
 
 impl ScenarioRuntime {
@@ -37,22 +36,8 @@ impl ScenarioRuntime {
             self.blob_service.clone(),
             self.keys.clone(),
         ));
-        let capabilities = self
-            .private_channel_capabilities
-            .lock()
-            .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"))?
-            .clone();
-        for capability in capabilities {
-            app.restore_private_channel_capability(capability).await?;
-        }
-        let persisted_capabilities = self.private_channel_capabilities.clone();
-        app.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-            let stored = persisted_capabilities
-                .lock()
-                .map(|mut persisted| *persisted = capabilities)
-                .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"));
-            Box::pin(async move { stored })
-        }));
+        // 再起動では同じ store の参加の行から戻す(ADR 0061 §9)。
+        app.restore_joined_private_channels().await?;
         self.app = Some(app);
         Ok(())
     }
@@ -301,21 +286,6 @@ pub(crate) fn cleanup_runtime_artifacts(db_path: &Path) -> Result<()> {
                 }
             }
         }
-    }
-    Ok(())
-}
-
-pub(crate) fn remove_sqlite_runtime_db(db_path: &Path) -> Result<()> {
-    for path in [
-        db_path.to_path_buf(),
-        db_path.with_extension("db-shm"),
-        db_path.with_extension("db-wal"),
-    ] {
-        if !path.exists() {
-            continue;
-        }
-        std::fs::remove_file(&path)
-            .with_context(|| format!("failed to remove sqlite artifact {}", path.display()))?;
     }
     Ok(())
 }

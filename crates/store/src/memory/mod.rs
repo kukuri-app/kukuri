@@ -106,6 +106,22 @@ pub struct MemoryStore {
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
     private_channel_participants: Arc<RwLock<MemoryPrivateChannelParticipants>>,
     account_sync_rows: Arc<RwLock<BTreeMap<String, crate::AccountSyncRow>>>,
+    private_channel_keys: Arc<RwLock<MemoryPrivateChannelKeys>>,
+    /// private channel の参加と鍵の行を読み書きした数(試験が、操作ごとに対象の行だけを触ることを確かめる)。
+    private_channel_key_rows_touched: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl MemoryStore {
+    pub fn private_channel_key_rows_touched(&self) -> usize {
+        self.private_channel_key_rows_touched
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[derive(Default)]
+struct MemoryPrivateChannelKeys {
+    channels: BTreeMap<String, crate::PrivateChannelRow>,
+    epochs: BTreeMap<(String, String), crate::PrivateChannelEpochRow>,
 }
 
 mod account_sync;
@@ -115,6 +131,7 @@ mod envelopes;
 mod live_game;
 mod notifications;
 mod observations;
+mod private_channel_keys;
 mod projections;
 mod social;
 mod withdrawals;

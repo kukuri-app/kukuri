@@ -234,9 +234,11 @@ pub(crate) async fn wait_for_joined_private_channel_epoch_result(
             let joined = runtime
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.into(),
+                    cursor: None,
                 })
                 .await
-                .context("joined channels query failed")?;
+                .context("joined channels query failed")?
+                .items;
             let Some(entry) = joined.iter().find(|item| item.channel_id == channel_id) else {
                 sleep(Duration::from_millis(50)).await;
                 continue;
@@ -272,9 +274,11 @@ pub(crate) async fn wait_for_joined_private_channel_epoch_result(
             let joined = runtime
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.into(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .items;
             bail!("joined private channel epoch timeout; {status}; joined={joined:?}");
         }
     }
@@ -288,9 +292,11 @@ pub(crate) async fn joined_private_channel_epoch_result(
     let joined = runtime
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .context("joined channels query failed")?;
+        .context("joined channels query failed")?
+        .items;
     Ok(joined
         .into_iter()
         .find(|entry| entry.channel_id == channel_id))

@@ -16,11 +16,11 @@ use kukuri_app_api::{
     CreateLiveSessionInput, CreateMetaverseRoomInput, CustomReactionAssetView,
     DirectMessageConversationView, DirectMessageStatusView, DirectMessageTimelineView,
     DomeHostingView, DomeLayoutCommitView, GameRoomView, ImportMetaverseRoomAssetInput,
-    JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView,
-    MoveDomeInput, NotificationPageView, NotificationStatusView, NotificationView, PostView,
-    PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, PrivateChannelCapability,
-    ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView, RecentReactionView,
-    ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
+    JoinedPrivateChannelPage, JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView,
+    MetaverseRoomEventView, MoveDomeInput, NotificationPageView, NotificationStatusView,
+    NotificationView, PostView, PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput,
+    PrivateChannelCapability, ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView,
+    RecentReactionView, ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
     StartOwnerDomeHostingInput, SubmitDomeSessionInput, SyncStatus, TimelineView,
     UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
@@ -185,23 +185,6 @@ async fn load_private_channel_capabilities(
         return Ok(Vec::new());
     };
     serde_json::from_str(&raw).context("failed to decode private channel capabilities")
-}
-
-async fn persist_private_channel_capabilities(
-    db_path: &Path,
-    mode: IdentityStorageMode,
-    capabilities: &[PrivateChannelCapability],
-) -> Result<()> {
-    let encoded = serde_json::to_string(capabilities)
-        .context("failed to encode private channel capabilities")?;
-    persist_optional_secret(
-        db_path,
-        mode,
-        PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
-        PRIVATE_CHANNEL_CAPABILITIES_KEY,
-        encoded.as_str(),
-    )
-    .await
 }
 
 /// #858: 成人向け表現の表示設定の永続形。`<db_path>.content-display.json` に保存する
@@ -449,30 +432,27 @@ impl DesktopRuntime {
         {
             tracing::warn!(%error, "legacy trust display exceptions were not imported");
         }
-        for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
-            app_service
-                .restore_private_channel_capability(capability)
-                .await?;
+        // ADR 0061 §9: 旧 registry(全件の 1 つの JSON)があれば、1 回だけ参加の行と世代の鍵の行へ移して消す。
+        // 行の書き込みは冪等なので、途中で止まっても次の起動でやり直す。
+        let legacy_capabilities =
+            load_private_channel_capabilities(&db_path, identity_mode).await?;
+        if !legacy_capabilities.is_empty() {
+            for capability in legacy_capabilities {
+                app_service
+                    .restore_private_channel_capability(capability)
+                    .await?;
+            }
+            delete_optional_secret(
+                &db_path,
+                identity_mode,
+                PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
+                PRIVATE_CHANNEL_CAPABILITIES_KEY,
+            )
+            .await?;
         }
-        // 復元完了後に write-through 永続化を接続する(復元前に接続すると復元途中の
-        // 部分リストが persist され、途中クラッシュでディスク上の registry が縮む)。
-        // 以後、capability registry の変異(register/remove 経由の全経路)は AppService
-        // 層でそのまま identity storage へ永続化され、ラッパー側の手動 persist 規約は不要。
+        app_service.restore_joined_private_channels().await?;
         // #1221 R5-G: 参加状態は索引の順に並ばないため、起動時と変更時に現 epoch の記録の移行を先頭から読み直す。
-        let private_migration_dirty = Arc::new(AtomicBool::new(true));
-        {
-            let persist_db_path = db_path.clone();
-            let dirty = private_migration_dirty.clone();
-            app_service.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-                let (db_path, dirty) = (persist_db_path.clone(), dirty.clone());
-                Box::pin(async move {
-                    persist_private_channel_capabilities(&db_path, identity_mode, &capabilities)
-                        .await?;
-                    dirty.store(true, std::sync::atomic::Ordering::SeqCst);
-                    Ok(())
-                })
-            }));
-        }
+        let private_migration_dirty = app_service.private_channel_rows_changed();
         let gossip_subscription_state =
             load_gossip_subscription_state(&db_path, identity_mode).await?;
         app_service

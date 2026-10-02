@@ -107,12 +107,8 @@ impl DesktopRuntime {
                 "private" => {
                     let channels = self
                         .app_service
-                        .joined_private_channel_replicas()
-                        .await
-                        .into_iter()
-                        .filter(|(key, _)| key.as_str() > cursor.as_str())
-                        .take(PROTECTED_MIGRATION_PAGE)
-                        .collect::<Vec<_>>();
+                        .joined_private_channel_replicas(&cursor, PROTECTED_MIGRATION_PAGE)
+                        .await?;
                     let mut plans = Vec::new();
                     for (key, replica) in &channels {
                         plans.extend(self.private_plan(&source, key, replica, &local).await?);

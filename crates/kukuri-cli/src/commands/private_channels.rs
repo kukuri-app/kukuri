@@ -194,7 +194,8 @@ impl CommandHandler for Handler {
                         payload,
                     )?)
                     .await
-                    .map_err(command_error)?,
+                    .map_err(command_error)?
+                    .items,
             ),
         }
     }

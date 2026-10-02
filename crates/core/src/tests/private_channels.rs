@@ -314,3 +314,35 @@ fn epoch_handoff_grant_reads_legacy_wire_fixture_and_preserves_wire_shape() {
         doc_json
     );
 }
+
+#[test]
+fn key_row_seal_opens_only_for_the_same_account_and_row() {
+    let keys = generate_keys();
+    let seal = keys.derive_private_channel_key_row_seal();
+    let secret = "11".repeat(32);
+    let sealed = seal.seal("channel-a", "epoch-1", &secret).expect("seal");
+    assert_eq!(
+        seal.open("channel-a", "epoch-1", &sealed).expect("open"),
+        secret
+    );
+    // 同じ鍵からは同じ封の鍵になる(再起動・復元の後も開ける)。
+    assert_eq!(
+        keys.derive_private_channel_key_row_seal()
+            .open("channel-a", "epoch-1", &sealed)
+            .expect("reopen"),
+        secret
+    );
+    // 別の行・別の account・改ざんは開けない。
+    assert!(seal.open("channel-a", "epoch-2", &sealed).is_err());
+    assert!(seal.open("channel-b", "epoch-1", &sealed).is_err());
+    assert!(
+        generate_keys()
+            .derive_private_channel_key_row_seal()
+            .open("channel-a", "epoch-1", &sealed)
+            .is_err()
+    );
+    let mut tampered = sealed.clone();
+    *tampered.last_mut().expect("ciphertext") ^= 1;
+    assert!(seal.open("channel-a", "epoch-1", &tampered).is_err());
+    assert!(seal.seal("channel-a", "epoch-1", "11").is_err());
+}

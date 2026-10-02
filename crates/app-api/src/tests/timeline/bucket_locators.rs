@@ -180,8 +180,8 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
     let topic = TopicId::new("private-source");
     let channel = ChannelId::new("room");
     let keys = generate_keys();
-    app.joined_private_channels.lock().await.insert(
-        joined_private_channel_key(topic.as_str(), channel.as_str()),
+    insert_joined_private_channel(
+        &app,
         JoinedPrivateChannelState {
             generation: 1,
             topic_id: topic.as_str().into(),
@@ -193,10 +193,11 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
             audience_kind: ChannelAudienceKind::InviteOnly,
             current_epoch_id: "e1".into(),
             current_epoch_secret_hex: hex::encode([7; 32]),
-            archived_epochs: Vec::new(),
             controller: None,
         },
-    );
+        &[],
+    )
+    .await;
     let post = build_post_envelope_with_payload_in_channel(
         &keys,
         &topic,
@@ -271,13 +272,8 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
         Some("private body")
     );
     let calls = docs.remote_requests.load(Ordering::SeqCst);
-    app.joined_private_channels
-        .lock()
-        .await
-        .remove(&joined_private_channel_key(
-            topic.as_str(),
-            channel.as_str(),
-        ));
+    app.remove_joined_private_channel(topic.as_str(), channel.as_str())
+        .await?;
     let after_leave = app.resolve_community_index_posts(vec![input]).await?;
     assert!(after_leave.entries[0].post.is_none());
     assert_eq!(docs.remote_requests.load(Ordering::SeqCst), calls);
@@ -293,8 +289,22 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
     let keys = generate_keys();
     let same_day_earlier = format!("epoch-{}-old", 6 * 86_400_000 + 1_800_000);
     let same_day_old = format!("epoch-{}-old", 6 * 86_400_000 + 3_600_000);
-    app.joined_private_channels.lock().await.insert(
-        joined_private_channel_key(topic, channel.as_str()),
+    let archived = (1..=5)
+        .map(|index| PrivateChannelEpochCapability {
+            epoch_id: format!("epoch-{}-old", index * 86_400_000),
+            namespace_secret_hex: hex::encode([7; 32]),
+        })
+        .chain(std::iter::once(PrivateChannelEpochCapability {
+            epoch_id: same_day_earlier.clone(),
+            namespace_secret_hex: hex::encode([9; 32]),
+        }))
+        .chain(std::iter::once(PrivateChannelEpochCapability {
+            epoch_id: same_day_old.clone(),
+            namespace_secret_hex: hex::encode([8; 32]),
+        }))
+        .collect::<Vec<_>>();
+    insert_joined_private_channel(
+        &app,
         JoinedPrivateChannelState {
             generation: 1,
             topic_id: topic.into(),
@@ -306,23 +316,11 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
             audience_kind: ChannelAudienceKind::InviteOnly,
             current_epoch_id: format!("epoch-{}-current", 6 * 86_400_000 + 43_200_000),
             current_epoch_secret_hex: hex::encode([7; 32]),
-            archived_epochs: (1..=5)
-                .map(|index| PrivateChannelEpochCapability {
-                    epoch_id: format!("epoch-{}-old", index * 86_400_000),
-                    namespace_secret_hex: hex::encode([7; 32]),
-                })
-                .chain(std::iter::once(PrivateChannelEpochCapability {
-                    epoch_id: same_day_earlier.clone(),
-                    namespace_secret_hex: hex::encode([9; 32]),
-                }))
-                .chain(std::iter::once(PrivateChannelEpochCapability {
-                    epoch_id: same_day_old.clone(),
-                    namespace_secret_hex: hex::encode([8; 32]),
-                }))
-                .collect(),
             controller: None,
         },
-    );
+        &archived,
+    )
+    .await;
     let selected = app
         .local_page_replicas(
             topic,

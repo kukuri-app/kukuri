@@ -1,7 +1,7 @@
 use crate::service::*;
 
 impl AppService {
-    /// 現在参加している非公開チャンネルについて、通信層が実際に購読する
+    /// 購読している(lease のある)非公開チャンネルについて、通信層が実際に購読する
     /// `hint/private/<channel_id>` と現在世代の秘密からランデブー鍵を派生する。
     /// 秘密そのものを実行層の境界へ渡さず、不正な秘密は公開用の派生へ落とさない。
     pub async fn private_channel_rendezvous_keys(&self) -> BTreeMap<String, String> {
@@ -34,18 +34,5 @@ impl AppService {
             }
         }
         keys
-    }
-
-    /// 参加中の channel ごとの、現在の epoch の replica(key の順。#1221 R5-G: 制御 record を保護所有先へ移す)。
-    pub async fn joined_private_channel_replicas(&self) -> Vec<(String, ReplicaId)> {
-        let mut items = self
-            .joined_private_channels
-            .lock()
-            .await
-            .iter()
-            .map(|(key, state)| (key.clone(), current_private_channel_replica_id(state)))
-            .collect::<Vec<_>>();
-        items.sort();
-        items
     }
 }

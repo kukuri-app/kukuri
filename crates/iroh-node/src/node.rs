@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock as StdRwLock};
@@ -598,13 +598,9 @@ impl IrohDocsNode {
             .map_err(|_| anyhow!("remote cache already installed"))
     }
 
-    /// private の capability の登録簿。相手への private の応答も、要求の replica をこの登録簿で `lookup` に引いて確かめる。
-    pub fn private_replica_secrets(
-        &self,
-        lookup: PrivateSecretLookup,
-    ) -> Arc<tokio::sync::Mutex<HashMap<String, iroh_docs::NamespaceSecret>>> {
+    /// 相手への private の応答で、要求の replica の secret を引く参照(docs-sync が入れる)。
+    pub fn set_private_secret_lookup(&self, lookup: Arc<dyn PrivateSecretLookup>) {
         let _ = self.private_capabilities.lookup.set(lookup);
-        self.private_capabilities.secrets.clone()
     }
 
     pub(crate) fn remote_cache(&self) -> Option<&Arc<dyn ContentCacheStore>> {

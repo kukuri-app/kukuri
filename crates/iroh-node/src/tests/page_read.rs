@@ -7,11 +7,17 @@ use std::sync::Arc;
 use crate::{DocReadQuery, DocReadRecord, DocReadResponse, IrohDocsNode};
 
 /// 相手への private の応答は、登録した capability で確かめる(登録簿は docs-sync が書く)。
+struct OneSecret(ReplicaId, NamespaceSecret);
+
+#[async_trait::async_trait]
+impl crate::PrivateSecretLookup for OneSecret {
+    async fn private_secret(&self, replica: &ReplicaId) -> Option<NamespaceSecret> {
+        (replica == &self.0).then(|| self.1.clone())
+    }
+}
+
 async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &NamespaceSecret) {
-    node.private_replica_secrets(|replica, secrets| secrets.get(replica.as_str()).cloned())
-        .lock()
-        .await
-        .insert(replica.as_str().into(), secret.clone());
+    node.set_private_secret_lookup(Arc::new(OneSecret(replica.clone(), secret.clone())));
 }
 
 /// private の bucket と本人の端末間の account 同期の replica（ADR 0061）は、登録した capability でだけ読める。

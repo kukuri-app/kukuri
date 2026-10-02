@@ -7,11 +7,10 @@
 
 use kukuri_core::{
     DirectMessageAckV1, PrivateReceivePayloadV1, ReceiveOfferReferenceV1, ReceiveOfferScopeV1,
-    VerifiedReceiveOffer, build_direct_message_ack, receive_epoch_key_id,
-    seal_private_receive_payload,
+    VerifiedReceiveOffer, build_direct_message_ack, seal_private_receive_payload,
 };
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
-use kukuri_store::{DirectMessageOutboxRow, PrivateChannelParticipantRow};
+use kukuri_store::{DirectMessageOutboxRow, PrivateChannelFilter, PrivateChannelParticipantRow};
 use kukuri_transport::EndpointAddr;
 
 use super::*;
@@ -129,17 +128,31 @@ impl AppService {
             Some((key, prefix)) => (key, Some(prefix)),
             None => (cursor, None),
         };
-        let target = self
-            .joined_private_channels
-            .lock()
-            .await
-            .iter()
-            .filter(|(key, state)| {
-                state.owner_pubkey == local
-                    && prefix.map_or(key.as_str() > finished, |_| key.as_str() == finished)
-            })
-            .min_by(|left, right| left.0.cmp(right.0))
-            .map(|(key, state)| (key.clone(), state.clone()));
+        // 自分が owner の参加中の channel を、key の順に 1 件ずつ(全件を読まない。ADR 0061 §9)。
+        let row = match prefix {
+            Some(_) => self
+                .services
+                .projection_store
+                .get_private_channel(finished)
+                .await?
+                .filter(|row| row.joined && row.owner_pubkey == local),
+            None => self
+                .services
+                .projection_store
+                .list_joined_private_channels(PrivateChannelFilter::Owner(&local), finished, 1)
+                .await?
+                .pop(),
+        };
+        let target = match row {
+            Some(row) => {
+                let key = row.channel_key.clone();
+                self.services
+                    .private_channel_state_from_row(row)
+                    .await?
+                    .map(|state| (key, state))
+            }
+            None => None,
+        };
         let Some((key, state)) = target else {
             // 途中の channel から退出していれば、その channel は済みとして次へ進む。
             return Ok((finished.to_string(), prefix.is_none()));
@@ -200,16 +213,18 @@ impl AppService {
         participant_epoch_id: &str,
         recipient: &str,
     ) -> Result<()> {
-        let Some(previous) = state
-            .archived_epochs
-            .last()
-            .filter(|epoch| epoch.epoch_id == participant_epoch_id)
+        let Some((previous_epoch_id, previous_secret_hex)) = self
+            .archived_private_channel_epochs(state, 1)
+            .await?
+            .into_iter()
+            .next()
+            .filter(|(epoch_id, _)| epoch_id == participant_epoch_id)
         else {
             return Ok(());
         };
         let mut old = state.clone();
-        old.current_epoch_id = previous.epoch_id.clone();
-        old.current_epoch_secret_hex = previous.namespace_secret_hex.clone();
+        old.current_epoch_id = previous_epoch_id;
+        old.current_epoch_secret_hex = previous_secret_hex;
         self.distribute_epoch_handoff_grant(
             &old,
             &state.current_epoch_id,
@@ -247,23 +262,11 @@ impl AppService {
         offer: &VerifiedReceiveOffer,
         epoch_key_id: &str,
     ) -> Result<bool> {
-        let matched = services
-            .joined_private_channels
-            .lock()
-            .await
-            .values()
-            .find_map(|state| {
-                private_channel_epoch_capabilities(state)
-                    .into_iter()
-                    .find_map(|epoch| {
-                        let secret = epoch_secret(&epoch.namespace_secret_hex).ok()?;
-                        (receive_epoch_key_id(&secret, state.channel_id.as_str(), &epoch.epoch_id)
-                            .ok()?
-                            == epoch_key_id)
-                            .then(|| (state.clone(), epoch.epoch_id, secret))
-                    })
-            });
-        let Some((state, epoch_id, secret)) = matched else {
+        // 受信 route の識別子の索引で 1 件引く(参加中の全 channel・全 epoch を走査しない。ADR 0061 §9)。
+        let Some((state, epoch_id, secret)) = services
+            .private_channel_epoch_by_receive_key(epoch_key_id)
+            .await?
+        else {
             return Ok(false);
         };
         let provider = EndpointAddr::new(offer.reference().provider_endpoint_id.parse()?);

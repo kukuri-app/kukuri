@@ -34,9 +34,9 @@ impl AppService {
         topic_id: &str,
         channel_id: &str,
     ) -> Result<(String, String)> {
-        let joined = self.joined_private_channels.lock().await;
-        let state = joined
-            .get(&joined_private_channel_key(topic_id, channel_id))
+        let state = self
+            .joined_private_channel_state(topic_id, channel_id)
+            .await
             .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
         if state.current_epoch_secret_hex.trim().is_empty() {
             anyhow::bail!("private channel current epoch secret is unavailable");

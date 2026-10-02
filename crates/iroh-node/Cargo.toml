@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 web-time.workspace = true
 n0-future.workspace = true
 anyhow.workspace = true

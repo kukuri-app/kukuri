@@ -22,16 +22,12 @@ fn joined(topic: &TopicId, channel: &ChannelId, secret: [u8; 32]) -> JoinedPriva
         audience_kind: ChannelAudienceKind::InviteOnly,
         current_epoch_id: EPOCH.into(),
         current_epoch_secret_hex: hex::encode(secret),
-        archived_epochs: Vec::new(),
         controller: None,
     }
 }
 
 async fn join(app: &AppService, state: JoinedPrivateChannelState) {
-    app.joined_private_channels.lock().await.insert(
-        joined_private_channel_key(&state.topic_id, state.channel_id.as_str()),
-        state,
-    );
+    insert_joined_private_channel(app, state, &[]).await;
 }
 
 fn private_post(
