@@ -3762,6 +3762,7 @@ dependencies = [
  "async-trait",
  "axum",
  "blake3",
+ "hex",
  "iroh",
  "js-sys",
  "kukuri-blob-service",
