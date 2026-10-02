@@ -3755,6 +3755,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "kukuri-web-runtime"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "blake3",
+ "iroh",
+ "js-sys",
+ "kukuri-blob-service",
+ "kukuri-core",
+ "kukuri-iroh-node",
+ "kukuri-store",
+ "kukuri-transport",
+ "kukuri-webrtc-transport",
+ "n0-future",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "kukuri-webrtc-transport"
 version = "0.3.3"
 dependencies = [

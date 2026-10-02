@@ -24,7 +24,8 @@ pub use account_store::{AccountStore, PrivateIndexGrant, PrivateIndexGrantStore}
 pub use account_sync::{AccountSyncRow, AccountSyncStore};
 pub use cache::{
     ContentCacheStore, OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES,
-    REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, RemoteRecordKey,
+    REMOTE_CACHE_RECLAIM_STEP, REMOTE_CACHE_TOUCH_INTERVAL_MS, REMOTE_CACHE_UNUSED_MS,
+    RemoteCacheReservation, RemoteRecordKey,
 };
 pub use memory::MemoryStore;
 pub use models::{
