@@ -229,18 +229,18 @@ impl IrohBlobService {
         }
     }
 
-    /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
-    #[cfg(not(target_family = "wasm"))]
+    /// account の保存先（native は SQLite、Web は IndexedDB）を、remote の cache と peer candidate の保存先に使う。
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
-        store: Arc<kukuri_store::SqliteStore>,
+        cache: Arc<dyn kukuri_store::ContentCacheStore>,
+        candidates: Arc<dyn kukuri_store::PeerCandidateStore>,
     ) -> Self {
-        let mut blobs = Self::with_content_cache(node.clone(), store.clone());
+        let mut blobs = Self::with_content_cache(node.clone(), cache);
         blobs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
             node.fetch_peer_health(),
-            store,
+            candidates,
             "blob",
         ));
         blobs

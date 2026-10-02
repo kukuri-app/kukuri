@@ -227,7 +227,7 @@ async fn private_exact_reads_include_moved_records_only_with_the_capability() {
             .await
             .expect("store"),
     );
-    let docs = IrohDocsSync::with_account_store(node.clone(), store.clone());
+    let docs = IrohDocsSync::with_account_store(node.clone(), store.clone(), store.clone());
     let replica = crate::private_channel_epoch_replica_id("channel", "epoch");
     let key = "channels/metadata";
     let value = br#"{"moved":true}"#.to_vec();

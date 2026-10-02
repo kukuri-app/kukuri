@@ -115,6 +115,7 @@ pub use kukuri_app_api::{
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 pub use requests::CreateAccountRequest;
+pub use stack::{NodeSource, StackStore};
 #[cfg(target_family = "wasm")]
 pub use storage::install_platform_storage;
 pub use storage::{ClientStorage, KeyringUnavailable};

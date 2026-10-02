@@ -44,6 +44,7 @@ async fn redisplay_after_the_provider_stops(content_labels: Vec<String>) -> anyh
         .unwrap();
     let receiver_blob = Arc::new(IrohBlobService::with_account_store(
         receiver_stack._node.clone(),
+        receiver_store.clone().clone(),
         receiver_store.clone(),
     ));
     let receiver_app = app_service_from_dependencies(

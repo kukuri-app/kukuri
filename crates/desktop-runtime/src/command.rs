@@ -151,6 +151,10 @@ async fn export_account_key(
 macro_rules! dispatch_table {
     ($runtime:ident, $ctx:ident; $( $(#[$meta:meta])* $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
         /// 表にある command の名前。
+        #[expect(
+            clippy::vec_init_then_push,
+            reason = "表の項目ごとに cfg（native だけの command）を付けるため"
+        )]
         pub fn dispatched_commands() -> Vec<&'static str> {
             let mut commands = Vec::new();
             $( $(#[$meta])* commands.push(stringify!($name)); )*

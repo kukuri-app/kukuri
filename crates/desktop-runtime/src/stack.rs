@@ -23,6 +23,7 @@ use kukuri_transport::{
     HintTransport, IrohGossipTransport, PeerSnapshot, ReceiveCandidateFence, ReceiveOfferLease,
     ReceiveOfferSubscription, SeedPeer, Transport, TransportNetworkConfig, TransportRelayConfig,
 };
+use kukuri_webrtc_transport::WebRtcTransport;
 #[cfg(test)]
 use tokio::sync::oneshot;
 use tokio::sync::{Mutex, RwLock};
@@ -37,11 +38,25 @@ pub(crate) struct BoundIrohStack {
     pub(crate) blob_service: Arc<IrohBlobService>,
 }
 
+/// stack が使う、remote の cache と peer の接続候補の保存先（native は SQLite、Web は IndexedDB。ADR 0056 §5）。
+pub trait StackStore: kukuri_store::ContentCacheStore + kukuri_store::PeerCandidateStore {}
+impl<T: kukuri_store::ContentCacheStore + kukuri_store::PeerCandidateStore> StackStore for T {}
+
+/// node の開き方。native は永続の root、Web はメモリの store と保存した endpoint の秘密鍵・WebRTC の transport
+/// （ADR 0056 §2・§8）。作り直しも同じ開き方で開く。
+pub enum NodeSource {
+    #[cfg(not(target_family = "wasm"))]
+    Persistent(PathBuf),
+    Memory {
+        secret_key: iroh::SecretKey,
+        webrtc: Option<Arc<WebRtcTransport>>,
+    },
+}
+
 /// 候補の台帳と、通信状態の変わった部分の印(#1221 R2-D。作り直しても同じ印へ付ける)。
-#[cfg(not(target_family = "wasm"))]
 enum StackOpen {
-    Initial(Arc<SqliteStore>, StatusChanges),
-    Reopen(Arc<SqliteStore>, StatusChanges),
+    Initial(Arc<dyn StackStore>, StatusChanges),
+    Reopen(Arc<dyn StackStore>, StatusChanges),
 }
 
 /// ホットスワップ可能なサービスラッパーを 1 つ生成する。
@@ -263,15 +278,12 @@ pub(crate) struct SharedIrohStack {
     pub(crate) transport: Arc<ReloadableTransport>,
     pub(crate) docs_sync: Arc<ReloadableDocsSync>,
     pub(crate) blob_service: Arc<ReloadableBlobService>,
-    #[cfg(not(target_family = "wasm"))]
-    pub(crate) root: PathBuf,
+    pub(crate) source: NodeSource,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
     /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
     dht_enabled: AtomicBool,
-    #[cfg(not(target_family = "wasm"))]
-    candidate_store: Arc<SqliteStore>,
-    #[cfg(not(target_family = "wasm"))]
+    candidate_store: Arc<dyn StackStore>,
     remote_cache_reaper: n0_future::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
     docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
@@ -317,7 +329,7 @@ impl SharedIrohStack {
         self.generation.load(Ordering::Relaxed)
     }
 
-    // 永続の node と SQLite の候補の台帳で組み立てる。Web の組み立ては W1 AC-5。
+    // 永続の node と SQLite の候補の台帳で組み立てる（無ければメモリの SQLite）。
     #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn new(
         root: &Path,
@@ -328,14 +340,36 @@ impl SharedIrohStack {
         relay_config: TransportRelayConfig,
         candidate_store: Option<Arc<SqliteStore>>,
     ) -> Result<Self> {
-        let dht_options = effective_dht_options(&dht_options, bootstrap_seed_peers, &relay_config);
         let candidate_store = match candidate_store {
             Some(store) => store,
             None => Arc::new(SqliteStore::connect_memory().await?),
         };
+        Self::open(
+            NodeSource::Persistent(root.to_path_buf()),
+            network_config,
+            discovery_config,
+            bootstrap_seed_peers,
+            dht_options,
+            relay_config,
+            candidate_store,
+        )
+        .await
+    }
+
+    /// node を開き、cache と候補の保存先で組み立てる（native と Web で共用）。
+    pub async fn open(
+        source: NodeSource,
+        network_config: TransportNetworkConfig,
+        discovery_config: &DiscoveryConfig,
+        bootstrap_seed_peers: &[SeedPeer],
+        dht_options: DhtDiscoveryOptions,
+        relay_config: TransportRelayConfig,
+        candidate_store: Arc<dyn StackStore>,
+    ) -> Result<Self> {
+        let dht_options = effective_dht_options(&dht_options, bootstrap_seed_peers, &relay_config);
         let status_changes = StatusChanges::default();
         let current = BoundIrohStack::new(
-            root,
+            &source,
             network_config.clone(),
             discovery_config,
             bootstrap_seed_peers,
@@ -372,7 +406,7 @@ impl SharedIrohStack {
             transport,
             docs_sync,
             blob_service,
-            root: root.to_path_buf(),
+            source,
             network_config,
             dht_enabled: AtomicBool::new(dht_options.enabled),
             dht_options,
@@ -419,7 +453,6 @@ impl SharedIrohStack {
         Ok(())
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn rebuild(
         &self,
         discovery_config: &DiscoveryConfig,
@@ -455,7 +488,7 @@ impl SharedIrohStack {
         }
         previous.shutdown().await;
         let next = BoundIrohStack::new(
-            &self.root,
+            &self.source,
             self.network_config.clone(),
             discovery_config,
             bootstrap_seed_peers,
@@ -550,12 +583,9 @@ impl SharedIrohStack {
                 discovery_mode = ?discovery_config.mode,
                 "runtime relay connectivity change requires stack rebuild"
             );
-            #[cfg(not(target_family = "wasm"))]
             return self
                 .rebuild(discovery_config, bootstrap_seed_peers, relay_config)
                 .await;
-            #[cfg(target_family = "wasm")]
-            anyhow::bail!("rebuilding the iroh stack is not available on the web yet");
         }
         let current = self.current.lock().await;
         let current = current
@@ -634,7 +664,6 @@ impl SharedIrohStack {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 impl Drop for SharedIrohStack {
     fn drop(&mut self) {
         self.remote_cache_reaper.abort();
@@ -642,9 +671,15 @@ impl Drop for SharedIrohStack {
 }
 
 impl BoundIrohStack {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(
+            unused_variables,
+            reason = "DHT と永続の node の開き直しは native だけ"
+        )
+    )]
     async fn new(
-        root: &Path,
+        source: &NodeSource,
         network_config: TransportNetworkConfig,
         discovery_config: &DiscoveryConfig,
         bootstrap_seed_peers: &[SeedPeer],
@@ -657,25 +692,40 @@ impl BoundIrohStack {
             StackOpen::Reopen(store, changes) => (true, store, changes),
         };
         let relay_config = relay_config.normalized();
-        // 末尾の true: ブラウザからの接続交渉に応じる（交渉は始めない。ADR 0057 §9）。
-        let node = if reopening {
-            IrohDocsNode::reopen_with_discovery_config(
-                root,
-                network_config.clone(),
-                dht_options,
-                relay_config.clone(),
-                true,
-            )
-            .await?
-        } else {
-            IrohDocsNode::persistent_with_discovery_config(
-                root,
-                network_config.clone(),
-                dht_options,
-                relay_config.clone(),
-                true,
-            )
-            .await?
+        let node = match source {
+            // 末尾の true: ブラウザからの接続交渉に応じる（交渉は始めない。ADR 0057 §9）。
+            #[cfg(not(target_family = "wasm"))]
+            NodeSource::Persistent(root) if reopening => {
+                IrohDocsNode::reopen_with_discovery_config(
+                    root,
+                    network_config.clone(),
+                    dht_options,
+                    relay_config.clone(),
+                    true,
+                )
+                .await?
+            }
+            #[cfg(not(target_family = "wasm"))]
+            NodeSource::Persistent(root) => {
+                IrohDocsNode::persistent_with_discovery_config(
+                    root,
+                    network_config.clone(),
+                    dht_options,
+                    relay_config.clone(),
+                    true,
+                )
+                .await?
+            }
+            // Web: DHT は使えない（ADR 0056 §3）。作り直しも同じ秘密鍵と WebRTC の transport で開く。
+            NodeSource::Memory { secret_key, webrtc } => {
+                IrohDocsNode::memory_with(kukuri_iroh_node::NodeOptions {
+                    network_config: network_config.clone(),
+                    relay_config: relay_config.clone(),
+                    secret_key: Some(secret_key.clone()),
+                    webrtc: webrtc.clone(),
+                })
+                .await?
+            }
         };
         node.install_remote_cache(candidate_store.clone())?;
         let transport = Arc::new(
@@ -692,9 +742,11 @@ impl BoundIrohStack {
         let docs_sync = Arc::new(IrohDocsSync::with_account_store(
             node.clone(),
             candidate_store.clone(),
+            candidate_store.clone(),
         ));
         let blob_service = Arc::new(IrohBlobService::with_account_store(
             node.clone(),
+            candidate_store.clone(),
             candidate_store,
         ));
         transport
