@@ -65,9 +65,9 @@ pub(crate) async fn negotiate(
     answerer_events: &mut mpsc::Receiver<SessionEvent>,
     answerer_id: EndpointId,
 ) -> (SessionId, CustomAddr) {
-    let (session, offer) = offerer.offer(answerer_id).await.expect("offer");
+    let (session, offer) = offerer.offer(answerer_id, &[]).await.expect("offer");
     let answer = answerer
-        .answer(offerer_id, session, &offer)
+        .answer(offerer_id, session, &offer, &[])
         .await
         .expect("answer");
     offerer

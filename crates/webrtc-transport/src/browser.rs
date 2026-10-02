@@ -7,14 +7,14 @@ use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use bytes::Bytes;
-use js_sys::{Reflect, Uint8Array};
+use js_sys::{Array, Reflect, Uint8Array};
 use tokio::sync::mpsc;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{
     MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelInit, RtcDataChannelState,
-    RtcDataChannelType, RtcIceGatheringState, RtcPeerConnection, RtcPeerConnectionState,
-    RtcSdpType, RtcSessionDescriptionInit,
+    RtcDataChannelType, RtcIceGatheringState, RtcIceServer, RtcPeerConnection,
+    RtcPeerConnectionState, RtcSdpType, RtcSessionDescriptionInit,
 };
 
 use crate::{
@@ -71,9 +71,17 @@ fn open_peer(
     shared: &Arc<Shared>,
     over_high: &Rc<Cell<bool>>,
     signals: mpsc::Sender<Signal>,
+    stun: &[String],
 ) -> Result<Peer> {
-    let connection =
-        RtcPeerConnection::new_with_configuration(&RtcConfiguration::new()).map_err(js_error)?;
+    let config = RtcConfiguration::new();
+    let servers = Array::new();
+    for server in stun {
+        let ice = RtcIceServer::new();
+        ice.set_urls_str(&format!("stun:{server}"));
+        servers.push(&ice);
+    }
+    config.set_ice_servers(&servers);
+    let connection = RtcPeerConnection::new_with_configuration(&config).map_err(js_error)?;
     let init = RtcDataChannelInit::new();
     init.set_negotiated(true);
     init.set_id(CHANNEL_STREAM_ID);
@@ -201,6 +209,7 @@ async fn run(start: Start) -> Result<String> {
         session,
         role,
         remote_offer,
+        stun,
         reply,
         mut out,
         mut control,
@@ -208,7 +217,7 @@ async fn run(start: Start) -> Result<String> {
     } = start;
     let over_high = Rc::new(Cell::new(false));
     let (signal_tx, mut signals) = mpsc::channel(8);
-    let peer = open_peer(session, &shared, &over_high, signal_tx)?;
+    let peer = open_peer(session, &shared, &over_high, signal_tx, &stun)?;
 
     let local_sdp = match role {
         Role::Offerer => {

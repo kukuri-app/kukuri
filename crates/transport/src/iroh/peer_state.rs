@@ -5,19 +5,26 @@ use super::*;
 pub(crate) struct ObservedPeerPath {
     pub(crate) has_active_ip: bool,
     pub(crate) has_active_relay: bool,
+    /// ブラウザとの直接経路(QUIC over WebRTC。接続交渉に relay を使う。ADR 0057 §9)。
+    pub(crate) has_active_custom: bool,
 }
 
 impl ObservedPeerPath {
-    /// 実データが relay 経由でのみ流れている(active な IP 経路を持たない)peer。
+    /// 実データが relay 経由でのみ流れている(active な IP・custom 経路を持たない)peer。
     /// remote_info が観測できない peer は relay_carried ではない扱いにして旧判定へ倒す。
     fn relay_carried(&self) -> bool {
-        self.has_active_relay && !self.has_active_ip
+        self.has_active_relay && !self.has_active_ip && !self.has_active_custom
+    }
+
+    /// relay で接続交渉した直接経路(custom)で実データが流れる peer。
+    fn relay_supported(&self) -> bool {
+        self.has_active_custom && !self.has_active_ip
     }
 }
 
 /// topic 単位の active_path 判定。precedence 順:
 /// 1. connected peer が 1 つ以上あり、全員が relay_carried → RelayFallback
-/// 2. rendezvous peer あり → RelaySupportedP2p
+/// 2. rendezvous peer あり、または relay で交渉した custom 経路の peer あり → RelaySupportedP2p
 /// 3. それ以外 → DirectP2p
 ///
 /// 返り値の fallback_peer_ids は active_path に関わらず relay_carried な peer を列挙する
@@ -39,7 +46,13 @@ fn topic_connection_path(
     let active_path =
         if !connected_peers.is_empty() && fallback_peer_ids.len() == connected_peers.len() {
             ConnectionPath::RelayFallback
-        } else if rendezvous_peer_count > 0 {
+        } else if rendezvous_peer_count > 0
+            || connected_peers.iter().any(|peer| {
+                observed_paths
+                    .get(peer)
+                    .is_some_and(ObservedPeerPath::relay_supported)
+            })
+        {
             ConnectionPath::RelaySupportedP2p
         } else {
             ConnectionPath::DirectP2p
@@ -390,6 +403,8 @@ impl IrohGossipTransport {
                     path.has_active_relay = true;
                 } else if addr.addr().is_ip() {
                     path.has_active_ip = true;
+                } else if addr.addr().is_custom() {
+                    path.has_active_custom = true;
                 }
             }
             observed.insert(peer_id.clone(), path);
@@ -436,6 +451,7 @@ mod tests {
                     ObservedPeerPath {
                         has_active_ip: *has_active_ip,
                         has_active_relay: *has_active_relay,
+                        has_active_custom: false,
                     },
                 )
             })
@@ -491,6 +507,28 @@ mod tests {
     }
 
     // --- relay fallback 判定 ---
+
+    /// #1422 AC-2 J6: custom 経路が開いた relay だけの peer は RelayFallback ではなく Relay Supported P2P。
+    /// custom を閉じた後は relay だけの peer に戻る。
+    #[test]
+    fn topic_path_with_an_active_custom_path_is_relay_supported() {
+        let web = |has_active_custom| {
+            BTreeMap::from([(
+                "web".to_string(),
+                ObservedPeerPath {
+                    has_active_ip: false,
+                    has_active_relay: true,
+                    has_active_custom,
+                },
+            )])
+        };
+        let (path, fallback) = topic_connection_path(&peers(&["web"]), 0, &web(true));
+        assert_eq!(path, ConnectionPath::RelaySupportedP2p);
+        assert!(fallback.is_empty());
+        let (path, fallback) = topic_connection_path(&peers(&["web"]), 0, &web(false));
+        assert_eq!(path, ConnectionPath::RelayFallback);
+        assert_eq!(fallback, peers(&["web"]));
+    }
 
     #[test]
     fn topic_path_all_peers_relay_carried_is_relay_fallback() {

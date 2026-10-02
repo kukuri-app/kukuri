@@ -1,0 +1,321 @@
+//! #1422 W10 AC-2 の native の固定 fixture。ブラウザの端（IP の transport が無く relay だけで届き、交渉を始める）を
+//! native で作り、native の node（UDP・relay・交渉に応じるだけ）と手元の iroh relay でつなぐ。
+
+use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+
+use anyhow::{Context as _, Result};
+use futures_util::StreamExt;
+use iroh::{EndpointAddr, RelayUrl, TransportAddr};
+use iroh_gossip::{TopicId, api::Event};
+use kukuri_transport::TransportRelayConfig;
+use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport, signaling_fixture};
+
+use crate::{DOC_READ_ALPN, DocReadQuery, DocReadResponse, IrohDocsNode, NodeOptions};
+
+#[path = "../../tests/support/web_e2e.rs"]
+mod web_e2e;
+
+const WAIT: Duration = Duration::from_secs(20);
+
+async fn node(
+    relay: &RelayUrl,
+    browser_like: bool,
+) -> Result<(Arc<IrohDocsNode>, Arc<WebRtcTransport>)> {
+    let transport = WebRtcTransport::new(WebRtcConfig {
+        bind_ip: Ipv4Addr::LOCALHOST.into(),
+    });
+    let node = IrohDocsNode::memory_with(NodeOptions {
+        relay_config: TransportRelayConfig {
+            iroh_relay_urls: vec![relay.to_string()],
+        },
+        webrtc: Some(transport.clone()),
+        browser_like,
+        ..NodeOptions::default()
+    })
+    .await?;
+    node.endpoint().online().await;
+    Ok((node, transport))
+}
+
+/// relay だけで届く宛先。
+fn via_relay(node: &IrohDocsNode, relay: &RelayUrl) -> EndpointAddr {
+    EndpointAddr::from_parts(node.endpoint().id(), [TransportAddr::Relay(relay.clone())])
+}
+
+async fn eventually(what: &str, done: impl AsyncFnMut() -> bool) -> Result<()> {
+    eventually_within(WAIT, what, done).await
+}
+
+async fn eventually_within(
+    limit: Duration,
+    what: &str,
+    mut done: impl AsyncFnMut() -> bool,
+) -> Result<()> {
+    n0_future::time::timeout(limit, async {
+        while !done().await {
+            n0_future::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .with_context(|| what.to_string())
+}
+
+/// 相手への経路に active な custom path があるか（診断が見る `remote_info`）。
+async fn custom_is_active(node: &IrohDocsNode, peer: &IrohDocsNode) -> bool {
+    node.endpoint()
+        .remote_info(peer.endpoint().id())
+        .await
+        .is_some_and(|info| {
+            info.addrs().any(|addr| {
+                addr.addr().is_custom()
+                    && matches!(addr.usage(), iroh::endpoint::TransportAddrUsage::Active)
+            })
+        })
+}
+
+async fn next_message(receiver: &mut iroh_gossip::api::GossipReceiver) -> Result<Vec<u8>> {
+    n0_future::time::timeout(WAIT, async {
+        loop {
+            if let Event::Received(message) = receiver.next().await.context("topic ended")?? {
+                return anyhow::Ok(message.content.to_vec());
+            }
+        }
+    })
+    .await
+    .context("no gossip message")?
+}
+
+/// J3（S1・S2・T3）: relay で始めた需要の接続へ交渉で custom path が足され、gossip の同じ購読・有界な reader・blob の
+/// 実データが custom を通る。blob の転送の途中で custom だけを閉じても、同じ接続のまま relay で完走し hash が一致し、
+/// gossip の同じ購読と reader も relay で続く。
+#[tokio::test]
+async fn the_route_moves_to_the_custom_path_and_falls_back_to_the_relay() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (native, native_transport) = node(&relay, false).await?;
+    let native_addr = via_relay(&native, &relay);
+    web_e2e::seed(&native, "native").await?;
+
+    // gossip の購読が最初の需要の接続になり、交渉が始まる。
+    let topic = TopicId::from_bytes([7; 32]);
+    let (native_sender, _native_receiver) = native.gossip().subscribe(topic, vec![]).await?.split();
+    web.discovery().add_endpoint_info(native_addr.clone());
+    let (_web_sender, mut web_receiver) = web
+        .gossip()
+        .subscribe_and_join(topic, vec![native.endpoint().id()])
+        .await?
+        .split();
+    eventually("one session per side", async || {
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions,
+        ) == (1, 1)
+    })
+    .await?;
+    eventually("the custom path is active", async || {
+        custom_is_active(&web, &native).await
+    })
+    .await?;
+    native_sender.broadcast(b"before".to_vec().into()).await?;
+    assert_eq!(next_message(&mut web_receiver).await?, b"before");
+
+    // 有界な reader の実データが custom を通る。
+    let demand = web_e2e::demand(&web, native_addr.clone()).await?;
+    let read =
+        web_e2e::read_over_custom(&web, &web_transport, &demand, native_addr.clone(), "native")
+            .await?;
+    assert!(read.ends_with("via_custom=true"), "{read}");
+
+    // 4 MiB の blob の転送の途中で custom だけを閉じる。
+    let data: Vec<u8> = (0..4 * 1024 * 1024)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let hash = native.blobs().blobs().add_bytes(data.clone()).await?.hash;
+    let connection = web
+        .endpoint()
+        .connect(native_addr.clone(), iroh_blobs::ALPN)
+        .await?;
+    let started = web_transport.stats().received_bytes;
+    let fetch = tokio::spawn({
+        let blobs = web.blobs().clone();
+        let connection = connection.clone();
+        async move { blobs.remote().fetch(connection, hash).await }
+    });
+    eventually(
+        "the transfer is under way over the custom path",
+        async || web_transport.stats().received_bytes >= started + 1024 * 1024,
+    )
+    .await?;
+    assert!(!fetch.is_finished());
+    web.webrtc_signaling().context("webrtc")?.reset();
+    let at_reset = web_transport.stats().received_bytes;
+    fetch.await??;
+    assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
+    // 残りは relay で届いた（custom の受信は reset の後に増えていない）。接続はそのままで、開いた path は relay だけ。
+    assert_eq!(web_transport.stats().received_bytes, at_reset);
+    assert!(connection.close_reason().is_none());
+    let paths = connection.paths();
+    assert!(!paths.is_empty() && paths.iter().all(|path| path.is_relay()));
+    assert!(!custom_is_active(&web, &native).await);
+    assert_eq!(web_transport.stats().sessions, 0);
+
+    // 同じ購読と reader は relay で続く。
+    native_sender.broadcast(b"after".to_vec().into()).await?;
+    assert_eq!(next_message(&mut web_receiver).await?, b"after");
+    let read = web_e2e::read_newest(&web, native_addr, "native").await?;
+    assert!(read.contains("value=native-3"), "{read}");
+    Ok(())
+}
+
+/// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
+/// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
+/// （需要の終わった 40 件とは交渉しない）。閉じた custom path は iroh の path の idle 期限（15 秒）まで選ばれたまま
+/// 残り、その間の新しい接続も届かないので、resume の前に閉じるのを待つ。
+#[tokio::test]
+async fn resume_renegotiates_only_the_live_demand() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (live, live_transport) = node(&relay, false).await?;
+    let signaling = web.webrtc_signaling().context("webrtc")?;
+    let _demand = web_e2e::demand(&web, via_relay(&live, &relay)).await?;
+    eventually("the live demand opens a session", async || {
+        (
+            web_transport.stats().sessions,
+            live_transport.stats().sessions,
+        ) == (1, 1)
+            && custom_is_active(&web, &live).await
+    })
+    .await?;
+
+    let relay_map = iroh::RelayMap::from_iter([relay.clone()]);
+    let mut others = Vec::new();
+    for _ in 0..40 {
+        let other = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .relay_mode(iroh::RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .await?;
+        let connection = other
+            .connect(via_relay(&web, &relay), iroh_blobs::ALPN)
+            .await?;
+        others.push((other, connection));
+    }
+    eventually("the table is full", async || {
+        signaling.stats().demand_peers == kukuri_webrtc_transport::MAX_SESSIONS
+    })
+    .await?;
+    for (_, connection) in &others {
+        connection.close(0u32.into(), b"done");
+    }
+    eventually("only the live demand stays in the table", async || {
+        signaling.stats().demand_peers == 1
+    })
+    .await?;
+
+    signaling.reset();
+    eventually("reset closes every session and backend", async || {
+        (
+            web_transport.stats().sessions,
+            live_transport.stats().sessions,
+            web_transport.stats().running_backends,
+        ) == (0, 0, 0)
+    })
+    .await?;
+    eventually_within(
+        Duration::from_secs(40),
+        "iroh drops the closed custom path",
+        async || !custom_is_active(&web, &live).await,
+    )
+    .await?;
+    let attempts = signaling.stats().attempts;
+    n0_future::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        (web_transport.stats().sessions, signaling.stats().attempts),
+        (0, attempts)
+    );
+    signaling.resume();
+    eventually("resume renegotiates the live demand", async || {
+        (
+            web_transport.stats().sessions,
+            live_transport.stats().sessions,
+        ) == (1, 1)
+            && custom_is_active(&web, &live).await
+    })
+    .await?;
+    n0_future::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(signaling.stats().attempts, attempts + 1);
+    Ok(())
+}
+
+/// #1214 AC-3: node の停止で WebRTC の交渉の世代も終わり、交渉で開いた session が閉じる。
+#[tokio::test]
+async fn shutting_down_the_node_closes_its_webrtc_sessions() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (native, native_transport) = node(&relay, false).await?;
+    let _demand = web_e2e::demand(&web, via_relay(&native, &relay)).await?;
+    eventually("one session per side", async || {
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions,
+        ) == (1, 1)
+    })
+    .await?;
+    web.shutdown().await?;
+    assert_eq!(web_transport.stats().sessions, 0);
+    native.shutdown().await?;
+    Ok(())
+}
+
+/// J8: native の node 同士は交渉しない（需要の表に載らず、session を作らない。UDP を維持する）。
+#[tokio::test]
+async fn native_nodes_do_not_negotiate_with_each_other() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (a, a_transport) = node(&relay, false).await?;
+    let (b, b_transport) = node(&relay, false).await?;
+    let _demand = web_e2e::demand(&a, b.endpoint().addr()).await?;
+    let signaling = a.webrtc_signaling().context("webrtc")?;
+    assert_eq!(signaling.stats(), Default::default());
+    assert_eq!(
+        (a_transport.stats().sessions, b_transport.stats().sessions),
+        (0, 0)
+    );
+    Ok(())
+}
+
+/// 監査 B-1: 交渉が始まった後、session を登録する前に需要の接続（1 回の reader 等）が閉じても、開いた session を残さない。
+/// 登録の前の待ちを、応答しない STUN（relay の host の 3478 番。応答を 500 ms 待つ）で作る。
+#[tokio::test]
+async fn a_demand_that_ends_during_the_negotiation_leaves_no_session() -> Result<()> {
+    let _silent_stun =
+        std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, kukuri_webrtc_transport::STUN_PORT));
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (native, native_transport) = node(&relay, false).await?;
+    let signaling = web.webrtc_signaling().context("webrtc")?;
+    let demand = web_e2e::demand(&web, via_relay(&native, &relay)).await?;
+    eventually("the negotiation starts", async || {
+        signaling.stats().attempts == 1
+    })
+    .await?;
+    demand.close(0u32.into(), b"done");
+    eventually("the demand ends", async || {
+        signaling.stats().demand_peers == 0
+    })
+    .await?;
+    eventually("no session is left on either side", async || {
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions,
+        ) == (0, 0)
+    })
+    .await?;
+    n0_future::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        (
+            web_transport.stats().sessions,
+            native_transport.stats().sessions
+        ),
+        (0, 0)
+    );
+    Ok(())
+}

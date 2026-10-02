@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10）
+Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10 の AC-1（§7）・AC-2（§9））
 
 ## Context
 
@@ -87,6 +87,8 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - W9 AC-2 の試験は、custom のアドレスだけで接続する（relay を使わない）ので #4565 に依存しない。
 - 経路の削除は、session の close で行う。閉じた session の addr は `is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
   iroh はその path を検証の失敗・idle で閉じ、既定の selector が relay 等の残りの path へ移る。iroh 側に path を消す API は要らない。
+  閉じた custom path は iroh の path の idle 期限（15 秒）まで選ばれたまま残り、その間の送信（その相手への新しい接続の最初の送信も）は届かない。
+  W10 AC-2 の実測（J3）では relay で再開するまで 16〜18 秒かかった。native の UDP の path を失ったときと同じ iroh の性質で、接続と stream は続く。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 
@@ -95,6 +97,9 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - STUN の提供元は Community Node の基盤で自前で運用する（2026-09-30 ユーザー決定）。`cn-iroh-relay` は純粋な iroh relay のまま、STUN は別の process とする。
 - 送信先・利用の可否（direct-only・relay 無効・同意の設定との関係）と、Community Node の基盤への配置は W10 が所有する。本番への反映は別の Issue にまとめる。開発と試験は手元の STUN を使う。
 - native backend の server reflexive の候補も同じ STUN から得る（iroh の QAD は iroh 自身の socket の値で、session の socket には使えない）。TURN は使わない（#1213 D-16）。
+- W10 AC-2 の決定: 送信先は、Endpoint が今使っている relay の host の 3478 番（`STUN_PORT`）。Community Node の基盤は relay と同じ host で STUN を動かす（配置は本番への反映の Issue）。
+  relay が無い（direct-only・relay 無効・同意の無い）ときは STUN を送らない。native は session の socket から、認証の無い binding（RFC 8489）を送信先ごとに 1 回送り、500 ms まで応答を待って server reflexive の候補を足す。
+  browser は `RTCPeerConnection` の `iceServers` に渡す。
 
 ### 7. W10 へ渡す session の API
 
@@ -136,6 +141,28 @@ Firefox・Safari の実測は W8 の matrix が扱う。
 | S2 | 同上 | relay の接続だけで始め、接続交渉の後に custom path を足す（#4565） | 再接続なしで custom path が選ばれ、以後の実データが custom を通る（経路ごとの bytes で判定） |
 | S3 | 同上 | 回線を全断して戻す | 既存の有界な再開へ戻り、未送信を成功として扱わない。旧 session の資源が 0 に戻る |
 
+W10 AC-2 では、relay だけで届き交渉を始める端（ブラウザ相当）を native で作り、手元の relay で次のとおり確かめた（`crates/iroh-node/src/tests/webrtc_route.rs`）。
+S1・S2 は gossip の同じ購読・有界な reader・4 MiB の blob で 1 つの試験にまとめた（reset の時点で custom を通った bytes は約 1 MiB、残りは relay で届いた）。
+S3 の回線の全断は、W4 の offline の入力（`reset`）と、その後の `resume` で代えた（§9）。
+
+### 9. 需要・経路選択・停止との接続（W10 AC-2）
+
+- 需要: 交渉は、相手との iroh の接続（gossip・docs の有界な reader・blob。既存の需要の owner が張る）だけを需要とみなす。
+  `DemandHooks`（`EndpointHooks::after_handshake`。交渉の ALPN 自身は除く）で接続の成立を受け、相手の EndpointId ごとに生きた接続を数える。
+  接続が閉じたら（`WeakConnectionHandle::closed`）数を減らし、0 になったら相手との session を閉じて表から消す。WebRTC のための常時の retry・topic ごとの交渉・発見済みの peer への交渉は無い。
+- 始める側: 交渉を始めるのは IP の transport を持たない端（ブラウザ。`IrohDocsNode` は wasm で `DemandHooks` を登録する）だけ。native は応じるだけで、native 同士では session を作らない（UDP を維持）。
+  desktop の node は WebRTC の transport を持ち、ブラウザからの交渉に応じる。session の socket の bind の IP が未指定なら、既定の経路の IP を使う。Community Node の node は持たない。
+- 上限: 需要の表は相手 16 件（session の上限と同じ）。満杯なら表に載せず既存の経路を使う。1 回の需要（表に載ってから消えるまで）の間、交渉は相手ごとに 3 回まで（`MAX_ATTEMPTS`）で、
+  失敗・session の喪失の後は期限（15 秒）の分だけ待つ。使い切ったら、その需要が終わるか `resume` まで試さない（未対応の旧 native の peer も 3 回で止まる）。
+- 共有: session は相手ごとに 1 本。開いている間に新しい需要の接続ができたら、その接続にも同じ custom path を足す。
+  開いた session があるときに相手から要求が来たら、同時開始（`Glare`）として断り、要求した側は自分の側の開いた session を使う（行き違いの交渉で 2 本目を作らない。開いた session を閉じて作り直すと、閉じた path が §5 のとおり残るため）。
+- 停止と再開（W1・W4 の入力）: `reset`（pagehide・freeze・offline・account の切替・停止）は世代を進め、交渉と session をすべて閉じる。
+  `resume`（可視・online・pageshow・resume）は、生きた需要の接続が残り今の世代の session が無い相手とだけ交渉し直し、開いている session は閉じない（閉じると §5 の期限まで通信が止まる）。
+  native の session を閉じるときは DataChannel を閉じる要求（SCTP の stream の reset）を相手へ送り、相手の session もすぐ閉じる。
+- 診断: `ObservedPeerPath` は active な custom path を数える。custom の path が開いていれば relay だけの peer（RelayFallback）として数えず、IP が無く custom で届く peer は Relay Supported P2P（接続交渉に relay を使った直接経路）とする。
+  経路ごとの実データは transport の `received_bytes`（custom で受け取った bytes）で判別する。
+- 撤去: native から交渉を始める試験の経路（`web_peer` の `/connect`）と、`Signaling::connect` の公開。
+
 ## 採らない方式
 
 - 外部の iroh 用 WebRTC transport の crate を使う: Context。維持の状態と iroh の版が合わず、上限と停止の契約を足す差分がかえって大きくなる。
@@ -164,10 +191,10 @@ ADR 0002 の template に従う。
 - Gossip Hint 必要有無: なし。
 - Blob 必要有無: なし。
 - SQLite projection 必要有無: なし。
-- 必須 contract: §8 の E1〜E6（S1〜S3 は W10 AC-2）。
+- 必須 contract: §8 の E1〜E6、W10 AC-2 の S1〜S3 と §9 の試験（#1422 の J1〜J7）。
 - 必須 scenario: W8（#1220）の native↔Web・Web↔Web の直接経路と fallback。
 - 新しい外部送信: STUN の要求（IP とポートが STUN の運用者、すなわち Community Node の運用者へ届く）、ICE の候補（IP とポートが接続交渉の相手へ届く）。
-  外部送信の一覧（`docs/legal/app-data-flow-inventory.md`・`docs/legal/external-transmission-notice.md`）への反映は W10 と W8 AC-6 が行う。
+  送信先と送る条件は W10 AC-2 で決めた（§6・§9）。外部送信の一覧（`docs/legal/app-data-flow-inventory.md`・`docs/legal/external-transmission-notice.md`）への反映は W8 AC-6 が行う（ADR 0060 §6）。
 
 ## References
 

@@ -140,7 +140,7 @@ async fn native_pair() -> NativePair {
     let mut events = transport.take_events().expect("events");
     let endpoint = custom_only_endpoint(Arc::clone(&transport)).await;
     let (session, offer) = transport
-        .offer(SecretKey::generate().public())
+        .offer(SecretKey::generate().public(), &[])
         .await
         .expect("offer");
     let (remote, answer) = crate::signaling_fixture::post_offer(endpoint.id(), session, &offer)
@@ -234,8 +234,13 @@ async fn relay_node(relay: &iroh::RelayUrl) -> (Endpoint, Arc<Signaling>, Router
         .await
         .expect("bind endpoint");
     endpoint.online().await;
-    let signaling = Signaling::new(transport, endpoint.clone(), crate::NEGOTIATION_DEADLINE)
-        .expect("signaling");
+    let signaling = Signaling::new(
+        transport,
+        endpoint.clone(),
+        None,
+        crate::NEGOTIATION_DEADLINE,
+    )
+    .expect("signaling");
     let router = Router::builder(endpoint.clone())
         .accept(ECHO_ALPN, Echo)
         .accept(crate::SIGNALING_ALPN, signaling.clone())

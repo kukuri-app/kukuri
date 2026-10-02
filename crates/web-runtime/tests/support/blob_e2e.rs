@@ -25,7 +25,7 @@ pub fn describe(bytes: &[u8], received_over_custom: u64) -> String {
     )
 }
 
-/// 相手への需要の接続。交渉の前に張り、交渉で足した custom path がこの接続に入る。
+/// 相手への需要の接続。ブラウザの node はこれを受けて交渉を始め（#1422 AC-2）、足した custom path がこの接続に入る。
 pub async fn demand(node: &IrohDocsNode, peer: EndpointAddr) -> Result<Connection> {
     Ok(node.endpoint().connect(peer, DOC_READ_ALPN).await?)
 }

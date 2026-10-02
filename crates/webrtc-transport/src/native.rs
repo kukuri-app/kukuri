@@ -1,7 +1,7 @@
 //! native の backend（str0m）。session ごとに ICE の UDP socket を 1 つ持つ task で `Rtc` を動かす。
 
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,6 +20,80 @@ use crate::{
     BUFFERED_HIGH_BYTES, BUFFERED_LOW_BYTES, CHANNEL_LABEL, CHANNEL_STREAM_ID, Control, Role,
     SessionId, Shared, Start,
 };
+
+/// STUN の送信先ごとに応答を待つ上限。
+const STUN_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// 既定の経路の IP（パケットは送らない）。
+pub(crate) fn default_route_ip() -> Option<IpAddr> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
+    Some(socket.local_addr().ok()?.ip())
+}
+
+const STUN_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
+
+/// `server` へ STUN の binding を 1 回問い合わせ、`socket` の外から見えるアドレスを返す（ADR 0057 §6）。
+/// 認証の無い binding（RFC 8489）だけを使う。
+async fn reflexive(socket: &UdpSocket, local: SocketAddr, server: &str) -> Option<SocketAddr> {
+    let target = tokio::net::lookup_host(server)
+        .await
+        .ok()?
+        .find(|addr| addr.is_ipv4() == local.is_ipv4())?;
+    let mut request = [0u8; 20];
+    request[1] = 0x01;
+    request[4..8].copy_from_slice(&STUN_COOKIE);
+    getrandom::fill(&mut request[8..]).ok()?;
+    socket.send_to(&request, target).await.ok()?;
+    let mut buf = [0u8; 512];
+    loop {
+        let (len, from) = socket.recv_from(&mut buf).await.ok()?;
+        if from == target
+            && let Some(addr) = xor_mapped_address(&buf[..len], &request[8..])
+        {
+            return Some(addr);
+        }
+    }
+}
+
+/// binding の成功応答から XOR-MAPPED-ADDRESS を読む。`id` は要求の transaction id。
+fn xor_mapped_address(message: &[u8], id: &[u8]) -> Option<SocketAddr> {
+    if message.get(..2)? != [0x01, 0x01]
+        || message.get(4..8)? != STUN_COOKIE
+        || message.get(8..20)? != id
+    {
+        return None;
+    }
+    let mut attrs = message.get(20..)?;
+    while attrs.len() >= 4 {
+        let kind = u16::from_be_bytes([attrs[0], attrs[1]]);
+        let len = usize::from(u16::from_be_bytes([attrs[2], attrs[3]]));
+        let value = attrs.get(4..4 + len)?;
+        if kind == 0x0020 && len >= 8 {
+            let port = u16::from_be_bytes([value[2], value[3]]) ^ 0x2112;
+            let mask = [&STUN_COOKIE[..], id].concat();
+            let ip = match (value[1], value.get(4..)?) {
+                (1, [a, b, c, d]) => IpAddr::V4(Ipv4Addr::new(
+                    a ^ mask[0],
+                    b ^ mask[1],
+                    c ^ mask[2],
+                    d ^ mask[3],
+                )),
+                (2, bytes) if bytes.len() == 16 => {
+                    let mut ip = [0u8; 16];
+                    for (index, byte) in bytes.iter().enumerate() {
+                        ip[index] = byte ^ mask[index];
+                    }
+                    IpAddr::V6(Ipv6Addr::from(ip))
+                }
+                _ => return None,
+            };
+            return Some(SocketAddr::new(ip, port));
+        }
+        attrs = attrs.get(4 + len.next_multiple_of(4)..)?;
+    }
+    None
+}
 
 pub(crate) fn spawn(start: Start) {
     tokio::spawn(async move {
@@ -102,6 +176,27 @@ impl Driver {
         true
     }
 
+    /// DataChannel を閉じる要求（SCTP の stream の reset）を相手へ送ってから終える。相手の session も閉じる。
+    async fn close(&mut self) -> String {
+        if let Some(id) = self.channel {
+            self.rtc.direct_api().close_data_channel(id);
+            // 自分の `ChannelClose` の event では止めずに、要求を送り切る。
+            while let Ok(output) = self.rtc.poll_output() {
+                match output {
+                    Output::Timeout(_) => break,
+                    Output::Transmit(transmit) => {
+                        let _ = self
+                            .socket
+                            .send_to(&transmit.contents, transmit.destination)
+                            .await;
+                    }
+                    Output::Event(_) => {}
+                }
+            }
+        }
+        "closed".to_string()
+    }
+
     fn send(&mut self, datagram: &[u8]) -> Result<()> {
         let Some(id) = self.channel else {
             return Ok(());
@@ -131,15 +226,28 @@ async fn run(start: Start) -> Result<String> {
         session,
         role,
         remote_offer,
+        stun,
         reply,
         mut out,
         mut control,
         shared,
     } = start;
-    let socket = UdpSocket::bind(SocketAddr::new(shared.config.bind_ip, 0))
+    let mut ip = shared.config.bind_ip;
+    if ip.is_unspecified() {
+        ip = default_route_ip().context("no default route for the webrtc ice socket")?;
+    }
+    let socket = UdpSocket::bind(SocketAddr::new(ip, 0))
         .await
         .context("bind webrtc ice socket")?;
     let local = socket.local_addr()?;
+    let mut reflexive_addrs = Vec::new();
+    for server in &stun {
+        if let Ok(Some(addr)) =
+            tokio::time::timeout(STUN_TIMEOUT, reflexive(&socket, local, server)).await
+        {
+            reflexive_addrs.push(addr);
+        }
+    }
     let mut driver = Driver {
         rtc: Rtc::builder().build(Instant::now()),
         socket,
@@ -152,6 +260,11 @@ async fn run(start: Start) -> Result<String> {
     };
     let candidate = Candidate::host(local, "udp").context("host candidate")?;
     driver.rtc.add_local_candidate(candidate);
+    for addr in reflexive_addrs {
+        if let Ok(candidate) = Candidate::server_reflexive(addr, local, "udp") {
+            driver.rtc.add_local_candidate(candidate);
+        }
+    }
     let mut deadline = driver.drain().await?;
 
     let mut pending: Option<SdpPendingOffer> = None;
@@ -197,7 +310,10 @@ async fn run(start: Start) -> Result<String> {
         let wait = next.saturating_duration_since(Instant::now());
         tokio::select! {
             received = driver.socket.recv_from(&mut buf) => {
-                let (len, source) = received.context("receive on webrtc ice socket")?;
+                // 届かない宛先への送信の ICMP は、Windows では次の受信のエラーになる。session は続ける。
+                let Ok((len, source)) = received else {
+                    continue;
+                };
                 let Ok(contents) = buf[..len].try_into() else {
                     continue;
                 };
@@ -226,7 +342,7 @@ async fn run(start: Start) -> Result<String> {
                         bail!("webrtc answer was rejected");
                     }
                 }
-                None => return Ok("closed".to_string()),
+                None => return Ok(driver.close().await),
             },
             datagram = out.recv(), if driver.open => match datagram {
                 Some(datagram) => {
@@ -244,7 +360,7 @@ async fn run(start: Start) -> Result<String> {
                         sent += 1;
                     }
                 }
-                None => return Ok("closed".to_string()),
+                None => return Ok(driver.close().await),
             },
         }
         deadline = driver.drain().await?;

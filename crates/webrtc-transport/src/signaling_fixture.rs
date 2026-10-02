@@ -19,7 +19,7 @@ pub use browser::{post, post_offer, relay_url};
 #[cfg(not(target_family = "wasm"))]
 mod native {
     use std::{
-        net::{IpAddr, Ipv4Addr, UdpSocket},
+        net::{IpAddr, Ipv4Addr},
         sync::Arc,
     };
 
@@ -30,13 +30,7 @@ mod native {
 
     /// ブラウザが到達できる、loopback ではない手元の IP（パケットは送らない）。
     pub fn reachable_ip() -> IpAddr {
-        UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .and_then(|socket| {
-                socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9))?;
-                socket.local_addr()
-            })
-            .map(|addr| addr.ip())
-            .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        crate::native::default_route_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
     }
 
     /// 手元の iroh relay を平文の HTTP で起動する。返した `Server` を持っている間だけ動く。
@@ -98,7 +92,7 @@ mod native {
             )?;
         }
         transport
-            .answer(remote, SessionId::from_bytes(bytes), offer)
+            .answer(remote, SessionId::from_bytes(bytes), offer, &[])
             .await
     }
 }

@@ -350,3 +350,9 @@ N70は旧全購読topic snapshotから自account受信routeを除き、own route
 #1221の[現行Scope revision](https://github.com/kukuri-app/kukuri/issues/1221)ではCNなしの未知endpoint発見を要求せず、
 既存のticket/seed/既知peerとCN候補を実QUIC bindingで検証する。#1333の本番未使用locatorページAPIと
 停止中の制御recordは不採用とし、旧計画を残件に数えない。前節の「著者制御state」は当時の残件記録である。
+
+## ブラウザとの直接経路の接続交渉（#1422 W10 AC-2）
+
+| ID | 入口 → helper → sink | guard / 停止 | 対応contract |
+| --- | --- | --- | --- |
+| N72 | 既存の需要の owner が張った iroh の接続（gossip・docs reader・blob）→ `DemandHooks::after_handshake` → `Signaling` の需要の表 → 専用 ALPN の交渉 → `add_remote_addrs` の custom path | 始めるのは IP の transport の無いブラウザの node だけ（native は応じるだけ）。表は相手 16 件、満杯は既存の経路。需要の接続がすべて閉じたら session を閉じて表から消す。1 回の需要で相手ごとに 3 回まで（間隔 15 秒）。開いた session は相手ごとに 1 本で、後の接続へも同じ path を足す。`reset`（停止・切替・freeze 等）で世代を進めて全 session を閉じ、`resume` は生きた需要で session の無い相手だけ。発見済み・履歴の peer、topic ごとの交渉は無い。STUN は今の relay の host の 3478 番だけ（relay 無効なら送らない） | `a_demand_connection_shares_one_session_until_the_demand_ends`、`a_peer_without_the_alpn_is_tried_a_bounded_number_of_times`、`native_nodes_do_not_negotiate_with_each_other`、`a_demand_that_ends_during_the_negotiation_leaves_no_session`、`resume_renegotiates_only_the_live_demand`、`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`、`the_offer_carries_a_reflexive_candidate_only_with_stun`、browser の `a_demand_connection_to_the_native_node_moves_to_the_custom_path`・`two_browser_nodes_share_one_session_over_the_custom_path` |

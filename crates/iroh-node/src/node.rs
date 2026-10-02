@@ -27,7 +27,11 @@ use kukuri_transport::{
     TransportNetworkConfig, TransportRelayConfig, build_endpoint_builder,
     prepare_endpoint_for_discovery, sync_endpoint_relay_config,
 };
-use kukuri_webrtc_transport::{NEGOTIATION_DEADLINE, SIGNALING_ALPN, Signaling, WebRtcTransport};
+#[cfg(not(target_family = "wasm"))]
+use kukuri_webrtc_transport::WebRtcConfig;
+use kukuri_webrtc_transport::{
+    DemandHooks, NEGOTIATION_DEADLINE, SIGNALING_ALPN, Signaling, WebRtcTransport,
+};
 use n0_future::time::timeout;
 #[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
@@ -229,7 +233,11 @@ pub struct NodeOptions {
     /// 端末の endpoint の秘密鍵。無ければ新しく作る。
     pub secret_key: Option<iroh::SecretKey>,
     /// ブラウザとの直接経路（QUIC over WebRTC DataChannel。ADR 0057）。渡すと接続交渉の ALPN も受ける（#1422）。
+    /// 交渉を始めるのは IP の transport を持たないブラウザの node だけ（ADR 0057 §9）。
     pub webrtc: Option<Arc<WebRtcTransport>>,
+    /// 試験で、IP の transport を持たず交渉を始めるブラウザの端を native で作る。
+    #[cfg(test)]
+    pub(crate) browser_like: bool,
 }
 
 impl Default for NodeOptions {
@@ -239,6 +247,8 @@ impl Default for NodeOptions {
             relay_config: TransportRelayConfig::default(),
             secret_key: None,
             webrtc: None,
+            #[cfg(test)]
+            browser_like: false,
         }
     }
 }
@@ -276,22 +286,26 @@ impl IrohDocsNode {
             network_config,
             DhtDiscoveryOptions::disabled(),
             TransportRelayConfig::default(),
+            false,
         )
         .await
     }
 
+    /// `webrtc` なら、ブラウザからの接続交渉に応じる（desktop。ADR 0057 §9）。
     #[cfg(not(target_family = "wasm"))]
     pub async fn persistent_with_discovery_config(
         root: impl AsRef<Path>,
         network_config: TransportNetworkConfig,
         dht_options: DhtDiscoveryOptions,
         relay_config: TransportRelayConfig,
+        webrtc: bool,
     ) -> Result<Arc<Self>> {
         Self::load_persistent(
             root.as_ref(),
             network_config,
             dht_options,
             relay_config,
+            webrtc,
             true,
         )
         .await
@@ -305,6 +319,7 @@ impl IrohDocsNode {
         network_config: TransportNetworkConfig,
         dht_options: DhtDiscoveryOptions,
         relay_config: TransportRelayConfig,
+        webrtc: bool,
     ) -> Result<Arc<Self>> {
         let root = root.as_ref();
         for name in [
@@ -317,7 +332,15 @@ impl IrohDocsNode {
                 "runtime repair requires the existing {name}"
             );
         }
-        Self::load_persistent(root, network_config, dht_options, relay_config, false).await
+        Self::load_persistent(
+            root,
+            network_config,
+            dht_options,
+            relay_config,
+            webrtc,
+            false,
+        )
+        .await
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -326,6 +349,7 @@ impl IrohDocsNode {
         network_config: TransportNetworkConfig,
         dht_options: DhtDiscoveryOptions,
         relay_config: TransportRelayConfig,
+        webrtc: bool,
         recover_corrupt_docs: bool,
     ) -> Result<Arc<Self>> {
         std::fs::create_dir_all(root)
@@ -338,10 +362,16 @@ impl IrohDocsNode {
             (*store).clone(),
             Some(root.to_path_buf()),
             NodeOptions {
+                webrtc: webrtc.then(|| {
+                    WebRtcTransport::new(WebRtcConfig {
+                        bind_ip: network_config.bind_addr.ip(),
+                    })
+                }),
                 network_config,
                 relay_config,
                 secret_key: None,
-                webrtc: None,
+                #[cfg(test)]
+                browser_like: false,
             },
             dht_options,
             recover_corrupt_docs,
@@ -369,7 +399,16 @@ impl IrohDocsNode {
             relay_config,
             secret_key,
             webrtc,
+            #[cfg(test)]
+            browser_like,
         } = options;
+        #[cfg(not(test))]
+        let browser_like = false;
+        // 交渉を始めるのは IP の transport を持たない端（ブラウザ）だけ（ADR 0057 §9）。
+        let demand = webrtc
+            .as_ref()
+            .filter(|_| cfg!(target_family = "wasm") || browser_like)
+            .map(|_| DemandHooks::default());
         let blobs = store.into();
         let discovery = Arc::new(MemoryLookup::new());
         #[cfg(not(target_family = "wasm"))]
@@ -396,6 +435,9 @@ impl IrohDocsNode {
         if let Some(transport) = &webrtc {
             endpoint_builder = endpoint_builder.add_custom_transport(transport.clone());
         }
+        if let Some(hooks) = &demand {
+            endpoint_builder = endpoint_builder.hooks(hooks.clone());
+        }
         // ブラウザには UDP の socket が無い（ADR 0056 §8）。
         #[cfg(not(target_family = "wasm"))]
         {
@@ -403,6 +445,10 @@ impl IrohDocsNode {
                 std::net::SocketAddr::V4(addr) => endpoint_builder.bind_addr(addr)?,
                 std::net::SocketAddr::V6(addr) => endpoint_builder.bind_addr(addr)?,
             };
+        }
+        #[cfg(all(test, not(target_family = "wasm")))]
+        if browser_like {
+            endpoint_builder = endpoint_builder.clear_ip_transports();
         }
         #[cfg(target_family = "wasm")]
         let _ = &network_config;
@@ -465,7 +511,14 @@ impl IrohDocsNode {
         );
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
         let signaling = webrtc
-            .map(|transport| Signaling::new(transport, endpoint.clone(), NEGOTIATION_DEADLINE))
+            .map(|transport| {
+                Signaling::new(
+                    transport,
+                    endpoint.clone(),
+                    demand.as_ref(),
+                    NEGOTIATION_DEADLINE,
+                )
+            })
             .transpose()?;
         let mut router = Router::builder(endpoint.clone())
             .accept(

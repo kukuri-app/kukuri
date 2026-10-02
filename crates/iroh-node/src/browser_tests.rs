@@ -1,8 +1,8 @@
-//! ブラウザの `IrohDocsNode` と native の node が、手元の iroh relay で届く接続の上で専用 ALPN の交渉を行い
-//! （#1422 W10 AC-1）、QUIC over WebRTC DataChannel の custom path で互いの replica を同じ有界な reader
-//! （件数・bytes・期限）で読む（W1 AC-2）。交渉はどちらの端からでも始められる。
-//! 交渉の前に相手への需要の接続を張り、その接続の選ばれた path が custom へ移ってから読む。読み出しが custom path を
-//! 通ったことは、最新の record（32 KiB の埋め草つき）の受信 bytes で判定する。
+//! ブラウザの `IrohDocsNode` と native の node・別のブラウザの node が、手元の iroh relay で届く接続の上で専用 ALPN の
+//! 交渉を行い（#1422 W10）、QUIC over WebRTC DataChannel の custom path で互いの replica を同じ有界な reader
+//! （件数・bytes・期限）で読む（W1 AC-2）。交渉は、ブラウザの node が相手への需要の接続を受けて自動で始める（AC-2）。
+//! 需要の接続の選ばれた path が custom へ移ってから読み、読み出しが custom path を通ったことは、最新の record
+//! （32 KiB の埋め草つき）の受信 bytes で判定する。
 //! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer` から実行する。
 
 use std::sync::Arc;
@@ -33,13 +33,15 @@ async fn native() -> (EndpointAddr, RelayUrl) {
     let (id, relay) = info.split_once('\n').expect("id and relay");
     let relay: RelayUrl = relay.parse().expect("relay url");
     let id: EndpointId = id.parse().expect("endpoint id");
-    (
-        EndpointAddr::from_parts(id, [TransportAddr::Relay(relay.clone())]),
-        relay,
-    )
+    (via_relay(id, &relay), relay)
 }
 
-async fn browser_node(relay: &RelayUrl) -> (Arc<IrohDocsNode>, Arc<WebRtcTransport>) {
+fn via_relay(id: EndpointId, relay: &RelayUrl) -> EndpointAddr {
+    EndpointAddr::from_parts(id, [TransportAddr::Relay(relay.clone())])
+}
+
+/// `side` の replica を置いたブラウザの node。
+async fn browser_node(relay: &RelayUrl, side: &str) -> (Arc<IrohDocsNode>, Arc<WebRtcTransport>) {
     let transport = WebRtcTransport::new(WebRtcConfig {});
     let node = IrohDocsNode::memory_with(NodeOptions {
         relay_config: TransportRelayConfig {
@@ -50,24 +52,20 @@ async fn browser_node(relay: &RelayUrl) -> (Arc<IrohDocsNode>, Arc<WebRtcTranspo
     })
     .await
     .expect("start the browser node");
-    web_e2e::seed(&node, "browser").await.expect("seed");
-    // native から relay で届くようになってから交渉する。
+    web_e2e::seed(&node, side).await.expect("seed");
+    // 相手から relay で届くようになってから需要の接続を張る。
     node.endpoint().online().await;
     (node, transport)
 }
 
+/// T1（browser→native）: 需要の接続を張るだけで交渉が始まり、両方向の読み出しが custom path を通る。
 #[wasm_bindgen_test]
-async fn the_browser_starts_the_negotiation_and_both_read_over_the_custom_path() {
+async fn a_demand_connection_to_the_native_node_moves_to_the_custom_path() {
     let (native, relay) = native().await;
-    let (node, transport) = browser_node(&relay).await;
+    let (node, transport) = browser_node(&relay, "browser").await;
     let demand = web_e2e::demand(&node, native.clone())
         .await
         .expect("demand");
-    node.webrtc_signaling()
-        .expect("webrtc")
-        .connect(native.clone())
-        .await
-        .expect("negotiate");
     let read = web_e2e::read_over_custom(&node, &transport, &demand, native, "native")
         .await
         .expect("read the native replica");
@@ -76,23 +74,29 @@ async fn the_browser_starts_the_negotiation_and_both_read_over_the_custom_path()
         .await
         .expect("read back");
     assert_eq!(read_back, expected("browser"));
+    assert_eq!(transport.stats().sessions, 1);
     node.shutdown().await.expect("shutdown");
 }
 
+/// T1（browser↔browser）: 両端が交渉を始めても、session は 1 本にまとまり、読み出しが custom path を通る。
 #[wasm_bindgen_test]
-async fn the_native_node_starts_the_negotiation_and_both_read_over_the_custom_path() {
-    let (native, relay) = native().await;
-    let (node, transport) = browser_node(&relay).await;
-    let demand = web_e2e::demand(&node, native.clone())
+async fn two_browser_nodes_share_one_session_over_the_custom_path() {
+    let (_, relay) = native().await;
+    let (a, a_transport) = browser_node(&relay, "a").await;
+    let (b, b_transport) = browser_node(&relay, "b").await;
+    let b_addr = via_relay(b.endpoint().id(), &relay);
+    let demand = web_e2e::demand(&a, b_addr.clone()).await.expect("demand");
+    let read = web_e2e::read_over_custom(&a, &a_transport, &demand, b_addr, "b")
         .await
-        .expect("demand");
-    let read_back = signaling_fixture::post("/connect", &node.endpoint().id().to_string())
-        .await
-        .expect("negotiate from the native node");
-    assert_eq!(read_back, expected("browser"));
-    let read = web_e2e::read_over_custom(&node, &transport, &demand, native, "native")
-        .await
-        .expect("read the native replica");
-    assert_eq!(read, expected("native"));
-    node.shutdown().await.expect("shutdown");
+        .expect("read the other browser replica");
+    assert_eq!(read, expected("b"));
+    n0_future::time::timeout(std::time::Duration::from_secs(20), async {
+        while (a_transport.stats().sessions, b_transport.stats().sessions) != (1, 1) {
+            n0_future::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("one session per side");
+    a.shutdown().await.expect("shutdown");
+    b.shutdown().await.expect("shutdown");
 }
