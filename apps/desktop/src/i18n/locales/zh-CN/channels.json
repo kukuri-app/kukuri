@@ -88,6 +88,8 @@
   "joinedList": {
     "title": "此主题中已加入",
     "open": "打开 {{channel}}",
-    "settings": "{{channel}} 的设置与分享"
+    "settings": "{{channel}} 的设置与分享",
+    "showMore": "显示更多",
+    "loadingMore": "加载中…"
   }
 }

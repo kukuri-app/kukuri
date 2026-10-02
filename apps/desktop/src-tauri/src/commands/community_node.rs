@@ -199,12 +199,11 @@ pub async fn leave_private_channel(
 pub async fn list_joined_private_channels(
     state: tauri::State<'_, DesktopState>,
     request: ListJoinedPrivateChannelsRequest,
-) -> Result<Vec<kukuri_app_api::JoinedPrivateChannelView>, CommandError> {
+) -> Result<kukuri_app_api::JoinedPrivateChannelPage, CommandError> {
     state
         .runtime()
         .list_joined_private_channels(request)
         .await
-        .map(|page| page.items)
         .map_err(map_error)
 }
 

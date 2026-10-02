@@ -347,8 +347,7 @@ fn three_real_daemons_exchange_content_and_preserve_private_boundaries() {
         },
     );
     assert!(
-        outsider
-            .call("list_joined_private_channels", json!({"topic": topic}))
+        outsider.call("list_joined_private_channels", json!({"topic": topic}))["items"]
             .as_array()
             .expect("channels")
             .is_empty()
@@ -377,7 +376,7 @@ fn three_real_daemons_exchange_content_and_preserve_private_boundaries() {
     b.wait_for(
         "list_joined_private_channels",
         json!({"topic": topic}),
-        |data| data[0]["current_epoch_id"] == rotated["current_epoch_id"],
+        |data| data["items"][0]["current_epoch_id"] == rotated["current_epoch_id"],
     );
     let renewed_post = a.call("create_post", json!({"topic": topic, "content": "鍵更新後の投稿", "channel_ref": {"kind": "private_channel", "channel_id": channel}}));
     b.wait_for(
@@ -394,7 +393,7 @@ fn three_real_daemons_exchange_content_and_preserve_private_boundaries() {
         json!({"topic": topic, "channel_id": channel}),
     );
     assert!(
-        b.call("list_joined_private_channels", json!({"topic": topic}))
+        b.call("list_joined_private_channels", json!({"topic": topic}))["items"]
             .as_array()
             .expect("退出後channels")
             .is_empty()
