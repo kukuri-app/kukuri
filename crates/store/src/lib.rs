@@ -42,7 +42,8 @@ pub use models::{
     adult_media_hashes_for_row,
 };
 pub use private_channel_keys::{
-    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
+    PrivateChannelRow,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use sqlite::{

@@ -4,7 +4,8 @@ use sqlx::sqlite::SqliteRow;
 
 use super::SqliteStore;
 use crate::{
-    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
+    PrivateChannelRow,
 };
 
 // sqlx は固定の SQL だけを受け付けるので、列の一覧は macro で埋め込む。
@@ -19,6 +20,25 @@ macro_rules! epoch_columns {
         "channel_id, epoch_id, started_at, receive_key_id, updated_at, sealed_secret"
     };
 }
+
+// 一覧の SQL。絞り込みごとに分け、それぞれ部分索引(`idx_private_channels_joined`・`_topic`・`_owner`)の範囲で読む。
+pub(crate) const LIST_JOINED_ALL: &str = concat!(
+    "SELECT ",
+    channel_columns!(),
+    " FROM private_channels WHERE joined = 1 AND channel_key > ? ORDER BY channel_key LIMIT ?"
+);
+pub(crate) const LIST_JOINED_BY_TOPIC: &str = concat!(
+    "SELECT ",
+    channel_columns!(),
+    " FROM private_channels WHERE joined = 1 AND topic_id = ? AND channel_key > ?
+     ORDER BY channel_key LIMIT ?"
+);
+pub(crate) const LIST_JOINED_BY_OWNER: &str = concat!(
+    "SELECT ",
+    channel_columns!(),
+    " FROM private_channels WHERE joined = 1 AND owner_pubkey = ? AND channel_key > ?
+     ORDER BY channel_key LIMIT ?"
+);
 
 fn channel_row(row: &SqliteRow) -> PrivateChannelRow {
     PrivateChannelRow {
@@ -125,24 +145,24 @@ impl PrivateChannelKeyStore for SqliteStore {
 
     async fn list_joined_private_channels(
         &self,
-        topic_id: Option<&str>,
-        owner_pubkey: Option<&str>,
+        filter: PrivateChannelFilter<'_>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<PrivateChannelRow>> {
-        let rows = sqlx::query(concat!(
-            "SELECT ",
-            channel_columns!(),
-            " FROM private_channels WHERE joined = 1 AND channel_key > ?1
-               AND (?2 IS NULL OR topic_id = ?2) AND (?3 IS NULL OR owner_pubkey = ?3)
-             ORDER BY channel_key LIMIT ?4"
-        ))
-        .bind(after)
-        .bind(topic_id)
-        .bind(owner_pubkey)
-        .bind(i64::try_from(limit)?)
-        .fetch_all(&self.pool)
-        .await?;
+        let query = match filter {
+            PrivateChannelFilter::All => sqlx::query(LIST_JOINED_ALL),
+            PrivateChannelFilter::Topic(topic_id) => {
+                sqlx::query(LIST_JOINED_BY_TOPIC).bind(topic_id)
+            }
+            PrivateChannelFilter::Owner(owner_pubkey) => {
+                sqlx::query(LIST_JOINED_BY_OWNER).bind(owner_pubkey)
+            }
+        };
+        let rows = query
+            .bind(after)
+            .bind(i64::try_from(limit)?)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.iter().map(channel_row).collect())
     }
 

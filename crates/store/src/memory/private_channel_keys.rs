@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
+    PrivateChannelRow,
 };
 
 impl MemoryStore {
@@ -58,8 +59,7 @@ impl PrivateChannelKeyStore for MemoryStore {
 
     async fn list_joined_private_channels(
         &self,
-        topic_id: Option<&str>,
-        owner_pubkey: Option<&str>,
+        filter: PrivateChannelFilter<'_>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<PrivateChannelRow>> {
@@ -72,8 +72,11 @@ impl PrivateChannelKeyStore for MemoryStore {
             .map(|(_, row)| row)
             .filter(|row| {
                 row.joined
-                    && topic_id.is_none_or(|topic| row.topic_id == topic)
-                    && owner_pubkey.is_none_or(|owner| row.owner_pubkey == owner)
+                    && match filter {
+                        PrivateChannelFilter::All => true,
+                        PrivateChannelFilter::Topic(topic) => row.topic_id == topic,
+                        PrivateChannelFilter::Owner(owner) => row.owner_pubkey == owner,
+                    }
             })
             .take(limit)
             .cloned()

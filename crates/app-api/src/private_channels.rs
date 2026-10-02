@@ -915,25 +915,6 @@ impl AppService {
         }
         self.joined_private_channel_view_for_state(&state).await
     }
-    /// 旧 registry の 1 件を、参加の行と世代の鍵の行へ移す(ADR 0061 §9。起動時の移行の入口で、試験も別の端末の
-    /// 状態をこれで作る)。移した行の時刻は 0(どの編集よりも古い)。
-    pub async fn restore_private_channel_capability(
-        &self,
-        capability: PrivateChannelCapability,
-    ) -> Result<()> {
-        let unrecorded = capability.controller.is_none();
-        let archived = capability.archived_epochs.clone();
-        let mut state = joined_private_channel_state_from_capability(capability)?;
-        // #1219 W6: 担当の欄が無い本変更前の保存の自分の channel は、保存していた端末を担当にする。
-        if unrecorded && state.owner_pubkey == self.current_author_pubkey() {
-            state.controller = Some(self.first_controller().await?);
-        }
-        self.install_private_epoch_secrets().await?;
-        self.persist_private_channel(&state, 0, &archived).await?;
-        self.restore_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
-            .await;
-        Ok(())
-    }
     pub async fn leave_private_channel(&self, topic_id: &str, channel_id: &str) -> Result<()> {
         let Some(state) = self
             .joined_private_channel_state(topic_id, channel_id)
@@ -1027,29 +1008,6 @@ impl AppService {
         self.remove_joined_private_channel_and_evict_dome_participant(topic_id, &state.channel_id)
             .await?;
         Ok(())
-    }
-    /// topic の参加中の channel を、`cursor` の後から 1 page(128 件まで)。続きは `next_cursor` で読む。
-    pub async fn list_joined_private_channels(
-        &self,
-        topic_id: &str,
-        cursor: Option<&str>,
-    ) -> Result<JoinedPrivateChannelPage> {
-        let after = cursor.unwrap_or_default();
-        let (states, _) = self
-            .joined_private_channel_states_for_topic(topic_id, after)
-            .await?;
-        for state in states {
-            self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, state.channel_id.as_str())
-                .await?;
-        }
-        let (states, next_cursor) = self
-            .joined_private_channel_states_for_topic(topic_id, after)
-            .await?;
-        let mut items = Vec::with_capacity(states.len());
-        for state in states {
-            items.push(self.joined_private_channel_view_for_state(&state).await?);
-        }
-        Ok(JoinedPrivateChannelPage { items, next_cursor })
     }
     /// テスト専用: capability の取得→restore 結合テストのユーティリティ
     /// (production の呼び出し元は WP-C2 T5 #479 で消滅)。

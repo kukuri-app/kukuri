@@ -192,7 +192,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 通知・epoch 制御の offer の照合 | 受信 route の識別子の索引で 1 件。通知は、その行が参加中の channel の現在の世代のときだけ |
 | 過去の bucket の読み出し、Dome の書込みの anchor | (channel id, 開始時刻) の索引で、bucket に掛かる世代を新しい順に 8 件まで |
 | 遅れた参加者への grant の直前の世代 | (channel id, 開始時刻) の索引で 1 件 |
-| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みと、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
+| live・game の session の一覧・表示（`scope_replicas`）、thread の窓（`local_page_replicas`） | 全世代を列挙しない。候補の絞り込みは replica id の channel で行い（候補は購読の event と固定の窓で集めた作業集合）、replica を指定した表示の許可は、replica id の channel と、その世代の行の点読で確かめる。手元の docs の catch-up と、replica を指定しない表示の要求は、(channel id, 開始時刻) の索引で新しい順に 8 世代まで。anchor のある thread の窓は、過去の bucket の読み出しと同じく、anchor の時刻に掛かる世代を開始時刻の索引で読む。鍵の更新の後の session の状態の更新は現在の世代の bucket へ書かれるので、外れるのは、新しい 8 世代より古い epoch の replica にあり、その後に更新されていない旧形式の session だけ（取りこぼしを 0 にすることを目標にしない） |
 | topic の参加中の一覧 | (topic id, channel id) の索引で 128 件の page（ADR 0055 の参加者の page と同じ）。続きは cursor から読む（2026-10-02 ユーザー判断。画面と CLI の続きの表示は AC-4d）。view の `archived_epoch_ids` は欄を残し、現在の世代より前に始まった世代を新しい順に 8 件まで（本人の別の端末から届いて、まだ現在の世代になっていない新しい世代は含めない） |
 | owner の channel の巡回（epoch 制御）、現在の世代の記録の移行（#1221 R5-G） | 索引の cursor から 1 件ずつ |
 | rendezvous、Dome の context | メモリ（lease のある channel）だけ。lease の無い channel は含めない |

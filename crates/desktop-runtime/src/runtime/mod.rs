@@ -434,18 +434,22 @@ impl DesktopRuntime {
         }
         // ADR 0061 §9: 旧 registry(全件の 1 つの JSON)があれば、1 回だけ参加の行と世代の鍵の行へ移して消す。
         // 行の書き込みは冪等なので、途中で止まっても次の起動でやり直す。
-        for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
-            app_service
-                .restore_private_channel_capability(capability)
-                .await?;
+        let legacy_capabilities =
+            load_private_channel_capabilities(&db_path, identity_mode).await?;
+        if !legacy_capabilities.is_empty() {
+            for capability in legacy_capabilities {
+                app_service
+                    .restore_private_channel_capability(capability)
+                    .await?;
+            }
+            delete_optional_secret(
+                &db_path,
+                identity_mode,
+                PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
+                PRIVATE_CHANNEL_CAPABILITIES_KEY,
+            )
+            .await?;
         }
-        delete_optional_secret(
-            &db_path,
-            identity_mode,
-            PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
-            PRIVATE_CHANNEL_CAPABILITIES_KEY,
-        )
-        .await?;
         app_service.restore_joined_private_channels().await?;
         // #1221 R5-G: 参加状態は索引の順に並ばないため、起動時と変更時に現 epoch の記録の移行を先頭から読み直す。
         let private_migration_dirty = app_service.private_channel_rows_changed();

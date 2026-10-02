@@ -10,7 +10,7 @@ use kukuri_core::{
     VerifiedReceiveOffer, build_direct_message_ack, seal_private_receive_payload,
 };
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
-use kukuri_store::{DirectMessageOutboxRow, PrivateChannelParticipantRow};
+use kukuri_store::{DirectMessageOutboxRow, PrivateChannelFilter, PrivateChannelParticipantRow};
 use kukuri_transport::EndpointAddr;
 
 use super::*;
@@ -139,7 +139,7 @@ impl AppService {
             None => self
                 .services
                 .projection_store
-                .list_joined_private_channels(None, Some(&local), finished, 1)
+                .list_joined_private_channels(PrivateChannelFilter::Owner(&local), finished, 1)
                 .await?
                 .pop(),
         };

@@ -302,12 +302,15 @@ impl AppService {
         state: &JoinedPrivateChannelState,
         limit: usize,
     ) -> Result<Vec<(String, String)>> {
+        // `legacy`(開始時刻が最小)の世代より前の世代は無い。
+        let current_at = epoch_started_at(&state.current_epoch_id);
+        if current_at == i64::MIN {
+            return Ok(Vec::new());
+        }
         self.services
             .private_channel_epochs(
                 state.channel_id.as_str(),
-                kukuri_store::PrivateChannelEpochRange::AtOrBefore(
-                    epoch_started_at(&state.current_epoch_id).saturating_sub(1),
-                ),
+                kukuri_store::PrivateChannelEpochRange::AtOrBefore(current_at - 1),
                 limit,
             )
             .await

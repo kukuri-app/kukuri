@@ -46,7 +46,7 @@ pub(crate) mod live_game;
 mod notifications;
 mod observations;
 mod peer_candidates;
-mod private_channel_keys;
+pub(crate) mod private_channel_keys;
 mod private_index_grants;
 pub(crate) mod projections;
 mod protected_migration;

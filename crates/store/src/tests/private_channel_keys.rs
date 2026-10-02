@@ -2,7 +2,8 @@
 
 use super::*;
 use crate::{
-    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
+    PrivateChannelRow,
 };
 
 fn channel(topic: &str, channel: &str, owner: &str, joined: bool) -> PrivateChannelRow {
@@ -82,7 +83,7 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
     assert_eq!(
         keys(
             store
-                .list_joined_private_channels(None, None, "", 10)
+                .list_joined_private_channels(PrivateChannelFilter::All, "", 10)
                 .await
                 .unwrap()
         ),
@@ -91,7 +92,7 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
     assert_eq!(
         keys(
             store
-                .list_joined_private_channels(Some("t1"), None, "t1::a", 10)
+                .list_joined_private_channels(PrivateChannelFilter::Topic("t1"), "t1::a", 10)
                 .await
                 .unwrap()
         ),
@@ -100,7 +101,7 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
     assert_eq!(
         keys(
             store
-                .list_joined_private_channels(None, Some("owner"), "", 1)
+                .list_joined_private_channels(PrivateChannelFilter::Owner("owner"), "", 1)
                 .await
                 .unwrap()
         ),
@@ -173,4 +174,37 @@ async fn private_channel_key_rows_have_the_same_meaning_on_both_stores() {
         .await
         .expect("sqlite store");
     assert_private_channel_keys(&sqlite).await;
+}
+
+// 一覧・世代の範囲・受信 route の識別子の読み出しが、索引の範囲の読み出しになること(件数に比例して走査しない)。
+#[tokio::test]
+async fn private_channel_key_queries_are_index_range_reads() {
+    use crate::sqlite::private_channel_keys::{
+        LIST_JOINED_ALL, LIST_JOINED_BY_OWNER, LIST_JOINED_BY_TOPIC,
+    };
+    use sqlx::Row;
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let store = SqliteStore::connect_file(&tempdir.path().join("private-channel-plans.db"))
+        .await
+        .expect("sqlite store");
+    for (name, query, index) in [
+        ("all", LIST_JOINED_ALL, "idx_private_channels_joined"),
+        ("topic", LIST_JOINED_BY_TOPIC, "idx_private_channels_topic"),
+        ("owner", LIST_JOINED_BY_OWNER, "idx_private_channels_owner"),
+    ] {
+        let mut explain = sqlx::QueryBuilder::<sqlx::Sqlite>::new("EXPLAIN QUERY PLAN ");
+        explain.push(query);
+        let plan = explain
+            .build()
+            .fetch_all(store.pool())
+            .await
+            .expect("query plan")
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(plan.contains(index), "{name}: {plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{name}: {plan}");
+    }
 }

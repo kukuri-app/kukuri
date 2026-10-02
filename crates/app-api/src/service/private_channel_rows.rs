@@ -5,7 +5,9 @@ use kukuri_core::{
     AccountSyncItem, AccountSyncItemKey, PrivateChannelKeyRowSeal, receive_epoch_key_id,
 };
 use kukuri_docs_sync::PrivateEpochSecrets;
-use kukuri_store::{PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelRow};
+use kukuri_store::{
+    PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelRow,
+};
 
 use super::remote_read_support::epoch_start_millis;
 use super::*;
@@ -314,6 +316,48 @@ impl AppService {
         Ok(())
     }
 
+    /// 旧 registry の 1 件を、参加の行と世代の鍵の行へ移す(ADR 0061 §9。起動時の移行の入口で、試験も別の端末の
+    /// 状態をこれで作る)。移した行の時刻は 0(どの編集よりも古い)。
+    pub async fn restore_private_channel_capability(
+        &self,
+        capability: PrivateChannelCapability,
+    ) -> Result<()> {
+        let unrecorded = capability.controller.is_none();
+        let archived = capability.archived_epochs.clone();
+        let mut state = joined_private_channel_state_from_capability(capability)?;
+        // #1219 W6: 担当の欄が無い本変更前の保存の自分の channel は、保存していた端末を担当にする。
+        if unrecorded && state.owner_pubkey == self.current_author_pubkey() {
+            state.controller = Some(self.first_controller().await?);
+        }
+        self.install_private_epoch_secrets().await?;
+        self.persist_private_channel(&state, 0, &archived).await?;
+        self.restore_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
+            .await;
+        Ok(())
+    }
+    /// topic の参加中の channel を、`cursor` の後から 1 page(128 件まで)。続きは `next_cursor` で読む。
+    pub async fn list_joined_private_channels(
+        &self,
+        topic_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<JoinedPrivateChannelPage> {
+        let after = cursor.unwrap_or_default();
+        let (states, _) = self
+            .joined_private_channel_states_for_topic(topic_id, after)
+            .await?;
+        for state in states {
+            self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, state.channel_id.as_str())
+                .await?;
+        }
+        let (states, next_cursor) = self
+            .joined_private_channel_states_for_topic(topic_id, after)
+            .await?;
+        let mut items = Vec::with_capacity(states.len());
+        for state in states {
+            items.push(self.joined_private_channel_view_for_state(&state).await?);
+        }
+        Ok(JoinedPrivateChannelPage { items, next_cursor })
+    }
     /// 起動時の復元（ADR 0061 §9）。参加中の行を key の順に読み、参加の holder の lease を取る。上限に達したら
     /// 読むのをやめる（残りは購読しない。行は残る）。参加状態は lease の task がメモリへ読む。
     pub async fn restore_joined_private_channels(&self) -> Result<()> {
@@ -323,7 +367,11 @@ impl AppService {
             let page = self
                 .services
                 .projection_store
-                .list_joined_private_channels(None, None, &after, PRIVATE_CHANNEL_PAGE)
+                .list_joined_private_channels(
+                    PrivateChannelFilter::All,
+                    &after,
+                    PRIVATE_CHANNEL_PAGE,
+                )
                 .await?;
             for row in &page {
                 if let Err(error) = self
@@ -394,7 +442,11 @@ impl AppService {
         let rows = self
             .services
             .projection_store
-            .list_joined_private_channels(Some(topic_id), None, after, PRIVATE_CHANNEL_PAGE)
+            .list_joined_private_channels(
+                PrivateChannelFilter::Topic(topic_id),
+                after,
+                PRIVATE_CHANNEL_PAGE,
+            )
             .await?;
         let next_cursor = rows
             .last()
@@ -421,7 +473,7 @@ impl AppService {
         Ok(self
             .services
             .projection_store
-            .list_joined_private_channels(None, None, after, limit)
+            .list_joined_private_channels(PrivateChannelFilter::All, after, limit)
             .await?
             .into_iter()
             .map(|row| {

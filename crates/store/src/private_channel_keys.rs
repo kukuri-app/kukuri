@@ -41,6 +41,14 @@ pub struct PrivateChannelEpochRow {
     pub sealed_secret: Vec<u8>,
 }
 
+/// 参加中の行の一覧の絞り込み。どれも索引の範囲で読む(全件を走査しない)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrivateChannelFilter<'a> {
+    All,
+    Topic(&'a str),
+    Owner(&'a str),
+}
+
 /// 開始時刻の索引で読む向き。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrivateChannelEpochRange {
@@ -64,11 +72,10 @@ pub trait PrivateChannelKeyStore: Send + Sync {
         &self,
         channel_id: &str,
     ) -> Result<Option<PrivateChannelRow>>;
-    /// 参加中の行を `channel_key` の順に、`after` より後から `limit` 件。topic・owner で絞れる。
+    /// 参加中の行を `channel_key` の順に、`after` より後から `limit` 件。
     async fn list_joined_private_channels(
         &self,
-        topic_id: Option<&str>,
-        owner_pubkey: Option<&str>,
+        filter: PrivateChannelFilter<'_>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<PrivateChannelRow>>;
