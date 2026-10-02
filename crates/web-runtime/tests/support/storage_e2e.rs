@@ -35,27 +35,37 @@ pub fn replica(side: &str) -> ReplicaId {
     ReplicaId::new(format!("topic::kukuri:topic:web-docs-{side}"))
 }
 
-/// `side` の replica に `numbers` の record を書く（account 由来の docs author の名義。ADR 0053）。
+/// `number` 番の record の key。
+pub fn key(number: usize) -> String {
+    format!("{PREFIX}{number:04}")
+}
+
+/// `replica` に `numbers` の record（値は `<side>-<番号>` と埋め草）を書く（account 由来の docs author の名義。ADR 0053）。
 pub async fn write_records(
     docs: &IrohDocsSync,
+    replica: &ReplicaId,
     side: &str,
     numbers: impl IntoIterator<Item = usize>,
 ) -> Result<()> {
     for number in numbers {
         let op = DocOp::SetBytes {
-            key: format!("{PREFIX}{number:04}"),
+            key: key(number),
             value: format!("{side}-{number}{}", ".".repeat(PADDING)).into_bytes(),
         };
-        docs.apply_doc_op(&replica(side), op).await?;
+        docs.apply_doc_op(replica, op).await?;
     }
     Ok(())
 }
 
-/// 相手の `side` の replica を、上限 2 件の key の page と、その先頭の 1 件の record（docs author を指定）で読み、
+/// 相手の `replica` を、上限 2 件の key の page と、その先頭の 1 件の record（docs author を指定）で読み、
 /// 確かめた record を手元に保持して、結果を 1 行にする。読んだ後も相手の namespace が手元に無い（同期を始めない）
 /// ことを添える。
-pub async fn read_newest(docs: &IrohDocsSync, peer: EndpointAddr, side: &str) -> Result<String> {
-    let replica = replica(side);
+pub async fn read_newest(
+    docs: &IrohDocsSync,
+    peer: EndpointAddr,
+    replica: &ReplicaId,
+) -> Result<String> {
+    let replica = replica.clone();
     let source = docs.remote_source(peer);
     let query = DocKeyQuery {
         prefix: PREFIX.into(),

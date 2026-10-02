@@ -391,7 +391,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     assert!(
         runtime
             .sqlite
-            .get_remote_records(&topic_replica, &own_record, None, 8)
+            .get_remote_records(&topic_replica, &own_record, None, 8, false)
             .await
             .expect("records")
             .is_empty()
@@ -420,7 +420,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     assert!(
         !runtime
             .sqlite
-            .get_remote_records(&topic_replica, &own_record, None, 8)
+            .get_remote_records(&topic_replica, &own_record, None, 8, false)
             .await
             .expect("records")
             .is_empty(),
@@ -451,7 +451,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
             assert!(
                 !runtime
                     .sqlite
-                    .get_remote_records(channel_replica.as_str(), key, None, 8)
+                    .get_remote_records(channel_replica.as_str(), key, None, 8, false)
                     .await
                     .expect("private records")
                     .is_empty(),
@@ -800,7 +800,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
         assert!(
             !runtime
                 .sqlite
-                .get_remote_records(replica.as_str(), key, None, 8)
+                .get_remote_records(replica.as_str(), key, None, 8, false)
                 .await
                 .expect("records")
                 .is_empty(),
@@ -817,7 +817,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
         assert!(
             !restored
                 .sqlite
-                .get_remote_records(replica.as_str(), key, None, 8)
+                .get_remote_records(replica.as_str(), key, None, 8, false)
                 .await
                 .expect("restored records")
                 .is_empty(),

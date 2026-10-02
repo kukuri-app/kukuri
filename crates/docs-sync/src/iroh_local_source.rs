@@ -35,13 +35,15 @@ impl IrohDocsSync {
         let local = self
             .read_local_source_owned(replica, key, author, limit)
             .await;
-        self.with_cached_records(replica, key, author, limit, local)
+        self.with_cached_records(replica, key, author, limit, false, local)
             .await
     }
 
-    /// private の key 指定の読み出しに、保護所有先へ移した record を足す(#1221 R5-G: 旧領域が消えても読める)。
-    /// capability の確認は手元の読み出し(replica を開く)が済ませている。
-    pub(super) async fn with_private_cache(
+    /// key 指定の読み出しに、保持分の record を足す。private は保護所有先へ移した record を含む保持分のすべて
+    /// (#1221 R5-G: 旧領域が消えても読める)、公開の replica は自分の record だけ(namespace の無い Web の reload・
+    /// native の restore の後も読める。他人の古い版で書き手本人への読み出しを止めない。ADR 0058 §7)。
+    /// private の capability の確認は手元の読み出し(replica を開く)が済ませている。
+    pub(super) async fn with_held_records(
         &self,
         replica: &ReplicaId,
         query: Option<DocQuery>,
@@ -49,10 +51,9 @@ impl IrohDocsSync {
         records: Vec<DocRecord>,
     ) -> Result<Vec<DocRecord>> {
         match query {
-            Some(DocQuery::Exact(key))
-                if public_replica_secret(replica).is_none() && records.len() < limit =>
-            {
-                self.with_cached_records(replica, &key, None, limit, Ok(records))
+            Some(DocQuery::Exact(key)) if records.len() < limit => {
+                let own_only = public_replica_secret(replica).is_some();
+                self.with_cached_records(replica, &key, None, limit, own_only, Ok(records))
                     .await
             }
             _ => Ok(records),
@@ -66,13 +67,14 @@ impl IrohDocsSync {
         key: &str,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
         local: Result<Vec<DocRecord>>,
     ) -> Result<Vec<DocRecord>> {
         let Some(cache) = self.remote_cache() else {
             return local;
         };
         let cached = cache
-            .get_remote_records(replica.as_str(), key, author, limit.min(8))
+            .get_remote_records(replica.as_str(), key, author, limit.min(8), own_only)
             .await?;
         let mut records = match local {
             Ok(records) => records,

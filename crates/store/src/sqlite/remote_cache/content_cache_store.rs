@@ -67,8 +67,9 @@ impl crate::ContentCacheStore for SqliteStore {
         key: &str,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<Vec<Vec<u8>>> {
-        SqliteStore::get_remote_records(self, replica, key, author, limit).await
+        SqliteStore::get_remote_records(self, replica, key, author, limit, own_only).await
     }
 
     async fn remote_record_keys(
@@ -78,8 +79,10 @@ impl crate::ContentCacheStore for SqliteStore {
         descending: bool,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<(Vec<RemoteRecordKey>, bool)> {
-        SqliteStore::remote_record_keys(self, replica, prefix, descending, author, limit).await
+        SqliteStore::remote_record_keys(self, replica, prefix, descending, author, limit, own_only)
+            .await
     }
 
     async fn add_protected_ref(&self, reference: &str, kind: &str, key: &str) -> Result<()> {

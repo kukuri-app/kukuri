@@ -18,7 +18,7 @@ use iroh_blobs::store::fs::options::Options as BlobStoreOptions;
 use iroh_blobs::store::mem::MemStore;
 use iroh_docs::actor::SyncHandle;
 use iroh_docs::api::DocsApi;
-use iroh_docs::engine::{DefaultAuthorStorage, Engine};
+use iroh_docs::engine::{DefaultAuthorStorage, Engine, ProtectCallbackHandler};
 use iroh_docs::store::Store as DocsStore;
 use iroh_gossip::net::Gossip;
 use kukuri_store::ContentCacheStore;
@@ -51,6 +51,10 @@ const DOCS_STORE_FILE_NAME: &str = "docs.redb";
 #[cfg(not(target_family = "wasm"))]
 const DEFAULT_AUTHOR_FILE_NAME: &str = "default-author";
 
+/// Web の memory store を回収する間隔(ADR 0058 §7)。
+#[cfg(target_family = "wasm")]
+const MEMORY_GC_INTERVAL: Duration = Duration::from_secs(10);
+
 fn relay_activation_timeout() -> Duration {
     Duration::from_secs(10)
 }
@@ -68,6 +72,7 @@ async fn spawn_docs(
     endpoint: Endpoint,
     blobs: BlobStore,
     gossip: Gossip,
+    protect: Option<ProtectCallbackHandler>,
 ) -> Result<SpawnedDocs> {
     // Keep the high-level API and its persistent store layout while retaining
     // the SyncHandle for the bounded page reader (`DocReadProtocol`). The
@@ -91,7 +96,7 @@ async fn spawn_docs(
         blobs,
         downloader,
         author_store,
-        None,
+        protect,
     )
     .await?;
     let sync = engine.sync.clone();
@@ -122,12 +127,7 @@ async fn recover_persistent_docs(
         error = %original_error,
         "recovering corrupt iroh docs store before retrying startup"
     );
-    spawn_docs(
-        Some(root),
-        endpoint,
-        blobs,
-        gossip,
-    )
+    spawn_docs(Some(root), endpoint, blobs, gossip, None)
     .await
     .with_context(|| {
         format!(
@@ -260,13 +260,30 @@ impl IrohDocsNode {
 
     /// メモリの store で起動する。endpoint の秘密鍵と custom transport を外から渡す（ADR 0056 §2・§8）。
     pub async fn memory_with(options: NodeOptions) -> Result<Arc<Self>> {
-        let store = MemStore::new();
+        // Web は閉じた replica を drop し(docs-sync)、どの entry も指さない内容を上流の GC で消す。GC が読む(mark・sweep)
+        // のは開いている replica のこの session の書込みと転送中の temp tag だけで、件数に比例しない(ADR 0058 §7)。
+        // native の memory store(試験)は GC を使わない。
+        #[cfg(target_family = "wasm")]
+        let (store, protect) = {
+            let (handler, protect) = ProtectCallbackHandler::new();
+            let gc_config = iroh_blobs::store::GcConfig {
+                interval: MEMORY_GC_INTERVAL,
+                add_protected: Some(protect),
+            };
+            let options = iroh_blobs::store::mem::Options {
+                gc_config: Some(gc_config),
+            };
+            (MemStore::new_with_opts(options), Some(handler))
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let (store, protect) = (MemStore::new(), None);
         Self::spawn(
             (*store).clone(),
             None,
             options,
             DhtDiscoveryOptions::disabled(),
             false,
+            protect,
         )
         .await
     }
@@ -375,6 +392,7 @@ impl IrohDocsNode {
             },
             dht_options,
             recover_corrupt_docs,
+            None,
         )
         .await;
         if result.is_err() {
@@ -393,6 +411,7 @@ impl IrohDocsNode {
         options: NodeOptions,
         dht_options: DhtDiscoveryOptions,
         recover_corrupt_docs: bool,
+        protect: Option<ProtectCallbackHandler>,
     ) -> Result<Arc<Self>> {
         let NodeOptions {
             network_config,
@@ -467,6 +486,7 @@ impl IrohDocsNode {
             endpoint.clone(),
             blobs.clone(),
             gossip.clone(),
+            protect,
         )
         .await
         {
