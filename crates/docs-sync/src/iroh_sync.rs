@@ -735,18 +735,18 @@ impl DocsSync for IrohDocsSync {
             None => None,
         };
         let Some(entry) = entry else {
-            // 手元に無ければ保持分(公開の replica は自分の record だけ)から読む(ADR 0058 §7)。
-            let held = self.with_held_records(
-                replica_id,
-                Some(DocQuery::Exact(key.into())),
-                1,
-                Vec::new(),
-            );
+            // 手元に無ければ、同じ docs author の保持分(公開の replica は自分の record だけ)から読む(ADR 0058 §7)。
+            let own_only = public_replica_secret(replica_id).is_some();
             let author = author.to_string();
-            return Ok(held
-                .await?
-                .into_iter()
-                .find(|record| record.docs_author.as_deref() == Some(author.as_str())));
+            let held = self.with_cached_records(
+                replica_id,
+                key,
+                Some(author.as_str()),
+                1,
+                own_only,
+                Ok(Vec::new()),
+            );
+            return Ok(held.await?.into_iter().next());
         };
         let content_hash = entry.content_hash().to_string();
         let Some(value) = self

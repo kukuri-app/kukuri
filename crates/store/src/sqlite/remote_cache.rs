@@ -592,15 +592,19 @@ impl SqliteStore {
         anyhow::ensure!(limit <= 8, "remote record cache limit exceeded");
         let now = now_ms()?;
         let rows = if let Some(author) = author {
+            // 自分の record は保護参照 `own_docs` で判定する(他の保護参照で保護した他人の record を含めない)。
             sqlx::query(
-                "SELECT cache_key, payload, is_protected, last_used_at FROM remote_content_cache \
+                "SELECT cache_key, payload, is_protected, last_used_at FROM remote_content_cache c \
                  WHERE kind = 'record' AND scope_key = ?1 AND record_key = ?2 \
-                   AND record_author = ?3 AND (?4 = 0 OR is_protected = 1) LIMIT 1",
+                   AND record_author = ?3 AND (?4 = 0 OR EXISTS(SELECT 1 \
+                   FROM remote_content_cache_protected_ref r WHERE r.ref_id = ?5 \
+                   AND r.kind = 'record' AND r.cache_key = c.cache_key)) LIMIT 1",
             )
             .bind(replica)
             .bind(key)
             .bind(author)
             .bind(own_only)
+            .bind(owned::OWN_DOCS_REF)
             .fetch_all(&self.pool)
             .await?
         } else if own_only {

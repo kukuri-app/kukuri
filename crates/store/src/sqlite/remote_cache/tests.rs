@@ -762,16 +762,30 @@ async fn own_record_reads_return_only_records_protected_as_own() {
         }))
         .unwrap()
     };
-    for key in ["indexes/timeline/1", "indexes/timeline/2", "indexes/timeline/3"] {
+    for key in [
+        "indexes/timeline/1",
+        "indexes/timeline/2",
+        "indexes/timeline/3",
+    ] {
         store
             .put_owned_record(replica, key, "own", &record(key, "own"))
             .await
             .unwrap();
         let other = record(key, "other");
-        assert!(store.put_remote_record(replica, key, "other", &other).await.unwrap());
+        assert!(
+            store
+                .put_remote_record(replica, key, "other", &other)
+                .await
+                .unwrap()
+        );
     }
     store
-        .put_owned_record("author::0b", "indexes/timeline/9", "own", &record("x", "own"))
+        .put_owned_record(
+            "author::0b",
+            "indexes/timeline/9",
+            "own",
+            &record("x", "own"),
+        )
         .await
         .unwrap();
 
@@ -783,7 +797,10 @@ async fn own_record_reads_return_only_records_protected_as_own() {
         .iter()
         .map(|row| (row.key.as_str(), row.author.as_str()))
         .collect::<Vec<_>>();
-    assert_eq!(keys, [("indexes/timeline/3", "own"), ("indexes/timeline/2", "own")]);
+    assert_eq!(
+        keys,
+        [("indexes/timeline/3", "own"), ("indexes/timeline/2", "own")]
+    );
     assert!(more);
     let (page, more) = store
         .remote_record_keys(replica, "indexes/timeline/", false, Some("other"), 5, true)
@@ -806,4 +823,23 @@ async fn own_record_reads_return_only_records_protected_as_own() {
         .await
         .unwrap();
     assert!(by_other.is_empty());
+    // 他の保護参照で保護した他人の record は、自分の record に含めない。
+    store
+        .add_protected_ref(
+            "bookmark:x",
+            "record",
+            &SqliteStore::remote_record_cache_key(replica, "indexes/timeline/2", "other"),
+        )
+        .await
+        .unwrap();
+    let protected_other = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("other"), 1, true)
+        .await
+        .unwrap();
+    assert!(protected_other.is_empty());
+    let own = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("own"), 1, true)
+        .await
+        .unwrap();
+    assert_eq!(own, [record("indexes/timeline/2", "own")]);
 }
