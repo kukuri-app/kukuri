@@ -99,7 +99,9 @@ pub use trust_gate_support::{
     AuthorTrustGate, AuthorTrustGateRequest, AuthorTrustGateResult,
     SetAuthorTrustDisplayExceptionRequest,
 };
-pub(crate) use trust_gate_support::{CachedAuthorTrustEvaluation, normalize_trust_node_priority};
+pub(crate) use trust_gate_support::{
+    CachedAuthorTrustEvaluation, import_legacy_trust_display, normalize_trust_node_priority,
+};
 #[cfg(test)]
 pub(crate) use trust_observation_support::load_trust_observation_pending_count;
 pub(crate) use trust_observation_support::without_observation_sharing_document;

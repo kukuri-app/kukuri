@@ -1,0 +1,231 @@
+//! 本人の端末間の account 同期の item の書き込み・点読・merge（#1218 AC-3、ADR 0061 §4）。
+//!
+//! 採用した状態は item ごとに 1 行（`AccountSyncStore`）で、`(updated_at, op_id)` が大きいものだけで置き換える。
+//! 読むのは account の docs author の組の 1 件と、それが無いときの key ごとの上限つきの旧候補だけで、replica の
+//! 全件・全 snapshot を比べない。hint・起動・復帰で差分を取りに行く経路は AC-5。
+
+use super::*;
+use kukuri_core::{AccountSyncItem, AccountSyncItemKey, SealedAccountSyncItem};
+use kukuri_store::AccountSyncRow;
+
+/// 著者を常に表示する指定の docs の key の prefix（ADR 0061 §2）。
+const TRUST_ALWAYS_VISIBLE_PREFIX: &str = "trust/always-visible/";
+/// 組の record が無い・開けないときに読む、key ごとの旧候補の上限（ADR 0053 §6 と同じ）。
+const ACCOUNT_SYNC_RECORDS_PER_KEY: usize = 8;
+
+fn trust_always_visible_item(
+    author: &str,
+    updated_at: i64,
+    visible: bool,
+) -> Result<AccountSyncItem> {
+    Ok(AccountSyncItem::edit(
+        AccountSyncItemKey::TrustAlwaysVisible {
+            author: Pubkey::from(normalize_author_pubkey(author)?),
+        },
+        updated_at,
+        visible.then_some(serde_json::Value::Bool(true)),
+    ))
+}
+
+fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
+    Ok(AccountSyncRow {
+        key: item.key.docs_key(),
+        op_id: item.op_id.clone(),
+        updated_at: item.updated_at,
+        value: item.value.as_ref().map(serde_json::to_string).transpose()?,
+    })
+}
+
+impl AppService {
+    /// この端末の編集を採用し、封をして account の replica へ書く。採用しなかった（同じか新しい状態がある）なら書かない。
+    /// replica へ書けなくても、この端末の採用は戻さない（送り直しは AC-5）。
+    async fn publish_account_sync_item(&self, item: AccountSyncItem) -> Result<()> {
+        if !self
+            .services
+            .projection_store
+            .adopt_account_sync_row(&row_of(&item)?)
+            .await?
+        {
+            return Ok(());
+        }
+        let keys = self.services.keys.derive_account_sync();
+        let sealed = keys.seal(&self.services.keys.public_key(), &item)?;
+        if let Err(error) = self
+            .services
+            .docs_sync
+            .apply_doc_op(
+                keys.replica_id(),
+                DocOp::SetJson {
+                    key: item.key.docs_key(),
+                    value: serde_json::to_value(sealed)?,
+                },
+            )
+            .await
+        {
+            warn!(key = ?item.key, %error, "account sync item stays local until it is resent");
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn publish_profile_item(&self, envelope: &KukuriEnvelope) -> Result<()> {
+        self.publish_account_sync_item(AccountSyncItem::profile(envelope)?)
+            .await
+    }
+
+    /// item を点読する。account の docs author の組の 1 件を読み、無い・開けないときだけ key の旧候補（上限 8 件）から
+    /// 最大の版を採る。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
+        )
+    )]
+    pub(crate) async fn read_account_sync_item(
+        &self,
+        key: &AccountSyncItemKey,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<AccountSyncItem>> {
+        let keys = self.services.keys.derive_account_sync();
+        let account = self.services.keys.public_key();
+        let docs_key = key.docs_key();
+        let open = |record: &DocRecord| {
+            serde_json::from_slice::<SealedAccountSyncItem>(&record.value)
+                .ok()
+                .and_then(|sealed| keys.open(&account, &docs_key, &sealed).ok())
+        };
+        let docs_sync = self.services.docs_sync.as_ref();
+        if let Some(docs_author) = docs_sync.local_docs_author().await?
+            && let Some(record) = docs_sync
+                .query_replica_by_author(keys.replica_id(), &docs_author, &docs_key, policy)
+                .await?
+            && let Some(item) = open(&record)
+        {
+            return Ok(Some(item));
+        }
+        Ok(docs_sync
+            .query_replica_exact_bounded(
+                keys.replica_id(),
+                &docs_key,
+                ACCOUNT_SYNC_RECORDS_PER_KEY,
+                policy,
+            )
+            .await?
+            .iter()
+            .filter_map(open)
+            .max_by(|a, b| (a.updated_at, &a.op_id).cmp(&(b.updated_at, &b.op_id))))
+    }
+
+    /// 本人の別の端末の item を、`(updated_at, op_id)` の勝者の規則で採用して反映する。採用したら true。
+    /// 同じ操作の再受信・古い版（restore した古い端末の版を含む）は何もしない。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
+        )
+    )]
+    pub(crate) async fn merge_account_sync_item(&self, item: AccountSyncItem) -> Result<bool> {
+        match &item.key {
+            AccountSyncItemKey::Profile => {
+                let envelope: KukuriEnvelope = serde_json::from_value(
+                    item.value
+                        .clone()
+                        .context("a profile item must carry its envelope")?,
+                )?;
+                envelope.verify()?;
+                anyhow::ensure!(
+                    envelope.pubkey.as_str() == self.current_author_pubkey()
+                        && AccountSyncItem::profile(&envelope)? == item
+                        && parse_profile(&envelope)?.is_some(),
+                    "the profile item does not match its envelope"
+                );
+                // この版より前の profile（行の無いもの）は、手元の profile の時刻と比べる。
+                let row = self
+                    .services
+                    .projection_store
+                    .get_account_sync_row(&item.key.docs_key())
+                    .await?;
+                if row.is_none() && self.get_my_profile().await?.updated_at > item.updated_at {
+                    return Ok(false);
+                }
+                if !self
+                    .services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await?
+                {
+                    return Ok(false);
+                }
+                self.commit_my_profile(envelope).await?;
+                Ok(true)
+            }
+            AccountSyncItemKey::TrustAlwaysVisible { .. } => {
+                anyhow::ensure!(
+                    matches!(item.value, None | Some(serde_json::Value::Bool(true))),
+                    "an always-visible item must be true or a tombstone"
+                );
+                self.services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await
+            }
+            // private channel の鍵・退会・担当は W5 AC-4・W6 が merge する。
+            _ => Ok(false),
+        }
+    }
+
+    /// 著者を常に表示する指定を設定・解除する（本人の端末で共有する。ADR 0061 §2）。
+    pub async fn set_trust_always_visible(&self, author: &str, visible: bool) -> Result<()> {
+        self.publish_account_sync_item(trust_always_visible_item(
+            author,
+            Utc::now().timestamp_millis(),
+            visible,
+        )?)
+        .await
+    }
+
+    /// 旧版の端末内の設定を取り込む。編集した時刻は分からないので、どの編集よりも古い 0 にする。
+    /// この端末だけで採用し、account の replica へは書かない（replica は書いた時刻の新しい 1 件を残すので、古い版を
+    /// 書くと他の端末の新しい編集を隠す）。他の端末へは次の編集で届く。
+    pub async fn import_trust_always_visible(&self, author: &str) -> Result<()> {
+        let item = trust_always_visible_item(author, 0, true)?;
+        self.services
+            .projection_store
+            .adopt_account_sync_row(&row_of(&item)?)
+            .await?;
+        Ok(())
+    }
+
+    /// `authors` のうち、常に表示する著者（著者ごとに 1 行を読む）。
+    pub async fn trust_always_visible(&self, authors: &[String]) -> Result<BTreeSet<String>> {
+        let mut visible = BTreeSet::new();
+        for author in authors {
+            if self
+                .services
+                .projection_store
+                .get_account_sync_row(&format!("{TRUST_ALWAYS_VISIBLE_PREFIX}{author}"))
+                .await?
+                .is_some_and(|row| row.value.is_some())
+            {
+                visible.insert(author.clone());
+            }
+        }
+        Ok(visible)
+    }
+
+    /// 常に表示する著者の一覧（管理導線用）。
+    pub async fn list_trust_always_visible(&self) -> Result<Vec<String>> {
+        Ok(self
+            .services
+            .projection_store
+            .list_account_sync_keys(TRUST_ALWAYS_VISIBLE_PREFIX)
+            .await?
+            .into_iter()
+            .filter_map(|key| {
+                key.strip_prefix(TRUST_ALWAYS_VISIBLE_PREFIX)
+                    .map(str::to_string)
+            })
+            .collect())
+    }
+}
