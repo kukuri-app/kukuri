@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分の取得・統合は同 Issue の AC-2〜6、鍵更新の担当は #1219 W6）
+Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分の取得・統合は同 Issue の AC-2〜6、鍵更新の担当は #1219 W6。差分の取得の設計は AC-5a で §10 に固定した）
 
 ## Context
 
@@ -44,6 +44,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | private channel の受領済みの世代の鍵 | `channel/<channel id の hex>/epoch/<epoch id の hex>` | (channel, epoch) ごと。追加だけ |
 | private channel の参加・明示の退会・取消 | `channel/<channel id の hex>/membership` | 参加の端末に依らない欄（§9）。退会・取消は tombstone として保持する |
 | private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味・値・採否は W6（#1219）が所有する（ADR 0018 §8） |
+| 変更の窓 | `changes/<端末 ID>/<slot>`・`changes/<端末 ID>/head` | 書いた端末の採用の順の手掛かり（§10）。merge の対象ではない |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
 allowlist の外の種類は封を開けても受け付けない（`AccountSyncItemKey` の `kind` の照合）。開いた item の key と docs の key の一致も確かめる。`value` の中身の検査は、書き手と読み手を実装する AC-3・AC-4 が種類ごとに行う。
@@ -68,9 +69,11 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 資源 | 上限 | 超えたとき |
 | --- | --- | --- |
 | 1 item | 平文 16 KiB | 書かない |
-| 1 回の差分の取得 | 64 item（key の一覧の 1 page） | 次の page は cursor から取る |
-| 送信待ちの item（outbox） | account ごとに 256 | 新しい編集を保留として示し、古い送信待ちを消さない |
-| 送信の試行 | 既存の需要の owner の期限と回数（ADR 0055） | 保留に戻す |
+| 1 回の差分の取得 | 相手 1 台の head 1 件と、slot・item 64 件ずつ（周回は照会 1 回と item 64 件） | 次の回は cursor から取る（§10） |
+| 変更の窓 | 端末ごとに 256 件 | 古い slot を上書きする。超えた読み手は周回する（§10） |
+| 相手ごとの cursor | account ごとに 16 相手 | 最も古く更新した cursor を消す（その相手とは周回から） |
+| 送信待ち | 行の欄（行の数を超えない） | 未書込みの索引から 64 件ずつ送り直す（§10）。新しい編集を保留にせず、未同期として示す（2026-10-02 ユーザー判断） |
+| 取得の試行 | 既存の需要の owner の期限と回数（ADR 0055） | 未同期として、次の契機を待つ |
 | 保存 | item ごとに現在の状態の 1 行 | 操作の log・重複排除の台帳を持たない |
 
 鍵・退会・採用済みの version の行は、容量の回収で消さない。
@@ -86,7 +89,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | native の行ごとの保存と旧 registry・旧 backup の移行（§9。Web の IndexedDB の実装は W4 AC-2） | W5 AC-4b |
 | channel の item の書き込みと merge（§9） | W5 AC-4c |
 | 参加中の channel の一覧の続きの表示（画面・CLI） | W5 AC-4d |
-| 起動・復帰・通知の欠落の差分の有限 page と durable な cursor、DB を失ったときの作り直し（§9） | W5 AC-5 |
+| 差分の取得・送り直し・DB を失ったときの作り直しの設計（§10） | W5 AC-5a |
+| 起動・復帰・通知の欠落の差分の有限 page と durable な cursor、送り直し（§10） | W5 AC-5b |
+| DB を失ったときの作り直し（§9・§10） | W5 AC-5c |
 | Web と native の 2 端末の統合 | W5 AC-6 |
 
 ### 7. 新しい種別の分類（W5 AC-2 の実装）
@@ -96,7 +101,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 入口 | 扱い |
 | --- | --- |
 | 起動・import・切替・復帰 | runtime の起動で `AppService::start_account_sync` が scope の lease（`ScopeKey::AccountSync`）を取る。lease の task が replica の namespace の秘密を登録し、hint を購読する。private channel の復元より前に取る（scope の上限 64 の 1 つ）。import は account の追加・切替と同じ runtime の起動を通る。停止・切替は runtime の停止で lease ごと外れ、新しい runtime は新しい account の値だけを持つ。endpoint の作り直し（docs も新しくなる）は、lease の task の作り直しで秘密の登録と購読へ戻る |
-| hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。gossip は rendezvous が返した本人の端末とだけ合流し、bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（送ると、合流できないまま warmup の接続を繰り返して他の通信を乱し、他人に topic を知らせる）。hint を受けた差分の取得は AC-5 |
+| hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。gossip は rendezvous が返した本人の端末とだけ合流し、bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（送ると、合流できないまま warmup の接続を繰り返して他の通信を乱し、他人に topic を知らせる）。hint を受けた差分の取得は §10（AC-5b） |
 | rendezvous | 購読中の account の hint は、秘密から導出した topic の rendezvous の鍵（`public_topic_rendezvous_key(hint/kukuri:account:<hex>)`）で Community Node へ送り、本人の端末どうしを Relay Supported P2P で会わせる。鍵はアカウント鍵を持つ端末だけが計算でき、node が受け取るのは不透明な鍵だけ。node が同じ account の端末を結び付けられることは、既存の受信 route の rendezvous（公開鍵から導出）と同じで、新しい情報を加えない |
 | 診断 | sync status の topic の一覧と topic の診断から外す（`normalize_topic_name`） |
 | 有界な読み出し（page_read） | `account::v1::` は private の replica として、登録した capability の証明がある要求にだけ応える |
@@ -116,11 +121,12 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - replica は本人の全端末が同じ docs author（ADR 0053）で書くので、key ごとに書いた時刻の新しい 1 件だけが残る。`(updated_at, op_id)` の古い版を後から書くと、新しい版を隠す。
     そのため、どの編集よりも古い版（旧版の取り込み）は replica へ書かない。
   - 時計のずれで同じことが起きた場合に備え、読んだ版が手元の行より古い端末は、手元の版を書き直す。これは AC-5 の差分の取得の規則とする。
+    - AC-5a で改めた: 端末どうしの replica を同期せず、各端末が採用した版を自分の replica へ書く形（§10）では、古い版が新しい版を隠すことが起きないので、書き直さない。旧版の取り込みを replica へ書かない規則は、§10 の送り直し（同じ key に版が無いときだけ書く）に置き換える。
   - AC-3 より前に確定した profile は、次の編集で書く。
 - 点読（`read_account_sync_item`）: account の docs author の組の 1 件を読み、無い・開けないときだけ、key ごとの上限 8 件の旧候補から最大の版を採る。replica の全件・全 snapshot を比べない。
-  - 本人の別の端末から読む差分の取得と、点読・merge の呼び出しは AC-5。
+  - 本人の別の端末から読む差分の取得と、点読・merge の呼び出しは AC-5（§10）。
 - 作者ごとの表示例外（`trust/always-visible/<pk>`）は、本人の端末で共有する。
-  - 旧版の端末内の file（`<db>.trust-display.json`）は、起動時に item（編集時刻 0。どの編集よりも古い）として、この端末だけで採用して消す（replica へは書かない。他の端末へは次の編集で届く）。
+  - 旧版の端末内の file（`<db>.trust-display.json`）は、起動時に item（編集時刻 0。どの編集よりも古い）として、この端末だけで採用して消す。取り込んだ行は、§10 の送り直しの規則で replica へ書く（AC-5a で改めた。それまでは書かず、他の端末へは次の編集で届く形だった）。
     取り込めない file（壊れているなど）は、表示設定にすぎないので起動を止めず、次の起動で取り込み直す。
   - 画面の「この端末だけの設定」の説明は、同じアカウントの端末で共有する旨に改めた（2026-10-02 ユーザー判断）。
   - 表示の判断は対象の作者ごとに 1 行を読む（全件を読まない）。
@@ -218,7 +224,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 #### DB を失ったとき（2026-10-02 ユーザー判断）
 
-- 行は account の DB に置く。DB の file を失ったら、手元の account 同期の replica（docs の保存で、DB とは別にある）の channel の item から、AC-5 の差分の取得で作り直す。
+- 行は account の DB に置く。DB の file を失ったら、手元の account 同期の replica（docs の保存で、DB とは別にある）の channel の item から、AC-5 の差分の取得で作り直す（§10 の周回、AC-5c）。手元の replica には、別の端末から採った item も、この端末が書いている（§10）。
   - cursor も DB にあるので、最初の page から読む。page は有限で、途中で止まっても再開できる。参加が戻るのは、背景の取得がその item に届いた後。
   - 作り直せるのは replica へ書いた item だけ。書けなかった行・旧版から移した行は、AC-5 の送り直しで書いた後に作り直せる。
   - 担当の記録は `membership` に含まれない。作り直した行の担当の記録は、W6 が書く `controller` の item から戻る。それまでは担当が不明な channel として、鍵更新を伴う操作を保留する（ADR 0018 §8）。
@@ -253,7 +259,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 書き込み:
   - 世代の鍵は追加のとき、`membership` は上の 3 つの操作のときに、行の保存と同じ所で封をして replica へ書く。owner の鍵更新で作った世代も、同じ所を通る。
   - AC-3 と同じく、replica へ書けなくても採用は戻さない。
-- AC-5 が持つもの:
+- AC-5 が持つもの（§10）:
   - 移した行（`updated_at` 0）と書けなかった行の送り直し。
   - 本人の別の端末の版の取得と、DB を失ったときの作り直し（上記）。
   - 旧版から移した行は、replica の同じ key に版が無いときだけ書く（新しい退会を古い版で隠さない）。
@@ -291,6 +297,112 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 退会と、別の端末の世代の追加（redeem）が並行しても、参加に戻らない。
   - 退会の後に別の招待で再参加した端末の `membership` と鍵を採ると、届いた鍵の最新の世代で参加する（tombstone の行に残る世代へ戻らない）。
 
+### 10. 差分の取得（W5 AC-5。AC-5a で固定し、AC-5b・AC-5c で実装）
+
+基準（統合 branch `cc4276665`）の事実:
+
+- account の replica は相手と同期しない。R5-H で旧 sync を撤去し、replica を開いても同期は始まらない（`iroh_sync.rs` の `ensure_replica`）。iroh-docs は、同期の集合に無い namespace への相手からの同期の要求を拒否する。そのため、別の端末が書いた item は、この端末の replica に届かない。
+- 有界な remote 読取り（`page_read`）の応答側は、account の replica を private の replica として扱い、登録した秘密の証明がある要求に応える。要求側（`remote_readers`）は、投稿と author の replica 以外を拒否する。
+- docs の key の一覧（`DocKeyQuery`、`page_read` の `Keys`）は、prefix・順・上限だけを取る。「ある key より後」と時刻では読めない。iroh-docs の `offset` は、読み飛ばす分を走査する。
+- account の hint topic は購読するが、hint を送る所は無い。受け手が知る peer（`source_peer`、iroh-gossip の `delivered_from`）は直前の中継者で、書いた端末とは限らない。
+- 送信待ちの table は無い。旧版から移した行（時刻 0）は、どの replica にも書かれていない。
+- 単調な sequence と 64 件の page の cursor は、OS 通知の dispatch（ADR 0055 §6）に先例がある。
+
+#### 各端末の replica（AC-5b）
+
+- 各端末の account の replica は、その端末が採用した状態を item ごとに 1 件持つ（自分の編集と、別の端末から採ったもの）。端末どうしの replica は iroh-docs で同期しない（R5-H のまま）。
+- 別の端末の状態は、その端末の replica を有界な remote 読取りで読む。reader は ADR 0055 のもの（期限 30 秒、provider 4、1 lease 32 key・1 MiB）を使い、要求側の許可に account の replica を加える。秘密は登録した account の namespace の秘密で、相手は下の「契機」の本人の端末だけ。
+- 別の端末から採った item は、封をし直してこの端末の replica へ書く（相手の entry を取り込まない）。
+  - 全端末が同じ docs author で書くので、iroh の時刻の後勝ちは書いた端末の時計で決まる。この端末の書込みにすれば、replica の 1 件は、この端末が採用した順の最後の版になる。
+  - これで、鍵待ちの読み直し（§9）と DB を失ったときの作り直し（下記）は、手元の replica だけで行える。
+- 読んだ版が手元の行より古ければ何もしない。相手は、この端末の変更の窓から新しい版を読む。replica を端末どうしで同期しないので、古い版で新しい版を隠すことは起きない。§8 の「手元の版を書き直す」は不要になる。
+
+#### 変更の窓（AC-5b）
+
+- 各端末は、item を採用して自分の replica へ書くたびに、自分の変更の窓へ 1 件足す。
+  - key は `changes/<端末 ID>/<slot>`（slot は seq を 256 で割った余り、3 桁の 10 進）と `changes/<端末 ID>/head`。端末 ID は endpoint ID（W6 と同じ。`local_device_id`）。
+  - 値は item と同じ封（§3）をした `{seq, docs key}` と `{seq}`。
+  - seq は手元の replica の head の seq に 1 を足したもの（DB に持たない。DB を失っても続く）。書く順は slot、head。head を書く前に止まったら、次の書込みが同じ slot を上書きする（読み手は head までしか読まないので、その slot を見ていない）。
+  - item の書込みと窓への追記は、端末の中で 1 つずつ行う（account 同期の書込みの排他。§9 の全体の排他とは別で、その外で取る）。
+- 窓は端末ごとに 256 件で、古い slot を上書きする。窓は変更の手掛かりで、item の収束は今の状態だけで決まる（「採らない方式」の操作の log ではない）。
+- 自分の端末の窓だけを書く。別の端末から採った item も、自分の窓に足す（ある相手 1 台から、その相手が採った変更をすべて読める）。
+  - 「採った」は、採用の行を置き換えたこと（`(updated_at, op_id)` が大きい版を置いた）とする。同じ版の再受信（AC-4c の再開のための merge のやり直しを含む）と古い版は、自分の replica へ書かず、窓にも足さない。これで、端末どうしの往復は同じ版で止まる。
+  - 世代の鍵の item は、鍵の行を足したことを「採った」とする。
+
+#### 取得（AC-5b）
+
+- 読み手は、相手（端末 ID）ごとの cursor を account の store に持つ（native は SQLite、Web は W4 AC-2 の IndexedDB）。欄は、読んだ seq、周回の位置、周回を始めたときの head、更新時刻。account ごとに 16 相手まで。超えたら最も古く更新した cursor を消す（その相手とは次に周回から始める）。
+- 1 回の取得は、相手 1 台について次を行う。
+  1. 相手の head を 1 件読む。
+  2. cursor の次から head までの slot を順に読み、各 slot の docs key の item を読んで merge する。1 回は 64 slot まで。続きは次の回。
+  3. item ごとに merge してから cursor を進める（途中で止まっても、そこから再開する）。
+  - slot の seq が期待と違う（窓を上書きされた）とき、または cursor が無い（初めての相手、DB を失った、cursor を消した）ときは、相手の replica を周回する。
+- 周回:
+  - item の prefix（`profile`、`trust/always-visible/`、`channel/`）を、key に使う文字（`0-9`、`a-z`、`/`、`-`）の prefix の木で辿る。
+  - 1 回の照会は 64 key まで。上限に届かなければ、その prefix の key をすべて merge して、次の prefix へ進む。届けば、子の prefix へ降りる。
+  - 位置（次に照会する prefix）を cursor に持つ。
+  - 周回を始めたときの head を覚え、周回が終わったら cursor をその head にする。周回の間の変更は、その後の窓で読む。
+- 1 回の取得の仕事は、head 1 件、slot と item 64 件ずつまで（周回は照会 1 回と item 64 件まで）。窓の外の休止した channel・過去の履歴の量は、仕事に入らない。
+- 契機で始めた取得は、相手の head（周回なら周回の終わり）に届くまで、lease の task が背景で 1 回ずつ続ける。1 回の間は他の要求を待たせない。
+  - 途中で止まった（取得の失敗、相手が離れた、lease が外れた）ら、cursor に残した位置から次の契機で再開する。失敗した 1 回は再試行しない。
+- 取得した item の merge は §8・§9 の規則（AC-3・AC-4c）で行う。
+- 読んだ head・slot・item は、remote の保持（`persist_verified_record`）に置かない（古い head を返し続ける）。object ごとに reader の lease を閉じる（`finish_remote_object`。1 lease は 32 key・1 MiB）。
+
+#### 契機と owner（AC-5b）
+
+- 周期処理を新設しない（ADR 0055 §6）。契機は ADR 0055 の受信と同じ。
+  - account の lease の開始（起動・import・切替）、endpoint の世代の変化（復帰）、日の境界（UTC）: 本人の端末の候補（account の hint topic の rendezvous の候補、最大 4）それぞれから取得する。lease の開始の後に、hint を 1 回送る（offline の間の自分の変更を、online の端末に読ませる）。
+  - hint を受けたとき: hint の端末 ID の端末から取得する（届かなければ、中継した peer から読む）。
+- hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
+  - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
+  - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
+- owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得は再試行せず、次の契機を待つ。
+- account の切替: 取得は account の runtime の lease の task が持ち、停止で止まる。新しい runtime は、新しい account の store の cursor だけを読む。別の account への遅れた反映は起きない。
+
+#### 送り直し（AC-5b）
+
+- 書けなかった行は、行の欄で送信待ちにする。
+  - `account_sync_items` と世代の鍵の行に、replica へ書いたかの欄を持ち、未書込みの行の索引で読む。
+  - 送信待ちは行の欄なので、行の数を超えない。別の台帳と、件数の上限（§5 の 256 件）を持たない。新しい編集を保留にしない（2026-10-02 ユーザー判断。送信待ちの間は未同期として示す）。
+  - 欄を足す migration は、既存の行を未書込みとする（下記の規則で、replica に同じ版があれば書いたとするだけで、書き直さない）。
+- 送り直しは、取得と同じ契機と、各書込みの後に始め、未書込みの索引から 64 件ずつ、索引が空になるまで背景で続ける。止まったら次の契機で再開する。
+- 未書込みの行は、手元の replica の同じ key の版（`(updated_at, op_id)`、鍵は有無）が行の版と同じなら書いたとし、違えば行の版を書く。
+  - 各端末の replica の版は、その端末が採用した版なので、行の版より新しくならない。違うのは、書けなかった版があるとき（例: 参加は書けたが、その後の退会を書けなかった）と、書いていないとき。
+  - 旧版から移した行（時刻 0）、旧版の表示例外の file から取り込んだ行（§8）、migration の時の既存の行も、この規則で扱う。
+- 世代の鍵の item は、鍵の行が残っている間だけ書ける（退会で消した鍵は送らない）。
+
+#### 状態（AC-5b）
+
+- 採用済みの状態は、取得を待たずに使う。
+- 未同期は、次のどれか。これを有界に読める状態として返す（未書込みの索引の 1 件の有無、作り直しの行、相手ごとの取得の結果）。表示は W8（#1220）。
+  - 本人の端末の候補が無い。
+  - 最後の取得が失敗した。
+  - 読み残しがある（相手の cursor が、最後に読んだ head より手前、または周回の途中）。
+  - 送信待ちがある。
+  - DB を失ったときの作り直しの途中。
+
+#### DB を失ったとき（AC-5c）
+
+- §9 の作り直しは、手元の replica を上の周回と同じ木で辿り、item を merge する。位置は自分の端末 ID の cursor の行に持つ。
+  - 手元の replica から読んだ item は、既に自分の replica にあるので、書き直さず、窓にも足さない（足すと窓が何周もして、全部の相手が周回を始める）。作り直した行は、書いたとして置く。
+  - 自分の cursor の行は、相手の cursor の上限（16）の数に入れず、消さない。
+  - account の lease の開始で、自分の cursor の行が無ければ（DB を失った、この版へ上げた）、最初から周回する。終わったら行に終わりを記録し、以後は周回しない。
+  - 背景で進め、途中で止まっても行の位置から再開する。参加が戻るのは、周回がその item に届いた後。
+- 各相手の cursor も失われるので、相手とは周回から始める。変更の窓の seq は replica の head から続く。
+- AC-4b で DB を消さない再起動に改めた試験 4 件を、DB を消して作り直しを確かめる試験に戻す。
+
+#### 判定（AC-5b・AC-5c）
+
+- AC-5b:
+  - 固定の sequence: 通知の欠落、offline からの復帰、再起動、保存の失敗、account の切替。
+  - 休止した channel・履歴を 10 倍にしても、1 回の取得・送り直しの処理数・bytes・待ちが増えない。
+  - 容量の超過と回収: 窓（256 件）を上書きされた相手と、cursor の上限（16 相手）で cursor を消した相手は、周回で追い付き、周回は止まっても再開する。送信待ちは件数の上限を持たず（上記のユーザー判断）、書込みに失敗し続けても新しい編集を保留にせず、未同期を示し、書けたら下りる。
+  - 1 回の取得の後も、head・周回の終わり・送信待ちの空に届くまで背景で続く（契機を待たない）。
+  - 未同期の状態が、上の「状態」の条件のときに立ち、解消したら下りる。
+- AC-5c:
+  - DB を消して再起動した端末が、手元の replica から参加と鍵を作り直す（試験 4 件）。
+  - 作り直しの 1 page の仕事が、参加・世代の数を 10 倍にしても増えない。
+
 ## 採らない方式
 
 - 公開鍵から同期先を導出する: 公開鍵を知る誰もが同期先を知れる（ADR 0055 の受信 route と同じになる）。
@@ -299,6 +411,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - account の同期を通常の private channel として作る: epoch の更新と担当（W6）に巻き込まれ、bootstrap にならない。
 - private channel の鍵を世代ごとに keyring・vault の entry にする（§9）: entry が件数に比例して増え、行の索引と秘密が別の保存先に分かれる。
 - 知らない channel の参加を、その replica の署名済みの metadata・policy を読んで作る（§9）: 本人の端末の item で足り、replica を持つ相手が online になるまで参加にできない。
+- account の replica を iroh-docs で本人の端末どうし同期する（§10）: R5-H で撤去した常時の同期を戻すことになり、届いた entry のうち未 merge のものを見つける手段が無い（届いた順の索引が無い）。全端末が同じ docs author なので、時計の進んだ端末の古い版が新しい版を隠す。
+- 編集の時刻で並べた変更の索引を、全端末で 1 つにする（§10）: 時計の遅れた端末の変更が、他の端末の cursor より前に並び、読まれない。端末ごとの seq の窓にする。
+- 送信待ちを別の table にし、件数の上限で新しい編集を保留にする（§10）: 送り直す内容は行が持つので、行の欄で足りる。
 
 ## Consequences
 
@@ -310,12 +425,12 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 ADR 0002 の template に従う。
 
 - Feature 名: 本人の端末間の account 同期
-- Durable / Transient: 採用した item の状態は Durable（item ごとに 1 行）。送信待ちは Durable。hint は Transient。
+- Durable / Transient: 採用した item の状態は Durable（item ごとに 1 行）。送信待ち（行の欄）と相手ごとの cursor は Durable。hint は Transient。
 - Canonical Source: profile は既存の署名済みの envelope。その他は、検証済みの item と各端末の保存状態。
 - Replicated?: 同じアカウント鍵を持つ本人の端末の間だけ（Private Replica）。
-- Rebuildable From: 同期の copy を持つ本人の端末から再取得できる。すべて offline なら待つ。DB を失った端末は、手元の account の replica から作り直す（§9）。
+- Rebuildable From: 採用した状態を持つ本人の端末の replica から再取得できる（§10）。すべて offline なら待つ。DB を失った端末は、手元の account の replica から作り直す（§9・§10）。
 - Public Replica / Private Replica / Local Only: Private Replica（`account::v1::`）。公開の索引・検索・推薦の対象外。
-- Gossip Hint 必要有無: あり（`kukuri:account:<hex>`。内容を含まない変更の手掛かり）。
+- Gossip Hint 必要有無: あり（`kukuri:account:<hex>`。item の内容を含まず、書いた端末の ID とその変更の窓の seq だけを運ぶ手掛かり。§10）。
 - Blob 必要有無: なし。
 - SQLite projection 必要有無: 採用した状態の行（native は SQLite、Web は IndexedDB。AC-3〜5）。
 - 必須 contract: 導出の golden、同じ鍵での一致・別の鍵での不一致、用途の分離、封の検査、上限、公開の導出からの除外、受信 route との分離（本 PR の試験）。
