@@ -5,9 +5,10 @@ use async_trait::async_trait;
 use kukuri_core::{FollowEdge, FollowEdgeStatus, Profile};
 use kukuri_store::{
     AuthorRelationshipProjectionRow, MutedAuthorRow, PrivateChannelParticipantRow,
-    SocialProjectionStore,
+    PrivateChannelRow, SocialProjectionStore,
 };
 use wasm_bindgen::JsValue;
+use web_sys::IdbTransaction;
 
 use super::now_ms;
 use crate::IndexedDbCache;
