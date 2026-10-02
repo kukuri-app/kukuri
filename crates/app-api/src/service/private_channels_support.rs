@@ -491,9 +491,9 @@ impl AppService {
     ) -> Result<Option<i64>> {
         self.install_private_epoch_secrets().await?;
         let key = joined_private_channel_key(state.topic_id.as_str(), state.channel_id.as_str());
-        let (membership_at, changed) = {
+        let ((membership_at, writes), changed) = {
             let _save_access = self.services.content_save_access.lock().await;
-            let membership_at = match commit {
+            let persisted = match commit {
                 ChannelCommit::Join(joined_at) => {
                     self.persist_private_channel(&state, joined_at, &[], true)
                         .await?
@@ -518,8 +518,11 @@ impl AppService {
                 .await
                 .get(&key)
                 .is_none_or(|current| !same_private_channel_state(current, &state));
-            (membership_at, changed)
+            (persisted, changed)
         };
+        for item in &writes {
+            self.write_account_sync_item(item).await?;
+        }
         if changed {
             // 現 epoch の replica だけを購読する。epoch が変わったら task を作り直す。
             self.restart_scope_subscription(&ScopeKey::Channel(

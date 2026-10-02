@@ -70,8 +70,10 @@ impl AppService {
         let row = store.get_private_channel_by_id(channel_id.as_str()).await?;
         let Some(membership) = membership else {
             // 退会: 参加中なら、この端末の退会と同じ順で外す（鍵待ちの参加は記録を書いていないので書かない）。
-            // 鍵の行は参加中でなくても消す（再送で、途中で止まった削除を再開する）。
+            // 鍵の行は参加中でなくても消す（参加より先に届いた鍵、再送で途中から再開する削除）。
             let Some(row) = row else {
+                self.delete_private_channel_keys(channel_id.as_str())
+                    .await?;
                 return Ok(true);
             };
             let (topic_id, channel) = (row.topic_id.clone(), row.channel_id.clone());

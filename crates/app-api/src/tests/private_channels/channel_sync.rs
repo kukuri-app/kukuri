@@ -5,6 +5,7 @@
 use super::super::*;
 
 use kukuri_core::{AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1};
+use kukuri_docs_sync::DocFetchPolicy;
 use kukuri_store::{PrivateChannelEpochRange, SqliteStore};
 
 const TOPIC: &str = "kukuri:topic:channel-sync";
@@ -385,4 +386,95 @@ async fn leave_races_with_epoch_advances_without_rejoining() {
     );
     assert_eq!(current(&app, "room").await, None);
     assert_eq!(key_rows(&app, "room").await, 1);
+}
+
+/// 参加の行の無い端末に、鍵が退会より先に届いても、退会で鍵を消す(key の順は鍵が参加の版より先)。その後の再参加は、
+/// 消した鍵の世代に戻らず鍵待ちになる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leave_removes_keys_that_arrived_before_any_membership() {
+    let store = Arc::new(MemoryStore::default());
+    let keys = generate_keys();
+    let app = device(store.clone(), store, &keys);
+    start(&app).await;
+    assert!(
+        app.merge_account_sync_item(key("room", 1, 100))
+            .await
+            .expect("key")
+    );
+    assert_eq!(key_rows(&app, "room").await, 1);
+    assert!(
+        app.merge_account_sync_item(left("room", 300, 'b'))
+            .await
+            .expect("leave")
+    );
+    assert_eq!(key_rows(&app, "room").await, 0);
+    assert!(
+        app.merge_account_sync_item(joined("room", 400, 'c', 2))
+            .await
+            .expect("rejoin")
+    );
+    assert_eq!(current(&app, "room").await, None);
+}
+
+/// この端末の参加・世代の追加・退会が書く item: 参加は参加の版と現在の世代の鍵、世代の追加は鍵だけ(参加の版を
+/// 変えない)、退会は tombstone。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_join_rotate_and_leave_write_their_items() {
+    let store = Arc::new(MemoryStore::default());
+    let keys = generate_keys();
+    let app = device(store.clone(), store, &keys);
+    start(&app).await;
+    let _ = app.list_timeline(TOPIC, None, 20).await;
+    let channel_id = app
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(TOPIC),
+            label: "writes".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .expect("create")
+        .channel_id;
+    let channel = ChannelId::new(channel_id.as_str());
+    let read = |key: AccountSyncItemKey| {
+        let app = &app;
+        async move {
+            app.read_account_sync_item(&key, DocFetchPolicy::LocalOnly)
+                .await
+                .expect("read item")
+        }
+    };
+    let membership_key = AccountSyncItemKey::ChannelMembership {
+        channel_id: channel.clone(),
+    };
+    let epoch_key = |epoch_id: String| AccountSyncItemKey::ChannelCapability {
+        channel_id: channel.clone(),
+        epoch_id,
+    };
+    let first = app
+        .joined_private_channel_state(TOPIC, channel_id.as_str())
+        .await
+        .expect("joined");
+    let joined_item = read(membership_key.clone()).await.expect("membership");
+    let value: ChannelMembershipV1 =
+        serde_json::from_value(joined_item.value.clone().expect("value")).expect("membership");
+    assert_eq!(value.current_epoch_id, first.current_epoch_id);
+    assert!(
+        read(epoch_key(first.current_epoch_id.clone()))
+            .await
+            .is_some()
+    );
+
+    let rotated = app
+        .rotate_private_channel(TOPIC, channel_id.as_str())
+        .await
+        .expect("rotate");
+    assert_ne!(rotated.current_epoch_id, first.current_epoch_id);
+    assert!(read(epoch_key(rotated.current_epoch_id)).await.is_some());
+    assert_eq!(read(membership_key.clone()).await, Some(joined_item));
+
+    app.leave_private_channel(TOPIC, channel_id.as_str())
+        .await
+        .expect("leave");
+    let tombstone = read(membership_key).await.expect("tombstone");
+    assert_eq!(tombstone.value, None);
 }

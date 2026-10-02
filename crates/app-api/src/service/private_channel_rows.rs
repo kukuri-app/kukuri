@@ -277,7 +277,7 @@ impl AppService {
         updated_at: i64,
         archived: &[PrivateChannelEpochCapability],
         join: bool,
-    ) -> Result<i64> {
+    ) -> Result<(i64, Vec<AccountSyncItem>)> {
         let key = joined_private_channel_key(&state.topic_id, state.channel_id.as_str());
         let existing = self
             .services
@@ -326,19 +326,20 @@ impl AppService {
             .await?;
         self.private_channel_rows_changed
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        // 採用の台帳への記録は行と同じ排他の中、replica への書込みは呼び出し元が排他の外で行う。旧版から移した版
+        // (時刻 0)は、新しい退会を隠さないよう replica へ書かない（送り直しは AC-5）。
+        let mut writes = Vec::new();
         if let Some(item) = membership_item {
-            if updated_at == 0 {
-                // 旧版から移した版は、新しい退会を隠さないよう replica へ書かない（送り直しは AC-5）。
-                self.services
-                    .projection_store
-                    .adopt_account_sync_row(&account_sync_row(&item)?)
-                    .await?;
-            } else {
-                self.publish_account_sync_item(item).await?;
+            self.services
+                .projection_store
+                .adopt_account_sync_row(&account_sync_row(&item)?)
+                .await?;
+            if updated_at != 0 {
+                writes.push(item);
             }
         }
         if updated_at != 0 {
-            self.write_account_sync_item(&AccountSyncItem::channel_epoch(
+            writes.push(AccountSyncItem::channel_epoch(
                 &state.channel_id,
                 &state.current_epoch_id,
                 updated_at,
@@ -346,10 +347,9 @@ impl AppService {
                     epoch_id: state.current_epoch_id.clone(),
                     namespace_secret_hex: state.current_epoch_secret_hex.clone(),
                 })?,
-            )?)
-            .await?;
+            )?);
         }
-        Ok(membership_at)
+        Ok((membership_at, writes))
     }
 
     /// 旧 registry の 1 件を、参加の行と世代の鍵の行へ移す(ADR 0061 §9。起動時の移行の入口で、試験も別の端末の
@@ -579,10 +579,10 @@ impl AppService {
         state: &JoinedPrivateChannelState,
         adopted: Option<&AccountSyncItem>,
     ) -> Result<i64> {
-        let _access = self.services.content_save_access.lock().await;
+        let access = self.services.content_save_access.lock().await;
         let key = joined_private_channel_key(&state.topic_id, state.channel_id.as_str());
-        let item = match adopted {
-            Some(item) => item.clone(),
+        let (item, write) = match adopted {
+            Some(item) => (item.clone(), false),
             None => {
                 let item = AccountSyncItem::edit(
                     AccountSyncItemKey::ChannelMembership {
@@ -591,12 +591,15 @@ impl AppService {
                     Utc::now().timestamp_millis(),
                     None,
                 );
-                self.publish_account_sync_item(item.clone()).await?;
-                item
+                self.services
+                    .projection_store
+                    .adopt_account_sync_row(&account_sync_row(&item)?)
+                    .await?;
+                (item, true)
             }
         };
         let left_at = item.updated_at;
-        let row = private_channel_row(state, false, (item.updated_at, item.op_id))?;
+        let row = private_channel_row(state, false, (item.updated_at, item.op_id.clone()))?;
         self.services
             .projection_store
             .put_private_channel(&row, &[])
@@ -610,15 +613,33 @@ impl AppService {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             .saturating_add(1);
         self.services.content_scope_changes.send_replace(generation);
+        drop(access);
+        if write {
+            self.write_account_sync_item(&item).await?;
+        }
         Ok(left_at)
     }
 
-    /// 退会の後に、その channel の世代の鍵の行を page で消しながら、その世代の replica の参照を外し、lease を外す。
+    /// 退会の後に、その channel の世代の鍵の行を消し、lease を外す。
     pub(crate) async fn forget_private_channel_keys(
         &self,
         topic_id: &str,
         channel_id: &str,
     ) -> Result<()> {
+        self.delete_private_channel_keys(channel_id).await?;
+        self.release_scope_holder(&private_channel_holder(topic_id, channel_id))
+            .await;
+        // 列が channel を開いたままでも、参加していない channel は購読しない。
+        self.restart_scope_subscription(&ScopeKey::Channel(
+            topic_id.to_string(),
+            channel_id.to_string(),
+        ))
+        .await;
+        Ok(())
+    }
+
+    /// その channel の世代の鍵の行を page で消しながら、その世代の replica の参照を外す。
+    pub(crate) async fn delete_private_channel_keys(&self, channel_id: &str) -> Result<()> {
         loop {
             let epochs = self
                 .services
@@ -642,14 +663,6 @@ impl AppService {
                     .await?;
             }
         }
-        self.release_scope_holder(&private_channel_holder(topic_id, channel_id))
-            .await;
-        // 列が channel を開いたままでも、参加していない channel は購読しない。
-        self.restart_scope_subscription(&ScopeKey::Channel(
-            topic_id.to_string(),
-            channel_id.to_string(),
-        ))
-        .await;
         Ok(())
     }
 }
