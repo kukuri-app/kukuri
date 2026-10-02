@@ -185,14 +185,14 @@ impl IndexedDbCache {
         .await
     }
 
-    /// 内容の 2 つ目の chunk を消す（試験で破損を作る）。
+    /// 内容の `seq` 番の chunk を消す（試験で破損を作る）。
     #[cfg(test)]
-    pub(crate) async fn drop_second_chunk(&self, key: &str) -> Result<()> {
-        let key = key.to_owned();
+    pub(crate) async fn drop_chunk(&self, kind: &str, key: &str, seq: u64) -> Result<()> {
+        let (kind, key) = (kind.to_owned(), key.to_owned());
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
             tx.chunks
-                .delete(&chunk_key("blob", &key, 1))
+                .delete(&chunk_key(&kind, &key, seq))
                 .map_err(js_error)?;
             tx.commit().await
         })

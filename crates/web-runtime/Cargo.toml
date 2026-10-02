@@ -42,6 +42,7 @@ web-time.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+hex.workspace = true
 iroh.workspace = true
 kukuri-blob-service = { path = "../blob-service" }
 kukuri-core = { path = "../core" }
