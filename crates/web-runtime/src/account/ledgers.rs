@@ -6,17 +6,18 @@ use anyhow::Result;
 use async_trait::async_trait;
 use kukuri_core::{EnvelopeId, ReplicaId};
 use kukuri_store::{
-    AccountSyncRow, AccountSyncStore, CONTENT_OBSERVATION_RETENTION_MS, ContentObservationRow,
-    ContentObservationStore, MAX_CONTENT_OBSERVATIONS, PostWithdrawalRow, PostWithdrawalStore,
-    PrivateIndexGrant, PrivateIndexGrantStore, WithdrawalWriteRow,
+    ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
+    CONTENT_OBSERVATION_RETENTION_MS, ContentObservationRow, ContentObservationStore,
+    MAX_CONTENT_OBSERVATIONS, PostWithdrawalRow, PostWithdrawalStore, PrivateIndexGrant,
+    PrivateIndexGrantStore, WithdrawalWriteRow,
 };
 use wasm_bindgen::JsValue;
 use web_sys::{IdbKeyRange, IdbTransaction};
 
 use crate::IndexedDbCache;
 use crate::content_cache::{
-    ACCOUNT_SYNC, INDEX_GRANTS, INDEX_STOPS, META, OBJECTS, OBSERVATIONS, PROFILES,
-    WITHDRAWAL_OUTBOX, WITHDRAWALS, prefix_upper_bound,
+    ACCOUNT_SYNC, ACCOUNT_SYNC_CURSORS, INDEX_GRANTS, INDEX_STOPS, META, OBJECTS, OBSERVATIONS,
+    PROFILES, WITHDRAWAL_OUTBOX, WITHDRAWALS, prefix_upper_bound,
 };
 use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, key, num, prefix, text};
@@ -248,10 +249,95 @@ impl AccountSyncStore for IndexedDbCache {
                     (row.updated_at, &row.op_id) > (current.updated_at, &current.op_id)
                 });
             if newer {
-                rows::put(&tx, ACCOUNT_SYNC, &row, &[])?;
+                rows::put(&tx, ACCOUNT_SYNC, &row, &[("unwritten", text(&row.key))])?;
             }
             tx.commit().await?;
             Ok(newer)
+        })
+        .await
+    }
+
+    /// 行の版が `row` と同じなら、未書込みの索引から外す（行を置き直す）。
+    async fn mark_account_sync_written(&self, row: &AccountSyncRow) -> Result<()> {
+        let row = row.clone();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[ACCOUNT_SYNC], Mode::Strict)?;
+            if rows::get::<AccountSyncRow>(&tx, ACCOUNT_SYNC, &text(&row.key))
+                .await?
+                .is_some_and(|current| {
+                    (current.updated_at, &current.op_id) == (row.updated_at, &row.op_id)
+                })
+            {
+                rows::put(&tx, ACCOUNT_SYNC, &row, &[])?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn list_unwritten_account_sync_rows(&self, limit: usize) -> Result<Vec<AccountSyncRow>> {
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[ACCOUNT_SYNC], Mode::Read)?;
+            let range = IdbKeyRange::lower_bound(&text("")).map_err(js_error)?;
+            rows::scan(&tx, ACCOUNT_SYNC, Some("unwritten"), &range, false, limit).await
+        })
+        .await
+    }
+
+    async fn get_account_sync_cursor(&self, device_id: &str) -> Result<Option<AccountSyncCursor>> {
+        let device_id = device_id.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[ACCOUNT_SYNC_CURSORS], Mode::Read)?;
+            rows::get(&tx, ACCOUNT_SYNC_CURSORS, &text(&device_id)).await
+        })
+        .await
+    }
+
+    /// cursor を置き、自分以外の行が上限を超えたら、最も古く更新した行を消す（行は上限 + 1 件まで）。
+    async fn put_account_sync_cursor(
+        &self,
+        cursor: &AccountSyncCursor,
+        own_device_id: &str,
+    ) -> Result<()> {
+        let (cursor, own) = (cursor.clone(), own_device_id.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[ACCOUNT_SYNC_CURSORS], Mode::Strict)?;
+            rows::put(&tx, ACCOUNT_SYNC_CURSORS, &cursor, &[])?;
+            let range = IdbKeyRange::lower_bound(&num(i64::MIN)).map_err(js_error)?;
+            let cursors: Vec<AccountSyncCursor> = rows::scan(
+                &tx,
+                ACCOUNT_SYNC_CURSORS,
+                Some("updated"),
+                &range,
+                true,
+                ACCOUNT_SYNC_CURSOR_LIMIT + 2,
+            )
+            .await?;
+            for stale in cursors
+                .iter()
+                .filter(|cursor| cursor.device_id != own)
+                .skip(ACCOUNT_SYNC_CURSOR_LIMIT)
+            {
+                rows::delete(&tx, ACCOUNT_SYNC_CURSORS, &text(&stale.device_id))?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn list_account_sync_cursors(&self) -> Result<Vec<AccountSyncCursor>> {
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[ACCOUNT_SYNC_CURSORS], Mode::Read)?;
+            let range = IdbKeyRange::lower_bound(&text("")).map_err(js_error)?;
+            rows::scan(
+                &tx,
+                ACCOUNT_SYNC_CURSORS,
+                None,
+                &range,
+                false,
+                ACCOUNT_SYNC_CURSOR_LIMIT + 1,
+            )
+            .await
         })
         .await
     }

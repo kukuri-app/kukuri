@@ -22,9 +22,9 @@ use kukuri_desktop_runtime::{ClientStorage, load_endpoint_secret, save_endpoint_
 use kukuri_docs_sync::IrohDocsSync;
 use kukuri_iroh_node::{IrohDocsNode, NodeOptions};
 use kukuri_store::{
-    AccountSyncRow, AccountSyncStore, ContentCacheStore, LEARNED_RETENTION_MS, ObjectProjectionRow,
-    ObjectProjectionStore, PeerCandidateStore, PrivateChannelEpochRow, PrivateChannelKeyStore,
-    PrivateChannelRow,
+    ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
+    ContentCacheStore, LEARNED_RETENTION_MS, ObjectProjectionRow, ObjectProjectionStore,
+    PeerCandidateStore, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
 };
 use kukuri_transport::{FakeNetwork, FakeTransport};
 use wasm_bindgen::JsValue;
@@ -408,6 +408,98 @@ async fn a_key_row_without_a_channel_is_added_once() {
         cache.get_private_channel_by_id("channel-1").await.unwrap(),
         None
     );
+}
+
+/// 採用した行と足した鍵の行は replica へ未書込みの索引に載り、書いたら外れる。相手の cursor は上限を超えたら古い
+/// ものから消え、自分の行は消えない（native の store と同じ意味。#1218 AC-5b、ADR 0061 §10）。
+#[wasm_bindgen_test]
+async fn unwritten_rows_and_cursors_follow_the_native_store() {
+    let cache = IndexedDbCache::start(&account_id(), None)
+        .await
+        .expect("cache");
+    let row = AccountSyncRow {
+        key: "profile".into(),
+        op_id: "op".into(),
+        updated_at: 5,
+        value: Some("{}".into()),
+    };
+    assert!(cache.adopt_account_sync_row(&row).await.unwrap());
+    assert!(
+        cache
+            .put_private_channel_epoch(&epoch_row("epoch-1"))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        cache.list_unwritten_account_sync_rows(8).await.unwrap(),
+        vec![row.clone()]
+    );
+    assert_eq!(
+        cache
+            .list_unwritten_private_channel_epochs(8)
+            .await
+            .unwrap(),
+        vec![epoch_row("epoch-1")]
+    );
+    // 版の違う印は外さない。
+    let older = AccountSyncRow {
+        updated_at: 4,
+        ..row.clone()
+    };
+    cache.mark_account_sync_written(&older).await.unwrap();
+    assert_eq!(
+        cache
+            .list_unwritten_account_sync_rows(8)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    cache.mark_account_sync_written(&row).await.unwrap();
+    cache
+        .mark_private_channel_epoch_written("channel-1", "epoch-1")
+        .await
+        .unwrap();
+    assert!(
+        cache
+            .list_unwritten_account_sync_rows(8)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        cache
+            .list_unwritten_private_channel_epochs(8)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let cursor = |device: &str, updated_at: i64| AccountSyncCursor {
+        device_id: device.into(),
+        seq: 1,
+        head: 1,
+        cycle_prefix: None,
+        cycle_head: 0,
+        updated_at,
+    };
+    cache
+        .put_account_sync_cursor(&cursor("own", 0), "own")
+        .await
+        .unwrap();
+    for index in 0..=ACCOUNT_SYNC_CURSOR_LIMIT {
+        cache
+            .put_account_sync_cursor(
+                &cursor(&format!("peer-{index:02}"), index as i64 + 1),
+                "own",
+            )
+            .await
+            .unwrap();
+    }
+    let kept = cache.list_account_sync_cursors().await.unwrap();
+    assert_eq!(kept.len(), ACCOUNT_SYNC_CURSOR_LIMIT + 1);
+    assert!(kept.iter().any(|cursor| cursor.device_id == "own"));
+    assert!(!kept.iter().any(|cursor| cursor.device_id == "peer-00"));
 }
 
 #[wasm_bindgen_test]

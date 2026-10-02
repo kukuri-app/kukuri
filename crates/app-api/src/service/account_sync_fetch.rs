@@ -55,8 +55,8 @@ fn new_cursor(device_id: &str, head: u64) -> AccountSyncCursor {
 pub(crate) struct AccountSyncState {
     /// item の書込みと変更の窓への追記を、端末の中で 1 つずつにする。
     write: tokio::sync::Mutex<()>,
-    /// 書込みが成功したら、lease の task に送り直しを始めさせる。
-    pub(super) resend: tokio::sync::Notify,
+    /// 書込みが成功したら、lease の task に送り直しと hint の送信をさせる（利用者の操作の経路で送信を待たない）。
+    pub(super) changed: tokio::sync::Notify,
     fetch: std::sync::Mutex<FetchResults>,
 }
 
@@ -89,7 +89,7 @@ impl AccountSyncStatus {
 
 impl AppService {
     /// 封をした item を自分の replica へ書き、変更の窓へ足して、書いたとする。書けなければ送信待ちのまま残す
-    /// （採用は戻さない）。書けたら hint を送り、lease の task に送り直しを始めさせる。
+    /// （採用は戻さない）。書けたら lease の task に、送り直しと hint の送信をさせる。
     pub(crate) async fn write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
         if let Err(error) = self.try_write_account_sync_item(item).await {
             warn!(key = ?item.key, %error, "account sync item stays unwritten until it is resent");
@@ -99,7 +99,7 @@ impl AppService {
 
     async fn try_write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
         let device_id = self.local_device_id().await?;
-        let seq = {
+        {
             let _write = self.services.account_sync.write.lock().await;
             self.set_account_sync_entry(item).await?;
             let seq = self
@@ -130,22 +130,45 @@ impl AppService {
                 Some(change(String::new())?),
             ))
             .await?;
-            seq
-        };
+        }
         self.mark_account_sync_item_written(item).await?;
-        if let Err(error) = self
-            .services
-            .hint_transport
-            .publish_hint(
-                self.services.keys.derive_account_sync().hint_topic(),
-                GossipHint::AccountSyncChanged { device_id, seq },
+        self.services.account_sync.changed.notify_one();
+        Ok(())
+    }
+
+    /// 自分の窓の head の seq を hint で送る。相手が居ないと gossip の送信は待ち続けうるので、期限で打ち切る（取りこぼした
+    /// hint は、相手の次の契機の取得が cursor から読む）。
+    pub(crate) async fn publish_account_sync_hint(&self) {
+        let result = async {
+            let device_id = self.local_device_id().await?;
+            let Some(head) = self
+                .read_account_sync_change(
+                    self.services.docs_sync.as_ref(),
+                    &AccountSyncItemKey::ChangeHead {
+                        device_id: device_id.clone(),
+                    },
+                )
+                .await?
+            else {
+                return anyhow::Ok(());
+            };
+            n0_future::time::timeout(
+                std::time::Duration::from_secs(2),
+                self.services.hint_transport.publish_hint(
+                    self.services.keys.derive_account_sync().hint_topic(),
+                    GossipHint::AccountSyncChanged {
+                        device_id,
+                        seq: head.seq,
+                    },
+                ),
             )
-            .await
-        {
+            .await??;
+            anyhow::Ok(())
+        }
+        .await;
+        if let Err(error) = result {
             warn!(%error, "failed to publish the account sync hint");
         }
-        self.services.account_sync.resend.notify_one();
-        Ok(())
     }
 
     async fn set_account_sync_entry(&self, item: &AccountSyncItem) -> Result<()> {
@@ -496,34 +519,7 @@ impl AppService {
                 warn!(%error, "account sync fetch stopped; it resumes at the next trigger");
             }
         }
-        match self
-            .read_account_sync_change(
-                self.services.docs_sync.as_ref(),
-                &AccountSyncItemKey::ChangeHead {
-                    device_id: own_device_id.clone(),
-                },
-            )
-            .await
-        {
-            Ok(Some(head)) => {
-                if let Err(error) = self
-                    .services
-                    .hint_transport
-                    .publish_hint(
-                        &hint_topic,
-                        GossipHint::AccountSyncChanged {
-                            device_id: own_device_id,
-                            seq: head.seq,
-                        },
-                    )
-                    .await
-                {
-                    warn!(%error, "failed to publish the account sync hint");
-                }
-            }
-            Ok(None) => {}
-            Err(error) => warn!(%error, "failed to read the account sync head"),
-        }
+        self.publish_account_sync_hint().await;
     }
 
     /// hint を受けたとき: 書いた端末から取得し、届かなければ中継した peer から読む。

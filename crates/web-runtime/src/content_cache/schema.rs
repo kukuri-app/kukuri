@@ -34,6 +34,7 @@ pub(crate) const OBSERVATIONS: &str = "observations";
 pub(crate) const WITHDRAWALS: &str = "withdrawals";
 pub(crate) const WITHDRAWAL_OUTBOX: &str = "withdrawal_outbox";
 pub(crate) const ACCOUNT_SYNC: &str = "account_sync";
+pub(crate) const ACCOUNT_SYNC_CURSORS: &str = "account_sync_cursors";
 pub(crate) const PRIVATE_CHANNELS: &str = "private_channels";
 pub(crate) const PRIVATE_EPOCHS: &str = "private_epochs";
 pub(crate) const INDEX_GRANTS: &str = "index_grants";
@@ -278,7 +279,19 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         &["r.withdrawal_envelope_id", "r.replica_id"],
         &[("seq", &["seq"])],
     )?;
-    table(db, ACCOUNT_SYNC, &["r.key"], &[])?;
+    // `unwritten` は replica へ未書込みの行だけが持つ（SQLite の `written = 0` の部分索引。ADR 0061 §10）。
+    table(
+        db,
+        ACCOUNT_SYNC,
+        &["r.key"],
+        &[("unwritten", &["unwritten"])],
+    )?;
+    table(
+        db,
+        ACCOUNT_SYNC_CURSORS,
+        &["r.device_id"],
+        &[("updated", &["r.updated_at"])],
+    )?;
     table(
         db,
         PRIVATE_CHANNELS,
@@ -297,6 +310,7 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         &[
             ("receive", &["r.receive_key_id"]),
             ("started", &["r.channel_id", "r.started_at", "r.epoch_id"]),
+            ("unwritten", &["unwritten"]),
         ],
     )?;
     table(

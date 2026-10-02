@@ -39,6 +39,11 @@ fn epoch_key(channel_id: &str, epoch_id: &str) -> JsValue {
     key(&[text(channel_id), text(epoch_id)])
 }
 
+/// 足した世代の鍵の行は、replica へ未書込みの索引に載る（ADR 0061 §10）。
+fn unwritten_epoch(epoch: &PrivateChannelEpochRow) -> [(&'static str, JsValue); 1] {
+    [("unwritten", epoch_key(&epoch.channel_id, &epoch.epoch_id))]
+}
+
 #[async_trait]
 impl PrivateChannelKeyStore for IndexedDbCache {
     /// 参加の行を置き換え、まだ無い世代の鍵の行を足す（1 つの strict の transaction）。
@@ -57,7 +62,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
                     .await?
                     .is_none()
                 {
-                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &unwritten_epoch(&epoch))?;
                 }
             }
             tx.commit().await
@@ -77,7 +82,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
             {
                 return Ok(false);
             }
-            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &unwritten_epoch(&epoch))?;
             tx.commit().await?;
             Ok(true)
         })
@@ -200,6 +205,38 @@ impl PrivateChannelKeyStore for IndexedDbCache {
                 limit,
             )
             .await
+        })
+        .await
+    }
+
+    /// 未書込みの索引から外す（行を置き直す）。
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()> {
+        let id = (channel_id.to_owned(), epoch_id.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Strict)?;
+            if let Some(epoch) =
+                rows::get::<PrivateChannelEpochRow>(&tx, PRIVATE_EPOCHS, &epoch_key(&id.0, &id.1))
+                    .await?
+            {
+                rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Read)?;
+            let range = web_sys::IdbKeyRange::lower_bound(&key(&[])).map_err(js_error)?;
+            rows::scan(&tx, PRIVATE_EPOCHS, Some("unwritten"), &range, false, limit).await
         })
         .await
     }
