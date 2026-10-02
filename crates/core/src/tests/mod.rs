@@ -1,4 +1,5 @@
 mod account_sync;
+mod account_transfer;
 mod derivation_golden;
 mod device_backup;
 mod direct_messages;

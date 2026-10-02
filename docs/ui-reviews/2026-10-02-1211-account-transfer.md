@@ -1,0 +1,21 @@
+# 2026-10-02 account transfer pairing
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1211 AC-1（W7-PR1）の実装PR
+- Preview: [移行元・ja・dark](./issue-1211-source-ja-dark.png) / [移行元・en・light](./issue-1211-source-en-light.png) / [移行先・zh-CN・dark](./issue-1211-target-zh-dark.png) / [確認コード・ja・dark](./issue-1211-confirming-ja-dark.png) / [確認済み・en・dark](./issue-1211-confirmed-en-dark.png)
+- Surface / user / purpose: 「アカウント追加」Dialog の「別の端末へ移す」「別の端末から移す」。2 台の端末を持つ本人が、QR・専用リンクで端末をつなぎ、両端末で同じ確認コードを確かめる。
+- Summary: 移行元は QR・残り時間・リンクとコピー操作を表示する。移行先はリンクを貼り付けて接続する（OS のリンク起動は入力欄へ入れるだけ）。両端末に確認コードを 3 桁ずつ区切って表示し、「一致しない」「一致する」を置く。自分の承認後は相手の確認待ち、失敗は理由と「もう一度試す」を示す。「戻る」と Dialog を閉じる操作は移行を取り消す。AC-1 は確認済みで終わり、鍵・設定の転送の表示は AC-2 以後に足す。
+- Conditions:
+  - Platform: Windows / Linux desktop（Storybook で描画、Tauri の実機は未確認）
+  - Viewport: Dialog の本文幅（Storybook の narrow frame 480px）
+  - Theme: dark / light
+  - Locale: ja / en / zh-CN
+  - State: 準備中、待機（QR・残り時間）、入力、接続中、確認中、相手の確認待ち、確認済み、失敗（期限切れ・使えないリンク・接続できない・不一致・中止・切断・準備失敗）
+- Accessibility / interaction: QR は `role="img"` と名前、残り時間は `role="timer"`、接続中・相手待ちは `role="status"`。確認コードは名前付きで表示する。ボタンは処理中に無効化する。
+- Performance: 画面を開いている間だけ 500 ms ごとに状態を 1 件読む。件数に依存する処理はない。
+- Validation: Vitest（`AccountTransferPanel.test.tsx` 4 件、`DesktopShellPage.accountMenu.test.tsx` 5 件）、eslint、tsc、Storybook の 4 story（`TargetConfirming`・`TargetConfirmed` は play で操作）を Playwright の Chromium で撮影して clipping・重なり・折り返しを確認した。
+- Not verified: Tauri の実機での OS のリンク起動と、カメラでの QR の読み取り（desktop は表示だけの決定）。Web の公開 URL が決まる W8 で QR の中身を Web の URL に替える。
+- Review result: 対象 story の採用判定は PASS。
+- Exceptions: QR は theme に関わらず白地・黒の module で描く（読み取りのための token の例外。DESIGN.md §4.1）。

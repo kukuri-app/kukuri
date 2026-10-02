@@ -39,6 +39,46 @@
       "switchNow": "Switch now"
     }
   },
+  "accountTransfer": {
+    "source": {
+      "title": "Move to another device",
+      "description": "Show a QR code and link for moving this account to another device.",
+      "preparing": "Preparing the link…",
+      "instructions": "Open this link on the other device, or paste it into “Move from another device”. The link works once, for 5 minutes. Don't show it to anyone else.",
+      "qrLabel": "QR code of the transfer link",
+      "remaining": "{{time}} left",
+      "linkLabel": "Transfer link",
+      "copy": "Copy link",
+      "copied": "Copied"
+    },
+    "target": {
+      "title": "Move from another device",
+      "description": "Move an account using the transfer link shown on another device.",
+      "linkLabel": "Transfer link",
+      "instructions": "Paste the link shown by “Move to another device” on the other device.",
+      "connect": "Connect",
+      "connecting": "Connecting to the other device…"
+    },
+    "confirm": {
+      "source": "Check that the other device shows the same confirmation code.",
+      "target": "Check that the other device shows the same confirmation code.",
+      "codeLabel": "Confirmation code",
+      "match": "Codes match",
+      "mismatch": "Codes don't match",
+      "waitingPeer": "Waiting for the other device to confirm…"
+    },
+    "confirmed": "Both devices are connected and confirmed.",
+    "retry": "Try again",
+    "failure": {
+      "expired": "The link has expired. Show a new link on the other device and try again.",
+      "invalid": "This link can't be used. It may have been used already, expired, or be incorrect. Show a new link on the other device.",
+      "unreachable": "Couldn't connect to the other device. Check that both devices are online.",
+      "rejected": "The confirmation codes didn't match, so the transfer was stopped.",
+      "cancelled": "The transfer was stopped.",
+      "interrupted": "The connection was lost during confirmation. Please try again.",
+      "prepareFailed": "Couldn't prepare the link. Please try again."
+    }
+  },
   "deviceBackup": {
     "title": "Device backup",
     "summary": "Save and restore this device's data.",

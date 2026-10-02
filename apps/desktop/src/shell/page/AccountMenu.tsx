@@ -9,11 +9,22 @@ import { Notice } from '@/components/ui/notice';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogBody, DialogFooter } from '@/components/ui/dialog';
 import { AccountKeyImportForm } from '@/components/settings/AccountKeyImportForm';
+import { AccountTransferPanel } from '@/components/settings/AccountTransferPanel';
+import { useAccountTransferLink } from '@/shell/page/useAccountTransferLink';
 import { getAccountDisplay, listAccounts } from '@/lib/api/identity';
 import type { AccountDisplay, AccountsSnapshot } from '@/lib/api/types.generated';
 import { accountCreationOperationId, changeAccountSession } from '@/lib/accountSession';
 import { useDesktopShellStore } from '@/shell/store';
 import { resolveProfilePictureSrc } from '@/shell/presentation';
+
+const dialogTitle = {
+  import: 'accountMenu.add', logout: 'accountMenu.logoutTitle',
+  'transfer-source': 'settings:accountTransfer.source.title', 'transfer-target': 'settings:accountTransfer.target.title',
+} as const;
+const dialogDescription = {
+  import: 'accountMenu.importDescription', logout: 'accountMenu.logoutDescription',
+  'transfer-source': 'settings:accountTransfer.source.description', 'transfer-target': 'settings:accountTransfer.target.description',
+} as const;
 
 export function AccountMenu({ onProfile, onManage, onOpen }: {
   onProfile: () => void;
@@ -22,7 +33,8 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
 }) {
   const { t } = useTranslation('shell');
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<'import' | 'logout' | null>(null);
+  const [dialog, setDialog] = useState<'import' | 'logout' | 'transfer-source' | 'transfer-target' | null>(null);
+  const [transferLink, setTransferLink] = useState('');
   const [snapshot, setSnapshot] = useState<AccountsSnapshot | null>(null);
   const [display, setDisplay] = useState<AccountDisplay[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -49,8 +61,10 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
     catch { setError(t('accountMenu.actionFailed')); setPending(false); }
   };
   const active = snapshot?.accounts.find((a) => a.id === snapshot.active_account_id && a.pubkey === pubkey);
+  // #1211: OS のリンク起動で受けた移行用のリンクは、移行先の入力欄へ入れるだけで接続はしない。
+  useAccountTransferLink((link) => { setOpen(false); setError(null); setTransferLink(link); setDialog('transfer-target'); });
   const openDialog = (next: 'import' | 'logout') => { moveFocus.current = true; setOpen(false); setError(null); setDialog(next); };
-  const closeDialog = () => { if (!pending) { setDialog(null); moveFocus.current = false; } };
+  const closeDialog = () => { if (!pending) { setDialog(null); setTransferLink(''); moveFocus.current = false; } };
   return <>
     <Popover open={open} onOpenChange={(next) => { if (next) onOpen(); moveFocus.current = false; setOpen(next); }}>
       <PopoverTrigger asChild>
@@ -93,14 +107,24 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
     <Dialog open={dialog !== null} onOpenChange={(next) => { if (!next) closeDialog(); }}>
       <DialogContent className='w-[min(34rem,94vw)] max-h-[90vh] overflow-y-auto' onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}
         onOpenAutoFocus={(event) => { if (dialog === 'logout') { event.preventDefault(); document.querySelector<HTMLButtonElement>('[data-testid="logout-cancel"]')?.focus(); } }}>
-        <DialogHeader><DialogTitle>{t(dialog === 'import' ? 'accountMenu.add' : 'accountMenu.logoutTitle')}</DialogTitle><DialogDescription>{t(dialog === 'import' ? 'accountMenu.importDescription' : 'accountMenu.logoutDescription')}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{t(dialogTitle[dialog ?? 'import'])}</DialogTitle><DialogDescription>{t(dialogDescription[dialog ?? 'import'])}</DialogDescription></DialogHeader>
         <DialogBody>
-          {dialog === 'import' ? <>
+          {dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
+            <AccountTransferPanel key={`${dialog}:${transferLink}`} role={dialog === 'transfer-source' ? 'source' : 'target'} initialLink={transferLink} />
+            <Button variant='ghost' className='mt-4' onClick={() => { setTransferLink(''); setDialog('import'); }}>{t('accountMenu.back')}</Button>
+          </> : dialog === 'import' ? <>
             <Button disabled={pending || !active} className='mb-4 w-full' data-testid='create-new-account' onClick={() => {
               if (!active || pending) return;
               setPending(true); setError(null);
               void Promise.resolve().then(() => changeAccountSession(active.id, false, accountCreationOperationId(active.id))).catch(() => { setError(t('accountMenu.actionFailed')); setPending(false); });
             }}>{t(pending ? 'accountMenu.pending' : 'accountMenu.create')}</Button>
+            <section className='mb-4 space-y-2'>
+              <h4 className='text-sm font-semibold text-foreground'>{t('accountMenu.transferHeading')}</h4>
+              <div className='flex flex-wrap gap-2'>
+                <Button variant='secondary' disabled={pending || !active} onClick={() => setDialog('transfer-source')}>{t('accountMenu.transferOut')}</Button>
+                <Button variant='secondary' disabled={pending} onClick={() => setDialog('transfer-target')}>{t('accountMenu.transferIn')}</Button>
+              </div>
+            </section>
             <fieldset disabled={pending}><AccountKeyImportForm onImported={refresh} onSwitch={(id) => switchTo(id)} switching={pending} /></fieldset>
           </> : <>
             <p className='font-semibold'>{label}</p><p>{localProfile?.name ? `@${localProfile.name}` : t('accountMenu.noUsername')}</p>

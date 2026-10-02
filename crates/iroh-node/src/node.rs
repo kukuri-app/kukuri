@@ -37,6 +37,7 @@ use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use crate::account_transfer::{ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
@@ -205,6 +206,7 @@ pub struct IrohDocsNode {
     private_capabilities: PrivateCapabilities,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
     receive_binding: ReceiveBindingSlot,
+    account_transfer: AccountTransfer,
     pub(crate) network_work: Arc<crate::network_work::NetworkWorkRuntime>,
     shutdown_started: AtomicBool,
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
@@ -501,6 +503,7 @@ impl IrohDocsNode {
             }
         };
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
+        let account_transfer = AccountTransfer::new(endpoint.clone());
         let remote_cache = Arc::new(OnceLock::new());
         let private_capabilities = PrivateCapabilities::default();
         let page_read = DocReadProtocol::new(
@@ -529,7 +532,8 @@ impl IrohDocsNode {
             .accept(iroh_gossip::ALPN, gossip.clone())
             .accept(RECEIVE_BINDING_ALPN, receive_binding.clone())
             .accept(DOC_READ_ALPN, page_read)
-            .accept(REMOTE_BLOB_ALPN, remote_blob);
+            .accept(REMOTE_BLOB_ALPN, remote_blob)
+            .accept(ACCOUNT_TRANSFER_ALPN, account_transfer.clone());
         if let Some(signaling) = &signaling {
             router = router.accept(SIGNALING_ALPN, signaling.clone());
         }
@@ -548,6 +552,7 @@ impl IrohDocsNode {
             private_capabilities,
             fetch_peer_health: Arc::new(kukuri_transport::BlobPeerHealth::default()),
             receive_binding,
+            account_transfer,
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
             shutdown_started: AtomicBool::new(false),
             shutdown_result: tokio::sync::watch::channel(None).0,
@@ -596,6 +601,11 @@ impl IrohDocsNode {
 
     pub fn fetch_peer_health(&self) -> Arc<kukuri_transport::BlobPeerHealth> {
         self.fetch_peer_health.clone()
+    }
+
+    /// QR・専用リンクの移行（#1211）。招待と確認は endpoint ごとに 1 つ。
+    pub fn account_transfer(&self) -> &AccountTransfer {
+        &self.account_transfer
     }
 
     pub async fn install_receive_binding(&self, keys: Arc<kukuri_core::KukuriKeys>) -> Result<()> {
@@ -709,6 +719,7 @@ impl IrohDocsNode {
 
     async fn shutdown_owned(&self) -> Result<()> {
         self.network_work.close();
+        self.account_transfer.cancel();
         self.receive_binding.clear().await;
         // Flush before the router invokes BlobsProtocol::shutdown. A later
         // shutdown RPC may legitimately find that actor already closed.

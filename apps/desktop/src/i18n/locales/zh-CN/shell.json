@@ -580,7 +580,11 @@
     "cancel": "取消",
     "yes": "是",
     "pending": "处理中…",
-    "create": "创建新账号"
+    "create": "创建新账号",
+    "transferHeading": "在设备之间迁移",
+    "transferOut": "迁移到其他设备",
+    "transferIn": "从其他设备迁移",
+    "back": "返回"
   },
   "initialProfile": {
     "title": "首次设置个人资料",

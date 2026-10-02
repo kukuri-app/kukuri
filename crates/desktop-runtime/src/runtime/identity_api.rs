@@ -5,8 +5,12 @@
 
 use anyhow::Result;
 
-use crate::accounts::AccountKeyExport;
-use crate::requests::ExportAccountKeyRequest;
+use kukuri_core::AccountTransferStatus;
+
+use crate::accounts::{AccountKeyExport, AccountTransferLink};
+use crate::requests::{
+    DecideAccountTransferRequest, ExportAccountKeyRequest, OpenAccountTransferRequest,
+};
 
 use super::DesktopRuntime;
 
@@ -25,5 +29,41 @@ impl DesktopRuntime {
             export,
             public_key: self.author_keys.public_key_hex(),
         })
+    }
+
+    /// #1211: 移行元として招待を出す。前の移行は取り消す。
+    pub async fn create_account_transfer_invite(&self) -> Result<AccountTransferLink> {
+        let invite = self.iroh_stack.account_transfer().await?.issue()?;
+        Ok(AccountTransferLink {
+            link: invite.to_link(),
+            expires_at_ms: invite.expires_at_ms,
+        })
+    }
+
+    /// #1211: 移行先としてリンクの移行元へ接続する。前の移行は取り消す。
+    pub async fn open_account_transfer(&self, request: OpenAccountTransferRequest) -> Result<()> {
+        self.iroh_stack
+            .account_transfer()
+            .await?
+            .open(&request.link)
+    }
+
+    pub async fn account_transfer_status(&self) -> Result<AccountTransferStatus> {
+        Ok(self.iroh_stack.account_transfer().await?.status())
+    }
+
+    pub async fn decide_account_transfer(
+        &self,
+        request: DecideAccountTransferRequest,
+    ) -> Result<()> {
+        self.iroh_stack
+            .account_transfer()
+            .await?
+            .decide(request.accept)
+    }
+
+    pub async fn cancel_account_transfer(&self) -> Result<()> {
+        self.iroh_stack.account_transfer().await?.cancel();
+        Ok(())
     }
 }
