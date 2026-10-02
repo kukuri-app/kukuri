@@ -1,4 +1,5 @@
-//! WP-S6 T8: sqlite/memory 差分ハーネス(backend parity)。
+//! WP-S6 T8: backend 差分ハーネス(backend parity)。`check_backend` が、渡した backend(native の試験は SqliteStore、
+//! Web の browser 試験は IndexedDB の store。W4 AC-2)を MemoryStore と突き合わせる。
 //!
 //! production は SqliteStore、テストダブルは MemoryStore という非対称に対し、
 //! `run_scenario` 形式(`async fn xxx_scenario<S: Store + ProjectionStore>(store: &S)`)で
@@ -28,7 +29,7 @@
 //!   実書き込み経路は Option バインドで '' を書かないため、本ハーネスの fixture も
 //!   これらの列に空文字を投入しない。
 
-use super::*;
+use crate::*;
 
 use kukuri_core::{
     AssetRef, AssetRole, CustomReactionAssetSnapshotV1, DomeCustomizationV1, DomeInstanceStatusV1,
@@ -37,10 +38,36 @@ use kukuri_core::{
     MetaverseRoomChatMessageV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1, RepostSourceSnapshotV1,
     SpatialContextV1, TopicId,
 };
+use kukuri_core::{
+    BlobHash, EnvelopeId, FollowEdgeStatus, ObjectStatus, PayloadRef, ReactionKeyKind, ReplicaId,
+};
 
 mod lists;
 mod live_game;
 mod pagination;
+
+/// `make` で作った空の backend ごとに、すべての scenario の結果を MemoryStore と突き合わせ、sqlite の実測値で確かめる。
+pub async fn check_backend<S: Store + ProjectionStore>(make: impl AsyncFn() -> S) {
+    lists::notifications_match_between_backends(&make).await;
+    lists::bookmarks_match_between_backends(&make).await;
+    lists::bookmarked_posts_seek_both_directions_without_loading_the_history(&make).await;
+    lists::muted_authors_match_between_backends(&make).await;
+    lists::follow_edges_match_between_backends(&make).await;
+    lists::reactions_match_between_backends(&make).await;
+    lists::direct_message_outbox_matches_between_backends(&make).await;
+    lists::direct_message_conversations_match_between_backends(&make).await;
+    lists::author_reposts_lookup_matches_between_backends(&make).await;
+    live_game::live_sessions_and_presence_match_between_backends(&make).await;
+    live_game::game_rooms_match_between_backends(&make).await;
+    live_game::live_and_game_lists_are_bounded_and_channel_indexed_in_both_backends(&make).await;
+    live_game::dome_connection_projection_matches_between_backends(&make).await;
+    live_game::dome_hosting_projection_matches_between_backends(&make).await;
+    live_game::session_revision_guards_match_between_backends(&make).await;
+    pagination::store_envelope_pagination_matches_between_backends(&make).await;
+    pagination::projection_timeline_pagination_matches_between_backends(&make).await;
+    pagination::projection_thread_pagination_matches_between_backends(&make).await;
+    pagination::direct_message_pagination_and_tombstones_match_between_backends(&make).await;
+}
 
 /// cursor 走査の暴走(divergence による無限ループ)を止める上限ページ数。
 const MAX_PAGES: usize = 8;

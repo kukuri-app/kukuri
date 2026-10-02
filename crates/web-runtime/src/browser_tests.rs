@@ -40,14 +40,14 @@ wasm_bindgen_test_configure!(run_in_browser);
 const MIME: &str = "application/octet-stream";
 const MIB: u64 = 1024 * 1024;
 
-struct Native {
+pub(crate) struct Native {
     addr: EndpointAddr,
-    relay: RelayUrl,
+    pub(crate) relay: RelayUrl,
     blob: BlobHash,
 }
 
 /// native の相手の node（relay だけで届く宛先）と、そこに置いた blob。
-async fn native() -> Result<Native> {
+pub(crate) async fn native() -> Result<Native> {
     let info = signaling_fixture::post("/info", "").await?;
     let mut lines = info.lines();
     let id: EndpointId = lines.next().context("id")?.parse()?;

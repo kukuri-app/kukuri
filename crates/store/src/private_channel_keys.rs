@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 /// 参加の行。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrivateChannelRow {
     /// `<topic id>::<channel id>`。一覧・巡回はこの順。
     pub channel_key: String,
@@ -28,7 +28,7 @@ pub struct PrivateChannelRow {
 }
 
 /// 世代の鍵の行。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrivateChannelEpochRow {
     pub channel_id: String,
     pub epoch_id: String,
@@ -66,6 +66,8 @@ pub trait PrivateChannelKeyStore: Send + Sync {
         row: &PrivateChannelRow,
         epochs: &[PrivateChannelEpochRow],
     ) -> Result<()>;
+    /// 世代の鍵の行だけを足す（参加の行の無い channel の鍵を受け取ったとき）。既にあれば何もしない。足したら true。
+    async fn put_private_channel_epoch(&self, epoch: &PrivateChannelEpochRow) -> Result<bool>;
     async fn get_private_channel(&self, channel_key: &str) -> Result<Option<PrivateChannelRow>>;
     /// channel id で引く参加の行（世代の鍵の行から参加を引くとき）。
     async fn get_private_channel_by_id(

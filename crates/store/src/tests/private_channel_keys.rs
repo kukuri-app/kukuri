@@ -140,6 +140,21 @@ async fn assert_private_channel_keys(store: &dyn PrivateChannelKeyStore) {
         ["epoch-2"]
     );
 
+    // 参加の行の無い channel の鍵の行だけを足せる。同じ行は足さない。
+    assert!(
+        store
+            .put_private_channel_epoch(&epoch("z", "epoch-9", 90, 9))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .put_private_channel_epoch(&epoch("z", "epoch-9", 90, 1))
+            .await
+            .unwrap()
+    );
+    assert_eq!(store.get_private_channel_by_id("z").await.unwrap(), None);
+
     // 鍵の行は channel ごとに page で消す。
     assert_eq!(
         store

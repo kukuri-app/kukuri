@@ -116,6 +116,23 @@ impl PrivateChannelKeyStore for SqliteStore {
         Ok(())
     }
 
+    async fn put_private_channel_epoch(&self, epoch: &PrivateChannelEpochRow) -> Result<bool> {
+        let result = sqlx::query(concat!(
+            "INSERT OR IGNORE INTO private_channel_epochs (",
+            epoch_columns!(),
+            ") VALUES (?, ?, ?, ?, ?, ?)"
+        ))
+        .bind(&epoch.channel_id)
+        .bind(&epoch.epoch_id)
+        .bind(epoch.started_at)
+        .bind(&epoch.receive_key_id)
+        .bind(epoch.updated_at)
+        .bind(&epoch.sealed_secret)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn get_private_channel(&self, channel_key: &str) -> Result<Option<PrivateChannelRow>> {
         let row = sqlx::query(concat!(
             "SELECT ",

@@ -33,12 +33,12 @@
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
-      "lines": 1113,
-      "path": "crates/app-api/src/private_channels.rs"
-    },
-    {
       "lines": 1096,
       "path": "docs/THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "lines": 1095,
+      "path": "crates/app-api/src/private_channels.rs"
     },
     {
       "lines": 1093,
@@ -53,16 +53,16 @@
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
-      "lines": 1048,
-      "path": "crates/store/src/tests/backend_parity/lists.rs"
-    },
-    {
-      "lines": 1044,
+      "lines": 1043,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
       "lines": 1042,
       "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
+    },
+    {
+      "lines": 1026,
+      "path": "crates/store/src/parity/lists.rs"
     },
     {
       "lines": 1018,

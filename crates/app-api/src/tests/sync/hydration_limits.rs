@@ -825,7 +825,7 @@ async fn leaving_a_private_channel_rejects_its_late_body() {
         .joined_private_channel_state(topic, channel_id.as_str())
         .await
         .unwrap();
-    app.register_joined_private_channel(state.clone())
+    app.register_joined_private_channel(state.clone(), Utc::now().timestamp_millis())
         .await
         .unwrap();
     assert_eq!(
@@ -904,7 +904,7 @@ async fn leaving_a_private_channel_rejects_its_late_body() {
     app.remove_joined_private_channel(topic, channel_id.as_str())
         .await
         .unwrap();
-    app.register_joined_private_channel(state.clone())
+    app.register_joined_private_channel(state.clone(), Utc::now().timestamp_millis())
         .await
         .unwrap();
     assert_ne!(
