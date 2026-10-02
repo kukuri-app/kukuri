@@ -244,6 +244,7 @@ impl E2eStack {
             TransportNetworkConfig::loopback(),
             DhtDiscoveryOptions::disabled(),
             relay_config.clone(),
+            false,
         )
         .await?;
         let indexer_dir = TempDir::new()?;
@@ -252,6 +253,7 @@ impl E2eStack {
             TransportNetworkConfig::loopback(),
             DhtDiscoveryOptions::disabled(),
             relay_config,
+            false,
         )
         .await?;
         let author = AuthorNode {

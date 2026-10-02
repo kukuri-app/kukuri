@@ -268,3 +268,43 @@ fn remote_sdp_over_the_limits_is_rejected() {
     let ok = "a=candidate:1 1 udp 1 127.0.0.1 1 typ host\n".repeat(MAX_SDP_CANDIDATES);
     assert!(check_remote_sdp(&ok).is_ok());
 }
+
+/// #1422 AC-2 J7: STUN の送信先を渡したときだけ問い合わせ、応答のアドレスを server reflexive の候補として offer に載せる。
+#[tokio::test]
+async fn the_offer_carries_a_reflexive_candidate_only_with_stun() {
+    let stun = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind stun");
+    let server = stun.local_addr().expect("stun addr").to_string();
+    let requests = Arc::new(AtomicU64::new(0));
+    // 192.0.2.7:4242 を XOR-MAPPED-ADDRESS で返す（RFC 8489 §14.2）。
+    let responder = tokio::spawn({
+        let requests = Arc::clone(&requests);
+        async move {
+            let mut buf = [0u8; 512];
+            while let Ok((20, from)) = stun.recv_from(&mut buf).await {
+                requests.fetch_add(1, Ordering::Relaxed);
+                let mut reply = [0u8; 32];
+                reply[..2].copy_from_slice(&[0x01, 0x01]);
+                reply[3] = 12;
+                reply[4..20].copy_from_slice(&buf[4..20]);
+                reply[20..24].copy_from_slice(&[0x00, 0x20, 0x00, 0x08]);
+                reply[25] = 1;
+                reply[26..28].copy_from_slice(&(4242u16 ^ 0x2112).to_be_bytes());
+                for (index, byte) in [192u8, 0, 2, 7].into_iter().enumerate() {
+                    reply[28 + index] = byte ^ buf[4 + index];
+                }
+                let _ = stun.send_to(&reply, from).await;
+            }
+        }
+    });
+    let transport = WebRtcTransport::new(config());
+    let peer = SecretKey::generate().public();
+    let (_, plain) = transport.offer(peer, &[]).await.expect("offer");
+    assert!(!plain.contains("typ srflx"));
+    assert_eq!(requests.load(Ordering::Relaxed), 0);
+    let (_, offer) = transport.offer(peer, &[server]).await.expect("offer");
+    assert_eq!(requests.load(Ordering::Relaxed), 1);
+    assert!(offer.contains("192.0.2.7 4242 typ srflx"), "{offer}");
+    responder.abort();
+}

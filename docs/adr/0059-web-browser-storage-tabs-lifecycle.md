@@ -82,7 +82,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   - Community Node の期限・同意の判定を 1 回
   - DM・取り下げ・epoch 制御の outbox の due を、実行枠の分だけ同じ ID で再送
   - W10 への世代の通知（接続交渉は有効な需要だけ）
-- 経路の世代を進めて旧世代の接続交渉・候補・callback を破棄するのは、`pagehide`・`freeze`・offline・account の切替・停止のとき。可視・online・`pageshow`・`resume` では世代を進めた後に、有効な需要の分だけ交渉し直す（#1422 T4）。
+- 経路の世代を進めて旧世代の接続交渉・候補・callback を破棄するのは、`pagehide`・`freeze`・offline・account の切替・停止のとき。可視・online・`pageshow`・`resume` では、有効な需要のうち session の無い相手とだけ交渉し直す（#1422 T4。開いている session は閉じない。理由は ADR 0057 §9）。
 - Web の adapter（`crates/web-runtime`）は browser の event をこの入口へ渡すだけで、Web だけの retry の loop を作らない。Android（#1196）も同じ入口を使う。
 - 全 topic・author・epoch の列挙や一括の再購読をしない。freeze・閉じた tab の間の接続の維持は約束しない。
 

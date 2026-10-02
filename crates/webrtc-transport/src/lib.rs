@@ -35,7 +35,8 @@ use native as backend;
 mod signaling;
 
 pub use signaling::{
-    MAX_NEGOTIATIONS, NEGOTIATION_DEADLINE, Rejected, Rejection, SIGNALING_ALPN, Signaling,
+    DemandHooks, MAX_ATTEMPTS, MAX_NEGOTIATIONS, NEGOTIATION_DEADLINE, Rejected, Rejection,
+    SIGNALING_ALPN, STUN_PORT, Signaling, SignalingStats,
 };
 
 /// `CustomAddr` の transport id（ASCII の `KKWR`）。kukuri の中だけで使う。
@@ -184,7 +185,7 @@ pub struct TransportStats {
 /// transport の設定。
 #[derive(Clone, Debug)]
 pub struct WebRtcConfig {
-    /// native の ICE の socket を bind する IP。host の候補になる。
+    /// native の ICE の socket を bind する IP。host の候補になる。未指定なら既定の経路の IP を使う。
     #[cfg(not(target_family = "wasm"))]
     pub bind_ip: std::net::IpAddr,
 }
@@ -212,6 +213,8 @@ struct Start {
     session: SessionId,
     role: Role,
     remote_offer: Option<String>,
+    /// STUN の送信先（`host:port`）。空なら送らない。
+    stun: Vec<String>,
     reply: oneshot::Sender<Result<String>>,
     out: mpsc::Receiver<Bytes>,
     control: mpsc::Receiver<Control>,
@@ -392,10 +395,12 @@ impl WebRtcTransport {
         }
     }
 
-    /// 相手へ送る offer を作る。候補は SDP に含める（trickle しない）。
-    pub async fn offer(&self, remote: EndpointId) -> Result<(SessionId, String)> {
+    /// 相手へ送る offer を作る。候補は SDP に含める（trickle しない）。`stun` は STUN の送信先。
+    pub async fn offer(&self, remote: EndpointId, stun: &[String]) -> Result<(SessionId, String)> {
         let session = SessionId::generate()?;
-        let sdp = self.start(remote, session, Role::Offerer, None).await?;
+        let sdp = self
+            .start(remote, session, Role::Offerer, None, stun)
+            .await?;
         Ok((session, sdp))
     }
 
@@ -405,10 +410,17 @@ impl WebRtcTransport {
         remote: EndpointId,
         session: SessionId,
         offer: &str,
+        stun: &[String],
     ) -> Result<String> {
         check_remote_sdp(offer)?;
-        self.start(remote, session, Role::Answerer, Some(offer.to_string()))
-            .await
+        self.start(
+            remote,
+            session,
+            Role::Answerer,
+            Some(offer.to_string()),
+            stun,
+        )
+        .await
     }
 
     /// 自分の offer への answer を適用する。
@@ -441,6 +453,7 @@ impl WebRtcTransport {
         session: SessionId,
         role: Role,
         remote_offer: Option<String>,
+        stun: &[String],
     ) -> Result<String> {
         let (out_tx, out) = mpsc::channel(SEND_QUEUE_DATAGRAMS);
         let (control_tx, control) = mpsc::channel(1);
@@ -471,6 +484,7 @@ impl WebRtcTransport {
             session,
             role,
             remote_offer,
+            stun: stun.to_vec(),
             reply,
             out,
             control,

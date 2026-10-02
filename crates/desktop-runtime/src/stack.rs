@@ -640,12 +640,14 @@ impl BoundIrohStack {
             StackOpen::Reopen(store, changes) => (true, store, changes),
         };
         let relay_config = relay_config.normalized();
+        // 末尾の true: ブラウザからの接続交渉に応じる（交渉は始めない。ADR 0057 §9）。
         let node = if reopening {
             IrohDocsNode::reopen_with_discovery_config(
                 root,
                 network_config.clone(),
                 dht_options,
                 relay_config.clone(),
+                true,
             )
             .await?
         } else {
@@ -654,6 +656,7 @@ impl BoundIrohStack {
                 network_config.clone(),
                 dht_options,
                 relay_config.clone(),
+                true,
             )
             .await?
         };

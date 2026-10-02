@@ -1,11 +1,11 @@
-//! browser↔native の試験（W1 AC-2 の有界な読み出し、#1422 W10 AC-1 の専用 ALPN の交渉）の native 側。
+//! browser↔native の試験（W1 AC-2 の有界な読み出し、#1422 W10 の専用 ALPN の交渉）の native 側。
 //!
 //! 手元の iroh relay を起動し、QUIC over WebRTC DataChannel（ADR 0057）を渡した `IrohDocsNode` を relay 付きで
 //! 起動して、公開の replica に 3 件を置く。試験だけの HTTP（`signaling_fixture`）で次を受ける。
 //! - `POST /info`: node の endpoint id と relay の URL
-//! - `POST /read-back`（本文は browser の endpoint id）: browser への需要の接続を張り、その接続が custom path へ
-//!   移ってから browser の node の replica を同じ有界な reader で読み、custom path を通ったかを添える
-//! - `POST /connect`（同上）: 需要の接続を張ってから native から専用 ALPN で交渉を始め、`/read-back` と同じく読む
+//! - `POST /read-back`（本文は browser の endpoint id）: browser への需要の接続を張り（browser がそれを受けて交渉を
+//!   始める。ADR 0057 §9）、その接続が custom path へ移ってから browser の node の replica を同じ有界な reader で読み、
+//!   custom path を通ったかを添える
 //!
 //! native だけで動く。
 
@@ -45,7 +45,6 @@ async fn main() -> Result<()> {
     let app = axum::Router::new()
         .route("/info", post(info))
         .route("/read-back", post(read_back))
-        .route("/connect", post(connect))
         .with_state((node, relay, transport));
     signaling_fixture::serve(app).await
 }
@@ -67,18 +66,6 @@ async fn read_back(State((node, relay, transport)): State<Peer>, body: String) -
     let read = async {
         let peer = browser(&body, &relay)?;
         let demand = web_e2e::demand(&node, peer.clone()).await?;
-        web_e2e::read_over_custom(&node, &transport, &demand, peer, "browser").await
-    };
-    read.await
-        .unwrap_or_else(|error| format!("error: {error:#}"))
-}
-
-async fn connect(State((node, relay, transport)): State<Peer>, body: String) -> String {
-    let read = async {
-        let peer = browser(&body, &relay)?;
-        let demand = web_e2e::demand(&node, peer.clone()).await?;
-        let signaling = node.webrtc_signaling().expect("webrtc is enabled");
-        signaling.connect(peer.clone()).await?;
         web_e2e::read_over_custom(&node, &transport, &demand, peer, "browser").await
     };
     read.await
