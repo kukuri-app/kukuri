@@ -358,6 +358,14 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm
 - W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
 - W2 の IndexedDB の blob の保存と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer`。
 
+### 上流 iroh-blobs の版を上げるとき（ADR 0058 §5、#1215 W2 AC-4）
+iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。
+
+1. root `Cargo.toml` の `iroh-blobs` の版を上げ、`cargo update -p iroh-blobs` で lockfile を更新する。workspace では `default-features = false`、native だけの feature（`fs-store`・`rpc` 等）は `crates/iroh-node/Cargo.toml` の native の節にある。
+2. native の互換: `cargo test -p kukuri-iroh-node -p kukuri-blob-service`（remote の取得・`/kukuri/remote-blob/1`・`FsStore` の読み直し・取得 gate の契約）。
+3. WASM の build: 上の共用 crate の wasm32 の clippy。
+4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
+
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>
 - 初回 Windows cut の対象は `x86_64-pc-windows-msvc` のみ
