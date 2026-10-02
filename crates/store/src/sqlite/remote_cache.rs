@@ -5,10 +5,9 @@ use std::sync::atomic::Ordering;
 
 pub use crate::cache::{
     OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
-    RemoteCacheReservation, RemoteRecordKey,
+    REMOTE_CACHE_TOUCH_INTERVAL_MS, REMOTE_CACHE_UNUSED_MS, RemoteCacheReservation,
+    RemoteRecordKey,
 };
-pub const REMOTE_CACHE_UNUSED_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-const REMOTE_CACHE_TOUCH_INTERVAL_MS: i64 = 60 * 60 * 1000;
 
 #[derive(Clone, Copy)]
 enum CachePayload<'a> {

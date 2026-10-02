@@ -353,9 +353,10 @@ docker build -t kukuri-wasm-dev docker/wasm-dev
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm-cargo:/usr/local/cargo/registry -v kukuri-wasm-git:/usr/local/cargo/git -v kukuri-wasm-target:/target -e CARGO_TARGET_DIR=/target -w /src kukuri-wasm-dev bash scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer
 ```
 
-- 共用 crate の wasm32 の clippy は `cargo clippy --target wasm32-unknown-unknown -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport -p kukuri-app-api -p kukuri-metaverse-host -p kukuri-desktop-runtime -- -D warnings`（image では `rustup component add clippy` を先に行う）。
+- 共用 crate の wasm32 の clippy は `cargo clippy --target wasm32-unknown-unknown -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport -p kukuri-app-api -p kukuri-metaverse-host -p kukuri-desktop-runtime -p kukuri-web-runtime -- -D warnings`（image では `rustup component add clippy` を先に行う）。
   共用 crate では tokio・std の時刻と task を直接使わず `n0_future`・`web_time` を使う。直接使うと wasm32 の clippy が `disallowed_methods` で止める。
 - W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
+- W2 の IndexedDB の blob の保存と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer`。
 
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>
