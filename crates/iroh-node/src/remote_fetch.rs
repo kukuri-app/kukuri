@@ -344,7 +344,8 @@ async fn fetch_ephemeral_into(
                     leaf.offset == received,
                     "non-contiguous ephemeral blob stream"
                 );
-                if incoming > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64 {
+                let capacity = cache.map_or(0, |cache| cache.remote_cache_capacity());
+                if incoming > capacity {
                     reservation = None;
                 } else if let (Some(cache), Some(reservation)) = (cache, reservation.as_mut())
                     && incoming > reservation.bytes()
@@ -352,7 +353,7 @@ async fn fetch_ephemeral_into(
                     let target = incoming
                         .div_ceil(1024 * 1024)
                         .saturating_mul(1024 * 1024)
-                        .min(kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64);
+                        .min(capacity);
                     let additional = target - reservation.bytes();
                     if !cache
                         .reserve_remote_cache_bytes(reservation, additional)

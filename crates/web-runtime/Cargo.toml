@@ -1,0 +1,62 @@
+[package]
+name = "kukuri-web-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Web の入口と、ブラウザ専用の保存 adapter（ADR 0056 §2）。lib はブラウザ（wasm32）でだけ中身を持つ。
+[target.'cfg(target_family = "wasm")'.dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+js-sys = "0.3.106"
+kukuri-store = { path = "../store" }
+n0-future.workspace = true
+tokio.workspace = true
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = [
+  "DomException",
+  "IdbCursor",
+  "IdbCursorWithValue",
+  "IdbDatabase",
+  "IdbFactory",
+  "IdbIndex",
+  "IdbKeyRange",
+  "IdbObjectStore",
+  "IdbObjectStoreParameters",
+  "IdbOpenDbRequest",
+  "IdbRequest",
+  "IdbTransaction",
+  "IdbTransactionMode",
+  "Navigator",
+  "StorageEstimate",
+  "StorageManager",
+  "Window",
+] }
+web-time.workspace = true
+
+# browser↔native の blob の送受信の試験（scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer）。
+[dev-dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+iroh.workspace = true
+kukuri-blob-service = { path = "../blob-service" }
+kukuri-core = { path = "../core" }
+kukuri-iroh-node = { path = "../iroh-node" }
+kukuri-transport = { path = "../transport" }
+kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }
+n0-future.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+[[example]]
+name = "web_blob_peer"
+test = false
+
+[lints]
+workspace = true
