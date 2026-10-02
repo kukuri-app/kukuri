@@ -584,6 +584,7 @@ impl SqliteStore {
         key: &str,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<Vec<Vec<u8>>> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -594,11 +595,28 @@ impl SqliteStore {
             sqlx::query(
                 "SELECT cache_key, payload, is_protected, last_used_at FROM remote_content_cache \
                  WHERE kind = 'record' AND scope_key = ?1 AND record_key = ?2 \
-                   AND record_author = ?3 LIMIT 1",
+                   AND record_author = ?3 AND (?4 = 0 OR is_protected = 1) LIMIT 1",
             )
             .bind(replica)
             .bind(key)
             .bind(author)
+            .bind(own_only)
+            .fetch_all(&self.pool)
+            .await?
+        } else if own_only {
+            // 本人の record は保護参照 `own_docs` の索引（ref_id, kind, cache_key）の範囲で引く。cache key は
+            // `<replica>\0<key>\0<author>` なので、同じ key の行は docs author の順に並ぶ。
+            sqlx::query(
+                "SELECT c.cache_key, c.payload, c.is_protected, c.last_used_at \
+                 FROM remote_content_cache_protected_ref r JOIN remote_content_cache c \
+                   ON c.kind = r.kind AND c.cache_key = r.cache_key \
+                 WHERE r.ref_id = ?1 AND r.kind = 'record' AND r.cache_key > ?2 AND r.cache_key < ?3 \
+                 ORDER BY r.cache_key LIMIT ?4",
+            )
+            .bind(owned::OWN_DOCS_REF)
+            .bind(format!("{replica}\0{key}\0"))
+            .bind(format!("{replica}\0{key}\u{1}"))
+            .bind(i64::try_from(limit)?)
             .fetch_all(&self.pool)
             .await?
         } else {

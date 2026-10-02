@@ -239,7 +239,13 @@ async fn fetched_public_record_remains_local_and_can_be_reprovided() -> Result<(
     assert_eq!(fetched[0].value, b"cached record");
     assert!(
         cache
-            .get_remote_records(replica.as_str(), key, fetched[0].docs_author.as_deref(), 1)
+            .get_remote_records(
+                replica.as_str(),
+                key,
+                fetched[0].docs_author.as_deref(),
+                1,
+                false
+            )
             .await?
             .is_empty(),
         "remote read must not persist before the caller's save guard"

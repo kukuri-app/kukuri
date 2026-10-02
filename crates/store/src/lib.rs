@@ -25,7 +25,7 @@ pub use account_sync::{AccountSyncRow, AccountSyncStore};
 pub use cache::{
     ContentCacheStore, OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES,
     REMOTE_CACHE_RECLAIM_STEP, REMOTE_CACHE_TOUCH_INTERVAL_MS, REMOTE_CACHE_UNUSED_MS,
-    RemoteCacheReservation, RemoteRecordKey,
+    RemoteCacheReservation, RemoteRecordKey, merge_record_keys,
 };
 pub use memory::MemoryStore;
 pub use models::{

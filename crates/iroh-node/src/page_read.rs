@@ -345,10 +345,6 @@ impl DocReadProtocol {
                     )
                     .await?
                 } else {
-                    ensure!(
-                        topic_replica(&request.replica),
-                        "docs namespace is not held"
-                    );
                     Vec::new()
                 };
                 let mut reached_limit = stream.len() > limit;
@@ -367,10 +363,12 @@ impl DocReadProtocol {
                         docs_author: entry.author_bytes().to_string(),
                     });
                 }
-                if topic_replica(&request.replica)
-                    && let Some(cache) = self.remote_cache.get()
-                {
-                    // 手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせれば、和集合の先頭 `limit` 件が決まる。
+                // 保持分を合わせる。公開 topic の replica は保持分のすべて(#1395)、それ以外は自分の record だけ
+                // (ADR 0058 §7。namespace の無い Web の reload・native の restore の後も一覧から消えない)。
+                // 手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせれば、和集合の先頭 `limit` 件が決まる。
+                let topic = topic_replica(&request.replica);
+                let mut held_any = false;
+                if let Some(cache) = self.remote_cache.get() {
                     let (held, more) = cache
                         .remote_record_keys(
                             &request.replica,
@@ -378,33 +376,32 @@ impl DocReadProtocol {
                             descending,
                             author.as_deref(),
                             limit,
+                            !topic,
                         )
                         .await?;
-                    reached_limit |= more;
-                    entries.extend(
-                        held.into_iter()
-                            .filter(|held| held.key.len() <= MAX_KEY_BYTES)
-                            .map(|held| DocReadKey {
-                                key: held.key,
-                                content_hash: held.content_hash,
-                                content_len: held.content_len,
-                                docs_author: held.author,
-                            }),
+                    held_any = !held.is_empty();
+                    let held = held
+                        .into_iter()
+                        .filter(|held| held.key.len() <= MAX_KEY_BYTES)
+                        .map(|held| DocReadKey {
+                            key: held.key,
+                            content_hash: held.content_hash,
+                            content_len: held.content_len,
+                            docs_author: held.author,
+                        });
+                    let truncated;
+                    (entries, truncated) = kukuri_store::merge_record_keys(
+                        entries,
+                        held,
+                        |entry| (entry.key.as_str(), entry.docs_author.as_str()),
+                        descending,
+                        limit,
                     );
-                    entries.sort_by(|left, right| {
-                        (&left.key, &left.docs_author).cmp(&(&right.key, &right.docs_author))
-                    });
-                    entries.dedup_by(|left, right| {
-                        left.key == right.key && left.docs_author == right.docs_author
-                    });
-                    if descending {
-                        entries.reverse();
-                    }
-                    if entries.len() > limit {
-                        entries.truncate(limit);
-                        reached_limit = true;
-                    }
+                    reached_limit |= more || truncated;
                 }
+                // 手元に無い namespace は、公開 topic の bucket か保持分があるときだけ答える。それ以外は読取りの失敗に
+                // して、呼出元が次の provider(書き手本人)へ進めるようにする。
+                ensure!(opened || topic || held_any, "docs namespace is not held");
                 DocReadResponse::Keys {
                     entries,
                     reached_limit,
@@ -414,7 +411,13 @@ impl DocReadProtocol {
                 let cached = match self.remote_cache.get() {
                     Some(cache) => {
                         cache
-                            .get_remote_records(&request.replica, &key, author.as_deref(), limit)
+                            .get_remote_records(
+                                &request.replica,
+                                &key,
+                                author.as_deref(),
+                                limit,
+                                false,
+                            )
                             .await?
                     }
                     None => Vec::new(),

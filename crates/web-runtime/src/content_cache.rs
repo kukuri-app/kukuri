@@ -4,7 +4,8 @@
 //! - `contents`: key は `[kind, key]`。長さ・`scope`・最後に使った時刻・容量の計数・保護の有無。非保護の行だけが
 //!   `reclaim`（回収の順）と `adult`（成人向けの回収）の索引に載る。docs の record（`kind` が `record`、key は native と
 //!   同じ `<replica>\0<key>\0<author>`）の行だけが `listing`（`[replica, key, author]`）と `by_author`
-//!   （`[replica, author, key]`）の索引に載る（ADR 0058 §7）。
+//!   （`[replica, author, key]`）の索引に載り、本人の record（保護した行）だけが `own`・`own_by_author` の同じ形の索引に
+//!   載る（ADR 0058 §7）。
 //! - `chunks`: key は `[kind, key, 連番]`。最大 1 MiB の bytes。
 //! - `refs`: key は `[保護参照, kind, key]`。`item`（`[kind, key]`）の索引で参照の有無を数える。
 //! - `meta`: 非保護分の合計 bytes（`usage`）。
@@ -230,6 +231,8 @@ fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
     contents.create_index_with_str_sequence("listing", &strings(&["replica", "rkey", "author"]))?;
     contents
         .create_index_with_str_sequence("by_author", &strings(&["replica", "author", "rkey"]))?;
+    contents.create_index_with_str("own", "own")?;
+    contents.create_index_with_str("own_by_author", "own_by_author")?;
     db.create_object_store("chunks")?;
     db.create_object_store_with_optional_parameters(
         "refs",
@@ -431,6 +434,7 @@ impl ContentCacheStore for IndexedDbCache {
         key: &str,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<Vec<Vec<u8>>> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -444,7 +448,10 @@ impl ContentCacheStore for IndexedDbCache {
             let rows = match &author {
                 Some(author) => {
                     let cache_key = record_key(&replica, &key, author);
-                    tx.row("record", &cache_key).await?.into_iter().collect()
+                    let row = tx.row("record", &cache_key).await?;
+                    row.into_iter()
+                        .filter(|row| row.protected || !own_only)
+                        .collect()
                 }
                 None => {
                     let lower = Array::of2(&replica.as_str().into(), &key.as_str().into());
@@ -454,7 +461,8 @@ impl ContentCacheStore for IndexedDbCache {
                         &Array::new(),
                     );
                     let range = IdbKeyRange::bound(&lower, &upper).map_err(js_error)?;
-                    tx.rows("listing", &range, IdbCursorDirection::Next, limit)
+                    let index = if own_only { "own" } else { "listing" };
+                    tx.rows(index, &range, IdbCursorDirection::Next, limit)
                         .await?
                 }
             };
@@ -477,16 +485,24 @@ impl ContentCacheStore for IndexedDbCache {
         descending: bool,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<(Vec<RemoteRecordKey>, bool)> {
         let (replica, prefix) = (replica.to_owned(), prefix.to_owned());
         let author = author.map(str::to_owned);
         self.run(move |db| async move {
             let (index, scope) = match &author {
                 Some(author) => (
-                    "by_author",
+                    if own_only {
+                        "own_by_author"
+                    } else {
+                        "by_author"
+                    },
                     vec![replica.as_str().into(), author.as_str().into()],
                 ),
-                None => ("listing", vec![JsValue::from_str(&replica)]),
+                None => (
+                    if own_only { "own" } else { "listing" },
+                    vec![JsValue::from_str(&replica)],
+                ),
             };
             let bound = |last: JsValue| {
                 let parts = scope.iter().cloned().collect::<Array>();

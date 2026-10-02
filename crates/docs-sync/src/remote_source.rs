@@ -88,7 +88,7 @@ impl RemoteDocsSource {
             && key != stable_key("profile", "latest")
         {
             let cached = cache
-                .get_remote_records(replica.as_str(), key, Some(author), 1)
+                .get_remote_records(replica.as_str(), key, Some(author), 1, false)
                 .await?;
             if let Some(bytes) = cached.into_iter().next() {
                 let entry: DocReadRecord = serde_json::from_slice(&bytes)?;

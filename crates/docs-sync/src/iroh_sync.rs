@@ -310,6 +310,9 @@ impl IrohDocsSync {
             if let Err(error) = handle.doc.close().await {
                 warn!(replica = %idle, error = %error, "failed to close an idle docs replica");
             }
+            // Web は閉じた replica を drop する(`close_replica_owned` と同じ。ADR 0058 §7)。
+            #[cfg(target_family = "wasm")]
+            let _ = self.node.docs().drop_doc(handle.doc.id()).await;
         }
         Ok(Some(doc))
     }
@@ -439,20 +442,74 @@ impl IrohDocsSync {
         query: DocKeyQuery,
     ) -> Result<DocKeyPage> {
         // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
-        let Some(doc) = self.read_replica(replica_id).await? else {
-            return Ok(DocKeyPage::default());
-        };
+        let doc = self.read_replica(replica_id).await?;
         if query.limit == 0 {
             return Ok(DocKeyPage::default());
         }
+        let page = match doc {
+            Some(doc) => {
+                self.local_key_page(replica_id, &doc, author, &query)
+                    .await?
+            }
+            None => DocKeyPage::default(),
+        };
+        // 自分の record の保持分を合わせる。namespace が手元に無くても(Web の reload・native の restore の後)読める
+        // (ADR 0058 §7)。手元の先頭 `limit` 件と保持分の先頭 `limit` 件から、和集合の先頭 `limit` 件を取る。
+        let Some(cache) = self.remote_cache() else {
+            return Ok(page);
+        };
+        let descending = query.order == DocKeyOrder::Descending;
+        let author = author.map(|author| author.to_string());
+        let (held, more) = cache
+            .remote_record_keys(
+                replica_id.as_str(),
+                &query.prefix,
+                descending,
+                author.as_deref(),
+                query.limit,
+                true,
+            )
+            .await?;
+        let held = held.into_iter().map(|held| DocKeyEntry {
+            key: held.key,
+            content_hash: held.content_hash,
+            content_len: held.content_len,
+            docs_author: Some(held.author),
+        });
+        let (entries, truncated) = kukuri_store::merge_record_keys(
+            page.entries,
+            held,
+            |entry| {
+                (
+                    entry.key.as_str(),
+                    entry.docs_author.as_deref().unwrap_or_default(),
+                )
+            },
+            descending,
+            query.limit,
+        );
+        Ok(DocKeyPage {
+            entries,
+            reached_limit: page.reached_limit || more || truncated,
+        })
+    }
+
+    /// 手元の namespace の、上限つきの key の一覧。
+    async fn local_key_page(
+        &self,
+        replica_id: &ReplicaId,
+        doc: &Doc,
+        author: Option<AuthorId>,
+        query: &DocKeyQuery,
+    ) -> Result<DocKeyPage> {
         let direction = match query.order {
             DocKeyOrder::Ascending => SortDirection::Asc,
             DocKeyOrder::Descending => SortDirection::Desc,
         };
         let query_limit = query.limit;
         let builder = match author {
-            Some(author) => Query::author(author).key_prefix(query.prefix),
-            None => Query::key_prefix(query.prefix),
+            Some(author) => Query::author(author).key_prefix(&query.prefix),
+            None => Query::key_prefix(&query.prefix),
         };
         let stream = doc
             .get_many(
@@ -608,7 +665,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<Vec<DocRecord>> {
         let exact = matches!(&query, DocQuery::Exact(_)).then(|| query.clone());
         let records = self.collect_records(replica_id, indexed_query(query), policy);
-        self.with_private_cache(replica_id, exact, 8, records.await?)
+        self.with_held_records(replica_id, exact, 8, records.await?)
             .await
     }
 
@@ -626,7 +683,7 @@ impl DocsSync for IrohDocsSync {
         }
         let records = self.collect_records(replica_id, bounded_exact_query(key, limit), policy);
         let exact = Some(DocQuery::Exact(key.into()));
-        self.with_private_cache(replica_id, exact, limit, records.await?)
+        self.with_held_records(replica_id, exact, limit, records.await?)
             .await
     }
 
@@ -672,12 +729,24 @@ impl DocsSync for IrohDocsSync {
         let Ok(author) = AuthorId::from_str(docs_author) else {
             return Ok(None);
         };
-        let Some(doc) = self.read_replica(replica_id).await? else {
-            return Ok(None);
+        let entry = match self.read_replica(replica_id).await? {
+            // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
+            Some(doc) => doc.get_exact(author, key.as_bytes(), false).await?,
+            None => None,
         };
-        // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
-        let Some(entry) = doc.get_exact(author, key.as_bytes(), false).await? else {
-            return Ok(None);
+        let Some(entry) = entry else {
+            // 手元に無ければ保持分(公開の replica は自分の record だけ)から読む(ADR 0058 §7)。
+            let held = self.with_held_records(
+                replica_id,
+                Some(DocQuery::Exact(key.into())),
+                1,
+                Vec::new(),
+            );
+            let author = author.to_string();
+            return Ok(held
+                .await?
+                .into_iter()
+                .find(|record| record.docs_author.as_deref() == Some(author.as_str())));
         };
         let content_hash = entry.content_hash().to_string();
         let Some(value) = self

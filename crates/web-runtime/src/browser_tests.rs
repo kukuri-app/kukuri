@@ -5,6 +5,8 @@
 //! Web の blob-service も取得 gate の前提（local-only・ephemeral・保護と cache の境界）を保つ（W2 AC-4）。
 //! docs の自分の record は IndexedDB に保護され、browser↔native の有界な key の一覧・record の読み出しが namespace の
 //! 同期を始めずに成り立ち、読んだ record は手元に保持される（#1216 W3 AC-2、ADR 0058 §7）。
+//! reload の後は空の docs から、保存した自分の record を必要な key だけ有界に読んで手元と相手へ出し、閉じた replica は
+//! memory store に残らない（W3 AC-3）。
 //! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer` から実行する。
 
 use std::sync::Arc;
@@ -15,7 +17,7 @@ use anyhow::{Context as _, Result};
 use iroh::endpoint::Connection;
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use kukuri_blob_service::{BlobService, BlobStatus, IrohBlobService};
-use kukuri_core::{BlobHash, KukuriKeys};
+use kukuri_core::{BlobHash, KukuriKeys, ReplicaId};
 use kukuri_docs_sync::{DocFetchPolicy, DocsSync, IrohDocsSync};
 use kukuri_iroh_node::{IrohDocsNode, NodeOptions};
 use kukuri_store::{
@@ -172,9 +174,14 @@ impl Session {
         signaling_fixture::post("/fetch", &body).await
     }
 
-    /// native がこの端の replica を読んだ結果。
-    async fn read_back(&self, webrtc: bool) -> Result<String> {
-        let body = format!("{}\n{}", self.node.endpoint().id(), u8::from(webrtc));
+    /// native がこの端の `replica` を読んだ結果。
+    async fn read_back(&self, replica: &ReplicaId, webrtc: bool) -> Result<String> {
+        let body = format!(
+            "{}\n{}\n{}",
+            self.node.endpoint().id(),
+            replica.as_str(),
+            u8::from(webrtc)
+        );
         signaling_fixture::post("/docs-read", &body).await
     }
 
@@ -584,29 +591,35 @@ async fn docs_roundtrip(webrtc: bool) {
     let prefix = storage_e2e::PREFIX;
 
     // 自分の record は IndexedDB に保護され、native が有界な reader で読める。
-    storage_e2e::write_records(&session.docs, "browser", 1..=3)
+    storage_e2e::write_records(&session.docs, &replica, "browser", 1..=3)
         .await
         .expect("write");
     let key = format!("{prefix}0003");
     let own = session
         .cache
-        .get_remote_records(replica.as_str(), &key, Some(&author), 1)
+        .get_remote_records(replica.as_str(), &key, Some(&author), 1, false)
         .await;
     assert_eq!(own.expect("own record").len(), 1);
     let via = format!(" via_custom={webrtc}");
-    let read = session.read_back(webrtc).await.expect("read back");
+    let read = session
+        .read_back(&replica, webrtc)
+        .await
+        .expect("read back");
     assert_eq!(read, newest("browser", 3, &author) + &via);
 
     // 履歴を増やしても、同じ要求の読み出しは同じ上限（2 件と 1 件の record）に収まり、手元の一覧も読む行は上限 + 1 まで。
-    storage_e2e::write_records(&session.docs, "browser", 4..=30)
+    storage_e2e::write_records(&session.docs, &replica, "browser", 4..=30)
         .await
         .expect("write more");
-    let read = session.read_back(webrtc).await.expect("read back");
+    let read = session
+        .read_back(&replica, webrtc)
+        .await
+        .expect("read back");
     assert_eq!(read, newest("browser", 30, &author) + &via);
     test_hooks::ROWS_READ.set(0);
     let held = session
         .cache
-        .remote_record_keys(replica.as_str(), prefix, true, None, 2)
+        .remote_record_keys(replica.as_str(), prefix, true, None, 2, false)
         .await;
     let (held, more) = held.expect("held keys");
     assert_eq!(held.len(), 2);
@@ -615,7 +628,8 @@ async fn docs_roundtrip(webrtc: bool) {
 
     // native の replica を読むと、確かめた record を IndexedDB に保持し、namespace を作らずに手元で読める。
     let before = session.received();
-    let read = storage_e2e::read_newest(&session.docs, native.addr.clone(), "native")
+    let native_replica = storage_e2e::replica("native");
+    let read = storage_e2e::read_newest(&session.docs, native.addr.clone(), &native_replica)
         .await
         .expect("read native");
     let native_author = read
@@ -627,7 +641,6 @@ async fn docs_roundtrip(webrtc: bool) {
     assert_eq!(read, newest("native", 3, &native_author));
     let received = session.received() - before;
     assert_eq!(received >= storage_e2e::PADDING as u64, webrtc);
-    let native_replica = storage_e2e::replica("native");
     let local = session
         .docs
         .query_local_source(&native_replica, &key, Some(&native_author), 1)
@@ -655,7 +668,7 @@ async fn docs_roundtrip(webrtc: bool) {
     assert!(reserved.await.expect("reserve"));
     let own = session
         .cache
-        .get_remote_records(replica.as_str(), &key, Some(&author), 1)
+        .get_remote_records(replica.as_str(), &key, Some(&author), 1, false)
         .await;
     assert_eq!(own.expect("own record").len(), 1);
     drop(all);
@@ -671,4 +684,157 @@ async fn own_records_are_protected_and_read_both_ways_with_native_over_the_relay
 #[wasm_bindgen_test]
 async fn own_records_are_protected_and_read_both_ways_with_native_over_the_webrtc_path() {
     docs_roundtrip(true).await;
+}
+
+/// reload の後、空の docs から自分の record を必要な key だけ読む（W3 AC-3）。同じ account 由来の docs author で、
+/// 手元の exact・docs author 指定・key の一覧が相手（peer）なしで読め、native へも同じ record（同じ hash）を出す。
+/// 読む行は要求の上限に収まり、namespace を作らない。同じ更新を書き直しても hash（更新の ID・時刻）は変わらない。
+#[wasm_bindgen_test]
+async fn own_records_are_restored_from_the_cache_after_a_reload_without_peers() {
+    let native = native().await.expect("native peer");
+    let account = account("restore");
+    let keys = KukuriKeys::generate();
+    let seed = keys.derive_docs_author_seed();
+    let replica = ReplicaId::new(format!("author::{}", keys.public_key_hex()));
+    let newest_key = storage_e2e::key(30);
+    let local_only = DocFetchPolicy::LocalOnly;
+
+    let first = start(&native, &account, false).await.expect("start");
+    let author = first
+        .docs
+        .use_account_docs_author(&seed, &keys.public_key_hex())
+        .await
+        .expect("docs author");
+    storage_e2e::write_records(&first.docs, &replica, "own", 1..=30)
+        .await
+        .expect("write");
+    let written = first
+        .docs
+        .query_replica_by_author(&replica, &author, &newest_key, local_only)
+        .await
+        .expect("read")
+        .expect("written record");
+    first.stop().await.expect("stop");
+
+    // reload: memory の docs は空から始まる。
+    let second = start(&native, &account, false).await.expect("restart");
+    let again = second
+        .docs
+        .use_account_docs_author(&seed, &keys.public_key_hex())
+        .await
+        .expect("docs author");
+    assert_eq!(again, author);
+    test_hooks::ROWS_READ.set(0);
+    let by_author = second
+        .docs
+        .query_replica_by_author(&replica, &author, &newest_key, local_only)
+        .await
+        .expect("by author")
+        .expect("restored record");
+    assert_eq!(by_author.content_hash, written.content_hash);
+    assert_eq!(by_author.value, written.value);
+    assert_eq!(test_hooks::ROWS_READ.get(), 1);
+    let exact = second
+        .docs
+        .query_replica_exact_bounded(&replica, &newest_key, 8, local_only)
+        .await
+        .expect("exact");
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].content_hash, written.content_hash);
+    test_hooks::ROWS_READ.set(0);
+    let query = kukuri_docs_sync::DocKeyQuery {
+        prefix: storage_e2e::PREFIX.into(),
+        order: kukuri_docs_sync::DocKeyOrder::Descending,
+        limit: 2,
+    };
+    let page = second
+        .docs
+        .query_replica_keys(&replica, query)
+        .await
+        .expect("keys");
+    let page_keys: Vec<_> = page.entries.iter().map(|entry| entry.key.clone()).collect();
+    assert_eq!(page_keys, [storage_e2e::key(30), storage_e2e::key(29)]);
+    assert!(page.reached_limit);
+    assert!(test_hooks::ROWS_READ.get() <= 3);
+    // 保存していない key は未取得（空）で、偽の完成を返さない。
+    let missing = second
+        .docs
+        .query_replica_by_author(&replica, &author, &storage_e2e::key(31), local_only)
+        .await
+        .expect("missing");
+    assert!(missing.is_none());
+    let namespace = second.docs.has_local_replica(&replica).await;
+    assert!(!namespace.expect("namespace"));
+
+    // native は reload 後の browser から、保持分として同じ record を読む。
+    let read = second.read_back(&replica, false).await.expect("read back");
+    assert_eq!(read, newest("own", 30, &author) + " via_custom=false");
+
+    // 同じ更新を書き直しても、hash（値の中の更新の ID・時刻）は変わらない。
+    storage_e2e::write_records(&second.docs, &replica, "own", 30..=30)
+        .await
+        .expect("re-send");
+    let resent = second
+        .docs
+        .query_replica_by_author(&replica, &author, &newest_key, local_only)
+        .await
+        .expect("read")
+        .expect("re-sent record");
+    assert_eq!(resent.content_hash, written.content_hash);
+    second.stop().await.expect("stop");
+    delete_database(&account).await.expect("delete");
+}
+
+/// 閉じた replica は drop され、その内容は memory store の GC で消える。自分の record は保存 trait から読める（W3 AC-3）。
+#[wasm_bindgen_test]
+async fn a_closed_replica_leaves_the_memory_store_and_stays_readable() {
+    let native = native().await.expect("native peer");
+    let account = account("memory");
+    let session = start(&native, &account, false).await.expect("start");
+    let keys = KukuriKeys::generate();
+    let author = session
+        .docs
+        .use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
+        .await
+        .expect("docs author");
+    let replica = storage_e2e::replica("memory");
+    let key = storage_e2e::key(1);
+    storage_e2e::write_records(&session.docs, &replica, "memory", 1..=1)
+        .await
+        .expect("write");
+    let local_only = DocFetchPolicy::LocalOnly;
+    let read = session
+        .docs
+        .query_replica_by_author(&replica, &author, &key, local_only)
+        .await
+        .expect("read")
+        .expect("record");
+    let in_memory = session.node.read_local_blob(&read.content_hash).await;
+    assert!(in_memory.expect("memory store").is_some());
+
+    session.docs.close_replica(&replica).await.expect("close");
+    n0_future::time::timeout(Duration::from_secs(30), async {
+        while session
+            .node
+            .read_local_blob(&read.content_hash)
+            .await
+            .expect("memory store")
+            .is_some()
+        {
+            n0_future::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .expect("the content leaves the memory store");
+    let namespace = session.docs.has_local_replica(&replica).await;
+    assert!(!namespace.expect("namespace"));
+    let held = session
+        .docs
+        .query_replica_by_author(&replica, &author, &key, local_only)
+        .await
+        .expect("held")
+        .expect("held record");
+    assert_eq!(held.content_hash, read.content_hash);
+    session.stop().await.expect("stop");
+    delete_database(&account).await.expect("delete");
 }

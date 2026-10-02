@@ -238,7 +238,7 @@ async fn fresh_cache_reads_do_not_take_the_sqlite_writer_lock() {
         );
         assert_eq!(
             store
-                .get_remote_records("replica", "key", Some("author"), 1)
+                .get_remote_records("replica", "key", Some("author"), 1, false)
                 .await
                 .unwrap(),
             vec![b"record".to_vec()]
@@ -691,7 +691,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
         |page: &[RemoteRecordKey]| page.iter().map(|row| row.key.clone()).collect::<Vec<_>>();
 
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2, false)
         .await
         .unwrap();
     assert_eq!(
@@ -703,7 +703,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     assert_eq!(page[0].content_hash, "hash-indexes/timeline/1/a");
     assert_eq!(page[0].content_len, 3);
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", true, None, 5)
+        .remote_record_keys(replica, "indexes/timeline/", true, None, 5, false)
         .await
         .unwrap();
     assert_eq!(
@@ -716,7 +716,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     );
     assert!(!more);
     let (page, _) = store
-        .remote_record_keys(replica, "indexes/timeline/", true, Some("other"), 5)
+        .remote_record_keys(replica, "indexes/timeline/", true, Some("other"), 5, false)
         .await
         .unwrap();
     assert!(page.is_empty());
@@ -735,7 +735,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     .await
     .unwrap();
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2, false)
         .await
         .unwrap();
     assert_eq!(keys(&page), ["indexes/timeline/1/a"]);
@@ -748,4 +748,62 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     .await
     .unwrap();
     assert_eq!(untouched, stale);
+}
+
+/// 自分の record（保護参照 `own_docs`）だけの読み出しは、他人の保持分を読まず、(key, author) の順で返す（ADR 0058 §7）。
+#[tokio::test]
+async fn own_record_reads_return_only_records_protected_as_own() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    let replica = "author::0a";
+    let record = |key: &str, author: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "key": key, "value": "", "content_hash": format!("hash-{key}-{author}"),
+            "content_len": 3, "docs_author": author,
+        }))
+        .unwrap()
+    };
+    for key in ["indexes/timeline/1", "indexes/timeline/2", "indexes/timeline/3"] {
+        store
+            .put_owned_record(replica, key, "own", &record(key, "own"))
+            .await
+            .unwrap();
+        let other = record(key, "other");
+        assert!(store.put_remote_record(replica, key, "other", &other).await.unwrap());
+    }
+    store
+        .put_owned_record("author::0b", "indexes/timeline/9", "own", &record("x", "own"))
+        .await
+        .unwrap();
+
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", true, None, 2, true)
+        .await
+        .unwrap();
+    let keys = page
+        .iter()
+        .map(|row| (row.key.as_str(), row.author.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(keys, [("indexes/timeline/3", "own"), ("indexes/timeline/2", "own")]);
+    assert!(more);
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", false, Some("other"), 5, true)
+        .await
+        .unwrap();
+    assert!(page.is_empty() && !more);
+
+    let exact = store
+        .get_remote_records(replica, "indexes/timeline/2", None, 8, true)
+        .await
+        .unwrap();
+    assert_eq!(exact, [record("indexes/timeline/2", "own")]);
+    let all = store
+        .get_remote_records(replica, "indexes/timeline/2", None, 8, false)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    let by_other = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("other"), 1, true)
+        .await
+        .unwrap();
+    assert!(by_other.is_empty());
 }

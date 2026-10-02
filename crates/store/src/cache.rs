@@ -47,6 +47,26 @@ pub struct RemoteRecordKey {
     pub content_len: u64,
 }
 
+/// 手元の key の一覧（先頭 `limit` 件）と保持分の一覧（先頭 `limit` 件）を合わせ、和集合の先頭 `limit` 件にする。
+/// 読む量は `2 × limit` を超えない。戻り値の真偽は、切り詰めたか。`key` は (key, docs author) を返す。
+pub fn merge_record_keys<T>(
+    mut entries: Vec<T>,
+    held: impl IntoIterator<Item = T>,
+    key: impl Fn(&T) -> (&str, &str),
+    descending: bool,
+    limit: usize,
+) -> (Vec<T>, bool) {
+    entries.extend(held);
+    entries.sort_by(|left, right| key(left).cmp(&key(right)));
+    entries.dedup_by(|left, right| key(left) == key(right));
+    if descending {
+        entries.reverse();
+    }
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
+    (entries, truncated)
+}
+
 #[async_trait]
 pub trait ContentCacheStore: Send + Sync {
     /// 非保護分の容量の上限。これを超える内容は予約せず、cache へ置かない（Web は quota の半分まで。ADR 0058 §4）。
@@ -84,13 +104,16 @@ pub trait ContentCacheStore: Send + Sync {
         author: &str,
         payload: &[u8],
     ) -> Result<bool>;
+    /// `own_only` なら、本人が書いた record（保護参照 `own_docs` の付いた行）だけを返す（ADR 0058 §7）。
     async fn get_remote_records(
         &self,
         replica: &str,
         key: &str,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<Vec<Vec<u8>>>;
+    /// `own_only` の意味は `get_remote_records` と同じ。
     async fn remote_record_keys(
         &self,
         replica: &str,
@@ -98,6 +121,7 @@ pub trait ContentCacheStore: Send + Sync {
         descending: bool,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<(Vec<RemoteRecordKey>, bool)>;
     async fn add_protected_ref(&self, reference: &str, kind: &str, key: &str) -> Result<()>;
     async fn put_owned_blob(&self, reference: &str, hash: &str, bytes: &[u8]) -> Result<()>;
