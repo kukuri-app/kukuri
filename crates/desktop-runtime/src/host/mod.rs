@@ -28,7 +28,10 @@ use crate::{
     ensure_accounts_initialized_from_env, list_accounts, set_active_account,
 };
 
-pub use command_gate::{NON_READY_COMMAND_ALLOWLIST, admit_command};
+pub use command_gate::{
+    NON_READY_COMMAND_ALLOWLIST, admit_command, require_runtime_operation_ready,
+    runtime_access_allowed,
+};
 pub use consent::{
     AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
     APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AgeAttestationStatus, AppConsentDocumentRecord,
@@ -52,7 +55,7 @@ pub use restore_lifecycle::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
     persist_restore_activation_phase, recover_device_restore_before_startup,
-    require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
+    restore_startup_action,
 };
 pub(crate) use subscriptions::load_desired_subscriptions;
 #[cfg(test)]
@@ -158,11 +161,31 @@ impl ClientStartupState {
     }
 }
 
+/// account の runtime を組み立てる platform の手順（native は SQLite と永続の node、Web は IndexedDB とメモリの
+/// node。ADR 0056 §2）。アカウントの作成・切替・logout・作り直しが使う。
+#[async_trait::async_trait]
+pub trait RuntimeBuilder: Send + Sync {
+    async fn build(&self, db_path: &Path) -> Result<Arc<DesktopRuntime>, ClientStartupError>;
+}
+
+/// native の手順（`build_detached_runtime`）。
+#[cfg(not(target_family = "wasm"))]
+pub struct NativeRuntimeBuilder;
+
+#[cfg(not(target_family = "wasm"))]
+#[async_trait::async_trait]
+impl RuntimeBuilder for NativeRuntimeBuilder {
+    async fn build(&self, db_path: &Path) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
+        ClientHost::build_detached_runtime(db_path).await
+    }
+}
+
 /// UI adapterに依存せず、一つのactive account runtimeとevent転送を所有する。
 /// runtime の世代は起動で 1、runtime の差し替え（切替・restore・restart）と停止のたびに進む（#1214 AC-3）。
 pub struct ClientHost {
     runtime: RwLock<Arc<DesktopRuntime>>,
     app_data_dir: PathBuf,
+    builder: Arc<dyn RuntimeBuilder>,
     events: broadcast::Sender<(u64, RuntimeEvent)>,
     generation: watch::Sender<u64>,
     event_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
@@ -217,9 +240,19 @@ impl ClientHost {
         Self::from_runtime(app_data_dir, runtime).await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn from_runtime(
         app_data_dir: PathBuf,
         runtime: Arc<DesktopRuntime>,
+    ) -> Result<Arc<Self>, ClientStartupError> {
+        Self::from_runtime_with_builder(app_data_dir, runtime, Arc::new(NativeRuntimeBuilder)).await
+    }
+
+    /// 組み立てた runtime から host を始める。`builder` は、アカウントの作成・切替・logout で次の runtime を作る。
+    pub async fn from_runtime_with_builder(
+        app_data_dir: PathBuf,
+        runtime: Arc<DesktopRuntime>,
+        builder: Arc<dyn RuntimeBuilder>,
     ) -> Result<Arc<Self>, ClientStartupError> {
         let desired = match subscriptions::load_desired_subscriptions(runtime.db_path()).await {
             Ok(desired) => desired,
@@ -232,6 +265,7 @@ impl ClientHost {
         let host = Arc::new(Self {
             runtime: RwLock::new(runtime.clone()),
             app_data_dir,
+            builder,
             events,
             generation: watch::channel(1).0,
             event_task: tokio::sync::Mutex::new(None),
@@ -332,7 +366,6 @@ impl ClientHost {
         Ok(previous)
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub async fn restart_runtime(
         &self,
         db_path: impl AsRef<Path>,
@@ -343,13 +376,12 @@ impl ClientHost {
                 "client host is shutting down".to_string(),
             ));
         }
-        let next = Self::build_detached_runtime(db_path).await?;
+        let next = self.builder.build(db_path.as_ref()).await?;
         let previous = self.replace_runtime_locked(next).await?;
         previous.shutdown().await;
         Ok(())
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub async fn switch_account(&self, account_id: &str) -> anyhow::Result<AccountRecord> {
         let _guard = self.operation_guard.lock().await;
         if self.shutdown_started.load(Ordering::Acquire) {
@@ -373,7 +405,9 @@ impl ClientHost {
             &record.pubkey,
         )
         .await?;
-        let next = Self::build_detached_runtime(db_path)
+        let next = self
+            .builder
+            .build(&db_path)
             .await
             .map_err(|error| anyhow::anyhow!("failed to start the account runtime: {error}"))?;
         let previous = self

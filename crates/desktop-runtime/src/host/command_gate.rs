@@ -41,6 +41,21 @@ pub fn admit_command(
     }
 }
 
+/// runtimeへ触れてよいのは、公開済みruntimeとstartup statusの両方がReadyの時だけ。
+pub fn runtime_access_allowed(status: &ClientStartupStatus) -> bool {
+    matches!(status, ClientStartupStatus::Ready)
+}
+
+pub fn require_runtime_operation_ready(status: &ClientStartupStatus) -> Result<(), String> {
+    if runtime_access_allowed(status) {
+        Ok(())
+    } else {
+        Err(format!(
+            "desktop runtime operation requires Ready startup state; current state is {status:?}"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

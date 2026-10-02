@@ -8,7 +8,6 @@ struct InitialProfileSave {
 }
 
 impl ClientHost {
-    #[cfg(not(target_family = "wasm"))]
     pub async fn create_account(
         &self,
         request: crate::CreateAccountRequest,
@@ -27,10 +26,11 @@ impl ClientHost {
         if list_accounts(&self.app_data_dir).await?.active_account_id == pending.next.id {
             return Ok(pending.next);
         }
-        let next =
-            Self::build_detached_runtime(account_db_path(&self.app_data_dir, &pending.next.id))
-                .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let next = self
+            .builder
+            .build(&account_db_path(&self.app_data_dir, &pending.next.id))
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let previous = self
             .replace_runtime_locked(next)
             .await
@@ -127,7 +127,6 @@ impl ClientHost {
         Ok(result)
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub async fn logout_account(&self, account_id: &str) -> anyhow::Result<AccountRecord> {
         let _guard = self.operation_guard.lock().await;
         if self.shutdown_started.load(Ordering::Acquire) {
@@ -139,10 +138,11 @@ impl ClientHost {
             account_id,
         )
         .await?;
-        let next =
-            Self::build_detached_runtime(account_db_path(&self.app_data_dir, &prepared.next.id))
-                .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let next = self
+            .builder
+            .build(&account_db_path(&self.app_data_dir, &prepared.next.id))
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let previous = self
             .replace_runtime_locked(next)
             .await

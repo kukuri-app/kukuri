@@ -3586,6 +3586,7 @@ dependencies = [
  "kukuri-store",
  "kukuri-test-support",
  "kukuri-transport",
+ "kukuri-webrtc-transport",
  "n0-future",
  "n0-mainline",
  "reqwest",

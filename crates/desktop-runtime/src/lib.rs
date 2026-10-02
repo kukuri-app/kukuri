@@ -99,14 +99,17 @@ pub use host::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
     persist_restore_activation_phase, recover_device_restore_before_startup,
-    require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
+    restore_startup_action,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use host::{
     ClientProfile, ClientProfileKind, ProfileError, ProfileErrorKind, ProfileLease, gui_profile,
     resolve_cli_profile,
 };
-pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
+pub use host::{
+    NON_READY_COMMAND_ALLOWLIST, RuntimeBuilder, admit_command, require_runtime_operation_ready,
+    runtime_access_allowed,
+};
 pub use identity::{load_endpoint_secret, save_endpoint_secret};
 pub use kukuri_app_api::SessionDisplayRequest;
 pub use kukuri_app_api::{
