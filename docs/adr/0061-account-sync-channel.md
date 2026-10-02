@@ -145,7 +145,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 | 行 | key | 欄 |
 | --- | --- | --- |
-| 参加 | channel id | topic id、label、作成者・owner・参加の経路の公開鍵、audience、現在の世代の ID、鍵更新の担当の記録（ADR 0018 §8）、参加か退会（tombstone）か、`membership` の item の `updated_at`・`op_id` |
+| 参加 | channel id | topic id、label、作成者・owner・参加の経路の公開鍵、audience、現在の世代の ID、鍵更新の担当の記録（ADR 0018 §8）、参加か退会（tombstone）か、`membership` の item の `updated_at`・`op_id`、この端末が owner へ前に書いた参加・退出の記録の時刻 |
 | 世代の鍵 | (channel id, epoch id) | 世代の開始時刻、受信 route の識別子（`receive_epoch_key_id`）、鍵を受け取った時刻（`updated_at`）、封をした秘密 |
 
 - 索引: 参加は (topic id, channel id) と (owner, channel id)。世代の鍵は受信 route の識別子と (channel id, 開始時刻)。
@@ -161,7 +161,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
     - 世代の開始時刻は epoch id の時刻（`legacy` は最小）。新しい世代の epoch id の時刻は、今の時刻と、現在の世代の開始時刻 + 1 ミリ秒の大きい方にする。これで、担当の端末が変わっても時計が戻っても、開始時刻の順が世代の鎖（`previous_epoch_id`）の順と一致する。ただし新しい担当が鎖の先頭の世代を持っていることが前提で、それは担当の移譲の遷移の条件（移譲先が最新の世代を持ってから有効になる。#1219 AC-4）とする。
     - handoff の redeem: 止めるのは、grant の旧世代が手元の現在の世代でないときだけ。新しい世代の鍵の行の有無では止めない。policy の検証を通ったら、鍵の行が無ければ書き、参加の行の現在の世代を進める（1 transaction）。旧世代の照合は、commit する transaction の中で参加の行に対して行い、行が参加中（tombstone でない）で、その現在の世代が grant の旧世代と一致するときだけ書く。検証を通らなければ何も書かず、次の呼び出しでやり直す（今と同じ）。新しい世代の replica への参加の doc は、行の commit が成立した後に書く。
     - 一時の秘密は、検証を通ったときは行の commit の後に外し、redeem の policy の検証を通らなかったときもすぐに外す。owner の鍵更新が配布の途中で失敗したときは、今と同じく巻き戻さず、再起動まで一時の登録に残す（配布の間に redeem を済ませた参加者へ応え続ける）。
-    - メモリの参加状態と lease は、行の commit が成立したときだけ更新する（退会と並行した世代の追加で、参加に戻さない）。commit とメモリの更新は、既存の全体の排他（`content_save_access`）の中で行う。退会と tombstone の採用も同じ排他を取る（lease の解除と順序が入れ替わらない）。channel ごとの lock の表は作らない。
+    - メモリの参加状態と lease は、行の commit が成立したときだけ更新する（退会と並行した世代の追加で、参加に戻さない）。commit とメモリの更新は、既存の全体の排他（`content_save_access`）の中で行う。退会と tombstone の採用も同じ排他を取る（lease の解除と順序が入れ替わらない）。排他の中で行うのは、参加の行の commit、owner への記録の時刻の決定、メモリと lease の更新だけ。redeem の検証の待ち、hint の送信、docs・outbox への記録の書込み、鍵の行の page ごとの削除は排他の外で行う（docs の参照は tombstone の channel の鍵を返さない）。channel ごとの lock の表は作らない。
   - 退会: 参加の行を tombstone にし、その channel の世代の鍵の行を消す（その channel の行だけを page で消す）。鍵の行を消してから replica を閉じる（閉じた後に開き直されても、秘密を引けない）。
   - 全件の書き直しをしない。
 - 退会の tombstone と鍵の行は、容量の回収で消さない（§5）。
@@ -241,8 +241,12 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 値の `epoch_id` と key の一致、秘密の形を確かめる。
   - tombstone の `membership` より古いか同じ `updated_at` の鍵は保存しない。
   - `op_id` は (channel id, epoch id) から決める（再送で変えない）。`updated_at` は、鍵を受け取った端末の時刻。
-- tombstone を採ったら、この端末の退会と同じく lease を外し、その channel の世代の鍵の行を消す。tombstone を採った端末も、鍵の行を消す前に、採った時刻を `left_at` にした退出の記録を owner へ書く（owner の参加者の表は時刻の後勝ちなので、この端末が退会より後に redeem して書いた参加の記録を打ち消す。重複は無害で、端末ごとに 1 件）。
+- tombstone を採ったら、この端末の退会と同じく lease を外し、その channel の世代の鍵の行を消す。owner への参加・退出の記録は、下の「owner への記録」に従う。
   - 退会と並行して別の端末が世代を追加した場合、tombstone より新しい鍵の行が残ることがある。参加にはならず、次の退会か再参加で扱う。
+- owner への記録: owner の参加者の表（ADR 0055）は、(channel, epoch, 公開鍵) ごとに時刻の後勝ちで、退出はそれより前の参加の行をすべて閉じる。本人の端末はどれも同じ公開鍵で書くので、各端末は自分の参加の状態が変わるたびに記録を書く。
+  - 書く時: この端末の参加・明示の退会・明示の再参加・redeem・owner の鍵更新の確定（今と同じ）に加え、`membership` の採用でこの端末の参加・退会が変わったとき（tombstone を採った、値のある版を採って参加に戻った。鍵待ちのときは現在の世代が決まったとき）。
+  - 時刻: 今の時刻と、この端末がその channel へ前に書いた記録の時刻 + 1 ミリ秒の大きい方。参加の行に、この端末が前に書いた記録の時刻を持つ。時刻は、行の commit と同じ排他の中で決める。
+  - これで、各端末の最後の記録はその端末の最終の状態（account の `membership` の最終の版）と一致する。古い tombstone を遅れて採った端末の退出が別の端末の再参加を閉じても、その端末が再参加の版を採ったときの参加の記録が後勝ちで戻す。退会の後に redeem した端末の参加の記録は、その端末が tombstone を採ったときの退出が閉じる。
 - 担当の記録は、ADR 0018 §8 の規則（`generation`、同じなら `transfer_to`）で採る。書くのは W6。
 - 書き込み:
   - 世代の鍵は追加のとき、`membership` は上の 3 つの操作のときに、行の保存と同じ所で封をして replica へ書く。owner の鍵更新で作った世代も、同じ所を通る。
