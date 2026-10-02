@@ -953,7 +953,7 @@ Total packages: 894
 
 ## Desktop npm packages
 
-Total packages: 136
+Total packages: 137
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -1084,6 +1084,7 @@ Total packages: 136
 | tslib | 2.8.1 | 0BSD | https://www.typescriptlang.org/ |
 | tunnel-rat | 0.1.2 | MIT | https://github.com/pmndrs/tunnel-rat#readme |
 | typescript | 6.0.3 | Apache-2.0 | https://www.typescriptlang.org/ |
+| uqr | 0.1.3 | MIT | https://github.com/unjs/uqr#readme |
 | use-callback-ref | 1.3.3 | MIT | https://github.com/theKashey/use-callback-ref#readme |
 | use-sidecar | 1.1.3 | MIT | https://github.com/theKashey/use-sidecar |
 | use-sync-external-store | 1.7.0 | MIT | https://github.com/react/react#readme |

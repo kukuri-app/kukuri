@@ -3,9 +3,11 @@
 //! 平文秘密鍵は IPC に載せない(export は暗号化 envelope のみ)。KDF(argon2id)は
 //! 数百 ms ブロックするため `spawn_blocking` で実行する。
 
+use kukuri_core::AccountTransferStatus;
 use kukuri_desktop_runtime::{
-    AccountKeyExport, AccountKeyImportPreview, AccountRecord, AccountsSnapshot,
-    ExportAccountKeyRequest, ImportAccountKeyRequest, PreviewAccountKeyImportRequest,
+    AccountKeyExport, AccountKeyImportPreview, AccountRecord, AccountTransferLink,
+    AccountsSnapshot, DecideAccountTransferRequest, ExportAccountKeyRequest,
+    ImportAccountKeyRequest, OpenAccountTransferRequest, PreviewAccountKeyImportRequest,
     SwitchAccountRequest,
 };
 use tauri::Manager;
@@ -45,6 +47,64 @@ pub async fn export_account_key(
     tauri::async_runtime::spawn_blocking(move || runtime.export_account_key(request))
         .await
         .map_err(|error| CommandError::from(format!("export task failed: {error}")))?
+        .map_err(map_error)
+}
+
+/// #1211: QR・専用リンクの移行。招待のリンクは log へ出さない。
+#[tauri::command]
+pub async fn create_account_transfer_invite(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<AccountTransferLink, CommandError> {
+    state
+        .runtime()
+        .create_account_transfer_invite()
+        .await
+        .map_err(map_error)
+}
+
+#[tauri::command]
+pub async fn open_account_transfer(
+    state: tauri::State<'_, DesktopState>,
+    request: OpenAccountTransferRequest,
+) -> Result<(), CommandError> {
+    state
+        .runtime()
+        .open_account_transfer(request)
+        .await
+        .map_err(map_error)
+}
+
+#[tauri::command]
+pub async fn get_account_transfer_status(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<AccountTransferStatus, CommandError> {
+    state
+        .runtime()
+        .account_transfer_status()
+        .await
+        .map_err(map_error)
+}
+
+#[tauri::command]
+pub async fn decide_account_transfer(
+    state: tauri::State<'_, DesktopState>,
+    request: DecideAccountTransferRequest,
+) -> Result<(), CommandError> {
+    state
+        .runtime()
+        .decide_account_transfer(request)
+        .await
+        .map_err(map_error)
+}
+
+#[tauri::command]
+pub async fn cancel_account_transfer(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<(), CommandError> {
+    state
+        .runtime()
+        .cancel_account_transfer()
+        .await
         .map_err(map_error)
 }
 

@@ -952,6 +952,18 @@ export type AccountKeyExport = { export: string, public_key: string, };
 
 export type AccountKeyImportPreview = { version: number, kdf: string, public_key: string, already_registered: boolean, };
 
+export type AccountTransferLink = { link: string, expires_at_ms: number, };
+
+export type OpenAccountTransferRequest = { link: string, };
+
+export type DecideAccountTransferRequest = { accept: boolean, };
+
+export type AccountTransferStatus = { "state": "idle" } | { "state": "waiting", expires_at_ms: number, } | { "state": "connecting" } | { "state": "confirming", role: AccountTransferRole, code: string, local_accepted: boolean, } | { "state": "confirmed", role: AccountTransferRole, } | { "state": "failed", role: AccountTransferRole, reason: AccountTransferFailure, };
+
+export type AccountTransferRole = "source" | "target";
+
+export type AccountTransferFailure = "expired" | "invalid" | "unreachable" | "rejected" | "cancelled" | "interrupted";
+
 export type CreateDeviceBackupRequest = { path: string, passphrase: string, frontend_state: { [key in string]: string }, };
 
 export type PreviewDeviceBackupRequest = { path: string, passphrase: string, };

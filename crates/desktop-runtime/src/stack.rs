@@ -608,6 +608,19 @@ impl SharedIrohStack {
         (reached_rx, resume_tx)
     }
 
+    /// QR・専用リンクの移行（#1211）。stack を作り直すと、進行中の移行は終わる。
+    pub(crate) async fn account_transfer(&self) -> Result<kukuri_iroh_node::AccountTransfer> {
+        Ok(self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .account_transfer()
+            .clone())
+    }
+
     #[cfg(test)]
     pub(crate) async fn endpoint(&self) -> iroh::Endpoint {
         self.current

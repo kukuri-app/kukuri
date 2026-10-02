@@ -70,3 +70,20 @@ test('add account dialog offers key import and explicit account creation', async
   expect(change).toHaveBeenCalledExactlyOnceWith(a.id, false, expect.stringMatching(/^[a-f0-9-]{36}$/));
   expect(within(dialog).getByRole('button', { name: 'Working…' })).toBeDisabled();
 });
+
+test('add account dialog opens both device transfer entries and returns with Back', async () => {
+  const { user, menu } = await setup();
+  const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'waiting', expires_at_ms: Date.now() + 300_000 });
+  vi.spyOn(identity, 'createAccountTransferInvite').mockResolvedValue({ link: 'kukuri://transfer#v1.ZXhhbXBsZQ', expires_at_ms: Date.now() + 300_000 });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Add account' });
+  await user.click(within(dialog).getByRole('button', { name: 'Move to another device' }));
+  const source = await screen.findByRole('dialog', { name: 'Move to another device' });
+  expect(await within(source).findByRole('img', { name: 'QR code of the transfer link' })).toBeVisible();
+  await user.click(within(source).getByRole('button', { name: 'Back' }));
+  await waitFor(() => expect(cancel).toHaveBeenCalled());
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  expect(within(target).getByRole('textbox', { name: /^Transfer link/ })).toHaveValue('');
+});

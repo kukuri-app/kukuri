@@ -580,7 +580,11 @@
     "cancel": "キャンセル",
     "yes": "はい",
     "pending": "処理中…",
-    "create": "新しいアカウントを作成"
+    "create": "新しいアカウントを作成",
+    "transferHeading": "別の端末と移行する",
+    "transferOut": "別の端末へ移す",
+    "transferIn": "別の端末から移す",
+    "back": "戻る"
   },
   "initialProfile": {
     "title": "初回プロフィール設定",

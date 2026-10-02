@@ -112,6 +112,23 @@ pub struct AccountKeyExport {
     pub public_key: String,
 }
 
+/// #1211: 移行元が表示する QR・リンク。招待の秘密を含むので Debug で redact する。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AccountTransferLink {
+    pub link: String,
+    pub expires_at_ms: i64,
+}
+
+impl std::fmt::Debug for AccountTransferLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountTransferLink")
+            .field("link", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 /// インポート前にパスフレーズなしで確認できるメタデータ。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

@@ -6,7 +6,8 @@
 //! docs の自分の record は IndexedDB に保護され、browser↔native の有界な key の一覧・record の読み出しが namespace の
 //! 同期を始めずに成り立ち、読んだ record は手元に保持される（#1216 W3 AC-2、ADR 0058 §7）。
 //! reload の後は空の docs から、保存した自分の record を必要な key だけ有界に読んで手元と相手へ出し、閉じた replica は
-//! memory store に残らない（W3 AC-3）。
+//! memory store に残らない（W3 AC-3）。保存の失敗・破損・失効した capability は、偽の成功・公開の replica への読替え
+//! にならない（W3 AC-4）。
 //! headless の Chromium で `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer` から実行する。
 
 use std::sync::Arc;
@@ -396,7 +397,7 @@ async fn a_blob_with_a_missing_chunk_is_not_complete_and_can_be_stored_again() {
         .put_owned_blob("own_blob:corrupt", &key, &blob)
         .await
         .expect("own");
-    cache.drop_second_chunk(&key).await.expect("corrupt");
+    cache.drop_chunk("blob", &key, 1).await.expect("corrupt");
     let len = cache.remote_content_len("blob", &key).await;
     assert_eq!(len.expect("len"), None);
     assert!(!cache.has_remote_content("blob", &key).await.expect("has"));
@@ -835,6 +836,70 @@ async fn a_closed_replica_leaves_the_memory_store_and_stays_readable() {
         .expect("held")
         .expect("held record");
     assert_eq!(held.content_hash, read.content_hash);
+    session.stop().await.expect("stop");
+    delete_database(&account).await.expect("delete");
+}
+
+/// 保存の失敗・破損・失効した capability を明示する（W3 AC-4）。保存 trait へ書けなければ書込みは失敗で、record は
+/// 保護されない。chunk の欠けた record は未取得として扱う。capability を外した private の replica は error で、公開の
+/// replica として読み替えない。
+#[wasm_bindgen_test]
+async fn own_record_failures_are_explicit_without_a_public_fallback() {
+    let native = native().await.expect("native peer");
+    let account = account("failures");
+    let session = start(&native, &account, false).await.expect("start");
+    let keys = KukuriKeys::generate();
+    let author = session
+        .docs
+        .use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
+        .await
+        .expect("docs author");
+    let topic = storage_e2e::replica("failures");
+    let local_only = DocFetchPolicy::LocalOnly;
+
+    // 保存 trait への書込みが 2 回とも中断すると（quota 超過と同じ）、書込み全体が失敗する。
+    test_hooks::fail_writes(2);
+    let failed = storage_e2e::write_records(&session.docs, &topic, "failed", 1..=1).await;
+    assert!(failed.is_err());
+    let protected = session
+        .cache
+        .get_remote_records(topic.as_str(), &storage_e2e::key(1), Some(&author), 1, true)
+        .await;
+    assert!(protected.expect("own records").is_empty());
+
+    // chunk の欠けた record は、namespace を閉じた後の読み出しで未取得になる。
+    storage_e2e::write_records(&session.docs, &topic, "corrupt", 2..=2)
+        .await
+        .expect("write");
+    session.docs.close_replica(&topic).await.expect("close");
+    let cache_key = format!("{}\0{}\0{author}", topic.as_str(), storage_e2e::key(2));
+    let corrupt = session.cache.drop_chunk("record", &cache_key, 0).await;
+    corrupt.expect("corrupt");
+    let read = session
+        .docs
+        .query_replica_by_author(&topic, &author, &storage_e2e::key(2), local_only)
+        .await;
+    assert!(read.expect("read").is_none());
+
+    // capability を外した private の replica は、手元の読み出しが error になる。
+    let channel = ReplicaId::new("channel::web-failures");
+    let secret = hex::encode([7u8; 32]);
+    let docs = &session.docs;
+    docs.register_private_replica_secret(&channel, &secret)
+        .await
+        .expect("register");
+    storage_e2e::write_records(docs, &channel, "private", 1..=1)
+        .await
+        .expect("write");
+    docs.remove_private_replica_secret(&channel)
+        .await
+        .expect("revoke");
+    let key = storage_e2e::key(1);
+    let by_author = docs.query_replica_by_author(&channel, &author, &key, local_only);
+    let error = by_author.await.expect_err("revoked capability").to_string();
+    assert!(error.contains("capability is not registered"), "{error}");
+    let exact = docs.query_replica_exact_bounded(&channel, &key, 8, local_only);
+    assert!(exact.await.is_err());
     session.stop().await.expect("stop");
     delete_database(&account).await.expect("delete");
 }

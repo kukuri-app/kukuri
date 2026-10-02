@@ -7,8 +7,12 @@ import type {
   AccountKeyImportPreview,
   AccountRecord,
   AccountsSnapshot,
+  AccountTransferLink,
+  AccountTransferStatus,
+  DecideAccountTransferRequest,
   ExportAccountKeyRequest,
   ImportAccountKeyRequest,
+  OpenAccountTransferRequest,
   PreviewAccountKeyImportRequest,
   SwitchAccountRequest,
 } from './types.generated';
@@ -169,4 +173,45 @@ export async function switchAccount(accountId: string): Promise<AccountRecord> {
   return invokeDesktop<AccountRecord>('switch_account', {
     request: { account_id: accountId } satisfies SwitchAccountRequest,
   });
+}
+
+// #1211: QR・専用リンクの移行。リンクは招待の秘密を含むので、log・URL の query へ出さない。
+// mock ビルドでは、接続と相手の承認を即座に済ませた状態を返す。
+let mockTransfer: AccountTransferStatus = { state: 'idle' };
+
+export async function createAccountTransferInvite(): Promise<AccountTransferLink> {
+  if (isDesktopMockActive()) {
+    const expires_at_ms = Date.now() + 5 * 60 * 1000;
+    mockTransfer = { state: 'waiting', expires_at_ms };
+    return { link: 'kukuri://transfer#v1.bW9jay1hY2NvdW50LXRyYW5zZmVyLWludml0ZQ', expires_at_ms };
+  }
+  return invokeDesktop<AccountTransferLink>('create_account_transfer_invite');
+}
+
+export async function openAccountTransfer(link: string): Promise<void> {
+  if (isDesktopMockActive()) {
+    if (!link.trim().startsWith('kukuri://transfer#v1.')) throw new Error('not an account transfer link');
+    mockTransfer = { state: 'confirming', role: 'target', code: '482915', local_accepted: false };
+    return;
+  }
+  return invokeDesktop<void>('open_account_transfer', { request: { link } satisfies OpenAccountTransferRequest });
+}
+
+export async function getAccountTransferStatus(): Promise<AccountTransferStatus> {
+  if (isDesktopMockActive()) return mockTransfer;
+  return invokeDesktop<AccountTransferStatus>('get_account_transfer_status');
+}
+
+export async function decideAccountTransfer(accept: boolean): Promise<void> {
+  if (isDesktopMockActive()) {
+    if (mockTransfer.state !== 'confirming') throw new Error('account transfer is not awaiting confirmation');
+    mockTransfer = accept ? { state: 'confirmed', role: mockTransfer.role } : { state: 'failed', role: mockTransfer.role, reason: 'rejected' };
+    return;
+  }
+  return invokeDesktop<void>('decide_account_transfer', { request: { accept } satisfies DecideAccountTransferRequest });
+}
+
+export async function cancelAccountTransfer(): Promise<void> {
+  if (isDesktopMockActive()) { mockTransfer = { state: 'idle' }; return; }
+  return invokeDesktop<void>('cancel_account_transfer');
 }
