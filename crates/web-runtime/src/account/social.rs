@@ -125,13 +125,42 @@ async fn put_participant(
     Ok(())
 }
 
-/// follow の edge が変わった公開鍵の参加者の行の印を読み直す（その公開鍵の行だけ）。
+/// follow の edge が変わった公開鍵の参加者の行の印を読み直す。数を読むのは現在の世代だけなので、その公開鍵が参加
+/// する channel を索引で 1 件ずつ引き、現在の世代の行だけを直す（過去の世代の行の数に比例しない）。
 pub(super) async fn restale_participants(tx: &IdbTransaction, pubkey: &str) -> Result<()> {
-    let range = between(&[text(pubkey)], &top(&[text(pubkey)]), false, false)?;
-    let rows: Vec<Participant> =
-        rows::scan(tx, PARTICIPANTS, Some("member"), &range, false, usize::MAX).await?;
-    for old in rows {
-        let stale = is_stale(tx, &old.row.channel_id, pubkey).await?;
+    let mut after = String::new();
+    loop {
+        let range = between(
+            &[text(pubkey), text(&after)],
+            &top(&[text(pubkey)]),
+            true,
+            false,
+        )?;
+        let Some(member) =
+            rows::scan::<Participant>(tx, PARTICIPANTS, Some("member"), &range, false, 1)
+                .await?
+                .pop()
+        else {
+            return Ok(());
+        };
+        after = member.row.channel_id;
+        let channel: Option<PrivateChannelRow> = rows::scan(
+            tx,
+            PRIVATE_CHANNELS,
+            Some("channel_id"),
+            &only(&text(&after))?,
+            false,
+            1,
+        )
+        .await?
+        .pop();
+        let Some(channel) = channel else { continue };
+        let id = key(&[text(&after), text(&channel.current_epoch_id), text(pubkey)]);
+        let Some(old) = rows::get::<Participant>(tx, PARTICIPANTS, &id).await? else {
+            continue;
+        };
+        let stale =
+            channel.owner_pubkey != pubkey && !mutual(tx, &channel.owner_pubkey, pubkey).await?;
         if stale != old.stale {
             let new = Participant {
                 row: old.row.clone(),
@@ -140,7 +169,6 @@ pub(super) async fn restale_participants(tx: &IdbTransaction, pubkey: &str) -> R
             put_participant(tx, Some(&old), &new).await?;
         }
     }
-    Ok(())
 }
 
 fn participant_key(row: &PrivateChannelParticipantRow) -> JsValue {
@@ -351,39 +379,35 @@ impl SocialProjectionStore for IndexedDbCache {
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
-        let (channel, epoch, after) = (
-            channel_id.to_owned(),
-            epoch_id.map(str::to_owned),
-            after.to_owned(),
-        );
+        let (channel, after) = (channel_id.to_owned(), after.to_owned());
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Read)?;
-            let mut head = vec![text(&channel)];
-            let index = match &epoch {
-                Some(epoch) => {
-                    head.push(text(epoch));
-                    "active_epoch"
-                }
-                None => "active",
-            };
-            let mut lower = head.clone();
-            lower.push(text(&after));
-            let range = between(&lower, &top(&head), true, false)?;
-            // 世代を問わないときは、同じ公開鍵の行（参加中の世代の数）が続くので重複を除く。
+            // 同じ公開鍵の行（参加中の世代の数）を読まずに、次の公開鍵を索引で 1 件ずつ引く。
             let mut pubkeys: Vec<String> = Vec::new();
-            if limit > 0 {
-                rows::walk(&tx, PARTICIPANTS, Some(index), &range, false, |value| {
-                    let row: PrivateChannelParticipantRow = rows::decode(value)?;
-                    if pubkeys.last() != Some(&row.participant_pubkey) {
-                        pubkeys.push(row.participant_pubkey);
-                    }
-                    Ok(pubkeys.len() < limit)
-                })
-                .await?;
+            while pubkeys.len() < limit {
+                let after = pubkeys.last().unwrap_or(&after);
+                let range = between(
+                    &[text(&channel), text(after)],
+                    &top(&[text(&channel)]),
+                    true,
+                    false,
+                )?;
+                let Some(row) = rows::scan::<PrivateChannelParticipantRow>(
+                    &tx,
+                    PARTICIPANTS,
+                    Some("active"),
+                    &range,
+                    false,
+                    1,
+                )
+                .await?
+                .pop() else {
+                    break;
+                };
+                pubkeys.push(row.participant_pubkey);
             }
             Ok(pubkeys)
         })

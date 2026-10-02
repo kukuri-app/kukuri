@@ -802,7 +802,6 @@ impl AppService {
         let page = store
             .list_private_channel_participants(
                 &rotation.channel_id,
-                None,
                 &after,
                 PRIVATE_CHANNEL_PARTICIPANT_PAGE,
             )

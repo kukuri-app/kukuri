@@ -267,7 +267,6 @@ impl SocialProjectionStore for MemoryStore {
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
@@ -277,7 +276,6 @@ impl SocialProjectionStore for MemoryStore {
             .filter(|row| {
                 row.channel_id == channel_id
                     && row.left_at.is_none()
-                    && epoch_id.is_none_or(|epoch| row.epoch_id == epoch)
                     && row.participant_pubkey.as_str() > after
             })
             .map(|row| row.participant_pubkey.clone())

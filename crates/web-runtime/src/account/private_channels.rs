@@ -88,7 +88,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
             {
                 return Ok(false);
             }
-            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &[])?;
+            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch))?;
             tx.commit().await?;
             Ok(true)
         })

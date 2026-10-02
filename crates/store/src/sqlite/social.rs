@@ -22,6 +22,32 @@ macro_rules! participant_stale {
     };
 }
 
+/// いずれかの epoch で参加中の pubkey を、次の 1 件ずつ部分索引 `idx_private_channel_participants_active` で引く。
+pub(crate) const LIST_PARTICIPANTS: &str = "WITH RECURSIVE next(pubkey, n) AS (
+       SELECT (SELECT MIN(participant_pubkey) FROM private_channel_participants
+               WHERE channel_id = ?1 AND left_at IS NULL AND participant_pubkey > ?2), 1
+       UNION ALL
+       SELECT (SELECT MIN(participant_pubkey) FROM private_channel_participants
+               WHERE channel_id = ?1 AND left_at IS NULL AND participant_pubkey > next.pubkey), n + 1
+       FROM next WHERE next.pubkey IS NOT NULL AND n < ?3)
+     SELECT pubkey FROM next WHERE pubkey IS NOT NULL";
+
+/// 公開鍵の参加する channel を `idx_private_channel_participants_member` で 1 件ずつ引き、その channel の現在の世代の
+/// 行の印を読み直す。
+pub(crate) const RESTALE_PARTICIPANT: &str = concat!(
+    "WITH RECURSIVE member(channel_id) AS (
+       SELECT (SELECT MIN(channel_id) FROM private_channel_participants WHERE participant_pubkey = ?1)
+       UNION ALL
+       SELECT (SELECT MIN(channel_id) FROM private_channel_participants
+               WHERE participant_pubkey = ?1 AND channel_id > member.channel_id)
+       FROM member WHERE member.channel_id IS NOT NULL)
+     UPDATE private_channel_participants SET stale = ",
+    participant_stale!("private_channel_participants.channel_id", "?1"),
+    " WHERE (channel_id, epoch_id, participant_pubkey) IN (
+       SELECT member.channel_id, channel.current_epoch_id, ?1 FROM member
+       JOIN private_channels AS channel ON channel.channel_id = member.channel_id)"
+);
+
 impl SqliteStore {
     pub(super) async fn store_upsert_profile_impl(&self, profile: Profile) -> Result<()> {
         let existing = self.get_profile(profile.pubkey.as_str()).await?;
@@ -187,6 +213,8 @@ impl SqliteStore {
             return Ok(());
         }
 
+        // edge と、その両端の参加者の資格喪失の印は 1 transaction で書く(最初の文が書込みなので、格上げを待たない)。
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             r#"
             INSERT INTO follow_edges (
@@ -204,19 +232,17 @@ impl SqliteStore {
         .bind(follow_edge_status_name(&edge.status))
         .bind(edge.updated_at)
         .bind(edge.envelope_id.as_str())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        // #1219 AC-2: 両端の公開鍵の参加者の行の資格喪失の印を読み直す(その公開鍵の行だけ。数は trigger が保つ)。
+        // #1219 AC-2: 両端の公開鍵の参加者の行の資格喪失の印を読み直す。数を読むのは現在の世代だけなので、その公開鍵が
+        // 参加する channel ごとに現在の世代の行だけを直す(過去の世代の行の数に比例しない。数は trigger が保つ)。
         for pubkey in [edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()] {
-            sqlx::query(concat!(
-                "UPDATE private_channel_participants SET stale = ",
-                participant_stale!("private_channel_participants.channel_id", "?1"),
-                " WHERE participant_pubkey = ?1"
-            ))
-            .bind(pubkey)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query(RESTALE_PARTICIPANT)
+                .bind(pubkey)
+                .execute(&mut *tx)
+                .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -560,21 +586,15 @@ impl SocialProjectionStore for SqliteStore {
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT DISTINCT participant_pubkey FROM private_channel_participants \
-             WHERE channel_id = ?1 AND left_at IS NULL AND (?2 IS NULL OR epoch_id = ?2) \
-             AND participant_pubkey > ?3 ORDER BY participant_pubkey LIMIT ?4",
-        )
-        .bind(channel_id)
-        .bind(epoch_id)
-        .bind(after)
-        .bind(i64::try_from(limit)?)
-        .fetch_all(&self.pool)
-        .await?)
+        Ok(sqlx::query_scalar(LIST_PARTICIPANTS)
+            .bind(channel_id)
+            .bind(after)
+            .bind(i64::try_from(limit)?)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn has_private_channel_participant(

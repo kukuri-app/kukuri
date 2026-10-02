@@ -51,7 +51,7 @@ mod private_index_grants;
 pub(crate) mod projections;
 mod protected_migration;
 mod remote_cache;
-mod social;
+pub(crate) mod social;
 mod withdrawals;
 
 pub use connection::StoreStartupError;

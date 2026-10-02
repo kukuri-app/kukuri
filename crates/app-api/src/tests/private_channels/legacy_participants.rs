@@ -194,10 +194,9 @@ async fn a_participant_from_before_the_update_receives_the_first_rotation_grant(
     let b_pubkey = keys_b.public_key_hex();
     let listed = |store: Arc<MemoryStore>| {
         let channel_id = channel.channel_id.clone();
-        let epoch_id = epoch_id.clone();
         async move {
             store
-                .list_private_channel_participants(&channel_id, Some(&epoch_id), "", 8)
+                .list_private_channel_participants(&channel_id, "", 8)
                 .await
                 .unwrap()
         }

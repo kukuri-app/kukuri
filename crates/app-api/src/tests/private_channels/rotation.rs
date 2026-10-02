@@ -474,9 +474,10 @@ async fn measure_rotation(scale: usize) -> Vec<(&'static str, usize, usize, usiz
         .await
         .expect("joined");
     // 対象の参加者は 2 page 以上で、全員 mutual。
-    for pubkey in participant_pubkeys(256 * scale) {
-        mutual(&store, &owner_pubkey, &pubkey).await;
-        join(&store, &channel_id, &state.current_epoch_id, &pubkey, false).await;
+    let targets = participant_pubkeys(256 * scale);
+    for pubkey in &targets {
+        mutual(&store, &owner_pubkey, pubkey).await;
+        join(&store, &channel_id, &state.current_epoch_id, pubkey, false).await;
     }
     // 対象外: 退出した参加者と、他の channel の参加者。
     for index in 0..50 * scale {
@@ -511,6 +512,12 @@ async fn measure_rotation(scale: usize) -> Vec<(&'static str, usize, usize, usiz
         .persist_private_channel(&state, 1, &archived, false)
         .await
         .expect("archived epochs");
+    // 完了した鍵更新ごとに参加者が redeem して残した、過去の世代の参加の行。
+    for epoch in &archived {
+        for pubkey in targets.iter().take(128) {
+            join(&store, &channel_id, &epoch.epoch_id, pubkey, false).await;
+        }
+    }
     let touched = || store.private_channel_key_rows_touched();
     let outbox = || async {
         let rows = store.list_direct_message_outbox().await.unwrap();

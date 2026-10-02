@@ -333,11 +333,11 @@ pub trait SocialProjectionStore: Send + Sync {
         channel_id: &str,
         participant_pubkey: &str,
     ) -> Result<bool>;
-    /// 参加中の pubkey を `after` より後ろから昇順に最大 `limit` 件。`epoch_id` が `None` なら channel の全 epoch から重複なく。
+    /// いずれかの epoch で参加中の pubkey を、`after` より後ろから昇順に重複なく最大 `limit` 件。次の pubkey を索引で
+    /// 1 回ずつ引く(#1219 AC-2。参加者が過去の世代の行を持っていても、1 件の仕事は世代の数に比例しない)。
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>>;

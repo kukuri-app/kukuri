@@ -45,7 +45,7 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
                 owner_pubkey: "owner".into(),
                 joined_via_pubkey: None,
                 audience_kind: "friend_only".into(),
-                current_epoch_id: "e2".into(),
+                current_epoch_id: "e1".into(),
                 controller: None,
                 joined: true,
                 updated_at: 1,
@@ -93,20 +93,14 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
     );
     // 全 epoch の参加中の pubkey を重複なく、cursor で読む。
     let first = store
-        .list_private_channel_participants("channel", None, "", 2)
+        .list_private_channel_participants("channel", "", 2)
         .await?;
     assert_eq!(first, vec!["a".to_string(), "b".to_string()]);
     let rest = store
-        .list_private_channel_participants("channel", None, "b", 2)
+        .list_private_channel_participants("channel", "b", 2)
         .await?;
     assert_eq!(rest, vec!["c".to_string(), "d".to_string()]);
-    assert_eq!(
-        store
-            .list_private_channel_participants("channel", Some("e2"), "", 10)
-            .await?,
-        vec!["a".to_string(), "d".to_string()]
-    );
-    // follow を外すと、その公開鍵の行が資格喪失になり、戻すと外れる(双方が外した関係も資格喪失)。
+    // follow を外すと、その公開鍵の現在の世代の行が資格喪失になり、戻すと外れる(双方が外した関係も資格喪失)。
     store
         .upsert_follow_edge(follow("c", "owner", FollowEdgeStatus::Revoked, 2))
         .await?;
@@ -136,7 +130,7 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
     );
     assert_eq!(
         store
-            .list_private_channel_participants("channel", None, "", 10)
+            .list_private_channel_participants("channel", "", 10)
             .await?,
         vec![
             "b".to_string(),
@@ -200,7 +194,7 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
     );
     assert!(
         store
-            .list_private_channel_participants("other", None, "", 10)
+            .list_private_channel_participants("other", "", 10)
             .await?
             .is_empty()
     );
@@ -213,31 +207,41 @@ async fn private_channel_participants_keep_the_newest_record_and_page_by_pubkey(
     participant_table_contract(&MemoryStore::default()).await
 }
 
-/// follow の edge の書込みは、その公開鍵の参加者の行だけを読み直し、数は 1 行で読む(参加者の表の件数に比例しない)。
+/// 数は 1 行で読み、参加中の pubkey の page と follow の edge の書込みは、次の pubkey・channel を索引で 1 件ずつ引く
+/// (参加者の表の件数にも、参加者が持つ過去の世代の行の数にも比例しない)。
 #[tokio::test]
 async fn participant_counts_and_stale_marks_use_bounded_index_ranges() -> Result<()> {
     use crate::sqlite::private_channel_keys::LIST_ROTATIONS;
+    use crate::sqlite::social::{LIST_PARTICIPANTS, RESTALE_PARTICIPANT};
     use sqlx::Row;
 
     let store = SqliteStore::connect_memory().await?;
     for (query, index, binds) in [
         (
-            "SELECT active, stale FROM private_channel_participant_counts              WHERE channel_id = 'c' AND epoch_id = 'e'",
-            "sqlite_autoindex_private_channel_participant_counts_1",
-            false,
+            LIST_PARTICIPANTS,
+            "idx_private_channel_participants_active",
+            3,
         ),
         (
-            "UPDATE private_channel_participants SET stale = 1 WHERE participant_pubkey = 'p'",
+            RESTALE_PARTICIPANT,
             "idx_private_channel_participants_member",
-            false,
+            1,
         ),
-        (LIST_ROTATIONS, "idx_private_channel_epochs_rotation", true),
+        (
+            "SELECT active, stale FROM private_channel_participant_counts              WHERE channel_id = 'c' AND epoch_id = 'e'",
+            "sqlite_autoindex_private_channel_participant_counts_1",
+            0,
+        ),
+        (LIST_ROTATIONS, "idx_private_channel_epochs_rotation", 3),
     ] {
         let mut explain = sqlx::QueryBuilder::<sqlx::Sqlite>::new("EXPLAIN QUERY PLAN ");
         explain.push(query);
         let mut plan = explain.build();
-        if binds {
-            plan = plan.bind("").bind("").bind(1_i64);
+        if binds > 0 {
+            plan = plan.bind("");
+        }
+        if binds == 3 {
+            plan = plan.bind("").bind(1_i64);
         }
         let plan = plan
             .fetch_all(store.pool())
