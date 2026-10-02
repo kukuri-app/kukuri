@@ -362,9 +362,17 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm
 iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。
 
 1. root `Cargo.toml` の `iroh-blobs` の版を上げ、`cargo update -p iroh-blobs` で lockfile を更新する。workspace では `default-features = false`、native だけの feature（`fs-store`・`rpc` 等）は `crates/iroh-node/Cargo.toml` の native の節にある。
-2. native の互換: `cargo test -p kukuri-iroh-node -p kukuri-blob-service`（remote の取得・`/kukuri/remote-blob/1`・`FsStore` の読み直し・取得 gate の契約）。
+2. native の互換: `cargo test -p kukuri-iroh-node -p kukuri-blob-service -p kukuri-docs-sync`（remote の取得・`/kukuri/remote-blob/1`・`FsStore` の読み直し・表示用の状態確認が remote から取らない契約・docs の entry の取得）。取得 gate そのものの試験（`cargo test -p kukuri-app-api tests::media`）は PR の CI で確かめる。iroh-docs（下）も iroh-blobs に依存するので、型が合わなければ iroh-docs の patch rev も同じ PR で上げる。
 3. WASM の build: 上の共用 crate の wasm32 の clippy。
 4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
+
+### 上流 iroh-docs の patch rev を上げるとき（ADR 0058 §7、#1216 W3 AC-4）
+iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流の rev を固定する。native は redb の永続 store、Web は `Store::memory()` を使い、Web の本人の record は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。Web の memory store は、上流の GC と iroh-docs の保護（`ProtectCallbackHandler`）で閉じた replica の内容を消す。上流の変更点（特に store の形式、`drop_doc`、`ProtectCallbackHandler`、`get_many` の並び）を読んでから次を順に行い、どれかが通らない rev は採らない。型の compile が通ることだけを Web の保存の成功としない。
+
+1. root `Cargo.toml` の iroh-docs の patch rev を上げ、`cargo update -p iroh-docs` で lockfile を更新する。
+2. native の保存互換: `cargo test -p kukuri-docs-sync -p kukuri-iroh-node`（既存の redb の store を開き直す試験、有界な reader、本人の record の保護と保持分の併合）と `cargo test -p kukuri-desktop-runtime protected_migration`（旧 store からの移行）。
+3. WASM の build: 上の共用 crate の wasm32 の clippy。
+4. browser での動作: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（本人の record の保護、reload の後の復元、native との読み合い、閉じた replica の memory からの回収、失敗の負例）。
 
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>
