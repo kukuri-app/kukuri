@@ -498,9 +498,11 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
         runtime
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: FIXTURE_TOPIC.into(),
+                cursor: None,
             })
             .await
             .expect("channels")
+            .items
             .iter()
             .any(|channel| channel.channel_id == fixture.channel_id)
     );

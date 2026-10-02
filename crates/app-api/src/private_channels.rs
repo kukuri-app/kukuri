@@ -1028,25 +1028,28 @@ impl AppService {
             .await?;
         Ok(())
     }
+    /// topic の参加中の channel を、`cursor` の後から 1 page(128 件まで)。続きは `next_cursor` で読む。
     pub async fn list_joined_private_channels(
         &self,
         topic_id: &str,
-    ) -> Result<Vec<JoinedPrivateChannelView>> {
-        for state in self
-            .joined_private_channel_states_for_topic(topic_id)
-            .await?
-        {
+        cursor: Option<&str>,
+    ) -> Result<JoinedPrivateChannelPage> {
+        let after = cursor.unwrap_or_default();
+        let (states, _) = self
+            .joined_private_channel_states_for_topic(topic_id, after)
+            .await?;
+        for state in states {
             self.maybe_redeem_epoch_handoff_grants_for_channel(topic_id, state.channel_id.as_str())
                 .await?;
         }
-        let mut items = Vec::new();
-        for state in self
-            .joined_private_channel_states_for_topic(topic_id)
-            .await?
-        {
+        let (states, next_cursor) = self
+            .joined_private_channel_states_for_topic(topic_id, after)
+            .await?;
+        let mut items = Vec::with_capacity(states.len());
+        for state in states {
             items.push(self.joined_private_channel_view_for_state(&state).await?);
         }
-        Ok(items)
+        Ok(JoinedPrivateChannelPage { items, next_cursor })
     }
     /// テスト専用: capability の取得→restore 結合テストのユーティリティ
     /// (production の呼び出し元は WP-C2 T5 #479 で消滅)。

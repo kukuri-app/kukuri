@@ -144,9 +144,10 @@ async fn measure(scale: usize) -> Vec<(&'static str, usize)> {
     let before = touched();
     assert_eq!(
         first
-            .joined_private_channel_states_for_topic(TOPIC)
+            .joined_private_channel_states_for_topic(TOPIC, "")
             .await
             .expect("list")
+            .0
             .len(),
         2
     );
@@ -195,4 +196,46 @@ async fn each_operation_touches_only_its_rows_regardless_of_other_channels_and_e
     let small = measure(1).await;
     let large = measure(10).await;
     assert_eq!(small, large);
+}
+
+/// topic の参加中の channel の一覧は 128 件の page で、続きは cursor から読める(2026-10-02 ユーザー判断)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn joined_channel_list_continues_from_the_cursor() {
+    let store = Arc::new(MemoryStore::default());
+    let docs = Arc::new(MemoryDocsSync::default());
+    let keys = generate_keys();
+    let app = device(&store, &docs, &keys).await;
+    app.install_private_epoch_secrets()
+        .await
+        .expect("install private epoch secrets");
+    for index in 0..130 {
+        let channel = capability(
+            TOPIC,
+            &format!("channel-{index:03}"),
+            &keys.public_key_hex(),
+            0,
+        );
+        let state = joined_private_channel_state_from_capability(channel).expect("state");
+        app.persist_private_channel(&state, 0, &[])
+            .await
+            .expect("channel rows");
+    }
+    let first = app
+        .list_joined_private_channels(TOPIC, None)
+        .await
+        .expect("first page");
+    assert_eq!(first.items.len(), 128);
+    let second = app
+        .list_joined_private_channels(TOPIC, first.next_cursor.as_deref())
+        .await
+        .expect("second page");
+    assert_eq!(
+        second
+            .items
+            .iter()
+            .map(|view| view.channel_id.as_str())
+            .collect::<Vec<_>>(),
+        ["channel-128", "channel-129"]
+    );
+    assert_eq!(second.next_cursor, None);
 }

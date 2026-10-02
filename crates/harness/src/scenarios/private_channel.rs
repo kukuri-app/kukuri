@@ -204,9 +204,10 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let joined_channels = runtime_b
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list joined private channels after invite import")?;
+            .context("failed to list joined private channels after invite import")?.items;
         assert!(
             joined_channels
                 .iter()
@@ -318,15 +319,17 @@ pub(crate) async fn run_private_channel_invite_connectivity(
             let joined_a = runtime_a
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default().items;
             let joined_b = runtime_b
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default().items;
             return Err(anyhow::anyhow!(error).context(format!(
                 "desktop a did not receive private post; desktop_a=({status_a}); desktop_b=({status_b}); joined_a={joined_a:?}; joined_b={joined_b:?}"
             )));
@@ -600,9 +603,10 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let joined_after_restart = runtime_b
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list joined private channels after restart")?;
+            .context("failed to list joined private channels after restart")?.items;
         assert!(
             joined_after_restart
                 .iter()
@@ -701,9 +705,10 @@ pub(crate) async fn run_private_channel_invite_connectivity(
         let joined_channels_c = runtime_c
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.to_string(),
+                cursor: None,
             })
             .await
-            .context("failed to list desktop c joined private channels")?;
+            .context("failed to list desktop c joined private channels")?.items;
         assert!(
             joined_channels_c
                 .iter()

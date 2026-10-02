@@ -572,9 +572,11 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         restored
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: TOPIC.into(),
+                cursor: None,
             })
             .await
             .expect("restored channels")
+            .items
             .iter()
             .any(|channel| channel.channel_id == fixture.channel_id)
     );

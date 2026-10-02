@@ -385,16 +385,21 @@ impl AppService {
         Some(state)
     }
 
-    /// topic の参加中の channel（上限つき）。
+    /// topic の参加中の channel の、`after` の後の 1 page と、続きの cursor(page が埋まったときだけ)。
     pub(crate) async fn joined_private_channel_states_for_topic(
         &self,
         topic_id: &str,
-    ) -> Result<Vec<JoinedPrivateChannelState>> {
+        after: &str,
+    ) -> Result<(Vec<JoinedPrivateChannelState>, Option<String>)> {
         let rows = self
             .services
             .projection_store
-            .list_joined_private_channels(Some(topic_id), None, "", PRIVATE_CHANNEL_PAGE)
+            .list_joined_private_channels(Some(topic_id), None, after, PRIVATE_CHANNEL_PAGE)
             .await?;
+        let next_cursor = rows
+            .last()
+            .filter(|_| rows.len() == PRIVATE_CHANNEL_PAGE)
+            .map(|row| row.channel_key.clone());
         let mut states = Vec::with_capacity(rows.len());
         for row in rows {
             let key = row.channel_key.clone();
@@ -404,7 +409,7 @@ impl AppService {
                 states.push(state);
             }
         }
-        Ok(states)
+        Ok((states, next_cursor))
     }
 
     /// 参加中の channel の現在の世代の replica を、key の順に `after` から `limit` 件（#1221 R5-G）。

@@ -69,9 +69,11 @@ async fn owner_invite_export_auto_rotate_survives_restart() {
     let joined = restarted
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined after restart");
+        .expect("list joined after restart")
+        .items;
     assert_eq!(joined.len(), 1);
     assert_eq!(
         joined[0].current_epoch_id, rotated_epoch,
@@ -154,9 +156,11 @@ async fn owner_access_token_export_auto_rotate_survives_restart() {
     let joined = restarted
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined after restart");
+        .expect("list joined after restart")
+        .items;
     assert_eq!(joined.len(), 1);
     assert_eq!(
         joined[0].current_epoch_id, rotated_epoch,
@@ -245,9 +249,11 @@ async fn legacy_registry_moves_into_rows_once() {
         let mut joined = runtime
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: topic.into(),
+                cursor: None,
             })
             .await
-            .expect("list joined channels");
+            .expect("list joined channels")
+            .items;
         joined.sort_by(|left, right| left.channel_id.cmp(&right.channel_id));
         let summary = joined
             .iter()

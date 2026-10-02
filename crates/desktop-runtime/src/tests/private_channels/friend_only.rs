@@ -280,9 +280,11 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
     let joined_after_restart = restarted_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined channels after restart");
+        .expect("list joined channels after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(

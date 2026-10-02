@@ -109,14 +109,15 @@ pub(crate) use crate::views::{
     DirectMessageConversationView, DirectMessageMessageView, DirectMessageStatusView,
     DirectMessageTimelineView, DiscoveryStatus, DomeConnectionProposalView,
     DomeConnectionTopologyView, DomeConnectionView, DomeMoveView, GameRoomView, GameScoreView,
-    ImportMetaverseRoomAssetInput, JoinedPrivateChannelView, LiveSessionView,
-    MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput, NotificationStatusView,
-    NotificationView, PendingAttachment, PostView, PostWithdrawalView, PrivateChannelCapability,
-    PrivateChannelController, PrivateChannelEpochCapability, ProfileAssetView, ProfileInput,
-    PublishMetaverseRoomEventInput, ReactionKeyView, ReactionStateView, ReactionSummaryView,
-    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
-    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
-    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
+    ImportMetaverseRoomAssetInput, JoinedPrivateChannelPage, JoinedPrivateChannelView,
+    LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput,
+    NotificationStatusView, NotificationView, PendingAttachment, PostView, PostWithdrawalView,
+    PrivateChannelCapability, PrivateChannelController, PrivateChannelEpochCapability,
+    ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput, ReactionKeyView,
+    ReactionStateView, ReactionSummaryView, RecentReactionView, ReplyPreviewAuthorView,
+    ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput, SocialConnectionKind,
+    SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput, UpdateMetaverseRoomInput,
+    WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;

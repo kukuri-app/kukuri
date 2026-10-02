@@ -392,9 +392,10 @@ pub(crate) async fn replicate_private_post_with_retry(
             let _ = publisher
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
                 .await
-                .context("failed to refresh publisher joined private channels")?;
+                .context("failed to refresh publisher joined private channels")?.items;
             wait_for_topic_delivery_result(publisher, topic, 1, attempt_timeout)
                 .await
                 .context("publisher did not observe private topic delivery readiness")?;
@@ -420,9 +421,10 @@ pub(crate) async fn replicate_private_post_with_retry(
                 let _ = subscriber
                     .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                         topic: topic.to_string(),
+                        cursor: None,
                     })
                     .await
-                    .context("failed to refresh subscriber joined private channels")?;
+                    .context("failed to refresh subscriber joined private channels")?.items;
                 wait_for_topic_delivery_result(subscriber, topic, 1, attempt_timeout)
                     .await
                     .context("subscriber did not observe private topic delivery readiness")?;
@@ -489,11 +491,12 @@ pub(crate) async fn replicate_private_post_with_retry(
                     let _ = runtime
                         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                             topic: topic.to_string(),
+                            cursor: None,
                         })
                         .await
                         .context(
                             "failed to refresh joined private channels after private channel rotation",
-                        )?;
+                        )?.items;
                 }
                 for subscriber in subscribers {
                     wait_for_joined_private_channel_epoch_result(

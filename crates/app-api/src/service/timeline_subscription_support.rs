@@ -637,8 +637,9 @@ impl AppService {
             }
             ReplicaScope::AllJoined => {
                 replicas.push(topic_replica_id(topic_id));
-                self.joined_private_channel_states_for_topic(topic_id)
+                self.joined_private_channel_states_for_topic(topic_id, "")
                     .await?
+                    .0
                     .into_iter()
                     .map(|state| state.channel_id)
                     .collect()

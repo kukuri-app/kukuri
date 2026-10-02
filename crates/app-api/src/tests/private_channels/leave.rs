@@ -49,9 +49,10 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     timeout(p2p_replication_timeout(), async {
         loop {
             let joined = app_a
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("owner joined channels");
+                .expect("owner joined channels")
+                .items;
             if joined.iter().any(|item| {
                 item.channel_id == channel.channel_id && item.participant_count == Some(2)
             }) {
@@ -64,9 +65,10 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     .expect("participant join propagation timeout");
     // 参加・退出 record は owner にだけ届くため、owner 以外の端末は人数を返さない(#1221 R5-H)。
     let joined_b = app_b
-        .list_joined_private_channels(topic)
+        .list_joined_private_channels(topic, None)
         .await
-        .expect("participant joined channels");
+        .expect("participant joined channels")
+        .items;
     assert_eq!(joined_b.len(), 1);
     assert_eq!(joined_b[0].participant_count, None);
 
@@ -76,9 +78,10 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
         .expect("leave private channel");
     assert!(
         app_b
-            .list_joined_private_channels(topic)
+            .list_joined_private_channels(topic, None)
             .await
             .expect("left joined channels")
+            .items
             .is_empty()
     );
     let private_ref = ChannelRef::PrivateChannel {
@@ -97,9 +100,10 @@ async fn private_channel_leave_removes_local_access_and_syncs_participant_exit()
     timeout(p2p_replication_timeout(), async {
         loop {
             let joined = app_a
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("owner joined channels after leave");
+                .expect("owner joined channels after leave")
+                .items;
             if joined.iter().any(|item| {
                 item.channel_id == channel.channel_id && item.participant_count == Some(1)
             }) {
@@ -121,9 +125,10 @@ async fn wait_for_owner_participant_count(
     timeout(p2p_replication_timeout(), async {
         loop {
             if app
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
                 .expect("owner joined channels")
+                .items
                 .iter()
                 .any(|item| {
                     item.channel_id == channel_id && item.participant_count == Some(expected)
@@ -291,9 +296,10 @@ async fn a_join_record_arriving_after_the_rotation_still_gets_the_handoff_grant(
     timeout(p2p_replication_timeout(), async {
         loop {
             if app_b
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
                 .expect("member channels")
+                .items
                 .iter()
                 .any(|item| item.current_epoch_id == rotated.current_epoch_id)
             {

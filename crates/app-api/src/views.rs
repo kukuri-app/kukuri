@@ -751,6 +751,13 @@ pub struct DirectMessageTimelineView {
     pub next_cursor: Option<TimelineCursor>,
 }
 
+/// topic の参加中の channel の 1 page(ADR 0061 §9)。`next_cursor` があれば続きがある。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinedPrivateChannelPage {
+    pub items: Vec<JoinedPrivateChannelView>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

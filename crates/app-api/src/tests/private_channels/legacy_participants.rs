@@ -211,9 +211,10 @@ async fn a_participant_from_before_the_update_receives_the_first_rotation_grant(
     timeout(p2p_replication_timeout(), async {
         loop {
             let joined = app_b
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("joined channels on b");
+                .expect("joined channels on b")
+                .items;
             if joined.iter().any(|item| {
                 item.channel_id == channel.channel_id
                     && item.current_epoch_id == rotated.current_epoch_id
