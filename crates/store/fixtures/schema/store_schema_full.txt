@@ -1,8 +1,16 @@
+table account_sync_cursors
+  column cid=0 name=device_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=seq type=INTEGER notnull=1 default=None pk=0
+  column cid=2 name=head type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=cycle_prefix type=TEXT notnull=0 default=None pk=0
+  column cid=4 name=cycle_head type=INTEGER notnull=1 default=None pk=0
+  column cid=5 name=updated_at type=INTEGER notnull=1 default=None pk=0
 table account_sync_items
   column cid=0 name=item_key type=TEXT notnull=1 default=None pk=1
   column cid=1 name=op_id type=TEXT notnull=1 default=None pk=0
   column cid=2 name=updated_at type=INTEGER notnull=1 default=None pk=0
   column cid=3 name=value type=TEXT notnull=0 default=None pk=0
+  column cid=4 name=written type=INTEGER notnull=1 default=Some("0") pk=0
 table adult_media_hashes
   column cid=0 name=blob_hash type=TEXT notnull=1 default=None pk=1
   column cid=1 name=marked_at type=INTEGER notnull=1 default=Some("0") pk=0
@@ -269,6 +277,7 @@ table private_channel_epochs
   column cid=5 name=sealed_secret type=BLOB notnull=1 default=None pk=0
   column cid=6 name=rotation_from type=TEXT notnull=0 default=None pk=0
   column cid=7 name=rotation_after type=TEXT notnull=0 default=None pk=0
+  column cid=8 name=written type=INTEGER notnull=1 default=Some("0") pk=0
 table private_channel_participant_counts
   column cid=0 name=channel_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=epoch_id type=TEXT notnull=1 default=None pk=2
@@ -384,6 +393,12 @@ index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=
   key seqno=3 cid=1 name=Some("topic_id")
   key seqno=4 cid=2 name=Some("channel_id")
   sql=Some("CREATE INDEX cn_private_index_grants_due ON cn_private_index_grants (base_url, active, last_checked_at_ms, topic_id, channel_id)")
+index idx_account_sync_cursors_updated table=account_sync_cursors unique=0 origin=c partial=0
+  key seqno=0 cid=5 name=Some("updated_at")
+  sql=Some("CREATE INDEX idx_account_sync_cursors_updated ON account_sync_cursors (updated_at)")
+index idx_account_sync_items_unwritten table=account_sync_items unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("item_key")
+  sql=Some("CREATE INDEX idx_account_sync_items_unwritten ON account_sync_items (item_key) WHERE written = 0")
 index idx_block_edges_subject table=block_edges unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("subject_pubkey")
   key seqno=1 cid=3 name=Some("updated_at")
@@ -602,6 +617,10 @@ index idx_private_channel_epochs_started table=private_channel_epochs unique=0 o
   key seqno=1 cid=2 name=Some("started_at")
   key seqno=2 cid=1 name=Some("epoch_id")
   sql=Some("CREATE INDEX idx_private_channel_epochs_started ON private_channel_epochs (channel_id, started_at, epoch_id)")
+index idx_private_channel_epochs_unwritten table=private_channel_epochs unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=1 name=Some("epoch_id")
+  sql=Some("CREATE INDEX idx_private_channel_epochs_unwritten ON private_channel_epochs (channel_id, epoch_id) WHERE written = 0")
 index idx_private_channel_participants_active table=private_channel_participants unique=0 origin=c partial=1
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=2 name=Some("participant_pubkey")
@@ -679,6 +698,9 @@ index remote_content_cache_record table=remote_content_cache unique=0 origin=c p
   key seqno=1 cid=3 name=Some("record_key")
   key seqno=2 cid=4 name=Some("record_author")
   sql=Some("CREATE INDEX remote_content_cache_record ON remote_content_cache(scope_key, record_key, record_author) WHERE kind = 'record'")
+index sqlite_autoindex_account_sync_cursors_1 table=account_sync_cursors unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("device_id")
+  sql=None
 index sqlite_autoindex_account_sync_items_1 table=account_sync_items unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("item_key")
   sql=None

@@ -102,6 +102,19 @@ pub trait PrivateChannelKeyStore: Send + Sync {
         range: PrivateChannelEpochRange,
         limit: usize,
     ) -> Result<Vec<PrivateChannelEpochRow>>;
+    /// 世代の鍵の行を、replica へ書いたとする（ADR 0061 §10）。足した行は未書込みで始まる。
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()>;
+    /// replica へ未書込みの世代の鍵の行を `limit` 件（未書込みの索引で読む）。この端末の鍵更新で予約し、まだ
+    /// 確定していない世代（`rotation_from` があり `rotation_after` が無い）は含めない（確定した世代だけを書く。
+    /// ADR 0061 §9）。
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>>;
     /// 予約した世代の配布の cursor を置く。`None` は鍵更新の終わり（`rotation_from` も消す）。
     async fn set_private_channel_rotation(
         &self,

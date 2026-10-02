@@ -79,7 +79,14 @@ impl IrohDocsSync {
         let private = match post_replica_kind(replica) {
             Some(kind) => matches!(kind, PostReplicaKind::PrivateChannel { .. }),
             None if author_replica(replica) => false,
-            None => anyhow::bail!("remote reader requires a post or author replica"),
+            // 本人の端末の account 同期の replica(ADR 0061 §10)。秘密は account の namespace の秘密。
+            None if replica
+                .as_str()
+                .starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX) =>
+            {
+                true
+            }
+            None => anyhow::bail!("remote reader requires a post, author or account replica"),
         };
         anyhow::ensure!(
             private == private_secret.is_some(),

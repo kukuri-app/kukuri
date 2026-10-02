@@ -37,8 +37,9 @@ pub mod wire;
 mod tests;
 
 pub use account_sync::{
-    AccountSyncItem, AccountSyncItemKey, AccountSyncKeys, ChannelMembershipV1,
-    MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
+    ACCOUNT_SYNC_CHANGE_WINDOW, AccountSyncChangeV1, AccountSyncItem, AccountSyncItemKey,
+    AccountSyncKeys, ChannelMembershipV1, MAX_ACCOUNT_SYNC_ITEM_BYTES,
+    MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
 };
 pub use account_transfer::{
     ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountTransferFailure,

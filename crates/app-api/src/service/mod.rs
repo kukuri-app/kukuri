@@ -151,6 +151,8 @@ use game_projection_support::GameRoomProjectionLocks;
 pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
 pub(crate) use live_game_support::DomeReadUnavailable;
+mod account_sync_fetch;
+mod channel_sync_merge;
 mod metaverse_room_event_support;
 mod missing_profiles;
 mod notifications_support;
@@ -158,15 +160,6 @@ mod object_hydration;
 mod object_persistence_support;
 mod post_integrity;
 mod post_withdrawal_hydration;
-// 呼び出し元は AC-5 の差分の取得。
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
-    )
-)]
-mod channel_sync_merge;
 mod private_channel_rows;
 pub(crate) use private_channel_rows::{
     PRIVATE_CHANNEL_EPOCH_WINDOW, PrivateChannelRotation, epoch_started_at,
@@ -196,6 +189,7 @@ pub(crate) use subscription_catch_up::catch_up_sessions;
 mod reply_target_support;
 mod scope_leases;
 pub(crate) mod scope_receive;
+pub use account_sync_fetch::AccountSyncStatus;
 pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
 pub(crate) use scope_leases::{
     ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
@@ -391,6 +385,8 @@ pub struct ServiceHandles {
     pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
     /// 取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。`AppService` の構築時に入る。
     pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
+    /// account 同期の書込みの排他と取得の結果（ADR 0061 §10）。
+    pub(crate) account_sync: Arc<account_sync_fetch::AccountSyncState>,
 }
 
 impl ServiceHandles {
@@ -512,6 +508,7 @@ impl ServiceHandles {
             range_checks: Arc::default(),
             writer_switched_at: Arc::default(),
             notify_remote_posts: None,
+            account_sync: Arc::default(),
         }
     }
 }

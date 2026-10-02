@@ -353,6 +353,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 周期処理を新設しない（ADR 0055 §6）。契機は ADR 0055 の受信と同じ。
   - account の lease の開始（起動・import・切替）、endpoint の世代の変化（復帰）、日の境界（UTC）: 本人の端末の候補（account の hint topic の rendezvous の候補、最大 4）それぞれから取得する。lease の開始の後に、hint を 1 回送る（offline の間の自分の変更を、online の端末に読ませる）。
   - hint を受けたとき: hint の端末 ID の端末から取得する（届かなければ、中継した peer から読む）。
+  - rendezvous の応答に、どの CN の前回の応答にも無かった本人の端末が現れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、gossip の候補は rendezvous の応答の後にしか入らない。そこで、新しく現れた端末から、gossip の合流を待たずに rendezvous の候補（endpoint ID と addr hint）で直接取得する。
+    - 前回の応答は CN ごとに持つ（CN の数 × 応答の上限）。同じ端末が続く応答と、その端末の居ない別の CN の応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
+    - account の lease の task の作り直し（起動・復帰）で前回の応答を忘れ、次の応答に居る端末から 1 回読む。
 - hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
@@ -375,7 +378,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 - 採用済みの状態は、取得を待たずに使う。
 - 未同期は、次のどれか。これを有界に読める状態として返す（未書込みの索引の 1 件の有無、作り直しの行、相手ごとの取得の結果）。表示は W8（#1220）。
-  - 本人の端末の候補が無い。
+  - 本人の端末の候補が無い（候補が入った契機の取得か、いずれかの相手からの取得の成功で下りる）。
   - 最後の取得が失敗した。
   - 読み残しがある（相手の cursor が、最後に読んだ head より手前、または周回の途中）。
   - 送信待ちがある。
@@ -390,6 +393,13 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 背景で進め、途中で止まっても行の位置から再開する。参加が戻るのは、周回がその item に届いた後。
 - 各相手の cursor も失われるので、相手とは周回から始める。変更の窓の seq は replica の head から続く。
 - AC-4b で DB を消さない再起動に改めた試験 4 件を、DB を消して作り直しを確かめる試験に戻す。
+
+#### 実装（AC-5b）
+
+- core: 変更の窓の key `AccountSyncItemKey::ChangeSlot`・`ChangeHead`（値は `AccountSyncChangeV1`）、行の key から item の key を戻す `AccountSyncItemKey::from_docs_key`、hint の `GossipHint::AccountSyncChanged`。
+- docs-sync: `remote_readers` の要求側の許可に account の replica を加えた。
+- store: `account_sync_items`・`private_channel_epochs` の `written` の欄と未書込みの部分索引、相手ごとの cursor の `account_sync_cursors`（migration `20261004000000`）。Web は IndexedDB の `account_sync`・`private_epochs` の `unwritten` の索引と `account_sync_cursors` の store。
+- app-api: `account_sync_fetch`（書込みと窓への追記、取得、周回、送り直し、作り直し、状態）。契機は account の lease の task（`account_sync_task`）。書込みの後の hint は、利用者の操作の経路で待たず、lease の task が送り直しの後に 2 秒の期限で送る。task の本体は `Send` の box に閉じる（取得の merge が channel の lease を取り、lease が task を作るため）。
 
 #### 判定（AC-5b・AC-5c）
 

@@ -23,9 +23,11 @@ impl PrivateChannelKeyStore for MemoryStore {
         let mut keys = self.private_channel_keys.write().await;
         keys.channels.insert(row.channel_key.clone(), row.clone());
         for epoch in epochs {
-            keys.epochs
-                .entry((epoch.channel_id.clone(), epoch.epoch_id.clone()))
-                .or_insert_with(|| epoch.clone());
+            let key = (epoch.channel_id.clone(), epoch.epoch_id.clone());
+            if !keys.epochs.contains_key(&key) {
+                keys.unwritten.insert(key.clone());
+                keys.epochs.insert(key, epoch.clone());
+            }
         }
         self.touched(1 + epochs.len(), ());
         Ok(())
@@ -36,6 +38,7 @@ impl PrivateChannelKeyStore for MemoryStore {
         let key = (epoch.channel_id.clone(), epoch.epoch_id.clone());
         let added = !keys.epochs.contains_key(&key);
         if added {
+            keys.unwritten.insert(key.clone());
             keys.epochs.insert(key, epoch.clone());
         }
         Ok(self.touched(1, added))
@@ -153,6 +156,35 @@ impl PrivateChannelKeyStore for MemoryStore {
         Ok(self.touched(epochs.len(), epochs))
     }
 
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()> {
+        self.private_channel_keys
+            .write()
+            .await
+            .unwritten
+            .remove(&(channel_id.to_string(), epoch_id.to_string()));
+        Ok(())
+    }
+
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        let keys = self.private_channel_keys.read().await;
+        let epochs = keys
+            .unwritten
+            .iter()
+            .filter_map(|key| keys.epochs.get(key))
+            .filter(|epoch| epoch.rotation_from.is_none() || epoch.rotation_after.is_some())
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(self.touched(epochs.len(), epochs))
+    }
+
     async fn set_private_channel_rotation(
         &self,
         channel_id: &str,
@@ -208,6 +240,7 @@ impl PrivateChannelKeyStore for MemoryStore {
             .collect::<Vec<_>>();
         for key in &doomed {
             keys.epochs.remove(key);
+            keys.unwritten.remove(key);
         }
         let epochs = doomed
             .into_iter()

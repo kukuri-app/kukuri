@@ -78,6 +78,12 @@ pub enum GossipHint {
         topic_id: TopicId,
         ack: DirectMessageAckV1,
     },
+    /// 本人の端末の account 同期の変更の手掛かり（ADR 0061 §10）。書いた端末の ID と、その変更の窓の head の seq
+    /// だけを運び、item の内容を含まない。
+    AccountSyncChanged {
+        device_id: String,
+        seq: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

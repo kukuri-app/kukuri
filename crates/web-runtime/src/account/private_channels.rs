@@ -39,15 +39,48 @@ fn epoch_key(channel_id: &str, epoch_id: &str) -> JsValue {
     key(&[text(channel_id), text(epoch_id)])
 }
 
-/// 鍵更新が終わっていない世代だけが載る索引の値（SQLite の `rotation_from IS NOT NULL` の部分索引）。
-fn epoch_extra(row: &PrivateChannelEpochRow) -> [(&'static str, JsValue); 1] {
-    [(
-        "rotation",
-        match row.rotation_from {
-            Some(_) => epoch_key(&row.channel_id, &row.epoch_id),
-            None => JsValue::UNDEFINED,
-        },
-    )]
+/// 世代の鍵の行の索引の値。`rotation` は鍵更新が終わっていない世代（SQLite の `rotation_from IS NOT NULL` の
+/// 部分索引）。`unwritten` は replica へ未書込み（`pending`）で、予約した鍵更新の確定前でない世代（SQLite の
+/// `written = 0` の部分索引と、未書込みの一覧の条件。ADR 0061 §10）。`pending` は行を置き直しても保つ。
+fn epoch_extra(row: &PrivateChannelEpochRow, pending: bool) -> [(&'static str, JsValue); 3] {
+    let id = epoch_key(&row.channel_id, &row.epoch_id);
+    let reserved = row.rotation_from.is_some() && row.rotation_after.is_none();
+    [
+        (
+            "rotation",
+            match row.rotation_from {
+                Some(_) => id.clone(),
+                None => JsValue::UNDEFINED,
+            },
+        ),
+        ("pending", JsValue::from_bool(pending)),
+        (
+            "unwritten",
+            if pending && !reserved {
+                id
+            } else {
+                JsValue::UNDEFINED
+            },
+        ),
+    ]
+}
+
+/// 世代の鍵の行と、replica へ未書込みか。
+async fn get_epoch(
+    tx: &web_sys::IdbTransaction,
+    key: &JsValue,
+) -> Result<Option<(PrivateChannelEpochRow, bool)>> {
+    let value = crate::idb::done(
+        &rows::store(tx, PRIVATE_EPOCHS)?
+            .get(key)
+            .map_err(js_error)?,
+    )
+    .await?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let pending = rows::extra(&value, "pending")?.as_bool().unwrap_or(false);
+    Ok(Some((rows::decode(&value)?, pending)))
 }
 
 #[async_trait]
@@ -68,7 +101,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
                     .await?
                     .is_none()
                 {
-                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch))?;
+                    rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch, true))?;
                 }
             }
             tx.commit().await
@@ -88,7 +121,7 @@ impl PrivateChannelKeyStore for IndexedDbCache {
             {
                 return Ok(false);
             }
-            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch))?;
+            rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch, true))?;
             tx.commit().await?;
             Ok(true)
         })
@@ -215,6 +248,23 @@ impl PrivateChannelKeyStore for IndexedDbCache {
         .await
     }
 
+    /// 未書込みの索引から外す（行を置き直す）。
+    async fn mark_private_channel_epoch_written(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+    ) -> Result<()> {
+        let id = (channel_id.to_owned(), epoch_id.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Strict)?;
+            if let Some((epoch, _)) = get_epoch(&tx, &epoch_key(&id.0, &id.1)).await? {
+                rows::put(&tx, PRIVATE_EPOCHS, &epoch, &epoch_extra(&epoch, false))?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
     async fn set_private_channel_rotation(
         &self,
         channel_id: &str,
@@ -226,16 +276,26 @@ impl PrivateChannelKeyStore for IndexedDbCache {
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Strict)?;
             let key = epoch_key(&id.0, &id.1);
-            if let Some(mut row) =
-                rows::get::<PrivateChannelEpochRow>(&tx, PRIVATE_EPOCHS, &key).await?
-            {
+            if let Some((mut row, pending)) = get_epoch(&tx, &key).await? {
                 if after.is_none() {
                     row.rotation_from = None;
                 }
                 row.rotation_after = after;
-                rows::put(&tx, PRIVATE_EPOCHS, &row, &epoch_extra(&row))?;
+                rows::put(&tx, PRIVATE_EPOCHS, &row, &epoch_extra(&row, pending))?;
             }
             tx.commit().await
+        })
+        .await
+    }
+
+    async fn list_unwritten_private_channel_epochs(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PRIVATE_EPOCHS], Mode::Read)?;
+            let range = web_sys::IdbKeyRange::lower_bound(&key(&[])).map_err(js_error)?;
+            rows::scan(&tx, PRIVATE_EPOCHS, Some("unwritten"), &range, false, limit).await
         })
         .await
     }

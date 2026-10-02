@@ -109,7 +109,9 @@ async fn owner_device(
     app.restore_joined_private_channels()
         .await
         .expect("restore joined channels");
-    app.start_account_sync().await.expect("account sync");
+    // account の replica の秘密だけを登録する（差分の取得・送り直しの背景の task は起こさない。背景の送り直しが
+    // 未書込みの過去の世代を読み、鍵更新の受付の計測に混ざらないように。ADR 0061 §10）。
+    super::super::account_sync::register_account_replica(&app).await;
     app
 }
 

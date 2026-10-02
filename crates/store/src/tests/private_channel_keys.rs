@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::{
+    ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
     PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
     PrivateChannelRow,
 };
@@ -295,4 +296,121 @@ async fn private_channel_key_queries_are_index_range_reads() {
         assert!(plan.contains(index), "{name}: {plan}");
         assert!(!plan.contains("TEMP B-TREE"), "{name}: {plan}");
     }
+}
+
+/// replica へ未書込みの行と相手ごとの cursor（#1218 AC-5b、ADR 0061 §10）。採用・足した行は未書込みで始まり、書いた
+/// 版の印で外れる。予約した鍵更新の確定前の世代は一覧に出ない。cursor は自分の行を除いて上限まで。
+async fn assert_account_sync_writes<S: AccountSyncStore + PrivateChannelKeyStore>(store: &S) {
+    let row = AccountSyncRow {
+        key: "profile".into(),
+        op_id: "b".repeat(32),
+        updated_at: 5,
+        value: Some("{}".into()),
+    };
+    assert!(store.adopt_account_sync_row(&row).await.unwrap());
+    assert_eq!(
+        store.list_unwritten_account_sync_rows(8).await.unwrap(),
+        vec![row.clone()]
+    );
+    let older = AccountSyncRow {
+        updated_at: 4,
+        ..row.clone()
+    };
+    store.mark_account_sync_written(&older).await.unwrap();
+    assert_eq!(
+        store
+            .list_unwritten_account_sync_rows(8)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    store.mark_account_sync_written(&row).await.unwrap();
+    assert!(
+        store
+            .list_unwritten_account_sync_rows(8)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut reserved = epoch("c", "epoch-2", 20, 2);
+    reserved.rotation_from = Some("epoch-1".into());
+    store
+        .put_private_channel_epoch(&epoch("c", "epoch-1", 10, 1))
+        .await
+        .unwrap();
+    store.put_private_channel_epoch(&reserved).await.unwrap();
+    assert_eq!(
+        ids(&store
+            .list_unwritten_private_channel_epochs(8)
+            .await
+            .unwrap()),
+        ["epoch-1"]
+    );
+    // 確定の段の後（配布の cursor を持つ）は、書けていなければ送り直す。
+    store
+        .set_private_channel_rotation("c", "epoch-2", Some(""))
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&store
+            .list_unwritten_private_channel_epochs(8)
+            .await
+            .unwrap()),
+        ["epoch-1", "epoch-2"]
+    );
+    for epoch_id in ["epoch-1", "epoch-2"] {
+        store
+            .mark_private_channel_epoch_written("c", epoch_id)
+            .await
+            .unwrap();
+    }
+    assert!(
+        store
+            .list_unwritten_private_channel_epochs(8)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let cursor = |device: &str, updated_at: i64| AccountSyncCursor {
+        device_id: device.into(),
+        seq: 1,
+        head: 1,
+        cycle_prefix: None,
+        cycle_head: 0,
+        updated_at,
+    };
+    store
+        .put_account_sync_cursor(&cursor("own", 0), "own")
+        .await
+        .unwrap();
+    for index in 0..=ACCOUNT_SYNC_CURSOR_LIMIT {
+        let device = format!("peer-{index:02}");
+        store
+            .put_account_sync_cursor(&cursor(&device, index as i64 + 1), "own")
+            .await
+            .unwrap();
+    }
+    let kept = store.list_account_sync_cursors().await.unwrap();
+    assert_eq!(kept.len(), ACCOUNT_SYNC_CURSOR_LIMIT + 1);
+    assert!(kept.iter().any(|cursor| cursor.device_id == "own"));
+    assert!(
+        store
+            .get_account_sync_cursor("peer-00")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn account_sync_writes_and_cursors_have_the_same_meaning_on_both_stores() {
+    assert_account_sync_writes(&MemoryStore::default()).await;
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let sqlite = SqliteStore::connect_file(&tempdir.path().join("account-sync-writes.db"))
+        .await
+        .expect("sqlite store");
+    assert_account_sync_writes(&sqlite).await;
 }

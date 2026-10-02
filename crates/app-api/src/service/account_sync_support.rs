@@ -2,7 +2,7 @@
 //!
 //! 採用した状態は item ごとに 1 行（`AccountSyncStore`）で、`(updated_at, op_id)` が大きいものだけで置き換える。
 //! 読むのは account の docs author の組の 1 件と、それが無いときの key ごとの上限つきの旧候補だけで、replica の
-//! 全件・全 snapshot を比べない。hint・起動・復帰で差分を取りに行く経路は AC-5。
+//! 全件・全 snapshot を比べない。hint・起動・復帰で差分を取りに行く経路は `account_sync_fetch`（AC-5b）。
 
 use super::*;
 use kukuri_core::{AccountSyncItem, AccountSyncItemKey, SealedAccountSyncItem};
@@ -38,7 +38,7 @@ pub(super) fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
 
 impl AppService {
     /// この端末の編集を採用し、封をして account の replica へ書く。採用しなかった（同じか新しい状態がある）なら書かない。
-    /// replica へ書けなくても、この端末の採用は戻さない（送り直しは AC-5）。
+    /// replica へ書けなくても、この端末の採用は戻さない（送り直しは `account_sync_fetch`）。
     pub(crate) async fn publish_account_sync_item(&self, item: AccountSyncItem) -> Result<()> {
         if !self
             .services
@@ -51,28 +51,6 @@ impl AppService {
         self.write_account_sync_item(&item).await
     }
 
-    /// 封をして account の replica へ書く(採用の台帳には入れない。鍵の item は秘密を含むのでこちらだけを使う)。
-    /// replica へ書けなくても失敗にしない(送り直しは AC-5)。
-    pub(crate) async fn write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
-        let keys = self.services.keys.derive_account_sync();
-        let sealed = keys.seal(&self.services.keys.public_key(), item)?;
-        if let Err(error) = self
-            .services
-            .docs_sync
-            .apply_doc_op(
-                keys.replica_id(),
-                DocOp::SetJson {
-                    key: item.key.docs_key(),
-                    value: serde_json::to_value(sealed)?,
-                },
-            )
-            .await
-        {
-            warn!(key = ?item.key, %error, "account sync item stays local until it is resent");
-        }
-        Ok(())
-    }
-
     pub(crate) async fn publish_profile_item(&self, envelope: &KukuriEnvelope) -> Result<()> {
         self.publish_account_sync_item(AccountSyncItem::profile(envelope)?)
             .await
@@ -80,13 +58,7 @@ impl AppService {
 
     /// item を点読する。account の docs author の組の 1 件を読み、無い・開けないときだけ key の旧候補（上限 8 件）から
     /// 最大の版を採る。
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) async fn read_account_sync_item(
         &self,
         key: &AccountSyncItemKey,
@@ -96,16 +68,21 @@ impl AppService {
             .await
     }
 
-    /// docs の key で item を点読する(`read_account_sync_item` と同じ規則)。
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
-        )
-    )]
+    /// 手元の replica から docs の key で item を点読する。
     pub(crate) async fn read_account_sync_docs_key(
         &self,
+        docs_key: &str,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<AccountSyncItem>> {
+        self.read_account_sync_record(self.services.docs_sync.as_ref(), docs_key, policy)
+            .await
+    }
+
+    /// `source`（手元の docs か、本人の別の端末の reader）から、account の docs author の組の 1 件を読み、無い・開け
+    /// ないときだけ key の旧候補（上限 8 件）から最大の版を採る。全端末が同じ docs author で書く（ADR 0053）。
+    pub(crate) async fn read_account_sync_record(
+        &self,
+        source: &dyn DocsSync,
         docs_key: &str,
         policy: DocFetchPolicy,
     ) -> Result<Option<AccountSyncItem>> {
@@ -117,16 +94,15 @@ impl AppService {
                 .ok()
                 .and_then(|sealed| keys.open(&account, &docs_key, &sealed).ok())
         };
-        let docs_sync = self.services.docs_sync.as_ref();
-        if let Some(docs_author) = docs_sync.local_docs_author().await?
-            && let Some(record) = docs_sync
+        if let Some(docs_author) = self.services.docs_sync.local_docs_author().await?
+            && let Some(record) = source
                 .query_replica_by_author(keys.replica_id(), &docs_author, &docs_key, policy)
                 .await?
             && let Some(item) = open(&record)
         {
             return Ok(Some(item));
         }
-        Ok(docs_sync
+        Ok(source
             .query_replica_exact_bounded(
                 keys.replica_id(),
                 &docs_key,
@@ -139,15 +115,8 @@ impl AppService {
             .max_by(|a, b| (a.updated_at, &a.op_id).cmp(&(b.updated_at, &b.op_id))))
     }
 
-    /// 本人の別の端末の item を、`(updated_at, op_id)` の勝者の規則で採用して反映する。採用したら true。
-    /// 同じ操作の再受信・古い版（restore した古い端末の版を含む）は何もしない。
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
-        )
-    )]
+    /// 本人の別の端末の item を、`(updated_at, op_id)` の勝者の規則で採用して反映する。採った（行を置き換えた・鍵の
+    /// 行を足した）ら true。同じ操作の再受信・古い版（restore した古い端末の版を含む）は false。
     pub(crate) async fn merge_account_sync_item(&self, item: AccountSyncItem) -> Result<bool> {
         match &item.key {
             AccountSyncItemKey::Profile => {
@@ -209,8 +178,7 @@ impl AppService {
     }
 
     /// 旧版の端末内の設定を取り込む。編集した時刻は分からないので、どの編集よりも古い 0 にする。
-    /// この端末だけで採用し、account の replica へは書かない（replica は書いた時刻の新しい 1 件を残すので、古い版を
-    /// 書くと他の端末の新しい編集を隠す）。他の端末へは次の編集で届く。
+    /// この端末で採用し、replica へは送り直しの規則（同じ key の版が違えば書く。ADR 0061 §10）で書く。
     pub async fn import_trust_always_visible(&self, author: &str) -> Result<()> {
         let item = trust_always_visible_item(author, 0, true)?;
         self.services

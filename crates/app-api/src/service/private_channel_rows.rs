@@ -84,7 +84,7 @@ impl ServiceHandles {
         })
     }
 
-    fn open_epoch_row(&self, row: PrivateChannelEpochRow) -> Result<(String, String)> {
+    pub(crate) fn open_epoch_row(&self, row: PrivateChannelEpochRow) -> Result<(String, String)> {
         let secret =
             self.key_row_seal()
                 .open(&row.channel_id, &row.epoch_id, &row.sealed_secret)?;

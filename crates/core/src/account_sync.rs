@@ -177,7 +177,14 @@ pub enum AccountSyncItemKey {
     ChannelMembership { channel_id: ChannelId },
     /// private channel の鍵更新の担当端末の記録（意味は W6 が所有する）。
     ChannelController { channel_id: ChannelId },
+    /// 端末の変更の窓の 1 件（ADR 0061 §10）。値は `AccountSyncChangeV1`。merge の対象ではない。
+    ChangeSlot { device_id: String, slot: u16 },
+    /// 端末の変更の窓の head。値は `AccountSyncChangeV1`（`docs_key` は空）。
+    ChangeHead { device_id: String },
 }
+
+/// 端末ごとの変更の窓の大きさ（ADR 0061 §5・§10）。
+pub const ACCOUNT_SYNC_CHANGE_WINDOW: u64 = 256;
 
 impl AccountSyncItemKey {
     /// docs の key。id は hex にして区切りを含ませない。
@@ -201,6 +208,50 @@ impl AccountSyncItemKey {
             Self::ChannelController { channel_id } => {
                 format!("channel/{}/controller", hex::encode(channel_id.as_str()))
             }
+            Self::ChangeSlot { device_id, slot } => format!("changes/{device_id}/{slot:03}"),
+            Self::ChangeHead { device_id } => format!("changes/{device_id}/head"),
+        }
+    }
+
+    /// 採用の行の key（docs の key）から、merge の対象の item の key を戻す（送り直しで行から item を作る）。
+    pub fn from_docs_key(docs_key: &str) -> Result<Self> {
+        let text = |value: &str| -> Result<String> {
+            String::from_utf8(hex::decode(value)?).context("account sync item id is not UTF-8")
+        };
+        let key = if docs_key == "profile" {
+            Self::Profile
+        } else if let Some(author) = docs_key.strip_prefix("trust/always-visible/") {
+            Self::TrustAlwaysVisible {
+                author: Pubkey::from(author.to_string()),
+            }
+        } else if let Some(rest) = docs_key.strip_prefix("channel/") {
+            let (channel, item) = rest.split_once('/').context("missing channel item")?;
+            let channel_id = ChannelId::new(text(channel)?);
+            match item.split_once('/') {
+                Some(("epoch", epoch)) => Self::ChannelCapability {
+                    channel_id,
+                    epoch_id: text(epoch)?,
+                },
+                None if item == "membership" => Self::ChannelMembership { channel_id },
+                None if item == "controller" => Self::ChannelController { channel_id },
+                _ => anyhow::bail!("unknown channel item"),
+            }
+        } else {
+            anyhow::bail!("unknown account sync item key");
+        };
+        key.validate()?;
+        ensure!(
+            key.docs_key() == docs_key,
+            "account sync item key is not canonical"
+        );
+        Ok(key)
+    }
+
+    /// seq の変更が入る、端末の変更の窓の slot。
+    pub fn change_slot(device_id: &str, seq: u64) -> Self {
+        Self::ChangeSlot {
+            device_id: device_id.to_string(),
+            slot: u16::try_from(seq % ACCOUNT_SYNC_CHANGE_WINDOW).unwrap_or_default(),
         }
     }
 
@@ -225,6 +276,14 @@ impl AccountSyncItemKey {
             Self::ChannelMembership { channel_id } | Self::ChannelController { channel_id } => {
                 id(channel_id.as_str())
             }
+            Self::ChangeSlot { device_id, slot } => {
+                ensure!(
+                    u64::from(*slot) < ACCOUNT_SYNC_CHANGE_WINDOW,
+                    "account sync change slot is outside the window"
+                );
+                validate_device_id(device_id)
+            }
+            Self::ChangeHead { device_id } => validate_device_id(device_id),
         }
     }
 }
@@ -337,6 +396,28 @@ pub struct SealedAccountSyncItem {
     pub v: u8,
     pub nonce_hex: String,
     pub ciphertext_hex: String,
+}
+
+/// 端末 ID（endpoint ID）は英数字・`-`・`_` だけ（docs の key の区切りを含ませない）。
+fn validate_device_id(device_id: &str) -> Result<()> {
+    ensure!(
+        !device_id.is_empty()
+            && device_id.len() <= MAX_ITEM_ID_BYTES
+            && device_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        "account sync device id must be alphanumeric"
+    );
+    Ok(())
+}
+
+/// 変更の窓の slot・head の値（ADR 0061 §10）。slot は seq と、その変更の item の docs の key。head は seq だけ。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountSyncChangeV1 {
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub docs_key: String,
 }
 
 /// private channel の参加の item の値（ADR 0061 §9）。参加の行のうち端末に依らない欄で、`current_epoch_id` は参加した
