@@ -69,9 +69,10 @@ async fn legacy_participants_move_to_the_table_one_bounded_window_at_a_time() {
     }
     assert_eq!(
         store
-            .count_private_channel_participants(&channel.channel_id, &epoch_id)
+            .private_channel_participant_counts(&channel.channel_id, &epoch_id)
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         1,
         "only the owner is in the table before the migration"
     );
@@ -83,9 +84,10 @@ async fn legacy_participants_move_to_the_table_one_bounded_window_at_a_time() {
     );
     assert_eq!(
         store
-            .count_private_channel_participants(&channel.channel_id, &epoch_id)
+            .private_channel_participant_counts(&channel.channel_id, &epoch_id)
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         301
     );
 }
@@ -192,10 +194,9 @@ async fn a_participant_from_before_the_update_receives_the_first_rotation_grant(
     let b_pubkey = keys_b.public_key_hex();
     let listed = |store: Arc<MemoryStore>| {
         let channel_id = channel.channel_id.clone();
-        let epoch_id = epoch_id.clone();
         async move {
             store
-                .list_private_channel_participants(&channel_id, Some(&epoch_id), "", 8)
+                .list_private_channel_participants(&channel_id, "", 8)
                 .await
                 .unwrap()
         }

@@ -169,51 +169,26 @@ impl AppService {
             .unwrap_or(ChannelSharingState::Open);
         // #1221 R5-H: 参加者数は参加者の表(owner は account 経路で届いた参加・退出)の現 epoch の行で数える。
         // 参加・退出 record は owner にだけ届くため、人数は owner の端末だけが返す(2026-09-27 ユーザー決定)。
-        let store = &self.services.projection_store;
-        let channel_id = state.channel_id.as_str();
-        let epoch_id = state.current_epoch_id.as_str();
+        // #1219 AC-2: 数と資格喪失(owner と mutual でない)の数は、store が行と follow の edge の書込みで保つ 1 行を
+        // 読む(参加者の数に比例しない)。
         let is_owner = state.owner_pubkey == self.current_author_pubkey();
-        let participant_count = if is_owner {
-            Some(
-                store
-                    .count_private_channel_participants(channel_id, epoch_id)
-                    .await?,
-            )
+        let (participant_count, stale) = if is_owner {
+            self.services
+                .projection_store
+                .private_channel_participant_counts(
+                    state.channel_id.as_str(),
+                    &state.current_epoch_id,
+                )
+                .await?
         } else {
-            None
+            (0, 0)
         };
-        let mut stale_participant_count = 0usize;
-        if state.audience_kind == ChannelAudienceKind::FriendOnly && is_owner {
-            let mut after = String::new();
-            loop {
-                let page = store
-                    .list_private_channel_participants(
-                        channel_id,
-                        Some(epoch_id),
-                        &after,
-                        PRIVATE_CHANNEL_PARTICIPANT_PAGE,
-                    )
-                    .await?;
-                let Some(last) = page.last().cloned() else {
-                    break;
-                };
-                for participant in page {
-                    if participant == state.owner_pubkey {
-                        continue;
-                    }
-                    let relationship = store
-                        .get_author_relationship(
-                            self.current_author_pubkey().as_str(),
-                            participant.as_str(),
-                        )
-                        .await?;
-                    if relationship.as_ref().is_some_and(|value| !value.mutual) {
-                        stale_participant_count += 1;
-                    }
-                }
-                after = last;
-            }
-        }
+        let participant_count = is_owner.then_some(participant_count);
+        let stale_participant_count = if state.audience_kind == ChannelAudienceKind::FriendOnly {
+            stale
+        } else {
+            0
+        };
         Ok(PrivateChannelDiagnostics {
             sharing_state,
             participant_count,

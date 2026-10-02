@@ -379,6 +379,8 @@ fn epoch_row(epoch: &str) -> PrivateChannelEpochRow {
         receive_key_id: format!("receive-{epoch}"),
         updated_at: 1,
         sealed_secret: vec![1, 2, 3],
+        rotation_from: None,
+        rotation_after: None,
     }
 }
 

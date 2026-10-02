@@ -6,7 +6,7 @@ use crate::{
 
 impl MemoryStore {
     /// 読み書きした行を数えて、そのまま返す。
-    fn touched<T>(&self, rows: usize, value: T) -> T {
+    pub(super) fn touched<T>(&self, rows: usize, value: T) -> T {
         self.private_channel_key_rows_touched
             .fetch_add(rows, std::sync::atomic::Ordering::SeqCst);
         value
@@ -177,10 +177,52 @@ impl PrivateChannelKeyStore for MemoryStore {
         let epochs = keys
             .unwritten
             .iter()
+            .filter_map(|key| keys.epochs.get(key))
+            .filter(|epoch| epoch.rotation_from.is_none() || epoch.rotation_after.is_some())
             .take(limit)
-            .filter_map(|key| keys.epochs.get(key).cloned())
+            .cloned()
             .collect::<Vec<_>>();
         Ok(self.touched(epochs.len(), epochs))
+    }
+
+    async fn set_private_channel_rotation(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+        after: Option<&str>,
+    ) -> Result<()> {
+        let mut keys = self.private_channel_keys.write().await;
+        if let Some(epoch) = keys
+            .epochs
+            .get_mut(&(channel_id.to_string(), epoch_id.to_string()))
+        {
+            epoch.rotation_after = after.map(str::to_string);
+            if after.is_none() {
+                epoch.rotation_from = None;
+            }
+        }
+        self.touched(1, ());
+        Ok(())
+    }
+
+    async fn list_private_channel_rotations(
+        &self,
+        after: (&str, &str),
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        let after = (after.0.to_string(), after.1.to_string());
+        let rows = self
+            .private_channel_keys
+            .read()
+            .await
+            .epochs
+            .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
+            .map(|(_, epoch)| epoch)
+            .filter(|epoch| epoch.rotation_from.is_some())
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(self.touched(rows.len(), rows))
     }
 
     async fn delete_private_channel_epochs(

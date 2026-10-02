@@ -275,13 +275,21 @@ table private_channel_epochs
   column cid=3 name=receive_key_id type=TEXT notnull=1 default=None pk=0
   column cid=4 name=updated_at type=INTEGER notnull=1 default=None pk=0
   column cid=5 name=sealed_secret type=BLOB notnull=1 default=None pk=0
-  column cid=6 name=written type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=6 name=rotation_from type=TEXT notnull=0 default=None pk=0
+  column cid=7 name=rotation_after type=TEXT notnull=0 default=None pk=0
+  column cid=8 name=written type=INTEGER notnull=1 default=Some("0") pk=0
+table private_channel_participant_counts
+  column cid=0 name=channel_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=epoch_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=active type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=stale type=INTEGER notnull=1 default=None pk=0
 table private_channel_participants
   column cid=0 name=channel_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=epoch_id type=TEXT notnull=1 default=None pk=2
   column cid=2 name=participant_pubkey type=TEXT notnull=1 default=None pk=3
   column cid=3 name=left_at type=INTEGER notnull=0 default=None pk=0
   column cid=4 name=updated_at type=INTEGER notnull=1 default=None pk=0
+  column cid=5 name=stale type=INTEGER notnull=1 default=Some("0") pk=0
 table private_channels
   column cid=0 name=channel_key type=TEXT notnull=1 default=None pk=1
   column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=0
@@ -600,6 +608,10 @@ index idx_post_withdrawals_author table=post_withdrawals unique=0 origin=c parti
 index idx_private_channel_epochs_receive table=private_channel_epochs unique=0 origin=c partial=0
   key seqno=0 cid=3 name=Some("receive_key_id")
   sql=Some("CREATE INDEX idx_private_channel_epochs_receive ON private_channel_epochs (receive_key_id)")
+index idx_private_channel_epochs_rotation table=private_channel_epochs unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=1 name=Some("epoch_id")
+  sql=Some("CREATE INDEX idx_private_channel_epochs_rotation ON private_channel_epochs (channel_id, epoch_id) WHERE rotation_from IS NOT NULL")
 index idx_private_channel_epochs_started table=private_channel_epochs unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=2 name=Some("started_at")
@@ -613,6 +625,10 @@ index idx_private_channel_participants_active table=private_channel_participants
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=2 name=Some("participant_pubkey")
   sql=Some("CREATE INDEX idx_private_channel_participants_active ON private_channel_participants(channel_id, participant_pubkey) WHERE left_at IS NULL")
+index idx_private_channel_participants_member table=private_channel_participants unique=0 origin=c partial=0
+  key seqno=0 cid=2 name=Some("participant_pubkey")
+  key seqno=1 cid=0 name=Some("channel_id")
+  sql=Some("CREATE INDEX idx_private_channel_participants_member ON private_channel_participants (participant_pubkey, channel_id)")
 index idx_private_channel_participants_pubkey table=private_channel_participants unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=2 name=Some("participant_pubkey")
@@ -797,6 +813,10 @@ index sqlite_autoindex_private_channel_epochs_1 table=private_channel_epochs uni
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=1 name=Some("epoch_id")
   sql=None
+index sqlite_autoindex_private_channel_participant_counts_1 table=private_channel_participant_counts unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("channel_id")
+  key seqno=1 cid=1 name=Some("epoch_id")
+  sql=None
 index sqlite_autoindex_private_channel_participants_1 table=private_channel_participants unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("channel_id")
   key seqno=1 cid=1 name=Some("epoch_id")
@@ -850,6 +870,8 @@ trigger notifications_assign_dispatch_seq table=notifications sql="CREATE TRIGGE
 trigger notifications_unread_delete table=notifications sql="CREATE TRIGGER notifications_unread_delete AFTER DELETE ON notifications WHEN OLD.read_at IS NULL AND (OLD.dispatch_seq IS NULL AND (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL OR OLD.dispatch_seq > (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1)) BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
 trigger notifications_unread_insert table=notifications sql="CREATE TRIGGER notifications_unread_insert AFTER INSERT ON notifications WHEN NEW.read_at IS NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count + 1 WHERE singleton = 1; END"
 trigger notifications_unread_read table=notifications sql="CREATE TRIGGER notifications_unread_read AFTER UPDATE OF read_at ON notifications WHEN OLD.read_at IS NULL AND NEW.read_at IS NOT NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
+trigger private_channel_participant_counts_insert table=private_channel_participants sql="CREATE TRIGGER private_channel_participant_counts_insert AFTER INSERT ON private_channel_participants BEGIN INSERT OR IGNORE INTO private_channel_participant_counts (channel_id, epoch_id, active, stale) VALUES (NEW.channel_id, NEW.epoch_id, 0, 0); UPDATE private_channel_participant_counts SET active = active + (NEW.left_at IS NULL), stale = stale + (NEW.left_at IS NULL AND NEW.stale) WHERE channel_id = NEW.channel_id AND epoch_id = NEW.epoch_id; END"
+trigger private_channel_participant_counts_update table=private_channel_participants sql="CREATE TRIGGER private_channel_participant_counts_update AFTER UPDATE OF left_at, stale ON private_channel_participants BEGIN UPDATE private_channel_participant_counts SET active = active + (NEW.left_at IS NULL) - (OLD.left_at IS NULL), stale = stale + (NEW.left_at IS NULL AND NEW.stale) - (OLD.left_at IS NULL AND OLD.stale) WHERE channel_id = NEW.channel_id AND epoch_id = NEW.epoch_id; END"
 trigger protected_migration_rewind_bookmark table=bookmarked_posts sql="CREATE TRIGGER protected_migration_rewind_bookmark AFTER INSERT ON bookmarked_posts WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'bookmark') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'bookmark'; END"
 trigger protected_migration_rewind_dm_message table=dm_messages sql="CREATE TRIGGER protected_migration_rewind_dm_message AFTER INSERT ON dm_messages WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'dm_message') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'dm_message'; END"
 trigger protected_migration_rewind_own_envelope table=envelopes sql="CREATE TRIGGER protected_migration_rewind_own_envelope AFTER INSERT ON envelopes WHEN NEW.rowid <= (SELECT CAST(cursor AS INTEGER) FROM protected_migration WHERE kind = 'own_envelope') BEGIN UPDATE protected_migration SET cursor = CAST(NEW.rowid - 1 AS TEXT), caught_up_at = NULL WHERE kind = 'own_envelope'; END"

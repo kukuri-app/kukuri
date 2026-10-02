@@ -321,7 +321,12 @@ for (const { locale, theme, width, controlCenter, entry, dialogName, more, faile
     await settleForShot(page, theme);
     await button.scrollIntoViewIfNeeded();
     await page.mouse.move(0, 0);
+    // #1492: 狭幅でも名前を省略しない。幅狭の設定ボタンは icon のみで、focus で tooltip を出す。
+    const labels = dialog.locator('.private-channel-joined-open .shell-topic-link-label');
+    expect(await labels.evaluateAll((items) => items.filter((item) => item.scrollWidth > item.clientWidth).length)).toBe(0);
     await expect(dialog).toHaveScreenshot(`joined-channels-more-${locale}-${theme}.png`);
+    await dialog.locator('.private-channel-joined-settings').last().focus();
+    await expect(page.getByRole('tooltip')).toBeVisible({ visible: width < 760 });
   });
 }
 

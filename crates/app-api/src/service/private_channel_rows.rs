@@ -79,6 +79,8 @@ impl ServiceHandles {
             receive_key_id: receive_epoch_key_id(&secret, channel_id, epoch_id)?,
             updated_at,
             sealed_secret: self.key_row_seal().seal(channel_id, epoch_id, secret_hex)?,
+            rotation_from: None,
+            rotation_after: None,
         })
     }
 
@@ -87,6 +89,29 @@ impl ServiceHandles {
             self.key_row_seal()
                 .open(&row.channel_id, &row.epoch_id, &row.sealed_secret)?;
         Ok((row.epoch_id, secret))
+    }
+
+    /// 予約した鍵更新の世代の鍵の行から、操作を作る(#1219 AC-2)。
+    pub(crate) fn private_channel_rotation(
+        &self,
+        topic_id: &str,
+        row: PrivateChannelEpochRow,
+    ) -> Result<PrivateChannelRotation> {
+        let from_epoch_id = row
+            .rotation_from
+            .clone()
+            .context("private channel epoch is not a pending rotation")?;
+        let after = row.rotation_after.clone();
+        let channel_id = row.channel_id.clone();
+        let (epoch_id, secret_hex) = self.open_epoch_row(row)?;
+        Ok(PrivateChannelRotation {
+            topic_id: topic_id.to_string(),
+            channel_id,
+            from_epoch_id,
+            epoch_id,
+            secret_hex,
+            after,
+        })
     }
 
     /// (channel, epoch) の秘密の hex。行が無ければ `None`。
@@ -671,6 +696,18 @@ impl AppService {
 }
 
 /// 参加の行に置く audience の名前（serde の名前）。
+/// この端末が予約した鍵更新の操作(#1219 AC-2)。新しい世代の ID が操作 ID で、状態は世代の鍵の行に置く。
+#[derive(Clone)]
+pub(crate) struct PrivateChannelRotation {
+    pub(crate) topic_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) from_epoch_id: String,
+    pub(crate) epoch_id: String,
+    pub(crate) secret_hex: String,
+    /// 配布の cursor。確定と account 同期への記録が済むまで `None`。
+    pub(crate) after: Option<String>,
+}
+
 pub(crate) fn audience_name(kind: &ChannelAudienceKind) -> Result<String> {
     Ok(serde_json::to_value(kind)?
         .as_str()

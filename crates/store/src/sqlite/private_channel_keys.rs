@@ -17,7 +17,7 @@ macro_rules! channel_columns {
 }
 macro_rules! epoch_columns {
     () => {
-        "channel_id, epoch_id, started_at, receive_key_id, updated_at, sealed_secret"
+        "channel_id, epoch_id, started_at, receive_key_id, updated_at, sealed_secret, rotation_from,          rotation_after"
     };
 }
 
@@ -38,6 +38,14 @@ pub(crate) const LIST_JOINED_BY_OWNER: &str = concat!(
     channel_columns!(),
     " FROM private_channels WHERE joined = 1 AND owner_pubkey = ? AND channel_key > ?
      ORDER BY channel_key LIMIT ?"
+);
+
+/// 鍵更新が終わっていない世代(部分索引 `idx_private_channel_epochs_rotation` の範囲)。
+pub(crate) const LIST_ROTATIONS: &str = concat!(
+    "SELECT ",
+    epoch_columns!(),
+    " FROM private_channel_epochs WHERE rotation_from IS NOT NULL AND (channel_id, epoch_id) > (?, ?)
+     ORDER BY channel_id, epoch_id LIMIT ?"
 );
 
 fn channel_row(row: &SqliteRow) -> PrivateChannelRow {
@@ -66,6 +74,8 @@ fn epoch_row(row: &SqliteRow) -> PrivateChannelEpochRow {
         receive_key_id: row.get("receive_key_id"),
         updated_at: row.get("updated_at"),
         sealed_secret: row.get("sealed_secret"),
+        rotation_from: row.get("rotation_from"),
+        rotation_after: row.get("rotation_after"),
     }
 }
 
@@ -101,7 +111,7 @@ impl PrivateChannelKeyStore for SqliteStore {
             sqlx::query(concat!(
                 "INSERT OR IGNORE INTO private_channel_epochs (",
                 epoch_columns!(),
-                ") VALUES (?, ?, ?, ?, ?, ?)"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             ))
             .bind(&epoch.channel_id)
             .bind(&epoch.epoch_id)
@@ -109,6 +119,8 @@ impl PrivateChannelKeyStore for SqliteStore {
             .bind(&epoch.receive_key_id)
             .bind(epoch.updated_at)
             .bind(&epoch.sealed_secret)
+            .bind(&epoch.rotation_from)
+            .bind(&epoch.rotation_after)
             .execute(&mut *tx)
             .await?;
         }
@@ -120,7 +132,7 @@ impl PrivateChannelKeyStore for SqliteStore {
         let result = sqlx::query(concat!(
             "INSERT OR IGNORE INTO private_channel_epochs (",
             epoch_columns!(),
-            ") VALUES (?, ?, ?, ?, ?, ?)"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         ))
         .bind(&epoch.channel_id)
         .bind(&epoch.epoch_id)
@@ -128,6 +140,8 @@ impl PrivateChannelKeyStore for SqliteStore {
         .bind(&epoch.receive_key_id)
         .bind(epoch.updated_at)
         .bind(&epoch.sealed_secret)
+        .bind(&epoch.rotation_from)
+        .bind(&epoch.rotation_after)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() == 1)
@@ -266,6 +280,25 @@ impl PrivateChannelKeyStore for SqliteStore {
         Ok(())
     }
 
+    async fn set_private_channel_rotation(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+        after: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE private_channel_epochs SET rotation_after = ?3,
+               rotation_from = CASE WHEN ?3 IS NULL THEN NULL ELSE rotation_from END
+             WHERE channel_id = ?1 AND epoch_id = ?2",
+        )
+        .bind(channel_id)
+        .bind(epoch_id)
+        .bind(after)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     async fn list_unwritten_private_channel_epochs(
         &self,
         limit: usize,
@@ -273,7 +306,9 @@ impl PrivateChannelKeyStore for SqliteStore {
         Ok(sqlx::query(concat!(
             "SELECT ",
             epoch_columns!(),
-            " FROM private_channel_epochs WHERE written = 0 ORDER BY channel_id, epoch_id LIMIT ?"
+            " FROM private_channel_epochs WHERE written = 0",
+            " AND (rotation_from IS NULL OR rotation_after IS NOT NULL)",
+            " ORDER BY channel_id, epoch_id LIMIT ?"
         ))
         .bind(i64::try_from(limit)?)
         .fetch_all(&self.pool)
@@ -281,6 +316,20 @@ impl PrivateChannelKeyStore for SqliteStore {
         .iter()
         .map(epoch_row)
         .collect())
+    }
+
+    async fn list_private_channel_rotations(
+        &self,
+        after: (&str, &str),
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>> {
+        let rows = sqlx::query(LIST_ROTATIONS)
+            .bind(after.0)
+            .bind(after.1)
+            .bind(i64::try_from(limit)?)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(epoch_row).collect())
     }
 
     async fn delete_private_channel_epochs(

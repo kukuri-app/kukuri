@@ -11,4 +11,5 @@ mod key_rows;
 mod leave;
 mod legacy_participants;
 mod rendezvous;
+mod rotation;
 mod scope_change_wait;

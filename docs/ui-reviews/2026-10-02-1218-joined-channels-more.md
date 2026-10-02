@@ -16,6 +16,6 @@
 - Accessibility / interaction: ボタンは通常の `button` で、読み込み中は `aria-busy` と `disabled`。続きが残る間は押した後も focus が同じボタンに残り、足した行はボタンの前に入る。エラーは既存の `error-inline` の行。
 - Performance: 1 回の操作で読むのは 128 件の 1 page。定期の再読み込みは今までどおり最初の page だけで、読み込んだ続きを読み直さない。保持する行は利用者が読み込んだ分だけ増える。
 - Validation: Vitest（`PrivateChannelPanel.test.tsx` の読み込み中・失敗、`DesktopShellPage.channels.test.tsx` の 130 件の続きと定期の再読み込み）、CLI（`crates/kukuri-cli/tests/private_channels.rs` の 130 件の page の読み進め）、Storybook の `WithMoreJoinedChannels`、eslint、tsc、Playwright の visual（`joined channel list more` 2 件）。
-- Not verified: Tauri の実機。最後の page を読んでボタンが消えたときの focus の移し先は定めていない（合意した操作の範囲外）。狭幅（390px）で channel 名が「設定と共有」ボタンに押されて短く切れるのは本変更の前からの表示で、本 AC の対象外。
+- Not verified: Tauri の実機。最後の page を読んでボタンが消えたときの focus の移し先は定めていない（合意した操作の範囲外）。狭幅（390px）で channel 名が「設定と共有」ボタンに押されて短く切れていた表示は、#1492 で幅狭（759px 以下）の設定ボタンを icon のみ（44×44、hover / focus で同じ読み上げ名の tooltip）にして解消し、en・390px の baseline を差し替えた（2026-10-02 ユーザー判断）。
 - Review result: 対象の 2 条件の採用判定は PASS。
 - Exceptions: None

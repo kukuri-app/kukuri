@@ -39,6 +39,12 @@ pub struct PrivateChannelEpochRow {
     /// 鍵を受け取った時刻。
     pub updated_at: i64,
     pub sealed_secret: Vec<u8>,
+    /// この端末の鍵更新で予約した世代なら、元の世代（#1219 AC-2。世代の ID が操作 ID）。配布を終えたら `None`。
+    #[serde(default)]
+    pub rotation_from: Option<String>,
+    /// 配布の cursor（参加者の公開鍵）。確定と account 同期への記録が済むまで `None`。
+    #[serde(default)]
+    pub rotation_after: Option<String>,
 }
 
 /// 参加中の行の一覧の絞り込み。どれも索引の範囲で読む(全件を走査しない)。
@@ -102,9 +108,24 @@ pub trait PrivateChannelKeyStore: Send + Sync {
         channel_id: &str,
         epoch_id: &str,
     ) -> Result<()>;
-    /// replica へ未書込みの世代の鍵の行を `limit` 件（未書込みの索引で読む）。
+    /// replica へ未書込みの世代の鍵の行を `limit` 件（未書込みの索引で読む）。この端末の鍵更新で予約し、まだ
+    /// 確定していない世代（`rotation_from` があり `rotation_after` が無い）は含めない（確定した世代だけを書く。
+    /// ADR 0061 §9）。
     async fn list_unwritten_private_channel_epochs(
         &self,
+        limit: usize,
+    ) -> Result<Vec<PrivateChannelEpochRow>>;
+    /// 予約した世代の配布の cursor を置く。`None` は鍵更新の終わり（`rotation_from` も消す）。
+    async fn set_private_channel_rotation(
+        &self,
+        channel_id: &str,
+        epoch_id: &str,
+        after: Option<&str>,
+    ) -> Result<()>;
+    /// 鍵更新が終わっていない世代の鍵の行を、(channel id, epoch id) が `after` より後から順に `limit` 件。
+    async fn list_private_channel_rotations(
+        &self,
+        after: (&str, &str),
         limit: usize,
     ) -> Result<Vec<PrivateChannelEpochRow>>;
     /// その channel の世代の鍵の行を `limit` 件まで消し、消した世代の ID を返す。
