@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 /// 採用した 1 item。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AccountSyncRow {
     /// docs の key（`AccountSyncItemKey::docs_key`）。
     pub key: String,

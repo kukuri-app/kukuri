@@ -100,6 +100,56 @@ pub(crate) async fn delete_optional_secret(
     delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await
 }
 
+/// account ごとの iroh endpoint 秘密鍵の置き場（Web の vault の secret。ADR 0059 §1）。EndpointId は private channel の
+/// 鍵更新の担当端末の ID なので（ADR 0018 §8）、reload の後も同じ鍵で Endpoint を作る。native の endpoint 秘密鍵は
+/// iroh-node が account の data dir に持つ。
+const ENDPOINT_SECRET_PURPOSE: &str = "iroh-endpoint";
+const ENDPOINT_SECRET_KEY: &str = "secret";
+
+/// 保存した endpoint 秘密鍵（Web の runtime は `platform_storage` を渡す）。無ければ `None`（呼出元は作った Endpoint の
+/// 鍵を `save_endpoint_secret` で置く）。
+/// 読めない値（破損・拒否）は失敗として返し、新しい鍵で隠さない。
+pub async fn load_endpoint_secret(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+) -> Result<Option<[u8; 32]>> {
+    let mode = IdentityStorageMode::from_env();
+    let Some(encoded) = load_optional_secret_with_storage(
+        db_path,
+        mode,
+        ENDPOINT_SECRET_PURPOSE,
+        ENDPOINT_SECRET_KEY,
+        storage,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)
+        .context("failed to decode the endpoint secret")?;
+    bytes
+        .try_into()
+        .map(Some)
+        .map_err(|_| anyhow!("the endpoint secret must be 32 bytes"))
+}
+
+pub async fn save_endpoint_secret(
+    storage: &dyn ClientStorage,
+    db_path: &Path,
+    secret: &[u8; 32],
+) -> Result<()> {
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, secret);
+    persist_optional_secret_with_storage(
+        db_path,
+        IdentityStorageMode::from_env(),
+        ENDPOINT_SECRET_PURPOSE,
+        ENDPOINT_SECRET_KEY,
+        &encoded,
+        storage,
+    )
+    .await
+}
+
 pub(crate) async fn load_or_create_keys_with_storage(
     db_path: &Path,
     mode: IdentityStorageMode,

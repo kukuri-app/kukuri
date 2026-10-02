@@ -3,6 +3,7 @@ use crate::receive_binding::{RECEIVE_BINDING_ALPN, ReceiveBindingProtocol};
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use kukuri_core::{KukuriKeys, ReceiveEndpointBindingV1};
+use kukuri_store::PeerCandidateStore as _;
 
 #[derive(Debug)]
 struct StalledDestinationBinding {

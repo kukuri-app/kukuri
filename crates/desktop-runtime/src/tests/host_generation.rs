@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::accounts::{add_account, ensure_accounts_initialized};
+use kukuri_store::PeerCandidateStore as _;
 
 const MODE: IdentityStorageMode = IdentityStorageMode::FileOnly;
 

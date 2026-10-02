@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::{ContentCacheStore, ProjectionStore, Store};
 
 /// Community Node へ private channel の索引を許した記録（node・channel ごと）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrivateIndexGrant {
     pub base_url: String,
     pub topic_id: String,

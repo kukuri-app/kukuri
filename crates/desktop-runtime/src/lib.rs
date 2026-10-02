@@ -101,6 +101,7 @@ pub use host::{
     resolve_cli_profile,
 };
 pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
+pub use identity::{load_endpoint_secret, save_endpoint_secret};
 pub use kukuri_app_api::SessionDisplayRequest;
 pub use kukuri_app_api::{
     ConnectivityPeersRequest, MAX_ACTIVE_SCOPES, PrivateChannelControllerPending,

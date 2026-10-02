@@ -3,10 +3,18 @@
 // tokio・std の時刻と task を直接使わない（ADR 0056 §3）。
 #![cfg_attr(not(test), warn(clippy::disallowed_methods))]
 
+mod account;
+mod actor;
 mod content_cache;
 mod idb;
+mod rows;
+mod vault;
 
+#[cfg(test)]
+mod account_tests;
 #[cfg(test)]
 mod browser_tests;
 
 pub use content_cache::IndexedDbCache;
+pub use idb::StorageFailure;
+pub use vault::BrowserStorage;

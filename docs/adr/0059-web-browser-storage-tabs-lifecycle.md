@@ -43,7 +43,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 | database | 中身 | durability | 回収 |
 | --- | --- | --- | --- |
 | `kukuri-device-v1`（origin に 1 つ） | account の一覧、アプリの同意、秘密を包む AES-GCM の `CryptoKey`（non-extractable） | strict | しない |
-| `kukuri-vault-v1-<account の公開鍵>` | `secrets[service, account]`（アカウント鍵・この account の iroh endpoint 秘密鍵・token 等を AES-GCM で包んだもの。private channel の鍵は持たない。§3）、`settings[name]`（設定と最小状態。gossip の購読状態、private index の grant と停止、W6 の鍵更新の担当・journal・配布の cursor を含む） | strict | しない（明示の削除だけ） |
+| `kukuri-vault-v1-<account の ID>`（公開鍵の hex の先頭 16 文字。desktop-runtime の account の dir の名前） | `secrets[service, account]`（アカウント鍵・この account の iroh endpoint 秘密鍵・token 等を AES-GCM で包んだもの。private channel の鍵は持たない。§3）、`settings[name]`（設定と最小状態。gossip の購読状態、private index の grant と停止、W6 の鍵更新の担当・journal・配布の cursor を含む） | strict | しない（明示の削除だけ） |
 | `kukuri-cache-v1-<account の公開鍵>`（ADR 0058） | blob・docs の record の保護と cache、projection（§2） | relaxed | ADR 0058 §4 の規則 |
 
 - 保存の成功は transaction の `complete` を基準にする（`beforeunload` に頼らない）。quota・拒否・破損・schema の更新・部分的な保存を区別して返し、既存の identity を失敗の隠蔽のために作り直さない。
@@ -51,6 +51,11 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - 起動時に vault を全件読まない。起動に要るもの（アカウント鍵、設定）を key で読む。
 - iroh の endpoint 秘密鍵は、native と同じく account ごとに持つ（同じブラウザの別の account と EndpointId を共有しない）。account の切替は runtime を作り直すので、その account の鍵で Endpoint を作る。
 - v1 には移行の対象が無い。schema の版を上げるときは、key と cursor で有界な単位に分けて進める（起動の条件にしない）。
+- 実装（W4 AC-2）: `crates/web-runtime` の `BrowserStorage`（`ClientStorage` の実装）。
+  - 振り分け: path・keyring の account が `accounts/<account の ID>/` を含む値はその account の vault、それ以外（account の一覧、作成中の account の一時の値）は device の database。
+  - keyring の値は `secrets`、file の値は `settings` に置く。どの値も device の `CryptoKey` で包み、`service` と `account` を AAD にする（別の key へ移した値は開けない）。
+  - 失敗の区別は `StorageFailure`（`Quota`・`Denied`・`Corrupt`・`Upgrade`・`Interrupted`）。包みを開けない値は `Corrupt` で、無い値と扱わない（identity・endpoint 秘密鍵を作り直さない）。
+  - endpoint 秘密鍵は desktop-runtime の `load_endpoint_secret`・`save_endpoint_secret`（vault の secret）。無ければ Endpoint を作った後にその鍵を置く。Web の Endpoint の組み立て（`NodeOptions.secret_key` へ渡す）は W1 AC-5。
 
 ### 2. projection
 
@@ -61,6 +66,12 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   projection の更新と保護参照の置き換え（ADR 0058 §2）は同じ transaction で行う。
 - Web の capability の外の機能（W1 AC-5・W8 の capability matrix で非対応とするもの）の trait の method は、共通の「この platform では使えない」error を返す。
 - 採らない方式: `MemoryStore` で動かして reload で作り直す（端末だけのデータを失い、全行の収集と整列が件数に比例する）。一部の trait だけを IndexedDB にする（実装が 2 つになり、メモリ側も上限と索引を作り直すことになる）。
+- 実装（W4 AC-2）: `crates/web-runtime` の `IndexedDbCache` が `AccountStore` と `PeerCandidateStore` を実装する（`src/account/`）。
+  - 行は `{ r: <行>, <索引の値> }` の形で置き、SQLite の索引と同じ列の並びの索引を作る（`content_cache/schema.rs`）。部分索引は、条件を満たす行だけに索引の値を置いて作る。
+  - remote の投稿の行は内容の台帳（`projection` の内容）で容量を数え、回収で行と成人向けの印の参照を消す（native の `charge_remote_projection`・`delete_cache_item`）。bookmark・DM の保護参照の置き換えは行の変更と同じ transaction。
+  - private channel の行と account 同期の採用済みの版は strict の transaction で書く。
+  - native の `profile_cache` はどの読み出しも引かない（書くだけの表）ので、Web は行を作らない。
+  - 検証: store の parity の scenario（`kukuri_store::parity::check_backend`）を IndexedDB と MemoryStore で突き合わせる。
 
 ### 3. capability と件数
 

@@ -17,7 +17,9 @@ use crate::models::{
     PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 
-pub(crate) const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// 内容の観測を残す期間と、残す行の数（新しい順）。
+pub const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+pub const MAX_CONTENT_OBSERVATIONS: usize = 2048;
 
 #[async_trait]
 pub trait Store: Send + Sync {

@@ -1,7 +1,5 @@
 use super::*;
-use crate::traits::CONTENT_OBSERVATION_RETENTION_MS;
-
-const MAX_CONTENT_OBSERVATIONS: usize = 2048;
+use crate::traits::{CONTENT_OBSERVATION_RETENTION_MS, MAX_CONTENT_OBSERVATIONS};
 
 #[async_trait]
 impl ContentObservationStore for MemoryStore {

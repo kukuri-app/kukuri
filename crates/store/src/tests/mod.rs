@@ -12,7 +12,6 @@ use tempfile::tempdir;
 
 mod account_sync_rows;
 mod author_docs_authors;
-mod backend_parity;
 mod content_observations;
 mod direct_messages;
 mod legacy_store_retirement;
@@ -34,3 +33,11 @@ mod row_mapping_roundtrip_live_game;
 mod row_mapping_roundtrip_social;
 mod sqlite_projection;
 mod sqlite_store;
+
+#[tokio::test]
+async fn sqlite_matches_memory_in_every_parity_scenario() {
+    crate::parity::check_backend(async || {
+        SqliteStore::connect_memory().await.expect("sqlite store")
+    })
+    .await;
+}

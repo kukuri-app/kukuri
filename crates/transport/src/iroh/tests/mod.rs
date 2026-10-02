@@ -1,4 +1,5 @@
 use super::*;
+use kukuri_store::PeerCandidateStore as _;
 
 use n0_mainline::{DhtBuilder, Testnet};
 

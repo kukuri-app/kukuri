@@ -8,7 +8,10 @@ license.workspace = true
 [target.'cfg(target_family = "wasm")'.dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+blake3.workspace = true
 js-sys = "0.3.106"
+kukuri-core = { path = "../core" }
+kukuri-desktop-runtime = { path = "../desktop-runtime" }
 kukuri-store = { path = "../store" }
 n0-future.workspace = true
 serde.workspace = true
@@ -17,6 +20,8 @@ tokio.workspace = true
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = [
+  "Crypto",
+  "CryptoKey",
   "DomException",
   "IdbCursor",
   "IdbCursorDirection",
@@ -24,6 +29,7 @@ web-sys = { version = "0.3.106", features = [
   "IdbDatabase",
   "IdbFactory",
   "IdbIndex",
+  "IdbIndexParameters",
   "IdbKeyRange",
   "IdbObjectStore",
   "IdbObjectStoreParameters",
@@ -34,6 +40,7 @@ web-sys = { version = "0.3.106", features = [
   "Navigator",
   "StorageEstimate",
   "StorageManager",
+  "SubtleCrypto",
   "Window",
 ] }
 web-time.workspace = true
@@ -42,12 +49,14 @@ web-time.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+kukuri-app-api = { path = "../app-api" }
 hex.workspace = true
 iroh.workspace = true
 kukuri-blob-service = { path = "../blob-service" }
 kukuri-core = { path = "../core" }
 kukuri-docs-sync = { path = "../docs-sync" }
 kukuri-iroh-node = { path = "../iroh-node" }
+kukuri-store = { path = "../store", features = ["test-support"] }
 kukuri-transport = { path = "../transport" }
 kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }
 n0-future.workspace = true

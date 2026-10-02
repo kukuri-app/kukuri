@@ -49,7 +49,7 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 - Web の projection（ADR 0056 §5、W4 AC-1 が方式を決める）は、DM・bookmark の更新のときに「保護の置き換え」を呼ぶ。projection を IndexedDB に置く場合は、本 ADR の cache と同じ database に置き、
   projection の更新と `refs` の更新を同じ transaction で行う（native と同じ原子性）。remote の投稿 projection の容量の計数も、そのとき同じ database の `meta` に含める。
 - file path を受け取る操作（`put_remote_blob_file`・`copy_remote_content_to_file`）は native の build でだけ trait に置く（`cfg(not(target_family = "wasm"))`）。native の呼出元（iroh-node・blob-service）は trait object から呼び、Web の build には現れない。Web は file を使わない（ADR 0056 §5）。
-- peer candidate の操作（`put_peer_candidate` など）は trait に入れない。Web は端末に保存しない（ADR 0056 §5）。
+- peer candidate の操作（`put_peer_candidate` など）はこの trait に入れず、別の trait `PeerCandidateStore`（`crates/store`）にする。native は `SqliteStore`、Web は同じ cache の database の `peer_candidates` が実装する（W4 AC-2。ADR 0056 §5）。
 
 ### 3. IndexedDB の形（Web の実装）
 

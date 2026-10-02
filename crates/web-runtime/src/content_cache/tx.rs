@@ -9,7 +9,7 @@ pub(super) fn record_key(replica: &str, key: &str, author: &str) -> String {
 
 /// `prefix` で始まる key の上界（これ未満が範囲）。無ければ同じ replica のすべての key より大きい値（配列は文字列より
 /// 大きい）。
-pub(super) fn prefix_upper_bound(prefix: &str) -> JsValue {
+pub(crate) fn prefix_upper_bound(prefix: &str) -> JsValue {
     let mut chars = prefix.chars();
     match chars
         .next_back()
@@ -22,7 +22,7 @@ pub(super) fn prefix_upper_bound(prefix: &str) -> JsValue {
 
 /// docs record の行だけが持つ、索引と一覧の値（一覧は値を読まずに hash と長さを返す）。
 #[derive(Clone, serde::Deserialize)]
-pub(super) struct RecordMeta {
+pub(crate) struct RecordMeta {
     #[serde(skip)]
     pub(super) replica: String,
     #[serde(rename = "key")]
@@ -34,15 +34,15 @@ pub(super) struct RecordMeta {
 }
 
 /// `contents` の 1 行。
-pub(super) struct Row {
-    pub(super) kind: String,
-    pub(super) key: String,
-    pub(super) len: u64,
-    pub(super) scope: String,
-    pub(super) used: i64,
-    pub(super) charge: i64,
-    pub(super) protected: bool,
-    pub(super) record: Option<RecordMeta>,
+pub(crate) struct Row {
+    pub(crate) kind: String,
+    pub(crate) key: String,
+    pub(crate) len: u64,
+    pub(crate) scope: String,
+    pub(crate) used: i64,
+    pub(crate) charge: i64,
+    pub(crate) protected: bool,
+    pub(crate) record: Option<RecordMeta>,
 }
 
 impl Row {
@@ -126,13 +126,24 @@ impl Row {
     }
 }
 
-/// 4 つの object store にまたがる readwrite transaction。
-pub(super) struct Tx {
-    pub(super) transaction: IdbTransaction,
+/// 内容の object store（`STORES`）にまたがる readwrite transaction。projection の行も同じ transaction で書ける。
+pub(crate) struct Tx {
+    pub(crate) transaction: IdbTransaction,
     pub(super) contents: IdbObjectStore,
     pub(super) chunks: IdbObjectStore,
     pub(super) refs: IdbObjectStore,
     pub(super) meta: IdbObjectStore,
+    /// 消した成人向けの印（確定の後に知らせる）。
+    labels: std::cell::RefCell<Vec<String>>,
+    evictions: broadcast::Sender<String>,
+}
+
+impl std::ops::Deref for Tx {
+    type Target = IdbTransaction;
+
+    fn deref(&self) -> &IdbTransaction {
+        &self.transaction
+    }
 }
 
 /// 確定を待たずに捨てた transaction（途中の失敗で返ったとき）は中断し、途中までの書込みを残さない。
@@ -144,25 +155,38 @@ impl Drop for Tx {
 }
 
 impl Tx {
-    pub(super) fn begin(db: &IdbDatabase) -> Result<Self> {
-        let transaction = db
-            .transaction_with_str_sequence_and_mode(
-                &strings(&STORES),
-                IdbTransactionMode::Readwrite,
-            )
-            .map_err(js_error)?;
+    pub(crate) fn begin(db: &Db) -> Result<Self> {
+        Self::begin_with(db, &[])
+    }
+
+    /// 内容の store に `extra` の store を加えた transaction（projection の更新と保護参照の置き換えを 1 つにする）。
+    pub(crate) fn begin_with(db: &Db, extra: &[&str]) -> Result<Self> {
+        let stores = STORES.iter().chain(extra).copied().collect::<Vec<_>>();
+        let transaction = idb::transaction(&db.idb, &stores, idb::Mode::Write)?;
         let store = |name: &str| transaction.object_store(name).map_err(js_error);
         Ok(Self {
             contents: store("contents")?,
             chunks: store("chunks")?,
             refs: store("refs")?,
-            meta: store("meta")?,
+            meta: store(META)?,
             transaction,
+            labels: Default::default(),
+            evictions: db.evictions.clone(),
         })
     }
 
-    pub(super) async fn commit(self) -> Result<()> {
-        idb::committed(&self.transaction).await
+    pub(crate) async fn commit(self) -> Result<()> {
+        idb::committed(&self.transaction).await?;
+        let labels = std::mem::take(&mut *self.labels.borrow_mut());
+        for hash in labels.into_iter().collect::<std::collections::HashSet<_>>() {
+            let _ = self.evictions.send(hash);
+        }
+        Ok(())
+    }
+
+    /// 成人向けの印を消したことを、確定の後に知らせる。
+    pub(crate) fn evicted_label(&self, hash: String) {
+        self.labels.borrow_mut().push(hash);
     }
 
     pub(super) async fn used(&self) -> Result<i64> {
@@ -177,7 +201,7 @@ impl Tx {
         Ok(())
     }
 
-    pub(super) async fn row(&self, kind: &str, key: &str) -> Result<Option<Row>> {
+    pub(crate) async fn row(&self, kind: &str, key: &str) -> Result<Option<Row>> {
         let request = self
             .contents
             .get(&strings(&[kind, key]))
@@ -261,15 +285,83 @@ impl Tx {
 
     /// 内容（行と chunk）を消す。保護参照は残す。
     pub(super) async fn forget(&self, row: &Row) -> Result<()> {
-        self.delete(&row.kind, &row.key)?;
+        self.drop_item(&row.kind, &row.key).await?;
         if !row.protected {
             self.set_used(self.used().await? - row.charge)?;
         }
         Ok(())
     }
 
-    pub(super) fn put_row(&self, row: &Row) -> Result<()> {
+    pub(crate) fn put_row(&self, row: &Row) -> Result<()> {
         self.contents.put(&row.to_js()?).map_err(js_error)?;
+        Ok(())
+    }
+
+    /// 保護参照を足す。内容がまだ無くても参照を先に置き、後から置く内容を容量の計数と回収の外にする。
+    pub(crate) async fn protect(&self, reference: &str, kind: &str, key: &str) -> Result<()> {
+        let entry = Object::new();
+        for (name, value) in [("reference", reference), ("kind", kind), ("key", key)] {
+            Reflect::set(&entry, &name.into(), &value.into()).map_err(js_error)?;
+        }
+        self.refs.put(&entry).map_err(js_error)?;
+        if let Some(mut row) = self.row(kind, key).await?
+            && !row.protected
+        {
+            self.set_used(self.used().await? - row.charge)?;
+            row.protected = true;
+            self.put_row(&row)?;
+        }
+        Ok(())
+    }
+
+    /// `reference` の保護参照を `desired` に置き換える。外れた内容は容量の内なら非保護へ戻し、超えるなら消す（native の
+    /// `replace_remote_protected_refs`。呼出元の行の変更と同じ transaction で行う）。
+    pub(crate) async fn replace_refs(
+        &self,
+        reference: &str,
+        desired: &[(String, String)],
+        budget: i64,
+    ) -> Result<()> {
+        let range = crate::rows::prefix(&[reference.into()])?;
+        let request = self.refs.get_all_with_key(&range).map_err(js_error)?;
+        let old = Array::from(&idb::done(&request).await?)
+            .iter()
+            .map(|entry| {
+                let text = |name: &str| {
+                    Reflect::get(&entry, &name.into())
+                        .ok()
+                        .and_then(|value| value.as_string())
+                        .unwrap_or_default()
+                };
+                (text("kind"), text("key"))
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let desired = desired
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for (kind, key) in old.difference(&desired) {
+            self.refs
+                .delete(&strings(&[reference, kind, key]))
+                .map_err(js_error)?;
+            if self.protected(kind, key).await? {
+                continue;
+            }
+            let Some(mut row) = self.row(kind, key).await?.filter(|row| row.protected) else {
+                continue;
+            };
+            let used = self.used().await?;
+            if used.saturating_add(row.charge) <= budget {
+                row.protected = false;
+                self.put_row(&row)?;
+                self.set_used(used + row.charge)?;
+            } else {
+                self.drop_item(kind, key).await?;
+            }
+        }
+        for (kind, key) in desired.difference(&old) {
+            self.protect(reference, kind, key).await?;
+        }
         Ok(())
     }
 
@@ -281,6 +373,19 @@ impl Tx {
             .count_with_key(&strings(&[kind, key]))
             .map_err(js_error)?;
         Ok(idb::done(&request).await?.as_f64().unwrap_or(0.0) > 0.0)
+    }
+
+    /// 内容を消す。remote の投稿の projection はその行と成人向けの印の参照を、成人向けの印はその知らせを伴う
+    /// （native の `delete_cache_item`）。
+    pub(crate) async fn drop_item(&self, kind: &str, key: &str) -> Result<()> {
+        match kind {
+            "projection" => crate::account::forget_remote_projection(self, key).await?,
+            "adult_marker" if self.row(kind, key).await?.is_some() => {
+                self.evicted_label(key.to_owned())
+            }
+            _ => {}
+        }
+        self.delete(kind, key)
     }
 
     pub(super) fn delete(&self, kind: &str, key: &str) -> Result<()> {
@@ -346,7 +451,7 @@ impl Tx {
                 if !evict(&row, *used) {
                     break;
                 }
-                self.delete(&row.kind, &row.key)?;
+                self.drop_item(&row.kind, &row.key).await?;
                 *used -= row.charge;
                 count += 1;
             }
@@ -356,17 +461,40 @@ impl Tx {
     }
 }
 
-/// 1 つの内容を置く（native の `put_remote_content_in_tx`）。偽は、1 処理の回収では容量に収まらなかったこと。
+/// 1 つの内容を置く。偽は、1 処理の回収では容量に収まらなかったこと。
 pub(super) async fn put_content(
-    db: &IdbDatabase,
-    (kind, key, scope): (&str, &str, &str),
+    db: &Db,
+    item: (&str, &str, &str),
     payload: &[u8],
     record: Option<RecordMeta>,
     budget: i64,
     now: i64,
 ) -> Result<bool> {
-    let charge = i64::try_from(payload.len() + kind.len() + key.len() + scope.len())? + 64;
     let tx = Tx::begin(db)?;
+    let stored = place(&tx, item, payload, record, budget, now, None).await?;
+    #[cfg(test)]
+    if stored && test_hooks::take_write_failure() {
+        tx.transaction.abort().map_err(js_error)?;
+    }
+    tx.commit().await?;
+    Ok(stored)
+}
+
+/// 呼出元の transaction の中で内容を置く（native の `put_remote_content_in_tx`）。`charge` を渡さなければ内容の大きさから
+/// 数える。偽は、1 処理の回収では容量に収まらなかったこと（計数は戻してある）。
+pub(crate) async fn place(
+    tx: &Tx,
+    (kind, key, scope): (&str, &str, &str),
+    payload: &[u8],
+    record: Option<RecordMeta>,
+    budget: i64,
+    now: i64,
+    charge: Option<i64>,
+) -> Result<bool> {
+    let charge = match charge {
+        Some(charge) => charge,
+        None => i64::try_from(payload.len() + kind.len() + key.len() + scope.len())? + 64,
+    };
     let protected = tx.protected(kind, key).await?;
     if !protected && charge > budget {
         return Ok(false);
@@ -385,7 +513,6 @@ pub(super) async fn put_content(
     .await?;
     if used > budget {
         tx.set_used(used - new_charge + old_unprotected)?;
-        tx.commit().await?;
         return Ok(false);
     }
     tx.delete(kind, key)?;
@@ -401,16 +528,11 @@ pub(super) async fn put_content(
         record,
     })?;
     tx.set_used(used)?;
-    #[cfg(test)]
-    if test_hooks::take_write_failure() {
-        tx.transaction.abort().map_err(js_error)?;
-    }
-    tx.commit().await?;
     Ok(true)
 }
 
 /// 書けなかった内容の `bytes` の分を、非保護の行を古い順に消して空ける（1 処理 `REMOTE_CACHE_RECLAIM_STEP` 件まで）。
-pub(super) async fn make_room(db: &IdbDatabase, bytes: i64) -> Result<()> {
+pub(super) async fn make_room(db: &Db, bytes: i64) -> Result<()> {
     let tx = Tx::begin(db)?;
     let before = tx.used().await?;
     let mut used = before;
@@ -421,11 +543,7 @@ pub(super) async fn make_room(db: &IdbDatabase, bytes: i64) -> Result<()> {
 }
 
 /// `index` の行を 1 処理消す（非利用の回収と、成人向けの回収）。
-pub(super) async fn delete_step(
-    db: &IdbDatabase,
-    index: &str,
-    expired_before: i64,
-) -> Result<usize> {
+pub(super) async fn delete_step(db: &Db, index: &str, expired_before: i64) -> Result<usize> {
     let tx = Tx::begin(db)?;
     let mut used = tx.used().await?;
     let count = tx

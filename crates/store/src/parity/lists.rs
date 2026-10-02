@@ -88,20 +88,21 @@ async fn notification_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn notifications_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn notifications_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = notification_scenario(&sqlite).await;
+    let from_backend = notification_scenario(&backend).await;
     let from_memory = notification_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(received_at DESC, notification_id DESC。100 の tie は id 降順)
-    assert_eq!(from_sqlite.inserted, vec![true, true, true, false]);
-    assert_eq!(from_sqlite.unread_initial, 2);
+    assert_eq!(from_backend.inserted, vec![true, true, true, false]);
+    assert_eq!(from_backend.unread_initial, 2);
     // 未読(read_at NULL)の行が None として読めること(WP-B16)。
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_initial
             .iter()
             .map(|row| row.read_at)
@@ -109,7 +110,7 @@ async fn notifications_match_between_backends() {
         vec![None, None, Some(95)],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_final
             .iter()
             .map(|row| row.notification_id.clone())
@@ -120,10 +121,10 @@ async fn notifications_match_between_backends() {
             "notif-3".to_string(),
         ],
     );
-    assert_eq!(from_sqlite.unread_after_single, 1);
-    assert_eq!(from_sqlite.unread_after_all, 0);
+    assert_eq!(from_backend.unread_after_single, 1);
+    assert_eq!(from_backend.unread_after_all, 0);
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_final
             .iter()
             .map(|row| row.read_at)
@@ -131,7 +132,7 @@ async fn notifications_match_between_backends() {
         vec![Some(140), Some(110), Some(95)],
     );
     // 重複 put は初回の内容が残る(notif-1 の preview_text は None のまま)
-    assert_eq!(from_sqlite.list_final[1].preview_text, None);
+    assert_eq!(from_backend.list_final[1].preview_text, None);
 }
 
 #[derive(Debug, PartialEq)]
@@ -205,17 +206,18 @@ async fn bookmark_scenario<S: Store + ProjectionStore>(store: &S) -> BookmarkSce
     }
 }
 
-#[tokio::test]
-async fn bookmarks_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn bookmarks_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = bookmark_scenario(&sqlite).await;
+    let from_backend = bookmark_scenario(&backend).await;
     let from_memory = bookmark_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(bookmarked_at DESC, source_object_id DESC)
     assert_eq!(
-        from_sqlite
+        from_backend
             .posts_initial
             .iter()
             .map(|row| row.source_object_id.as_str().to_string())
@@ -227,13 +229,13 @@ async fn bookmarks_match_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite.posts_initial[1].content.as_deref(),
+        from_backend.posts_initial[1].content.as_deref(),
         Some("content:bp-max:updated"),
     );
-    assert_eq!(from_sqlite.posts_after_remove.len(), 2);
+    assert_eq!(from_backend.posts_after_remove.len(), 2);
     // search_key '' / 空白のみ → asset_id フォールバック(sqlite 読み出しと同義)
     assert_eq!(
-        from_sqlite
+        from_backend
             .reactions_initial
             .iter()
             .map(|row| (row.asset_id.clone(), row.search_key.clone()))
@@ -245,7 +247,7 @@ async fn bookmarks_match_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .reactions_after_remove
             .iter()
             .map(|row| row.asset_id.clone())
@@ -301,11 +303,14 @@ async fn bookmark_cursor_scenario<S: Store + ProjectionStore>(
     )
 }
 
-#[tokio::test]
-async fn bookmarked_posts_seek_both_directions_without_loading_the_history() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn bookmarked_posts_seek_both_directions_without_loading_the_history<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let expected = bookmark_cursor_scenario(&sqlite).await;
+    let expected = bookmark_cursor_scenario(&backend).await;
     assert_eq!(bookmark_cursor_scenario(&memory).await, expected);
     assert_eq!(expected.0.len(), 21);
     assert_eq!(expected.0[0], "bp-29");
@@ -376,17 +381,18 @@ async fn muted_scenario<S: Store + ProjectionStore>(store: &S) -> MutedScenarioR
     }
 }
 
-#[tokio::test]
-async fn muted_authors_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn muted_authors_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = muted_scenario(&sqlite).await;
+    let from_backend = muted_scenario(&backend).await;
     let from_memory = muted_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(muted_at DESC, author_pubkey ASC。100 の tie は author 昇順)
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_initial
             .iter()
             .map(|row| (row.author_pubkey.clone(), row.muted_at))
@@ -398,12 +404,12 @@ async fn muted_authors_match_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite.muted_hit.as_ref().map(|row| row.muted_at),
+        from_backend.muted_hit.as_ref().map(|row| row.muted_at),
         Some(100)
     );
-    assert!(from_sqlite.muted_miss.is_none());
+    assert!(from_backend.muted_miss.is_none());
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_after_remove
             .iter()
             .map(|row| row.author_pubkey.clone())
@@ -494,17 +500,18 @@ async fn follow_edge_scenario<S: Store + ProjectionStore>(store: &S) -> FollowEd
     }
 }
 
-#[tokio::test]
-async fn follow_edges_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn follow_edges_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = follow_edge_scenario(&sqlite).await;
+    let from_backend = follow_edge_scenario(&backend).await;
     let from_memory = follow_edge_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(updated_at DESC, target ASC。stale 無視・同時刻上書き)
     assert_eq!(
-        from_sqlite
+        from_backend
             .by_subject
             .iter()
             .map(|edge| {
@@ -538,7 +545,7 @@ async fn follow_edges_match_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .by_target
             .iter()
             .map(|edge| (edge.subject_pubkey.as_str().to_string(), edge.updated_at))
@@ -646,26 +653,27 @@ async fn reaction_scenario<S: Store + ProjectionStore>(store: &S) -> ReactionSce
     }
 }
 
-#[tokio::test]
-async fn reactions_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn reactions_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = reaction_scenario(&sqlite).await;
+    let from_backend = reaction_scenario(&backend).await;
     let from_memory = reaction_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測
     assert_eq!(
-        from_sqlite
+        from_backend
             .reaction_hit
             .as_ref()
             .map(|row| row.status.clone()),
         Some(ObjectStatus::Deleted),
     );
-    assert!(from_sqlite.reaction_miss.is_none());
+    assert!(from_backend.reaction_miss.is_none());
     // normalized_reaction_key ASC, reaction_id ASC(custom:… < emoji:…、🔥 < 😀 は UTF-8 バイト順)
     assert_eq!(
-        from_sqlite
+        from_backend
             .for_target
             .iter()
             .map(|row| row.reaction_id.as_str().to_string())
@@ -678,15 +686,15 @@ async fn reactions_match_between_backends() {
         ],
     );
     // 行のない obj-3 はキー自体が存在しない
-    assert_eq!(from_sqlite.for_targets.len(), 2);
+    assert_eq!(from_backend.for_targets.len(), 2);
     assert_eq!(
-        from_sqlite.for_targets.get("obj-2").map(|rows| rows.len()),
+        from_backend.for_targets.get("obj-2").map(|rows| rows.len()),
         Some(1),
     );
-    assert!(from_sqlite.for_targets_empty.is_empty());
+    assert!(from_backend.for_targets_empty.is_empty());
     // updated_at DESC, reaction_id DESC(react-1 は再 upsert で 11)
     assert_eq!(
-        from_sqlite
+        from_backend
             .recent_by_author
             .iter()
             .map(|row| row.reaction_id.as_str().to_string())
@@ -757,17 +765,18 @@ async fn outbox_scenario<S: Store + ProjectionStore>(store: &S) -> OutboxScenari
     }
 }
 
-#[tokio::test]
-async fn direct_message_outbox_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn direct_message_outbox_matches_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = outbox_scenario(&sqlite).await;
+    let from_backend = outbox_scenario(&backend).await;
     let from_memory = outbox_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(created_at ASC, message_id ASC。10 の tie は id 昇順)
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_initial
             .iter()
             .map(|row| row.message_id.clone())
@@ -775,7 +784,7 @@ async fn direct_message_outbox_matches_between_backends() {
         vec!["om-0".to_string(), "om-1".to_string(), "om-2".to_string()],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_after_update
             .iter()
             .map(|row| (row.message_id.clone(), row.created_at, row.last_attempt_at))
@@ -787,14 +796,14 @@ async fn direct_message_outbox_matches_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .outbox_hit
             .as_ref()
             .and_then(|row| row.last_attempt_at),
         Some(99),
     );
-    assert!(from_sqlite.outbox_miss.is_none());
-    assert_eq!(from_sqlite.list_after_remove.len(), 2);
+    assert!(from_backend.outbox_miss.is_none());
+    assert_eq!(from_backend.list_after_remove.len(), 2);
 }
 
 #[derive(Debug, PartialEq)]
@@ -870,17 +879,20 @@ async fn conversation_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn direct_message_conversations_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn direct_message_conversations_match_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = conversation_scenario(&sqlite).await;
+    let from_backend = conversation_scenario(&backend).await;
     let from_memory = conversation_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(updated_at DESC, dm_id DESC。100 の tie は dm_id 降順)
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_initial
             .iter()
             .map(|row| row.dm_id.clone())
@@ -888,14 +900,14 @@ async fn direct_message_conversations_match_between_backends() {
         vec!["dm-b".to_string(), "dm-a".to_string(), "dm-c".to_string()],
     );
     assert_eq!(
-        from_sqlite.peer_hit.as_ref().map(|row| row.dm_id.clone()),
+        from_backend.peer_hit.as_ref().map(|row| row.dm_id.clone()),
         Some("dm-b".to_string()),
     );
-    assert!(from_sqlite.peer_miss.is_none());
-    assert!(from_sqlite.dm_id_hit.is_some());
-    assert!(from_sqlite.dm_id_miss.is_none());
+    assert!(from_backend.peer_miss.is_none());
+    assert!(from_backend.dm_id_hit.is_some());
+    assert!(from_backend.dm_id_miss.is_none());
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_after_update
             .iter()
             .map(|row| row.dm_id.clone())
@@ -903,7 +915,7 @@ async fn direct_message_conversations_match_between_backends() {
         vec!["dm-c".to_string(), "dm-b".to_string(), "dm-a".to_string()],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .list_after_clear
             .iter()
             .map(|row| row.dm_id.clone())
@@ -993,15 +1005,16 @@ async fn author_reposts_scenario<S: Store + ProjectionStore>(store: &S) -> Vec<V
 }
 
 // #1239: 自分の既存の repost の検索は、両実装で同じ結果を返す(新しい順、著者・topic・repost 元で絞る)。
-#[tokio::test]
-async fn author_reposts_lookup_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn author_reposts_lookup_matches_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = author_reposts_scenario(&sqlite).await;
+    let from_backend = author_reposts_scenario(&backend).await;
     let from_memory = author_reposts_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
     assert_eq!(
-        from_sqlite,
+        from_backend,
         vec![
             vec!["repost-new".to_string(), "repost-old".to_string()],
             vec!["repost-new".to_string()],
@@ -1009,40 +1022,5 @@ async fn author_reposts_lookup_matches_between_backends() {
             vec![],
             vec![],
         ],
-    );
-}
-
-// #1239: SQLite の検索が、repost 元の式の索引を使う(全行の scan にならない)。
-#[tokio::test]
-async fn author_reposts_lookup_uses_the_repost_source_index() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
-    let plan = sqlx::query(
-        r#"
-        EXPLAIN QUERY PLAN
-        SELECT object_id
-        FROM object_index_cache
-        WHERE object_kind = 'repost'
-          AND topic_id = ?1
-          AND author_pubkey = ?2
-          AND json_extract(repost_of_json, '$.source_object_id') = ?3
-        ORDER BY created_at DESC
-        LIMIT ?4
-        "#,
-    )
-    .bind("kukuri:topic:parity-repost")
-    .bind("a".repeat(64))
-    .bind("source-1")
-    .bind(10_i64)
-    .fetch_all(sqlite.pool())
-    .await
-    .expect("explain query plan");
-    let detail = plan
-        .iter()
-        .map(|row| sqlx::Row::get::<String, _>(row, "detail"))
-        .collect::<Vec<_>>()
-        .join(" / ");
-    assert!(
-        detail.contains("idx_object_index_cache_repost_source"),
-        "the lookup must use the repost source index, got: {detail}"
     );
 }
