@@ -1,36 +1,7 @@
-use kukuri_desktop_runtime::{GetBlobMediaRequest, RetryPostElementsRequest};
+use kukuri_desktop_runtime::GetBlobMediaRequest;
 
 use crate::state::{CommandError, DesktopState, map_error};
 use serde::Serialize;
-
-#[tauri::command]
-pub async fn retry_post_elements(
-    state: tauri::State<'_, DesktopState>,
-    request: RetryPostElementsRequest,
-) -> Result<Option<PostRetryView>, CommandError> {
-    let post = state
-        .runtime()
-        .retry_post_elements(request)
-        .await
-        .map_err(map_error)?;
-    let Some(post) = post else { return Ok(None) };
-    let display_retry_next_at_ms = state
-        .runtime()
-        .post_display_retry_at(&post)
-        .await
-        .map_err(map_error)?;
-    Ok(Some(PostRetryView {
-        post,
-        display_retry_next_at_ms,
-    }))
-}
-
-#[derive(serde::Serialize)]
-pub struct PostRetryView {
-    #[serde(flatten)]
-    post: kukuri_app_api::PostView,
-    display_retry_next_at_ms: Option<i64>,
-}
 
 #[derive(Serialize)]
 pub struct BlobMediaFile {

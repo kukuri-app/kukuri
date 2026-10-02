@@ -343,7 +343,6 @@ pub fn run() {
         })
         .invoke_handler(invoke_gate::with_desktop_startup_gate(
             invoke_gate::with_runtime_dispatch(tauri::generate_handler![
-            commands::startup::get_desktop_startup_status,
             commands::system_locale::get_system_locales,
             desktop_lifecycle::get_window_close_preference,
             desktop_lifecycle::set_window_close_preference,
@@ -359,15 +358,7 @@ pub fn run() {
             commands::link_preview::fetch_link_preview,
             commands::app_consent::get_app_consent_status,
             commands::app_consent::accept_app_consents,
-            commands::identity::preview_account_key_import,
-            commands::identity::import_account_key,
-            commands::identity::list_accounts,
-            commands::identity::switch_account,
-            commands::identity::logout_account,
-            commands::identity::create_account,
-            commands::identity::get_profile_setup_required,
             commands::identity::get_account_display,
-            commands::identity::save_initial_profile,
             commands::device_backup::create_device_backup_command,
             commands::device_backup::preview_device_backup_command,
             commands::device_backup::restore_device_backup_command,
@@ -376,7 +367,6 @@ pub fn run() {
             commands::device_backup::acknowledge_pending_device_restore_frontend_state,
             commands::posts::get_blob_media_file,
             commands::posts::release_blob_media_file,
-            commands::posts::retry_post_elements,
             commands::os_notification::show_os_notification,
             commands::os_notification::get_os_notification_permission,
             commands::os_notification::request_os_notification_permission,

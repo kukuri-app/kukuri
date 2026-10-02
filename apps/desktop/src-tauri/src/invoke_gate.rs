@@ -33,6 +33,39 @@ where
     }
 }
 
+/// アカウントの操作の調停が使う Tauri の state（排他・起動の状態・終了の要求・OS 通知の後始末）。
+struct TauriGate<R: Runtime>(tauri::AppHandle<R>);
+
+impl<R: Runtime> kukuri_desktop_runtime::ClientGate for TauriGate<R> {
+    fn host(&self) -> Option<std::sync::Arc<kukuri_desktop_runtime::ClientHost>> {
+        self.0
+            .try_state::<crate::state::DesktopState>()
+            .map(|state| state.host())
+    }
+
+    fn startup(&self) -> &DesktopStartupState {
+        self.0.state::<DesktopStartupState>().inner()
+    }
+
+    fn operation_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self
+            .0
+            .state::<crate::restore_lifecycle::DesktopOperationState>()
+            .inner()
+            .switch_guard
+    }
+
+    fn require_running(&self) -> Result<(), CommandError> {
+        crate::desktop_lifecycle::require_running(&self.0)
+    }
+
+    fn account_switched(&self) {
+        self.0
+            .state::<crate::commands::background_notifications::OsNotificationBackground>()
+            .reset_for_account_switch();
+    }
+}
+
 /// desktop-runtime の dispatch 表にある command をそこで呼び、それ以外（Tauri 専用・native だけの command）を
 /// `generate_handler!` の handler へ渡す（W1 AC-5、ADR 0056 §6）。旧世代の結果は表が `stale_runtime` にする。
 pub(crate) fn with_runtime_dispatch<R, F>(
@@ -54,21 +87,14 @@ where
             tauri::ipc::InvokeBody::Json(args) => args.clone(),
             tauri::ipc::InvokeBody::Raw(_) => serde_json::Value::Null,
         };
-        let webview = invoke.message.webview_ref();
-        let Some(state) = webview.try_state::<crate::state::DesktopState>() else {
-            invoke
-                .resolver
-                .reject(CommandError::from("the runtime is not ready".to_string()));
-            return true;
-        };
-        let host = state.host();
+        let app = invoke.message.webview_ref().app_handle().clone();
         let ctx = kukuri_desktop_runtime::DispatchContext {
-            app_version: webview.app_handle().package_info().version.to_string(),
+            app_version: app.package_info().version.to_string(),
         };
+        let gate = TauriGate(app);
         invoke.resolver.respond_async(async move {
-            kukuri_desktop_runtime::dispatch_command(&host, &ctx, &command, args)
+            kukuri_desktop_runtime::dispatch_command(&gate, &ctx, &command, args)
                 .await
-                .unwrap_or_else(|| Err(CommandError::from(format!("unknown command {command}"))))
                 .map_err(tauri::ipc::InvokeError::from)
         });
         true

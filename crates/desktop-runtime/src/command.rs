@@ -3,7 +3,9 @@
 //! `DesktopRuntime` の method へ委譲する command を、名前 → 引数 → method の 1 つの表にする。Tauri の invoke handler
 //! と web-runtime の `invoke` がこの表を使う。引数は Tauri と同じ形（top-level の key は camelCase、中身は DTO）。
 //! 結果は、呼ぶ前と後で host の世代が同じときだけ返す（旧世代の結果を返さない。ADR 0056 §7）。
+//! 起動の状態とアカウントの操作は、platform の状態（[`ClientGate`]）を受ける別の表で、排他と起動の状態の遷移を行う。
 
+use std::future::Future;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -148,25 +150,127 @@ async fn export_account_key(
     runtime.export_account_key(request).map_err(map_error)
 }
 
+/// 呼んだ後の投稿と、表示の再試行の時刻（投稿の再試行の view）。
+#[derive(Serialize)]
+pub struct PostRetryView {
+    #[serde(flatten)]
+    post: kukuri_app_api::PostView,
+    display_retry_next_at_ms: Option<i64>,
+}
+
+async fn retry_post_elements(
+    runtime: &Arc<DesktopRuntime>,
+    request: RetryPostElementsRequest,
+) -> anyhow::Result<Option<PostRetryView>> {
+    let Some(post) = runtime.retry_post_elements(request).await? else {
+        return Ok(None);
+    };
+    let display_retry_next_at_ms = runtime.post_display_retry_at(&post).await?;
+    Ok(Some(PostRetryView {
+        post,
+        display_retry_next_at_ms,
+    }))
+}
+
+/// アカウントの操作の調停が使う platform の状態（ADR 0056 §7）。Tauri は app の state、Web は web-runtime が持つ。
+pub trait ClientGate: Send + Sync {
+    /// 公開済みの host（起動の前は無い）。
+    fn host(&self) -> Option<Arc<ClientHost>>;
+    fn startup(&self) -> &ClientStartupState;
+    /// アカウントの操作・device backup・終了の処理が互いに排他にする lock。
+    fn operation_lock(&self) -> &tokio::sync::Mutex<()>;
+    /// 終了の要求の後は断る。排他を待つ間に終了が始まることがあるので、排他を取った後に呼ぶ。
+    fn require_running(&self) -> Result<(), CommandError>;
+    /// アカウントが替わった後の platform の後始末（Tauri は OS 通知の既読の位置）。
+    fn account_switched(&self) {}
+}
+
+fn ready_host(gate: &dyn ClientGate) -> Result<Arc<ClientHost>, CommandError> {
+    gate.host()
+        .ok_or_else(|| CommandError::from("the runtime is not ready".to_string()))
+}
+
+/// アカウントの操作を 1 つずつ行う。排他を取り、終了中でなく Ready であることを確かめてから呼ぶ。
+async fn exclusive<T, F, Fut>(gate: &dyn ClientGate, operation: F) -> Result<T, CommandError>
+where
+    F: FnOnce(Arc<ClientHost>) -> Fut,
+    Fut: Future<Output = Result<T, CommandError>>,
+{
+    let _guard = gate.operation_lock().lock().await;
+    gate.require_running()?;
+    require_runtime_operation_ready(&gate.startup().status()).map_err(CommandError::from)?;
+    operation(ready_host(gate)?).await
+}
+
+/// runtime を差し替える操作（排他の中で呼ぶ）。間は Initializing にし、後は Ready（host が止まったら再起動を求める
+/// 失敗）にする。
+async fn transition(
+    gate: &dyn ClientGate,
+    host: &ClientHost,
+    operation: impl Future<Output = anyhow::Result<AccountRecord>>,
+) -> Result<AccountRecord, CommandError> {
+    gate.startup().set_status(ClientStartupStatus::Initializing);
+    let result = operation.await.map_err(map_error);
+    if result.is_ok() {
+        gate.account_switched();
+    }
+    gate.startup().set_status(if host.is_stopped() {
+        failed_startup_status(
+            ClientStartupError::unknown("Account transition requires restart".to_string()),
+            None,
+        )
+    } else {
+        ClientStartupStatus::Ready
+    });
+    result
+}
+
+/// アクティブなアカウントを切り替える。新しい runtime を組み立ててから registry と host を更新し、失敗したら旧 runtime
+/// をそのまま使う（アプリの再起動は要らない）。
+async fn switch_account(
+    gate: &dyn ClientGate,
+    request: SwitchAccountRequest,
+) -> Result<AccountRecord, CommandError> {
+    exclusive(gate, |host| async move {
+        let snapshot = list_accounts(host.app_data_dir())
+            .await
+            .map_err(map_error)?;
+        let record = snapshot
+            .accounts
+            .iter()
+            .find(|record| record.id == request.account_id)
+            .cloned()
+            .ok_or_else(|| {
+                CommandError::from(format!("unknown account `{}`", request.account_id))
+            })?;
+        if snapshot.active_account_id == request.account_id {
+            return Ok(record);
+        }
+        transition(gate, &host, host.switch_account(&request.account_id)).await
+    })
+    .await
+}
+
 macro_rules! dispatch_table {
-    ($runtime:ident, $ctx:ident; $( $(#[$meta:meta])* $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
+    ($list:ident, $dispatch:ident ($receiver:ident : $receiver_ty:ty, $ctx:ident); $( $(#[$meta:meta])* $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
         /// 表にある command の名前。
         #[expect(
             clippy::vec_init_then_push,
             reason = "表の項目ごとに cfg（native だけの command）を付けるため"
         )]
-        pub fn dispatched_commands() -> Vec<&'static str> {
+        fn $list() -> Vec<&'static str> {
             let mut commands = Vec::new();
             $( $(#[$meta])* commands.push(stringify!($name)); )*
             commands
         }
 
-        async fn dispatch_runtime(
-            $runtime: &Arc<DesktopRuntime>,
+        /// 表に無い command は、引数を `Err` で返す。
+        async fn $dispatch(
+            $receiver: $receiver_ty,
             $ctx: &DispatchContext,
             command: &str,
             args: Value,
-        ) -> Option<Result<Value, CommandError>> {
+        ) -> Result<Result<Value, CommandError>, Value> {
             match command {
                 $(
                     $(#[$meta])*
@@ -174,7 +278,7 @@ macro_rules! dispatch_table {
                         #[derive(serde::Deserialize)]
                         #[serde(rename_all = "camelCase")]
                         struct Args { $( $arg: $ty ),* }
-                        Some(async {
+                        Ok(async {
                             let Args { $( $arg ),* } =
                                 serde_json::from_value(args).map_err(|error| invalid_args(command, error))?;
                             let value = $call?;
@@ -183,32 +287,72 @@ macro_rules! dispatch_table {
                         }.await)
                     }
                 )*
-                _ => None,
+                _ => Err(args),
             }
         }
     };
 }
 
-/// command を表で呼ぶ。表に無ければ `None`。呼ぶ前と後で host の世代が違えば、結果を返さず `stale_runtime` にする。
+/// 表にある command の名前（起動の状態・アカウントの操作と、runtime へ委譲するもの）。
+pub fn dispatched_commands() -> Vec<&'static str> {
+    let mut commands = gate_commands();
+    commands.extend(runtime_commands());
+    commands
+}
+
+/// command を表で呼ぶ。表に無ければ `unsupported_platform`。runtime へ委譲する command は、呼ぶ前と後で host の世代が
+/// 違えば、結果を返さず `stale_runtime` にする。
 pub async fn dispatch_command(
-    host: &Arc<ClientHost>,
+    gate: &dyn ClientGate,
     ctx: &DispatchContext,
     command: &str,
     args: Value,
-) -> Option<Result<Value, CommandError>> {
+) -> Result<Value, CommandError> {
+    let args = match dispatch_gate(gate, ctx, command, args).await {
+        Ok(result) => return result,
+        Err(args) => args,
+    };
+    let host = ready_host(gate)?;
     let generation = host.generation();
-    let runtime = host.runtime();
-    let result = dispatch_runtime(&runtime, ctx, command, args).await?;
+    let result = dispatch_runtime(&host.runtime(), ctx, command, args)
+        .await
+        .map_err(|_| {
+            CommandError::new(
+                UNSUPPORTED_PLATFORM_CODE,
+                format!("{command} is not available on this platform"),
+            )
+        })?;
     if host.generation() != generation {
-        return Some(Err(CommandError::new(
+        return Err(CommandError::new(
             STALE_RUNTIME_CODE,
             format!("the runtime changed while {command} was running"),
-        )));
+        ));
     }
-    Some(result)
+    result
 }
 
-dispatch_table! { runtime, ctx;
+dispatch_table! { gate_commands, dispatch_gate(gate: &dyn ClientGate, _ctx);
+    get_desktop_startup_status() => Ok::<_, CommandError>(gate.startup().status());
+    create_account(request: CreateAccountRequest) =>
+        exclusive(gate, |host| async move { transition(gate, &host, host.create_account(request)).await }).await;
+    logout_account(request: SwitchAccountRequest) =>
+        exclusive(gate, |host| async move { transition(gate, &host, host.logout_account(&request.account_id)).await }).await;
+    switch_account(request: SwitchAccountRequest) => switch_account(gate, request).await;
+    import_account_key(request: ImportAccountKeyRequest) => exclusive(gate, |host| async move {
+        host.import_account_key(request.export, request.passphrase, request.label).await.map_err(map_error)
+    }).await;
+    get_profile_setup_required(request: SwitchAccountRequest) => exclusive(gate, |host| async move {
+        host.profile_setup_required(&request.account_id).await.map_err(map_error)
+    }).await;
+    save_initial_profile(request: InitialProfileRequest) => exclusive(gate, |host| async move {
+        host.save_initial_profile(request).await.map_err(map_error)
+    }).await;
+    preview_account_key_import(request: PreviewAccountKeyImportRequest) =>
+        preview_account_key_import(ready_host(gate)?.app_data_dir(), &request.export).await.map_err(map_error);
+    list_accounts() => list_accounts(ready_host(gate)?.app_data_dir()).await.map_err(map_error);
+}
+
+dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntime>, ctx);
     abort_dome_transition(request: AbortDomeTransitionRequest) => runtime.abort_dome_transition(request).await.map_err(map_error);
     accept_dome_connection_proposal(request: AcceptDomeConnectionProposalRequest) => runtime.accept_dome_connection_proposal(request).await.map_err(map_error);
     authenticate_community_node(request: CommunityNodeTargetRequest) => runtime.authenticate_community_node(request).await.map_err(map_error);
@@ -353,6 +497,7 @@ dispatch_table! { runtime, ctx;
     export_account_key(request: ExportAccountKeyRequest) => export_account_key(runtime, request).await;
     get_blob_media_payload(request: GetBlobMediaRequest) => runtime.get_blob_media_payload(request).await.map_err(map_error);
     get_content_display_settings() => Ok::<_, CommandError>(runtime.get_content_display_settings());
+    retry_post_elements(request: RetryPostElementsRequest) => retry_post_elements(runtime, request).await.map_err(map_error);
     set_adult_content_display_enabled(enabled: bool) => runtime.set_adult_content_display_enabled(enabled).await.map_err(map_error);
 }
 
