@@ -158,11 +158,21 @@ mod object_hydration;
 mod object_persistence_support;
 mod post_integrity;
 mod post_withdrawal_hydration;
+// 呼び出し元は AC-5 の差分の取得。
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
+    )
+)]
+mod channel_sync_merge;
 mod private_channel_rows;
 pub(crate) use private_channel_rows::{
     PRIVATE_CHANNEL_EPOCH_WINDOW, epoch_started_at, same_private_channel_state,
 };
 mod private_channels_support;
+pub(crate) use private_channels_support::ChannelCommit;
 mod private_control_support;
 mod profile_docs_support;
 mod profile_timeline_support;

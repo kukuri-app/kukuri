@@ -34,7 +34,8 @@ impl AppService {
             // #1219 W6: 作成した端末が最初の担当。
             controller: Some(self.first_controller().await?),
         };
-        self.register_joined_private_channel(state.clone()).await?;
+        self.register_joined_private_channel(state.clone(), now)
+            .await?;
         let metadata = PrivateChannelMetadataDocV1 {
             channel_id: channel_id.clone(),
             topic_id: input.topic_id.clone(),
@@ -158,6 +159,8 @@ impl AppService {
         self.docs_sync()
             .register_private_replica_secret(&replica, spec.namespace_secret_hex.as_str())
             .await?;
+        // 参加の記録の時刻は、参加の版の時刻(ADR 0061 §9)。
+        let joined_at = Utc::now().timestamp_millis();
         let import_result = async {
             // #1221 R5-C: token の発行者と owner の端末から、参加に要る制御 record だけを key 指定で読む。
             let PrivateEpochSnapshot {
@@ -197,7 +200,7 @@ impl AppService {
                         topic_id: metadata.topic_id.clone(),
                         epoch_id: policy.epoch_id.clone(),
                         participant_pubkey: local_pubkey,
-                        joined_at: Utc::now().timestamp_millis(),
+                        joined_at,
                         is_owner: false,
                         join_mode: Some(spec.join_mode),
                         sponsor_pubkey: Some(sponsor_pubkey),
@@ -223,7 +226,8 @@ impl AppService {
                 spec.epoch_id.as_str(),
                 spec.namespace_secret_hex.as_str(),
             );
-            self.register_joined_private_channel(next_state).await?;
+            self.register_joined_private_channel(next_state, joined_at)
+                .await?;
             Ok::<(), anyhow::Error>(())
         }
         .await;
@@ -728,6 +732,16 @@ impl AppService {
             self.current_author_pubkey().as_str(),
             &state.current_epoch_id,
         );
+        // owner の参加の記録の時刻は、参加の版の時刻(ADR 0061 §9)。
+        let joined_at = self
+            .services
+            .projection_store
+            .get_private_channel(&joined_private_channel_key(
+                topic_id,
+                state.channel_id.as_str(),
+            ))
+            .await?
+            .map_or_else(|| Utc::now().timestamp_millis(), |row| row.updated_at);
         let secret_hex = generate_keys().export_secret_hex();
         let replica =
             private_channel_epoch_replica_id(state.channel_id.as_str(), epoch_id.as_str());
@@ -767,7 +781,7 @@ impl AppService {
                 topic_id: TopicId::new(topic_id),
                 epoch_id: epoch_id.clone(),
                 participant_pubkey: Pubkey::from(state.owner_pubkey.clone()),
-                joined_at: Utc::now().timestamp_millis(),
+                joined_at,
                 is_owner: true,
                 join_mode: Some(PrivateChannelJoinMode::OwnerSeed),
                 sponsor_pubkey: None,
@@ -881,8 +895,14 @@ impl AppService {
         let previous_epoch_id = std::mem::replace(&mut state.current_epoch_id, next.epoch_id);
         state.current_epoch_secret_hex = next.secret_hex;
         let committed = self
-            .commit_joined_private_channel_state(state.clone(), Some(&previous_epoch_id))
-            .await?;
+            .commit_joined_private_channel_state(
+                state.clone(),
+                ChannelCommit::Advance {
+                    from_epoch: &previous_epoch_id,
+                },
+            )
+            .await?
+            .is_some();
         // 準備と配布の間の一時の秘密は、行の commit の後に外す(失敗したときは巻き戻さず、再起動まで残す)。
         self.docs_sync()
             .remove_private_replica_secret(&private_channel_epoch_replica_id(
@@ -915,6 +935,7 @@ impl AppService {
         }
         self.joined_private_channel_view_for_state(&state).await
     }
+
     pub async fn leave_private_channel(&self, topic_id: &str, channel_id: &str) -> Result<()> {
         let Some(state) = self
             .joined_private_channel_state(topic_id, channel_id)
@@ -923,49 +944,9 @@ impl AppService {
             anyhow::bail!("private channel is not joined");
         };
         // 退会の印を先に付ける(並行する世代の追加で参加に戻さない)。鍵の行は記録を書いた後に消す(ADR 0061 §9)。
-        self.tombstone_private_channel(&state).await?;
-        let replica = current_private_channel_replica_id(&state);
-        let local_author = self.current_author_pubkey();
-        let local_pubkey = Pubkey::from(local_author.clone());
-        let now = Utc::now().timestamp_millis();
-        let existing_participant = fetch_private_channel_participant_from_replica(
-            self.docs_sync(),
-            &replica,
-            local_author.as_str(),
-            DocFetchPolicy::LocalOnly,
-        )
-        .await?
-        .filter(|participant| participant.epoch_id == state.current_epoch_id);
-        self.record_private_channel_participant(
-            &PrivateChannelParticipantDocV1 {
-                channel_id: state.channel_id.clone(),
-                topic_id: TopicId::new(topic_id),
-                epoch_id: state.current_epoch_id.clone(),
-                participant_pubkey: local_pubkey,
-                joined_at: existing_participant
-                    .as_ref()
-                    .map(|participant| participant.joined_at)
-                    .unwrap_or(now),
-                is_owner: existing_participant
-                    .as_ref()
-                    .map(|participant| participant.is_owner)
-                    .unwrap_or(state.owner_pubkey == local_author),
-                join_mode: existing_participant
-                    .as_ref()
-                    .and_then(|participant| participant.join_mode.clone()),
-                sponsor_pubkey: existing_participant
-                    .as_ref()
-                    .and_then(|participant| participant.sponsor_pubkey.clone()),
-                share_token_id: existing_participant
-                    .as_ref()
-                    .and_then(|participant| participant.share_token_id.clone()),
-                left_at: Some(now),
-            },
-            &state.owner_pubkey,
-            &state.current_epoch_secret_hex,
-            &replica,
-        )
-        .await?;
+        // 退出の記録の時刻は退会の版の時刻。
+        let left_at = self.tombstone_private_channel(&state, None).await?;
+        self.record_private_channel_leave(&state, left_at).await?;
         let has_peers = self
             .services
             .transport

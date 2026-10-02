@@ -265,6 +265,12 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 読む範囲の数: 起動時の復元と topic の一覧（`list_joined_private_channels` の `next_cursor` で続く）と退会の鍵の削除は 128 行の page、過去の世代は新しい順に 8 世代まで、bucket に掛かる世代は 2 件まで。
 - 参加の行の版（`updated_at`・`op_id`）は、AC-4c の `membership` の item の版になる。op_id は item と同じ形で作り、旧 registry から移した行の時刻は 0。
 
+#### 実装（AC-4c）
+
+- item: core の `AccountSyncItemKey::ChannelMembership`（値は `ChannelMembershipV1`）と `AccountSyncItem::channel_epoch`（op_id は (channel, epoch) の hash）。
+- 書き込み: app-api の `persist_private_channel`（参加の版と、現在の世代の鍵）と `tombstone_private_channel`。世代の追加は `ChannelCommit::Advance` で、行が参加中でその世代が現在の世代のときだけ書く。
+- merge: app-api の `channel_sync_merge`。呼び出し元は AC-5 の差分の取得で、それまでは試験だけが呼ぶ。
+
 #### 判定（AC-4b・AC-4c）
 
 - AC-4b:

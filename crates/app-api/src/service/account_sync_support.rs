@@ -27,7 +27,7 @@ fn trust_always_visible_item(
     ))
 }
 
-fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
+pub(super) fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
     Ok(AccountSyncRow {
         key: item.key.docs_key(),
         op_id: item.op_id.clone(),
@@ -39,7 +39,7 @@ fn row_of(item: &AccountSyncItem) -> Result<AccountSyncRow> {
 impl AppService {
     /// この端末の編集を採用し、封をして account の replica へ書く。採用しなかった（同じか新しい状態がある）なら書かない。
     /// replica へ書けなくても、この端末の採用は戻さない（送り直しは AC-5）。
-    async fn publish_account_sync_item(&self, item: AccountSyncItem) -> Result<()> {
+    pub(crate) async fn publish_account_sync_item(&self, item: AccountSyncItem) -> Result<()> {
         if !self
             .services
             .projection_store
@@ -48,8 +48,14 @@ impl AppService {
         {
             return Ok(());
         }
+        self.write_account_sync_item(&item).await
+    }
+
+    /// 封をして account の replica へ書く(採用の台帳には入れない。鍵の item は秘密を含むのでこちらだけを使う)。
+    /// replica へ書けなくても失敗にしない(送り直しは AC-5)。
+    pub(crate) async fn write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
         let keys = self.services.keys.derive_account_sync();
-        let sealed = keys.seal(&self.services.keys.public_key(), &item)?;
+        let sealed = keys.seal(&self.services.keys.public_key(), item)?;
         if let Err(error) = self
             .services
             .docs_sync
@@ -86,9 +92,26 @@ impl AppService {
         key: &AccountSyncItemKey,
         policy: DocFetchPolicy,
     ) -> Result<Option<AccountSyncItem>> {
+        self.read_account_sync_docs_key(&key.docs_key(), policy)
+            .await
+    }
+
+    /// docs の key で item を点読する(`read_account_sync_item` と同じ規則)。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "W5 AC-5 の差分の取得が、本人の別の端末から読んだ item で呼ぶ"
+        )
+    )]
+    pub(crate) async fn read_account_sync_docs_key(
+        &self,
+        docs_key: &str,
+        policy: DocFetchPolicy,
+    ) -> Result<Option<AccountSyncItem>> {
         let keys = self.services.keys.derive_account_sync();
         let account = self.services.keys.public_key();
-        let docs_key = key.docs_key();
+        let docs_key = docs_key.to_string();
         let open = |record: &DocRecord| {
             serde_json::from_slice::<SealedAccountSyncItem>(&record.value)
                 .ok()
@@ -170,8 +193,8 @@ impl AppService {
                     .adopt_account_sync_row(&row_of(&item)?)
                     .await
             }
-            // private channel の鍵・退会・担当は W5 AC-4・W6 が merge する。
-            _ => Ok(false),
+            // private channel の参加・鍵・担当（ADR 0061 §9）。
+            _ => self.merge_channel_item(&item).await,
         }
     }
 

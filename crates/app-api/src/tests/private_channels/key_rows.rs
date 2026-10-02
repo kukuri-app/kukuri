@@ -84,7 +84,7 @@ async fn measure(scale: usize) -> Vec<(&'static str, usize)> {
         let other = capability(OTHER_TOPIC, &format!("other-{index:05}"), &owner, 2);
         let state = joined_private_channel_state_from_capability(other.clone()).expect("state");
         first
-            .persist_private_channel(&state, 0, &other.archived_epochs)
+            .persist_private_channel(&state, 0, &other.archived_epochs, true)
             .await
             .expect("other channel rows");
     }
@@ -216,7 +216,7 @@ async fn joined_channel_list_continues_from_the_cursor() {
             0,
         );
         let state = joined_private_channel_state_from_capability(channel).expect("state");
-        app.persist_private_channel(&state, 0, &[])
+        app.persist_private_channel(&state, 0, &[], true)
             .await
             .expect("channel rows");
     }

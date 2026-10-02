@@ -31,6 +31,16 @@ impl PrivateChannelKeyStore for MemoryStore {
         Ok(())
     }
 
+    async fn put_private_channel_epoch(&self, epoch: &PrivateChannelEpochRow) -> Result<bool> {
+        let mut keys = self.private_channel_keys.write().await;
+        let key = (epoch.channel_id.clone(), epoch.epoch_id.clone());
+        let added = !keys.epochs.contains_key(&key);
+        if added {
+            keys.epochs.insert(key, epoch.clone());
+        }
+        Ok(self.touched(1, added))
+    }
+
     async fn get_private_channel(&self, channel_key: &str) -> Result<Option<PrivateChannelRow>> {
         let row = self
             .private_channel_keys

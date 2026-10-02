@@ -2,8 +2,11 @@
 //! ある channel の参加状態だけを持つ。各操作は対象の行だけを読み書きし、全件の読み込み・書き直しをしない。
 
 use kukuri_core::{
-    AccountSyncItem, AccountSyncItemKey, PrivateChannelKeyRowSeal, receive_epoch_key_id,
+    AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1, PrivateChannelKeyRowSeal,
+    receive_epoch_key_id,
 };
+
+use super::account_sync_support::row_of as account_sync_row;
 use kukuri_docs_sync::PrivateEpochSecrets;
 use kukuri_store::{
     PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelRow,
@@ -264,33 +267,43 @@ impl AppService {
             .await
     }
 
-    /// 参加の行と、現在の世代（と `archived` の過去の世代）の鍵の行を書く（全件を書き直さない）。参加し直したとき
-    /// だけ参加の版を新しくする。
+    /// 参加の行と、現在の世代（と `archived` の過去の世代）の鍵の行を書く（全件を書き直さない）。
+    /// `join` なら参加の版（`membership` の item）を `updated_at` で新しくし、でなければ今の版のまま世代を進める。
+    /// `updated_at` が 0（旧版から移した行）でなければ、参加の item と現在の世代の鍵の item を account の replica へ
+    /// 書く（ADR 0061 §9）。戻り値は参加の版の時刻（owner への参加・退出の記録の時刻）。
     pub(crate) async fn persist_private_channel(
         &self,
         state: &JoinedPrivateChannelState,
         updated_at: i64,
         archived: &[PrivateChannelEpochCapability],
-    ) -> Result<()> {
+        join: bool,
+    ) -> Result<i64> {
         let key = joined_private_channel_key(&state.topic_id, state.channel_id.as_str());
-        let version = match self
+        let existing = self
             .services
             .projection_store
             .get_private_channel(&key)
             .await?
-        {
-            Some(row) if row.joined => (row.updated_at, row.op_id),
+            .filter(|row| row.joined);
+        let membership = match existing {
+            Some(row) if !join => {
+                let row = (row.updated_at, row.op_id);
+                (None, row)
+            }
             _ => {
                 let item = AccountSyncItem::edit(
-                    AccountSyncItemKey::ChannelLeave {
+                    AccountSyncItemKey::ChannelMembership {
                         channel_id: state.channel_id.clone(),
                     },
                     updated_at,
-                    None,
+                    Some(serde_json::to_value(membership_value(state))?),
                 );
-                (item.updated_at, item.op_id)
+                let version = (item.updated_at, item.op_id.clone());
+                (Some(item), version)
             }
         };
+        let (membership_item, version) = membership;
+        let membership_at = version.0;
         let row = private_channel_row(state, true, version)?;
         let epochs = std::iter::once((&state.current_epoch_id, &state.current_epoch_secret_hex))
             .chain(
@@ -313,7 +326,30 @@ impl AppService {
             .await?;
         self.private_channel_rows_changed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
+        if let Some(item) = membership_item {
+            if updated_at == 0 {
+                // 旧版から移した版は、新しい退会を隠さないよう replica へ書かない（送り直しは AC-5）。
+                self.services
+                    .projection_store
+                    .adopt_account_sync_row(&account_sync_row(&item)?)
+                    .await?;
+            } else {
+                self.publish_account_sync_item(item).await?;
+            }
+        }
+        if updated_at != 0 {
+            self.write_account_sync_item(&AccountSyncItem::channel_epoch(
+                &state.channel_id,
+                &state.current_epoch_id,
+                updated_at,
+                serde_json::to_value(PrivateChannelEpochCapability {
+                    epoch_id: state.current_epoch_id.clone(),
+                    namespace_secret_hex: state.current_epoch_secret_hex.clone(),
+                })?,
+            )?)
+            .await?;
+        }
+        Ok(membership_at)
     }
 
     /// 旧 registry の 1 件を、参加の行と世代の鍵の行へ移す(ADR 0061 §9。起動時の移行の入口で、試験も別の端末の
@@ -330,7 +366,8 @@ impl AppService {
             state.controller = Some(self.first_controller().await?);
         }
         self.install_private_epoch_secrets().await?;
-        self.persist_private_channel(&state, 0, &archived).await?;
+        self.persist_private_channel(&state, 0, &archived, true)
+            .await?;
         self.restore_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
             .await;
         Ok(())
@@ -484,21 +521,81 @@ impl AppService {
             .collect())
     }
 
+    /// この端末の退出の記録(現在の世代の参加の記録を、退会の版の時刻 `left_at` で閉じる)を owner へ書く。
+    pub(crate) async fn record_private_channel_leave(
+        &self,
+        state: &JoinedPrivateChannelState,
+        left_at: i64,
+    ) -> Result<()> {
+        let replica = current_private_channel_replica_id(state);
+        let local_author = self.current_author_pubkey();
+        let local_pubkey = Pubkey::from(local_author.clone());
+        let existing_participant = fetch_private_channel_participant_from_replica(
+            self.docs_sync(),
+            &replica,
+            local_author.as_str(),
+            DocFetchPolicy::LocalOnly,
+        )
+        .await?
+        .filter(|participant| participant.epoch_id == state.current_epoch_id);
+        self.record_private_channel_participant(
+            &PrivateChannelParticipantDocV1 {
+                channel_id: state.channel_id.clone(),
+                topic_id: TopicId::new(state.topic_id.as_str()),
+                epoch_id: state.current_epoch_id.clone(),
+                participant_pubkey: local_pubkey,
+                joined_at: existing_participant
+                    .as_ref()
+                    .map(|participant| participant.joined_at)
+                    .unwrap_or(left_at),
+                is_owner: existing_participant
+                    .as_ref()
+                    .map(|participant| participant.is_owner)
+                    .unwrap_or(state.owner_pubkey == local_author),
+                join_mode: existing_participant
+                    .as_ref()
+                    .and_then(|participant| participant.join_mode.clone()),
+                sponsor_pubkey: existing_participant
+                    .as_ref()
+                    .and_then(|participant| participant.sponsor_pubkey.clone()),
+                share_token_id: existing_participant
+                    .as_ref()
+                    .and_then(|participant| participant.share_token_id.clone()),
+                left_at: Some(left_at),
+            },
+            &state.owner_pubkey,
+            &state.current_epoch_secret_hex,
+            &replica,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// 退会の印（参加の行を tombstone にし、メモリから外す）。鍵の行は `forget_private_channel_keys` で消す。
+    /// `adopted` が無ければこの端末の明示の退会で、新しい tombstone の item を書く。あれば本人の別の端末から採った
+    /// tombstone で、その版を写す。戻り値は退会の時刻（owner への退出の記録の時刻）。
     pub(crate) async fn tombstone_private_channel(
         &self,
         state: &JoinedPrivateChannelState,
-    ) -> Result<()> {
+        adopted: Option<&AccountSyncItem>,
+    ) -> Result<i64> {
         let _access = self.services.content_save_access.lock().await;
         let key = joined_private_channel_key(&state.topic_id, state.channel_id.as_str());
-        let now = Utc::now().timestamp_millis();
-        let item = AccountSyncItem::edit(
-            AccountSyncItemKey::ChannelLeave {
-                channel_id: state.channel_id.clone(),
-            },
-            now,
-            None,
-        );
+        let item = match adopted {
+            Some(item) => item.clone(),
+            None => {
+                let item = AccountSyncItem::edit(
+                    AccountSyncItemKey::ChannelMembership {
+                        channel_id: state.channel_id.clone(),
+                    },
+                    Utc::now().timestamp_millis(),
+                    None,
+                );
+                self.publish_account_sync_item(item.clone()).await?;
+                item
+            }
+        };
+        let left_at = item.updated_at;
         let row = private_channel_row(state, false, (item.updated_at, item.op_id))?;
         self.services
             .projection_store
@@ -513,7 +610,7 @@ impl AppService {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             .saturating_add(1);
         self.services.content_scope_changes.send_replace(generation);
-        Ok(())
+        Ok(left_at)
     }
 
     /// 退会の後に、その channel の世代の鍵の行を page で消しながら、その世代の replica の参照を外し、lease を外す。
@@ -557,7 +654,28 @@ impl AppService {
     }
 }
 
-fn private_channel_row(
+/// 参加の行に置く audience の名前（serde の名前）。
+pub(crate) fn audience_name(kind: &ChannelAudienceKind) -> Result<String> {
+    Ok(serde_json::to_value(kind)?
+        .as_str()
+        .context("audience kind is not a string")?
+        .to_string())
+}
+
+/// 参加の item の値（参加の行のうち端末に依らない欄。ADR 0061 §9）。
+pub(crate) fn membership_value(state: &JoinedPrivateChannelState) -> ChannelMembershipV1 {
+    ChannelMembershipV1 {
+        topic_id: state.topic_id.clone(),
+        label: state.label.clone(),
+        creator_pubkey: state.creator_pubkey.clone(),
+        owner_pubkey: state.owner_pubkey.clone(),
+        joined_via_pubkey: state.joined_via_pubkey.clone(),
+        audience_kind: state.audience_kind.clone(),
+        current_epoch_id: state.current_epoch_id.clone(),
+    }
+}
+
+pub(crate) fn private_channel_row(
     state: &JoinedPrivateChannelState,
     joined: bool,
     (updated_at, op_id): (i64, String),
@@ -570,10 +688,7 @@ fn private_channel_row(
         creator_pubkey: state.creator_pubkey.clone(),
         owner_pubkey: state.owner_pubkey.clone(),
         joined_via_pubkey: state.joined_via_pubkey.clone(),
-        audience_kind: serde_json::to_value(&state.audience_kind)?
-            .as_str()
-            .context("audience kind is not a string")?
-            .to_string(),
+        audience_kind: audience_name(&state.audience_kind)?,
         current_epoch_id: state.current_epoch_id.clone(),
         controller: state
             .controller

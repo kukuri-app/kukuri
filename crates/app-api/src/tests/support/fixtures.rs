@@ -422,7 +422,7 @@ pub(crate) async fn insert_joined_private_channel(
     app.install_private_epoch_secrets()
         .await
         .expect("install private epoch secrets");
-    app.persist_private_channel(&state, 0, archived)
+    app.persist_private_channel(&state, 0, archived, true)
         .await
         .expect("persist private channel rows");
     app.joined_private_channels.lock().await.insert(

@@ -173,8 +173,8 @@ pub enum AccountSyncItemKey {
         channel_id: ChannelId,
         epoch_id: String,
     },
-    /// private channel の明示の退会・取消の記録。
-    ChannelLeave { channel_id: ChannelId },
+    /// private channel の参加（値）と、明示の退会・取消（tombstone）。値は `ChannelMembershipV1`。
+    ChannelMembership { channel_id: ChannelId },
     /// private channel の鍵更新の担当端末の記録（意味は W6 が所有する）。
     ChannelController { channel_id: ChannelId },
 }
@@ -195,8 +195,8 @@ impl AccountSyncItemKey {
                 hex::encode(channel_id.as_str()),
                 hex::encode(epoch_id)
             ),
-            Self::ChannelLeave { channel_id } => {
-                format!("channel/{}/leave", hex::encode(channel_id.as_str()))
+            Self::ChannelMembership { channel_id } => {
+                format!("channel/{}/membership", hex::encode(channel_id.as_str()))
             }
             Self::ChannelController { channel_id } => {
                 format!("channel/{}/controller", hex::encode(channel_id.as_str()))
@@ -222,7 +222,7 @@ impl AccountSyncItemKey {
                 id(channel_id.as_str())?;
                 id(epoch_id)
             }
-            Self::ChannelLeave { channel_id } | Self::ChannelController { channel_id } => {
+            Self::ChannelMembership { channel_id } | Self::ChannelController { channel_id } => {
                 id(channel_id.as_str())
             }
         }
@@ -275,6 +275,31 @@ impl AccountSyncItem {
         Ok(item)
     }
 
+    /// private channel の受領済みの世代の鍵の item（ADR 0061 §9）。op_id は (channel, epoch) から決めるので、
+    /// 同じ世代を書き直しても変わらない。`updated_at` は鍵を受け取った時刻。
+    pub fn channel_epoch(
+        channel_id: &ChannelId,
+        epoch_id: &str,
+        updated_at: i64,
+        value: serde_json::Value,
+    ) -> Result<Self> {
+        let mut seed = b"kukuri channel epoch item v1\0".to_vec();
+        seed.extend_from_slice(channel_id.as_str().as_bytes());
+        seed.push(0);
+        seed.extend_from_slice(epoch_id.as_bytes());
+        let item = Self {
+            key: AccountSyncItemKey::ChannelCapability {
+                channel_id: channel_id.clone(),
+                epoch_id: epoch_id.to_string(),
+            },
+            op_id: blake3::hash(&seed).to_hex()[..32].to_string(),
+            updated_at,
+            value: Some(value),
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
     /// この端末での編集の item。op_id は新しく作る（再送しても変えない）。
     pub fn edit(
         key: AccountSyncItemKey,
@@ -312,4 +337,17 @@ pub struct SealedAccountSyncItem {
     pub v: u8,
     pub nonce_hex: String,
     pub ciphertext_hex: String,
+}
+
+/// private channel の参加の item の値（ADR 0061 §9）。参加の行のうち端末に依らない欄で、`current_epoch_id` は参加した
+/// ときの現在の世代。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelMembershipV1 {
+    pub topic_id: String,
+    pub label: String,
+    pub creator_pubkey: String,
+    pub owner_pubkey: String,
+    pub joined_via_pubkey: Option<String>,
+    pub audience_kind: crate::ChannelAudienceKind,
+    pub current_epoch_id: String,
 }
