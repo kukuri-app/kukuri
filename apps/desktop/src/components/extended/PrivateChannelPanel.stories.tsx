@@ -164,6 +164,22 @@ export const WithJoinedChannels: Story = {
   ),
 };
 
+// Issue #1218 AC-4d: 一覧に続きがあるときの「さらに表示」(押すと読み込み中、失敗で 1 行のエラー)。
+export const WithMoreJoinedChannels: Story = {
+  args: STORY_ARGS,
+  render: () => (
+    <PrivateChannelPanel
+      {...STORY_ARGS}
+      channelLabel=''
+      channelAudience='invite_only'
+      joinedChannels={BASE_CHANNELS.map((item) => item.channel)}
+      onSelectJoinedChannel={() => undefined}
+      onOpenJoinedChannelSettings={() => undefined}
+      onLoadMoreJoinedChannels={() => new Promise((_, reject) => setTimeout(() => reject(new Error('offline')), 800))}
+    />
+  ),
+};
+
 export const SettingsOwnerOnlyBlocked: Story = {
   args: STORY_ARGS,
   render: () => (

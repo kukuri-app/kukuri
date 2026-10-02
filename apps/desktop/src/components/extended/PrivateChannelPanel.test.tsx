@@ -204,3 +204,21 @@ test('settings panel shows a pending reason and the rotation next step', () => {
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Create share link' })).toBeEnabled();
 });
+
+test('joined list shows more while loading, and keeps rows and the button after a failure', async () => {
+  const user = userEvent.setup();
+  let rejectLoad: (error: Error) => void = () => undefined;
+  const onLoadMoreJoinedChannels = vi.fn(
+    () => new Promise<void>((_, reject) => { rejectLoad = reject; })
+  );
+  renderPanel({ joinedChannels: [channel()], onLoadMoreJoinedChannels });
+
+  await user.click(screen.getByRole('button', { name: 'Show more' }));
+  expect(screen.getByRole('button', { name: 'Loading…' })).toBeDisabled();
+  rejectLoad(new Error('offline'));
+
+  expect(await screen.findByText('Failed to load private channels.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Open core' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Show more' })).toBeEnabled();
+  expect(onLoadMoreJoinedChannels).toHaveBeenCalledTimes(1);
+});

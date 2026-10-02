@@ -88,6 +88,8 @@
   "joinedList": {
     "title": "Joined in this topic",
     "open": "Open {{channel}}",
-    "settings": "{{channel}} settings and sharing"
+    "settings": "{{channel}} settings and sharing",
+    "showMore": "Show more",
+    "loadingMore": "Loading…"
   }
 }

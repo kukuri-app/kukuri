@@ -176,6 +176,7 @@ fn export_ipc_types() {
         TimelineView,
         DirectMessageTimelineView,
         JoinedPrivateChannelView,
+        kukuri_app_api::JoinedPrivateChannelPage,
         PrivateChannelEpochCapability,
         PrivateChannelCapability,
         ChannelAccessTokenExport,

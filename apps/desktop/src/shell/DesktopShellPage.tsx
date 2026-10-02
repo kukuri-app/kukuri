@@ -57,6 +57,7 @@ import {
   DesktopShellNotificationsSurface,
 } from '@/shell/page/DesktopShellAuxiliaryPanels';
 import { DesktopShellOverlays } from '@/shell/page/DesktopShellOverlays';
+import { loadMoreJoinedChannels } from '@/shell/data/joinedChannelPages';
 import { CommunityNodeOnboarding } from '@/shell/page/CommunityNodeOnboarding';
 import { DesktopShellColumnWorkspace } from '@/shell/page/DesktopShellColumnWorkspace';
 import { DesktopShellControlCenter } from '@/shell/page/DesktopShellControlCenter';
@@ -935,6 +936,7 @@ export function DesktopShellPage({
         clipboardToastId={clipboardToastId}
         onRequestPrivateIndexing={setIndexingTarget}
         onOpenChannelSettings={channelEntries.openChannelSettingsDialog}
+        onLoadMoreJoinedChannels={(topic) => loadMoreJoinedChannels(api, storeApi, topic)}
       />
       <CommunityNodeOnboarding api={api} onAccept={shellActions.handleAcceptCommunityNodeConsents}
         onOpenSettings={handleOpenCommunityNodeSettings} onRetry={retryCommunityNode} />

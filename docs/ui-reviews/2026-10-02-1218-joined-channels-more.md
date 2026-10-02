@@ -1,0 +1,21 @@
+# 2026-10-02 joined channels more
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1218 AC-4d（W5-PR4d）の実装PR
+- Preview: [「さらに表示」・ja・dark・1280px](../../apps/desktop/tests/playwright/__screenshots__/visual.spec.ts/joined-channels-more-ja-dark.png) / [続きの読み込みの失敗・en・light・390px](../../apps/desktop/tests/playwright/__screenshots__/visual.spec.ts/joined-channels-more-en-light.png)（visual baseline）
+- Surface / user / purpose: プライベートチャンネルの作成・参加 Dialog の「このトピックで参加中」の一覧。1 つの topic で 129 件以上の channel に参加している利用者が、128 件の page の続きを読んで、すべての channel を開けるようにする。
+- Summary: 一覧に続きがあるときだけ、card の末尾に「さらに表示」を置く。押すと cursor の続きの 1 page を一覧の後ろへ足し、続きが無くなったらボタンを消す。読み込み中は「読み込み中…」で無効化する。失敗したら読み込んだ行とボタンを残し、ボタンの下に既存の文言「プライベートチャンネルの読み込みに失敗しました」を 1 行出す（押し直せる）。定期の再読み込みは最初の page だけを読み、読み込んだ続きを残す（ADR 0061 §9）。2026-10-02 ユーザー判断（置き場・文言・失敗時の表示）。
+- Conditions:
+  - Platform: Windows / Linux desktop（Playwright の Chromium と mock の runtime。Tauri の実機は未確認）
+  - Viewport: 1280px（Dialog の通常幅）、390px（狭幅）
+  - Theme: dark / light
+  - Locale: ja / en（zh-CN は文言の追加だけ。「显示更多」「加载中…」）
+  - State: 続きあり（ボタン）、読み込み中（無効）、続きの読み込みの失敗（エラーの 1 行とボタン）、最後まで読んだ（ボタン無し）
+- Accessibility / interaction: ボタンは通常の `button` で、読み込み中は `aria-busy` と `disabled`。続きが残る間は押した後も focus が同じボタンに残り、足した行はボタンの前に入る。エラーは既存の `error-inline` の行。
+- Performance: 1 回の操作で読むのは 128 件の 1 page。定期の再読み込みは今までどおり最初の page だけで、読み込んだ続きを読み直さない。保持する行は利用者が読み込んだ分だけ増える。
+- Validation: Vitest（`PrivateChannelPanel.test.tsx` の読み込み中・失敗、`DesktopShellPage.channels.test.tsx` の 130 件の続きと定期の再読み込み）、CLI（`crates/kukuri-cli/tests/private_channels.rs` の 130 件の page の読み進め）、Storybook の `WithMoreJoinedChannels`、eslint、tsc、Playwright の visual（`joined channel list more` 2 件）。
+- Not verified: Tauri の実機。最後の page を読んでボタンが消えたときの focus の移し先は定めていない（合意した操作の範囲外）。狭幅（390px）で channel 名が「設定と共有」ボタンに押されて短く切れるのは本変更の前からの表示で、本 AC の対象外。
+- Review result: 対象の 2 条件の採用判定は PASS。
+- Exceptions: None
