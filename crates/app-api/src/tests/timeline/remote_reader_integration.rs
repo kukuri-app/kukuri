@@ -203,6 +203,7 @@ async fn real_iroh_private_reader_stops_after_leave() -> Result<()> {
             epoch_id: old_epoch,
             namespace_secret_hex: hex::encode([8; 32]),
         }],
+        controller: None,
     };
     app.joined_private_channels.lock().await.insert(
         joined_private_channel_key(topic.as_str(), channel.as_str()),

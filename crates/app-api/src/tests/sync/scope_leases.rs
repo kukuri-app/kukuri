@@ -108,6 +108,7 @@ fn capability(topic: &str, channel: &str, archived_epochs: usize) -> PrivateChan
         participant_count: 0,
         stale_participant_count: 0,
         namespace_secret_hex: String::new(),
+        controller: None,
     }
 }
 

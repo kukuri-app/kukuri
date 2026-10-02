@@ -66,6 +66,8 @@ pub(crate) struct CommandError {
 
 pub(crate) const COMMAND_FAILED_CODE: &str = "command_failed";
 pub(crate) const SCOPE_LIMIT_REACHED_CODE: &str = "SCOPE_LIMIT_REACHED";
+pub(crate) const PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE: &str =
+    "PRIVATE_CHANNEL_CONTROLLER_PENDING";
 
 impl From<anyhow::Error> for CommandError {
     fn from(error: anyhow::Error) -> Self {
@@ -177,6 +179,18 @@ pub(crate) fn map_error(error: anyhow::Error) -> CommandError {
     {
         return CommandError {
             code: SCOPE_LIMIT_REACHED_CODE.to_string(),
+            message: error_message(error),
+            status: None,
+            retry_after_seconds: None,
+        };
+    }
+    // 鍵更新の担当端末でないための保留(#1219 W6)。画面は code で判別してダイアログを出す(W8)。
+    if error
+        .downcast_ref::<kukuri_desktop_runtime::PrivateChannelControllerPending>()
+        .is_some()
+    {
+        return CommandError {
+            code: PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE.to_string(),
             message: error_message(error),
             status: None,
             retry_after_seconds: None,
@@ -331,6 +345,14 @@ mod tests {
             anyhow::Error::from(kukuri_desktop_runtime::ScopeLimitReached).context("join"),
         );
         assert_eq!(error.code, SCOPE_LIMIT_REACHED_CODE);
+    }
+
+    #[test]
+    fn controller_pending_is_reported_by_its_code() {
+        let error = map_error(anyhow::Error::from(
+            kukuri_desktop_runtime::PrivateChannelControllerPending,
+        ));
+        assert_eq!(error.code, PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE);
     }
 
     #[test]

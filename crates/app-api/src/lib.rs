@@ -52,7 +52,10 @@ pub use kukuri_store::{NOTIFICATION_DISPATCH_PAGE_SIZE, NotificationKind};
 pub use private_channels::{
     is_retryable_friend_only_grant_import_error, is_retryable_friend_plus_share_import_error,
 };
-pub use service::{AppService, MAX_ACTIVE_SCOPES, ScopeLimitReached, ServiceHandles};
+pub use service::{
+    AppService, MAX_ACTIVE_SCOPES, PrivateChannelControllerPending, ScopeLimitReached,
+    ServiceHandles,
+};
 pub use views::*;
 
 /// `deadline` までに終わらなければ `Elapsed`（tokio の `timeout_at` と同じ。`n0_future::time` には無い）。

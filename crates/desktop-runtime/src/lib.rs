@@ -103,8 +103,8 @@ pub use host::{
 pub use host::{NON_READY_COMMAND_ALLOWLIST, admit_command};
 pub use kukuri_app_api::SessionDisplayRequest;
 pub use kukuri_app_api::{
-    ConnectivityPeersRequest, MAX_ACTIVE_SCOPES, ScopeDisplayRequest, ScopeDisplayTarget,
-    ScopeLimitReached,
+    ConnectivityPeersRequest, MAX_ACTIVE_SCOPES, PrivateChannelControllerPending,
+    ScopeDisplayRequest, ScopeDisplayTarget, ScopeLimitReached,
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 pub use requests::CreateAccountRequest;

@@ -113,11 +113,11 @@ pub(crate) use crate::views::{
     ImportMetaverseRoomAssetInput, JoinedPrivateChannelView, LiveSessionView,
     MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput, NotificationStatusView,
     NotificationView, PendingAttachment, PostView, PostWithdrawalView, PrivateChannelCapability,
-    PrivateChannelEpochCapability, ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput,
-    ReactionKeyView, ReactionStateView, ReactionSummaryView, RecentReactionView,
-    ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput,
-    SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput,
-    UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
+    PrivateChannelController, PrivateChannelEpochCapability, ProfileAssetView, ProfileInput,
+    PublishMetaverseRoomEventInput, ReactionKeyView, ReactionStateView, ReactionSummaryView,
+    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
+    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
+    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;
@@ -192,6 +192,7 @@ mod timeline_subscription_support;
 pub(crate) use timeline_subscription_support::ReplicaScope;
 mod timeline_view_support;
 
+pub use errors::PrivateChannelControllerPending;
 pub(crate) use errors::{
     PrivateChannelImportError, PrivateChannelImportKind, PrivateChannelSnapshotWaitContext,
 };
@@ -560,6 +561,8 @@ pub(crate) struct JoinedPrivateChannelState {
     pub(crate) current_epoch_id: String,
     pub(crate) current_epoch_secret_hex: String,
     pub(crate) archived_epochs: Vec<PrivateChannelEpochCapability>,
+    /// 鍵更新の担当端末(#1219 W6)。`None` は担当が不明で、この端末は新しい世代を作らない。
+    pub(crate) controller: Option<PrivateChannelController>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

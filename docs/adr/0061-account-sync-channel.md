@@ -43,7 +43,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | 著者を常に表示する指定 | `trust/always-visible/<著者の公開鍵>` | 著者ごと。解除は tombstone |
 | private channel の受領済みの世代の鍵 | `channel/<channel id の hex>/epoch/<epoch id の hex>` | (channel, epoch) ごと。追加だけ |
 | private channel の明示の退会・取消 | `channel/<channel id の hex>/leave` | tombstone として保持する |
-| private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味は W6（#1219）が所有する |
+| private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味・値・採否は W6（#1219）が所有する（ADR 0018 §8） |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
 allowlist の外の種類は封を開けても受け付けない（`AccountSyncItemKey` の `kind` の照合）。開いた item の key と docs の key の一致も確かめる。`value` の中身の検査は、書き手と読み手を実装する AC-3・AC-4 が種類ごとに行う。
@@ -58,7 +58,8 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 - profile: 署名済みの envelope の `created_at` が新しいものを採る。同じなら envelope の ID の辞書順で大きいものを採る。
 - 著者を常に表示する指定などの設定の item: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。再受信・再起動・restore の時刻を `updated_at` にしない。
-- private channel の鍵: (channel, epoch) ごとに追加し、相手に項目が無いことを削除と解釈しない。現在の世代への切替は、検証済みの遷移（W6）に従う。
+- private channel の鍵: (channel, epoch) ごとに追加し、相手に項目が無いことを削除と解釈しない。値の形と現在の世代への切替は、検証済みの遷移（W6、ADR 0018 §8）に従う。
+- 鍵更新の担当: 担当の世代（`generation`）で採り、`updated_at` では決めない（ADR 0018 §8）。
 - 退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の別の認証済みの更新として扱う。
 - 採用した状態は item ごとに 1 行で持つ（操作の log を持たない）。同じ `op_id` と `updated_at` の再受信は何もしない（重複排除の台帳を別に持たない）。
 

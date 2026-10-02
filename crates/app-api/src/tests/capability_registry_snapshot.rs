@@ -1,5 +1,5 @@
 use crate::service::projection_support::joined_private_channel_state_from_capability;
-use crate::{PrivateChannelCapability, PrivateChannelEpochCapability};
+use crate::{PrivateChannelCapability, PrivateChannelController, PrivateChannelEpochCapability};
 use kukuri_core::ChannelAudienceKind;
 
 // private channel capability registry の永続 JSON(desktop-runtime が identity storage に
@@ -27,6 +27,11 @@ fn full_capability() -> PrivateChannelCapability {
         participant_count: 3,
         stale_participant_count: 1,
         namespace_secret_hex: "44".repeat(32),
+        controller: Some(Some(PrivateChannelController {
+            device_id: "66".repeat(32),
+            generation: 1,
+            transfer_to: None,
+        })),
     }
 }
 
@@ -53,7 +58,8 @@ fn capability_registry_json_shape_is_frozen() {
             "\"rotation_required\":true,",
             "\"participant_count\":3,",
             "\"stale_participant_count\":1,",
-            "\"namespace_secret_hex\":\"{s}\"",
+            "\"namespace_secret_hex\":\"{s}\",",
+            "\"controller\":{{\"device_id\":\"{d}\",\"generation\":1,\"transfer_to\":null}}",
             "}}]"
         ),
         c = "11".repeat(32),
@@ -61,6 +67,7 @@ fn capability_registry_json_shape_is_frozen() {
         j = "33".repeat(32),
         s = "44".repeat(32),
         a = "55".repeat(32),
+        d = "66".repeat(32),
     );
     assert_eq!(encoded, expected);
 
@@ -85,6 +92,12 @@ fn capability_registry_accepts_minimal_legacy_json() {
     assert_eq!(decoded[0].owner_pubkey, "");
     assert_eq!(decoded[0].audience_kind, ChannelAudienceKind::InviteOnly);
     assert!(decoded[0].archived_epochs.is_empty());
+    // #1219 W6: 担当の欄が無い保存(本変更前)と、担当が不明(null)を区別して読む。
+    assert_eq!(decoded[0].controller, None);
+    let unknown = minimal.replace("\"aa\"", "\"aa\", \"controller\": null");
+    let decoded: Vec<PrivateChannelCapability> =
+        serde_json::from_str(&unknown).expect("decode unknown controller");
+    assert_eq!(decoded[0].controller, Some(None));
 
     let legacy = r#"[{
         "topic_id": "kukuri:topic:legacy",

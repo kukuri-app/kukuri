@@ -809,6 +809,31 @@ pub struct PrivateChannelCapability {
     pub stale_participant_count: usize,
     #[serde(default)]
     pub namespace_secret_hex: String,
+    /// 鍵更新の担当端末の記録(#1219 W6、ADR 0018 §8)。`None` は欄の無い本変更前の保存、`Some(None)` は担当が不明。
+    #[serde(default, deserialize_with = "present_field")]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub controller: Option<Option<PrivateChannelController>>,
+}
+
+/// 欄があれば `Some`(値が null でも)。欄の有無を `#[serde(default)]` の `None` と区別する。
+fn present_field<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// private channel の鍵更新の担当端末(#1219 W6、ADR 0018 §8)。account 同期の `channel/<hex>/controller` の値でもある。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateChannelController {
+    /// 担当端末の iroh endpoint ID。
+    pub device_id: String,
+    /// 担当の世代。作成で 1、担当が移るごとに増える。
+    pub generation: u64,
+    /// 引継ぎ中の移譲先。あれば旧担当は停止しており、どの端末も新しい世代を作らない。
+    #[serde(default)]
+    pub transfer_to: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

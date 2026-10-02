@@ -194,6 +194,7 @@ async fn private_index_source_uses_only_the_joined_epoch_and_stops_after_leave()
             current_epoch_id: "e1".into(),
             current_epoch_secret_hex: hex::encode([7; 32]),
             archived_epochs: Vec::new(),
+            controller: None,
         },
     );
     let post = build_post_envelope_with_payload_in_channel(
@@ -319,6 +320,7 @@ async fn private_legacy_page_selects_the_cursor_epoch_without_scanning_every_rep
                     namespace_secret_hex: hex::encode([8; 32]),
                 }))
                 .collect(),
+            controller: None,
         },
     );
     let selected = app
