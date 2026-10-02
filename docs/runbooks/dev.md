@@ -357,6 +357,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm
   共用 crate では tokio・std の時刻と task を直接使わず `n0_future`・`web_time` を使う。直接使うと wasm32 の clippy が `disallowed_methods` で止める。
 - W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
 - W2・W3 の IndexedDB の保存（blob と docs の record）と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`。
+  W4 AC-2 の鍵・設定・projection・peer の接続候補の保存（reload、失敗の区別、EndpointId の保持、store の parity の scenario）も同じ試験に含む（`src/account_tests.rs`）。
 
 ### 上流 iroh-blobs の版を上げるとき（ADR 0058 §5、#1215 W2 AC-4）
 iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。

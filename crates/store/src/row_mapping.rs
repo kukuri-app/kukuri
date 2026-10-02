@@ -124,17 +124,14 @@ pub(crate) fn row_to_bookmarked_custom_reaction(
         asset_id: row.get("asset_id"),
         owner_pubkey: row.get("owner_pubkey"),
         blob_hash: BlobHash::new(row.get::<String, _>("blob_hash")),
-        search_key: row
-            .try_get::<String, _>("search_key")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| row.get("asset_id")),
+        search_key: row.try_get("search_key").unwrap_or_default(),
         mime: row.get("mime"),
         bytes: row.get::<i64, _>("bytes") as u64,
         width: row.get::<i64, _>("width") as u32,
         height: row.get::<i64, _>("height") as u32,
         bookmarked_at: row.get("bookmarked_at"),
-    })
+    }
+    .with_search_key_fallback())
 }
 
 pub(crate) fn row_to_bookmarked_post(row: sqlx::sqlite::SqliteRow) -> Result<BookmarkedPostRow> {

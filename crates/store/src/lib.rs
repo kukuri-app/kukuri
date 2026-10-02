@@ -10,6 +10,10 @@ mod cache;
 mod memory;
 mod models;
 mod pagination;
+/// backend の差分ハーネス(試験と、他の crate の試験から `test-support` で使う)。
+#[cfg(any(test, feature = "test-support"))]
+pub mod parity;
+mod peer_candidates;
 mod private_channel_keys;
 // SQLite の実装は native だけ（ADR 0056 §5）。
 #[cfg(not(target_family = "wasm"))]
@@ -39,7 +43,11 @@ pub use models::{
     NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, PrivateChannelParticipantRow,
     ReactionProjectionRow, TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION,
     VERIFIED_REACTION_PROJECTION_VERSION, VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow,
-    adult_media_hashes_for_row,
+    adult_media_hashes_for_row, bookmark_cache_refs,
+};
+pub use peer_candidates::{
+    LEARNED_BUDGET_BYTES, LEARNED_PRUNE_STEP, LEARNED_RETENTION_MS, LEARNED_SOURCE, MAX_ADDR_BYTES,
+    PeerCandidateStore, peer_candidate_bytes,
 };
 pub use private_channel_keys::{
     PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
@@ -52,8 +60,9 @@ pub use sqlite::{
     ProtectedMigrationPage, ProtectedSource, SqliteStore, StoreStartupError,
 };
 pub use traits::{
-    BOOKMARKED_CUSTOM_REACTION_LIMIT, ContentObservationStore, DirectMessageStore,
-    LiveGameProjectionStore, NOTIFICATION_DISPATCH_PAGE_SIZE, NOTIFICATION_PAGE_SIZE,
-    NotificationStore, ObjectProjectionStore, PostWithdrawalStore, ProjectionStore,
-    ReactionBookmarkStore, SocialProjectionStore, Store,
+    BOOKMARKED_CUSTOM_REACTION_LIMIT, CONTENT_OBSERVATION_RETENTION_MS, ContentObservationStore,
+    DirectMessageStore, LiveGameProjectionStore, MAX_CONTENT_OBSERVATIONS,
+    NOTIFICATION_DISPATCH_PAGE_SIZE, NOTIFICATION_PAGE_SIZE, NotificationStore,
+    ObjectProjectionStore, PostWithdrawalStore, ProjectionStore, ReactionBookmarkStore,
+    SocialProjectionStore, Store,
 };

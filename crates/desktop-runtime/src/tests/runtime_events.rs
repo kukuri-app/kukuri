@@ -1,5 +1,6 @@
 use super::*;
 use kukuri_core::BlobHash;
+use kukuri_store::PeerCandidateStore as _;
 
 #[test]
 fn sync_status_changed_event_wire_shape_is_stable() {

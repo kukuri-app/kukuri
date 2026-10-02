@@ -740,7 +740,8 @@ impl IrohGossipTransport {
                         *transport_last_error.lock().await = None;
                         drop(guard);
                         if let Some(store) = &candidate_store
-                            && let Err(error) = remember_connected_peer(store, peer_id).await
+                            && let Err(error) =
+                                remember_connected_peer(store.as_ref(), peer_id).await
                         {
                             debug!(%error, "failed to remember connected peer for account receive");
                         }

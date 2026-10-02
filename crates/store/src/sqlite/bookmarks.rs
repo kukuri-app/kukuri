@@ -1,29 +1,5 @@
 use super::*;
-use crate::BookmarkCursor;
-use kukuri_core::PayloadRef;
-
-pub(super) fn bookmark_cache_refs(row: &BookmarkedPostRow) -> Vec<(String, String)> {
-    let mut refs = Vec::new();
-    if let PayloadRef::BlobText { hash, .. } = &row.payload_ref {
-        refs.push(("blob".to_string(), hash.as_str().to_string()));
-    }
-    refs.extend(
-        row.attachments
-            .iter()
-            .map(|attachment| ("blob".to_string(), attachment.hash.as_str().to_string())),
-    );
-    if let Some(snapshot) = &row.repost_of {
-        refs.extend(
-            snapshot
-                .attachments
-                .iter()
-                .map(|attachment| ("blob".to_string(), attachment.hash.as_str().to_string())),
-        );
-    }
-    refs.sort();
-    refs.dedup();
-    refs
-}
+use crate::{BookmarkCursor, bookmark_cache_refs};
 
 #[async_trait]
 impl ReactionBookmarkStore for SqliteStore {

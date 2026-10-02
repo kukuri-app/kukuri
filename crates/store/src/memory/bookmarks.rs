@@ -122,15 +122,8 @@ impl ReactionBookmarkStore for MemoryStore {
             .await
             .values()
             .cloned()
+            .map(BookmarkedCustomReactionRow::with_search_key_fallback)
             .collect::<Vec<_>>();
-        // sqlite の読み出し(row_mapping.rs row_to_bookmarked_custom_reaction)と同義:
-        // search_key が空文字/空白のみの行は読み出し時に asset_id へフォールバックする。
-        // 格納値そのものは書き換えない(put 値は保持し、読み出しで適用する — WP-S6 T7)。
-        for row in &mut items {
-            if row.search_key.trim().is_empty() {
-                row.search_key = row.asset_id.clone();
-            }
-        }
         items.sort_by(|left, right| {
             right
                 .bookmarked_at

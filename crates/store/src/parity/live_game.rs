@@ -133,18 +133,21 @@ fn session_viewer_counts(rows: &[LiveSessionProjectionRow]) -> Vec<(String, usiz
         .collect()
 }
 
-#[tokio::test]
-async fn live_sessions_and_presence_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn live_sessions_and_presence_match_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = live_session_scenario(&sqlite).await;
+    let from_backend = live_session_scenario(&backend).await;
     let from_memory = live_session_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(started_at DESC, session_id DESC。100 の tie は id 降順)
     // sess-live の viewer は alice(更新済み)+ bob + carol の 3。ended は常に 0。
     assert_eq!(
-        session_viewer_counts(&from_sqlite.topic_a_initial),
+        session_viewer_counts(&from_backend.topic_a_initial),
         vec![
             ("sess-sched".to_string(), 1),
             ("sess-live".to_string(), 3),
@@ -152,12 +155,12 @@ async fn live_sessions_and_presence_match_between_backends() {
         ],
     );
     assert_eq!(
-        session_viewer_counts(&from_sqlite.topic_b_initial),
+        session_viewer_counts(&from_backend.topic_b_initial),
         vec![("sess-other".to_string(), 0)],
     );
     // expires_at == 500 の carol は掃除される
     assert_eq!(
-        session_viewer_counts(&from_sqlite.topic_a_after_expire),
+        session_viewer_counts(&from_backend.topic_a_after_expire),
         vec![
             ("sess-sched".to_string(), 1),
             ("sess-live".to_string(), 2),
@@ -166,7 +169,7 @@ async fn live_sessions_and_presence_match_between_backends() {
     );
     // topic-b の掃除は topic-a の presence に影響しない
     assert_eq!(
-        session_viewer_counts(&from_sqlite.topic_a_after_clear_topic_b),
+        session_viewer_counts(&from_backend.topic_a_after_clear_topic_b),
         vec![
             ("sess-sched".to_string(), 1),
             ("sess-live".to_string(), 2),
@@ -174,7 +177,7 @@ async fn live_sessions_and_presence_match_between_backends() {
         ],
     );
     assert_eq!(
-        session_viewer_counts(&from_sqlite.topic_b_after_clear_topic_b),
+        session_viewer_counts(&from_backend.topic_b_after_clear_topic_b),
         vec![("sess-other".to_string(), 0)],
     );
 }
@@ -228,17 +231,18 @@ async fn game_room_scenario<S: Store + ProjectionStore>(store: &S) -> GameRoomSc
     }
 }
 
-#[tokio::test]
-async fn game_rooms_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn game_rooms_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = game_room_scenario(&sqlite).await;
+    let from_backend = game_room_scenario(&backend).await;
     let from_memory = game_room_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(updated_at DESC, room_id DESC。100 の tie は id 降順)
     assert_eq!(
-        from_sqlite
+        from_backend
             .topic_rooms
             .iter()
             .map(|row| (
@@ -265,15 +269,15 @@ async fn game_rooms_match_between_backends() {
             ),
         ],
     );
-    assert_eq!(from_sqlite.topic_rooms[0].scores, parity_game_scores());
+    assert_eq!(from_backend.topic_rooms[0].scores, parity_game_scores());
     assert_eq!(
-        from_sqlite.topic_rooms[2].metaverse,
+        from_backend.topic_rooms[2].metaverse,
         Some(parity_metaverse_state()),
     );
     // sanity: serde 写像の生リテラル固定(fixture ビルダーを経由しない直値。
     // scores_json / metaverse_json ⇄ struct の対応が変われば fixture 側と
     // 同時にズレてもここが割れる)
-    let scores = &from_sqlite.topic_rooms[0].scores;
+    let scores = &from_backend.topic_rooms[0].scores;
     assert_eq!(
         (
             scores[0].participant_id.as_str(),
@@ -286,7 +290,7 @@ async fn game_rooms_match_between_backends() {
         (scores[1].participant_id.as_str(), scores[1].score),
         ("player-2", -5),
     );
-    let metaverse = from_sqlite.topic_rooms[2]
+    let metaverse = from_backend.topic_rooms[2]
         .metaverse
         .as_ref()
         .expect("metaverse state");
@@ -301,7 +305,7 @@ async fn game_rooms_match_between_backends() {
     );
     assert_eq!(metaverse.chat_history[0].body, "hello");
     assert_eq!(
-        from_sqlite
+        from_backend
             .other_topic_rooms
             .iter()
             .map(|row| row.room_id.clone())
@@ -483,29 +487,32 @@ async fn bounded_list_scenario<S: Store + ProjectionStore>(store: &S) -> Bounded
     }
 }
 
-#[tokio::test]
-async fn live_and_game_lists_are_bounded_and_channel_indexed_in_both_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn live_and_game_lists_are_bounded_and_channel_indexed_in_both_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = bounded_list_scenario(&sqlite).await;
+    let from_backend = bounded_list_scenario(&backend).await;
     let from_memory = bounded_list_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
     assert_eq!(
-        from_sqlite.live_ids,
+        from_backend.live_ids,
         (113..120)
             .rev()
             .map(|index| format!("live-{index:03}"))
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        from_sqlite.game_ids,
+        from_backend.game_ids,
         (113..120)
             .rev()
             .map(|index| format!("game-{index:03}"))
             .collect::<Vec<_>>()
     );
-    assert_eq!(from_sqlite.moved_live_ids, vec!["live-119"]);
-    assert_eq!(from_sqlite.moved_game_ids, vec!["game-119"]);
+    assert_eq!(from_backend.moved_live_ids, vec!["live-119"]);
+    assert_eq!(from_backend.moved_game_ids, vec!["game-119"]);
 }
 
 async fn dome_connection_projection_scenario<S: Store + ProjectionStore>(
@@ -543,14 +550,17 @@ async fn dome_connection_projection_scenario<S: Store + ProjectionStore>(
         .expect("get updated Dome Connection projection")
 }
 
-#[tokio::test]
-async fn dome_connection_projection_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn dome_connection_projection_matches_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = dome_connection_projection_scenario(&sqlite).await;
+    let from_backend = dome_connection_projection_scenario(&backend).await;
     let from_memory = dome_connection_projection_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
-    let projection = from_sqlite.expect("Dome Connection projection");
+    assert_eq!(from_backend, from_memory);
+    let projection = from_backend.expect("Dome Connection projection");
     assert_eq!(projection.topology_digest, "digest-2");
     assert_eq!(projection.derived_at, 20);
 }
@@ -590,14 +600,15 @@ async fn dome_hosting_projection_scenario<S: Store + ProjectionStore>(
         .expect("get updated Dome Hosting projection")
 }
 
-#[tokio::test]
-async fn dome_hosting_projection_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn dome_hosting_projection_matches_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = dome_hosting_projection_scenario(&sqlite).await;
+    let from_backend = dome_hosting_projection_scenario(&backend).await;
     let from_memory = dome_hosting_projection_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
-    let projection = from_sqlite.expect("Dome Hosting projection");
+    assert_eq!(from_backend, from_memory);
+    let projection = from_backend.expect("Dome Hosting projection");
     assert_eq!(projection.lease_epoch, Some(2));
     assert_eq!(projection.session_id.as_deref(), Some("cn-session-2"));
     assert_eq!(projection.derived_at, 20);
@@ -675,18 +686,19 @@ async fn session_revision_guard_scenario<S: Store + ProjectionStore>(
     )
 }
 
-#[tokio::test]
-async fn session_revision_guards_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn session_revision_guards_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = session_revision_guard_scenario(&sqlite).await;
+    let from_backend = session_revision_guard_scenario(&backend).await;
     let from_memory = session_revision_guard_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
-    assert_eq!(from_sqlite.0.revision, 2);
-    assert_eq!(from_sqlite.0.status, LiveSessionStatus::Ended);
-    assert_eq!(from_sqlite.0.title, "latest live");
-    assert_eq!(from_sqlite.1.score_revision, Some(2));
-    assert_eq!(from_sqlite.1.status, GameRoomStatus::Running);
-    assert_eq!(from_sqlite.2.score_revision, None);
-    assert_eq!(from_sqlite.2.status, GameRoomStatus::Ended);
+    assert_eq!(from_backend, from_memory);
+    assert_eq!(from_backend.0.revision, 2);
+    assert_eq!(from_backend.0.status, LiveSessionStatus::Ended);
+    assert_eq!(from_backend.0.title, "latest live");
+    assert_eq!(from_backend.1.score_revision, Some(2));
+    assert_eq!(from_backend.1.status, GameRoomStatus::Running);
+    assert_eq!(from_backend.2.score_revision, None);
+    assert_eq!(from_backend.2.status, GameRoomStatus::Ended);
 }

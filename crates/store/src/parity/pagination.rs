@@ -257,17 +257,20 @@ async fn store_envelope_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn store_envelope_pagination_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn store_envelope_pagination_matches_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = store_envelope_scenario(&sqlite).await;
+    let from_backend = store_envelope_scenario(&backend).await;
     let from_memory = store_envelope_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(created_at DESC, envelope_id DESC。60 の tie は id 降順)
     assert_eq!(
-        envelope_page_ids(&from_sqlite.timeline_pages),
+        envelope_page_ids(&from_backend.timeline_pages),
         vec![
             vec!["env-reply-3".to_string(), "env-solo".to_string()],
             vec!["env-reply-2".to_string(), "env-reply-1".to_string()],
@@ -276,20 +279,20 @@ async fn store_envelope_pagination_matches_between_backends() {
         ],
     );
     // ちょうど尽きた 3 ページ目も next_cursor=Some(幻の次ページ)を返す現挙動
-    assert!(from_sqlite.timeline_pages[2].next_cursor.is_some());
+    assert!(from_backend.timeline_pages[2].next_cursor.is_some());
     // thread は root 先頭固定 + created_at ASC, id ASC(60 の tie は id 昇順)
     assert_eq!(
-        envelope_page_ids(&from_sqlite.thread_pages),
+        envelope_page_ids(&from_backend.thread_pages),
         vec![
             vec!["env-root".to_string(), "env-reply-1".to_string()],
             vec!["env-reply-2".to_string(), "env-reply-3".to_string()],
             vec![],
         ],
     );
-    assert_eq!(from_sqlite.full_page.items.len(), 6);
-    assert!(from_sqlite.full_page.next_cursor.is_none());
-    assert!(from_sqlite.envelope_hit.is_some());
-    assert!(from_sqlite.envelope_miss.is_none());
+    assert_eq!(from_backend.full_page.items.len(), 6);
+    assert!(from_backend.full_page.next_cursor.is_none());
+    assert!(from_backend.envelope_hit.is_some());
+    assert!(from_backend.envelope_miss.is_none());
 }
 
 #[derive(Debug, PartialEq)]
@@ -349,17 +352,20 @@ async fn projection_timeline_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn projection_timeline_pagination_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn projection_timeline_pagination_matches_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = projection_timeline_scenario(&sqlite).await;
+    let from_backend = projection_timeline_scenario(&backend).await;
     let from_memory = projection_timeline_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(created_at DESC, object_id DESC。tie は id 降順)
     assert_eq!(
-        projection_page_ids(&from_sqlite.timeline_pages),
+        projection_page_ids(&from_backend.timeline_pages),
         vec![
             vec!["proj-b".to_string(), "proj-a".to_string()],
             vec!["proj-c".to_string(), "proj-e".to_string()],
@@ -368,21 +374,21 @@ async fn projection_timeline_pagination_matches_between_backends() {
         ],
     );
     assert_eq!(
-        projection_page_ids(&from_sqlite.filtered_pages),
+        projection_page_ids(&from_backend.filtered_pages),
         vec![
             vec!["proj-b".to_string(), "proj-c".to_string()],
             vec!["proj-e".to_string()],
         ],
     );
-    assert_eq!(from_sqlite.filtered_public.items.len(), 3);
+    assert_eq!(from_backend.filtered_public.items.len(), 3);
     assert_eq!(
-        from_sqlite
+        from_backend
             .projection_hit
             .as_ref()
             .and_then(|row| row.content.as_deref()),
         Some("content:proj-a:updated"),
     );
-    assert!(from_sqlite.projection_miss.is_none());
+    assert!(from_backend.projection_miss.is_none());
 }
 
 #[derive(Debug, PartialEq)]
@@ -442,17 +448,20 @@ async fn projection_thread_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn projection_thread_pagination_matches_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn projection_thread_pagination_matches_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = projection_thread_scenario(&sqlite).await;
+    let from_backend = projection_thread_scenario(&backend).await;
     let from_memory = projection_thread_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(root 先頭固定 + created_at ASC, object_id ASC)
     assert_eq!(
-        projection_page_ids(&from_sqlite.thread_pages),
+        projection_page_ids(&from_backend.thread_pages),
         vec![
             vec!["th-root".to_string(), "th-r1".to_string()],
             vec!["th-r2".to_string(), "th-r3".to_string()],
@@ -460,7 +469,7 @@ async fn projection_thread_pagination_matches_between_backends() {
         ],
     );
     assert_eq!(
-        projection_page_ids(&from_sqlite.filtered_pages),
+        projection_page_ids(&from_backend.filtered_pages),
         vec![
             vec!["th-root".to_string(), "th-r2".to_string()],
             vec!["th-r3".to_string()],
@@ -468,7 +477,7 @@ async fn projection_thread_pagination_matches_between_backends() {
     );
     // allowed_channel = None は無フィルタの thread と同じ items(th-x は thread 外)
     assert_eq!(
-        from_sqlite
+        from_backend
             .filtered_none_channel
             .items
             .iter()
@@ -585,17 +594,20 @@ async fn direct_message_scenario<S: Store + ProjectionStore>(
     }
 }
 
-#[tokio::test]
-async fn direct_message_pagination_and_tombstones_match_between_backends() {
-    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+pub(super) async fn direct_message_pagination_and_tombstones_match_between_backends<
+    S: Store + ProjectionStore,
+>(
+    make: &impl AsyncFn() -> S,
+) {
+    let backend = make().await;
     let memory = MemoryStore::default();
-    let from_sqlite = direct_message_scenario(&sqlite).await;
+    let from_backend = direct_message_scenario(&backend).await;
     let from_memory = direct_message_scenario(&memory).await;
-    assert_eq!(from_sqlite, from_memory);
+    assert_eq!(from_backend, from_memory);
 
     // sanity: sqlite 実測(created_at DESC, message_id DESC。40/20 の tie は id 降順)
     assert_eq!(
-        dm_page_ids(&from_sqlite.first_walk),
+        dm_page_ids(&from_backend.first_walk),
         vec![
             vec!["msg-6".to_string(), "msg-5".to_string()],
             vec!["msg-4".to_string(), "msg-3".to_string()],
@@ -604,17 +616,17 @@ async fn direct_message_pagination_and_tombstones_match_between_backends() {
         ],
     );
     assert_eq!(
-        from_sqlite
+        from_backend
             .acked_message
             .as_ref()
             .and_then(|row| row.acked_at),
         Some(99),
     );
-    assert!(from_sqlite.blocked_message.is_none());
-    assert!(from_sqlite.has_tombstone_hit);
-    assert!(!from_sqlite.has_tombstone_miss);
+    assert!(from_backend.blocked_message.is_none());
+    assert!(from_backend.has_tombstone_hit);
+    assert!(!from_backend.has_tombstone_miss);
     assert_eq!(
-        from_sqlite
+        from_backend
             .tombstones
             .iter()
             .map(|row| row.message_id.clone())
@@ -626,7 +638,7 @@ async fn direct_message_pagination_and_tombstones_match_between_backends() {
         ],
     );
     assert_eq!(
-        dm_page_ids(&from_sqlite.second_walk),
+        dm_page_ids(&from_backend.second_walk),
         vec![
             vec!["msg-6".to_string(), "msg-5".to_string()],
             vec!["msg-3".to_string(), "msg-2".to_string()],

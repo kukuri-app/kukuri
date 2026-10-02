@@ -16,7 +16,6 @@
 //! 起動時に内容を読まず、key を指定して読む。回収は索引を古い順に 1 処理 `REMOTE_CACHE_RECLAIM_STEP` 件まで歩く。
 
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,24 +27,37 @@ use kukuri_store::{
     REMOTE_CACHE_TOUCH_INTERVAL_MS, REMOTE_CACHE_UNUSED_MS, RemoteCacheReservation,
     RemoteRecordKey,
 };
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::broadcast;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     IdbCursorDirection, IdbDatabase, IdbKeyRange, IdbObjectStore, IdbObjectStoreParameters,
-    IdbTransaction, IdbTransactionMode, StorageEstimate,
+    IdbTransaction, StorageEstimate,
 };
 
+use crate::actor::Actor;
 use crate::idb::{self, js_error};
 
+mod schema;
 mod tx;
-use tx::{RecordMeta, Tx, delete_step, make_room, prefix_upper_bound, put_content, record_key};
+pub(crate) use schema::*;
+pub(crate) use tx::prefix_upper_bound;
+use tx::{RecordMeta, delete_step, make_room, put_content, record_key};
+pub(crate) use tx::{Tx, place};
 
 const VERSION: u32 = 1;
 /// 1 つの chunk の上限（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
 const CHUNK_BYTES: usize = 1024 * 1024;
-/// 処理待ちの操作の上限。超えた呼出元は空くまで待つ。
-const QUEUE: usize = 64;
-const STORES: [&str; 4] = ["contents", "chunks", "refs", "meta"];
+/// 内容の transaction が触る object store。remote の投稿の projection（`projection` の内容）を消すときは、その行と
+/// 成人向けの印の参照も同じ transaction で消す（native の `delete_cache_item`）。
+const STORES: [&str; 7] = [
+    "contents",
+    "chunks",
+    "refs",
+    META,
+    OBJECTS,
+    ADULT_HASHES,
+    ADULT_REFS,
+];
 const USAGE: &str = "usage";
 /// 表示設定 ON の間に置いた成人向けの blob の `scope`（native の `REMOTE_ADULT_BLOB_SCOPE`）。
 const ADULT: &str = "adult";
@@ -54,12 +66,17 @@ const OWN_DOCS: &str = "own_docs";
 /// 1 回の key 指定の record の読み出しの上限（native と同じ）。
 const EXACT_RECORDS: usize = 8;
 
-type Job = Box<dyn FnOnce(IdbDatabase) -> Pin<Box<dyn Future<Output = ()>>> + Send>;
+/// database の task が持つ接続と、成人向けの印を消したことの知らせ（`subscribe_adult_label_evictions`）。
+#[derive(Clone)]
+pub(crate) struct Db {
+    pub(crate) idb: IdbDatabase,
+    evictions: broadcast::Sender<String>,
+}
 
 /// IndexedDB の保存 trait の実装。database は 1 つの task が持ち、操作を channel で受けて 1 つずつ行う
 /// （native の `remote_cache_gate` と同じ直列化。ADR 0056 §4）。drop で database を閉じる。
 pub struct IndexedDbCache {
-    jobs: mpsc::Sender<Job>,
+    actor: Actor<Db>,
     reserved: Arc<AtomicU64>,
     evictions: broadcast::Sender<String>,
     /// 非保護分の上限。起動時の quota の半分と 3 GiB の小さい方（ADR 0058 §4）。
@@ -75,58 +92,47 @@ impl IndexedDbCache {
     /// `capacity` を渡さなければ、quota から決める。
     pub(crate) async fn start(account: &str, capacity: Option<i64>) -> Result<Self> {
         let name = format!("kukuri-cache-v1-{account}");
-        let (jobs, mut queue) = mpsc::channel::<Job>(QUEUE);
-        let (opened, receiver) = oneshot::channel();
-        n0_future::task::spawn(async move {
-            let opening = async {
+        let evictions = broadcast::channel(64).0;
+        let sender = evictions.clone();
+        let (actor, capacity) = Actor::start(
+            move || async move {
                 let capacity = match capacity {
                     Some(capacity) => capacity,
                     None => quota_capacity().await?,
                 };
-                anyhow::Ok((idb::open(&name, VERSION, create_stores).await?, capacity))
-            };
-            let db = match opening.await {
-                Ok((db, capacity)) => {
-                    let _ = opened.send(Ok(capacity));
-                    db
-                }
-                Err(error) => {
-                    let _ = opened.send(Err(error));
-                    return;
-                }
-            };
-            while let Some(job) = queue.recv().await {
-                job(db.clone()).await;
-            }
-            db.close();
-        });
-        let capacity = receiver
-            .await
-            .map_err(|_| anyhow!("indexeddb open dropped"))??;
+                let idb = idb::open(&name, VERSION, create_stores).await?;
+                let db = Db {
+                    idb,
+                    evictions: sender,
+                };
+                Ok((db, capacity))
+            },
+            |db| db.idb.close(),
+        )
+        .await?;
         Ok(Self {
-            jobs,
+            actor,
             reserved: Arc::default(),
-            evictions: broadcast::channel(64).0,
+            evictions,
             capacity,
         })
     }
 
     /// 操作を database の task で行う。呼出元が待つのをやめても、始めた transaction は最後まで進む。
-    async fn run<T, F, Fut>(&self, job: F) -> Result<T>
+    pub(crate) async fn run<T, F, Fut>(&self, job: F) -> Result<T>
     where
         T: Send + 'static,
-        F: FnOnce(IdbDatabase) -> Fut + Send + 'static,
+        F: FnOnce(Db) -> Fut + Send + 'static,
         Fut: Future<Output = Result<T>> + 'static,
     {
-        let (sender, receiver) = oneshot::channel();
-        let job: Job = Box::new(move |db| {
-            Box::pin(async move {
-                let _ = sender.send(job(db).await);
-            })
-        });
-        let closed = || anyhow!("the browser cache is closed");
-        self.jobs.send(job).await.map_err(|_| closed())?;
-        receiver.await.map_err(|_| closed())?
+        self.actor.run(job).await
+    }
+
+    /// 非保護分に今使える bytes（上限から取得中の予約を引いたもの）。
+    pub(crate) fn budget(&self) -> i64 {
+        self.capacity.saturating_sub(
+            i64::try_from(self.reserved.load(Ordering::Acquire)).unwrap_or(i64::MAX),
+        )
     }
 
     /// 内容を 1 つ置く。偽は、容量に収まらなかったこと。
@@ -239,8 +245,8 @@ fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
         &in_line(&["reference", "kind", "key"]),
     )?
     .create_index_with_str_sequence("item", &strings(&["kind", "key"]))?;
-    db.create_object_store("meta")?;
-    Ok(())
+    db.create_object_store(META)?;
+    schema::create_projection_stores(db)
 }
 
 fn strings(parts: &[&str]) -> JsValue {
@@ -546,19 +552,7 @@ impl ContentCacheStore for IndexedDbCache {
         let (reference, kind, key) = (reference.to_owned(), kind.to_owned(), key.to_owned());
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
-            let entry = Object::new();
-            for (name, value) in [("reference", &reference), ("kind", &kind), ("key", &key)] {
-                Reflect::set(&entry, &name.into(), &value.as_str().into()).map_err(js_error)?;
-            }
-            tx.refs.put(&entry).map_err(js_error)?;
-            // 内容がまだ無くても参照を先に置き、後から置く内容を容量の計数と回収の外にする。
-            if let Some(mut row) = tx.row(&kind, &key).await?
-                && !row.protected
-            {
-                tx.set_used(tx.used().await? - row.charge)?;
-                row.protected = true;
-                tx.put_row(&row)?;
-            }
+            tx.protect(&reference, &kind, &key).await?;
             tx.commit().await
         })
         .await

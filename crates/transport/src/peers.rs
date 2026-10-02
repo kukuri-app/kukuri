@@ -396,7 +396,7 @@ impl PeerAddrBook {
     /// every sampled identity remains learned -> seed -> imported.
     pub async fn ranked_peers(&self) -> Vec<EndpointAddr> {
         if let Some((store, scope)) = &self.account_store {
-            return match self.ranked_account_peers(store, scope).await {
+            return match self.ranked_account_peers(store.as_ref(), scope).await {
                 Ok(peers) => peers,
                 Err(error) => {
                     tracing::warn!(%error, "failed to read peer candidates");

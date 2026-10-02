@@ -395,3 +395,38 @@ async fn timeline_pages_list_every_row_once_for_each_channel_filter() {
         assert_eq!(listed, expected, "allowed={allowed:?}");
     }
 }
+
+// #1239: SQLite の検索が、repost 元の式の索引を使う(全行の scan にならない)。
+#[tokio::test]
+async fn author_reposts_lookup_uses_the_repost_source_index() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let plan = sqlx::query(
+        r#"
+        EXPLAIN QUERY PLAN
+        SELECT object_id
+        FROM object_index_cache
+        WHERE object_kind = 'repost'
+          AND topic_id = ?1
+          AND author_pubkey = ?2
+          AND json_extract(repost_of_json, '$.source_object_id') = ?3
+        ORDER BY created_at DESC
+        LIMIT ?4
+        "#,
+    )
+    .bind("kukuri:topic:parity-repost")
+    .bind("a".repeat(64))
+    .bind("source-1")
+    .bind(10_i64)
+    .fetch_all(sqlite.pool())
+    .await
+    .expect("explain query plan");
+    let detail = plan
+        .iter()
+        .map(|row| sqlx::Row::get::<String, _>(row, "detail"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    assert!(
+        detail.contains("idx_object_index_cache_repost_source"),
+        "the lookup must use the repost source index, got: {detail}"
+    );
+}

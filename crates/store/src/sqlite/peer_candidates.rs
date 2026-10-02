@@ -2,11 +2,10 @@ use anyhow::{Result, ensure};
 use sqlx::Row;
 
 use super::SqliteStore;
-
-const LEARNED_SOURCE: &str = "learned";
-const LEARNED_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
-const LEARNED_BUDGET_BYTES: i64 = 64 * 1024 * 1024;
-const MAX_ADDR_BYTES: usize = 4 * 1024;
+use crate::{
+    LEARNED_BUDGET_BYTES, LEARNED_PRUNE_STEP, LEARNED_RETENTION_MS, LEARNED_SOURCE, MAX_ADDR_BYTES,
+    PeerCandidateStore, peer_candidate_bytes,
+};
 
 impl SqliteStore {
     async fn begin_candidate_write(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
@@ -18,27 +17,6 @@ impl SqliteStore {
             .execute(&mut *tx)
             .await?;
         Ok(tx)
-    }
-
-    /// The account database owns the candidate history. Only learned rows are
-    /// time/size evicted; explicit tickets and configured seeds are user input.
-    pub async fn put_peer_candidate(
-        &self,
-        scope: &str,
-        source: &str,
-        endpoint_id: &str,
-        addr: &[u8],
-        now_ms: i64,
-    ) -> Result<bool> {
-        self.put_peer_candidate_bounded(
-            scope,
-            source,
-            endpoint_id,
-            addr,
-            now_ms,
-            LEARNED_BUDGET_BYTES,
-        )
-        .await
     }
 
     async fn put_peer_candidate_bounded(
@@ -54,7 +32,7 @@ impl SqliteStore {
             addr.len() <= MAX_ADDR_BYTES,
             "peer address exceeds candidate budget"
         );
-        let bytes = (addr.len() + scope.len() + source.len() + endpoint_id.len() + 64) as i64;
+        let bytes = peer_candidate_bytes(scope, source, endpoint_id, addr);
         let mut tx = self.begin_candidate_write().await?;
         let previous = sqlx::query(
             "SELECT endpoint_addr, accounted_bytes FROM peer_candidates \
@@ -121,8 +99,32 @@ impl SqliteStore {
         tx.commit().await?;
         Ok(changed)
     }
+}
 
-    pub async fn peer_candidate_window(
+#[async_trait::async_trait]
+impl PeerCandidateStore for SqliteStore {
+    /// The account database owns the candidate history. Only learned rows are
+    /// time/size evicted; explicit tickets and configured seeds are user input.
+    async fn put_peer_candidate(
+        &self,
+        scope: &str,
+        source: &str,
+        endpoint_id: &str,
+        addr: &[u8],
+        now_ms: i64,
+    ) -> Result<bool> {
+        self.put_peer_candidate_bounded(
+            scope,
+            source,
+            endpoint_id,
+            addr,
+            now_ms,
+            LEARNED_BUDGET_BYTES,
+        )
+        .await
+    }
+
+    async fn peer_candidate_window(
         &self,
         scope: &str,
         source: &str,
@@ -196,7 +198,7 @@ impl SqliteStore {
             .collect())
     }
 
-    pub async fn peer_candidate_by_id(
+    async fn peer_candidate_by_id(
         &self,
         scope: &str,
         source: &str,
@@ -223,7 +225,7 @@ impl SqliteStore {
     /// The receive-destination selector keeps an endpoint-ID cursor per account.
     /// The primary key serves this page without reading earlier tickets.
     /// 取り込んだ ticket の id を、id の順に `after` の後から最大 `limit` 件読む(詳細のページ用。折り返さない。#1221 R2-D)。
-    pub async fn imported_peer_candidate_ids(
+    async fn imported_peer_candidate_ids(
         &self,
         scope: &str,
         after: Option<&str>,
@@ -241,7 +243,7 @@ impl SqliteStore {
         .await?)
     }
 
-    pub async fn imported_peer_candidate_window(
+    async fn imported_peer_candidate_window(
         &self,
         scope: &str,
         after: Option<&str>,
@@ -280,7 +282,7 @@ impl SqliteStore {
             .collect())
     }
 
-    pub async fn replace_seed_candidates(
+    async fn replace_seed_candidates(
         &self,
         scope: &str,
         seeds: Vec<(String, Vec<u8>)>,
@@ -334,9 +336,10 @@ async fn prune_learned(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, now_ms: i64
     let rows = sqlx::query(
         "DELETE FROM peer_candidates WHERE rowid IN \
          (SELECT rowid FROM peer_candidates WHERE source = 'learned' AND seen_ms < ? \
-          ORDER BY seen_ms LIMIT 64) RETURNING accounted_bytes",
+          ORDER BY seen_ms LIMIT ?) RETURNING accounted_bytes",
     )
     .bind(now_ms.saturating_sub(LEARNED_RETENTION_MS))
+    .bind(LEARNED_PRUNE_STEP as i64)
     .fetch_all(&mut **tx)
     .await?;
     let freed: i64 = rows

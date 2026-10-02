@@ -96,7 +96,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 | docs の replica | redb（persistent） | 上流の `Store::memory()`。自分の record は保存 trait の IndexedDB 実装（ADR 0058） | W3 |
 | blobs | `FsStore` | 上流の `MemStore`（blob-service は書かない）と、保存 trait の IndexedDB 実装（ADR 0058） | W2 |
 | remote read の cache と本人の書込みの保護（`SqliteStore` の直接保持。iroh-node・docs-sync・blob-service） | `SqliteStore` | 保存 trait（ADR 0058。`ContentCacheStore`）の IndexedDB 実装。W1 AC-2 で trait を切り出し、native の呼出元を trait object へ切り替えた | W1 AC-2・W2・W3 |
-| peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | 端末に保存しない（transport の `PeerCandidateStore` は wasm で値を持てない型）。store を持たない経路の learned・imported の台帳は、それぞれ 256 件（`STORELESS_PEER_LIMIT`）を超えたら古いものから台帳と `MemoryLookup` から外す。hot endpoint は store の有無によらず 16 件（W1 AC-2） | W1 AC-2 |
+| peer candidate（transport の `account_store`） | `SqliteStore`（hot endpoint は 16 件で古いものから `MemoryLookup` から外す） | account の cache の database（ADR 0058）の IndexedDB に保存し、reload の後も使う。上限と回収は native と同じ定数（store の `PeerCandidateStore` の trait と `LEARNED_*`・`MAX_ADDR_BYTES`）。store を持たない経路（docs-sync の台帳）の learned・imported は、それぞれ 256 件（`STORELESS_PEER_LIMIT`）を超えたら古いものから台帳と `MemoryLookup` から外す。hot endpoint は store の有無によらず 16 件（W1 AC-2。保存は 2026-10-02 のユーザー判断で W4 AC-2 に改めた） | W1 AC-2・W4 AC-2 |
 | file path を受け取る API（`BlobService::put_remote_blob_file`・`fetch_blob_ephemeral_to_file`、`get_blob_media_file`） | file | 使わない。media は payload と Blob URL の経路を使う | W1 AC-5・W8 |
 
 保存・復元・cache の回収は、key・cursor・chunk で有界な単位にする（#1213「作業・設計原則を適用する境界」）。
