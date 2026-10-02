@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 # Web の入口と、ブラウザ専用の保存 adapter（ADR 0056 §2）。lib はブラウザ（wasm32）でだけ中身を持つ。
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [target.'cfg(target_family = "wasm")'.dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -13,6 +16,7 @@ js-sys = "0.3.106"
 kukuri-core = { path = "../core" }
 kukuri-desktop-runtime = { path = "../desktop-runtime" }
 kukuri-store = { path = "../store" }
+kukuri-webrtc-transport = { path = "../webrtc-transport" }
 n0-future.workspace = true
 serde.workspace = true
 serde_json.workspace = true

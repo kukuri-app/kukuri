@@ -57,6 +57,7 @@ pub use restore_lifecycle::{
     persist_restore_activation_phase, recover_device_restore_before_startup,
     restore_startup_action,
 };
+#[cfg(not(target_family = "wasm"))]
 pub(crate) use subscriptions::load_desired_subscriptions;
 #[cfg(test)]
 pub(crate) use subscriptions::save_desired_subscriptions;
@@ -215,6 +216,18 @@ impl ClientEventReceiver {
             }
         }
     }
+
+    /// 次の event。取りこぼしたら、画面に読み直しを促す event（`AdultMediaLabelEvicted { hash: None }`）を返す。
+    /// host が止まったら `None`。
+    pub async fn next(&mut self) -> Option<RuntimeEvent> {
+        match self.recv().await {
+            Ok(event) => Some(event),
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                Some(RuntimeEvent::AdultMediaLabelEvicted { hash: None })
+            }
+            Err(broadcast::error::RecvError::Closed) => None,
+        }
+    }
 }
 
 impl ClientHost {
@@ -222,22 +235,27 @@ impl ClientHost {
     pub async fn start_if_consented(
         app_data_dir: PathBuf,
     ) -> Result<ClientHostStart, ClientStartupError> {
+        Self::start_if_consented_with(app_data_dir, Arc::new(NativeRuntimeBuilder)).await
+    }
+
+    /// アプリの同意があれば、アクティブなアカウント（無ければ作る）の runtime を `builder` で組み立てて始める。
+    pub async fn start_if_consented_with(
+        app_data_dir: PathBuf,
+        builder: Arc<dyn RuntimeBuilder>,
+    ) -> Result<ClientHostStart, ClientStartupError> {
         let consent = load_app_consent_store(&app_data_dir.join(crate::paths::DB_FILE_NAME)).await;
         if !app_consent_satisfied(&consent) {
             return Ok(ClientHostStart::ConsentRequired(consent_required_status(
                 &consent,
             )));
         }
-        Self::start(app_data_dir).await.map(ClientHostStart::Ready)
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    async fn start(app_data_dir: PathBuf) -> Result<Arc<Self>, ClientStartupError> {
         let db_path = ensure_accounts_initialized_from_env(&app_data_dir)
             .await
             .map_err(ClientStartupError::from_error)?;
-        let runtime = Self::build_detached_runtime(db_path).await?;
-        Self::from_runtime(app_data_dir, runtime).await
+        let runtime = builder.build(&db_path).await?;
+        Self::from_runtime_with_builder(app_data_dir, runtime, builder)
+            .await
+            .map(ClientHostStart::Ready)
     }
 
     #[cfg(not(target_family = "wasm"))]

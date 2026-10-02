@@ -475,7 +475,6 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     set_topic_gossip_enabled(request: SetTopicGossipEnabledRequest) => runtime.set_topic_gossip_enabled(request).await.map_err(map_error);
     start_owner_dome_hosting(request: StartOwnerDomeHostingRequest) => runtime.start_owner_dome_hosting(request).await.map_err(map_error);
     submit_community_node_indexing_request(request: CommunityNodeIndexingRequest) => runtime.submit_community_node_indexing_request(request).await.map_err(CommandError::from);
-    #[cfg(not(target_family = "wasm"))]
     submit_community_node_report(request: SubmitCommunityNodeReportRequest) => runtime.submit_community_node_report(request).await.map_err(CommandError::from);
     submit_community_node_tester_feedback(request: CommunityNodeTesterFeedbackSubmission) => runtime.submit_community_node_tester_feedback(request).await.map_err(CommandError::from);
     submit_dome_session_input(request: SubmitDomeSessionInputRequest) => runtime.submit_dome_session_input(request).await.map_err(map_error);

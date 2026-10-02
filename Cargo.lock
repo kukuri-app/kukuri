@@ -3574,6 +3574,7 @@ dependencies = [
  "iroh",
  "iroh-docs",
  "iroh-mainline-address-lookup",
+ "js-sys",
  "keyring",
  "kukuri-app-api",
  "kukuri-blob-service",
@@ -3599,6 +3600,9 @@ dependencies = [
  "ts-rs",
  "url",
  "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "web-time",
 ]
 

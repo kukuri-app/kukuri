@@ -4,8 +4,6 @@
     all(target_family = "wasm", not(test)),
     warn(clippy::disallowed_methods)
 )]
-// wasm では runtime と host をまだ組み立てない（native だけの構築を外した残り）。Web の構築を足す W1 AC-5 で外す。
-#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 mod accounts;
 mod attachments;
 #[cfg(not(target_family = "wasm"))]

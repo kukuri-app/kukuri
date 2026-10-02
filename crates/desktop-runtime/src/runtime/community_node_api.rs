@@ -587,7 +587,6 @@ impl DesktopRuntime {
 
     /// 解決済みの通報先 node へ通報を送信する（#310 の分散通報ルーティング）。
     /// 通報先は client が provenance + manifest から解決し、その report endpoint を渡す。
-    #[cfg(not(target_family = "wasm"))]
     pub async fn submit_community_node_report(
         &self,
         request: SubmitCommunityNodeReportRequest,

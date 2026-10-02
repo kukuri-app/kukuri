@@ -41,9 +41,7 @@ use kukuri_core::{
 use kukuri_docs_sync::{DocQuery, DocsSync};
 #[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
-use kukuri_transport::{
-    DhtDiscoveryOptions, DiscoveryMode, TransportNetworkConfig, TransportRelayConfig,
-};
+use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
 use tokio::sync::Mutex;
 
 use crate::attachments::{
@@ -246,6 +244,7 @@ async fn load_gossip_subscription_state(
     serde_json::from_str(&raw).context("failed to decode gossip subscription state")
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn validate_persisted_runtime_state(
     db_path: &Path,
     mode: IdentityStorageMode,
@@ -273,6 +272,7 @@ pub(crate) async fn validate_persisted_runtime_state(
     Ok(())
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn validate_private_channel_namespace_secret(secret: &str) -> Result<()> {
     let secret = secret.trim();
     if secret.len() != 64 || !secret.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -296,6 +296,22 @@ async fn persist_gossip_subscription_state(
         encoded.as_str(),
     )
     .await
+}
+
+/// 保存した Community Node の設定。無ければ `initial` を正規化して保存する（初回の起動）。
+async fn community_node_config_or_initial(
+    db_path: &Path,
+    initial: Option<CommunityNodeConfig>,
+) -> Result<CommunityNodeConfig> {
+    if let Some(config) = load_community_node_config_from_file(db_path).await? {
+        return Ok(config);
+    }
+    let Some(initial) = initial else {
+        return Ok(CommunityNodeConfig::default());
+    };
+    let config = normalize_community_node_config(initial)?;
+    save_community_node_config(db_path, &config).await?;
+    Ok(config)
 }
 
 // runtime の構築（永続の node・SQLite・旧 store）は native だけ。Web の構築は web-runtime と一緒に足す（W1 AC-5）。
@@ -356,17 +372,8 @@ impl DesktopRuntime {
         initial_community_node_config: Option<CommunityNodeConfig>,
     ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
-        let community_node_config = match load_community_node_config_from_file(&db_path).await? {
-            Some(config) => config,
-            None if initial_community_node_config.is_some() => {
-                let config = normalize_community_node_config(
-                    initial_community_node_config.expect("checked as present"),
-                )?;
-                save_community_node_config(&db_path, &config).await?;
-                config
-            }
-            None => CommunityNodeConfig::default(),
-        };
+        let community_node_config =
+            community_node_config_or_initial(&db_path, initial_community_node_config).await?;
         // 保存済みの Node relay / seed は、公開 policy とサーバ同意を確認する前の
         // 起動入力へ渡さない。設定と resolved_urls は保持し、node ごとに確かめてから足す。
         // #1221 R5-I: node は新しい store で動く。旧 `iroh-data` の endpoint secret を写して endpoint ID を保つ。
@@ -411,7 +418,7 @@ impl DesktopRuntime {
         db_path: PathBuf,
         store: Arc<S>,
         webrtc: Option<Arc<kukuri_webrtc_transport::WebRtcTransport>>,
-        network_config: TransportNetworkConfig,
+        initial_community_node_config: CommunityNodeConfig,
     ) -> Result<Self>
     where
         S: kukuri_store::AccountStore + crate::stack::StackStore + 'static,
@@ -426,13 +433,12 @@ impl DesktopRuntime {
                 secret_key
             }
         };
-        let community_node_config = load_community_node_config_from_file(&db_path)
-            .await?
-            .unwrap_or_default();
-        let discovery_config = DiscoveryConfig::static_peer_default();
+        let community_node_config =
+            community_node_config_or_initial(&db_path, Some(initial_community_node_config)).await?;
+        let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
         let iroh_stack = SharedIrohStack::open(
             crate::stack::NodeSource::Memory { secret_key, webrtc },
-            network_config,
+            TransportNetworkConfig::default(),
             &discovery_config,
             &[],
             DhtDiscoveryOptions::disabled(),
@@ -638,8 +644,8 @@ impl DesktopRuntime {
         let db_path = db_path.as_ref().to_path_buf();
         let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
         let dht_options = match discovery_config.mode {
-            DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
-            DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
+            kukuri_transport::DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
+            kukuri_transport::DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
         };
         Self::new_with_config_and_identity_and_discovery(
             &db_path,
