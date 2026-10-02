@@ -200,3 +200,26 @@ fn docs_keys_do_not_contain_separators_from_ids() {
     };
     assert_eq!(key.docs_key(), "channel/612f62/epoch/632f64");
 }
+
+/// 世代の鍵の item の op_id は (channel, epoch) から決まり、書き直しや受け取った時刻で変わらない(ADR 0061 §9)。
+#[test]
+fn channel_epoch_items_keep_their_op_id_across_rewrites() {
+    let channel = ChannelId::new("room");
+    let value = serde_json::json!({"epoch_id": "epoch-1", "namespace_secret_hex": "11".repeat(32)});
+    let first = AccountSyncItem::channel_epoch(&channel, "epoch-1", 10, value.clone()).unwrap();
+    let rewritten = AccountSyncItem::channel_epoch(&channel, "epoch-1", 20, value.clone()).unwrap();
+    let other = AccountSyncItem::channel_epoch(&channel, "epoch-2", 10, value).unwrap();
+    assert_eq!(first.op_id, rewritten.op_id);
+    assert_ne!(first.op_id, other.op_id);
+    assert_eq!(
+        first.key.docs_key(),
+        "channel/726f6f6d/epoch/65706f63682d31"
+    );
+    assert_eq!(
+        AccountSyncItemKey::ChannelMembership {
+            channel_id: channel
+        }
+        .docs_key(),
+        "channel/726f6f6d/membership"
+    );
+}

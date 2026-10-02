@@ -119,12 +119,17 @@ impl AppService {
             payload.new_epoch_id.as_str(),
             payload.new_namespace_secret_hex.as_str(),
         );
-        if !self
-            .commit_joined_private_channel_state(next_state, Some(payload.old_epoch_id.as_str()))
+        let Some(membership_at) = self
+            .commit_joined_private_channel_state(
+                next_state,
+                ChannelCommit::Advance {
+                    from_epoch: payload.old_epoch_id.as_str(),
+                },
+            )
             .await?
-        {
+        else {
             return Ok(false);
-        }
+        };
         if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
             self.record_private_channel_participant(
                 &PrivateChannelParticipantDocV1 {
@@ -132,7 +137,7 @@ impl AppService {
                     topic_id: metadata.topic_id.clone(),
                     epoch_id: policy.epoch_id.clone(),
                     participant_pubkey: Pubkey::from(self.current_author_pubkey()),
-                    joined_at: Utc::now().timestamp_millis(),
+                    joined_at: membership_at,
                     is_owner: false,
                     join_mode: Some(PrivateChannelJoinMode::RotationRedeem),
                     sponsor_pubkey: Some(policy.owner_pubkey.clone()),
@@ -416,14 +421,18 @@ impl AppService {
         .await
     }
 
-    /// 参加を登録する。新しい参加は参加の holder で channel key を取る。上限なら何も保存しない(#1221 R2-C)。
+    /// 参加を登録する(参加の版を時刻 `joined_at` で新しくする)。新しい参加は参加の holder で channel key を取る。
+    /// 上限なら何も保存しない(#1221 R2-C)。
     pub(crate) async fn register_joined_private_channel(
         &self,
         state: JoinedPrivateChannelState,
+        joined_at: i64,
     ) -> Result<()> {
         self.hold_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
             .await?;
-        self.register_joined_private_channel_state(state).await
+        self.commit_joined_private_channel_state(state, ChannelCommit::Join(joined_at))
+            .await
+            .map(|_| ())
     }
 
     /// 参加の holder で channel key を取る。既に持っていれば何もしない。戻り値は今回取ったか。
@@ -468,45 +477,52 @@ impl AppService {
         }
     }
 
-    pub(crate) async fn register_joined_private_channel_state(
-        &self,
-        state: JoinedPrivateChannelState,
-    ) -> Result<()> {
-        self.commit_joined_private_channel_state(state, None)
-            .await
-            .map(|_| ())
-    }
-
-    /// 参加状態を行へ書き、メモリと購読を合わせる。`expected_epoch` があれば、行が参加中でその世代が現在の世代の
-    /// ときだけ書く(照合は書込みと同じ排他の中。退会と並行した世代の追加で参加に戻さない。ADR 0061 §9)。
-    /// 書いたら true。メモリは lease の task が行から読む(lease の無い channel はメモリへ載せない)。
+    /// 参加状態を行へ書き、メモリと購読を合わせる。
+    /// - `ChannelCommit::Join(t)`: 参加・再参加・取り込み直し。参加の版を時刻 `t` で新しくする。
+    /// - `ChannelCommit::Advance`: 世代を進める。行が参加中でその世代が現在の世代のときだけ書く(照合は書込みと
+    ///   同じ排他の中。退会と並行した世代の追加で参加に戻さない。ADR 0061 §9)。
+    ///
+    /// 書いたら参加の版の時刻(owner への参加の記録の時刻)。メモリは lease の task が行から読む(lease の無い channel
+    /// はメモリへ載せない)。
     pub(crate) async fn commit_joined_private_channel_state(
         &self,
         state: JoinedPrivateChannelState,
-        expected_epoch: Option<&str>,
-    ) -> Result<bool> {
+        commit: ChannelCommit<'_>,
+    ) -> Result<Option<i64>> {
         self.install_private_epoch_secrets().await?;
         let key = joined_private_channel_key(state.topic_id.as_str(), state.channel_id.as_str());
-        let changed = {
+        let ((membership_at, writes), changed) = {
             let _save_access = self.services.content_save_access.lock().await;
-            if let Some(expected) = expected_epoch
-                && !self
-                    .services
-                    .projection_store
-                    .get_private_channel(&key)
-                    .await?
-                    .is_some_and(|row| row.joined && row.current_epoch_id == expected)
-            {
-                return Ok(false);
-            }
-            self.persist_private_channel(&state, Utc::now().timestamp_millis(), &[])
-                .await?;
-            self.joined_private_channels
+            let persisted = match commit {
+                ChannelCommit::Join(joined_at) => {
+                    self.persist_private_channel(&state, joined_at, &[], true)
+                        .await?
+                }
+                ChannelCommit::Advance { from_epoch } => {
+                    if !self
+                        .services
+                        .projection_store
+                        .get_private_channel(&key)
+                        .await?
+                        .is_some_and(|row| row.joined && row.current_epoch_id == from_epoch)
+                    {
+                        return Ok(None);
+                    }
+                    self.persist_private_channel(&state, Utc::now().timestamp_millis(), &[], false)
+                        .await?
+                }
+            };
+            let changed = self
+                .joined_private_channels
                 .lock()
                 .await
                 .get(&key)
-                .is_none_or(|current| !same_private_channel_state(current, &state))
+                .is_none_or(|current| !same_private_channel_state(current, &state));
+            (persisted, changed)
         };
+        for item in &writes {
+            self.write_account_sync_item(item).await?;
+        }
         if changed {
             // 現 epoch の replica だけを購読する。epoch が変わったら task を作り直す。
             self.restart_scope_subscription(&ScopeKey::Channel(
@@ -515,7 +531,7 @@ impl AppService {
             ))
             .await;
         }
-        Ok(true)
+        Ok(Some(membership_at))
     }
 
     /// 退会。参加の行を tombstone にしてメモリから外し、鍵の行を消して lease を外す。
@@ -528,10 +544,18 @@ impl AppService {
             .joined_private_channel_state(topic_id, channel_id)
             .await;
         if let Some(state) = &removed {
-            self.tombstone_private_channel(state).await?;
+            self.tombstone_private_channel(state, None).await?;
         }
         self.forget_private_channel_keys(topic_id, channel_id)
             .await?;
         Ok(removed)
     }
+}
+
+/// 参加状態の書き込みの種類(ADR 0061 §9)。
+pub(crate) enum ChannelCommit<'a> {
+    /// 参加・再参加・取り込み直し。参加の版をこの時刻で新しくする。
+    Join(i64),
+    /// 世代を進める。行が参加中で、現在の世代が `from_epoch` のときだけ書く。
+    Advance { from_epoch: &'a str },
 }
