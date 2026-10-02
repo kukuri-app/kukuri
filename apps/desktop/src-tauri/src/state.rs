@@ -1,30 +1,24 @@
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
+use crate::media_previews::MediaPreviewFiles;
+#[cfg(test)]
+pub(crate) use kukuri_desktop_runtime::{
+    AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
+    APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AppConsentDocumentRecord, AppConsentStore,
+    ClientStartupErrorKind as DesktopStartupErrorKind, LEGAL_BUNDLE_VERSION,
+    age_attestation_satisfied, age_attestation_status, app_consent_documents_satisfied,
+    app_consent_documents_status, app_consent_path, current_unix_seconds, save_app_consent_store,
+};
 use kukuri_desktop_runtime::{
     AppBuildProfile, ClientHost, DesktopRuntime, default_app_data_dir,
     resolve_app_data_dir_from_env, resolve_db_path_from_env,
 };
 pub(crate) use kukuri_desktop_runtime::{
-    ClientStartupError as StartupError,
-    ClientStartupState as DesktopStartupState, ClientStartupStatus as DesktopStartupStatus,
-    app_consent_satisfied, consent_required_status,
+    ClientStartupError as StartupError, ClientStartupState as DesktopStartupState,
+    ClientStartupStatus as DesktopStartupStatus, app_consent_satisfied, consent_required_status,
     failed_startup_status as failed_status, load_app_consent_store, reset_app_consent_at_path,
 };
-#[cfg(test)]
-pub(crate) use kukuri_desktop_runtime::{
-    AGE_ATTESTATION_VERSION, APP_LEGAL_DOCUMENTS, AgeAttestationRecord, AppConsentDocumentRecord,
-    age_attestation_satisfied, age_attestation_status, app_consent_documents_status,
-    current_unix_seconds, save_app_consent_store,
-    APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_EFFECTIVE_DATE, AppConsentStore,
-    ClientStartupErrorKind as DesktopStartupErrorKind, LEGAL_BUNDLE_VERSION,
-    app_consent_documents_satisfied, app_consent_path,
-};
-use serde::Serialize;
 use tauri::{Emitter, Manager};
-use crate::media_previews::MediaPreviewFiles;
 
 /// `manage` 済みのTauri stateでは共有hostの参照だけを保持する。
 /// account runtimeの所有・差し替え・停止は`ClientHost`へ集約し、このlockは
@@ -37,8 +31,7 @@ pub(crate) struct DesktopState {
 
 impl DesktopState {
     pub(crate) fn runtime(&self) -> Arc<DesktopRuntime> {
-        self.host()
-            .runtime()
+        self.host().runtime()
     }
 
     pub(crate) fn host(&self) -> Arc<ClientHost> {
@@ -68,7 +61,8 @@ pub(crate) fn base_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf
 }
 
 pub(crate) fn resolve_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    resolve_app_data_dir_from_env(&base_app_data_dir(app_handle)?).map_err(|error| format!("{error:#}"))
+    resolve_app_data_dir_from_env(&base_app_data_dir(app_handle)?)
+        .map_err(|error| format!("{error:#}"))
 }
 
 /// アプリ同意など端末レベルのファイルの命名基準となる flat db path。
@@ -97,23 +91,24 @@ pub(crate) async fn build_desktop_state(
         host: std::sync::RwLock::new(host),
         app_data_dir,
         media_previews: MediaPreviewFiles::new(
-            app_handle.path().app_cache_dir().ok().map(|dir| dir.join("kukuri-display")),
+            app_handle
+                .path()
+                .app_cache_dir()
+                .ok()
+                .map(|dir| dir.join("kukuri-display")),
         ),
     })
 }
 
 /// backup／restore中に一時停止したruntimeの後継を構築する。
 /// 常駐タスクは`ClientHost::replace_runtime`がevent購読順序を保って開始する。
-pub(crate) async fn build_runtime(
-    db_path: PathBuf,
-) -> Result<Arc<DesktopRuntime>, StartupError> {
-    ClientHost::build_detached_runtime(db_path)
-        .await
+pub(crate) async fn build_runtime(db_path: PathBuf) -> Result<Arc<DesktopRuntime>, StartupError> {
+    ClientHost::build_detached_runtime(db_path).await
 }
 
 #[cfg(test)]
-fn distribution_community_node_config(
-) -> Result<kukuri_desktop_runtime::CommunityNodeConfig, serde_json::Error> {
+fn distribution_community_node_config()
+-> Result<kukuri_desktop_runtime::CommunityNodeConfig, serde_json::Error> {
     kukuri_desktop_runtime::distribution_community_node_config()
 }
 
@@ -141,7 +136,9 @@ fn spawn_runtime_event_bridge(app_handle: &tauri::AppHandle, host: &Arc<ClientHo
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let _ = app.emit(
                         "kukuri://runtime-event",
-                        &kukuri_desktop_runtime::RuntimeEvent::AdultMediaLabelEvicted { hash: None },
+                        &kukuri_desktop_runtime::RuntimeEvent::AdultMediaLabelEvicted {
+                            hash: None,
+                        },
                     );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

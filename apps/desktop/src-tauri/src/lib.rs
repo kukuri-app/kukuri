@@ -1,12 +1,12 @@
 mod app_update;
 mod commands;
-mod media_previews;
 #[cfg(target_os = "linux")]
 mod deb_update;
 mod desktop_lifecycle;
 #[cfg(target_os = "linux")]
 mod file_dialog;
 mod invoke_gate;
+mod media_previews;
 mod restore_lifecycle;
 mod state;
 mod tracing;

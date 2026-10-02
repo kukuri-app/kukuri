@@ -1,12 +1,4 @@
-use ::tracing::{info, warn};
-use kukuri_desktop_runtime::{
-    BookmarkedPostIdsRequest, BookmarkPostRequest, CreatePostRequest, CreateRepostRequest,
-    GetBlobMediaRequest,
-    GetBlobPreviewRequest, ListBookmarkedPostsRequest, ListProfileTimelineRequest,
-    ListThreadRequest, ListTimelineRequest,
-    RemoveBookmarkedPostRequest, ResolveCommunityIndexPostsRequest, WithdrawPostRequest,
-    RetryPostElementsRequest,
-};
+use kukuri_desktop_runtime::{GetBlobMediaRequest, RetryPostElementsRequest};
 
 use crate::state::{CommandError, DesktopState, map_error};
 use serde::Serialize;
@@ -90,4 +82,3 @@ pub async fn release_blob_media_file(
     state.media_previews.release(&request_id);
     Ok(())
 }
-

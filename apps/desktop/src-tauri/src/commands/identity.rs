@@ -3,12 +3,9 @@
 //! 平文秘密鍵は IPC に載せない(export は暗号化 envelope のみ)。KDF(argon2id)は
 //! 数百 ms ブロックするため `spawn_blocking` で実行する。
 
-use kukuri_core::AccountTransferStatus;
 use kukuri_desktop_runtime::{
-    AccountKeyExport, AccountKeyImportPreview, AccountRecord, AccountTransferLink,
-    AccountsSnapshot, DecideAccountTransferRequest, ExportAccountKeyRequest,
-    ImportAccountKeyRequest, OpenAccountTransferRequest, PreviewAccountKeyImportRequest,
-    SwitchAccountRequest,
+    AccountKeyImportPreview, AccountRecord, AccountsSnapshot, ImportAccountKeyRequest,
+    PreviewAccountKeyImportRequest, SwitchAccountRequest,
 };
 use tauri::Manager;
 
@@ -30,11 +27,26 @@ pub async fn create_account(
     let startup = app_handle.state::<DesktopStartupState>();
     require_runtime_operation_ready(&startup.status()).map_err(CommandError::from)?;
     startup.set_status(DesktopStartupStatus::Initializing);
-    let result = state.host().create_account(request).await.map_err(map_error);
-    if result.is_ok() { app_handle.state::<OsNotificationBackground>().reset_for_account_switch(); }
+    let result = state
+        .host()
+        .create_account(request)
+        .await
+        .map_err(map_error);
+    if result.is_ok() {
+        app_handle
+            .state::<OsNotificationBackground>()
+            .reset_for_account_switch();
+    }
     if state.host().is_stopped() {
-        startup.set_status(kukuri_desktop_runtime::failed_startup_status(kukuri_desktop_runtime::ClientStartupError::unknown("Account transition requires restart".to_string()), None));
-    } else { startup.set_status(DesktopStartupStatus::Ready); }
+        startup.set_status(kukuri_desktop_runtime::failed_startup_status(
+            kukuri_desktop_runtime::ClientStartupError::unknown(
+                "Account transition requires restart".to_string(),
+            ),
+            None,
+        ));
+    } else {
+        startup.set_status(DesktopStartupStatus::Ready);
+    }
     result
 }
 
