@@ -242,7 +242,7 @@ async fn a_saved_blob_survives_a_reload_and_roundtrips_with_native_over_the_webr
 async fn chunks_reservations_and_the_database_are_released() {
     let account = account("release");
     let cache = IndexedDbCache::open(&account).await.expect("open");
-    let capacity = REMOTE_CACHE_CAPACITY_BYTES as u64;
+    let capacity = cache.remote_cache_capacity();
 
     // 取得を止めた（予約を drop した）分は戻る。
     let mut held = cache.empty_remote_cache_reservation();
@@ -395,10 +395,9 @@ async fn a_blob_with_a_missing_chunk_is_not_complete_and_can_be_stored_again() {
             .is_empty()
     );
 
-    cache
-        .put_owned_blob("own_blob:corrupt", &key, &blob)
-        .await
-        .expect("again");
+    // 保護参照を足し直さずに置き直す（消したのは内容だけで、参照は残っている）。
+    let again = cache.put_remote_content("blob", &key, "blob", &blob).await;
+    assert!(again.expect("again"));
     assert_eq!(
         cache.get_remote_content("blob", &key).await.expect("get"),
         Some(blob)
@@ -463,9 +462,10 @@ async fn a_reclaim_step_and_a_read_stay_in_a_fixed_window_as_the_cache_grows() {
     }
 }
 
-/// 取得の途中で待つのをやめても何も保存されない。取り直すと同じ hash で完成し、予約はすべて戻る。
+/// 転送の途中で取得を待つのをやめると（転送は共有の task で続く）、検証を終えた bytes を呼出元が置くまで何も保存されない。
+/// 取り直すと同じ hash で完成し、予約はすべて戻る。
 #[wasm_bindgen_test]
-async fn an_interrupted_transfer_stores_nothing_and_a_retry_completes() {
+async fn a_transfer_abandoned_midway_stores_nothing_and_a_retry_completes() {
     let native = native().await.expect("native peer");
     let account = account("interrupted");
     let session = start(&native, &account, false).await.expect("start");
