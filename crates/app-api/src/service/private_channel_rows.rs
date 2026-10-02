@@ -326,17 +326,18 @@ impl AppService {
             .await?;
         self.private_channel_rows_changed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        // 採用の台帳への記録は行と同じ排他の中、replica への書込みは呼び出し元が排他の外で行う。旧版から移した版
+        // 採用の台帳への記録は行と同じ排他の中、replica への書込みは呼び出し元が排他の外で行う（採用したときだけ）。旧版から移した版
         // (時刻 0)は、新しい退会を隠さないよう replica へ書かない（送り直しは AC-5）。
         let mut writes = Vec::new();
-        if let Some(item) = membership_item {
-            self.services
+        if let Some(item) = membership_item
+            && self
+                .services
                 .projection_store
                 .adopt_account_sync_row(&account_sync_row(&item)?)
-                .await?;
-            if updated_at != 0 {
-                writes.push(item);
-            }
+                .await?
+            && updated_at != 0
+        {
+            writes.push(item);
         }
         if updated_at != 0 {
             writes.push(AccountSyncItem::channel_epoch(
@@ -591,11 +592,13 @@ impl AppService {
                     Utc::now().timestamp_millis(),
                     None,
                 );
-                self.services
+                // 採用しなかった（同じか新しい版がある）なら replica へ書かない。
+                let adopted = self
+                    .services
                     .projection_store
                     .adopt_account_sync_row(&account_sync_row(&item)?)
                     .await?;
-                (item, true)
+                (item, adopted)
             }
         };
         let left_at = item.updated_at;
