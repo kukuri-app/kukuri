@@ -224,7 +224,7 @@ impl AppService {
 
     /// replica の namespace の秘密を登録し、hint の購読を持つ。endpoint の作り直しで docs が新しくなっても、
     /// task の作り直しで登録し直す。差分の取得の契機（ADR 0061 §10）: task の開始（lease の開始・endpoint の世代の
-    /// 変化）と日の境界、hint、書込みの後の送り直しと hint の送信の要求、rendezvous での本人の端末の合流。
+    /// 変化）と日の境界、hint、書込みの後の送り直しと hint の送信の要求、rendezvous の応答に新しく現れた本人の端末。
     pub(crate) async fn spawn_account_sync_subscription(
         &self,
         hint_topic: TopicId,
@@ -620,7 +620,7 @@ fn account_sync_task(
                     reader.publish_account_sync_hint().await;
                 }
                 _ = reader.services.account_sync.peers.notified() => {
-                    reader.catch_up_account_sync().await;
+                    reader.fetch_account_sync_from_appeared().await;
                 }
                 _ = boundary => reader.catch_up_account_sync().await,
                 else => break,

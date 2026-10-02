@@ -615,10 +615,11 @@ impl HintTransport for CandidateHints {
     }
 }
 
-/// 起動・復帰の時点では本人の端末の候補がまだ無い。rendezvous で候補が入ったら、その端末から取得し、未同期の
-/// 「候補なし」を下ろす（#1218 AC-5b 監査 B-1）。
+/// 起動・復帰の時点では gossip の候補がまだ無い。rendezvous の応答に新しく現れた本人の端末からは、gossip の合流を
+/// 待たずに取得し、未同期の「候補なし」を下ろす。同じ端末が続く応答（更新ごと）では読み直さない（#1218 AC-5b 監査
+/// B-1・B-3）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn own_devices_found_after_start_are_fetched_from() {
+async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     let keys = generate_keys();
     let (a, a_docs) = memory_device(&keys, "device-a").await;
     let b_docs = DeviceDocs::new();
@@ -633,46 +634,45 @@ async fn own_devices_found_after_start_are_fetched_from() {
         store.clone(),
         store,
         transport,
-        Arc::new(hints.clone()),
+        Arc::new(hints),
         Arc::new(b_docs.clone()),
         Arc::new(MemoryBlobService::default()),
         keys.clone(),
     );
     b.start_account_sync().await.expect("account sync");
-    let wait = |until: &'static str| {
+    let until = |done: fn(&AccountSyncStatus) -> bool| {
         let b = &b;
         async move {
             tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                loop {
-                    let status = b.account_sync_status().await.expect("status");
-                    let done = match until {
-                        "no peers" => status.no_peers,
-                        _ => !status.no_peers,
-                    };
-                    if done {
-                        return;
-                    }
+                while !done(&b.account_sync_status().await.expect("status")) {
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 }
             })
             .await
-            .expect(until);
+            .expect("status");
         }
     };
-    wait("no peers").await;
+    until(|status| status.no_peers).await;
     let authors = trust(&a, 2).await;
-    *hints.peers.lock().expect("peers") = vec![kukuri_transport::SeedPeer {
+    // gossip の候補（`topic_read_candidates`）は空のまま、rendezvous の候補だけで読む。
+    let topic = kukuri_core::wire::hint_topic_id(keys.derive_account_sync().hint_topic());
+    let peers = [kukuri_transport::SeedPeer {
         endpoint_id: "device-a".into(),
         addr_hint: None,
     }];
-    let topic = kukuri_core::wire::hint_topic_id(keys.derive_account_sync().hint_topic());
-    b.account_sync_peers_joined(topic.as_str()).await;
-    wait("peers").await;
+    b.account_sync_peers_joined(topic.as_str(), &peers).await;
+    until(|status| !status.no_peers).await;
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while trusted(&b).await != authors {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("the joined device is fetched from");
+    .expect("the appeared device is fetched from");
+
+    // 同じ端末が続く応答では読み直さない。
+    a_docs.work();
+    b.account_sync_peers_joined(topic.as_str(), &peers).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(a_docs.work(), (0, 0, 0));
 }

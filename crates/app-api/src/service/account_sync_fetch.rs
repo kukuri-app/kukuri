@@ -57,10 +57,19 @@ pub(crate) struct AccountSyncState {
     write: tokio::sync::Mutex<()>,
     /// 書込みが成功したら、lease の task に送り直しと hint の送信をさせる（利用者の操作の経路で送信を待たない）。
     pub(super) changed: tokio::sync::Notify,
-    /// rendezvous で本人の端末の候補が入ったら、lease の task に契機の取得をさせる（起動・復帰の時点では候補が
-    /// まだ無い）。
+    /// rendezvous の応答に新しく現れた本人の端末。lease の task がそこから取得する（起動・復帰の時点では gossip の
+    /// 候補がまだ無い）。
     pub(super) peers: tokio::sync::Notify,
+    rendezvous: std::sync::Mutex<RendezvousPeers>,
     fetch: std::sync::Mutex<FetchResults>,
+}
+
+/// 前回の rendezvous の応答の本人の端末と、まだ取得していない新しく現れた端末。応答ごとに置き換えるので、応答の
+/// 大きさ（CN の上限）を超えない。
+#[derive(Default)]
+struct RendezvousPeers {
+    last: BTreeSet<String>,
+    pending: Vec<kukuri_transport::SeedPeer>,
 }
 
 #[derive(Default)]
@@ -364,6 +373,17 @@ impl AppService {
     /// 相手 1 台から、head（周回なら周回の終わり）に届くまで取得する。失敗したら再試行せず、cursor の位置から次の
     /// 契機で再開する。
     pub(crate) async fn fetch_account_sync_from(&self, device_id: &str) -> Result<()> {
+        self.fetch_account_sync_from_peer(kukuri_transport::SeedPeer {
+            endpoint_id: device_id.to_string(),
+            addr_hint: None,
+        })
+        .await
+    }
+
+    /// `fetch_account_sync_from` の、到達の手掛かり（addr hint）つきの相手（rendezvous の候補）版。
+    async fn fetch_account_sync_from_peer(&self, peer: kukuri_transport::SeedPeer) -> Result<()> {
+        let device_id = peer.endpoint_id.clone();
+        let device_id = device_id.as_str();
         let own_device_id = self.local_device_id().await?;
         if device_id == own_device_id {
             return Ok(());
@@ -372,10 +392,6 @@ impl AppService {
             let keys = self.services.keys.derive_account_sync();
             let mut secret = [0_u8; 32];
             hex::decode_to_slice(keys.expose_namespace_secret_hex(), &mut secret)?;
-            let peer = kukuri_transport::SeedPeer {
-                endpoint_id: device_id.to_string(),
-                addr_hint: None,
-            };
             let source = self
                 .services
                 .docs_sync
@@ -526,17 +542,55 @@ impl AppService {
         self.publish_account_sync_hint().await;
     }
 
-    /// rendezvous の応答で、本人の端末の候補を account の hint topic へ入れたとき（desktop-runtime が呼ぶ）。lease の
-    /// task が契機の取得を行う（ADR 0061 §10）。
-    pub async fn account_sync_peers_joined(&self, topic: &str) {
+    /// rendezvous の応答で、account の hint topic の本人の端末の候補を受けたとき（desktop-runtime が呼ぶ）。前回の
+    /// 応答に無かった端末だけを、lease の task が gossip の合流を待たずに rendezvous の候補から直接読む（ADR 0061
+    /// §10。応答ごとの再読込みはしない）。
+    pub async fn account_sync_peers_joined(
+        &self,
+        topic: &str,
+        peers: &[kukuri_transport::SeedPeer],
+    ) {
         let hint_topic = self
             .services
             .keys
             .derive_account_sync()
             .hint_topic()
             .clone();
-        if topic == kukuri_core::wire::hint_topic_id(&hint_topic).as_str() {
-            self.services.account_sync.peers.notify_one();
+        if topic != kukuri_core::wire::hint_topic_id(&hint_topic).as_str() {
+            return;
+        }
+        let state = &self.services.account_sync;
+        let mut rendezvous = state
+            .rendezvous
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let appeared = peers
+            .iter()
+            .filter(|peer| !rendezvous.last.contains(&peer.endpoint_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        rendezvous.last = peers.iter().map(|peer| peer.endpoint_id.clone()).collect();
+        if !appeared.is_empty() {
+            rendezvous.pending = appeared;
+            state.peers.notify_one();
+        }
+    }
+
+    /// rendezvous に新しく現れた本人の端末から取得する。
+    pub(crate) async fn fetch_account_sync_from_appeared(&self) {
+        let appeared = std::mem::take(
+            &mut self
+                .services
+                .account_sync
+                .rendezvous
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pending,
+        );
+        for peer in appeared {
+            if let Err(error) = self.fetch_account_sync_from_peer(peer).await {
+                warn!(%error, "account sync fetch stopped; it resumes at the next trigger");
+            }
         }
     }
 

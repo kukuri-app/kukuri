@@ -532,16 +532,16 @@ impl DesktopRuntime {
                     addr_hint: peer.addr_hint,
                 })
                 .collect::<Vec<_>>();
-            let joined = !peers.is_empty();
+            // account の hint topic なら、新しく現れた本人の端末から差分を取る(起動・復帰の時点では gossip の候補が
+            // まだ無い。ADR 0061 §10)。
+            self.app_service
+                .account_sync_peers_joined(topic, &peers)
+                .await;
             self.iroh_stack
                 .transport
                 .join_topic_peers(base_url, &TopicId::new(topic.clone()), peers)
                 .await
                 .map_err(CommunityNodeRequestError::Other)?;
-            // 本人の端末の候補が入ったら、account 同期の差分を取る(起動・復帰の時点では候補がまだ無い。ADR 0061 §10)。
-            if joined {
-                self.app_service.account_sync_peers_joined(topic).await;
-            }
         }
         Ok(())
     }
