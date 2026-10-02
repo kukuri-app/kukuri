@@ -120,6 +120,8 @@ impl AppService {
         self.services
             .persist_author_event(profile.pubkey.as_str(), &envelope)
             .await?;
+        // 本人の別の端末へ同じ envelope を渡す（ADR 0061 §2。公開の正本と同じ ID）。
+        self.publish_profile_item(&envelope).await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(profile)
     }

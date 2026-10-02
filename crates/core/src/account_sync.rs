@@ -11,7 +11,7 @@ use secp256k1::rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{ACCOUNT_SYNC_REPLICA_PREFIX, ACCOUNT_SYNC_TOPIC_PREFIX};
-use crate::{ChannelId, KukuriKeys, Pubkey, ReplicaId, TopicId};
+use crate::{ChannelId, KukuriEnvelope, KukuriKeys, Pubkey, ReplicaId, TopicId};
 
 /// 導出の context（ADR 0061 §1）。変えると全アカウントの同期先が変わるので、変更してはならない。
 const ID_CONTEXT: &str = "kukuri.app 2026-10-01 account sync id v1";
@@ -254,6 +254,43 @@ impl std::fmt::Debug for AccountSyncItem {
 }
 
 impl AccountSyncItem {
+    /// 公開 profile の item。値は署名済みの envelope で、op_id は envelope の ID の先頭 32 桁、編集時刻は
+    /// `created_at`。`(updated_at, op_id)` の比較が、ADR 0061 §4 の profile の規則（`created_at`、同じなら ID）になる。
+    pub fn profile(envelope: &KukuriEnvelope) -> Result<Self> {
+        let op_id = envelope
+            .id
+            .as_str()
+            .get(..32)
+            .context("profile envelope id is too short")?
+            .to_string();
+        let item = Self {
+            key: AccountSyncItemKey::Profile,
+            op_id,
+            updated_at: envelope.created_at,
+            value: Some(
+                serde_json::to_value(envelope).context("failed to encode profile envelope")?,
+            ),
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    /// この端末での編集の item。op_id は新しく作る（再送しても変えない）。
+    pub fn edit(
+        key: AccountSyncItemKey,
+        updated_at: i64,
+        value: Option<serde_json::Value>,
+    ) -> Self {
+        let mut op_id = [0u8; 16];
+        rng().fill_bytes(&mut op_id);
+        Self {
+            key,
+            op_id: hex::encode(op_id),
+            updated_at,
+            value,
+        }
+    }
+
     fn validate(&self) -> Result<()> {
         self.key.validate()?;
         ensure!(

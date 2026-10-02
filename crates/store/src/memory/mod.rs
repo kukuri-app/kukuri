@@ -105,8 +105,10 @@ pub struct MemoryStore {
     post_withdrawal_rows: Arc<RwLock<HashMap<EnvelopeId, PostWithdrawalRow>>>,
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
     private_channel_participants: Arc<RwLock<MemoryPrivateChannelParticipants>>,
+    account_sync_rows: Arc<RwLock<BTreeMap<String, crate::AccountSyncRow>>>,
 }
 
+mod account_sync;
 mod bookmarks;
 mod direct_messages;
 mod envelopes;
