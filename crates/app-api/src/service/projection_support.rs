@@ -281,6 +281,7 @@ pub(crate) fn joined_private_channel_state_from_capability(
         current_epoch_id,
         current_epoch_secret_hex,
         archived_epochs: capability.archived_epochs,
+        controller: capability.controller.flatten(),
     })
 }
 
@@ -325,6 +326,7 @@ pub(crate) fn merged_private_channel_state_from_epoch_join(
         current_epoch_id: epoch_id.to_string(),
         current_epoch_secret_hex: namespace_secret_hex.to_string(),
         archived_epochs,
+        controller: existing.and_then(|state| state.controller),
     }
 }
 

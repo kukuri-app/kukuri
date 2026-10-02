@@ -1,3 +1,4 @@
+mod controller;
 #[cfg(feature = "iroh-integration-tests")]
 mod friend_only;
 #[cfg(feature = "iroh-integration-tests")]

@@ -244,6 +244,7 @@ impl AppService {
             participant_count: diagnostics.participant_count.unwrap_or_default(),
             stale_participant_count: diagnostics.stale_participant_count,
             namespace_secret_hex: state.current_epoch_secret_hex.clone(),
+            controller: Some(state.controller.clone()),
         })
     }
     pub(crate) async fn audience_label_for_storage(
@@ -283,6 +284,18 @@ impl AppService {
             .await
             .get(joined_private_channel_key(topic_id, channel_id).as_str())
             .cloned()
+    }
+    /// この端末の ID(iroh endpoint ID)。鍵更新の担当端末の判定に使う(#1219 W6)。
+    pub(crate) async fn local_device_id(&self) -> Result<String> {
+        Ok(self.services.transport.discovery().await?.local_endpoint_id)
+    }
+    /// この端末を最初の担当(世代 1)にする記録。
+    pub(crate) async fn first_controller(&self) -> Result<PrivateChannelController> {
+        Ok(PrivateChannelController {
+            device_id: self.local_device_id().await?,
+            generation: 1,
+            transfer_to: None,
+        })
     }
     pub(crate) async fn ensure_private_channel_access(
         &self,
@@ -552,5 +565,6 @@ pub(crate) fn private_channel_capability_snapshot(
         participant_count: 0,
         stale_participant_count: 0,
         namespace_secret_hex: state.current_epoch_secret_hex.clone(),
+        controller: Some(state.controller.clone()),
     }
 }

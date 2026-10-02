@@ -78,6 +78,30 @@ Accepted
 - 旧方式の公開情報由来の鍵と新方式の鍵は併送しない。併送すると失効済み参加者が旧鍵で在席情報を追跡できるためである。
 - 新旧クライアントが混在する間は、同じ非公開チャンネルの参加者でもコミュニティノード経由の発見が成立しない場合がある。参加者のクライアント更新を移行条件とし、サーバー側の別名解決は設けない。
 
+### 8. 鍵更新の担当端末（#1219 W6）
+同じ owner の account を複数の端末で使っても世代を分岐させないため、新しい世代を作る端末を channel ごとに 1 つにする。
+
+- 端末 ID は、その端末の iroh endpoint ID とする。endpoint の秘密は端末ごとに作り、backup（ADR 0048）・account 同期（ADR 0061）で移さない。同じ account で共通の docs author（ADR 0053）は使わない。
+- 担当の記録（`PrivateChannelController`）は次の欄を持つ。
+
+| 欄 | 意味 |
+| --- | --- |
+| `device_id` | 担当端末の endpoint ID |
+| `generation` | 担当の世代。作成で 1、担当が移るごとに 1 増やす |
+| `transfer_to` | 引継ぎ中の移譲先。あれば旧担当は停止済みで、移譲先が次の世代で有効になるまで、どの端末も新しい世代を作らない（遷移は #1219 AC-4） |
+
+- channel を作成した端末が generation 1 の担当になる。記録は参加状態の capability と一緒に端末へ保存する。
+- 新しい世代（epoch の ID と secret の生成、旧世代の凍結、handoff grant の配布）は `rotate_private_channel` の準備段階だけで作る。owner の account で、記録の `device_id` が自端末かつ `transfer_to` が無い端末だけが進む。同じ account の別端末、記録が無い、引継ぎ中のときは、何も書かずに `PrivateChannelControllerPending`（code `PRIVATE_CHANNEL_CONTROLLER_PENDING`）を返す。W8 #1220 はこの code で「チャンネルオーナーが参加処理を行うまで保留になる」旨のダイアログを出す。
+- この判定を通る入口: 明示の rotate、共有前の auto rotate（`invite_only`・`friend_plus`）、参加者の変更（`friend_only` で資格を失った参加者がいる）による write・共有前の auto rotate、それらの再試行。鍵更新を伴わない閲覧・投稿・`friend_only` の grant の共有は判定を通らず、どの端末でも行える。
+- 担当が不明な channel（記録の無いまま受け取った自分の channel）は、担当の記録が届くまで鍵更新を伴う操作を保留する。担当を移譲せずに失った channel は、復旧・強制移譲をせずに作り直す（#1219 S5）。
+- 移行: 担当の欄が無い本変更前の保存の自分の channel は、読み込んだ端末を generation 1 の担当にする（それまでの単一端末の利用を保つ）。本変更前に同じ channel を複数の端末へ写していた場合の重複は扱わない。
+
+account 同期（ADR 0061 §2）の記録の契約:
+
+- `channel/<channel id の hex>/controller` の値は上の記録の JSON（`{"device_id":"…","generation":1,"transfer_to":null}`）。書くのは担当端末と、#1219 AC-4 の引継ぎの遷移だけ。
+- 採否は記録の中身で決め、`updated_at`・`op_id` では決めない（#1218 INVAR-3）。`generation` の大きい方を採る。同じ `generation` では `transfer_to` のある方を採る（旧担当の停止は戻らない）。同じ `generation` で `device_id` か `transfer_to` が食い違う記録は採らず、手元の記録を保つ。
+- `channel/<channel id の hex>/epoch/<epoch id の hex>` の値は `PrivateChannelEpochCapability`（`{"epoch_id":"…","namespace_secret_hex":"…"}`）。受けた鍵は追加で保持する。現在の世代は、新しい世代の replica にある owner 署名の policy の `previous_epoch_id` が手元の現在の世代と一致するときだけ進める（参加者の handoff の redeem と同じ検証）。
+
 ## Implementation Contract
 
 ### Desktop shell

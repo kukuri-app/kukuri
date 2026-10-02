@@ -23,6 +23,7 @@ fn joined(topic: &TopicId, channel: &ChannelId, secret: [u8; 32]) -> JoinedPriva
         current_epoch_id: EPOCH.into(),
         current_epoch_secret_hex: hex::encode(secret),
         archived_epochs: Vec::new(),
+        controller: None,
     }
 }
 

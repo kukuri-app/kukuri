@@ -32,6 +32,8 @@ impl AppService {
             current_epoch_id: current_epoch_id.clone(),
             current_epoch_secret_hex: current_epoch_secret_hex.clone(),
             archived_epochs: Vec::new(),
+            // #1219 W6: 作成した端末が最初の担当。
+            controller: Some(self.first_controller().await?),
         };
         self.register_joined_private_channel(state.clone()).await?;
         let metadata = PrivateChannelMetadataDocV1 {
@@ -670,6 +672,13 @@ impl AppService {
         if state.owner_pubkey != self.current_author_pubkey() {
             anyhow::bail!("only the channel owner can rotate the channel");
         }
+        // #1219 W6: 明示の rotate も write/share 前の auto rotate もここを通る。担当端末でなければ何も書かずに保留する。
+        let device_id = self.local_device_id().await?;
+        if !state.controller.as_ref().is_some_and(|controller| {
+            controller.device_id == device_id && controller.transfer_to.is_none()
+        }) {
+            return Err(PrivateChannelControllerPending.into());
+        }
         let current_replica = current_private_channel_replica_id(&state);
         let current_policy = fetch_private_channel_policy_from_replica(
             self.docs_sync(),
@@ -904,7 +913,12 @@ impl AppService {
         &self,
         capability: PrivateChannelCapability,
     ) -> Result<()> {
-        let state = joined_private_channel_state_from_capability(capability)?;
+        let unrecorded = capability.controller.is_none();
+        let mut state = joined_private_channel_state_from_capability(capability)?;
+        // #1219 W6: 担当の欄が無い本変更前の保存の自分の channel は、保存していた端末を担当にする。
+        if unrecorded && state.owner_pubkey == self.current_author_pubkey() {
+            state.controller = Some(self.first_controller().await?);
+        }
         self.restore_joined_private_channel(state).await
     }
     pub async fn leave_private_channel(&self, topic_id: &str, channel_id: &str) -> Result<()> {

@@ -33,7 +33,7 @@
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
-      "lines": 1099,
+      "lines": 1113,
       "path": "crates/app-api/src/private_channels.rs"
     },
     {
