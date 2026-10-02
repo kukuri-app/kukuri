@@ -316,7 +316,7 @@ describe('useDesktopShellData characterization', () => {
     );
     // 参加済み channel を返し続けないと dataEffects が selectedChannelId を
     // null へ戻してしまうため、listJoinedPrivateChannels も固定する。
-    const listJoinedPrivateChannels = vi.fn(async () => [joinedChannel]);
+    const listJoinedPrivateChannels = vi.fn(async () => ({ items: [joinedChannel], next_cursor: null }));
     const api: DesktopApi = { ...baseApi, listTimeline, listJoinedPrivateChannels };
 
     // channel 選択中にすると「アクティブ scope(channel)+ public scope」の

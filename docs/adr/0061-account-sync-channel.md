@@ -265,6 +265,11 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 読む範囲の数: 起動時の復元と topic の一覧（`list_joined_private_channels` の `next_cursor` で続く）と退会の鍵の削除は 128 行の page、過去の世代は新しい順に 8 世代まで、bucket に掛かる世代は 2 件まで。
 - 参加の行の版（`updated_at`・`op_id`）は、AC-4c の `membership` の item の版になる。op_id は item と同じ形で作り、旧 registry から移した行の時刻は 0。
 
+#### 一覧の画面と CLI（AC-4d）
+
+- 2026-10-02 ユーザー判断: 画面は「このトピックで参加中」の一覧の card の末尾に「さらに表示」を置く（読み込み中は「読み込み中…」で無効）。続きの読み込みに失敗したら、読み込んだ行とボタンを残し、ボタンの下に 1 行のエラーを出す。CLI の `list_joined_private_channels` は入力に `cursor` を足し、出力を配列から `{items, next_cursor}` に変える（旧い配列の出力を読む利用者は読めなくなる）。
+- 定期の再読み込みは最初の page だけを読む。表示中の行のうち、その page の最後の channel id より後ろの行は読み込んだ続きとして残し、続きの cursor も保つ（一覧は channel id の順）。最初の page に `next_cursor` が無ければ、その page で置き換える。
+
 #### 判定（AC-4b・AC-4c）
 
 - AC-4b:

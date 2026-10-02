@@ -1,4 +1,4 @@
-import type { FormEventHandler } from 'react';
+import { useState, type FormEventHandler } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Copy, Settings } from 'lucide-react';
 
@@ -56,6 +56,8 @@ type PrivateChannelPanelProps = {
   inviteOutputLabel?: InviteOutputLabel;
   // 同じトピックで参加済みのチャンネル(Issue #966)。未参加なら空配列または省略。
   joinedChannels?: JoinedPrivateChannelView[];
+  // 一覧の続きがあるときの「さらに表示」(#1218 AC-4d)。失敗は reject で受け取る。
+  onLoadMoreJoinedChannels?: () => Promise<void>;
   onChannelLabelChange: (value: string) => void;
   onChannelAudienceChange: (value: ChannelAudienceOption['value']) => void;
   onInviteTokenChange: (value: string) => void;
@@ -88,6 +90,7 @@ export function PrivateChannelPanel({
   inviteOutput = null,
   inviteOutputLabel = 'invite',
   joinedChannels = [],
+  onLoadMoreJoinedChannels,
   onChannelLabelChange,
   onChannelAudienceChange,
   onInviteTokenChange,
@@ -103,6 +106,11 @@ export function PrivateChannelPanel({
     ? buildChannelAccessPreviewDeepLink(inviteOutput)
     : null;
   const audienceDescription = policyDescription(channelAudience, t);
+  const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const loadMore = () => {
+    setMoreState('loading');
+    onLoadMoreJoinedChannels?.().then(() => setMoreState('idle'), () => setMoreState('error'));
+  };
 
   return (
     <div className='extended-module-stack'>
@@ -143,6 +151,25 @@ export function PrivateChannelPanel({
               </li>
             ))}
           </ul>
+          {onLoadMoreJoinedChannels ? (
+            <div className='private-channel-joined-more'>
+              <Button
+                variant='secondary'
+                size='sm'
+                type='button'
+                aria-busy={moreState === 'loading'}
+                disabled={moreState === 'loading'}
+                onClick={loadMore}
+              >
+                {moreState === 'loading'
+                  ? t('channels:joinedList.loadingMore')
+                  : t('channels:joinedList.showMore')}
+              </Button>
+              {moreState === 'error' ? (
+                <p className='error error-inline'>{t('common:errors.failedToLoadPrivateChannels')}</p>
+              ) : null}
+            </div>
+          ) : null}
         </Card>
       ) : null}
 

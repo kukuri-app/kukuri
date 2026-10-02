@@ -194,8 +194,7 @@ impl CommandHandler for Handler {
                         payload,
                     )?)
                     .await
-                    .map_err(command_error)?
-                    .items,
+                    .map_err(command_error)?,
             ),
         }
     }
@@ -248,7 +247,11 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             "topic": {"type": "string"}, "channel_id": {"type": "string"}, "entry_dome_instance_id": {"type": "string"}
         }), &["topic", "channel_id"]), joined_schema()),
         ("leave_private_channel", Destructive, Leave, false, false, channel(), json!({"type": "null"})),
-        ("list_joined_private_channels", Read, List, false, false, schema::object(json!({"topic": {"type": "string"}}), &["topic"]), schema::array(joined_schema())),
+        ("list_joined_private_channels", Read, List, false, false, schema::object(json!({
+            "topic": {"type": "string"}, "cursor": schema::nullable(json!({"type": "string"}))
+        }), &["topic"]), schema::object(json!({
+            "items": schema::array(joined_schema()), "next_cursor": schema::nullable(json!({"type": "string"}))
+        }), &["items", "next_cursor"])),
     ].into_iter().map(|(name, effect, operation, secret_input, secret_output, input, output)| {
         command(name, effect, secret_input, secret_output, host_guards(), (input, output), Arc::new(Handler(operation)))
     }).collect()

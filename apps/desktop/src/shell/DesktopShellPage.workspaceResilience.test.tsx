@@ -241,12 +241,12 @@ test('timeline keeps the last successful workspace state when joined channels re
   });
   const api: DesktopApi = {
     ...baseApi,
-    async listJoinedPrivateChannels(topic) {
+    async listJoinedPrivateChannels(topic, cursor) {
       if (failNextJoinedChannelsRefresh) {
         failNextJoinedChannelsRefresh = false;
         throw new Error('temporary joined channel failure');
       }
-      return baseApi.listJoinedPrivateChannels(topic);
+      return baseApi.listJoinedPrivateChannels(topic, cursor);
     },
   };
 

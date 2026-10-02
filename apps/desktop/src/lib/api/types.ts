@@ -57,6 +57,7 @@ import type {
   GameRoomStatus,
   GameRoomView,
   GameScoreView,
+  JoinedPrivateChannelPage,
   JoinedPrivateChannelView,
   LiveSessionView,
   MetaverseAssetKind,
@@ -431,7 +432,7 @@ export interface DesktopApi {
     entryDomeInstanceId: string | null
   ): Promise<JoinedPrivateChannelView>;
   leavePrivateChannel(topic: string, channelId: string): Promise<void>;
-  listJoinedPrivateChannels(topic: string): Promise<JoinedPrivateChannelView[]>;
+  listJoinedPrivateChannels(topic: string, cursor?: string | null): Promise<JoinedPrivateChannelPage>;
   updateGameRoom(
     topic: string,
     roomId: string,

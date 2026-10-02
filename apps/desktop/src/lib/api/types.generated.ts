@@ -98,6 +98,8 @@ export type JoinedPrivateChannelView = { topic_id: string, channel_id: string, l
  */
 participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, };
 
+export type JoinedPrivateChannelPage = { items: Array<JoinedPrivateChannelView>, next_cursor?: string | null, };
+
 export type PrivateChannelEpochCapability = { epoch_id: string, namespace_secret_hex: string, };
 
 export type PrivateChannelCapability = { topic_id: string, channel_id: string, label: string, creator_pubkey: string, owner_pubkey: string, joined_via_pubkey?: string | null, audience_kind: ChannelAudienceKind, current_epoch_id: string, current_epoch_secret_hex: string, archived_epochs: Array<PrivateChannelEpochCapability>, rotation_required: boolean, participant_count: number, stale_participant_count: number, namespace_secret_hex: string, };

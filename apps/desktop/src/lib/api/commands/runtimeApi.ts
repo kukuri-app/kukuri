@@ -609,9 +609,9 @@ export const runtimeApi: DesktopApi = {
       } satisfies LeavePrivateChannelRequest,
     });
   }),
-  listJoinedPrivateChannels: command('listJoinedPrivateChannels', async (topic) => {
-    return invokeDesktop<JoinedPrivateChannelView[]>('list_joined_private_channels', {
-      request: { topic } satisfies ListJoinedPrivateChannelsRequest,
+  listJoinedPrivateChannels: command('listJoinedPrivateChannels', async (topic, cursor) => {
+    return invokeDesktop('list_joined_private_channels', {
+      request: { topic, cursor: cursor ?? null } satisfies ListJoinedPrivateChannelsRequest,
     });
   }),
   updateGameRoom: command('updateGameRoom', async (topic, roomId, status, phaseLabel, scores) => {
