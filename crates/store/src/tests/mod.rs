@@ -10,6 +10,7 @@ use kukuri_core::{
 };
 use tempfile::tempdir;
 
+mod account_sync_rows;
 mod author_docs_authors;
 mod backend_parity;
 mod content_observations;

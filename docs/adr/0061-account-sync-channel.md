@@ -80,7 +80,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | --- | --- |
 | 導出、payload の封、allowlist、wire の定数、公開の導出からの除外（本 ADR） | W5 AC-1 |
 | 起動・import・切替・復帰、hint・rendezvous・CN の索引・検索・推薦・診断での新しい種別の分類（page_read の private の判定を含む） | W5 AC-2 |
-| profile・設定の merge | W5 AC-3 |
+| profile・設定の merge（§8） | W5 AC-3 |
 | (channel, epoch) の鍵の保持と退会（native と Web の行ごとの保存。ADR 0059 §3） | W5 AC-4 |
 | 起動・復帰・通知の欠落の差分の有限 page と durable な cursor | W5 AC-5 |
 | Web と native の 2 端末の統合 | W5 AC-6 |
@@ -98,6 +98,24 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 | 有界な読み出し（page_read） | `account::v1::` は private の replica として、登録した capability の証明がある要求にだけ応える |
 | Community Node の索引・対応 topic | client の索引の依頼・`cn-user-api` の索引の依頼の受付・運用の対応 topic の追加と削除で、公開 topic として拒否する。account の replica は公開の導出で開けないので、indexer は読めない（§1） |
 | 検索・発見・推薦 | 索引した投稿だけを返す。上の入口で索引に入らないので出ない |
+
+### 8. profile・設定の merge（W5 AC-3 の実装）
+
+- 採用した状態は account の store の `AccountSyncStore`（native は SQLite の `account_sync_items`、item ごとに 1 行）に置く。
+  - 行は `(updated_at, op_id)` が今の行より大きいときだけ置き換える。同じ操作の再受信・古い版（restore した古い端末の版を含む）は何もしない。
+  - Web の実装は W4 AC-2 が IndexedDB で作る。
+- profile の item の op_id は envelope の ID の先頭 32 桁、`updated_at` は envelope の `created_at`。§4 の profile の規則（`created_at`、同じなら ID）を、他の item と同じ `(updated_at, op_id)` の比較で表す。
+  - merge は envelope の署名・本人であること・item との一致を確かめてから、既存の profile の確定（`commit_my_profile`）で反映する。
+  - この版より前の profile（行の無いもの）は、手元の profile の時刻と比べる。
+- 書き込み: profile は確定のたび、表示例外は設定・解除のたびに、この端末の採用と同時に封をして account の replica へ書く。
+  - replica へ書けなくても、この端末の採用は戻さない（送り直しは AC-5）。
+  - AC-3 より前に確定した profile は、次の編集で書く。
+- 点読（`read_account_sync_item`）: account の docs author の組の 1 件を読み、無い・開けないときだけ、key ごとの上限 8 件の旧候補から最大の版を採る。replica の全件・全 snapshot を比べない。
+  - 本人の別の端末から読む差分の取得と、点読・merge の呼び出しは AC-5。
+- 作者ごとの表示例外（`trust/always-visible/<pk>`）は、本人の端末で共有する。
+  - 旧版の端末内の file（`<db>.trust-display.json`）は、起動時に item（編集時刻 0。どの編集よりも古い）へ取り込んで消す。
+  - 画面の「この端末だけの設定」の説明は、同じアカウントの端末で共有する旨に改めた（2026-10-02 ユーザー判断）。
+  - 表示の判断は対象の作者ごとに 1 行を読む（全件を読まない）。
 
 ## 採らない方式
 

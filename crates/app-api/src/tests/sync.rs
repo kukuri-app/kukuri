@@ -25,7 +25,7 @@ impl CountingDocsSync {
     }
 
     /// 書き込みの名義(docs author)を持つ docs(ADR 0053)。
-    fn with_docs_author(docs_author: &str) -> Self {
+    pub(super) fn with_docs_author(docs_author: &str) -> Self {
         Self {
             inner: kukuri_docs_sync::MemoryDocsSync::with_docs_author(docs_author),
             ..Self::default()

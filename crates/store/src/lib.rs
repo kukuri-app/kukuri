@@ -5,6 +5,7 @@
     warn(clippy::disallowed_methods)
 )]
 mod account_store;
+mod account_sync;
 mod cache;
 mod memory;
 mod models;
@@ -20,6 +21,7 @@ mod traits;
 mod tests;
 
 pub use account_store::{AccountStore, PrivateIndexGrant, PrivateIndexGrantStore};
+pub use account_sync::{AccountSyncRow, AccountSyncStore};
 pub use cache::{
     ContentCacheStore, OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES,
     REMOTE_CACHE_RECLAIM_STEP, RemoteCacheReservation, RemoteRecordKey,

@@ -162,8 +162,6 @@ pub struct DesktopRuntime {
     /// #1061: ブロック / ミュート観測の提供状態ファイルの読み書きを直列化する。
     pub(crate) trust_observation_guard: Arc<Mutex<()>>,
     pub(crate) private_index_grant_guard: Mutex<()>,
-    /// #1061: 著者表示例外ファイルの読み書きを直列化する。
-    pub(crate) trust_display_guard: Arc<Mutex<()>>,
     /// #1061: 採用 CN から採った評価の cache（key = (base_url, target)）。
     pub(crate) author_trust_gate_cache:
         Arc<Mutex<HashMap<(String, String), crate::community_node::CachedAuthorTrustEvaluation>>>,
@@ -445,6 +443,7 @@ impl DesktopRuntime {
         }
         // 本人の端末間の同期（ADR 0061）。private channel の復元より前に scope の枠を取る。
         app_service.start_account_sync().await?;
+        crate::community_node::import_legacy_trust_display(&db_path, &app_service).await?;
         for capability in load_private_channel_capabilities(&db_path, identity_mode).await? {
             app_service
                 .restore_private_channel_capability(capability)
@@ -549,7 +548,6 @@ impl DesktopRuntime {
             content_advisory_issuer_cache: Arc::new(Mutex::new(HashMap::new())),
             trust_observation_guard: Arc::new(Mutex::new(())),
             private_index_grant_guard: Mutex::new(()),
-            trust_display_guard: Arc::new(Mutex::new(())),
             author_trust_gate_cache: Arc::new(Mutex::new(HashMap::new())),
             author_trust_gate_generation: Arc::new(AtomicU64::new(0)),
             event_sender,

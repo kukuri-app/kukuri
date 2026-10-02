@@ -429,6 +429,35 @@ async fn priority_and_display_exceptions_restore_after_restart() {
     node.server.abort();
 }
 
+// #1218 AC-3: 旧版が端末内の file に置いた例外は、起動時に本人の端末で共有する item へ取り込み、file を消す。
+#[tokio::test]
+async fn legacy_display_exceptions_are_imported_into_account_sync_items() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("trust-gates.db");
+    let legacy = db_path.with_extension("trust-display.json");
+    std::fs::write(
+        &legacy,
+        serde_json::json!({ "always_visible": [author(0)] }).to_string(),
+    )
+    .expect("legacy file");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        &db_path,
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("runtime");
+    assert_eq!(
+        runtime
+            .list_author_trust_display_exceptions()
+            .await
+            .expect("exceptions"),
+        vec![author(0)]
+    );
+    assert!(!legacy.exists());
+    runtime.shutdown().await;
+}
+
 /// 表示設定にすぎないため、読めない優先順位があっても起動を止めず、有効な分だけ復元する。
 #[tokio::test]
 async fn unusable_priority_entries_are_dropped_without_blocking_startup() {

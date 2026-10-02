@@ -1,3 +1,8 @@
+table account_sync_items
+  column cid=0 name=item_key type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=op_id type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=updated_at type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=value type=TEXT notnull=0 default=None pk=0
 table adult_media_hashes
   column cid=0 name=blob_hash type=TEXT notnull=1 default=None pk=1
   column cid=1 name=marked_at type=INTEGER notnull=1 default=Some("0") pk=0
@@ -615,6 +620,9 @@ index remote_content_cache_record table=remote_content_cache unique=0 origin=c p
   key seqno=1 cid=3 name=Some("record_key")
   key seqno=2 cid=4 name=Some("record_author")
   sql=Some("CREATE INDEX remote_content_cache_record ON remote_content_cache(scope_key, record_key, record_author) WHERE kind = 'record'")
+index sqlite_autoindex_account_sync_items_1 table=account_sync_items unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("item_key")
+  sql=None
 index sqlite_autoindex_adult_media_hashes_1 table=adult_media_hashes unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("blob_hash")
   sql=None

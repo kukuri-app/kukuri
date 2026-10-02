@@ -37,6 +37,13 @@ pub(crate) async fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
         .await
 }
 
+/// 既定の保存先の file を消す。無ければ何もしない。
+pub(crate) async fn delete_file(path: &Path) -> Result<()> {
+    platform_storage()
+        .delete(FILE_SERVICE, &path_key(path)?)
+        .await
+}
+
 /// 既定の provider が無い keyring（headless の Linux 等）。その環境では file への fallback だけが使える。
 #[derive(Debug)]
 pub struct KeyringUnavailable;
