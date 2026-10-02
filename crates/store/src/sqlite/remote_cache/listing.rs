@@ -26,28 +26,50 @@ impl SqliteStore {
         descending: bool,
         author: Option<&str>,
         limit: usize,
+        own_only: bool,
     ) -> Result<(Vec<RemoteRecordKey>, bool)> {
         let order = if descending { "DESC" } else { "ASC" };
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT record_key, record_author, is_protected, last_used_at, \
              json_extract(CAST(payload AS TEXT), '$.content_hash') AS content_hash, \
-             json_extract(CAST(payload AS TEXT), '$.content_len') AS content_len \
-             FROM remote_content_cache WHERE kind = 'record' AND scope_key = ",
+             json_extract(CAST(payload AS TEXT), '$.content_len') AS content_len ",
         );
-        query.push_bind(replica);
-        query.push(" AND record_key >= ");
-        query.push_bind(prefix);
-        if let Some(upper) = prefix_upper_bound(prefix) {
-            query.push(" AND record_key < ");
-            query.push_bind(upper);
+        if own_only {
+            // 本人の record は保護参照 `own_docs` の索引の範囲で引く。cache key `<replica>\0<key>\0<author>` の順は
+            // (key, author)の順と同じ。
+            query.push(
+                "FROM remote_content_cache_protected_ref r JOIN remote_content_cache \
+                 ON remote_content_cache.kind = r.kind AND remote_content_cache.cache_key = r.cache_key \
+                 WHERE r.ref_id = ",
+            );
+            query.push_bind(super::owned::OWN_DOCS_REF);
+            query.push(" AND r.kind = 'record' AND r.cache_key >= ");
+            query.push_bind(format!("{replica}\0{prefix}"));
+            query.push(" AND r.cache_key < ");
+            query.push_bind(match prefix_upper_bound(prefix) {
+                Some(upper) => format!("{replica}\0{upper}"),
+                None => format!("{replica}\u{1}"),
+            });
+        } else {
+            query.push("FROM remote_content_cache WHERE kind = 'record' AND scope_key = ");
+            query.push_bind(replica);
+            query.push(" AND record_key >= ");
+            query.push_bind(prefix);
+            if let Some(upper) = prefix_upper_bound(prefix) {
+                query.push(" AND record_key < ");
+                query.push_bind(upper);
+            }
         }
         if let Some(author) = author {
             query.push(" AND record_author = ");
             query.push_bind(author);
         }
-        query.push(format!(
-            " ORDER BY record_key {order}, record_author {order} LIMIT "
-        ));
+        let order = if own_only {
+            format!(" ORDER BY r.cache_key {order} LIMIT ")
+        } else {
+            format!(" ORDER BY record_key {order}, record_author {order} LIMIT ")
+        };
+        query.push(order);
         query.push_bind(i64::try_from(limit.saturating_add(1))?);
         let rows = query.build().fetch_all(&self.pool).await?;
         let reached_limit = rows.len() > limit;

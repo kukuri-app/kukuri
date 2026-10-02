@@ -3,7 +3,7 @@
 use super::*;
 
 /// 本人が書いた docs record の保護参照。
-const OWN_DOCS_REF: &str = "own_docs";
+pub(super) const OWN_DOCS_REF: &str = "own_docs";
 
 impl SqliteStore {
     /// `reference` の保護参照を 1 件足す。内容がまだ無くても参照を先に置き、後から置く内容を容量の計数と回収の外にする。

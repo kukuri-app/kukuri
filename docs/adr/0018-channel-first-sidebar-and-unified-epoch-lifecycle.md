@@ -90,7 +90,7 @@ Accepted
 | `generation` | 担当の世代。作成で 1、担当が移るごとに 1 増やす |
 | `transfer_to` | 引継ぎ中の移譲先。あれば旧担当は停止済みで、移譲先が次の世代で有効になるまで、どの端末も新しい世代を作らない（遷移は #1219 AC-4） |
 
-- channel を作成した端末が generation 1 の担当になる。記録は参加状態の capability と一緒に端末へ保存する。
+- channel を作成した端末が generation 1 の担当になる。記録は参加状態の capability と一緒に端末へ保存する（参加の行。ADR 0061 §9）。
 - 新しい世代（epoch の ID と secret の生成、旧世代の凍結、handoff grant の配布）は `rotate_private_channel` の準備段階だけで作る。owner の account で、記録の `device_id` が自端末かつ `transfer_to` が無い端末だけが進む。同じ account の別端末、記録が無い、引継ぎ中のときは、何も書かずに `PrivateChannelControllerPending`（code `PRIVATE_CHANNEL_CONTROLLER_PENDING`）を返す。W8 #1220 はこの code で「チャンネルオーナーが参加処理を行うまで保留になる」旨のダイアログを出す。
 - この判定を通る入口: 明示の rotate、共有前の auto rotate（`invite_only`・`friend_plus`）、参加者の変更（`friend_only` で資格を失った参加者がいる）による write・共有前の auto rotate、それらの再試行。鍵更新を伴わない閲覧・投稿・`friend_only` の grant の共有は判定を通らず、どの端末でも行える。
 - 担当が不明な channel（記録の無いまま受け取った自分の channel）は、担当の記録が届くまで鍵更新を伴う操作を保留する。担当を移譲せずに失った channel は、復旧・強制移譲をせずに作り直す（#1219 S5）。
@@ -101,6 +101,7 @@ account 同期（ADR 0061 §2）の記録の契約:
 - `channel/<channel id の hex>/controller` の値は上の記録の JSON（`{"device_id":"…","generation":1,"transfer_to":null}`）。書くのは担当端末と、#1219 AC-4 の引継ぎの遷移だけ。
 - 採否は記録の中身で決め、`updated_at`・`op_id` では決めない（#1218 INVAR-3）。`generation` の大きい方を採る。同じ `generation` で `device_id` が同じなら、`transfer_to` の無い記録より有る記録を採る（旧担当の停止は戻らない）。同じ `generation` でそれ以外の食い違い（`device_id` が異なる、または両方の `transfer_to` が異なる値）があれば、受けた記録を採らずに手元の記録を保つ。
 - `channel/<channel id の hex>/epoch/<epoch id の hex>` の値は `PrivateChannelEpochCapability`（`{"epoch_id":"…","namespace_secret_hex":"…"}`）。受けた鍵は追加で保持する。現在の世代は、新しい世代の replica にある owner 署名の policy の `previous_epoch_id` が手元の現在の世代と一致するときだけ進める（参加者の handoff の redeem と同じ検証）。
+- 例外: 本人の端末から届いた鍵の item は、その端末が上の検証（または owner の鍵更新の確定・参加）を通して現在の世代にした世代である。そのため参加中の channel では、`previous_epoch_id` を辿らずに、開始時刻が最も新しい鍵の行の世代を現在の世代にする（ADR 0061 §9。新しい端末・作り直した端末が世代の数だけ辿らない）。このため新しい世代の epoch id の時刻は、今の時刻と、現在の世代の開始時刻 + 1 ミリ秒の大きい方にする（開始時刻の順を鎖の順と一致させる）。
 
 ## Implementation Contract
 

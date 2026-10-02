@@ -28,7 +28,7 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 
 - Web の iroh-blobs は上流の `MemStore`、iroh-docs は上流（root `Cargo.toml` の patch rev）の `Store::memory()` を使う。どちらも fork しない。wire protocol・hash・取得 gate は native と同じ。
 - Web の blob-service は `MemStore` へ書かない。本人の blob（`put_owned_blob`）・remote の blob（`put_remote_blob`）・pin は保存 trait（§2）へだけ書き、取得は一時 bytes の経路（ephemeral）だけを使う。
-  これで `MemStore` に残るのは iroh-docs の entry が参照する内容と転送中の temp tag だけになる（その保持の上限は W3 AC-1 が決める）。上流の GC は使わない。
+  これで `MemStore` に残るのは iroh-docs の entry が参照する内容と転送中の temp tag だけになる（その保持の上限は W3 AC-1 が決める）。blob の回収に上流の GC は使わない（docs の閉じた replica の内容の回収にだけ使う。§7）。
 - Web が持つ blob を相手へ提供するのは `/kukuri/remote-blob/1` とする。iroh-blobs の取得は `MemStore` に無いので Missing になり、既存の fallback がこの protocol で取りに来る。protocol は変えない。
 - native は変えない（`FsStore` と SQLite の remote cache の両方）。
 
@@ -63,14 +63,14 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
   quota 超過・中断で transaction が失敗すると何も残らない（途中まで書かれた内容を完成と扱わない）。途中の取得（partial）は保存せず、取り直す。
 - 起動時に内容を読み込まない。`meta` の集計を 1 行読むだけで、以後は key を指定して読む。
 - 実装（W2 AC-2）: `crates/web-runtime` の `IndexedDbCache`。database は 1 つの task が持ち、操作を 1 つずつ行う（native の `remote_cache_gate` と同じ直列化。ADR 0056 §4）。
-  `reclaim`・`adult` の索引は非保護の行だけに値を置く。Web の blob-service は `IrohBlobService::with_content_cache` で作り、`MemStore` へ書かない。record の操作は W3 AC-2 まで error を返す。
+  `reclaim`・`adult` の索引は非保護の行だけに値を置く。Web の blob-service は `IrohBlobService::with_content_cache` で作り、`MemStore` へ書かない。record の操作の実装は §7（W3 AC-2）。
 
 ### 4. 容量・回収・予約
 
 - 非保護分の上限は `min(3 GiB, 起動時の StorageManager の quota の 50%)`。非利用 7 日・1 処理 128 件・取得中の 1 MiB 単位の予約・最後に使った時刻の更新の間隔（1 時間）は native と同じ定数を使う。
 - 回収は `contents` の索引を古い順に 1 処理 128 件まで歩き、保護参照のある行を消さない。全行を読んでから選ばない。回収の背景 task は native と同じ owner（desktop-runtime）から起こす。
 - 成人向けの印の付いた非保護分の回収も `scope` の索引で 1 処理 128 件まで。
-- quota 超過で書けないときは、回収を 1 処理行って 1 回だけ書き直す。それでも書けなければ保存の失敗として返し、取得を延期する（native の容量不足と同じ）。鍵・capability・設定は W4 の別の database にあり、この回収で消えない（#1215 INVAR-2）。
+- quota 超過で書けないときは、回収を 1 処理行って 1 回だけ書き直す。それでも書けなければ保存の失敗として返し、取得を延期する（native の容量不足と同じ）。鍵・設定は W4 の別の database にあり、private channel の鍵は projection の保護行（ADR 0061 §9）にあって、どちらもこの回収で消えない（#1215 INVAR-2）。
 - 実装（W2 AC-3）: 上限は保存 trait の `remote_cache_capacity` で返し（native は 3 GiB のまま）、取得の予約と cache へ置くかの判定（`remote_fetch`・`remote_blob`・blob-service）もこれを使う。
   書けなかったとき（transaction の中断。quota 超過を含む）の回収は、書く内容の bytes の分を非保護の行の古い順に 128 件まで消す。chunk の数が長さと合わない（破損した）内容は完成と扱わず、行と chunk を消して取り直させる（保護参照は残す）。
 
@@ -120,9 +120,13 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
   docs の namespace ではなく登録した capability で確かめるので、drop した replica にも答えられ、証明に使った namespace と別の replica の保持分を返すことはない。実装は W3 AC-3 が所有する。
 - memory store の保持: replica は需要の間だけ開く（既存の lease と close）。Web では、需要が終わって閉じた replica を drop し、その replica でこの session に書いた entry の内容の hash を `MemStore` から消す（書いた record は保存 trait に確定しており、保持分として読める）。
   memory に残るのは、開いている replica のこの session の書込みと、転送中の temp tag だけになる。開いている replica の数は既存の需要の上限に従う。
-  同じ内容の hash を開いている別の replica も参照しうるので、`MemStore` から消すのは、開いている replica のどれもこの session の書込みで参照していない hash に限る（hash ごとに参照する replica の数を数える。数えるのはこの session の書込みだけなので有界）。
   drop した replica への読み出しは、namespace を作り直さずに保持分で答える（上の 2 項目）。これを AC-3 の reload・peer 不在の試験で確かめる。
+  - 実装（W3 AC-3、2026-10-02 改訂）: 上流 iroh-blobs（0.103.0）の blob の削除は `pub(crate)` で、外から hash を指定して消せない。そこで、hash ごとに数えて消す案をやめ、
+    Web の memory store に限って上流の GC（`MemStore::new_with_opts` の `GcConfig`、間隔 10 秒）を有効にし、iroh-docs の保護（`ProtectCallbackHandler`。docs store の entry が指す内容を守る）を渡す。
+    閉じた replica は docs-sync が drop する（`close_replica` と、上限を超えた idle の close）。drop した replica の内容は、どの entry も指さなくなるので GC が消す。
+    GC が読む（mark・sweep）のは memory の tag・temp tag・開いている replica の entry と memory store の内容だけで、Web ではどれもこの session の開いている分に限られ、件数に比例しない。native は GC を使わない（§1）。
 - 再構築・再送は、保存 trait の record をそのまま提供する。docs へ書き直さないので、更新の ID と時刻は変わらない。
+  実装（W3 AC-3）: 手元の exact・docs author 指定・key の一覧と、相手への key の一覧（topic の replica 以外）が、保存 trait の自分の record（`own_only`）を合わせる（native は保護参照 `own_docs` の索引、Web は `own`・`own_by_author` の索引）。一覧の併合は `merge_record_keys` を共用する。
 - 保存 trait への書込みに失敗したら、書込み全体を失敗として返し、偽の保存成功を返さない。native の `protect_own_record` は cache や account が無いと何もせずに成功を返すが、Web には常に保存 trait があるので、この分岐を Web の保護の成功として扱わない。
 - 上流 iroh-docs の patch rev を更新するときの互換検証（native の保存互換、WASM の build と動作）の手順を AC-4 で `docs/runbooks/dev.md` に書く。
 

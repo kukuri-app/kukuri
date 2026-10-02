@@ -24,6 +24,8 @@ use crate::types::{
     DocOp, DocQuery, DocRecord, DocsSync, ReplicaNotice, ReplicaNoticeStream,
 };
 
+#[path = "iroh_sync_keys.rs"]
+mod keys;
 #[path = "iroh_sync_lifecycle.rs"]
 mod lifecycle;
 #[path = "iroh_local_source.rs"]
@@ -310,6 +312,9 @@ impl IrohDocsSync {
             if let Err(error) = handle.doc.close().await {
                 warn!(replica = %idle, error = %error, "failed to close an idle docs replica");
             }
+            // Web は閉じた replica を drop する(`close_replica_owned` と同じ。ADR 0058 §7)。
+            #[cfg(target_family = "wasm")]
+            let _ = self.node.docs().drop_doc(handle.doc.id()).await;
         }
         Ok(Some(doc))
     }
@@ -430,66 +435,6 @@ pub(crate) fn indexed_query(query: DocQuery) -> Query {
 }
 
 /// #1248: key を 1 つ指定し、読む entry 数に上限を置く query。同じ key の entry は docs author の昇順で返る。
-impl IrohDocsSync {
-    /// 上限つきの key の一覧。`author` があれば、その docs author の entry だけを読む。
-    async fn key_page(
-        &self,
-        replica_id: &ReplicaId,
-        author: Option<AuthorId>,
-        query: DocKeyQuery,
-    ) -> Result<DocKeyPage> {
-        // `limit` が 0 でも replica は開く(`MemoryDocsSync` と同じ。権限の無い replica はここで失敗する)。
-        let Some(doc) = self.read_replica(replica_id).await? else {
-            return Ok(DocKeyPage::default());
-        };
-        if query.limit == 0 {
-            return Ok(DocKeyPage::default());
-        }
-        let direction = match query.order {
-            DocKeyOrder::Ascending => SortDirection::Asc,
-            DocKeyOrder::Descending => SortDirection::Desc,
-        };
-        let query_limit = query.limit;
-        let builder = match author {
-            Some(author) => Query::author(author).key_prefix(query.prefix),
-            None => Query::key_prefix(query.prefix),
-        };
-        let stream = doc
-            .get_many(
-                builder
-                    .sort_by(SortBy::KeyAuthor, direction)
-                    .limit(query.limit as u64)
-                    .build(),
-            )
-            .await?;
-        tokio::pin!(stream);
-        let mut entries = Vec::new();
-        let mut skipped_keys = 0usize;
-        let mut scanned = 0usize;
-        while let Some(entry) = stream.next().await {
-            let entry = entry?;
-            scanned += 1;
-            // 飛ばした分を読み足さない(追加の query を発行しない)。返す件数が `limit` より減るだけである。
-            // 飛ばした entry も `scanned` に数え、打ち切られたかどうかを呼び出し側へ伝える(#1257)。
-            let Some(key) = utf8_key(entry.key()) else {
-                skipped_keys += 1;
-                continue;
-            };
-            entries.push(DocKeyEntry {
-                key,
-                content_hash: entry.content_hash().to_string(),
-                content_len: entry.content_len(),
-                docs_author: Some(entry.author().to_string()),
-            });
-        }
-        warn_skipped_keys(replica_id, skipped_keys);
-        Ok(DocKeyPage {
-            entries,
-            reached_limit: scanned >= query_limit,
-        })
-    }
-}
-
 pub(crate) fn bounded_exact_query(key: &str, limit: usize) -> Query {
     Query::key_exact(key)
         .sort_by(SortBy::KeyAuthor, SortDirection::Asc)
@@ -608,7 +553,7 @@ impl DocsSync for IrohDocsSync {
     ) -> Result<Vec<DocRecord>> {
         let exact = matches!(&query, DocQuery::Exact(_)).then(|| query.clone());
         let records = self.collect_records(replica_id, indexed_query(query), policy);
-        self.with_private_cache(replica_id, exact, 8, records.await?)
+        self.with_held_records(replica_id, exact, 8, records.await?)
             .await
     }
 
@@ -626,7 +571,7 @@ impl DocsSync for IrohDocsSync {
         }
         let records = self.collect_records(replica_id, bounded_exact_query(key, limit), policy);
         let exact = Some(DocQuery::Exact(key.into()));
-        self.with_private_cache(replica_id, exact, limit, records.await?)
+        self.with_held_records(replica_id, exact, limit, records.await?)
             .await
     }
 
@@ -672,12 +617,24 @@ impl DocsSync for IrohDocsSync {
         let Ok(author) = AuthorId::from_str(docs_author) else {
             return Ok(None);
         };
-        let Some(doc) = self.read_replica(replica_id).await? else {
-            return Ok(None);
+        let entry = match self.read_replica(replica_id).await? {
+            // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
+            Some(doc) => doc.get_exact(author, key.as_bytes(), false).await?,
+            None => None,
         };
-        // (namespace、docs author、key)の主 key の 1 件引き。同じ key の他の名義の entry は読まない。
-        let Some(entry) = doc.get_exact(author, key.as_bytes(), false).await? else {
-            return Ok(None);
+        let Some(entry) = entry else {
+            // 手元に無ければ、同じ docs author の保持分(公開の replica は自分の record だけ)から読む(ADR 0058 §7)。
+            let own_only = public_replica_secret(replica_id).is_some();
+            let author = author.to_string();
+            let held = self.with_cached_records(
+                replica_id,
+                key,
+                Some(author.as_str()),
+                1,
+                own_only,
+                Ok(Vec::new()),
+            );
+            return Ok(held.await?.into_iter().next());
         };
         let content_hash = entry.content_hash().to_string();
         let Some(value) = self

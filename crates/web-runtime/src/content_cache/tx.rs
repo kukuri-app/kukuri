@@ -66,6 +66,15 @@ impl Row {
             set("author", record.author.as_str().into())?;
             set("hash", record.content_hash.as_str().into())?;
             set("hlen", (record.content_len as f64).into())?;
+            if self.protected {
+                let (replica, rkey, author) = (
+                    JsValue::from_str(&record.replica),
+                    JsValue::from_str(&record.rkey),
+                    JsValue::from_str(&record.author),
+                );
+                set("own", Array::of3(&replica, &rkey, &author).into())?;
+                set("own_by_author", Array::of3(&replica, &author, &rkey).into())?;
+            }
         }
         // 索引は値のある行だけを載せるので、保護した行は回収の対象に現れない。
         if !self.protected {

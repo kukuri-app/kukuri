@@ -34,6 +34,13 @@ impl IrohDocsSync {
         let mut replicas = self.replicas.clone().lock_owned().await;
         let secrets = self.private_replica_secrets.clone();
         let id = replica_id.as_str().to_string();
+        #[cfg(target_family = "wasm")]
+        let (docs, namespace) = (
+            self.node.docs().clone(),
+            self.replica_secret(replica_id)
+                .await
+                .map(|secret| secret.id()),
+        );
         let (send, receive) = oneshot::channel();
         tasks.spawn(async move {
             let result = close_replica_under_guard(
@@ -45,6 +52,14 @@ impl IrohDocsSync {
                 hook,
             )
             .await;
+            // Web は閉じた replica を drop し、その内容を memory store の GC に任せる。本人の record は保存 trait に
+            // 確定しており、保持分として読める(ADR 0058 §7)。
+            #[cfg(target_family = "wasm")]
+            if result.is_ok()
+                && let Ok(namespace) = namespace
+            {
+                let _ = docs.drop_doc(namespace).await;
+            }
             let _ = send.send(result);
         });
         drop(tasks);

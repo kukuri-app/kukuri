@@ -6,8 +6,8 @@
 //! `1`。custom path なら、browser への需要の接続が custom path へ移ってから読む。
 //! - `POST /info`: node の endpoint id、relay の URL、置いた blob の hash
 //! - `POST /fetch`（2 行目は blob の hash）: browser から blob を取得し、`storage_e2e::describe` の 1 行を返す。
-//! - `POST /docs-read`: browser の replica を `storage_e2e::read_newest` で読み、custom path で record の埋め草以上を
-//!   受け取ったか（`via_custom`）を添える。
+//! - `POST /docs-read`（2 行目は replica）: browser の replica を `storage_e2e::read_newest` で読み、custom path で
+//!   record の埋め草以上を受け取ったか（`via_custom`）を添える。
 //!
 //! native だけで動く。
 
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     let keys = KukuriKeys::generate();
     docs.use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
         .await?;
-    storage_e2e::write_records(&docs, "native", 1..=3).await?;
+    storage_e2e::write_records(&docs, &storage_e2e::replica("native"), "native", 1..=3).await?;
     // browser が relay で届くようになってから URL を出す。
     node.endpoint().online().await;
     let app = axum::Router::new()
@@ -132,7 +132,8 @@ async fn docs_read(State(peer): State<Arc<Peer>>, body: String) -> String {
     let read = async {
         let (_, browser, _demand) = peer.browser(&body).await?;
         let before = peer.transport.stats().received_bytes;
-        let read = storage_e2e::read_newest(&peer.docs, browser, "browser").await?;
+        let replica = kukuri_core::ReplicaId::new(body.lines().nth(1).context("replica")?);
+        let read = storage_e2e::read_newest(&peer.docs, browser, &replica).await?;
         let received = peer.transport.stats().received_bytes - before;
         anyhow::Ok(format!(
             "{read} via_custom={}",
