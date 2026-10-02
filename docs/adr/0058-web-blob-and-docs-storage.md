@@ -106,6 +106,9 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
   - key は `[replica, key, author]`。値は `DocReadRecord` の bytes・保護の有無・最後に使った時刻。
   - 索引は `[replica, key]`（exact）、`[replica, author, key]`（author を指定した一覧）、「非保護か・最後に使った時刻」（回収の順）。
   - 自分の record は `own_docs` の参照で保護し、remote の record は §4 と同じ規則で回収する。
+  - 実装（W3 AC-2）: 別の object store にせず、native と同じく `contents` の行（`kind` が `record`、key は `<replica>\0<key>\0<author>`）と `chunks` に置く。
+    record の行だけが `listing`（`[replica, key, author]`。exact と一覧）と `by_author`（`[replica, author, key]`）の索引に載る。回収の索引・容量の計数・保護参照・完成の判定を blob と共有し、同じ処理を 2 つ持たない。
+    一覧は値を読まずに、行に置いた record の hash と長さを返す（native の `json_extract` と同じ）。
 - 起動時に record を読まない。docs author はアカウント鍵から導出し直し（ADR 0053）、namespace は需要があるときに開く（公開は replica id から導出、private は W4・W5 が保存する capability から登録する）。全 replica の export・import を起動の条件にしない。
 - 自分の record（`own_docs` で保護した行）を合わせる範囲を、手元の読み出しのすべての経路（exact・author を指定した exact・key の一覧）と相手への key の一覧で、全 replica（topic・author・author bucket・private）へ広げる。
   他人の record の保持分を合わせる範囲は今のまま変えない（手元の exact の公開 replica では合わせない。上書きされる他人の record の古い版が、書き手本人への読み出しを止めないため。#1395・#1419）。

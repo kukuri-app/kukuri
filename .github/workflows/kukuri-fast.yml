@@ -206,12 +206,12 @@ jobs:
           AR_wasm32_unknown_unknown: llvm-ar
         run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer
 
-      # IndexedDB の blob の保存と、reload の後の native との送受信（#1215 W2、ADR 0058）。
+      # IndexedDB の保存（blob と docs の record）と native との送受信（#1215 W2・#1216 W3、ADR 0058）。
       - name: Browser storage tests
         env:
           CC_wasm32_unknown_unknown: clang
           AR_wasm32_unknown_unknown: llvm-ar
-        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-web-runtime web_blob_peer
+        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer
 
   linux-desktop-ui:
     runs-on: ubuntu-24.04
