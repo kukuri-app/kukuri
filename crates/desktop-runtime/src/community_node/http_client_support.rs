@@ -44,7 +44,7 @@ pub(crate) fn community_node_http_client() -> Result<CommunityNodeHttpClient> {
         .context("failed to build community-node http client")
 }
 
-/// 通報を POST し、応答の status と本文を返す(#703)。
+/// 通報を POST し、応答の status と本文（読めなければ空）を返す(#703)。
 ///
 /// 通報本文(詳細・連絡先)が転送応答で別ホストへ再送されないよう、転送を追跡しない。native は 3xx を返し、呼び出し側が
 /// `REPORT_REDIRECT_REJECTED` として扱う。
@@ -60,7 +60,8 @@ pub(crate) async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, V
         .send()
         .await?;
     let status = response.status().as_u16();
-    Ok((status, response.bytes().await?.to_vec()))
+    let body = response.bytes().await.map(|bytes| bytes.to_vec());
+    Ok((status, body.unwrap_or_default()))
 }
 
 /// Web はブラウザの fetch を `redirect: "error"` で呼び、転送を失敗にする（ブラウザの reqwest は転送を止められない）。
@@ -93,10 +94,14 @@ pub async fn post_report(endpoint: &str, body: Vec<u8>) -> Result<(u16, Vec<u8>)
                     .map_err(js)?
                     .dyn_into()
                     .map_err(js)?;
-            let bytes = JsFuture::from(response.array_buffer().map_err(js)?)
-                .await
-                .map_err(js)?;
-            Ok((response.status(), js_sys::Uint8Array::new(&bytes).to_vec()))
+            let body = match response.array_buffer() {
+                Ok(buffer) => JsFuture::from(buffer)
+                    .await
+                    .map(|bytes| js_sys::Uint8Array::new(&bytes).to_vec())
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            Ok((response.status(), body))
         }
         .await;
         let _ = sender.send(result);

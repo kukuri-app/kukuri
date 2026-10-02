@@ -49,7 +49,7 @@ pub enum NodeSource {
     #[cfg(not(target_family = "wasm"))]
     Persistent(PathBuf),
     Memory {
-        secret_key: iroh::SecretKey,
+        secret_key: Box<iroh::SecretKey>,
         webrtc: Option<Arc<WebRtcTransport>>,
     },
 }
@@ -722,7 +722,7 @@ impl BoundIrohStack {
                 IrohDocsNode::memory_with(kukuri_iroh_node::NodeOptions {
                     network_config: network_config.clone(),
                     relay_config: relay_config.clone(),
-                    secret_key: Some(secret_key.clone()),
+                    secret_key: Some((**secret_key).clone()),
                     webrtc: webrtc.clone(),
                 })
                 .await?

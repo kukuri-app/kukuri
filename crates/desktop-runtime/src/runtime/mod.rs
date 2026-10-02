@@ -437,7 +437,10 @@ impl DesktopRuntime {
             community_node_config_or_initial(&db_path, Some(initial_community_node_config)).await?;
         let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
         let iroh_stack = SharedIrohStack::open(
-            crate::stack::NodeSource::Memory { secret_key, webrtc },
+            crate::stack::NodeSource::Memory {
+                secret_key: Box::new(secret_key),
+                webrtc,
+            },
             TransportNetworkConfig::default(),
             &discovery_config,
             &[],

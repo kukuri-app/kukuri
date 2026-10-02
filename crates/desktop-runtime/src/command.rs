@@ -252,16 +252,10 @@ async fn switch_account(
 }
 
 macro_rules! dispatch_table {
-    ($list:ident, $dispatch:ident ($receiver:ident : $receiver_ty:ty, $ctx:ident); $( $(#[$meta:meta])* $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
+    ($list:ident, $dispatch:ident ($receiver:ident : $receiver_ty:ty, $ctx:ident); $( $name:ident ( $( $arg:ident : $ty:ty ),* ) => $call:expr ; )*) => {
         /// 表にある command の名前と、引数の top-level の key（snake_case。invoke では camelCase）。
-        #[expect(
-            clippy::vec_init_then_push,
-            reason = "表の項目ごとに cfg（native だけの command）を付けるため"
-        )]
         pub(crate) fn $list() -> Vec<(&'static str, &'static [&'static str])> {
-            let mut commands = Vec::new();
-            $( $(#[$meta])* commands.push((stringify!($name), &[$(stringify!($arg)),*] as &[&str])); )*
-            commands
+            vec![$( (stringify!($name), &[$(stringify!($arg)),*] as &[&str]) ),*]
         }
 
         /// 表に無い command は、引数を `Err` で返す。
@@ -273,7 +267,6 @@ macro_rules! dispatch_table {
         ) -> Result<Result<Value, CommandError>, Value> {
             match command {
                 $(
-                    $(#[$meta])*
                     stringify!($name) => {
                         #[derive(serde::Deserialize)]
                         #[serde(rename_all = "camelCase")]
