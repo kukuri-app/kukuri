@@ -559,7 +559,8 @@ pub trait NotificationStore: Send + Sync {
 /// 注入点はこれまでどおり `dyn ProjectionStore` を使える。個別ドメインだけが必要な
 /// 場面では対応する sub-trait を直接使う。
 pub trait ProjectionStore:
-    ObjectProjectionStore
+    crate::AccountSyncStore
+    + ObjectProjectionStore
     + ContentObservationStore
     + PostWithdrawalStore
     + LiveGameProjectionStore
@@ -571,7 +572,8 @@ pub trait ProjectionStore:
 }
 
 impl<T> ProjectionStore for T where
-    T: ObjectProjectionStore
+    T: crate::AccountSyncStore
+        + ObjectProjectionStore
         + ContentObservationStore
         + PostWithdrawalStore
         + LiveGameProjectionStore

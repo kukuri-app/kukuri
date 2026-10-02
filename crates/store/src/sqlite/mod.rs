@@ -36,6 +36,7 @@ use crate::traits::{
     SocialProjectionStore, Store,
 };
 
+mod account_sync;
 mod bookmarks;
 mod connection;
 mod direct_messages;

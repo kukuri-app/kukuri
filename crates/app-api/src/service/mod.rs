@@ -120,6 +120,7 @@ pub(crate) use crate::views::{
     UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
+mod account_sync_support;
 mod attachment_support;
 mod bucket_writer;
 mod local_source_reader;
