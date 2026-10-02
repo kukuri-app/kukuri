@@ -62,6 +62,8 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 - 1 つの内容の書込みは 1 つの readwrite transaction にし、`chunks` と `contents` の行と `meta` の集計を同じ transaction で書く。transaction が確定した時点を「完成」とする。
   quota 超過・中断で transaction が失敗すると何も残らない（途中まで書かれた内容を完成と扱わない）。途中の取得（partial）は保存せず、取り直す。
 - 起動時に内容を読み込まない。`meta` の集計を 1 行読むだけで、以後は key を指定して読む。
+- 実装（W2 AC-2）: `crates/web-runtime` の `IndexedDbCache`。database は 1 つの task が持ち、操作を 1 つずつ行う（native の `remote_cache_gate` と同じ直列化。ADR 0056 §4）。
+  `reclaim`・`adult` の索引は非保護の行だけに値を置く。Web の blob-service は `IrohBlobService::with_content_cache` で作り、`MemStore` へ書かない。record の操作は W3 AC-2 まで error を返す。
 
 ### 4. 容量・回収・予約
 

@@ -218,21 +218,31 @@ impl IrohBlobService {
         self.peers.ranked_peers().await
     }
 
+    /// 保存 trait を持つ。Web は IndexedDB の実装を渡し、peer candidate は保存しない（ADR 0056 §5、ADR 0058 §1）。
+    pub fn with_content_cache(
+        node: Arc<IrohDocsNode>,
+        cache: Arc<dyn kukuri_store::ContentCacheStore>,
+    ) -> Self {
+        Self {
+            remote_cache: Some(cache),
+            ..Self::new(node)
+        }
+    }
+
     /// native の account の SQLite を、保存 trait と peer candidate の保存先の両方に使う。
     #[cfg(not(target_family = "wasm"))]
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
         store: Arc<kukuri_store::SqliteStore>,
     ) -> Self {
-        let mut blobs = Self::new(node.clone());
+        let mut blobs = Self::with_content_cache(node.clone(), store.clone());
         blobs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
             node.fetch_peer_health(),
-            store.clone(),
+            store,
             "blob",
         ));
-        blobs.remote_cache = Some(store);
         blobs
     }
 
@@ -497,12 +507,14 @@ impl BlobService for IrohBlobService {
         let hash = iroh_blobs::Hash::new(&data);
         let byte_len = data.len() as u64;
         // #1221 R5-I: 本人の書込みは、書いたときに保護参照つきで保護所有先へも入れる(backup・restore の対象)。
-        // iroh の store にも置き、SQLite を失っても docs から戻せるようにする。
+        // native は iroh の store にも置き、SQLite を失っても docs から戻せるようにする。Web は `MemStore` へ書かない
+        // （reload で消えるので、保存 trait だけが正本。ADR 0058 §1）。
         if let Some(cache) = &self.remote_cache {
             cache
                 .put_owned_blob(reference, &hash.to_string(), &data)
                 .await?;
         }
+        #[cfg(not(target_family = "wasm"))]
         self.node.blobs().blobs().add_bytes(data).await?;
         Ok(StoredBlob {
             hash: BlobHash::new(hash.to_string()),
@@ -591,6 +603,7 @@ impl BlobService for IrohBlobService {
                     .put_owned_blob(&reference, hash.as_str(), &bytes)
                     .await?;
             }
+            #[cfg(not(target_family = "wasm"))]
             if !self.node.blobs().blobs().has(parsed).await?
                 && let Some(bytes) = cache.get_remote_content("blob", hash.as_str()).await?
             {
