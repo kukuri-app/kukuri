@@ -39,6 +39,46 @@
       "switchNow": "立即切换"
     }
   },
+  "accountTransfer": {
+    "source": {
+      "title": "迁移到其他设备",
+      "description": "显示用于将此账号迁移到其他设备的二维码和链接。",
+      "preparing": "正在准备链接…",
+      "instructions": "请在目标设备上打开此链接，或粘贴到“从其他设备迁移”中。链接只能使用一次，有效期 5 分钟。请勿展示给他人。",
+      "qrLabel": "迁移链接的二维码",
+      "remaining": "剩余 {{time}}",
+      "linkLabel": "迁移链接",
+      "copy": "复制链接",
+      "copied": "已复制"
+    },
+    "target": {
+      "title": "从其他设备迁移",
+      "description": "使用其他设备上显示的迁移链接迁移账号。",
+      "linkLabel": "迁移链接",
+      "instructions": "请粘贴源设备上“迁移到其他设备”显示的链接。",
+      "connect": "连接",
+      "connecting": "正在连接源设备…"
+    },
+    "confirm": {
+      "source": "请确认目标设备上显示相同的确认码。",
+      "target": "请确认源设备上显示相同的确认码。",
+      "codeLabel": "确认码",
+      "match": "一致",
+      "mismatch": "不一致",
+      "waitingPeer": "正在等待另一台设备确认…"
+    },
+    "confirmed": "已确认两台设备的连接。",
+    "retry": "重试",
+    "failure": {
+      "expired": "已过期。请在源设备上显示新的链接后重试。",
+      "invalid": "此链接无法使用。可能已被使用、已过期或内容有误。请在源设备上显示新的链接。",
+      "unreachable": "无法连接到源设备。请确认两台设备都已联网。",
+      "rejected": "确认码不一致，已中止迁移。",
+      "cancelled": "已中止迁移。",
+      "interrupted": "确认过程中连接中断。请重试。",
+      "prepareFailed": "无法准备链接。请重试。"
+    }
+  },
   "deviceBackup": {
     "title": "设备备份",
     "summary": "保存并恢复本设备数据。",

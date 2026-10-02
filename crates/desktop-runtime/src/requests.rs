@@ -786,6 +786,28 @@ impl std::fmt::Debug for ImportAccountKeyRequest {
     }
 }
 
+/// #1211: 移行先が開くリンク。招待の秘密を含むので Debug で redact する。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct OpenAccountTransferRequest {
+    pub link: String,
+}
+
+impl std::fmt::Debug for OpenAccountTransferRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAccountTransferRequest")
+            .field("link", &"<redacted>")
+            .finish()
+    }
+}
+
+/// #1211: 確認コードが一致したか。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DecideAccountTransferRequest {
+    pub accept: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SwitchAccountRequest {

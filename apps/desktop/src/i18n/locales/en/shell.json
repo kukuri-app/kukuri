@@ -580,7 +580,11 @@
     "cancel": "Cancel",
     "yes": "Yes",
     "pending": "Working…",
-    "create": "Create a new account"
+    "create": "Create a new account",
+    "transferHeading": "Move between devices",
+    "transferOut": "Move to another device",
+    "transferIn": "Move from another device",
+    "back": "Back"
   },
   "initialProfile": {
     "title": "Set up your profile",

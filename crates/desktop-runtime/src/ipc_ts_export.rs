@@ -464,6 +464,13 @@ fn export_ipc_types() {
         AccountsSnapshot,
         AccountKeyExport,
         AccountKeyImportPreview,
+        // #1211: QR・専用リンクの移行
+        crate::AccountTransferLink,
+        crate::OpenAccountTransferRequest,
+        crate::DecideAccountTransferRequest,
+        kukuri_core::AccountTransferStatus,
+        kukuri_core::AccountTransferRole,
+        kukuri_core::AccountTransferFailure,
         // #855: 端末バックアップ / 復元
         CreateDeviceBackupRequest,
         PreviewDeviceBackupRequest,

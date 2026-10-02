@@ -51,6 +51,7 @@ pub(crate) use kukuri_test_support::{TestResource, lock_test_resource};
 mod support;
 pub(crate) use support::*;
 
+mod account_transfer;
 mod accounts_migration;
 mod attachments;
 mod community_node;

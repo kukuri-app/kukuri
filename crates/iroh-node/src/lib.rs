@@ -12,6 +12,7 @@
     warn(clippy::disallowed_methods)
 )]
 
+mod account_transfer;
 // 旧 store の退役は native だけ（file を使う）。
 #[cfg(not(target_family = "wasm"))]
 mod legacy;
@@ -27,6 +28,7 @@ mod browser_tests;
 #[cfg(not(target_family = "wasm"))]
 mod tests;
 
+pub use account_transfer::{ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;

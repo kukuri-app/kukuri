@@ -143,6 +143,15 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
             tauri,
             "commands::posts::bookmarked_post_ids" | "commands::community_node::set_scope_display"
         ),
+        // #1211: QR・確認コードを両端末の画面で比べる移行の接続。
+        "gui_device_pairing" => matches!(
+            tauri,
+            "commands::identity::create_account_transfer_invite"
+                | "commands::identity::open_account_transfer"
+                | "commands::identity::get_account_transfer_status"
+                | "commands::identity::decide_account_transfer"
+                | "commands::identity::cancel_account_transfer"
+        ),
         _ => false,
     }
 }
@@ -187,7 +196,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 174);
+    assert_eq!(manifest.entries.len(), 179);
     check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");
 }
 

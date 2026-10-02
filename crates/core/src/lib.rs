@@ -5,6 +5,7 @@
     warn(clippy::disallowed_methods)
 )]
 mod account_sync;
+mod account_transfer;
 mod crypto;
 mod device_backup;
 mod direct_messages;
@@ -38,6 +39,11 @@ mod tests;
 pub use account_sync::{
     AccountSyncItem, AccountSyncItemKey, AccountSyncKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES,
     MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
+};
+pub use account_transfer::{
+    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountTransferFailure,
+    AccountTransferInvite, AccountTransferRole, AccountTransferStatus,
+    MAX_ACCOUNT_TRANSFER_DIRECT_ADDRS, MAX_ACCOUNT_TRANSFER_LINK_BYTES,
 };
 pub use crypto::{
     DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,
