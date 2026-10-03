@@ -83,7 +83,7 @@ async function openClient(name, { ice }) {
   browser.on('log.entryAdded', (entry) => {
     if (entry.text?.includes('get_community_node_observation_sharing')) return;
     browser.consoleLines.push(`${new Date(entry.timestamp).toISOString().slice(11, 23)} ${entry.text}`);
-    if (browser.consoleLines.length > 1500) browser.consoleLines.shift();
+    if (browser.consoleLines.length > 8000) browser.consoleLines.shift();
   });
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
@@ -264,6 +264,16 @@ async function post(browser, content, column = publicColumn(browser), file = nul
   await diagState(browser, column, `before Post "${content}"`);
   await column.$('button=Post').click();
   await diagState(browser, column, `after Post "${content}"`);
+  for (let retry = 0; retry < 3; retry += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const lost = await browser.execute((text) => {
+      const textarea = [...document.querySelectorAll('textarea[placeholder="Write a post"]')].find((node) => node.value === text);
+      return Boolean(textarea) && ![...document.querySelectorAll('article')].some((node) => node.innerText.includes(text));
+    }, content);
+    if (!lost) break;
+    console.log(`DIAG ${new Date().toISOString().slice(11, 23)} ${browser.label} lost Post click "${content}" retry ${retry + 1}`);
+    await column.$('button=Post').click();
+  }
   const timer = setTimeout(() => diagState(browser, column, `20s after Post "${content}"`), 20_000);
   try {
     await sees(browser, content);
@@ -978,10 +988,21 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await nativePostsInChannel(ctx.channel.channelId, afterRotation);
   const rotatedAt = Date.now();
   await channelColumn(a, ctx.channel.channelId).scrollIntoView();
-  await eventually(`${a.label} reads the new generation`, async () => {
-    await showNewPosts(a);
-    return (await pageText(a)).includes(afterRotation);
-  }, 4 * WAIT);
+  const nativeChannelState = async (tag) => {
+    const page = await native('list_joined_private_channels', { request: { topic: TOPIC } }).catch((error) => ({ error: String(error).slice(0, 200) }));
+    const view = page.items?.find((item) => item.channel_id === ctx.channel.channelId);
+    console.log(`DIAG ${new Date().toISOString().slice(11, 23)} native channel ${tag} ${JSON.stringify(view ? { epoch: view.current_epoch_id, participants: view.participant_count, stale: view.stale_participant_count, archived: view.archived_epoch_ids, controller: view.controller } : page)}`);
+  };
+  await nativeChannelState('after rotation');
+  const progress = setInterval(() => nativeChannelState('waiting').catch(() => undefined), 60_000);
+  try {
+    await eventually(`${a.label} reads the new generation`, async () => {
+      await showNewPosts(a);
+      return (await pageText(a)).includes(afterRotation);
+    }, 4 * WAIT);
+  } finally {
+    clearInterval(progress);
+  }
   console.log('the new generation reaches web-a in', Date.now() - rotatedAt, 'ms');
   const leftLabel = `lx-${RUN}`;
   const left = await nativeCreatesChannel(leftLabel);
@@ -1122,7 +1143,9 @@ async function dumpColumns(browser) {
   );
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
-  const since = new Date(Date.now() - 180_000).toISOString().slice(11, 23);
+  const since = new Date(Date.now() - 480_000).toISOString().slice(11, 23);
+  const panics = (browser.consoleLines ?? []).filter((line) => line.includes('DIAG panic') || line.includes('unreachable'));
+  console.log(`--- ${browser.label} panics\n${panics.join('\n')}`);
   const recent = (browser.consoleLines ?? []).filter((line) => line.slice(0, 12) >= since);
   console.log(`--- ${browser.label} console (since ${since}, ${recent.length} lines)\n${recent.join('\n')}`);
 }

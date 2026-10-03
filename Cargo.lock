@@ -3668,6 +3668,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower-http 0.7.1",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3793,6 +3794,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing-subscriber",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

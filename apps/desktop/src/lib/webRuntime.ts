@@ -38,7 +38,7 @@ export function invokeWebRuntime<T>(command: string, args?: Record<string, unkno
     return (runtime.invoke(command, args) as Promise<T>).then(
       (value) => {
         const items = command === 'list_joined_private_channels'
-          ? ` items=${((value as { items?: { channel_id: string }[] })?.items ?? []).map((item) => item.channel_id.slice(-8)).join(',')}`
+          ? ` items=${((value as { items?: { channel_id: string; current_epoch_id?: string }[] })?.items ?? []).map((item) => `${item.channel_id.slice(-8)}@${(item.current_epoch_id ?? '').slice(-6)}`).join(',')}`
           : '';
         console.info(`DIAGJS end #${diagId} ${command} ok ${Math.round(performance.now() - started)}ms${items}`);
         return value;

@@ -331,12 +331,45 @@ async fn invoke_command(
 
 /// 起動する。同意があれば アクティブなアカウント（無ければ作る）の runtime を始める。起動の状態を返す。
 /// `config` は `{ communityNodeConfig }`（省略可）。
+// DIAG(一時): tracing の 1 件を console の 1 行にする。
+struct DiagConsole(Vec<u8>);
+
+impl std::io::Write for DiagConsole {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for DiagConsole {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            web_sys::console::log_1(&JsValue::from_str(&format!(
+                "TRACE {}",
+                String::from_utf8_lossy(&self.0).trim_end()
+            )));
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
     // DIAG(一時): panic の内容を console へ出す。
     std::panic::set_hook(Box::new(|info| {
         web_sys::console::log_1(&JsValue::from_str(&format!("DIAG panic {info}")));
     }));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "warn,kukuri_app_api=debug",
+        ))
+        .without_time()
+        .with_ansi(false)
+        .with_writer(|| DiagConsole(Vec::new()))
+        .try_init();
     let config = match from_js(&config).map_err(|error| error_value(&error))? {
         Value::Null => StartConfig::default(),
         config => serde_json::from_value(config)
