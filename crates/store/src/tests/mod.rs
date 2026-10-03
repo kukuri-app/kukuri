@@ -41,3 +41,9 @@ async fn sqlite_matches_memory_in_every_parity_scenario() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn sqlite_trust_observation_rows_follow_the_shared_scenario() {
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    crate::parity::check_trust_observation_store(&store).await;
+}

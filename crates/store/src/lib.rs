@@ -25,7 +25,10 @@ mod traits;
 #[cfg(test)]
 mod tests;
 
-pub use account_store::{AccountStore, PrivateIndexGrant, PrivateIndexGrantStore};
+pub use account_store::{
+    AccountStore, PrivateIndexGrant, PrivateIndexGrantStore, TrustObservationNode,
+    TrustObservationStore,
+};
 pub use account_sync::{
     ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
 };

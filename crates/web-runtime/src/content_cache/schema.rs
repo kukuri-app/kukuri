@@ -40,6 +40,8 @@ pub(crate) const PRIVATE_CHANNELS: &str = "private_channels";
 pub(crate) const PRIVATE_EPOCHS: &str = "private_epochs";
 pub(crate) const INDEX_GRANTS: &str = "index_grants";
 pub(crate) const INDEX_STOPS: &str = "index_stops";
+pub(crate) const TRUST_OBSERVATION_NODES: &str = "trust_observation_nodes";
+pub(crate) const TRUST_OBSERVATION_PENDING: &str = "trust_observation_pending";
 pub(crate) const PEER_CANDIDATES: &str = "peer_candidates";
 pub(crate) const META: &str = "meta";
 
@@ -332,6 +334,19 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         )],
     )?;
     table(db, INDEX_STOPS, &["r.kind", "r.id"], &[])?;
+    // `sharing` は提供中（有効で、削除要求が未完了でない）の node だけが持つ。
+    table(
+        db,
+        TRUST_OBSERVATION_NODES,
+        &["r.base_url"],
+        &[("sharing", &["sharing"])],
+    )?;
+    table(
+        db,
+        TRUST_OBSERVATION_PENDING,
+        &["r.base_url", "r.observation_key"],
+        &[("key", &["r.observation_key", "r.envelope.created_at"])],
+    )?;
     table(
         db,
         PEER_CANDIDATES,

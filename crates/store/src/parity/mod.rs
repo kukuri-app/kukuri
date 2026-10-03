@@ -45,6 +45,9 @@ use kukuri_core::{
 mod lists;
 mod live_game;
 mod pagination;
+mod trust_observations;
+
+pub use trust_observations::check_trust_observation_store;
 
 /// `make` で作った空の backend ごとに、すべての scenario の結果を MemoryStore と突き合わせ、sqlite の実測値で確かめる。
 pub async fn check_backend<S: Store + ProjectionStore>(make: impl AsyncFn() -> S) {

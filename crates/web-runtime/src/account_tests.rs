@@ -329,6 +329,12 @@ async fn account_rows_match_memory_in_every_parity_scenario() {
     .await;
 }
 
+#[wasm_bindgen_test]
+async fn trust_observation_rows_follow_the_native_store() {
+    let cache = IndexedDbCache::open(&account_id()).await.expect("cache");
+    kukuri_store::parity::check_trust_observation_store(&cache).await;
+}
+
 fn projection(id: &str, created_at: i64) -> ObjectProjectionRow {
     ObjectProjectionRow {
         object_id: EnvelopeId::from(id),

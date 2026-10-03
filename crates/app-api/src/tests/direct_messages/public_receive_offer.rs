@@ -376,3 +376,125 @@ async fn unfollow_sends_a_follow_offer_to_the_target() {
     drop(offers);
     app.shutdown().await;
 }
+
+// #1521: 送り直すのは送れなかった follow の offer だけで、回数は有限(最初の 1 回と送り直し 6 回)。投稿の通知の
+// offer は 1 回だけ送る。
+#[tokio::test(start_paused = true)]
+async fn only_follow_offers_are_resent_and_only_a_bounded_number_of_times() {
+    let sender = generate_keys();
+    let recipient = generate_keys();
+    let store = Arc::new(MemoryStore::default());
+    let offers = Arc::new(ProbeOfferTransport::default());
+    let app = AppService::from_handles(ServiceHandles::new(
+        store.clone(),
+        store,
+        Arc::new(FakeTransport::new("sender", FakeNetwork::default())),
+        offers.clone(),
+        Arc::new(MemoryDocsSync::default()),
+        Arc::new(MemoryBlobService::default()),
+        sender.clone(),
+    ));
+    let recipients = BTreeSet::from([recipient.public_key_hex()]);
+    let topic = TopicId::new("resend-scope");
+    let post = persist_test_post(
+        &MemoryDocsSync::default(),
+        None,
+        &sender,
+        &topic,
+        PayloadRef::InlineText {
+            text: "hello".into(),
+        },
+        Vec::new(),
+        None,
+    )
+    .await;
+    app.queue_public_notification_offer(
+        PublicNotificationSource::Post {
+            replica: topic_replica_id(topic.as_str()),
+            envelope: post,
+            content: "hello".into(),
+            reply_target: None,
+        },
+        recipients.clone(),
+    )
+    .await;
+    sleep(Duration::from_secs(300)).await;
+    assert_eq!(offers.resolve_attempts.load(Ordering::SeqCst), 1);
+
+    let follow = build_follow_edge_envelope_with_docs_author(
+        &sender,
+        &recipient.public_key(),
+        FollowEdgeStatus::Active,
+        None,
+    )
+    .unwrap();
+    app.queue_public_notification_offer(
+        PublicNotificationSource::Follow { envelope: follow },
+        recipients,
+    )
+    .await;
+    sleep(Duration::from_secs(300)).await;
+    assert_eq!(offers.resolve_attempts.load(Ordering::SeqCst), 1 + 7);
+    app.shutdown().await;
+}
+
+// #1521: B が A の profile を開いたまま A が follow し返したとき、最初の offer が宛先なしで送れなくても、A が送り直し、
+// 宛先が見つかれば B の画面は相互 follow になる(profile を開き直さない)。
+#[tokio::test(start_paused = true)]
+async fn follow_back_reaches_an_open_profile_after_the_first_offer_is_not_sent() {
+    use kukuri_transport::EndpointAddr;
+
+    let a = generate_keys();
+    let b = generate_keys();
+    let network = FakeNetwork::default();
+    let a_endpoint = iroh::SecretKey::from_bytes(&[71; 32]).public();
+    let b_endpoint = iroh::SecretKey::from_bytes(&[72; 32]).public();
+    let a_transport = Arc::new(FakeTransport::new(a_endpoint.to_string(), network.clone()));
+    let blob = Arc::new(MemoryBlobService::default());
+    let app_a = offer_app(
+        a.clone(),
+        Arc::new(MemoryStore::default()),
+        a_transport.clone(),
+        Arc::new(OfferBlobService::new(blob.clone())),
+    );
+    let app_b = offer_app(
+        b.clone(),
+        Arc::new(MemoryStore::default()),
+        Arc::new(FakeTransport::new(b_endpoint.to_string(), network.clone())),
+        Arc::new(OfferBlobService::new(blob)),
+    );
+    app_b.start_account_receive_offers().await.unwrap();
+    let a_hex = a.public_key_hex();
+    app_b.follow_author(&a_hex).await.unwrap();
+    display_author(&app_b, &a_hex).await.unwrap();
+
+    app_a.follow_author(&b.public_key_hex()).await.unwrap();
+    sleep(Duration::from_millis(100)).await;
+    assert!(
+        !app_b.get_author_social_view(&a_hex).await.unwrap().mutual,
+        "the first offer has no destination for b"
+    );
+
+    let fence = a_transport.receive_candidate_fence().await.unwrap();
+    a_transport
+        .offer_receive_candidates(
+            "test",
+            &b.public_key(),
+            vec![EndpointAddr::new(b_endpoint)],
+            fence,
+        )
+        .await
+        .unwrap();
+    network
+        .trust_receive_provider(&b.public_key(), &b_endpoint.to_string())
+        .await;
+    timeout(Duration::from_secs(150), async {
+        while !app_b.get_author_social_view(&a_hex).await.unwrap().mutual {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("a resends the follow offer and b's open profile becomes mutual");
+    app_a.shutdown().await;
+    app_b.shutdown().await;
+}
