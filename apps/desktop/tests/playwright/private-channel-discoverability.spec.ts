@@ -152,6 +152,49 @@ for (const locale of ['ja', 'en'] as const) {
   }
 }
 
+// Issue #1517: 公開の列の見出しから開いた Dialog で channel を作る・参加済みの一覧から開くと、閉じた後も
+// channel の列が active で画面に入っている。入口へ focus を戻すと入口の列が active に戻り、右端の
+// channel の列が画面外に残っていた(画面外の列は読み直さないため新しい投稿が出ない、#765)。
+// focus も channel の列へ移す(入口に残すと、次の Tab で入口の列が active に戻る)。
+test('a channel created or opened from the Timeline Column header stays active and in view (en 1280)', async ({
+  page,
+}) => {
+  const copy = COPY.en;
+  await seed(page, 'en', 'dark');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(TIMELINE_URL);
+  const timelineColumn = (scope: string) =>
+    page
+      .getByRole('region', { name: /^Timeline Column,/ })
+      .filter({ has: page.locator('.shell-column-header', { hasText: scope }) });
+  const publicColumn = timelineColumn('Public · general');
+  const channelColumn = timelineColumn('core · general');
+  const dialog = page.getByRole('dialog', { name: copy.dialog });
+  const expectChannelColumnActiveAfterClose = async () => {
+    await expect(dialog).toBeHidden();
+    // focus は閉じた後の task で戻る。戻った後の frame まで待ってから確かめる。
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
+    );
+    await expect(channelColumn).toHaveAttribute('aria-current', 'true');
+    await expect(channelColumn).toBeInViewport();
+    await expect(channelColumn).toBeFocused();
+  };
+
+  await publicColumn.getByRole('button', { name: copy.entry }).click();
+  await dialog.getByPlaceholder(copy.channelName).fill('core');
+  await dialog.getByRole('button', { name: copy.create }).click();
+  await expect(page).toHaveURL(/channel=channel-1/);
+  await dialog.getByRole('button', { name: copy.closeDialog }).click();
+  await expectChannelColumnActiveAfterClose();
+
+  await publicColumn.locator('.shell-column-title-row').click();
+  await expect(channelColumn).not.toBeInViewport();
+  await publicColumn.getByRole('button', { name: copy.entry }).click();
+  await dialog.getByRole('button', { name: 'Open core' }).click();
+  await expectChannelColumnActiveAfterClose();
+});
+
 test('private channel entry is reachable by keyboard and returns focus on Escape (ja dark 1280)', async ({
   page,
 }) => {
