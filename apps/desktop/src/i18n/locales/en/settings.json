@@ -90,6 +90,35 @@
       "interrupted": "The connection was lost during confirmation or transfer. Please try again.",
       "prepareFailed": "Couldn't prepare the link. Please try again.",
       "storage": "The other device couldn't save the account. Check its free space and try again."
+    },
+    "history": {
+      "label": "Post history",
+      "hint": "Moves your posts written on the other device, with their text, images and videos (posts written on other devices aren't moved). A lot of posts can take a while. Posts saved in the older format move only with “All”.",
+      "choice": {
+        "none": "Don't move",
+        "month": "Last 30 days",
+        "year": "Last year",
+        "all": "All"
+      },
+      "bundleDone": "Keys and settings have been moved.",
+      "progress": {
+        "source": "Sending post history ({{count}})…",
+        "target": "Receiving post history ({{count}})…"
+      },
+      "stop": {
+        "source": "Stop sending history",
+        "target": "Stop receiving history"
+      },
+      "done": {
+        "source": "Sent post history ({{count}}).",
+        "target": "Received post history ({{count}})."
+      },
+      "stopped": {
+        "source": "Sending post history stopped partway ({{count}}).",
+        "target": "Receiving post history stopped partway ({{count}})."
+      },
+      "unavailable": "Texts or attachments that weren't on the other device couldn't be moved ({{count}}).",
+      "resume": "Connect again and choose the same range on the receiving device to continue where it stopped."
     }
   },
   "deviceBackup": {

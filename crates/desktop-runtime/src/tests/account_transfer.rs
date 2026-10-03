@@ -1,20 +1,24 @@
 //! #1211 AC-1（1c）: 移行の接続と確認を runtime の command から通す。誤ったリンクでは確認に進まない。
 //! AC-2（2c・2d）: 確認の後に必須 bundle を送り、移行先はアカウントの置き場へ保存して確定で登録する。反映は受けた
 //! アカウントの runtime の起動時に行い、受信途中・反映途中の再起動、同じ移行のやり直し、手元の新しい版を扱う。
+//! AC-3 の履歴は `account_transfer_history.rs`。
 
 use super::*;
 use crate::accounts::transfer::TransferSink;
 use crate::accounts::{account_db_path, ensure_accounts_initialized, list_accounts};
 use crate::requests::{DecideAccountTransferRequest, OpenAccountTransferRequest};
 use kukuri_core::{
-    AccountSyncItem, AccountSyncItemKey, AccountTransferFailure, AccountTransferItem,
-    AccountTransferStatus, KukuriKeys, Pubkey,
+    AccountSyncItem, AccountSyncItemKey, AccountTransferFailure, AccountTransferHistory,
+    AccountTransferItem, AccountTransferStatus, KukuriKeys, Pubkey,
 };
 use kukuri_iroh_node::AccountBundleSink;
 
 const MODE: IdentityStorageMode = IdentityStorageMode::FileOnly;
 
-async fn wait_for(runtime: &DesktopRuntime, done: impl Fn(&AccountTransferStatus) -> bool) {
+pub(super) async fn wait_for(
+    runtime: &DesktopRuntime,
+    done: impl Fn(&AccountTransferStatus) -> bool,
+) {
     timeout(Duration::from_secs(20), async {
         while !done(&runtime.account_transfer_status().await.unwrap()) {
             sleep(Duration::from_millis(10)).await;
@@ -24,14 +28,14 @@ async fn wait_for(runtime: &DesktopRuntime, done: impl Fn(&AccountTransferStatus
     .expect("account transfer status did not settle");
 }
 
-async fn runtime_at(db: impl AsRef<Path>) -> DesktopRuntime {
+pub(super) async fn runtime_at(db: impl AsRef<Path>) -> DesktopRuntime {
     DesktopRuntime::new_with_config_and_identity(db, TransportNetworkConfig::loopback(), MODE)
         .await
         .unwrap()
 }
 
 /// 移行先: アカウントの layout を持つ端末の host（最初のアカウントを使っている）。
-async fn target_host(dir: &Path) -> Arc<ClientHost> {
+pub(super) async fn target_host(dir: &Path) -> Arc<ClientHost> {
     let db = ensure_accounts_initialized(dir, MODE).await.unwrap();
     ClientHost::from_runtime(dir.to_path_buf(), Arc::new(runtime_at(&db).await))
         .await
@@ -40,8 +44,23 @@ async fn target_host(dir: &Path) -> Arc<ClientHost> {
 
 /// 移行元の招待で移行先の host が接続し、両端末で承認して、両方の完了を待つ。受けたアカウントの ID を返す。
 async fn transfer(source: &DesktopRuntime, host: &Arc<ClientHost>) -> String {
+    match transfer_with(source, host, None).await {
+        AccountTransferStatus::Completed {
+            account_id: Some(id),
+            ..
+        } => id,
+        status => panic!("unexpected {status:?}"),
+    }
+}
+
+/// `history` の範囲の履歴（AC-3）を選んで移行し、両方の完了を待つ。移行先の完了の状態を返す。
+pub(super) async fn transfer_with(
+    source: &DesktopRuntime,
+    host: &Arc<ClientHost>,
+    history: Option<AccountTransferHistory>,
+) -> AccountTransferStatus {
     let link = source.create_account_transfer_invite().await.unwrap().link;
-    host.open_account_transfer(OpenAccountTransferRequest { link })
+    host.open_account_transfer(OpenAccountTransferRequest { link, history })
         .await
         .unwrap();
     let target = host.runtime();
@@ -59,13 +78,7 @@ async fn transfer(source: &DesktopRuntime, host: &Arc<ClientHost>) -> String {
         |status: &AccountTransferStatus| matches!(status, AccountTransferStatus::Completed { .. });
     wait_for(&target, completed).await;
     wait_for(source, completed).await;
-    match target.account_transfer_status().await.unwrap() {
-        AccountTransferStatus::Completed {
-            account_id: Some(id),
-            ..
-        } => id,
-        status => panic!("unexpected {status:?}"),
-    }
+    target.account_transfer_status().await.unwrap()
 }
 
 fn staging_files(db: &Path) -> Vec<String> {
@@ -80,7 +93,7 @@ fn staging_files(db: &Path) -> Vec<String> {
     files
 }
 
-async fn eventually(what: &str, mut done: impl AsyncFnMut() -> bool) {
+pub(super) async fn eventually(what: &str, mut done: impl AsyncFnMut() -> bool) {
     timeout(Duration::from_secs(20), async {
         while !done().await {
             sleep(Duration::from_millis(20)).await;
@@ -99,6 +112,7 @@ async fn account_transfer_commands_reject_a_broken_link() {
     let link = source.create_account_transfer_invite().await.unwrap().link;
     let truncated = OpenAccountTransferRequest {
         link: link[..link.len() - 8].to_string(),
+        history: None,
     };
     assert!(host.open_account_transfer(truncated).await.is_err());
     assert_eq!(
@@ -368,6 +382,6 @@ async fn staged_bundles_resume_and_never_roll_back_newer_versions() {
     host.shutdown().await;
 }
 
-fn account_id_for(keys: &KukuriKeys) -> String {
+pub(super) fn account_id_for(keys: &KukuriKeys) -> String {
     crate::accounts::account_id_for_pubkey(&keys.public_key_hex()).unwrap()
 }

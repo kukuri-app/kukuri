@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
+use kukuri_core::AccountHistoryCursor;
 
 /// 非保護分の容量の上限。
 pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 3 * 1024 * 1024 * 1024;
@@ -132,6 +133,15 @@ pub trait ContentCacheStore: Send + Sync {
         author: &str,
         payload: &[u8],
     ) -> Result<()>;
+    /// 保護参照（`reference` で始まる参照。`own_docs` はそれ 1 つ）が守る record を、(参照, replica, key, docs author)
+    /// の順に `after` の次から `limit` 件まで、位置と値（`DocReadRecord` の JSON）とともに返す（#1211 AC-3 の履歴）。
+    /// 索引の範囲を `after` から読み、手前の行を読まない。
+    async fn protected_records_after(
+        &self,
+        reference: &str,
+        after: &AccountHistoryCursor,
+        limit: usize,
+    ) -> Result<Vec<(AccountHistoryCursor, Vec<u8>)>>;
     async fn reclaim_remote_cache_step(&self) -> Result<usize>;
     async fn mark_remote_blob_adult(&self, hash: &str) -> Result<()>;
     async fn forget_adult_remote_blobs_step(&self) -> Result<usize>;

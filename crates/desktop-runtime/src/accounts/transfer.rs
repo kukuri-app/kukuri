@@ -1,4 +1,5 @@
 //! #1211 AC-2: 移行の必須 bundle の送り元（手元の account の replica）と、移行先の保存（staging）・確定・反映。
+//! AC-3: 任意の投稿の履歴の送り元と置き場（`history.rs`）をつなぐ。
 //!
 //! 置き場はアカウントごとに 1 つ（`<db>.account-transfer.json` の manifest と、chunk の
 //! `<db>.account-transfer-<n>.json`）。chunk は受けた封のまま置く（秘密は封の中）。manifest の `complete` が保存の
@@ -12,12 +13,17 @@ use std::sync::{Arc, Weak};
 use anyhow::Result;
 use kukuri_app_api::AppService;
 use kukuri_core::{
-    AccountSyncKeys, AccountTransferFailure as Failure, AccountTransferItem, KukuriKeys, Pubkey,
+    AccountHistoryCursor, AccountSyncKeys, AccountTransferFailure as Failure,
+    AccountTransferHistory, AccountTransferItem, KukuriKeys, Pubkey,
 };
-use kukuri_iroh_node::{AccountBundleSink, AccountBundleSource, AccountBundleStaging};
+use kukuri_iroh_node::{
+    AccountBundleSink, AccountBundleSource, AccountBundleStaging, AccountHistoryPage,
+    AccountHistoryResume,
+};
+use kukuri_store::AccountStore;
 use serde::{Deserialize, Serialize};
 
-use super::{account_db_path, account_id_for_pubkey, list_accounts};
+use super::{account_db_path, account_id_for_pubkey, history, list_accounts};
 use crate::ClientHost;
 use crate::storage::{delete_file, read_file, write_file};
 
@@ -79,10 +85,11 @@ pub(crate) async fn merge_staged(db: &Path, app: &AppService) -> Result<()> {
     delete_file(&manifest_path(db)).await
 }
 
-/// 移行元: アカウントの鍵と、手元の account の replica の page。
+/// 移行元: アカウントの鍵と、手元の account の replica の page、保護所有先の履歴（AC-3）。
 pub(crate) struct RuntimeBundleSource {
     pub(crate) app: AppService,
     pub(crate) keys: Arc<KukuriKeys>,
+    pub(crate) store: Arc<dyn AccountStore>,
 }
 
 #[async_trait::async_trait]
@@ -96,6 +103,42 @@ impl AccountBundleSource for RuntimeBundleSource {
         cursor: Option<String>,
     ) -> Result<(Vec<AccountTransferItem>, Option<String>)> {
         self.app.account_transfer_page(cursor).await
+    }
+
+    /// 履歴の 1 page。最初の page の前に、送信待ちの取り下げを書く（取り下げた投稿を取り下げの record とともに送る）。
+    async fn history_page(
+        &self,
+        since: Option<u64>,
+        cursor: Option<AccountHistoryCursor>,
+    ) -> Result<AccountHistoryPage> {
+        if cursor.is_none() {
+            self.app.resume_withdrawal_writes().await?;
+        }
+        let read = |reference, after: AccountHistoryCursor, limit| async move {
+            self.store
+                .protected_records_after(reference, &after, limit)
+                .await
+        };
+        history::page(read, &self.keys.public_key_hex(), since, cursor).await
+    }
+
+    async fn blob_part(
+        &self,
+        hash: &str,
+        offset: u64,
+        limit: usize,
+    ) -> Result<Option<(u64, Vec<u8>)>> {
+        let Some(len) = self.store.remote_content_len("blob", hash).await? else {
+            return Ok(None);
+        };
+        if offset >= len {
+            return Ok(Some((len, Vec::new())));
+        }
+        let part = self
+            .store
+            .remote_content_chunk("blob", hash, offset, limit)
+            .await?;
+        Ok(part.map(|bytes| (len, bytes)))
     }
 }
 
@@ -169,6 +212,33 @@ impl AccountBundleSink for TransferSink {
             chunks: 0,
             settled: false,
         }))
+    }
+
+    async fn history(
+        &self,
+        account_id: &str,
+        history: AccountTransferHistory,
+    ) -> Result<AccountHistoryResume, Failure> {
+        let host = self.host.upgrade().ok_or(Failure::Cancelled)?;
+        let accounts = list_accounts(host.app_data_dir()).await.map_err(storage)?;
+        let account = accounts
+            .accounts
+            .into_iter()
+            .find(|record| record.id == account_id)
+            .ok_or(Failure::Invalid)?
+            .pubkey;
+        let db = account_db_path(host.app_data_dir(), account_id);
+        let now = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64);
+        let (since, cursor, page) = history::begin(&db, history, now).await.map_err(storage)?;
+        // 使っているアカウントへの履歴は、page の保存の後に反映させる。
+        let active = (host.runtime().local_author_pubkey() == account).then(|| self.host.clone());
+        Ok(AccountHistoryResume {
+            since,
+            cursor,
+            staging: Box::new(history::Staging::new(db, account, since, page, active)),
+        })
     }
 }
 

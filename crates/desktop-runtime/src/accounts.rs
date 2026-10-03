@@ -14,6 +14,7 @@ use std::fs;
 pub(crate) mod create;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod display;
+pub(crate) mod history;
 pub(crate) mod lifecycle;
 pub(crate) mod transfer;
 use std::path::{Path, PathBuf};
