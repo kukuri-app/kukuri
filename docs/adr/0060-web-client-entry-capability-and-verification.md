@@ -75,6 +75,11 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 相手は harness の `web_e2e_fixture`。同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信の origin を CORS で許可する）、Community Node に同意した native の相手、`dist-web` の配信を動かす。driver（WebdriverIO）は `/fixture/*` で native を Tauri・Web と同じ dispatch 表で操作する。
   - 直接経路と fallback は、受け手が画像（毎回違う乱数の画素の PNG）を取得する間に relay が中継した bytes で判定する。ブラウザには relay と WebRTC の他の経路が無いので、中継が画像より十分小さければ WebRTC を通っている。双方の診断の EndpointId（ブラウザの CONNECTED PEERS と native の接続先）も照合する。
   - fallback の fixture（W10 の T2 の ICE の失敗）は、ページより先に動く script で、送る SDP と受け取る SDP から ICE の候補を除いた Chrome とする。Chrome の UDP を抑える起動の設定（`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`）では ICE が成立し続け、fallback にならなかった。
+- W8 AC-2b の実装（2026-10-03）: 同じ試験で、DM と private channel を直接経路の端と fallback の端で確かめる。
+  - DM は native↔Web と Web↔Web で送り合う。private channel は、Web が作った channel に native と別の Web が共有リンクで参加し、native が作った channel に Web が参加して、投稿を行き来させる。
+  - 実データの経路は、AC-2a と同じく画像を添えた DM と channel の投稿で判定する（native→Web と Web→Web）。native の画像は driver が command に base64 で添える。
+  - 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の node の保存・同意・認証の状態）は、経路に依らないので直接経路の端だけで確かめる。
+  - 作成・参加の dialog を閉じると channel の列が画面外に残る不具合（#1517、desktop と共通）の間は、利用者と同じく列を画面に入れてから投稿を確かめる。
 
 ### 5. 測定の workload と STUN
 

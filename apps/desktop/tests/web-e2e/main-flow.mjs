@@ -1,4 +1,4 @@
-// Web クライアントの主要導線を実ブラウザで試す（#1220 W8 AC-2a、ADR 0060 §4）。`cargo xtask web-e2e` から呼ぶ。
+// Web クライアントの主要導線を実ブラウザで試す（#1220 W8 AC-2a・AC-2b、ADR 0060 §4）。`cargo xtask web-e2e` から呼ぶ。
 // 相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の配信）。
 //
 // - 直接経路: 通常の Chrome。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
@@ -75,6 +75,7 @@ async function openClient(name, { ice }) {
     },
   });
   browser.label = `${name}-${RUN}`;
+  await browser.addInitScript(captureClipboard);
   if (!ice) await browser.addInitScript(withoutIceCandidates);
   await browser.url(ORIGIN);
   await browser.$('[data-testid="age-attestation-checkbox"]').click();
@@ -104,6 +105,14 @@ function withoutIceCandidates() {
   prototype.setRemoteDescription = function (description) { return setRemote.call(this, strip(description)); };
 }
 
+/** 共有リンク（clipboard へ書く値）を控える（ページより先に動く）。headless では clipboard へ書けないことがある。 */
+function captureClipboard() {
+  window.__kukuriCopied = [];
+  navigator.clipboard.writeText = async (text) => {
+    window.__kukuriCopied.push(text);
+  };
+}
+
 async function findDialog(browser, text) {
   for await (const dialog of browser.$$('[role=dialog]')) {
     if ((await dialog.getText()).includes(text)) return dialog;
@@ -127,15 +136,24 @@ const sees = (browser, text) =>
     return (await pageText(browser)).includes(text);
   });
 
-async function openComposer(browser) {
-  const composer = browser.$('textarea[placeholder="Write a post"]');
-  if (!(await composer.isDisplayed())) await browser.$('button[aria-label^="Post to Public"]').click();
+/** 列（id は `column:<kind>:<topic>:<channel>:<相手>`。channel と相手は無ければ `-`）。 */
+const columnOf = (browser, kind, tail) =>
+  browser.$(`section[data-column-id^="column:${kind}:"][data-column-id$=":${tail}"]`);
+const publicColumn = (browser) => columnOf(browser, 'timeline', '-:-');
+const channelColumn = (browser, channelId) => columnOf(browser, 'timeline', `${channelId}:-`);
+
+async function openComposer(column) {
+  await column.waitForExist({ timeout: WAIT });
+  const composer = column.$('textarea[placeholder="Write a post"]');
+  if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Post to "]').click();
   return composer;
 }
 
-async function post(browser, content) {
-  await (await openComposer(browser)).setValue(content);
-  await browser.$('button=Post').click();
+/** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。 */
+async function post(browser, content, column = publicColumn(browser), file = null) {
+  await (await openComposer(column)).setValue(content);
+  if (file) await column.$('input[type=file]').addValue(file);
+  await column.$('button=Post').click();
   await sees(browser, content);
 }
 
@@ -229,14 +247,12 @@ async function exchangeBetweenWeb(x, y, reactions) {
   await seesReaction(x, yPost, EMOJI[reactions[2]]);
 }
 
-/** 画像を添えた投稿の画像が読み込まれるまで待ち、その間に relay が中継した bytes と、投稿の画像のうち最も小さい版の
- * bytes（受け手が少なくとも取得する量。Web の投稿には preview の版が付く）を返す。画像が届く前に投稿の card と操作が
- * 出ていたか（欠けた media があっても表示と操作が成り立つ）も返す。 */
+/** `publish` が画像を添えて送ってから、受け手がその画像を読み込むまでに relay が中継した bytes と、画像の bytes
+ * （`publish` の返り値。受け手が表示するのは添えた原本）を返す。画像が届く前に投稿の card と操作が出ていたか（欠けた
+ * media があっても表示と操作が成り立つ）も返す。 */
 async function relayedWhileLoading(browser, content, publish) {
   const before = await relayedBytes();
-  await publish();
-  const posted = await nativeSees(content, (item) => item.content === content && item.attachments.length > 0);
-  const size = Math.min(...posted.attachments.filter((a) => a.mime.startsWith('image/')).map((a) => a.bytes));
+  const size = await publish();
   let shownBeforeImage = false;
   await eventually(`${browser.label} loads the image of "${content}"`, async () => {
     await showNewPosts(browser);
@@ -255,25 +271,308 @@ async function relayedWhileLoading(browser, content, publish) {
   return { relayed: (await relayedBytes()) - before, size, shownBeforeImage };
 }
 
-const postNativeImage = (content) => () => fixture('/fixture/post-image', { topic: TOPIC, content });
+/** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
+function assertRoute(name, result, direct) {
+  console.log(name, result);
+  assert.ok(
+    direct ? result.relayed < result.size / 4 : result.relayed >= result.size * 0.9,
+    `${name} ${direct ? 'went through' : 'did not use'} the relay: ${JSON.stringify(result)}`
+  );
+}
 
-/** 画像を Web の投稿欄から添えて投稿する（fixture の画像を一時 file にして渡す）。 */
-const postWebImage = (browser, content) => async () => {
-  const png = Buffer.from(await (await fetch(`${ORIGIN}/fixture/payload.png`)).arrayBuffer());
+/** 経路の判定に使う画像（乱数の画素の PNG。毎回違う内容）。 */
+const payloadPng = async () => Buffer.from(await (await fetch(`${ORIGIN}/fixture/payload.png`)).arrayBuffer());
+
+/** native が画像を添えて投稿・DM を送る（`request` に添付を足す）。返り値は画像の bytes 数。 */
+const nativeWithImage = (command, request) => async () => {
+  const png = await payloadPng();
+  const image = { file_name: 'payload.png', mime: 'image/png', byte_size: png.length, data_base64: png.toString('base64'), role: 'image_original' };
+  await native(command, { request: { ...request, attachments: [image] } });
+  return png.length;
+};
+
+const postNativeImage = (content) => nativeWithImage('create_post', { topic: TOPIC, content, reply_to: null });
+
+/** Web の投稿欄・DM 欄から添える画像（一時 file）。 */
+async function payloadFile() {
+  const png = await payloadPng();
   const file = path.join(await mkdtemp(path.join(tmpdir(), 'kukuri-web-e2e-')), 'payload.png');
   await writeFile(file, png);
-  await (await openComposer(browser)).setValue(content);
-  await browser.$('input[type=file]').addValue(file);
-  await browser.$('button=Post').click();
+  return { file, size: png.length };
+}
+
+/** Web が画像を添えて投稿する（`column` は公開か channel の列）。返り値は画像の bytes 数。 */
+const postWebImage = (browser, content, column = publicColumn(browser)) => async () => {
+  const { file, size } = await payloadFile();
+  await post(browser, content, column, file);
+  return size;
 };
+
+const channelScope = (channelId) => ({ kind: 'channel', channel_id: channelId });
+
+const channelRef = (channelId) => ({ kind: 'private_channel', channel_id: channelId });
+
+const nativePostsInChannel = (channelId, content) =>
+  native('create_post', { request: { topic: TOPIC, content, reply_to: null, channel_ref: channelRef(channelId) } });
+
+const nativeSeesInChannel = (channelId, content) =>
+  eventually(`native sees "${content}" in ${channelId}`, async () => {
+    const page = await native('list_timeline', { request: { topic: TOPIC, scope: channelScope(channelId), limit: 50 } });
+    return page.items.some((item) => item.content === content);
+  });
+
+const nativeShowsChannel = (channelId) =>
+  native('set_scope_display', {
+    request: {
+      observer: `web-e2e-native-${channelId}`,
+      target: { kind: 'timeline', topic: TOPIC, scope: channelScope(channelId) },
+      visible: true,
+    },
+  });
+
+/** native が共有の token で channel に参加し、その channel の列を表示する。 */
+async function nativeJoinsChannel(token) {
+  const preview = await native('import_channel_access_token', { request: { token } });
+  await nativeShowsChannel(preview.channel_id);
+  return preview.channel_id;
+}
+
+/** native が招待制の channel を作って表示し、共有の token を返す。 */
+async function nativeCreatesChannel(label) {
+  const channel = await native('create_private_channel', {
+    request: { topic: TOPIC, label, audience_kind: 'invite_only' },
+  });
+  await nativeShowsChannel(channel.channel_id);
+  const access = await native('export_channel_access_token', {
+    request: { topic: TOPIC, channel_id: channel.channel_id, expires_at: null },
+  });
+  return { channelId: channel.channel_id, token: access.token };
+}
+
+/** channel の列を画面に入れて、投稿が出るのを待つ。画面外の列は読み直さない（#765）。作成・参加の dialog を閉じると
+ * focus が元の列へ戻り、channel の列は画面外に残る（#1517）ので、利用者と同じく列を画面に入れてから見る。 */
+async function seesInChannel(browser, channelId, text) {
+  await channelColumn(browser, channelId).scrollIntoView();
+  await sees(browser, text);
+}
+
+/** channel の投稿が Web と native の間で行き来し、native の画像の経路を判定する。返り値は Web の投稿。 */
+async function exchangeInChannelWithNative(browser, channelId, tag, direct) {
+  const fromWeb = `${tag} in channel from ${browser.label}`;
+  await post(browser, fromWeb, channelColumn(browser, channelId));
+  await nativeSeesInChannel(channelId, fromWeb);
+  const fromNative = `${tag} in channel from native to ${browser.label}`;
+  await nativePostsInChannel(channelId, fromNative);
+  await seesInChannel(browser, channelId, fromNative);
+  const image = `${tag} channel image from native to ${browser.label}`;
+  const publish = nativeWithImage('create_post', { topic: TOPIC, content: image, reply_to: null, channel_ref: channelRef(channelId) });
+  assertRoute(`native→web channel (${tag})`, await relayedWhileLoading(browser, image, publish), direct);
+  return fromWeb;
+}
+
+/** private channel の作成・参加の dialog（public の timeline の列の見出しから開く）。 */
+async function openChannelDialog(browser) {
+  await browser.$('button[aria-label="Create or join a private channel"]').click();
+  return dialogWith(browser, 'Create / Join Private Channel');
+}
+
+async function closeChannelDialog(browser) {
+  if (await findDialog(browser, 'Create / Join Private Channel')) await browser.keys('Escape');
+}
+
+/** Web で招待制の channel を作り、共有の token（JSON）を返す。その channel の列が増える。 */
+async function createChannel(browser, label) {
+  const dialog = await openChannelDialog(browser);
+  await dialog.$('input[placeholder="Channel name"]').setValue(label);
+  await dialog.$('button=Create Channel').click();
+  const copy = browser.$('[role=dialog] button[aria-label="Copy link"]');
+  await copy.waitForClickable({ timeout: WAIT });
+  await copy.click();
+  const link = await eventually('the share link', () => browser.execute(() => window.__kukuriCopied.at(-1)));
+  await closeChannelDialog(browser);
+  return new URL(link).searchParams.get('token');
+}
+
+/** Web で共有の token を貼って channel に参加し、その channel の列を開く。 */
+async function joinChannel(browser, token, label) {
+  const dialog = await openChannelDialog(browser);
+  await dialog.$('textarea[placeholder="Paste a private channel invite, mutual grant, or mutuals+ share"]').setValue(token);
+  await dialog.$('button=Join').click();
+  const open = browser.$(`[role=dialog] button[aria-label="Open ${label}"]`);
+  await open.waitForClickable({ timeout: WAIT });
+  await open.click();
+  await closeChannelDialog(browser);
+}
+
+/** 投稿の作者（`author`）の profile を開き、まだなら follow する。profile の操作の欄を返す。 */
+async function openAuthorProfile(browser, authorPost, author) {
+  await showNewPosts(browser);
+  await (await card(browser, authorPost)).$('button.post-meta-author').click();
+  const profile = columnOf(browser, 'profile', author);
+  await profile.waitForExist({ timeout: WAIT });
+  const actions = profile.$('.author-detail-action-buttons');
+  await actions.waitForExist({ timeout: WAIT });
+  const follow = actions.$('button=Follow');
+  if (await follow.isExisting()) await follow.click();
+  await actions.$('button=Unfollow').waitForExist({ timeout: WAIT });
+  return actions;
+}
+
+/** 投稿の作者（`peer`）を follow し、相互になって「Message」が出たら会話を開く（profile を開き直して待つ）。 */
+async function openDirectMessage(browser, authorPost, peer) {
+  await eventually(`${browser.label} can message ${peer}`, async () => {
+    const message = (await openAuthorProfile(browser, authorPost, peer)).$('button=Message');
+    if (!(await message.isExisting())) return false;
+    await message.click();
+    return true;
+  });
+}
+
+/** `peer` との会話の列（「Message」で開く。会話を開く照会の後に増える）の投稿欄から DM を送る。`file` は添える画像。 */
+async function sendDirectMessage(browser, peer, text, file = null) {
+  const column = columnOf(browser, 'conversation', peer);
+  await column.waitForExist({ timeout: WAIT });
+  const composer = column.$('textarea[placeholder="Write a message"]');
+  if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Message to "]').click();
+  await composer.setValue(text);
+  if (file) await column.$('input[type=file]').addValue(file);
+  await column.$('button=Send').click();
+  await sees(browser, text);
+}
+
+/** Web が画像を添えて DM を送る。返り値は画像の bytes 数。 */
+const sendWebImage = (browser, peer, text) => async () => {
+  const { file, size } = await payloadFile();
+  await sendDirectMessage(browser, peer, text, file);
+  return size;
+};
+
+const nativeSeesDirectMessage = (pubkey, text) =>
+  eventually(`native receives the message "${text}"`, async () => {
+    const page = await native('list_direct_message_messages', { request: { pubkey, cursor: null, limit: 50 } });
+    return page.items.some((item) => item.text === text);
+  });
+
+/** native との DM: 互いに follow し、Web と native が送り合い、native の画像の経路を判定する。`nativeParty` は native の
+ * pubkey と投稿（profile を開く入口）。 */
+async function exchangeDirectMessagesWithNative(browser, webPubkey, nativeParty, direct) {
+  await native('follow_author', { request: { pubkey: webPubkey } });
+  await openDirectMessage(browser, nativeParty.post, nativeParty.pubkey);
+  const fromWeb = `dm from ${browser.label}`;
+  await sendDirectMessage(browser, nativeParty.pubkey, fromWeb);
+  await nativeSeesDirectMessage(webPubkey, fromWeb);
+  const fromNative = `dm from native to ${browser.label}`;
+  await native('send_direct_message', { request: { pubkey: webPubkey, text: fromNative, reply_to_message_id: null } });
+  await sees(browser, fromNative);
+  const image = `dm image from native to ${browser.label}`;
+  const publish = nativeWithImage('send_direct_message', { pubkey: webPubkey, text: image, reply_to_message_id: null });
+  assertRoute(`native→web dm (${browser.label})`, await relayedWhileLoading(browser, image, publish), direct);
+}
+
+/** Web↔Web の DM: 互いの投稿の作者を follow して会話を開いて送り合い、y から x への画像の経路を判定する。x・y は
+ * `{ browser, pubkey, post }`（post は profile を開く入口）。 */
+async function exchangeDirectMessagesBetweenWeb(x, y, direct) {
+  await openAuthorProfile(x.browser, y.post, y.pubkey);
+  await openDirectMessage(y.browser, x.post, x.pubkey);
+  await openDirectMessage(x.browser, y.post, y.pubkey);
+  const fromY = `dm from ${y.browser.label} to ${x.browser.label}`;
+  await sendDirectMessage(y.browser, x.pubkey, fromY);
+  await sees(x.browser, fromY);
+  const fromX = `dm from ${x.browser.label} to ${y.browser.label}`;
+  await sendDirectMessage(x.browser, y.pubkey, fromX);
+  await sees(y.browser, fromX);
+  const image = `dm image from ${y.browser.label} to ${x.browser.label}`;
+  const result = await relayedWhileLoading(x.browser, image, sendWebImage(y.browser, x.pubkey, image));
+  assertRoute(`web→web dm (${x.browser.label})`, result, direct);
+}
+
+/** 設定のドロワーの section を開く。 */
+async function openSettings(browser, section) {
+  if (!(await browser.$('#shell-settings-drawer[data-open="true"]').isExisting())) {
+    await browser.$('[data-testid="control-center-trigger"]').click();
+    await browser.$('#shell-control-center button[aria-label="Settings"]').click();
+  }
+  await browser.$(`[data-testid="settings-section-${section}"]`).click();
+}
+
+/** 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の接続設定）の変更が反映される（2026-10-03 ユーザー判断）。
+ * 開発者モード（Community Node の状態の表示）は `assertConnected` で有効にした後に呼ぶ。 */
+async function changeSettings(browser) {
+  await openSettings(browser, 'appearance');
+  await browser.$('button[role=radio][aria-label="Light"]').click();
+  await eventually('the light theme', () => browser.execute(() => document.documentElement.dataset.theme === 'light'));
+  await browser.$('button[role=radio][aria-label="Dark"]').click();
+  await eventually('the dark theme', () => browser.execute(() => document.documentElement.dataset.theme === 'dark'));
+  const language = browser.$('//select[option[@value="zh-CN"]]');
+  await language.selectByAttribute('value', 'ja');
+  await eventually('the Japanese UI', () =>
+    browser.execute(() => document.documentElement.lang === 'ja' && document.body.innerText.includes('表示と言語'))
+  );
+  await language.selectByAttribute('value', 'en');
+  await eventually('the English UI', () => browser.execute(() => document.documentElement.lang === 'en'));
+
+  // 成人向け: 自己申告の投稿は、表示を有効にするまで本文を出さない。
+  const adult = `adult from native ${RUN}`;
+  const adultId = await native('create_post', {
+    request: { topic: TOPIC, content: adult, reply_to: null, content_labels: ['adult'] },
+  });
+  await browser.$('button[aria-label="Close settings"]').click();
+  await eventually('the gated adult post', async () => {
+    await showNewPosts(browser);
+    return browser.$(`[data-testid="post-adult-gated-${adultId}"]`).isExisting();
+  });
+  assert.ok(!(await pageText(browser)).includes(adult), 'the adult post is hidden by default');
+  await openSettings(browser, 'safety');
+  await browser.$('[data-testid="adult-content-display-toggle"]').click();
+  await browser.$('button[aria-label="Close settings"]').click();
+  await sees(browser, adult);
+
+  // Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
+  // 同意し直して認証し直せる。
+  await openSettings(browser, 'community-node');
+  const extra = 'http://127.0.0.1:9';
+  const extraNode = `//h4[normalize-space()="${extra}"]`;
+  const unsaved = async () => (await pageText(browser)).includes('Unsaved');
+  const saveNodes = async () => {
+    await eventually('the unsaved node edits', unsaved);
+    await browser.$('button=Save Nodes').click();
+    await eventually('the node list is saved', async () => !(await unsaved()));
+  };
+  await browser.$('button=Add Node').click();
+  await (await browser.$$('input[aria-label="Base URL"]')).at(-1).setValue(extra);
+  await saveNodes();
+  await browser.$(`${extraNode}/ancestor::section[1]//button[normalize-space()="Remove"]`).click();
+  await saveNodes();
+  await eventually('the removed node is no longer listed', async () => !(await browser.$(extraNode).isExisting()));
+  const status = (label) =>
+    browser.$(`//dt[normalize-space()="${label}"]/following-sibling::dd[1]`).getText();
+  await eventually('the node is authenticated', async () => (await status('Auth')).startsWith('yes'));
+  assert.equal(await status('Consent'), 'accepted');
+  const policies = () => dialogWith(browser, 'Community node policies');
+  // 撤回と同意の後は dialog が閉じる（閉じ終わるまで overlay が下の操作を遮る）。
+  const closed = async () => !(await findDialog(browser, 'Community node policies'));
+  await browser.$('button=Consents').click();
+  // 文書を読み込むと、すべて同意済みの表示になる。
+  await (await policies()).$('button=All accepted').waitForExist({ timeout: WAIT });
+  await (await policies()).$('button=Withdraw consent').click();
+  await eventually('the consent is withdrawn', async () =>
+    (await status('Consent')) === 'Consent withdrawn' && (await status('Auth')) === 'no' && (await closed())
+  );
+  await browser.$('button=Consents').click();
+  const accept = (await policies()).$('button=Accept');
+  await accept.waitForClickable({ timeout: WAIT });
+  await accept.click();
+  await eventually('the consent is accepted again', async () => (await status('Consent')) === 'accepted' && (await closed()));
+  await browser.$('button=Authenticate').click();
+  await eventually('the node is authenticated again', async () => (await status('Auth')).startsWith('yes'));
+  await browser.$('button[aria-label="Close settings"]').click();
+}
 
 /** ブラウザの EndpointId と接続先（設定の Discovery の診断。開発者モードで出る）。接続先は topic の gossip の隣接なので、
  * 既知の相手（`peers`）のどれかを持てばよい。native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の
  * 照合）。実データがどの経路を通ったかは relay の bytes で判定する。 */
 async function assertConnected(browser, peers, nativeEndpoint) {
-  await browser.$('[data-testid="control-center-trigger"]').click();
-  await browser.$('#shell-control-center').$('button*=Settings').click();
-  await browser.$('[data-testid="settings-section-developer"]').click();
+  await openSettings(browser, 'developer');
   await browser.$('label*=Enable developer mode').$('input[type=checkbox]').click();
   await browser.$('[data-testid="settings-section-discovery"]').click();
   const details = browser.$('//*[normalize-space(text())="Technical diagnostic details"]');
@@ -300,7 +599,7 @@ async function assertConnected(browser, peers, nativeEndpoint) {
 async function main() {
   const clients = [];
   await nativeShows(TOPIC);
-  const { endpoint_id: nativeEndpoint } = await fixture('/fixture/info');
+  const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
   try {
     // 直接経路: native↔Web。
     const a = await openClient('web-a', { ice: true });
@@ -308,9 +607,12 @@ async function main() {
     const withA = await exchangeWithNative(a, 'web-a', 'thumbs-up');
     await exchangeInTopic(a, 'dev', 'web-a');
     const direct = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
-    console.log('native→web direct', direct);
-    assert.ok(direct.relayed < direct.size / 4, `native→web image went through the relay: ${JSON.stringify(direct)}`);
+    assertRoute('native→web direct', direct, true);
     const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
+    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定。
+    const aPubkey = withA.webPost.author_pubkey;
+    await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
+    await changeSettings(a);
 
     // 直接経路: Web↔Web。
     const b = await openClient('web-b', { ice: true });
@@ -318,10 +620,34 @@ async function main() {
     await sees(b, withA.fromWeb);
     await exchangeBetweenWeb(b, a, ['heart', 'fire', 'clap']);
     const webImage = `web image ${RUN}`;
-    const webToWeb = await relayedWhileLoading(b, webImage, postWebImage(a, webImage));
-    console.log('web→web direct', webToWeb);
-    assert.ok(webToWeb.relayed < webToWeb.size / 4, `web→web image went through the relay: ${JSON.stringify(webToWeb)}`);
+    assertRoute('web→web direct', await relayedWhileLoading(b, webImage, postWebImage(a, webImage)), true);
     const bEndpoint = await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
+    // AC-2b（直接経路）: Web が作った private channel に native と別の Web が参加し、投稿が行き来する。Web↔Web の DM。
+    const channelLabel = `channel-a-${RUN}`;
+    const channelToken = await createChannel(a, channelLabel);
+    const channelId = await nativeJoinsChannel(channelToken);
+    const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
+    await joinChannel(b, channelToken, channelLabel);
+    await seesInChannel(b, channelId, fromAInChannel);
+    const fromBInChannel = `web-b in channel ${RUN}`;
+    await post(b, fromBInChannel, channelColumn(b, channelId));
+    await seesInChannel(a, channelId, fromBInChannel);
+    const channelImage = `channel image to web-b ${RUN}`;
+    const toB = await relayedWhileLoading(b, channelImage, postWebImage(a, channelImage, channelColumn(a, channelId)));
+    assertRoute('web→web channel direct', toB, true);
+    const bHello = `hello from ${b.label} to ${a.label}`;
+    const bPubkey = (await nativeSees(bHello, (item) => item.content === bHello)).author_pubkey;
+    await exchangeDirectMessagesBetweenWeb(
+      { browser: b, pubkey: bPubkey, post: bHello },
+      { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${b.label}` },
+      true
+    );
+    // native が作った channel に Web が参加する（作成と招待の向きの逆）。fallback の端を開く前に確かめる（fallback の
+    // 端の通信は relay を通るので、直接経路の判定に混ざる）。
+    const nativeChannelLabel = `channel-native-${RUN}`;
+    const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
+    await joinChannel(a, nativeChannel.token, nativeChannelLabel);
+    await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
@@ -340,18 +666,32 @@ async function main() {
       if (await more.isExisting()) await more.click();
       return (await c.$$('.post-list article').length) > cards;
     });
-    await exchangeWithNative(c, 'web-c', 'clap');
+    const withC = await exchangeWithNative(c, 'web-c', 'clap');
     await exchangeInTopic(c, 'test', 'web-c');
     await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands', 'party-popper']);
     const fallback = await relayedWhileLoading(c, `native image fallback ${RUN}`, postNativeImage(`native image fallback ${RUN}`));
-    console.log('native→web fallback', fallback);
-    assert.ok(fallback.relayed >= fallback.size * 0.9, `native→web image did not use the relay: ${JSON.stringify(fallback)}`);
+    assertRoute('native→web fallback', fallback, false);
     assert.ok(fallback.shownBeforeImage, 'the post and its actions are shown while the image is missing');
     await assertConnected(c, [nativeEndpoint, aEndpoint, bEndpoint], nativeEndpoint);
     const webFallback = `web image fallback ${RUN}`;
-    const webToWebFallback = await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback));
-    console.log('web→web fallback', webToWebFallback);
-    assert.ok(webToWebFallback.relayed >= webToWebFallback.size * 0.9, `web→web image did not use the relay: ${JSON.stringify(webToWebFallback)}`);
+    assertRoute('web→web fallback', await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback)), false);
+
+    // AC-2b（fallback）: channel への参加と投稿、native と Web との DM。
+    await joinChannel(c, channelToken, channelLabel);
+    await seesInChannel(c, channelId, fromBInChannel);
+    const fromCInChannel = await exchangeInChannelWithNative(c, channelId, 'fallback', false);
+    await seesInChannel(a, channelId, fromCInChannel);
+    const channelFallback = `channel image to web-c ${RUN}`;
+    const toC = await relayedWhileLoading(c, channelFallback, postWebImage(a, channelFallback, channelColumn(a, channelId)));
+    assertRoute('web→web channel fallback', toC, false);
+    const cPubkey = withC.webPost.author_pubkey;
+    await exchangeDirectMessagesWithNative(c, cPubkey, { pubkey: nativePubkey, post: withC.fromNative }, false);
+    await exchangeDirectMessagesBetweenWeb(
+      { browser: c, pubkey: cPubkey, post: `hello from ${c.label} to ${a.label}` },
+      { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${c.label}` },
+      false
+    );
+
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
   }

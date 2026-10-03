@@ -12,7 +12,7 @@
 //!
 //! 準備ができたら標準出力に `KUKURI_WEB_E2E_READY=<配信の origin>` を出す。
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -96,9 +96,10 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let app = Router::new()
         .route("/fixture/info", get(info))
         .route("/fixture/invoke", post(invoke))
-        .route("/fixture/post-image", post(post_image))
         .route("/fixture/relay-bytes", get(relay_bytes))
         .route("/fixture/payload.png", get(payload_png))
+        // 経路の判定の画像（約 1.7 MiB）を base64 で添えた command を受ける。
+        .layer(DefaultBodyLimit::max(8 << 20))
         .with_state(fixture.clone())
         .fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
@@ -194,42 +195,6 @@ async fn invoke(
     .map_err(|error| failed(format!("{}: {}", error.code, error.message)))
 }
 
-#[derive(Deserialize)]
-struct PostImageBody {
-    topic: String,
-    content: String,
-}
-
-/// 乱数の画素の PNG を添えた投稿を native で作る。受け手がこの画像を取得する間の relay の bytes で経路を判定する。
-async fn post_image(
-    State(fixture): State<Shared>,
-    Json(body): Json<PostImageBody>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let png = random_png().map_err(failed)?;
-    let byte_size = png.len() as u64;
-    let post = fixture
-        .gate
-        .host
-        .runtime()
-        .create_post(CreatePostRequest {
-            topic: body.topic,
-            content: body.content,
-            reply_to: None,
-            channel_ref: Default::default(),
-            attachments: vec![CreateAttachmentRequest {
-                file_name: Some("payload.png".to_string()),
-                mime: "image/png".to_string(),
-                byte_size,
-                data_base64: BASE64_STANDARD.encode(&png),
-                role: Some("image_original".to_string()),
-            }],
-            content_labels: Vec::new(),
-        })
-        .await
-        .map_err(failed)?;
-    Ok(Json(json!({ "object_id": post, "byte_size": byte_size })))
-}
-
 async fn relay_bytes(State(fixture): State<Shared>) -> Json<Value> {
     let relayed = fixture
         .stack
@@ -240,7 +205,7 @@ async fn relay_bytes(State(fixture): State<Shared>) -> Json<Value> {
     Json(json!({ "relayed_bytes": relayed }))
 }
 
-/// Web の投稿欄から添える画像（Web↔Web の経路の判定）。
+/// 投稿・DM に添える画像（driver が Web の投稿欄から添えるか、native の command に base64 で添える）。
 async fn payload_png() -> Result<Vec<u8>, (StatusCode, Json<Value>)> {
     random_png().map_err(failed)
 }
