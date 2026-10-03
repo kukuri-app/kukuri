@@ -77,10 +77,7 @@ async function openClient(name, { ice }) {
   browser.label = `${name}-${RUN}`;
   if (!ice) await browser.addInitScript(withoutIceCandidates);
   await browser.url(ORIGIN);
-  await browser.$('[data-testid="age-attestation-checkbox"]').click();
-  await browser.$('button=Accept and continue').click();
-  await (await dialogWith(browser, 'What is a community node?')).$('button=Review terms').click();
-  await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
+  await acceptFirstRun(browser);
   const profile = await dialogWith(browser, 'Set up your profile');
   const displayName = profile.$('input');
   await displayName.waitForClickable({ timeout: WAIT });
@@ -271,9 +268,7 @@ const postWebImage = (browser, content) => async () => {
  * 既知の相手（`peers`）のどれかを持てばよい。native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の
  * 照合）。実データがどの経路を通ったかは relay の bytes で判定する。 */
 async function assertConnected(browser, peers, nativeEndpoint) {
-  await browser.$('[data-testid="control-center-trigger"]').click();
-  await browser.$('#shell-control-center').$('button*=Settings').click();
-  await browser.$('[data-testid="settings-section-developer"]').click();
+  await openSettings(browser, 'developer');
   await browser.$('label*=Enable developer mode').$('input[type=checkbox]').click();
   await browser.$('[data-testid="settings-section-discovery"]').click();
   const details = browser.$('//*[normalize-space(text())="Technical diagnostic details"]');

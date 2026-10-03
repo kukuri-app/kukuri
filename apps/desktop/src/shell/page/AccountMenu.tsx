@@ -64,7 +64,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   const active = snapshot?.accounts.find((a) => a.id === snapshot.active_account_id && a.pubkey === pubkey);
   // #1211: OS のリンク起動で受けた移行用のリンクは、移行先の入力欄へ入れるだけで接続はしない。
   useAccountTransferLink((link) => { setOpen(false); setError(null); setTransferLink(link); setDialog('transfer-target'); });
-  useEffect(() => onAccountAddRequest(() => { setOpen(false); setError(null); setDialog('import'); }), []);
+  useEffect(() => onAccountAddRequest(() => { setOpen(false); setError(null); setDialog('import'); void refresh(); }), [refresh]);
   const openDialog = (next: 'import' | 'logout') => { moveFocus.current = true; setOpen(false); setError(null); setDialog(next); };
   const closeDialog = () => { if (!pending) { setDialog(null); setTransferLink(''); moveFocus.current = false; } };
   return <>

@@ -7,7 +7,7 @@ import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { requestAccountAdd } from '@/shell/page/accountAddRequest';
 import { renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
 
-async function setup() {
+async function renderShell() {
   setViewportWidth(1280);
   const api = createDesktopMockApi();
   const profile = await api.getMyProfile();
@@ -21,6 +21,11 @@ async function setup() {
   ]);
   const change = vi.spyOn(session, 'changeAccountSession').mockResolvedValue(undefined);
   renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral', api);
+  return { change, a, b };
+}
+
+async function setup() {
+  const { change, a, b } = await renderShell();
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Account menu' }));
   const menu = await screen.findByRole('menu', { name: 'Account menu' });
@@ -114,12 +119,15 @@ test('a completed transfer into the active account does not switch', async () =>
   expect(change).not.toHaveBeenCalled();
 });
 
-// #1217 AC-5: 初回の profile 設定の「以前のアカウントを戻す」は、アカウント追加の dialog（import・移行）を開く。
-test('a restore request opens the add account dialog', async () => {
-  await setup();
+// #1217 AC-5: 初回の profile 設定の「以前のアカウントを戻す」は、menu を開いていなくても、menu から開くときと同じ
+// アカウント追加の dialog（作成・import・移行）を開く。
+test('a restore request opens the add account dialog with every action available', async () => {
+  await renderShell();
+  await screen.findByRole('button', { name: 'Account menu' });
   act(() => requestAccountAdd());
   const dialog = await screen.findByRole('dialog', { name: 'Add account' });
   expect(within(dialog).getByTestId('import-input')).toBeVisible();
-  expect(within(dialog).getByRole('button', { name: 'Move from another device' })).toBeVisible();
-  expect(screen.queryByRole('menu', { name: 'Account menu' })).not.toBeInTheDocument();
+  await waitFor(() => expect(within(dialog).getByTestId('create-new-account')).toBeEnabled());
+  expect(within(dialog).getByRole('button', { name: 'Move to another device' })).toBeEnabled();
+  expect(within(dialog).getByRole('button', { name: 'Move from another device' })).toBeEnabled();
 });
