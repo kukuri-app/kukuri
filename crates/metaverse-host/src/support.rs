@@ -10,7 +10,7 @@ use rapier3d::prelude::{ColliderBuilder, Vector};
 
 use crate::RateWindow;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct InputMark {
     sequence: u64,
     sent_at: i64,
@@ -59,10 +59,11 @@ impl InputLedger {
         }
     }
 
+    /// 退出した参加者の記録を、退出した署名者の側へ移す。まだ input を受け付けていない
+    /// 参加者（遷移で到着した直後）にも行を作り、退出を起こした input を後から記録する。
     pub(crate) fn retire(&mut self, participant_id: &str, limit: usize) {
-        let Some(mark) = self.active.remove(participant_id) else {
-            return;
-        };
+        let mark = self.mark(participant_id).unwrap_or_default();
+        self.active.remove(participant_id);
         self.departures += 1;
         self.departed
             .insert(participant_id.to_string(), (self.departures, mark));

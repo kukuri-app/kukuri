@@ -56,10 +56,11 @@ impl DomeSessionRuntime {
 
     pub fn evict_participant(&mut self, participant_pubkey: &kukuri_core::Pubkey) -> bool {
         let participant_id = participant_pubkey.as_str();
+        let evicted = self.participants.remove(participant_id);
         self.revoke_transition_access(participant_pubkey, None);
         self.transition_entries.remove(participant_id);
         self.seated_on.remove(participant_id);
-        if participant_pubkey != &self.lease.lease.owner_pubkey {
+        if evicted && participant_pubkey != &self.lease.lease.owner_pubkey {
             self.inputs
                 .retire(participant_id, self.participant_limit as usize);
         }
@@ -71,7 +72,7 @@ impl DomeSessionRuntime {
                 runtime_body.grabbed_by = None;
             }
         }
-        self.participants.remove(participant_id)
+        evicted
     }
 
     pub fn prepare_transition_admission(

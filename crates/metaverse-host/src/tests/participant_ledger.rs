@@ -203,30 +203,32 @@ fn departed_replay_marks_are_capped_at_the_participant_limit() {
 }
 
 #[test]
-fn transition_arrivals_keep_one_committed_ticket_and_leave_drops_it() {
+fn transition_arrivals_keep_one_committed_ticket_and_a_first_leave_is_not_replayable() {
     let (_owner, mut runtime) = runtime_with_participant_limit(8);
     let participant = KukuriKeys::generate();
-    for transition_id in ["arrival-1", "arrival-2"] {
+    let arrive = |runtime: &mut DomeSessionRuntime, transition_id: &str, now: i64| {
         let ticket = runtime
             .prepare_transition_admission(
                 transition_request(&participant, transition_id),
                 DomeTransitionAccessDecisionV1::Allowed,
-                1_100,
+                now,
             )
             .unwrap();
         runtime
-            .commit_transition_admission(&ticket, [0, 90, 0], [0, 0, 0], 1_200)
+            .commit_transition_admission(&ticket, [0, 90, 0], [0, 0, 0], now + 100)
             .unwrap();
-    }
+    };
+    arrive(&mut runtime, "arrival-1", 1_100);
+    arrive(&mut runtime, "arrival-2", 1_100);
     assert_eq!(runtime.committed_transitions.len(), 1);
 
-    runtime
-        .apply_signed_input_at(
-            &signed_input(&participant, 1, DomeSessionInputKindV1::Leave),
-            1_300,
-        )
-        .unwrap();
-    assert!(ledger_rows(&runtime, &participant).is_empty());
+    // 到着の後の最初の input が Leave でも、その sequence を残して再送を拒否する。
+    let leave = signed_input(&participant, 1, DomeSessionInputKindV1::Leave);
+    runtime.apply_signed_input_at(&leave, 1_300).unwrap();
+    assert_eq!(ledger_rows(&runtime, &participant), ["sequence"]);
+    arrive(&mut runtime, "arrival-3", 1_400);
+    assert!(runtime.apply_signed_input_at(&leave, 1_600).is_err());
+    assert_eq!(runtime.participant_count(), 1);
 }
 
 #[test]
