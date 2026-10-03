@@ -333,6 +333,10 @@ async fn invoke_command(
 /// `config` は `{ communityNodeConfig }`（省略可）。
 #[wasm_bindgen]
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
+    // DIAG(一時): panic の内容を console へ出す。
+    std::panic::set_hook(Box::new(|info| {
+        web_sys::console::log_1(&JsValue::from_str(&format!("DIAG panic {info}")));
+    }));
     let config = match from_js(&config).map_err(|error| error_value(&error))? {
         Value::Null => StartConfig::default(),
         config => serde_json::from_value(config)

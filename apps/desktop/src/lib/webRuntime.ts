@@ -37,7 +37,10 @@ export function invokeWebRuntime<T>(command: string, args?: Record<string, unkno
     console.info(`DIAGJS start #${diagId} ${command}`);
     return (runtime.invoke(command, args) as Promise<T>).then(
       (value) => {
-        console.info(`DIAGJS end #${diagId} ${command} ok ${Math.round(performance.now() - started)}ms`);
+        const items = command === 'list_joined_private_channels'
+          ? ` items=${((value as { items?: { channel_id: string }[] })?.items ?? []).map((item) => item.channel_id.slice(-8)).join(',')}`
+          : '';
+        console.info(`DIAGJS end #${diagId} ${command} ok ${Math.round(performance.now() - started)}ms${items}`);
         return value;
       },
       (error: unknown) => {

@@ -81,8 +81,9 @@ async function openClient(name, { ice }) {
   browser.consoleLines = [];
   await browser.sessionSubscribe({ events: ['log.entryAdded'] });
   browser.on('log.entryAdded', (entry) => {
+    if (entry.text?.includes('get_community_node_observation_sharing')) return;
     browser.consoleLines.push(`${new Date(entry.timestamp).toISOString().slice(11, 23)} ${entry.text}`);
-    if (browser.consoleLines.length > 400) browser.consoleLines.shift();
+    if (browser.consoleLines.length > 1500) browser.consoleLines.shift();
   });
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
@@ -100,7 +101,33 @@ async function openClient(name, { ice }) {
 async function addInitScripts(browser, { ice }) {
   await browser.addInitScript(captureClipboard);
   await browser.addInitScript(trackPeerConnections);
+  await browser.addInitScript(trackNavigation);
   if (!ice) await browser.addInitScript(withoutIceCandidates);
+}
+
+// DIAG（一時）: URL の書き換え・active の列・focus の変化を console へ出す。
+function trackNavigation() {
+  for (const name of ['pushState', 'replaceState']) {
+    const original = history[name];
+    history[name] = function (state, title, url) {
+      console.info(`NAV ${name} ${String(url ?? '').slice(0, 220)}`);
+      return original.apply(this, [state, title, url]);
+    };
+  }
+  addEventListener('hashchange', () => console.info(`NAV hashchange ${location.hash.slice(0, 220)}`));
+  let last = null;
+  const report = () => {
+    const active = document.querySelector('[data-column-id][data-active]')?.dataset.columnId ?? null;
+    if (active === last) return;
+    last = active;
+    const focused = document.activeElement;
+    console.info(`NAV active ${active} focus=${focused?.tagName} ${(focused?.getAttribute?.('aria-label') ?? '').slice(0, 40)} hash=${location.hash.slice(0, 160)}`);
+  };
+  new MutationObserver(report).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-active'] });
+  addEventListener('focusin', (event) => {
+    const column = event.target?.closest?.('[data-column-id]')?.dataset.columnId ?? '-';
+    console.info(`NAV focusin ${event.target?.tagName} ${(event.target?.getAttribute?.('aria-label') ?? '').slice(0, 40)} in ${column}`);
+  });
 }
 
 /** relay fallback の端: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない（ページの script より先に動く）。 */
@@ -1095,7 +1122,9 @@ async function dumpColumns(browser) {
   );
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
-  console.log(`--- ${browser.label} console (last ${Math.min(250, browser.consoleLines?.length ?? 0)})\n${(browser.consoleLines ?? []).slice(-250).join('\n')}`);
+  const since = new Date(Date.now() - 180_000).toISOString().slice(11, 23);
+  const recent = (browser.consoleLines ?? []).filter((line) => line.slice(0, 12) >= since);
+  console.log(`--- ${browser.label} console (since ${since}, ${recent.length} lines)\n${recent.join('\n')}`);
 }
 
 async function main() {
