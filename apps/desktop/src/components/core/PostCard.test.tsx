@@ -96,7 +96,7 @@ test('post card requests one preview for an eligible public primary URL', async 
   });
   expect(preview).toHaveAttribute('href', url);
   expect(fetcher).toHaveBeenCalledOnce();
-  expect(fetcher).toHaveBeenCalledWith(url);
+  expect(fetcher).toHaveBeenCalledWith(url, base.post.object_id);
   expect(screen.getByRole('link', { name: 'https://second.example/path' })).toBeInTheDocument();
   preview.addEventListener('click', (event) => event.preventDefault());
   fireEvent.click(preview);

@@ -31,6 +31,11 @@ fn parse_resolves_client_keys_and_rejects_unknown() {
             "o1/state",
         ),
         (
+            stable_key("link-previews", "o1/state"),
+            SharedReplicaKeyFamily::LinkPreview,
+            "o1/state",
+        ),
+        (
             stable_key("manifests/media", "m1/envelope"),
             SharedReplicaKeyFamily::MediaManifest,
             "m1/envelope",

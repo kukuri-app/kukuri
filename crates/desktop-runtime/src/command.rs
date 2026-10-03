@@ -448,6 +448,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     preview_channel_access_token(request: PreviewChannelAccessTokenRequest) => runtime.preview_channel_access_token(request).await.map_err(map_error);
     preview_dome_transition_access(request: PrepareDomeTransitionRequest) => runtime.preview_dome_transition_access(request).await.map_err(map_error);
     publish_metaverse_room_event(request: PublishMetaverseRoomEventRequest) => runtime.publish_metaverse_room_event(request).await.map_err(map_error);
+    read_link_preview_record(object_id: String, url: String) => runtime.read_link_preview_record(&object_id, &url).await.map_err(map_error);
     read_community_node_indexing_status(request: CommunityNodeIndexingStatusRequest) => runtime.read_community_node_indexing_status(request).await.map_err(CommandError::from);
     read_community_node_relation_user(request: CommunityNodeUserAdvisoryRequest) => runtime.read_community_node_relation_user(request).await.map_err(CommandError::from);
     read_community_node_trust_user(request: CommunityNodeUserAdvisoryRequest) => runtime.read_community_node_trust_user(request).await.map_err(CommandError::from);

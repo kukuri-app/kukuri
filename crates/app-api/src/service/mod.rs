@@ -144,6 +144,8 @@ mod errors;
 mod game_projection_support;
 mod gossip_subscription_support;
 mod hydration_limits;
+mod link_preview_record;
+pub use link_preview_record::{LinkPreviewRecordInput, LinkPreviewRecordView};
 pub(crate) mod hydration_support;
 pub(crate) mod session_projection;
 use game_projection_support::GameRoomProjectionLocks;

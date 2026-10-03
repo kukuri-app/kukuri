@@ -45,7 +45,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 | 分類 | 件数 | Web での扱い |
 | --- | --- | --- |
 | (a) `DesktopRuntime` への委譲 | 134 | ADR 0056 §6 の dispatch 表から、Web でもそのまま使う。ただし live・game・metaverse・Dome の 34 件は今回の合意の外なので、Web では「この platform では使えない」を返し、画面で未対応と示す |
-| (b) 端末固有 | 19 | Web では「この platform では使えない」を返す。media は payload と Blob URL の経路（ADR 0056 §5）、locale は `navigator.languages`、外部 URL は通常の link で置き換える。link preview は Web では出さない |
+| (b) 端末固有 | 19 | Web では「この platform では使えない」を返す。media は payload と Blob URL の経路（ADR 0056 §5）、locale は `navigator.languages`、外部 URL は通常の link で置き換える。link preview の HTTP 取得は Web では行わず、投稿者が書いた record を (a) の `read_link_preview_record` で読む（ADR 0051 §7、#1220 AC-2d で追加） |
 | (c) Tauri 側に処理がある | 21 | 起動・同意・account 切替・identity の処理と起動 gate を host へ移して Web でも使う（起動 gate は W1 AC-3、残りは W1 AC-5）。device backup（完全な端末 backup）は Web では使えないとし、鍵の export・import（ADR 0047）と QR・リンクの移行（#1211）で代える |
 
 - 必須の主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、設定）は、すべて (a) のうち Web で使う command と (c) の移設で成り立つ。matrix だけで省略しない。

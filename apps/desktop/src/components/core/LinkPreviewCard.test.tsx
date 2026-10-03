@@ -24,13 +24,13 @@ const available = async (url: string): Promise<LinkPreviewOutcome> => ({
 test('renders a successful preview as a link to the original URL', async () => {
   const fetcher = vi.fn(available);
   const url = 'https://example.test/article?q=preview#section';
-  render(<LinkPreviewCard content={`Read ${url}`} enabled fetcher={fetcher} />);
+  render(<LinkPreviewCard objectId='post-1' content={`Read ${url}`} enabled fetcher={fetcher} />);
 
   const card = await screen.findByRole('link', {
     name: 'A bounded link preview — Example Site',
   });
   expect(fetcher).toHaveBeenCalledOnce();
-  expect(fetcher).toHaveBeenCalledWith(url);
+  expect(fetcher).toHaveBeenCalledWith(url, 'post-1');
   expect(card).toHaveAttribute('href', url);
   expect(card.querySelector('img')).toHaveAttribute(
     'src',
@@ -45,7 +45,7 @@ test('keeps the slot empty when metadata is unavailable', async () => {
     reason: 'timeout',
   }));
   const { container } = render(
-    <LinkPreviewCard content='https://example.test/unavailable' enabled fetcher={fetcher} />
+    <LinkPreviewCard objectId='post-1' content='https://example.test/unavailable' enabled fetcher={fetcher} />
   );
 
   await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
@@ -70,7 +70,7 @@ test('does not render an unapproved data image MIME returned by the bridge', asy
     },
   }));
   render(
-    <LinkPreviewCard content='https://example.test/svg' enabled fetcher={fetcher} />
+    <LinkPreviewCard objectId='post-1' content='https://example.test/svg' enabled fetcher={fetcher} />
   );
 
   const card = await screen.findByRole('link', {
@@ -102,7 +102,7 @@ test('does not request an offscreen preview until it intersects', async () => {
   const fetcher = vi.fn(available);
   const { container } = render(
     <article>
-      <LinkPreviewCard content='https://example.test/visible' enabled fetcher={fetcher} />
+      <LinkPreviewCard objectId='post-1' content='https://example.test/visible' enabled fetcher={fetcher} />
     </article>
   );
 

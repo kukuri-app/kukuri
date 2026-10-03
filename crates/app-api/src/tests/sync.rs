@@ -366,6 +366,7 @@ mod hydration_integrity_contract;
 mod hydration_integrity_sessions;
 mod hydration_integrity_sessions_contract;
 mod hydration_limits;
+mod link_preview_records;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod page_bounds;

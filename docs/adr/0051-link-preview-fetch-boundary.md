@@ -61,9 +61,24 @@ Issue #1174では、投稿本文中の外部URLをlink化し、OGP metadataを�
 
 自動previewは、リンク先pageとOGP image hostに対する新しい外部送信である。legal bundle version 8で、送信先、表示を契機とすること、IP address、HTTP／TLS metadata、path／query、保持主体を開示する。cookie、Referer、account／topic／post情報、他本文を送らないこと、private channel／DMを自動取得しないことも明記する。version 7以下では再同意前にruntimeを開始せず、invoke gateによりpreview commandも拒否する。
 
+### 7. 投稿者の record（Web の表示。2026-10-03、#1220 W8 AC-2d）
+
+Web クライアントは §2 の取得境界を持たず、ブラウザからリンク先・画像を取得しない（ADR 0060 §3）。代わりに、投稿者本人の native が取得した preview を投稿者の署名つき record にして投稿と同じ replica に置き、Web はそれを読む（2026-10-03 ユーザー判断）。
+
+- 書き手と契機: 投稿者本人の native だけが書く。§1 の表示条件で `fetch_link_preview` が成功し、対象が自分の公開投稿で、その本文に preview の URL があるとき、背景で書く。外部への取得の契機・回数・送信内容は増やさず、取得の結果と表示も変えない（書込みの失敗は表示に影響しない）。投稿者でない native による書込み、投稿の時点での取得、native の閲覧が record を読むことは行わない。
+- 置き場所と形: 投稿の source replica（時間 bucket では投稿と同じ bucket。ADR 0054 §2）の `link-previews/<object id>/state`。値は kind `link_preview` の署名つき envelope で、`target_object_id`・`url`・`title`・`description`・`site_name`・任意の `image` を持つ。`url` は本文に書かれた先頭の URL の文字列のまま。
+- 画像: §5 の画像（1 MiB 以下の PNG・JPEG・GIF・WebP）を content-addressed blob にし、record から hash・MIME・bytes 数で参照する。blob は添付と同じく本人が書いた blob として保持する。
+- 1 投稿 1 回: 自分の docs author の record がその key に既にあれば書かない。取得し直しても書き換えず、取得のたびに blob を増やさない。
+- 読む側（Web）: §1 と同じ表示条件で、投稿の行が持つ投稿者の docs author（ADR 0053 §2）と key の組で 1 件だけ読む。手元に無ければ、投稿者の検証済み宛先と topic の参加者から最大 4 件、全体 30 秒で読む（ADR 0054 §4 の対象参照と同じ）。key の列は走査せず、他の名義の record は何件あっても読まない。
+- 検証: envelope の署名が投稿者のもの、`target_object_id` が表示中の投稿、`url` が表示側で本文から抽出した先頭の URL と一致し、文字と画像が §4 の上限内であること。画像は record の bytes 数までだけ取得し、bytes 数と先頭の bytes の形式が record と一致するときだけ data URL にする。
+- 結果: 検証に通れば native と同じ card を出す。record が無い・検証に通らない・投稿者の docs author が分からないときは、inline link（URL だけ）を示す。画像だけを取れないときは文字の card を出す。
+- cache: Web は読取りの結果を §4 と同じ上限（128 件、成功 10 分・失敗 60 秒）で画面の memory に持つ。
+- 開示: record は公開投稿と同じ範囲（その replica を取得する peer と、索引に参加する Community Node）へ複製される。legal bundle の版は上げず、再同意を求めない（2026-10-03 ユーザー判断）。データ分類（`docs/legal/link-preview-data-classification.md`）と突合表（`docs/legal/app-data-flow-inventory.md`）を更新する。cn-indexer は `link-previews/` を索引の契機にしない（共有 replica の key 種別表で無視）。
+
 ## Consequences
 
 - 公開投稿の表示はリンク先から観測され得るため、previewの利便性と引き換えにlegal再同意が必要になる。
 - private contentと非表示contentのURLは自動取得しない。利用者がinline linkを明示操作した場合だけ既存browser経路を使う。
 - OGPはtransientな補助表示であり、取得不能でも投稿のcanonical contentとP2P同期は影響を受けない。
 - site固有embed、永続cache、proxy service、複数previewが必要になった場合は、別Issueで送信先・保持・security boundaryを再決定する。
+- §7 の record は投稿者の native が表示した後にだけ書かれる。投稿者が自分の投稿を表示していない、取得に失敗した、旧版の native で投稿した場合、Web は URL だけを示す。

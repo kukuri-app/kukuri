@@ -16,6 +16,7 @@
     {"tauri":"app_update::install_app_update","excluded":"os","reason":"明示操作によるGUI更新のOS適用。CLIはpackageの自動更新対象外。"},
     {"tauri":"commands::external_url::open_external_url","excluded":"os","reason":"GUIの明示的な外部リンクをOSの既定ブラウザーへ渡す。CLI／daemonからのOS起動は対象外。"},
     {"tauri":"commands::link_preview::fetch_link_preview","excluded":"gui_content_preview","reason":"#1174: GUIで表示中の公開投稿に対する一時的な外部URL preview。CLI／daemonは投稿cardを描画せず、自動preview通信を追加しない。"},
+    {"tauri":"read_link_preview_record","excluded":"gui_content_preview","reason":"#1220 AC-2d: Webで表示中の公開投稿に、投稿者が書いたリンクプレビューのrecordを読む。CLI／daemonは投稿cardを描画しない。"},
     {"tauri":"commands::app_consent::get_app_consent_status","cli":"get_app_consent_status","inventory":"INV-1"},
     {"tauri":"commands::app_consent::accept_app_consents","cli":"accept_app_consents","inventory":"INV-1"},
     {"tauri":"export_account_key","cli":"export_account_key","inventory":"INV-1"},
