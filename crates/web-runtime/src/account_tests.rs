@@ -47,6 +47,9 @@ fn account_id() -> String {
     format!("{:016x}", now as u64)
 }
 
+/// device の値の例。client の試験（`client_tests`）が使う registry と別の key にし、試験の順で互いに壊さない。
+const DEVICE_SETTING: &str = "/kukuri/kukuri.device-setting-test.json";
+
 fn db_path(account: &str) -> PathBuf {
     PathBuf::from(format!("/kukuri/accounts/{account}/kukuri.db"))
 }
@@ -73,7 +76,7 @@ async fn keys_and_settings_survive_a_reload_in_the_account_vault() {
         .await
         .expect("setting");
     storage
-        .set("file", "/kukuri/accounts.json", b"{\"accounts\":[]}")
+        .set("file", DEVICE_SETTING, b"{\"accounts\":[]}")
         .await
         .expect("device setting");
     drop(storage);
@@ -97,7 +100,7 @@ async fn keys_and_settings_survive_a_reload_in_the_account_vault() {
     );
     assert_eq!(
         storage
-            .get("file", "/kukuri/accounts.json")
+            .get("file", DEVICE_SETTING)
             .await
             .unwrap()
             .as_deref(),

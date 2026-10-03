@@ -158,8 +158,22 @@ async fn sync_status_events_carry_only_the_changed_parts_and_stop_on_shutdown() 
     let mut events = runtime.subscribe_events();
     let quiet = Duration::from_millis(1_500);
 
+    // 起動時の account 同期の契機が「本人の端末の候補なし」へ変えた状態は送る（W5 AC-6a。observer が印を待ち始める前
+    // なら印は付かない）。その後は、変化の無い間は event も読取りも無い。
+    let started = drain_sync_events(&mut events, quiet).await;
+    assert!(started.len() <= 1, "{started:?}");
+    assert!(started.iter().all(|(status, ..)| {
+        status
+            .as_ref()
+            .is_some_and(|status| status.account_sync.no_peers)
+    }));
+    let reads = delta_reads(&runtime);
     assert!(drain_sync_events(&mut events, quiet).await.is_empty());
-    assert_eq!(delta_reads(&runtime), 0, "no read while nothing changes");
+    assert_eq!(
+        delta_reads(&runtime),
+        reads,
+        "no read while nothing changes"
+    );
 
     let topic = "kukuri:topic:observer-delta";
     open_topic_column(&runtime, topic, TimelineScope::Public)

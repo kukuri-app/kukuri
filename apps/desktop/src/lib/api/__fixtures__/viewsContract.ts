@@ -332,7 +332,14 @@ export const syncStatusFull = {
   ],
   "gossip_disabled_channels": [
     "chan-quiet"
-  ]
+  ],
+  "account_sync": {
+    "no_peers": false,
+    "fetch_failed": true,
+    "behind": true,
+    "pending_writes": true,
+    "rebuilding": false
+  }
 } satisfies SyncStatus;
 
 // sync_status.minimal.json
@@ -364,7 +371,14 @@ export const syncStatusMinimal = {
     "last_discovery_error": null
   },
   "gossip_disabled_topics": [],
-  "gossip_disabled_channels": []
+  "gossip_disabled_channels": [],
+  "account_sync": {
+    "no_peers": false,
+    "fetch_failed": false,
+    "behind": false,
+    "pending_writes": false,
+    "rebuilding": false
+  }
 } satisfies SyncStatus;
 
 // notification_view.json

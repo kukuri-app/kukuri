@@ -7,16 +7,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kukuri_cn_operator::CommunityNodeManifest;
 use kukuri_cn_protocol::{
     ADVISORY_LOOKUP_PATH, AUTH_CHALLENGE_PATH, AUTH_VERIFY_PATH, BOOTSTRAP_HEARTBEAT_PATH,
-    BOOTSTRAP_NODES_PATH, CONSENTS_PATH, CONSENTS_STATUS_PATH, DOME_HOSTING_ACTIVATE_PATH,
-    DOME_HOSTING_ASSIGNMENTS_PATH, DOME_HOSTING_LAYOUT_CANDIDATE_PATH, DOME_HOSTING_RELEASE_PATH,
-    DOME_HOSTING_SESSION_INPUT_PATH, DOME_HOSTING_SESSION_WS_PATH,
+    BOOTSTRAP_NODES_PATH, CHANNEL_MEMBERSHIP_SECRET_HEADER, CONSENTS_PATH, CONSENTS_STATUS_PATH,
+    DOME_HOSTING_ACTIVATE_PATH, DOME_HOSTING_ASSIGNMENTS_PATH, DOME_HOSTING_LAYOUT_CANDIDATE_PATH,
+    DOME_HOSTING_RELEASE_PATH, DOME_HOSTING_SESSION_INPUT_PATH, DOME_HOSTING_SESSION_WS_PATH,
     DOME_HOSTING_SNAPSHOT_RESYNC_PATH, DOME_HOSTING_STATUS_ROUTE, DOME_TRANSITION_ABORT_PATH,
     DOME_TRANSITION_COMMIT_PATH, DOME_TRANSITION_PREPARE_PATH, INDEX_DISCOVERY_PATH,
     INDEX_RECOMMENDATIONS_PATH, INDEX_SEARCH_PATH, INDEXING_REQUESTS_PATH, INDEXING_STATUS_PATH,
@@ -27,7 +27,9 @@ use kukuri_cn_protocol::{
     TRUST_OBSERVATIONS_PATH, TRUST_USERS_ROUTE,
 };
 use serde_json::{Value, json};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+use url::Url;
 
 use crate::admin::admin_router;
 use crate::config::{RateLimitConfig, UserApiConfig};
@@ -290,7 +292,10 @@ pub async fn run_from_env() -> Result<()> {
         .transpose()
         .context("invalid COMMUNITY_NODE_ADMIN_BIND_ADDR")?;
     let admin_app = admin_bind_addr.map(|_| admin_router(state.clone()));
-    let app = apply_rate_limit(app_router(state), &rate_limit)?;
+    let app = with_cors(
+        apply_rate_limit(app_router(state), &rate_limit)?,
+        &kukuri_cn_core::parse_csv_env("COMMUNITY_NODE_CORS_ALLOWED_ORIGINS"),
+    )?;
     if rate_limit.enabled {
         tracing::info!(
             per_second = rate_limit.per_second,
@@ -320,6 +325,36 @@ pub async fn run_from_env() -> Result<()> {
         user_server.await?;
     }
     Ok(())
+}
+
+/// 別の origin で配信する Web クライアント（ADR 0060 §2）から API を呼べるよう、許可した origin にだけ CORS で応答する。
+/// 許可が無ければ CORS に応答しない。token は `Authorization` の header で送り、cookie は使わない。private channel の
+/// 照会の参加の証明（`x-kukuri-channel-secret`）も許す。client が再試行の間隔に読む `Retry-After` をブラウザに見せる。
+pub fn with_cors(router: Router, allowed_origins: &[String]) -> Result<Router> {
+    if allowed_origins.is_empty() {
+        return Ok(router);
+    }
+    let origins = allowed_origins
+        .iter()
+        .map(|value| {
+            let url = Url::parse(value)
+                .ok()
+                .filter(|url| matches!(url.scheme(), "http" | "https"))
+                .with_context(|| format!("invalid CORS allowed origin `{value}`"))?;
+            Ok(HeaderValue::from_str(&url.origin().ascii_serialization())?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(router.layer(
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                HeaderName::from_static(CHANNEL_MEMBERSHIP_SECRET_HEADER),
+            ])
+            .expose_headers([header::RETRY_AFTER]),
+    ))
 }
 
 fn spawn_retention_cleanup(state: UserApiState) {

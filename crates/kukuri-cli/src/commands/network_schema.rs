@@ -92,6 +92,10 @@ fn sync_status() -> Value {
         "peer_count": count(), "pending_events": count(), "status_detail": string(), "last_error": nullable(string()),
         "configured_peer_count": count(), "subscribed_topics": strings(), "active_path": path(), "fallback_peer_count": count(),
         "local_author_pubkey": string(), "gossip_disabled_topics": strings(), "gossip_disabled_channels": strings(),
+        "account_sync": view(json!({
+            "no_peers": boolean(), "fetch_failed": boolean(), "behind": boolean(),
+            "pending_writes": boolean(), "rebuilding": boolean()
+        })),
         "topic_diagnostics": array(view(json!({
             "topic": string(), "joined": boolean(), "delivery_state": delivery(), "peer_count": count(),
             "configured_peer_count": count(), "missing_peer_count": count(),

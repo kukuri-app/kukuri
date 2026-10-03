@@ -133,23 +133,6 @@ fn invalid_args(command: &str, error: serde_json::Error) -> CommandError {
     )
 }
 
-/// 同期の method を、native では blocking の thread で呼ぶ（keyring の読取り）。
-async fn export_account_key(
-    runtime: &Arc<DesktopRuntime>,
-    request: ExportAccountKeyRequest,
-) -> Result<AccountKeyExport, CommandError> {
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let runtime = runtime.clone();
-        tokio::task::spawn_blocking(move || runtime.export_account_key(request))
-            .await
-            .map_err(|error| CommandError::from(format!("export task failed: {error}")))?
-            .map_err(map_error)
-    }
-    #[cfg(target_family = "wasm")]
-    runtime.export_account_key(request).map_err(map_error)
-}
-
 /// 呼んだ後の投稿と、表示の再試行の時刻（投稿の再試行の view）。
 #[derive(Serialize)]
 pub struct PostRetryView {
@@ -385,6 +368,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     discover_community_node_index(request: CommunityNodeIndexQueryRequest) => runtime.discover_community_node_index(request).await.map_err(CommandError::from);
     end_live_session(request: LiveSessionCommandRequest) => runtime.end_live_session(request).await.map_err(map_error);
     evaluate_author_trust_gates(request: AuthorTrustGateRequest) => runtime.evaluate_author_trust_gates(request).await.map_err(map_error);
+    export_account_key(request: ExportAccountKeyRequest) => runtime.export_account_key(request).await.map_err(map_error);
     export_channel_access_token(request: ExportChannelAccessTokenRequest) => runtime.export_channel_access_token(request).await.map_err(map_error);
     export_friend_only_grant(request: ExportFriendOnlyGrantRequest) => runtime.export_friend_only_grant(request).await.map_err(map_error);
     export_friend_plus_share(request: ExportFriendPlusShareRequest) => runtime.export_friend_plus_share(request).await.map_err(map_error);
@@ -494,7 +478,6 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
         runtime.accept_community_node_consents(request, ctx.app_version.as_str()).await.map_err(map_error);
     enable_community_node_observation_sharing(request: EnableCommunityNodeObservationSharingRequest) =>
         runtime.enable_community_node_observation_sharing(request, ctx.app_version.as_str()).await.map_err(map_error);
-    export_account_key(request: ExportAccountKeyRequest) => export_account_key(runtime, request).await;
     get_blob_media_payload(request: GetBlobMediaRequest) => runtime.get_blob_media_payload(request).await.map_err(map_error);
     get_content_display_settings() => Ok::<_, CommandError>(runtime.get_content_display_settings());
     retry_post_elements(request: RetryPostElementsRequest) => retry_post_elements(runtime, request).await.map_err(map_error);

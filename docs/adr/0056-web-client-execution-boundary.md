@@ -44,6 +44,11 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - 理由: WebRTC の `RTCPeerConnection` は Window にしか無く（#1421 の browser backend が使う）、Worker へ移せるのは生成直後の `RTCDataChannel` だけである。
   Worker に置くと、main thread の接続交渉と Worker の QUIC を橋渡しする処理と、UI と runtime の間の command の橋渡しが増える。先行する iroh 用 WebRTC transport（SuddenlyHazel/iroh-webrtc-transport）も Worker 構成をやめ、main thread に一本化している。
 - 結果として、runtime の 1 回の処理は main thread を占有する。設計原則（件数に依存しない処理）により 1 回の処理は上限つきなので、占有時間も上限つきになる。W8（#1220）で固定 workload の long task を計測する。Worker へ移すことは受入条件の変更として扱う。
+- 例外（2026-10-02 のユーザー判断、#1220 W8 AC-2c）: 鍵の export・import の passphrase の鍵の導出（argon2id、64 MiB・3 回。ADR 0047 §1）だけを Dedicated Worker で行う。
+  導出は件数でなく 1 回で決まる重さ（数百 ms〜数秒）で、上限つきの小さな処理に分けられないため。export の形式と KDF の parameter は native と同じで、後方互換は変えない。
+  - Worker は導出ごとに作り、結果を受けたら止める。main thread の `WebAssembly.Module`（同じ web-runtime の wasm、`wasm_bindgen::module()`）を受け取り、glue を使わずに instantiate して、導出の export（`kukuri_kdf_alloc`・`kukuri_kdf_derive`）だけを呼ぶ。導出は JS の import を呼ばないので、import は呼ばれたら投げる関数で埋める（`crates/desktop-runtime/src/kdf.rs`・`kdf_worker.js`）。
+  - Worker へ渡すのは passphrase・salt・parameter だけ、返すのは導出した鍵だけ。runtime・アカウント鍵・保存は Worker に置かない。native は同じ導出を blocking の thread で行う（`kukuri_core::encrypt_account_key_export`・`decrypt_account_key_export` は導出の実行を呼出し側から受ける）。
+  - Worker の script は `wasm_bindgen::link_to!` の snippet。ADR 0060 §2 の CSP（`script-src 'self'`）のまま読めるよう、配信の build は `wasm-bindgen --split-linked-modules` で別の file にする（既定は `data:` の URL で、CSP が拒む。wasm-bindgen-test の runner は CSP を付けないので既定のまま動く）。Worker が glue を読む形は採らない（Vite で bundle した後は glue の URL が定まらない）。
 
 ### 2. crate の構成
 

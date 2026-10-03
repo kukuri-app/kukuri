@@ -225,20 +225,6 @@ impl ClientHost {
         if self.shutdown_started.load(Ordering::Acquire) {
             anyhow::bail!("client host is shutting down");
         }
-        let dir = self.app_data_dir.clone();
-        // passphrase の鍵の導出（argon2）は重いので、native では blocking の thread で行う。ブラウザには無い。
-        // native の保存先の future は I/O を待たずに終わるので、その thread の中で block_on で進める。
-        #[cfg(not(target_family = "wasm"))]
-        return tokio::task::spawn_blocking(move || {
-            n0_future::future::block_on(crate::import_account_key_from_env(
-                &dir,
-                &export,
-                &passphrase,
-                label,
-            ))
-        })
-        .await?;
-        #[cfg(target_family = "wasm")]
-        return crate::import_account_key_from_env(&dir, &export, &passphrase, label).await;
+        crate::import_account_key_from_env(&self.app_data_dir, &export, &passphrase, label).await
     }
 }

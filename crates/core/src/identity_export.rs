@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use anyhow::{Context, Result, anyhow, bail};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
@@ -52,7 +54,45 @@ pub struct AccountKeyExportPreview {
     pub public_key: Pubkey,
 }
 
-pub fn encrypt_account_key_export(keys: &KukuriKeys, passphrase: &str) -> Result<String> {
+/// passphrase の鍵の導出（argon2id）の入力。導出は重いので、実行する場所を呼出し側が選ぶ（native は blocking の
+/// thread、Web は Worker）。passphrase を含むので `Debug` を持たない。
+pub struct PassphraseKdf {
+    pub passphrase: Vec<u8>,
+    pub salt: Vec<u8>,
+    pub m_cost_kib: u32,
+    pub t_cost: u32,
+    pub p_cost: u32,
+}
+
+impl PassphraseKdf {
+    pub fn derive(&self) -> Result<[u8; 32]> {
+        if self.m_cost_kib > KDF_MAX_M_COST_KIB
+            || self.t_cost > KDF_MAX_T_COST
+            || self.p_cost > KDF_MAX_P_COST
+        {
+            bail!("account key export kdf parameters exceed supported bounds");
+        }
+        let params = Params::new(self.m_cost_kib, self.t_cost, self.p_cost, Some(32))
+            .map_err(|_| anyhow!("invalid account key export kdf parameters"))?;
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+        let mut key = [0u8; 32];
+        argon2
+            .hash_password_into(&self.passphrase, &self.salt, &mut key)
+            .map_err(|_| anyhow!("failed to derive account key export key"))?;
+        Ok(key)
+    }
+}
+
+/// `derive` は受け取った `PassphraseKdf` の `derive` を呼んだ結果を返す（実行する場所だけを選ぶ）。
+pub async fn encrypt_account_key_export<D, F>(
+    keys: &KukuriKeys,
+    passphrase: &str,
+    derive: D,
+) -> Result<String>
+where
+    D: FnOnce(PassphraseKdf) -> F,
+    F: Future<Output = Result<[u8; 32]>>,
+{
     if passphrase.chars().count() < ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS {
         bail!(
             "account key export passphrase must be at least {ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS} characters"
@@ -72,7 +112,14 @@ pub fn encrypt_account_key_export(keys: &KukuriKeys, passphrase: &str) -> Result
         salt_hex.as_str(),
         public_key.as_str(),
     );
-    let key = derive_passphrase_key(passphrase, &salt, KDF_M_COST_KIB, KDF_T_COST, KDF_P_COST)?;
+    let key = derive(PassphraseKdf {
+        passphrase: passphrase.as_bytes().to_vec(),
+        salt: salt.to_vec(),
+        m_cost_kib: KDF_M_COST_KIB,
+        t_cost: KDF_T_COST,
+        p_cost: KDF_P_COST,
+    })
+    .await?;
     let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice())
         .context("failed to initialize account key export cipher")?;
     let secret_hex = keys.export_secret_hex();
@@ -114,7 +161,16 @@ pub fn preview_account_key_export(export: &str) -> Result<AccountKeyExportPrevie
     })
 }
 
-pub fn decrypt_account_key_export(export: &str, passphrase: &str) -> Result<KukuriKeys> {
+/// `derive` は `encrypt_account_key_export` と同じ。
+pub async fn decrypt_account_key_export<D, F>(
+    export: &str,
+    passphrase: &str,
+    derive: D,
+) -> Result<KukuriKeys>
+where
+    D: FnOnce(PassphraseKdf) -> F,
+    F: Future<Output = Result<[u8; 32]>>,
+{
     let envelope = parse_account_key_export(export)?;
     let salt = hex::decode(envelope.salt_hex.trim()).context("invalid account key export salt")?;
     if salt.len() != SALT_LEN {
@@ -134,13 +190,14 @@ pub fn decrypt_account_key_export(export: &str, passphrase: &str) -> Result<Kuku
         envelope.salt_hex.as_str(),
         envelope.public_key.as_str(),
     );
-    let key = derive_passphrase_key(
-        passphrase,
-        salt.as_slice(),
-        envelope.m_cost_kib,
-        envelope.t_cost,
-        envelope.p_cost,
-    )?;
+    let key = derive(PassphraseKdf {
+        passphrase: passphrase.as_bytes().to_vec(),
+        salt,
+        m_cost_kib: envelope.m_cost_kib,
+        t_cost: envelope.t_cost,
+        p_cost: envelope.p_cost,
+    })
+    .await?;
     let cipher = XChaCha20Poly1305::new_from_slice(key.as_slice())
         .context("failed to initialize account key export cipher")?;
     let plaintext = cipher
@@ -184,26 +241,6 @@ fn parse_account_key_export(export: &str) -> Result<AccountKeyExportEnvelopeV1> 
     crate::crypto::validate_pubkey(envelope.public_key.as_str())
         .context("invalid account key export public key")?;
     Ok(envelope)
-}
-
-fn derive_passphrase_key(
-    passphrase: &str,
-    salt: &[u8],
-    m_cost_kib: u32,
-    t_cost: u32,
-    p_cost: u32,
-) -> Result<[u8; 32]> {
-    if m_cost_kib > KDF_MAX_M_COST_KIB || t_cost > KDF_MAX_T_COST || p_cost > KDF_MAX_P_COST {
-        bail!("account key export kdf parameters exceed supported bounds");
-    }
-    let params = Params::new(m_cost_kib, t_cost, p_cost, Some(32))
-        .map_err(|_| anyhow!("invalid account key export kdf parameters"))?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; 32];
-    argon2
-        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
-        .map_err(|_| anyhow!("failed to derive account key export key"))?;
-    Ok(key)
 }
 
 fn account_key_export_aad(

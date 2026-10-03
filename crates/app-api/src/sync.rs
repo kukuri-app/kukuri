@@ -125,6 +125,7 @@ impl AppService {
             // 保存済みの停止設定(手元の集合)。topic をやめると、その topic の設定も消える。
             gossip_disabled_topics: self.list_gossip_disabled_topics().await,
             gossip_disabled_channels: self.list_gossip_disabled_channels().await,
+            account_sync: self.last_account_sync_status().await,
         };
         Ok((status, removed_topics))
     }

@@ -314,6 +314,13 @@ fn sync_status_full() -> SyncStatus {
         },
         gossip_disabled_topics: vec!["kukuri:topic:quiet".to_string()],
         gossip_disabled_channels: vec!["chan-quiet".to_string()],
+        account_sync: crate::AccountSyncStatus {
+            no_peers: false,
+            fetch_failed: true,
+            behind: true,
+            pending_writes: true,
+            rebuilding: false,
+        },
     }
 }
 
@@ -343,6 +350,7 @@ fn views_wire_sync_status_minimal() {
             discovery: DiscoveryStatus::default(),
             gossip_disabled_topics: vec![],
             gossip_disabled_channels: vec![],
+            account_sync: crate::AccountSyncStatus::default(),
         },
     );
 }

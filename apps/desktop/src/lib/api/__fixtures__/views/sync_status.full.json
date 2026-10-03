@@ -48,5 +48,12 @@
   ],
   "gossip_disabled_channels": [
     "chan-quiet"
-  ]
+  ],
+  "account_sync": {
+    "no_peers": false,
+    "fetch_failed": true,
+    "behind": true,
+    "pending_writes": true,
+    "rebuilding": false
+  }
 }

@@ -37,6 +37,9 @@ pub(crate) struct BoundIrohStack {
     pub(crate) transport: Arc<IrohGossipTransport>,
     pub(crate) docs_sync: Arc<IrohDocsSync>,
     pub(crate) blob_service: Arc<IrohBlobService>,
+    /// 停止を終えた。作り直しの失敗で止めた stack を止め直すと、その後に始まって返事の来ない actor を待つ操作（docs の
+    /// replicas の lock を持つ）の終わりを待ち続ける。途中で取り消された停止は、次の停止でやり直す。
+    shut_down: AtomicBool,
 }
 
 /// stack が使う、remote の cache と peer の接続候補の保存先（native は SQLite、Web は IndexedDB。ADR 0056 §5）。
@@ -487,7 +490,7 @@ impl SharedIrohStack {
             let _ = reached.send(());
             let _ = resume.await;
         }
-        previous.shutdown().await;
+        let _ = previous.shutdown().await;
         let next = BoundIrohStack::new(
             &self.source,
             self.network_config.clone(),
@@ -622,9 +625,7 @@ impl SharedIrohStack {
         #[cfg(not(target_family = "wasm"))]
         self.remote_cache_reaper.abort();
         if let Some(current) = self.current.lock().await.take() {
-            current.transport.shutdown().await;
-            current.docs_sync.shutdown().await;
-            current.node.clone().shutdown().await?;
+            current.shutdown().await?;
         }
         Ok(())
     }
@@ -768,13 +769,19 @@ impl BoundIrohStack {
             transport,
             docs_sync,
             blob_service,
+            shut_down: AtomicBool::new(false),
         })
     }
 
-    pub(crate) async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) -> Result<()> {
+        if self.shut_down.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         self.transport.shutdown().await;
         self.docs_sync.shutdown().await;
-        let _ = self.node.clone().shutdown().await;
+        let result = self.node.clone().shutdown().await;
+        self.shut_down.store(true, Ordering::SeqCst);
+        result
     }
 }
 
