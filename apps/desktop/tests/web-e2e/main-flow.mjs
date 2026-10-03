@@ -159,8 +159,8 @@ function captureClipboard() {
 /**
  * WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる口を
  * 持つ（ページより先に動く。#1220 AC-4）。constructor は差し替えない（fallback の端の script が prototype の getter を差し替える）。
- * `window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる（runtime は close
- * の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
+ * `window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じ、閉じた時刻を
+ * `done` に残す（runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
  */
 function trackPeerConnections() {
   window.__kukuriPeers = [];
@@ -179,7 +179,7 @@ function trackPeerConnections() {
       onmessage.set.call(this, handler && ((event) => {
         const cut = window.__kukuriCut;
         if (cut && !cut.done && (cut.received = (cut.received ?? 0) + event.data.byteLength) >= cut.after) {
-          cut.done = true;
+          cut.done = Date.now();
           this.close();
         }
         handler(event);
@@ -816,8 +816,7 @@ const seesOnlyUrl = (browser, post) =>
 /** WebRTC の session の状態（作った順。`trackPeerConnections`）。 */
 const sessionStates = (browser) => browser.execute(() => window.__kukuriPeers.map((peer) => peer.connectionState));
 
-/** WebRTC の session が 1 つ以上開き、交渉の途中の session が無くなるまで待つ。復帰の直後の 1 回目の交渉は、閉じた経路が
- * 選ばれ続ける間（#1482）に期限が切れ、次の試行（15 秒後）で開く。 */
+/** WebRTC の session が 1 つ以上開き、交渉の途中の session が無くなるまで待つ。 */
 const directPathOpens = (browser) =>
   eventually(`${browser.label} opens its WebRTC sessions`, async () => {
     const states = await sessionStates(browser);
@@ -1071,24 +1070,30 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   // 再送は届いた後も重ならない。
   assert.equal((await copies()).length, 1, 'the message is delivered once');
 
-  // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じ、画像が出るまでは新しい session の ICE も
-  // 成立させない（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ
-  // hash で、投稿の card は 1 つ。転送中の stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が
-  // 15 秒の期限で打ち切られ、relay で取り直す）。
+  // WebRTC の経路だけの喪失（relay は健全）: 画像の半分ほどを受け取った時点で DataChannel を閉じ、画像が出るまでは新しい
+  // session の ICE も成立させない（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。同じ取得が relay で続き
+  // （残りだけが relay を通り、取り直しにならない。#1482 J2）、閉じてから 10 秒以内に表示される。表示した画像は原本と同じ hash
+  // で、投稿の card は 1 つ。
   await directPathOpens(a);
   const png = await payloadPng();
   const acrossTheLoss = `image across the webrtc loss ${RUN}`;
-  await a.execute(() => {
-    window.__kukuriCut = { after: 256 * 1024 };
-  });
+  await a.execute((after) => {
+    window.__kukuriCut = { after };
+  }, png.length / 2);
   const publish = nativeWithImage('create_post', { topic: TOPIC, content: acrossTheLoss, reply_to: null }, png);
   const loss = await relayedWhileLoading(a, acrossTheLoss, publish);
   await a.execute(() => {
     window.__kukuriCut.released = true;
   });
-  console.log('webrtc path loss', loss);
-  assert.ok(await a.execute(() => window.__kukuriCut.done), 'the data channel closes during the transfer');
-  assert.ok(loss.relayed >= loss.size / 2, `the transfer finishes through the relay: ${JSON.stringify(loss)}`);
+  const cutAt = await a.execute(() => window.__kukuriCut.done);
+  assert.ok(cutAt, 'the data channel closes during the transfer');
+  const sinceCut = (await a.execute(() => Date.now())) - cutAt;
+  console.log('webrtc path loss', { ...loss, sinceCut });
+  assert.ok(
+    loss.relayed > loss.size / 4 && loss.relayed < loss.size,
+    `the same fetch continues through the relay: ${JSON.stringify(loss)}`
+  );
+  assert.ok(sinceCut <= 10_000, `the image shows within 10 s of the loss: ${sinceCut} ms`);
   assert.deepEqual(await shownImage(a, acrossTheLoss), { cards: 1, sha256: createHash('sha256').update(png).digest('hex') });
 }
 
