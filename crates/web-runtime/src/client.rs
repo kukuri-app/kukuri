@@ -360,7 +360,11 @@ impl Drop for DiagConsole {
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
     // DIAG(一時): panic の内容を console へ出す。
     std::panic::set_hook(Box::new(|info| {
-        web_sys::console::log_1(&JsValue::from_str(&format!("DIAG panic {info}")));
+        let stack = js_sys::Reflect::get(&js_sys::Error::new("panic"), &JsValue::from_str("stack"))
+            .ok()
+            .and_then(|stack| stack.as_string())
+            .unwrap_or_default();
+        web_sys::console::log_1(&JsValue::from_str(&format!("DIAG panic {info}\n{stack}")));
     }));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(

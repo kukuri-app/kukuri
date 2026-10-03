@@ -107,6 +107,7 @@ async function addInitScripts(browser, { ice }) {
 
 // DIAG（一時）: URL の書き換え・active の列・focus の変化を console へ出す。
 function trackNavigation() {
+  Error.stackTraceLimit = 200;
   for (const name of ['pushState', 'replaceState']) {
     const original = history[name];
     history[name] = function (state, title, url) {
