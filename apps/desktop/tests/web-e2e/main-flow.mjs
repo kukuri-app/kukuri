@@ -119,18 +119,17 @@ function captureClipboard() {
 }
 
 /**
- * WebRTC の session（RTCPeerConnection）を作った順に控え、WebRTC の経路だけを失わせる口を持つ（ページより先に動く。
- * #1220 AC-4）。`window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる
- * （runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
+ * WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる口を
+ * 持つ（ページより先に動く。#1220 AC-4）。constructor は差し替えない（fallback の端の script が prototype の getter を差し替える）。
+ * `window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる（runtime は close
+ * の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
  */
 function trackPeerConnections() {
   window.__kukuriPeers = [];
-  const Original = window.RTCPeerConnection;
-  window.RTCPeerConnection = class extends Original {
-    constructor(...args) {
-      super(...args);
-      window.__kukuriPeers.push(this);
-    }
+  const createDataChannel = RTCPeerConnection.prototype.createDataChannel;
+  RTCPeerConnection.prototype.createDataChannel = function (...args) {
+    window.__kukuriPeers.push(this);
+    return createDataChannel.apply(this, args);
   };
   const onmessage = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage');
   Object.defineProperty(RTCDataChannel.prototype, 'onmessage', {
@@ -798,8 +797,11 @@ async function assertWindowed(browser, peers) {
   const cards = await shown();
   assert.ok(cards <= 20, `the first page shows at most 20 posts, saw ${cards}`);
   await directPathOpens(browser);
+  // 接続が戻った後も、頁は窓のまま（後から全件を読み足さない）。
+  const later = await shown();
   const open = (await sessionStates(browser)).filter((state) => state !== 'closed').length;
-  console.log(`${browser.label} windowed`, { cards, open });
+  console.log(`${browser.label} windowed`, { cards, later, open });
+  assert.ok(later <= 20, `the first page stays within 20 posts, saw ${later}`);
   assert.ok(open <= peers, `at most ${peers} WebRTC sessions, saw ${open}`);
 }
 
@@ -904,6 +906,7 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await nativePostsInChannel(ctx.channel.channelId, afterRotation);
   await seesInChannel(a, ctx.channel.channelId, afterRotation);
   const version = await profileVersion(ctx.aPubkey);
+  assert.ok(version, 'native knows the version of the profile');
   // 編集の途中（private channel の列の下書き）。
   const draft = `draft in the channel ${RUN}`;
   await (await openComposer(channelColumn(a, ctx.channel.channelId))).setValue(draft);
@@ -915,11 +918,15 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await a.refresh();
   await assertWindowed(a, ctx.peers);
   assert.equal(await assertConnected(a, ctx.peerEndpoints, ctx.nativeEndpoint), ctx.aEndpoint);
-  assert.equal(await a.execute(() => document.documentElement.dataset.theme), 'dark');
   for (const text of ['Set up your profile', 'What is a community node?']) assert.equal(await findDialog(a, text), null, text);
+  // 設定（成人向け表示。runtime が保存し、既定は無効）は有効のまま。
+  await openSettings(a, 'safety');
+  await eventually('the adult content display stays enabled', () => a.$('[data-testid="adult-content-display-toggle"]').isSelected());
+  await a.$('button[aria-label="Close settings"]').click();
   await channelColumn(a, ctx.channel.channelId).scrollIntoView();
   assert.equal(await channelColumn(a, ctx.channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
-  await sees(a, whileReloading);
+  // reload の間の投稿は、利用者の操作（「Show N new posts」）なしに出る。
+  await eventually(`${a.label} shows the post made while reloading`, async () => (await pageText(a)).includes(whileReloading));
   // 退会した channel は、世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。
   // profile の版は reload で変わらない（再送を新しい編集にしない）。
   const labels = await joinedChannelLabels(a);
@@ -989,14 +996,19 @@ async function lifecycleOnTheDirectPath(a, ctx) {
     return state?.chip === 'Pending' && state;
   });
   await network(false);
-  await eventually('native receives the message once', async () => {
-    const page = await native('list_direct_message_messages', { request: { pubkey: ctx.aPubkey, cursor: null, limit: 50 } });
-    const copies = page.items.filter((item) => item.text === offlineMessage);
-    assert.ok(copies.length <= 1, `the message arrives once: ${JSON.stringify(copies)}`);
-    return copies.length === 1 && copies[0].message_id === pending.id;
+  const copies = async () =>
+    (await native('list_direct_message_messages', { request: { pubkey: ctx.aPubkey, cursor: null, limit: 50 } })).items.filter(
+      (item) => item.text === offlineMessage
+    );
+  await eventually('native receives the message', async () => {
+    const received = await copies();
+    assert.ok(received.length <= 1, `the message arrives once: ${JSON.stringify(received)}`);
+    return received.length === 1 && received[0].message_id === pending.id;
   });
   await eventually('the delivered message', async () => (await directMessageState(a, offlineMessage))?.chip === 'Delivered');
   await resumesOnTheDirectPath(a, ctx.aPubkey, 'going online');
+  // 再送は届いた後も重ならない。
+  assert.equal((await copies()).length, 1, 'the message is delivered once');
 
   // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じる。relay で完了し、表示した画像は原本と同じ
   // hash で、投稿の card は 1 つ。転送中の stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が
