@@ -37,6 +37,11 @@
       "pending": "Importing…",
       "success": "Account added. Switch to it to start using the imported account.",
       "switchNow": "Switch now"
+    },
+    "browserStorage": {
+      "persisted": "This browser does not delete this site's data automatically. If you clear the site data yourself, your account keys are deleted too.",
+      "notPersisted": "This browser may delete this site's data automatically when storage runs low or after a long time without use. If that happens, your account keys are deleted too.",
+      "recovery": "If you export your account key, you can bring the account back by importing it from Add account. You can also move it from another device. Not all history, such as posts, comes back."
     }
   },
   "accountTransfer": {

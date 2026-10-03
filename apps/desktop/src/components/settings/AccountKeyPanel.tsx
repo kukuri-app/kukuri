@@ -1,4 +1,5 @@
 import { AccountKeyImportForm } from './AccountKeyImportForm';
+import { BrowserStorageNotice } from './BrowserStorageNotice';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -32,9 +33,11 @@ function errorMessage(error: unknown): string {
 type AccountKeyPanelProps = {
   // #967: 端末全体のバックアップ／復元(設定 > バックアップと復元)への案内。section 移動だけを行う。
   onOpenDeviceBackup?: () => void;
+  // Web だけ（#1217 AC-5）: このブラウザの保存の状態（`navigator.storage.persisted()`）と、消えたときの戻し方を示す。
+  showBrowserStorage?: boolean;
 };
 
-export function AccountKeyPanel({ onOpenDeviceBackup }: AccountKeyPanelProps = {}) {
+export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage }: AccountKeyPanelProps = {}) {
   const { t } = useTranslation(['settings']);
 
   const [accounts, setAccounts] = useState<AccountsSnapshot | null>(null);
@@ -50,6 +53,7 @@ export function AccountKeyPanel({ onOpenDeviceBackup }: AccountKeyPanelProps = {
 
   const [switchPendingId, setSwitchPendingId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [persisted, setPersisted] = useState<boolean | null>(null);
 
   const refreshAccounts = useCallback(async () => {
     try {
@@ -63,6 +67,11 @@ export function AccountKeyPanel({ onOpenDeviceBackup }: AccountKeyPanelProps = {
   useEffect(() => {
     void refreshAccounts();
   }, [refreshAccounts]);
+
+  useEffect(() => {
+    if (!showBrowserStorage) return;
+    void navigator.storage.persisted().then(setPersisted, () => setPersisted(false));
+  }, [showBrowserStorage]);
 
   const passphraseTooShort =
     exportPassphrase.length > 0 && exportPassphrase.length < MIN_PASSPHRASE_CHARS;
@@ -113,6 +122,7 @@ export function AccountKeyPanel({ onOpenDeviceBackup }: AccountKeyPanelProps = {
       </CardHeader>
 
       <Notice>{t('settings:accountKey.scopeNotice')}</Notice>
+      {persisted === null ? null : <BrowserStorageNotice persisted={persisted} />}
       {onOpenDeviceBackup ? (
         <Button variant='secondary' type='button' onClick={onOpenDeviceBackup}>
           {t('settings:accountKey.openBackup')}

@@ -1,10 +1,10 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import type { RuntimeEvent } from '@/lib/api';
 
-// Web の build（#1217 W4 AC-4、ADR 0059 §4）: command と event を web-runtime の代わりに試験の mock へ向ける。
+// Web の build（#1217 W4、ADR 0059）: command と event を web-runtime の代わりに試験の mock へ向ける。
 const { invokeMock, listeners } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listeners: new Set<(event: RuntimeEvent) => void>(),
@@ -42,12 +42,28 @@ function webRuntime(status: () => Promise<unknown>, takeOver: () => Promise<unkn
   });
 }
 
+// ブラウザの保存の永続化（ADR 0059 §6）。既定は許可済み。
+const storage = { persisted: vi.fn<() => Promise<boolean>>(), persist: vi.fn<() => Promise<boolean>>() };
+
 beforeEach(() => {
   invokeMock.mockReset();
   listeners.clear();
   delete window.__KUKURI_DESKTOP__;
   window.history.replaceState(null, '', '/');
+  storage.persisted.mockReset().mockResolvedValue(true);
+  storage.persist.mockReset().mockResolvedValue(true);
+  Object.defineProperty(navigator, 'storage', { configurable: true, value: storage });
 });
+
+// #1217 AC-5: runtime が使える状態になるたびに、まだ許可されていなければ保存の永続化を求める。許可済みなら求めない。
+test.each([[false, 1], [true, 0]])('a ready runtime asks the browser to keep the site data unless it already does (persisted: %s)', async (persisted, requests) => {
+  storage.persisted.mockResolvedValue(persisted);
+  webRuntime(runInThisTab, runInThisTab);
+  render(<App />);
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+  await waitFor(() => expect(storage.persisted).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(storage.persist).toHaveBeenCalledTimes(requests));
+}, 20000);
 
 test('a tab opened while another tab runs kukuri takes it over only on request', async () => {
   const user = userEvent.setup();

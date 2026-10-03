@@ -258,6 +258,7 @@ export function DesktopShellSettingsDrawer({
       content: (
         <AccountKeyPanel
           onOpenDeviceBackup={IS_WEB_RUNTIME ? undefined : () => openDiagnosticSettings('backup')}
+          showBrowserStorage={IS_WEB_RUNTIME}
         />
       ),
     },

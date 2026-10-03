@@ -592,7 +592,11 @@
     "save": "Save",
     "later": "Later",
     "nodeUnavailable": "The community node status is unavailable. Retry or skip to continue setting up your profile.",
-    "skipNode": "Skip and continue"
+    "skipNode": "Skip and continue",
+    "restore": {
+      "description": "You can bring back an account you used before by importing an exported account key or by moving it from another device (not all history, such as posts, comes back).",
+      "action": "Restore a previous account"
+    }
   },
   "scopeLimit": {
     "title": "Limit reached",

@@ -2,6 +2,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { useRef, useState } from 'react';
 import { firstUnconsentedCommunityNode } from '@/lib/api/communityNodeAvailability';
 import { InitialProfileSetup } from './InitialProfileSetup';
+import { requestAccountAdd } from './accountAddRequest';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 import type { DesktopApi } from '@/lib/api';
 import { communityIndexNodeLabel } from '@/lib/api/communityIndex';
 import { communityIndexAvailability, type CommunityNodeAvailability } from '@/lib/api/communityNodeAvailability';
@@ -56,6 +58,7 @@ export function CommunityNodeOnboarding({ api, onAccept, onOpenSettings, onRetry
       onCloseAutoFocus={intro.restoreFocus}
     /> : null}
     {consent.dialog ? <CommunityNodeConsentDialog {...consent.dialog} /> : null}
-    <InitialProfileSetup key={state.author} onRequired={setProfileRequired} ready={nodeReady && !baseUrl && !consent.dialog} nodeFailed={state.statusError} onSkipNode={() => setResolvedFor(state.author)} />
+    <InitialProfileSetup key={state.author} onRequired={setProfileRequired} ready={nodeReady && !baseUrl && !consent.dialog} nodeFailed={state.statusError} onSkipNode={() => setResolvedFor(state.author)}
+      onRestore={IS_WEB_RUNTIME ? requestAccountAdd : undefined} />
   </>;
 }

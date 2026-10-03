@@ -1,0 +1,163 @@
+{
+  "conditions": 18,
+  "violations": 0,
+  "incomplete": 6,
+  "results": [
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--not-persisted",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "settings-browserstoragenotice--persisted",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    },
+    {
+      "story": "shell-initialprofilesetup--web-restore",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "nodes": 2
+        }
+      ]
+    }
+  ]
+}

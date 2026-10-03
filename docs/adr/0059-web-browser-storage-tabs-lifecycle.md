@@ -117,9 +117,24 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 
 ### 6. データの喪失と復旧
 
-- account の作成・import の後に `navigator.storage.persist()` を要求し、許可の状態を設定の画面に示す（W8）。
+- runtime が使える状態になるたびに、まだ許可されていなければ `navigator.storage.persist()` を要求し、許可の状態を設定の画面に示す（2026-10-03 のユーザー判断）。
+  - 旧案「account の作成・import の後に要求」は失効した。作成と移行の後は画面を読み込み直すので、要求を次の起動へ持ち越す仕組みが要るため。
+  - Chrome・Safari は確認を出さずに、browser が利用の履歴から判断する。後から許可に変わることもある。
+  - Firefox は利用者に確認を出す。利用者が決めるまでは、起動のたびに出うる。
 - app による cache の回収は vault と device の database と、cache の database の保護行（private channel の鍵を含む）を消さない。利用者のサイトデータの削除・browser の eviction（Safari の 7 日間の削除を含む）で失われた鍵は、既存の暗号化 export（ADR 0047）と QR・リンクの移行（#1211）から戻す。保持を偽らない。
 - export の鍵の導出（argon2id 64 MiB）は main thread を数秒止めうる。明示の操作のときだけ行い、進行中を示す（W8）。
+- W4 AC-5 の実装（2026-10-03）
+  - 要求は App の起動の gate で、`ready` になるたびに行う。結果は待たない。
+  - 設定の「アカウント」に、次の 2 つを示す（`BrowserStorageNotice`）。
+    - このブラウザの保存の状態（自動では消さない／自動で消すことがある）。
+    - 消えたときの戻し方: export した鍵を「アカウント追加」から import する。別の端末から移す。投稿などの履歴は、全ては戻らない。
+  - 初回の profile 設定の dialog に、同じ戻し方の案内と「以前のアカウントを戻す」を出す。押すと「アカウント追加」の dialog を開く（2026-10-03 のユーザー判断）。
+  - 消えたことは検出しない。browser は origin のデータを丸ごと消すので、消えた後の起動を初回と区別できない。
+    - 消えた後の初回に作られたアカウントは、戻した後も一覧に残る。logout で消せる。
+  - native・Android との境界
+    - native の鍵は OS の keyring（使えなければ file）にあり、browser のサイトデータの削除の対象外。端末全体の backup は ADR 0048。
+    - Android の OS 固有の保存と復帰は #1196 が所有する。
+  - 判定は web-e2e（Chromium）の消去→復旧。Firefox・Safari・Android の実機は W8 #1220 AC-5 の matrix。
 
 ### 7. 所有する AC
 

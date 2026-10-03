@@ -177,3 +177,29 @@ test('successful import offers switching to the new account', async () => {
   });
   vi.unstubAllGlobals();
 });
+
+// #1217 AC-5: Web では、このブラウザの保存の状態と、消えたときの戻し方を示す。許可が無いのに「消えない」と示さない。
+test.each([
+  [true, "This browser does not delete this site's data automatically."],
+  [false, "This browser may delete this site's data automatically"],
+])('the web build shows whether this browser keeps the site data (persisted: %s)', async (persisted, state) => {
+  Object.defineProperty(navigator, 'storage', {
+    configurable: true,
+    value: { persisted: vi.fn().mockResolvedValue(persisted) },
+  });
+  try {
+    render(<AccountKeyPanel showBrowserStorage />);
+    const notice = await screen.findByTestId('browser-storage-notice');
+    expect(notice).toHaveTextContent(state);
+    expect(notice).toHaveTextContent('importing it from Add account');
+    expect(notice).toHaveTextContent('Not all history, such as posts, comes back.');
+  } finally {
+    Reflect.deleteProperty(navigator, 'storage');
+  }
+});
+
+test('the desktop build does not show the browser storage notice', async () => {
+  render(<AccountKeyPanel />);
+  await screen.findByText(ACTIVE_PUBKEY);
+  expect(screen.queryByTestId('browser-storage-notice')).not.toBeInTheDocument();
+});
