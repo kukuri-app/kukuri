@@ -478,7 +478,6 @@ fn export_ipc_types() {
         kukuri_core::AccountTransferRole,
         kukuri_core::AccountTransferFailure,
         kukuri_core::AccountTransferHistory,
-        kukuri_core::AccountTransferHistoryResult,
         // #855: 端末バックアップ / 復元
         CreateDeviceBackupRequest,
         PreviewDeviceBackupRequest,

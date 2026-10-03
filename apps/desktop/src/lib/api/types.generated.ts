@@ -972,15 +972,13 @@ export type OpenAccountTransferRequest = { link: string, history: AccountTransfe
 
 export type DecideAccountTransferRequest = { accept: boolean, };
 
-export type AccountTransferStatus = { "state": "idle" } | { "state": "waiting", expires_at_ms: number, } | { "state": "connecting" } | { "state": "confirming", role: AccountTransferRole, code: string, local_accepted: boolean, } | { "state": "transferring", role: AccountTransferRole, items: number, } | { "state": "history", role: AccountTransferRole, account_id: string | null, posts: number, unavailable: number, } | { "state": "completed", role: AccountTransferRole, account_id: string | null, history: AccountTransferHistoryResult | null, } | { "state": "failed", role: AccountTransferRole, reason: AccountTransferFailure, };
+export type AccountTransferStatus = { "state": "idle" } | { "state": "waiting", expires_at_ms: number, } | { "state": "connecting" } | { "state": "confirming", role: AccountTransferRole, code: string, local_accepted: boolean, } | { "state": "transferring", role: AccountTransferRole, items: number, } | { "state": "history", role: AccountTransferRole, account_id: string | null, posts: number, unavailable: number, } | { "state": "completed", role: AccountTransferRole, account_id: string | null, history: { posts: number, unavailable: number, stopped: AccountTransferFailure | null, } | null, } | { "state": "failed", role: AccountTransferRole, reason: AccountTransferFailure, };
 
 export type AccountTransferRole = "source" | "target";
 
 export type AccountTransferFailure = "expired" | "invalid" | "unreachable" | "rejected" | "cancelled" | "interrupted" | "storage";
 
 export type AccountTransferHistory = "month" | "year" | "all";
-
-export type AccountTransferHistoryResult = { posts: number, unavailable: number, stopped: AccountTransferFailure | null, };
 
 export type CreateDeviceBackupRequest = { path: string, passphrase: string, frontend_state: { [key in string]: string }, };
 

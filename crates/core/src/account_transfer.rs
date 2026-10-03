@@ -180,6 +180,7 @@ pub enum AccountTransferStatus {
     Completed {
         role: AccountTransferRole,
         account_id: Option<String>,
+        #[cfg_attr(feature = "ts", ts(inline))]
         history: Option<AccountTransferHistoryResult>,
     },
     Failed {
