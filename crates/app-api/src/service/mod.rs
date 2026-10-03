@@ -380,9 +380,20 @@ pub struct ServiceHandles {
     pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
     /// 取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。`AppService` の構築時に入る。
     pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
+    /// 自分を指す相手の follow の edge を新しく保存したときに、相手の pubkey を知らせる(#1521 AC-1b)。
+    pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
 }
 
 impl ServiceHandles {
+    /// 自分を指す follow の edge を新しく保存したら、相手を知らせる。画面はその相手の開いている列を読み直す(#1521 AC-1b)。
+    pub(crate) fn author_relationship_changed(&self, edge: &FollowEdge) {
+        if edge.target_pubkey.as_str() == self.keys.public_key_hex() {
+            let _ = self
+                .author_relationship_changes
+                .send(edge.subject_pubkey.as_str().to_string());
+        }
+    }
+
     pub(crate) async fn put_post_projection(&self, row: ObjectProjectionRow) -> Result<()> {
         if row.author_pubkey == self.keys.public_key_hex() {
             self.projection_store.put_object_projection(row).await
@@ -501,6 +512,7 @@ impl ServiceHandles {
             range_checks: Arc::default(),
             writer_switched_at: Arc::default(),
             notify_remote_posts: None,
+            author_relationship_changes: tokio::sync::broadcast::channel(64).0,
         }
     }
 }
@@ -678,6 +690,13 @@ impl AppService {
 
     pub fn notification_inserted_notify(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.notification_inserted_notify)
+    }
+
+    /// 自分を指す相手の follow の edge を新しく保存したときの、相手の pubkey(#1521 AC-1b)。
+    pub fn subscribe_author_relationship_changes(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<String> {
+        self.services.author_relationship_changes.subscribe()
     }
 
     pub fn metaverse_resource_budget(&self) -> &kukuri_core::MetaverseResourceBudgetConfig {

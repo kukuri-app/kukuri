@@ -591,19 +591,22 @@ async fn hydrate_author_record(
     if changed
         && kind == AuthorKeyKind::Follow
         && let Ok(Some(edge)) = parse_follow_edge(&envelope)
-        && let Some(candidate) =
+    {
+        services.author_relationship_changed(&edge);
+        if let Some(candidate) =
             super::notifications_support::notification_candidate_from_verified_follow(
                 &local,
                 &author_replica_id(author_pubkey),
                 &edge,
             )
-    {
-        AppService::put_notification_candidate(
-            services.projection_store.as_ref(),
-            &local,
-            candidate,
-        )
-        .await?;
+        {
+            AppService::put_notification_candidate(
+                services.projection_store.as_ref(),
+                &local,
+                candidate,
+            )
+            .await?;
+        }
     }
     Ok(AuthorHydration::reflected(changed))
 }

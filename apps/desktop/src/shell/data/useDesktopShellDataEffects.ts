@@ -79,6 +79,7 @@ type UseDesktopShellDataEffectsArgs = {
   // 「何をどう読むか」は loader を呼ぶ。
   loadProfileSection: () => Promise<void>;
   loadAuthorSection: (pubkey: string) => Promise<void>;
+  refreshConversationColumn: (peerPubkey: string) => Promise<void>;
   loadMessagesSection: () => Promise<void>;
   loadNotificationsSection: (options?: { markAsRead?: boolean }) => Promise<void>;
   refreshNotificationStatus: () => Promise<void>;
@@ -127,6 +128,7 @@ export function useDesktopShellDataEffects({
   loadTopics,
   loadProfileSection,
   loadAuthorSection,
+  refreshConversationColumn,
   loadMessagesSection,
   loadNotificationsSection,
   refreshNotificationStatus,
@@ -342,10 +344,25 @@ export function useDesktopShellDataEffects({
     [setCommunityNodeStatuses, setSyncStatus, storeApi]
   );
 
+  // #1521 AC-1b: 自分を指す相手の follow の edge が届いたら、その相手の開いている profile と会話の列の関係を読み直す
+  // (知らせが溢れたときの `null` は、開いている列を 1 回ずつ)。
+  const refreshAuthorRelationship = useCallback(
+    (pubkey: string | null) => {
+      for (const column of storeApi.getState().workspaceState.columns) {
+        const peer = column.entityId;
+        if (!peer || (pubkey !== null && peer !== pubkey)) continue;
+        if (column.kind === 'profile') void loadAuthorSection(peer).catch(() => undefined);
+        if (column.kind === 'conversation') void refreshConversationColumn(peer);
+      }
+    },
+    [loadAuthorSection, refreshConversationColumn, storeApi]
+  );
+
   useRuntimeEventBridge(
     refreshNotificationsFromEvent,
     applySyncStatusChange,
-    handleAdultLabelEvicted
+    handleAdultLabelEvicted,
+    refreshAuthorRelationship
   );
 
   useEffect(() => {

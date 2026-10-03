@@ -1004,6 +1004,7 @@ export function useDesktopShellData({
     loadTopics,
     loadProfileSection,
     loadAuthorSection,
+    refreshConversationColumn,
     loadMessagesSection,
     loadNotificationsSection,
     loadCommunityIndexCapability,

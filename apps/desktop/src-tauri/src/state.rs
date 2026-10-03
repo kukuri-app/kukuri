@@ -288,6 +288,12 @@ fn spawn_runtime_event_bridge(app_handle: &tauri::AppHandle, host: &Arc<ClientHo
                         "kukuri://runtime-event",
                         &kukuri_desktop_runtime::RuntimeEvent::AdultMediaLabelEvicted { hash: None },
                     );
+                    let _ = app.emit(
+                        "kukuri://runtime-event",
+                        &kukuri_desktop_runtime::RuntimeEvent::AuthorRelationshipChanged {
+                            pubkey: None,
+                        },
+                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
