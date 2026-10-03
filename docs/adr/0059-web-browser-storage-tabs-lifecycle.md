@@ -86,6 +86,12 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - lock を取れなかった tab は「別のタブで使用中」を示し、利用者の明示の操作でだけ `steal` する。奪われた tab は lock の request の reject を受けて runtime を止め（世代の終了。旧世代の callback は反映しない）、同じ表示へ戻る。
 - tab 間で状態を同期する仕組み（BroadcastChannel 等）は作らない。runtime を持つ tab が 1 つなので要らない。
 - 端末固有の ID と、account ごとの iroh の endpoint 秘密鍵は、tab ごとに複製しない。WebRTC の session も runtime の所有に従う（W9・W10）。
+- W4 AC-4 の実装（2026-10-03）
+  - lock は `crates/web-runtime/src/tab_lock.rs`。web-sys の Web Locks は unstable の cfg を要るので、`navigator.locks.request` を直接呼ぶ。持つ間は解決しない promise を callback から返し、手放すときに resolve する。
+  - `start` は保存先を開く前に lock を取る。取れなければ runtime を始めず、起動の状態を `in_use_elsewhere`（Web だけ）にする。この状態の間は、起動の状態の読取りと引継ぎの command `take_over_runtime`（Web だけ。`invoke` で呼ぶ）だけを受ける。
+  - 奪われた tab は、host を止めて（世代の終了）起動の状態を `in_use_elsewhere` に戻してから、`RuntimeEvent::StartupStatusChanged` を callback へ渡す。画面は起動の状態を読み直して「別のタブで使用中」へ移る。`shutdown` は host を止めてから lock を手放す。
+  - 画面の store は shell を出すときに保存先から作る。引き継いだ tab は、前の tab が保存した layout・下書きから続ける。
+  - §5 の復帰・中断の入口は host の操作の排他の中で行う（account の切替・logout の直前に掴んだ旧 runtime で処理を続けない）。
 
 ### 5. lifecycle と通信の復帰
 

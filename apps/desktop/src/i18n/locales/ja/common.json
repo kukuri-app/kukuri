@@ -172,7 +172,7 @@
       "unknown": "不明な起動エラー"
     },
     "inUseElsewhere": {
-      "title": "kukuri は別のタブで使用中です。",
+      "title": "kukuri は別のタブで使用中です",
       "description": "同時に動かせるのは 1 つのタブだけです。このタブで使うと、別のタブの kukuri は止まります。",
       "takeOver": "このタブで使う",
       "failed": "このタブへ切り替えられませんでした。もう一度お試しください。"

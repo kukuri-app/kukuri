@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { HashRouter } from 'react-router-dom';
 
 import { ConsentGateView } from '@/components/ConsentGateView';
+import { RuntimeInUseView } from '@/components/RuntimeInUseView';
 import { WindowClosePrompt } from '@/components/WindowClosePrompt';
 import { normalizeSupportedLocale } from '@/i18n';
 import { changeDesktopLocale } from '@/i18n/changeLocale';
@@ -33,6 +34,7 @@ import {
   writeDesktopTheme,
 } from '@/lib/theme';
 import { copyTextToClipboard } from '@/lib/utils';
+import { IS_WEB_RUNTIME, listenWebRuntimeEvents } from '@/lib/webRuntime';
 import {
   WORKSPACE_LAYOUT_STORAGE_KEY,
   startWorkspaceLayoutPersistence,
@@ -66,6 +68,14 @@ export function App(props: AppProps) {
   useEffect(() => {
     if (startupGate.status === 'ready') writeDesktopTheme(theme);
   }, [startupGate.status, theme]);
+
+  // Web だけ: 別の tab に runtime を引き継がれたら、起動の状態を読み直す（ADR 0059 §4）。
+  useEffect(() => {
+    if (!IS_WEB_RUNTIME) return;
+    return listenWebRuntimeEvents((event) => {
+      if (event.type === 'startup_status_changed') setStartupCheck((count) => count + 1);
+    });
+  }, []);
 
   useEffect(() => {
     if (props.api) {
@@ -155,14 +165,7 @@ export function App(props: AppProps) {
   }
 
   if (startupGate.status === 'in_use_elsewhere') {
-    return (
-      <InUseElsewhereScreen
-        onTakeOver={async () => {
-          await takeOverRuntime();
-          setStartupCheck((count) => count + 1);
-        }}
-      />
-    );
+    return <RuntimeInUseGate onTakenOver={() => setStartupCheck((count) => count + 1)} />;
   }
 
   return <DesktopShell {...props} theme={theme} onThemeChange={setTheme} />;
@@ -207,35 +210,18 @@ function DesktopShell(props: DesktopShellPageProps) {
   );
 }
 
-// Web だけ: 同じ origin の別の tab が kukuri を動かしている（ADR 0059 §4）。利用者の操作でだけ、この tab に引き継ぐ。
-function InUseElsewhereScreen({ onTakeOver }: { onTakeOver: () => Promise<void> }) {
-  const { t } = useTranslation(['common']);
+// 引継ぎの操作は App が所有し、描画は RuntimeInUseView に任せる（ConsentGate と同じ分け方）。
+function RuntimeInUseGate({ onTakenOver }: { onTakenOver: () => void }) {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const takeOver = () => {
     setPending(true);
     setFailed(false);
-    onTakeOver()
-      .catch(() => setFailed(true))
+    takeOverRuntime()
+      .then(onTakenOver, () => setFailed(true))
       .finally(() => setPending(false));
   };
-
-  return (
-    <main className='startup-error-screen'>
-      <section className='startup-error-panel' aria-live='polite'>
-        <Notice>
-          <strong>{t('startup.inUseElsewhere.title')}</strong>
-          <span>{t('startup.inUseElsewhere.description')}</span>
-        </Notice>
-        {failed ? <Notice tone='destructive'>{t('startup.inUseElsewhere.failed')}</Notice> : null}
-        <div className='startup-error-actions'>
-          <Button type='button' disabled={pending} onClick={takeOver}>
-            {t('startup.inUseElsewhere.takeOver')}
-          </Button>
-        </div>
-      </section>
-    </main>
-  );
+  return <RuntimeInUseView pending={pending} failed={failed} onTakeOver={takeOver} />;
 }
 
 function ConsentGate({

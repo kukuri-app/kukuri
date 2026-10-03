@@ -1,0 +1,133 @@
+{
+  "conditions": 18,
+  "violations": 0,
+  "incomplete": 0,
+  "results": [
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--default",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--pending",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "en",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "en",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "ja",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "ja",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "zh-CN",
+      "theme": "dark",
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "story": "startup-runtimeinuse--take-over-failed",
+      "locale": "zh-CN",
+      "theme": "light",
+      "violations": [],
+      "incomplete": []
+    }
+  ]
+}
