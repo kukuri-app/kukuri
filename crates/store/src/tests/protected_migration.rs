@@ -341,10 +341,19 @@ async fn the_writer_switches_once_after_the_migration_and_stays_switched() -> an
             .finish_protected_migration_page(kind, "", true)
             .await?;
     }
-    let switched = store
-        .switch_writer_if_migrated()
-        .await?
-        .expect("switched after the migration");
+    // 別の接続(runtime の起動時に走る成人向け blob の削除など)が書込み中でも、失敗せずに書込みの終わりを待つ(#1471)。
+    let mut writer = store.pool().begin().await?;
+    sqlx::query("UPDATE remote_content_cache_usage SET used_bytes = used_bytes WHERE id = 1")
+        .execute(&mut *writer)
+        .await?;
+    let switching = tokio::spawn({
+        let store = store.clone();
+        async move { store.switch_writer_if_migrated().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!switching.is_finished(), "{:?}", switching.await);
+    writer.commit().await?;
+    let switched = switching.await??.expect("switched after the migration");
     store.close().await;
     let store = SqliteStore::connect_file(&path).await?;
     assert_eq!(store.writer_switched_at().await?, Some(switched));
