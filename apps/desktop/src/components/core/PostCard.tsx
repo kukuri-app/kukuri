@@ -537,6 +537,7 @@ export function PostCard({
         ) : null}
         <LinkPreviewCard
           content={primaryContent}
+          objectId={showRepostAsPrimary && repostSource ? repostSource.source_object_id : post.object_id}
           enabled={linkPreviewEligible}
           fetcher={linkPreviewFetcher}
         />
