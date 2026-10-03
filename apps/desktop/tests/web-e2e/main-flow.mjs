@@ -470,9 +470,12 @@ async function exchangeDirectMessagesWithNative(browser, webPubkey, nativeParty,
 }
 
 /** Web↔Web の DM: 互いの投稿の作者を follow して会話を開いて送り合い、y から x への画像の経路を判定する。x・y は
- * `{ browser, pubkey, post }`（post は profile を開く入口）。 */
+ * `{ browser, pubkey, post }`（post は profile を開く入口）。相手の follow は、相手の profile を開いた時（author の購読の
+ * 開始）の読みで届く（follow の offer は宛先の探索が有界で、届かないことがある。ADR 0055 の R4-D）。そこで x は follow
+ * したら profile を閉じ、y が follow した後に開き直す。 */
 async function exchangeDirectMessagesBetweenWeb(x, y, direct) {
   await openAuthorProfile(x.browser, y.post, y.pubkey);
+  await columnOf(x.browser, 'profile', y.pubkey).$('button.shell-column-close-button').click();
   await openDirectMessage(y.browser, x.post, x.pubkey);
   await openDirectMessage(x.browser, y.post, y.pubkey);
   const fromY = `dm from ${y.browser.label} to ${x.browser.label}`;
@@ -694,6 +697,21 @@ async function main() {
     const channelFallback = `channel image to web-c ${RUN}`;
     const toC = await relayedWhileLoading(c, channelFallback, postWebImage(a, channelFallback, channelColumn(a, channelId)));
     assertRoute('web→web channel fallback', toC, false);
+    // fallback の端が作った channel に native と直接経路の端が参加し、native が作った channel に fallback の端が参加する
+    // （作成・招待・参加の両方の向き）。
+    const cChannelLabel = `channel-c-${RUN}`;
+    const cChannelToken = await createChannel(c, cChannelLabel);
+    const cChannelId = await nativeJoinsChannel(cChannelToken);
+    const fromCInOwnChannel = await exchangeInChannelWithNative(c, cChannelId, 'fallback-owned', false);
+    await joinChannel(a, cChannelToken, cChannelLabel);
+    await seesInChannel(a, cChannelId, fromCInOwnChannel);
+    const fromAInCChannel = `web-a in channel of web-c ${RUN}`;
+    await post(a, fromAInCChannel, channelColumn(a, cChannelId));
+    await seesInChannel(c, cChannelId, fromAInCChannel);
+    const nativeChannelForCLabel = `channel-native-c-${RUN}`;
+    const nativeChannelForC = await nativeCreatesChannel(nativeChannelForCLabel);
+    await joinChannel(c, nativeChannelForC.token, nativeChannelForCLabel);
+    await exchangeInChannelWithNative(c, nativeChannelForC.channelId, 'native-owned-fallback', false);
     const cPubkey = withC.webPost.author_pubkey;
     await exchangeDirectMessagesWithNative(c, cPubkey, { pubkey: nativePubkey, post: withC.fromNative }, false);
     await exchangeDirectMessagesBetweenWeb(
