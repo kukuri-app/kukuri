@@ -19,6 +19,7 @@ import type {
 
 import { invokeDesktop } from './invoke/desktop';
 import { isDesktopMockActive } from './invoke/dispatch';
+import { IS_WEB_RUNTIME } from '../webRuntime';
 
 // #859: アカウント鍵の export / import と複数アカウント管理。DesktopApi 外の
 // スタンドアロンコマンド(appConsent.ts と同じ形)。mock ビルドでは in-memory の
@@ -60,6 +61,8 @@ export async function listAccounts(): Promise<AccountsSnapshot> {
 
 export async function getAccountDisplay(): Promise<AccountDisplay[]> {
   if (isDesktopMockActive()) return mockAccounts.accounts.map((a) => ({ id: a.id, name: null, display_name: a.label, picture: null, unavailable: false }));
+  // 他のアカウントの DB を読む表示は native だけ（ADR 0056 §2）。Web では他のアカウントの profile を出さない。
+  if (IS_WEB_RUNTIME) return [];
   return invokeDesktop<AccountDisplay[]>('get_account_display');
 }
 

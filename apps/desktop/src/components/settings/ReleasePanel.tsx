@@ -34,6 +34,7 @@ import { useDesktopShellStore } from '@/shell/store';
 import { SettingsActionRow } from './SettingsActionRow';
 import { SettingsDiagnosticList } from './SettingsDiagnosticList';
 import { formatUpdateStatus } from './releasePanelCopy';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 function updateErrorTranslationKey(errorMessage?: string | null): string {
   return `settings:release.update.errors.${classifyUpdateError(errorMessage)}`;
@@ -190,7 +191,8 @@ export function ReleasePanel({
       {externalLink.pending ? <Notice role='status'>{t('common:externalLink.opening')}</Notice> : null}
       {externalLink.failed ? <Notice tone='destructive' role='alert'>{t('common:externalLink.failed')}</Notice> : null}
 
-      <section className='min-w-0 space-y-3'>
+      {/* Web は配信元から最新を読むので、アプリの更新は無い（ADR 0060 §3）。 */}
+      {IS_WEB_RUNTIME ? null : <section className='min-w-0 space-y-3'>
         <h4 className='text-base font-semibold text-foreground'>
           {t('settings:release.update.title')}
         </h4>
@@ -302,7 +304,7 @@ export function ReleasePanel({
           )}
         </SettingsActionRow>
         </> : null}
-      </section>
+      </section>}
 
       <section className='min-w-0 space-y-3'>
         <h4 className='text-base font-semibold text-foreground'>

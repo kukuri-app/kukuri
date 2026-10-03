@@ -12,6 +12,8 @@ use kukuri_store::SqliteStore;
 use crate::AccountSyncStatus;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+mod controller_requests;
+
 /// 試験の端末の docs。書込み・読取りを止められ、読取りの回数を数え、`remote` を本人の別の端末の reader として返す。
 #[derive(Clone)]
 struct DeviceDocs {

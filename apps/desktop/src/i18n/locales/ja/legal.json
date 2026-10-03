@@ -22,7 +22,8 @@
     "acceptedValue": "v{{version}}(同意日時: {{acceptedAt}})",
     "ageAttestationHeading": "年齢の自己申告",
     "ageAttestedValue": "18歳以上であることを申告済み(申告日時: {{attestedAt}})",
-    "notAttested": "未申告"
+    "notAttested": "未申告",
+    "webUnavailable": "Web 版では、端末の backup・アプリの更新・ウィンドウと OS 通知の設定・開発者ログ・live / game / metaverse / Dome は使えません。別の端末へ移るときは、アカウントの鍵の export を使ってください。"
   },
   "metadata": {
     "effectiveDate": "施行日: {{date}}",

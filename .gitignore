@@ -149,6 +149,10 @@ operator-config.yaml
 promo-artifacts/
 apps/desktop/dist-promo/
 
+# Web の build の出力と、その入力の web-runtime の wasm-bindgen の出力 (#1220)
+apps/desktop/dist-web/
+apps/desktop/web-runtime-pkg/
+
 # Python の bytecode cache（scripts/release の test が import で生成する）
 __pycache__/
 *.pyc

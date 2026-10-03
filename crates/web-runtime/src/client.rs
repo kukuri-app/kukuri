@@ -15,7 +15,6 @@ use kukuri_desktop_runtime::{
     dispatch_command, failed_startup_status, install_platform_storage, record_app_consents,
     require_consent_acceptance_state, validate_app_consent_documents,
 };
-use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::prelude::*;
@@ -62,7 +61,7 @@ impl RuntimeBuilder for WebRuntimeBuilder {
         let runtime = DesktopRuntime::open_in_memory_node(
             db_path.to_path_buf(),
             store,
-            Some(WebRtcTransport::new(WebRtcConfig {})),
+            true,
             self.community_node_config.clone(),
         )
         .await

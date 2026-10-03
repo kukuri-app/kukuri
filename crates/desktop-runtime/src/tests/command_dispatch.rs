@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::accounts::{add_account, ensure_accounts_initialized};
-use crate::command::{gate_commands, runtime_commands};
+use crate::command::{gate_commands, runtime_commands, session_commands};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -223,6 +223,7 @@ fn frontend_invocations_use_the_command_names_and_argument_keys_of_the_table() {
     let table: std::collections::BTreeMap<_, BTreeSet<String>> = gate_commands()
         .into_iter()
         .chain(runtime_commands())
+        .chain(session_commands())
         .map(|(name, args)| (name, args.iter().map(|arg| camel_case(arg)).collect()))
         .collect();
     let mut sources = Vec::new();

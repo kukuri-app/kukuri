@@ -474,7 +474,7 @@ export type DesktopShellNotificationsSurfaceProps = {
   handleOpenNotification: (notification: NotificationView) => Promise<void>;
   onNavigatePage: (before: boolean) => Promise<void>;
   /** #962: 通知の受信設定(設定 > 通知)を開く。一覧の状態や既読は変えない。 */
-  onOpenNotificationSettings: () => void;
+  onOpenNotificationSettings?: () => void; // OS 通知の受信設定。Web には無い。
 };
 
 export function DesktopShellNotificationsSurface({
@@ -593,12 +593,12 @@ export function DesktopShellNotificationsSurface({
       {notificationAutoReadError ? <Notice tone='warning'>{notificationAutoReadError}</Notice> : null}
 
       {/* #962: 受信設定(設定 > 通知)への導線。header は要約と更新で埋まるため本文先頭に置く。 */}
-      <div className='flex justify-end'>
+      {onOpenNotificationSettings ? <div className='flex justify-end'>
         <Button variant='ghost' size='sm' type='button' onClick={onOpenNotificationSettings}>
           <Settings className='size-4' aria-hidden='true' />
           {t('shell:notifications.settings')}
         </Button>
-      </div>
+      </div> : null}
 
       <div className='shell-column-content'>
         {notificationPanelState.status === 'ready' && notificationItems.length === 0 ? (

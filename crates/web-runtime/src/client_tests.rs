@@ -345,6 +345,9 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
         .await
         .unwrap_err();
     assert_eq!(unsupported["code"], "unsupported_platform");
+    // live・game・metaverse・Dome は Web の合意の外（ADR 0060 §3）。
+    let session = call("list_live_sessions", Value::Null).await.unwrap_err();
+    assert_eq!(session["code"], "unsupported_platform");
     shutdown().await;
 }
 

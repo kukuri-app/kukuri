@@ -60,6 +60,7 @@ mod empty_namespace_reclaim;
 mod identity_restart;
 mod legacy_store_retirement;
 mod media_blob_restore;
+mod memory_node_rebuild;
 mod private_channels;
 mod protected_migration;
 mod receive_binding;

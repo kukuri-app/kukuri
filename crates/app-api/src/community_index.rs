@@ -156,7 +156,11 @@ impl AppService {
         for (source, topic, scope, entries) in ready_groups {
             let write_allowed = match &scope {
                 TimelineScope::Channel { channel_id } => self
-                    .private_channel_write_state(topic.as_str(), channel_id)
+                    .private_channel_state_for_owner_action(
+                        topic.as_str(),
+                        channel_id,
+                        PrivateChannelOwnerAction::WriteCheck,
+                    )
                     .await
                     .is_ok(),
                 TimelineScope::Public => true,

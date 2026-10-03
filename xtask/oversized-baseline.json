@@ -21,6 +21,10 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
+      "lines": 1132,
+      "path": "docs/THIRD_PARTY_NOTICES.md"
+    },
+    {
       "lines": 1131,
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
@@ -31,10 +35,6 @@
     {
       "lines": 1116,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
-    },
-    {
-      "lines": 1096,
-      "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
       "lines": 1093,

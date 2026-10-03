@@ -72,6 +72,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
   - Community Node の HTTP は、応答の本文まで 10 秒の期限で打ち切る（native は client の期限、Web は request ごとの期限。`CommunityNodeHttpClient`）。
   - 通報の送信は、HTTP の 1 回（`post_report`）だけを platform で分けた。native は reqwest で転送を追わず 3xx を `REPORT_REDIRECT_REJECTED` にする。Web はブラウザの fetch を `redirect: "error"` と期限（`AbortSignal.timeout`）で呼び、転送を失敗にする（本文を転送先へ送らない）。送信先の構成・origin・同意の確認と応答の解釈は共通。
   - native だけの command（device backup・media file・他の account の表示）は、Web の dispatch で `unsupported_platform` を返す。
+- #1220 W8 AC-2a の修正（2026-10-03）: `NodeSource::Memory` は WebRTC の transport の実体でなく、持つかどうか（`webrtc: bool`）を持ち、node を開くたびに transport を作る（native と同じ）。transport は 1 回しか bind できず、実体を持ち回していたため、Community Node の relay が届いたときの作り直しで bind に失敗し、docs の操作が失敗し続けていた。
 
 ### 3. 依存と feature
 

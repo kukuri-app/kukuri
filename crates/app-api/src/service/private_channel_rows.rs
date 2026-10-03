@@ -364,6 +364,28 @@ impl AppService {
         {
             writes.push(item);
         }
+        // 担当になった端末(作成・旧保存の移行)は、担当の記録を本人の端末へ書く(#1219 AC-3、ADR 0018 §8)。
+        if join
+            && let Some(controller) = &state.controller
+            && self.local_device_id().await.ok().as_ref() == Some(&controller.device_id)
+        {
+            let item = AccountSyncItem::edit(
+                AccountSyncItemKey::ChannelController {
+                    channel_id: state.channel_id.clone(),
+                },
+                updated_at,
+                Some(serde_json::to_value(controller)?),
+            );
+            if self
+                .services
+                .projection_store
+                .adopt_account_sync_row(&account_sync_row(&item)?)
+                .await?
+                && updated_at != 0
+            {
+                writes.push(item);
+            }
+        }
         if updated_at != 0 {
             writes.push(AccountSyncItem::channel_epoch(
                 &state.channel_id,
