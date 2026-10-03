@@ -19,15 +19,19 @@ use serde::Serialize;
 use tauri::{State, Url};
 use tokio::sync::{Mutex, Semaphore, watch};
 
-use crate::state::CommandError;
+use kukuri_app_api::LinkPreviewRecordInput;
+use kukuri_core::{
+    LINK_PREVIEW_MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS, LINK_PREVIEW_MAX_IMAGE_BYTES,
+    LINK_PREVIEW_MAX_SITE_NAME_CHARS as MAX_SITE_NAME_CHARS,
+    LINK_PREVIEW_MAX_TITLE_CHARS as MAX_TITLE_CHARS, LINK_PREVIEW_MAX_URL_BYTES as MAX_URL_BYTES,
+    link_preview_image_mime,
+};
 
-const MAX_URL_BYTES: usize = 4_096;
+use crate::state::{CommandError, DesktopState};
+
 const MAX_REDIRECTS: usize = 3;
 const MAX_HTML_BYTES: usize = 512 * 1024;
-const MAX_IMAGE_BYTES: usize = 1024 * 1024;
-const MAX_TITLE_CHARS: usize = 200;
-const MAX_DESCRIPTION_CHARS: usize = 500;
-const MAX_SITE_NAME_CHARS: usize = 100;
+const MAX_IMAGE_BYTES: usize = LINK_PREVIEW_MAX_IMAGE_BYTES as usize;
 const MAX_CONCURRENT_FETCHES: usize = 4;
 const MAX_IN_FLIGHT_ENTRIES: usize = 32;
 const MAX_CACHE_ENTRIES: usize = 128;
@@ -245,12 +249,40 @@ impl LinkPreviewState {
     }
 }
 
+/// 取得結果は変えずに返す。自分の公開投稿(`object_id`)のときは、背景で投稿者の record を書く(ADR 0051 §7)。
 #[tauri::command]
 pub async fn fetch_link_preview(
     state: State<'_, LinkPreviewState>,
+    desktop: State<'_, DesktopState>,
     url: String,
+    object_id: Option<String>,
 ) -> Result<LinkPreviewOutcome, CommandError> {
-    Ok(state.request(&url).await)
+    let outcome = state.request(&url).await;
+    if let (LinkPreviewOutcome::Available { preview }, Some(object_id)) = (&outcome, object_id) {
+        let runtime = desktop.runtime();
+        let input = record_input(url, preview);
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = runtime.record_link_preview(&object_id, input).await {
+                tracing::debug!(%error, "link preview record was not written");
+            }
+        });
+    }
+    Ok(outcome)
+}
+
+/// record の URL は本文に書かれた文字列(`url`)のまま。画像は返した data URL の bytes。
+fn record_input(url: String, preview: &LinkPreview) -> LinkPreviewRecordInput {
+    LinkPreviewRecordInput {
+        url,
+        title: preview.title.clone(),
+        description: preview.description.clone(),
+        site_name: preview.source_label.clone(),
+        image: preview
+            .image_data_url
+            .as_deref()
+            .and_then(|value| value.split_once(";base64,"))
+            .and_then(|(_, data)| BASE64_STANDARD.decode(data).ok()),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -652,17 +684,7 @@ fn media_type(value: Option<&str>) -> Option<&str> {
 }
 
 fn raster_mime(bytes: &[u8], declared: Option<&str>) -> Option<&'static str> {
-    let sniffed = if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        "image/jpeg"
-    } else if bytes.starts_with(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) {
-        "image/png"
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        "image/gif"
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        "image/webp"
-    } else {
-        return None;
-    };
+    let sniffed = link_preview_image_mime(bytes)?;
     if !declared.is_some_and(|value| value.eq_ignore_ascii_case(sniffed)) {
         return None;
     }

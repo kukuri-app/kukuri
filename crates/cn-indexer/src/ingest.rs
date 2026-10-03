@@ -89,6 +89,7 @@ pub const fn key_disposition(family: SharedReplicaKeyFamily) -> KeyDisposition {
         SharedReplicaKeyFamily::Reaction => KeyDisposition::Relation,
         SharedReplicaKeyFamily::TimelineIndex
         | SharedReplicaKeyFamily::ThreadIndex
+        | SharedReplicaKeyFamily::LinkPreview
         | SharedReplicaKeyFamily::Envelope
         | SharedReplicaKeyFamily::Session
         | SharedReplicaKeyFamily::Channel

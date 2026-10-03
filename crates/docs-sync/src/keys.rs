@@ -10,6 +10,8 @@ pub enum SharedReplicaKeyFamily {
     PostObject,
     /// 投稿の撤回（`withdrawals/<object id>/state`）。
     PostWithdrawal,
+    /// 投稿者が書いたリンクプレビュー（`link-previews/<object id>/state`。ADR 0051 §7）。
+    LinkPreview,
     /// media manifest（`manifests/media/<manifest id>/{state,envelope}`）。
     MediaManifest,
     /// timeline 索引（`indexes/timeline/<sort key>/<object id>`）。
@@ -30,9 +32,10 @@ pub enum SharedReplicaKeyFamily {
 
 impl SharedReplicaKeyFamily {
     /// 全種別。`parse` はこの順に照合する。
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::PostObject,
         Self::PostWithdrawal,
+        Self::LinkPreview,
         Self::MediaManifest,
         Self::TimelineIndex,
         Self::ThreadIndex,
@@ -48,6 +51,7 @@ impl SharedReplicaKeyFamily {
         match self {
             Self::PostObject => "objects/",
             Self::PostWithdrawal => "withdrawals/",
+            Self::LinkPreview => "link-previews/",
             Self::MediaManifest => "manifests/media/",
             Self::TimelineIndex => "indexes/timeline/",
             Self::ThreadIndex => "indexes/thread/",

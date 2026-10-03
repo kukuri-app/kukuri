@@ -144,6 +144,38 @@ fn raster_image_requires_matching_declared_mime_and_magic_bytes() {
     assert_eq!(raster_mime(&png, None), None);
 }
 
+// AC-2d: record には本文に書かれた URL のまま、取得した文字と画像の bytes を渡す。
+#[test]
+fn record_input_keeps_the_post_url_and_decodes_the_image() {
+    let png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    let preview = LinkPreview {
+        url: "https://example.test/a".into(),
+        source_label: "Example".into(),
+        title: "Title".into(),
+        description: Some("Description".into()),
+        image_data_url: Some(format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(png)
+        )),
+    };
+    let input = record_input("https://example.test/a#top".into(), &preview);
+    assert_eq!(input.url, "https://example.test/a#top");
+    assert_eq!(
+        (input.title.as_str(), input.site_name.as_str()),
+        ("Title", "Example")
+    );
+    assert_eq!(input.description.as_deref(), Some("Description"));
+    assert_eq!(input.image.as_deref(), Some(png.as_slice()));
+    let text_only = LinkPreview {
+        image_data_url: None,
+        ..preview
+    };
+    assert_eq!(
+        record_input("https://example.test/a".into(), &text_only).image,
+        None
+    );
+}
+
 #[tokio::test]
 async fn fetches_html_and_optional_safe_image() {
     let image = TransportResponse {

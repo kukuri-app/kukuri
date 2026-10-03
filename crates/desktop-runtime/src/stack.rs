@@ -242,8 +242,6 @@ reloadable_service! {
     pub(crate) struct ReloadableBlobService wrapping IrohBlobService;
 
     // 宣言の無い trait メソッドは内側へ転送されず、trait の既定実装に落ちる(#1157)。
-    // `fetch_blob_ephemeral_bounded` は CN の indexer 専用で desktop からは呼ばれないため
-    // 宣言しない(既定実装は bail なので、誤って呼ばれても無制限取得にはならない)。
     #[async_trait]
     impl BlobService {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
@@ -258,6 +256,8 @@ reloadable_service! {
         // #1152: trait の既定実装は永続化する `fetch_blob` へ委譲するため、必ず実体へ転送する
         // (成人向け表示 ON の取得は ephemeral で永続化しない。ADR 0046 §6.2)。
         async fn fetch_blob_ephemeral(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
+        // #1220 AC-2d: リンクプレビューの record の画像は、record の bytes 数までだけ取得する(既定実装は bail)。
+        async fn fetch_blob_ephemeral_bounded(hash: &BlobHash, max_bytes: u64) -> Result<Option<Vec<u8>>>;
         #[cfg(not(target_family = "wasm"))]
         async fn fetch_blob_ephemeral_to_file(hash: &BlobHash, path: &std::path::Path) -> Result<Option<u64>>;
         async fn fetch_verified_receive_offer_payload(

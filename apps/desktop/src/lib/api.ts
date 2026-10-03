@@ -5,6 +5,7 @@ export { getAppConsentStatus, acceptAppConsents } from './api/appConsent';
 export { applyPendingDeviceRestoreFrontendState } from './api/deviceBackup';
 export {
   fetchLinkPreview,
+  readLinkPreviewRecord,
   type LinkPreview,
   type LinkPreviewFetcher,
   type LinkPreviewOutcome,

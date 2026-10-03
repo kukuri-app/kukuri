@@ -94,6 +94,24 @@ impl DesktopRuntime {
             .await
     }
 
+    /// 投稿者本人が表示のときに取得したリンクプレビューを、投稿の replica へ書く(ADR 0051 §7)。
+    pub async fn record_link_preview(
+        &self,
+        object_id: &str,
+        input: kukuri_app_api::LinkPreviewRecordInput,
+    ) -> Result<()> {
+        self.app_service.record_link_preview(object_id, input).await
+    }
+
+    /// 表示中の公開投稿の、投稿者が書いたリンクプレビューを読む(Web の表示。ADR 0051 §7)。
+    pub async fn read_link_preview_record(
+        &self,
+        object_id: &str,
+        url: &str,
+    ) -> Result<Option<kukuri_app_api::LinkPreviewRecordView>> {
+        self.app_service.link_preview_record(object_id, url).await
+    }
+
     pub async fn create_repost(&self, request: CreateRepostRequest) -> Result<String> {
         self.app_service
             .create_repost(
