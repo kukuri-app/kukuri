@@ -474,8 +474,7 @@ export type DesktopShellNotificationsSurfaceProps = {
   handleOpenNotification: (notification: NotificationView) => Promise<void>;
   onNavigatePage: (before: boolean) => Promise<void>;
   /** #962: 通知の受信設定(設定 > 通知)を開く。一覧の状態や既読は変えない。 */
-  /** OS 通知の受信設定。Web には無い。 */
-  onOpenNotificationSettings?: () => void;
+  onOpenNotificationSettings?: () => void; // OS 通知の受信設定。Web には無い。
 };
 
 export function DesktopShellNotificationsSurface({
