@@ -57,6 +57,7 @@ import type {
   NotificationStatusView,
   NotificationPageView,
   NotificationCursor,
+  PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
   Profile,
   ReactionStateView,
@@ -140,6 +141,7 @@ import type {
   SetTopicGossipEnabledRequest,
   StartOwnerDomeHostingRequest,
   SubmitDomeSessionInputRequest,
+  TakePrivateChannelControllerRequest,
   ToggleReactionRequest,
   UnsubscribeTopicRequest,
   UpdateGameRoomRequest,
@@ -586,6 +588,14 @@ export const runtimeApi: DesktopApi = {
         topic,
         channel_id: channelId,
       } satisfies RotatePrivateChannelRequest,
+    });
+  }),
+  takePrivateChannelController: command('takePrivateChannelController', async (topic, channelId) => {
+    return invokeDesktop<PrivateChannelControllerTake>('take_private_channel_controller', {
+      request: {
+        topic,
+        channel_id: channelId,
+      } satisfies TakePrivateChannelControllerRequest,
     });
   }),
   setPrivateChannelEntryDome: command('setPrivateChannelEntryDome', async (

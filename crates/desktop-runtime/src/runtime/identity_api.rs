@@ -18,6 +18,7 @@ use crate::requests::{
 };
 
 use super::DesktopRuntime;
+use super::private_channel_controller::claim_restored_controllers;
 
 impl DesktopRuntime {
     /// この account の公開鍵(hex)。
@@ -113,6 +114,9 @@ pub(super) fn spawn_account_transfer_merge(
     n0_future::task::spawn(async move {
         if let Err(error) = merge_staged(&db_path, &app).await {
             tracing::warn!(%error, "the transferred account bundle is merged again at the next start");
+        }
+        if let Err(error) = claim_restored_controllers(&db_path, &app).await {
+            tracing::warn!(%error, "the restored device takes over its private channels at the next start");
         }
     })
 }

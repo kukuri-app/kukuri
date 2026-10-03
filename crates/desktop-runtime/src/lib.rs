@@ -158,9 +158,10 @@ pub use requests::{
     RetryPostElementsRequest, RevokeDomeConnectionRequest, RotatePrivateChannelRequest,
     SendDirectMessageRequest, SetChannelGossipEnabledRequest, SetMyProfileRequest,
     SetPrivateChannelEntryDomeRequest, SetTopicGossipEnabledRequest, StartOwnerDomeHostingRequest,
-    SubmitDomeSessionInputRequest, SwitchAccountRequest, ToggleReactionRequest,
-    UnsubscribeTopicRequest, UpdateGameRoomRequest, UpdateMetaverseRoomRequest,
-    WithdrawDomeConnectionProposalRequest, WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
+    SubmitDomeSessionInputRequest, SwitchAccountRequest, TakePrivateChannelControllerRequest,
+    ToggleReactionRequest, UnsubscribeTopicRequest, UpdateGameRoomRequest,
+    UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
+    WithdrawalReasonVisibilityRequest,
 };
 pub use runtime::{DesktopRuntime, RuntimeEvent};
 

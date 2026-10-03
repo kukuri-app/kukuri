@@ -87,6 +87,9 @@ mod legacy_store_retirement;
 #[cfg(test)]
 pub(crate) use legacy_store_retirement::LegacyStoreProgress;
 mod notifications_messages_api;
+mod private_channel_controller;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use private_channel_controller::controller_claim_marker;
 mod private_channels_game_api;
 #[cfg(not(target_family = "wasm"))]
 mod protected_migration;
@@ -139,7 +142,8 @@ pub struct DesktopRuntime {
     pub(crate) community_node_connectivity: Mutex<crate::community_node::AppliedConnectivity>,
     pub(crate) community_node_scheduler_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
-    /// #1211 AC-2: 移行で保存した必須 bundle の反映の背景 task。
+    /// #1211 AC-2: 移行で保存した必須 bundle の反映と、backup から復元した account の担当の引取り（#1219 AC-4）の
+    /// 背景 task。
     pub(crate) account_transfer_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     /// 計測用: 差分を作った回数(#1221 R2-D)。
     #[cfg(test)]
@@ -576,7 +580,7 @@ impl DesktopRuntime {
         }
         app_service.resume_direct_message_state().await?;
 
-        // #1211 AC-2: 移行で保存した必須 bundle があれば、背景で反映する。
+        // #1211 AC-2: 移行で保存した必須 bundle があれば、背景で反映する。#1219 AC-4: 復元の後なら担当を引き取る。
         let account_transfer_task = identity_api::spawn_account_transfer_merge(
             db_path.clone(),
             app_service.account_transfer_handle(),

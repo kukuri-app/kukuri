@@ -1,0 +1,242 @@
+[
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-other-device",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Switching…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Switching…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / 切り替えています…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / 切り替えています…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 正在切换…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-taking",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 正在切换…"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / The device doing this now is not connected, so it could not be switched. Open the app on that device and try again. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / The device doing this now is not connected, so it could not be switched. Open the app on that device and try again. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / いま行っている端末が接続していないため、切り替えられませんでした。その端末でアプリを開いてから、もう一度お試しください。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / いま行っている端末が接続していないため、切り替えられませんでした。その端末でアプリを開いてから、もう一度お試しください。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 当前进行这些操作的设备未连接，无法切换。请在该设备上打开应用后重试。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-not-connected",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 当前进行这些操作的设备未连接，无法切换。请在该设备上打开应用后重试。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Waiting for the device doing this now to respond. Opening the app on that device switches it to this device. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "Creating share links and handing out new access when participants change happen on another of your devices. / Waiting for the device doing this now to respond. Opening the app on that device switches it to this device. / Do this on this device"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / いま行っている端末の応答を待っています。その端末でアプリを開くと、この端末に切り替わります。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。 / いま行っている端末の応答を待っています。その端末でアプリを開くと、この端末に切り替わります。 / この端末で行う"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 正在等待当前进行这些操作的设备响应。在该设备上打开应用后，将切换到此设备。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-take-waiting",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。 / 正在等待当前进行这些操作的设备响应。在该设备上打开应用后，将切换到此设备。 / 在此设备上进行"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "Switching the device that does this. Until it finishes, creating share links and handing out new access are on hold. / If the device it is switching to can no longer be used, recreate the channel."
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "Switching the device that does this. Until it finishes, creating share links and handing out new access are on hold. / If the device it is switching to can no longer be used, recreate the channel."
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "行う端末を切り替えています。終わるまで、共有リンクの作成と新しいアクセスの配布は保留になります。 / 切り替え先の端末が使えなくなったときは、チャンネルを作り直してください。"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "行う端末を切り替えています。終わるまで、共有リンクの作成と新しいアクセスの配布は保留になります。 / 切り替え先の端末が使えなくなったときは、チャンネルを作り直してください。"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [],
+    "text": "正在切换进行这些操作的设备。完成之前，创建分享链接和分发新的访问权限将暂停。 / 如果要切换到的设备已无法使用，请重新创建频道。"
+  },
+  {
+    "id": "extended-privatechannelpanel--settings-moving",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [],
+    "text": "正在切换进行这些操作的设备。完成之前，创建分享链接和分发新的访问权限将暂停。 / 如果要切换到的设备已无法使用，请重新创建频道。"
+  }
+]
