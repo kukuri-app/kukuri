@@ -102,6 +102,18 @@ async fn dome_creation_hosting_and_connection_lifecycle_use_shared_runtime() {
     .await;
     assert_eq!(active["state"]["kind"], "owner_hosted");
     assert_eq!(active["state"]["lease_epoch"], 1);
+    // 参加者がいると呼び出しの間隔しだいで物理が進み、床にめり込んだ既定の prop が押し戻されて
+    // layout が変わる。変更なしの commit は join の前(物理が進まない間)に確かめる(#1511)。
+    let layout = invoke(
+        &dispatcher,
+        &host,
+        "commit_dome_layout",
+        json!({
+            "spatial_context": context, "instance_id": room, "operation_id": "layout-1"
+        }),
+    )
+    .await;
+    assert_eq!(layout["outcome"], "no_op");
     let snapshot = invoke(&dispatcher, &host, "submit_dome_session_input", json!({
         "spatial_context": context, "instance_id": room, "sequence": 1, "input": {"type": "join"}
     })).await;
@@ -125,16 +137,6 @@ async fn dome_creation_hosting_and_connection_lifecycle_use_shared_runtime() {
     )
     .await;
     assert!(!snapshots.as_array().expect("snapshots").is_empty());
-    let layout = invoke(
-        &dispatcher,
-        &host,
-        "commit_dome_layout",
-        json!({
-            "spatial_context": context, "instance_id": room, "operation_id": "layout-1"
-        }),
-    )
-    .await;
-    assert_eq!(layout["outcome"], "no_op");
     let closed = invoke(
         &dispatcher,
         &host,
