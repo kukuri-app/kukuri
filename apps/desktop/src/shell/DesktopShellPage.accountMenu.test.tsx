@@ -1,9 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import * as identity from '@/lib/api/identity';
 import * as session from '@/lib/accountSession';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
+import { requestAccountAdd } from '@/shell/page/accountAddRequest';
 import { renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
 
 async function setup() {
@@ -111,4 +112,14 @@ test('a completed transfer into the active account does not switch', async () =>
   const change = await completeTransferTo('aaaaaaaaaaaaaaaa');
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(change).not.toHaveBeenCalled();
+});
+
+// #1217 AC-5: 初回の profile 設定の「以前のアカウントを戻す」は、アカウント追加の dialog（import・移行）を開く。
+test('a restore request opens the add account dialog', async () => {
+  await setup();
+  act(() => requestAccountAdd());
+  const dialog = await screen.findByRole('dialog', { name: 'Add account' });
+  expect(within(dialog).getByTestId('import-input')).toBeVisible();
+  expect(within(dialog).getByRole('button', { name: 'Move from another device' })).toBeVisible();
+  expect(screen.queryByRole('menu', { name: 'Account menu' })).not.toBeInTheDocument();
 });

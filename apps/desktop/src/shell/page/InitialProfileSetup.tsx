@@ -12,10 +12,12 @@ import { useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
 
 type AccountAccess = { listAccounts: typeof listAccounts; getProfileSetupRequired: typeof getProfileSetupRequired; saveInitialProfile: typeof saveInitialProfile };
 
-export function InitialProfileSetup({ ready, nodeFailed, onSkipNode, accountAccess, onRequired }: {
+export function InitialProfileSetup({ ready, nodeFailed, onSkipNode, accountAccess, onRequired, onRestore }: {
   ready: boolean; nodeFailed: boolean; onSkipNode: () => void;
   accountAccess?: AccountAccess;
   onRequired?: (required: boolean) => void;
+  // Web だけ（#1217 AC-5）: サイトデータが消えた後に、以前のアカウントを戻す入口。押すとこの dialog を閉じる。
+  onRestore?: () => void;
 }) {
   const { t } = useTranslation('shell');
   const store = useDesktopShellStoreApi();
@@ -75,6 +77,10 @@ export function InitialProfileSetup({ ready, nodeFailed, onSkipNode, accountAcce
     <DialogContent data-initial-profile className='w-[min(36rem,94vw)] max-h-[90vh] overflow-hidden flex flex-col' onInteractOutside={(event) => event.preventDefault()}>
       <DialogHeader><DialogTitle>{t('initialProfile.title')}</DialogTitle><DialogDescription>{t('initialProfile.description')}</DialogDescription></DialogHeader>
       <DialogBody className='min-h-0 overflow-y-auto'>
+        {onRestore ? <Notice className='mb-4 space-y-2'>
+          <p>{t('initialProfile.restore.description')}</p>
+          <Button variant='secondary' onClick={() => { setDismissed(true); onRestore(); }}>{t('initialProfile.restore.action')}</Button>
+        </Notice> : null}
         <ProfileEditorPanel hideActions authorLabel={localProfile?.display_name || t('accountMenu.unknown')} status='ready' saving={saving} dirty
           error={null} fields={{ displayName: fields.display_name ?? '', name: fields.name ?? '', about: fields.about ?? '' }}
           picturePreviewSrc={picture} hasPicture={Boolean(picture)} pictureInputKey={0}

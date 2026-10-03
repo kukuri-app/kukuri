@@ -297,6 +297,84 @@ async function assertConnected(browser, peers, nativeEndpoint) {
   return endpoint;
 }
 
+/** 設定の区分を開く。 */
+async function openSettings(browser, section) {
+  await browser.$('[data-testid="control-center-trigger"]').click();
+  await browser.$('#shell-control-center').$('button*=Settings').click();
+  await browser.$(`[data-testid="settings-section-${section}"]`).click();
+}
+
+/** 新しいアカウントの初回（同意・Community Node の同意）を進める。 */
+async function acceptFirstRun(browser) {
+  await browser.$('[data-testid="age-attestation-checkbox"]').click();
+  await browser.$('button=Accept and continue').click();
+  await (await dialogWith(browser, 'What is a community node?')).$('button=Review terms').click();
+  await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
+}
+
+/**
+ * サイトデータが消えた後、export した鍵を初回の dialog の入口から import して、同じ公開鍵のアカウントへ戻る（#1217 AC-5、
+ * ADR 0059 §6）。全履歴の回復は確かめない。
+ */
+async function recoverAfterSiteDataLoss(browser) {
+  const passphrase = `recovery-${RUN}`;
+  await openSettings(browser, 'account');
+  // 保存の状態を偽らない: 示す状態は browser の答えと同じ。
+  const persisted = await browser.execute(() => navigator.storage.persisted());
+  const notice = await browser.$('[data-testid="browser-storage-notice"]').getText();
+  assert.ok(notice.includes(persisted ? 'does not delete' : 'may delete'), notice);
+  await browser.$('[data-testid="export-acknowledge"]').click();
+  await browser.$('[data-testid="export-passphrase"]').setValue(passphrase);
+  await browser.$('[data-testid="export-passphrase-confirm"]').setValue(passphrase);
+  await browser.$('[data-testid="export-submit"]').click();
+  const envelope = browser.$('[data-testid="export-envelope"]');
+  await envelope.waitForExist({ timeout: WAIT });
+  const exported = await envelope.getValue();
+  const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
+
+  // 利用者がサイトデータを消したのと同じく、同じ origin の保存先を消す。app を動かさない文書で消す（開いた接続が待たせない）。
+  await browser.url(`${ORIGIN}/fixture/info`);
+  await browser.execute(async () => {
+    for (const { name } of await indexedDB.databases()) {
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onsuccess = resolve;
+        request.onerror = () => reject(request.error);
+      });
+    }
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  // 開き直すと初回の同意から始まり、新しいアカウントの profile の設定になる（以前のアカウントは無い）。
+  await browser.url(ORIGIN);
+  await acceptFirstRun(browser);
+  await (await dialogWith(browser, 'Set up your profile')).$('button=Restore a previous account').click();
+  const add = await dialogWith(browser, 'Import an encrypted account key');
+  await add.$('[data-testid="import-input"]').setValue(exported);
+  await add.$('[data-testid="import-preview-button"]').click();
+  await add.$('[data-testid="import-passphrase"]').setValue(passphrase);
+  await add.$('[data-testid="import-submit"]').click();
+  const switchNow = add.$('[data-testid="import-switch-now"]');
+  await switchNow.waitForClickable({ timeout: WAIT });
+  await switchNow.click();
+
+  // 切り替えると画面を読み込み直す。初回の dialog を閉じてから、使っているアカウントの公開鍵を見る。
+  await eventually('the restored account is active', async () => {
+    for (const text of ['Set up your profile', 'What is a community node?']) {
+      const dialog = await findDialog(browser, text);
+      if (dialog) await dialog.$(text === 'Set up your profile' ? 'button=Later' : 'button=Not now').click();
+    }
+    if (await findDialog(browser, 'Set up your profile') || await findDialog(browser, 'What is a community node?')) return false;
+    if (!(await browser.$('[data-testid="control-center-trigger"]').isExisting())) return false;
+    await openSettings(browser, 'account');
+    const active = await browser.$('[data-testid="account-list"]').$('li*=Active');
+    const restored = (await active.isExisting()) && (await active.getText()).includes(publicKey);
+    await browser.keys('Escape');
+    return restored;
+  });
+}
+
 async function main() {
   const clients = [];
   await nativeShows(TOPIC);
@@ -352,6 +430,9 @@ async function main() {
     const webToWebFallback = await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback));
     console.log('web→web fallback', webToWebFallback);
     assert.ok(webToWebFallback.relayed >= webToWebFallback.size * 0.9, `web→web image did not use the relay: ${JSON.stringify(webToWebFallback)}`);
+
+    // サイトデータが消えた後の復旧（#1217 AC-5）。
+    await recoverAfterSiteDataLoss(a);
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
   }

@@ -69,6 +69,15 @@ export function App(props: AppProps) {
     if (startupGate.status === 'ready') writeDesktopTheme(theme);
   }, [startupGate.status, theme]);
 
+  // Web だけ: runtime が使える状態になるたびに、まだ許可されていなければ保存の永続化を求める（ADR 0059 §6）。待たない。
+  useEffect(() => {
+    if (!IS_WEB_RUNTIME || startupGate.status !== 'ready') return;
+    void navigator.storage
+      .persisted()
+      .then((persisted) => persisted || navigator.storage.persist())
+      .catch(() => undefined);
+  }, [startupGate.status]);
+
   // Web だけ: 別の tab に runtime を引き継がれたら、起動の状態を読み直す（ADR 0059 §4）。
   useEffect(() => {
     if (!IS_WEB_RUNTIME) return;
