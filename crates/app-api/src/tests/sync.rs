@@ -381,6 +381,7 @@ mod range_reconcile_faults;
 mod range_reconcile_ledger;
 mod range_reconcile_reactions;
 mod range_reconcile_walk;
+mod reaction_hints;
 mod reply_target_background;
 mod scale_counts;
 mod scale_independence;

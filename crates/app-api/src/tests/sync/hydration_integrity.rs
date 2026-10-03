@@ -61,6 +61,7 @@ pub(super) async fn integrity_fixture(name: &str) -> IntegrityFixture {
                     object_id: first.id.as_str().to_string(),
                     object_kind: "post".into(),
                     docs_author: None,
+                    sent_at: None,
                 }],
             },
         )

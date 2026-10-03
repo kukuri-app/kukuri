@@ -137,6 +137,7 @@ impl AppService {
                         object_id: envelope.id.0.clone(),
                         object_kind: envelope.kind.clone(),
                         docs_author,
+                        sent_at: None,
                     }],
                 },
             )
@@ -488,6 +489,7 @@ impl AppService {
                             Some(_) => None,
                             None => self.services.docs_sync.local_docs_author().await?,
                         },
+                        sent_at: None,
                     }],
                 },
             )
@@ -719,6 +721,7 @@ impl AppService {
                 docs_author: docs_author
                     .clone()
                     .filter(|_| effective_channel_id.is_none()),
+                sent_at: None,
             }],
         };
         let mut hint_error = None;
