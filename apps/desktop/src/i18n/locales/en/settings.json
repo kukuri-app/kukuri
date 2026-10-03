@@ -67,7 +67,14 @@
       "mismatch": "Codes don't match",
       "waitingPeer": "Waiting for the other device to confirm…"
     },
-    "confirmed": "Both devices are connected and confirmed.",
+    "transferring": {
+      "source": "Sending keys and settings ({{count}})…",
+      "target": "Receiving and saving keys and settings ({{count}})…"
+    },
+    "completed": {
+      "source": "The other device has saved the account. You can keep using it on this device.",
+      "target": "Everything was received. Opening the account…"
+    },
     "retry": "Try again",
     "failure": {
       "expired": "The link has expired. Show a new link on the other device and try again.",
@@ -75,8 +82,9 @@
       "unreachable": "Couldn't connect to the other device. Check that both devices are online.",
       "rejected": "The confirmation codes didn't match, so the transfer was stopped.",
       "cancelled": "The transfer was stopped.",
-      "interrupted": "The connection was lost during confirmation. Please try again.",
-      "prepareFailed": "Couldn't prepare the link. Please try again."
+      "interrupted": "The connection was lost during confirmation or transfer. Please try again.",
+      "prepareFailed": "Couldn't prepare the link. Please try again.",
+      "storage": "The other device couldn't save the account. Check its free space and try again."
     }
   },
   "deviceBackup": {

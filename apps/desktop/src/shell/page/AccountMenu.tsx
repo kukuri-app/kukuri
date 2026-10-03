@@ -110,7 +110,9 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
         <DialogHeader><DialogTitle>{t(dialogTitle[dialog ?? 'import'])}</DialogTitle><DialogDescription>{t(dialogDescription[dialog ?? 'import'])}</DialogDescription></DialogHeader>
         <DialogBody>
           {dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
-            <AccountTransferPanel key={`${dialog}:${transferLink}`} role={dialog === 'transfer-source' ? 'source' : 'target'} initialLink={transferLink} />
+            {/* #1211: 移行先は受け取りが終わったら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。 */}
+            <AccountTransferPanel key={`${dialog}:${transferLink}`} role={dialog === 'transfer-source' ? 'source' : 'target'} initialLink={transferLink}
+              onCompleted={(id) => void listAccounts().then((accounts) => accounts.active_account_id === id ? undefined : switchTo(id)).catch(() => setError(t('accountMenu.actionFailed')))} />
             <Button variant='ghost' className='mt-4' onClick={() => { setTransferLink(''); setDialog('import'); }}>{t('accountMenu.back')}</Button>
           </> : dialog === 'import' ? <>
             <Button disabled={pending || !active} className='mb-4 w-full' data-testid='create-new-account' onClick={() => {

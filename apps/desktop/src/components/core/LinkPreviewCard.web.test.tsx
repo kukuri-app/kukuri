@@ -2,11 +2,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { invoke } from '@tauri-apps/api/core';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { readLinkPreviewRecord } from '@/lib/api';
+
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { PostCard } from './PostCard';
 import { createView } from './PostCard.testHelpers';
 
 // AC-2d: Web は外部 URL を取得せず、投稿者が書いた record を読む。native は従来の取得のまま、投稿の ID を渡す。
+// AC-2f: native も表示したときに record を読み(中継のための保持)、読取りの結果は native の取得と同じ上限で持つ。
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke);
@@ -76,14 +79,56 @@ test.each([
   expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url);
 });
 
-test('native keeps fetching the URL and passes the post for the author record', async () => {
+test('native keeps showing its own fetch and also reads the author record to relay it', async () => {
   (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-  invokeMock.mockResolvedValue({ status: 'available', preview: record });
+  invokeMock.mockImplementation(async (command) =>
+    command === 'fetch_link_preview' ? { status: 'available', preview: record } : null
+  );
   render(<LinkPreviewCard content={url} objectId='native-card' enabled />);
 
   await screen.findByRole('link', { name: 'Author record — Example' });
-  expect(invokeMock).toHaveBeenCalledExactlyOnceWith('fetch_link_preview', {
-    url,
+  expect(invokeMock).toHaveBeenCalledTimes(2);
+  expect(invokeMock).toHaveBeenCalledWith('fetch_link_preview', { url, objectId: 'native-card' });
+  expect(invokeMock).toHaveBeenCalledWith('read_link_preview_record', {
     objectId: 'native-card',
+    url,
   });
+});
+
+test('a refused or failed read is not kept and is read again on the next display', async () => {
+  invokeMock.mockRejectedValueOnce(new Error('link preview reads are busy'));
+  invokeMock.mockResolvedValueOnce(record);
+
+  expect((await readLinkPreviewRecord(url, 'web-retry')).status).toBe('unavailable');
+  expect((await readLinkPreviewRecord(url, 'web-retry')).status).toBe('available');
+  expect(invokeMock).toHaveBeenCalledTimes(2);
+});
+
+test('the kept results are limited to 16 MiB and the oldest is dropped first', async () => {
+  invokeMock.mockImplementation(async () => ({
+    ...record,
+    image_data_url: `data:image/png;base64,${'A'.repeat(6 * 1024 * 1024)}`,
+  }));
+  for (const objectId of ['big-1', 'big-2', 'big-3']) {
+    await readLinkPreviewRecord(url, objectId);
+  }
+  invokeMock.mockClear();
+
+  await readLinkPreviewRecord(url, 'big-3');
+  expect(invokeMock).not.toHaveBeenCalled();
+  await readLinkPreviewRecord(url, 'big-1');
+  expect(invokeMock).toHaveBeenCalledOnce();
+});
+
+test('the kept results are limited to 128 entries and the oldest is dropped first', async () => {
+  invokeMock.mockResolvedValue(null);
+  for (let index = 0; index <= 128; index += 1) {
+    await readLinkPreviewRecord(url, `count-${index}`);
+  }
+  invokeMock.mockClear();
+
+  await readLinkPreviewRecord(url, 'count-128');
+  expect(invokeMock).not.toHaveBeenCalled();
+  await readLinkPreviewRecord(url, 'count-0');
+  expect(invokeMock).toHaveBeenCalledOnce();
 });

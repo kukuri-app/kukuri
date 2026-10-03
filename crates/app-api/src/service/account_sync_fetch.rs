@@ -7,6 +7,7 @@
 use super::*;
 use kukuri_core::{
     ACCOUNT_SYNC_CHANGE_WINDOW, AccountSyncChangeV1, AccountSyncItem, AccountSyncItemKey,
+    AccountTransferItem,
 };
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{AccountSyncCursor, AccountSyncRow};
@@ -261,14 +262,13 @@ impl AppService {
         Ok(())
     }
 
-    /// 周回の 1 照会。上限に届かなければ、その prefix の key をすべて merge して次の prefix へ、届けば子の prefix へ
-    /// 降りる。次に照会する prefix を返す（尽きたら `None`）。
-    pub(crate) async fn account_sync_cycle_step(
+    /// 周回の 1 照会（64 key まで）。上限に届かなければ、その prefix の key をすべて返して次の prefix へ、届けば
+    /// prefix と同じ key だけを返して子の prefix へ降りる。返す key と、次に照会する prefix（尽きたら `None`）。
+    async fn account_sync_cycle_keys(
         &self,
         source: &dyn DocsSync,
         prefix: &str,
-        from_own_replica: bool,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Vec<String>, Option<String>)> {
         let replica = self
             .services
             .keys
@@ -290,21 +290,90 @@ impl AppService {
         };
         source.finish_remote_object().await;
         let complete = !page.reached_limit;
-        for entry in page
+        let keys = page
             .entries
-            .iter()
+            .into_iter()
             .filter(|entry| complete || entry.key == prefix)
-        {
-            if let Some(item) = self.read_account_sync_from(source, &entry.key).await? {
+            .map(|entry| entry.key)
+            .collect();
+        Ok((
+            keys,
+            if complete {
+                next_cycle_prefix(prefix)
+            } else {
+                Some(format!("{prefix}{}", &KEY_ALPHABET[..1]))
+            },
+        ))
+    }
+
+    /// 周回の 1 照会の key を merge する。次に照会する prefix を返す（尽きたら `None`）。
+    pub(crate) async fn account_sync_cycle_step(
+        &self,
+        source: &dyn DocsSync,
+        prefix: &str,
+        from_own_replica: bool,
+    ) -> Result<Option<String>> {
+        let (keys, next) = self.account_sync_cycle_keys(source, prefix).await?;
+        for key in keys {
+            if let Some(item) = self.read_account_sync_from(source, &key).await? {
                 self.merge_fetched_account_sync_item(item, from_own_replica)
                     .await?;
             }
         }
-        Ok(if complete {
-            next_cycle_prefix(prefix)
-        } else {
-            Some(format!("{prefix}{}", &KEY_ALPHABET[..1]))
-        })
+        Ok(next)
+    }
+
+    /// 移行（#1211 AC-2）の送り元・反映の背景 task が持つ handle（account の購読 task と同じく `ServiceHandles` を
+    /// 共有する）。
+    pub fn account_transfer_handle(&self) -> AppService {
+        self.scope_reader()
+    }
+
+    /// 移行元の必須 bundle の 1 page（#1211 AC-2）。最初（`cursor` が `None`）に送信待ちの行を replica へ書き、手元の
+    /// replica を周回と同じ prefix の木で 1 照会ずつ辿って、封をした item を返す。次の cursor（尽きたら `None`）。
+    pub async fn account_transfer_page(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<AccountTransferItem>, Option<String>)> {
+        let prefix = match cursor {
+            Some(prefix) => prefix,
+            None => {
+                self.resend_account_sync_items().await?;
+                CYCLE_ROOTS[0].to_string()
+            }
+        };
+        let local = self.services.docs_sync.as_ref();
+        let (keys, next) = self.account_sync_cycle_keys(local, &prefix).await?;
+        let sync_keys = self.services.keys.derive_account_sync();
+        let account = self.services.keys.public_key();
+        let mut items = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some(item) = self.read_account_sync_from(local, &key).await? {
+                items.push(AccountTransferItem {
+                    sealed: sync_keys.seal(&account, &item)?,
+                    key,
+                });
+            }
+        }
+        Ok((items, next))
+    }
+
+    /// 移行で受けた必須 bundle の chunk を、本人の別の端末から採った item と同じ規則で merge する（#1211 AC-2）。
+    /// 開けない item（別のアカウント・変更の窓）は拒否する。merge できない item は飛ばす（やり直しても結果は変わらず、
+    /// 残りの chunk を止めない）。
+    pub async fn merge_account_transfer_items(
+        &self,
+        items: Vec<AccountTransferItem>,
+    ) -> Result<()> {
+        let sync_keys = self.services.keys.derive_account_sync();
+        let account = self.services.keys.public_key();
+        for entry in items {
+            let item = entry.open(&sync_keys, &account)?;
+            if let Err(error) = self.merge_fetched_account_sync_item(item, false).await {
+                warn!(key = %entry.key, %error, "a transferred account sync item was not merged");
+            }
+        }
+        Ok(())
     }
 
     /// 相手 1 台との取得の 1 回。続きがあれば true。

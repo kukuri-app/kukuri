@@ -4,7 +4,7 @@ import { expect, userEvent, within } from 'storybook/test';
 import { AccountTransferPanel } from './AccountTransferPanel';
 import { SettingsStoryFrame } from './SettingsStoryFrame';
 
-// #1211: QR・専用リンクの移行。mock の API は接続と相手の承認を即座に済ませる。
+// #1211: QR・専用リンクの移行。mock の API は接続と相手の承認を即座に済ませ、1.5 秒の転送中の後に完了にする。
 const meta = {
   title: 'Settings/AccountTransferPanel',
   component: AccountTransferPanel,
@@ -34,12 +34,21 @@ export const TargetConfirming: Story = {
   },
 };
 
-export const TargetConfirmed: Story = {
+export const TargetTransferring: Story = {
   args: TargetConfirming.args,
   play: async (context) => {
     await TargetConfirming.play?.(context);
     const canvas = within(context.canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /Codes match|一致する/ }));
-    await expect(await canvas.findByTestId('account-transfer-confirmed')).toBeVisible();
+    await expect(await canvas.findByTestId('account-transfer-transferring')).toBeVisible();
+  },
+};
+
+export const TargetCompleted: Story = {
+  args: TargetConfirming.args,
+  play: async (context) => {
+    await TargetTransferring.play?.(context);
+    const canvas = within(context.canvasElement);
+    await expect(await canvas.findByTestId('account-transfer-completed', {}, { timeout: 4000 })).toBeVisible();
   },
 };

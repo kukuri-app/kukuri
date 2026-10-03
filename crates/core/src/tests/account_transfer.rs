@@ -1,11 +1,13 @@
-//! #1211 AC-1（1a・1f）: 招待の wire の形式・上限・期限と、秘密の非混入。
+//! #1211 AC-1（1a・1f）: 招待の wire の形式・上限・期限と、秘密の非混入。AC-2（2a）: 必須 bundle の frame。
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 
 use crate::{
-    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountTransferInvite,
-    MAX_ACCOUNT_TRANSFER_LINK_BYTES,
+    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountSyncItem,
+    AccountSyncItemKey, AccountTransferFrame, AccountTransferInvite, AccountTransferItem,
+    ChannelId, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS,
+    MAX_ACCOUNT_TRANSFER_FRAME_BYTES, MAX_ACCOUNT_TRANSFER_LINK_BYTES,
 };
 
 const NOW: i64 = 1_790_000_000_000;
@@ -121,4 +123,130 @@ fn debug_output_does_not_contain_the_secret() {
     let debug = format!("{invite:?}");
     assert!(!debug.contains(&secret), "{debug}");
     assert!(!debug.contains("direct_addrs"), "{debug}");
+}
+
+// #1211 AC-2（2a）: 確認済みの接続で送る必須 bundle の frame の上限と、item の検証。
+
+const SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+const OTHER_SECRET: &str = "101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f";
+
+fn bundle_item(
+    keys: &KukuriKeys,
+    key: AccountSyncItemKey,
+    value_bytes: usize,
+) -> AccountTransferItem {
+    let item = AccountSyncItem {
+        key,
+        op_id: "0123456789abcdef0123456789abcdef".to_string(),
+        updated_at: NOW,
+        value: Some(serde_json::Value::String("x".repeat(value_bytes))),
+    };
+    AccountTransferItem {
+        key: item.key.docs_key(),
+        sealed: keys
+            .derive_account_sync()
+            .seal(&keys.public_key(), &item)
+            .unwrap(),
+    }
+}
+
+fn membership(index: usize) -> AccountSyncItemKey {
+    AccountSyncItemKey::ChannelMembership {
+        channel_id: ChannelId(format!("channel-{index}")),
+    }
+}
+
+#[test]
+fn bundle_frames_stay_within_the_item_and_byte_limits() {
+    let keys = KukuriKeys::parse(SECRET).unwrap();
+    let small = (0..130)
+        .map(|i| bundle_item(&keys, membership(i), 8))
+        .collect();
+    let frames = AccountTransferFrame::chunks(small).unwrap();
+    let sizes: Vec<_> = frames
+        .iter()
+        .map(|frame| match frame {
+            AccountTransferFrame::Items { items } => items.len(),
+            _ => panic!("not an items frame"),
+        })
+        .collect();
+    assert_eq!(sizes, [64, 64, 2]);
+
+    // 1 件が 16 KiB 近い item は、64 件より前に 1 MiB で分かれる。
+    let large: Vec<_> = (0..70)
+        .map(|i| bundle_item(&keys, membership(i), MAX_ACCOUNT_SYNC_ITEM_BYTES - 200))
+        .collect();
+    let total = large.len();
+    let frames = AccountTransferFrame::chunks(large).unwrap();
+    assert!(frames.len() > 2, "{}", frames.len());
+    let mut count = 0;
+    for frame in &frames {
+        let bytes = frame.encode().unwrap();
+        assert!(bytes.len() <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES);
+        assert_eq!(&AccountTransferFrame::decode(&bytes).unwrap(), frame);
+        if let AccountTransferFrame::Items { items } = frame {
+            assert!(items.len() < MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS);
+            count += items.len();
+        }
+    }
+    assert_eq!(count, total);
+}
+
+#[test]
+fn malformed_and_oversized_bundle_frames_are_rejected() {
+    let keys = KukuriKeys::parse(SECRET).unwrap();
+    let item = serde_json::to_value(bundle_item(&keys, membership(0), 8)).unwrap();
+    let items = |n: usize| serde_json::json!({ "frame": "items", "items": vec![item.clone(); n] });
+    for bad in [
+        items(0),
+        items(MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS + 1),
+        serde_json::json!({ "frame": "end", "count": 1, "extra": 1 }),
+        serde_json::json!({ "frame": "history" }),
+    ] {
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        assert!(
+            AccountTransferFrame::decode(&bytes).is_err(),
+            "accepted {bad}"
+        );
+    }
+    let oversized = vec![b' '; MAX_ACCOUNT_TRANSFER_FRAME_BYTES + 1];
+    assert!(AccountTransferFrame::decode(&oversized).is_err());
+    assert!(
+        AccountTransferFrame::decode(
+            &serde_json::to_vec(&items(MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS)).unwrap()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn bundle_items_open_only_for_the_account_and_a_transferred_kind() {
+    let keys = KukuriKeys::parse(SECRET).unwrap();
+    let derived = keys.derive_account_sync();
+    let account = keys.public_key();
+    let item = bundle_item(&keys, membership(1), 8);
+    assert_eq!(item.open(&derived, &account).unwrap().key, membership(1));
+
+    // 別のアカウントの鍵・公開鍵、置き換えた docs の key では開けない。
+    let other = KukuriKeys::parse(OTHER_SECRET).unwrap();
+    assert!(item.open(&other.derive_account_sync(), &account).is_err());
+    assert!(item.open(&derived, &other.public_key()).is_err());
+    let moved = AccountTransferItem {
+        key: membership(2).docs_key(),
+        sealed: item.sealed.clone(),
+    };
+    assert!(moved.open(&derived, &account).is_err());
+
+    // 変更の窓は移行の bundle に入れない（封が正しくても拒否する）。
+    let slot = bundle_item(&keys, AccountSyncItemKey::change_slot("device-a", 3), 8);
+    assert!(slot.open(&derived, &account).is_err());
+}
+
+#[test]
+fn the_key_frame_does_not_debug_the_secret() {
+    let frame = AccountTransferFrame::Key {
+        secret: SECRET.to_string(),
+    };
+    let debug = format!("{frame:?}");
+    assert!(!debug.contains(SECRET), "{debug}");
 }

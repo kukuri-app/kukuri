@@ -28,7 +28,10 @@ mod browser_tests;
 #[cfg(not(target_family = "wasm"))]
 mod tests;
 
-pub use account_transfer::{ACCOUNT_TRANSFER_ALPN, AccountTransfer};
+pub use account_transfer::{
+    ACCOUNT_TRANSFER_ALPN, AccountBundleSink, AccountBundleSource, AccountBundleStaging,
+    AccountTransfer,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;

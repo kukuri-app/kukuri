@@ -139,6 +139,8 @@ pub struct DesktopRuntime {
     pub(crate) community_node_connectivity: Mutex<crate::community_node::AppliedConnectivity>,
     pub(crate) community_node_scheduler_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     pub(crate) sync_status_observer_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
+    /// #1211 AC-2: 移行で保存した必須 bundle の反映の背景 task。
+    pub(crate) account_transfer_task: Mutex<Option<n0_future::task::JoinHandle<()>>>,
     /// 計測用: 差分を作った回数(#1221 R2-D)。
     #[cfg(test)]
     pub(crate) sync_status_delta_reads: std::sync::atomic::AtomicUsize,
@@ -574,6 +576,11 @@ impl DesktopRuntime {
         }
         app_service.resume_direct_message_state().await?;
 
+        // #1211 AC-2: 移行で保存した必須 bundle があれば、背景で反映する。
+        let account_transfer_task = identity_api::spawn_account_transfer_merge(
+            db_path.clone(),
+            app_service.account_transfer_handle(),
+        );
         let (event_sender, _) = tokio::sync::broadcast::channel(64);
         let notification_event_task = {
             let notify = app_service.notification_inserted_notify();
@@ -618,6 +625,7 @@ impl DesktopRuntime {
             community_node_connectivity: Mutex::default(),
             community_node_scheduler_task: Mutex::new(None),
             sync_status_observer_task: Mutex::new(None),
+            account_transfer_task: Mutex::new(Some(account_transfer_task)),
             #[cfg(test)]
             sync_status_delta_reads: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(not(target_family = "wasm"))]
@@ -703,6 +711,9 @@ impl Drop for DesktopRuntime {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
         {
+            task.abort();
+        }
+        if let Some(task) = self.account_transfer_task.get_mut().take() {
             task.abort();
         }
     }

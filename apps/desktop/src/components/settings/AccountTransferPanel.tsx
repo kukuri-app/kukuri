@@ -18,11 +18,13 @@ import { Notice } from '@/components/ui/notice';
 const POLL_MS = 500;
 const IDLE: AccountTransferStatus = { state: 'idle' };
 
-// #1211: QR・専用リンクの移行（AC-1 は両端末の確認まで）。移行元は招待を出して QR とリンクを表示し、
-// 移行先はリンクを貼り付けて接続する。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
-export function AccountTransferPanel({ role, initialLink = '' }: {
+// #1211: QR・専用リンクの移行。移行元は招待を出して QR とリンクを表示し、移行先はリンクを貼り付けて接続する。
+// 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了したら受け取った
+// アカウントを `onCompleted` へ渡す（切替は呼び出し側）。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
+export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
   role: 'source' | 'target';
   initialLink?: string;
+  onCompleted?: (accountId: string) => void;
 }) {
   const { t } = useTranslation('settings');
   const [invite, setInvite] = useState<AccountTransferLink | null>(null);
@@ -73,7 +75,7 @@ export function AccountTransferPanel({ role, initialLink = '' }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const active = ['waiting', 'connecting', 'confirming'].includes(status.state);
+  const active = ['waiting', 'connecting', 'confirming', 'transferring'].includes(status.state);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => {
@@ -82,6 +84,13 @@ export function AccountTransferPanel({ role, initialLink = '' }: {
     }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [active]);
+
+  const receivedAccount = status.state === 'completed' ? status.account_id : null;
+  useEffect(() => {
+    if (receivedAccount) onCompleted?.(receivedAccount);
+    // 受け取ったアカウントごとに 1 回だけ渡す。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receivedAccount]);
 
   const decide = async (accept: boolean) => {
     setPending(true);
@@ -110,8 +119,11 @@ export function AccountTransferPanel({ role, initialLink = '' }: {
         </div>}
     </section>;
   }
-  if (status.state === 'confirmed') {
-    return <Notice tone='accent' data-testid='account-transfer-confirmed'>{t('accountTransfer.confirmed')}</Notice>;
+  if (status.state === 'transferring') {
+    return <p role='status' data-testid='account-transfer-transferring'>{t(`accountTransfer.transferring.${role}`, { count: status.items })}</p>;
+  }
+  if (status.state === 'completed') {
+    return <Notice tone='accent' data-testid='account-transfer-completed'>{t(`accountTransfer.completed.${role}`)}</Notice>;
   }
   if (status.state === 'failed') {
     return <section className='space-y-3' data-testid='account-transfer-failed'>

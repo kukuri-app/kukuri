@@ -3,6 +3,7 @@
 use super::*;
 
 mod fetch;
+mod transfer;
 
 #[tokio::test]
 async fn account_sync_starts_privately_and_stops_with_the_runtime() {

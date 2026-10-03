@@ -227,4 +227,39 @@ impl ClientHost {
         }
         crate::import_account_key_from_env(&self.app_data_dir, &export, &passphrase, label).await
     }
+
+    /// #1211: 移行先としてリンクの移行元へ接続する。受けた必須 bundle はそのアカウントの置き場へ保存し、保存の確定で
+    /// 新規のアカウントを登録簿へ足す。
+    pub async fn open_account_transfer(
+        self: &Arc<Self>,
+        request: crate::OpenAccountTransferRequest,
+    ) -> anyhow::Result<()> {
+        let sink = Arc::new(crate::accounts::transfer::TransferSink {
+            host: Arc::downgrade(self),
+        });
+        self.runtime().open_account_transfer(request, sink).await
+    }
+
+    /// #1211: 移行の保存を確定したアカウントを登録簿へ足す。同じ公開鍵が登録済みなら、そのまま返す（二重に登録しない）。
+    pub(crate) async fn register_transferred_account(
+        &self,
+        keys: &kukuri_core::KukuriKeys,
+    ) -> anyhow::Result<AccountRecord> {
+        let _guard = self.operation_guard.lock().await;
+        if self.shutdown_started.load(Ordering::Acquire) {
+            anyhow::bail!("client host is shutting down");
+        }
+        let pubkey = keys.public_key_hex();
+        if let Some(record) = list_accounts(&self.app_data_dir)
+            .await?
+            .accounts
+            .into_iter()
+            .find(|record| record.pubkey == pubkey)
+        {
+            return Ok(record);
+        }
+        // 鍵の置き場は、この端末の今のアカウントと同じ方式にする。
+        let mode = self.runtime().identity_mode;
+        crate::accounts::add_account(&self.app_data_dir, mode, keys, None, false).await
+    }
 }
