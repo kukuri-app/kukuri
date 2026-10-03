@@ -265,8 +265,9 @@ const postWebImage = (browser, content) => async () => {
   await browser.$('button=Post').click();
 };
 
-/** ブラウザの EndpointId と接続先（設定の Discovery の診断。開発者モードで出る）。`peers` のどれかを接続先に持つ。
- * native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の照合）。 */
+/** ブラウザの EndpointId と接続先（設定の Discovery の診断。開発者モードで出る）。接続先は topic の gossip の隣接なので、
+ * 既知の相手（`peers`）のどれかを持てばよい。native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の
+ * 照合）。実データがどの経路を通ったかは relay の bytes で判定する。 */
 async function assertConnected(browser, peers, nativeEndpoint) {
   await browser.$('[data-testid="control-center-trigger"]').click();
   await browser.$('#shell-control-center').$('button*=Settings').click();
@@ -318,7 +319,7 @@ async function main() {
     const webToWeb = await relayedWhileLoading(b, webImage, postWebImage(a, webImage));
     console.log('web→web direct', webToWeb);
     assert.ok(webToWeb.relayed < webToWeb.size / 4, `web→web image went through the relay: ${JSON.stringify(webToWeb)}`);
-    await assertConnected(b, [aEndpoint], nativeEndpoint);
+    const bEndpoint = await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
@@ -344,7 +345,7 @@ async function main() {
     console.log('native→web fallback', fallback);
     assert.ok(fallback.relayed >= fallback.size * 0.9, `native→web image did not use the relay: ${JSON.stringify(fallback)}`);
     assert.ok(fallback.shownBeforeImage, 'the post and its actions are shown while the image is missing');
-    await assertConnected(c, [nativeEndpoint, aEndpoint], nativeEndpoint);
+    await assertConnected(c, [nativeEndpoint, aEndpoint, bEndpoint], nativeEndpoint);
     const webFallback = `web image fallback ${RUN}`;
     const webToWebFallback = await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback));
     console.log('web→web fallback', webToWebFallback);
