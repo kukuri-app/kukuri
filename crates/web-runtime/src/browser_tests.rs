@@ -71,7 +71,7 @@ fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
-fn account(label: &str) -> String {
+pub(crate) fn account(label: &str) -> String {
     let now = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .expect("clock");
@@ -79,7 +79,7 @@ fn account(label: &str) -> String {
 }
 
 /// database を消す。開いたままの接続があると消せずに待つので、期限で失敗にする。
-async fn delete_database(account: &str) -> Result<()> {
+pub(crate) async fn delete_database(account: &str) -> Result<()> {
     let request = web_sys::window()
         .context("window")?
         .indexed_db()

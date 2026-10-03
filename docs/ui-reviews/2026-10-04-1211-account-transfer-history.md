@@ -1,0 +1,24 @@
+# 2026-10-04 account transfer history
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1211 AC-3（W7-PR3）の実装PR
+- Preview: [範囲の選択・ja・dark](./issue-1211-history-choice-ja-dark.png) / [範囲の選択・en・light](./issue-1211-history-choice-en-light.png) / [履歴の受信中・ja・dark](./issue-1211-history-receiving-ja-dark.png) / [完了と要約・en・light](./issue-1211-history-completed-en-light.png) / [完了と要約・ja・dark](./issue-1211-history-completed-ja-dark.png)
+- Surface / user / purpose: 「アカウント追加」Dialog の「別の端末から移す」と「別の端末へ移す」。2 台の端末を持つ本人が、鍵と設定に加えて、移行元の端末で書いた自分の投稿の履歴を、選んだ範囲だけ移す。
+- Summary: [2026-10-03 の record](./2026-10-03-1211-account-transfer-bundle.md) の画面に、次を足した（2026-10-04 ユーザー決定）。対象・未取得の説明の画面と ADR 0047/0048 との対象差は AC-5。
+  - 移行先のリンクの入力欄の下に「投稿の履歴」の select（移さない（既定）・直近 30 日・直近 1 年・すべて）。補足で、移行元の端末で書いた投稿を本文・画像・動画ごと移すこと、他の端末の投稿は移らないこと、旧形式は「すべて」だけであることを示す。
+  - 履歴の間は、鍵と設定の移行の完了の文と、履歴の件数の状態の文、「履歴の受け取りをやめる」（移行元は「履歴の送信をやめる」）を置く。止めても鍵と設定の移行は完了のまま。
+  - 完了は履歴が終わってから示す（移行先はそこで切り替える）。完了の Notice の下に、履歴の件数・移行元に無かった本文・添付の数・途中で止まったときの続きの案内を示す。
+- Conditions:
+  - Platform: Windows / Linux desktop（Storybook で描画、Tauri の実機は未確認）
+  - Viewport: Dialog の本文幅（Storybook の narrow frame）
+  - Theme: dark / light
+  - Locale: ja / en（zh-CN は文言だけ。story の play が ja・en のボタン名で操作するため撮影しない）
+  - State: 範囲の選択（既定）、履歴の受信中、完了と要約（移行元に無かった数あり）
+- Accessibility / interaction: select は `Field` の label（「投稿の履歴」）と補足を持つ native の select。履歴の件数は `role="status"`。「やめる」は処理中の重複操作を無効にする。件数と単位の間は改行しない（ja・zh-CN は no-break space）。
+- Performance: 画面を開いている間だけ 500 ms ごとに状態を 1 件読む（AC-1 と同じ）。履歴の量に比例する処理は画面にない。
+- Validation: Vitest（`AccountTransferPanel.test.tsx` 8 件、`DesktopShellPage.accountMenu.test.tsx` 8 件）、eslint、tsc、Storybook の `Target`・`TargetHistory`・`TargetCompletedWithHistory`（play で操作）を static build から Playwright の Chromium で撮影して clipping・重なり・折り返しを確認した。
+- Not verified: Tauri の実機での履歴の後の切替。Web↔native の実ブラウザの往復（W8）。
+- Review result: 対象 story の採用判定は PASS。
+- Exceptions: なし。

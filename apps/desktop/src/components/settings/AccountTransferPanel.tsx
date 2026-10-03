@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encode } from 'uqr';
-import type { AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
+import type { AccountTransferHistory, AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
 import {
   cancelAccountTransfer,
   createAccountTransferInvite,
@@ -14,13 +14,18 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
+import { Select } from '@/components/ui/select';
 
 const POLL_MS = 500;
 const IDLE: AccountTransferStatus = { state: 'idle' };
+const HISTORY_CHOICES = ['none', 'month', 'year', 'all'] as const;
+type HistoryChoice = (typeof HISTORY_CHOICES)[number];
 
 // #1211: QR・専用リンクの移行。移行元は招待を出して QR とリンクを表示し、移行先はリンクを貼り付けて接続する。
 // 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了したら受け取った
 // アカウントを `onCompleted` へ渡す（切替は呼び出し側）。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
+// AC-3: 移行先は接続の前に投稿の履歴の範囲を選ぶ（既定は移さない）。履歴は必須の移行の後に受け、受けている間は
+// 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。
 export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
   role: 'source' | 'target';
   initialLink?: string;
@@ -29,6 +34,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
   const { t } = useTranslation('settings');
   const [invite, setInvite] = useState<AccountTransferLink | null>(null);
   const [link, setLink] = useState(initialLink);
+  const [history, setHistory] = useState<HistoryChoice>('none');
   const [status, setStatus] = useState<AccountTransferStatus>(IDLE);
   const [error, setError] = useState<'prepareFailed' | 'invalid' | null>(null);
   const [pending, setPending] = useState(false);
@@ -58,7 +64,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
     setPending(true);
     setError(null);
     try {
-      await openAccountTransfer(link.trim());
+      await openAccountTransfer(link.trim(), history === 'none' ? null : history as AccountTransferHistory);
       setStatus({ state: 'connecting' });
     } catch {
       setError('invalid');
@@ -75,7 +81,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const active = ['waiting', 'connecting', 'confirming', 'transferring'].includes(status.state);
+  const active = ['waiting', 'connecting', 'confirming', 'transferring', 'history'].includes(status.state);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => {
@@ -96,6 +102,14 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
     setPending(true);
     try { await decideAccountTransfer(accept); setStatus(await getAccountTransferStatus()); }
     catch { setStatus(await getAccountTransferStatus().catch(() => status)); }
+    finally { setPending(false); }
+  };
+
+  // 履歴だけを止める（必須の移行は完了のまま。backend が完了の状態へ移す）。
+  const stopHistory = async () => {
+    setPending(true);
+    try { await cancelAccountTransfer(); setStatus(await getAccountTransferStatus()); }
+    catch { /* 次の状態の読み出しで確かめる */ }
     finally { setPending(false); }
   };
 
@@ -122,8 +136,23 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
   if (status.state === 'transferring') {
     return <p role='status' data-testid='account-transfer-transferring'>{t(`accountTransfer.transferring.${role}`, { count: status.items })}</p>;
   }
+  if (status.state === 'history') {
+    return <section className='space-y-3' data-testid='account-transfer-history'>
+      <p className='text-sm'>{t('accountTransfer.history.bundleDone')}</p>
+      <p role='status'>{t(`accountTransfer.history.progress.${role}`, { count: status.posts })}</p>
+      <Button variant='secondary' disabled={pending} onClick={() => void stopHistory()}>{t(`accountTransfer.history.stop.${role}`)}</Button>
+    </section>;
+  }
   if (status.state === 'completed') {
-    return <Notice tone='accent' data-testid='account-transfer-completed'>{t(`accountTransfer.completed.${role}`)}</Notice>;
+    const result = status.history;
+    return <section className='space-y-3' data-testid='account-transfer-completed'>
+      <Notice tone='accent'>{t(`accountTransfer.completed.${role}`)}</Notice>
+      {result ? <div className='space-y-1 text-sm' data-testid='account-transfer-history-result'>
+        <p>{t(`accountTransfer.history.${result.stopped ? 'stopped' : 'done'}.${role}`, { count: result.posts })}</p>
+        {result.unavailable > 0 ? <p>{t('accountTransfer.history.unavailable', { count: result.unavailable })}</p> : null}
+        {result.stopped ? <p className='text-muted-foreground'>{t('accountTransfer.history.resume')}</p> : null}
+      </div> : null}
+    </section>;
   }
   if (status.state === 'failed') {
     return <section className='space-y-3' data-testid='account-transfer-failed'>
@@ -161,6 +190,11 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
     <Field label={t('accountTransfer.target.linkLabel')} hint={t('accountTransfer.target.instructions')}
       tone={error ? 'danger' : 'default'} message={error ? t('accountTransfer.failure.invalid') : undefined}>
       <Input value={link} onChange={(event) => { setLink(event.target.value); setError(null); }} autoComplete='off' spellCheck={false} />
+    </Field>
+    <Field label={t('accountTransfer.history.label')} hint={t('accountTransfer.history.hint')}>
+      <Select value={history} onChange={(event) => setHistory(event.target.value as HistoryChoice)}>
+        {HISTORY_CHOICES.map((choice) => <option key={choice} value={choice}>{t(`accountTransfer.history.choice.${choice}`)}</option>)}
+      </Select>
     </Field>
     <Button disabled={pending || !link.trim()} onClick={() => void connect()}>
       {t(pending ? 'accountTransfer.target.connecting' : 'accountTransfer.target.connect')}

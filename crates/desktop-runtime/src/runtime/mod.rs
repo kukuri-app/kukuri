@@ -576,10 +576,11 @@ impl DesktopRuntime {
         }
         app_service.resume_direct_message_state().await?;
 
-        // #1211 AC-2: 移行で保存した必須 bundle があれば、背景で反映する。
+        // #1211 AC-2・AC-3: 移行で保存した必須 bundle と履歴があれば、背景で反映する。
         let account_transfer_task = identity_api::spawn_account_transfer_merge(
             db_path.clone(),
             app_service.account_transfer_handle(),
+            store.clone(),
         );
         let (event_sender, _) = tokio::sync::broadcast::channel(64);
         let notification_event_task = {

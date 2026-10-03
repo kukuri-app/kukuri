@@ -1,5 +1,6 @@
 //! #1211 AC-1（1b〜1d）: QR・専用リンクの移行の接続と両端末の確認。負例では、どちらの端末にも転送（確認の後の
 //! 唯一の続き）が始まらないことを確かめる。AC-2（2a・2c・2f）: 確認の後の必須 bundle の転送と、保存の確定の境界。
+//! AC-3（3a・3d）の履歴は `account_transfer_history.rs`。
 
 use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
@@ -76,6 +77,19 @@ impl AccountBundleSource for FakeSource {
         let next = (index + 1 < self.pages.len()).then(|| (index + 1).to_string());
         Ok((self.pages.get(index).cloned().unwrap_or_default(), next))
     }
+
+    /// 履歴は持たない（履歴の fake は `history::HistorySource`）。
+    async fn history_page(
+        &self,
+        _since: Option<u64>,
+        _cursor: Option<AccountHistoryCursor>,
+    ) -> Result<AccountHistoryPage> {
+        Ok(AccountHistoryPage::default())
+    }
+
+    async fn blob_part(&self, _: &str, _: u64, _: usize) -> Result<Option<(u64, Vec<u8>)>> {
+        Ok(None)
+    }
 }
 
 /// 移行先の保存で故障を入れる境界。
@@ -127,6 +141,15 @@ impl AccountBundleSink for FakeSink {
             log: self.log.clone(),
             settled: false,
         }))
+    }
+
+    /// 履歴の置き場は持たない（履歴の fake は `history::HistorySink`）。
+    async fn history(
+        &self,
+        _: &str,
+        _: AccountTransferHistory,
+    ) -> Result<AccountHistoryResume, Failure> {
+        Err(Failure::Invalid)
     }
 }
 
@@ -220,7 +243,7 @@ fn failed(reason: Failure) -> impl Fn(&Status) -> bool {
 fn is_confirmed(status: &Status) -> bool {
     matches!(
         status,
-        Status::Transferring { .. } | Status::Completed { .. }
+        Status::Transferring { .. } | Status::History { .. } | Status::Completed { .. }
     )
 }
 
@@ -270,7 +293,8 @@ async fn completed_both(source: &AccountTransfer, target: &AccountTransfer) -> R
         done,
         Status::Completed {
             role: Role::Target,
-            account_id: Some(ACCOUNT.to_string())
+            account_id: Some(ACCOUNT.to_string()),
+            history: None,
         }
     );
     let done = wait_for(source, "source completed", is_completed).await?;
@@ -278,7 +302,8 @@ async fn completed_both(source: &AccountTransfer, target: &AccountTransfer) -> R
         done,
         Status::Completed {
             role: Role::Source,
-            account_id: None
+            account_id: None,
+            history: None,
         }
     );
     Ok(())
@@ -301,7 +326,7 @@ async fn native_nodes_confirm_over_the_direct_path() -> Result<()> {
     let sink = fake_sink();
     target
         .account_transfer()
-        .open(&invite.to_link(), sink.clone())?;
+        .open(&invite.to_link(), sink.clone(), None)?;
     transfer_both(source.account_transfer(), target.account_transfer()).await?;
     assert_eq!(
         *sink.log.lock().unwrap(),
@@ -317,7 +342,7 @@ async fn native_nodes_confirm_over_the_direct_path() -> Result<()> {
     // 1c 再生: 使用済みの招待は、同じ端末からも別の端末からも受けない。
     target
         .account_transfer()
-        .open(&invite.to_link(), fake_sink())?;
+        .open(&invite.to_link(), fake_sink(), None)?;
     wait_for(
         target.account_transfer(),
         "replay",
@@ -327,7 +352,7 @@ async fn native_nodes_confirm_over_the_direct_path() -> Result<()> {
     let third = IrohDocsNode::memory().await?;
     third
         .account_transfer()
-        .open(&invite.to_link(), fake_sink())?;
+        .open(&invite.to_link(), fake_sink(), None)?;
     wait_for(third.account_transfer(), "replay", failed(Failure::Invalid)).await?;
     assert!(is_confirmed(&source.account_transfer().status()));
     Ok(())
@@ -342,6 +367,7 @@ async fn a_wrong_proof_is_rejected_without_consuming_the_invite() -> Result<()> 
     forger.account_transfer().open(
         &tamper(&link, |json| json["secret"] = "ab".repeat(32).into()),
         fake_sink(),
+        None,
     )?;
     wait_for(
         forger.account_transfer(),
@@ -367,7 +393,7 @@ async fn a_wrong_proof_is_rejected_without_consuming_the_invite() -> Result<()> 
     ));
 
     let target = IrohDocsNode::memory().await?;
-    target.account_transfer().open(&link, fake_sink())?;
+    target.account_transfer().open(&link, fake_sink(), None)?;
     confirm_both(source.account_transfer(), target.account_transfer()).await
 }
 
@@ -387,6 +413,7 @@ async fn an_invite_expired_at_the_source_is_rejected() -> Result<()> {
             invite,
             Status::Waiting { expires_at_ms },
             Some(fake_source()),
+            None,
         )),
         None,
     );
@@ -399,7 +426,9 @@ async fn an_invite_expired_at_the_source_is_rejected() -> Result<()> {
     let extended = tamper(&short, |json| {
         json["expires_at_ms"] = (now_ms() + 60_000).into()
     });
-    target.account_transfer().open(&extended, fake_sink())?;
+    target
+        .account_transfer()
+        .open(&extended, fake_sink(), None)?;
     wait_for(
         target.account_transfer(),
         "expired",
@@ -407,7 +436,12 @@ async fn an_invite_expired_at_the_source_is_rejected() -> Result<()> {
     )
     .await?;
     // 移行先の手元でも、期限を過ぎたリンクは開く前に拒否する。
-    assert!(target.account_transfer().open(&short, fake_sink()).is_err());
+    assert!(
+        target
+            .account_transfer()
+            .open(&short, fake_sink(), None)
+            .is_err()
+    );
     Ok(())
 }
 
@@ -425,7 +459,9 @@ async fn a_link_pointing_at_another_device_is_rejected() -> Result<()> {
         json["issuer"] = other_invite.issuer.clone().into();
         json["direct_addrs"] = serde_json::to_value(&other_invite.direct_addrs).unwrap();
     });
-    target.account_transfer().open(&to_other, fake_sink())?;
+    target
+        .account_transfer()
+        .open(&to_other, fake_sink(), None)?;
     wait_for(
         target.account_transfer(),
         "other device",
@@ -436,7 +472,9 @@ async fn a_link_pointing_at_another_device_is_rejected() -> Result<()> {
     let mismatched = tamper(&link, |json| {
         json["direct_addrs"] = serde_json::to_value(&other_invite.direct_addrs).unwrap();
     });
-    target.account_transfer().open(&mismatched, fake_sink())?;
+    target
+        .account_transfer()
+        .open(&mismatched, fake_sink(), None)?;
     wait_for(
         target.account_transfer(),
         "id mismatch",
@@ -457,7 +495,7 @@ async fn confirmation_needs_both_devices() -> Result<()> {
         let source = IrohDocsNode::memory().await?;
         let target = IrohDocsNode::memory().await?;
         let link = source.account_transfer().issue(fake_source())?.to_link();
-        target.account_transfer().open(&link, fake_sink())?;
+        target.account_transfer().open(&link, fake_sink(), None)?;
         let (accepting, rejecting) = if rejecting_source {
             (target.account_transfer(), source.account_transfer())
         } else {
@@ -494,6 +532,7 @@ async fn confirmation_needs_both_devices() -> Result<()> {
     target.account_transfer().open(
         &source.account_transfer().issue(fake_source())?.to_link(),
         fake_sink(),
+        None,
     )?;
     wait_for(source.account_transfer(), "code", |s| code_of(s).is_some()).await?;
     source.account_transfer().decide(true)?;
@@ -556,7 +595,7 @@ async fn a_browser_like_device_confirms_over_the_relay() -> Result<()> {
         Some(relay.to_string().as_str())
     );
     web.account_transfer()
-        .open(&invite.to_link(), fake_sink())?;
+        .open(&invite.to_link(), fake_sink(), None)?;
     transfer_both(source.account_transfer(), web.account_transfer()).await
 }
 
@@ -579,7 +618,7 @@ async fn a_transfer_survives_losing_the_custom_path() -> Result<()> {
     let staged = |sink: &FakeSink| sink.log.lock().unwrap().staged.iter().sum::<usize>();
     let invite = native.account_transfer().issue(source.clone())?;
     web.account_transfer()
-        .open(&invite.to_link(), sink.clone())?;
+        .open(&invite.to_link(), sink.clone(), None)?;
     confirm_both(native.account_transfer(), web.account_transfer()).await?;
     timeout(WAIT, async {
         while !web
@@ -686,7 +725,9 @@ async fn faults_before_the_commit_complete_neither_device() -> Result<()> {
             .account_transfer()
             .issue(Arc::new(source))?
             .to_link();
-        target_node.account_transfer().open(&link, sink.clone())?;
+        target_node
+            .account_transfer()
+            .open(&link, sink.clone(), None)?;
         decide_both(
             source_node.account_transfer(),
             target_node.account_transfer(),
@@ -727,7 +768,9 @@ async fn cancelling_during_the_transfer_completes_neither_device() -> Result<()>
         });
         let sink = fake_sink();
         let link = source_node.account_transfer().issue(source)?.to_link();
-        target_node.account_transfer().open(&link, sink.clone())?;
+        target_node
+            .account_transfer()
+            .open(&link, sink.clone(), None)?;
         confirm_both(
             source_node.account_transfer(),
             target_node.account_transfer(),
@@ -793,7 +836,9 @@ async fn a_lost_ack_completes_only_the_target() -> Result<()> {
         .account_transfer()
         .issue(fake_source())?
         .to_link();
-    target_node.account_transfer().open(&link, sink.clone())?;
+    target_node
+        .account_transfer()
+        .open(&link, sink.clone(), None)?;
     confirm_both(
         source_node.account_transfer(),
         target_node.account_transfer(),
@@ -897,7 +942,7 @@ async fn malformed_bundles_are_never_committed() -> Result<()> {
         let sink = fake_sink();
         target
             .account_transfer()
-            .open(&invite.to_link(), sink.clone())?;
+            .open(&invite.to_link(), sink.clone(), None)?;
         wait_for(target.account_transfer(), "code", |s| code_of(s).is_some()).await?;
         target.account_transfer().decide(true)?;
         wait_for(
@@ -910,3 +955,6 @@ async fn malformed_bundles_are_never_committed() -> Result<()> {
     }
     Ok(())
 }
+
+#[path = "account_transfer_history.rs"]
+mod history;

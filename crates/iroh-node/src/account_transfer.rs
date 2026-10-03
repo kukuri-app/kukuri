@@ -1,9 +1,13 @@
-//! QR・専用リンクの移行の接続と両端末の確認（#1211 W7 AC-1）、必須 bundle の転送（AC-2）。
+//! QR・専用リンクの移行の接続と両端末の確認（#1211 W7 AC-1）、必須 bundle の転送（AC-2）、任意の投稿の履歴（AC-3）。
 //!
 //! 移行先は招待の endpoint id の端末だけへ接続する（QUIC の認証で接続先を束縛する）。移行元は招待の秘密による
 //! 証明・期限・未使用を確かめて招待を消費し、両端末が同じ確認コードを出す。両方の承認を交換したときだけ、同じ
 //! 接続の新しい stream で移行元が必須 bundle（鍵・item の chunk・総数）を送る。それ以外の終わり方では何も送らない。
-//! 移行先は chunk ごとに保存し、すべて受けて確定したら ACK を返す。移行元は ACK を受けたときだけ完了にする。
+//! 移行先は chunk ごとに保存し、すべて受けて確定したら ACK を返す。移行元は ACK を受けたときだけ必須の移行を終える。
+//! 移行先が履歴を選んでいれば、さらに新しい stream で範囲と続きの位置を送り、移行元が page ごとに record・本文と添付
+//! の blob・page の終わりを順に送る。移行先は page を保存するたびに ACK を返し、移行元は ACK を受けてから次の page を
+//! 送る（送っている page は常に 1 つ）。履歴の中止・失敗は必須の移行の完了を変えない。選んでいなければ、移行先は
+//! ACK の後に接続を閉じる。
 
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -13,8 +17,10 @@ use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use kukuri_core::{
-    AccountTransferFailure as Failure, AccountTransferFrame as Frame, AccountTransferInvite,
-    AccountTransferItem, AccountTransferRole as Role, AccountTransferStatus as Status,
+    AccountHistoryCursor, AccountHistoryRecord, AccountTransferFailure as Failure,
+    AccountTransferFrame as Frame, AccountTransferHistory, AccountTransferHistoryResult,
+    AccountTransferInvite, AccountTransferItem, AccountTransferRole as Role,
+    AccountTransferStatus as Status, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES,
     MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
 };
 use n0_future::task::AbortOnDropHandle;
@@ -36,7 +42,7 @@ const REJECTED: u8 = 0;
 /// 移行先が保存に失敗して接続を閉じるときの code。移行元は保存の失敗として示す。
 const STORAGE_FAILED: u32 = 1;
 
-/// 移行元の必須 bundle（#1211 AC-2）。runtime が手元の account の replica から読む。
+/// 移行元の必須 bundle（#1211 AC-2）と投稿の履歴（AC-3）。runtime が手元の account の replica と保護所有先から読む。
 #[async_trait::async_trait]
 pub trait AccountBundleSource: Send + Sync {
     /// アカウントの秘密鍵（hex）。
@@ -46,12 +52,70 @@ pub trait AccountBundleSource: Send + Sync {
         &self,
         cursor: Option<String>,
     ) -> Result<(Vec<AccountTransferItem>, Option<String>)>;
+    /// 履歴の 1 page。`since`（最初の時間 bucket。すべては `None`）の範囲を `cursor`（最初は `None`）の次から読む。
+    async fn history_page(
+        &self,
+        since: Option<u64>,
+        cursor: Option<AccountHistoryCursor>,
+    ) -> Result<AccountHistoryPage>;
+    /// blob の `offset` からの一部（`limit` byte まで）と全体の長さ。持っていなければ `None`。
+    async fn blob_part(
+        &self,
+        hash: &str,
+        offset: u64,
+        limit: usize,
+    ) -> Result<Option<(u64, Vec<u8>)>>;
 }
 
-/// 移行先の保存（#1211 AC-2）。鍵を受けて保存を始める。
+/// 履歴の 1 page（AC-3）。
+#[derive(Debug, Default)]
+pub struct AccountHistoryPage {
+    pub records: Vec<AccountHistoryRecord>,
+    /// record の投稿の本文・添付の blob の hash（page の中で重ならない）。
+    pub blobs: Vec<String>,
+    /// record の中の投稿の数。
+    pub posts: u64,
+    /// 送れない record・本文・添付の数（1 frame に収まらない record など）。
+    pub unavailable: u64,
+    /// 次の位置。範囲の終わりは `None`。
+    pub next: Option<AccountHistoryCursor>,
+}
+
+/// 移行先の保存（#1211 AC-2・AC-3）。鍵を受けて必須 bundle の保存を始め、確定の後に履歴の置き場を開く。
 #[async_trait::async_trait]
 pub trait AccountBundleSink: Send + Sync {
     async fn begin(&self, secret_hex: &str) -> Result<Box<dyn AccountBundleStaging>, Failure>;
+    /// 受けたアカウントの履歴の置き場を開く。範囲の最初の時間 bucket（すべては `None`）と、続きの位置（同じ範囲の途中
+    /// で止まっていればその位置）を返す。
+    async fn history(
+        &self,
+        account_id: &str,
+        history: AccountTransferHistory,
+    ) -> Result<AccountHistoryResume, Failure>;
+}
+
+/// 移行先の履歴の置き場と、そこから始める範囲・位置。
+pub struct AccountHistoryResume {
+    pub since: Option<u64>,
+    pub cursor: Option<AccountHistoryCursor>,
+    pub staging: Box<dyn AccountHistoryStaging>,
+}
+
+/// 履歴の page ごとの保存（AC-3）。確定しないまま落とされた page は、実装が消す。
+#[async_trait::async_trait]
+pub trait AccountHistoryStaging: Send {
+    /// 受けた record を確かめて今の page に置く。
+    async fn records(&mut self, records: Vec<AccountHistoryRecord>) -> Result<(), Failure>;
+    /// blob の一部を今の page に置く（0 から順に、長さに届くまで。届いたら hash を確かめる）。
+    async fn blob(
+        &mut self,
+        hash: &str,
+        len: u64,
+        offset: u64,
+        bytes: Vec<u8>,
+    ) -> Result<(), Failure>;
+    /// 今の page を確定し、続きの位置を `next` へ進める。
+    async fn commit(&mut self, next: Option<AccountHistoryCursor>) -> Result<(), Failure>;
 }
 
 /// 1 回の移行の保存。chunk ごとに保存し、すべて受けたら確定する。確定しなければ消す（失敗では `abort` を呼ぶ。
@@ -84,8 +148,10 @@ struct Session {
     consumed: StdMutex<bool>,
     status: watch::Sender<Status>,
     decision: watch::Sender<Option<bool>>,
-    /// 移行元が送る必須 bundle（移行先は `None`）。
+    /// 移行元が送る必須 bundle と履歴（移行先は `None`）。
     source: Option<Arc<dyn AccountBundleSource>>,
+    /// 移行先が選んだ履歴の範囲（移さないとき・移行元は `None`）。
+    history: Option<AccountTransferHistory>,
 }
 
 impl std::fmt::Debug for AccountTransfer {
@@ -121,24 +187,38 @@ impl AccountTransfer {
                 invite.clone(),
                 status,
                 Some(source),
+                None,
             )),
             None,
         );
         Ok(invite)
     }
 
-    /// 移行先: リンクの移行元へ接続し、確認を始める。確認の後に受けた必須 bundle を `sink` へ保存する。リンクの
-    /// 形式・期限の誤りはここで返す。
-    pub fn open(&self, link: &str, sink: Arc<dyn AccountBundleSink>) -> Result<()> {
+    /// 移行先: リンクの移行元へ接続し、確認を始める。確認の後に受けた必須 bundle を `sink` へ保存し、`history` を
+    /// 選んでいれば続けてその範囲の履歴を受ける。リンクの形式・期限の誤りはここで返す。
+    pub fn open(
+        &self,
+        link: &str,
+        sink: Arc<dyn AccountBundleSink>,
+        history: Option<AccountTransferHistory>,
+    ) -> Result<()> {
         let invite = AccountTransferInvite::parse_link(link, now_ms())?;
         let addr = issuer_addr(&invite)?;
-        let session = Session::new(Role::Target, invite, Status::Connecting, None);
+        let session = Session::new(Role::Target, invite, Status::Connecting, None, history);
         let task = n0_future::task::spawn({
             let endpoint = self.endpoint.clone();
             let session = session.clone();
             async move {
-                if let Err(reason) = run_target(&endpoint, addr, &session, sink.as_ref()).await {
-                    session.fail(reason);
+                // 取消（新しい移行・cancel・履歴だけの中止）で状態が終わったら、途中でもやめる。
+                let mut status = session.status.subscribe();
+                let ended = status.wait_for(Status::is_terminal);
+                tokio::select! {
+                    result = run_target(&endpoint, addr, &session, sink.as_ref()) => {
+                        if let Err(reason) = result {
+                            session.fail(reason);
+                        }
+                    }
+                    _ = ended => {}
                 }
             }
         });
@@ -178,7 +258,17 @@ impl AccountTransfer {
         Ok(())
     }
 
+    /// 移行を取り消す。履歴の途中なら、必須の移行は完了のまま履歴だけを止める（AC-3）。
     pub fn cancel(&self) {
+        let slot = self.slot.lock().expect("account transfer slot poisoned");
+        if slot
+            .session
+            .as_ref()
+            .is_some_and(|session| session.stop_history())
+        {
+            return;
+        }
+        drop(slot);
         self.replace(None, None);
     }
 
@@ -210,6 +300,7 @@ impl Session {
         invite: AccountTransferInvite,
         status: Status,
         source: Option<Arc<dyn AccountBundleSource>>,
+        history: Option<AccountTransferHistory>,
     ) -> Arc<Self> {
         Arc::new(Self {
             role,
@@ -218,7 +309,42 @@ impl Session {
             status: watch::channel(status).0,
             decision: watch::channel(None).0,
             source,
+            history,
         })
+    }
+
+    /// 履歴の途中なら、取り消したとして完了にする（必須の移行は完了のまま）。
+    fn stop_history(&self) -> bool {
+        self.status.send_if_modified(|current| {
+            let Status::History {
+                role,
+                account_id,
+                posts,
+                unavailable,
+            } = current.clone()
+            else {
+                return false;
+            };
+            *current = Status::Completed {
+                role,
+                account_id,
+                history: Some(AccountTransferHistoryResult {
+                    posts,
+                    unavailable,
+                    stopped: Some(Failure::Cancelled),
+                }),
+            };
+            true
+        })
+    }
+
+    fn set_history(&self, account_id: Option<&str>, result: &AccountTransferHistoryResult) {
+        self.set(Status::History {
+            role: self.role,
+            account_id: account_id.map(str::to_string),
+            posts: result.posts,
+            unavailable: result.unavailable,
+        });
     }
 
     /// 終わった移行の状態は変えない。
@@ -274,8 +400,8 @@ impl ProtocolHandler for AccountTransfer {
     }
 }
 
-/// 移行元: 証明を確かめ、受けた接続だけで確認へ進み、両端末の承認の後に必須 bundle を送る。証明の誤りは待って
-/// いる招待を終わらせない。
+/// 移行元: 証明を確かめ、受けた接続だけで確認へ進み、両端末の承認の後に必須 bundle を送る。移行先が履歴を選んで
+/// いれば、続けて履歴を送る。証明の誤りは待っている招待を終わらせない。
 async fn serve_source(connection: &Connection, session: &Session) -> Result<(), Failure> {
     let target = *connection.remote_id().as_bytes();
     let hello = timeout(HELLO_TIMEOUT, async {
@@ -298,10 +424,19 @@ async fn serve_source(connection: &Connection, session: &Session) -> Result<(), 
         .map_err(|_| Failure::Interrupted)?;
     confirm(session, send, recv, &target).await?;
     let source = session.source.as_deref().ok_or(Failure::Invalid)?;
-    send_bundle(session, connection, source).await
+    send_bundle(session, connection, source).await?;
+    let history = serve_history(session, connection, source).await;
+    session.set(Status::Completed {
+        role: Role::Source,
+        account_id: None,
+        history,
+    });
+    connection.close(0u32.into(), b"account transfer completed");
+    Ok(())
 }
 
-/// 移行先: 招待の endpoint id へ接続し、証明を送る。両端末の承認の後に必須 bundle を受けて保存する。
+/// 移行先: 招待の endpoint id へ接続し、証明を送る。両端末の承認の後に必須 bundle を受けて保存し、履歴を選んで
+/// いれば続けて受ける（選んでいなければ接続を閉じる）。
 async fn run_target(
     endpoint: &Endpoint,
     addr: EndpointAddr,
@@ -333,7 +468,20 @@ async fn run_target(
         _ => return Err(Failure::Invalid),
     }
     confirm(session, send, recv, &target).await?;
-    receive_bundle(session, &connection, sink).await
+    let account_id = receive_bundle(session, &connection, sink).await?;
+    let history = match session.history {
+        Some(history) => {
+            Some(receive_history(session, &connection, sink, &account_id, history).await)
+        }
+        None => None,
+    };
+    session.set(Status::Completed {
+        role: Role::Target,
+        account_id: Some(account_id),
+        history,
+    });
+    connection.close(0u32.into(), b"account transfer completed");
+    Ok(())
 }
 
 /// 両端末: 確認コードを出し、自分の承認を送り、相手の承認を受ける。両方そろったときだけ転送へ進む。
@@ -396,7 +544,7 @@ async fn confirm(
     Ok(())
 }
 
-/// 移行元: 同じ接続の新しい stream で、鍵・item の chunk・総数を送り、移行先の保存の ACK を受けたら完了にする。
+/// 移行元: 同じ接続の新しい stream で、鍵・item の chunk・総数を送り、移行先の保存の ACK を受けるまで待つ。
 /// 移行先が保存の失敗で閉じた接続は、送る途中でも保存の失敗として示す。
 async fn send_bundle(
     session: &Session,
@@ -439,28 +587,132 @@ async fn send_bundle(
         }
     }
     .await;
-    if let Err(reason) = sent {
-        let storage = matches!(
-            connection.close_reason(),
-            Some(ConnectionError::ApplicationClosed(close))
-                if close.error_code == STORAGE_FAILED.into()
-        );
-        return Err(if storage { Failure::Storage } else { reason });
+    sent.map_err(|reason| closed_for_storage(connection).unwrap_or(reason))
+}
+
+/// 移行先が保存の失敗で閉じた接続なら、保存の失敗。
+fn closed_for_storage(connection: &Connection) -> Option<Failure> {
+    matches!(
+        connection.close_reason(),
+        Some(ConnectionError::ApplicationClosed(close))
+            if close.error_code == STORAGE_FAILED.into()
+    )
+    .then_some(Failure::Storage)
+}
+
+/// 移行元: 移行先が履歴を選んでいれば、新しい stream で範囲と続きの位置を受け、page ごとに record・本文と添付の
+/// blob・page の終わりを順に送り、その page の保存の ACK を受けてから次の page へ進む。選んでいなければ（接続を
+/// 閉じれば）`None`。
+async fn serve_history(
+    session: &Session,
+    connection: &Connection,
+    source: &dyn AccountBundleSource,
+) -> Option<AccountTransferHistoryResult> {
+    let (mut send, mut recv) = timeout(FRAME_TIMEOUT, connection.accept_bi())
+        .await
+        .ok()?
+        .ok()?;
+    let mut result = AccountTransferHistoryResult {
+        posts: 0,
+        unavailable: 0,
+        stopped: None,
+    };
+    session.set_history(None, &result);
+    let sent = async {
+        let Frame::History { since, mut cursor } = read_frame(&mut recv).await? else {
+            return Err(Failure::Invalid);
+        };
+        loop {
+            let page = source
+                .history_page(since, cursor.take())
+                .await
+                .map_err(|_| Failure::Storage)?;
+            let mut unavailable = page.unavailable;
+            for frame in Frame::record_chunks(page.records).map_err(|_| Failure::Invalid)? {
+                write_frame(&mut send, &frame).await?;
+            }
+            for hash in &page.blobs {
+                if !send_blob(&mut send, source, hash).await? {
+                    unavailable += 1;
+                }
+            }
+            let next = page.next;
+            write_frame(
+                &mut send,
+                &Frame::Page {
+                    next: next.clone(),
+                    posts: page.posts,
+                    unavailable,
+                },
+            )
+            .await?;
+            let mut ack = [0];
+            match timeout(COMMIT_TIMEOUT, recv.read_exact(&mut ack)).await {
+                Ok(Ok(())) if ack == [ACCEPTED] => {}
+                _ => return Err(Failure::Interrupted),
+            }
+            result.posts += page.posts;
+            result.unavailable += unavailable;
+            session.set_history(None, &result);
+            let Some(next) = next else { break };
+            cursor = Some(next);
+        }
+        let _ = send.finish();
+        Ok(())
     }
-    session.set(Status::Completed {
-        role: Role::Source,
-        account_id: None,
-    });
-    connection.close(0u32.into(), b"account transfer completed");
-    Ok(())
+    .await;
+    if let Err(reason) = sent {
+        result.stopped = Some(closed_for_storage(connection).unwrap_or(reason));
+    }
+    Some(result)
+}
+
+/// blob を 512 KiB ずつ送る。移行元に無ければ送らずに `false`。送り始めた後に読めなくなったら失敗にする（移行先は
+/// 揃っていない blob の page を確定しない）。
+async fn send_blob(
+    send: &mut SendStream,
+    source: &dyn AccountBundleSource,
+    hash: &str,
+) -> Result<bool, Failure> {
+    let mut offset = 0;
+    loop {
+        let part = source
+            .blob_part(hash, offset, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES)
+            .await
+            .map_err(|_| Failure::Storage)?;
+        let (len, bytes) = match part {
+            Some((len, bytes)) if !bytes.is_empty() || offset >= len => (len, bytes),
+            _ if offset == 0 => return Ok(false),
+            _ => return Err(Failure::Storage),
+        };
+        if offset >= len {
+            return Ok(true);
+        }
+        let end = offset + bytes.len() as u64;
+        write_frame(
+            send,
+            &Frame::Blob {
+                hash: hash.to_string(),
+                len,
+                offset,
+                bytes,
+            },
+        )
+        .await?;
+        if end >= len {
+            return Ok(true);
+        }
+        offset = end;
+    }
 }
 
 /// 移行先: 鍵を受けて保存を始め、chunk ごとに保存し、総数が合えば確定して ACK を返す。確定しなければ保存を消す。
+/// 受けたアカウントの ID を返す。
 async fn receive_bundle(
     session: &Session,
     connection: &Connection,
     sink: &dyn AccountBundleSink,
-) -> Result<(), Failure> {
+) -> Result<String, Failure> {
     let (mut send, mut recv) = timeout(FRAME_TIMEOUT, connection.accept_bi())
         .await
         .map_err(|_| Failure::Interrupted)?
@@ -504,11 +756,77 @@ async fn receive_bundle(
     if send.write_all(&[ACCEPTED]).await.is_ok() && send.finish().is_ok() {
         let _ = timeout(FRAME_TIMEOUT, send.stopped()).await;
     }
-    session.set(Status::Completed {
-        role: Role::Target,
-        account_id: Some(account_id),
-    });
-    Ok(())
+    Ok(account_id)
+}
+
+/// 移行先: 受けたアカウントの履歴の置き場を開き、新しい stream で範囲と続きの位置を送る。page ごとに保存して位置を
+/// 進め、ACK を返す。止まったら（中止・失敗）理由を結果に持たせる（必須の移行は完了のまま）。
+async fn receive_history(
+    session: &Session,
+    connection: &Connection,
+    sink: &dyn AccountBundleSink,
+    account_id: &str,
+    history: AccountTransferHistory,
+) -> AccountTransferHistoryResult {
+    let mut result = AccountTransferHistoryResult {
+        posts: 0,
+        unavailable: 0,
+        stopped: None,
+    };
+    session.set_history(Some(account_id), &result);
+    let received = async {
+        let AccountHistoryResume {
+            since,
+            cursor,
+            mut staging,
+        } = sink.history(account_id, history).await?;
+        let (mut send, mut recv) = connection
+            .open_bi()
+            .await
+            .map_err(|_| Failure::Interrupted)?;
+        write_frame(&mut send, &Frame::History { since, cursor }).await?;
+        loop {
+            match read_frame(&mut recv).await? {
+                Frame::Records { records } => staging.records(records).await?,
+                Frame::Blob {
+                    hash,
+                    len,
+                    offset,
+                    bytes,
+                } => staging.blob(&hash, len, offset, bytes).await?,
+                Frame::Page {
+                    next,
+                    posts,
+                    unavailable,
+                } => {
+                    let last = next.is_none();
+                    staging.commit(next).await?;
+                    result.posts += posts;
+                    result.unavailable += unavailable;
+                    session.set_history(Some(account_id), &result);
+                    send.write_all(&[ACCEPTED])
+                        .await
+                        .map_err(|_| Failure::Interrupted)?;
+                    if last {
+                        break;
+                    }
+                }
+                _ => return Err(Failure::Invalid),
+            }
+        }
+        if send.finish().is_ok() {
+            let _ = timeout(FRAME_TIMEOUT, send.stopped()).await;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(reason) = received {
+        if reason == Failure::Storage {
+            connection.close(STORAGE_FAILED.into(), b"account transfer storage failed");
+        }
+        result.stopped = Some(reason);
+    }
+    result
 }
 
 /// frame を 1 つ読む（長さ 4 byte の後に JSON）。大きさと形を確かめる。

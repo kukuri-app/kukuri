@@ -1,13 +1,16 @@
 //! #1211 AC-1（1a・1f）: 招待の wire の形式・上限・期限と、秘密の非混入。AC-2（2a）: 必須 bundle の frame。
+//! AC-3（3a）: 履歴の frame。
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 
 use crate::{
-    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountSyncItem,
-    AccountSyncItemKey, AccountTransferFrame, AccountTransferInvite, AccountTransferItem,
-    ChannelId, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS,
-    MAX_ACCOUNT_TRANSFER_FRAME_BYTES, MAX_ACCOUNT_TRANSFER_LINK_BYTES,
+    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountHistoryCursor,
+    AccountHistoryRecord, AccountSyncItem, AccountSyncItemKey, AccountTransferFrame,
+    AccountTransferHistory, AccountTransferInvite, AccountTransferItem, ChannelId, KukuriKeys,
+    MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES, MAX_ACCOUNT_SYNC_ITEM_BYTES,
+    MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS, MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+    MAX_ACCOUNT_TRANSFER_LINK_BYTES,
 };
 
 const NOW: i64 = 1_790_000_000_000;
@@ -201,7 +204,7 @@ fn malformed_and_oversized_bundle_frames_are_rejected() {
         items(0),
         items(MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS + 1),
         serde_json::json!({ "frame": "end", "count": 1, "extra": 1 }),
-        serde_json::json!({ "frame": "history" }),
+        serde_json::json!({ "frame": "rewind" }),
     ] {
         let bytes = serde_json::to_vec(&bad).unwrap();
         assert!(
@@ -249,4 +252,151 @@ fn the_key_frame_does_not_debug_the_secret() {
     };
     let debug = format!("{frame:?}");
     assert!(!debug.contains(SECRET), "{debug}");
+}
+
+// #1211 AC-3（3a）: 履歴の stream の frame の上限と形。
+
+fn history_record(index: usize, value_bytes: usize) -> AccountHistoryRecord {
+    AccountHistoryRecord {
+        replica: format!("bucket::v1::topic::74::{}", 20_000 + index),
+        key: format!("objects/{index:064x}/envelope"),
+        docs_author: "a".repeat(64),
+        value: vec![b'v'; value_bytes],
+    }
+}
+
+#[test]
+fn history_frames_stay_within_the_record_and_byte_limits() {
+    let frames =
+        AccountTransferFrame::record_chunks((0..130).map(|i| history_record(i, 8)).collect())
+            .unwrap();
+    let sizes: Vec<_> = frames
+        .iter()
+        .map(|frame| match frame {
+            AccountTransferFrame::Records { records } => records.len(),
+            _ => panic!("not a records frame"),
+        })
+        .collect();
+    assert_eq!(sizes, [64, 64, 2]);
+
+    // 1 件が 64 KiB の record は、64 件より前に 1 MiB で分かれ、値はそのまま戻る。
+    let large: Vec<_> = (0..20).map(|i| history_record(i, 64 * 1024)).collect();
+    let frames = AccountTransferFrame::record_chunks(large.clone()).unwrap();
+    assert!(frames.len() > 1, "{}", frames.len());
+    let mut decoded = Vec::new();
+    for frame in &frames {
+        let bytes = frame.encode().unwrap();
+        assert!(bytes.len() <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES);
+        match AccountTransferFrame::decode(&bytes).unwrap() {
+            AccountTransferFrame::Records { records } => decoded.extend(records),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(decoded, large);
+
+    // 範囲・続きの位置・page の終わりと、512 KiB の blob の一部は 1 frame に収まって戻る。
+    let cursor = AccountHistoryCursor {
+        reference: "own_docs".into(),
+        replica: "bucket::v1::topic::74::20000".into(),
+        key: "objects/x/envelope".into(),
+        author: "a".repeat(64),
+    };
+    for frame in [
+        AccountTransferFrame::History {
+            since: Some(20_000),
+            cursor: Some(cursor.clone()),
+        },
+        AccountTransferFrame::History {
+            since: None,
+            cursor: None,
+        },
+        AccountTransferFrame::Page {
+            next: Some(cursor),
+            posts: 3,
+            unavailable: 2,
+        },
+        AccountTransferFrame::Blob {
+            hash: "b".repeat(64),
+            len: 2 * MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES as u64,
+            offset: MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES as u64,
+            bytes: vec![7; MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES],
+        },
+    ] {
+        let bytes = frame.encode().unwrap();
+        assert!(bytes.len() <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES);
+        assert_eq!(AccountTransferFrame::decode(&bytes).unwrap(), frame);
+    }
+}
+
+#[test]
+fn malformed_history_frames_are_rejected() {
+    let record = serde_json::to_value(history_record(0, 8)).unwrap();
+    let records =
+        |n: usize| serde_json::json!({ "frame": "records", "records": vec![record.clone(); n] });
+    let blob = |len: u64, offset: u64, bytes: usize| {
+        serde_json::json!({
+            "frame": "blob",
+            "hash": "b".repeat(64),
+            "len": len,
+            "offset": offset,
+            "bytes": base64::engine::general_purpose::STANDARD.encode(vec![1u8; bytes]),
+        })
+    };
+    let mut unknown_field = record.clone();
+    unknown_field["content_hash"] = serde_json::json!("x");
+    for bad in [
+        records(0),
+        records(MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS + 1),
+        serde_json::json!({ "frame": "records", "records": [unknown_field] }),
+        blob(10, 0, 0),
+        blob(10, 5, 6),
+        blob(u64::MAX, u64::MAX, 1),
+        blob(u64::MAX, 0, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES + 1),
+        serde_json::json!({ "frame": "page", "next": null, "posts": 0 }),
+        serde_json::json!({ "frame": "history", "since": "1" }),
+    ] {
+        let bytes = serde_json::to_vec(&bad).unwrap();
+        assert!(
+            AccountTransferFrame::decode(&bytes).is_err(),
+            "accepted {bad}"
+        );
+    }
+    assert!(AccountTransferFrame::decode(&serde_json::to_vec(&blob(10, 5, 5)).unwrap()).is_ok());
+}
+
+#[test]
+fn history_frames_do_not_debug_the_content() {
+    let record = history_record(0, 8);
+    let value = String::from_utf8(record.value.clone()).unwrap();
+    for debug in [
+        format!("{record:?}"),
+        format!(
+            "{:?}",
+            AccountTransferFrame::Records {
+                records: vec![record.clone()]
+            }
+        ),
+        format!(
+            "{:?}",
+            AccountTransferFrame::Blob {
+                hash: "b".repeat(64),
+                len: 8,
+                offset: 0,
+                bytes: record.value.clone(),
+            }
+        ),
+    ] {
+        assert!(!debug.contains(&value), "{debug}");
+    }
+}
+
+#[test]
+fn the_history_ranges_have_fixed_days() {
+    assert_eq!(AccountTransferHistory::Month.days(), Some(30));
+    assert_eq!(AccountTransferHistory::Year.days(), Some(365));
+    assert_eq!(AccountTransferHistory::All.days(), None);
+    assert_eq!(
+        serde_json::to_value(AccountTransferHistory::Month).unwrap(),
+        "month"
+    );
 }

@@ -98,7 +98,7 @@ async function completeTransferTo(accountId: string) {
   const { user, menu, change } = await setup();
   vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
   vi.spyOn(identity, 'openAccountTransfer').mockResolvedValue(undefined);
-  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'completed', role: 'target', account_id: accountId });
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'completed', role: 'target', account_id: accountId, history: null });
   await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
   await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
   const target = await screen.findByRole('dialog', { name: 'Move from another device' });
