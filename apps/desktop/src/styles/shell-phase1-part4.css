@@ -359,3 +359,25 @@
 .shell-phase1 .shell-control-center-place-list .topic-channel-empty-action:focus-visible {
   background: var(--surface-button-ghost-hover);
 }
+
+/* #1533: 参加中のチャンネルの行は、接続の切替・設定・退出を右端にまとめ、名前の横に収まらない行だけ
+   名前の下の段へ移す。行の全幅にも収まらない名前は省略せずに折り返す。 */
+.shell-phase1 .shell-control-center-place-list .topic-subitem-row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shell-phase1 .shell-control-center-place-list .topic-subitem-row > .topic-subitem {
+  flex-grow: 1;
+}
+
+.shell-phase1 .shell-control-center-place-list .topic-subitem-row .shell-topic-link-label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.shell-phase1 .shell-control-center-place-list .topic-subitem-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}

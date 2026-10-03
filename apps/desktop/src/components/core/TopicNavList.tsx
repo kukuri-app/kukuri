@@ -174,76 +174,78 @@ export function TopicNavList({
                             <span className='shell-topic-link-label'>{channel.label}</span>
                             <small>{t(`channels:audienceOptions.${channel.audienceKind}`)}</small>
                           </button>
-                          {onToggleChannelGossip ? (
-                            <IconButtonTooltip
-                              label={t(
-                                channelGossipJoined
-                                  ? 'shell:navigation.disconnectChannel'
-                                  : 'shell:navigation.connectChannel',
-                                { channel: channel.label }
-                              )}
-                            >
-                              <button
-                                className={cn(
-                                  'topic-channel-settings',
-                                  channelGossipJoined && 'topic-plug-active'
-                                )}
-                                type='button'
-                                aria-pressed={channelGossipJoined}
-                                aria-label={t(
+                          <div className='topic-subitem-actions'>
+                            {onToggleChannelGossip ? (
+                              <IconButtonTooltip
+                                label={t(
                                   channelGossipJoined
                                     ? 'shell:navigation.disconnectChannel'
                                     : 'shell:navigation.connectChannel',
                                   { channel: channel.label }
                                 )}
-                                onClick={() =>
-                                  onToggleChannelGossip(
-                                    item.topic,
-                                    channel.channelId,
-                                    !channelGossipJoined
-                                  )
-                                }
                               >
-                                <Plug className='size-4' aria-hidden='true' />
-                              </button>
-                            </IconButtonTooltip>
-                          ) : null}
-                          {onOpenChannelSettings ? (
-                            <IconButtonTooltip
-                              label={t('channels:actions.openSettings', {
-                                channel: channel.label,
-                              })}
-                            >
-                              <button
-                                className='topic-channel-settings'
-                                type='button'
-                                aria-label={t('channels:actions.openSettings', {
+                                <button
+                                  className={cn(
+                                    'topic-channel-settings',
+                                    channelGossipJoined && 'topic-plug-active'
+                                  )}
+                                  type='button'
+                                  aria-pressed={channelGossipJoined}
+                                  aria-label={t(
+                                    channelGossipJoined
+                                      ? 'shell:navigation.disconnectChannel'
+                                      : 'shell:navigation.connectChannel',
+                                    { channel: channel.label }
+                                  )}
+                                  onClick={() =>
+                                    onToggleChannelGossip(
+                                      item.topic,
+                                      channel.channelId,
+                                      !channelGossipJoined
+                                    )
+                                  }
+                                >
+                                  <Plug className='size-4' aria-hidden='true' />
+                                </button>
+                              </IconButtonTooltip>
+                            ) : null}
+                            {onOpenChannelSettings ? (
+                              <IconButtonTooltip
+                                label={t('channels:actions.openSettings', {
                                   channel: channel.label,
                                 })}
-                                onClick={() => onOpenChannelSettings(item.topic, channel.channelId)}
                               >
-                                <Settings className='size-4' aria-hidden='true' />
-                              </button>
-                            </IconButtonTooltip>
-                          ) : null}
-                          {onLeaveChannel ? (
-                            <IconButtonTooltip
-                              label={t('channels:actions.leaveChannel', {
-                                channel: channel.label,
-                              })}
-                            >
-                              <button
-                                className='topic-channel-settings'
-                                type='button'
-                                aria-label={t('channels:actions.leaveChannel', {
+                                <button
+                                  className='topic-channel-settings'
+                                  type='button'
+                                  aria-label={t('channels:actions.openSettings', {
+                                    channel: channel.label,
+                                  })}
+                                  onClick={() => onOpenChannelSettings(item.topic, channel.channelId)}
+                                >
+                                  <Settings className='size-4' aria-hidden='true' />
+                                </button>
+                              </IconButtonTooltip>
+                            ) : null}
+                            {onLeaveChannel ? (
+                              <IconButtonTooltip
+                                label={t('channels:actions.leaveChannel', {
                                   channel: channel.label,
                                 })}
-                                onClick={() => onLeaveChannel(item.topic, channel.channelId)}
                               >
-                                <SquareArrowRightExit className='size-4' aria-hidden='true' />
-                              </button>
-                            </IconButtonTooltip>
-                          ) : null}
+                                <button
+                                  className='topic-channel-settings'
+                                  type='button'
+                                  aria-label={t('channels:actions.leaveChannel', {
+                                    channel: channel.label,
+                                  })}
+                                  onClick={() => onLeaveChannel(item.topic, channel.channelId)}
+                                >
+                                  <SquareArrowRightExit className='size-4' aria-hidden='true' />
+                                </button>
+                              </IconButtonTooltip>
+                            ) : null}
+                          </div>
                         </li>
                         );
                       })}
