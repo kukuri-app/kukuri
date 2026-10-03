@@ -2,11 +2,11 @@
 //! 別の端末の鍵で署名した要求を、所有者の端末の受け口へ直接渡す(transport の test double)。
 
 use super::*;
-use crate::{CreatePrivateChannelInput, StartOwnerDomeHostingInput, SubmitDomeSessionInput};
+use crate::{StartOwnerDomeHostingInput, SubmitDomeSessionInput};
 use kukuri_core::{
-    ChannelAudienceKind, ChannelId, DomePhysicsSnapshotV1, DomeSessionInputKindV1,
-    DomeSessionInputV1, DomeSessionRequestV1, DomeSessionResponseV1, KukuriKeys,
-    MetaverseResourceRejection, SpatialContextV1, build_dome_spatial_access_proof,
+    ChannelAudienceKind, ChannelId, CreatePrivateChannelInput, DomePhysicsSnapshotV1,
+    DomeSessionInputKindV1, DomeSessionInputV1, DomeSessionRequestV1, DomeSessionResponseV1,
+    KukuriKeys, MetaverseResourceRejection, SpatialContextV1, build_dome_spatial_access_proof,
     build_signed_dome_session_input,
 };
 
