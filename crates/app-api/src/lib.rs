@@ -54,8 +54,8 @@ pub use private_channels::{
     is_retryable_friend_only_grant_import_error, is_retryable_friend_plus_share_import_error,
 };
 pub use service::{
-    AppService, MAX_ACTIVE_SCOPES, PrivateChannelControllerPending, ScopeLimitReached,
-    ServiceHandles,
+    AppService, LinkPreviewRecordInput, LinkPreviewRecordView, MAX_ACTIVE_SCOPES,
+    PrivateChannelControllerPending, ScopeLimitReached, ServiceHandles,
 };
 pub use views::*;
 

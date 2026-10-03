@@ -144,6 +144,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         "gui_content_preview" => matches!(
             tauri,
             "commands::link_preview::fetch_link_preview"
+                | "read_link_preview_record"
                 | "commands::posts::get_blob_media_file"
                 | "commands::posts::release_blob_media_file"
         ),
@@ -204,7 +205,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 179);
+    assert_eq!(manifest.entries.len(), 180);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

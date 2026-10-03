@@ -19,6 +19,7 @@ mod envelope;
 mod game;
 mod identity_export;
 mod ids;
+mod link_preview;
 mod live;
 mod media;
 mod metaverse_audio;
@@ -147,6 +148,12 @@ pub use identity_export::{
 };
 pub use ids::{
     BlobHash, ChannelId, EnvelopeId, Pubkey, ReplicaId, TopicId, author_profile_topic_id,
+};
+pub use link_preview::{
+    KukuriLinkPreviewContentV1, KukuriLinkPreviewImageV1, LINK_PREVIEW_KIND,
+    LINK_PREVIEW_MAX_DESCRIPTION_CHARS, LINK_PREVIEW_MAX_IMAGE_BYTES,
+    LINK_PREVIEW_MAX_SITE_NAME_CHARS, LINK_PREVIEW_MAX_TITLE_CHARS, LINK_PREVIEW_MAX_URL_BYTES,
+    build_link_preview_envelope, link_preview_image_mime, verify_link_preview,
 };
 pub use live::{
     LiveSessionManifestBlobV1, LiveSessionStateDocV1, LiveSessionStatus, LiveSignalKind,
