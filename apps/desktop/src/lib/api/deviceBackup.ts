@@ -19,6 +19,7 @@ import type {
 } from './types.generated';
 import { invokeDesktop } from './invoke/desktop';
 import { isDesktopMockActive } from './invoke/dispatch';
+import { IS_WEB_RUNTIME } from '../webRuntime';
 
 export const DEVICE_BACKUP_PROGRESS_EVENT = 'kukuri://device-backup-progress';
 
@@ -67,7 +68,8 @@ function restorePortableFrontendSnapshot(
 }
 
 export async function getPendingDeviceRestoreFrontendState(): Promise<Record<string, string> | null> {
-  if (isDesktopMockActive()) return null;
+  // device backup は Web では使わない（ADR 0060 §3）ので、反映する復元も無い。
+  if (isDesktopMockActive() || IS_WEB_RUNTIME) return null;
   return invokeDesktop<Record<string, string> | null>('get_pending_device_restore_frontend_state');
 }
 

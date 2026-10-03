@@ -22,7 +22,8 @@
     "acceptedValue": "v{{version}}(同意时间:{{acceptedAt}})",
     "ageAttestationHeading": "年龄自我声明",
     "ageAttestedValue": "已声明年满 18 周岁(声明时间:{{attestedAt}})",
-    "notAttested": "尚未声明"
+    "notAttested": "尚未声明",
+    "webUnavailable": "网页版不支持设备备份、应用更新、窗口与系统通知设置、开发者日志以及 live / game / metaverse / Dome。迁移到其他设备时，请导出账号密钥。"
   },
   "metadata": {
     "effectiveDate": "生效日期：{{date}}",

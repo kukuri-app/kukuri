@@ -3,6 +3,7 @@ mod runtime;
 mod scenario;
 mod scenarios;
 mod waiters;
+mod web_e2e;
 
 #[cfg(test)]
 mod tests;
@@ -13,6 +14,7 @@ pub use scenario::{
     ScenarioStep, ScenarioTimeouts, load_scenario,
 };
 pub use scenarios::{run_named_scenario, run_scenario};
+pub use web_e2e::run_web_e2e_fixture;
 
 pub(crate) use artifacts::{push_named_step, write_result_artifact};
 pub(crate) use runtime::{

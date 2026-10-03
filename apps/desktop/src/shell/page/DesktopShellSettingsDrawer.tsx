@@ -37,6 +37,10 @@ import {
 import type { SyncRoute } from '@/shell/actions/shared';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
 import { useShallow } from 'zustand/react/shallow';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+
+// ウィンドウ・OS 通知・端末の backup は Web では使えない（ADR 0060 §3）ので、その section を出さない。
+const WEB_UNAVAILABLE_SETTINGS = new Set<SettingsSection>(['system', 'notifications', 'backup']);
 
 type ViewModels = ReturnType<typeof useDesktopShellViewModels>;
 
@@ -251,7 +255,11 @@ export function DesktopShellSettingsDrawer({
     },
     {
       ...sectionCopy('account'),
-      content: <AccountKeyPanel onOpenDeviceBackup={() => openDiagnosticSettings('backup')} />,
+      content: (
+        <AccountKeyPanel
+          onOpenDeviceBackup={IS_WEB_RUNTIME ? undefined : () => openDiagnosticSettings('backup')}
+        />
+      ),
     },
     {
       ...sectionCopy('connectivity'),
@@ -410,11 +418,11 @@ export function DesktopShellSettingsDrawer({
             // The selected panel unmounts; keep keyboard focus on the destination nav.
             document.getElementById(`${SHELL_SETTINGS_ID}-section-${section}`)?.focus();
           }}
-          logs={developerModeEnabled ? <DesktopShellDeveloperLogs api={api} /> : null}
+          logs={developerModeEnabled && !IS_WEB_RUNTIME ? <DesktopShellDeveloperLogs api={api} /> : null}
         />
       ),
     },
-  ];
+  ].filter((section) => !IS_WEB_RUNTIME || !WEB_UNAVAILABLE_SETTINGS.has(section.id));
 
   return (
     <SettingsDrawer

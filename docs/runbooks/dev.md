@@ -359,6 +359,11 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm
 - W2・W3 の IndexedDB の保存（blob と docs の record）と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`。
   W4 AC-2 の鍵・設定・projection・peer の接続候補の保存（reload、失敗の区別、EndpointId の保持、store の parity の scenario）も同じ試験に含む（`src/account_tests.rs`）。
 
+### Web の build と実ブラウザの主要導線の試験（ADR 0060 §1・§4、#1220 W8）
+- Web の build: `apps/desktop` の Vite を `VITE_KUKURI_TARGET=web` で動かす（出力は `apps/desktop/dist-web`）。入力の web-runtime は `wasm-bindgen --target web --split-linked-modules` の出力を `apps/desktop/web-runtime-pkg`（別の場所なら `KUKURI_WEB_RUNTIME_PKG`）に置く。Community Node の初期設定は native の配布の設定（`src-tauri/distribution/community-nodes.json`）で、開発・試験では `VITE_KUKURI_COMMUNITY_NODE_BASE_URL` で替える。
+- 主要導線の試験は `cargo xtask-lite web-e2e`（CI の `linux-web-e2e`）。wasm と Web の build、harness の `web_e2e_fixture`（in-process の Community Node と relay、native の相手、`dist-web` の配信。Postgres と valkey は `cn-test` と同じ compose）、WebdriverIO の driver（`apps/desktop/tests/web-e2e/main-flow.mjs`。Chrome、chromedriver は `CHROMEDRIVER`、無ければ自動で入れる）を順に動かす。Linux で wasm の build の要件（上）と Docker が要る。
+- Windows では wasm の build（上の image）と Web の build を行ってから、手元の Postgres・valkey を `COMMUNITY_NODE_DATABASE_URL`・`COMMUNITY_NODE_RENDEZVOUS_REDIS_URL` で渡して `web_e2e_fixture` を起動し（`KUKURI_WEB_E2E_DIST` に `dist-web`）、`node tests/web-e2e/main-flow.mjs` を `apps/desktop` で動かす。Web の build は fixture の user-api の URL（既定 `http://127.0.0.1:4181`）を `VITE_KUKURI_COMMUNITY_NODE_BASE_URL` に渡して作る。
+
 ### 上流 iroh-blobs の版を上げるとき（ADR 0058 §5、#1215 W2 AC-4）
 iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。
 

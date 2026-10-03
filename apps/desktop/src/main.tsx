@@ -5,6 +5,7 @@ import { initializeDesktopLocale } from '@/i18n/bootstrap';
 import { browserDesktopMockSeed } from '@/mocks/browserSeed';
 import { type DesktopMockApiOptions } from '@/mocks/desktopApiMock';
 import { installWindowDesktopMock } from '@/mocks/installWindowDesktopMock';
+import { IS_WEB_RUNTIME, startWebRuntime } from '@/lib/webRuntime';
 import { App } from './App';
 import '@/styles/index.css';
 
@@ -20,7 +21,10 @@ if (import.meta.env.DEV) {
   console.info('[kukuri.desktop] frontend boot');
 }
 
-void initializeDesktopLocale().then(() => {
+// Web の build は、描画の前に WASM の runtime を始める。失敗しても描画し、起動の状態の画面で示す。
+const webRuntimeReady = IS_WEB_RUNTIME ? startWebRuntime().catch(() => undefined) : Promise.resolve();
+
+void Promise.all([webRuntimeReady, initializeDesktopLocale()]).then(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <App />
