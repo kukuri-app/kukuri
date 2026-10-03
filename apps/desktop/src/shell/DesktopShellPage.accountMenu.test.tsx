@@ -132,10 +132,18 @@ test('the target cannot close the dialog while receiving the history and switche
   const target = await screen.findByRole('dialog', { name: 'Move from another device' });
   expect(within(target).getByRole('button', { name: 'Close dialog' })).toBeVisible();
   await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
+  // 履歴の画面が出た時点から「戻る」と閉じるボタンは無い（描いた後の次の更新を待たない）。DOM が変わるたびに記録する。
+  const closable: boolean[] = [];
+  const observer = new MutationObserver(() => {
+    if (!within(target).queryByText('Receiving post history (3)…')) return;
+    closable.push(within(target).queryAllByRole('button', { name: /^(Back|Close dialog)$/ }).length > 0);
+  });
+  observer.observe(target, { childList: true, subtree: true });
   await user.click(within(target).getByRole('button', { name: 'Connect' }));
   expect(await within(target).findByText('Receiving post history (3)…', {}, { timeout: 2000 })).toBeVisible();
-  expect(within(target).queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
-  expect(within(target).queryByRole('button', { name: 'Close dialog' })).not.toBeInTheDocument();
+  observer.disconnect();
+  expect(closable.length).toBeGreaterThan(0);
+  expect(closable).not.toContain(true);
   await user.keyboard('{Escape}');
   expect(screen.getByRole('dialog', { name: 'Move from another device' })).toBeVisible();
   expect(cancel).not.toHaveBeenCalled();

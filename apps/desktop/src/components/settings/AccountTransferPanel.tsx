@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encode } from 'uqr';
 import type { AccountTransferHistory, AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
@@ -101,7 +101,8 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   }, [receivedAccount]);
 
   const receivingHistory = role === 'target' && status.state === 'history';
-  useEffect(() => {
+  // 描いた後の paint・操作より前に知らせる（呼び出し側が閉じる操作を隠すのを、履歴の画面と同じ時点にそろえる）。
+  useLayoutEffect(() => {
     onReceivingHistory?.(receivingHistory);
     return () => onReceivingHistory?.(false);
     // 履歴を受け始めた・終えた・閉じたときだけ知らせる。
