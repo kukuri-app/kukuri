@@ -170,6 +170,12 @@
       "database_open": "DB open failure",
       "database_migration": "Migration failure",
       "unknown": "Unknown startup error"
+    },
+    "inUseElsewhere": {
+      "title": "kukuri is open in another tab.",
+      "description": "Only one tab can run kukuri at a time. Using it here stops kukuri in the other tab.",
+      "takeOver": "Use in this tab",
+      "failed": "Could not switch to this tab. Please try again."
     }
   },
   "fallbacks": {

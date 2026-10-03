@@ -170,6 +170,12 @@
       "database_open": "DB open 失败",
       "database_migration": "迁移失败",
       "unknown": "未知启动错误"
+    },
+    "inUseElsewhere": {
+      "title": "kukuri 正在另一个标签页中使用。",
+      "description": "同一时间只能在一个标签页中运行 kukuri。在此标签页中使用会停止另一个标签页中的 kukuri。",
+      "takeOver": "在此标签页中使用",
+      "failed": "无法切换到此标签页。请重试。"
     }
   },
   "fallbacks": {

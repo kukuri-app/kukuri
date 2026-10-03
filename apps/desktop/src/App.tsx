@@ -12,6 +12,7 @@ import { DesktopShellPage } from '@/shell/DesktopShellPage';
 import { reconcileAccountDrafts } from '@/lib/accountSession';
 import {
   type AppProps,
+  type DesktopShellPageProps,
   DesktopShellStoreContext,
   createDesktopShellStore,
 } from '@/shell/store';
@@ -23,6 +24,7 @@ import {
   acceptAppConsents,
   applyPendingDeviceRestoreFrontendState,
   getDesktopStartupStatus,
+  takeOverRuntime,
 } from '@/lib/api';
 import { isBridgeUnavailableError } from '@/lib/api/invoke/error';
 import {
@@ -50,32 +52,12 @@ export function App(props: AppProps) {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
-  const [store] = useState(() => {
-    const createdStore = createDesktopShellStore({
-      workspaceStorage: window.localStorage,
-      draftStorage: window.localStorage,
-      communityIndexPreferenceStorage: window.localStorage,
-    });
-    // Issue #765 T4: hash の無い cold start では、復元した active Column の canonical target を
-    // 初期 route として仕込み、既存の deep link 機構に focus 復元を委ねる。
-    // 明示的な deep link(hash あり)と、保存 layout が無い初回起動では何もしない。
-    if (
-      isDefaultStartupHash(window.location.hash) &&
-      window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) !== null
-    ) {
-      const restoredHash = initialHashForRestoredWorkspace(
-        createdStore.getState().workspaceState
-      );
-      if (restoredHash) {
-        window.history.replaceState(null, '', restoredHash);
-      }
-    }
-    return createdStore;
-  });
   const [theme, setTheme] = useState<DesktopTheme>(() => readDesktopTheme());
   const [startupGate, setStartupGate] = useState<StartupGateState>(() =>
     props.api ? { status: 'ready' } : { status: 'checking' }
   );
+  // 起動の状態を読み直す回数（引継ぎの後・状態の変化の通知の後に増やす）。
+  const [startupCheck, setStartupCheck] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -84,21 +66,6 @@ export function App(props: AppProps) {
   useEffect(() => {
     if (startupGate.status === 'ready') writeDesktopTheme(theme);
   }, [startupGate.status, theme]);
-
-  useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startWorkspaceLayoutPersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
-
-  useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startColumnDraftPersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
-
-  useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startCommunityIndexNodePreferencePersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
 
   useEffect(() => {
     if (props.api) {
@@ -156,7 +123,7 @@ export function App(props: AppProps) {
         clearTimeout(retryTimer);
       }
     };
-  }, [props.api]);
+  }, [props.api, startupCheck]);
 
   if (startupGate.status === 'checking' || startupGate.status === 'initializing') {
     return (
@@ -187,13 +154,87 @@ export function App(props: AppProps) {
     );
   }
 
+  if (startupGate.status === 'in_use_elsewhere') {
+    return (
+      <InUseElsewhereScreen
+        onTakeOver={async () => {
+          await takeOverRuntime();
+          setStartupCheck((count) => count + 1);
+        }}
+      />
+    );
+  }
+
+  return <DesktopShell {...props} theme={theme} onThemeChange={setTheme} />;
+}
+
+// store は shell を出すときに保存先から作る（Web で別の tab から引き継いだとき、その tab が残した layout・下書きから続ける）。
+function DesktopShell(props: DesktopShellPageProps) {
+  const [store] = useState(() => {
+    const createdStore = createDesktopShellStore({
+      workspaceStorage: window.localStorage,
+      draftStorage: window.localStorage,
+      communityIndexPreferenceStorage: window.localStorage,
+    });
+    // Issue #765 T4: hash の無い cold start では、復元した active Column の canonical target を
+    // 初期 route として仕込み、既存の deep link 機構に focus 復元を委ねる。
+    // 明示的な deep link(hash あり)と、保存 layout が無い初回起動では何もしない。
+    if (
+      isDefaultStartupHash(window.location.hash) &&
+      window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) !== null
+    ) {
+      const restoredHash = initialHashForRestoredWorkspace(
+        createdStore.getState().workspaceState
+      );
+      if (restoredHash) {
+        window.history.replaceState(null, '', restoredHash);
+      }
+    }
+    return createdStore;
+  });
+
+  useEffect(() => startWorkspaceLayoutPersistence(store, window.localStorage), [store]);
+  useEffect(() => startColumnDraftPersistence(store, window.localStorage), [store]);
+  useEffect(() => startCommunityIndexNodePreferencePersistence(store, window.localStorage), [store]);
+
   return (
     <DesktopShellStoreContext.Provider value={store}>
       <HashRouter>
-        <DesktopShellPage {...props} theme={theme} onThemeChange={setTheme} />
+        <DesktopShellPage {...props} />
       </HashRouter>
       <WindowClosePrompt />
     </DesktopShellStoreContext.Provider>
+  );
+}
+
+// Web だけ: 同じ origin の別の tab が kukuri を動かしている（ADR 0059 §4）。利用者の操作でだけ、この tab に引き継ぐ。
+function InUseElsewhereScreen({ onTakeOver }: { onTakeOver: () => Promise<void> }) {
+  const { t } = useTranslation(['common']);
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const takeOver = () => {
+    setPending(true);
+    setFailed(false);
+    onTakeOver()
+      .catch(() => setFailed(true))
+      .finally(() => setPending(false));
+  };
+
+  return (
+    <main className='startup-error-screen'>
+      <section className='startup-error-panel' aria-live='polite'>
+        <Notice>
+          <strong>{t('startup.inUseElsewhere.title')}</strong>
+          <span>{t('startup.inUseElsewhere.description')}</span>
+        </Notice>
+        {failed ? <Notice tone='destructive'>{t('startup.inUseElsewhere.failed')}</Notice> : null}
+        <div className='startup-error-actions'>
+          <Button type='button' disabled={pending} onClick={takeOver}>
+            {t('startup.inUseElsewhere.takeOver')}
+          </Button>
+        </div>
+      </section>
+    </main>
   );
 }
 
