@@ -384,6 +384,12 @@ pairwise hintの送信・ACK、送信直後の二重送信を撤去した。送�
 保護outboxはACKまで残す。DM状態viewの接続peer数（`peer_count`）は撤去し、画面は送信可能／送信不可だけを示す
 （2026-09-26 ユーザー決定）。
 
+follow / unfollowのofferは、宛先が見つからない・2秒の時間切れで送れなかった受け手だけへ、2・4・8・16・32・64秒後に
+送り直す（計6回・約2分。#1521、2026-10-04 ユーザー決定）。相手のprofileを開いたまま相手がfollowし返した場面で、
+最初のofferが落ちると日の境界まで相互followにならなかったため。送り直しを待つofferはofferのworkerが64件まで持ち、
+accountの停止で捨てる。再起動をまたがず、ACKも求めない（旧版はACKを返さない）。follow以外の通知のofferは1回だけ送る。
+閲覧者がauthorごとのhint topicで受ける案は、閲覧の情報がCNと第三者へ出るか、つながる前のfollowを取りこぼすので採らない。
+
 private rotation/freeze/失効には投稿通知と別の制御capsuleを使う。
 現在のhandoff grant作成時に、旧epochの受信者別grantをaccount宛に配送待ちへ登録する。
 制御capsuleは**既知の旧epochで保護**し、旧epoch/受信者/署名済みgrant参照を束縛する。

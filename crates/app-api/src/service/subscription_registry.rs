@@ -37,9 +37,16 @@ pub(crate) struct SubscriptionRegistry {
 
 pub(crate) struct AbortOnDropTask(Option<JoinHandle<()>>);
 
+/// 通知の offer の manifest、受け手、scope、送れなかった受け手へ送り直すまでの残りの間隔(#1521)。
+pub(crate) type PublicNotificationOffer = (
+    Vec<u8>,
+    BTreeSet<String>,
+    kukuri_core::ReceiveOfferScopeV1,
+    &'static [std::time::Duration],
+);
+
 pub(crate) struct PublicNotificationOfferQueue {
-    pub(crate) sender:
-        tokio::sync::mpsc::Sender<(Vec<u8>, BTreeSet<String>, kukuri_core::ReceiveOfferScopeV1)>,
+    pub(crate) sender: tokio::sync::mpsc::Sender<PublicNotificationOffer>,
     pub(crate) task: AbortOnDropTask,
 }
 
