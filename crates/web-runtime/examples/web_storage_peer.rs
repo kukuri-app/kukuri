@@ -10,6 +10,9 @@
 //!   record の埋め草以上を受け取ったか（`via_custom`）を添える。
 //! - `POST /report`・`POST /report-redirect`・`POST /report-count`: 通報の送信の試験（#1214 W1 AC-5）。`/report` は
 //!   受けた数を数え、`/report-redirect` は `/report` へ転送する。`/report-count` は受けた数を返す。
+//! - `POST /account-key-export`（本文は passphrase）: native で生成した鍵を書き出し、export と公開鍵の 2 行を返す。
+//!   `POST /account-key-import`（本文は export と passphrase の 2 行）: browser の export を取り込み、公開鍵を返す
+//!   （鍵の export・import の互換。#1220 AC-2c）。
 //!
 //! native だけで動く。
 
@@ -75,6 +78,8 @@ async fn main() -> Result<()> {
         .route("/report", post(report).options(preflight))
         .route("/report-redirect", post(report_redirect).options(preflight))
         .route("/report-count", post(report_count))
+        .route("/account-key-export", post(account_key_export))
+        .route("/account-key-import", post(account_key_import))
         .with_state(Arc::new(Peer {
             node,
             relay,
@@ -109,6 +114,29 @@ async fn report_redirect() -> impl axum::response::IntoResponse {
 
 async fn report_count(State(peer): State<Arc<Peer>>) -> String {
     peer.reports.load(Ordering::SeqCst).to_string()
+}
+
+async fn derive(input: kukuri_core::PassphraseKdf) -> Result<[u8; 32]> {
+    input.derive()
+}
+
+async fn account_key_export(passphrase: String) -> String {
+    let keys = KukuriKeys::generate();
+    match kukuri_core::encrypt_account_key_export(&keys, &passphrase, derive).await {
+        Ok(export) => format!("{export}\n{}", keys.public_key_hex()),
+        Err(error) => format!("error: {error:#}"),
+    }
+}
+
+async fn account_key_import(body: String) -> String {
+    let import = async {
+        let (export, passphrase) = body.split_once('\n').context("export and passphrase")?;
+        let keys = kukuri_core::decrypt_account_key_export(export, passphrase, derive).await?;
+        anyhow::Ok(keys.public_key_hex())
+    };
+    import
+        .await
+        .unwrap_or_else(|error| format!("error: {error:#}"))
 }
 
 async fn info(State(peer): State<Arc<Peer>>) -> String {

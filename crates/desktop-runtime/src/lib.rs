@@ -15,6 +15,7 @@ mod host;
 mod identity;
 #[cfg(feature = "ts")]
 mod ipc_ts_export;
+mod kdf;
 mod paths;
 mod requests;
 mod runtime;

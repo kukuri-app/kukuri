@@ -50,7 +50,7 @@ ts = [
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
-# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）。
+# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）と、passphrase の鍵の導出の Worker（src/kdf.rs）。
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys = "0.3.106"
 wasm-bindgen = "0.2.129"
@@ -58,10 +58,12 @@ wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = [
   "AbortSignal",
   "Headers",
+  "MessageEvent",
   "RequestInit",
   "RequestRedirect",
   "Response",
   "Window",
+  "Worker",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

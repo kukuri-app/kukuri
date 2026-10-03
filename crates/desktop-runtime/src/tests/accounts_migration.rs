@@ -326,8 +326,13 @@ async fn import_preview_reports_registration_state_without_secrets() {
     let keys = active_keys(&db_path).await;
     let passphrase = "correct horse battery staple";
 
-    let registered_export =
-        kukuri_core::encrypt_account_key_export(&keys, passphrase).expect("export active key");
+    let registered_export = kukuri_core::encrypt_account_key_export(
+        &keys,
+        passphrase,
+        crate::kdf::derive_passphrase_key,
+    )
+    .await
+    .expect("export active key");
     let registered = crate::accounts::preview_account_key_import(dir.path(), &registered_export)
         .await
         .expect("preview registered key");
@@ -335,8 +340,13 @@ async fn import_preview_reports_registration_state_without_secrets() {
     assert_eq!(registered.public_key, keys.public_key_hex());
 
     let foreign_keys = KukuriKeys::generate();
-    let foreign_export =
-        kukuri_core::encrypt_account_key_export(&foreign_keys, passphrase).expect("export");
+    let foreign_export = kukuri_core::encrypt_account_key_export(
+        &foreign_keys,
+        passphrase,
+        crate::kdf::derive_passphrase_key,
+    )
+    .await
+    .expect("export");
     let foreign = crate::accounts::preview_account_key_import(dir.path(), &foreign_export)
         .await
         .expect("preview foreign key");
