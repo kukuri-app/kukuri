@@ -892,8 +892,19 @@ const shownImage = (browser, text) =>
  * （`channel`）、需要のある相手の数（`peers`）。
  */
 async function lifecycleOnTheDirectPath(a, ctx) {
-  // 旧 state の再送の準備: a は native の channel に参加してから退会し、owner の native はその channel の世代を更新して投稿する
-  // （旧い参加への配布）。a が参加中の channel の世代を native が更新し、a は新しい世代の投稿を読める。
+  // 旧 state の再送の準備: a が参加中の channel の世代を native が更新し、a は新しい世代の投稿を読める。新しい世代は W6 の背景の
+  // 配布（epoch 制御の送信と引継ぎの grant）で届くので、届くまでの時間を記録し、待ちの上限は通常より長くする。次に、a は native
+  // の別の channel に参加してから退会し、owner の native はその channel の世代を更新して投稿する（旧い参加への配布）。
+  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: ctx.channel.channelId } });
+  const afterRotation = `after the rotation ${RUN}`;
+  await nativePostsInChannel(ctx.channel.channelId, afterRotation);
+  const rotatedAt = Date.now();
+  await channelColumn(a, ctx.channel.channelId).scrollIntoView();
+  await eventually(`${a.label} reads the new generation`, async () => {
+    await showNewPosts(a);
+    return (await pageText(a)).includes(afterRotation);
+  }, 4 * WAIT);
+  console.log('the new generation reaches web-a in', Date.now() - rotatedAt, 'ms');
   const leftLabel = `lx-${RUN}`;
   const left = await nativeCreatesChannel(leftLabel);
   await joinChannel(a, left.token, leftLabel);
@@ -901,10 +912,6 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: left.channelId } });
   const inTheLeftChannel = `in the left channel ${RUN}`;
   await nativePostsInChannel(left.channelId, inTheLeftChannel);
-  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: ctx.channel.channelId } });
-  const afterRotation = `after the rotation ${RUN}`;
-  await nativePostsInChannel(ctx.channel.channelId, afterRotation);
-  await seesInChannel(a, ctx.channel.channelId, afterRotation);
   const version = await profileVersion(ctx.aPubkey);
   assert.ok(version, 'native knows the version of the profile');
   // 編集の途中（private channel の列の下書き）。
@@ -925,8 +932,9 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await a.$('button[aria-label="Close settings"]').click();
   await channelColumn(a, ctx.channel.channelId).scrollIntoView();
   assert.equal(await channelColumn(a, ctx.channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
-  // reload の間の投稿は、利用者の操作（「Show N new posts」）なしに出る。
-  await eventually(`${a.label} shows the post made while reloading`, async () => (await pageText(a)).includes(whileReloading));
+  // reload の間の投稿は、利用者が取り直す操作をしなくても出る（「Show N new posts」は受け取り済みの新着を並べるだけで、取得は
+  // しない）。
+  await sees(a, whileReloading);
   // 退会した channel は、世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。
   // profile の版は reload で変わらない（再送を新しい編集にしない）。
   const labels = await joinedChannelLabels(a);
@@ -1027,14 +1035,15 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   assert.deepEqual(await shownImage(a, acrossTheLoss), { cards: 1, sha256: createHash('sha256').update(png).digest('hex') });
 }
 
-/** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭。 */
+/** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭と、WebRTC の session の状態。 */
 async function dumpColumns(browser) {
   const columns = await browser.execute(() =>
     [...document.querySelectorAll('section.shell-column-surface')].map(
       (node) => `[${node.dataset.columnId} visible=${node.dataset.runtimeVisible ?? 'false'}]\n${node.innerText.slice(0, 800)}`
     )
   );
-  console.log(`--- ${browser.label}\n${columns.join('\n')}`);
+  const sessions = await sessionStates(browser).catch(() => []);
+  console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
 
 async function main() {
