@@ -203,6 +203,19 @@ impl Store for MemoryStore {
             .await
     }
 
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>> {
+        Ok(self
+            .follow_edges
+            .read()
+            .await
+            .get(&(subject_pubkey.to_string(), target_pubkey.to_string()))
+            .cloned())
+    }
+
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()> {
         self.store_upsert_block_edge_impl(edge).await
     }

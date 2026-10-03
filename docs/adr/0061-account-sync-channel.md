@@ -45,6 +45,9 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | private channel の参加・明示の退会・取消 | `channel/<channel id の hex>/membership` | 参加の端末に依らない欄（§9）。退会・取消は tombstone として保持する |
 | private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味・値・採否は W6（#1219）が所有する（ADR 0018 §8） |
 | private channel の鍵更新の依頼 | `channel/<channel id の hex>/rotation` | 担当でない端末から担当への依頼。値は元の世代（`ChannelRotationRequestV1`）。意味は W6（#1219 AC-3、ADR 0018 §8） |
+| private channel の担当の移譲の依頼 | `channel/<channel id の hex>/controller-request` | 担当を引き取りたい端末から旧担当への依頼。値は移譲先と旧担当の世代（`ChannelControllerRequestV1`）。意味は W6（#1219 AC-4、ADR 0018 §8） |
+| private channel の参加者 | `channel/<channel id の hex>/participant/<参加者の公開鍵>` | owner の端末が受けた参加者の最新の参加・退会の record の世代と時刻（`ChannelParticipantV1`）。owner の端末の参加者の表を本人の端末で集める（#1219 AC-5、2026-10-04 ユーザー判断） |
+| 参加者との follow | `follow/<subject の公開鍵>/<target の公開鍵>` | 自分と自分の channel の参加者の間の follow の edge の状態。相互フォロー限定の資格の材料で、受け手はフォローの表・一覧に入れない（#1219 AC-5） |
 | 変更の窓 | `changes/<端末 ID>/<slot>`・`changes/<端末 ID>/head` | 書いた端末の採用の順の手掛かり（§10）。merge の対象ではない |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
@@ -62,7 +65,9 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 著者を常に表示する指定などの設定の item: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。再受信・再起動・restore の時刻を `updated_at` にしない。
 - private channel の鍵: (channel, epoch) ごとに追加し、相手に項目が無いことを削除と解釈しない。値の形と現在の世代への切替は、検証済みの遷移（W6、ADR 0018 §8）に従う。
 - 鍵更新の担当: 担当の世代（`generation`）で採り、`updated_at` では決めない（ADR 0018 §8）。
-- 鍵更新の依頼: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。担当は採った依頼の元の世代が手元の現在の世代のときだけ処理する（ADR 0018 §8）。
+- 鍵更新の依頼・担当の移譲の依頼: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。担当は採った依頼の元の世代が手元の現在の世代のときだけ処理する（ADR 0018 §8）。
+- 参加者: `updated_at` は record の時刻（退会なら退会、参加なら参加の時刻）、`op_id` は中身から決める（同じ record を受け直しても版が増えない）。新しいものを採り、参加者の表へは表と同じ規則（同じ (channel, epoch, 公開鍵) の行より新しいときだけ置き換え、退会は channel の全行に付く）で取り込む。古い参加の record で参加中に戻らない。
+- 参加者との follow: `updated_at` は edge の時刻、`op_id` は edge の envelope の ID の先頭 32 桁。新しいものを採る。相互フォローの判定は、向きごとに、手元の edge と採った記録の新しい方を使う（ADR 0018 §8）。
 - 参加・退会・取消（`membership`）は `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の値のある版として扱う（§9）。
 - 採用した状態は item ごとに 1 行で持つ（操作の log を持たない）。同じ `op_id` と `updated_at` の再受信は何もしない（重複排除の台帳を別に持たない）。
 
@@ -341,7 +346,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   3. item ごとに merge してから cursor を進める（途中で止まっても、そこから再開する）。
   - slot の seq が期待と違う（窓を上書きされた）とき、または cursor が無い（初めての相手、DB を失った、cursor を消した）ときは、相手の replica を周回する。
 - 周回:
-  - item の prefix（`profile`、`trust/always-visible/`、`channel/`）を、key に使う文字（`0-9`、`a-z`、`/`、`-`）の prefix の木で辿る。
+  - item の prefix（`profile`、`trust/always-visible/`、`follow/`、`channel/` の順）を、key に使う文字（`0-9`、`a-z`、`/`、`-`）の prefix の木で辿る。`follow/` は #1219 AC-5 で足し、参加者の item より先に読む（遅れた参加の grant の資格を、同期した edge でも判断するため）。
   - 1 回の照会は 64 key まで。上限に届かなければ、その prefix の key をすべて merge して、次の prefix へ進む。届けば、子の prefix へ降りる。
   - 位置（次に照会する prefix）を cursor に持つ。
   - 周回を始めたときの head を覚え、周回が終わったら cursor をその head にする。周回の間の変更は、その後の窓で読む。

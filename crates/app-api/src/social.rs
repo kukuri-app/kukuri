@@ -138,6 +138,7 @@ impl AppService {
         let edge = parse_follow_edge(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
+        self.share_participant_follow(&edge).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
         self.services
             .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
@@ -166,6 +167,7 @@ impl AppService {
         let edge = parse_follow_edge(&envelope)?
             .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
         self.services.store.put_envelope(envelope.clone()).await?;
+        self.share_participant_follow(&edge).await?;
         persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
         self.services
             .persist_author_event(edge.subject_pubkey.as_str(), &envelope)

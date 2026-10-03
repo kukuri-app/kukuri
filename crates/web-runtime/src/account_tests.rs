@@ -15,8 +15,8 @@ use js_sys::Uint8Array;
 use kukuri_app_api::{AppService, PrivateChannelControllerPending, ServiceHandles};
 use kukuri_blob_service::IrohBlobService;
 use kukuri_core::{
-    ChannelAudienceKind, CreatePrivateChannelInput, EnvelopeId, KukuriKeys, PayloadRef, ReplicaId,
-    TopicId,
+    ChannelAudienceKind, CreatePrivateChannelInput, EnvelopeId, FollowEdge, FollowEdgeStatus,
+    KukuriKeys, PayloadRef, ReplicaId, TopicId,
 };
 use kukuri_desktop_runtime::{ClientStorage, load_endpoint_secret, save_endpoint_secret};
 use kukuri_docs_sync::IrohDocsSync;
@@ -24,7 +24,8 @@ use kukuri_iroh_node::{IrohDocsNode, NodeOptions};
 use kukuri_store::{
     ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
     ContentCacheStore, LEARNED_RETENTION_MS, ObjectProjectionRow, ObjectProjectionStore,
-    PeerCandidateStore, PrivateChannelEpochRow, PrivateChannelKeyStore, PrivateChannelRow,
+    PeerCandidateStore, PrivateChannelEpochRow, PrivateChannelKeyStore,
+    PrivateChannelParticipantRow, PrivateChannelRow, SocialProjectionStore, Store,
 };
 use kukuri_transport::{FakeNetwork, FakeTransport};
 use wasm_bindgen::JsValue;
@@ -385,6 +386,75 @@ fn epoch_row(epoch: &str) -> PrivateChannelEpochRow {
         rotation_from: None,
         rotation_after: None,
     }
+}
+
+/// follow の edge を向きごとに 1 件で読め、いずれかの channel に行のある相手（退出を含む）を判定できる（native の
+/// store と同じ意味。#1219 AC-5）。
+#[wasm_bindgen_test]
+async fn a_follow_edge_and_a_channel_member_are_read_one_by_one() {
+    let cache = IndexedDbCache::start(&account_id(), None)
+        .await
+        .expect("cache");
+    let (owner, member) = ("a".repeat(64), "b".repeat(64));
+    let edge = FollowEdge {
+        subject_pubkey: owner.clone().into(),
+        target_pubkey: member.clone().into(),
+        status: FollowEdgeStatus::Active,
+        updated_at: 5,
+        envelope_id: EnvelopeId::from("e".repeat(64)),
+    };
+    cache.upsert_follow_edge(edge.clone()).await.unwrap();
+    assert_eq!(
+        cache.get_follow_edge(&owner, &member).await.unwrap(),
+        Some(edge)
+    );
+    assert_eq!(cache.get_follow_edge(&member, &owner).await.unwrap(), None);
+    cache
+        .put_private_channel(&channel_row(true), &[epoch_row("epoch-1")])
+        .await
+        .unwrap();
+    assert!(!cache.has_private_channel_member(&member).await.unwrap());
+    cache
+        .put_private_channel_participant(PrivateChannelParticipantRow {
+            channel_id: "channel-1".into(),
+            epoch_id: "epoch-1".into(),
+            participant_pubkey: member.clone(),
+            left_at: Some(3),
+            updated_at: 3,
+        })
+        .await
+        .unwrap();
+    assert!(cache.has_private_channel_member(&member).await.unwrap());
+    assert!(!cache.has_private_channel_member(&owner).await.unwrap());
+    assert!(
+        !cache
+            .is_active_private_channel_participant("channel-1", &member)
+            .await
+            .unwrap()
+    );
+    let active = "c".repeat(64);
+    cache
+        .put_private_channel_participant(PrivateChannelParticipantRow {
+            channel_id: "channel-1".into(),
+            epoch_id: "epoch-1".into(),
+            participant_pubkey: active.clone(),
+            left_at: None,
+            updated_at: 4,
+        })
+        .await
+        .unwrap();
+    assert!(
+        cache
+            .is_active_private_channel_participant("channel-1", &active)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !cache
+            .is_active_private_channel_participant("channel-2", &active)
+            .await
+            .unwrap()
+    );
 }
 
 /// 参加の行の無い channel の鍵の行だけを足せる。同じ行は足さない（native の store と同じ意味。#1218 AC-4c）。

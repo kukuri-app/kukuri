@@ -135,6 +135,23 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM follow_edges WHERE subject_pubkey = ?1 AND target_pubkey = ?2",
+        )
+        .bind(subject_pubkey)
+        .bind(target_pubkey)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(crate::row_mapping::row_to_follow_edge)
+        .transpose()
+    }
+
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()> {
         self.store_upsert_block_edge_impl(edge).await
     }

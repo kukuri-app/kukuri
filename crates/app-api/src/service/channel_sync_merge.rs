@@ -2,7 +2,8 @@
 //! #1219 AC-3）。
 //!
 //! 参加・退会と依頼の版は採用の台帳（`AccountSyncStore`）の `(updated_at, op_id)` で採り、鍵は追加だけ、担当は
-//! ADR 0018 §8 の規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
+//! ADR 0018 §8 の規則で採る。参加者の item（#1219 AC-5）は `epoch_control_support` が参加者の表へ取り込む。各 merge は
+//! 対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
 
 use kukuri_core::{
     AccountSyncItem, AccountSyncItemKey, ChannelControllerRequestV1, ChannelMembershipV1,
@@ -68,6 +69,13 @@ impl AppService {
             }
             AccountSyncItemKey::ChannelControllerRequest { channel_id } => {
                 self.merge_channel_controller_request(channel_id, item)
+                    .await
+            }
+            AccountSyncItemKey::ChannelParticipant {
+                channel_id,
+                participant,
+            } => {
+                self.merge_channel_participant(channel_id, participant, item)
                     .await
             }
             _ => Ok(false),
