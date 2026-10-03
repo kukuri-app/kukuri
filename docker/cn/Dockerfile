@@ -49,4 +49,9 @@ RUN apt-get update \
 RUN test -n "$TARGET_BIN"
 COPY --from=builder /workspace/target/release/${TARGET_BIN} /usr/local/bin/app
 
+# #1483: relay の image に、relay とは別の process として動かす STUN の binary（cn-stun）を同梱する。
+ARG EXTRA_BIN
+RUN --mount=type=bind,from=builder,source=/workspace/target/release,target=/release \
+    if [ -n "$EXTRA_BIN" ]; then cp "/release/$EXTRA_BIN" /usr/local/bin/; fi
+
 ENTRYPOINT ["/usr/local/bin/app"]

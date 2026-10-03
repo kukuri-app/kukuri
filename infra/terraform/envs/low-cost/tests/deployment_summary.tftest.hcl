@@ -180,3 +180,14 @@ run "relation_analyze_interval_fraction_is_rejected" {
   }
   expect_failures = [var.relation_analyze_interval_minutes]
 }
+
+run "stun_runs_beside_the_relay" {
+  command = plan
+  assert {
+    condition = strcontains(
+      base64decode(regex("echo \"([A-Za-z0-9+/=]+)\" [|] base64 -d > \"[$]INSTALL_DIR/docker-compose[.]yml\"", nonsensitive(module.vm.startup_script))[0]),
+      "  cn-stun:\n    logging: *cn-logging\n    image: ${var.cn_iroh_relay_image}\n    entrypoint: [\"/usr/local/bin/cn-stun\"]\n    restart: unless-stopped\n    ports:\n      - \"3478:3478/udp\"\n"
+    )
+    error_message = "cn-stun must run from the relay image as its own service on 3478/udp (#1483)."
+  }
+}
