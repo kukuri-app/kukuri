@@ -44,6 +44,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | private channel の受領済みの世代の鍵 | `channel/<channel id の hex>/epoch/<epoch id の hex>` | (channel, epoch) ごと。追加だけ |
 | private channel の参加・明示の退会・取消 | `channel/<channel id の hex>/membership` | 参加の端末に依らない欄（§9）。退会・取消は tombstone として保持する |
 | private channel の鍵更新の担当 | `channel/<channel id の hex>/controller` | 意味・値・採否は W6（#1219）が所有する（ADR 0018 §8） |
+| private channel の鍵更新の依頼 | `channel/<channel id の hex>/rotation` | 担当でない端末から担当への依頼。値は元の世代（`ChannelRotationRequestV1`）。意味は W6（#1219 AC-3、ADR 0018 §8） |
 | 変更の窓 | `changes/<端末 ID>/<slot>`・`changes/<端末 ID>/head` | 書いた端末の採用の順の手掛かり（§10）。merge の対象ではない |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
@@ -61,6 +62,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 著者を常に表示する指定などの設定の item: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。再受信・再起動・restore の時刻を `updated_at` にしない。
 - private channel の鍵: (channel, epoch) ごとに追加し、相手に項目が無いことを削除と解釈しない。値の形と現在の世代への切替は、検証済みの遷移（W6、ADR 0018 §8）に従う。
 - 鍵更新の担当: 担当の世代（`generation`）で採り、`updated_at` では決めない（ADR 0018 §8）。
+- 鍵更新の依頼: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。担当は採った依頼の元の世代が手元の現在の世代のときだけ処理する（ADR 0018 §8）。
 - 参加・退会・取消（`membership`）は `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の値のある版として扱う（§9）。
 - 採用した状態は item ごとに 1 行で持つ（操作の log を持たない）。同じ `op_id` と `updated_at` の再受信は何もしない（重複排除の台帳を別に持たない）。
 
@@ -255,7 +257,8 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 時刻: 参加・退出の記録の時刻（参加の `joined_at`、退出の `left_at`）は、端末の時計ではなく、その時点でこの端末が採っている `membership` の版の `updated_at` とする（参加・再参加の時刻、または退会の時刻。旧版から移した行は 0）。redeem・owner の鍵更新の確定で新しい世代へ書く参加の記録も同じ。
   - 書く時: この端末の参加・明示の退会・明示の再参加・redeem・owner の鍵更新の確定（今と同じ）に加え、`membership` の採用でこの端末の参加・退会が変わったとき（tombstone を採った、値のある版を採って参加に戻った。鍵待ちのときは現在の世代が決まったとき）。
   - これで、owner の表の順序は account の `membership` の版の順序と一致する。古い tombstone を遅れて採った端末の退出は、それより新しい再参加の記録を閉じない。退会の後に、それを知らずに redeem した端末の参加の記録（退会より前の参加の時刻）は、その端末が tombstone を採ったときの退出が閉じる。（再参加の記録が届く前に owner が回転すると、owner は古い世代宛ての参加の記録を捨てる。これは今の owner の受け付け（#1221 R5-H）からの制約で、本 ADR では変えない。）
-- 担当の記録は、ADR 0018 §8 の規則（`generation`、同じなら `transfer_to`）で採る。書くのは W6。
+- 担当の記録は、ADR 0018 §8 の規則（`generation`、同じなら `transfer_to`）で採る。書くのは担当になった端末（#1219 AC-3）。
+  - 担当の item は key の順で `membership` より先に読まれる（周回・作り直し）。参加の行が無いときも採ったとして自分の replica に置き、`membership` で参加の行を作るときに手元の replica から 1 件読んで採る。
 - 書き込み:
   - 世代の鍵は追加のとき、`membership` は上の 3 つの操作のときに、行の保存と同じ所で封をして replica へ書く。owner の鍵更新で作った世代も、同じ所を通る。
   - AC-3 と同じく、replica へ書けなくても採用は戻さない。

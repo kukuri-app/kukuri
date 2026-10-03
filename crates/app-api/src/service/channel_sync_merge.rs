@@ -1,9 +1,12 @@
-//! 本人の別の端末の private channel の item（参加・世代の鍵・担当）の merge（ADR 0061 §9、#1218 AC-4c）。
+//! 本人の別の端末の private channel の item（参加・世代の鍵・担当・鍵更新の依頼）の merge（ADR 0061 §9、#1218 AC-4c、
+//! #1219 AC-3）。
 //!
-//! 参加・退会の版は採用の台帳（`AccountSyncStore`）の `(updated_at, op_id)` で採り、鍵は追加だけ、担当は ADR 0018 §8 の
-//! 規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
+//! 参加・退会と依頼の版は採用の台帳（`AccountSyncStore`）の `(updated_at, op_id)` で採り、鍵は追加だけ、担当は
+//! ADR 0018 §8 の規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
 
-use kukuri_core::{AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1};
+use kukuri_core::{
+    AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1, ChannelRotationRequestV1,
+};
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{PrivateChannelEpochRange, PrivateChannelRow};
 
@@ -42,6 +45,9 @@ impl AppService {
             AccountSyncItemKey::ChannelController { channel_id } => {
                 self.merge_channel_controller(channel_id, item).await
             }
+            AccountSyncItemKey::ChannelRotationRequest { channel_id } => {
+                self.merge_channel_rotation_request(channel_id, item).await
+            }
             _ => Ok(false),
         }
     }
@@ -69,6 +75,7 @@ impl AppService {
             return Ok(false);
         }
         let row = store.get_private_channel_by_id(channel_id.as_str()).await?;
+        let previous_controller = row.as_ref().and_then(|row| row.controller.clone());
         let Some(membership) = membership else {
             // 退会: 参加中なら、この端末の退会と同じ順で外す（鍵待ちの参加は記録を書いていないので書かない）。
             // 鍵の行は参加中でなくても消す（参加より先に届いた鍵、再送で途中から再開する削除）。
@@ -145,6 +152,25 @@ impl AppService {
             .pop();
         let waiting = newest.is_none();
         let topic_id = membership.topic_id.clone();
+        // 担当の item は key の順で参加の item より先に届く（周回・作り直し）。届いて手元の replica に置いたものを採る。
+        let controller = match previous_controller {
+            Some(controller) => Some(controller),
+            None => self
+                .read_account_sync_docs_key(
+                    &AccountSyncItemKey::ChannelController {
+                        channel_id: channel_id.clone(),
+                    }
+                    .docs_key(),
+                    DocFetchPolicy::LocalOnly,
+                )
+                .await?
+                .and_then(|item| item.value)
+                .map(|value| {
+                    serde_json::from_value::<PrivateChannelController>(value)
+                        .and_then(|controller| serde_json::to_string(&controller))
+                })
+                .transpose()?,
+        };
         {
             let _access = self.services.content_save_access.lock().await;
             self.services
@@ -160,7 +186,7 @@ impl AppService {
                         joined_via_pubkey: membership.joined_via_pubkey,
                         audience_kind: audience_name(&membership.audience_kind)?,
                         current_epoch_id: newest.unwrap_or(membership.current_epoch_id),
-                        controller: None,
+                        controller,
                         joined: true,
                         updated_at: item.updated_at,
                         op_id: item.op_id.clone(),
@@ -276,7 +302,8 @@ impl AppService {
         Ok(true)
     }
 
-    /// 担当の記録を ADR 0018 §8 の規則で採る（書くのは W6）。
+    /// 担当の記録を ADR 0018 §8 の規則で採る（書くのは担当になった端末）。参加の行がまだ無ければ、自分の replica に
+    /// 置くために採ったとし、参加の行を作るときに手元の replica から読む。
     async fn merge_channel_controller(
         &self,
         channel_id: &ChannelId,
@@ -290,7 +317,7 @@ impl AppService {
             let _access = self.services.content_save_access.lock().await;
             let store = &self.services.projection_store;
             let Some(row) = store.get_private_channel_by_id(channel_id.as_str()).await? else {
-                return Ok(false);
+                return Ok(true);
             };
             let local = row
                 .controller
@@ -320,6 +347,47 @@ impl AppService {
             .await;
         }
         Ok(true)
+    }
+
+    /// 鍵更新の依頼を `(updated_at, op_id)` で採り、この端末が担当で、現在の世代が依頼の元の世代なら鍵を更新する
+    /// （#1219 AC-3、ADR 0018 §8）。同じ版の再受信でもやり直す（鍵更新が途中で失敗したら、差分の取得の再送で再開する）。
+    /// 担当でなければ何もしない。採った（行を置き換えた）ら true。
+    async fn merge_channel_rotation_request(
+        &self,
+        channel_id: &ChannelId,
+        item: &AccountSyncItem,
+    ) -> Result<bool> {
+        let request: ChannelRotationRequestV1 = serde_json::from_value(
+            item.value
+                .clone()
+                .context("a rotation request must carry its epoch")?,
+        )?;
+        let store = &self.services.projection_store;
+        let adopted = store.adopt_account_sync_row(&row_of(item)?).await?;
+        let current = adopted
+            || store
+                .get_account_sync_row(&item.key.docs_key())
+                .await?
+                .is_some_and(|row| row.updated_at == item.updated_at && row.op_id == item.op_id);
+        let Some(row) = store
+            .get_private_channel_by_id(channel_id.as_str())
+            .await?
+            .filter(|row| {
+                current
+                    && row.joined
+                    && row.current_epoch_id == request.from_epoch_id
+                    && row.owner_pubkey == self.current_author_pubkey()
+            })
+        else {
+            return Ok(adopted);
+        };
+        match self
+            .rotate_private_channel(&row.topic_id, channel_id.as_str())
+            .await
+        {
+            Err(error) if !error.is::<PrivateChannelControllerPending>() => Err(error),
+            _ => Ok(adopted),
+        }
     }
 
     /// 鍵待ちの channel の鍵の item を、手元の account の replica から新しい順に 1 page 読み直す。退会を採ったときに

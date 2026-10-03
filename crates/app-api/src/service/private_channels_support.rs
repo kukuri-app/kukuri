@@ -1,4 +1,10 @@
 use super::*;
+use kukuri_core::{AccountSyncItem, AccountSyncItemKey, ChannelRotationRequestV1};
+
+/// 担当でない端末が、担当へ依頼した鍵更新の新しい世代を待つ上限（#1219 AC-3。2026-10-03 ユーザー判断）。
+const PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT: std::time::Duration =
+    std::time::Duration::from_secs(15);
+
 impl AppService {
     pub(crate) async fn maybe_redeem_epoch_handoff_grants_for_channel(
         &self,
@@ -336,24 +342,71 @@ impl AppService {
         if state.owner_pubkey != self.current_author_pubkey() {
             return Ok(());
         }
-        match state.audience_kind {
+        let required = match state.audience_kind {
             ChannelAudienceKind::InviteOnly | ChannelAudienceKind::FriendPlus => {
-                if matches!(action, PrivateChannelOwnerAction::Share) {
-                    let _ = self
-                        .rotate_private_channel(topic_id, channel_id.as_str())
-                        .await?;
-                }
+                matches!(action, PrivateChannelOwnerAction::Share)
             }
             ChannelAudienceKind::FriendOnly => {
-                let diagnostics = self.private_channel_diagnostics(&state).await?;
-                if diagnostics.rotation_required {
-                    let _ = self
-                        .rotate_private_channel(topic_id, channel_id.as_str())
-                        .await?;
-                }
+                self.private_channel_diagnostics(&state)
+                    .await?
+                    .rotation_required
             }
+        };
+        if required {
+            self.rotate_or_request_private_channel(topic_id, &state)
+                .await?;
         }
         Ok(())
+    }
+
+    /// 共有・投稿の前の鍵更新。担当でなければ、担当への依頼を account 同期へ書き、担当が本人の端末の候補にいれば
+    /// 新しい世代が届くまで待つ。候補にいない・期限までに届かなければ保留を返す（依頼は残り、担当が取得したときに
+    /// 処理する。#1219 AC-3、ADR 0018 §8）。
+    async fn rotate_or_request_private_channel(
+        &self,
+        topic_id: &str,
+        state: &JoinedPrivateChannelState,
+    ) -> Result<()> {
+        let channel_id = state.channel_id.as_str();
+        let pending = match self.rotate_private_channel(topic_id, channel_id).await {
+            Err(error) if error.is::<PrivateChannelControllerPending>() => error,
+            result => return result.map(|_| ()),
+        };
+        self.publish_account_sync_item(AccountSyncItem::edit(
+            AccountSyncItemKey::ChannelRotationRequest {
+                channel_id: state.channel_id.clone(),
+            },
+            Utc::now().timestamp_millis(),
+            Some(serde_json::to_value(ChannelRotationRequestV1 {
+                from_epoch_id: state.current_epoch_id.clone(),
+            })?),
+        ))
+        .await?;
+        let candidates = self
+            .services
+            .hint_transport
+            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
+            .await
+            .unwrap_or_default();
+        if !state.controller.as_ref().is_some_and(|controller| {
+            controller.transfer_to.is_none()
+                && candidates
+                    .iter()
+                    .any(|peer| peer.endpoint_id == controller.device_id)
+        }) {
+            return Err(pending);
+        }
+        let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            while self
+                .joined_private_channel_state(topic_id, channel_id)
+                .await
+                .is_some_and(|current| current.current_epoch_id == state.current_epoch_id)
+            {
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        advanced.map_err(|_| pending)
     }
     pub(crate) async fn private_channel_state_for_owner_action(
         &self,
