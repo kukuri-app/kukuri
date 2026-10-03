@@ -243,7 +243,7 @@ async fn web_ignores_records_by_others_mismatched_urls_and_over_the_limits() {
 
     let mut large_image = fixture.content(URL, "大きい画像");
     large_image.image = Some(KukuriLinkPreviewImageV1 {
-        hash: kukuri_core::blob_hash(&png()),
+        hash: kukuri_core::blob_hash(png()),
         mime: "image/png".into(),
         bytes: 1024 * 1024 + 1,
     });
