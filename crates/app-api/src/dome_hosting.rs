@@ -1,3 +1,4 @@
+use crate::dome_session::DomeInputSource;
 use crate::service::*;
 use crate::views::{
     AbortDomeTransitionInput, ActivateCommunityNodeDomeHostingInput, CloseDomeHostingInput,
@@ -9,11 +10,10 @@ use crate::views::{
 use kukuri_core::{
     DOME_HOSTING_MAX_LEASE_MILLIS, DOME_LAYOUT_COMMIT_MIN_INTERVAL_MILLIS, DomeHostTargetV1,
     DomeHostingLeaseV1, DomeHostingRecordV1, DomeHostingStateKindV1, DomeInstanceStatusV1,
-    DomeLayoutCommitV1, DomeSessionInputKindV1, DomeTransitionAccessDecisionV1,
-    DomeTransitionAdmissionTicketV1, SignedDomeHostingAcceptanceV1, SignedDomeHostingLeaseV1,
-    SignedDomeLayoutCandidateV1, SignedDomePhysicsSnapshotV1, SpatialContextV1,
-    accept_dome_hosting_lease, activate_dome_hosting_lease, build_signed_dome_hosting_lease,
-    build_signed_dome_layout_commit, build_signed_dome_session_input, close_dome_hosting_lease,
+    DomeLayoutCommitV1, DomeTransitionAdmissionTicketV1, SignedDomeHostingAcceptanceV1,
+    SignedDomeHostingLeaseV1, SignedDomeLayoutCandidateV1, SignedDomePhysicsSnapshotV1,
+    SpatialContextV1, accept_dome_hosting_lease, activate_dome_hosting_lease,
+    build_signed_dome_hosting_lease, build_signed_dome_layout_commit, close_dome_hosting_lease,
     dome_layout_candidate_digest, resolve_dome_hosting_state, verify_signed_dome_host_heartbeat,
     verify_signed_dome_layout_candidate,
 };
@@ -331,70 +331,16 @@ impl AppService {
         &self,
         input: SubmitDomeSessionInput,
     ) -> Result<SignedDomePhysicsSnapshotV1> {
-        self.hosting_context_replica(&input.spatial_context).await?;
-        let instance = self
-            .hosting_instance(&input.spatial_context, &input.instance_id)
-            .await?
-            .context("Dome instance was not found")?;
-        if input
-            .expected_generation
-            .is_some_and(|generation| generation != instance.generation)
-        {
-            anyhow::bail!("DOME_SESSION_STALE_INSTANCE");
-        }
-        if instance.status != DomeInstanceStatusV1::Active || instance.relationship_detach.is_some()
-        {
-            anyhow::bail!("DOME_SESSION_STALE_INSTANCE");
-        }
-        if matches!(
-            &input.input,
-            DomeSessionInputKindV1::Join { .. } | DomeSessionInputKindV1::KeepAlive
-        ) {
-            match self
-                .evaluate_dome_room_access(
-                    &input.spatial_context,
-                    &instance.owner_pubkey,
-                    &self.services.keys.public_key(),
-                )
-                .await?
-            {
-                DomeTransitionAccessDecisionV1::Allowed => {}
-                DomeTransitionAccessDecisionV1::Denied { reason } => {
-                    anyhow::bail!(reason.code())
-                }
-            }
-        }
-        let now = Utc::now().timestamp_millis();
-        let mut sessions = self.dome_host_sessions.lock().await;
-        let runtime = sessions
-            .get_mut(&input.instance_id)
-            .context("this device is not the active Dome host")?;
-        if runtime.lease().spatial_context != input.spatial_context
-            || runtime.lease().instance_generation != instance.generation
-        {
-            anyhow::bail!("Dome session input SpatialContext mismatch");
-        }
-        let signed = build_signed_dome_session_input(
-            self.services.keys.as_ref(),
-            kukuri_core::DomeSessionInputV1 {
-                input_id: format!("input-{}-{}", input.instance_id, input.sequence),
-                instance_id: input.instance_id,
-                instance_generation: runtime.lease().instance_generation,
-                lease_epoch: runtime.lease().epoch,
-                session_id: runtime.session_id().to_string(),
-                participant_pubkey: self.services.keys.public_key(),
+        self.apply_dome_session_input(
+            &input.spatial_context,
+            &input.instance_id,
+            input.expected_generation,
+            DomeInputSource::Local {
                 sequence: input.sequence,
-                sent_at: now,
                 input: input.input,
             },
-        )?;
-        let admission = matches!(&signed.input.input, DomeSessionInputKindV1::Join { .. });
-        runtime.apply_signed_input_at(&signed, now)?;
-        if admission {
-            runtime.signed_admission_snapshot(now)
-        } else {
-            runtime.signed_snapshot(now)
-        }
+        )
+        .await
     }
 
     pub async fn prepare_dome_transition(

@@ -53,6 +53,12 @@ pub trait Store: Send + Sync {
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()>;
     async fn list_block_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<BlockEdge>>;
     async fn list_block_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<BlockEdge>>;
+    /// subject から target への block の 1 件(subject の block の件数に比例しない読み出し)。
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>>;
 }
 
 // ProjectionStore はドメイン別 sub-trait の supertrait 合成(WP-H1)。

@@ -598,10 +598,14 @@ fn dome_entry_access_proof_is_valid(
     now: i64,
 ) -> bool {
     proof.is_some_and(|proof| {
-        proof.statement.participant_pubkey == *participant_pubkey
-            && proof.statement.spatial_context == *spatial_context
-            && proof.statement.target_owner_pubkey == *target_owner_pubkey
-            && proof.verify_at(now).is_ok()
+        proof
+            .verify_for(
+                participant_pubkey,
+                spatial_context,
+                target_owner_pubkey,
+                now,
+            )
+            .is_ok()
     })
 }
 

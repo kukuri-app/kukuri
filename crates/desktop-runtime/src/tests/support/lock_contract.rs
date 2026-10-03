@@ -66,6 +66,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("community_node/trust_relation.rs", "CommunityNodeServer", 5),
     ("device_backup.rs", "IdentityStorage", 8),
     ("device_backup/recovery.rs", "IdentityStorage", 13),
+    ("dome_session.rs", "IrohNetwork", 2),
     ("empty_namespace_reclaim.rs", "IdentityStorage", 1),
     ("identity_restart.rs", "IdentityStorage", 2),
     ("legacy_store_retirement.rs", "IdentityStorage", 2),

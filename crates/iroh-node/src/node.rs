@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use tracing::warn;
 
+use crate::dome_session::{DOME_SESSION_ALPN, DomeSessionConnections, DomeSessionSlot};
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
@@ -183,6 +184,8 @@ pub struct IrohDocsNode {
     private_capabilities: PrivateCapabilities,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
     receive_binding: ReceiveBindingSlot,
+    pub(crate) dome_session: DomeSessionSlot,
+    pub(crate) dome_session_connections: DomeSessionConnections,
     pub(crate) network_work: Arc<crate::network_work::NetworkWorkRuntime>,
     shutdown_started: AtomicBool,
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
@@ -388,6 +391,7 @@ impl IrohDocsNode {
             private_capabilities.clone(),
         );
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
+        let dome_session = DomeSessionSlot::default();
         let router = Router::builder(endpoint.clone())
             .accept(
                 iroh_blobs::ALPN,
@@ -398,6 +402,7 @@ impl IrohDocsNode {
             .accept(RECEIVE_BINDING_ALPN, receive_binding.clone())
             .accept(DOC_READ_ALPN, page_read)
             .accept(REMOTE_BLOB_ALPN, remote_blob)
+            .accept(DOME_SESSION_ALPN, dome_session.clone())
             .spawn();
 
         let node = Arc::new(Self {
@@ -412,6 +417,8 @@ impl IrohDocsNode {
             private_capabilities,
             fetch_peer_health: Arc::new(kukuri_transport::BlobPeerHealth::default()),
             receive_binding,
+            dome_session,
+            dome_session_connections: DomeSessionConnections::default(),
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
             shutdown_started: AtomicBool::new(false),
             shutdown_result: tokio::sync::watch::channel(None).0,
@@ -565,6 +572,7 @@ impl IrohDocsNode {
     async fn shutdown_owned(&self) -> Result<()> {
         self.network_work.close();
         self.receive_binding.clear().await;
+        self.dome_session.install(None);
         // Flush before the router invokes BlobsProtocol::shutdown. A later
         // shutdown RPC may legitimately find that actor already closed.
         let blob_flush = self.blobs.sync_db().await;
@@ -591,6 +599,7 @@ impl Drop for IrohDocsNode {
     fn drop(&mut self) {
         self.network_work.close();
         self.receive_binding.reject_new_requests();
+        self.dome_session.install(None);
         if self.shutdown_started.swap(true, Ordering::AcqRel) {
             return;
         }

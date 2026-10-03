@@ -15,6 +15,7 @@ import { useMetaverseRoomSession } from './useMetaverseRoomSession';
 import { createMetaverseRoomActions } from '@/shell/actions/metaverse';
 import { createDefaultMetaverseRoomState } from './DomeSceneModel';
 import { readLastVisitedDome } from './DomeEntryModel';
+import { InvokeError } from '@/lib/api/invoke/error';
 
 const room: GameRoomView = {
   room_id: 'metaverse-room-1',
@@ -910,5 +911,26 @@ describe('useMetaverseRoomSession', () => {
       expect.objectContaining({ type: 'complete_transition' }),
       1
     );
+  });
+
+  // #1527: 所有者の端末に接続できなかった入室は、code ではなく利用者向けの文言で示す。
+  test('shows a user-facing message when the owner device cannot be reached', async () => {
+    const api: DesktopApi = {
+      ...createDesktopMockApi(),
+      submitDomeSessionInput: vi.fn().mockRejectedValue(
+        new InvokeError('DOME_HOST_UNREACHABLE', 'the Dome host device could not be reached', 503)
+      ),
+    };
+    const session = renderSession({ api });
+    await waitFor(() => expect(session.result.current.admissionStatus).toBe('selection'));
+
+    await act(async () => {
+      await session.result.current.joinRoom(room.room_id);
+    });
+
+    expect(session.onError).toHaveBeenLastCalledWith(
+      "Couldn't connect to the owner's device. Please try again later."
+    );
+    expect(session.result.current.admittedRoom).toBeNull();
   });
 });

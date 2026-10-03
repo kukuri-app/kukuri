@@ -44,6 +44,7 @@ import {
 import { useSpatialAudio } from './useSpatialAudio';
 import { mergePeerPresence, useMetaverseBackendEvents } from './useMetaverseBackendEvents';
 import {
+  domeEntryErrorMessage,
   readLastVisitedDome,
   resolveDomeEntryOrder,
   spatialContextKey,
@@ -675,10 +676,7 @@ export function useMetaverseRoomSession({
     try {
       const avatarCollider = await resolveLocalAvatarCollider();
       if (attempt !== admissionAttempt.current) return false;
-      const snapshot = await submitInputForRoom(room, {
-        type: 'join',
-        avatar_collider: avatarCollider,
-      });
+      const snapshot = await submitInputForRoom(room, { type: 'join', avatar_collider: avatarCollider });
       if (attempt !== admissionAttempt.current) return false;
       if (snapshot.instance_id !== room.metaverse.instance_id || snapshot.instance_generation !== room.metaverse.instance_generation) throw new Error('DOME_ENTRY_STALE_INSTANCE');
       const body = snapshot.bodies.find(
@@ -719,7 +717,7 @@ export function useMetaverseRoomSession({
         setAdmissionStatus('joined');
       }
       if (reportError) {
-        onError(entryError instanceof Error ? entryError.message : 'Dome entry failed');
+        onError(domeEntryErrorMessage(entryError, t));
       }
       return false;
     }
@@ -735,6 +733,7 @@ export function useMetaverseRoomSession({
     rooms,
     submitInputForRoom,
     syncStatus.local_author_pubkey,
+    t,
   ]);
 
   const evacuate = useCallback(async (

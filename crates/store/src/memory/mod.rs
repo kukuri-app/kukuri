@@ -187,4 +187,13 @@ impl Store for MemoryStore {
         self.store_list_block_edges_by_target_impl(target_pubkey)
             .await
     }
+
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        self.store_get_block_edge_impl(subject_pubkey, target_pubkey)
+            .await
+    }
 }
