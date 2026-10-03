@@ -50,6 +50,7 @@ async fn topic_object_hints_do_not_rehydrate_whole_replica() {
                     object_id: envelope.id.as_str().to_string(),
                     object_kind: "post".into(),
                     docs_author: None,
+                    sent_at: None,
                 }],
             },
         )

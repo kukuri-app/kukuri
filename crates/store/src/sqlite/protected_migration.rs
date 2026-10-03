@@ -350,18 +350,17 @@ impl SqliteStore {
     /// 保護移行が全 kind で終端へ達していれば、切替の時刻を 1 回だけ保存する。保存済みならその時刻を返し、
     /// 移行が済んでいなければ `None`(旧 writer のまま)。
     pub async fn switch_writer_if_migrated(&self) -> Result<Option<i64>> {
-        let mut tx = self.pool.begin().await?;
-        if caught_up_at(&mut tx).await?.is_some() {
-            sqlx::query("INSERT OR IGNORE INTO writer_cutover (id, switched_at) VALUES (1, ?1)")
-                .bind(now_ms()?)
-                .execute(&mut *tx)
-                .await?;
-        }
-        let switched = sqlx::query_scalar("SELECT switched_at FROM writer_cutover WHERE id = 1")
-            .fetch_optional(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(switched)
+        // 判定と保存を 1 文にし、書込みの lock を busy_timeout まで待つ(#1471)。読取りで始めた transaction の書込みへの
+        // 格上げは、別の接続(起動時の成人向け blob の削除など)の書込み中だと待たずに `database is locked` で失敗する。
+        sqlx::query(
+            "INSERT OR IGNORE INTO writer_cutover (id, switched_at) SELECT 1, ?1 \
+             WHERE (SELECT COUNT(caught_up_at) FROM protected_migration) = ?2",
+        )
+        .bind(now_ms()?)
+        .bind(i64::try_from(PROTECTED_MIGRATION_KINDS.len())?)
+        .execute(&self.pool)
+        .await?;
+        self.writer_switched_at().await
     }
 
     /// 停止した account の SQLite を 1 本の接続で読み、backup に含める保護された file の名前

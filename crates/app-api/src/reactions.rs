@@ -148,6 +148,7 @@ impl AppService {
                         object_id: target_object_id.as_str().to_string(),
                         object_kind: "reaction".into(),
                         docs_author: None,
+                        sent_at: Some(Utc::now().timestamp_millis()),
                     }],
                 },
             )
