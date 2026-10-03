@@ -32,8 +32,8 @@ export function RuntimeInUseView({ pending, failed, onTakeOver }: RuntimeInUseVi
           </Notice>
         ) : null}
         <div className='startup-error-actions'>
-          <Button type='button' disabled={pending} onClick={onTakeOver}>
-            {t('startup.inUseElsewhere.takeOver')}
+          <Button type='button' disabled={pending} aria-busy={pending} onClick={onTakeOver}>
+            {pending ? t('startup.inUseElsewhere.takingOver') : t('startup.inUseElsewhere.takeOver')}
           </Button>
         </div>
       </section>

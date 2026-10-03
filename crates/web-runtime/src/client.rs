@@ -193,9 +193,10 @@ async fn begin(client: &Rc<Client>, steal: bool) -> ClientStartupStatus {
     }
 }
 
-/// 別の tab に lock を奪われた: runtime を止め（世代の終了）、起動の状態を `in_use_elsewhere` に戻して、止め終えてから
-/// 画面に知らせる。
+/// 別の tab に lock を奪われた: 行っている操作（起動・引継ぎ・同意・account の切替）の終わりを待ってから runtime を止め
+/// （世代の終了）、起動の状態を `in_use_elsewhere` に戻して、止め終えてから画面に知らせる。
 async fn lose_runtime(client: Rc<Client>) {
+    let _guard = client.gate.operation_lock.lock().await;
     client.runtime_lock.borrow_mut().take();
     let host = client.gate.host.write().expect("host lock poisoned").take();
     client

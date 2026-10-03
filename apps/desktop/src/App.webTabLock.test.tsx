@@ -62,8 +62,14 @@ test('a tab opened while another tab runs kukuri takes it over only on request',
   expect(await screen.findByRole('alert')).toHaveTextContent('Could not switch to this tab. Please try again.');
   expect(screen.getByRole('button', { name: 'Use in this tab' })).toBeEnabled();
 
-  takeOver.mockImplementation(runInThisTab);
+  // 引継ぎの間は、処理中であることを示して重ねて押せない。
+  let finish!: () => void;
+  takeOver.mockImplementation(() => new Promise((resolve) => { finish = () => resolve(runInThisTab()); }));
   await user.click(screen.getByRole('button', { name: 'Use in this tab' }));
+  const busy = await screen.findByRole('button', { name: 'Switching to this tab…' });
+  expect(busy).toBeDisabled();
+  expect(busy).toHaveAttribute('aria-busy', 'true');
+  finish();
   expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
   expect(takeOver).toHaveBeenCalledTimes(2);
 });

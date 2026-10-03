@@ -106,6 +106,25 @@ async fn eventually(mut done: impl FnMut() -> bool) -> bool {
     false
 }
 
+/// この origin で runtime の lock（`kukuri-runtime-v1`）を誰かが持っている（Web Locks の `query`）。
+async fn runtime_lock_held() -> bool {
+    let window = web_sys::window().unwrap();
+    let locks = js_sys::Reflect::get(&window.navigator(), &"locks".into()).unwrap();
+    let query: js_sys::Function = js_sys::Reflect::get(&locks, &"query".into())
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let snapshot: js_sys::Promise = query.call0(&locks).unwrap().dyn_into().unwrap();
+    let snapshot = wasm_bindgen_futures::JsFuture::from(snapshot)
+        .await
+        .unwrap();
+    json_of(&snapshot)["held"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|lock| lock["name"] == "kukuri-runtime-v1")
+}
+
 async fn timeline(topic: &str) -> Vec<String> {
     let view = call(
         "list_timeline",
@@ -348,6 +367,35 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
     // live・game・metaverse・Dome は Web の合意の外（ADR 0060 §3）。
     let session = call("list_live_sessions", Value::Null).await.unwrap_err();
     assert_eq!(session["code"], "unsupported_platform");
+
+    // 起動の途中（lock を取った後、runtime を公開する前）に別の tab が奪っても、起動を終えてから止まり、lock を持たない
+    // まま runtime を動かさない。
+    shutdown().await;
+    let mut starting = Box::pin(start(JsValue::UNDEFINED));
+    while !runtime_lock_held().await {
+        assert!(n0_future::future::poll_once(&mut starting).await.is_none());
+    }
+    // 起動は poll しないと進まない。lock の callback が動くのを待ってから 1 歩だけ進め、lock を取った後で止める。
+    n0_future::time::sleep(Duration::from_millis(50)).await;
+    assert!(n0_future::future::poll_once(&mut starting).await.is_none());
+    let thief = tab_lock::acquire(true, || {})
+        .await
+        .unwrap()
+        .expect("the other tab takes the lock during the start");
+    starting.await.unwrap();
+    let mut status = Value::Null;
+    for _ in 0..100 {
+        status = call("get_desktop_startup_status", Value::Null)
+            .await
+            .unwrap();
+        if status["status"] == "in_use_elsewhere" {
+            break;
+        }
+        n0_future::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(status, json!({ "status": "in_use_elsewhere" }));
+    assert!(call("list_accounts", Value::Null).await.is_err());
+    drop(thief);
     shutdown().await;
 }
 
