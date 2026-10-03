@@ -52,6 +52,7 @@ pub(crate) mod projections;
 mod protected_migration;
 mod remote_cache;
 mod social;
+mod trust_observations;
 mod withdrawals;
 
 pub use connection::StoreStartupError;
@@ -67,6 +68,7 @@ pub use remote_cache::{
     OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
     RemoteCacheReservation, RemoteRecordKey,
 };
+pub use trust_observations::TrustObservationNode;
 
 #[derive(Clone)]
 pub struct SqliteStore {
