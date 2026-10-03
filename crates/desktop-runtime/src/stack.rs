@@ -719,7 +719,7 @@ impl BoundIrohStack {
                 )
                 .await?
             }
-            // Web: DHT は使えない（ADR 0056 §3）。作り直しも同じ秘密鍵と WebRTC の transport で開く。
+            // Web: DHT は使えない（ADR 0056 §3）。作り直しも同じ秘密鍵で開き、WebRTC の transport は開くたびに作る。
             NodeSource::Memory { secret_key, webrtc } => {
                 IrohDocsNode::memory_with(kukuri_iroh_node::NodeOptions {
                     network_config: network_config.clone(),
