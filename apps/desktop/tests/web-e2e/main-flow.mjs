@@ -359,19 +359,25 @@ async function recoverAfterSiteDataLoss(browser) {
   await switchNow.waitForClickable({ timeout: WAIT });
   await switchNow.click();
 
-  // 切り替えると画面を読み込み直す。初回の dialog を閉じてから、使っているアカウントの公開鍵を見る。
+  // 切り替えると画面を読み込み直す。出てくる初回の dialog を閉じてから、使っているアカウントの公開鍵を見る。読み込み直しの
+  // 途中の要素は使えないので、失敗したら次の回で見直す。
   await eventually('the restored account is active', async () => {
-    for (const text of ['Set up your profile', 'What is a community node?']) {
-      const dialog = await findDialog(browser, text);
-      if (dialog) await dialog.$(text === 'Set up your profile' ? 'button=Later' : 'button=Not now').click();
+    try {
+      for (const text of ['What is a community node?', 'Set up your profile']) {
+        const dialog = await findDialog(browser, text);
+        if (dialog) {
+          await dialog.$('button=Later').click();
+          return false;
+        }
+      }
+      await openSettings(browser, 'account');
+      const active = browser.$('[data-testid="account-list"]').$('li*=Active');
+      const restored = (await active.isExisting()) && (await active.getText()).includes(publicKey);
+      await browser.keys('Escape');
+      return restored;
+    } catch {
+      return false;
     }
-    if (await findDialog(browser, 'Set up your profile') || await findDialog(browser, 'What is a community node?')) return false;
-    if (!(await browser.$('[data-testid="control-center-trigger"]').isExisting())) return false;
-    await openSettings(browser, 'account');
-    const active = await browser.$('[data-testid="account-list"]').$('li*=Active');
-    const restored = (await active.isExisting()) && (await active.getText()).includes(publicKey);
-    await browser.keys('Escape');
-    return restored;
   });
 }
 
