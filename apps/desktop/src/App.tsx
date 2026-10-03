@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { HashRouter } from 'react-router-dom';
 
 import { ConsentGateView } from '@/components/ConsentGateView';
+import { RuntimeInUseView } from '@/components/RuntimeInUseView';
 import { WindowClosePrompt } from '@/components/WindowClosePrompt';
 import { normalizeSupportedLocale } from '@/i18n';
 import { changeDesktopLocale } from '@/i18n/changeLocale';
@@ -12,6 +13,7 @@ import { DesktopShellPage } from '@/shell/DesktopShellPage';
 import { reconcileAccountDrafts } from '@/lib/accountSession';
 import {
   type AppProps,
+  type DesktopShellPageProps,
   DesktopShellStoreContext,
   createDesktopShellStore,
 } from '@/shell/store';
@@ -23,6 +25,7 @@ import {
   acceptAppConsents,
   applyPendingDeviceRestoreFrontendState,
   getDesktopStartupStatus,
+  takeOverRuntime,
 } from '@/lib/api';
 import { isBridgeUnavailableError } from '@/lib/api/invoke/error';
 import {
@@ -31,6 +34,7 @@ import {
   writeDesktopTheme,
 } from '@/lib/theme';
 import { copyTextToClipboard } from '@/lib/utils';
+import { IS_WEB_RUNTIME, listenWebRuntimeEvents } from '@/lib/webRuntime';
 import {
   WORKSPACE_LAYOUT_STORAGE_KEY,
   startWorkspaceLayoutPersistence,
@@ -50,32 +54,12 @@ export function App(props: AppProps) {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
-  const [store] = useState(() => {
-    const createdStore = createDesktopShellStore({
-      workspaceStorage: window.localStorage,
-      draftStorage: window.localStorage,
-      communityIndexPreferenceStorage: window.localStorage,
-    });
-    // Issue #765 T4: hash の無い cold start では、復元した active Column の canonical target を
-    // 初期 route として仕込み、既存の deep link 機構に focus 復元を委ねる。
-    // 明示的な deep link(hash あり)と、保存 layout が無い初回起動では何もしない。
-    if (
-      isDefaultStartupHash(window.location.hash) &&
-      window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) !== null
-    ) {
-      const restoredHash = initialHashForRestoredWorkspace(
-        createdStore.getState().workspaceState
-      );
-      if (restoredHash) {
-        window.history.replaceState(null, '', restoredHash);
-      }
-    }
-    return createdStore;
-  });
   const [theme, setTheme] = useState<DesktopTheme>(() => readDesktopTheme());
   const [startupGate, setStartupGate] = useState<StartupGateState>(() =>
     props.api ? { status: 'ready' } : { status: 'checking' }
   );
+  // 起動の状態を読み直す回数（引継ぎの後・状態の変化の通知の後に増やす）。
+  const [startupCheck, setStartupCheck] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -85,20 +69,13 @@ export function App(props: AppProps) {
     if (startupGate.status === 'ready') writeDesktopTheme(theme);
   }, [startupGate.status, theme]);
 
+  // Web だけ: 別の tab に runtime を引き継がれたら、起動の状態を読み直す（ADR 0059 §4）。
   useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startWorkspaceLayoutPersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
-
-  useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startColumnDraftPersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
-
-  useEffect(() => {
-    if (startupGate.status !== 'ready') return;
-    return startCommunityIndexNodePreferencePersistence(store, window.localStorage);
-  }, [startupGate.status, store]);
+    if (!IS_WEB_RUNTIME) return;
+    return listenWebRuntimeEvents((event) => {
+      if (event.type === 'startup_status_changed') setStartupCheck((count) => count + 1);
+    });
+  }, []);
 
   useEffect(() => {
     if (props.api) {
@@ -156,7 +133,7 @@ export function App(props: AppProps) {
         clearTimeout(retryTimer);
       }
     };
-  }, [props.api]);
+  }, [props.api, startupCheck]);
 
   if (startupGate.status === 'checking' || startupGate.status === 'initializing') {
     return (
@@ -187,14 +164,64 @@ export function App(props: AppProps) {
     );
   }
 
+  if (startupGate.status === 'in_use_elsewhere') {
+    return <RuntimeInUseGate onTakenOver={() => setStartupCheck((count) => count + 1)} />;
+  }
+
+  return <DesktopShell {...props} theme={theme} onThemeChange={setTheme} />;
+}
+
+// store は shell を出すときに保存先から作る（Web で別の tab から引き継いだとき、その tab が残した layout・下書きから続ける）。
+function DesktopShell(props: DesktopShellPageProps) {
+  const [store] = useState(() => {
+    const createdStore = createDesktopShellStore({
+      workspaceStorage: window.localStorage,
+      draftStorage: window.localStorage,
+      communityIndexPreferenceStorage: window.localStorage,
+    });
+    // Issue #765 T4: hash の無い cold start では、復元した active Column の canonical target を
+    // 初期 route として仕込み、既存の deep link 機構に focus 復元を委ねる。
+    // 明示的な deep link(hash あり)と、保存 layout が無い初回起動では何もしない。
+    if (
+      isDefaultStartupHash(window.location.hash) &&
+      window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) !== null
+    ) {
+      const restoredHash = initialHashForRestoredWorkspace(
+        createdStore.getState().workspaceState
+      );
+      if (restoredHash) {
+        window.history.replaceState(null, '', restoredHash);
+      }
+    }
+    return createdStore;
+  });
+
+  useEffect(() => startWorkspaceLayoutPersistence(store, window.localStorage), [store]);
+  useEffect(() => startColumnDraftPersistence(store, window.localStorage), [store]);
+  useEffect(() => startCommunityIndexNodePreferencePersistence(store, window.localStorage), [store]);
+
   return (
     <DesktopShellStoreContext.Provider value={store}>
       <HashRouter>
-        <DesktopShellPage {...props} theme={theme} onThemeChange={setTheme} />
+        <DesktopShellPage {...props} />
       </HashRouter>
       <WindowClosePrompt />
     </DesktopShellStoreContext.Provider>
   );
+}
+
+// 引継ぎの操作は App が所有し、描画は RuntimeInUseView に任せる（ConsentGate と同じ分け方）。
+function RuntimeInUseGate({ onTakenOver }: { onTakenOver: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const takeOver = () => {
+    setPending(true);
+    setFailed(false);
+    takeOverRuntime()
+      .then(onTakenOver, () => setFailed(true))
+      .finally(() => setPending(false));
+  };
+  return <RuntimeInUseView pending={pending} failed={failed} onTakeOver={takeOver} />;
 }
 
 function ConsentGate({

@@ -10,3 +10,8 @@ export async function getDesktopStartupStatus(): Promise<DesktopStartupStatus> {
   }
   return invokeDesktop<DesktopStartupStatus>('get_desktop_startup_status');
 }
+
+// Web だけ: 別の tab から runtime を引き継ぐ（ADR 0059 §4）。別の tab の kukuri は止まる。
+export async function takeOverRuntime(): Promise<DesktopStartupStatus> {
+  return invokeDesktop<DesktopStartupStatus>('take_over_runtime');
+}

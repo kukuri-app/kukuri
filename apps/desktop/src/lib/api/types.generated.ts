@@ -732,7 +732,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, };
 
 export type CreatePostRequest = { topic: string, content: string, reply_to?: string | null, channel_ref: ChannelRef, attachments: Array<CreateAttachmentRequest>, 
 /**

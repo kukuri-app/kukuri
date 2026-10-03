@@ -203,6 +203,8 @@ pub enum ClientStartupStatus {
     Failed {
         error: ClientStartupErrorView,
     },
+    /// 同じ origin の別の tab が runtime を動かしている（Web だけ。ADR 0059 §4）。
+    InUseElsewhere,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -10,6 +10,7 @@ mod content_cache;
 mod idb;
 mod lifecycle;
 mod rows;
+mod tab_lock;
 mod vault;
 
 #[cfg(test)]

@@ -190,7 +190,7 @@ pub struct ClientHost {
     events: broadcast::Sender<(u64, RuntimeEvent)>,
     generation: watch::Sender<u64>,
     event_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-    operation_guard: tokio::sync::Mutex<()>,
+    pub(crate) operation_guard: tokio::sync::Mutex<()>,
     shutdown_guard: tokio::sync::Mutex<()>,
     shutdown_started: AtomicBool,
 }
@@ -516,6 +516,7 @@ impl ClientHost {
     /// 経路の確かめ直しと WebRTC の交渉の再開、Community Node の期限・同意の確認（期限前の node には要求しない）、
     /// 送信待ちの再送（既存の owner と実行枠、同じ ID）。
     pub async fn resume(&self) {
+        let _guard = self.operation_guard.lock().await;
         if self.is_stopped() {
             return;
         }
@@ -524,6 +525,7 @@ impl ClientHost {
 
     /// browser・Android の lifecycle の中断（pagehide・freeze・offline。ADR 0059 §5）: WebRTC の交渉の世代を終える。
     pub async fn suspend(&self) {
+        let _guard = self.operation_guard.lock().await;
         if self.is_stopped() {
             return;
         }

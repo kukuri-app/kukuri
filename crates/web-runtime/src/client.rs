@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     AcceptedAppConsentDocument, ClientGate, ClientHost, ClientHostStart, ClientStartupError,
     ClientStartupState, ClientStartupStatus, CommandError, CommunityNodeConfig, DesktopRuntime,
-    DispatchContext, RuntimeBuilder, admit_command, app_consent_status, dispatch_command,
-    failed_startup_status, install_platform_storage, record_app_consents,
+    DispatchContext, RuntimeBuilder, RuntimeEvent, admit_command, app_consent_status,
+    dispatch_command, failed_startup_status, install_platform_storage, record_app_consents,
     require_consent_acceptance_state, validate_app_consent_documents,
 };
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use serde_json::Value;
 use wasm_bindgen::prelude::*;
 
 use crate::lifecycle::{Lifecycle, LifecycleListeners, listen_lifecycle};
+use crate::tab_lock::{self, RuntimeLock};
 use crate::{BrowserStorage, IndexedDbCache};
 
 /// 保存の key に使う仮想の app data dir。
@@ -105,6 +106,8 @@ struct Client {
     listeners: RefCell<Vec<js_sys::Function>>,
     /// browser の lifecycle の event を host の中断・復帰へ渡す（ADR 0059 §5）。`shutdown` で外す。
     lifecycle: RefCell<Option<LifecycleListeners>>,
+    /// runtime を動かす tab の lock（ADR 0059 §4）。持っている間だけ runtime を動かす。
+    runtime_lock: RefCell<Option<RuntimeLock>>,
 }
 
 thread_local! {
@@ -166,6 +169,65 @@ async fn start_host(client: &Rc<Client>) -> ClientStartupStatus {
         Ok(ClientHostStart::ConsentRequired(status)) => status,
         Err(error) => failed_startup_status(error, None),
     }
+}
+
+/// lock を取り（`steal` なら奪い）、runtime を始めて、起動の状態を返す。取れなければ runtime を始めない
+/// （`in_use_elsewhere`）。保存先は lock を取ってから開く。
+async fn begin(client: &Rc<Client>, steal: bool) -> ClientStartupStatus {
+    let weak = Rc::downgrade(client);
+    let lost = move || {
+        if let Some(client) = weak.upgrade() {
+            n0_future::task::spawn(lose_runtime(client));
+        }
+    };
+    match tab_lock::acquire(steal, lost).await {
+        Ok(Some(lock)) => *client.runtime_lock.borrow_mut() = Some(lock),
+        Ok(None) => return ClientStartupStatus::InUseElsewhere,
+        Err(error) => {
+            return failed_startup_status(ClientStartupError::unknown(format!("{error:?}")), None);
+        }
+    }
+    match install_storage().await {
+        Ok(()) => start_host(client).await,
+        Err(error) => failed_startup_status(ClientStartupError::unknown(error.message), None),
+    }
+}
+
+/// 別の tab に lock を奪われた: 行っている操作（起動・引継ぎ・同意・account の切替）の終わりを待ってから runtime を止め
+/// （世代の終了）、起動の状態を `in_use_elsewhere` に戻して、止め終えてから画面に知らせる。
+async fn lose_runtime(client: Rc<Client>) {
+    let _guard = client.gate.operation_lock.lock().await;
+    client.runtime_lock.borrow_mut().take();
+    let host = client.gate.host.write().expect("host lock poisoned").take();
+    client
+        .gate
+        .startup
+        .set_status(ClientStartupStatus::InUseElsewhere);
+    if let Some(host) = host {
+        host.shutdown().await;
+    }
+    if let Ok(event) = to_js(&RuntimeEvent::StartupStatusChanged) {
+        let listeners = client.listeners.borrow().clone();
+        for listener in listeners {
+            let _ = listener.call1(&JsValue::NULL, &event);
+        }
+    }
+}
+
+/// 利用者の明示の操作で、別の tab から runtime を引き継ぐ（`take_over_runtime`）。
+async fn take_over_runtime(client: &Rc<Client>) -> Result<ClientStartupStatus, CommandError> {
+    let gate = &client.gate;
+    let _guard = gate.operation_lock.lock().await;
+    gate.require_running()?;
+    if gate.startup.status() != ClientStartupStatus::InUseElsewhere {
+        return Err(CommandError::from(
+            "the runtime already runs in this tab".to_string(),
+        ));
+    }
+    gate.startup.set_status(ClientStartupStatus::Initializing);
+    let status = begin(client, true).await;
+    gate.startup.set_status(status.clone());
+    Ok(status)
 }
 
 /// host を公開し、その event を `listen` の callback へ渡す。止めた後の event は渡さない。
@@ -233,6 +295,17 @@ async fn invoke_command(
     args: Value,
 ) -> Result<Value, CommandError> {
     let gate = &client.gate;
+    // 別の tab が runtime を動かす間は、起動の状態の読取りと引継ぎだけを受ける（保存先を開かない）。
+    match command {
+        "take_over_runtime" => return to_value(take_over_runtime(client).await?),
+        "get_desktop_startup_status" => {}
+        _ if gate.startup.status() == ClientStartupStatus::InUseElsewhere => {
+            return Err(CommandError::from(
+                "kukuri is running in another tab".to_string(),
+            ));
+        }
+        _ => {}
+    }
     admit_command(
         command,
         Some(&gate.startup.status()),
@@ -282,6 +355,7 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         }),
         listeners: RefCell::default(),
         lifecycle: RefCell::default(),
+        runtime_lock: RefCell::default(),
     });
     let weak = Rc::downgrade(&client);
     let lifecycle = listen_lifecycle(move |lifecycle| {
@@ -299,10 +373,7 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
     CLIENT.set(Some(client.clone()));
     let status = {
         let _guard = client.gate.operation_lock.lock().await;
-        match install_storage().await {
-            Ok(()) => start_host(&client).await,
-            Err(error) => failed_startup_status(ClientStartupError::unknown(error.message), None),
-        }
+        begin(&client, false).await
     };
     client.gate.startup.set_status(status.clone());
     to_js(&status)
@@ -316,6 +387,8 @@ pub async fn shutdown() {
     };
     client.listeners.borrow_mut().clear();
     client.lifecycle.borrow_mut().take();
+    // lock は runtime を止めてから手放す（止める前に別の tab が始めないように）。
+    let lock = client.runtime_lock.borrow_mut().take();
     let gate = client.gate.clone();
     drop(client);
     gate.stopping.store(true, Ordering::SeqCst);
@@ -324,6 +397,7 @@ pub async fn shutdown() {
     if let Some(host) = host {
         host.shutdown().await;
     }
+    drop(lock);
 }
 
 /// command を呼ぶ。結果は Tauri の invoke と同じ形、error は `{ code, message }`。

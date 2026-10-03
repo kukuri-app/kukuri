@@ -182,3 +182,27 @@ async fn switching_accounts_moves_the_account_sync_scope() {
     );
     host.shutdown().await;
 }
+
+/// #1217 W4 AC-4: lifecycle の復帰・中断は host の操作の排他を待つ（切替・logout の直前に掴んだ旧 runtime で続けない）。
+#[tokio::test]
+async fn lifecycle_entries_wait_for_the_host_operation() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().unwrap();
+    let host = test_host(dir.path()).await;
+    let operation = host.operation_guard.lock().await;
+    let resume = tokio::spawn({
+        let host = host.clone();
+        async move { host.resume().await }
+    });
+    let suspend = tokio::spawn({
+        let host = host.clone();
+        async move { host.suspend().await }
+    });
+    // 排他が無ければ、CN も送信待ちも無い runtime の復帰・中断はすぐに終わる。
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!resume.is_finished() && !suspend.is_finished());
+    drop(operation);
+    resume.await.unwrap();
+    suspend.await.unwrap();
+    host.shutdown().await;
+}
