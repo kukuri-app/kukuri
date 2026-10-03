@@ -3,7 +3,8 @@
 //! 置き場はアカウントごとに 1 つ（`<db>.account-transfer.json` の manifest と、chunk の
 //! `<db>.account-transfer-<n>.json`）。chunk は受けた封のまま置く（秘密は封の中）。manifest の `complete` が保存の
 //! 確定で、新規のアカウントはその後に登録簿へ足す。反映はそのアカウントの runtime が chunk ごとに W5 の item 単位の
-//! merge で行い、反映した chunk から消す。受信途中（`complete` でない）の置き場は反映せず、次の受信・起動で消す。
+//! merge で行い、反映した chunk から消す。受信を失敗・取消・停止で止めたら置き場を消し、再起動などで残った受信途中
+//! （`complete` でない）の置き場は反映せず、次の受信・起動で消す。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -115,6 +116,22 @@ struct TransferStaging {
     account: Pubkey,
     db: PathBuf,
     chunks: u64,
+    /// 保存を確定した（manifest を完了にした）か、破棄した。どちらでもなく落とされた（取消・停止で移行の task ごと
+    /// 止めた）ら、置き場を消す。
+    settled: bool,
+}
+
+impl Drop for TransferStaging {
+    fn drop(&mut self) {
+        if !self.settled {
+            let db = self.db.clone();
+            n0_future::task::spawn(async move {
+                if let Err(error) = clear(&db).await {
+                    tracing::warn!(%error, "the cancelled account bundle stays until the next transfer");
+                }
+            });
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -150,6 +167,7 @@ impl AccountBundleSink for TransferSink {
             account,
             db,
             chunks: 0,
+            settled: false,
         }))
     }
 }
@@ -182,6 +200,8 @@ impl AccountBundleStaging for TransferStaging {
             merged: 0,
         };
         write_manifest(&self.db, &manifest).await.map_err(storage)?;
+        // ここから先で止まっても、確定した置き場は残す（登録できていれば、そのアカウントの起動で反映する）。
+        self.settled = true;
         let host = self.host.upgrade().ok_or(Failure::Cancelled)?;
         let record = host
             .register_transferred_account(&self.keys)
@@ -195,6 +215,7 @@ impl AccountBundleStaging for TransferStaging {
     }
 
     async fn abort(&mut self) {
+        self.settled = true;
         if let Err(error) = clear(&self.db).await {
             tracing::warn!(%error, "the transferred account bundle stays until the next transfer");
         }

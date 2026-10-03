@@ -226,8 +226,9 @@ fn bundle_item(
     }
 }
 
-/// 2c・2d（保存先の境界の故障）: 別のアカウントの item は保存を確定せず消す。受信途中で止まった置き場は反映せず、
-/// 次の受信で消す。反映の途中で止まった置き場は、続きの chunk から反映する。手元の新しい版を古い bundle で戻さない。
+/// 2c・2d（保存先の境界の故障）: 別のアカウントの item は保存を確定せず消す。取消・停止で止めた受信の置き場は消す。
+/// 再起動などで残った受信途中の置き場は反映せず、起動か次の受信で消す。反映の途中で止まった置き場は、続きの chunk
+/// から反映する。手元の新しい版を古い bundle で戻さない。
 #[tokio::test]
 async fn staged_bundles_resume_and_never_roll_back_newer_versions() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
@@ -257,7 +258,19 @@ async fn staged_bundles_resume_and_never_roll_back_newer_versions() {
     staging.abort().await;
     assert!(staging_files(&db).is_empty());
 
-    // 受信途中で止まった（確定も破棄もしない）置き場は反映せず、そのアカウントの起動か次の受信が消す。
+    // 取消・停止で移行の task ごと止めた（確定も破棄もせずに落とした）置き場も消す。
+    let mut staging = sink.begin(&secret).await.unwrap();
+    staging
+        .stage(vec![bundle_item(&keys, &authors[0], 1, true)])
+        .await
+        .unwrap();
+    drop(staging);
+    eventually("the cancelled staging is removed", async || {
+        staging_files(&db).is_empty()
+    })
+    .await;
+
+    // 再起動などで残った受信途中の置き場（ここでは片付けずに残す）は反映せず、そのアカウントの起動か次の受信が消す。
     let other = KukuriKeys::generate();
     let other_db = account_db_path(dir.path(), &account_id_for(&other));
     let mut staging = sink.begin(&other.export_secret_hex()).await.unwrap();
@@ -265,7 +278,7 @@ async fn staged_bundles_resume_and_never_roll_back_newer_versions() {
         .stage(vec![bundle_item(&other, &authors[0], 1, true)])
         .await
         .unwrap();
-    drop(staging);
+    std::mem::forget(staging);
     assert_eq!(staging_files(&other_db).len(), 2);
     let started = runtime_at(&other_db).await;
     eventually("the unfinished staging is removed at start", async || {
@@ -286,7 +299,7 @@ async fn staged_bundles_resume_and_never_roll_back_newer_versions() {
         .stage(vec![bundle_item(&keys, &authors[0], 1, true)])
         .await
         .unwrap();
-    drop(staging);
+    std::mem::forget(staging);
     assert_eq!(staging_files(&db).len(), 2);
     let mut staging = sink.begin(&secret).await.unwrap();
     assert_eq!(staging_files(&db).len(), 1, "only the new manifest");

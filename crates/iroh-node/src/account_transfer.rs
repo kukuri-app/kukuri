@@ -54,7 +54,8 @@ pub trait AccountBundleSink: Send + Sync {
     async fn begin(&self, secret_hex: &str) -> Result<Box<dyn AccountBundleStaging>, Failure>;
 }
 
-/// 1 回の移行の保存。chunk ごとに保存し、すべて受けたら確定する。確定しなければ消す。
+/// 1 回の移行の保存。chunk ごとに保存し、すべて受けたら確定する。確定しなければ消す（失敗では `abort` を呼ぶ。
+/// 取消・停止では移行の task ごと止めるので、確定も `abort` もせずに落とされる。実装はそのときも消す）。
 #[async_trait::async_trait]
 pub trait AccountBundleStaging: Send {
     async fn stage(&mut self, items: Vec<AccountTransferItem>) -> Result<(), Failure>;

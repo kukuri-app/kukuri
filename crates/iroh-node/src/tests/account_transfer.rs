@@ -102,12 +102,15 @@ struct SinkLog {
     staged: Vec<usize>,
     committed: usize,
     aborted: usize,
+    /// 確定も `abort` もされずに落とされた保存（取消・停止で task ごと止めた）。
+    abandoned: usize,
 }
 
 struct FakeStaging {
     fault: Option<Fault>,
     commit_gate: Option<Arc<(Notify, Notify)>>,
     log: Arc<StdMutex<SinkLog>>,
+    settled: bool,
 }
 
 #[async_trait::async_trait]
@@ -122,7 +125,16 @@ impl AccountBundleSink for FakeSink {
             fault: self.fault,
             commit_gate: self.commit_gate.clone(),
             log: self.log.clone(),
+            settled: false,
         }))
+    }
+}
+
+impl Drop for FakeStaging {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.log.lock().unwrap().abandoned += 1;
+        }
     }
 }
 
@@ -147,11 +159,13 @@ impl AccountBundleStaging for FakeStaging {
         if self.fault == Some(Fault::Commit) {
             return Err(Failure::Storage);
         }
+        self.settled = true;
         self.log.lock().unwrap().committed += 1;
         Ok(ACCOUNT.to_string())
     }
 
     async fn abort(&mut self) {
+        self.settled = true;
         self.log.lock().unwrap().aborted += 1;
     }
 }
@@ -295,7 +309,8 @@ async fn native_nodes_confirm_over_the_direct_path() -> Result<()> {
             begun: 1,
             staged: vec![3, 2],
             committed: 1,
-            aborted: 0
+            aborted: 0,
+            abandoned: 0,
         }
     );
 
@@ -626,6 +641,7 @@ async fn faults_before_the_commit_complete_neither_device() -> Result<()> {
         staged: staged.to_vec(),
         committed: 0,
         aborted: begun,
+        abandoned: 0,
     };
     // 移行元の読み出しの失敗は接続を閉じるので、移行先が受けた分は時機による（`None`）。
     let cases = [
@@ -698,7 +714,7 @@ async fn faults_before_the_commit_complete_neither_device() -> Result<()> {
 }
 
 /// 2c: 転送の途中の取消。移行元が取り消すと、移行先は切断で保存を破棄する。移行先が取り消すと、移行元は切断に
-/// なり、移行先は確定しない（task ごと止めた保存の破棄は、保存先が次の受信・起動で行う）。
+/// なり、移行先の保存は確定も `abort` もされずに落とされる（移行の task ごと止める。保存先はそのときも消す）。
 #[tokio::test]
 async fn cancelling_during_the_transfer_completes_neither_device() -> Result<()> {
     for cancel_source in [true, false] {
@@ -743,9 +759,22 @@ async fn cancelling_during_the_transfer_completes_neither_device() -> Result<()>
             .await?;
             assert_eq!(target_node.account_transfer().status(), Status::Idle);
         }
+        let ended = || {
+            let log = sink.log.lock().unwrap();
+            log.abandoned + log.aborted
+        };
+        timeout(WAIT, async {
+            while ended() == 0 {
+                n0_future::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
         let log = sink.log.lock().unwrap();
         assert_eq!(log.committed, 0);
-        assert_eq!(log.aborted, usize::from(cancel_source));
+        assert_eq!(
+            (log.aborted, log.abandoned),
+            (usize::from(cancel_source), usize::from(!cancel_source))
+        );
     }
     Ok(())
 }

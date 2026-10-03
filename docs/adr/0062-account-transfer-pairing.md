@@ -57,7 +57,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5 
 - 保存（staging）: 受けたアカウントの DB の隣の `<db>.account-transfer.json`（manifest）と `<db>.account-transfer-<n>.json`（chunk）。chunk は受けた封のまま置く（秘密は封の中）。置き場はアカウントごとに 1 つで、新しい受信が前の置き場を消す。
 - 確定: `end` を受けたら manifest を完了にし、新規のアカウントは鍵の保存と登録簿への追加（host のアカウントの操作と排他。同じ公開鍵が登録済みなら追加しない）を行ってから ACK を返す。移行元は ACK を受けたときだけ `completed`、移行先は確定の後に `completed`。保存できない（容量不足など）ときは `storage` にして接続を閉じ、移行元にも `storage` を示す。ACK が届かなくても移行先の保存は戻さない（やり直しは同じアカウントへの item 単位の merge になる）。
 - 反映: 置き場は、そのアカウントの runtime の起動時（使っているアカウントへの移行なら確定の直後）に背景で chunk ごとに W5 の item 単位の merge（`(updated_at, op_id)`）で反映し、反映した chunk から消す。手元の新しい版は古い bundle で戻らない。別のアカウントの runtime は読まない（置き場はアカウントの DB の隣で、封はアカウントの鍵でしか開けない）。
-  - 受信途中（manifest が完了でない）の置き場は反映せず、次の受信かそのアカウントの起動で消す。反映の途中で止まったら、manifest の位置から続ける（消えた chunk は反映済み）。
+  - 受信を失敗・取消・停止で止めたら置き場を消す（取消・停止は移行の task ごと止めるので、確定も破棄もせずに落とされた保存が消す）。再起動などで残った受信途中（manifest が完了でない）の置き場は反映せず、次の受信かそのアカウントの起動で消す。反映の途中で止まったら、manifest の位置から続ける（消えた chunk は反映済み）。
 - 切替（ユーザー決定）: 移行先は完了したら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。
 - 確認済みの直後に片方だけが切断と表示しうる AC-1 の挙動は、同じ接続で転送を続け、移行元が ACK を受けてから閉じる形にして解消した。
 - 実装: core の `AccountTransferFrame`・`AccountTransferItem`、iroh-node の `AccountBundleSource`・`AccountBundleSink`、app-api の `account_transfer_page`・`merge_account_transfer_items`、desktop-runtime の `accounts/transfer.rs`。
