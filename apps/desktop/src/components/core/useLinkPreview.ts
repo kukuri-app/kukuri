@@ -9,11 +9,13 @@ type LinkPreviewState =
 export function useLinkPreview({
   enabled,
   fetcher,
+  objectId,
   targetRef,
   url,
 }: {
   enabled: boolean;
   fetcher: LinkPreviewFetcher | null;
+  objectId: string;
   targetRef: RefObject<HTMLElement | null>;
   url: string | null;
 }): LinkPreviewState {
@@ -56,7 +58,7 @@ export function useLinkPreview({
       return;
     }
     setState({ status: 'loading', preview: null });
-    void fetcher(url)
+    void fetcher(url, objectId)
       .then((outcome) => {
         if (generation.current !== request) return;
         setState(
@@ -73,7 +75,7 @@ export function useLinkPreview({
     return () => {
       generation.current += 1;
     };
-  }, [documentVisible, enabled, fetcher, intersecting, url]);
+  }, [documentVisible, enabled, fetcher, intersecting, objectId, url]);
 
   return state;
 }

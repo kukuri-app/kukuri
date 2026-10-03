@@ -86,6 +86,18 @@ async fn reloadable_blob_service_keeps_ephemeral_fetch_and_local_status_non_pers
         BlobStatus::Missing,
         "ephemeral fetch through the reloadable wrapper must not persist the blob"
     );
+    // #1220 AC-2d: リンクプレビューの画像は、record の bytes 数までの bounded 取得で読む(宣言漏れは既定実装の bail)。
+    let bytes = b"adult-display-enabled-media".len() as u64;
+    assert_eq!(
+        timeout(
+            Duration::from_secs(20),
+            receiver.fetch_blob_ephemeral_bounded(&stored.hash, bytes),
+        )
+        .await
+        .expect("bounded fetch timeout")
+        .expect("bounded fetch"),
+        Some(b"adult-display-enabled-media".to_vec())
+    );
     let retry = receiver
         .prepare_retry_fetch(&stored.hash)
         .await
