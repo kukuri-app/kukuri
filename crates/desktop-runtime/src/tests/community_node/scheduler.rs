@@ -321,10 +321,6 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
     server.abort();
 }
 
-/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
-/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
-/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
-/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
 /// topic を購読し、rendezvous に応じる mock の Community Node と session の前提（token・設定・同意）を置いた runtime。
 async fn rendezvous_runtime(
     dir: &Path,
@@ -419,6 +415,10 @@ async fn rendezvous_runtime(
     (runtime, state, server)
 }
 
+/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
+/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
+/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
+/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
 /// due なら refresh POST が独立して打たれることを検証する。
 #[tokio::test]
 async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
