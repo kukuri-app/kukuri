@@ -7,7 +7,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use kukuri_cn_protocol::{AUTH_CHALLENGE_PATH, NODE_MANIFEST_PATH};
+use kukuri_cn_protocol::{
+    AUTH_CHALLENGE_PATH, CHANNEL_MEMBERSHIP_SECRET_HEADER, NODE_MANIFEST_PATH,
+};
 use kukuri_cn_user_api::{manifest_routes, with_cors};
 use reqwest::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -40,7 +42,10 @@ async fn preflight(base: &str, origin: &str) -> Result<Response> {
         .request(Method::OPTIONS, format!("{base}{AUTH_CHALLENGE_PATH}"))
         .header(ORIGIN, origin)
         .header(ACCESS_CONTROL_REQUEST_METHOD, "POST")
-        .header(ACCESS_CONTROL_REQUEST_HEADERS, "authorization,content-type")
+        .header(
+            ACCESS_CONTROL_REQUEST_HEADERS,
+            format!("authorization,content-type,{CHANNEL_MEMBERSHIP_SECRET_HEADER}"),
+        )
         .send()
         .await?)
 }
@@ -76,6 +81,10 @@ async fn only_allowed_origins_get_cors_headers() -> Result<()> {
         .to_ascii_lowercase();
     assert!(headers.contains("authorization"), "{headers}");
     assert!(headers.contains("content-type"), "{headers}");
+    assert!(
+        headers.contains(CHANNEL_MEMBERSHIP_SECRET_HEADER),
+        "{headers}"
+    );
     let response = get(&base, ALLOWED).await?;
     assert_eq!(allow_origin(&response), Some(ALLOWED));
     let exposed = response
