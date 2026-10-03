@@ -2,6 +2,7 @@
 //!
 //! 投稿者本人の native が自分の公開投稿の record を書き、手元に replica を持たない閲覧者(Web)が投稿者の docs author と
 //! key の組で 1 件読んで検証する。投稿者以外が書いた record、URL が一致しない record、上限を超えた record は読まない。
+//! 読取りの数の上限と、検証した record・画像の保持(中継)は #1220 AC-2f。
 
 use super::shadowing_docs::ShadowingDocsSync;
 use super::*;
@@ -32,9 +33,55 @@ fn input(url: &str, title: &str, image: Option<Vec<u8>>) -> LinkPreviewRecordInp
     }
 }
 
+/// 閲覧者の blob。手元の保存(`local`)と、provider からの取得(`remote`。投稿者の blob)を分ける。
+struct ViewerBlobs {
+    local: MemoryBlobService,
+    remote: Arc<MemoryBlobService>,
+    remote_reads: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl BlobService for ViewerBlobs {
+    async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        self.local.put_blob(data, mime).await
+    }
+    async fn put_remote_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob> {
+        self.local.put_blob(data, mime).await
+    }
+    async fn fetch_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        self.local.fetch_blob(hash).await
+    }
+    async fn fetch_local_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
+        self.local.fetch_local_blob(hash).await
+    }
+    async fn fetch_blob_ephemeral_bounded(
+        &self,
+        hash: &BlobHash,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        self.remote_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.remote
+            .fetch_blob_ephemeral_bounded(hash, max_bytes)
+            .await
+    }
+    async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
+        self.local.pin_blob(hash).await
+    }
+    async fn blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
+        self.local.blob_status(hash).await
+    }
+    async fn local_blob_status(&self, hash: &BlobHash) -> Result<BlobStatus> {
+        self.local.local_blob_status(hash).await
+    }
+    async fn import_peer_ticket(&self, _ticket: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
 fn app(
     docs_sync: Arc<dyn DocsSync>,
-    blobs: Arc<MemoryBlobService>,
+    blobs: Arc<dyn BlobService>,
     keys: KukuriKeys,
 ) -> (AppService, Arc<MemoryStore>) {
     let store = Arc::new(MemoryStore::default());
@@ -56,6 +103,7 @@ struct Fixture {
     writer: AppService,
     /// 手元に replica を持たず、投稿者の docs を provider として読む閲覧者(Web)。
     viewer: AppService,
+    viewer_blobs: Arc<ViewerBlobs>,
     author_keys: KukuriKeys,
     replica: ReplicaId,
     post_id: String,
@@ -84,9 +132,14 @@ async fn fixture(name: &str) -> Fixture {
         Some(author_docs_author().as_str())
     );
     let provider: Arc<dyn DocsSync> = Arc::new(docs.as_remote_reader("provider"));
+    let viewer_blobs = Arc::new(ViewerBlobs {
+        local: MemoryBlobService::default(),
+        remote: blobs,
+        remote_reads: Default::default(),
+    });
     let (viewer, viewer_store) = app(
         Arc::new(CountingDocsSync::reading_from(provider)),
-        blobs,
+        viewer_blobs.clone(),
         generate_keys(),
     );
     let replica = row.source_replica_id.clone();
@@ -98,6 +151,7 @@ async fn fixture(name: &str) -> Fixture {
         docs,
         writer,
         viewer,
+        viewer_blobs,
         author_keys,
         replica,
         key: stable_key("link-previews", &format!("{post_id}/state")),
@@ -106,6 +160,11 @@ async fn fixture(name: &str) -> Fixture {
 }
 
 impl Fixture {
+    /// provider に、検証済みとして保持を求められた key。
+    async fn persisted(&self) -> Vec<String> {
+        self.docs.persisted.lock().await.clone()
+    }
+
     async fn read(&self) -> Option<LinkPreviewRecordView> {
         self.viewer
             .link_preview_record(&self.post_id, URL)
@@ -276,4 +335,99 @@ async fn web_keeps_the_text_when_the_image_cannot_be_read() {
     let view = fixture.read().await.expect("text preview");
     assert_eq!(view.title, "画像なし");
     assert_eq!(view.image_data_url, None);
+}
+
+// AC-2f: 検証に通った record と画像だけを保持し(他の参加者へ提供する)、保持した画像を先に使う。
+#[tokio::test]
+async fn only_verified_records_and_their_images_are_kept_for_other_participants() {
+    let fixture = fixture("relay").await;
+    let other_url = build_link_preview_envelope(
+        &fixture.author_keys,
+        &fixture.content("https://example.test/other", "別の URL"),
+    )
+    .expect("other url record");
+    fixture.put(&other_url).await;
+    assert_eq!(fixture.read().await, None);
+    assert!(
+        !fixture.persisted().await.contains(&fixture.key),
+        "a record that fails verification must not be kept"
+    );
+
+    let stored = fixture
+        .viewer_blobs
+        .remote
+        .put_blob(png(), "image/png")
+        .await
+        .expect("the author's image");
+    let mut content = fixture.content(URL, "記事");
+    content.image = Some(KukuriLinkPreviewImageV1 {
+        hash: stored.hash,
+        mime: "image/png".into(),
+        bytes: stored.bytes,
+    });
+    fixture
+        .put(&build_link_preview_envelope(&fixture.author_keys, &content).expect("record"))
+        .await;
+    let first = fixture.read().await.expect("the record");
+    assert!(fixture.persisted().await.contains(&fixture.key));
+    assert_eq!(
+        fixture
+            .viewer_blobs
+            .local
+            .fetch_local_blob(&kukuri_core::blob_hash(png()))
+            .await
+            .expect("local blob"),
+        Some(png()),
+        "the fetched image is kept"
+    );
+    let second = fixture.read().await.expect("the record");
+    assert_eq!(second.image_data_url, first.image_data_url);
+    assert_eq!(
+        fixture
+            .viewer_blobs
+            .remote_reads
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the kept image is used before fetching again"
+    );
+}
+
+// AC-2f: 待つものを含めた読取りが上限(32 件)に達していれば、待たずに断る。
+#[tokio::test]
+async fn reads_over_the_pending_limit_are_refused_without_waiting() {
+    let fixture = fixture("pending-limit").await;
+    let reads = fixture.viewer.services.link_preview_reads.clone();
+    let held: Vec<_> = (0..32).map(|_| reads.admit().expect("admit")).collect();
+    let refused = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        fixture.viewer.link_preview_record(&fixture.post_id, URL),
+    )
+    .await
+    .expect("refused without waiting");
+    assert!(refused.is_err());
+    drop(held);
+    assert_eq!(fixture.read().await, None, "reads are accepted again");
+}
+
+// AC-2f: 同時に読むのは 4 件まで。5 件目は前の読取りが終わるまで待つ。
+#[tokio::test]
+async fn at_most_four_reads_run_at_once() {
+    let fixture = fixture("concurrency").await;
+    let reads = fixture.viewer.services.link_preview_reads.clone();
+    let running = reads
+        .permits
+        .acquire_many(4)
+        .await
+        .expect("hold the permits");
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            fixture.viewer.link_preview_record(&fixture.post_id, URL),
+        )
+        .await
+        .is_err(),
+        "a fifth read waits"
+    );
+    drop(running);
+    assert_eq!(fixture.read().await, None);
 }

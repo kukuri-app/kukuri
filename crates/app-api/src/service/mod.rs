@@ -388,6 +388,8 @@ pub struct ServiceHandles {
     pub(crate) notify_remote_posts: Option<Arc<tokio::sync::Notify>>,
     /// account 同期の書込みの排他と取得の結果（ADR 0061 §10）。
     pub(crate) account_sync: Arc<account_sync_fetch::AccountSyncState>,
+    /// リンクプレビューの record の読取りの上限（ADR 0051 §7、#1220 AC-2f）。
+    pub(crate) link_preview_reads: Arc<link_preview_record::LinkPreviewReads>,
 }
 
 impl ServiceHandles {
@@ -510,6 +512,7 @@ impl ServiceHandles {
             writer_switched_at: Arc::default(),
             notify_remote_posts: None,
             account_sync: Arc::default(),
+            link_preview_reads: Arc::default(),
         }
     }
 }

@@ -1,8 +1,9 @@
 //! 公開投稿のリンクプレビューの record(ADR 0051 §7、#1220 W8 AC-2d)。
 //!
 //! 書くのは投稿者本人の native だけで、表示のときに取得した OGP を、投稿と同じ replica の
-//! `link-previews/<object id>/state` へ投稿者の署名つきで置く。Web は投稿者の docs author と key の組で 1 件読み、
-//! 投稿者の署名・URL の一致・上限を確かめてから表示する。
+//! `link-previews/<object id>/state` へ投稿者の署名つきで置く。読む側(Web の表示と、native・Web の中継。#1220 AC-2f)は
+//! 投稿者の docs author と key の組で 1 件読み、投稿者の署名・URL の一致・上限を確かめる。検証した record と画像は
+//! 手元の cache に保持し、他の参加者へ提供する(#1395 と同じ)。
 
 use super::remote_read_support::{read_local_then_remote, writer_readers};
 use super::*;
@@ -29,6 +30,46 @@ pub struct LinkPreviewRecordView {
     pub title: String,
     pub description: Option<String>,
     pub image_data_url: Option<String>,
+}
+
+/// 同時に読む record の数と、待つものを含めた読取りの数の上限(native の取得と同じ。ADR 0051 §4)。
+const MAX_CONCURRENT_READS: usize = 4;
+const MAX_PENDING_READS: usize = 32;
+
+/// record の読取りの上限。待つものを含めて上限を超えた読取りは、待たずに断る(画面は URL だけを示す)。
+pub(crate) struct LinkPreviewReads {
+    pub(super) permits: tokio::sync::Semaphore,
+    pending: std::sync::atomic::AtomicUsize,
+}
+
+impl Default for LinkPreviewReads {
+    fn default() -> Self {
+        Self {
+            permits: tokio::sync::Semaphore::new(MAX_CONCURRENT_READS),
+            pending: Default::default(),
+        }
+    }
+}
+
+/// 受け付けた読取り。終わったら(drop で)数を戻す。
+pub(super) struct PendingRead<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for PendingRead<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+impl LinkPreviewReads {
+    pub(super) fn admit(&self) -> Option<PendingRead<'_>> {
+        use std::sync::atomic::Ordering;
+        self.pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                (pending < MAX_PENDING_READS).then_some(pending + 1)
+            })
+            .ok()
+            .map(|_| PendingRead(&self.pending))
+    }
 }
 
 fn link_preview_key(object_id: &EnvelopeId) -> String {
@@ -114,6 +155,7 @@ impl AppService {
 
     /// 表示中の公開投稿の record を、投稿者の docs author と key の組で 1 件読む。手元に無ければ投稿者と topic の参加者から
     /// 読む。record が無い・検証に通らないときは `None`(画面は URL だけを示す)。画像だけが取れないときは文字だけを返す。
+    /// 読取りの数が上限を超えたときは、待たずにエラーを返す(画面は結果を持たず、次の表示で読み直す)。
     pub async fn link_preview_record(
         &self,
         object_id: &str,
@@ -134,6 +176,9 @@ impl AppService {
         if row.channel_id != PUBLIC_CHANNEL_ID {
             return Ok(None);
         }
+        let reads = self.services.link_preview_reads.as_ref();
+        let _pending = reads.admit().context("link preview reads are busy")?;
+        let _permit = reads.permits.acquire().await?;
         let replica = row.source_replica_id.clone();
         let key = link_preview_key(&object_id);
         let author = Pubkey::from(row.author_pubkey.as_str());
@@ -167,7 +212,16 @@ impl AppService {
                         .and_then(|envelope| {
                             verify_link_preview(&envelope, &object_id, &author, &url)
                         }) {
-                        Ok(content) => Ok(Some((content, source.remote_reader_id()))),
+                        Ok(content) => {
+                            // 検証した record を保持し、他の参加者へ提供する(#1395)。
+                            if let Err(error) = source
+                                .persist_verified_record(&replica, &key, Some(&docs_author), &[])
+                                .await
+                            {
+                                warn!(%error, "failed to keep a link preview record");
+                            }
+                            Ok(Some((content, source.remote_reader_id())))
+                        }
                         Err(error) => {
                             warn!(%error, "ignored an invalid link preview record");
                             Ok(None)
@@ -193,29 +247,41 @@ impl AppService {
         }))
     }
 
-    /// record が指す画像を、record の bytes 数までだけ取得し、bytes 数と形式が一致するときだけ data URL にする。
+    /// record が指す画像を、手元に保持していればそれを使い、無ければ record の bytes 数までだけ取得する。bytes 数と形式が
+    /// 一致するときだけ data URL にする。取得した画像は保持し、他の参加者へ提供する(#1395)。
     async fn link_preview_image(
         &self,
         image: &KukuriLinkPreviewImageV1,
         provider: Option<&str>,
     ) -> Option<String> {
         let blobs = self.services.blob_service.as_ref();
-        if let Some(provider) = provider {
-            let _ = blobs.learn_content_source(&image.hash, provider).await;
+        let (bytes, fetched) = match blobs.fetch_local_blob(&image.hash).await.ok().flatten() {
+            Some(bytes) => (bytes, false),
+            None => {
+                if let Some(provider) = provider {
+                    let _ = blobs.learn_content_source(&image.hash, provider).await;
+                }
+                let bytes = blobs
+                    .fetch_blob_ephemeral_bounded(&image.hash, image.bytes)
+                    .await
+                    .ok()
+                    .flatten()?;
+                (bytes, true)
+            }
+        };
+        if bytes.len() as u64 != image.bytes
+            || link_preview_image_mime(&bytes) != Some(image.mime.as_str())
+        {
+            return None;
         }
-        let bytes = blobs
-            .fetch_blob_ephemeral_bounded(&image.hash, image.bytes)
-            .await
-            .ok()
-            .flatten()?;
-        (bytes.len() as u64 == image.bytes
-            && link_preview_image_mime(&bytes) == Some(image.mime.as_str()))
-        .then(|| {
-            format!(
-                "data:{};base64,{}",
-                image.mime,
-                BASE64_STANDARD.encode(&bytes)
-            )
-        })
+        let data_url = format!(
+            "data:{};base64,{}",
+            image.mime,
+            BASE64_STANDARD.encode(&bytes)
+        );
+        if fetched && let Err(error) = blobs.put_remote_blob(bytes, &image.mime).await {
+            warn!(%error, "failed to keep a link preview image");
+        }
+        Some(data_url)
     }
 }

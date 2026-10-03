@@ -122,6 +122,7 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - 取り下げのrecord
   - reactionのenvelope
   - live/game sessionのstate・署名済みenvelope・manifest blob（署名済みmanifestの無い旧Domeは除く）
+  - リンクプレビューのrecord（投稿者の名義）と、それが指す画像のblob（ADR 0051 §7、#1220 AC-2f。表示した参加者が読んで検証したもの）
   - 更新されるもの（reaction、session）は、projectionがより新しい版として受け入れたときだけ保持を上書きし、古い版を提供しない。
     sessionは反映の経路（読み直し・hint）で受け入れたときだけ保持し、操作（参加・終了・Domeなど）が読んだ版は保持しない。
   - 手元の読み取りは、保持した他人の版も返す。自分のdocs authorが書いていないsessionの版が反映済みより新しくなければ、
