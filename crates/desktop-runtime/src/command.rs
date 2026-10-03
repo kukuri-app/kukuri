@@ -332,6 +332,9 @@ dispatch_table! { gate_commands, dispatch_gate(gate: &dyn ClientGate, _ctx);
     }).await;
     preview_account_key_import(request: PreviewAccountKeyImportRequest) =>
         preview_account_key_import(ready_host(gate)?.app_data_dir(), &request.export).await.map_err(map_error);
+    // #1211: 受けた必須 bundle の保存の確定で登録簿へ足すので、host の操作と排他にする（接続と確認は待たない）。
+    open_account_transfer(request: OpenAccountTransferRequest) =>
+        ready_host(gate)?.open_account_transfer(request).await.map_err(map_error);
     list_accounts() => list_accounts(ready_host(gate)?.app_data_dir()).await.map_err(map_error);
 }
 
@@ -426,7 +429,6 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     mark_notification_read(request: NotificationIdRequest) => runtime.mark_notification_read(request).await.map_err(map_error);
     move_dome(request: MoveDomeRequest) => runtime.move_dome(request).await.map_err(map_error);
     mute_author(request: AuthorRequest) => runtime.mute_author(request).await.map_err(map_error);
-    open_account_transfer(request: OpenAccountTransferRequest) => runtime.open_account_transfer(request).await.map_err(map_error);
     open_direct_message(request: DirectMessageRequest) => runtime.open_direct_message(request).await.map_err(map_error);
     prepare_dome_transition(request: PrepareDomeTransitionRequest) => runtime.prepare_dome_transition(request).await.map_err(map_error);
     preview_channel_access_token(request: PreviewChannelAccessTokenRequest) => runtime.preview_channel_access_token(request).await.map_err(map_error);

@@ -1,19 +1,21 @@
-//! QR・専用リンクの移行の接続と、両端末の確認（#1211 W7 AC-1）。
+//! QR・専用リンクの移行の接続と両端末の確認（#1211 W7 AC-1）、必須 bundle の転送（AC-2）。
 //!
 //! 移行先は招待の endpoint id の端末だけへ接続する（QUIC の認証で接続先を束縛する）。移行元は招待の秘密による
-//! 証明・期限・未使用を確かめて招待を消費し、両端末が同じ確認コードを出す。両方の承認を交換したときだけ
-//! 「確認済み」になる。確認済みが鍵・設定の転送（AC-2）の唯一の入口で、それ以外の終わり方では何も送らない。
+//! 証明・期限・未使用を確かめて招待を消費し、両端末が同じ確認コードを出す。両方の承認を交換したときだけ、同じ
+//! 接続の新しい stream で移行元が必須 bundle（鍵・item の chunk・総数）を送る。それ以外の終わり方では何も送らない。
+//! 移行先は chunk ごとに保存し、すべて受けて確定したら ACK を返す。移行元は ACK を受けたときだけ完了にする。
 
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use kukuri_core::{
-    AccountTransferFailure as Failure, AccountTransferInvite, AccountTransferRole as Role,
-    AccountTransferStatus as Status,
+    AccountTransferFailure as Failure, AccountTransferFrame as Frame, AccountTransferInvite,
+    AccountTransferItem, AccountTransferRole as Role, AccountTransferStatus as Status,
+    MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
 };
 use n0_future::task::AbortOnDropHandle;
 use n0_future::time::timeout;
@@ -23,10 +25,43 @@ pub const ACCOUNT_TRANSFER_ALPN: &[u8] = b"/kukuri/account-transfer/1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(120);
+/// 必須 bundle の frame 1 つの待ち。
+const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+/// 移行先が保存を確定して ACK を返すまでの待ち（登録簿の更新はアカウントの操作の排他を待つ）。
+const COMMIT_TIMEOUT: Duration = Duration::from_secs(60);
 /// 同時に応じる接続の数。超えた接続は待たせずに閉じる。
 const CONCURRENT_REQUESTS: usize = 2;
 const ACCEPTED: u8 = 1;
 const REJECTED: u8 = 0;
+/// 移行先が保存に失敗して接続を閉じるときの code。移行元は保存の失敗として示す。
+const STORAGE_FAILED: u32 = 1;
+
+/// 移行元の必須 bundle（#1211 AC-2）。runtime が手元の account の replica から読む。
+#[async_trait::async_trait]
+pub trait AccountBundleSource: Send + Sync {
+    /// アカウントの秘密鍵（hex）。
+    fn secret_hex(&self) -> String;
+    /// `cursor`（最初は `None`）からの 1 page と、次の cursor（尽きたら `None`）。
+    async fn page(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<AccountTransferItem>, Option<String>)>;
+}
+
+/// 移行先の保存（#1211 AC-2）。鍵を受けて保存を始める。
+#[async_trait::async_trait]
+pub trait AccountBundleSink: Send + Sync {
+    async fn begin(&self, secret_hex: &str) -> Result<Box<dyn AccountBundleStaging>, Failure>;
+}
+
+/// 1 回の移行の保存。chunk ごとに保存し、すべて受けたら確定する。確定しなければ消す。
+#[async_trait::async_trait]
+pub trait AccountBundleStaging: Send {
+    async fn stage(&mut self, items: Vec<AccountTransferItem>) -> Result<(), Failure>;
+    /// 確定して、受けたアカウントの ID を返す。
+    async fn commit(&mut self) -> Result<String, Failure>;
+    async fn abort(&mut self);
+}
 
 /// 端末ごとに 1 つだけの移行（移行元・移行先のどちらか）。新しい移行は前の移行を取り消す。
 #[derive(Clone)]
@@ -48,6 +83,8 @@ struct Session {
     consumed: StdMutex<bool>,
     status: watch::Sender<Status>,
     decision: watch::Sender<Option<bool>>,
+    /// 移行元が送る必須 bundle（移行先は `None`）。
+    source: Option<Arc<dyn AccountBundleSource>>,
 }
 
 impl std::fmt::Debug for AccountTransfer {
@@ -65,8 +102,8 @@ impl AccountTransfer {
         }
     }
 
-    /// 移行元: 招待を出す。
-    pub fn issue(&self) -> Result<AccountTransferInvite> {
+    /// 移行元: 招待を出す。確認の後に `source` の必須 bundle を送る。
+    pub fn issue(&self, source: Arc<dyn AccountBundleSource>) -> Result<AccountTransferInvite> {
         let addr = self.endpoint.addr();
         let invite = AccountTransferInvite::issue(
             addr.id.to_string(),
@@ -78,22 +115,28 @@ impl AccountTransfer {
             expires_at_ms: invite.expires_at_ms,
         };
         self.replace(
-            Some(Session::new(Role::Source, invite.clone(), status)),
+            Some(Session::new(
+                Role::Source,
+                invite.clone(),
+                status,
+                Some(source),
+            )),
             None,
         );
         Ok(invite)
     }
 
-    /// 移行先: リンクの移行元へ接続し、確認を始める。リンクの形式・期限の誤りはここで返す。
-    pub fn open(&self, link: &str) -> Result<()> {
+    /// 移行先: リンクの移行元へ接続し、確認を始める。確認の後に受けた必須 bundle を `sink` へ保存する。リンクの
+    /// 形式・期限の誤りはここで返す。
+    pub fn open(&self, link: &str, sink: Arc<dyn AccountBundleSink>) -> Result<()> {
         let invite = AccountTransferInvite::parse_link(link, now_ms())?;
         let addr = issuer_addr(&invite)?;
-        let session = Session::new(Role::Target, invite, Status::Connecting);
+        let session = Session::new(Role::Target, invite, Status::Connecting, None);
         let task = n0_future::task::spawn({
             let endpoint = self.endpoint.clone();
             let session = session.clone();
             async move {
-                if let Err(reason) = run_target(&endpoint, addr, &session).await {
+                if let Err(reason) = run_target(&endpoint, addr, &session, sink.as_ref()).await {
                     session.fail(reason);
                 }
             }
@@ -161,13 +204,19 @@ impl AccountTransfer {
 }
 
 impl Session {
-    fn new(role: Role, invite: AccountTransferInvite, status: Status) -> Arc<Self> {
+    fn new(
+        role: Role,
+        invite: AccountTransferInvite,
+        status: Status,
+        source: Option<Arc<dyn AccountBundleSource>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             role,
             invite,
             consumed: StdMutex::new(false),
             status: watch::channel(status).0,
             decision: watch::channel(None).0,
+            source,
         })
     }
 
@@ -209,14 +258,23 @@ impl ProtocolHandler for AccountTransfer {
         let Some(session) = self.source_session() else {
             return Ok(());
         };
-        if let Err(reason) = serve_source(&connection, &session).await {
+        // 取消（新しい移行・cancel）で状態が終わったら、確認・転送の途中でもやめる。
+        let mut status = session.status.subscribe();
+        let ended = status.wait_for(Status::is_terminal);
+        let result = tokio::select! {
+            result = serve_source(&connection, &session) => result,
+            _ = ended => Err(Failure::Cancelled),
+        };
+        if let Err(reason) = result {
             session.fail(reason);
+            connection.close(0u32.into(), b"account transfer ended");
         }
         Ok(())
     }
 }
 
-/// 移行元: 証明を確かめ、受けた接続だけで確認へ進む。証明の誤りは待っている招待を終わらせない。
+/// 移行元: 証明を確かめ、受けた接続だけで確認へ進み、両端末の承認の後に必須 bundle を送る。証明の誤りは待って
+/// いる招待を終わらせない。
 async fn serve_source(connection: &Connection, session: &Session) -> Result<(), Failure> {
     let target = *connection.remote_id().as_bytes();
     let hello = timeout(HELLO_TIMEOUT, async {
@@ -237,14 +295,17 @@ async fn serve_source(connection: &Connection, session: &Session) -> Result<(), 
     send.write_all(&[ACCEPTED])
         .await
         .map_err(|_| Failure::Interrupted)?;
-    confirm(session, connection, send, recv, &target).await
+    confirm(session, send, recv, &target).await?;
+    let source = session.source.as_deref().ok_or(Failure::Invalid)?;
+    send_bundle(session, connection, source).await
 }
 
-/// 移行先: 招待の endpoint id へ接続し、証明を送る。
+/// 移行先: 招待の endpoint id へ接続し、証明を送る。両端末の承認の後に必須 bundle を受けて保存する。
 async fn run_target(
     endpoint: &Endpoint,
     addr: EndpointAddr,
     session: &Session,
+    sink: &dyn AccountBundleSink,
 ) -> Result<(), Failure> {
     let issuer = addr.id;
     let connection = timeout(
@@ -270,13 +331,13 @@ async fn run_target(
         Ok(Ok(())) if verdict[0] == ACCEPTED => {}
         _ => return Err(Failure::Invalid),
     }
-    confirm(session, &connection, send, recv, &target).await
+    confirm(session, send, recv, &target).await?;
+    receive_bundle(session, &connection, sink).await
 }
 
-/// 両端末: 確認コードを出し、自分の承認を送り、相手の承認を受ける。両方そろったときだけ確認済みにする。
+/// 両端末: 確認コードを出し、自分の承認を送り、相手の承認を受ける。両方そろったときだけ転送へ進む。
 async fn confirm(
     session: &Session,
-    connection: &Connection,
     mut send: SendStream,
     mut recv: RecvStream,
     target: &[u8; 32],
@@ -327,9 +388,159 @@ async fn confirm(
     )
     .await
     .map_err(|_| Failure::Expired)??;
-    session.set(Status::Confirmed { role: session.role });
-    connection.close(0u32.into(), b"account transfer confirmed");
+    session.set(Status::Transferring {
+        role: session.role,
+        items: 0,
+    });
     Ok(())
+}
+
+/// 移行元: 同じ接続の新しい stream で、鍵・item の chunk・総数を送り、移行先の保存の ACK を受けたら完了にする。
+/// 移行先が保存の失敗で閉じた接続は、送る途中でも保存の失敗として示す。
+async fn send_bundle(
+    session: &Session,
+    connection: &Connection,
+    source: &dyn AccountBundleSource,
+) -> Result<(), Failure> {
+    let sent = async {
+        let (mut send, mut recv) = connection
+            .open_bi()
+            .await
+            .map_err(|_| Failure::Interrupted)?;
+        write_frame(
+            &mut send,
+            &Frame::Key {
+                secret: source.secret_hex(),
+            },
+        )
+        .await?;
+        let (mut cursor, mut count) = (None, 0);
+        loop {
+            let (items, next) = source.page(cursor).await.map_err(|_| Failure::Storage)?;
+            for frame in Frame::chunks(items).map_err(|_| Failure::Invalid)? {
+                if let Frame::Items { items } = &frame {
+                    count += items.len() as u64;
+                }
+                write_frame(&mut send, &frame).await?;
+                session.set(Status::Transferring {
+                    role: Role::Source,
+                    items: count,
+                });
+            }
+            let Some(next) = next else { break };
+            cursor = Some(next);
+        }
+        write_frame(&mut send, &Frame::End { count }).await?;
+        send.finish().map_err(|_| Failure::Interrupted)?;
+        match timeout(COMMIT_TIMEOUT, recv.read_to_end(1)).await {
+            Ok(Ok(ack)) if ack == [ACCEPTED] => Ok(()),
+            _ => Err(Failure::Interrupted),
+        }
+    }
+    .await;
+    if let Err(reason) = sent {
+        let storage = matches!(
+            connection.close_reason(),
+            Some(ConnectionError::ApplicationClosed(close))
+                if close.error_code == STORAGE_FAILED.into()
+        );
+        return Err(if storage { Failure::Storage } else { reason });
+    }
+    session.set(Status::Completed {
+        role: Role::Source,
+        account_id: None,
+    });
+    connection.close(0u32.into(), b"account transfer completed");
+    Ok(())
+}
+
+/// 移行先: 鍵を受けて保存を始め、chunk ごとに保存し、総数が合えば確定して ACK を返す。確定しなければ保存を消す。
+async fn receive_bundle(
+    session: &Session,
+    connection: &Connection,
+    sink: &dyn AccountBundleSink,
+) -> Result<(), Failure> {
+    let (mut send, mut recv) = timeout(FRAME_TIMEOUT, connection.accept_bi())
+        .await
+        .map_err(|_| Failure::Interrupted)?
+        .map_err(|_| Failure::Interrupted)?;
+    let Frame::Key { secret } = read_frame(&mut recv).await? else {
+        return Err(Failure::Invalid);
+    };
+    let storage_failed = |reason| {
+        if reason == Failure::Storage {
+            connection.close(STORAGE_FAILED.into(), b"account transfer storage failed");
+        }
+        reason
+    };
+    let mut staging = sink.begin(&secret).await.map_err(&storage_failed)?;
+    let staged = async {
+        let mut count = 0;
+        loop {
+            match read_frame(&mut recv).await? {
+                Frame::Items { items } => {
+                    count += items.len() as u64;
+                    staging.stage(items).await?;
+                    session.set(Status::Transferring {
+                        role: Role::Target,
+                        items: count,
+                    });
+                }
+                Frame::End { count: sent } if sent == count => return staging.commit().await,
+                _ => return Err(Failure::Invalid),
+            }
+        }
+    }
+    .await;
+    let account_id = match staged {
+        Ok(account_id) => account_id,
+        Err(reason) => {
+            staging.abort().await;
+            return Err(storage_failed(reason));
+        }
+    };
+    // 確定した後の ACK は、届かなくても保存を戻さない（移行元は完了にならず、やり直しは同じアカウントへの merge）。
+    if send.write_all(&[ACCEPTED]).await.is_ok() && send.finish().is_ok() {
+        let _ = timeout(FRAME_TIMEOUT, send.stopped()).await;
+    }
+    session.set(Status::Completed {
+        role: Role::Target,
+        account_id: Some(account_id),
+    });
+    Ok(())
+}
+
+/// frame を 1 つ読む（長さ 4 byte の後に JSON）。大きさと形を確かめる。
+async fn read_frame(recv: &mut RecvStream) -> Result<Frame, Failure> {
+    let read = async {
+        let mut len = [0; 4];
+        recv.read_exact(&mut len)
+            .await
+            .map_err(|_| Failure::Interrupted)?;
+        let len = u32::from_be_bytes(len) as usize;
+        if len > MAX_ACCOUNT_TRANSFER_FRAME_BYTES {
+            return Err(Failure::Invalid);
+        }
+        let mut bytes = vec![0; len];
+        recv.read_exact(&mut bytes)
+            .await
+            .map_err(|_| Failure::Interrupted)?;
+        Frame::decode(&bytes).map_err(|_| Failure::Invalid)
+    };
+    timeout(FRAME_TIMEOUT, read)
+        .await
+        .map_err(|_| Failure::Interrupted)?
+}
+
+async fn write_frame(send: &mut SendStream, frame: &Frame) -> Result<(), Failure> {
+    let bytes = frame.encode().map_err(|_| Failure::Invalid)?;
+    let len = u32::try_from(bytes.len()).map_err(|_| Failure::Invalid)?;
+    send.write_all(&len.to_be_bytes())
+        .await
+        .map_err(|_| Failure::Interrupted)?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|_| Failure::Interrupted)
 }
 
 fn issuer_addr(invite: &AccountTransferInvite) -> Result<EndpointAddr> {

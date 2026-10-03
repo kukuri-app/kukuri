@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// 試験の端末の docs。書込み・読取りを止められ、読取りの回数を数え、`remote` を本人の別の端末の reader として返す。
 #[derive(Clone)]
-struct DeviceDocs {
+pub(super) struct DeviceDocs {
     inner: MemoryDocsSync,
     writes_down: Arc<AtomicBool>,
     /// 0 になったら読取りが失敗する（相手が離れた）。
@@ -216,7 +216,7 @@ async fn own_device(
     app
 }
 
-async fn memory_device(keys: &KukuriKeys, id: &str) -> (AppService, DeviceDocs) {
+pub(super) async fn memory_device(keys: &KukuriKeys, id: &str) -> (AppService, DeviceDocs) {
     let docs = DeviceDocs::new();
     let store = Arc::new(MemoryStore::default());
     (
@@ -225,11 +225,11 @@ async fn memory_device(keys: &KukuriKeys, id: &str) -> (AppService, DeviceDocs) 
     )
 }
 
-async fn trusted(app: &AppService) -> Vec<String> {
+pub(super) async fn trusted(app: &AppService) -> Vec<String> {
     app.list_trust_always_visible().await.expect("trusted")
 }
 
-async fn trust(app: &AppService, count: usize) -> Vec<String> {
+pub(super) async fn trust(app: &AppService, count: usize) -> Vec<String> {
     let mut authors = Vec::new();
     for _ in 0..count {
         let author = generate_keys().public_key_hex();

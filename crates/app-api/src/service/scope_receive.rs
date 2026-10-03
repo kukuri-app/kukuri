@@ -28,7 +28,7 @@ pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
 
 impl AppService {
     /// task の中で使う読み手。`ServiceHandles` を共有する(参加状態・通知の Notify は同じ Arc)。
-    fn scope_reader(&self) -> AppService {
+    pub(crate) fn scope_reader(&self) -> AppService {
         let mut services = self.services.clone();
         // 読み直しは lease の開始・再接続(task の作り直し)と日の境界だけ。表示の照合の間隔の台帳を共有すると、
         // 直前に表示が照合した範囲を読み飛ばすので、task ごとの台帳にする。

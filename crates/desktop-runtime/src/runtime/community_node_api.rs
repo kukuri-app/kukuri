@@ -609,6 +609,7 @@ impl DesktopRuntime {
             handle.abort();
             let _ = handle.await;
         }
+        self.stop_account_transfer_merge().await;
         #[cfg(not(target_family = "wasm"))]
         {
             if let Some(handle) = self.legacy_store_task.lock().await.take() {

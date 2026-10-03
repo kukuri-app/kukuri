@@ -87,3 +87,28 @@ test('add account dialog opens both device transfer entries and returns with Bac
   const target = await screen.findByRole('dialog', { name: 'Move from another device' });
   expect(within(target).getByRole('textbox', { name: /^Transfer link/ })).toHaveValue('');
 });
+
+async function completeTransferTo(accountId: string) {
+  const { user, menu, change } = await setup();
+  vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'openAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'completed', role: 'target', account_id: accountId });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
+  await user.click(within(target).getByRole('button', { name: 'Connect' }));
+  expect(await within(target).findByTestId('account-transfer-completed', {}, { timeout: 2000 })).toBeVisible();
+  return change;
+}
+
+test('a completed transfer switches to the received account', async () => {
+  const change = await completeTransferTo('cccccccccccccccc');
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
+});
+
+test('a completed transfer into the active account does not switch', async () => {
+  const change = await completeTransferTo('aaaaaaaaaaaaaaaa');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(change).not.toHaveBeenCalled();
+});

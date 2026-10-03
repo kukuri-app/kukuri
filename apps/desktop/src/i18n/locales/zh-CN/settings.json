@@ -67,7 +67,14 @@
       "mismatch": "不一致",
       "waitingPeer": "正在等待另一台设备确认…"
     },
-    "confirmed": "已确认两台设备的连接。",
+    "transferring": {
+      "source": "正在发送密钥和设置（{{count}} 项）…",
+      "target": "正在接收并保存密钥和设置（{{count}} 项）…"
+    },
+    "completed": {
+      "source": "目标设备已保存完毕。此设备上的账号可以继续使用。",
+      "target": "接收完毕。正在打开此账号…"
+    },
     "retry": "重试",
     "failure": {
       "expired": "已过期。请在源设备上显示新的链接后重试。",
@@ -75,8 +82,9 @@
       "unreachable": "无法连接到源设备。请确认两台设备都已联网。",
       "rejected": "确认码不一致，已中止迁移。",
       "cancelled": "已中止迁移。",
-      "interrupted": "确认过程中连接中断。请重试。",
-      "prepareFailed": "无法准备链接。请重试。"
+      "interrupted": "确认或传输过程中连接中断。请重试。",
+      "prepareFailed": "无法准备链接。请重试。",
+      "storage": "目标设备无法保存。请确认可用空间后重试。"
     }
   },
   "deviceBackup": {
