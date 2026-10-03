@@ -81,6 +81,10 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 実データの経路は、AC-2a と同じく画像を添えた DM と channel の投稿で判定する（native→Web と Web→Web）。native の画像は driver が command に base64 で添える。
   - 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の node の保存・同意・認証の状態）は、経路に依らないので直接経路の端だけで確かめる。
   - 作成・参加の dialog を閉じると channel の列が画面外に残る不具合（#1517、desktop と共通）の間は、利用者と同じく列を画面に入れてから投稿を確かめる。
+- W8 AC-2g の実装（2026-10-03）: 同じ試験の最後に、リンクプレビュー（ADR 0051 §7）を確かめる。
+  - native（投稿者）は OGP を取得せず（試験の site は ADR 0051 §3 の宛先の制限で取得できない）、fixture の手順で自分の公開投稿の record（試験の題と小さい PNG）を書く。Web は card と画像（record の画像と同じ data URL）を示し、record の無い投稿は URL だけを示す。
+  - Web は record の無い結果を 60 秒持つので、Web が表示していない topic に投稿して record を書いてから、Web をその topic へ切り替える。
+  - 最後に native を止め、新しく開いた Web にも、record を読んだ Web から card と画像が出ること（AC-2f の中継）を確かめる。試験の Community Node は docs を保持しないので、この card は参加者の中継による。
 
 ### 5. 測定の workload と STUN
 

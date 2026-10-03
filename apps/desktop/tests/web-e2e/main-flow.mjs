@@ -1,4 +1,4 @@
-// Web クライアントの主要導線を実ブラウザで試す（#1220 W8 AC-2a・AC-2b、ADR 0060 §4）。`cargo xtask web-e2e` から呼ぶ。
+// Web クライアントの主要導線を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g、ADR 0060 §4）。`cargo xtask web-e2e` から呼ぶ。
 // 相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の配信）。
 //
 // - 直接経路: 通常の Chrome。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
@@ -676,6 +676,49 @@ async function recoverAfterSiteDataLoss(browser) {
   });
 }
 
+/** native が `topic` に URL を書いた公開投稿を作る。`title` があれば、その投稿のリンクプレビューの record を書く（OGP は
+ * 取得しない。AC-2g）。 */
+async function nativeLinkPost(topic, tag, title = null) {
+  const url = `https://example.com/kukuri-web-e2e/${tag}-${RUN}`;
+  const content = `${tag} ${RUN} ${url}`;
+  const objectId = await native('create_post', { request: { topic, content, reply_to: null } });
+  const record = title && (await fixture('/fixture/link-preview', { object_id: objectId, url, title }));
+  return { url, content, title, image: record?.image_data_url };
+}
+
+/** 公開の列の投稿のリンクプレビュー: slot の状態、card の題と読み込んだ画像の src、本文の link。preview は画面内の投稿
+ * だけ読む。 */
+const linkPreviewOf = (browser, content) =>
+  browser.execute((text) => {
+    const column = document.querySelector('section[data-column-id^="column:timeline:"][data-column-id$=":-:-"]');
+    const article = [...(column?.querySelectorAll('article') ?? [])].find((node) => node.innerText.includes(text));
+    if (!article) return null;
+    article.scrollIntoView({ block: 'center' });
+    const image = article.querySelector('img.link-preview-image');
+    return {
+      state: article.querySelector('.link-preview-slot')?.dataset.state,
+      title: article.querySelector('.link-preview-title')?.textContent,
+      image: image?.complete && image.naturalWidth > 0 ? image.getAttribute('src') : null,
+      link: article.querySelector('a.smart-external-link')?.getAttribute('href'),
+    };
+  }, content);
+
+/** card に record の題と画像が出る。 */
+const seesLinkPreview = (browser, post) =>
+  eventually(`${browser.label} sees the link preview of "${post.content}"`, async () => {
+    await showNewPosts(browser);
+    const preview = await linkPreviewOf(browser, post.content);
+    return preview?.state === 'available' && preview.title === post.title && preview.image === post.image;
+  });
+
+/** record の無い投稿は、card を出さず URL（本文の link）だけを示す。 */
+const seesOnlyUrl = (browser, post) =>
+  eventually(`${browser.label} shows only the url of "${post.content}"`, async () => {
+    await showNewPosts(browser);
+    const preview = await linkPreviewOf(browser, post.content);
+    return preview?.state === 'unavailable' && preview.link === post.url;
+  });
+
 /** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭。 */
 async function dumpColumns(browser) {
   const columns = await browser.execute(() =>
@@ -796,6 +839,21 @@ async function main() {
       { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${c.label}` },
       false
     );
+
+    // AC-2g: リンクプレビュー。native（投稿者）が record を書いた後に Web が投稿を表示する（表示が先だと、record の無い
+    // 結果を 60 秒持つ）ように、a が今は表示していない topic に投稿してから、a をその topic へ切り替える。
+    await nativeShows(topicId('dev'));
+    const withPreview = await nativeLinkPost(topicId('dev'), 'with-preview', `preview title ${RUN}`);
+    const urlOnly = await nativeLinkPost(topicId('dev'), 'url-only');
+    await switchTopic(a, 'dev');
+    await seesLinkPreview(a, withPreview);
+    await seesOnlyUrl(a, urlOnly);
+    // 投稿者の native を止めた後に開いた Web にも、record を読んだ Web（a）から card と画像が出る（AC-2f の中継）。
+    await fixture('/fixture/shutdown', {});
+    const d = await openClient('web-d', { ice: true });
+    clients.push(d);
+    await switchTopic(d, 'dev');
+    await seesLinkPreview(d, withPreview);
 
     // サイトデータが消えた後の復旧（#1217 AC-5）。
     await recoverAfterSiteDataLoss(a);
