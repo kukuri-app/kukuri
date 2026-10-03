@@ -429,7 +429,8 @@ export const joinedPrivateChannelView = {
   "rotation_required": true,
   "participant_count": null,
   "stale_participant_count": 1,
-  "entry_dome_instance_id": "dome-entry"
+  "entry_dome_instance_id": "dome-entry",
+  "controller": null
 } satisfies JoinedPrivateChannelView;
 
 // dm_conversation_view.json

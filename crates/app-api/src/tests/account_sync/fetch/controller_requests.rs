@@ -8,10 +8,10 @@ use kukuri_store::{
     PrivateChannelEpochRange, PrivateChannelKeyStore, PrivateChannelParticipantRow,
 };
 
-const TOPIC: &str = "kukuri:topic:controller-requests";
+pub(super) const TOPIC: &str = "kukuri:topic:controller-requests";
 
 /// 起動の復元（private の世代の秘密の参照を docs へ入れる）を済ませた端末。
-async fn restored(apps: &[&AppService]) {
+pub(super) async fn restored(apps: &[&AppService]) {
     for app in apps {
         app.restore_joined_private_channels()
             .await
@@ -19,7 +19,7 @@ async fn restored(apps: &[&AppService]) {
     }
 }
 
-async fn create(app: &AppService, audience_kind: ChannelAudienceKind) -> String {
+pub(super) async fn create(app: &AppService, audience_kind: ChannelAudienceKind) -> String {
     let _ = app.list_timeline(TOPIC, None, 20).await;
     app.create_private_channel(CreatePrivateChannelInput {
         topic_id: TopicId::new(TOPIC),
@@ -309,7 +309,7 @@ async fn a_request_without_the_controller_online_is_held_until_it_fetches() {
 }
 
 /// 本人の端末の候補を `peers` で返す、hint の流れる 2 端末（account 同期の task を起こす）。
-async fn running_devices(
+pub(super) async fn running_devices(
     keys: &KukuriKeys,
 ) -> (AppService, AppService, Arc<MemoryStore>, Arc<MemoryStore>) {
     let network = FakeNetwork::default();
@@ -347,7 +347,7 @@ async fn running_devices(
     (a, b, a_store, b_store)
 }
 
-async fn joined_on(app: &AppService, channel_id: &str) {
+pub(super) async fn joined_on(app: &AppService, channel_id: &str) {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while app
             .joined_private_channel_state(TOPIC, channel_id)

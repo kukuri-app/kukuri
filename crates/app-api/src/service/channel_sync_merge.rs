@@ -5,7 +5,8 @@
 //! ADR 0018 §8 の規則で採る。各 merge は対象の channel の行だけを読む。呼び出し元は差分の取得（`account_sync_fetch`）。
 
 use kukuri_core::{
-    AccountSyncItem, AccountSyncItemKey, ChannelMembershipV1, ChannelRotationRequestV1,
+    AccountSyncItem, AccountSyncItemKey, ChannelControllerRequestV1, ChannelMembershipV1,
+    ChannelRotationRequestV1,
 };
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{PrivateChannelEpochRange, PrivateChannelRow};
@@ -18,7 +19,8 @@ use super::*;
 const CHANNEL_EPOCH_ITEM_PAGE: usize = 64;
 
 /// 担当の記録を採るか（ADR 0018 §8）。世代の大きい方を採り、同じ世代で同じ端末なら、移譲中の記録を採る。
-/// 同じ世代でそれ以外の食い違いは、手元の記録を保つ。
+/// 同じ世代で端末が異なる記録（古い backup の復元で起きる。#1219 AC-4）は、端末 ID の大きい方を採る（どの端末でも
+/// 同じ記録に決まる）。同じ世代・同じ端末でそれ以外の食い違いは、手元の記録を保つ。
 fn controller_supersedes(
     local: Option<&PrivateChannelController>,
     incoming: &PrivateChannelController,
@@ -26,10 +28,26 @@ fn controller_supersedes(
     local.is_none_or(|local| {
         incoming.generation > local.generation
             || (incoming.generation == local.generation
-                && incoming.device_id == local.device_id
-                && local.transfer_to.is_none()
-                && incoming.transfer_to.is_some())
+                && if incoming.device_id == local.device_id {
+                    local.transfer_to.is_none() && incoming.transfer_to.is_some()
+                } else {
+                    incoming.device_id > local.device_id
+                })
     })
+}
+
+/// 担当の記録の account 同期の item。
+pub(super) fn controller_item(
+    channel_id: &ChannelId,
+    controller: &PrivateChannelController,
+) -> Result<AccountSyncItem> {
+    Ok(AccountSyncItem::edit(
+        AccountSyncItemKey::ChannelController {
+            channel_id: channel_id.clone(),
+        },
+        Utc::now().timestamp_millis(),
+        Some(serde_json::to_value(controller)?),
+    ))
 }
 
 impl AppService {
@@ -47,6 +65,10 @@ impl AppService {
             }
             AccountSyncItemKey::ChannelRotationRequest { channel_id } => {
                 self.merge_channel_rotation_request(channel_id, item).await
+            }
+            AccountSyncItemKey::ChannelControllerRequest { channel_id } => {
+                self.merge_channel_controller_request(channel_id, item)
+                    .await
             }
             _ => Ok(false),
         }
@@ -314,6 +336,7 @@ impl AppService {
             return Ok(false);
         };
         let incoming: PrivateChannelController = serde_json::from_value(value)?;
+        let device_id = self.local_device_id().await?;
         let adopted = {
             let _access = self.services.content_save_access.lock().await;
             let store = &self.services.projection_store;
@@ -328,21 +351,30 @@ impl AppService {
                     if !controller_supersedes(local.as_ref(), &incoming) {
                         return Ok(false);
                     }
+                    // 移譲先がこの端末なら、取り込む代わりに次の世代で有効になる（取り込みと有効化を 1 回の書込みに
+                    // する。止まっても、同じ記録の取得の再送でやり直す。#1219 AC-4）。
+                    let next = if row.joined
+                        && incoming.transfer_to.as_deref() == Some(device_id.as_str())
+                    {
+                        PrivateChannelController {
+                            device_id: device_id.clone(),
+                            generation: incoming.generation + 1,
+                            transfer_to: None,
+                        }
+                    } else {
+                        incoming.clone()
+                    };
+                    let activation = (next != incoming)
+                        .then(|| controller_item(channel_id, &next))
+                        .transpose()?;
                     let topic_id = row.joined.then(|| row.topic_id.clone());
-                    store
-                        .put_private_channel(
-                            &PrivateChannelRow {
-                                controller: Some(serde_json::to_string(&incoming)?),
-                                ..row
-                            },
-                            &[],
-                        )
+                    self.put_private_channel_controller(row, &next, activation.as_ref())
                         .await?;
-                    Some(topic_id)
+                    Some((topic_id, activation))
                 }
             }
         };
-        let Some(topic_id) = adopted else {
+        let Some((topic_id, activation)) = adopted else {
             let local = self
                 .read_account_sync_docs_key(&item.key.docs_key(), DocFetchPolicy::LocalOnly)
                 .await?
@@ -351,6 +383,9 @@ impl AppService {
                 .transpose()?;
             return Ok(controller_supersedes(local.as_ref(), &incoming));
         };
+        if let Some(activation) = &activation {
+            self.write_account_sync_item(activation).await?;
+        }
         if let Some(topic_id) = topic_id {
             self.restart_scope_subscription(&ScopeKey::Channel(
                 topic_id,
@@ -358,7 +393,9 @@ impl AppService {
             ))
             .await;
         }
-        Ok(true)
+        // 有効化したら、受けた停止の記録は採っていない（採ったとすると、取得がその記録を同じ key で自分の replica へ
+        // 書き、有効化の記録を上書きする）。
+        Ok(activation.is_none())
     }
 
     /// 鍵更新の依頼を `(updated_at, op_id)` で採り、この端末が担当で、現在の世代が依頼の元の世代なら鍵を更新する
@@ -400,6 +437,90 @@ impl AppService {
             Err(error) if !error.is::<PrivateChannelControllerPending>() => Err(error),
             _ => Ok(adopted),
         }
+    }
+
+    /// 担当の移譲の依頼を `(updated_at, op_id)` で採り、この端末が依頼の世代の担当なら、移譲先への停止の記録を書く
+    /// （#1219 AC-4、ADR 0018 §8）。停止の記録の書込みが、応じたことの印になる。既に移った世代・引継ぎ中・同じ
+    /// 依頼の再受信では何もしない。採った（行を置き換えた）ら true。
+    async fn merge_channel_controller_request(
+        &self,
+        channel_id: &ChannelId,
+        item: &AccountSyncItem,
+    ) -> Result<bool> {
+        let request: ChannelControllerRequestV1 = serde_json::from_value(
+            item.value
+                .clone()
+                .context("a controller request must carry its target")?,
+        )?;
+        let store = &self.services.projection_store;
+        let adopted = store.adopt_account_sync_row(&row_of(item)?).await?;
+        let device_id = self.local_device_id().await?;
+        if request.to_device_id == device_id {
+            return Ok(adopted);
+        }
+        let stop = PrivateChannelController {
+            device_id: device_id.clone(),
+            generation: request.generation,
+            transfer_to: Some(request.to_device_id),
+        };
+        let stopped = {
+            let _access = self.services.content_save_access.lock().await;
+            let Some(row) = store
+                .get_private_channel_by_id(channel_id.as_str())
+                .await?
+                .filter(|row| row.joined && row.owner_pubkey == self.current_author_pubkey())
+            else {
+                return Ok(adopted);
+            };
+            let local = row
+                .controller
+                .as_deref()
+                .map(serde_json::from_str::<PrivateChannelController>)
+                .transpose()?;
+            if !local.is_some_and(|local| {
+                local.device_id == device_id
+                    && local.generation == stop.generation
+                    && local.transfer_to.is_none()
+            }) {
+                return Ok(adopted);
+            }
+            let item = controller_item(channel_id, &stop)?;
+            let topic_id = row.topic_id.clone();
+            self.put_private_channel_controller(row, &stop, Some(&item))
+                .await?;
+            (topic_id, item)
+        };
+        self.write_account_sync_item(&stopped.1).await?;
+        self.restart_scope_subscription(&ScopeKey::Channel(
+            stopped.0,
+            channel_id.as_str().to_string(),
+        ))
+        .await;
+        Ok(adopted)
+    }
+
+    /// 参加の行の担当の記録を置き換え、書く item があれば採用の台帳へ足す（`content_save_access` の中で呼ぶ）。replica
+    /// へは呼び出し元が排他の外で書く。止まっても台帳の送り直しで届く（ADR 0061 §10）。
+    pub(crate) async fn put_private_channel_controller(
+        &self,
+        row: PrivateChannelRow,
+        controller: &PrivateChannelController,
+        item: Option<&AccountSyncItem>,
+    ) -> Result<()> {
+        let store = &self.services.projection_store;
+        store
+            .put_private_channel(
+                &PrivateChannelRow {
+                    controller: Some(serde_json::to_string(controller)?),
+                    ..row
+                },
+                &[],
+            )
+            .await?;
+        if let Some(item) = item {
+            store.adopt_account_sync_row(&row_of(item)?).await?;
+        }
+        Ok(())
     }
 
     /// 鍵待ちの channel の鍵の item を、手元の account の replica から新しい順に 1 page 読み直す。退会を採ったときに

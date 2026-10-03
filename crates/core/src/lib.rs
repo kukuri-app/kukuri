@@ -39,7 +39,8 @@ mod tests;
 
 pub use account_sync::{
     ACCOUNT_SYNC_CHANGE_WINDOW, AccountSyncChangeV1, AccountSyncItem, AccountSyncItemKey,
-    AccountSyncKeys, ChannelMembershipV1, ChannelRotationRequestV1, MAX_ACCOUNT_SYNC_ITEM_BYTES,
+    AccountSyncKeys, ChannelControllerRequestV1, ChannelMembershipV1, ChannelRotationRequestV1,
+    MAX_ACCOUNT_SYNC_ITEM_BYTES,
     MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
 };
 pub use account_transfer::{
