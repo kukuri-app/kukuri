@@ -499,9 +499,19 @@ impl AppService {
         {
             return Ok(false);
         }
-        // 制御 record の宛先(owner・参加者)は mutual とは限らない。受け手が epoch の鍵で確かめる。
-        if row.dm_id.starts_with(EPOCH_CONTROL_OUTBOX_PREFIX) {
-            return Ok(true);
+        // 制御 record の宛先(owner・参加者)は mutual とは限らない。受け手が epoch の鍵で確かめる。owner の端末の grant は、
+        // 送るたびに宛先の資格を確かめ、失っていれば送らずに消す(#1219 AC-5)。
+        if let Some(epoch_key_id) = row.dm_id.strip_prefix(EPOCH_CONTROL_OUTBOX_PREFIX) {
+            if Self::epoch_control_recipient_qualified(services, epoch_key_id, &row.peer_pubkey)
+                .await?
+            {
+                return Ok(true);
+            }
+            services
+                .projection_store
+                .remove_direct_message_outbox(&row.dm_id, &row.message_id)
+                .await?;
+            return Ok(false);
         }
         let local = services.keys.public_key_hex();
         Ok(services

@@ -70,6 +70,13 @@ impl AppService {
                 self.merge_channel_controller_request(channel_id, item)
                     .await
             }
+            AccountSyncItemKey::ChannelParticipant {
+                channel_id,
+                participant,
+            } => {
+                self.merge_channel_participant(channel_id, participant, item)
+                    .await
+            }
             _ => Ok(false),
         }
     }

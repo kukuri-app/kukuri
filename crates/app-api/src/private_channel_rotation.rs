@@ -383,15 +383,11 @@ impl AppService {
         if recipient == state.owner_pubkey {
             return Ok(());
         }
-        if state.audience_kind == ChannelAudienceKind::FriendOnly {
-            let relationship = self
-                .services
-                .projection_store
-                .get_author_relationship(self.current_author_pubkey().as_str(), recipient)
-                .await?;
-            if !relationship.as_ref().is_some_and(|value| value.mutual) {
-                return Ok(());
-            }
+        // 相互フォローは、本人の別の端末で観測した edge も含めて判断する(#1219 AC-5)。
+        if state.audience_kind == ChannelAudienceKind::FriendOnly
+            && !self.participant_mutual(recipient).await?
+        {
+            return Ok(());
         }
         let grant_doc = encrypt_private_channel_epoch_handoff_grant(
             self.keys(),

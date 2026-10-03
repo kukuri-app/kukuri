@@ -19,7 +19,7 @@ use super::account_sync_support::row_of;
 /// 1 回に読む slot・item・key の数（ADR 0061 §5）。
 const ACCOUNT_SYNC_PAGE: usize = 64;
 /// 周回で辿る item の prefix（key の順）。
-const CYCLE_ROOTS: [&str; 3] = ["profile", "trust/always-visible/", "channel/"];
+const CYCLE_ROOTS: [&str; 4] = ["profile", "trust/always-visible/", "channel/", "follow/"];
 /// item の key に使う文字（ASCII の順）。周回は prefix にこの順で 1 文字ずつ足して降りる。
 const KEY_ALPHABET: &str = "-/0123456789abcdefghijklmnopqrstuvwxyz";
 

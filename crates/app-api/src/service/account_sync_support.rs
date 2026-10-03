@@ -162,6 +162,19 @@ impl AppService {
                     .adopt_account_sync_row(&row_of(&item)?)
                     .await
             }
+            // 参加者との follow の edge（#1219 AC-5。相互フォロー限定の資格の材料）。採用の台帳に持つだけで、フォローの表に
+            // 入れない。
+            AccountSyncItemKey::ParticipantFollow { .. } => {
+                serde_json::from_value::<FollowEdgeStatus>(
+                    item.value
+                        .clone()
+                        .context("a follow item must carry its status")?,
+                )?;
+                self.services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await
+            }
             // private channel の参加・鍵・担当（ADR 0061 §9）。
             _ => self.merge_channel_item(&item).await,
         }

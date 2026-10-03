@@ -52,6 +52,12 @@ pub trait Store: Send + Sync {
     async fn upsert_follow_edge(&self, edge: FollowEdge) -> Result<()>;
     async fn list_follow_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<FollowEdge>>;
     async fn list_follow_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<FollowEdge>>;
+    /// `subject` から `target` への follow の edge(#1219 AC-5)。無ければ `None`。
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>>;
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()>;
     async fn list_block_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<BlockEdge>>;
     async fn list_block_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<BlockEdge>>;
@@ -329,6 +335,14 @@ pub trait SocialProjectionStore: Send + Sync {
     ) -> Result<bool>;
     /// 同じ channel にその pubkey の行が(epoch と退出を問わず)1 行でもあれば `true`(#1221 R5-H B7)。
     async fn has_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool>;
+    /// いずれかの channel にその pubkey の行が(epoch と退出を問わず)1 行でもあれば `true`(#1219 AC-5)。
+    async fn has_private_channel_member(&self, participant_pubkey: &str) -> Result<bool>;
+    /// 同じ channel にその pubkey の参加中の行があれば `true`(#1219 AC-5。参加中の行の索引で 1 件を引く)。
+    async fn is_active_private_channel_participant(
         &self,
         channel_id: &str,
         participant_pubkey: &str,
