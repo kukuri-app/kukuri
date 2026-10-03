@@ -346,7 +346,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   3. item ごとに merge してから cursor を進める（途中で止まっても、そこから再開する）。
   - slot の seq が期待と違う（窓を上書きされた）とき、または cursor が無い（初めての相手、DB を失った、cursor を消した）ときは、相手の replica を周回する。
 - 周回:
-  - item の prefix（`profile`、`trust/always-visible/`、`channel/`、`follow/`）を、key に使う文字（`0-9`、`a-z`、`/`、`-`）の prefix の木で辿る（`follow/` は #1219 AC-5 で足した）。
+  - item の prefix（`profile`、`trust/always-visible/`、`follow/`、`channel/` の順）を、key に使う文字（`0-9`、`a-z`、`/`、`-`）の prefix の木で辿る。`follow/` は #1219 AC-5 で足し、参加者の item より先に読む（遅れた参加の grant の資格を、同期した edge でも判断するため）。
   - 1 回の照会は 64 key まで。上限に届かなければ、その prefix の key をすべて merge して、次の prefix へ進む。届けば、子の prefix へ降りる。
   - 位置（次に照会する prefix）を cursor に持つ。
   - 周回を始めたときの head を覚え、周回が終わったら cursor をその head にする。周回の間の変更は、その後の窓で読む。

@@ -347,3 +347,62 @@ async fn rotations_leave_the_account_sync_channel_alone() {
         current_epoch(&o.a, &o.channel).await
     );
 }
+
+/// 相互フォロー限定で、遅れて届いた参加の record を担当でない B が受けたら、B が手元で観測した edge の記録を参加者の
+/// 記録より先に同期する。担当 A は、B だけが相互フォローを観測した P へ grant を 1 件出し、B でフォローを解除された Q へは
+/// 出さない（#1219 AC-5 監査 B-1）。A が B から初めて取得する（周回の）場合と、差分の窓で取得する場合の両方。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_late_friend_only_join_received_elsewhere_uses_the_edges_seen_there() {
+    for first_fetch_is_a_cycle in [false, true] {
+        let o = owners(ChannelAudienceKind::FriendOnly).await;
+        let owner = o.keys.public_key_hex();
+        let (p, q) = (
+            generate_keys().public_key_hex(),
+            generate_keys().public_key_hex(),
+        );
+        let e1 = current_epoch(&o.a, &o.channel).await;
+        if !first_fetch_is_a_cycle {
+            o.a.fetch_account_sync_from("device-b")
+                .await
+                .expect("fetch");
+        }
+        rotate(&o.a, &o.channel).await;
+        o.b.fetch_account_sync_from("device-a")
+            .await
+            .expect("fetch");
+        // P とは B だけが相互フォローを観測した。Q とは A が相互フォローを観測し、B では owner がフォローを解除していた
+        // （どちらも参加者になる前の観測なので、その時点では同期していない）。
+        for (subject, target, status, updated_at) in [
+            (&owner, &p, FollowEdgeStatus::Active, 1),
+            (&p, &owner, FollowEdgeStatus::Active, 1),
+            (&owner, &q, FollowEdgeStatus::Revoked, 2),
+            (&q, &owner, FollowEdgeStatus::Active, 1),
+        ] {
+            o.b_store
+                .upsert_follow_edge(edge(subject, target, status, updated_at))
+                .await
+                .expect("edge seen on B");
+        }
+        for (subject, target) in [(&owner, &q), (&q, &owner)] {
+            o.a_store
+                .upsert_follow_edge(edge(subject, target, FollowEdgeStatus::Active, 1))
+                .await
+                .expect("edge seen on A");
+        }
+        for participant in [&p, &q] {
+            receive(&o.b, &o.channel, participant, joined(&e1)).await;
+        }
+        o.a.fetch_account_sync_from("device-b")
+            .await
+            .expect("fetch");
+        assert_eq!(
+            (grants(&o.a_store, &p).await, grants(&o.a_store, &q).await),
+            (1, 0),
+            "the first fetch from B is a cycle: {first_fetch_is_a_cycle}"
+        );
+        assert_eq!(
+            (grants(&o.b_store, &p).await, grants(&o.b_store, &q).await),
+            (0, 0)
+        );
+    }
+}

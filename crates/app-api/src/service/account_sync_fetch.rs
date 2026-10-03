@@ -18,8 +18,9 @@ use super::account_sync_support::row_of;
 
 /// 1 回に読む slot・item・key の数（ADR 0061 §5）。
 const ACCOUNT_SYNC_PAGE: usize = 64;
-/// 周回で辿る item の prefix（key の順）。
-const CYCLE_ROOTS: [&str; 4] = ["profile", "trust/always-visible/", "channel/", "follow/"];
+/// 周回で辿る item の prefix（この順に辿る）。参加者との follow の item は、参加者の item（`channel/` の下）より先に読む
+/// （遅れた参加の grant の資格を、同期した edge でも判断するため。#1219 AC-5 監査 B-1）。
+const CYCLE_ROOTS: [&str; 4] = ["profile", "trust/always-visible/", "follow/", "channel/"];
 /// item の key に使う文字（ASCII の順）。周回は prefix にこの順で 1 文字ずつ足して降りる。
 const KEY_ALPHABET: &str = "-/0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -750,15 +751,19 @@ mod tests {
             next_cycle_prefix("profile").as_deref(),
             Some("trust/always-visible/")
         );
-        assert_eq!(next_cycle_prefix("channel/").as_deref(), Some("follow/"));
-        assert_eq!(next_cycle_prefix("follow/").as_deref(), None);
+        assert_eq!(
+            next_cycle_prefix("trust/always-visible/").as_deref(),
+            Some("follow/")
+        );
+        assert_eq!(next_cycle_prefix("follow/").as_deref(), Some("channel/"));
+        assert_eq!(next_cycle_prefix("follow/z").as_deref(), Some("channel/"));
+        assert_eq!(next_cycle_prefix("channel/").as_deref(), None);
         assert_eq!(next_cycle_prefix("channel/a").as_deref(), Some("channel/b"));
         assert_eq!(
             next_cycle_prefix("channel/az").as_deref(),
             Some("channel/b")
         );
-        assert_eq!(next_cycle_prefix("channel/z").as_deref(), Some("follow/"));
-        assert_eq!(next_cycle_prefix("follow/z").as_deref(), None);
+        assert_eq!(next_cycle_prefix("channel/z").as_deref(), None);
         assert_eq!(next_cycle_prefix("profile-").as_deref(), Some("profile/"));
     }
 }

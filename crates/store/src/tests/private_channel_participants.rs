@@ -180,9 +180,15 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
             .await?
     );
     assert!(!store.has_private_channel_participant("other", "a").await?);
-    // #1219 AC-5: いずれかの channel に行のある相手（退出を含む）と、channel で参加中の相手。
+    // #1219 AC-5: いずれかの channel に行のある相手（退出の行だけの相手を含む）と、channel で参加中の相手。
     assert!(store.has_private_channel_member("d").await?);
+    assert!(store.has_private_channel_member("c").await?);
     assert!(!store.has_private_channel_member("z").await?);
+    assert!(
+        !store
+            .is_active_private_channel_participant("other", "b")
+            .await?
+    );
     assert!(
         store
             .is_active_private_channel_participant("channel", "b")

@@ -432,6 +432,29 @@ async fn a_follow_edge_and_a_channel_member_are_read_one_by_one() {
             .await
             .unwrap()
     );
+    let active = "c".repeat(64);
+    cache
+        .put_private_channel_participant(PrivateChannelParticipantRow {
+            channel_id: "channel-1".into(),
+            epoch_id: "epoch-1".into(),
+            participant_pubkey: active.clone(),
+            left_at: None,
+            updated_at: 4,
+        })
+        .await
+        .unwrap();
+    assert!(
+        cache
+            .is_active_private_channel_participant("channel-1", &active)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !cache
+            .is_active_private_channel_participant("channel-2", &active)
+            .await
+            .unwrap()
+    );
 }
 
 /// 参加の行の無い channel の鍵の行だけを足せる。同じ行は足さない（native の store と同じ意味。#1218 AC-4c）。

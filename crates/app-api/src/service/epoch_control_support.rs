@@ -213,8 +213,10 @@ impl AppService {
     }
 
     /// owner の端末が受けた(または本人の別の端末から同期した)参加者の record を表へ入れる。表を変えたら `true`。
-    /// - 受けた record(`publish`)で表を変えたら、本人の端末へ同期する。
-    /// - その相手を channel に初めて入れたら、手元の 2 方向の follow の edge も同期する(参加より前に観測した edge)。
+    /// - その相手を channel に初めて入れたら、手元の 2 方向の follow の edge を同期する(参加より前に観測した edge)。
+    ///   受けた record(`publish`)の同期より先に書く。取り込む端末(担当)が、参加者の record を取り込む前に edge を
+    ///   採り、遅れた参加の grant の資格をその edge でも判断するため(#1219 AC-5 監査 B-1)。
+    /// - 受けた record で表を変えたら、本人の端末へ同期する。
     /// - 回転の前に参加したのに record の到着が遅れた人(#1221 R5-H B7): 現 epoch でない参加 record は、その相手の行が
     ///   channel にまだ 1 行も無く(退出した人・既に宛先に入った人は行を持つ)、参加の時刻が回転の時刻(現 epoch の開始)
     ///   より前のときだけ受け付ける。退出した人が参加の時刻を偽って送り直しても、行は有効へ戻らず、grant も出ない。
@@ -251,14 +253,6 @@ impl AppService {
         {
             return Ok(false);
         }
-        if publish {
-            self.publish_account_sync_item(AccountSyncItem::channel_participant(
-                &state.channel_id,
-                participant,
-                record,
-            )?)
-            .await?;
-        }
         if !known {
             let local = self.current_author_pubkey();
             for (subject, target) in [
@@ -270,6 +264,14 @@ impl AppService {
                         .await?;
                 }
             }
+        }
+        if publish {
+            self.publish_account_sync_item(AccountSyncItem::channel_participant(
+                &state.channel_id,
+                participant,
+                record,
+            )?)
+            .await?;
         }
         if late && self.controls_private_channel(channel_id).await? {
             self.grant_current_epoch_to_late_participant(
