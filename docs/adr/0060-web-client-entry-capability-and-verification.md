@@ -86,7 +86,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - Web は record の無い結果を 60 秒持つので、Web が表示していない topic に投稿して record を書いてから、Web をその topic へ切り替える。
   - 最後に native を止め、新しく開いた Web にも、record を読んだ Web から card と画像が出ること（AC-2f の中継）を確かめる。試験の Community Node は docs を保持しないので、この card は参加者の中継による。
 - W8 AC-4 の実装（2026-10-04）: 同じ試験の直接経路の端（Web a）で、fallback の端を開く前に、reload・終了・凍結・回線全断・WebRTC の経路だけの喪失が W4 の保存と復帰の入口（ADR 0059 §4〜§6）へつながり、退会・世代・version を巻き戻さないことを確かめる。reload・終了・凍結・回線全断の各段の後に、投稿の行き来と native の画像の直接経路（relay の中継 bytes）を確かめる。
-  - reload: 同じアカウント・EndpointId・設定（runtime が保存する成人向け表示）・private channel の列の下書きで再開し、初回の同意・profile の dialog は出ない。reload の間の投稿も、利用者の操作なしに出る。
+  - reload: 同じアカウント・EndpointId・設定（runtime が保存する成人向け表示）・private channel の列の下書きで再開し、初回の同意・profile の dialog は出ない。reload の間の投稿も、利用者が取り直す操作（列の開き直し・再読込）をしなくても出る。先頭にいる列では「Show N new posts」の新着として示されるものを含む（この button は受け取り済みの投稿を並べるだけで、取得はしない。2026-10-04 ユーザー判断）。
   - 終了: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって WebRTC の session を全て閉じる。新しい tab は保存から同じ EndpointId で再開する。
   - 凍結: 利用者と同じく、非表示 → freeze → resume → 表示の順にする。chromedriver の freeze は page を非表示にしてから凍結し、resume の後も非表示のまま戻さないので、CDP の `Emulation.setFocusEmulationEnabled` で表示へ戻す（画面は非表示の間は列を読み直さない）。freeze で旧い session を閉じ（旧世代の candidate・callback の解放）、復帰では生きた需要の相手とだけ交渉し直す（試行は有界）。
   - 回線全断: chromedriver の回線の模擬（`setNetworkConditions` の offline）。offline の間、接続の案内はつながっていないことと次の手順を示し、DM は送信待ち（Pending）と示す。online の後、DM は同じ id で 1 回だけ届いて Delivered になる。
