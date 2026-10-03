@@ -523,6 +523,7 @@ async fn reads_by_size() -> BTreeMap<&'static str, Vec<Reads>> {
                                     object_id: post.envelope.id.as_str().to_string(),
                                     object_kind: "post".into(),
                                     docs_author: None,
+                                    sent_at: None,
                                 }],
                             },
                         )

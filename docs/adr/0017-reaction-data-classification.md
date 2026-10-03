@@ -34,6 +34,7 @@ Proposed
   - private post/comment reaction: private-channel epoch replica
   - picker open state / hover state: local only
 - Gossip Hint 必要有無: No new hint type; target replica の既存 object update path を使う
+  - reaction の hint(`TopicObjectsChanged` の `HintObjectRef`)は、送った時刻 `sent_at`(ミリ秒。任意の field で、旧版は無視する)を載せる。gossip は同じ内容の message を 90 秒間 1 回だけ届けるので、載せないと同じ投稿への続く reaction(別の人・同じ人の付け外し)の hint が落ちる(#1505)。
 - Blob 必要有無: No
 - SQLite projection 必要有無: Yes, target object ごとの aggregate と `my_reactions` query を local projection に持つ
 - 必須 contract:

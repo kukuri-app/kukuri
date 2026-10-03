@@ -17,6 +17,10 @@ pub struct HintObjectRef {
     /// 旧 client の hint には無い。旧 client は、この field を無視して読む。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs_author: Option<String>,
+    /// 送った時刻(ミリ秒)。reaction の hint だけが載せる。gossip は同じ内容の message を 90 秒間 1 回だけ届けるので、
+    /// 同じ投稿への続く reaction(別の人・同じ人の付け外し)の hint を別の message にする(#1505)。旧 client は無視して読む。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
