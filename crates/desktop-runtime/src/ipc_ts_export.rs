@@ -184,6 +184,7 @@ fn export_ipc_types() {
         TopicSyncStatus,
         DiscoveryStatus,
         SyncStatus,
+        AccountSyncStatus,
         // metaverse / game / live
         LiveSessionStatus,
         LiveSessionView,

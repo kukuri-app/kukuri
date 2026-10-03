@@ -38,11 +38,21 @@ async fn replace_runtime(host: &ClientHost, db: &Path) {
         .await;
 }
 
+/// 試験が送った event を受け取る。runtime の起動時の account 同期の契機が送る通信状態の event（W5 AC-6a）は飛ばす。
+async fn recv_emitted(events: &mut crate::ClientEventReceiver) -> RuntimeEvent {
+    loop {
+        match events.recv().await.unwrap() {
+            RuntimeEvent::SyncStatusChanged { .. } => continue,
+            event => return event,
+        }
+    }
+}
+
 /// host の broadcast まで届いた（別の購読で受け取れた）ことを確かめてから返す。
 async fn emit_and_forward(host: &ClientHost, event: RuntimeEvent) {
     let mut probe = host.subscribe_events();
     host.runtime().emit_event(event.clone());
-    assert_eq!(probe.recv().await.unwrap(), event);
+    assert_eq!(recv_emitted(&mut probe).await, event);
 }
 
 #[tokio::test]
@@ -61,7 +71,7 @@ async fn replacing_and_stopping_the_runtime_advance_the_generation_and_drop_stal
         hash: Some("current".into()),
     };
     emit_and_forward(&host, current.clone()).await;
-    assert_eq!(events.recv().await.unwrap(), current);
+    assert_eq!(recv_emitted(&mut events).await, current);
 
     // 停止でも世代が進み、停止の前に届いた event は受け取れない。
     emit_and_forward(&host, RuntimeEvent::NotificationStatusChanged).await;

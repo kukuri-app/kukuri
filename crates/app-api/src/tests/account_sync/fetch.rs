@@ -8,6 +8,8 @@ use kukuri_core::{
     TopicId,
 };
 use kukuri_store::SqliteStore;
+
+use crate::AccountSyncStatus;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// 試験の端末の docs。書込み・読取りを止められ、読取りの回数を数え、`remote` を本人の別の端末の reader として返す。
@@ -254,7 +256,7 @@ async fn missed_hints_and_offline_devices_are_recovered_from_the_cursor() {
     assert!(b.fetch_account_sync_from("device-a").await.is_err());
     assert!(trusted(&b).await.is_empty());
     let status = b.account_sync_status().await.expect("status");
-    assert!(status.fetch_failed && status.unsynced());
+    assert!(status.fetch_failed);
 
     a_docs.reachable(usize::MAX);
     b.fetch_account_sync_from("device-a").await.expect("fetch");
@@ -797,4 +799,64 @@ async fn a_rebuild_page_does_not_grow_with_channels() {
         largest.push(most);
     }
     assert_eq!(largest[0], largest[1]);
+}
+
+/// 印を待ち始めてから `step` を行い、印が付いた後の通信状態の account 同期の状態を返す。
+async fn marked(
+    app: &AppService,
+    changes: &kukuri_transport::StatusChanges,
+    step: impl std::future::Future<Output = ()>,
+) -> AccountSyncStatus {
+    let (keys, ()) = tokio::join!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), changes.changed()),
+        step
+    );
+    assert!(
+        keys.expect("a mark")
+            .contains(&kukuri_transport::StatusKey::Summary)
+    );
+    app.get_sync_status()
+        .await
+        .expect("sync status")
+        .account_sync
+}
+
+/// W5 AC-6a: account 同期の状態は通信状態（`get_sync_status`・差分の通知）に載り、候補の有無・取得の失敗と成功・送信待ちの
+/// 発生と解消のたびに、通信状態の印が付く（差分の通知がそれを読み直す）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_account_sync_status_rides_on_the_sync_status_and_marks_each_change() {
+    let keys = generate_keys();
+    let (_a, a_docs) = memory_device(&keys, "device-a").await;
+    let changes = kukuri_transport::StatusChanges::default();
+    let (b, b_docs) = memory_device(&keys, "device-b").await;
+    let b = b.with_status_changes(changes.clone());
+    b_docs.reading_from(&a_docs);
+
+    assert!(
+        marked(&b, &changes, b.catch_up_account_sync())
+            .await
+            .no_peers
+    );
+    a_docs.reachable(0);
+    let failed = marked(&b, &changes, async {
+        assert!(b.fetch_account_sync_from("device-a").await.is_err());
+    });
+    assert!(failed.await.fetch_failed);
+    a_docs.reachable(usize::MAX);
+    let fetched = marked(&b, &changes, async {
+        b.fetch_account_sync_from("device-a").await.expect("fetch");
+    })
+    .await;
+    assert!(!fetched.no_peers && !fetched.fetch_failed);
+
+    b_docs.writes_down.store(true, Ordering::SeqCst);
+    let unwritten = marked(&b, &changes, async {
+        trust(&b, 1).await;
+    });
+    assert!(unwritten.await.pending_writes);
+    b_docs.writes_down.store(false, Ordering::SeqCst);
+    let resent = marked(&b, &changes, async {
+        b.resend_account_sync_items().await.expect("resend");
+    });
+    assert_eq!(resent.await, AccountSyncStatus::default());
 }
