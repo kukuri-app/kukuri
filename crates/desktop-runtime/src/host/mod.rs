@@ -436,6 +436,8 @@ impl ClientHost {
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                        let _ =
+                            sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
