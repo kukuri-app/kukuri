@@ -25,7 +25,11 @@ import {
 
 import { authorDisplayLabel } from '@/shell/presentation';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
-import { activeWorkspaceScope } from '@/shell/slices/workspace';
+import {
+  activateColumn,
+  activeWorkspaceScope,
+  timelineColumnIdForScope,
+} from '@/shell/slices/workspace';
 import type { Translate } from '@/shell/actions/shared';
 import type { useShellDialogs } from '@/shell/page/useShellDialogs';
 import type { useSharePreview } from '@/shell/page/useSharePreview';
@@ -100,6 +104,9 @@ type DesktopShellOverlaysProps = {
 // Issue #966: Radix の既定の focus 復元はこの shell では body へ落ちるため、
 // TesterFeedbackDialog と同じく開いた要素を記録して閉じたときに戻す。
 // Control Center から開いた場合は trigger が閉じて外れているため、そのときは既定に任せる。
+// Issue #1517: channel の作成・参加・選択で開いた要素の Column が active でなくなったら、
+// active な Column へ戻す。開いた要素へ戻すと ColumnCanvas がその Column を active に戻し、
+// channel の Column が画面外に残る。
 function useDialogReturnFocus() {
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const onOpenAutoFocus = useCallback(() => {
@@ -107,8 +114,13 @@ function useDialogReturnFocus() {
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }, []);
   const onCloseAutoFocus = useCallback((event: Event) => {
-    const target = returnFocusRef.current;
+    const opener = returnFocusRef.current;
     returnFocusRef.current = null;
+    const openerColumn = opener?.closest('[data-column-id]');
+    const target =
+      openerColumn && !openerColumn.hasAttribute('data-active')
+        ? document.querySelector<HTMLElement>('[data-column-id][data-active]')
+        : opener;
     if (target?.isConnected) {
       event.preventDefault();
       target.focus();
@@ -242,6 +254,7 @@ export function DesktopShellOverlays({
   );
   const channelDialogFocus = useDialogReturnFocus();
   const channelSettingsFocus = useDialogReturnFocus();
+  const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
   const setChannelLabelInput = useDesktopShellFieldSetter('channelLabelInput');
   const setChannelAudienceInput = useDesktopShellFieldSetter('channelAudienceInput');
   const setInviteTokenInput = useDesktopShellFieldSetter('inviteTokenInput');
@@ -326,6 +339,15 @@ export function DesktopShellOverlays({
               onSelectJoinedChannel={(channelId) => {
                 setChannelDialogOpen(false);
                 handleSelectPrivateChannel(activeTopic, channelId);
+                // Issue #1517: handleSelectPrivateChannel は公開の Column を active にし、channel の
+                // Column は route の同期で後から active になる。閉じる時点で active にしておき、
+                // focus を開いた要素ではなく channel の Column へ戻す。
+                setWorkspaceState((current) =>
+                  activateColumn(
+                    current,
+                    timelineColumnIdForScope(current, { topicId: activeTopic, channelId })
+                  )
+                );
               }}
               onOpenJoinedChannelSettings={(channelId) => {
                 setChannelDialogOpen(false);
