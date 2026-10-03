@@ -26,10 +26,10 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 ### 1. Web の entry と build
 
 - `apps/web` は作らない。`apps/desktop` に Web の build mode（`VITE_KUKURI_TARGET=web`、出力は `dist-web`）を足す。UI・API・i18n・Playwright の設定を共有し、package・lockfile・lint の設定を増やさない。
-- `main.tsx` は Web の mode で `web-runtime` の WASM を初期化（`init()`）してから `App` を描く。WASM は `wasm-bindgen --target web` の出力を Vite の asset として読み、main thread で動かす（ADR 0056 §1）。
+- `main.tsx` は Web の mode で `web-runtime` の WASM を初期化（`init()`）してから `App` を描く。WASM は `wasm-bindgen --target web --split-linked-modules` の出力を Vite の asset として読み、main thread で動かす（ADR 0056 §1）。`--split-linked-modules` は鍵の導出の Worker の script（ADR 0056 §1 の例外）を別の file にし、§2 の CSP のまま読めるようにする（既定の `data:` の URL は CSP が拒む。#1220 AC-2c）。
 - ADR 0056 §6 の 2 つの差し替え点（`invokeDesktop`・`useRuntimeEventBridge`）を、Web の mode で `web-runtime` の `invoke`・`listen` へ向ける。DesktopApi を丸ごと置き換える mock の方式は Web の本番の経路に使わない。
 - Tauri の API を静的に import する file は bundle に入ってよい（実行時に `__TAURI_INTERNALS__` を触らない限り動く）。Web で使わない機能は §3 の capability で止める。
-- 配信の artifact は「WASM の build → `wasm-bindgen --target web` → Web の mode の Vite の build → `_headers`」を 1 つの command にまとめる（W8 AC-6。`cargo xtask` の入口にする）。
+- 配信の artifact は「WASM の build → `wasm-bindgen --target web --split-linked-modules` → Web の mode の Vite の build → `_headers`」を 1 つの command にまとめる（W8 AC-6。`cargo xtask` の入口にする）。
 
 ### 2. 配信の条件
 

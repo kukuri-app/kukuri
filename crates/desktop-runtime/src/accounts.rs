@@ -172,7 +172,12 @@ pub async fn import_account_key_from_env(
     passphrase: &str,
     label: Option<String>,
 ) -> Result<AccountRecord> {
-    let keys = kukuri_core::decrypt_account_key_export(export, passphrase)?;
+    let keys = kukuri_core::decrypt_account_key_export(
+        export,
+        passphrase,
+        crate::kdf::derive_passphrase_key,
+    )
+    .await?;
     add_account_from_env(app_data_dir, &keys, label, false).await
 }
 

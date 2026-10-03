@@ -49,9 +49,12 @@ pub(crate) async fn run_account_lifecycle(
             },
         })
         .await?;
-        let exported = host.runtime().export_account_key(ExportAccountKeyRequest {
-            passphrase: "account-lifecycle-fixture".into(),
-        })?;
+        let exported = host
+            .runtime()
+            .export_account_key(ExportAccountKeyRequest {
+                passphrase: "account-lifecycle-fixture".into(),
+            })
+            .await?;
         let post = host
             .runtime()
             .create_post(kukuri_desktop_runtime::CreatePostRequest {
