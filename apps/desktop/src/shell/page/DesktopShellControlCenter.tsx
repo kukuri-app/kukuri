@@ -62,6 +62,7 @@ import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store'
 import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts';
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
 
@@ -179,7 +180,8 @@ export function DesktopShellControlCenter({
       : 'shell:controlCenter.openWithStatus',
     { status: statusLabel }
   );
-  const addableColumnKinds = developerModeEnabled
+  // live・game・metaverse は Web では使えない（ADR 0060 §3）。
+  const addableColumnKinds = developerModeEnabled && !IS_WEB_RUNTIME
     ? ADDABLE_COLUMN_KINDS
     : ADDABLE_COLUMN_KINDS.filter(
         (kind) => kind !== 'stream' && kind !== 'metaverse'
@@ -643,10 +645,12 @@ export function DesktopShellControlCenter({
                   {t('shell:settingsSections.keyboard.label')}
                 </Button>
                 {/* #967: 端末移行・故障への備えの入口。設定の backup section を開くだけで、backup は開始しない。 */}
-                <Button variant='ghost' type='button' onClick={() => openSettings('backup')}>
-                  <DatabaseBackup className='size-4' aria-hidden='true' />
-                  {t('shell:settingsSections.backup.label')}
-                </Button>
+                {IS_WEB_RUNTIME ? null : (
+                  <Button variant='ghost' type='button' onClick={() => openSettings('backup')}>
+                    <DatabaseBackup className='size-4' aria-hidden='true' />
+                    {t('shell:settingsSections.backup.label')}
+                  </Button>
+                )}
                 <Button variant='ghost' type='button' onClick={() => openSettings('about')}>
                   <Info className='size-4' aria-hidden='true' />
                   {t('shell:settingsSections.about.label')}

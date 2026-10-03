@@ -213,6 +213,54 @@ jobs:
           AR_wasm32_unknown_unknown: llvm-ar
         run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer
 
+  # #1220 W8 AC-2a: Web の build の主要導線を、実ブラウザ（Chrome）と同じ job の Community Node・native の相手で試す
+  # （ADR 0060 §4）。直接経路と relay fallback を、relay が中継した bytes で判定する。
+  linux-web-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: wasm32-unknown-unknown
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang llvm pkg-config libdbus-1-dev
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Web E2E
+        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" cargo xtask-lite web-e2e
+
   linux-desktop-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

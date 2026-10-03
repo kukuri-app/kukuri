@@ -24,7 +24,7 @@ use kukuri_transport::{
     HintTransport, IrohGossipTransport, PeerSnapshot, ReceiveCandidateFence, ReceiveOfferLease,
     ReceiveOfferSubscription, SeedPeer, Transport, TransportNetworkConfig, TransportRelayConfig,
 };
-use kukuri_webrtc_transport::WebRtcTransport;
+use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport};
 #[cfg(test)]
 use tokio::sync::oneshot;
 use tokio::sync::{Mutex, RwLock};
@@ -50,7 +50,8 @@ pub enum NodeSource {
     Persistent(PathBuf),
     Memory {
         secret_key: Box<iroh::SecretKey>,
-        webrtc: Option<Arc<WebRtcTransport>>,
+        /// WebRTC の transport を持つか。transport は 1 回しか bind できないので、開くたびに作る（native と同じ）。
+        webrtc: bool,
     },
 }
 
@@ -723,7 +724,12 @@ impl BoundIrohStack {
                     network_config: network_config.clone(),
                     relay_config: relay_config.clone(),
                     secret_key: Some((**secret_key).clone()),
-                    webrtc: webrtc.clone(),
+                    webrtc: webrtc.then(|| {
+                        WebRtcTransport::new(WebRtcConfig {
+                            #[cfg(not(target_family = "wasm"))]
+                            bind_ip: network_config.bind_addr.ip(),
+                        })
+                    }),
                 })
                 .await?
             }

@@ -412,12 +412,12 @@ impl DesktopRuntime {
     }
 
     /// Web の runtime（ADR 0056 §2・§8）。保存先は呼び出し元（web-runtime）が開いた account の store。node はメモリの
-    /// store で、保存した endpoint の秘密鍵（無ければ作って保存する）と WebRTC の transport を渡して開く。DHT は使えない。
+    /// store で、保存した endpoint の秘密鍵（無ければ作って保存する）で開き、`webrtc` なら WebRTC の transport を持つ。DHT は使えない。
     /// 旧 store は無いので、新形式の writer で始める。
     pub async fn open_in_memory_node<S>(
         db_path: PathBuf,
         store: Arc<S>,
-        webrtc: Option<Arc<kukuri_webrtc_transport::WebRtcTransport>>,
+        webrtc: bool,
         initial_community_node_config: CommunityNodeConfig,
     ) -> Result<Self>
     where

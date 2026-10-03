@@ -29,6 +29,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - `main.tsx` は Web の mode で `web-runtime` の WASM を初期化（`init()`）してから `App` を描く。WASM は `wasm-bindgen --target web --split-linked-modules` の出力を Vite の asset として読み、main thread で動かす（ADR 0056 §1）。`--split-linked-modules` は鍵の導出の Worker の script（ADR 0056 §1 の例外）を別の file にし、§2 の CSP のまま読めるようにする（既定の `data:` の URL は CSP が拒む。#1220 AC-2c）。
 - ADR 0056 §6 の 2 つの差し替え点（`invokeDesktop`・`useRuntimeEventBridge`）を、Web の mode で `web-runtime` の `invoke`・`listen` へ向ける。DesktopApi を丸ごと置き換える mock の方式は Web の本番の経路に使わない。
 - Tauri の API を静的に import する file は bundle に入ってよい（実行時に `__TAURI_INTERNALS__` を触らない限り動く）。Web で使わない機能は §3 の capability で止める。
+- W8 AC-2a の実装（2026-10-03）: Web の mode は `VITE_KUKURI_TARGET=web`。`@kukuri/web-runtime` を wasm-bindgen の出力（`apps/desktop/web-runtime-pkg`、または `KUKURI_WEB_RUNTIME_PKG`）へ解決し、Tauri の build では使えないことを示す代わりの module へ解決する（Tauri の bundle に WASM を入れない）。`main.tsx` は描画の前に `start` を呼ぶ（Community Node の初期設定は native と同じ配布の設定。開発・試験は `VITE_KUKURI_COMMUNITY_NODE_BASE_URL`）。web-runtime の `listen` の callback は外せないので、frontend は 1 つだけ渡して購読者へ配る。device backup の復元の反映と他の account の表示は、Web では呼ばない。live・game・metaverse・Dome の 35 件の command は desktop-runtime の native だけの表に移し、Web の dispatch では `unsupported_platform` を返す。
 - 配信の artifact は「WASM の build → `wasm-bindgen --target web --split-linked-modules` → Web の mode の Vite の build → `_headers`」を 1 つの command にまとめる（W8 AC-6。`cargo xtask` の入口にする）。
 
 ### 2. 配信の条件
@@ -50,6 +51,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 
 - 必須の主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、設定）は、すべて (a) のうち Web で使う command と (c) の移設で成り立つ。matrix だけで省略しない。
 - 最終の matrix は W1 AC-5 の capability の実装と一緒に確定し、W8 AC-5 の実測の結果と合わせて記録する。
+- 2026-10-03 のユーザー判断（W8 AC-2a）: 「画面で未対応と示す」は、Web では使えない機能（live・game・metaverse・Dome、device backup・restore、アプリの更新、ウィンドウを閉じるときの設定、OS 通知の設定、開発者ログの閲覧）の入口を出さず、設定の About に短い説明を 1 つ出す形で満たす。
 
 ### 4. 実ブラウザの検証環境
 
@@ -68,6 +70,11 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - 2026-09-30 のユーザー決定: Safari は CI の実 Safari、Android は CI の emulator で判定する。手元の Mac・Android の実機は使わない。
 - CI で作れない条件（別の機器との同じ LAN の直接経路、実回線の切替、モバイル回線）は、Chromium と Linux 実機（`local2`）で確かめ、Firefox・Safari・Android では確かめない制約として matrix に記録する。未確認を PASS にしない。
 - native の相手は、CI の job の中で起動する kukuri の native の node とする。direct と fallback の判定は実データの経路と bytes で行う（ADR 0057 §8、W10）。
+
+- W8 AC-2a の実装（2026-10-03）: Chromium の主要導線の試験は `cargo xtask-lite web-e2e`（CI の `linux-web-e2e`）。
+  - 相手は harness の `web_e2e_fixture`。同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信の origin を CORS で許可する）、Community Node に同意した native の相手、`dist-web` の配信を動かす。driver（WebdriverIO）は `/fixture/*` で native を Tauri・Web と同じ dispatch 表で操作する。
+  - 直接経路と fallback は、受け手が画像（毎回違う乱数の画素の PNG）を取得する間に relay が中継した bytes で判定する。ブラウザには relay と WebRTC の他の経路が無いので、中継が画像より十分小さければ WebRTC を通っている。双方の診断の EndpointId（ブラウザの CONNECTED PEERS と native の接続先）も照合する。
+  - fallback の fixture（W10 の T2 の ICE の失敗）は、ページより先に動く script で、送る SDP と受け取る SDP から ICE の候補を除いた Chrome とする。Chrome の UDP を抑える起動の設定（`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`）では ICE が成立し続け、fallback にならなかった。
 
 ### 5. 測定の workload と STUN
 
