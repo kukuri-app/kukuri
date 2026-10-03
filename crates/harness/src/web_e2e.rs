@@ -16,6 +16,7 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use kukuri_app_api::LinkPreviewRecordInput;
 use kukuri_desktop_runtime::{
     ClientGate, ClientHost, ClientStartupState, ClientStartupStatus, CommandError,
     CommunityNodeConsentDocumentRef, DispatchContext, FetchCommunityNodePoliciesRequest,
@@ -28,6 +29,8 @@ use crate::*;
 
 /// 経路の判定に使う画像の 1 辺（乱数の画素の PNG は圧縮されず、約 1.7 MiB になる）。
 const PAYLOAD_IMAGE_SIDE: u32 = 768;
+/// リンクプレビューの record の画像の 1 辺（約 12 KiB。record の画像の上限 1 MiB に収まる）。
+const PREVIEW_IMAGE_SIDE: u32 = 64;
 
 struct NativeGate {
     host: Arc<ClientHost>,
@@ -98,6 +101,8 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/invoke", post(invoke))
         .route("/fixture/relay-bytes", get(relay_bytes))
         .route("/fixture/payload.png", get(payload_png))
+        .route("/fixture/link-preview", post(link_preview))
+        .route("/fixture/shutdown", post(shutdown))
         // 経路の判定の画像（約 1.7 MiB）を base64 で添えた command を受ける。
         .layer(DefaultBodyLimit::max(8 << 20))
         .with_state(fixture.clone())
@@ -207,16 +212,57 @@ async fn relay_bytes(State(fixture): State<Shared>) -> Json<Value> {
 
 /// 投稿・DM に添える画像（driver が Web の投稿欄から添えるか、native の command に base64 で添える）。
 async fn payload_png() -> Result<Vec<u8>, (StatusCode, Json<Value>)> {
-    random_png().map_err(failed)
+    random_png(PAYLOAD_IMAGE_SIDE).map_err(failed)
+}
+
+#[derive(Deserialize)]
+struct LinkPreviewBody {
+    object_id: String,
+    url: String,
+    title: String,
+}
+
+/// native が自分の公開投稿のリンクプレビューの record を書く（#1220 AC-2g）。試験の site は ADR 0051 §3 の宛先の制限で
+/// 取得できないので OGP は取得せず、表示のときの取得の結果の代わりに試験の題と画像を書く。返り値は画像の data URL（card の
+/// 画像との照合用）。
+async fn link_preview(
+    State(fixture): State<Shared>,
+    Json(body): Json<LinkPreviewBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let png = random_png(PREVIEW_IMAGE_SIDE).map_err(failed)?;
+    let image_data_url = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(&png));
+    fixture
+        .gate
+        .host
+        .runtime()
+        .record_link_preview(
+            &body.object_id,
+            LinkPreviewRecordInput {
+                url: body.url,
+                title: body.title,
+                description: None,
+                site_name: "web-e2e".to_string(),
+                image: Some(png),
+            },
+        )
+        .await
+        .map_err(failed)?;
+    Ok(Json(json!({ "image_data_url": image_data_url })))
+}
+
+/// native を止める（#1220 AC-2g。投稿者の native が居ないときの中継を確かめる。以後は native を操作できない）。
+async fn shutdown(State(fixture): State<Shared>) -> Json<Value> {
+    fixture.gate.host.shutdown().await;
+    Json(json!({}))
 }
 
 /// 毎回違う内容（違う blob の hash）にする。同じ内容だと、受け手が前に取得した blob を使い、経路を判定できない。
-fn random_png() -> Result<Vec<u8>> {
+fn random_png(side: u32) -> Result<Vec<u8>> {
     let mut state = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos() as u64
         | 1;
-    let pixels = (0..PAYLOAD_IMAGE_SIDE * PAYLOAD_IMAGE_SIDE * 3)
+    let pixels = (0..side * side * 3)
         .map(|_| {
             state ^= state << 13;
             state ^= state >> 7;
@@ -224,8 +270,7 @@ fn random_png() -> Result<Vec<u8>> {
             state as u8
         })
         .collect::<Vec<_>>();
-    let image = image::RgbImage::from_raw(PAYLOAD_IMAGE_SIDE, PAYLOAD_IMAGE_SIDE, pixels)
-        .context("payload image")?;
+    let image = image::RgbImage::from_raw(side, side, pixels).context("payload image")?;
     let mut png = Vec::new();
     image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
     Ok(png)
