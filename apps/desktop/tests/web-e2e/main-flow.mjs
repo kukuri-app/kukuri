@@ -77,6 +77,13 @@ async function openClient(name, { ice }) {
     },
   });
   browser.label = `${name}-${RUN}`;
+  // DIAG（一時）: console を client ごとに控え、失敗の dump に出す。
+  browser.consoleLines = [];
+  await browser.sessionSubscribe({ events: ['log.entryAdded'] });
+  browser.on('log.entryAdded', (entry) => {
+    browser.consoleLines.push(`${new Date(entry.timestamp).toISOString().slice(11, 23)} ${entry.text}`);
+    if (browser.consoleLines.length > 400) browser.consoleLines.shift();
+  });
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
@@ -165,7 +172,39 @@ const pageText = (browser) => browser.execute(() => document.body.innerText);
 /** 先頭にいないときの新着は「Show N new post(s)」を押すと並ぶ。 */
 async function showNewPosts(browser) {
   const button = browser.$('//button[starts-with(normalize-space(.), "Show ") and contains(., "new post")]');
-  if (await button.isExisting()) await button.click().catch(() => undefined);
+  if (await button.isExisting()) {
+    const owner = await browser.execute((node) => node.closest('[data-column-id]')?.dataset.columnId ?? '-', button).catch(() => '?');
+    console.log(`DIAG ${new Date().toISOString().slice(11, 23)} ${browser.label} show-new-posts in ${owner}`);
+    await button.click().catch(() => undefined);
+  }
+}
+
+// DIAG（一時）: 投稿の欄と focus・active の列の状態を控える。
+async function diagState(browser, column, tag) {
+  const columnId = await column.getAttribute('data-column-id').catch(() => null);
+  const state = await browser.execute((id) => {
+    const canvas = document.querySelector('.shell-column-canvas');
+    const col = id && document.querySelector(`[data-column-id="${CSS.escape(id)}"]`);
+    const focused = document.activeElement;
+    const composer = col?.querySelector('.shell-column-composer');
+    const textarea = col?.querySelector('textarea[placeholder="Write a post"]');
+    const rect = col?.getBoundingClientRect();
+    return {
+      active: document.querySelector('[data-column-id][data-active]')?.dataset.columnId ?? null,
+      focus: focused ? `${focused.tagName} ${(focused.getAttribute('aria-label') ?? '').slice(0, 40)} in ${focused.closest('[data-column-id]')?.dataset.columnId ?? '-'}` : null,
+      scrollLeft: canvas?.scrollLeft ?? null,
+      colLeft: rect ? Math.round(rect.left) : null,
+      visible: col?.dataset.runtimeVisible ?? null,
+      expanded: Boolean(composer),
+      value: textarea ? textarea.value.slice(0, 60) : null,
+      composer: composer ? composer.innerText.replace(/\s+/g, ' ').slice(0, 160) : null,
+      postButtons: col ? [...col.querySelectorAll('button')].filter((node) => node.innerText.trim() === 'Post').map((node) => `${node.getAttribute('aria-label') ?? '-'}|disabled=${node.disabled}|type=${node.type}`) : null,
+      articles: col ? col.querySelectorAll('article').length : null,
+      columns: document.querySelectorAll('[data-column-id]').length,
+      dialogs: document.querySelectorAll('[role=dialog]').length,
+    };
+  }, columnId).catch((error) => ({ error: String(error).slice(0, 120) }));
+  console.log(`DIAG ${new Date().toISOString().slice(11, 23)} ${browser.label} ${tag} ${columnId} ${JSON.stringify(state)}`);
 }
 
 const sees = (browser, text) =>
@@ -180,19 +219,30 @@ const columnOf = (browser, kind, tail) =>
 const publicColumn = (browser) => columnOf(browser, 'timeline', '-:-');
 const channelColumn = (browser, channelId) => columnOf(browser, 'timeline', `${channelId}:-`);
 
-async function openComposer(column) {
+async function openComposer(column, browser = null) {
   await column.waitForExist({ timeout: WAIT });
   const composer = column.$('textarea[placeholder="Write a post"]');
-  if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Post to "]').click();
+  if (!(await composer.isDisplayed())) {
+    if (browser) await diagState(browser, column, 'before Post-to');
+    await column.$('button[aria-label^="Post to "]').click();
+    if (browser) await diagState(browser, column, 'after Post-to');
+  }
   return composer;
 }
 
 /** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。 */
 async function post(browser, content, column = publicColumn(browser), file = null) {
-  await (await openComposer(column)).setValue(content);
+  await (await openComposer(column, browser)).setValue(content);
   if (file) await column.$('input[type=file]').addValue(file);
+  await diagState(browser, column, `before Post "${content}"`);
   await column.$('button=Post').click();
-  await sees(browser, content);
+  await diagState(browser, column, `after Post "${content}"`);
+  const timer = setTimeout(() => diagState(browser, column, `20s after Post "${content}"`), 20_000);
+  try {
+    await sees(browser, content);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const card = (browser, text) => browser.$(`article*=${text}`);
@@ -446,6 +496,7 @@ async function joinChannel(browser, token, label) {
   await open.waitForClickable({ timeout: WAIT });
   await open.click();
   await channelDialogClosed(browser);
+  await diagState(browser, browser.$('[data-column-id][data-active]'), `joined ${label}`);
 }
 
 /** 投稿の作者（`author`）の profile を開き、まだなら follow する。profile の操作の欄を返す。 */
@@ -1044,6 +1095,7 @@ async function dumpColumns(browser) {
   );
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
+  console.log(`--- ${browser.label} console (last ${Math.min(250, browser.consoleLines?.length ?? 0)})\n${(browser.consoleLines ?? []).slice(-250).join('\n')}`);
 }
 
 async function main() {

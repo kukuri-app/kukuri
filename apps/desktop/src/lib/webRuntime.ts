@@ -30,8 +30,25 @@ export function invokeWebRuntime<T>(command: string, args?: Record<string, unkno
   if (!runtime) {
     return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
   }
+  // DIAG(一時)
+  if (/post|channel|follow|direct_message/.test(command)) {
+    const diagId = (diagSeq += 1);
+    const started = performance.now();
+    console.info(`DIAGJS start #${diagId} ${command}`);
+    return (runtime.invoke(command, args) as Promise<T>).then(
+      (value) => {
+        console.info(`DIAGJS end #${diagId} ${command} ok ${Math.round(performance.now() - started)}ms`);
+        return value;
+      },
+      (error: unknown) => {
+        console.info(`DIAGJS end #${diagId} ${command} err ${Math.round(performance.now() - started)}ms ${JSON.stringify(error).slice(0, 200)}`);
+        throw error;
+      }
+    );
+  }
   return runtime.invoke(command, args) as Promise<T>;
 }
+let diagSeq = 0;
 
 export function listenWebRuntimeEvents(listener: (event: RuntimeEvent) => void): () => void {
   listeners.add(listener);

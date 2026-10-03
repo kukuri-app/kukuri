@@ -405,7 +405,25 @@ pub async fn shutdown() {
 pub async fn invoke(command: String, args: JsValue) -> Result<JsValue, JsValue> {
     let client = current()?;
     let args = from_js(&args).map_err(|error| error_value(&error))?;
-    match invoke_command(&client, &command, args).await {
+    // DIAG(一時)
+    thread_local! { static NEXT: Cell<u64> = const { Cell::new(0) }; }
+    let id = NEXT.with(|next| {
+        next.set(next.get() + 1);
+        next.get()
+    });
+    let started = web_time::Instant::now();
+    let result = invoke_command(&client, &command, args).await;
+    let ms = started.elapsed().as_millis();
+    if ms >= 300 || result.is_err() {
+        let detail = match &result {
+            Ok(_) => String::new(),
+            Err(error) => format!(" err={}:{}", error.code, error.message),
+        };
+        web_sys::console::log_1(&JsValue::from_str(&format!(
+            "DIAG invoke #{id} {command} {ms}ms{detail}"
+        )));
+    }
+    match result {
         Ok(value) => to_js(&value),
         Err(error) => Err(error_value(&error)),
     }
