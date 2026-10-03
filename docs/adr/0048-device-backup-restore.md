@@ -31,6 +31,7 @@ Accepted
 - 旧`iroh-data`（remote内容が混在するSDKのDocs/Blob）は含めない（§7、#1221 R5-G）。新しい`iroh-store`（新形式のDocs・pinのSDK store、#1221 R5-I）も含めない。本人の書込みは書いたときに保護所有先へ入る（§7）。
 - 移行不可: iroh endpoint secret、Community Node bearer token、実行中session、通知cursor、OS通知権限。
 - 再同意: app-level同意、Community Node同意、18歳以上の自己申告。これらの記録はバックアップへ含めない。成人向け表示設定も含めず、復元後はOFFとする。
+- Community Nodeへのブロック・ミュートの提供（ADR 0022 追補）の選択、送信待ち、未完了の削除要求は、SQLiteの行として含め、復元した端末へ引き継ぐ（#1510、2026-10-04 の判断）。復元した端末では、任意文書 `trust_observation_sharing` への同意をやり直さずに、必須の同意の再同意で session が利用可能になった時点から提供を再開する。#1510 より前はSQLiteの外のfileに置かれ、バックアップに含まれなかった（復元後は提供が無効だった）。
 - バックアップはCommunity Node、他端末、Direct P2P参加者が保持するcopyを削除または巻き戻さない。
 
 ### 4. 整合スナップショット
