@@ -104,6 +104,8 @@ pub(crate) const GOSSIP_SUBSCRIPTION_STATE_KEY: &str = "registry";
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeEvent {
     NotificationStatusChanged,
+    /// 起動の状態が変わった（Web で別の tab に runtime を引き継がれたとき。ADR 0059 §4）。画面は状態を読み直す。
+    StartupStatusChanged,
     AdultMediaLabelEvicted {
         hash: Option<String>,
     },

@@ -141,7 +141,9 @@ export type DesktopStartupStatus =
       documents: AppConsentDocumentStatus[];
       age_attestation: AgeAttestationStatus;
     }
-  | { status: 'failed'; error: DesktopStartupErrorView };
+  | { status: 'failed'; error: DesktopStartupErrorView }
+  // Web だけ: 同じ origin の別の tab が runtime を動かしている（ADR 0059 §4）。
+  | { status: 'in_use_elsewhere' };
 
 // #858: 18歳以上の自己申告の状態。文書同意とは別レコード(ADR 0046)。
 export type AgeAttestationStatus = {

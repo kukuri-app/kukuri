@@ -4,7 +4,7 @@
 //! 保存した同意・アカウント・投稿・channel が読める。通報の送信は転送を失敗にし、転送先へ本文を送らない（#703）。
 //! 鍵の export・import は native と互換で、argon2id の導出の間に main thread の long task が出ない（#1220 AC-2c）。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::client::{invoke, listen, shutdown, start};
+use crate::tab_lock;
 use kukuri_webrtc_transport::signaling_fixture::post as post_to_peer;
 
 #[wasm_bindgen(inline_js = r#"
@@ -139,8 +140,24 @@ async fn joined_channels(topic: &str) -> Vec<String> {
 async fn the_client_runs_commands_and_events_and_drops_stale_results_across_restarts() {
     let topic = "kukuri:web-client-test";
 
-    // 同意の前は、runtime の command を断る。
+    // W4 AC-4（ADR 0059 §4）: 別の tab（同じ page から lock を持たせて模す）が runtime を動かす間は、runtime を始めず、
+    // 起動の状態の読取りと引継ぎだけを受ける。引き継ぐと、別の tab の lock は外れる。
+    let other_lost = Rc::new(Cell::new(false));
+    let other = tab_lock::acquire(false, {
+        let lost = other_lost.clone();
+        move || lost.set(true)
+    })
+    .await
+    .unwrap()
+    .expect("the other tab holds the lock");
     let status = json_of(&start(JsValue::UNDEFINED).await.unwrap());
+    assert_eq!(status, json!({ "status": "in_use_elsewhere" }));
+    assert!(call("get_app_consent_status", Value::Null).await.is_err());
+    let status = call("take_over_runtime", Value::Null).await.unwrap();
+    assert!(eventually(|| other_lost.get()).await);
+    drop(other);
+
+    // 同意の前は、runtime の command を断る。
     assert_eq!(status["status"], "consent_required", "{status}");
     let rejected = call("create_post", json!({})).await.unwrap_err();
     assert!(
@@ -283,6 +300,45 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
         .unwrap(),
         exported["public_key"].as_str().unwrap()
     );
+
+    // 実行中に別の tab が runtime を奪うと、この tab の runtime は止まってから、callback が起動の状態の変化を受ける。
+    // 止める前に呼んだ結果は返さず、別の tab が使う間は command を断る。もう一度引き継げる。
+    let mut stale = Box::pin(invoke_future(
+        "list_timeline",
+        json!({ "request": { "topic": topic, "cursor": null, "limit": 50 } }),
+    ));
+    assert!(n0_future::future::poll_once(&mut stale).await.is_none());
+    let thief_lost = Rc::new(Cell::new(false));
+    let thief = tab_lock::acquire(true, {
+        let lost = thief_lost.clone();
+        move || lost.set(true)
+    })
+    .await
+    .unwrap()
+    .expect("the other tab takes the lock");
+    let changed = || {
+        restarted
+            .received
+            .borrow()
+            .iter()
+            .any(|event| event["type"] == "startup_status_changed")
+    };
+    assert!(eventually(changed).await);
+    assert_eq!(json_of(&stale.await.unwrap_err())["code"], "stale_runtime");
+    assert_eq!(
+        call("get_desktop_startup_status", Value::Null)
+            .await
+            .unwrap(),
+        json!({ "status": "in_use_elsewhere" })
+    );
+    assert!(call("list_accounts", Value::Null).await.is_err());
+    assert_eq!(
+        call("take_over_runtime", Value::Null).await.unwrap(),
+        json!({ "status": "ready" })
+    );
+    assert!(eventually(|| thief_lost.get()).await);
+    drop(thief);
+    assert_eq!(timeline(topic).await.len(), 2);
 
     // 表に無い command は、この platform では使えない。
     let unsupported = call("open_external_url", json!({ "url": "https://example.com" }))
