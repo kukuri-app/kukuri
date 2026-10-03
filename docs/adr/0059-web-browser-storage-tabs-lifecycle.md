@@ -17,7 +17,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - 起動時に community-node.json と capability の registry を全件読み、capability を 1 件ずつ登録し直す。capability が変わるたびに registry 全体を書き直す（参加 channel 数 × epoch 数に比例する）。
 - projection の trait（`Store` と `ProjectionStore` の 9 つの trait）の SQLite 実装は 9 file・約 3,300 行・query 約 126。`MemoryStore`（約 2,200 行）は試験向けで、一覧を全行の収集と整列で作り、上限も回収も無い。
   reload で失うと困る端末だけのデータ（DM の履歴と未送信の outbox、通知の既読、bookmark、mute、取り下げの outbox、owner の参加者の記録）が projection の trait にある。
-- native の通信の復帰は、iroh の自動検知、`stack.rs` の差し替え、Community Node の 15 秒の tick で成り立つ。共通の復帰の入口は無い（#1196 は Open・Blocked）。`Endpoint::network_change()` は呼ばれていない。
+- native の通信の復帰は、iroh の自動検知、`stack.rs` の差し替え、Community Node の 15 秒の tick で成り立つ。共通の復帰の入口は無い（#1196 は Open・Blocked）。`Endpoint::network_change()` は呼ばれていない。（W4 AC-3 の前の状態。共通の入口は下の §5 で足した）
 
 ブラウザの事実:
 
@@ -97,6 +97,17 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - 経路の世代を進めて旧世代の接続交渉・候補・callback を破棄するのは、`pagehide`・`freeze`・offline・account の切替・停止のとき。可視・online・`pageshow`・`resume` では、有効な需要のうち session の無い相手とだけ交渉し直す（#1422 T4。開いている session は閉じない。理由は ADR 0057 §9）。
 - Web の adapter（`crates/web-runtime`）は browser の event をこの入口へ渡すだけで、Web だけの retry の loop を作らない。Android（#1196）も同じ入口を使う。
 - 全 topic・author・epoch の列挙や一括の再購読をしない。freeze・閉じた tab の間の接続の維持は約束しない。
+- W4 AC-3 の実装（2026-10-03）
+  - 入口は `ClientHost::resume`・`suspend`。止めた host では何もしない。
+    - 復帰の本体は `DesktopRuntime::resume_after_lifecycle`。上の 4 つを、次の順に 1 回ずつ呼ぶ。
+      1. `SharedIrohStack::resume_network`（`Endpoint::network_change()` と `Signaling::resume`）
+      2. `run_community_node_session_maintenance_once`
+      3. `AppService::resume_pending_writes`（DM・epoch 制御の outbox の再送の owner を `Notify` で 1 回起こす。取り下げは `resume_withdrawal_writes`）
+    - 中断は `SharedIrohStack::suspend_network`（`Signaling::reset`）。
+  - Web の adapter は `crates/web-runtime/src/lifecycle.rs`。`start` で次の event を登録し、`shutdown` で外す。止めた後の event は反映しない。
+    - 中断: window の `pagehide`・`offline`、document の `freeze`
+    - 復帰: window の `online`・`pageshow`、document の `resume`、可視になった `visibilitychange`
+  - WebRTC の session の開閉と復帰後の経路は、W10 の試験（`Signaling::reset`・`resume`）と、W8（#1220）の実ブラウザの復帰の E2E で照合する。
 
 ### 6. データの喪失と復旧
 

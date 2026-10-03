@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::prelude::*;
 
+use crate::lifecycle::{Lifecycle, LifecycleListeners, listen_lifecycle};
 use crate::{BrowserStorage, IndexedDbCache};
 
 /// 保存の key に使う仮想の app data dir。
@@ -103,6 +104,8 @@ impl ClientGate for WebGate {
 struct Client {
     gate: Arc<WebGate>,
     listeners: RefCell<Vec<js_sys::Function>>,
+    /// browser の lifecycle の event を host の中断・復帰へ渡す（ADR 0059 §5）。`shutdown` で外す。
+    lifecycle: RefCell<Option<LifecycleListeners>>,
 }
 
 thread_local! {
@@ -279,7 +282,21 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
             }),
         }),
         listeners: RefCell::default(),
+        lifecycle: RefCell::default(),
     });
+    let weak = Rc::downgrade(&client);
+    let lifecycle = listen_lifecycle(move |lifecycle| {
+        let Some(host) = weak.upgrade().and_then(|client| client.gate.host()) else {
+            return;
+        };
+        n0_future::task::spawn(async move {
+            match lifecycle {
+                Lifecycle::Suspend => host.suspend().await,
+                Lifecycle::Resume => host.resume().await,
+            }
+        });
+    })?;
+    *client.lifecycle.borrow_mut() = Some(lifecycle);
     CLIENT.set(Some(client.clone()));
     let status = {
         let _guard = client.gate.operation_lock.lock().await;
@@ -299,6 +316,7 @@ pub async fn shutdown() {
         return;
     };
     client.listeners.borrow_mut().clear();
+    client.lifecycle.borrow_mut().take();
     let gate = client.gate.clone();
     drop(client);
     gate.stopping.store(true, Ordering::SeqCst);

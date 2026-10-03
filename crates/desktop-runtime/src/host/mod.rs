@@ -512,6 +512,24 @@ impl ClientHost {
             })
     }
 
+    /// browser・Android の lifecycle の復帰（可視・online・pageshow・resume。ADR 0059 §5）。既存の処理を 1 回ずつ呼ぶ:
+    /// 経路の確かめ直しと WebRTC の交渉の再開、Community Node の期限・同意の確認（期限前の node には要求しない）、
+    /// 送信待ちの再送（既存の owner と実行枠、同じ ID）。
+    pub async fn resume(&self) {
+        if self.is_stopped() {
+            return;
+        }
+        self.runtime().resume_after_lifecycle().await;
+    }
+
+    /// browser・Android の lifecycle の中断（pagehide・freeze・offline。ADR 0059 §5）: WebRTC の交渉の世代を終える。
+    pub async fn suspend(&self) {
+        if self.is_stopped() {
+            return;
+        }
+        self.runtime().iroh_stack.suspend_network().await;
+    }
+
     pub async fn shutdown(&self) {
         let _shutdown_guard = self.shutdown_guard.lock().await;
         if self.shutdown_started.swap(true, Ordering::AcqRel) {

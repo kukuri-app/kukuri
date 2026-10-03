@@ -321,16 +321,15 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
     server.abort();
 }
 
-/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
-/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
-/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
-/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
-/// due なら refresh POST が独立して打たれることを検証する。
-#[tokio::test]
-async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
-    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
-    let dir = tempdir().expect("tempdir");
-    let db_path = dir.path().join("community-rendezvous-refresh.db");
+/// topic を購読し、rendezvous に応じる mock の Community Node と session の前提（token・設定・同意）を置いた runtime。
+async fn rendezvous_runtime(
+    dir: &Path,
+) -> (
+    DesktopRuntime,
+    Arc<MockRendezvousCommunityNodeState>,
+    tokio::task::JoinHandle<()>,
+) {
+    let db_path = dir.join("community-rendezvous-refresh.db");
     let runtime = DesktopRuntime::new_with_config_and_identity(
         &db_path,
         TransportNetworkConfig::loopback(),
@@ -412,6 +411,20 @@ async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
         }],
     };
     seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
+
+    (runtime, state, server)
+}
+
+/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
+/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
+/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
+/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
+/// due なら refresh POST が独立して打たれることを検証する。
+#[tokio::test]
+async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let dir = tempdir().expect("tempdir");
+    let (runtime, state, server) = rendezvous_runtime(dir.path()).await;
 
     // 1 回目: セッション確立(heartbeat 1 発 + 便乗 rendezvous refresh)。
     // 2 回目: ready 遷移で立った ready_refresh_pending の metadata refresh(便乗 refresh)を消化。
@@ -946,6 +959,29 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
         rotated_requests
             .iter()
             .all(|request| !request.refreshes.contains(&old_private))
+    );
+
+    runtime.shutdown().await;
+    server.abort();
+}
+
+/// W4 AC-3（ADR 0059 §5）: lifecycle の復帰は Community Node の確認を 1 回行うだけで、期限前の node には要求しない。
+#[tokio::test]
+async fn a_lifecycle_resume_contacts_a_community_node_only_when_due() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let dir = tempdir().expect("tempdir");
+    let (runtime, state, server) = rendezvous_runtime(dir.path()).await;
+    runtime.run_community_node_session_maintenance_once().await;
+    runtime.run_community_node_session_maintenance_once().await;
+    assert_eq!(state.heartbeat_hits.load(Ordering::SeqCst), 1);
+
+    for _ in 0..3 {
+        runtime.resume_after_lifecycle().await;
+    }
+    assert_eq!(
+        state.heartbeat_hits.load(Ordering::SeqCst),
+        1,
+        "a resume must not refresh a session before its due time"
     );
 
     runtime.shutdown().await;
