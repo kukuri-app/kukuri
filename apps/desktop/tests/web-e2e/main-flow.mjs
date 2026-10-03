@@ -16,6 +16,7 @@ import { remote } from 'webdriverio';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
+const topicId = (name) => `kukuri:topic:${name}`;
 const RUN = Date.now().toString(36);
 const WAIT = 90_000;
 
@@ -43,13 +44,24 @@ async function eventually(what, check, timeout = WAIT) {
   }
 }
 
-async function nativeTimeline() {
-  const page = await native('list_timeline', { request: { topic: TOPIC, scope: { kind: 'public' }, limit: 50 } });
+async function nativeTimeline(topic = TOPIC) {
+  const page = await native('list_timeline', { request: { topic, scope: { kind: 'public' }, limit: 50 } });
   return page.items;
 }
 
-const nativeSees = (what, predicate) =>
-  eventually(`native sees ${what}`, async () => (await nativeTimeline()).find(predicate));
+const nativeSees = (what, predicate, topic = TOPIC) =>
+  eventually(`native sees ${what}`, async () => (await nativeTimeline(topic)).find(predicate));
+
+/** native の相手は、desktop の UI と同じく topic の timeline の列を表示している（需要の購読）。 */
+const nativeShows = (topic) =>
+  native('set_scope_display', {
+    request: { observer: `web-e2e-native-${topic}`, target: { kind: 'timeline', topic, scope: { kind: 'public' } }, visible: true },
+  });
+
+const nativeReact = (target, emoji) =>
+  native('toggle_reaction', {
+    request: { target_topic_id: TOPIC, target_object_id: target.object_id, reaction_key: { kind: 'emoji', emoji }, channel_ref: null },
+  });
 
 /** 新しい profile の Chrome を開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
 async function openClient(name, { ice }) {
@@ -117,7 +129,7 @@ const sees = (browser, text) =>
 
 async function openComposer(browser) {
   const composer = browser.$('textarea[placeholder="Write a post"]');
-  if (!(await composer.isDisplayed())) await browser.$('button[aria-label="Post to Public · general"]').click();
+  if (!(await composer.isDisplayed())) await browser.$('button[aria-label^="Post to Public"]').click();
   return composer;
 }
 
@@ -135,9 +147,84 @@ async function reply(browser, target, content) {
   await browser.$('button=Reply').click();
 }
 
-async function react(browser, target) {
+async function react(browser, target, emoji) {
   await (await card(browser, target)).$('button[aria-label="React"]').click();
-  await browser.$('button[aria-label="thumbs-up"]').click();
+  await browser.$(`button[aria-label="${emoji}"]`).click();
+}
+
+const EMOJI = { 'thumbs-up': '👍', heart: '❤️', fire: '🔥', clap: '👏', 'party-popper': '🎉', sparkles: '✨', 'raised-hands': '🙌' };
+
+/** 投稿の card に反応が出る。 */
+const seesReaction = (browser, target, emoji) =>
+  eventually(`${browser.label} sees ${emoji} on "${target}"`, async () => {
+    await showNewPosts(browser);
+    return browser.execute(
+      (text, mark) => [...document.querySelectorAll('article')].some((node) => node.innerText.includes(text) && node.innerText.includes(mark)),
+      target,
+      emoji
+    );
+  });
+
+/** 列の topic を切り替える（その topic の timeline を表示して購読する）。 */
+const switchTopic = (browser, name) =>
+  browser.$('select[aria-label="Timeline topic"]').selectByAttribute('value', topicId(name));
+
+/** native との主要導線を、同じ操作で確かめる（直接経路の端でも fallback の端でも）。返り値は Web と native の投稿。 */
+async function exchangeWithNative(browser, tag, reaction) {
+  const fromWeb = `hello from ${tag} ${RUN}`;
+  await post(browser, fromWeb);
+  const webPost = await nativeSees(fromWeb, (item) => item.content === fromWeb);
+  const fromNative = `hello from native to ${tag} ${RUN}`;
+  await native('create_post', { request: { topic: TOPIC, content: fromNative, reply_to: null } });
+  await sees(browser, fromNative);
+  const nativePost = (await nativeTimeline()).find((item) => item.content === fromNative);
+  const webReply = `reply from ${tag} ${RUN}`;
+  await reply(browser, fromNative, webReply);
+  await nativeSees(webReply, (item) => item.content === webReply && item.reply_to === nativePost.object_id);
+  await react(browser, fromNative, reaction);
+  await nativeSees(`the ${reaction} of ${tag}`, (item) =>
+    item.object_id === nativePost.object_id && JSON.stringify(item.reaction_summary).includes(EMOJI[reaction])
+  );
+  const nativeReply = `native reply to ${tag} ${RUN}`;
+  await native('create_post', { request: { topic: TOPIC, content: nativeReply, reply_to: webPost.object_id } });
+  await sees(browser, nativeReply);
+  await nativeReact(webPost, EMOJI['party-popper']);
+  await seesReaction(browser, fromWeb, EMOJI['party-popper']);
+  return { fromWeb, webPost, fromNative, nativePost };
+}
+
+/** 別の topic へ切り替えて、その topic の投稿が native と行き来する。 */
+async function exchangeInTopic(browser, name, tag) {
+  await nativeShows(topicId(name));
+  await switchTopic(browser, name);
+  const fromWeb = `${tag} in ${name} ${RUN}`;
+  await post(browser, fromWeb);
+  await nativeSees(fromWeb, (item) => item.content === fromWeb, topicId(name));
+  const fromNative = `native in ${name} for ${tag} ${RUN}`;
+  await native('create_post', { request: { topic: topicId(name), content: fromNative, reply_to: null } });
+  await sees(browser, fromNative);
+  await switchTopic(browser, 'general');
+}
+
+/** Web↔Web: 双方が投稿し、互いの投稿へ返信と反応をして、相手に届く。反応は他の反応の付いていない投稿へ付ける
+ * （同じ投稿への 90 秒以内の 2 件目以降の反応は届かない既知の不具合 #1505 を避ける。直ったらこの条件を外す）。 */
+async function exchangeBetweenWeb(x, y, reactions) {
+  const xPost = `hello from ${x.label} to ${y.label}`;
+  const yPost = `hello from ${y.label} to ${x.label}`;
+  await post(x, xPost);
+  await post(y, yPost);
+  await sees(x, yPost);
+  await sees(y, xPost);
+  const fromX = `reply from ${x.label} to ${y.label}`;
+  await reply(x, yPost, fromX);
+  await sees(y, fromX);
+  await react(x, yPost, reactions[0]);
+  await seesReaction(y, yPost, EMOJI[reactions[0]]);
+  const fromY = `reply from ${y.label} to ${x.label}`;
+  await reply(y, xPost, fromY);
+  await sees(x, fromY);
+  await react(y, xPost, reactions[1]);
+  await seesReaction(x, xPost, EMOJI[reactions[1]]);
 }
 
 /** 画像を添えた投稿の画像が読み込まれるまで待ち、その間に relay が中継した bytes と、投稿の画像のうち最も小さい版の
@@ -178,8 +265,9 @@ const postWebImage = (browser, content) => async () => {
   await browser.$('button=Post').click();
 };
 
-/** ブラウザの EndpointId（設定の Discovery の診断。開発者モードで出る）を、native が接続先として持つ。 */
-async function assertNativeConnectedTo(browser) {
+/** ブラウザの EndpointId と接続先（設定の Discovery の診断。開発者モードで出る）。`peers` のどれかを接続先に持つ。
+ * native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の照合）。 */
+async function assertConnected(browser, peers, nativeEndpoint) {
   await browser.$('[data-testid="control-center-trigger"]').click();
   await browser.$('#shell-control-center').$('button*=Settings').click();
   await browser.$('[data-testid="settings-section-developer"]').click();
@@ -188,64 +276,49 @@ async function assertNativeConnectedTo(browser) {
   const details = browser.$('//*[normalize-space(text())="Technical diagnostic details"]');
   await details.click();
   // 診断の「LOCAL ENDPOINT ID」と「CONNECTED PEERS」（表示は大文字）。
-  const { endpoint, connected } = await eventually('the browser endpoint id', async () => {
+  // 接続先は今の接続の一覧なので、読み直しながら待つ。
+  const { endpoint, connected } = await eventually(`${browser.label} connects to one of ${peers}`, async () => {
+    await browser.$('button=Refresh diagnostics').click();
     const text = await pageText(browser);
     const local = text.match(/LOCAL ENDPOINT ID\s+([0-9a-f]{64})/);
-    const peers = text.match(/CONNECTED PEERS\s+([0-9a-f\s]+)/);
-    return local && peers ? { endpoint: local[1], connected: peers[1] } : null;
+    const list = text.match(/CONNECTED PEERS\s+([0-9a-f\s]+)/);
+    return local && list && peers.some((peer) => list[1].includes(peer)) ? { endpoint: local[1], connected: list[1] } : null;
   });
-  const { endpoint_id: nativeEndpoint } = await fixture('/fixture/info');
-  assert.ok(connected.includes(nativeEndpoint), `the browser is not connected to native ${nativeEndpoint}`);
-  await eventually(`native connects to ${endpoint}`, async () => {
-    const page = await native('list_connectivity_peers', { request: { kind: 'connected', limit: 64 } });
-    return JSON.stringify(page).includes(endpoint);
-  });
+  if (connected.includes(nativeEndpoint)) {
+    await eventually(`native connects to ${endpoint}`, async () => {
+      const page = await native('list_connectivity_peers', { request: { kind: 'connected', limit: 64 } });
+      return JSON.stringify(page).includes(endpoint);
+    });
+  }
   await browser.keys('Escape');
+  return endpoint;
 }
 
 async function main() {
   const clients = [];
-  // native の相手は、desktop の UI と同じく topic の timeline の列を表示している（需要の購読）。
-  await native('set_scope_display', {
-    request: { observer: 'web-e2e-native', target: { kind: 'timeline', topic: TOPIC, scope: { kind: 'public' } }, visible: true },
-  });
+  await nativeShows(TOPIC);
+  const { endpoint_id: nativeEndpoint } = await fixture('/fixture/info');
   try {
     // 直接経路: native↔Web。
     const a = await openClient('web-a', { ice: true });
     clients.push(a);
-    const fromWeb = `hello from web ${RUN}`;
-    await post(a, fromWeb);
-    const webPost = await nativeSees(fromWeb, (item) => item.content === fromWeb);
-    const fromNative = `hello from native ${RUN}`;
-    await native('create_post', { request: { topic: TOPIC, content: fromNative, reply_to: null } });
-    await sees(a, fromNative);
-    const nativePost = (await nativeTimeline()).find((item) => item.content === fromNative);
-    const webReply = `web reply ${RUN}`;
-    await reply(a, fromNative, webReply);
-    await nativeSees(webReply, (item) => item.content === webReply && item.reply_to === nativePost.object_id);
-    await react(a, fromNative);
-    await nativeSees('the reaction', (item) =>
-      item.object_id === nativePost.object_id && JSON.stringify(item.reaction_summary ?? []).includes('👍')
-    );
-    const nativeReply = `native reply ${RUN}`;
-    await native('create_post', { request: { topic: TOPIC, content: nativeReply, reply_to: webPost.object_id } });
-    await sees(a, nativeReply);
-    await assertNativeConnectedTo(a);
+    const withA = await exchangeWithNative(a, 'web-a', 'thumbs-up');
+    await exchangeInTopic(a, 'dev', 'web-a');
     const direct = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
     console.log('native→web direct', direct);
     assert.ok(direct.relayed < direct.size / 4, `native→web image went through the relay: ${JSON.stringify(direct)}`);
+    const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
 
     // 直接経路: Web↔Web。
     const b = await openClient('web-b', { ice: true });
     clients.push(b);
-    await sees(b, fromWeb);
-    const fromB = `hello from web b ${RUN}`;
-    await post(b, fromB);
-    await sees(a, fromB);
+    await sees(b, withA.fromWeb);
+    await exchangeBetweenWeb(b, a, ['heart', 'fire']);
     const webImage = `web image ${RUN}`;
     const webToWeb = await relayedWhileLoading(b, webImage, postWebImage(a, webImage));
     console.log('web→web direct', webToWeb);
     assert.ok(webToWeb.relayed < webToWeb.size / 4, `web→web image went through the relay: ${JSON.stringify(webToWeb)}`);
+    await assertConnected(b, [aEndpoint], nativeEndpoint);
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
@@ -264,14 +337,14 @@ async function main() {
       if (await more.isExisting()) await more.click();
       return (await c.$$('.post-list article').length) > cards;
     });
-    const fromC = `hello from web c ${RUN}`;
-    await post(c, fromC);
-    await nativeSees(fromC, (item) => item.content === fromC);
-    await sees(a, fromC);
+    await exchangeWithNative(c, 'web-c', 'clap');
+    await exchangeInTopic(c, 'test', 'web-c');
+    await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands']);
     const fallback = await relayedWhileLoading(c, `native image fallback ${RUN}`, postNativeImage(`native image fallback ${RUN}`));
     console.log('native→web fallback', fallback);
     assert.ok(fallback.relayed >= fallback.size * 0.9, `native→web image did not use the relay: ${JSON.stringify(fallback)}`);
     assert.ok(fallback.shownBeforeImage, 'the post and its actions are shown while the image is missing');
+    await assertConnected(c, [nativeEndpoint, aEndpoint], nativeEndpoint);
     const webFallback = `web image fallback ${RUN}`;
     const webToWebFallback = await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback));
     console.log('web→web fallback', webToWebFallback);
