@@ -127,12 +127,10 @@ impl CommandHandler for Handler {
             "export_account_key" => {
                 let runtime = runtime(&context)?;
                 let passphrase = secret_text(secret)?;
-                let exported = tokio::task::spawn_blocking(move || {
-                    runtime.export_account_key(ExportAccountKeyRequest { passphrase })
-                })
-                .await
-                .map_err(|_| crate::session::failed())?
-                .map_err(command_error)?;
+                let exported = runtime
+                    .export_account_key(ExportAccountKeyRequest { passphrase })
+                    .await
+                    .map_err(command_error)?;
                 Ok(CommandOutput::Secret {
                     data: json!({"public_key": exported.public_key}),
                     secret: SecretOutput::new(exported.export.into_bytes()),

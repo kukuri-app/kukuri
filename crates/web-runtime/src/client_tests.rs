@@ -2,6 +2,7 @@
 //! private audience の channel・アカウントの作成と切替を Tauri と同じ command で呼び、event を `listen` の callback で
 //! 受ける。停止・切替の後に終わった旧世代の結果は返さず、停止の後の callback は呼ばない。再起動の後も IndexedDB に
 //! 保存した同意・アカウント・投稿・channel が読める。通報の送信は転送を失敗にし、転送先へ本文を送らない（#703）。
+//! 鍵の export・import は native と互換で、argon2id の導出の間に main thread の long task が出ない（#1220 AC-2c）。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -13,6 +14,37 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::client::{invoke, listen, shutdown, start};
+use kukuri_webrtc_transport::signaling_fixture::post as post_to_peer;
+
+#[wasm_bindgen(inline_js = r#"
+export function watch_long_tasks() {
+  const durations = [];
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) durations.push(entry.duration);
+  });
+  observer.observe({ type: "longtask" });
+  return () => {
+    for (const entry of observer.takeRecords()) durations.push(entry.duration);
+    observer.disconnect();
+    return durations;
+  };
+}
+export function block_main_thread(ms) {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {}
+}
+"#)]
+extern "C" {
+    /// main thread の long task（50 ms 超）の観測を始め、止めて長さの一覧を返す関数を返す。
+    fn watch_long_tasks() -> js_sys::Function;
+    fn block_main_thread(ms: f64);
+}
+
+/// 観測を止め、それまでの long task の長さを返す。entry は task の後に積まれるので少し待つ。
+async fn long_tasks(stop: js_sys::Function) -> Vec<f64> {
+    n0_future::time::sleep(Duration::from_millis(200)).await;
+    serde_json::from_value(json_of(&stop.call0(&JsValue::NULL).unwrap())).unwrap()
+}
 
 fn json_of(value: &JsValue) -> Value {
     if value.is_undefined() {
@@ -205,6 +237,52 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
     .unwrap();
     assert!(eventually(|| !restarted.received.borrow().is_empty()).await);
     assert_eq!(events.received.borrow().len(), delivered);
+
+    // 鍵の export・import。long task の観測は、main thread を 100 ms 止めると検出する（陽性対照）。
+    let stop = watch_long_tasks();
+    block_main_thread(100.0);
+    assert!(!long_tasks(stop).await.is_empty());
+    let passphrase = "correct horse battery staple";
+    let native = post_to_peer("/account-key-export", passphrase)
+        .await
+        .unwrap();
+    let (native_export, native_pubkey) = native.split_once('\n').unwrap();
+    // export と import の 2 回の導出の間に、main thread の long task が出ない。
+    let stop = watch_long_tasks();
+    let exported = call(
+        "export_account_key",
+        json!({ "request": { "passphrase": passphrase } }),
+    )
+    .await
+    .unwrap();
+    let preview = call(
+        "preview_account_key_import",
+        json!({ "request": { "export": native_export } }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(preview["public_key"], native_pubkey);
+    assert_eq!(preview["already_registered"], false);
+    let imported = call(
+        "import_account_key",
+        json!({ "request": { "export": native_export, "passphrase": passphrase, "label": null } }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(long_tasks(stop).await, Vec::<f64>::new());
+    // native の export を取り込むと同じ公開鍵になり、Web の export は native で取り込める。
+    assert_eq!(imported["pubkey"], native_pubkey);
+    let web_export = exported["export"].as_str().unwrap();
+    assert!(web_export.starts_with(kukuri_core::ACCOUNT_KEY_EXPORT_PREFIX));
+    assert_eq!(
+        post_to_peer(
+            "/account-key-import",
+            &format!("{web_export}\n{passphrase}")
+        )
+        .await
+        .unwrap(),
+        exported["public_key"].as_str().unwrap()
+    );
 
     // 表に無い command は、この platform では使えない。
     let unsupported = call("open_external_url", json!({ "url": "https://example.com" }))

@@ -142,7 +142,7 @@ pub use game::{
 };
 pub use identity_export::{
     ACCOUNT_KEY_EXPORT_KDF, ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS, ACCOUNT_KEY_EXPORT_PREFIX,
-    ACCOUNT_KEY_EXPORT_VERSION, AccountKeyExportPreview, decrypt_account_key_export,
+    ACCOUNT_KEY_EXPORT_VERSION, AccountKeyExportPreview, PassphraseKdf, decrypt_account_key_export,
     encrypt_account_key_export, preview_account_key_export,
 };
 pub use ids::{
