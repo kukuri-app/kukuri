@@ -26,5 +26,12 @@
     "last_discovery_error": null
   },
   "gossip_disabled_topics": [],
-  "gossip_disabled_channels": []
+  "gossip_disabled_channels": [],
+  "account_sync": {
+    "no_peers": false,
+    "fetch_failed": false,
+    "behind": false,
+    "pending_writes": false,
+    "rebuilding": false
+  }
 }
