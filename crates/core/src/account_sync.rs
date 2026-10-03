@@ -177,6 +177,8 @@ pub enum AccountSyncItemKey {
     ChannelMembership { channel_id: ChannelId },
     /// private channel の鍵更新の担当端末の記録（意味は W6 が所有する）。
     ChannelController { channel_id: ChannelId },
+    /// 担当でない端末から担当への鍵更新の依頼（#1219 AC-3）。値は `ChannelRotationRequestV1`。
+    ChannelRotationRequest { channel_id: ChannelId },
     /// 端末の変更の窓の 1 件（ADR 0061 §10）。値は `AccountSyncChangeV1`。merge の対象ではない。
     ChangeSlot { device_id: String, slot: u16 },
     /// 端末の変更の窓の head。値は `AccountSyncChangeV1`（`docs_key` は空）。
@@ -208,6 +210,9 @@ impl AccountSyncItemKey {
             Self::ChannelController { channel_id } => {
                 format!("channel/{}/controller", hex::encode(channel_id.as_str()))
             }
+            Self::ChannelRotationRequest { channel_id } => {
+                format!("channel/{}/rotation", hex::encode(channel_id.as_str()))
+            }
             Self::ChangeSlot { device_id, slot } => format!("changes/{device_id}/{slot:03}"),
             Self::ChangeHead { device_id } => format!("changes/{device_id}/head"),
         }
@@ -234,6 +239,7 @@ impl AccountSyncItemKey {
                 },
                 None if item == "membership" => Self::ChannelMembership { channel_id },
                 None if item == "controller" => Self::ChannelController { channel_id },
+                None if item == "rotation" => Self::ChannelRotationRequest { channel_id },
                 _ => anyhow::bail!("unknown channel item"),
             }
         } else {
@@ -273,9 +279,9 @@ impl AccountSyncItemKey {
                 id(channel_id.as_str())?;
                 id(epoch_id)
             }
-            Self::ChannelMembership { channel_id } | Self::ChannelController { channel_id } => {
-                id(channel_id.as_str())
-            }
+            Self::ChannelMembership { channel_id }
+            | Self::ChannelController { channel_id }
+            | Self::ChannelRotationRequest { channel_id } => id(channel_id.as_str()),
             Self::ChangeSlot { device_id, slot } => {
                 ensure!(
                     u64::from(*slot) < ACCOUNT_SYNC_CHANGE_WINDOW,
@@ -431,4 +437,12 @@ pub struct ChannelMembershipV1 {
     pub joined_via_pubkey: Option<String>,
     pub audience_kind: crate::ChannelAudienceKind,
     pub current_epoch_id: String,
+}
+
+/// 鍵更新の依頼の item の値（#1219 AC-3、ADR 0018 §8）。担当は、現在の世代が `from_epoch_id` のときだけ鍵を更新する
+/// （同じ依頼の再受信・既に進んだ世代からの依頼は何もしない）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelRotationRequestV1 {
+    pub from_epoch_id: String,
 }

@@ -576,6 +576,9 @@ pub(crate) struct PrivateChannelDiagnostics {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PrivateChannelOwnerAction {
     Write,
+    /// 表示のための「書けるか」の判定。担当でない端末は依頼も待ちもせず、すぐ保留にする（#1219 AC-3。2026-10-03
+    /// ユーザー判断）。
+    WriteCheck,
     Share,
 }
 

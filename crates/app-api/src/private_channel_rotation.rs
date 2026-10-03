@@ -23,8 +23,8 @@ impl AppService {
             .await?;
         if let Err(error) = self.advance_private_channel_rotation(&rotation).await {
             let state = self
-                .joined_private_channel_state(topic_id, channel_id)
-                .await
+                .rotation_channel_state(topic_id, channel_id)
+                .await?
                 .context("private channel is not joined")?;
             if state.current_epoch_id == rotation.from_epoch_id {
                 return Err(error);
@@ -38,20 +38,24 @@ impl AppService {
             );
         }
         let state = self
-            .joined_private_channel_state(topic_id, channel_id)
-            .await
+            .rotation_channel_state(topic_id, channel_id)
+            .await?
             .context("private channel is not joined")?;
-        if let Err(error) = self
-            .services
-            .hint_transport
-            .publish_hint(
+        // 相手が居ないと gossip の送信は待ち続けうるので、期限で打ち切る（担当が account 同期の取得の中で依頼を処理する
+        // とき、その task を止めない。#1219 AC-3）。
+        if let Err(error) = n0_future::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.services.hint_transport.publish_hint(
                 &channel_hint_topic_for(topic_id, Some(&state.channel_id)),
                 GossipHint::TopicObjectsChanged {
                     topic_id: TopicId::new(topic_id),
                     objects: Vec::new(),
                 },
-            )
-            .await
+            ),
+        )
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|published| published)
         {
             warn!(
                 topic = %topic_id,
@@ -62,6 +66,17 @@ impl AppService {
             );
         }
         self.joined_private_channel_view_for_state(&state).await
+    }
+    /// 鍵更新の段の判断に使う参加状態。正本の参加の行から読む(メモリは確定の後に lease の task が読み直すまで
+    /// 古いままで、確定前と取り違えると、確定していない世代の印を消してしまう)。
+    async fn rotation_channel_state(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<Option<JoinedPrivateChannelState>> {
+        self.services
+            .stored_private_channel_state(&joined_private_channel_key(topic_id, channel_id))
+            .await
     }
     /// 前提検証(参加中・epoch 対応・所有者・担当端末)と、操作の予約。現在の世代から予約した確定前の世代があれば
     /// それを再開し、無ければ新しい世代の ID と秘密を作って鍵の行を 1 行書く(docs へはまだ何も書かない)。
@@ -136,8 +151,8 @@ impl AppService {
     ) -> Result<()> {
         let store = &self.services.projection_store;
         let Some(state) = self
-            .joined_private_channel_state(&rotation.topic_id, &rotation.channel_id)
-            .await
+            .rotation_channel_state(&rotation.topic_id, &rotation.channel_id)
+            .await?
         else {
             // 退会した channel の鍵更新は終える(鍵の行は退会で消える)。
             return store
