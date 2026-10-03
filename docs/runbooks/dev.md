@@ -184,7 +184,7 @@ docker compose --env-file .env.community-node -f docker-compose.community-node.y
 
 - host port の既定値は `18080` (`cn-user-api`), `13340` (`cn-iroh-relay`), `15432` (`cn-postgres`), `16379` (`cn-valkey`)。`cn-stun` の `3478/udp` は、クライアントが relay の host の 3478 番へ送るので変えない
 - host 側 bind の既定値は loopback (`127.0.0.1`) なので、LAN/WireGuard 越しに公開する場合は `CN_*_HOST_BIND_IP` を上書きする
-- `cn-stun`（STUN、binding だけ。ADR 0057 §6）は client の送信元の address を見て返すので、送信元を書き換えずに受ける IP で公開する。送信元を書き換えて UDP を転送する VPS edge 構成では起動しない（[VPS edge の手順](community-node-self-host-vps.md)）
+- `cn-stun`（STUN、binding だけ。ADR 0057 §6）は client の送信元の address を見て返すので、送信元を書き換えずに受ける IP で公開する。送信元を書き換えて UDP を転送する VPS edge 構成では起動しない（[VPS edge の手順](community-node-self-host-vps.md)）。応答は[本番反映の runbook](community-node-production-rollout.md) の「5.3 public surface」の確認 script を、公開した host へ実行して確かめる
 - compose 内の service 名は `cn-postgres`, `cn-migrate`, `cn-user-api`, `cn-iroh-relay`, `cn-stun`
 - public URL を変える場合は `CN_BASE_URL`, `CN_PUBLIC_BASE_URL`, `COMMUNITY_NODE_CONNECTIVITY_URLS` を上書きする
 - `cn-user-api` は `COMMUNITY_NODE_DATABASE_INIT_MODE=require_ready` で起動するので、`cn-migrate` または `cn-cli prepare` を先に流さないと fail-fast する

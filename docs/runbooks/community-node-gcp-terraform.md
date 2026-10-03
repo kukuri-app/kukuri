@@ -1,6 +1,6 @@
 # Community Node GCP Terraform Deploy
 
-最終更新日: 2026-09-17
+最終更新日: 2026-10-04
 
 `openai-moderation` の非秘密設定は `deploy.moderation`、キーは既存の `deploy.vlm_api_key_secret_id` から注入する。詳細は[専用providerの運用](community-node-openai-moderation.md)を参照。
 
@@ -221,6 +221,9 @@ curl -fsS https://<relay_domain>/ping
 terraform output ssh_iap_command   # IAP 経由 SSH
 terraform output admin_iap_tunnel_command # IAP 内部 admin UI
 ```
+
+STUN（`cn-stun`、`3478/udp`）の応答は、[本番反映の runbook](community-node-production-rollout.md) の
+「5.3 public surface」の確認 script を `<relay_domain>` へ実行して確かめる。
 
 VM 内のサービスは `/var/lib/kukuri/community-node` の docker compose で動く。SSH は IAP のみ
 （`22/tcp` と admin UI の `9090/tcp` は GCP IAP レンジからのみ許可）。admin UI を使う場合は、
