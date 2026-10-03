@@ -1,5 +1,6 @@
-// Web クライアントの主要導線を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g、ADR 0060 §4）。`cargo xtask web-e2e` から呼ぶ。
-// 相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の配信）。
+// Web クライアントの主要導線と復帰を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g・AC-4、ADR 0060 §4）。
+// `cargo xtask web-e2e` から呼ぶ。相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の
+// 配信）。
 //
 // - 直接経路: 通常の Chrome。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
 // - relay fallback: 交換する SDP から ICE の候補を除いた Chrome（ICE が成立しない。W10 の T2 にあたる）。実データが relay
@@ -8,6 +9,7 @@
 // relay と WebRTC の他の経路が無いので、relay の中継が画像より十分小さければ、画像は WebRTC を通っている。
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -75,8 +77,7 @@ async function openClient(name, { ice }) {
     },
   });
   browser.label = `${name}-${RUN}`;
-  await browser.addInitScript(captureClipboard);
-  if (!ice) await browser.addInitScript(withoutIceCandidates);
+  await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
   const profile = await dialogWith(browser, 'Set up your profile');
@@ -86,6 +87,13 @@ async function openClient(name, { ice }) {
   await profile.$('button=Save').click();
   await eventually(`${name} saves the profile`, async () => !(await findDialog(browser, 'Set up your profile')));
   return browser;
+}
+
+/** ページの script より先に動く script を、今の tab に入れる（WebdriverIO の addInitScript は今の tab にだけ効く）。 */
+async function addInitScripts(browser, { ice }) {
+  await browser.addInitScript(captureClipboard);
+  await browser.addInitScript(trackPeerConnections);
+  if (!ice) await browser.addInitScript(withoutIceCandidates);
 }
 
 /** relay fallback の端: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない（ページの script より先に動く）。 */
@@ -108,6 +116,39 @@ function captureClipboard() {
   navigator.clipboard.writeText = async (text) => {
     window.__kukuriCopied.push(text);
   };
+}
+
+/**
+ * WebRTC の session（RTCPeerConnection）を作った順に控え、WebRTC の経路だけを失わせる口を持つ（ページより先に動く。
+ * #1220 AC-4）。`window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる
+ * （runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
+ */
+function trackPeerConnections() {
+  window.__kukuriPeers = [];
+  const Original = window.RTCPeerConnection;
+  window.RTCPeerConnection = class extends Original {
+    constructor(...args) {
+      super(...args);
+      window.__kukuriPeers.push(this);
+    }
+  };
+  const onmessage = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage');
+  Object.defineProperty(RTCDataChannel.prototype, 'onmessage', {
+    configurable: true,
+    get() {
+      return onmessage.get.call(this);
+    },
+    set(handler) {
+      onmessage.set.call(this, handler && ((event) => {
+        const cut = window.__kukuriCut;
+        if (cut && !cut.done && (cut.received = (cut.received ?? 0) + event.data.byteLength) >= cut.after) {
+          cut.done = true;
+          this.close();
+        }
+        handler(event);
+      }));
+    },
+  });
 }
 
 async function findDialog(browser, text) {
@@ -281,12 +322,16 @@ function assertRoute(name, result, direct) {
 /** 経路の判定に使う画像（乱数の画素の PNG。毎回違う内容）。 */
 const payloadPng = async () => Buffer.from(await (await fetch(`${ORIGIN}/fixture/payload.png`)).arrayBuffer());
 
-/** native が画像を添えて投稿・DM を送る（`request` に添付を足す）。返り値は画像の bytes 数。 */
-const nativeWithImage = (command, request) => async () => {
-  const png = await payloadPng();
-  const image = { file_name: 'payload.png', mime: 'image/png', byte_size: png.length, data_base64: png.toString('base64'), role: 'image_original' };
-  await native(command, { request: { ...request, attachments: [image] } });
-  return png.length;
+/** native の command に base64 で添える画像。 */
+const imageAttachment = (png) => ({
+  file_name: 'payload.png', mime: 'image/png', byte_size: png.length, data_base64: png.toString('base64'), role: 'image_original',
+});
+
+/** native が画像を添えて投稿・DM を送る（`request` に添付を足す）。返り値は画像の bytes 数。`png` を省くと新しい画像。 */
+const nativeWithImage = (command, request, png = null) => async () => {
+  const image = png ?? (await payloadPng());
+  await native(command, { request: { ...request, attachments: [imageAttachment(image)] } });
+  return image.length;
 };
 
 const postNativeImage = (content) => nativeWithImage('create_post', { topic: TOPIC, content, reply_to: null });
@@ -576,7 +621,9 @@ async function changeSettings(browser) {
  * 照合）。実データがどの経路を通ったかは relay の bytes で判定する。 */
 async function assertConnected(browser, peers, nativeEndpoint) {
   await openSettings(browser, 'developer');
-  await browser.$('label*=Enable developer mode').$('input[type=checkbox]').click();
+  // 開発者モードは保存されるので、reload の後は有効のまま。
+  const developerMode = browser.$('label*=Enable developer mode').$('input[type=checkbox]');
+  if (!(await developerMode.isSelected())) await developerMode.click();
   await browser.$('[data-testid="settings-section-discovery"]').click();
   const details = browser.$('//*[normalize-space(text())="Technical diagnostic details"]');
   await details.click();
@@ -719,6 +766,255 @@ const seesOnlyUrl = (browser, post) =>
     return preview?.state === 'unavailable' && preview.link === post.url;
   });
 
+/** WebRTC の session の状態（作った順。`trackPeerConnections`）。 */
+const sessionStates = (browser) => browser.execute(() => window.__kukuriPeers.map((peer) => peer.connectionState));
+
+/** WebRTC の session が 1 つ以上開き、交渉の途中の session が無くなるまで待つ。復帰の直後の 1 回目の交渉は、閉じた経路が
+ * 選ばれ続ける間（#1482）に期限が切れ、次の試行（15 秒後）で開く。 */
+const directPathOpens = (browser) =>
+  eventually(`${browser.label} opens its WebRTC sessions`, async () => {
+    const states = await sessionStates(browser);
+    return states.includes('connected') && !states.some((state) => state === 'new' || state === 'connecting');
+  });
+
+/** 中断より前に作った `count` 件の session が閉じる（旧世代の交渉・candidate・callback を捨てる。ADR 0059 §5）。 */
+const earlierSessionsClose = (browser, count) =>
+  eventually(`${browser.label} closes the earlier sessions`, async () =>
+    (await sessionStates(browser)).slice(0, count).every((state) => state === 'closed')
+  );
+
+/** native が公開投稿を `count` 件足す（履歴を増やす）。 */
+async function addHistory(tag, count) {
+  for (let index = 0; index < count; index++) {
+    await native('create_post', { request: { topic: TOPIC, content: `${tag} ${RUN} ${index}`, reply_to: null } });
+  }
+}
+
+/** 再開した画面の公開の列の最初の頁が窓（20 件）に収まり、閉じていない session が需要のある相手（`peers`）の数以下。どちらも
+ * 履歴の総数に依らない（#1220 AC-4。件数に比例しないことは W4・W10・#1221 の試験が確かめる）。 */
+async function assertWindowed(browser, peers) {
+  const shown = () => publicColumn(browser).$$('.post-list article').length;
+  await eventually(`${browser.label} shows the first page`, async () => (await shown()) > 0);
+  const cards = await shown();
+  assert.ok(cards <= 20, `the first page shows at most 20 posts, saw ${cards}`);
+  await directPathOpens(browser);
+  const open = (await sessionStates(browser)).filter((state) => state !== 'closed').length;
+  console.log(`${browser.label} windowed`, { cards, open });
+  assert.ok(open <= peers, `at most ${peers} WebRTC sessions, saw ${open}`);
+}
+
+/** native の画像が直接経路を通るまで、新しい画像で 3 回まで試す（復帰の直後は、相手ごとの交渉の再開を待つ）。 */
+async function nativeImageGoesDirect(browser, tag) {
+  for (let attempt = 1; ; attempt++) {
+    await directPathOpens(browser);
+    const image = `${tag}: native image ${attempt} ${RUN}`;
+    const result = await relayedWhileLoading(browser, image, postNativeImage(image));
+    console.log(`native→web after ${tag} (${attempt})`, result);
+    if (result.relayed < result.size / 4) return;
+    assert.ok(attempt < 3, `native→web after ${tag} went through the relay: ${JSON.stringify(result)}`);
+  }
+}
+
+/** 復帰の後: Web の投稿が同じ公開鍵で native へ届き、native の投稿が Web に出て、native の画像は直接経路を通る。 */
+async function resumesOnTheDirectPath(browser, pubkey, tag) {
+  const fromWeb = `${tag}: from ${browser.label}`;
+  await post(browser, fromWeb);
+  await nativeSees(fromWeb, (item) => item.content === fromWeb && item.author_pubkey === pubkey);
+  const fromNative = `${tag}: from native ${RUN}`;
+  await native('create_post', { request: { topic: TOPIC, content: fromNative, reply_to: null } });
+  await sees(browser, fromNative);
+  await nativeImageGoesDirect(browser, tag);
+}
+
+/** Control Center を閉じ終わるまで待つ。 */
+const closeControlCenter = (browser) =>
+  eventually(`${browser.label} closes the control center`, async () => {
+    if (!(await browser.$('#shell-control-center').isDisplayed().catch(() => false))) return true;
+    await browser.keys('Escape');
+    return false;
+  });
+
+/** Control Center に出る、参加中の channel の名前（退会の操作の label から）。 */
+async function joinedChannelLabels(browser) {
+  await browser.$('[data-testid="control-center-trigger"]').click();
+  const labels = await browser.execute(() =>
+    [...document.querySelectorAll('#shell-control-center button[aria-label^="Leave "]')].map((node) =>
+      node.getAttribute('aria-label').replace(/^Leave (.*) channel$/, '$1')
+    )
+  );
+  await closeControlCenter(browser);
+  return labels;
+}
+
+/** Control Center から channel を退会する。名前が長いと、行の退会の操作が枠の外へ切れて押せない（desktop と共通の画面の不具合）
+ * ので、短い名前の channel で行う。 */
+async function leaveChannel(browser, label) {
+  const leave = browser.$(`#shell-control-center button[aria-label="Leave ${label} channel"]`);
+  await browser.$('[data-testid="control-center-trigger"]').click();
+  await leave.click();
+  await (await dialogWith(browser, 'Leave this channel?')).$('button=Yes').click();
+  await eventually(`${browser.label} leaves ${label}`, async () => !(await leave.isExisting()));
+  await closeControlCenter(browser);
+}
+
+/** native から見た Web の profile の版（署名した編集の時刻）。 */
+const profileVersion = async (pubkey) => (await native('get_author_social_view', { request: { pubkey } })).updated_at;
+
+/** DM の列の、`text` を含む message の配達の印（Delivered・Pending）と message の id。 */
+const directMessageState = (browser, text) =>
+  browser.execute((value) => {
+    const article = [...document.querySelectorAll('section[data-column-id^="column:conversation:"] article')].find((node) =>
+      node.innerText.includes(value)
+    );
+    const avatar = article?.querySelector('[data-testid^="dm-message-avatar-"]');
+    return article
+      ? { chip: article.querySelector('.reply-chip')?.textContent, id: avatar?.dataset.testid.replace('dm-message-avatar-', '') }
+      : null;
+  }, text);
+
+/** 公開の列に読み込んだ投稿の画像の SHA-256 と、その投稿の card の数。 */
+const shownImage = (browser, text) =>
+  browser.execute(async (value) => {
+    const column = document.querySelector('section[data-column-id^="column:timeline:"][data-column-id$=":-:-"]');
+    const articles = [...(column?.querySelectorAll('article') ?? [])].filter((node) => node.innerText.includes(value));
+    const image = articles[0]?.querySelector('img[src^="blob:"]');
+    if (!image) return { cards: articles.length, sha256: null };
+    const digest = await crypto.subtle.digest('SHA-256', await (await fetch(image.src)).arrayBuffer());
+    return { cards: articles.length, sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
+  }, text);
+
+/**
+ * #1220 AC-4: 直接経路の端 a の reload・終了・凍結・回線全断・WebRTC の経路だけの喪失が W4 の保存と復帰の入口へつながり、
+ * 退会・世代・version を巻き戻さないことを確かめる（ADR 0059 §4〜§6、ADR 0060 §4）。`ctx` は a の公開鍵と EndpointId、native の
+ * 公開鍵と EndpointId、既知の相手の EndpointId（`peerEndpoints`。gossip の隣接はそのどれか）、a が参加中の native の channel
+ * （`channel`）、需要のある相手の数（`peers`）。
+ */
+async function lifecycleOnTheDirectPath(a, ctx) {
+  // 旧 state の再送の準備: a は native の channel に参加してから退会し、owner の native はその channel の世代を更新して投稿する
+  // （旧い参加への配布）。a が参加中の channel の世代を native が更新し、a は新しい世代の投稿を読める。
+  const leftLabel = `lx-${RUN}`;
+  const left = await nativeCreatesChannel(leftLabel);
+  await joinChannel(a, left.token, leftLabel);
+  await leaveChannel(a, leftLabel);
+  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: left.channelId } });
+  const inTheLeftChannel = `in the left channel ${RUN}`;
+  await nativePostsInChannel(left.channelId, inTheLeftChannel);
+  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: ctx.channel.channelId } });
+  const afterRotation = `after the rotation ${RUN}`;
+  await nativePostsInChannel(ctx.channel.channelId, afterRotation);
+  await seesInChannel(a, ctx.channel.channelId, afterRotation);
+  const version = await profileVersion(ctx.aPubkey);
+  // 編集の途中（private channel の列の下書き）。
+  const draft = `draft in the channel ${RUN}`;
+  await (await openComposer(channelColumn(a, ctx.channel.channelId))).setValue(draft);
+
+  // reload（1 つ目の履歴の量）: 同じアカウント・EndpointId・設定・下書きで再開し、初回の dialog を出さない。reload の間の投稿も出る。
+  await addHistory('history-a', 25);
+  const whileReloading = `posted while reloading ${RUN}`;
+  await native('create_post', { request: { topic: TOPIC, content: whileReloading, reply_to: null } });
+  await a.refresh();
+  await assertWindowed(a, ctx.peers);
+  assert.equal(await assertConnected(a, ctx.peerEndpoints, ctx.nativeEndpoint), ctx.aEndpoint);
+  assert.equal(await a.execute(() => document.documentElement.dataset.theme), 'dark');
+  for (const text of ['Set up your profile', 'What is a community node?']) assert.equal(await findDialog(a, text), null, text);
+  await channelColumn(a, ctx.channel.channelId).scrollIntoView();
+  assert.equal(await channelColumn(a, ctx.channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
+  await sees(a, whileReloading);
+  // 退会した channel は、世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。
+  // profile の版は reload で変わらない（再送を新しい編集にしない）。
+  const labels = await joinedChannelLabels(a);
+  assert.ok(labels.includes(ctx.channel.label) && !labels.includes(leftLabel), JSON.stringify(labels));
+  assert.ok(!(await pageText(a)).includes(inTheLeftChannel), 'the left channel stays left');
+  const afterReload = `after the reload ${RUN}`;
+  await nativePostsInChannel(ctx.channel.channelId, afterReload);
+  await seesInChannel(a, ctx.channel.channelId, afterReload);
+  const fromAInChannel = `from ${a.label} after the reload ${RUN}`;
+  await post(a, fromAInChannel, channelColumn(a, ctx.channel.channelId));
+  await nativeSeesInChannel(ctx.channel.channelId, fromAInChannel);
+  assert.equal(await profileVersion(ctx.aPubkey), version);
+  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the reload');
+
+  // 終了（2 つ目の履歴の量）: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって session を閉じ、新しい
+  // tab が保存から同じ EndpointId で再開する。
+  await addHistory('history-b', 25);
+  const first = await a.getWindowHandle();
+  const { handle: second } = await a.newWindow('about:blank');
+  await addInitScripts(a, { ice: true });
+  await a.url(ORIGIN);
+  await sees(a, 'kukuri is open in another tab');
+  await a.$('button=Use in this tab').click();
+  await assertWindowed(a, ctx.peers);
+  await a.switchToWindow(first);
+  await sees(a, 'kukuri is open in another tab');
+  assert.ok((await sessionStates(a)).every((state) => state === 'closed'), 'the first tab closes its sessions');
+  await a.closeWindow();
+  await a.switchToWindow(second);
+  assert.equal(await assertConnected(a, ctx.peerEndpoints, ctx.nativeEndpoint), ctx.aEndpoint);
+  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the takeover');
+
+  // 凍結: 利用者と同じく、非表示 → 凍結 → 復帰 → 表示の順にする（chromedriver の freeze は page を非表示にしてから凍結し、resume
+  // の後も非表示のまま戻さない。画面は非表示の間は列を読み直さない）。凍結で旧い session を閉じ、復帰では生きた需要の相手と
+  // だけ交渉し直す。交渉は相手ごとに復帰の event（resume と可視）1 回につき 3 回まで（W10 の MAX_ATTEMPTS）。
+  await directPathOpens(a);
+  const beforeFreeze = (await sessionStates(a)).length;
+  await a.freeze();
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await a.resume();
+  await a.sendCommandAndGetResult('Emulation.setFocusEmulationEnabled', { enabled: true });
+  await earlierSessionsClose(a, beforeFreeze);
+  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the freeze');
+  const renegotiated = (await sessionStates(a)).length - beforeFreeze;
+  console.log('negotiations after the freeze', renegotiated);
+  assert.ok(renegotiated <= 6 * ctx.peers, `at most 6 negotiations per peer after the freeze, saw ${renegotiated}`);
+
+  // 回線全断（chromedriver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
+  // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
+  // 届いたと示す。
+  await directPathOpens(a);
+  const beforeOffline = (await sessionStates(a)).length;
+  const network = (offline) => a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 });
+  await network(true);
+  await earlierSessionsClose(a, beforeOffline);
+  await openSettings(a, 'connectivity');
+  await eventually('the guidance without a live connection', async () => {
+    const text = await pageText(a);
+    return text.includes('There is no live connection') && !/A live connection is available|This topic has a live connection/.test(text);
+  });
+  await a.$('button[aria-label="Close settings"]').click();
+  await post(a, `posted offline ${RUN}`);
+  const offlineMessage = `dm while offline ${RUN}`;
+  await sendDirectMessage(a, ctx.nativePubkey, offlineMessage);
+  const pending = await eventually('the pending message', async () => {
+    const state = await directMessageState(a, offlineMessage);
+    return state?.chip === 'Pending' && state;
+  });
+  await network(false);
+  await eventually('native receives the message once', async () => {
+    const page = await native('list_direct_message_messages', { request: { pubkey: ctx.aPubkey, cursor: null, limit: 50 } });
+    const copies = page.items.filter((item) => item.text === offlineMessage);
+    assert.ok(copies.length <= 1, `the message arrives once: ${JSON.stringify(copies)}`);
+    return copies.length === 1 && copies[0].message_id === pending.id;
+  });
+  await eventually('the delivered message', async () => (await directMessageState(a, offlineMessage))?.chip === 'Delivered');
+  await resumesOnTheDirectPath(a, ctx.aPubkey, 'going online');
+
+  // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じる。relay で完了し、表示した画像は原本と同じ
+  // hash で、投稿の card は 1 つ。転送中の stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が
+  // 15 秒の期限で打ち切られ、relay で取り直す）。
+  await directPathOpens(a);
+  const png = await payloadPng();
+  const acrossTheLoss = `image across the webrtc loss ${RUN}`;
+  await a.execute(() => {
+    window.__kukuriCut = { after: 256 * 1024 };
+  });
+  const publish = nativeWithImage('create_post', { topic: TOPIC, content: acrossTheLoss, reply_to: null }, png);
+  const loss = await relayedWhileLoading(a, acrossTheLoss, publish);
+  console.log('webrtc path loss', loss);
+  assert.ok(await a.execute(() => window.__kukuriCut.done), 'the data channel closes during the transfer');
+  assert.ok(loss.relayed >= loss.size / 2, `the transfer finishes through the relay: ${JSON.stringify(loss)}`);
+  assert.deepEqual(await shownImage(a, acrossTheLoss), { cards: 1, sha256: createHash('sha256').update(png).digest('hex') });
+}
+
 /** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭。 */
 async function dumpColumns(browser) {
   const columns = await browser.execute(() =>
@@ -781,6 +1077,17 @@ async function main() {
     const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
     await joinChannel(a, nativeChannel.token, nativeChannelLabel);
     await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
+    // AC-4: a の reload・終了・凍結・回線全断・WebRTC の経路だけの喪失と、旧 state の再送。直接経路で判定するので、fallback の
+    // 端を開く前に行う。需要のある相手は native と b。
+    await lifecycleOnTheDirectPath(a, {
+      aPubkey,
+      aEndpoint,
+      nativePubkey,
+      nativeEndpoint,
+      peerEndpoints: [nativeEndpoint, bEndpoint],
+      channel: { channelId: nativeChannel.channelId, label: nativeChannelLabel },
+      peers: 2,
+    });
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
