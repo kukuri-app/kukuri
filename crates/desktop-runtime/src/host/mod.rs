@@ -513,7 +513,7 @@ impl ClientHost {
     }
 
     /// browser・Android の lifecycle の復帰（可視・online・pageshow・resume。ADR 0059 §5）。既存の処理を 1 回ずつ呼ぶ:
-    /// 経路の確かめ直しと WebRTC の交渉の再開、Community Node の期限・同意・actor の確認（期限前の node には要求しない）、
+    /// 経路の確かめ直しと WebRTC の交渉の再開、Community Node の期限・同意の確認（期限前の node には要求しない）、
     /// 送信待ちの再送（既存の owner と実行枠、同じ ID）。
     pub async fn resume(&self) {
         if self.is_stopped() {

@@ -6,9 +6,9 @@
 mod account;
 mod actor;
 mod client;
-mod lifecycle;
 mod content_cache;
 mod idb;
+mod lifecycle;
 mod rows;
 mod vault;
 
