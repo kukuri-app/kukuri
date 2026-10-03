@@ -71,7 +71,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 移行先の置き場: 受けたアカウントの DB の隣の journal（`<db>.account-history.json`。範囲・続きの位置・保存した page の数・反映した page の数）と、page ごとの `<db>.account-history-<n>.json`、blob の部分の `<db>.account-history-<n>-<p>.bin`。record は空でない・NUL を含まない・範囲の replica であることを、blob は順番・長さ・hash を確かめる。page は `page` を受けたら保存して journal を進め、ACK を返す。確定していない page の部分は取消・失敗で消し、再起動で残ったものは次の受信で消す。
 - 反映: そのアカウントの runtime の起動時（使っているアカウントなら page の保存の後）に、page ごとに自分の record（`put_owned_record`）と blob（保護参照 `own_blob:<hash>`）として保存し、反映した page から消す。既にある自分の record は上書きしない。範囲の終わりまで反映したら journal も消す。
 - 中止・失敗・再開（ユーザー決定）: 履歴の途中の取消（どちらの端末からも）・切断・保存の失敗では、必須の移行は完了のまま、履歴は止まった理由（`stopped`）を結果に持つ。もう一度つないで同じ範囲を選ぶと、journal の続きの位置から受ける（受けた page は送り直さない）。別の範囲は最初から。自動の再接続・一時停止はしない。
-- 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）受け取ったアカウントへ切り替える。切替は runtime と endpoint を作り直すので、その時点で移行の接続が切れるため。
+- 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）受け取ったアカウントへ切り替える。切替は runtime と endpoint を作り直すので、その時点で移行の接続が切れるため。移行先は履歴を受ける間は Dialog を閉じさせない（「戻る」と閉じるボタンを出さず、Escape・外側のクリックでも閉じない）。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じる操作で履歴が止まり、切り替わらなかった監査の指摘 B-1 による）。
 - 表示: 移行先では、移した投稿は自分のプロフィールに出る（作者の bucket の索引を、手元の自分の record から読む）。topic の timeline は時間 bucket を相手の端末から読むので、移行先の自分の record だけでは出ない（相手の端末が居れば読める）。取り下げは、表示した投稿の背景の確認が投稿の日の bucket を読んで反映する（確認先が旧形式の replica だけだった既存の不具合を、2026-10-04 のユーザー判断でこの AC で直した）。
 - 実装: core の `AccountTransferHistory`・`AccountHistoryRecord`・`AccountHistoryCursor` と frame の `history`・`records`・`blob`・`page`、store の `protected_records_after`、iroh-node の `AccountBundleSource::history_page`・`blob_part`・`AccountBundleSink::history`・`AccountHistoryStaging`、desktop-runtime の `accounts/history.rs`、app-api の `schedule_withdrawal_check`。
 

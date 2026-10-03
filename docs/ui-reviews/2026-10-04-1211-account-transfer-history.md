@@ -9,6 +9,7 @@
 - Summary: [2026-10-03 の record](./2026-10-03-1211-account-transfer-bundle.md) の画面に、次を足した（2026-10-04 ユーザー決定）。対象・未取得の説明の画面と ADR 0047/0048 との対象差は AC-5。
   - 移行先のリンクの入力欄の下に「投稿の履歴」の select（移さない（既定）・直近 30 日・直近 1 年・すべて）。補足で、移行元の端末で書いた投稿を本文・画像・動画ごと移すこと、他の端末の投稿は移らないこと、旧形式は「すべて」だけであることを示す。
   - 履歴の間は、鍵と設定の移行の完了の文と、履歴の件数の状態の文、「履歴の受け取りをやめる」（移行元は「履歴の送信をやめる」）を置く。止めても鍵と設定の移行は完了のまま。
+  - 移行先は履歴を受ける間、「戻る」と Dialog の閉じるボタンを出さず、Escape・外側のクリックでも閉じない。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じると履歴が止まるのに切り替わらなかった監査の指摘 B-1 による）。
   - 完了は履歴が終わってから示す（移行先はそこで切り替える）。完了の Notice の下に、履歴の件数・移行元に無かった本文・添付の数・途中で止まったときの続きの案内を示す。
 - Conditions:
   - Platform: Windows / Linux desktop（Storybook で描画、Tauri の実機は未確認）
@@ -18,7 +19,7 @@
   - State: 範囲の選択（既定）、履歴の受信中、完了と要約（移行元に無かった数あり）
 - Accessibility / interaction: select は `Field` の label（「投稿の履歴」）と補足を持つ native の select。履歴の件数は `role="status"`。「やめる」は処理中の重複操作を無効にする。件数と単位の間は改行しない（ja・zh-CN は no-break space）。
 - Performance: 画面を開いている間だけ 500 ms ごとに状態を 1 件読む（AC-1 と同じ）。履歴の量に比例する処理は画面にない。
-- Validation: Vitest（`AccountTransferPanel.test.tsx` 8 件、`DesktopShellPage.accountMenu.test.tsx` 8 件）、eslint、tsc、Storybook の `Target`・`TargetHistory`・`TargetCompletedWithHistory`（play で操作）を static build から Playwright の Chromium で撮影して clipping・重なり・折り返しを確認した。
+- Validation: Vitest（`AccountTransferPanel.test.tsx` 8 件、`DesktopShellPage.accountMenu.test.tsx` 9 件。履歴の間は「戻る」・閉じるボタンが無く Escape でも閉じないこと、「やめる」の後に 1 回だけ切り替えることを含む）、eslint、tsc、Storybook の `Target`・`TargetHistory`・`TargetCompletedWithHistory`（play で操作）を static build から Playwright の Chromium で撮影して clipping・重なり・折り返しを確認した。
 - Not verified: Tauri の実機での履歴の後の切替。Web↔native の実ブラウザの往復（W8）。
 - Review result: 対象 story の採用判定は PASS。
 - Exceptions: なし。

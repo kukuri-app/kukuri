@@ -119,6 +119,32 @@ test('a completed transfer into the active account does not switch', async () =>
   expect(change).not.toHaveBeenCalled();
 });
 
+// #1211 AC-3（監査 B-1、2026-10-04 ユーザー決定）: 移行先は履歴を受けている間は Dialog を閉じられず、「戻る」も出ない。
+// 履歴は「やめる」で終え、終えたら受け取ったアカウントへ切り替える。
+test('the target cannot close the dialog while receiving the history and switches after stopping it', async () => {
+  const { user, menu, change } = await setup();
+  const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'openAccountTransfer').mockResolvedValue(undefined);
+  const status = vi.spyOn(identity, 'getAccountTransferStatus')
+    .mockResolvedValue({ state: 'history', role: 'target', account_id: 'cccccccccccccccc', posts: 3, unavailable: 0 });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  expect(within(target).getByRole('button', { name: 'Close dialog' })).toBeVisible();
+  await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
+  await user.click(within(target).getByRole('button', { name: 'Connect' }));
+  expect(await within(target).findByText('Receiving post history (3)…', {}, { timeout: 2000 })).toBeVisible();
+  expect(within(target).queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
+  expect(within(target).queryByRole('button', { name: 'Close dialog' })).not.toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('dialog', { name: 'Move from another device' })).toBeVisible();
+  expect(cancel).not.toHaveBeenCalled();
+
+  status.mockResolvedValue({ state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: { posts: 3, unavailable: 0, stopped: 'cancelled' } });
+  await user.click(within(target).getByRole('button', { name: 'Stop receiving history' }));
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
+});
+
 // #1217 AC-5: 初回の profile 設定の「以前のアカウントを戻す」は、menu を開いていなくても、menu から開くときと同じ
 // アカウント追加の dialog（作成・import・移行）を開く。
 test('a restore request opens the add account dialog with every action available', async () => {

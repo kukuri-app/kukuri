@@ -25,11 +25,13 @@ type HistoryChoice = (typeof HISTORY_CHOICES)[number];
 // 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了したら受け取った
 // アカウントを `onCompleted` へ渡す（切替は呼び出し側）。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
 // AC-3: 移行先は接続の前に投稿の履歴の範囲を選ぶ（既定は移さない）。履歴は必須の移行の後に受け、受けている間は
-// 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。
-export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
+// 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。移行先は履歴を受けている間を
+// `onReceivingHistory` で知らせる（呼び出し側はその間は閉じさせない。終えるのは「やめる」だけ）。
+export function AccountTransferPanel({ role, initialLink = '', onCompleted, onReceivingHistory }: {
   role: 'source' | 'target';
   initialLink?: string;
   onCompleted?: (accountId: string) => void;
+  onReceivingHistory?: (receiving: boolean) => void;
 }) {
   const { t } = useTranslation('settings');
   const [invite, setInvite] = useState<AccountTransferLink | null>(null);
@@ -97,6 +99,14 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted }: {
     // 受け取ったアカウントごとに 1 回だけ渡す。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receivedAccount]);
+
+  const receivingHistory = role === 'target' && status.state === 'history';
+  useEffect(() => {
+    onReceivingHistory?.(receivingHistory);
+    return () => onReceivingHistory?.(false);
+    // 履歴を受け始めた・終えた・閉じたときだけ知らせる。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receivingHistory]);
 
   const decide = async (accept: boolean) => {
     setPending(true);
