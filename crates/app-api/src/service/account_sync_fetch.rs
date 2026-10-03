@@ -64,6 +64,8 @@ pub(crate) struct AccountSyncState {
     pub(super) peers: tokio::sync::Notify,
     rendezvous: std::sync::Mutex<RendezvousPeers>,
     fetch: std::sync::Mutex<FetchResults>,
+    /// 最後に作り直した状態。通信状態はこれだけを読む（SQLite を読まない。#1221 R2-D）。作り直しは 1 つずつ行う。
+    status: tokio::sync::Mutex<AccountSyncStatus>,
 }
 
 /// CN ごとの前回の rendezvous の応答の本人の端末と、まだ取得していない新しく現れた端末。CN ごとに応答で置き換える
@@ -87,13 +89,26 @@ impl AppService {
         if let Err(error) = self.try_write_account_sync_item(item).await {
             warn!(key = ?item.key, %error, "account sync item stays unwritten until it is resent");
         }
-        self.mark_account_sync_status();
+        self.refresh_account_sync_status().await;
         Ok(())
     }
 
-    /// account 同期の状態が変わりうるとき、通信状態の印を付ける（差分の通知が `account_sync` を読み直す）。
-    fn mark_account_sync_status(&self) {
-        self.last_sync_ts.mark(kukuri_transport::StatusKey::Summary);
+    /// account 同期の状態が変わりうるとき、状態を作り直し、変わったら通信状態の印を付ける（差分の通知が読み直す）。
+    async fn refresh_account_sync_status(&self) {
+        let mut last = self.services.account_sync.status.lock().await;
+        match self.account_sync_status().await {
+            Ok(status) if status != *last => {
+                *last = status;
+                self.last_sync_ts.mark(kukuri_transport::StatusKey::Summary);
+            }
+            Ok(_) => {}
+            Err(error) => warn!(%error, "account sync status stays at the last value"),
+        }
+    }
+
+    /// 最後に作り直した account 同期の状態（通信状態が読む）。
+    pub(crate) async fn last_account_sync_status(&self) -> AccountSyncStatus {
+        self.services.account_sync.status.lock().await.clone()
     }
 
     async fn try_write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
@@ -198,7 +213,7 @@ impl AppService {
             }
             _ => store.mark_account_sync_written(&row_of(item)?).await?,
         }
-        self.mark_account_sync_status();
+        self.refresh_account_sync_status().await;
         Ok(())
     }
 
@@ -396,20 +411,21 @@ impl AppService {
             anyhow::Ok(())
         }
         .await;
-        let mut fetch = self
-            .services
-            .account_sync
-            .fetch
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if result.is_ok() {
-            fetch.failed.remove(device_id);
-            fetch.no_candidates = false;
-        } else {
-            fetch.failed.insert(device_id.to_string());
+        {
+            let mut fetch = self
+                .services
+                .account_sync
+                .fetch
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if result.is_ok() {
+                fetch.failed.remove(device_id);
+                fetch.no_candidates = false;
+            } else {
+                fetch.failed.insert(device_id.to_string());
+            }
         }
-        drop(fetch);
-        self.mark_account_sync_status();
+        self.refresh_account_sync_status().await;
         result
     }
 
@@ -525,7 +541,7 @@ impl AppService {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .no_candidates = peers.is_empty();
-        self.mark_account_sync_status();
+        self.refresh_account_sync_status().await;
         for peer in peers {
             if let Err(error) = self.fetch_account_sync_from(&peer.endpoint_id).await {
                 warn!(%error, "account sync fetch stopped; it resumes at the next trigger");
