@@ -1,5 +1,8 @@
+use super::channel_sync_merge::controller_item;
 use super::*;
-use kukuri_core::{AccountSyncItem, AccountSyncItemKey, ChannelRotationRequestV1};
+use kukuri_core::{
+    AccountSyncItem, AccountSyncItemKey, ChannelControllerRequestV1, ChannelRotationRequestV1,
+};
 
 /// 担当でない端末が、担当へ依頼した鍵更新の新しい世代を待つ上限（#1219 AC-3。2026-10-03 ユーザー判断）。
 const PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT: std::time::Duration =
@@ -209,6 +212,22 @@ impl AppService {
         state: &JoinedPrivateChannelState,
     ) -> Result<JoinedPrivateChannelView> {
         let diagnostics = self.private_channel_diagnostics(state).await?;
+        let is_owner = state.owner_pubkey == self.current_author_pubkey();
+        let controller = if is_owner {
+            let device_id = self.local_device_id().await?;
+            Some(match &state.controller {
+                None => PrivateChannelControllerState::Unknown,
+                Some(controller) if controller.transfer_to.is_some() => {
+                    PrivateChannelControllerState::Moving
+                }
+                Some(controller) if controller.device_id == device_id => {
+                    PrivateChannelControllerState::ThisDevice
+                }
+                Some(_) => PrivateChannelControllerState::OtherDevice,
+            })
+        } else {
+            None
+        };
         Ok(JoinedPrivateChannelView {
             topic_id: state.topic_id.clone(),
             channel_id: state.channel_id.as_str().to_string(),
@@ -217,7 +236,7 @@ impl AppService {
             owner_pubkey: state.owner_pubkey.clone(),
             joined_via_pubkey: state.joined_via_pubkey.clone(),
             audience_kind: state.audience_kind.clone(),
-            is_owner: state.owner_pubkey == self.current_author_pubkey(),
+            is_owner,
             current_epoch_id: state.current_epoch_id.clone(),
             archived_epoch_ids: self
                 .archived_private_channel_epochs(state, PRIVATE_CHANNEL_EPOCH_WINDOW)
@@ -230,6 +249,7 @@ impl AppService {
             participant_count: diagnostics.participant_count,
             stale_participant_count: diagnostics.stale_participant_count,
             entry_dome_instance_id: diagnostics.entry_dome_instance_id,
+            controller,
         })
     }
     /// テスト専用: 唯一の呼び出し元が cfg(test) の get_private_channel_capability。
@@ -364,6 +384,18 @@ impl AppService {
             .await
     }
 
+    /// 担当の端末が本人の端末の候補（account の hint topic の rendezvous の候補、ADR 0061 §10）にいるか（#1219 AC-3・
+    /// AC-4）。
+    async fn controller_is_reachable(&self, controller: &PrivateChannelController) -> bool {
+        self.services
+            .hint_transport
+            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|peer| peer.endpoint_id == controller.device_id)
+    }
+
     /// 共有・投稿の前の鍵更新。担当でなければ、担当への依頼を account 同期へ書き、担当が本人の端末の候補にいれば
     /// 新しい世代が届くまで待つ。候補にいない・期限までに届かなければ保留を返す（依頼は残り、担当が取得したときに
     /// 処理する。#1219 AC-3、ADR 0018 §8）。
@@ -387,18 +419,13 @@ impl AppService {
             })?),
         ))
         .await?;
-        let candidates = self
-            .services
-            .hint_transport
-            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
-            .await
-            .unwrap_or_default();
-        if !state.controller.as_ref().is_some_and(|controller| {
-            controller.transfer_to.is_none()
-                && candidates
-                    .iter()
-                    .any(|peer| peer.endpoint_id == controller.device_id)
-        }) {
+        let reachable = match &state.controller {
+            Some(controller) if controller.transfer_to.is_none() => {
+                self.controller_is_reachable(controller).await
+            }
+            _ => false,
+        };
+        if !reachable {
             return Err(pending);
         }
         let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
@@ -413,6 +440,132 @@ impl AppService {
         .await;
         advanced.map_err(|_| pending)
     }
+    /// 担当を引き取る（#1219 AC-4、ADR 0018 §8）。旧担当が本人の端末の候補にいれば、移譲の依頼を account 同期へ書き、
+    /// この端末が担当になるまで待つ（期限は鍵更新の依頼と同じ）。候補にいなければ何も書かない。期限までに移らなければ、
+    /// 依頼を残して待ちを返す。判断は参加の行で行う（メモリは書込みの直後に古い）。
+    pub async fn take_private_channel_controller(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<PrivateChannelControllerTake> {
+        let key = joined_private_channel_key(topic_id, channel_id);
+        let state = self
+            .services
+            .stored_private_channel_state(&key)
+            .await?
+            .context("private channel is not joined")?;
+        if state.owner_pubkey != self.current_author_pubkey() {
+            anyhow::bail!("only the channel owner can take over key updates");
+        }
+        let controller = state
+            .controller
+            .context("the device that updates keys is not known yet")?;
+        let device_id = self.local_device_id().await?;
+        let taken = |controller: &PrivateChannelController| {
+            controller.device_id == device_id && controller.transfer_to.is_none()
+        };
+        if taken(&controller) {
+            return Ok(PrivateChannelControllerTake::Taken);
+        }
+        if controller.transfer_to.is_some() {
+            return Ok(PrivateChannelControllerTake::Waiting);
+        }
+        if !self.controller_is_reachable(&controller).await {
+            return Ok(PrivateChannelControllerTake::NotConnected);
+        }
+        self.publish_account_sync_item(AccountSyncItem::edit(
+            AccountSyncItemKey::ChannelControllerRequest {
+                channel_id: ChannelId::new(channel_id),
+            },
+            Utc::now().timestamp_millis(),
+            Some(serde_json::to_value(ChannelControllerRequestV1 {
+                to_device_id: device_id.clone(),
+                generation: controller.generation,
+            })?),
+        ))
+        .await?;
+        let waited = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            loop {
+                let state = self.services.stored_private_channel_state(&key).await?;
+                if state
+                    .and_then(|state| state.controller)
+                    .is_some_and(|controller| taken(&controller))
+                {
+                    return anyhow::Ok(());
+                }
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        match waited {
+            Ok(result) => result.map(|()| PrivateChannelControllerTake::Taken),
+            Err(_) => Ok(PrivateChannelControllerTake::Waiting),
+        }
+    }
+
+    /// backup から復元した端末が、自分の channel の担当を引き取る（#1219 AC-4、2026-10-02 のユーザー判断）。owner の
+    /// 参加中の行を `after` より後から `limit` 件読み、記録を `{この端末, 世代 + 1}`（記録が無ければ世代 1）にする。
+    /// 既にこの端末が担当の channel（行の後・台帳の前で止まった起動の後のやり直し）は、世代を進めずに同じ記録を書き直す。
+    /// 続きの cursor を返す（終わりは `None`）。
+    pub async fn claim_private_channel_controllers(
+        &self,
+        after: &str,
+        limit: usize,
+    ) -> Result<Option<String>> {
+        let device_id = self.local_device_id().await?;
+        let owner = self.current_author_pubkey();
+        let store = &self.services.projection_store;
+        let rows = store
+            .list_joined_private_channels(
+                kukuri_store::PrivateChannelFilter::Owner(owner.as_str()),
+                after,
+                limit,
+            )
+            .await?;
+        for listed in &rows {
+            let claimed = {
+                let _access = self.services.content_save_access.lock().await;
+                let Some(row) = store
+                    .get_private_channel(&listed.channel_key)
+                    .await?
+                    .filter(|row| row.joined)
+                else {
+                    continue;
+                };
+                let local = row
+                    .controller
+                    .as_deref()
+                    .map(serde_json::from_str::<PrivateChannelController>)
+                    .transpose()?;
+                let next = match local {
+                    Some(local) if local.device_id == device_id && local.transfer_to.is_none() => {
+                        local
+                    }
+                    local => PrivateChannelController {
+                        device_id: device_id.clone(),
+                        generation: local.map_or(1, |local| local.generation + 1),
+                        transfer_to: None,
+                    },
+                };
+                let channel_id = ChannelId::new(row.channel_id.clone());
+                let item = controller_item(&channel_id, &next)?;
+                let topic_id = row.topic_id.clone();
+                self.put_private_channel_controller(row, &next, Some(&item))
+                    .await?;
+                (
+                    ScopeKey::Channel(topic_id, channel_id.as_str().to_string()),
+                    item,
+                )
+            };
+            self.write_account_sync_item(&claimed.1).await?;
+            self.restart_scope_subscription(&claimed.0).await;
+        }
+        Ok(rows
+            .last()
+            .filter(|_| rows.len() == limit)
+            .map(|row| row.channel_key.clone()))
+    }
+
     pub(crate) async fn private_channel_state_for_owner_action(
         &self,
         topic_id: &str,

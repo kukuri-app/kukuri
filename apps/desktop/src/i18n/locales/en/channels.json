@@ -37,7 +37,8 @@
     "failedCreateShare": "failed to create mutuals+ share",
     "failedJoinChannel": "failed to join private channel",
     "failedLeaveChannel": "failed to leave private channel",
-    "failedShareChannel": "failed to share private channel"
+    "failedShareChannel": "failed to share private channel",
+    "failedTakeController": "failed to switch the device"
   },
   "inspectHint": "Review who can join and what you can do here.",
   "joined": "{{count}} joined",
@@ -81,7 +82,16 @@
     "pending": "Working… please wait until it finishes.",
     "rotationNextStep": "Creating a share link hands new access only to participants who still qualify. Check follow relationships from their profiles.",
     "ownerOnlyShare": "Only the owner can create share links for a mutuals channel. Ask the owner for an invite.",
-    "shareHint": "Send the share link only to people you want to invite. Anyone who receives it can join if they meet the audience rule."
+    "shareHint": "Send the share link only to people you want to invite. Anyone who receives it can join if they meet the audience rule.",
+    "controller": {
+      "otherDevice": "Creating share links and handing out new access when participants change happen on another of your devices.",
+      "take": "Do this on this device",
+      "taking": "Switching…",
+      "notConnected": "The device doing this now is not connected, so it could not be switched. Open the app on that device and try again.",
+      "waiting": "Waiting for the device doing this now to respond. Opening the app on that device switches it to this device.",
+      "moving": "Switching the device that does this. Until it finishes, creating share links and handing out new access are on hold.",
+      "movingStuck": "If the device it is switching to can no longer be used, recreate the channel."
+    }
   },
   "title": "Private Channels",
   "intro": "A private channel is a space inside this topic where only participants can read and write posts. Create one yourself, or join with an invite or share link from a participant. Invite and share links are created from the channel settings after you join.",

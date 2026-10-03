@@ -47,6 +47,7 @@ type OverlayActions = Pick<
   | 'handleLeavePrivateChannel'
   | 'handleProfileAvatarFile'
   | 'handleShareChannelAccess'
+  | 'handleTakePrivateChannelController'
 >;
 type ShellDialogs = Pick<
   ReturnType<typeof useShellDialogs>,
@@ -162,6 +163,7 @@ export function DesktopShellOverlays({
     handleSelectPrivateChannel,
     handleProfileAvatarFile,
     handleShareChannelAccess,
+    handleTakePrivateChannelController,
   } = actions;
   const {
     channelDialogOpen,
@@ -359,6 +361,7 @@ export function DesktopShellOverlays({
                 inviteOutput={inviteOutput}
                 inviteOutputLabel={inviteOutputLabel}
                 onShare={() => void handleShareChannelAccess()}
+                onTakeController={handleTakePrivateChannelController}
                 onRequestIndexing={() =>
                   onRequestPrivateIndexing({
                     kind: 'private_channel',

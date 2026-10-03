@@ -497,7 +497,10 @@ where
             IdentityStorageMode::FileOnly,
             &keys,
         ))?;
-        persist_restored_secrets(&staging_db, &secret_bundle)
+        persist_restored_secrets(&staging_db, &secret_bundle)?;
+        // #1219 AC-4: 復元した account の最初の起動で、自分の channel の担当を引き取る。
+        fs::write(crate::runtime::controller_claim_marker(&staging_db), [])
+            .context("failed to mark the restored account for taking over its private channels")
     })();
     if let Err(error) = validation {
         let _ = fs::remove_dir_all(&staging_dir);

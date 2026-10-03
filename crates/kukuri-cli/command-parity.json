@@ -66,6 +66,7 @@
     {"tauri":"import_friend_plus_share","cli":"import_friend_plus_share","inventory":"INV-4"},
     {"tauri":"freeze_private_channel","cli":"freeze_private_channel","inventory":"INV-4"},
     {"tauri":"rotate_private_channel","cli":"rotate_private_channel","inventory":"INV-4"},
+    {"tauri":"take_private_channel_controller","cli":"take_private_channel_controller","inventory":"INV-4"},
     {"tauri":"set_private_channel_entry_dome","cli":"set_private_channel_entry_dome","inventory":"INV-4"},
     {"tauri":"leave_private_channel","cli":"leave_private_channel","inventory":"INV-4"},
     {"tauri":"list_joined_private_channels","cli":"list_joined_private_channels","inventory":"INV-4"},

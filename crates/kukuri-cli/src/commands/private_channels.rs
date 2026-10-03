@@ -8,6 +8,7 @@ use kukuri_desktop_runtime::{
     ImportPrivateChannelInviteRequest, LeavePrivateChannelRequest,
     ListJoinedPrivateChannelsRequest, PreviewChannelAccessTokenRequest,
     RotatePrivateChannelRequest, SetPrivateChannelEntryDomeRequest,
+    TakePrivateChannelControllerRequest,
 };
 use serde_json::{Value, json};
 
@@ -31,6 +32,7 @@ enum Operation {
     ImportShare,
     Freeze,
     Rotate,
+    TakeController,
     EntryDome,
     Leave,
     List,
@@ -174,6 +176,14 @@ impl CommandHandler for Handler {
                     .await
                     .map_err(command_error)?,
             ),
+            Operation::TakeController => encode(
+                runtime
+                    .take_private_channel_controller(decode::<TakePrivateChannelControllerRequest>(
+                        payload,
+                    )?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             Operation::EntryDome => encode(
                 runtime
                     .set_private_channel_entry_dome(decode::<SetPrivateChannelEntryDomeRequest>(
@@ -243,6 +253,8 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
         ("import_friend_plus_share", Write, ImportShare, true, false, token(), preview_schema()),
         ("freeze_private_channel", Write, Freeze, false, false, channel(), joined_schema()),
         ("rotate_private_channel", Write, Rotate, false, false, channel(), joined_schema()),
+        ("take_private_channel_controller", Write, TakeController, false, false, channel(),
+            json!({"enum": ["taken", "not_connected", "waiting"]})),
         ("set_private_channel_entry_dome", Write, EntryDome, false, false, schema::object(json!({
             "topic": {"type": "string"}, "channel_id": {"type": "string"}, "entry_dome_instance_id": {"type": "string"}
         }), &["topic", "channel_id"]), joined_schema()),
@@ -287,7 +299,8 @@ fn joined_schema() -> Value {
         "sharing_state": {"enum": ["open", "frozen"]}, "rotation_required": {"type": "boolean"},
         "participant_count": schema::nullable(json!({"type": "integer", "minimum": 0})),
         "stale_participant_count": {"type": "integer", "minimum": 0},
-        "entry_dome_instance_id": schema::nullable(json!({"type": "string"}))}),
+        "entry_dome_instance_id": schema::nullable(json!({"type": "string"})),
+        "controller": {"enum": ["this_device", "other_device", "moving", "unknown", null]}}),
         &[
             "topic_id",
             "channel_id",
@@ -304,6 +317,7 @@ fn joined_schema() -> Value {
             "participant_count",
             "stale_participant_count",
             "entry_dome_instance_id",
+            "controller",
         ],
     )
 }

@@ -780,6 +780,34 @@ pub struct JoinedPrivateChannelView {
     pub participant_count: Option<usize>,
     pub stale_participant_count: usize,
     pub entry_dome_instance_id: Option<String>,
+    /// owner の端末で、鍵更新の担当がこの端末から見てどこにあるか（#1219 AC-4）。owner 以外は `None`。
+    pub controller: Option<PrivateChannelControllerState>,
+}
+
+/// 鍵更新の担当の、この端末から見た状態（#1219 AC-4、ADR 0018 §8）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateChannelControllerState {
+    ThisDevice,
+    OtherDevice,
+    /// 引継ぎ中（旧担当は停止し、移譲先の有効化を待っている）。
+    Moving,
+    /// 記録がまだ届いていない。
+    Unknown,
+}
+
+/// 担当の引き取り（`take_private_channel_controller`）の結果（#1219 AC-4）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateChannelControllerTake {
+    /// この端末が担当になった。
+    Taken,
+    /// 旧担当が本人の端末の候補にいない。何も書いていない。
+    NotConnected,
+    /// 依頼を書いたが、期限までに移らなかった。依頼は残り、旧担当が取得したときに処理する。
+    Waiting,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

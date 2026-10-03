@@ -29,12 +29,12 @@
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
-      "lines": 1118,
-      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
+      "lines": 1126,
+      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
-      "lines": 1116,
-      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
+      "lines": 1118,
+      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1093,

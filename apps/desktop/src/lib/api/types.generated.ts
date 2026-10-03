@@ -96,7 +96,15 @@ export type JoinedPrivateChannelView = { topic_id: string, channel_id: string, l
 /**
  * 参加者数。参加・退出 record が届く owner の端末だけが持ち、owner 以外は `None`(#1221 R5-H)。
  */
-participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, };
+participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, 
+/**
+ * owner の端末で、鍵更新の担当がこの端末から見てどこにあるか（#1219 AC-4）。owner 以外は `None`。
+ */
+controller?: PrivateChannelControllerState | null, };
+
+export type PrivateChannelControllerState = "this_device" | "other_device" | "moving" | "unknown";
+
+export type PrivateChannelControllerTake = "taken" | "not_connected" | "waiting";
 
 export type JoinedPrivateChannelPage = { items: Array<JoinedPrivateChannelView>, next_cursor?: string | null, };
 
@@ -871,6 +879,8 @@ export type ImportFriendPlusShareRequest = { token: string, };
 export type FreezePrivateChannelRequest = { topic: string, channel_id: string, };
 
 export type RotatePrivateChannelRequest = { topic: string, channel_id: string, };
+
+export type TakePrivateChannelControllerRequest = { topic: string, channel_id: string, };
 
 export type SetPrivateChannelEntryDomeRequest = { topic: string, channel_id: string, entry_dome_instance_id?: string | null, };
 
