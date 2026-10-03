@@ -596,6 +596,16 @@ async function assertConnected(browser, peers, nativeEndpoint) {
   return endpoint;
 }
 
+/** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭。 */
+async function dumpColumns(browser) {
+  const columns = await browser.execute(() =>
+    [...document.querySelectorAll('section.shell-column-surface')].map(
+      (node) => `[${node.dataset.columnId} visible=${node.dataset.runtimeVisible ?? 'false'}]\n${node.innerText.slice(0, 800)}`
+    )
+  );
+  console.log(`--- ${browser.label}\n${columns.join('\n')}`);
+}
+
 async function main() {
   const clients = [];
   await nativeShows(TOPIC);
@@ -692,6 +702,9 @@ async function main() {
       false
     );
 
+  } catch (error) {
+    for (const client of clients) await dumpColumns(client).catch(() => undefined);
+    throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
   }
