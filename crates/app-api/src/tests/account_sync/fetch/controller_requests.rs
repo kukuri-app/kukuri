@@ -181,6 +181,71 @@ async fn the_controller_and_a_new_epoch_reach_the_other_device() {
     assert_eq!(epoch(&b, &first).await, rotated);
 }
 
+/// 端末の変更の窓の head の seq（書いた item の数）。
+async fn head(app: &AppService, device_id: &str) -> u64 {
+    app.read_account_sync_item(
+        &AccountSyncItemKey::ChangeHead {
+            device_id: device_id.into(),
+        },
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("read the head")
+    .and_then(|item| item.value)
+    .map_or(0, |value| {
+        serde_json::from_value::<kukuri_core::AccountSyncChangeV1>(value)
+            .expect("head value")
+            .seq
+    })
+}
+
+/// 参加の行の無い端末どうし（作成した端末で退会した channel を、後から取得した 2 端末）でも、担当の item は同じ版で
+/// 往復を止める（ADR 0061 §10。#1219 AC-3 監査 B-1）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_controller_item_without_a_channel_row_stops_at_the_same_version() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = memory_device(&keys, "device-b").await;
+    let (c, c_docs) = memory_device(&keys, "device-c").await;
+    restored(&[&a, &b, &c]).await;
+    let channel = create(&a, ChannelAudienceKind::InviteOnly).await;
+    a.leave_private_channel(TOPIC, &channel)
+        .await
+        .expect("leave");
+    b_docs.reading_from(&a_docs);
+    b.fetch_account_sync_from("device-a")
+        .await
+        .expect("b from a");
+    c_docs.reading_from(&b_docs);
+    c.fetch_account_sync_from("device-b")
+        .await
+        .expect("c from b");
+    for app in [&b, &c] {
+        assert!(
+            app.services
+                .projection_store
+                .get_private_channel_by_id(&channel)
+                .await
+                .expect("row")
+                .is_none_or(|row| !row.joined),
+            "the left channel is not joined"
+        );
+    }
+
+    let (b_head, c_head) = (head(&b, "device-b").await, head(&c, "device-c").await);
+    b_docs.reading_from(&c_docs);
+    for _ in 0..2 {
+        b.fetch_account_sync_from("device-c")
+            .await
+            .expect("b from c");
+        c.fetch_account_sync_from("device-b")
+            .await
+            .expect("c from b");
+    }
+    assert_eq!(head(&b, "device-b").await, b_head, "b writes nothing again");
+    assert_eq!(head(&c, "device-c").await, c_head, "c writes nothing again");
+}
+
 /// C3: 担当が本人の端末の候補にいないと、B の共有はすぐ保留になり、依頼だけが残る。担当が取得したときに鍵を更新し、
 /// 同じ依頼の再受信では更新しない。B は取得で新しい世代へ移る。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -298,6 +363,7 @@ async fn joined_on(app: &AppService, channel_id: &str) {
 
 /// C3: 担当 A が本人の端末の候補にいれば、B の共有（invite_only）と、資格を失った参加者のいる friend_only への投稿は、
 /// A への依頼で A が鍵を更新し、新しい世代が届いたところで完了する。世代を作るのは A の 1 回だけで、B は作らない。
+/// 表示のための「書けるか」の判定は、A が online でも依頼も待ちもしない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_online_controller_rotates_for_a_share_and_a_post_on_the_other_device() {
     let keys = generate_keys();
@@ -359,6 +425,31 @@ async fn the_online_controller_rotates_for_a_share_and_a_post_on_the_other_devic
             .await
             .expect("stale participant");
     }
+    // 表示のための「書けるか」の判定は、依頼も待ちもせずに保留する（2026-10-03 ユーザー判断）。
+    let started = std::time::Instant::now();
+    let checked = b
+        .private_channel_state_for_owner_action(
+            TOPIC,
+            &ChannelId::new(posted.as_str()),
+            PrivateChannelOwnerAction::WriteCheck,
+        )
+        .await
+        .expect_err("the check does not rotate on the other device");
+    assert!(checked.is::<PrivateChannelControllerPending>());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(
+        b.read_account_sync_item(
+            &AccountSyncItemKey::ChannelRotationRequest {
+                channel_id: ChannelId::new(posted.as_str()),
+            },
+            DocFetchPolicy::LocalOnly,
+        )
+        .await
+        .expect("read the request")
+        .is_none(),
+        "the check writes no request"
+    );
+    assert_eq!(epoch(&a, &posted).await, old);
     post(&b, &posted)
         .await
         .expect("the controller rotates for the post");

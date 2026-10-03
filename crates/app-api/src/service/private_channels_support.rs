@@ -352,11 +352,16 @@ impl AppService {
                     .rotation_required
             }
         };
-        if required {
-            self.rotate_or_request_private_channel(topic_id, &state)
-                .await?;
+        if !required {
+            return Ok(());
         }
-        Ok(())
+        if action == PrivateChannelOwnerAction::WriteCheck {
+            self.rotate_private_channel(topic_id, channel_id.as_str())
+                .await?;
+            return Ok(());
+        }
+        self.rotate_or_request_private_channel(topic_id, &state)
+            .await
     }
 
     /// 共有・投稿の前の鍵更新。担当でなければ、担当への依頼を account 同期へ書き、担当が本人の端末の候補にいれば

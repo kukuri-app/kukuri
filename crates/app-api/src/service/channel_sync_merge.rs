@@ -302,8 +302,9 @@ impl AppService {
         Ok(true)
     }
 
-    /// 担当の記録を ADR 0018 §8 の規則で採る（書くのは担当になった端末）。参加の行がまだ無ければ、自分の replica に
-    /// 置くために採ったとし、参加の行を作るときに手元の replica から読む。
+    /// 担当の記録を ADR 0018 §8 の規則で採る（書くのは担当になった端末）。参加の行がまだ無ければ（担当の item は key の
+    /// 順で参加の item より先に届く）、手元の replica の記録より新しいときだけ採って自分の replica に置き、参加の行を
+    /// 作るときに手元の replica から読む。同じ版は採らない（行の無い端末どうしの往復を止める。ADR 0061 §10）。
     async fn merge_channel_controller(
         &self,
         channel_id: &ChannelId,
@@ -313,31 +314,42 @@ impl AppService {
             return Ok(false);
         };
         let incoming: PrivateChannelController = serde_json::from_value(value)?;
-        let topic_id = {
+        let adopted = {
             let _access = self.services.content_save_access.lock().await;
             let store = &self.services.projection_store;
-            let Some(row) = store.get_private_channel_by_id(channel_id.as_str()).await? else {
-                return Ok(true);
-            };
-            let local = row
-                .controller
-                .as_deref()
-                .map(serde_json::from_str::<PrivateChannelController>)
-                .transpose()?;
-            if !controller_supersedes(local.as_ref(), &incoming) {
-                return Ok(false);
+            match store.get_private_channel_by_id(channel_id.as_str()).await? {
+                None => None,
+                Some(row) => {
+                    let local = row
+                        .controller
+                        .as_deref()
+                        .map(serde_json::from_str::<PrivateChannelController>)
+                        .transpose()?;
+                    if !controller_supersedes(local.as_ref(), &incoming) {
+                        return Ok(false);
+                    }
+                    let topic_id = row.joined.then(|| row.topic_id.clone());
+                    store
+                        .put_private_channel(
+                            &PrivateChannelRow {
+                                controller: Some(serde_json::to_string(&incoming)?),
+                                ..row
+                            },
+                            &[],
+                        )
+                        .await?;
+                    Some(topic_id)
+                }
             }
-            let topic_id = row.joined.then(|| row.topic_id.clone());
-            store
-                .put_private_channel(
-                    &PrivateChannelRow {
-                        controller: Some(serde_json::to_string(&incoming)?),
-                        ..row
-                    },
-                    &[],
-                )
-                .await?;
-            topic_id
+        };
+        let Some(topic_id) = adopted else {
+            let local = self
+                .read_account_sync_docs_key(&item.key.docs_key(), DocFetchPolicy::LocalOnly)
+                .await?
+                .and_then(|item| item.value)
+                .map(serde_json::from_value::<PrivateChannelController>)
+                .transpose()?;
+            return Ok(controller_supersedes(local.as_ref(), &incoming));
         };
         if let Some(topic_id) = topic_id {
             self.restart_scope_subscription(&ScopeKey::Channel(
