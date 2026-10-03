@@ -115,7 +115,8 @@ function captureClipboard() {
 
 async function findDialog(browser, text) {
   for await (const dialog of browser.$$('[role=dialog]')) {
-    if ((await dialog.getText()).includes(text)) return dialog;
+    // 閉じかけの dialog は、一覧を取ってから読むまでの間に消える（stale element）。
+    if ((await dialog.getText().catch(() => '')).includes(text)) return dialog;
   }
   return null;
 }
@@ -376,9 +377,10 @@ async function openChannelDialog(browser) {
   return dialogWith(browser, 'Create / Join Private Channel');
 }
 
-async function closeChannelDialog(browser) {
-  if (await findDialog(browser, 'Create / Join Private Channel')) await browser.keys('Escape');
-}
+/** 作成・参加の dialog が閉じ終わるまで待つ。閉じる途中は、元の列へ戻る focus がその列を active にし直し（#1517）、
+ * その間の別の列の押下が失われる。 */
+const channelDialogClosed = (browser) =>
+  eventually('the channel dialog closes', async () => !(await findDialog(browser, 'Create / Join Private Channel')));
 
 /** Web で招待制の channel を作り、共有の token（JSON）を返す。その channel の列が増える。 */
 async function createChannel(browser, label) {
@@ -389,11 +391,12 @@ async function createChannel(browser, label) {
   await copy.waitForClickable({ timeout: WAIT });
   await copy.click();
   const link = await eventually('the share link', () => browser.execute(() => window.__kukuriCopied.at(-1)));
-  await closeChannelDialog(browser);
+  await browser.keys('Escape');
+  await channelDialogClosed(browser);
   return new URL(link).searchParams.get('token');
 }
 
-/** Web で共有の token を貼って channel に参加し、その channel の列を開く。 */
+/** Web で共有の token を貼って channel に参加し、その channel の列を開く（dialog は閉じる）。 */
 async function joinChannel(browser, token, label) {
   const dialog = await openChannelDialog(browser);
   await dialog.$('textarea[placeholder="Paste a private channel invite, mutual grant, or mutuals+ share"]').setValue(token);
@@ -401,7 +404,7 @@ async function joinChannel(browser, token, label) {
   const open = browser.$(`[role=dialog] button[aria-label="Open ${label}"]`);
   await open.waitForClickable({ timeout: WAIT });
   await open.click();
-  await closeChannelDialog(browser);
+  await channelDialogClosed(browser);
 }
 
 /** 投稿の作者（`author`）の profile を開き、まだなら follow する。profile の操作の欄を返す。 */
