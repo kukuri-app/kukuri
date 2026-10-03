@@ -489,7 +489,9 @@ impl DesktopRuntime {
             let sender = event_sender.clone();
             tokio::spawn(async move {
                 loop {
+                    // 通知の Notify は受け損なうと残らないので、先に見る(broadcast の 2 つは溜まる。#1521 AC-1b)。
                     tokio::select! {
+                        biased;
                         _ = notify.notified() => {
                             let _ = sender.send(RuntimeEvent::NotificationStatusChanged);
                         }

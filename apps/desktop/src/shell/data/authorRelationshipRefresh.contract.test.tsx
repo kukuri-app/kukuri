@@ -40,8 +40,22 @@ async function flush(milliseconds = 0) {
 test('a relationship change re-reads only the open columns of that author', async () => {
   const api = createDesktopMockApi();
   const readView = api.getAuthorSocialView.bind(api);
+  const readStatus = api.getDirectMessageStatus.bind(api);
   const socialView = vi.spyOn(api, 'getAuthorSocialView');
   const status = vi.spyOn(api, 'getDirectMessageStatus');
+  // 相手の follow の有無に応じた手元の関係と送信の可否。
+  const relationship = (mutual: boolean) => {
+    socialView.mockImplementation(async (pubkey) => ({
+      ...(await readView(pubkey)), following: true, followed_by: mutual, mutual,
+    }));
+    status.mockImplementation(async (pubkey) => ({
+      ...(await readStatus(pubkey)), mutual, send_enabled: mutual,
+    }));
+  };
+  const shown = (pubkey: string) => ({
+    message: harness.store.getState().knownAuthorsByPubkey[pubkey]?.mutual,
+    sendable: harness.store.getState().directMessageStatusByPeer[pubkey]?.send_enabled,
+  });
   const harness = createShellHookHarness({ hash: '/timeline?topic=kukuri%3Atopic%3Ageneral' });
   let workspace = harness.store.getState().workspaceState;
   for (const [kind, entityId] of [
@@ -66,15 +80,17 @@ test('a relationship change re-reads only the open columns of that author', asyn
   expect(receive).toBeDefined();
   socialView.mockClear();
   status.mockClear();
-  // 相手が follow し返した後の手元の関係。
-  socialView.mockImplementation(async (pubkey) => ({
-    ...(await readView(pubkey)), following: true, followed_by: true, mutual: true,
-  }));
 
-  await act(async () => { receive?.({ payload: { type: 'author_relationship_changed', pubkey: peer } }); });
-  await vi.waitFor(() => expect(harness.store.getState().knownAuthorsByPubkey[peer]?.mutual).toBe(true));
-  expect(socialView.mock.calls.map(([pubkey]) => pubkey)).toEqual([peer]);
-  expect(status.mock.calls.map(([pubkey]) => pubkey)).toEqual([peer]);
+  // 相手が follow し返すと「Message」が出て会話は送信可能になり、unfollow で戻る。読むのはその相手の列だけ。
+  for (const mutual of [true, false]) {
+    relationship(mutual);
+    await act(async () => { receive?.({ payload: { type: 'author_relationship_changed', pubkey: peer } }); });
+    await vi.waitFor(() => expect(shown(peer)).toEqual({ message: mutual, sendable: mutual }));
+    expect(socialView.mock.calls.map(([pubkey]) => pubkey)).toEqual([peer]);
+    expect(status.mock.calls.map(([pubkey]) => pubkey)).toEqual([peer]);
+    socialView.mockClear();
+    status.mockClear();
+  }
 
   socialView.mockClear();
   status.mockClear();
