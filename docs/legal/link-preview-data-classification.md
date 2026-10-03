@@ -25,7 +25,7 @@ ADR 0002（`docs/adr/0002-feature-data-classification-template.md`）とADR 0051
 - 端末内保持: sanitized metadataとbounded data imageをprocess-memory cacheへsuccess 10分／failure 60秒。128 entryかつ16 MiB上限。process終了で消える
 - 第三者保持: link先、image host、通信経路事業者の方針に従う。kukuriから一括削除できない
 
-## 投稿者のrecord（Web の表示。ADR 0051 §7）
+## 投稿者のrecord（Web の表示と中継。ADR 0051 §7）
 
 - 書き手: 投稿者本人のnativeだけ。上の契機で取得に成功したとき、背景で書く。外部への取得の契機・送信先・送信内容は増えない
 - 複製される項目: URL（本文に書かれた文字列）、title、description、site、画像のblob（hash・MIME・bytes数）、投稿者の公開鍵と署名。公開投稿本文と同じ範囲へ複製され、受信したpeerやCommunity Nodeにcopyが残り得る

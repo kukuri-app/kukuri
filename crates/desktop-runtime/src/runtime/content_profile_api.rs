@@ -103,7 +103,7 @@ impl DesktopRuntime {
         self.app_service.record_link_preview(object_id, input).await
     }
 
-    /// 表示中の公開投稿の、投稿者が書いたリンクプレビューを読む(Web の表示。ADR 0051 §7)。
+    /// 表示中の公開投稿の、投稿者が書いたリンクプレビューを読む(Web の表示と、Web・native の中継。ADR 0051 §7)。
     pub async fn read_link_preview_record(
         &self,
         object_id: &str,

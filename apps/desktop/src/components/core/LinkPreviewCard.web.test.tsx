@@ -119,3 +119,16 @@ test('the kept results are limited to 16 MiB and the oldest is dropped first', a
   await readLinkPreviewRecord(url, 'big-1');
   expect(invokeMock).toHaveBeenCalledOnce();
 });
+
+test('the kept results are limited to 128 entries and the oldest is dropped first', async () => {
+  invokeMock.mockResolvedValue(null);
+  for (let index = 0; index <= 128; index += 1) {
+    await readLinkPreviewRecord(url, `count-${index}`);
+  }
+  invokeMock.mockClear();
+
+  await readLinkPreviewRecord(url, 'count-128');
+  expect(invokeMock).not.toHaveBeenCalled();
+  await readLinkPreviewRecord(url, 'count-0');
+  expect(invokeMock).toHaveBeenCalledOnce();
+});

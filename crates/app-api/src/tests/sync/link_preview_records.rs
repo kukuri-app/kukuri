@@ -392,11 +392,16 @@ async fn only_verified_records_and_their_images_are_kept_for_other_participants(
     );
 }
 
-// AC-2f: 待つものを含めた読取りが上限(32 件)に達していれば、待たずに断る。
+// AC-2f: 待つものを含めた読取りが上限(32 件)に達していれば、同時に読む枠が空くのを待たずに断る。
 #[tokio::test]
 async fn reads_over_the_pending_limit_are_refused_without_waiting() {
     let fixture = fixture("pending-limit").await;
     let reads = fixture.viewer.services.link_preview_reads.clone();
+    let running = reads
+        .permits
+        .acquire_many(4)
+        .await
+        .expect("hold the permits");
     let held: Vec<_> = (0..32).map(|_| reads.admit().expect("admit")).collect();
     let refused = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -406,6 +411,7 @@ async fn reads_over_the_pending_limit_are_refused_without_waiting() {
     .expect("refused without waiting");
     assert!(refused.is_err());
     drop(held);
+    drop(running);
     assert_eq!(fixture.read().await, None, "reads are accepted again");
 }
 

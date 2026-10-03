@@ -61,7 +61,7 @@ Issue #1174では、投稿本文中の外部URLをlink化し、OGP metadataを�
 
 自動previewは、リンク先pageとOGP image hostに対する新しい外部送信である。legal bundle version 8で、送信先、表示を契機とすること、IP address、HTTP／TLS metadata、path／query、保持主体を開示する。cookie、Referer、account／topic／post情報、他本文を送らないこと、private channel／DMを自動取得しないことも明記する。version 7以下では再同意前にruntimeを開始せず、invoke gateによりpreview commandも拒否する。
 
-### 7. 投稿者の record（Web の表示。2026-10-03、#1220 W8 AC-2d）
+### 7. 投稿者の record（Web の表示と中継。2026-10-03、#1220 W8 AC-2d・AC-2f）
 
 Web クライアントは §2 の取得境界を持たず、ブラウザからリンク先・画像を取得しない（ADR 0060 §3）。代わりに、投稿者本人の native が取得した preview を投稿者の署名つき record にして投稿と同じ replica に置き、Web はそれを読む（2026-10-03 ユーザー判断）。
 
