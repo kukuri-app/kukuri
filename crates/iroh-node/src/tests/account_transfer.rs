@@ -18,8 +18,6 @@ use super::*;
 use crate::{IrohDocsNode, NodeOptions};
 
 const WAIT: Duration = Duration::from_secs(20);
-/// custom path を閉じた後の relay への切替の待ち（iroh の path の idle 期限 15 秒と、その後の転送）。
-const FALLBACK_WAIT: Duration = Duration::from_secs(45);
 const ACCOUNT: &str = "acct";
 
 /// 中身を確かめない item（封の検証は保存先の責務）。`bytes` は封の大きさ。
@@ -206,16 +204,7 @@ async fn wait_for(
     what: &str,
     done: impl Fn(&Status) -> bool,
 ) -> Result<Status> {
-    wait_within(transfer, WAIT, what, done).await
-}
-
-async fn wait_within(
-    transfer: &AccountTransfer,
-    limit: Duration,
-    what: &str,
-    done: impl Fn(&Status) -> bool,
-) -> Result<Status> {
-    timeout(limit, async {
+    timeout(WAIT, async {
         loop {
             let status = transfer.status();
             if done(&status) {
@@ -650,18 +639,11 @@ async fn a_transfer_survives_losing_the_custom_path() -> Result<()> {
     .context("the second page is staged")?;
     assert!(web_transport.stats().received_bytes >= before + 128 * 1024);
 
-    // custom だけを閉じても、3 page 目は同じ接続のまま relay で届く。閉じた custom path は iroh の path の idle 期限
-    // （15 秒）まで選ばれたまま残るので、relay への切替をその分だけ待つ（W10 の T3 と同じ）。
+    // custom だけを閉じても、3 page 目は同じ接続のまま relay で届く（閉じた custom path は iroh がすぐ閉じる。#1482）。
     web.webrtc_signaling().context("webrtc")?.reset();
     let at_reset = web_transport.stats().received_bytes;
     gate.notify_one();
-    wait_within(
-        web.account_transfer(),
-        FALLBACK_WAIT,
-        "relay fallback",
-        is_completed,
-    )
-    .await?;
+    wait_for(web.account_transfer(), "relay fallback", is_completed).await?;
     completed_both(native.account_transfer(), web.account_transfer()).await?;
     assert_eq!(web_transport.stats().received_bytes, at_reset);
     assert_eq!(*source.sent.lock().unwrap(), 1, "the bundle was sent once");
