@@ -116,33 +116,9 @@ export type DiscoveryStatus = { mode: DiscoveryMode, connect_mode: ConnectMode, 
  */
 docs_assist_peer_count: number, blob_assist_peer_count: number, local_endpoint_id: string, last_discovery_error?: string | null, };
 
-export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peer_count: number, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_count: number, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, 
-/**
- * account 同期の状態（W5 AC-6a、ADR 0061 §10）。front では任意（旧い runtime の応答と mock は持たない）。
- */
-account_sync?: AccountSyncStatus | null, };
+export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peer_count: number, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_count: number, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, account_sync?: AccountSyncStatus | null, };
 
-export type AccountSyncStatus = { 
-/**
- * 本人の端末の候補が無い。
- */
-no_peers: boolean, 
-/**
- * 最後の取得が失敗した相手がある。
- */
-fetch_failed: boolean, 
-/**
- * 読み残しがある（cursor が最後に読んだ head より手前、または周回の途中）。
- */
-behind: boolean, 
-/**
- * replica へ書けていない行がある。
- */
-pending_writes: boolean, 
-/**
- * DB を失ったときの作り直しの途中。
- */
-rebuilding: boolean, };
+export type AccountSyncStatus = { no_peers: boolean, fetch_failed: boolean, behind: boolean, pending_writes: boolean, rebuilding: boolean, };
 
 export type LiveSessionStatus = "Scheduled" | "Live" | "Paused" | "Ended";
 

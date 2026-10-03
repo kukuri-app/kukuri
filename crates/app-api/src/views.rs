@@ -899,25 +899,26 @@ pub struct SyncStatus {
     pub discovery: DiscoveryStatus,
     pub gossip_disabled_topics: Vec<String>,
     pub gossip_disabled_channels: Vec<String>,
-    /// account 同期の状態（W5 AC-6a、ADR 0061 §10）。front では任意（旧い runtime の応答と mock は持たない）。
+    // account 同期の状態（W5 AC-6a、ADR 0061 §10）。front では任意（旧い runtime の応答と mock は持たない）。
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(as = "Option<AccountSyncStatus>"))]
     pub account_sync: AccountSyncStatus,
 }
 
-/// account 同期の状態（ADR 0061 §10）。どれかが true なら、本人の別の端末と同期できていない。
+// account 同期の状態（ADR 0061 §10）。どれかが true なら、本人の別の端末と同期できていない。
+// 説明は `//` に置き、生成する TS の型（types.generated.ts）に出さない。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct AccountSyncStatus {
-    /// 本人の端末の候補が無い。
+    // 本人の端末の候補が無い。
     pub no_peers: bool,
-    /// 最後の取得が失敗した相手がある。
+    // 最後の取得が失敗した相手がある。
     pub fetch_failed: bool,
-    /// 読み残しがある（cursor が最後に読んだ head より手前、または周回の途中）。
+    // 読み残しがある（cursor が最後に読んだ head より手前、または周回の途中）。
     pub behind: bool,
-    /// replica へ書けていない行がある。
+    // replica へ書けていない行がある。
     pub pending_writes: bool,
-    /// DB を失ったときの作り直しの途中。
+    // DB を失ったときの作り直しの途中。
     pub rebuilding: bool,
 }
 
