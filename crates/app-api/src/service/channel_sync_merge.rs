@@ -348,24 +348,23 @@ impl AppService {
                         .as_deref()
                         .map(serde_json::from_str::<PrivateChannelController>)
                         .transpose()?;
-                    if !controller_supersedes(local.as_ref(), &incoming) {
+                    // 移譲先がこの端末なら、取り込む代わりに次の世代で有効になる（取り込みと有効化を 1 回の書込みに
+                    // する。#1219 AC-4）。有効化の行を書いた後に止まっていれば、停止の記録の再受信で同じ記録を書き直す。
+                    let activation = (row.joined
+                        && incoming.transfer_to.as_deref() == Some(device_id.as_str()))
+                    .then(|| PrivateChannelController {
+                        device_id: device_id.clone(),
+                        generation: incoming.generation + 1,
+                        transfer_to: None,
+                    });
+                    if !controller_supersedes(local.as_ref(), &incoming)
+                        && (activation.is_none() || local != activation)
+                    {
                         return Ok(false);
                     }
-                    // 移譲先がこの端末なら、取り込む代わりに次の世代で有効になる（取り込みと有効化を 1 回の書込みに
-                    // する。止まっても、同じ記録の取得の再送でやり直す。#1219 AC-4）。
-                    let next = if row.joined
-                        && incoming.transfer_to.as_deref() == Some(device_id.as_str())
-                    {
-                        PrivateChannelController {
-                            device_id: device_id.clone(),
-                            generation: incoming.generation + 1,
-                            transfer_to: None,
-                        }
-                    } else {
-                        incoming.clone()
-                    };
-                    let activation = (next != incoming)
-                        .then(|| controller_item(channel_id, &next))
+                    let next = activation.clone().unwrap_or_else(|| incoming.clone());
+                    let activation = activation
+                        .map(|next| controller_item(channel_id, &next))
                         .transpose()?;
                     let topic_id = row.joined.then(|| row.topic_id.clone());
                     self.put_private_channel_controller(row, &next, activation.as_ref())
@@ -440,8 +439,9 @@ impl AppService {
     }
 
     /// 担当の移譲の依頼を `(updated_at, op_id)` で採り、この端末が依頼の世代の担当なら、移譲先への停止の記録を書く
-    /// （#1219 AC-4、ADR 0018 §8）。停止の記録の書込みが、応じたことの印になる。既に移った世代・引継ぎ中・同じ
-    /// 依頼の再受信では何もしない。採った（行を置き換えた）ら true。
+    /// （#1219 AC-4、ADR 0018 §8）。停止の記録の書込みが、応じたことの印になる。既に同じ停止を行に書いていれば
+    /// （行の後・台帳の前で止まった後の再受信）、同じ記録を書き直す。既に移った世代・別の移譲先への引継ぎ中では何も
+    /// しない。採った（行を置き換えた）ら true。
     async fn merge_channel_controller_request(
         &self,
         channel_id: &ChannelId,
@@ -480,7 +480,7 @@ impl AppService {
             if !local.is_some_and(|local| {
                 local.device_id == device_id
                     && local.generation == stop.generation
-                    && local.transfer_to.is_none()
+                    && (local.transfer_to.is_none() || local.transfer_to == stop.transfer_to)
             }) {
                 return Ok(adopted);
             }
@@ -500,7 +500,8 @@ impl AppService {
     }
 
     /// 参加の行の担当の記録を置き換え、書く item があれば採用の台帳へ足す（`content_save_access` の中で呼ぶ）。replica
-    /// へは呼び出し元が排他の外で書く。止まっても台帳の送り直しで届く（ADR 0061 §10）。
+    /// へは呼び出し元が排他の外で書く。台帳の後に止まれば送り直しで（ADR 0061 §10）、行の後・台帳の前に止まれば同じ
+    /// 遷移のやり直し（依頼・停止の記録の再受信、復元の引取りの次の起動）が書き直して届く。
     pub(crate) async fn put_private_channel_controller(
         &self,
         row: PrivateChannelRow,

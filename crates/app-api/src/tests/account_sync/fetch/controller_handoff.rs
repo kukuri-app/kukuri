@@ -4,10 +4,12 @@
 
 use super::controller_requests::{TOPIC, create, joined_on, restored, running_devices};
 use super::*;
+use crate::service::channel_sync_merge::controller_item;
 use crate::{
     PrivateChannelControllerPending, PrivateChannelControllerState, PrivateChannelControllerTake,
 };
 use kukuri_core::ChannelControllerRequestV1;
+use kukuri_store::PrivateChannelRow;
 
 fn record(device_id: &str, generation: u64, transfer_to: Option<&str>) -> PrivateChannelController {
     PrivateChannelController {
@@ -58,14 +60,45 @@ async fn view_state(app: &AppService, channel_id: &str) -> Option<PrivateChannel
         .controller
 }
 
-fn controller_item(channel_id: &str, controller: &PrivateChannelController) -> AccountSyncItem {
+fn record_item(channel_id: &str, controller: &PrivateChannelController) -> AccountSyncItem {
+    controller_item(&ChannelId::new(channel_id), controller).expect("controller item")
+}
+
+/// B から旧担当（世代 1）への移譲の依頼。
+fn request_item(channel_id: &str) -> AccountSyncItem {
     AccountSyncItem::edit(
-        AccountSyncItemKey::ChannelController {
+        AccountSyncItemKey::ChannelControllerRequest {
             channel_id: ChannelId::new(channel_id),
         },
         Utc::now().timestamp_millis(),
-        Some(serde_json::to_value(controller).expect("controller value")),
+        Some(
+            serde_json::to_value(ChannelControllerRequestV1 {
+                to_device_id: "device-b".into(),
+                generation: 1,
+            })
+            .expect("request value"),
+        ),
     )
+}
+
+/// 担当の記録を参加の行にだけ書く（遷移の行を書いた後、account 同期の台帳へ書く前に止まった端末の状態）。
+async fn write_row_only(app: &AppService, channel_id: &str, controller: &PrivateChannelController) {
+    let store = &app.services.projection_store;
+    let row = store
+        .get_private_channel_by_id(channel_id)
+        .await
+        .expect("row")
+        .expect("joined row");
+    store
+        .put_private_channel(
+            &PrivateChannelRow {
+                controller: Some(serde_json::to_string(controller).expect("record")),
+                ..row
+            },
+            &[],
+        )
+        .await
+        .expect("row only");
 }
 
 /// 本人の端末の候補を `peers` で返す端末（差分の取得の task は起こさない。試験が契機を呼ぶ）。
@@ -210,19 +243,7 @@ async fn a_handoff_stopped_at_each_boundary_ends_with_one_device() {
     b.fetch_account_sync_from("device-a").await.expect("fetch");
 
     // 境界 1: B の依頼の後、A が取得する前に B を作り直す。A だけが鍵を更新できる。
-    let request = AccountSyncItem::edit(
-        AccountSyncItemKey::ChannelControllerRequest {
-            channel_id: ChannelId::new(channel.as_str()),
-        },
-        Utc::now().timestamp_millis(),
-        Some(
-            serde_json::to_value(ChannelControllerRequestV1 {
-                to_device_id: "device-b".into(),
-                generation: 1,
-            })
-            .expect("request value"),
-        ),
-    );
+    let request = request_item(&channel);
     b.publish_account_sync_item(request.clone())
         .await
         .expect("request");
@@ -291,7 +312,7 @@ async fn a_handoff_stopped_at_each_boundary_ends_with_one_device() {
         .await
         .expect("the same request again");
     for app in [&a, &b] {
-        app.merge_account_sync_item(controller_item(&channel, &record("device-a", 1, None)))
+        app.merge_account_sync_item(record_item(&channel, &record("device-a", 1, None)))
             .await
             .expect("an old record again");
         assert_eq!(
@@ -300,6 +321,69 @@ async fn a_handoff_stopped_at_each_boundary_ends_with_one_device() {
         );
     }
     assert_eq!(updaters(&devices(&a, &b), &channel).await, ["device-b"]);
+}
+
+/// 停止・有効化の行を書いた後、account 同期の台帳へ書く前に止まった端末は、作り直した後の同じ item の再受信（差分の
+/// 取得は merge を終えてから cursor を進める）で同じ記録を書き直し、移譲を終える（#1219 AC-4 監査 B-1）。channel ごとに
+/// 1 つの境界で止める。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_transition_stopped_after_its_row_ends_when_the_item_comes_again() {
+    let keys = generate_keys();
+    let (a_docs, b_docs) = (DeviceDocs::new(), DeviceDocs::new());
+    let (a_store, b_store) = (
+        Arc::new(MemoryStore::default()),
+        Arc::new(MemoryStore::default()),
+    );
+    let a = own_device(&keys, "device-a", &a_docs, a_store.clone(), a_store.clone()).await;
+    let b = device_seeing(&keys, "device-b", &b_docs, b_store.clone(), &["device-a"]).await;
+    a_docs.reading_from(&b_docs);
+    b_docs.reading_from(&a_docs);
+    restored(&[&a, &b]).await;
+    let (stopped, activated) = (
+        create(&a, ChannelAudienceKind::InviteOnly).await,
+        create(&a, ChannelAudienceKind::InviteOnly).await,
+    );
+    b.fetch_account_sync_from("device-a").await.expect("fetch");
+    for channel in [&stopped, &activated] {
+        b.publish_account_sync_item(request_item(channel))
+            .await
+            .expect("request");
+    }
+
+    // A が依頼を取り込んで `stopped` の停止の行だけを書いて止まり、作り直した後に依頼を受け直す。
+    write_row_only(&a, &stopped, &record("device-a", 1, Some("device-b"))).await;
+    drop(a);
+    let a = own_device(&keys, "device-a", &a_docs, a_store.clone(), a_store.clone()).await;
+    restored(&[&a]).await;
+    a.fetch_account_sync_from("device-b")
+        .await
+        .expect("the old device fetches the requests again");
+
+    // B が停止の記録を取り込んで `activated` の有効化の行だけを書いて止まり、作り直した後に停止の記録を受け直す。
+    write_row_only(&b, &activated, &record("device-b", 2, None)).await;
+    drop(b);
+    let b = device_seeing(&keys, "device-b", &b_docs, b_store.clone(), &["device-a"]).await;
+    restored(&[&b]).await;
+    b.fetch_account_sync_from("device-a")
+        .await
+        .expect("the new device fetches the stops");
+    a.fetch_account_sync_from("device-b")
+        .await
+        .expect("the old device follows");
+    for channel in [&stopped, &activated] {
+        for app in [&a, &b] {
+            assert_eq!(
+                controller(app, channel).await,
+                Some(record("device-b", 2, None)),
+                "{channel}"
+            );
+        }
+        assert_eq!(updaters(&devices(&a, &b), channel).await, ["device-b"]);
+        assert_eq!(
+            view_state(&a, channel).await,
+            Some(PrivateChannelControllerState::OtherDevice)
+        );
+    }
 }
 
 /// 同じ世代で端末が異なる 2 つの記録（古い backup の復元で起きる）は、どの順で受けても、どの端末でも端末 ID の大きい方に
@@ -315,10 +399,10 @@ async fn records_of_the_same_generation_settle_on_one_device() {
     b.fetch_account_sync_from("device-a").await.expect("fetch");
     let (low, high) = (record("device-c", 2, None), record("device-d", 2, None));
     for (app, first, second) in [(&a, &low, &high), (&b, &high, &low)] {
-        app.merge_account_sync_item(controller_item(&channel, first))
+        app.merge_account_sync_item(record_item(&channel, first))
             .await
             .expect("first");
-        app.merge_account_sync_item(controller_item(&channel, second))
+        app.merge_account_sync_item(record_item(&channel, second))
             .await
             .expect("second");
         assert_eq!(controller(app, &channel).await, Some(high.clone()));
@@ -326,6 +410,7 @@ async fn records_of_the_same_generation_settle_on_one_device() {
 }
 
 /// backup から復元した端末は、自分の channel の担当を次の世代で引き取る。旧担当は account 同期でそれに従い、保留になる。
+/// 1 件目の行を書いた後・台帳の前で止まった起動のやり直しでも、その channel の記録を書き直す（#1219 AC-4 監査 B-1）。
 /// やり直しても同じ記録のまま。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restored_device_takes_over_its_channels() {
@@ -338,6 +423,7 @@ async fn a_restored_device_takes_over_its_channels() {
     let first = create(&a, ChannelAudienceKind::InviteOnly).await;
     let second = create(&a, ChannelAudienceKind::FriendPlus).await;
     b.fetch_account_sync_from("device-a").await.expect("fetch");
+    write_row_only(&b, &first, &record("device-b", 2, None)).await;
     let mut after = String::new();
     while let Some(next) = b
         .claim_private_channel_controllers(&after, 1)

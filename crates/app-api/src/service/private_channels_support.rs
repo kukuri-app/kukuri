@@ -384,6 +384,18 @@ impl AppService {
             .await
     }
 
+    /// 担当の端末が本人の端末の候補（account の hint topic の rendezvous の候補、ADR 0061 §10）にいるか（#1219 AC-3・
+    /// AC-4）。
+    async fn controller_is_reachable(&self, controller: &PrivateChannelController) -> bool {
+        self.services
+            .hint_transport
+            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|peer| peer.endpoint_id == controller.device_id)
+    }
+
     /// 共有・投稿の前の鍵更新。担当でなければ、担当への依頼を account 同期へ書き、担当が本人の端末の候補にいれば
     /// 新しい世代が届くまで待つ。候補にいない・期限までに届かなければ保留を返す（依頼は残り、担当が取得したときに
     /// 処理する。#1219 AC-3、ADR 0018 §8）。
@@ -407,18 +419,13 @@ impl AppService {
             })?),
         ))
         .await?;
-        let candidates = self
-            .services
-            .hint_transport
-            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
-            .await
-            .unwrap_or_default();
-        if !state.controller.as_ref().is_some_and(|controller| {
-            controller.transfer_to.is_none()
-                && candidates
-                    .iter()
-                    .any(|peer| peer.endpoint_id == controller.device_id)
-        }) {
+        let reachable = match &state.controller {
+            Some(controller) if controller.transfer_to.is_none() => {
+                self.controller_is_reachable(controller).await
+            }
+            _ => false,
+        };
+        if !reachable {
             return Err(pending);
         }
         let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
@@ -463,16 +470,7 @@ impl AppService {
         if controller.transfer_to.is_some() {
             return Ok(PrivateChannelControllerTake::Waiting);
         }
-        let candidates = self
-            .services
-            .hint_transport
-            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
-            .await
-            .unwrap_or_default();
-        if !candidates
-            .iter()
-            .any(|peer| peer.endpoint_id == controller.device_id)
-        {
+        if !self.controller_is_reachable(&controller).await {
             return Ok(PrivateChannelControllerTake::NotConnected);
         }
         self.publish_account_sync_item(AccountSyncItem::edit(
@@ -507,7 +505,8 @@ impl AppService {
 
     /// backup から復元した端末が、自分の channel の担当を引き取る（#1219 AC-4、2026-10-02 のユーザー判断）。owner の
     /// 参加中の行を `after` より後から `limit` 件読み、記録を `{この端末, 世代 + 1}`（記録が無ければ世代 1）にする。
-    /// 既にこの端末が担当の channel は飛ばす。続きの cursor を返す（終わりは `None`）。
+    /// 既にこの端末が担当の channel（行の後・台帳の前で止まった起動の後のやり直し）は、世代を進めずに同じ記録を書き直す。
+    /// 続きの cursor を返す（終わりは `None`）。
     pub async fn claim_private_channel_controllers(
         &self,
         after: &str,
@@ -538,15 +537,15 @@ impl AppService {
                     .as_deref()
                     .map(serde_json::from_str::<PrivateChannelController>)
                     .transpose()?;
-                if local.as_ref().is_some_and(|local| {
-                    local.device_id == device_id && local.transfer_to.is_none()
-                }) {
-                    continue;
-                }
-                let next = PrivateChannelController {
-                    device_id: device_id.clone(),
-                    generation: local.map_or(1, |local| local.generation + 1),
-                    transfer_to: None,
+                let next = match local {
+                    Some(local) if local.device_id == device_id && local.transfer_to.is_none() => {
+                        local
+                    }
+                    local => PrivateChannelController {
+                        device_id: device_id.clone(),
+                        generation: local.map_or(1, |local| local.generation + 1),
+                        transfer_to: None,
+                    },
                 };
                 let channel_id = ChannelId::new(row.channel_id.clone());
                 let item = controller_item(&channel_id, &next)?;
