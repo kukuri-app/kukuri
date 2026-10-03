@@ -315,7 +315,7 @@ impl Signaling {
     }
 
     /// 生きた需要の接続が残り、今の世代の session が無い相手とだけ交渉し直す（可視・online・pageshow・resume）。
-    /// 開いている session は閉じない（閉じた custom path は iroh の path の idle 期限まで選ばれたまま残るため）。
+    /// 開いている session は閉じない（閉じると、交渉し直すまで relay の経路になるため）。
     pub fn resume(&self) {
         let drivers: Vec<_> = {
             let mut state = self.state();

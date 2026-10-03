@@ -42,16 +42,8 @@ fn via_relay(node: &IrohDocsNode, relay: &RelayUrl) -> EndpointAddr {
     EndpointAddr::from_parts(node.endpoint().id(), [TransportAddr::Relay(relay.clone())])
 }
 
-async fn eventually(what: &str, done: impl AsyncFnMut() -> bool) -> Result<()> {
-    eventually_within(WAIT, what, done).await
-}
-
-async fn eventually_within(
-    limit: Duration,
-    what: &str,
-    mut done: impl AsyncFnMut() -> bool,
-) -> Result<()> {
-    n0_future::time::timeout(limit, async {
+async fn eventually(what: &str, mut done: impl AsyncFnMut() -> bool) -> Result<()> {
+    n0_future::time::timeout(WAIT, async {
         while !done().await {
             n0_future::time::sleep(Duration::from_millis(10)).await;
         }
@@ -147,8 +139,18 @@ async fn the_route_moves_to_the_custom_path_and_falls_back_to_the_relay() -> Res
     )
     .await?;
     assert!(!fetch.is_finished());
+    // #1482 J1: 閉じた custom path を iroh がすぐ閉じるので、relay で受信が再開する（64 KiB 届く）まで 2 秒以内。
+    let relayed = || web.endpoint().metrics().socket.recv_data_relay.get();
+    let before = relayed();
+    let closed_at = n0_future::time::Instant::now();
     web.webrtc_signaling().context("webrtc")?.reset();
     let at_reset = web_transport.stats().received_bytes;
+    eventually("the transfer resumes over the relay", async || {
+        relayed() >= before + 64 * 1024
+    })
+    .await?;
+    let stall = closed_at.elapsed();
+    assert!(stall <= Duration::from_secs(2), "stall {stall:?}");
     fetch.await??;
     assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
     // 残りは relay で届いた（custom の受信は reset の後に増えていない）。接続はそのままで、開いた path は relay だけ。
@@ -169,8 +171,8 @@ async fn the_route_moves_to_the_custom_path_and_falls_back_to_the_relay() -> Res
 
 /// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
 /// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
-/// （需要の終わった 40 件とは交渉しない）。閉じた custom path は iroh の path の idle 期限（15 秒）まで選ばれたまま
-/// 残り、その間の新しい接続も届かないので、resume の前に閉じるのを待つ。
+/// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の
+/// 相手（交渉に応じない）との交渉は reset の後も期限まで枠を持つので、resume の前に期限の分だけ待つ。
 #[tokio::test]
 async fn resume_renegotiates_only_the_live_demand() -> Result<()> {
     let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
@@ -220,14 +222,12 @@ async fn resume_renegotiates_only_the_live_demand() -> Result<()> {
         ) == (0, 0, 0)
     })
     .await?;
-    eventually_within(
-        Duration::from_secs(40),
-        "iroh drops the closed custom path",
-        async || !custom_is_active(&web, &live).await,
-    )
+    eventually("iroh drops the closed custom path", async || {
+        !custom_is_active(&web, &live).await
+    })
     .await?;
     let attempts = signaling.stats().attempts;
-    n0_future::time::sleep(Duration::from_secs(1)).await;
+    n0_future::time::sleep(kukuri_webrtc_transport::NEGOTIATION_DEADLINE).await;
     assert_eq!(
         (web_transport.stats().sessions, signaling.stats().attempts),
         (0, attempts)
