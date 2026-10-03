@@ -83,9 +83,10 @@ fn export_ipc_types() {
         StartOwnerDomeHostingRequest, SubmitCommunityNodeReportRequest,
         SubmitCommunityNodeReportResult, SubmitCommunityNodeReportStatus,
         SubmitDomeSessionInputRequest, SubmitIndexingRequestResponse, SwitchAccountRequest,
-        ToggleReactionRequest, TrustUserReadResponse, UnsubscribeTopicRequest,
-        UpdateGameRoomRequest, UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest,
-        WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
+        TakePrivateChannelControllerRequest, ToggleReactionRequest, TrustUserReadResponse,
+        UnsubscribeTopicRequest, UpdateGameRoomRequest, UpdateMetaverseRoomRequest,
+        WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
+        WithdrawalReasonVisibilityRequest,
     };
     use kukuri_app_api::*;
     use kukuri_cn_protocol::{
@@ -176,6 +177,8 @@ fn export_ipc_types() {
         TimelineView,
         DirectMessageTimelineView,
         JoinedPrivateChannelView,
+        PrivateChannelControllerState,
+        PrivateChannelControllerTake,
         kukuri_app_api::JoinedPrivateChannelPage,
         PrivateChannelEpochCapability,
         PrivateChannelCapability,
@@ -428,6 +431,7 @@ fn export_ipc_types() {
         ImportFriendPlusShareRequest,
         FreezePrivateChannelRequest,
         RotatePrivateChannelRequest,
+        TakePrivateChannelControllerRequest,
         SetPrivateChannelEntryDomeRequest,
         LeavePrivateChannelRequest,
         ListJoinedPrivateChannelsRequest,

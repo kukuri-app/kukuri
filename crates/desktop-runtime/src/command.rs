@@ -440,6 +440,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     submit_community_node_indexing_request(request: CommunityNodeIndexingRequest) => runtime.submit_community_node_indexing_request(request).await.map_err(CommandError::from);
     submit_community_node_report(request: SubmitCommunityNodeReportRequest) => runtime.submit_community_node_report(request).await.map_err(CommandError::from);
     submit_community_node_tester_feedback(request: CommunityNodeTesterFeedbackSubmission) => runtime.submit_community_node_tester_feedback(request).await.map_err(CommandError::from);
+    take_private_channel_controller(request: TakePrivateChannelControllerRequest) => runtime.take_private_channel_controller(request).await.map_err(map_error);
     toggle_reaction(request: ToggleReactionRequest) => runtime.toggle_reaction(request).await.map_err(map_error);
     unblock_author(request: AuthorRequest) => runtime.unblock_author(request).await.map_err(map_error);
     unfollow_author(request: AuthorRequest) => runtime.unfollow_author(request).await.map_err(map_error);

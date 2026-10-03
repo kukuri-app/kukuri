@@ -97,22 +97,29 @@ impl AppService {
         if state.owner_pubkey != self.current_author_pubkey() {
             anyhow::bail!("only the channel owner can rotate the channel");
         }
-        // #1219 W6: 明示の rotate も write/share 前の auto rotate もここを通る。担当端末でなければ何も書かずに保留する。
         let device_id = self.local_device_id().await?;
-        if !state.controller.as_ref().is_some_and(|controller| {
+        // 予約の照合と書込みは、参加の行の commit と同じ排他の中で行う(同じ端末の同時の鍵更新は同じ操作になる)。
+        let _save_access = self.services.content_save_access.lock().await;
+        let store = &self.services.projection_store;
+        let row = store
+            .get_private_channel(&joined_private_channel_key(topic_id, channel_id))
+            .await?
+            .filter(|row| row.joined)
+            .context("private channel is not joined")?;
+        // #1219 W6: 明示の rotate も write/share 前の auto rotate もここを通る。担当端末でなければ何も書かずに保留する。
+        // 判定は参加の行で、担当の停止・有効化の書込みと同じ排他の中で行う(メモリは書込みの直後に古く、移譲の後の旧担当が
+        // 鍵を更新してしまう。#1219 AC-4)。
+        let controller = row
+            .controller
+            .as_deref()
+            .map(serde_json::from_str::<PrivateChannelController>)
+            .transpose()?;
+        if !controller.is_some_and(|controller| {
             controller.device_id == device_id && controller.transfer_to.is_none()
         }) {
             return Err(PrivateChannelControllerPending.into());
         }
-        // 予約の照合と書込みは、参加の行の commit と同じ排他の中で行う(同じ端末の同時の鍵更新は同じ操作になる)。
-        let _save_access = self.services.content_save_access.lock().await;
-        let store = &self.services.projection_store;
-        let from_epoch_id = store
-            .get_private_channel(&joined_private_channel_key(topic_id, channel_id))
-            .await?
-            .filter(|row| row.joined)
-            .context("private channel is not joined")?
-            .current_epoch_id;
+        let from_epoch_id = row.current_epoch_id;
         let reserved = store
             .list_private_channel_epochs(
                 channel_id,

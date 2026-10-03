@@ -179,6 +179,8 @@ pub enum AccountSyncItemKey {
     ChannelController { channel_id: ChannelId },
     /// 担当でない端末から担当への鍵更新の依頼（#1219 AC-3）。値は `ChannelRotationRequestV1`。
     ChannelRotationRequest { channel_id: ChannelId },
+    /// 担当を引き取りたい端末から旧担当への移譲の依頼（#1219 AC-4）。値は `ChannelControllerRequestV1`。
+    ChannelControllerRequest { channel_id: ChannelId },
     /// 端末の変更の窓の 1 件（ADR 0061 §10）。値は `AccountSyncChangeV1`。merge の対象ではない。
     ChangeSlot { device_id: String, slot: u16 },
     /// 端末の変更の窓の head。値は `AccountSyncChangeV1`（`docs_key` は空）。
@@ -213,6 +215,10 @@ impl AccountSyncItemKey {
             Self::ChannelRotationRequest { channel_id } => {
                 format!("channel/{}/rotation", hex::encode(channel_id.as_str()))
             }
+            Self::ChannelControllerRequest { channel_id } => format!(
+                "channel/{}/controller-request",
+                hex::encode(channel_id.as_str())
+            ),
             Self::ChangeSlot { device_id, slot } => format!("changes/{device_id}/{slot:03}"),
             Self::ChangeHead { device_id } => format!("changes/{device_id}/head"),
         }
@@ -240,6 +246,9 @@ impl AccountSyncItemKey {
                 None if item == "membership" => Self::ChannelMembership { channel_id },
                 None if item == "controller" => Self::ChannelController { channel_id },
                 None if item == "rotation" => Self::ChannelRotationRequest { channel_id },
+                None if item == "controller-request" => {
+                    Self::ChannelControllerRequest { channel_id }
+                }
                 _ => anyhow::bail!("unknown channel item"),
             }
         } else {
@@ -281,7 +290,8 @@ impl AccountSyncItemKey {
             }
             Self::ChannelMembership { channel_id }
             | Self::ChannelController { channel_id }
-            | Self::ChannelRotationRequest { channel_id } => id(channel_id.as_str()),
+            | Self::ChannelRotationRequest { channel_id }
+            | Self::ChannelControllerRequest { channel_id } => id(channel_id.as_str()),
             Self::ChangeSlot { device_id, slot } => {
                 ensure!(
                     u64::from(*slot) < ACCOUNT_SYNC_CHANGE_WINDOW,
@@ -445,4 +455,13 @@ pub struct ChannelMembershipV1 {
 #[serde(deny_unknown_fields)]
 pub struct ChannelRotationRequestV1 {
     pub from_epoch_id: String,
+}
+
+/// 担当の移譲の依頼の item の値（#1219 AC-4、ADR 0018 §8）。旧担当は、自分が担当でその世代が `generation` のときだけ、
+/// `to_device_id` への停止の記録を書く（同じ依頼の再受信・既に移った世代からの依頼は何もしない）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelControllerRequestV1 {
+    pub to_device_id: String,
+    pub generation: u64,
 }

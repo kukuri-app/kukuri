@@ -75,6 +75,7 @@ import type {
   NotificationCursor,
   PostView as WirePostView,
   PostWithdrawalReasonRequest,
+  PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
   Profile,
   ReactionStateView,
@@ -428,6 +429,8 @@ export interface DesktopApi {
   importFriendPlusShare(token: string): Promise<FriendPlusSharePreview>;
   freezePrivateChannel(topic: string, channelId: string): Promise<JoinedPrivateChannelView>;
   rotatePrivateChannel(topic: string, channelId: string): Promise<JoinedPrivateChannelView>;
+  // 共有リンクの作成と新しいアクセスの配布を、この端末で行うように切り替える(#1219 AC-4)。
+  takePrivateChannelController(topic: string, channelId: string): Promise<PrivateChannelControllerTake>;
   setPrivateChannelEntryDome(
     topic: string,
     channelId: string,

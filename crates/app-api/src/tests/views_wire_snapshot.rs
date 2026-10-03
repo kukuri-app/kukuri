@@ -403,6 +403,7 @@ fn views_wire_joined_private_channel_view() {
             participant_count: None,
             stale_participant_count: 1,
             entry_dome_instance_id: Some("dome-entry".to_string()),
+            controller: None,
         },
     );
 }
