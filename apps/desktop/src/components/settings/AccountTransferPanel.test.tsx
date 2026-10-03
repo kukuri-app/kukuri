@@ -54,10 +54,37 @@ test('the source shows the QR code and link, then confirms the matching code', a
   expect(await screen.findByText('Waiting for the other device to confirm…')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Codes match' })).not.toBeInTheDocument();
 
-  status = { state: 'confirmed', role: 'source' };
-  expect(await screen.findByText('Both devices are connected and confirmed.', {}, { timeout: 2000 })).toBeInTheDocument();
+  status = { state: 'transferring', role: 'source', items: 5 };
+  expect(await screen.findByText('Sending keys and settings (5)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  status = { state: 'completed', role: 'source', account_id: null };
+  expect(await screen.findByText(/The other device has saved the account/, {}, { timeout: 2000 })).toBeInTheDocument();
   unmount();
   expect(identityApi.cancelAccountTransfer).toHaveBeenCalled();
+});
+
+test('the target reports the received account once and explains a storage failure', async () => {
+  const user = userEvent.setup();
+  const onCompleted = vi.fn();
+  const { unmount } = render(<AccountTransferPanel role='target' initialLink={LINK} onCompleted={onCompleted} />);
+  identityApi.openAccountTransfer.mockImplementation(async () => {
+    status = { state: 'transferring', role: 'target', items: 64 };
+  });
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  expect(await screen.findByText('Receiving and saving keys and settings (64)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(onCompleted).not.toHaveBeenCalled();
+  status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc' };
+  expect(await screen.findByText(/Everything was received/, {}, { timeout: 2000 })).toBeInTheDocument();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc');
+  unmount();
+
+  render(<AccountTransferPanel role='target' initialLink={LINK} onCompleted={onCompleted} />);
+  identityApi.openAccountTransfer.mockImplementation(async () => {
+    status = { state: 'failed', role: 'target', reason: 'storage' };
+  });
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  expect(await screen.findByText(/couldn't save the account/, {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(onCompleted).toHaveBeenCalledTimes(1);
 });
 
 test('the target pastes the link, connects and can reject a mismatching code', async () => {

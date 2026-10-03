@@ -1,4 +1,4 @@
-//! QR・専用リンクによる端末間の移行の招待（#1211 W7）。
+//! QR・専用リンクによる端末間の移行の招待（#1211 W7）と、確認済みの接続で送る必須 bundle の frame（AC-2）。
 //!
 //! 招待は移行元が出す短命・1 回限りの接続情報で、アカウントの秘密鍵・チャンネルの秘密を含まない。
 //! 秘密の値は移行先が移行元へ自分を証明する鍵にだけ使い、確認コードの導出にも両端末の endpoint id を束縛する。
@@ -10,6 +10,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use secp256k1::rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
+
+use crate::{AccountSyncItem, AccountSyncItemKey, AccountSyncKeys, Pubkey, SealedAccountSyncItem};
 
 /// リンクの形。秘密は fragment にだけ置き、HTTP の query・Referer へ出さない。
 pub const ACCOUNT_TRANSFER_LINK_PREFIX: &str = "kukuri://transfer#v1.";
@@ -141,7 +143,7 @@ impl AccountTransferInvite {
     }
 }
 
-/// 移行の画面へ返す状態（AC-1 は確認済みまで。転送は AC-2）。
+/// 移行の画面へ返す状態。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -159,8 +161,15 @@ pub enum AccountTransferStatus {
         code: String,
         local_accepted: bool,
     },
-    Confirmed {
+    /// 両端末の承認の後、必須 bundle を送っている・保存している（送った・保存した item の数）。
+    Transferring {
         role: AccountTransferRole,
+        items: u64,
+    },
+    /// 移行元は移行先の保存の ACK を受けた。移行先は保存を確定した（`account_id` は受けたアカウント）。
+    Completed {
+        role: AccountTransferRole,
+        account_id: Option<String>,
     },
     Failed {
         role: AccountTransferRole,
@@ -170,7 +179,7 @@ pub enum AccountTransferStatus {
 
 impl AccountTransferStatus {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Confirmed { .. } | Self::Failed { .. })
+        matches!(self, Self::Completed { .. } | Self::Failed { .. })
     }
 }
 
@@ -195,8 +204,118 @@ pub enum AccountTransferFailure {
     /// どちらかの端末で「一致しない」を選んだ。
     Rejected,
     Cancelled,
-    /// 確認の途中で接続が切れた。
+    /// 確認・転送の途中で接続が切れた。
     Interrupted,
+    /// 移行先で必須 bundle を保存できなかった（容量不足など）。
+    Storage,
+}
+
+/// 1 つの Items の frame の item の上限。
+pub const MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS: usize = 64;
+/// 1 つの frame の JSON の上限。
+pub const MAX_ACCOUNT_TRANSFER_FRAME_BYTES: usize = 1024 * 1024;
+
+/// 必須 bundle の 1 件: 移行元の account の replica の docs の key と、その封（ADR 0061 §3）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountTransferItem {
+    pub key: String,
+    pub sealed: SealedAccountSyncItem,
+}
+
+impl AccountTransferItem {
+    /// アカウントの鍵で開いて確かめる。封の認証（AAD はアカウントの公開鍵と docs の key）と、移行する種類
+    /// （profile・表示例外・channel の参加・世代の鍵・担当。変更の窓は送らない）を見る。
+    pub fn open(&self, keys: &AccountSyncKeys, account: &Pubkey) -> Result<AccountSyncItem> {
+        AccountSyncItemKey::from_docs_key(&self.key)?;
+        keys.open(account, &self.key, &self.sealed)
+    }
+}
+
+/// 両端末の承認の後、移行元が同じ接続で送る frame。Key・Items（0 回以上）・End の順。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AccountTransferFrame {
+    /// アカウントの秘密鍵（hex）。
+    Key {
+        secret: String,
+    },
+    Items {
+        items: Vec<AccountTransferItem>,
+    },
+    /// 送った item の総数。
+    End {
+        count: u64,
+    },
+}
+
+impl std::fmt::Debug for AccountTransferFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Key { .. } => f.write_str("Key { .. }"),
+            Self::Items { items } => write!(f, "Items {{ {} items }}", items.len()),
+            Self::End { count } => write!(f, "End {{ count: {count} }}"),
+        }
+    }
+}
+
+impl AccountTransferFrame {
+    /// item を、64 件・1 MiB までの Items の frame に分ける。
+    pub fn chunks(items: Vec<AccountTransferItem>) -> Result<Vec<Self>> {
+        let empty = serde_json::to_vec(&Self::Items { items: Vec::new() })?.len();
+        let mut frames = Vec::new();
+        let mut chunk = Vec::new();
+        let mut bytes = empty;
+        for item in items {
+            let size = serde_json::to_vec(&item)?.len();
+            // 2 件目からは区切りの `,` が 1 byte 増える。
+            if !chunk.is_empty()
+                && (chunk.len() == MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS
+                    || bytes + 1 + size > MAX_ACCOUNT_TRANSFER_FRAME_BYTES)
+            {
+                frames.push(Self::Items {
+                    items: std::mem::take(&mut chunk),
+                });
+                bytes = empty;
+            }
+            bytes += usize::from(!chunk.is_empty()) + size;
+            ensure!(
+                bytes <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+                "account transfer item is too large"
+            );
+            chunk.push(item);
+        }
+        if !chunk.is_empty() {
+            frames.push(Self::Items { items: chunk });
+        }
+        Ok(frames)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let bytes = serde_json::to_vec(self)?;
+        ensure!(
+            bytes.len() <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+            "account transfer frame is too large"
+        );
+        Ok(bytes)
+    }
+
+    /// frame を読む。大きさと Items の件数を確かめる。
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() <= MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+            "account transfer frame is too large"
+        );
+        let frame: Self =
+            serde_json::from_slice(bytes).context("invalid account transfer frame")?;
+        if let Self::Items { items } = &frame {
+            ensure!(
+                (1..=MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS).contains(&items.len()),
+                "account transfer chunk must contain 1..={MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS} items"
+            );
+        }
+        Ok(frame)
+    }
 }
 
 mod hex_secret {

@@ -179,8 +179,10 @@ export async function switchAccount(accountId: string): Promise<AccountRecord> {
 }
 
 // #1211: QR・専用リンクの移行。リンクは招待の秘密を含むので、log・URL の query へ出さない。
-// mock ビルドでは、接続と相手の承認を即座に済ませた状態を返す。
+// mock ビルドでは、接続と相手の承認を即座に済ませ、1.5 秒の転送中の後に完了にする（移行先は今のアカウントを受けた
+// ことにして、切り替えない）。
 let mockTransfer: AccountTransferStatus = { state: 'idle' };
+let mockTransferDoneAt = 0;
 
 export async function createAccountTransferInvite(): Promise<AccountTransferLink> {
   if (isDesktopMockActive()) {
@@ -201,14 +203,21 @@ export async function openAccountTransfer(link: string): Promise<void> {
 }
 
 export async function getAccountTransferStatus(): Promise<AccountTransferStatus> {
-  if (isDesktopMockActive()) return mockTransfer;
+  if (isDesktopMockActive()) {
+    if (mockTransfer.state === 'transferring' && Date.now() >= mockTransferDoneAt) {
+      const { role } = mockTransfer;
+      mockTransfer = { state: 'completed', role, account_id: role === 'target' ? mockAccounts.active_account_id : null };
+    }
+    return mockTransfer;
+  }
   return invokeDesktop<AccountTransferStatus>('get_account_transfer_status');
 }
 
 export async function decideAccountTransfer(accept: boolean): Promise<void> {
   if (isDesktopMockActive()) {
     if (mockTransfer.state !== 'confirming') throw new Error('account transfer is not awaiting confirmation');
-    mockTransfer = accept ? { state: 'confirmed', role: mockTransfer.role } : { state: 'failed', role: mockTransfer.role, reason: 'rejected' };
+    mockTransferDoneAt = Date.now() + 1500;
+    mockTransfer = accept ? { state: 'transferring', role: mockTransfer.role, items: 12 } : { state: 'failed', role: mockTransfer.role, reason: 'rejected' };
     return;
   }
   return invokeDesktop<void>('decide_account_transfer', { request: { accept } satisfies DecideAccountTransferRequest });

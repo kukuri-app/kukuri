@@ -1,0 +1,21 @@
+# 2026-10-03 account transfer bundle
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1211 AC-2（W7-PR2）の実装PR
+- Preview: [転送中・ja・dark](./issue-1211-transferring-ja-dark.png) / [完了・en・light](./issue-1211-completed-en-light.png) / [完了・ja・dark](./issue-1211-completed-ja-dark.png)
+- Surface / user / purpose: 「アカウント追加」Dialog の「別の端末へ移す」「別の端末から移す」の、両端末の確認の後。2 台の端末を持つ本人が、鍵と設定を移し終えたことを両端末で知り、移行先で受け取ったアカウントを使い始める。
+- Summary: [2026-10-02 の record](./2026-10-02-1211-account-transfer.md) の「確認済み」の表示を、転送中（送った・保存した件数の状態の文）と完了（accent の Notice）に置き換えた。移行先は完了したら受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない。2026-10-03 ユーザー決定）。失敗の理由に「移行先で保存できない」を足し、「切断」の文言を確認・転送の両方に合わせた。対象・未取得の説明は AC-5。
+- Conditions:
+  - Platform: Windows / Linux desktop（Storybook で描画、Tauri の実機は未確認）
+  - Viewport: Dialog の本文幅（Storybook の narrow frame 480px）
+  - Theme: dark / light
+  - Locale: ja / en（zh-CN は文言だけ。story の play が ja・en のボタン名で操作するため撮影しない）
+  - State: 転送中（件数）、完了（移行元・移行先）、保存の失敗
+- Accessibility / interaction: 転送中は `role="status"`。件数と単位の間は改行しない（ja・zh-CN は no-break space）。完了の後の切替は既存のアカウントの切替（処理中の重複操作の無効化・失敗の表示）を使う。
+- Performance: 画面を開いている間だけ 500 ms ごとに状態を 1 件読む（AC-1 と同じ）。件数に依存する処理は画面にない。
+- Validation: Vitest（`AccountTransferPanel.test.tsx` 6 件、`DesktopShellPage.accountMenu.test.tsx` 7 件）、eslint、tsc、Storybook の `TargetTransferring`・`TargetCompleted`（play で操作）を Playwright の Chromium で撮影して clipping・重なり・折り返しを確認した。
+- Not verified: Tauri の実機での切替の後の表示。Web↔native の実ブラウザの往復（W8）。
+- Review result: 対象 story の採用判定は PASS。
+- Exceptions: なし。

@@ -15,6 +15,7 @@ pub(crate) mod create;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod display;
 pub(crate) mod lifecycle;
+pub(crate) mod transfer;
 use std::path::{Path, PathBuf};
 use web_time::{SystemTime, UNIX_EPOCH};
 
