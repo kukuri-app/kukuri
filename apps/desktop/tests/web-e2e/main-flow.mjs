@@ -206,8 +206,8 @@ async function exchangeInTopic(browser, name, tag) {
   await switchTopic(browser, 'general');
 }
 
-/** Web↔Web: 双方が投稿し、互いの投稿へ返信と反応をして、相手に届く。反応は他の反応の付いていない投稿へ付ける
- * （同じ投稿への 90 秒以内の 2 件目以降の反応は届かない既知の不具合 #1505 を避ける。直ったらこの条件を外す）。 */
+/** Web↔Web: 双方が投稿し、互いの投稿へ返信と反応をして、相手に届く。同じ投稿への別の人の 2 件目の反応も、続けて
+ * （90 秒以内に）付けて届く（#1505 の修正の後の挙動）。 */
 async function exchangeBetweenWeb(x, y, reactions) {
   const xPost = `hello from ${x.label} to ${y.label}`;
   const yPost = `hello from ${y.label} to ${x.label}`;
@@ -225,6 +225,8 @@ async function exchangeBetweenWeb(x, y, reactions) {
   await sees(x, fromY);
   await react(y, xPost, reactions[1]);
   await seesReaction(x, xPost, EMOJI[reactions[1]]);
+  await react(y, yPost, reactions[2]);
+  await seesReaction(x, yPost, EMOJI[reactions[2]]);
 }
 
 /** 画像を添えた投稿の画像が読み込まれるまで待ち、その間に relay が中継した bytes と、投稿の画像のうち最も小さい版の
@@ -314,7 +316,7 @@ async function main() {
     const b = await openClient('web-b', { ice: true });
     clients.push(b);
     await sees(b, withA.fromWeb);
-    await exchangeBetweenWeb(b, a, ['heart', 'fire']);
+    await exchangeBetweenWeb(b, a, ['heart', 'fire', 'clap']);
     const webImage = `web image ${RUN}`;
     const webToWeb = await relayedWhileLoading(b, webImage, postWebImage(a, webImage));
     console.log('web→web direct', webToWeb);
@@ -340,7 +342,7 @@ async function main() {
     });
     await exchangeWithNative(c, 'web-c', 'clap');
     await exchangeInTopic(c, 'test', 'web-c');
-    await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands']);
+    await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands', 'party-popper']);
     const fallback = await relayedWhileLoading(c, `native image fallback ${RUN}`, postNativeImage(`native image fallback ${RUN}`));
     console.log('native→web fallback', fallback);
     assert.ok(fallback.relayed >= fallback.size * 0.9, `native→web image did not use the relay: ${JSON.stringify(fallback)}`);
