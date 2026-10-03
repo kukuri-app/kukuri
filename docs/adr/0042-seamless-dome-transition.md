@@ -39,7 +39,7 @@ ActiveなDome Connectionは恒常的なportalではなく、avatarが隣のDome�
 - Canonical source: topologyはSpatial Context replica、world definitionはInstance／Preset manifest、physicsはactive host session。
 - Replicated: transition自体はNo。owner hostまたはCommunity Node hostのmemoryとclient coordinatorだけに保持する。
 - Rebuildable: topology、hosting view、manifest、latest signed snapshotから再試行できる。
-- Retention: reservationは15秒で失効し、commit／abort／session終了時に破棄する。raw access proof、token、presence payloadは診断へ出さない。
+- Retention: reservationは15秒で失効し、commit／abort／session終了時に破棄する。source exit fenceはsourceの完了・Leave・退去で破棄する（#1538）。raw access proof、token、presence payloadは診断へ出さない。
 
 ## Consequences
 

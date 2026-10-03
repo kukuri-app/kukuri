@@ -59,7 +59,10 @@ impl DomeSessionRuntime {
         self.revoke_transition_access(participant_pubkey, None);
         self.transition_entries.remove(participant_id);
         self.seated_on.remove(participant_id);
-        self.last_input_sequence.remove(participant_id);
+        if participant_pubkey != &self.lease.lease.owner_pubkey {
+            self.inputs
+                .retire(participant_id, self.participant_limit as usize);
+        }
         self.participant_last_seen_at.remove(participant_id);
         self.player_budgets.remove(participant_id);
         self.remove_body(&format!("avatar:{participant_id}"));
@@ -176,6 +179,10 @@ impl DomeSessionRuntime {
         self.prepared_exits.remove(&participant_id);
         self.transition_reservations
             .remove(&ticket.request.transition_id);
+        // commit の再送に応えるため、参加者ごとに最後の commit だけを残す。
+        self.committed_transitions.retain(|_, committed| {
+            committed.request.participant_pubkey != ticket.request.participant_pubkey
+        });
         self.committed_transitions
             .insert(ticket.request.transition_id.clone(), ticket.clone());
         self.clamp_bodies_to_dome();
@@ -252,20 +259,21 @@ impl DomeSessionRuntime {
 
     pub(super) fn complete_transition_exit(
         &mut self,
-        participant_id: &str,
+        participant_pubkey: &kukuri_core::Pubkey,
         transition_id: &str,
     ) -> Result<()> {
+        // 応答を失った完了の再送は、退出済みなら何もせず成功とする。
+        if !self.participants.contains(participant_pubkey.as_str()) {
+            return Ok(());
+        }
         let prepared = self
             .prepared_exits
-            .get(participant_id)
+            .get(participant_pubkey.as_str())
             .context("participant has no prepared Dome transition")?;
         if prepared.transition_id != transition_id {
             bail!("DOME_TRANSITION_INVALID_TICKET");
         }
-        self.participants.remove(participant_id);
-        self.participant_last_seen_at.remove(participant_id);
-        self.seated_on.remove(participant_id);
-        self.remove_body(&format!("avatar:{participant_id}"));
+        self.evict_participant(participant_pubkey);
         Ok(())
     }
 

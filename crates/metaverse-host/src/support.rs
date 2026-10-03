@@ -1,11 +1,98 @@
-use anyhow::Result;
+use std::collections::BTreeMap;
+
+use anyhow::{Result, bail};
 use kukuri_core::{
-    MetaverseBudgetResource, MetaverseBudgetScope, MetaverseColliderV1, MetaverseResourceRejection,
+    DOME_ACCESS_PROOF_TTL_MILLIS, DomeSessionInputV1, MetaverseBudgetResource,
+    MetaverseBudgetScope, MetaverseColliderV1, MetaverseResourceRejection,
     MetaverseResourceRejectionReason,
 };
 use rapier3d::prelude::{ColliderBuilder, Vector};
 
 use crate::RateWindow;
+
+#[derive(Clone, Copy, Debug)]
+struct InputMark {
+    sequence: u64,
+    sent_at: i64,
+}
+
+/// 署名者ごとに最後に受け付けた input。同じ session での古い署名済み input の再送を拒否する。
+///
+/// input は署名時刻から access proof と同じ期間を過ぎたら受け付けない。参加中の署名者と
+/// 所有者の記録は保ち、退出した署名者の記録は受け付けた input が期限を過ぎるまで、
+/// 参加者の上限の件数だけ残す（超えたら退出の古い順に捨てる）。
+#[derive(Debug, Default)]
+pub(crate) struct InputLedger {
+    active: BTreeMap<String, InputMark>,
+    departed: BTreeMap<String, (u64, InputMark)>,
+    departures: u64,
+}
+
+impl InputLedger {
+    pub(crate) fn check(&mut self, input: &DomeSessionInputV1, now_millis: i64) -> Result<()> {
+        self.departed
+            .retain(|_, (_, mark)| !input_expired(mark.sent_at, now_millis));
+        if input_expired(input.sent_at, now_millis) {
+            bail!("DOME_SESSION_INPUT_EXPIRED");
+        }
+        let id = input.participant_pubkey.as_str();
+        if input.sequence <= self.mark(id).map_or(0, |mark| mark.sequence) {
+            bail!("stale Dome session input sequence");
+        }
+        Ok(())
+    }
+
+    /// `active` は参加中の署名者または所有者。それ以外は退出後の記録だけを更新する。
+    pub(crate) fn record(&mut self, input: &DomeSessionInputV1, active: bool) {
+        let id = input.participant_pubkey.as_str();
+        let mark = InputMark {
+            sequence: input.sequence,
+            sent_at: self
+                .mark(id)
+                .map_or(input.sent_at, |mark| mark.sent_at.max(input.sent_at)),
+        };
+        if active {
+            self.departed.remove(id);
+            self.active.insert(id.to_string(), mark);
+        } else if let Some((_, departed)) = self.departed.get_mut(id) {
+            *departed = mark;
+        }
+    }
+
+    pub(crate) fn retire(&mut self, participant_id: &str, limit: usize) {
+        let Some(mark) = self.active.remove(participant_id) else {
+            return;
+        };
+        self.departures += 1;
+        self.departed
+            .insert(participant_id.to_string(), (self.departures, mark));
+        if self.departed.len() > limit
+            && let Some(oldest) = self
+                .departed
+                .iter()
+                .min_by_key(|(_, (order, _))| *order)
+                .map(|(id, _)| id.clone())
+        {
+            self.departed.remove(&oldest);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sequence(&self, participant_id: &str) -> Option<u64> {
+        self.mark(participant_id).map(|mark| mark.sequence)
+    }
+
+    fn mark(&self, participant_id: &str) -> Option<InputMark> {
+        self.active
+            .get(participant_id)
+            .or_else(|| self.departed.get(participant_id).map(|(_, mark)| mark))
+            .copied()
+    }
+}
+
+fn input_expired(sent_at: i64, now_millis: i64) -> bool {
+    sent_at.saturating_add(DOME_ACCESS_PROOF_TTL_MILLIS) <= now_millis
+}
 
 pub(crate) fn rejection(
     scope: MetaverseBudgetScope,
