@@ -750,13 +750,15 @@ mod tests {
             next_cycle_prefix("profile").as_deref(),
             Some("trust/always-visible/")
         );
-        assert_eq!(next_cycle_prefix("channel/").as_deref(), None);
+        assert_eq!(next_cycle_prefix("channel/").as_deref(), Some("follow/"));
+        assert_eq!(next_cycle_prefix("follow/").as_deref(), None);
         assert_eq!(next_cycle_prefix("channel/a").as_deref(), Some("channel/b"));
         assert_eq!(
             next_cycle_prefix("channel/az").as_deref(),
             Some("channel/b")
         );
-        assert_eq!(next_cycle_prefix("channel/z").as_deref(), None);
+        assert_eq!(next_cycle_prefix("channel/z").as_deref(), Some("follow/"));
+        assert_eq!(next_cycle_prefix("follow/z").as_deref(), None);
         assert_eq!(next_cycle_prefix("profile-").as_deref(), Some("profile/"));
     }
 }
