@@ -32,10 +32,9 @@ async fn controller(app: &AppService, channel_id: &str) -> Option<PrivateChannel
 async fn updaters(devices: &[(&AppService, &str)], channel_id: &str) -> Vec<String> {
     let mut found = Vec::new();
     for (app, id) in devices {
-        if controller(app, channel_id)
-            .await
-            .is_some_and(|controller| controller.device_id == *id && controller.transfer_to.is_none())
-        {
+        if controller(app, channel_id).await.is_some_and(|controller| {
+            controller.device_id == *id && controller.transfer_to.is_none()
+        }) {
             found.push(id.to_string());
         }
     }
@@ -257,7 +256,9 @@ async fn a_handoff_stopped_at_each_boundary_ends_with_one_device() {
         view_state(&a, &channel).await,
         Some(PrivateChannelControllerState::Moving)
     );
-    a.resend_account_sync_items().await.expect("resend the stop");
+    a.resend_account_sync_items()
+        .await
+        .expect("resend the stop");
 
     // 境界 3: B が停止の記録を取り込んで有効化の行を書いたが、account 同期へ書けないまま B を作り直す。B だけが有効。
     b_docs.writes_down.store(true, Ordering::SeqCst);
@@ -273,7 +274,9 @@ async fn a_handoff_stopped_at_each_boundary_ends_with_one_device() {
     let b = device_seeing(&keys, "device-b", &b_docs, b_store.clone(), &["device-a"]).await;
     restored(&[&b]).await;
     assert_eq!(updaters(&devices(&a, &b), &channel).await, ["device-b"]);
-    b.resend_account_sync_items().await.expect("resend the activation");
+    b.resend_account_sync_items()
+        .await
+        .expect("resend the activation");
     a.fetch_account_sync_from("device-b")
         .await
         .expect("the old device follows");

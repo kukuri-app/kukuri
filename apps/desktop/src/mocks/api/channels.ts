@@ -27,6 +27,7 @@ type ChannelsMock = Pick<
   | 'importFriendPlusShare'
   | 'freezePrivateChannel'
   | 'rotatePrivateChannel'
+  | 'takePrivateChannelController'
   | 'setPrivateChannelEntryDome'
   | 'leavePrivateChannel'
   | 'listJoinedPrivateChannels'
@@ -247,6 +248,12 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
       );
       joinedChannelsByTopic[topic] = next;
       return next.find((channel) => channel.channel_id === channelId)!;
+    },
+    async takePrivateChannelController(topic, channelId) {
+      joinedChannelsByTopic[topic] = (joinedChannelsByTopic[topic] ?? []).map((channel) =>
+        channel.channel_id === channelId ? { ...channel, controller: 'this_device' } : channel
+      );
+      return 'taken';
     },
     async setPrivateChannelEntryDome(topic, channelId, entryDomeInstanceId) {
       const channels = joinedChannelsByTopic[topic] ?? [];

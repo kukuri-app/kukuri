@@ -800,4 +800,5 @@ async fn interrupted_replacement_is_rolled_back_on_recovery() {
     assert_eq!(recovered_identity, original_identity);
 }
 
+mod controller_claim;
 mod recovery;

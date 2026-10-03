@@ -67,6 +67,8 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ),
     ("community_node/trust_relation.rs", "CommunityNodeServer", 5),
     ("device_backup.rs", "IdentityStorage", 8),
+    // #1219 AC-4 の復元の後の担当の引取り。
+    ("device_backup/controller_claim.rs", "IdentityStorage", 1),
     ("device_backup/recovery.rs", "IdentityStorage", 13),
     ("empty_namespace_reclaim.rs", "IdentityStorage", 1),
     // #1214 AC-3 の host の世代の 2 test（account の identity を作る）。
@@ -148,7 +150,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 201,
+        total, 202,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -170,6 +172,7 @@ fn lock_acquisitions_match_declared_classification() {
          #1214 AC-5 で command の dispatch 表の試験に IdentityStorage 取得を 2 件追加、
          #1217 AC-3 で lifecycle の復帰の試験に CommunityNodeServer 取得を 1 件追加、
          #1217 AC-4 で復帰・中断の排他の試験に IdentityStorage 取得を 1 件追加、
-         #1211 AC-2 で必須 bundle の移行・保存の試験に IdentityStorage 取得を 2 件追加)"
+         #1211 AC-2 で必須 bundle の移行・保存の試験に IdentityStorage 取得を 2 件追加、
+         #1219 AC-4 で復元の後の担当の引取りの試験に IdentityStorage 取得を 1 件追加)"
     );
 }

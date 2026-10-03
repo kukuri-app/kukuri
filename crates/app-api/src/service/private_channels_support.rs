@@ -553,7 +553,10 @@ impl AppService {
                 let topic_id = row.topic_id.clone();
                 self.put_private_channel_controller(row, &next, Some(&item))
                     .await?;
-                (ScopeKey::Channel(topic_id, channel_id.as_str().to_string()), item)
+                (
+                    ScopeKey::Channel(topic_id, channel_id.as_str().to_string()),
+                    item,
+                )
             };
             self.write_account_sync_item(&claimed.1).await?;
             self.restart_scope_subscription(&claimed.0).await;

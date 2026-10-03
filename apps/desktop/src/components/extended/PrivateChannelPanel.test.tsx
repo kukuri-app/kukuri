@@ -2,8 +2,10 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 
+import type { PrivateChannelControllerTake } from '@/lib/api';
+
 import { PrivateChannelPanel, PrivateChannelSettingsPanel } from './PrivateChannelPanel';
-import type { PrivateChannelListItemView } from './types';
+import type { PrivateChannelListItemView, PrivateChannelPendingAction } from './types';
 
 // Issue #966: 作成・参加 Dialog の説明と参加済み一覧、設定 Dialog の理由表示。
 // 既存 handler は変更せず、開く／説明するだけでは API を呼ばないことを固定する。
@@ -221,4 +223,77 @@ test('joined list shows more while loading, and keeps rows and the button after 
   expect(screen.getByRole('button', { name: 'Open core' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Show more' })).toBeEnabled();
   expect(onLoadMoreJoinedChannels).toHaveBeenCalledTimes(1);
+});
+
+// #1219 AC-4: 共有リンクの作成と新しいアクセスの配布を別の端末で行っている owner の端末は、案内とこの端末で行う button を
+// 出し、結果(処理中・接続していない・応答待ち)を示す。
+test('settings panel offers doing the access updates on this device and shows the result', async () => {
+  const user = userEvent.setup();
+  let finish: (result: PrivateChannelControllerTake | null) => void = () => undefined;
+  const onTakeController = vi.fn(
+    () => new Promise<PrivateChannelControllerTake | null>((resolve) => { finish = resolve; })
+  );
+  const panel = (pendingAction: PrivateChannelPendingAction) => (
+    <PrivateChannelSettingsPanel
+      error={null}
+      pendingAction={pendingAction}
+      channel={channel({ controller: 'other_device' })}
+      inviteOutput={null}
+      inviteOutputLabel='invite'
+      onShare={vi.fn()}
+      onTakeController={onTakeController}
+    />
+  );
+  const { rerender } = render(panel(null));
+  expect(
+    screen.getByText(
+      'Creating share links and handing out new access when participants change happen on another of your devices.'
+    )
+  ).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Do this on this device' }));
+  rerender(panel('take'));
+  const pending = screen.getByRole('button', { name: 'Switching…' });
+  expect(pending).toBeDisabled();
+  expect(pending).toHaveAttribute('aria-busy', 'true');
+  finish('not_connected');
+  rerender(panel(null));
+  expect(await screen.findByText(/The device doing this now is not connected/)).toBeInTheDocument();
+
+  // キーボードでも押せる。
+  screen.getByRole('button', { name: 'Do this on this device' }).focus();
+  await user.keyboard('{Enter}');
+  expect(screen.queryByText(/is not connected/)).not.toBeInTheDocument();
+  finish('waiting');
+  expect(await screen.findByText(/Waiting for the device doing this now to respond/)).toBeInTheDocument();
+  expect(onTakeController).toHaveBeenCalledTimes(2);
+});
+
+test('settings panel explains the hold while switching, and says nothing otherwise', () => {
+  const panel = (overrides: Partial<PrivateChannelListItemView['channel']>) => (
+    <PrivateChannelSettingsPanel
+      error={null}
+      pendingAction={null}
+      channel={channel(overrides)}
+      inviteOutput={null}
+      inviteOutputLabel='invite'
+      onShare={vi.fn()}
+      onTakeController={vi.fn()}
+    />
+  );
+  const { rerender } = render(panel({ controller: 'moving' }));
+  expect(screen.getByText(/creating share links and handing out new access are on hold/)).toBeInTheDocument();
+  expect(screen.getByText(/recreate the channel/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Do this on this device' })).not.toBeInTheDocument();
+
+  // この端末で行うとき・まだ分からないとき・owner でないときは出さない。
+  for (const overrides of [
+    { controller: 'this_device' as const },
+    { controller: 'unknown' as const },
+    { is_owner: false, controller: null },
+  ]) {
+    rerender(panel(overrides));
+    expect(screen.queryByText(/another of your devices|on hold/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Do this on this device' })).not.toBeInTheDocument();
+  }
 });

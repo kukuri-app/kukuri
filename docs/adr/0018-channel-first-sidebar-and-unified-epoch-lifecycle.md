@@ -115,10 +115,21 @@ Accepted
 - 新しい世代は、担当が書く世代の鍵の item（確定の段）で依頼した端末へ届く。依頼した端末は鍵の行を保存してから現在の世代を進める（ADR 0061 §9）。
 - 担当の記録の item は、担当になった端末が書く（作成。旧保存の移行の分は時刻 0 の行にして、送り直しで書く）。担当の item は key の順で参加の item より先に読まれる（周回・作り直し）ので、受け手は参加の行が無いときも、手元の replica の記録より上の規則で新しければ採って自分の replica に置き、参加の行を作るときに手元の replica から 1 件読んで採る。同じ版は採らない（行の無い端末どうしの往復を止める。ADR 0061 §10）。
 
+担当の移譲と復元（#1219 AC-4）:
+
+- 移譲は、担当にしたい owner の端末 B の操作（channel の設定の「この端末で行う」。`take_private_channel_controller`）で始める。B は、旧担当 A の `device_id` が本人の端末の候補（AC-3 と同じ）にいて `transfer_to` が無いときだけ、依頼の item `channel/<channel id の hex>/controller-request`（値は `{"to_device_id":"<B>","generation":<A の記録の世代>}`）を account 同期へ書き、B が担当になるのを 15 秒まで待つ（結果は `taken`、期限切れは `waiting` で依頼は残る）。候補にいなければ何も書かずに `not_connected` を返す。旧担当の端末での確認・端末の一覧・旧担当が接続していないときの奪取は無い（2026-10-03 ユーザー判断）。
+- A は依頼を merge するとき、参加の行の記録が自分で `transfer_to` が無く、世代が依頼の `generation` と同じで、`to_device_id` が自分でなければ、停止の記録 `{A, g, transfer_to: B}` を参加の行と account 同期へ書く。それ以外（同じ依頼の再受信・既に移った世代からの依頼）は何もしない。停止の後、A は上の判定で新しい世代を作らない。
+- B は `transfer_to` が自分の記録を merge するとき、それを取り込む代わりに、有効化の記録 `{B, g + 1, null}` を同じ排他の中で参加の行へ書き、その後に account 同期へ書く（取得した停止の記録は自分の replica へ置かない）。途中で止まれば、停止の記録の取得の再送で有効化をやり直す。停止から有効化が届くまでは、どの端末も保留する。
+- 引継ぎの途中で B が戻らなければ、その channel は保留のままになり、作り直す（S5）。始めた引継ぎの取消しは無い。
+- 鍵更新の判定（`prepare_private_channel_rotation`）は、予約の前に参加の行の記録を排他の中で読んで行う（メモリの参加状態は移譲の直後に古い）。
+- backup（ADR 0048）から復元した端末は endpoint の秘密を持ち越さないので、別の端末 ID になる。復元の準備が account の db の隣に印（`<db>.controller-claim`）を置き、その account の最初の起動の背景 task が、自分が owner の参加中の channel を 64 件ずつ読み、記録を `{この端末, g + 1, null}`（記録が無ければ世代 1）にして参加の行と account 同期へ書き、終えたら印を消す（2026-10-03 ユーザー判断）。途中で止まれば次の起動でやり直し、既にこの端末が担当の channel は飛ばす。旧担当は account 同期で新しい世代の記録を採って保留になる。
+- 古い backup の復元（backup の後に担当を別の端末へ移していた）では、同じ世代で端末の異なる記録が 2 つになりうる。下の規則で `device_id` の大きい方に決まる（復元した端末が担当にならないこともある）。より新しい世代の記録が届けば、それに従う。
+- 画面: owner の端末の channel の設定は、別の端末が担当なら「共有リンクの作成と、参加者が変わったときの新しいアクセスの配布は、あなたの別の端末で行っています。」と「この端末で行う」（処理中・接続していない・応答待ちを示す）を、引継ぎ中なら保留と、移す先の端末が使えないときの作り直しの案内を出す。この端末が担当・担当が不明・owner でないときは出さない。「担当」という語は画面に出さない（開発中の独自の語で、利用者には意味が分からない。2026-10-03 ユーザー判断）。
+
 account 同期（ADR 0061 §2）の記録の契約:
 
-- `channel/<channel id の hex>/controller` の値は上の記録の JSON（`{"device_id":"…","generation":1,"transfer_to":null}`）。書くのは担当端末と、#1219 AC-4 の引継ぎの遷移だけ。
-- 採否は記録の中身で決め、`updated_at`・`op_id` では決めない（#1218 INVAR-3）。`generation` の大きい方を採る。同じ `generation` で `device_id` が同じなら、`transfer_to` の無い記録より有る記録を採る（旧担当の停止は戻らない）。同じ `generation` でそれ以外の食い違い（`device_id` が異なる、または両方の `transfer_to` が異なる値）があれば、受けた記録を採らずに手元の記録を保つ。
+- `channel/<channel id の hex>/controller` の値は上の記録の JSON（`{"device_id":"…","generation":1,"transfer_to":null}`）。書くのは担当端末と、#1219 AC-4 の引継ぎの遷移（停止・有効化）と復元の引取りだけ。
+- 採否は記録の中身で決め、`updated_at`・`op_id` では決めない（#1218 INVAR-3）。`generation` の大きい方を採る。同じ `generation` で `device_id` が同じなら、`transfer_to` の無い記録より有る記録を採る（旧担当の停止は戻らない。両方の `transfer_to` が異なる値なら手元を保つ）。同じ `generation` で `device_id` が異なれば、`device_id` の大きい方を採る（どの順で受けても、どの端末でも同じ記録に決まる。#1219 AC-4 で、受けた記録を採らずに手元を保つ旧規則から変えた）。
 - `channel/<channel id の hex>/epoch/<epoch id の hex>` の値は `PrivateChannelEpochCapability`（`{"epoch_id":"…","namespace_secret_hex":"…"}`）。受けた鍵は追加で保持する。現在の世代は、新しい世代の replica にある owner 署名の policy の `previous_epoch_id` が手元の現在の世代と一致するときだけ進める（参加者の handoff の redeem と同じ検証）。
 - 例外: 本人の端末から届いた鍵の item は、その端末が上の検証（または owner の鍵更新の確定・参加）を通して現在の世代にした世代である。そのため参加中の channel では、`previous_epoch_id` を辿らずに、開始時刻が最も新しい鍵の行の世代を現在の世代にする（ADR 0061 §9。新しい端末・作り直した端末が世代の数だけ辿らない）。このため新しい世代の epoch id の時刻は、今の時刻と、現在の世代の開始時刻 + 1 ミリ秒の大きい方にする（開始時刻の順を鎖の順と一致させる）。
 
@@ -138,6 +149,7 @@ account 同期（ADR 0061 §2）の記録の契約:
 - frontend/runtime には `importChannelAccessToken(token)` と `exportChannelAccessToken(topicId, channelId, expiresAt)` を追加する。
 - import result は `kind` を持つ discriminated union とし、`topic_id`, `channel_id`, `channel_label`, `epoch_id` を共通 field とする。
 - export result は `kind` と `token` を返すが、UI copy は `kind` を primary label に露出しない。
+- `takePrivateChannelController(topicId, channelId)`（`take_private_channel_controller`）は `taken | not_connected | waiting` を返す。`JoinedPrivateChannelView.controller` は owner の端末で `this_device | other_device | moving | unknown`、owner 以外は `null`（#1219 AC-4）。
 
 ### Domain
 - `invite_only` を含む private audience はすべて `channel-policy` と `channel-participant` に参加する。

@@ -207,7 +207,8 @@ async fn waiting_membership_rereads_the_channel_keys_from_the_local_replica() {
     assert_eq!(current(&app, "late").await, Some(epoch(2)));
 }
 
-/// 担当の記録は ADR 0018 §8 の規則で採る(世代の大きい方、同じ世代で同じ端末なら移譲中の記録)。
+/// 担当の記録は ADR 0018 §8 の規則で採る(世代の大きい方、同じ世代で同じ端末なら移譲中の記録、同じ世代の別の端末は
+/// 端末 ID の大きい方。#1219 AC-4)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn controller_items_follow_the_generation_rule() {
     let store = Arc::new(MemoryStore::default());
@@ -241,9 +242,10 @@ async fn controller_items_follow_the_generation_rule() {
     };
     assert!(merge(controller(1, "a", None)).await);
     assert!(merge(controller(1, "a", Some("b"))).await);
-    // 移譲の停止は戻らず、同じ世代の別の端末・古い世代は採らない。
+    // 移譲の停止は戻らず、古い世代は採らない。同じ世代の別の端末は、端末 ID の大きい方を採る。
     assert!(!merge(controller(1, "a", None)).await);
-    assert!(!merge(controller(1, "c", None)).await);
+    assert!(!merge(controller(1, "0", None)).await);
+    assert!(merge(controller(1, "c", None)).await);
     assert!(merge(controller(2, "b", None)).await);
     assert!(!merge(controller(1, "a", Some("b"))).await);
     let state = app

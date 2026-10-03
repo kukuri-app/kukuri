@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Notice } from '@/components/ui/notice';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import type { JoinedPrivateChannelView } from '@/lib/api';
+import type { JoinedPrivateChannelView, PrivateChannelControllerTake } from '@/lib/api';
 
 import {
   type ChannelAudienceOption,
@@ -77,6 +77,8 @@ type PrivateChannelSettingsPanelProps = {
   onShare: () => void;
   onRequestIndexing?: () => void;
   onCopyInviteOutput?: (token: string) => void;
+  // 共有リンクの作成と新しいアクセスの配布を、この端末で行うように切り替える(#1219 AC-4)。失敗は error で示し null を返す。
+  onTakeController?: () => Promise<PrivateChannelControllerTake | null>;
 };
 
 export function PrivateChannelPanel({
@@ -278,9 +280,15 @@ export function PrivateChannelSettingsPanel({
   onShare,
   onRequestIndexing,
   onCopyInviteOutput,
+  onTakeController,
 }: PrivateChannelSettingsPanelProps) {
   const { t } = useTranslation(['channels', 'common', 'shell']);
   const channelActionDisabled = pendingAction !== null;
+  const [takeResult, setTakeResult] = useState<PrivateChannelControllerTake | null>(null);
+  const takeController = () => {
+    setTakeResult(null);
+    void onTakeController?.().then(setTakeResult);
+  };
   const policyLabel = policyDescription(channel.audience_kind, t);
   const channelAccessDeepLink = inviteOutput
     ? buildChannelAccessPreviewDeepLink(inviteOutput)
@@ -315,6 +323,38 @@ export function PrivateChannelSettingsPanel({
             <span>{t('channels:rotationRequired')}</span>
             <span>{t('channels:settings.rotationNextStep')}</span>
           </div>
+        ) : null}
+        {/* owner の端末だけが持つ。この端末で行うとき・まだ分からないときは出さない(#1219 AC-4)。 */}
+        {channel.controller === 'other_device' ? (
+          <Notice>
+            <p>{t('channels:settings.controller.otherDevice')}</p>
+            {takeResult === 'not_connected' || takeResult === 'waiting' ? (
+              <p role='status'>
+                {t(takeResult === 'waiting'
+                  ? 'channels:settings.controller.waiting'
+                  : 'channels:settings.controller.notConnected')}
+              </p>
+            ) : null}
+            {onTakeController ? (
+              <Button
+                variant='secondary'
+                size='sm'
+                type='button'
+                aria-busy={pendingAction === 'take'}
+                disabled={channelActionDisabled}
+                onClick={takeController}
+              >
+                {pendingAction === 'take'
+                  ? t('channels:settings.controller.taking')
+                  : t('channels:settings.controller.take')}
+              </Button>
+            ) : null}
+          </Notice>
+        ) : channel.controller === 'moving' ? (
+          <Notice>
+            <p>{t('channels:settings.controller.moving')}</p>
+            <p>{t('channels:settings.controller.movingStuck')}</p>
+          </Notice>
         ) : null}
         {ownerOnlyShareBlocked ? (
           <Notice id='private-channel-share-reason'>{t('channels:settings.ownerOnlyShare')}</Notice>

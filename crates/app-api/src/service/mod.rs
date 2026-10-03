@@ -113,12 +113,11 @@ pub(crate) use crate::views::{
     LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView, MoveDomeInput,
     NotificationStatusView, NotificationView, PendingAttachment, PostView, PostWithdrawalView,
     PrivateChannelCapability, PrivateChannelController, PrivateChannelControllerState,
-    PrivateChannelControllerTake, PrivateChannelEpochCapability,
-    ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput, ReactionKeyView,
-    ReactionStateView, ReactionSummaryView, RecentReactionView, ReplyPreviewAuthorView,
-    ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput, SocialConnectionKind,
-    SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput, UpdateMetaverseRoomInput,
-    WithdrawDomeConnectionProposalInput,
+    PrivateChannelControllerTake, PrivateChannelEpochCapability, ProfileAssetView, ProfileInput,
+    PublishMetaverseRoomEventInput, ReactionKeyView, ReactionStateView, ReactionSummaryView,
+    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
+    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
+    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;

@@ -29,7 +29,7 @@ use crate::backup::{
 
 pub(super) const TOPIC: &str = "kukuri:topic:protected-migration";
 
-async fn open_runtime(db: &Path) -> DesktopRuntime {
+pub(super) async fn open_runtime(db: &Path) -> DesktopRuntime {
     DesktopRuntime::new_with_config_and_identity(
         db,
         TransportNetworkConfig::loopback(),
