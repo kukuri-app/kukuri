@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
-- Issue: #788
+- Issue: #788、#1527（owner device host への P2P の session 経路）
 
 ## Context
 
@@ -53,6 +53,51 @@ participant は movement、grab、throw、push、sit を lease epoch / session /
 
 host は検証済み input を共通 Rust runtime へ適用し、host-signed snapshot を配信する。client prediction / interpolation は表示上の補助であり、active host signature、lease epoch、session id、sequence の検証に失敗した snapshot を破棄する。
 
+### Owner device host への P2P の session 経路（#1527）
+
+host session stream は、host の種類ごとに次の経路を使う。所有者本人の端末は process 内で処理し、Community Node host は HTTPS で処理する（どちらも変更しない）。所有者以外の端末の participant が `OwnerDevice` lease の host へ input を送る経路は、次の P2P の要求・応答とする。
+
+#### 接続と wire
+
+- 専用の ALPN `/kukuri/dome-session/1` の QUIC 接続を、participant の端末と host の endpoint の組ごとに 1 本使う。要求ごとに双方向 stream を 1 本開き、JSON の要求を 1 件（上限 256 KiB）送って、JSON の応答を 1 件（上限 8 MiB。rigid body の安全上限の snapshot を収める）受け取る。
+- 要求は次の 4 種とする。participant input と snapshot は既存の署名済みの型をそのまま運ぶ。
+  - `input`: `SignedDomeSessionInputV1`。応答は `SignedDomePhysicsSnapshotV1`。
+  - `prepare_transition`: `DomeTransitionAdmissionRequestV1` と `DomeSpatialAccessProofV1`。応答は admission ticket。
+  - `commit_transition`: ticket と遷移先の位置・回転。応答は受理。
+  - `abort_transition`: ticket。応答は受理。
+- 拒否の応答は理由を持つ。resource budget の拒否は ADR-0041 の `MetaverseResourceRejection` の型のまま返し、participant の端末は process 内の host と同じ code で画面へ渡す。
+- Join には admission 用の snapshot（stream の頻度制御で直前の snapshot を再利用しない。ADR-0044）を、それ以外の input には stream の最新の snapshot を返す。host は participant ごとの送信 queue や snapshot の push を持たず、応答は常にその時点の最新の 1 件になる。participant の画面の他者の avatar は、自分の input の応答（移動中は host の snapshot 頻度、静止中は keepalive の 5 秒ごと）で更新される。これは process 内の host と Community Node host の現行の挙動と同じである。
+- snapshot の ring と再同期（`resync_dome_snapshots`）はこの経路で提供しない。host 本人の端末と Community Node host だけが応じる。
+
+#### host での確認
+
+確認点は Community Node host と同じにし、署名・lease・sequence・budget の検証は同じ共通 runtime（`DomeSessionRuntime`）で行う。
+
+- すべての input: participant の署名、lease の Instance・generation・epoch・session、participant ごとに単調な sequence、resource budget を検証する。
+- Join と KeepAlive: owner device が自分の状態で current Spatial Context access と owner からの block を再評価する（ADR-0044）。channel の状態を持たない Community Node と違い、access proof は要らない。
+- Join 以外の input: 署名者が現在の participant でなければ、runtime の状態を変えず、snapshot も返さずに拒否する。process 内の host と Community Node host の挙動は変えない。
+- `prepare_transition`: access proof の署名で participant 本人と、Spatial Context・遷移先 owner への束縛と有効期限を確かめる（Community Node と共通の helper）。そのうえで owner device が topology・access・block を再評価して ticket を発行する（ADR-0042 / 0043）。
+- `commit_transition` / `abort_transition`: host が発行した ticket と runtime の予約の一致、lease epoch・session・期限で判定する（ADR-0042）。ticket はこの暗号化された接続でだけ要求者へ渡る。
+
+#### 接続先の解決
+
+- 接続先は、現在の owner 署名の lease の `OwnerDevice.endpoint_id` だけとする。QUIC の handshake が endpoint を、lease の `host_pubkey` による snapshot の署名の検証が host を確かめる。heartbeat や他の peer の申告で接続先を変えない。
+- 到達情報は既存の経路だけから得る（接続中の経路、ticket・seed・topic rendezvous・接続済みの peer から得た address、有効な場合の DHT）。この経路のために新たな address の公開はしない。
+- 候補は既存の transport と同じ順で試す。relay URL を含まない直接の IP 候補（Direct P2P）を先に試し、成立しなければ設定中の relay URL を含む候補（Relay Supported P2P）を試す。hole punching が成立せず実データが relay を経由する場合は Relay Fallback として扱う。
+- 接続の確立と、要求 1 件の往復は、それぞれ 10 秒（Community Node の HTTP と同じ）で打ち切る。接続できない場合は code `DOME_HOST_UNREACHABLE` の失敗とする。
+
+#### 上限と切断
+
+- participant 数・resource budget・keepalive 5 秒・30 秒の participant timeout は、ADR-0041 / 0045 のまま共通 runtime が適用する。接続が切れただけでは participant を除去せず、input の途絶で除去する。
+- host は同時接続を 512（participant の安全上限）までに制限し、1 接続の要求は順に 1 件ずつ処理する。30 秒要求の無い接続は host が閉じる。iroh stack を作り直したときは、受け口を新しい node へ付け直す。
+- 要求ごとの処理は、session の索引と、access・block の key 指定の 1 件の読み出しだけにする。participant 数・topic 数・block 台帳の件数に比例する読み出しを持たない。
+- participant の端末が保持する接続は、current Dome と隣接 4 Dome の host の 5 本まで（ADR-0041 の neighbor 上限）とする。失敗した接続は捨て、次の要求で張り直す。
+
+#### 未到達時の表示
+
+- 稼働中（heartbeat が新しい owner hosted）の Dome は、従来どおり入室できる候補として表示する。到達できるかは接続を試すまで分からないため、事前の確認はしない。
+- 入室が `DOME_HOST_UNREACHABLE` で失敗したときは、「所有者の端末に接続できませんでした」という趣旨の利用者向けの文言を表示する。自動入室では次の候補へ進む（ADR-0044）。
+
 ## Feature Data Classification
 
 | Data | Authority | Canonical store | Sync / transport | Local / Node cache | Retention / delete |
@@ -60,12 +105,12 @@ host は検証済み input を共通 Rust runtime へ適用し、host-signed sna
 | Hosting Lease / activation / close | owner signature | SpatialContext replica | docs sync、gossip hint | SQLite projection、Postgres operational mirror | append-only。Instance tombstone / move後は無効として保持し、通常GC規則に従う |
 | host acceptance | target host signature | SpatialContext replica | docs sync、gossip hint | SQLite / Postgres | 対応するlease recordと同じ |
 | heartbeat | active host signature | なし | gossip / WebSocket | memory latest only | grace判定後に破棄 |
-| participant input | participant signature | なし | host session stream | host memory queue | 適用またはreject後に破棄。raw inputをlogへ出さない |
-| physics snapshot | active host signature | なし | host session stream | client / host memory latest only | session終了または置換で破棄。ring bufferは#793 |
+| participant input | participant signature | なし | host session stream（owner device host へは P2P の `/kukuri/dome-session/1`、Community Node host へは HTTPS） | host memory queue | 適用またはreject後に破棄。raw inputをlogへ出さない |
+| physics snapshot | active host signature | なし | host session stream（input への応答。owner device host からは P2P、Community Node host からは HTTPS） | client / host memory latest only | session終了または置換で破棄。ring bufferは#793 |
 | guest prop expiry metadata | active host | なし | snapshot | host memory | wall-clock expiryまたはsession終了で破棄 |
 | Community Node assignment mirror | owner / host署名済みrecord | なし | HTTPS | Postgres | lease expiry / close後にoperational retention規則で削除 |
 
-秘密鍵、bearer token、participant raw input は永続化・診断出力しない。Dome id、epoch、lease digest、host id、session id、heartbeat timestamp、reject reason は診断可能とする。
+秘密鍵、bearer token、participant raw input は永続化・診断出力しない。Dome id、epoch、lease digest、host id、session id、heartbeat timestamp、reject reason は診断可能とする。P2P の session 経路では、要求の種類、拒否の理由、接続の経路の分類（Direct P2P / Relay Supported P2P / Relay Fallback）も診断可能とし、access proof と ticket の本文は出力しない。
 
 ## Community Node boundary
 
@@ -84,4 +129,5 @@ Issue #797の5秒heartbeat、15秒offline grace、30秒participant timeoutは[AD
 - ownerの明示操作なしにavailabilityを優先する自動failoverは行わない。
 - transfer中またはsplit-brain検出時は一時的にDomeへ入れなくても、二重authorityより安全側を選ぶ。
 - metaverseは実験機能のため、旧peer-authoritative wire contractとの互換decodeやmigrationは提供しない。
+- 所有者以外の端末の participant も、owner device host の Dome へ入室・滞在・遷移できる（#1527）。この ALPN に応じない旧版の端末が host の Dome へは `DOME_HOST_UNREACHABLE` で入室できず、旧版の端末からは従来どおり入室できない。保存データの形は変えない。
 - snapshot retentionとresource budgetはADR-0041、transitionはADR-0042、access / block / presence / audioはADR-0043がこのcontractを利用する。
