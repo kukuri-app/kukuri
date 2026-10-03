@@ -11,6 +11,8 @@ use kukuri_core::{
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{AccountSyncCursor, AccountSyncRow};
 
+use crate::views::AccountSyncStatus;
+
 use super::account_sync_support::row_of;
 
 /// 1 回に読む slot・item・key の数（ADR 0061 §5）。
@@ -78,27 +80,6 @@ struct FetchResults {
     failed: BTreeSet<String>,
 }
 
-/// account 同期の状態（ADR 0061 §10）。どれかが true なら未同期。表示は W8。
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-pub struct AccountSyncStatus {
-    /// 本人の端末の候補が無い。
-    pub no_peers: bool,
-    /// 最後の取得が失敗した相手がある。
-    pub fetch_failed: bool,
-    /// 読み残しがある（cursor が最後に読んだ head より手前、または周回の途中）。
-    pub behind: bool,
-    /// replica へ書けていない行がある。
-    pub pending_writes: bool,
-    /// DB を失ったときの作り直しの途中。
-    pub rebuilding: bool,
-}
-
-impl AccountSyncStatus {
-    pub fn unsynced(&self) -> bool {
-        self.no_peers || self.fetch_failed || self.behind || self.pending_writes || self.rebuilding
-    }
-}
-
 impl AppService {
     /// 封をした item を自分の replica へ書き、変更の窓へ足して、書いたとする。書けなければ送信待ちのまま残す
     /// （採用は戻さない）。書けたら lease の task に、送り直しと hint の送信をさせる。
@@ -106,7 +87,13 @@ impl AppService {
         if let Err(error) = self.try_write_account_sync_item(item).await {
             warn!(key = ?item.key, %error, "account sync item stays unwritten until it is resent");
         }
+        self.mark_account_sync_status();
         Ok(())
+    }
+
+    /// account 同期の状態が変わりうるとき、通信状態の印を付ける（差分の通知が `account_sync` を読み直す）。
+    fn mark_account_sync_status(&self) {
+        self.last_sync_ts.mark(kukuri_transport::StatusKey::Summary);
     }
 
     async fn try_write_account_sync_item(&self, item: &AccountSyncItem) -> Result<()> {
@@ -207,10 +194,12 @@ impl AppService {
             } => {
                 store
                     .mark_private_channel_epoch_written(channel_id.as_str(), epoch_id)
-                    .await
+                    .await?
             }
-            _ => store.mark_account_sync_written(&row_of(item)?).await,
+            _ => store.mark_account_sync_written(&row_of(item)?).await?,
         }
+        self.mark_account_sync_status();
+        Ok(())
     }
 
     async fn read_account_sync_change(
@@ -419,6 +408,8 @@ impl AppService {
         } else {
             fetch.failed.insert(device_id.to_string());
         }
+        drop(fetch);
+        self.mark_account_sync_status();
         result
     }
 
@@ -534,6 +525,7 @@ impl AppService {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .no_candidates = peers.is_empty();
+        self.mark_account_sync_status();
         for peer in peers {
             if let Err(error) = self.fetch_account_sync_from(&peer.endpoint_id).await {
                 warn!(%error, "account sync fetch stopped; it resumes at the next trigger");

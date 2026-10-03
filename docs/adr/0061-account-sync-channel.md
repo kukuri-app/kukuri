@@ -383,6 +383,10 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 読み残しがある（相手の cursor が、最後に読んだ head より手前、または周回の途中）。
   - 送信待ちがある。
   - DB を失ったときの作り直しの途中。
+- 画面と CLI への受け渡し（AC-6a、2026-10-03）
+  - この状態は、通信状態（`SyncStatus` の `account_sync`）として `get_sync_status` と差分の通知（`SyncStatusChanged`）に載る。新しい command は作らない。
+  - 状態が変わりうる箇所（item の書込み、書いたことの記録、相手からの取得の結果、契機の取得）で通信状態の印（`StatusKey::Summary`）を付け、差分の通知はそれを読み直す。周期の読み直しは足さない。
+  - front では任意の欄とする（旧い runtime の応答と mock は持たない）。
 
 #### DB を失ったとき（AC-5c）
 

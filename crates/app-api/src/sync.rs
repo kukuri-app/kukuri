@@ -8,8 +8,9 @@ impl AppService {
         Ok(self.sync_status_delta(None).await?.0)
     }
 
-    /// 通常の通信状態を、transport と app-api が保持している状態から作る。全台帳の走査・SQLite の読取り・
-    /// 取得の候補の cursor の前進を起こさない(#1221 R2-D)。
+    /// 通常の通信状態を、transport と app-api が保持している状態から作る。全台帳の走査・取得の候補の cursor の
+    /// 前進を起こさない(#1221 R2-D)。store は account 同期の状態の有界な行(cursor の行と未書込みの索引の 1 件)
+    /// だけを読む(W5 AC-6a)。
     ///
     /// `changed` を渡すと、`topic_diagnostics` はその印の topic だけにし、印の付いた topic のうち
     /// 稼働していないもの(抜けた topic)を 2 つ目に返す。
@@ -125,6 +126,7 @@ impl AppService {
             // 保存済みの停止設定(手元の集合)。topic をやめると、その topic の設定も消える。
             gossip_disabled_topics: self.list_gossip_disabled_topics().await,
             gossip_disabled_channels: self.list_gossip_disabled_channels().await,
+            account_sync: self.account_sync_status().await?,
         };
         Ok((status, removed_topics))
     }

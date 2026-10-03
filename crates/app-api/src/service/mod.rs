@@ -189,7 +189,6 @@ pub(crate) use subscription_catch_up::catch_up_sessions;
 mod reply_target_support;
 mod scope_leases;
 pub(crate) mod scope_receive;
-pub use account_sync_fetch::AccountSyncStatus;
 pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
 pub(crate) use scope_leases::{
     ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
