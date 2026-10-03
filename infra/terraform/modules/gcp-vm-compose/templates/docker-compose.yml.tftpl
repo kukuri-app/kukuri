@@ -124,6 +124,16 @@ services:
       - "${relay_http_port}"
     ports:
       - "${relay_quic_port}:${relay_quic_internal_port}/udp"
+
+  # STUN（binding だけ。#1483、ADR 0057 §6）。relay の image に同梱した cn-stun を、relay とは別の
+  # process として動かす。クライアントは relay の host の 3478/udp へ送る。
+  cn-stun:
+    logging: *cn-logging
+    image: ${cn_iroh_relay_image}
+    entrypoint: ["/usr/local/bin/cn-stun"]
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
 %{ if deploy_indexer_stack ~}
 
   # index 投影 + relation graph（#615）。rebuildable projection（canonical store ではない）。

@@ -38,7 +38,7 @@ UDP/QUIC を扱えないため）。profile ごとに変わるのは data/cache/
 ```text
 infra/terraform/
   modules/
-    gcp-network/            VPC/subnet/static IP/firewall (80,443,7842/udp,IAP SSH)
+    gcp-network/            VPC/subnet/static IP/firewall (80,443,7842/udp,3478/udp,IAP SSH)
     gcp-dns/                Cloud DNS A records (任意)
     gcp-vm-compose/         Compute Engine + startup script (compose/Caddy/ACME/backup) + Secret Manager accessor IAM
     gcp-low-cost-backup/    pg_dump 退避先 GCS bucket
