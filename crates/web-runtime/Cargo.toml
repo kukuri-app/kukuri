@@ -26,7 +26,10 @@ wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = [
   "Crypto",
   "CryptoKey",
+  "Document",
   "DomException",
+  "Event",
+  "EventTarget",
   "IdbCursor",
   "IdbCursorDirection",
   "IdbCursorWithValue",
@@ -45,6 +48,7 @@ web-sys = { version = "0.3.106", features = [
   "StorageEstimate",
   "StorageManager",
   "SubtleCrypto",
+  "VisibilityState",
   "Window",
 ] }
 web-time.workspace = true

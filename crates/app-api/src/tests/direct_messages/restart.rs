@@ -151,3 +151,93 @@ async fn dm_restart_resends_outbox_by_account_route_and_recipient_keeps_local_de
         .unwrap();
     assert!(after_duplicate.items.is_empty());
 }
+
+// W4 AC-3（ADR 0059 §5）: 復帰の契機は、再送の owner に次の間隔を待たずに 1 回分を行わせる。1 回で送るのは既存の実行枠
+// （新規 3 件）までで、期限の来た送信待ちを増やしても増えない。tokio の時計を止め、間隔の tick を起こさない。
+#[tokio::test(start_paused = true)]
+async fn a_lifecycle_resume_wakes_the_outbox_owner_for_one_bounded_pass() {
+    let transport = Arc::new(
+        StaticTransport::new(PeerSnapshot::default())
+            .with_local_endpoint_id(iroh::SecretKey::from_bytes(&[61; 32]).public().to_string()),
+    );
+    let hint_transport = Arc::new(TrackingHintTransport::default());
+    *hint_transport.resolved_destination.lock().await = Some(kukuri_transport::EndpointAddr::new(
+        iroh::SecretKey::from_bytes(&[62; 32]).public(),
+    ));
+    let store = Arc::new(MemoryStore::default());
+    let (keys_a, keys_b) = (generate_keys(), generate_keys());
+    let b_pubkey = keys_b.public_key_hex();
+    seed_follow_edges(
+        store.as_ref(),
+        &keys_a.public_key_hex(),
+        [b_pubkey.as_str()],
+        FollowEdgeStatus::Active,
+    )
+    .await;
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport,
+        hint_transport.clone(),
+        Arc::new(MemoryDocsSync::default()),
+        Arc::new(MemoryBlobService::default()),
+        keys_a,
+    );
+    for index in 0..10 {
+        app.send_direct_message(
+            b_pubkey.as_str(),
+            Some(&format!("m{index}")),
+            None,
+            Vec::new(),
+        )
+        .await
+        .expect("queue direct message");
+    }
+    // 期限（作った時刻から再送の間隔）を壁時計で過ぎる。tokio の時計は止めたまま。
+    std::thread::sleep(std::time::Duration::from_millis(
+        DIRECT_MESSAGE_RETRY_INTERVAL_MS + 200,
+    ));
+    let sent = || async {
+        hint_transport
+            .offers
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(_, _, offer)| {
+                match &offer
+                    .open(&keys_b, Utc::now().timestamp_millis())
+                    .ok()?
+                    .reference()
+                    .scope
+                {
+                    kukuri_core::ReceiveOfferScopeV1::DirectMessageFrame { message_id, .. } => {
+                        Some(message_id.clone())
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    };
+    let settle = || async {
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+    };
+    let before = sent().await;
+    // owner の最初の tick は直ちに 1 回分を行う。その後は、時計を止めているので間隔の tick が来ない。
+    app.resume_direct_message_state().await.expect("owner");
+    settle().await;
+    let first = sent().await;
+    assert!(first > before && first - before <= 3, "{before} -> {first}");
+    settle().await;
+    assert_eq!(sent().await, first, "no pass without a tick or a resume");
+
+    app.resume_pending_writes().await.expect("resume");
+    settle().await;
+    let resumed = sent().await;
+    assert!(
+        resumed > first && resumed - first <= 3,
+        "{first} -> {resumed}"
+    );
+}

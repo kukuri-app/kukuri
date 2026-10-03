@@ -313,3 +313,41 @@ async fn a_report_is_not_sent_to_the_redirected_location() {
     );
     assert_eq!(count().await.unwrap().parse::<usize>().unwrap(), before + 1);
 }
+
+/// W4 AC-3: browser の lifecycle の event が、host の中断・復帰のどちらかへ渡る（ADR 0059 §5）。外した後は渡らない。
+#[wasm_bindgen_test]
+fn lifecycle_events_map_to_suspend_and_resume_until_the_listeners_are_dropped() {
+    use crate::lifecycle::{Lifecycle, listen_lifecycle};
+
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let listeners = listen_lifecycle(move |lifecycle| sink.borrow_mut().push(lifecycle)).unwrap();
+    let fire = || {
+        for (target, name) in [
+            (window.as_ref(), "pagehide"),
+            (window.as_ref(), "offline"),
+            (document.as_ref(), "freeze"),
+            (window.as_ref(), "online"),
+            (window.as_ref(), "pageshow"),
+            (document.as_ref(), "resume"),
+            // headless の Chromium の page は可視。
+            (document.as_ref(), "visibilitychange"),
+        ] as [(&web_sys::EventTarget, &str); 7]
+        {
+            target
+                .dispatch_event(&web_sys::Event::new(name).unwrap())
+                .unwrap();
+        }
+    };
+    fire();
+    use Lifecycle::{Resume, Suspend};
+    assert_eq!(
+        *seen.borrow(),
+        [Suspend, Suspend, Suspend, Resume, Resume, Resume, Resume]
+    );
+    drop(listeners);
+    fire();
+    assert_eq!(seen.borrow().len(), 7);
+}

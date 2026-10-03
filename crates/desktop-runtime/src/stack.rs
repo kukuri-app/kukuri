@@ -640,6 +640,32 @@ impl SharedIrohStack {
         (reached_rx, resume_tx)
     }
 
+    /// 復帰（ADR 0059 §5）: 経路を確かめ直し、WebRTC の交渉を、生きた需要のうち session の無い相手とだけやり直す
+    /// （ADR 0057 §9）。
+    pub(crate) async fn resume_network(&self) {
+        let current = self.current.lock().await;
+        let Some(current) = current.as_ref() else {
+            return;
+        };
+        current.node.endpoint().network_change().await;
+        if let Some(signaling) = current.node.webrtc_signaling() {
+            signaling.resume();
+        }
+    }
+
+    /// 中断（ADR 0059 §5）: WebRTC の交渉の世代を終え、旧世代の交渉・候補・session を捨てる。
+    pub(crate) async fn suspend_network(&self) {
+        if let Some(signaling) = self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|current| current.node.webrtc_signaling())
+        {
+            signaling.reset();
+        }
+    }
+
     /// QR・専用リンクの移行（#1211）。stack を作り直すと、進行中の移行は終わる。
     pub(crate) async fn account_transfer(&self) -> Result<kukuri_iroh_node::AccountTransfer> {
         Ok(self

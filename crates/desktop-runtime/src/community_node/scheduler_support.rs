@@ -5,6 +5,15 @@ use super::maintenance_tasks::{MaintenanceJob, MaintenanceTasks};
 use super::*;
 
 impl DesktopRuntime {
+    /// lifecycle の復帰の本体（`ClientHost::resume`。ADR 0059 §5）。
+    pub(crate) async fn resume_after_lifecycle(&self) {
+        self.iroh_stack.resume_network().await;
+        self.run_community_node_session_maintenance_once().await;
+        if let Err(error) = self.app_service.resume_pending_writes().await {
+            tracing::warn!(%error, "pending writes stay queued after the lifecycle resume");
+        }
+    }
+
     /// 設定変更とtest向けの1回実行。常駐schedulerと同じ独立laneを使用する。
     pub(crate) async fn run_community_node_session_maintenance_once(&self) {
         let mut tasks = MaintenanceTasks::default();
