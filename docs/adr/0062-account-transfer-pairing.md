@@ -51,6 +51,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 
 - 両端末の承認の後、同じ接続の新しい stream で移行元が frame（長さ 4 byte の後に JSON）を送る: `key`（アカウントの秘密鍵、1 回）→ `items`（0 回以上）→ `end`（送った item の総数）。
   - item は移行元の account の replica（ADR 0061）の docs の key と、その封（§3 の封。AAD はアカウントの公開鍵と docs の key）。種類は W5 の allowlist のうち profile・表示例外・channel の参加・世代の鍵・担当（tombstone を含む）で、変更の窓・投稿・履歴は送らない。
+  - フォロー・ブロック（#1211 AC-6、2026-10-04 ユーザー判断）は、replica の `graph/` の木の代わりに、移行元の store から相手の順に 64 件ずつ読んで送る（AC-6 より前の edge は replica に無いため）。順は、自分のフォロー、それらの相手から自分への follow（移行先が相互フォローを判定して DM を送受信するため）、自分のブロックで、`channel/` の item より先に送る。ミュートは端末ごとのまま送らない（ADR 0022）。
   - 移行元は、送信待ちの行を先に replica へ書き、replica を W5 の周回と同じ prefix の木（1 照会 64 key）で辿る。読む量はアカウントの item の数で、投稿・履歴の量に依らない。
   - 上限: 1 frame は 1 MiB、`items` は 64 件まで。総量では打ち切らない（ユーザー決定）。frame の待ちは 30 秒、確定の ACK の待ちは 60 秒。
 - 移行先は frame の大きさ・件数・順序・総数と、各 item の封（受けた鍵から導出した payload の鍵で開く）と種類を確かめる。外れたら確定せず、保存を消して `invalid` にする。

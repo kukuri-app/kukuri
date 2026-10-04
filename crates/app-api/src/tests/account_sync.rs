@@ -3,6 +3,7 @@
 use super::*;
 
 mod fetch;
+mod social_edges;
 mod transfer;
 
 #[tokio::test]

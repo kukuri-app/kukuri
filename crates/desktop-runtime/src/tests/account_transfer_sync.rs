@@ -1,12 +1,13 @@
 //! #1211 AC-4: 移行の後、移行先の端末で、受け取ったアカウントの Community Node に同意して認証すると、rendezvous で
 //! 移行元を見つけ、本人の端末間の自動同期（W5）へつながる。identity・同意・担当は端末ごとのまま移らない。
+//! #1211 AC-6: フォロー・ブロックは、移行の必須 bundle と、その後の同期で届く。
 
 use super::account_transfer::{runtime_at, target_host, transfer_with};
 use super::*;
 use crate::accounts::account_db_path;
 use crate::community_node::{load_community_node_local_consents, load_community_node_token};
 use crate::requests::{RotatePrivateChannelRequest, SetMyProfileRequest};
-use kukuri_app_api::PrivateChannelControllerState;
+use kukuri_app_api::{PrivateChannelControllerState, SocialConnectionKind};
 use kukuri_cn_protocol::{
     TopicRendezvousCandidate, TopicRendezvousHeartbeat, TopicRendezvousHeartbeatResponse,
     TopicRendezvousTopicResponse,
@@ -190,6 +191,17 @@ async fn channel_view(runtime: &DesktopRuntime, topic: &str) -> Option<JoinedPri
         .pop()
 }
 
+async fn social(runtime: &DesktopRuntime, kind: SocialConnectionKind) -> Vec<String> {
+    runtime
+        .app_service
+        .list_social_connections(kind)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|view| view.author_pubkey)
+        .collect()
+}
+
 async fn has_own_peer(runtime: &DesktopRuntime) -> bool {
     !runtime
         .get_sync_status()
@@ -212,6 +224,12 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
     let source = runtime_at(dir.path().join("source.db")).await;
     consent(&source, &source_node).await;
     source.set_my_profile(profile("before")).await.unwrap();
+    let (followed, blocked) = (
+        KukuriKeys::generate().public_key_hex(),
+        KukuriKeys::generate().public_key_hex(),
+    );
+    source.app_service.follow_author(&followed).await.unwrap();
+    source.app_service.block_author(&blocked).await.unwrap();
     source
         .set_adult_content_display_enabled(true)
         .await
@@ -287,6 +305,8 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
             && channel_view(&target, topic)
                 .await
                 .is_some_and(|view| view.channel_id == channel)
+            && social(&target, SocialConnectionKind::Following).await == [followed.clone()]
+            && social(&target, SocialConnectionKind::Blocking).await == [blocked.clone()]
             && !has_own_peer(&target).await
     })
     .await;
@@ -381,6 +401,19 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
                 .await
                 .unwrap()
                 == vec![author.clone()]
+        },
+    )
+    .await;
+    // AC-6: 移行の後のフォロー・解除は、両方向に届く。
+    let later = KukuriKeys::generate().public_key_hex();
+    target.app_service.follow_author(&later).await.unwrap();
+    source.app_service.unfollow_author(&followed).await.unwrap();
+    converge(
+        "the follows reach both devices",
+        [&source, &target],
+        async || {
+            social(&source, SocialConnectionKind::Following).await == [later.clone()]
+                && social(&target, SocialConnectionKind::Following).await == [later.clone()]
         },
     )
     .await;

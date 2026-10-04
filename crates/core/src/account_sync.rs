@@ -11,7 +11,10 @@ use secp256k1::rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{ACCOUNT_SYNC_REPLICA_PREFIX, ACCOUNT_SYNC_TOPIC_PREFIX};
-use crate::{ChannelId, FollowEdge, KukuriEnvelope, KukuriKeys, Pubkey, ReplicaId, TopicId};
+use crate::{
+    ChannelId, FollowEdge, KukuriEnvelope, KukuriKeys, Pubkey, ReplicaId, TopicId,
+    parse_block_edge, parse_follow_edge,
+};
 
 /// 導出の context（ADR 0061 §1）。変えると全アカウントの同期先が変わるので、変更してはならない。
 const ID_CONTEXT: &str = "kukuri.app 2026-10-01 account sync id v1";
@@ -187,9 +190,17 @@ pub enum AccountSyncItemKey {
         channel_id: ChannelId,
         participant: Pubkey,
     },
-    /// 自分と自分の channel の参加者の間の follow の edge の状態（#1219 AC-5。相互フォロー限定の資格の材料で、受け手は
-    /// フォローの表に入れない）。値は `FollowEdgeStatus`。
+    /// 自分の channel の参加者から自分への follow の edge の状態（#1219 AC-5。相互フォロー限定の資格の材料で、受け手は
+    /// フォローの表に入れない。自分から参加者への edge は `OwnFollow` が運ぶ）。値は `FollowEdgeStatus`。
     ParticipantFollow { subject: Pubkey, target: Pubkey },
+    /// 自分のフォローの edge（#1211 AC-6）。値は署名済みの envelope で、受け手はフォローの表と自分の author の replica に
+    /// 置く。
+    OwnFollow { target: Pubkey },
+    /// 自分のブロックの edge（#1211 AC-6）。値は署名済みの envelope。
+    OwnBlock { target: Pubkey },
+    /// 自分がフォローしている相手から自分への follow の edge（#1211 AC-6。移行先が相互フォローを判定するため）。値は相手の
+    /// 署名済みの envelope で、受け手はフォローの表にだけ置く。
+    FollowerEdge { subject: Pubkey },
     /// 端末の変更の窓の 1 件（ADR 0061 §10）。値は `AccountSyncChangeV1`。merge の対象ではない。
     ChangeSlot { device_id: String, slot: u16 },
     /// 端末の変更の窓の head。値は `AccountSyncChangeV1`（`docs_key` は空）。
@@ -239,6 +250,9 @@ impl AccountSyncItemKey {
             Self::ParticipantFollow { subject, target } => {
                 format!("follow/{}/{}", subject.as_str(), target.as_str())
             }
+            Self::OwnFollow { target } => format!("graph/follows/{}", target.as_str()),
+            Self::OwnBlock { target } => format!("graph/blocks/{}", target.as_str()),
+            Self::FollowerEdge { subject } => format!("graph/followers/{}", subject.as_str()),
             Self::ChangeSlot { device_id, slot } => format!("changes/{device_id}/{slot:03}"),
             Self::ChangeHead { device_id } => format!("changes/{device_id}/head"),
         }
@@ -274,6 +288,18 @@ impl AccountSyncItemKey {
                     Self::ChannelControllerRequest { channel_id }
                 }
                 _ => anyhow::bail!("unknown channel item"),
+            }
+        } else if let Some(target) = docs_key.strip_prefix("graph/follows/") {
+            Self::OwnFollow {
+                target: Pubkey::from(target.to_string()),
+            }
+        } else if let Some(target) = docs_key.strip_prefix("graph/blocks/") {
+            Self::OwnBlock {
+                target: Pubkey::from(target.to_string()),
+            }
+        } else if let Some(subject) = docs_key.strip_prefix("graph/followers/") {
+            Self::FollowerEdge {
+                subject: Pubkey::from(subject.to_string()),
             }
         } else if let Some(rest) = docs_key.strip_prefix("follow/") {
             let (subject, target) = rest.split_once('/').context("missing follow target")?;
@@ -333,6 +359,9 @@ impl AccountSyncItemKey {
                 crate::crypto::validate_pubkey(subject.as_str())?;
                 crate::crypto::validate_pubkey(target.as_str())
             }
+            Self::OwnFollow { target: key }
+            | Self::OwnBlock { target: key }
+            | Self::FollowerEdge { subject: key } => crate::crypto::validate_pubkey(key.as_str()),
             Self::ChangeSlot { device_id, slot } => {
                 ensure!(
                     u64::from(*slot) < ACCOUNT_SYNC_CHANGE_WINDOW,
@@ -459,6 +488,54 @@ impl AccountSyncItem {
                 .to_string(),
             updated_at: edge.updated_at,
             value: Some(serde_json::to_value(&edge.status)?),
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    /// follow・block の edge の item（#1211 AC-6）。`account` の edge は自分のフォロー・ブロック、`account` への follow の
+    /// edge はフォロワーの edge になる。値は署名済みの envelope で、op_id は envelope の ID の先頭 32 桁、版は edge の時刻
+    /// （`created_at`）。同じ edge を受け直しても版が増えない。
+    pub fn edge(account: &Pubkey, envelope: &KukuriEnvelope) -> Result<Self> {
+        let (key, updated_at) = if let Some(edge) = parse_follow_edge(envelope)? {
+            let key = if edge.subject_pubkey == *account {
+                AccountSyncItemKey::OwnFollow {
+                    target: edge.target_pubkey,
+                }
+            } else {
+                ensure!(
+                    edge.target_pubkey == *account,
+                    "the follow edge does not touch the account"
+                );
+                AccountSyncItemKey::FollowerEdge {
+                    subject: edge.subject_pubkey,
+                }
+            };
+            (key, edge.updated_at)
+        } else if let Some(edge) = parse_block_edge(envelope)? {
+            ensure!(
+                edge.subject_pubkey == *account,
+                "the block edge is not the account's"
+            );
+            (
+                AccountSyncItemKey::OwnBlock {
+                    target: edge.target_pubkey,
+                },
+                edge.updated_at,
+            )
+        } else {
+            anyhow::bail!("not a follow or block edge envelope");
+        };
+        let item = Self {
+            key,
+            op_id: envelope
+                .id
+                .as_str()
+                .get(..32)
+                .context("edge envelope id is too short")?
+                .to_string(),
+            updated_at,
+            value: Some(serde_json::to_value(envelope).context("failed to encode edge envelope")?),
         };
         item.validate()?;
         Ok(item)

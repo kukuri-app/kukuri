@@ -62,7 +62,7 @@ impl DeviceDocs {
     }
 
     /// (読取り、読んだ bytes、書込み) を数え直す。
-    fn work(&self) -> (usize, usize, usize) {
+    pub(super) fn work(&self) -> (usize, usize, usize) {
         (
             self.reads.swap(0, Ordering::SeqCst),
             self.bytes.swap(0, Ordering::SeqCst),
@@ -81,7 +81,7 @@ impl DeviceDocs {
         self.reads_left.store(reads, Ordering::SeqCst);
     }
 
-    fn reading_from(&self, other: &DeviceDocs) {
+    pub(super) fn reading_from(&self, other: &DeviceDocs) {
         *self.remote.lock().expect("remote") = Some(Arc::new(other.clone()));
     }
 }

@@ -1,8 +1,9 @@
 //! 本人の端末間の account 同期の導出と item の封（ADR 0061 §1・§2）。
 
 use crate::{
-    AccountSyncItem, AccountSyncItemKey, ChannelId, ChannelParticipantV1, EnvelopeId, FollowEdge,
-    FollowEdgeStatus, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES, Pubkey, SealedAccountSyncItem,
+    AccountSyncItem, AccountSyncItemKey, BlockEdgeStatus, ChannelId, ChannelParticipantV1,
+    EnvelopeId, FollowEdge, FollowEdgeStatus, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES, Pubkey,
+    SealedAccountSyncItem, build_block_edge_envelope, build_follow_edge_envelope,
     receive_route_for_account,
 };
 
@@ -273,5 +274,63 @@ fn participant_items_round_trip_and_keep_their_version() {
             AccountSyncItemKey::from_docs_key(&item.key.docs_key()).unwrap(),
             item.key
         );
+    }
+}
+
+/// 自分のフォロー・ブロックの edge の item は、envelope から種類・版・op_id が決まり、docs の key を往復できる
+/// （#1211 AC-6）。edge でない envelope からは作らない。
+#[test]
+fn own_edge_items_round_trip_and_keep_their_version() {
+    let me = keys(SECRET);
+    let target = keys(OTHER_SECRET).public_key();
+    let follow = build_follow_edge_envelope(&me, &target, FollowEdgeStatus::Active).unwrap();
+    let block = build_block_edge_envelope(&me, &target, BlockEdgeStatus::Active).unwrap();
+    for (envelope, docs_key) in [
+        (&follow, format!("graph/follows/{}", target.as_str())),
+        (&block, format!("graph/blocks/{}", target.as_str())),
+    ] {
+        let item = AccountSyncItem::edge(&me.public_key(), envelope).unwrap();
+        assert_eq!(
+            item,
+            AccountSyncItem::edge(&me.public_key(), envelope).unwrap()
+        );
+        assert_eq!(item.key.docs_key(), docs_key);
+        assert_eq!(
+            AccountSyncItemKey::from_docs_key(&docs_key).unwrap(),
+            item.key
+        );
+        assert_eq!(
+            (item.op_id.as_str(), item.updated_at),
+            (&envelope.id.as_str()[..32], envelope.created_at)
+        );
+    }
+    let profile = crate::build_profile_envelope(
+        &me,
+        &crate::KukuriProfileEnvelopeContentV1 {
+            author_pubkey: me.public_key(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(AccountSyncItem::edge(&me.public_key(), &profile).is_err());
+    // 相手から自分への follow の edge はフォロワーの edge。自分に触れない edge と、相手のブロックは作らない。
+    let other = keys(OTHER_SECRET);
+    let follower =
+        build_follow_edge_envelope(&other, &me.public_key(), FollowEdgeStatus::Active).unwrap();
+    let item = AccountSyncItem::edge(&me.public_key(), &follower).unwrap();
+    assert_eq!(
+        item.key.docs_key(),
+        format!("graph/followers/{}", other.public_key().as_str())
+    );
+    assert_eq!(
+        AccountSyncItemKey::from_docs_key(&item.key.docs_key()).unwrap(),
+        item.key
+    );
+    let third = KukuriKeys::generate().public_key();
+    for envelope in [
+        build_follow_edge_envelope(&other, &third, FollowEdgeStatus::Active).unwrap(),
+        build_block_edge_envelope(&other, &me.public_key(), BlockEdgeStatus::Active).unwrap(),
+    ] {
+        assert!(AccountSyncItem::edge(&me.public_key(), &envelope).is_err());
     }
 }

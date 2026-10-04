@@ -18,9 +18,24 @@ use super::account_sync_support::row_of;
 
 /// 1 回に読む slot・item・key の数（ADR 0061 §5）。
 const ACCOUNT_SYNC_PAGE: usize = 64;
-/// 周回で辿る item の prefix（この順に辿る）。参加者との follow の item は、参加者の item（`channel/` の下）より先に読む
-/// （遅れた参加の grant の資格を、同期した edge でも判断するため。#1219 AC-5 監査 B-1）。
-const CYCLE_ROOTS: [&str; 4] = ["profile", "trust/always-visible/", "follow/", "channel/"];
+/// 周回で辿る item の prefix（この順に辿る）。参加者との follow の item と自分のフォローの edge は、参加者の item
+/// （`channel/` の下）より先に読む（遅れた参加の grant の資格を、同期した edge でも判断するため。#1219 AC-5 監査 B-1、
+/// #1211 AC-6）。
+const CYCLE_ROOTS: [&str; 5] = [
+    "profile",
+    "trust/always-visible/",
+    "follow/",
+    OWN_EDGES_ROOT,
+    "channel/",
+];
+/// 自分のフォロー・ブロックの edge の根（#1211 AC-6）。移行では、replica の木の代わりに store から送る（AC-6 より前の
+/// edge は replica に無い）。
+const OWN_EDGES_ROOT: &str = "graph/";
+/// 移行で store から edge を送る段の cursor（自分のフォロー・それらの相手から自分への edge・自分のブロックの順）。`:` は
+/// key の文字に無いので、replica の prefix と重ならない。
+const TRANSFER_FOLLOWS: &str = "@follows:";
+const TRANSFER_FOLLOWERS: &str = "@followers:";
+const TRANSFER_BLOCKS: &str = "@blocks:";
 /// item の key に使う文字（ASCII の順）。周回は prefix にこの順で 1 文字ずつ足して降りる。
 const KEY_ALPHABET: &str = "-/0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -337,6 +352,9 @@ impl AppService {
                 CYCLE_ROOTS[0].to_string()
             }
         };
+        if prefix == OWN_EDGES_ROOT || prefix.starts_with('@') {
+            return self.account_transfer_edges_page(&prefix).await;
+        }
         let local = self.services.docs_sync.as_ref();
         let (keys, next) = self.account_sync_cycle_keys(local, &prefix).await?;
         let sync_keys = self.services.keys.derive_account_sync();
@@ -350,6 +368,72 @@ impl AppService {
                 });
             }
         }
+        Ok((items, next))
+    }
+
+    /// 移行の edge の 1 page（#1211 AC-6）。store から相手の順に 64 件ずつ読み、envelope の item にして返す。自分の
+    /// フォロー、それらの相手から自分への edge（移行先が相互フォローを判定するため）、自分のブロックの順に送り、その後に
+    /// 周回の次の根へ進む。
+    async fn account_transfer_edges_page(
+        &self,
+        cursor: &str,
+    ) -> Result<(Vec<AccountTransferItem>, Option<String>)> {
+        let account = self.services.keys.public_key();
+        let me = account.as_str();
+        let (phase, after) = [TRANSFER_FOLLOWERS, TRANSFER_BLOCKS]
+            .into_iter()
+            .find_map(|phase| cursor.strip_prefix(phase).map(|after| (phase, after)))
+            .unwrap_or((
+                TRANSFER_FOLLOWS,
+                cursor.strip_prefix(TRANSFER_FOLLOWS).unwrap_or_default(),
+            ));
+        let after = (!after.is_empty()).then_some(after);
+        let store = &self.services.store;
+        // 読んだ edge の相手と、送る envelope の ID。
+        let (targets, envelope_ids) = if phase == TRANSFER_BLOCKS {
+            store
+                .list_block_edges_by_subject_after(me, after, ACCOUNT_SYNC_PAGE)
+                .await?
+                .into_iter()
+                .map(|edge| (edge.target_pubkey, Some(edge.envelope_id)))
+                .unzip::<_, _, Vec<_>, Vec<_>>()
+        } else {
+            let mut pairs = Vec::new();
+            for edge in store
+                .list_follow_edges_by_subject_after(me, after, ACCOUNT_SYNC_PAGE)
+                .await?
+            {
+                let envelope_id = if phase == TRANSFER_FOLLOWS {
+                    Some(edge.envelope_id)
+                } else {
+                    store
+                        .get_follow_edge(edge.target_pubkey.as_str(), me)
+                        .await?
+                        .map(|reverse| reverse.envelope_id)
+                };
+                pairs.push((edge.target_pubkey, envelope_id));
+            }
+            pairs.into_iter().unzip()
+        };
+        let sync_keys = self.services.keys.derive_account_sync();
+        let mut items = Vec::with_capacity(envelope_ids.len());
+        for envelope_id in envelope_ids.iter().flatten() {
+            if let Some(envelope) = store.get_envelope(envelope_id).await? {
+                let item = AccountSyncItem::edge(&account, &envelope)?;
+                items.push(AccountTransferItem {
+                    sealed: sync_keys.seal(&account, &item)?,
+                    key: item.key.docs_key(),
+                });
+            }
+        }
+        let next = match targets.last() {
+            Some(target) if targets.len() == ACCOUNT_SYNC_PAGE => {
+                Some(format!("{phase}{}", target.as_str()))
+            }
+            _ if phase == TRANSFER_FOLLOWS => Some(TRANSFER_FOLLOWERS.to_string()),
+            _ if phase == TRANSFER_FOLLOWERS => Some(TRANSFER_BLOCKS.to_string()),
+            _ => next_cycle_prefix(OWN_EDGES_ROOT),
+        };
         Ok((items, next))
     }
 
@@ -758,8 +842,10 @@ mod tests {
             next_cycle_prefix("trust/always-visible/").as_deref(),
             Some("follow/")
         );
-        assert_eq!(next_cycle_prefix("follow/").as_deref(), Some("channel/"));
-        assert_eq!(next_cycle_prefix("follow/z").as_deref(), Some("channel/"));
+        assert_eq!(next_cycle_prefix("follow/").as_deref(), Some("graph/"));
+        assert_eq!(next_cycle_prefix("follow/z").as_deref(), Some("graph/"));
+        assert_eq!(next_cycle_prefix("graph/").as_deref(), Some("channel/"));
+        assert_eq!(next_cycle_prefix("graph/z").as_deref(), Some("channel/"));
         assert_eq!(next_cycle_prefix("channel/").as_deref(), None);
         assert_eq!(next_cycle_prefix("channel/a").as_deref(), Some("channel/b"));
         assert_eq!(
