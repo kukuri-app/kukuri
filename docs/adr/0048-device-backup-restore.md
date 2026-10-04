@@ -77,6 +77,10 @@ Accepted
 - 他人の旧投稿のうち予算に入らないものは手元から消え、表示時にproviderから取り直す（取れなければ取得不能）。更新前に旧context replicaへ置いたDome instanceの読取りは撤去した（2026-09-27ユーザー決定）。
 - 空のnamespaceの回収（#1407、2026-09-28ユーザー決定）: 退役を終えた後（旧storeが無いaccountを含む）、同じ背景taskが、更新前の版が読取りで作った空のnamespaceを回収する。新しいstoreのnamespaceをidの順に1回128件以内で調べ、中身が0件で`IrohDocsSync`が開いていないものを`drop_doc`で消す（idはハッシュで元のreplicaを逆算できないため、空で閉じたものを対象にする。失うデータは無い）。位置は`legacy_store_retirement`の`empty_namespaces`に保存し、`legacy_store_retirable`はこのkindを数えない。iroh-docsの列挙に開始位置の指定が無いので、再開のときは保存した位置まで読み飛ばす（namespaceの総数に比例する一度きりの走査。2026-09-28ユーザー承認）。終端を記録した後は列挙せず、背景taskは止まる。
 
+### 8. 他の方法との対象の差（#1211 AC-5、2026-10-04）
+
+- backup は、端末のデータ全体を運ぶ唯一の方法で、desktop だけで使える。別の端末へ移す（ADR 0062）とアカウント鍵の export（ADR 0047）は、運ぶものが少ない。差の表は ADR 0047 §6 にあり、設定の「アカウント」で示す。
+
 ## Consequences
 
 - データ分類は`docs/legal/device-backup-data-classification.md`を正とする。

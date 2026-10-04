@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6、自動同期への接続は AC-4 で §7 に固定した。画面と既存の鍵の export・backup との対象差の説明は AC-5）
+Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6、自動同期への接続は AC-4 で §7 に固定した。画面と既存の鍵の export・backup との対象差の説明は AC-5 で §8 に固定した）
 
 ## Context
 
@@ -59,7 +59,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 確定: `end` を受けたら manifest を完了にし、新規のアカウントは鍵の保存と登録簿への追加（host のアカウントの操作と排他。同じ公開鍵が登録済みなら追加しない）を行ってから ACK を返す。移行元は ACK を受けたときだけ `completed`、移行先は確定の後に `completed`。保存できない（容量不足など）ときは `storage` にして接続を閉じ、移行元にも `storage` を示す。ACK が届かなくても移行先の保存は戻さない（やり直しは同じアカウントへの item 単位の merge になる）。
 - 反映: 置き場は、そのアカウントの runtime の起動時（使っているアカウントへの移行なら確定の直後）に背景で chunk ごとに W5 の item 単位の merge（`(updated_at, op_id)`）で反映し、反映した chunk から消す。手元の新しい版は古い bundle で戻らない。別のアカウントの runtime は読まない（置き場はアカウントの DB の隣で、封はアカウントの鍵でしか開けない）。
   - 受信を失敗・取消・停止で止めたら置き場を消す（取消・停止は移行の task ごと止めるので、確定も破棄もせずに落とされた保存が消す）。再起動などで残った受信途中（manifest が完了でない）の置き場は反映せず、次の受信かそのアカウントの起動で消す。反映の途中で止まったら、manifest の位置から続ける（消えた chunk は反映済み）。
-- 切替（ユーザー決定）: 移行先は完了したら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。
+- 切替（ユーザー決定）: 移行先は完了の画面で「このアカウントを使う」を押したら、受け取ったアカウントへ切り替える（使っているアカウントなら閉じるだけ。§8）。
 - 確認済みの直後に片方だけが切断と表示しうる AC-1 の挙動は、同じ接続で転送を続け、移行元が ACK を受けてから閉じる形にして解消した。
 - 実装: core の `AccountTransferFrame`・`AccountTransferItem`、iroh-node の `AccountBundleSource`・`AccountBundleSink`、app-api の `account_transfer_page`・`merge_account_transfer_items`、desktop-runtime の `accounts/transfer.rs`。
 
@@ -72,7 +72,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 移行先の置き場: 受けたアカウントの DB の隣の journal（`<db>.account-history.json`。範囲・続きの位置・保存した page の数・反映した page の数）と、page ごとの `<db>.account-history-<n>.json`、blob の部分の `<db>.account-history-<n>-<p>.bin`。record は空でない・NUL を含まない・範囲の replica であることを、blob は順番・長さ・hash を確かめる。page は `page` を受けたら保存して journal を進め、ACK を返す。確定していない page の部分は取消・失敗で消し、再起動で残ったものは次の受信で消す。
 - 反映: そのアカウントの runtime の起動時（使っているアカウントなら page の保存の後）に、page ごとに自分の record（`put_owned_record`）と blob（保護参照 `own_blob:<hash>`）として保存し、反映した page から消す。既にある自分の record は上書きしない。範囲の終わりまで反映したら journal も消す。
 - 中止・失敗・再開（ユーザー決定）: 履歴の途中の取消（どちらの端末からも）・切断・保存の失敗では、必須の移行は完了のまま、履歴は止まった理由（`stopped`）を結果に持つ。もう一度つないで同じ範囲を選ぶと、journal の続きの位置から受ける（受けた page は送り直さない）。別の範囲は最初から。自動の再接続・一時停止はしない。
-- 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）受け取ったアカウントへ切り替える。切替は runtime と endpoint を作り直すので、その時点で移行の接続が切れるため。移行先は履歴を受ける間は Dialog を閉じさせない（「戻る」と閉じるボタンを出さず、Escape・外側のクリックでも閉じない）。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じる操作で履歴が止まり、切り替わらなかった監査の指摘 B-1 による）。
+- 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）完了の画面を示す（切替は §8 の「このアカウントを使う」から）。切替は runtime と endpoint を作り直し、移行の接続が切れるので、履歴を受ける間は切り替えない。移行先は履歴を受ける間は Dialog を閉じさせない（「戻る」と閉じるボタンを出さず、Escape・外側のクリックでも閉じない）。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じる操作で履歴が止まり、切り替わらなかった監査の指摘 B-1 による）。
 - 表示: 移行先では、移した投稿は自分のプロフィールに出る（作者の bucket の索引を、手元の自分の record から読む）。topic の timeline は時間 bucket を相手の端末から読むので、移行先の自分の record だけでは出ない（相手の端末が居れば読める）。取り下げは、表示した投稿の背景の確認が投稿の日の bucket を読んで反映する（確認先が旧形式の replica だけだった既存の不具合を、2026-10-04 のユーザー判断でこの AC で直した）。
 - 実装: core の `AccountTransferHistory`・`AccountHistoryRecord`・`AccountHistoryCursor` と frame の `history`・`records`・`blob`・`page`、store の `protected_records_after`、iroh-node の `AccountBundleSource::history_page`・`blob_part`・`AccountBundleSink::history`・`AccountHistoryStaging`、desktop-runtime の `accounts/history.rs`、app-api の `schedule_withdrawal_check`。
 
@@ -86,6 +86,16 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
   - 差分の取得の task と移行の反映は、account の状態を共有する handle（`AppService::account_handle`）で merge する。持ち主ではないので、落としても購読を止めない。それまでは別の lease の表を持つ handle で merge していたため、別の端末から届いた channel の世代の変化が購読とメモリへ反映されず、移行で受けた channel の購読は反映の task が終わると外れていた。
 - 実装: docs-sync の `RemoteDocsSource::exact`、app-api の `AppService::account_handle`。試験は desktop-runtime の `account_transfer_sync.rs`（2 端末の実 runtime の切替、loopback の直接経路、rendezvous の在席を返す模擬の node）。
 
+### 8. 画面の説明と、既存の鍵の export・backup との対象差（AC-5、2026-10-04 ユーザー判断）
+
+- 移行の画面は、接続の前（移行元のリンクを出す画面と、移行先のリンクを貼る画面）に、移るもの・移らないもの・移行元のアカウントが残ることを示す。移行先の完了の画面にも、移っていないものを示す。必須の完了と履歴の結果の表示は §5・§6 のまま。
+- 切替は画面を読み込み直すので、移行先は完了してもすぐには切り替えず、完了の画面の「このアカウントを使う」で切り替える（2026-10-04 ユーザー判断。完了したらすぐ切り替える旧い形を改めた）。閉じたときは、アカウントの menu から切り替える。
+  - 移るもの: アカウント鍵、profile、フォローとブロック（AC-6）、「この作者を常に表示する」の指定、参加中の private channel とその鍵。選んだときは、移行元で書いた自分の投稿の履歴（本文と添付）。
+  - 移らないもの: ミュート（ADR 0022）、DM と通知の履歴（ADR 0020・0023）、Community Node の設定と同意、アプリの同意と年齢の申告、成人向けの表示の設定（§7）。
+- 移行元のアカウント（登録簿と鍵）は、移行の後も残す。移行は移行元の鍵・登録簿・DB に触れない。
+- 設定の「アカウント」は、別の端末で使う 3 つの方法の差を示す（ADR 0047 §6）。
+- 実装: `apps/desktop/src/components/settings/AccountTransferPanel.tsx` の `TransferScope` と完了の画面、`apps/desktop/src/shell/page/AccountMenu.tsx`、`AccountKeyPanel.tsx`。
+
 ## 採らない方式
 
 - 秘密鍵・チャンネルの秘密を QR に直接載せる: 画面を見た人・リンクを受け取った経路に秘密が渡る（#1213 の Non-goals）。
@@ -96,7 +106,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 ## Consequences
 
 - 移行の秘密の転送（AC-2）は、確認済みの接続の上だけで行う。
-- 受けたアカウントの鍵・設定は、そのアカウントの runtime が起動するまで置き場に残る（移行先は完了で切り替えるので、通常はすぐ反映する）。
+- 受けたアカウントの鍵・設定は、そのアカウントの runtime が起動するまで置き場に残る（移行先は完了の画面から切り替えるので、通常はすぐ反映する）。
 - Web の runtime の組み立て（W1 AC-5）以後、Web も同じ protocol で移行先・移行元になれる（`iroh-node` は wasm32 で build する共用 crate）。
 
 ## Data classification

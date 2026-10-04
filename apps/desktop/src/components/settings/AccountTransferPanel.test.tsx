@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import i18n from '@/i18n';
 import type { AccountTransferStatus } from '@/lib/api/types.generated';
 
 import { AccountTransferPanel } from './AccountTransferPanel';
@@ -63,7 +64,7 @@ test('the source shows the QR code and link, then confirms the matching code', a
   expect(identityApi.cancelAccountTransfer).toHaveBeenCalled();
 });
 
-test('the target reports the received account once and explains a storage failure', async () => {
+test('the target hands over the received account when asked and explains a storage failure', async () => {
   const user = userEvent.setup();
   const onCompleted = vi.fn();
   const { unmount } = render(<AccountTransferPanel role='target' initialLink={LINK} onCompleted={onCompleted} />);
@@ -75,7 +76,10 @@ test('the target reports the received account once and explains a storage failur
   expect(onCompleted).not.toHaveBeenCalled();
   status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: null };
   expect(await screen.findByText(/Everything was received/, {}, { timeout: 2000 })).toBeInTheDocument();
+  // AC-5: 完了の画面の説明を読めるように、押すまでは渡さない。
   await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(onCompleted).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Use this account' }));
   expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc');
   unmount();
 
@@ -175,7 +179,8 @@ test('the target chooses a history range and is completed only after the history
   expect(await screen.findByText('Receiving post history stopped partway (12).')).toBeInTheDocument();
   expect(screen.getByText("Texts or attachments that weren't on the other device couldn't be moved (2).")).toBeInTheDocument();
   expect(screen.getByText(/choose the same range on the receiving device to continue/)).toBeInTheDocument();
-  await waitFor(() => expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc'));
+  await user.click(screen.getByRole('button', { name: 'Use this account' }));
+  expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc');
 });
 
 test('the source shows the history it sends and the finished summary', async () => {
@@ -188,4 +193,53 @@ test('the source shows the history it sends and the finished summary', async () 
   expect(await screen.findByText('Sent post history (40).', {}, { timeout: 2000 })).toBeInTheDocument();
   expect(screen.queryByText(/couldn't be moved/)).not.toBeInTheDocument();
   expect(screen.queryByText(/continue where it stopped/)).not.toBeInTheDocument();
+});
+
+// #1211 AC-5: 接続の前に移るもの・移らないもの・移行元に残ることを示し、移行先の完了の後に移っていないものを示す。
+test('both devices explain what moves before connecting and the target lists what was not moved', async () => {
+  const { unmount } = render(<AccountTransferPanel role='source' />);
+  await screen.findByRole('img', { name: 'QR code of the transfer link' });
+  const sourceScope = screen.getByTestId('account-transfer-scope');
+  expect(sourceScope).toHaveTextContent('Moves: your account key, profile, follows and blocks');
+  expect(sourceScope).toHaveTextContent("Doesn't move: your muted list, DM and notification history");
+  expect(sourceScope).toHaveTextContent('The account stays on the source device.');
+  status = { state: 'completed', role: 'source', account_id: null, history: null };
+  await screen.findByText(/The other device has saved the account/, {}, { timeout: 2000 });
+  expect(screen.queryByTestId('account-transfer-scope')).not.toBeInTheDocument();
+  unmount();
+
+  const user = userEvent.setup();
+  render(<AccountTransferPanel role='target' initialLink={LINK} />);
+  expect(screen.getByTestId('account-transfer-scope')).toHaveTextContent('Moves: your account key');
+  identityApi.openAccountTransfer.mockImplementation(async () => {
+    status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: null };
+  });
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  await screen.findByText(/Everything was received/, {}, { timeout: 2000 });
+  const done = screen.getByTestId('account-transfer-scope');
+  expect(done).toHaveTextContent('Not moved: your muted list, DM and notification history');
+  expect(done).not.toHaveTextContent('Moves:');
+  expect(screen.getByRole('button', { name: 'Use this account' })).toBeVisible();
+});
+
+test.each([
+  ['ja', '移るもの:', '移らないもの:', '移っていないもの:', 'このアカウントを使う'],
+  ['zh-CN', '会迁移：', '不会迁移：', '未迁移：', '使用此账号'],
+])('the transfer screen explains what moves in %s', async (language, moves, notMoved, notMovedDone, use) => {
+  await i18n.changeLanguage(language);
+  try {
+    const user = userEvent.setup();
+    render(<AccountTransferPanel role='target' initialLink={LINK} />);
+    const scope = screen.getByTestId('account-transfer-scope');
+    expect(scope).toHaveTextContent(moves);
+    expect(scope).toHaveTextContent(notMoved);
+    identityApi.openAccountTransfer.mockImplementation(async () => {
+      status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: null };
+    });
+    await user.click(screen.getByRole('button', { name: i18n.t('settings:accountTransfer.target.connect') }));
+    expect(await screen.findByRole('button', { name: use }, { timeout: 2000 })).toBeVisible();
+    expect(screen.getByTestId('account-transfer-scope')).toHaveTextContent(notMovedDone);
+  } finally {
+    await i18n.changeLanguage('en');
+  }
 });
