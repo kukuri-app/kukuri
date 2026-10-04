@@ -170,11 +170,13 @@ function captureClipboard() {
 /**
  * WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる口を
  * 持つ（ページより先に動く。#1220 AC-4）。constructor は差し替えない（fallback の端の script が prototype の getter を差し替える）。
- * `window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる（runtime は close
- * の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
+ * `window.__kukuriCut = { after }` を置くと、1 本の DataChannel で `after` bytes を受け取った時点で、開いている DataChannel をすべて
+ * 閉じる（runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。1 本だけ閉じると、
+ * 他の相手との session が残り、転送が relay を通らずに完了しうる（#1549）。
  */
 function trackPeerConnections() {
   window.__kukuriPeers = [];
+  const channels = [];
   const createDataChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function (...args) {
     window.__kukuriPeers.push(this);
@@ -187,11 +189,13 @@ function trackPeerConnections() {
       return onmessage.get.call(this);
     },
     set(handler) {
+      if (handler) channels.push(this);
+      let received = 0;
       onmessage.set.call(this, handler && ((event) => {
         const cut = window.__kukuriCut;
-        if (cut && !cut.done && (cut.received = (cut.received ?? 0) + event.data.byteLength) >= cut.after) {
+        if (cut && !cut.done && (received += event.data.byteLength) >= cut.after) {
           cut.done = true;
-          this.close();
+          for (const channel of channels) channel.close();
         }
         handler(event);
       }));
@@ -659,8 +663,7 @@ async function settings() {
   await sees(browser, adult);
 
   // Community Node: node の追加と削除を保存できる。同意と認証の状態（開発者モードで出る）を示し、同意を撤回すると未同意・
-  // 未認証になり、同意し直して認証し直せる。保存と同意し直しで通信の stack を作り直した後の Web は、作り直す前から通信して
-  // いた native へ受信の offer（参加 record・ACK）を送れない（#1549）ので、この scenario の最後に行う。
+  // 未認証になり、同意し直して認証し直せる。
   await enableDeveloperMode(browser);
   await openSettings(browser, 'community-node');
   const extra = 'http://127.0.0.1:9';
@@ -1319,9 +1322,9 @@ async function lifecycle() {
 
 /**
  * `webrtc-loss`（#1220 AC-4、#1482 J2）: WebRTC の経路だけの喪失（relay は健全）。native の画像が直接経路を通る状態で、画像の
- * 転送の途中に DataChannel を閉じ、画像が出るまでは新しい session の ICE も成立させない（直接経路が先に戻ると relay を通らずに
- * 完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ hash で、投稿の card は 1 つ。転送中の stream が続くこと
- * （取り直しにならないこと）は #1482 が判定する（今は表示の取得が 15 秒の期限で打ち切られ、relay で取り直す）。
+ * 転送の途中に開いている DataChannel をすべて閉じ、画像が出るまでは新しい session の ICE も成立させない（直接経路が先に戻ると
+ * relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ hash で、投稿の card は 1 つ。転送中の
+ * stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が 15 秒の期限で打ち切られ、relay で取り直す）。
  */
 async function webrtcLoss() {
   const a = await openClient('web-a', { ice: true });
