@@ -34,6 +34,8 @@ export default defineConfig({
         : path.resolve(import.meta.dirname, './src/lib/webRuntimeUnavailable.ts'),
     },
   },
+  // Web の配信の header（`_headers`。ADR 0060 §2）だけを置く。`public` の metaverse の資源は Web では使わない。
+  publicDir: webTarget ? 'web-public' : 'public',
   build: webTarget
     ? {
         outDir: 'dist-web',

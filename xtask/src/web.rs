@@ -26,10 +26,20 @@ fn target_dir() -> PathBuf {
         .unwrap_or_else(|| root.join("target"))
 }
 
+/// Cloudflare Pages の 1 file の上限（ADR 0060 §2）。配信の artifact の各 file をこれ以下にする。
+const MAX_ARTIFACT_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
 /// web-runtime の wasm を `wasm-bindgen --target web` で `apps/desktop/web-runtime-pkg` へ出し、Web の mode の Vite の
 /// build で `apps/desktop/dist-web` を作る。wasm の C の依存の build に clang と llvm-ar が要る（Linux）。
-fn web_build(community_node_base_url: &str) -> Result<()> {
+/// 試験の Community Node を渡さないときは配信の build で、Community Node は配布の設定を使い、wasm を LTO の profile と
+/// 名前の section の除去で小さくする。試験の build は、速さと失敗時の調べやすさのため、どちらもしない。
+fn web_build(test_community_node: Option<&str>) -> Result<()> {
     let root = root_dir();
+    let profile = if test_community_node.is_some() {
+        "release"
+    } else {
+        "web-release"
+    };
     run_with_env(
         "cargo",
         [
@@ -38,7 +48,8 @@ fn web_build(community_node_base_url: &str) -> Result<()> {
             "kukuri-web-runtime",
             "--target",
             "wasm32-unknown-unknown",
-            "--release",
+            "--profile",
+            profile,
         ],
         &root,
         &[
@@ -46,40 +57,75 @@ fn web_build(community_node_base_url: &str) -> Result<()> {
             ("AR_wasm32_unknown_unknown", "llvm-ar"),
         ],
     )?;
-    let target = target_dir();
-    let wasm = target.join("wasm32-unknown-unknown/release/kukuri_web_runtime.wasm");
+    let wasm = target_dir().join(format!(
+        "wasm32-unknown-unknown/{profile}/kukuri_web_runtime.wasm"
+    ));
     let pkg = desktop_dir().join("web-runtime-pkg");
-    run(
-        "wasm-bindgen",
-        [
-            "--target".to_string(),
-            "web".to_string(),
-            // Worker の script（鍵の導出。desktop-runtime の kdf.rs の link_to!）を data URL でなく別 file にする（CSP）。
-            "--split-linked-modules".to_string(),
-            "--out-dir".to_string(),
-            pkg.display().to_string(),
-            wasm.display().to_string(),
-        ],
-        &root,
-    )?;
+    let mut args = vec![
+        "--target".to_string(),
+        "web".to_string(),
+        // Worker の script（鍵の導出。desktop-runtime の kdf.rs の link_to!）を data URL でなく別 file にする（CSP）。
+        "--split-linked-modules".to_string(),
+    ];
+    if test_community_node.is_none() {
+        args.extend([
+            "--remove-name-section".to_string(),
+            "--remove-producers-section".to_string(),
+        ]);
+    }
+    args.extend([
+        "--out-dir".to_string(),
+        pkg.display().to_string(),
+        wasm.display().to_string(),
+    ]);
+    run("wasm-bindgen", args, &root)?;
     run_pnpm_with_env(
         ["exec", "vite", "build"],
         &desktop_dir(),
         &[
             ("VITE_KUKURI_TARGET", "web"),
+            // 空なら配布の設定（`webRuntime.ts`）。手元の環境の値を配信の build に持ち込まない。
             (
                 "VITE_KUKURI_COMMUNITY_NODE_BASE_URL",
-                community_node_base_url,
+                test_community_node.unwrap_or(""),
             ),
         ],
     )
+}
+
+/// 配信の artifact（`apps/desktop/dist-web`。ADR 0060 §1・§2、#1220 AC-6）。上限を超える file があれば失敗にする。
+pub(crate) fn web_build_artifact() -> Result<()> {
+    web_build(None)?;
+    let dist = desktop_dir().join("dist-web");
+    let mut dirs = vec![dist.clone()];
+    let mut total = 0;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                dirs.push(entry.path());
+                continue;
+            }
+            if metadata.len() > MAX_ARTIFACT_FILE_BYTES {
+                bail!(
+                    "{} is {} bytes, over the {MAX_ARTIFACT_FILE_BYTES} bytes limit of a file",
+                    entry.path().display(),
+                    metadata.len()
+                );
+            }
+            total += metadata.len();
+        }
+    }
+    println!("[xtask] web artifact: {} ({total} bytes)", dist.display());
+    Ok(())
 }
 
 /// Web の build を、同じ process の Community Node・native の相手（harness の `web_e2e_fixture`）と実ブラウザで試す。
 /// driver は `apps/desktop/tests/web-e2e/main-flow.mjs`（WebdriverIO。chromedriver は `CHROMEDRIVER`、無ければ自動）。
 pub(crate) fn web_e2e() -> Result<()> {
     let root = root_dir();
-    web_build(&format!("http://{WEB_E2E_CN_ADDR}"))?;
+    web_build(Some(&format!("http://{WEB_E2E_CN_ADDR}")))?;
     run(
         "cargo",
         ["build", "-p", "kukuri-harness", "--bin", "web_e2e_fixture"],

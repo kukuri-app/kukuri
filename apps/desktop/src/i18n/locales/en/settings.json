@@ -526,6 +526,7 @@
     "title": "Release",
     "summary": "Preview channel, updater, diagnostics, and resources.",
     "storeSummary": "Microsoft Store updates, diagnostics, and resources.",
+    "webSummary": "Preview channel, diagnostics, and resources.",
     "update": {
       "title": "Updates",
       "version": "Version",
@@ -582,6 +583,12 @@
       "p2pPurpose": "Peer discovery, P2P connectivity, synchronization within the selected audience, and relay when needed",
       "p2pItems": "Public key, endpoint identifier, IP address, connection metadata, and signed content, metadata, and attachments within the selected audience",
       "p2pRetention": "Subject to the receiving peer, DHT participant, or relay operator; copies already obtained cannot be erased centrally.",
+      "webOriginDestination": "The server that delivers the web client",
+      "webOriginPurpose": "Loading the screens and code of the web client when it opens and while it is in use",
+      "webOriginItems": "IP address, HTTP/TLS request metadata, User-Agent, requested path, and Referer (when the linking page sends it)",
+      "webOriginRetention": "Subject to the policies of the delivering operator and network providers.",
+      "webP2pDestination": "Peers and configured relays (including STUN on the same host)",
+      "webP2pRetention": "Subject to the receiving peer or relay operator; copies already obtained cannot be erased centrally.",
       "diagnosticNotice": "Copying or exporting a diagnostic report does not send it automatically. It leaves the device only if you attach it to a destination you choose."
     },
     "diagnostics": {
