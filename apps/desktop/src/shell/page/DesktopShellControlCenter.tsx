@@ -62,6 +62,7 @@ import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store'
 import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts';
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
+import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
@@ -285,6 +286,7 @@ export function DesktopShellControlCenter({
   return (
     <>
       <ColumnScopeLeases api={api} onActivateColumn={onActivateColumn} />
+      <ControllerPendingNotice />
       <div className='shell-control-cluster' data-control-center-open={workspaceState.controlCenterOpen}>
         <AccountMenu onOpen={() => setOpen(false)} onManage={() => openSettings('account')} onProfile={onOpenProfile} />
         <Button
