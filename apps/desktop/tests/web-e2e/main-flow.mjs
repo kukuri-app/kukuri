@@ -855,12 +855,12 @@ async function siteData() {
   // 途中の要素は使えないので、失敗したら次の回で見直す。
   await eventually('the restored account is active', async () => {
     try {
-      for (const text of ['What is a community node?', 'Set up your profile']) {
-        const dialog = await findDialog(browser, text);
-        if (dialog) {
-          await dialog.$('button=Later').click();
-          return false;
-        }
+      // 2 つが重なって出ることがあるので、いちばん上（最後）の dialog から閉じる。
+      const dialogs = await browser.$$('[role=dialog]');
+      const top = dialogs.length ? dialogs[dialogs.length - 1] : null;
+      if (top && /What is a community node\?|Set up your profile/.test(await top.getText())) {
+        await top.$('button=Later').click();
+        return false;
       }
       await openSettings(browser, 'account');
       const active = browser.$('[data-testid="account-list"]').$('li*=Active');
