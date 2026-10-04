@@ -365,6 +365,35 @@ describe('useDesktopShellData characterization', () => {
     view.unmount();
   });
 
+  test('a channel joined while a topic load is in flight stays in the joined list after the load lands', async () => {
+    // #1544: 読込みの途中で手元の参加済み一覧が変わったら、参加の前に取った一覧で置き換えない
+    // (置き換えると route の同期が参加した channel の route を公開へ戻す)。
+    const topic = 'kukuri:topic:general';
+    const joinedChannel = buildJoinedChannel('channel-joined');
+    const timeline = createDeferred<TimelineView>();
+    const listTimeline = vi.fn(() => timeline.promise);
+    const listJoinedPrivateChannels = vi.fn(async () => []);
+    const api: DesktopApi = { ...createDesktopMockApi(), listTimeline, listJoinedPrivateChannels };
+    const { harness, view } = renderDataHook(api);
+    await flushAsyncWork();
+    expect(listJoinedPrivateChannels).toHaveBeenCalledTimes(1);
+
+    // 参加の処理と同じく、手元の一覧へ足す。
+    await act(async () => {
+      const state = harness.store.getState();
+      state.patchState({
+        joinedChannelsByTopic: { ...state.joinedChannelsByTopic, [topic]: [joinedChannel] },
+      });
+    });
+    timeline.resolve({ items: [], next_cursor: null });
+    await flushAsyncWork();
+
+    expect(
+      harness.store.getState().joinedChannelsByTopic[topic]?.map((channel) => channel.channel_id)
+    ).toEqual(['channel-joined']);
+    view.unmount();
+  });
+
   test('background refresh buffers new authoritative posts as pending without touching the visible timeline', async () => {
     const olderPost = buildPost({
       object_id: 'post-old',
