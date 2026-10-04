@@ -268,10 +268,6 @@ async fn a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_p
     Ok(())
 }
 
-/// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
-/// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
-/// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の
-/// 相手（交渉に応じない）との交渉は reset の後も期限まで枠を持つので、resume の前に期限の分だけ待つ。
 /// #1220 AC-3c2: docs の読取りの接続は、handshake に答えが返らなければ接続の期限（5 秒）で終わる。handshake の途中で WebRTC
 /// の経路を失った接続は、相手の側が失った path に結び付いたままになり、QUIC の idle 期限（30 秒）まで待っていた。答えない相手
 /// （止めた node）で同じ待ちを作る。
@@ -306,6 +302,10 @@ async fn a_docs_read_whose_handshake_gets_no_answer_ends_at_the_connect_timeout(
     Ok(())
 }
 
+/// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
+/// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
+/// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の
+/// 相手（交渉に応じない）との交渉は reset の後も期限まで枠を持つので、resume の前に期限の分だけ待つ。
 #[tokio::test]
 async fn resume_renegotiates_only_the_live_demand() -> Result<()> {
     let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
