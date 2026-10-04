@@ -21,6 +21,7 @@ const NOT_COMMANDS: &[&str] = &[
     "from_env",                               // constructor
     "new",                                    // constructor
     "new_with_config",                        // constructor
+    "open_in_memory_node",                    // constructor（Web）
     "start_community_node_session_scheduler", // background task
     "start_legacy_store_retirement",          // background task
     "start_sync_status_observer",             // background task
@@ -63,6 +64,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::accept_dome_connection_proposal),
         ),
         (
+            "account_transfer_status",
+            size0(DesktopRuntime::account_transfer_status),
+        ),
+        (
             "authenticate_community_node",
             size1(DesktopRuntime::authenticate_community_node),
         ),
@@ -75,6 +80,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "bookmarked_post_ids",
             size1(DesktopRuntime::bookmarked_post_ids),
+        ),
+        (
+            "cancel_account_transfer",
+            size0(DesktopRuntime::cancel_account_transfer),
         ),
         (
             "clear_community_node_config",
@@ -105,6 +114,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::commit_dome_transition),
         ),
         (
+            "create_account_transfer_invite",
+            size0(DesktopRuntime::create_account_transfer_invite),
+        ),
+        (
             "create_custom_reaction_asset",
             size1(DesktopRuntime::create_custom_reaction_asset),
         ),
@@ -127,6 +140,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::create_private_channel),
         ),
         ("create_repost", size1(DesktopRuntime::create_repost)),
+        (
+            "decide_account_transfer",
+            size1(DesktopRuntime::decide_account_transfer),
+        ),
         (
             "delegate_dome_hosting",
             size1(DesktopRuntime::delegate_dome_hosting),
@@ -152,6 +169,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "evaluate_author_trust_gates",
             size1(DesktopRuntime::evaluate_author_trust_gates),
+        ),
+        (
+            "export_account_key",
+            size1(DesktopRuntime::export_account_key),
         ),
         (
             "export_channel_access_token",
@@ -415,8 +436,16 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::read_community_node_trust_user),
         ),
         (
+            "read_link_preview_record",
+            size2(DesktopRuntime::read_link_preview_record),
+        ),
+        (
             "recommend_community_node_index",
             size1(DesktopRuntime::recommend_community_node_index),
+        ),
+        (
+            "record_link_preview",
+            size2(DesktopRuntime::record_link_preview),
         ),
         (
             "refresh_community_node_metadata",
@@ -461,6 +490,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "send_direct_message",
             size1(DesktopRuntime::send_direct_message),
+        ),
+        (
+            "set_adult_content_display_enabled",
+            size1(DesktopRuntime::set_adult_content_display_enabled),
         ),
         (
             "set_author_trust_display_exception",
@@ -524,6 +557,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "submit_dome_session_input",
             size1(DesktopRuntime::submit_dome_session_input),
+        ),
+        (
+            "take_private_channel_controller",
+            size1(DesktopRuntime::take_private_channel_controller),
         ),
         ("toggle_reaction", size1(DesktopRuntime::toggle_reaction)),
         ("unblock_author", size1(DesktopRuntime::unblock_author)),
