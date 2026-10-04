@@ -1143,7 +1143,8 @@ const shownImage = (browser, text) =>
 /**
  * `lifecycle`（#1220 AC-4）: 直接経路の端 a の reload・終了・凍結・回線全断が W4 の保存と復帰の入口へつながり、退会・世代・
  * version を巻き戻さないことを確かめる（ADR 0059 §4〜§6、ADR 0060 §4）。WebRTC の経路だけの喪失は `webrtc-loss`。需要のある
- * 相手は native と b（gossip の隣接は、その EndpointId のどれか）。
+ * 相手は native と b（gossip の隣接は、その EndpointId のどれか）。最後に、AC-4 より前に a が作った channel へ、fallback の端 c が
+ * 参加する（r9）。
  */
 async function lifecycle() {
   const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
@@ -1155,6 +1156,10 @@ async function lifecycle() {
   // の招待制の channel に参加し、投稿が行き来する。b は同じ topic を表示する。
   await native('follow_author', { request: { pubkey: aPubkey } });
   await openDirectMessage(a, withA.fromNative, nativePubkey);
+  // r6 の前提: a が DM で画像を送る（画面が送信中の仮の添付を読みに行く。#1220 AC-4 r6）。
+  const dmImage = `dm image from ${a.label} ${RUN}`;
+  await sendWebImage(a, nativePubkey, dmImage)();
+  await nativeSeesDirectMessage(aPubkey, dmImage);
   await openSettings(a, 'safety');
   await a.$('[data-testid="adult-content-display-toggle"]').click();
   await a.$('button[aria-label="Close settings"]').click();
@@ -1166,6 +1171,13 @@ async function lifecycle() {
   await sees(b, withA.fromWeb);
   const peerEndpoints = [nativeEndpoint, await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint)];
   const peers = 2;
+  // r9 の前提: a が作った招待制の channel に native と b が参加し、b が投稿する（AC-4 の段の後に fallback の端が参加する）。
+  const ownLabel = `channel-a-${RUN}`;
+  const ownToken = await createChannel(a, ownLabel);
+  const ownChannelId = await nativeJoinsChannel(ownToken);
+  await joinChannel(b, ownToken, ownLabel);
+  const fromBInOwnChannel = `web-b in the channel of web-a ${RUN}`;
+  await post(b, fromBInOwnChannel, channelColumn(b, ownChannelId));
 
   // 旧 state の再送の準備: a が参加中の channel の世代を native が更新し、a は新しい世代の投稿を読める。新しい世代は W6 の背景の
   // 配布（epoch 制御の送信と引継ぎの grant）で届くので、届くまでの時間を記録し、待ちの上限は通常より長くする。次に、a は native
@@ -1297,6 +1309,12 @@ async function lifecycle() {
   await resumesOnTheDirectPath(a, aPubkey, 'going online');
   // 再送は届いた後も重ならない。
   assert.equal((await copies()).length, 1, 'the message is delivered once');
+
+  // r9: AC-4 の段の後に、AC-4 より前に a が作った招待制の channel へ fallback の端 c が token で参加し、b の投稿を読む（reload など
+  // の後の owner の channel への新しい参加。#1220 AC-4 r9）。c は直接経路の判定を終えた後に開く（relay の通信が判定に混ざらない）。
+  const c = await openClient('web-c', { ice: false });
+  await joinChannel(c, ownToken, ownLabel);
+  await seesInChannel(c, ownChannelId, fromBInOwnChannel);
 }
 
 /**

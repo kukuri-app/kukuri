@@ -213,10 +213,8 @@ jobs:
           AR_wasm32_unknown_unknown: llvm-ar
         run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" bash scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer
 
-  # #1220 W8 AC-2a: Web の build の主要導線を、実ブラウザ（Chrome）と同じ job の Community Node・native の相手で試す
-  # （ADR 0060 §4）。直接経路と relay fallback を、relay が中継した bytes で判定する。
-  # #1559: build（wasm・Web・fixture）はこの job で 1 回だけ行い、scenario の job へ配る。scenario の一覧の正本は
-  # `main-flow.mjs --list`。
+  # #1559: 実ブラウザの E2E の build（wasm・Web・fixture）をこの job で 1 回だけ行い、scenario の job へ配る。scenario の
+  # 一覧の正本は `main-flow.mjs --list`。
   linux-web-e2e-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -280,6 +278,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # #1220 W8 AC-2a: Web の build の主要導線を、実ブラウザ（Chrome）と同じ job の Community Node・native の相手で試す
+  # （ADR 0060 §4）。直接経路と relay fallback を、relay が中継した bytes で判定する。
   # #1559: scenario ごとに新しい fixture と client で、並列の job で試す。失敗は、その scenario の job にだけ出る。
   linux-web-e2e:
     needs: linux-web-e2e-build
