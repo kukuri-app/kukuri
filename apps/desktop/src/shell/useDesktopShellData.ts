@@ -658,11 +658,14 @@ export function useDesktopShellData({
         }
 
         if (joinedChannelsResult.status === 'fulfilled') {
+          // 取得の間に手元の一覧が変わった(参加・作成など)なら、取得前の一覧で置き換えない。次の読込みでそろえる(#1544)。
           // 同じ内容なら配列を差し替えない。差し替えると表示中の全行の view を作り直す(#1425)。
-          setJoinedChannelsByTopic(updateRecordEntry(topic, (prev) =>
-            prev && JSON.stringify(prev) === JSON.stringify(joinedChannelsResult.value)
-              ? prev
-              : joinedChannelsResult.value));
+          if (currentState.joinedChannelsByTopic[topic] === requestState.joinedChannelsByTopic[topic]) {
+            setJoinedChannelsByTopic(updateRecordEntry(topic, (prev) =>
+              prev && JSON.stringify(prev) === JSON.stringify(joinedChannelsResult.value)
+                ? prev
+                : joinedChannelsResult.value));
+          }
           setChannelPanelStateByTopic(setRecordEntry(topic, {
               status: 'ready',
               error: null,
