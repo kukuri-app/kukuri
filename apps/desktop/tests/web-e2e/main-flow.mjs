@@ -1295,7 +1295,7 @@ async function lifecycle() {
     unconfirmed.push('freeze (the driver cannot freeze a page)');
   }
 
-  // 回線全断（WebDriver BiDi の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
+  // 回線全断（driver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
   // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
   // 届いたと示す。
   // native との会話の列は、会話の route で開き直す（前提で開いた会話の列は一時の列）。
@@ -1305,9 +1305,12 @@ async function lifecycle() {
   await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
   await directPathOpens(a);
   const beforeOffline = (await sessionStates(a)).length;
+  // Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
   const contexts = [await a.getWindowHandle()];
   const network = (offline) =>
-    a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
+    BROWSER === 'chrome'
+      ? a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 })
+      : a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
   await network(true);
   await earlierSessionsClose(a, beforeOffline);
   await openSettings(a, 'connectivity');
