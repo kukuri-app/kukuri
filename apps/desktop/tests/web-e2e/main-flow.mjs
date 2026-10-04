@@ -1772,11 +1772,11 @@ const scenarios = {
 // 一時の診断（#1582）: CI で same-account だけを 6 本並べる。
 for (const key of Object.keys(scenarios)) delete scenarios[key];
 for (let index = 1; index <= 6; index++) scenarios[`same-account-${index}`] = sameAccount;
-const DIAG_LINE = /KDIAG (account sync|rotation)|rebuild|connectivity|relay|stack|PANIC|panicked|RuntimeError|closed channel|unreachable|WARN kukuri|ERROR|connect timed out|deselecting|closing (custom path|a connection)|AddConnection|Uncaught/;
+const DIAG_LINE = /KDIAG (account sync|rotation|docs read)|rebuild|connectivity|relay|stack|PANIC|panicked|RuntimeError|closed channel|unreachable|WARN kukuri|ERROR|connect timed out|deselecting|closing (custom path|a connection)|AddConnection|Uncaught/;
 function printLogs(client) {
   const lines = client.__logs.filter((line) => DIAG_LINE.test(line.text) && !/Not enough addresses/.test(line.text));
   console.log(`--- logs ${client.label} (${lines.length} of ${client.__logs.length})`);
-  for (const line of lines.slice(-600)) console.log(`${new Date(line.at).toISOString().slice(11, 23)} ${line.text.slice(0, 300)}`);
+  for (const line of lines.slice(-1500)) console.log(`${new Date(line.at).toISOString().slice(11, 23)} ${line.text.slice(0, 300)}`);
 }
 
 const [name] = process.argv.slice(2);

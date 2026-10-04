@@ -520,12 +520,15 @@ pub(crate) async fn fetch(
 ) -> Result<DocReadResponse> {
     // 答えの返らない handshake（途中で WebRTC の経路を失った接続など）を QUIC の idle 期限まで待たない。期限は blob の
     // 取得と同じ（#1220 AC-3c2）。
+    let diag_peer = peer.id.fmt_short().to_string();
+    let diag_started = n0_future::time::Instant::now();
     let connection = timeout(
         crate::remote_fetch::REMOTE_FETCH_CONNECT_TIMEOUT,
         endpoint.connect(peer, DOC_READ_ALPN),
     )
     .await
     .context("docs read connect timed out")??;
+    tracing::info!(peer = %diag_peer, ms = diag_started.elapsed().as_millis() as u64, conn = connection.stable_id(), "KDIAG docs read connected");
     let (mut send, mut recv) = connection.open_bi().await?;
     let bytes = serde_json::to_vec(&request)?;
     ensure!(
@@ -534,7 +537,10 @@ pub(crate) async fn fetch(
     );
     send.write_all(&bytes).await?;
     send.finish()?;
-    let bytes = recv.read_to_end(MAX_RESPONSE_BYTES).await?;
+    tracing::info!(peer = %diag_peer, ms = diag_started.elapsed().as_millis() as u64, conn = connection.stable_id(), "KDIAG docs read sent");
+    let bytes = recv.read_to_end(MAX_RESPONSE_BYTES).await;
+    tracing::info!(peer = %diag_peer, ms = diag_started.elapsed().as_millis() as u64, conn = connection.stable_id(), ok = bytes.is_ok(), "KDIAG docs read received");
+    let bytes = bytes?;
     connection.close(0u32.into(), b"docs read complete");
     Ok(serde_json::from_slice(&bytes)?)
 }

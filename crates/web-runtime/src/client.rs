@@ -355,7 +355,7 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         .without_time()
         .with_ansi(false)
         .with_env_filter(tracing_subscriber::EnvFilter::new(
-            "warn,kukuri_app_api=debug,iroh_gossip=debug,kukuri_iroh_node=debug,kukuri_transport=debug,iroh::socket=debug,kukuri_connectivity=info,kukuri_desktop_runtime=info",
+            "warn,kukuri_app_api=debug,iroh_gossip=debug,kukuri_iroh_node=debug,kukuri_transport=debug,iroh::socket::remote_map::remote_state=debug,kukuri_connectivity=info,kukuri_desktop_runtime=info",
         ))
         .with_writer(|| DiagConsoleLine(Vec::new()))
         .try_init();
