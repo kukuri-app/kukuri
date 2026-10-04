@@ -95,6 +95,10 @@ const clients = [];
 async function startClient(name, { ice }) {
   const browser = await remote({ logLevel: 'warn', capabilities: CAPABILITIES });
   browser.label = `${name}-${RUN}`;
+  // DIAG（一時）
+  browser.diagLogs = [];
+  await browser.sessionSubscribe({ events: ['log.entryAdded'] }).catch((e) => console.log('DIAG subscribe failed', e.message));
+  browser.on('log.entryAdded', (entry) => browser.diagLogs.push(`${entry.level} ${entry.text}`.slice(0, 600)));
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
   await addInitScripts(browser, { ice });
@@ -1390,6 +1394,23 @@ async function dumpColumns(browser) {
   );
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
+  // DIAG（一時）
+  const diag = await browser.executeAsync((done) => {
+    Promise.all(window.__kukuriPeers.map(async (peer) => {
+      const stats = [];
+      (await peer.getStats()).forEach((s) => {
+        if (s.type === 'candidate-pair') stats.push(`pair ${s.state} nom=${s.nominated} ${s.localCandidateId}->${s.remoteCandidateId} sent=${s.bytesSent} recv=${s.bytesReceived}`);
+        if (s.type === 'local-candidate' || s.type === 'remote-candidate') stats.push(`${s.type} ${s.id} ${s.candidateType} ${s.address}:${s.port} ${s.protocol}`);
+      });
+      return { conn: peer.connectionState, ice: peer.iceConnectionState, gather: peer.iceGatheringState, sig: peer.signalingState,
+        local: peer.localDescription?.type, remote: peer.remoteDescription?.type,
+        remoteCands: (peer.remoteDescription?.sdp ?? '').split(/\r?\n/).filter((l) => l.startsWith('a=candidate') || l.startsWith('a=setup') || l.startsWith('a=fingerprint')),
+        localCands: (peer.localDescription?.sdp ?? '').split(/\r?\n/).filter((l) => l.startsWith('a=candidate') || l.startsWith('a=setup')),
+        stats };
+    })).then((v) => done(JSON.stringify(v, null, 1)), (e) => done(String(e)));
+  }).catch((e) => String(e));
+  console.log(`DIAG ${browser.label} peers ${diag}`);
+  console.log(`DIAG ${browser.label} console (last 150)\n${(browser.diagLogs ?? []).slice(-150).join('\n')}`);
 }
 
 /**
