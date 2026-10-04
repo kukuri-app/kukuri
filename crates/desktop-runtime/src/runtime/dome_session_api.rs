@@ -99,7 +99,7 @@ impl DesktopRuntime {
     ) -> Result<SignedDomePhysicsSnapshotV1> {
         let request = DomeSessionRequestV1::Input { signed_input };
         match self.request_owner_device_host(endpoint_id, request).await? {
-            DomeSessionResponseV1::Snapshot { signed_snapshot } => Ok(signed_snapshot),
+            DomeSessionResponseV1::Snapshot { signed_snapshot } => Ok(*signed_snapshot),
             _ => bail!("unexpected Dome host response"),
         }
     }

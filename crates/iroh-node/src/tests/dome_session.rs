@@ -33,7 +33,11 @@ async fn a_participant_reaches_only_an_installed_host_handler_within_the_limits(
     let host_id = host.endpoint().id().to_string();
 
     assert!(
-        unreachable(participant.dome_session_request(&host_id, b"join", 1024).await),
+        unreachable(
+            participant
+                .dome_session_request(&host_id, b"join", 1024)
+                .await
+        ),
         "a host without the handler does not answer"
     );
 
@@ -56,7 +60,11 @@ async fn a_participant_reaches_only_an_installed_host_handler_within_the_limits(
     assert!(unreachable(
         participant.dome_session_request(&host_id, b"move", 4).await
     ));
-    assert_eq!(calls.load(Ordering::SeqCst), 3, "the oversized request never reached the handler");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "the oversized request never reached the handler"
+    );
 
     participant.shutdown().await?;
     host.shutdown().await?;

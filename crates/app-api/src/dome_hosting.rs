@@ -337,7 +337,7 @@ impl AppService {
             input.expected_generation,
             DomeInputSource::Local {
                 sequence: input.sequence,
-                input: input.input,
+                input: Box::new(input.input),
             },
         )
         .await

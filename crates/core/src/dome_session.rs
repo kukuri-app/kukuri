@@ -41,7 +41,7 @@ impl DomeSessionRequestV1 {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DomeSessionResponseV1 {
     Snapshot {
-        signed_snapshot: SignedDomePhysicsSnapshotV1,
+        signed_snapshot: Box<SignedDomePhysicsSnapshotV1>,
     },
     Snapshots {
         snapshots: Vec<SignedDomePhysicsSnapshotV1>,

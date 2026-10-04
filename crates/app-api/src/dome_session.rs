@@ -13,10 +13,10 @@ pub(crate) enum DomeInputSource {
     /// 所有者本人の端末の input。host の lease と session に束縛して、この端末の鍵で署名する。
     Local {
         sequence: u64,
-        input: DomeSessionInputKindV1,
+        input: Box<DomeSessionInputKindV1>,
     },
     /// 別の端末の participant が署名した input。
-    Remote(SignedDomeSessionInputV1),
+    Remote(Box<SignedDomeSessionInputV1>),
 }
 
 impl AppService {
@@ -38,13 +38,15 @@ impl AppService {
                             &context,
                             &instance_id,
                             generation,
-                            DomeInputSource::Remote(signed_input),
+                            DomeInputSource::Remote(Box::new(signed_input)),
                         )
                         .await
                     }
                     None => Err(anyhow::anyhow!("this device is not the active Dome host")),
                 }
-                .map(|signed_snapshot| DomeSessionResponseV1::Snapshot { signed_snapshot })
+                .map(|signed_snapshot| DomeSessionResponseV1::Snapshot {
+                    signed_snapshot: Box::new(signed_snapshot),
+                })
             }
             Ok(DomeSessionRequestV1::ResyncSnapshots {
                 instance_id,
@@ -72,7 +74,7 @@ impl AppService {
         source: DomeInputSource,
     ) -> Result<SignedDomePhysicsSnapshotV1> {
         let (participant, kind) = match &source {
-            DomeInputSource::Local { input, .. } => (self.services.keys.public_key(), input),
+            DomeInputSource::Local { input, .. } => (self.services.keys.public_key(), &**input),
             DomeInputSource::Remote(signed) => {
                 (signed.input.participant_pubkey.clone(), &signed.input.input)
             }
@@ -116,7 +118,7 @@ impl AppService {
                     participant_pubkey: participant,
                     sequence,
                     sent_at: now,
-                    input,
+                    input: *input,
                 },
             )?,
             // 別の端末の Join 以外の input は、現在の participant だけを受け付ける(状態を変えず snapshot も返さない)。
@@ -124,7 +126,7 @@ impl AppService {
                 if !join && !runtime.is_participant(&participant) {
                     anyhow::bail!("DOME_SESSION_NOT_JOINED");
                 }
-                signed
+                *signed
             }
         };
         runtime.apply_signed_input_at(&signed, now)?;
