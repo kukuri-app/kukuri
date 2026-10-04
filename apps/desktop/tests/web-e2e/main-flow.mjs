@@ -19,6 +19,9 @@ const TOPIC = 'kukuri:topic:general';
 const topicId = (name) => `kukuri:topic:${name}`;
 const RUN = Date.now().toString(36);
 const WAIT = 90_000;
+// 開いたままの profile で相手の follow し返しを待つ期限。相手の follow の offer は、送れなかったら 2〜64 秒後に 6 回
+// （間隔の計 126 秒）送り直され（#1521 AC-1a）、各回は宛先の探索と送信で最長 10 秒ほどかかるので、それを覆う。
+const FOLLOW_BACK_WAIT = 210_000;
 
 async function fixture(route, body) {
   const response = await fetch(`${ORIGIN}${route}`, body === undefined ? undefined : {
@@ -431,14 +434,18 @@ async function openAuthorProfile(browser, authorPost, author) {
   return actions;
 }
 
-/** 投稿の作者（`peer`）を follow し、相互になって「Message」が出たら会話を開く（profile を開き直して待つ）。 */
+/** 開いている `peer` の profile の列に、相互になって「Message」が出たら会話を開く。列を閉じず、開き直さずに待つ
+ * （相手の follow は follow の offer で届き、送れなかったら送り直される。届くと開いている列が読み直される。#1521）。 */
+async function messageFromOpenProfile(browser, peer) {
+  const message = columnOf(browser, 'profile', peer).$('.author-detail-action-buttons').$('button=Message');
+  await message.waitForExist({ timeout: FOLLOW_BACK_WAIT });
+  await message.click();
+}
+
+/** 投稿の作者（`peer`）の profile を開いて follow し、相互になったら会話を開く。 */
 async function openDirectMessage(browser, authorPost, peer) {
-  await eventually(`${browser.label} can message ${peer}`, async () => {
-    const message = (await openAuthorProfile(browser, authorPost, peer)).$('button=Message');
-    if (!(await message.isExisting())) return false;
-    await message.click();
-    return true;
-  });
+  await openAuthorProfile(browser, authorPost, peer);
+  await messageFromOpenProfile(browser, peer);
 }
 
 /** `peer` との会話の列（「Message」で開く。会話を開く照会の後に増える）の投稿欄から DM を送る。`file` は添える画像。 */
@@ -483,14 +490,12 @@ async function exchangeDirectMessagesWithNative(browser, webPubkey, nativeParty,
 }
 
 /** Web↔Web の DM: 互いの投稿の作者を follow して会話を開いて送り合い、y から x への画像の経路を判定する。x・y は
- * `{ browser, pubkey, post }`（post は profile を開く入口）。相手の follow は、相手の profile を開いた時（author の購読の
- * 開始）の読みで届く（follow の offer は宛先の探索が有界で、届かないことがある。ADR 0055 の R4-D）。そこで x は follow
- * したら profile を閉じ、y が follow した後に開き直す。 */
+ * `{ browser, pubkey, post }`（post は profile を開く入口）。x は y を follow したら profile を開いたまま、y が follow
+ * し返すのを待つ（#1220 AC-2h）。 */
 async function exchangeDirectMessagesBetweenWeb(x, y, direct) {
   await openAuthorProfile(x.browser, y.post, y.pubkey);
-  await columnOf(x.browser, 'profile', y.pubkey).$('button.shell-column-close-button').click();
   await openDirectMessage(y.browser, x.post, x.pubkey);
-  await openDirectMessage(x.browser, y.post, y.pubkey);
+  await messageFromOpenProfile(x.browser, y.pubkey);
   const fromY = `dm from ${y.browser.label} to ${x.browser.label}`;
   await sendDirectMessage(y.browser, x.pubkey, fromY);
   await sees(x.browser, fromY);
