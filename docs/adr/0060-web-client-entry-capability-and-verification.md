@@ -31,6 +31,13 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - Tauri の API を静的に import する file は bundle に入ってよい（実行時に `__TAURI_INTERNALS__` を触らない限り動く）。Web で使わない機能は §3 の capability で止める。
 - W8 AC-2a の実装（2026-10-03）: Web の mode は `VITE_KUKURI_TARGET=web`。`@kukuri/web-runtime` を wasm-bindgen の出力（`apps/desktop/web-runtime-pkg`、または `KUKURI_WEB_RUNTIME_PKG`）へ解決し、Tauri の build では使えないことを示す代わりの module へ解決する（Tauri の bundle に WASM を入れない）。`main.tsx` は描画の前に `start` を呼ぶ（Community Node の初期設定は native と同じ配布の設定。開発・試験は `VITE_KUKURI_COMMUNITY_NODE_BASE_URL`）。web-runtime の `listen` の callback は外せないので、frontend は 1 つだけ渡して購読者へ配る。device backup の復元の反映と他の account の表示は、Web では呼ばない。live・game・metaverse・Dome の 35 件の command は desktop-runtime の native だけの表に移し、Web の dispatch では `unsupported_platform` を返す。
 - 配信の artifact は「WASM の build → `wasm-bindgen --target web --split-linked-modules` → Web の mode の Vite の build → `_headers`」を 1 つの command にまとめる（W8 AC-6。`cargo xtask` の入口にする）。
+- W8 AC-6 の実装（2026-10-04）: command は `cargo xtask web-build` で、出力は `apps/desktop/dist-web`。
+  - WASM は LTO の profile（root の `Cargo.toml` の `web-release`。fat・codegen-units 1）で build し、wasm-bindgen で名前の section と producers の section を除く（§2 の大きさ）。
+  - Community Node は配布の設定を使う（試験の URL を埋め込まない）。
+  - Vite の Web の build は `apps/desktop/web-public`（`_headers` だけ）を public にする。`public` の metaverse の資源は Web では使わないので含めない。
+  - build の後に、各 file が 25 MiB 以下であることを確かめ、超えたら失敗にする。
+  - 試験（`cargo xtask web-e2e`）の build は、試験の Community Node を埋め込み、速さと失敗時の調べやすさのため LTO と名前の section の除去をしない。
+  - 手順は `docs/runbooks/web-client-publish.md`。
 
 ### 2. 配信の条件
 
@@ -38,8 +45,14 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   `style-src` の inline は、依存の UI 部品が `<style>` を差し込むため（Tauri の CSP と同じ）。script の inline は許さない。
   `connect-src` の `https:`・`wss:` は Community Node の API と iroh relay（WebSocket）のため。第三者の script・analytics を読み込まない。
 - `.wasm` は `Content-Type: application/wasm` で配る。COOP・COEP は付けない（SharedArrayBuffer・thread を使わない）。
+  W8 AC-6 では `_headers` に書かない。Cloudflare Pages の `_headers` は、全体（`/*`）や末尾の splat の pattern は文書にあるが、拡張子の pattern は文書に無いため。置いた後に `content-type` を確かめる（runbook）。
 - secret を扱う Web クライアントは LP と別の origin に置く（同じ origin の第三者 script から IndexedDB の vault を守るため。ADR 0059 §1 の信頼境界）。公開の URL・DNS・公開の時期は artifact の完成と別の操作とする（#1220 の Non-goals）。
 - release build の WASM の大きさを AC-6 で測り、25 MiB を超えるなら分割・圧縮を AC-6 の中で決める。
+- W8 AC-6 の測定（2026-10-04。wasm-bindgen の出力）: 既定の release は 33.8 MB で、上限を超える。
+  - 名前の section の除去だけで 26.1 MB（24.9 MiB）、LTO（fat・codegen-units 1）だけで 25.2 MB になる。
+  - 両方で 20.3 MB（19.4 MiB）になる。機能を変えないので、これを採る。
+  - opt-level を `s` に下げると 15.1 MB になるが、実行の速さが変わり得るので採らない。
+- W8 AC-6 の確認: 実ブラウザの E2E の fixture は、artifact の `_headers` の header を付けて配信する。試験の Community Node と relay は http・ws の 127.0.0.1 なので、CSP の connect-src にだけそれを足す。E2E は、各 client の CSP の違反（`securitypolicyviolation`）が 0 件であることを確かめる（WASM の起動、鍵の export・import の Worker、画像の表示を含む）。
 
 ### 3. capability matrix
 
@@ -94,7 +107,11 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 ### 6. 説明とデータ分類の変更点（AC-6）
 
 - `docs/legal/app-data-flow-inventory.md`: 対象に Web を加え、秘密鍵の保存先に IndexedDB の vault（ADR 0059）、DHT・P2P・relay の行に STUN と ICE の候補、新しい行に静的配信の取得（配信元へ IP・User-Agent・Referer）とブラウザの storage・persist を足す。自動更新と developer log は Web では該当しないと書く。
-- `docs/legal/external-transmission-notice.md`: 対象に Web を加え、「Web の配信元」と「STUN」の行を足し、relay の行に WebSocket を書く。legal bundle の版を上げる。LP への同期は既存の手順（`apps/lp/scripts/sync-legal.mjs`）を使う。
+- `docs/legal/external-transmission-notice.md`: 対象に Web を加え、「Web の配信元」と「STUN」の行を足し、relay の行に WebSocket を書く。legal bundle の版は上げない（2026-10-04 ユーザー判断。8 のまま再同意を求めず、外部送信表示の「version 8 補記」として記録する）。
+  - Web の利用者は、初回の同意でこの内容に同意する。
+  - native の送信に加わるのは、Web との接続の交渉での STUN（relay と同じ host）だけで、送信先の運営者・目的・項目（IP address とポート）は relay の行の範囲内である。
+  - プライバシーポリシーと利用規約は変えないので、LP への同期は要らない。
+- W8 AC-6 の実装（2026-10-04）: 上の 2 つの文書を改めた。一覧の「確認上の境界」に、Web の秘密の出口（URL・cookie・analytics・公開索引・診断）の照合の結果を書いた。
 
 ## 採らない方式
 

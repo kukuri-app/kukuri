@@ -1,8 +1,9 @@
 //! Web クライアントの実ブラウザ試験の相手（#1220 W8 AC-2a）。
 //!
 //! 同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信 origin に CORS で応答する）、
-//! Web の build（`dist-web`）の配信、Community Node に同意した native の相手を起動する。試験の driver（WebdriverIO）は
-//! `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を判定する（ADR 0060 §4・§5）。
+//! Web の build（`dist-web`。その `_headers` の header を付ける）の配信、Community Node に同意した native の相手を
+//! 起動する。試験の driver（WebdriverIO）は `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を
+//! 判定する（ADR 0060 §4・§5）。
 //!
 //! 環境変数:
 //! - `KUKURI_WEB_E2E_DIST`: 配信する `dist-web`（必須）
@@ -13,7 +14,8 @@
 //! 準備ができたら標準出力に `KUKURI_WEB_E2E_READY=<配信の origin>` を出す。
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kukuri_app_api::LinkPreviewRecordInput;
@@ -76,6 +78,7 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let web_addr: SocketAddr = env_or("KUKURI_WEB_E2E_WEB_ADDR", "127.0.0.1:4180").parse()?;
     let cn_addr = env_or("KUKURI_WEB_E2E_CN_ADDR", "127.0.0.1:4181");
     let web_origin = format!("http://{web_addr}");
+    let headers = artifact_headers(&dist)?;
 
     let stack =
         CommunityNodeStack::spawn_with("web_e2e", &cn_addr, std::slice::from_ref(&web_origin))
@@ -108,12 +111,51 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .with_state(fixture.clone())
         .fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
-        );
+        )
+        .layer(axum::middleware::map_response(
+            move |mut response: Response| {
+                let headers = headers.clone();
+                async move {
+                    response.headers_mut().extend(headers);
+                    response
+                }
+            },
+        ));
     let listener = tokio::net::TcpListener::bind(web_addr).await?;
     println!("KUKURI_WEB_E2E_READY={web_origin}");
     axum::serve(listener, app).await?;
     drop(dir);
     Ok(())
+}
+
+/// 配信の artifact の `_headers`（Cloudflare Pages の形式。ADR 0060 §2、#1220 AC-6）の全体（`/*`）の header を読み、
+/// 本番の CSP の下で試す。試験の Community Node と relay は http・ws の 127.0.0.1 なので、CSP の connect-src にだけ足す。
+fn artifact_headers(dist: &Path) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    for line in std::fs::read_to_string(dist.join("_headers"))?.lines() {
+        let rule = line.trim();
+        if rule.is_empty() || rule.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace) {
+            anyhow::ensure!(
+                rule == "/*",
+                "the fixture applies only the `/*` rule: {rule}"
+            );
+            continue;
+        }
+        let (name, value) = rule.split_once(':').context("a header of _headers")?;
+        let mut value = value.trim().to_string();
+        if name.eq_ignore_ascii_case("content-security-policy") {
+            value = value.replacen(
+                "connect-src",
+                "connect-src http://127.0.0.1:* ws://127.0.0.1:*",
+                1,
+            );
+        }
+        headers.insert(HeaderName::try_from(name)?, HeaderValue::try_from(value)?);
+    }
+    Ok(headers)
 }
 
 /// harness の接続の scenario と同じ手順で、Community Node の文書に同意して session を張る。

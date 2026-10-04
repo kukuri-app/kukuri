@@ -76,6 +76,7 @@ async function openClient(name, { ice }) {
   });
   browser.label = `${name}-${RUN}`;
   await browser.addInitScript(captureClipboard);
+  await browser.addInitScript(recordCspViolations);
   if (!ice) await browser.addInitScript(withoutIceCandidates);
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
@@ -101,6 +102,18 @@ function withoutIceCandidates() {
   const setRemote = prototype.setRemoteDescription;
   prototype.setRemoteDescription = function (description) { return setRemote.call(this, strip(description)); };
 }
+
+/** CSP の違反を控える（ページより先に動く）。配信の `_headers` の CSP の下で動くことを確かめる（#1220 AC-6）。 */
+function recordCspViolations() {
+  window.__kukuriCspViolations = [];
+  document.addEventListener('securitypolicyviolation', (event) =>
+    window.__kukuriCspViolations.push(`${event.effectiveDirective} ${event.blockedURI}`)
+  );
+}
+
+/** 今の page で CSP の違反が無い（page を読み込み直すと控えは消えるので、読み込み直す前に呼ぶ）。 */
+const assertNoCspViolations = async (browser) =>
+  assert.deepEqual(await browser.execute(() => window.__kukuriCspViolations), [], `${browser.label} has no CSP violations`);
 
 /** 共有リンク（clipboard へ書く値）を控える（ページより先に動く）。headless では clipboard へ書けないことがある。 */
 function captureClipboard() {
@@ -626,6 +639,8 @@ async function recoverAfterSiteDataLoss(browser) {
   await envelope.waitForExist({ timeout: WAIT });
   const exported = await envelope.getValue();
   const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
+  // 鍵の導出の Worker（export）が CSP の下で動いた。
+  await assertNoCspViolations(browser);
 
   // 利用者がサイトデータを消したのと同じく、同じ origin の保存先を消す。app を動かさない文書で消す（開いた接続が待たせない）。
   await browser.url(`${ORIGIN}/fixture/info`);
@@ -652,6 +667,8 @@ async function recoverAfterSiteDataLoss(browser) {
   await add.$('[data-testid="import-submit"]').click();
   const switchNow = add.$('[data-testid="import-switch-now"]');
   await switchNow.waitForClickable({ timeout: WAIT });
+  // 鍵の導出の Worker（import）が CSP の下で動いた（切り替えると読み込み直す）。
+  await assertNoCspViolations(browser);
   await switchNow.click();
 
   // 切り替えると画面を読み込み直す。出てくる初回の dialog を閉じてから、使っているアカウントの公開鍵を見る。読み込み直しの
@@ -857,6 +874,7 @@ async function main() {
 
     // サイトデータが消えた後の復旧（#1217 AC-5）。
     await recoverAfterSiteDataLoss(a);
+    for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
     throw error;
