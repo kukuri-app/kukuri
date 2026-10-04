@@ -1,8 +1,9 @@
 //! Web クライアントの実ブラウザ試験の相手（#1220 W8 AC-2a）。
 //!
 //! 同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信 origin に CORS で応答する）、
-//! Web の build（`dist-web`）の配信、Community Node に同意した native の相手を起動する。試験の driver（WebdriverIO）は
-//! `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を判定する（ADR 0060 §4・§5）。
+//! Web の build（`dist-web`。その `_headers` の header を付ける）の配信、Community Node に同意した native の相手を
+//! 起動する。試験の driver（WebdriverIO）は `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を
+//! 判定する（ADR 0060 §4・§5）。
 //!
 //! 環境変数:
 //! - `KUKURI_WEB_E2E_DIST`: 配信する `dist-web`（必須）
@@ -12,8 +13,9 @@
 //!
 //! 準備ができたら標準出力に `KUKURI_WEB_E2E_READY=<配信の origin>` を出す。
 
-use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::middleware::Next;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kukuri_app_api::LinkPreviewRecordInput;
@@ -76,6 +78,7 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let web_addr: SocketAddr = env_or("KUKURI_WEB_E2E_WEB_ADDR", "127.0.0.1:4180").parse()?;
     let cn_addr = env_or("KUKURI_WEB_E2E_CN_ADDR", "127.0.0.1:4181");
     let web_origin = format!("http://{web_addr}");
+    let rules = Arc::new(artifact_headers(&dist)?);
 
     let stack =
         CommunityNodeStack::spawn_with("web_e2e", &cn_addr, std::slice::from_ref(&web_origin))
@@ -108,12 +111,76 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .with_state(fixture.clone())
         .fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
-        );
+        )
+        .layer(axum::middleware::from_fn(
+            move |request: Request, next: Next| {
+                let rules = rules.clone();
+                async move {
+                    let path = request.uri().path().to_owned();
+                    let mut response = next.run(request).await;
+                    for (pattern, headers) in rules.iter() {
+                        if splat_matches(pattern, &path) {
+                            response.headers_mut().extend(headers.clone());
+                        }
+                    }
+                    response
+                }
+            },
+        ));
     let listener = tokio::net::TcpListener::bind(web_addr).await?;
     println!("KUKURI_WEB_E2E_READY={web_origin}");
     axum::serve(listener, app).await?;
     drop(dir);
     Ok(())
+}
+
+/// 配信の artifact の `_headers`（Cloudflare Pages の形式。ADR 0060 §2、#1220 AC-6）の規則（path の pattern と header）を
+/// 読み、本番の header の下で試す。試験の Community Node と relay は http・ws の 127.0.0.1 なので、CSP の connect-src にだけ
+/// 足す。
+fn artifact_headers(dist: &Path) -> Result<Vec<(String, HeaderMap)>> {
+    let mut rules: Vec<(String, HeaderMap)> = Vec::new();
+    for line in std::fs::read_to_string(dist.join("_headers"))?.lines() {
+        let rule = line.trim();
+        if rule.is_empty() || rule.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(char::is_whitespace) {
+            // fixture が当てられるのは、`*` が 1 つまでの path だけ（placeholder や URL の規則は扱わない）。
+            anyhow::ensure!(
+                rule.starts_with('/') && rule.matches('*').count() <= 1 && !rule.contains(':'),
+                "the fixture cannot apply this rule of _headers: {rule}"
+            );
+            rules.push((rule.to_string(), HeaderMap::new()));
+            continue;
+        }
+        let (name, value) = rule.split_once(':').context("a header of _headers")?;
+        let mut value = value.trim().to_string();
+        if name.eq_ignore_ascii_case("content-security-policy") {
+            value = value.replacen(
+                "connect-src",
+                "connect-src http://127.0.0.1:* ws://127.0.0.1:*",
+                1,
+            );
+        }
+        rules
+            .last_mut()
+            .context("a header before the path of _headers")?
+            .1
+            .insert(HeaderName::try_from(name)?, HeaderValue::try_from(value)?);
+    }
+    Ok(rules)
+}
+
+/// `_headers` の path の pattern に一致するか（`*` は任意の文字列に一致する）。
+fn splat_matches(pattern: &str, path: &str) -> bool {
+    match pattern.split_once('*') {
+        Some((prefix, suffix)) => {
+            path.len() >= prefix.len() + suffix.len()
+                && path.starts_with(prefix)
+                && path.ends_with(suffix)
+        }
+        None => pattern == path,
+    }
 }
 
 /// harness の接続の scenario と同じ手順で、Community Node の文書に同意して session を張る。
@@ -274,4 +341,33 @@ fn random_png(side: u32) -> Result<Vec<u8>> {
     let mut png = Vec::new();
     image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
     Ok(png)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_artifact_headers_apply_by_their_paths() {
+        let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop/web-public");
+        let rules = artifact_headers(&dist).expect("the _headers of the web build");
+        let applied = |path: &str| {
+            rules
+                .iter()
+                .filter(|(pattern, _)| splat_matches(pattern, path))
+                .flat_map(|(_, headers)| headers.keys().map(|name| name.as_str().to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(applied("/"), ["content-security-policy"]);
+        assert_eq!(
+            applied("/assets/kukuri_web_runtime_bg-x.wasm"),
+            ["content-security-policy", "content-type"]
+        );
+        let csp = rules[0].1["content-security-policy"]
+            .to_str()
+            .expect("an ascii header");
+        assert!(
+            csp.contains("connect-src http://127.0.0.1:* ws://127.0.0.1:* 'self' https: wss:;")
+        );
+    }
 }

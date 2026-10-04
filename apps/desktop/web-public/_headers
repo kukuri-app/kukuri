@@ -1,0 +1,6 @@
+# Web クライアントの配信の header（ADR 0060 §2。手順は docs/runbooks/web-client-publish.md）。
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: wss:; img-src 'self' blob: data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+
+/*.wasm
+  Content-Type: application/wasm

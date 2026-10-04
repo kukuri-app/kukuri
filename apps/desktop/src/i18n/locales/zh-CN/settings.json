@@ -526,6 +526,7 @@
     "title": "发布",
     "summary": "预览频道、更新、诊断和资源。",
     "storeSummary": "Microsoft Store 版本的更新、诊断和资源。",
+    "webSummary": "预览频道、诊断和资源。",
     "update": {
       "title": "更新",
       "version": "版本",
@@ -582,6 +583,12 @@
       "p2pPurpose": "发现连接对象、建立P2P连接、在所选共享范围内同步，以及必要时中继",
       "p2pItems": "公钥、连接端标识符、IP地址、连接元数据，以及所选范围内的签名正文、元数据和附件",
       "p2pRetention": "遵循接收设备、DHT参与者或中继运营者的政策；已取得的副本无法集中删除。",
+      "webOriginDestination": "Web 客户端的分发源",
+      "webOriginPurpose": "打开 Web 客户端时及使用期间获取界面和程序",
+      "webOriginItems": "IP地址、HTTP／TLS请求元数据、User-Agent、请求的路径、Referer（链接来源页面发送时）",
+      "webOriginRetention": "遵循分发源运营者及网络服务商的政策。",
+      "webP2pDestination": "连接设备和已配置的中继服务（含同一主机上的STUN）",
+      "webP2pRetention": "遵循接收设备或中继运营者的政策；已取得的副本无法集中删除。",
       "diagnosticNotice": "复制或导出诊断报告不会自动发送。只有您将报告附加到自己选择的接收方时，它才会离开设备。"
     },
     "diagnostics": {
