@@ -88,7 +88,8 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
             .await?;
     let dir = tempfile::tempdir()?;
     let db = dir.path().join("native.db");
-    let runtime = DesktopRuntime::new_with_config(&db, TransportNetworkConfig::loopback()).await?;
+    // 未指定の bind では、WebRTC の候補は既定の経路の IP になる。Firefox は loopback の候補と組を作らない（#1220 AC-5a）。
+    let runtime = DesktopRuntime::new_with_config(&db, TransportNetworkConfig::default()).await?;
     consent_to_community_node(&runtime, &stack.base_url).await?;
     let host = ClientHost::from_runtime(dir.path().to_path_buf(), Arc::new(runtime))
         .await
