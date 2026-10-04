@@ -85,12 +85,23 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - relay で始めた接続へ、後から custom path を足すには上流 #4565 の `Endpoint::add_remote_addrs` が要る。
   これを iroh の fork（`KingYoSun/iroh`）へ載せた（上流の汎用 API であり、Web 固有の差分ではない。#1213 D-2）。W10 AC-1 で、fork の branch `kukuri/add-remote-addrs-v1.3.0` の rev `c47e860f`（上流 v1.3.0＋#4447＋#4565 の cherry-pick）へ更新した。
 - W9 AC-2 の試験は、custom のアドレスだけで接続する（relay を使わない）ので #4565 に依存しない。
-- 経路の削除は、session の close で行う。閉じた session の addr は `is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
-  iroh はその path を検証の失敗・idle で閉じ、既定の selector が relay 等の残りの path へ移る。iroh 側に path を消す API は要らない。
-  閉じた custom path は iroh の path の idle 期限（15 秒）まで選ばれたまま残り、その間の送信（その相手への新しい接続の最初の送信も）は届かない。
-  W10 AC-2 の実測（J3）では relay で再開するまで 16〜18 秒かかった。native の UDP の path を失ったときと同じ iroh の性質で、接続と stream は続く。
+- 経路の削除は、session の close で行う。閉じた session の addr は `watch_local_addrs` から外れ、`is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
+  iroh の fork は、custom transport が外した local addr を持つ custom path をすぐ閉じる（PATH_ABANDON を送る）。破棄の event で、既定の selector が relay 等の残りの path へ移る。
+  その path が接続の最後の path で閉じられないときは、別の path が確立した時点で閉じ直す。新しい接続は選ばれた custom path で始まり、relay の path は約 0.33 秒後（相手の connection ID を待つ再試行）に開くので、その間の喪失がこれに当たる。
+  接続と stream は続く。公開の API は足さない。
+  - #1482 で載せた（2026-10-04）。それまでは、閉じた custom path が iroh の path の idle 期限（15 秒）まで選ばれたまま残り、その間の送信（その相手への新しい接続の最初の送信も）は届かなかった。
+    W10 AC-2 の実測（J3）では、relay で再開するまで 16〜18 秒かかった。
+  - #1482 の J1（`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`）では、閉じてから relay で受信が再開するまで 2 秒以内。
+    relay の path が開く前の喪失（`a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay`）も 2 秒以内（手元の実測は約 0.3 秒）。
+  - 対象は、WebRTC 層が検出して session を閉じた喪失（DataChannel の close、相手の close の到着、PeerConnection の failed・closed、native の ICE の切断の検出）。
+    回線が無言で切れたときは、WebRTC 層が検出するか path の idle 期限が来るまで止まる（#1482 の対象外）。
+    接続の直後、相手の connection ID が届く前（約 1 RTT）に失ったときは、新しい path を開けないので、閉じ直す契機が来ない。
+    その接続は QUIC の idle 期限（30 秒）で閉じるまで止まり、その間は同じ相手への新しい接続の最初の送信も届かない。
+    #1482 より前からの挙動で、#1482 の判定 J1・J2 の外として記録した（2026-10-04 ユーザー判断）。対策は #1571 で扱う。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
+- fork の独自差分: 上の custom path を閉じる変更は、上流へ PR を出さず fork だけで持つ（2026-10-04 ユーザー判断、#1213 D-2 の例外）。
+  branch `kukuri/close-withdrawn-custom-paths-v1.3.0` の rev `523655a7`（`c47e860f` の上の 2 commit）。fork の rev を上げるときは、この 2 commit を載せ直し、上の 2 つの試験を通す。
 
 ### 6. STUN
 
@@ -163,9 +174,9 @@ S3 の回線の全断は、W4 の offline の入力（`reset`）と、その後�
 - 上限: 需要の表は相手 16 件（session の上限と同じ）。満杯なら表に載せず既存の経路を使う。1 回の需要（表に載ってから消えるまで）の間、交渉は相手ごとに 3 回まで（`MAX_ATTEMPTS`）で、
   失敗・session の喪失の後は期限（15 秒）の分だけ待つ。使い切ったら、その需要が終わるか `resume` まで試さない（未対応の旧 native の peer も 3 回で止まる）。
 - 共有: session は相手ごとに 1 本。開いている間に新しい需要の接続ができたら、その接続にも同じ custom path を足す。
-  開いた session があるときに相手から要求が来たら、同時開始（`Glare`）として断り、要求した側は自分の側の開いた session を使う（行き違いの交渉で 2 本目を作らない。開いた session を閉じて作り直すと、閉じた path が §5 のとおり残るため）。
+  開いた session があるときに相手から要求が来たら、同時開始（`Glare`）として断り、要求した側は自分の側の開いた session を使う（行き違いの交渉で 2 本目を作らない。開いた session を閉じて作り直すと、作り直すまで relay の経路になるため）。
 - 停止と再開（W1・W4 の入力）: `reset`（pagehide・freeze・offline・account の切替・停止）は世代を進め、交渉と session をすべて閉じる。
-  `resume`（可視・online・pageshow・resume）は、生きた需要の接続が残り今の世代の session が無い相手とだけ交渉し直し、開いている session は閉じない（閉じると §5 の期限まで通信が止まる）。
+  `resume`（可視・online・pageshow・resume）は、生きた需要の接続が残り今の世代の session が無い相手とだけ交渉し直し、開いている session は閉じない（閉じると、交渉し直すまで relay の経路になる）。
   native の session を閉じるときは DataChannel を閉じる要求（SCTP の stream の reset）を相手へ送り、相手の session もすぐ閉じる。
 - 診断: `ObservedPeerPath` は active な custom path を数える。custom の path が開いていれば relay だけの peer（RelayFallback）として数えず、IP が無く custom で届く peer は Relay Supported P2P（接続交渉に relay を使った直接経路）とする。
   経路ごとの実データは transport の `received_bytes`（custom で受け取った bytes）で判別する。

@@ -104,12 +104,13 @@ wiremock = "0.6"
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d14853cb4db9966e30050bac1e689cdeec8" }
 # Upstream #4447: release inactive endpoint/relay address mappings.
 # Upstream #4565: Endpoint::add_remote_addrs opens a custom path on a live connection (#1422).
-# The fork rev is upstream v1.3.0 with #4447 rebased on top (#1450) and #4565 cherry-picked.
+# fork だけの変更（#1482。上流へは PR を出さない）: custom transport が外した local addr の custom path をすぐ閉じる。
+# fork の rev は、上流 v1.3.0 に #4447（#1450 で rebase）・#4565 の cherry-pick・#1482 の変更を載せたもの。
 # Keep the shared public types on the same source as the endpoint crate.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "c47e860f7573841ff86b51bfa1984777bffca274" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "c47e860f7573841ff86b51bfa1984777bffca274" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "c47e860f7573841ff86b51bfa1984777bffca274" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "c47e860f7573841ff86b51bfa1984777bffca274" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
 # Upstream #162 includes #161: release idle connections and retired peer state.
 # The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376),
 # and answer a join while an earlier neighbor request to the peer is pending (#1549).
