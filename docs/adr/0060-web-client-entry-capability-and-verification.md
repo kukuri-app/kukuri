@@ -116,6 +116,14 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 直接経路の判定（relay の中継 bytes）を持つ scenario は、その判定を終えるまで fallback の端を開かない。fallback の端の relay の通信が判定に混ざらない。`lifecycle` は、AC-4 の段の前に a が DM で画像を送り（r6）、AC-4 の段の後に、AC-4 より前に a が作った channel へ fallback の端が token で参加する（r9）。
   - CI は、build の job（`linux-web-e2e-build`）が wasm・Web・fixture を 1 回だけ作り、scenario ごとの job（`linux-web-e2e (<scenario>)`）が並列に回す。失敗はその scenario の job にだけ出る。merge の条件は全 scenario の job の成功とする（2026-10-04 ユーザー判断）。
   - 今後の AC の段で、既存の scenario に自然に属さないものは、新しい scenario にする（2026-10-04 ユーザー判断）。
+- W8 AC-5a の実装（2026-10-04）: 同じ scenario を desktop Firefox で回す。
+  - 上の 2 つの job は、再利用の workflow `kukuri-web-e2e.yml` に置く。Fast は Chrome で呼ぶ（merge の条件）。同じ workflow を、夜間（schedule）と手動（workflow_dispatch）で Firefox で回す。Firefox の job は merge の条件にせず、失敗は Issue にする（2026-10-04 ユーザー判断）。schedule と workflow_dispatch は、workflow が default branch に入ってから動く。
+  - driver は、ブラウザを `KUKURI_WEB_E2E_BROWSER`（`chrome`・`firefox`）で選ぶ。Firefox は geckodriver で操作し、ページより先に動く script は WebDriver BiDi の preload script として Chrome と同じに動く。
+  - fixture の native は、WebRTC の候補を loopback でない既定の経路の IP で出す。Firefox は loopback の候補と組を作らず、`127.0.0.1` の候補では ICE が成立しなかった。Chrome も同じ候補で接続する。
+  - 回線全断は、Firefox では WebDriver BiDi の `emulation.setNetworkConditions`（offline）で作り、Chrome と同じ判定（offline の間の案内と送信待ち、online の後の 1 回だけの配送と直接経路での再開）で確かめる。Chrome は chromedriver の命令のままにする（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
+  - 凍結（と、復帰の後の focus の模擬）は Firefox の driver で作れない。Firefox では未確認の制約とし、PASS にしない（`lifecycle` の PASS の行に `unconfirmed: freeze …` と示す）。
+  - Firefox の JSON の viewer は止める（特権の文書になり、`site-data` の page から保存先を消せない）。
+  - 実結果（2026-10-04、Firefox 156.0、PR #1573 の CI。一時に Fast から Firefox も呼んだ run）: `settings`・`link-preview`・`transfer`・`webrtc-loss` は毎回 PASS。`lifecycle` は凍結を未確認として 3 回とも PASS。`site-data` は、重なった初回の dialog の閉じ方を直した後に PASS。direct と fallback は relay の中継 bytes で分かれた（native→Web の画像は、直接経路で 17〜47 KB、fallback で画像の大きさ 1.77 MB 以上）。`direct`・`fallback` には、Web 間の画像が受け手に出ない失敗が時々あり、#1577 にした。
 
 ### 5. 測定の workload と STUN
 
