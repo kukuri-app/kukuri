@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6 に固定した。自動同期への接続は AC-4、画面と既存の鍵の export・backup との対象差の説明は AC-5）
+Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6、自動同期への接続は AC-4 で §7 に固定した。画面と既存の鍵の export・backup との対象差の説明は AC-5）
 
 ## Context
 
@@ -75,6 +75,16 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 表示: 移行先では、移した投稿は自分のプロフィールに出る（作者の bucket の索引を、手元の自分の record から読む）。topic の timeline は時間 bucket を相手の端末から読むので、移行先の自分の record だけでは出ない（相手の端末が居れば読める）。取り下げは、表示した投稿の背景の確認が投稿の日の bucket を読んで反映する（確認先が旧形式の replica だけだった既存の不具合を、2026-10-04 のユーザー判断でこの AC で直した）。
 - 実装: core の `AccountTransferHistory`・`AccountHistoryRecord`・`AccountHistoryCursor` と frame の `history`・`records`・`blob`・`page`、store の `protected_records_after`、iroh-node の `AccountBundleSource::history_page`・`blob_part`・`AccountBundleSink::history`・`AccountHistoryStaging`、desktop-runtime の `accounts/history.rs`、app-api の `schedule_withdrawal_check`。
 
+### 7. 自動同期への接続と、端末ごとに残すもの（AC-4）
+
+- 移行先は、受け取ったアカウントへ切り替えると、その runtime の起動で W5 の account 同期の lease を取る（ADR 0061 §7）。本人の端末の候補は Community Node の rendezvous からだけ得る。そのため、移行先の端末がそのアカウントで node に同意して認証（bearer token の取得）した後に、移行元を見つけて差分の取得を始める（ADR 0061 §10）。再 QR は要らない。同意のダイアログは、node に同意していないアカウントへ切り替えたときの既存のもの。移行の接続先を同期の相手には使わない。
+- 端末ごとに残し、移さないもの: endpoint の秘密鍵と端末 ID（担当の判定・変更の窓の ID）、node の設定・同意・token、アプリの同意と年齢の申告（端末の app data）、成人向けの表示の設定、OS の permission。必須 bundle は W5 の allowlist の item だけを運ぶ（§5）。account 由来の docs author（ADR 0053）は、両端末で同じになる。
+- 担当（ADR 0018 §8）: 移行は担当の記録をそのまま運び、復元の印を作らない。移行先は、移行だけでは担当にならない（担当は「この端末で行う」の明示の操作か、担当の移譲で移る）。
+- 実 iroh の 2 端末で確かめて見つけた W5 の 2 つの不備を、この AC で直した（2026-10-04 ユーザー判断）。
+  - 相手の account の replica の読み出しは、手元の保持分で短絡しない（ADR 0061 §10）。本人の端末は同じ docs author なので、手元で書いた item も同じ key・author の保持分になり、相手の新しい版を隠していた。
+  - 差分の取得の task と移行の反映は、account の状態を共有する handle（`AppService::account_handle`）で merge する。持ち主ではないので、落としても購読を止めない。それまでは別の lease の表を持つ handle で merge していたため、別の端末から届いた channel の世代の変化が購読とメモリへ反映されず、移行で受けた channel の購読は反映の task が終わると外れていた。
+- 実装: docs-sync の `RemoteDocsSource::exact`、app-api の `AppService::account_handle`。試験は desktop-runtime の `account_transfer_sync.rs`（2 端末の実 runtime の切替、loopback の直接経路、rendezvous の在席を返す模擬の node）。
+
 ## 採らない方式
 
 - 秘密鍵・チャンネルの秘密を QR に直接載せる: 画面を見た人・リンクを受け取った経路に秘密が渡る（#1213 の Non-goals）。
@@ -101,7 +111,7 @@ ADR 0002 の template に従う。
 - Gossip Hint 必要有無: なし
 - Blob 必要有無: 履歴を選んだときだけ、投稿の本文・添付の blob を送る（移行先は自分の blob として保護する）
 - SQLite projection 必要有無: なし（反映は W5 の item 単位の merge で、既存の行へ入る）
-- 必須 contract: 招待の形式・上限・期限、証明と確認コードの束縛、秘密の `Debug` の非出力、bundle と履歴の frame の上限と item の検証（core の試験）、正例と負例の接続、確定の境界の故障、履歴の中止・失敗・続きの位置（iroh-node の試験）、保存・確定・反映・やり直し・再起動、履歴の page の範囲と読む量・置き場の再開と回収・往復の反映と契約（desktop-runtime の試験）、保護参照の索引の読み出し（store の試験と Web の browser 試験）
+- 必須 contract: 招待の形式・上限・期限、証明と確認コードの束縛、秘密の `Debug` の非出力、bundle と履歴の frame の上限と item の検証（core の試験）、正例と負例の接続、確定の境界の故障、履歴の中止・失敗・続きの位置（iroh-node の試験）、保存・確定・反映・やり直し・再起動、履歴の page の範囲と読む量・置き場の再開と回収・往復の反映と契約（desktop-runtime の試験）、保護参照の索引の読み出し（store の試験と Web の browser 試験）、移行の後の同意を経た自動同期への接続と、端末ごとに残すもの・担当の分離（desktop-runtime の 2 端末の試験）
 - 必須 scenario: Web↔native の往復（W8）
 - 新しい外部送信: なし（利用者が選んだ自分の端末との P2P の接続。relay は既存の relay だけ）
 

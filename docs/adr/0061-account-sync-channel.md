@@ -355,6 +355,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 途中で止まった（取得の失敗、相手が離れた、lease が外れた）ら、cursor に残した位置から次の契機で再開する。失敗した 1 回は再試行しない。
 - 取得した item の merge は §8・§9 の規則（AC-3・AC-4c）で行う。
 - 読んだ head・slot・item は、remote の保持（`persist_verified_record`）に置かない（古い head を返し続ける）。object ごとに reader の lease を閉じる（`finish_remote_object`。1 lease は 32 key・1 MiB）。
+  - account の replica の読み出しは、手元の保持分で短絡せず、相手に問う（#1211 AC-4 で直した）。本人の端末は同じ docs author なので、自分で書いた item も同じ key・author の保持分になり、短絡すると相手の新しい版を隠す。
 
 #### 契機と owner（AC-5b）
 
@@ -368,6 +369,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
 - owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得は再試行せず、次の契機を待つ。
+  - 取得した item の merge は、account の状態（購読の lease の表・参加状態・購読を止めた topic と channel など）を共有する handle（`AppService::account_handle`）で行う（#1211 AC-4 で直した）。channel の参加・世代の変化を、この account の購読とメモリへ反映するため。それまでは別の lease の表を持つ handle で merge し、世代を進めても購読とメモリは古い世代のままだった。
 - account の切替: 取得は account の runtime の lease の task が持ち、停止で止まる。新しい runtime は、新しい account の store の cursor だけを読む。別の account への遅れた反映は起きない。
 
 #### 送り直し（AC-5b）
