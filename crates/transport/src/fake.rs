@@ -16,13 +16,12 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::{StreamExt, stream};
+use futures_util::stream;
 use iroh::EndpointAddr;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId, receive_route_for_account};
 use tokio::sync::{Mutex, broadcast, watch};
 #[cfg(test)]
 use tokio::time::timeout;
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::config::{
     ConnectMode, ConnectionPath, ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, SeedPeer,
@@ -358,9 +357,7 @@ impl HintTransport for FakeTransport {
             .or_default()
             .insert(self.local_id.clone());
         let sender = self.hint_sender(topic).await;
-        let stream =
-            BroadcastStream::new(sender.subscribe()).filter_map(|event| async move { event.ok() });
-        Ok(Box::pin(stream))
+        Ok(crate::hint_stream_from_sender(&sender))
     }
 
     async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()> {
@@ -385,6 +382,7 @@ impl HintTransport for FakeTransport {
             hint,
             received_at: Utc::now().timestamp_millis(),
             source_peer: self.local_id.clone(),
+            dropped_before: 0,
         });
         Ok(())
     }
@@ -539,6 +537,7 @@ impl HintTransport for FakeTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
     use kukuri_core::{
         BlobHash, KukuriKeys, ReceiveOfferReferenceV1, ReceiveOfferScopeV1, seal_receive_offer,
     };

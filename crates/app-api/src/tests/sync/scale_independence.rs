@@ -67,6 +67,7 @@ async fn fixture(name: &str, posts: usize) -> Fixture {
             },
             received_at: 0,
             source_peer: String::new(),
+            dropped_before: 0,
         })
         .expect("the topic subscription listens for hints");
     timeout(Duration::from_secs(30), async {

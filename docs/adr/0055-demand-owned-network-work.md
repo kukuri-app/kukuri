@@ -64,8 +64,13 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   旧syncで受けるためのものだったのでR5-Hで撤去した（grantの配送はaccount経路、R5-HのAC-5）。
 - 受信（R5-H）: taskはgossip hintが指す対象だけを手元→有界なprovider（R5-B/CのQUIC reader）の順にexactに読む。
   投稿・返信はobject id、reactionは現在と直前のbucketの対象ごとの上限つき一覧、取り下げは元投稿の位置、live/gameは
-  idの時刻のbucket。leaseの開始・endpointの世代の変化（taskの作り直し）・日の境界（UTC）で、現在と直前のbucketと
-  旧形式の保存済みデータを1ページ（最大200行）だけ読み直し、続きを全件読みに行かない。照合の間隔の台帳はtaskごと。
+  idの時刻のbucket。content hint（LivePresence・DomeHostHeartbeat・MetaverseRoomEvent以外）の受付はleaseごとに
+  窓30秒あたり32件までで、超えた分はpeerの学習も読みもせずに捨てる（#1567、2026-10-04ユーザー決定。topicの活動量が
+  増えても1つのleaseが読む量は窓あたりの定数に収まる）。
+  leaseの開始・endpointの世代の変化（taskの作り直し）・日の境界（UTC）と、捨てたhint（transportの購読streamの
+  取りこぼしを次のenvelopeの`dropped_before`に畳んだ件数を含む）が1件以上あった窓の終わりに、現在と直前のbucketと
+  旧形式の保存済みデータを1ページ（最大200行）だけ読み直し、続きを全件読みに行かない。何を落としたかは分からないので
+  対象を特定せずに読み直す。読み直しで1件以上反映したら最後の同期時刻を更新する。照合の間隔の台帳はtaskごと。
   authorのleaseは開始時と日の境界でR5-Cの制御領域・author bucketの有界な読みを行う。友達の友達の判定のため、
   他の相手を指すfollowの窓もproviderから1ページ（ADR 0054 §3のroster上限と同じ512 key、手元の窓と同じ昇順・
   docs author指定）読み、手元に無いkeyをproviderから反映する（2026-09-27ユーザー決定。全edgeは列挙しない。blockの
@@ -128,6 +133,7 @@ UIには保存済み内容と取得待ち/取得不能を返し、空の結果�
 | remote取得実行 | 8 | 既存の8をaccount全体に統一。各serviceに8ずつ持たせない |
 | 新規接続試行 | 2 | 現行gossip warmupの並列2を共通化 |
 | gossip購読 | 81 | 表示等64、account受信1、短期送信先16。内訳も全体上限内 |
+| hintの受付 | leaseごと窓30秒に32件 | 超えた分は読まずに捨て、窓の終わりに1回の読み直しで回収。短命種は対象外（#1567） |
 | 待機要求 / 待機者 | 256要求、1要求64待機者 | metadata合計4MiBも同時に制限。本文をqueueへ複製しない |
 | 学習peer / peer状態 / 失敗記録 | 各1,024件、各4MiB | 期限索引から古い非実行記録を回収。全件sort/retainを通常経路に置かない |
 | close/revoke中の操作 | 32 | P1の所有付き停止を再利用。停止未完了のhandleは128枠からも除外しない |
