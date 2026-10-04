@@ -576,8 +576,8 @@ async function changeSettings(browser) {
 }
 
 /** Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
- * 同意し直して認証し直せる。保存と同意し直しで作り直した後の Web は、受信の offer（参加 record・ACK）を送れない（#1549）
- * ので、受信の offer に頼る段（AC-4 の世代の更新の配布）の後に行う。 */
+ * 同意し直して認証し直せる。保存と同意し直しで通信の stack を作り直した後の Web は、受信の offer（参加 record・ACK）を
+ * 送れず、作り直しの前に作った private channel を新しい参加者へ提供できない（#1549）ので、a を使う段の最後に行う。 */
 async function changeCommunityNodeSettings(browser) {
   await openSettings(browser, 'community-node');
   const extra = 'http://127.0.0.1:9';
@@ -1067,7 +1067,7 @@ async function main() {
     const direct = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
     assertRoute('native→web direct', direct, true);
     const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
-    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定（Community Node の設定は AC-4 の段の後。#1549）。
+    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定（Community Node の設定は a を使う段の最後。#1549）。
     const aPubkey = withA.webPost.author_pubkey;
     await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
     await changeSettings(a);
@@ -1117,7 +1117,6 @@ async function main() {
       channel: { channelId: nativeChannel.channelId, label: nativeChannelLabel },
       peers: 2,
     });
-    await changeCommunityNodeSettings(a);
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
@@ -1191,6 +1190,9 @@ async function main() {
     clients.push(d);
     await switchTopic(d, 'dev');
     await seesLinkPreview(d, withPreview);
+
+    // AC-2b の Community Node の設定（a を使う段の最後。#1549）。
+    await changeCommunityNodeSettings(a);
 
     // サイトデータが消えた後の復旧（#1217 AC-5）。
     await recoverAfterSiteDataLoss(a);
