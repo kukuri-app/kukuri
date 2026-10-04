@@ -221,6 +221,53 @@ async fn a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay(
     Ok(())
 }
 
+/// #1571: 接続が確立した直後（相手の connection ID が届く前）に custom path を失うと、その接続は外された custom path
+/// だけを持ち、閉じられない。同じ相手への新しい接続は、その path へ最初の送信を向けずに relay で確立して通信でき、
+/// 止まった接続は 3 秒で閉じる。
+#[tokio::test]
+async fn a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_peer() -> Result<()>
+{
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, _web_transport) = node(&relay, true).await?;
+    let (native, _native_transport) = node(&relay, false).await?;
+    let native_addr = via_relay(&native, &relay);
+    let _demand = web_e2e::demand(&web, native_addr.clone()).await?;
+    eventually("the custom path is active", async || {
+        custom_is_active(&web, &native).await
+    })
+    .await?;
+    let data: Vec<u8> = (0..64 * 1024).map(|index| (index % 251) as u8).collect();
+    let hash = native.blobs().blobs().add_bytes(data.clone()).await?.hash;
+    let stuck = web
+        .endpoint()
+        .connect(native_addr.clone(), iroh_blobs::ALPN)
+        .await?;
+    // 接続が返った直後、相手の connection ID（確立の後に届く）より先に、同期の reset で custom path を失わせる。
+    web.webrtc_signaling().context("webrtc")?.reset();
+    let lost_at = n0_future::time::Instant::now();
+    let fresh = n0_future::time::timeout(
+        Duration::from_secs(2),
+        web.endpoint()
+            .connect(native_addr.clone(), iroh_blobs::ALPN),
+    )
+    .await
+    .context("a new connection to the peer stalls")??;
+    web.blobs().remote().fetch(fresh, hash).await?;
+    let fetched = lost_at.elapsed();
+    assert!(
+        fetched <= Duration::from_secs(2),
+        "fetched after {fetched:?}"
+    );
+    assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
+    n0_future::time::timeout(
+        Duration::from_secs(4).saturating_sub(lost_at.elapsed()),
+        stuck.closed(),
+    )
+    .await
+    .context("the stuck connection stays open")?;
+    Ok(())
+}
+
 /// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
 /// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
 /// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の
