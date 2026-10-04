@@ -108,10 +108,10 @@ iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d148
 # その path を選ばず、それだけが残った接続を 3 秒で閉じる。
 # fork の rev は、上流 v1.3.0 に #4447（#1450 で rebase）・#4565 の cherry-pick・#1482 と #1571 の変更を載せたもの。
 # Keep the shared public types on the same source as the endpoint crate.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "a0e37e8a59bcb1eb09344abcb5e14f439f78be1d" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "a0e37e8a59bcb1eb09344abcb5e14f439f78be1d" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "a0e37e8a59bcb1eb09344abcb5e14f439f78be1d" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "a0e37e8a59bcb1eb09344abcb5e14f439f78be1d" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
 # Upstream #162 includes #161: release idle connections and retired peer state.
 # The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376),
 # and answer a join while an earlier neighbor request to the peer is pending (#1549).
