@@ -237,6 +237,8 @@ struct Shared {
     received: AtomicU64,
     #[cfg(test)]
     test_send_loss: (AtomicU64, AtomicU64),
+    #[cfg(feature = "test-signaling")]
+    test_receive_blocked: std::sync::atomic::AtomicBool,
 }
 
 impl Shared {
@@ -371,8 +373,18 @@ impl WebRtcTransport {
                 received: AtomicU64::new(0),
                 #[cfg(test)]
                 test_send_loss: (AtomicU64::new(0), AtomicU64::new(0)),
+                #[cfg(feature = "test-signaling")]
+                test_receive_blocked: std::sync::atomic::AtomicBool::new(false),
             }),
         })
+    }
+
+    /// 試験で、`blocked` の間に受け取る datagram をすべて捨てる（相手の応答が届かない喪失を作る。#1571）。
+    #[cfg(feature = "test-signaling")]
+    pub fn set_receive_blocked(&self, blocked: bool) {
+        self.shared
+            .test_receive_blocked
+            .store(blocked, Ordering::Relaxed);
     }
 
     /// session の event の受け口。最初の 1 回だけ返す。
@@ -566,6 +578,11 @@ impl CustomEndpoint for WebRtcEndpoint {
                 Poll::Ready(None) | Poll::Pending => break,
             };
             let len = packet.data.len();
+            #[cfg(feature = "test-signaling")]
+            if self.shared.test_receive_blocked.load(Ordering::Relaxed) {
+                self.shared.dropped_recv.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
             if len > bufs[filled].len() {
                 self.shared.dropped_recv.fetch_add(1, Ordering::Relaxed);
                 continue;
