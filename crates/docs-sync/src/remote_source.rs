@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use iroh::EndpointAddr;
 use iroh_docs::NamespaceSecret;
 use kukuri_core::ReplicaId;
+use kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX;
 use kukuri_iroh_node::{DocReadQuery, DocReadRecord, DocReadResponse};
 use tokio::sync::Mutex;
 
@@ -82,10 +83,12 @@ impl RemoteDocsSource {
         if policy == DocFetchPolicy::LocalOnly {
             return Ok(Vec::new());
         }
-        // 保持した record で提供者への問い合わせを省く。ただし更新される現在値(`profile/latest`)は、保持した旧い版で
-        // 提供者の新しい版を隠さないよう、提供者に問う(#1419)。
+        // 保持した record で提供者への問い合わせを省く。ただし更新される現在値(`profile/latest` と、本人の別の端末の
+        // account 同期の item)は、保持した旧い版で提供者の新しい版を隠さないよう、提供者に問う(#1419)。本人の端末は
+        // 同じ docs author なので、手元で書いた item も同じ key・author の保持分になる(#1211 AC-4)。
         if let (Some(cache), Some(author)) = (self.inner.remote_cache(), author)
             && key != stable_key("profile", "latest")
+            && !replica.as_str().starts_with(ACCOUNT_SYNC_REPLICA_PREFIX)
         {
             let cached = cache
                 .get_remote_records(replica.as_str(), key, Some(author), 1, false)

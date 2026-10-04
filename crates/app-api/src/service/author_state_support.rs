@@ -590,6 +590,7 @@ async fn hydrate_author_record(
         && kind == AuthorKeyKind::Follow
         && let Ok(Some(edge)) = parse_follow_edge(&envelope)
     {
+        services.author_relationship_changed(&edge);
         // #1219 AC-5: 自分と自分の channel の参加者の間の edge は、本人の端末へも同期する。
         AppService::from_handles(services.clone())
             .share_participant_follow(&edge)

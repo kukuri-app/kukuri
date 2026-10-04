@@ -27,7 +27,7 @@ describe('useRuntimeEventBridge', () => {
 
   test('does not subscribe outside the Tauri runtime', () => {
     delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
-    renderHook(() => useRuntimeEventBridge(vi.fn(), vi.fn(), vi.fn()));
+    renderHook(() => useRuntimeEventBridge(vi.fn(), vi.fn(), vi.fn(), vi.fn()));
     expect(listenMock).not.toHaveBeenCalled();
   });
 
@@ -40,6 +40,7 @@ describe('useRuntimeEventBridge', () => {
     const onNotificationStatusChanged = vi.fn();
     const onSyncStatusChanged = vi.fn();
     const onAdultMediaLabelEvicted = vi.fn();
+    const onAuthorRelationshipChanged = vi.fn();
     const api = createDesktopMockApi();
     const syncStatus = await api.getSyncStatus();
     const communityNodeStatuses = await api.getCommunityNodeStatuses();
@@ -48,7 +49,8 @@ describe('useRuntimeEventBridge', () => {
       useRuntimeEventBridge(
         onNotificationStatusChanged,
         onSyncStatusChanged,
-        onAdultMediaLabelEvicted
+        onAdultMediaLabelEvicted,
+        onAuthorRelationshipChanged
       )
     );
     await vi.waitFor(() => expect(capturedCallback).toBeDefined());
@@ -78,6 +80,10 @@ describe('useRuntimeEventBridge', () => {
     capturedCallback?.({ payload: { type: 'adult_media_label_evicted', hash: null } });
     expect(onAdultMediaLabelEvicted).toHaveBeenNthCalledWith(1, 'hash-1');
     expect(onAdultMediaLabelEvicted).toHaveBeenNthCalledWith(2, null);
+    capturedCallback?.({ payload: { type: 'author_relationship_changed', pubkey: 'a'.repeat(64) } });
+    capturedCallback?.({ payload: { type: 'author_relationship_changed', pubkey: null } });
+    expect(onAuthorRelationshipChanged).toHaveBeenNthCalledWith(1, 'a'.repeat(64));
+    expect(onAuthorRelationshipChanged).toHaveBeenNthCalledWith(2, null);
   });
 
   test('ignores unknown runtime event types', async () => {
@@ -89,12 +95,14 @@ describe('useRuntimeEventBridge', () => {
     const onNotificationStatusChanged = vi.fn();
     const onSyncStatusChanged = vi.fn();
     const onAdultMediaLabelEvicted = vi.fn();
+    const onAuthorRelationshipChanged = vi.fn();
 
     renderHook(() =>
       useRuntimeEventBridge(
         onNotificationStatusChanged,
         onSyncStatusChanged,
-        onAdultMediaLabelEvicted
+        onAdultMediaLabelEvicted,
+        onAuthorRelationshipChanged
       )
     );
     await vi.waitFor(() => expect(capturedCallback).toBeDefined());
@@ -103,5 +111,6 @@ describe('useRuntimeEventBridge', () => {
     expect(onNotificationStatusChanged).not.toHaveBeenCalled();
     expect(onSyncStatusChanged).not.toHaveBeenCalled();
     expect(onAdultMediaLabelEvicted).not.toHaveBeenCalled();
+    expect(onAuthorRelationshipChanged).not.toHaveBeenCalled();
   });
 });

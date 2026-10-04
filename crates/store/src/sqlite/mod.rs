@@ -52,6 +52,7 @@ pub(crate) mod projections;
 mod protected_migration;
 mod remote_cache;
 pub(crate) mod social;
+mod trust_observations;
 mod withdrawals;
 
 pub use connection::StoreStartupError;

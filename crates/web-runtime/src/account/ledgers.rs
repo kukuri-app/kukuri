@@ -1,15 +1,15 @@
 //! 端末の台帳: 内容の観測・投稿の取り下げと docs への書込みの送信待ち・account 同期の採用済みの版・Community Node の
-//! private index の許可（native の `sqlite/observations.rs`・`withdrawals.rs`・`account_sync.rs`・
-//! `private_index_grants.rs`）。どれも回収しない（観測は件数と期間の上限で消す）。
+//! private index の許可と信頼評価の観測の提供（native の `sqlite/observations.rs`・`withdrawals.rs`・`account_sync.rs`・
+//! `private_index_grants.rs`・`trust_observations.rs`）。どれも回収しない（観測は件数と期間の上限で消す）。
 
 use anyhow::Result;
 use async_trait::async_trait;
-use kukuri_core::{EnvelopeId, ReplicaId};
+use kukuri_core::{EnvelopeId, KukuriEnvelope, ReplicaId};
 use kukuri_store::{
     ACCOUNT_SYNC_CURSOR_LIMIT, AccountSyncCursor, AccountSyncRow, AccountSyncStore,
     CONTENT_OBSERVATION_RETENTION_MS, ContentObservationRow, ContentObservationStore,
     MAX_CONTENT_OBSERVATIONS, PostWithdrawalRow, PostWithdrawalStore, PrivateIndexGrant,
-    PrivateIndexGrantStore, WithdrawalWriteRow,
+    PrivateIndexGrantStore, TrustObservationNode, TrustObservationStore, WithdrawalWriteRow,
 };
 use wasm_bindgen::JsValue;
 use web_sys::{IdbKeyRange, IdbTransaction};
@@ -17,7 +17,8 @@ use web_sys::{IdbKeyRange, IdbTransaction};
 use crate::IndexedDbCache;
 use crate::content_cache::{
     ACCOUNT_SYNC, ACCOUNT_SYNC_CURSORS, INDEX_GRANTS, INDEX_STOPS, META, OBJECTS, OBSERVATIONS,
-    PROFILES, WITHDRAWAL_OUTBOX, WITHDRAWALS, prefix_upper_bound,
+    PROFILES, TRUST_OBSERVATION_NODES, TRUST_OBSERVATION_PENDING, WITHDRAWAL_OUTBOX, WITHDRAWALS,
+    prefix_upper_bound,
 };
 use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, key, num, prefix, text};
@@ -542,5 +543,191 @@ impl PrivateIndexGrantStore for IndexedDbCache {
     ) -> Result<()> {
         self.bump_stop("channel", channel_stop_id(topic_id, channel_id)?)
             .await
+    }
+}
+
+/// CN ごとの観測の提供の状態（native の `cn_trust_observation_nodes`）。提供中（有効で、削除要求が未完了でない）の
+/// 行だけが `sharing` の索引に載る。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ObservationNode {
+    base_url: String,
+    #[serde(flatten)]
+    node: TrustObservationNode,
+}
+
+/// 送信待ちの観測（native の `cn_trust_observation_pending`。key は `[base_url, observation_key]`）。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QueuedObservation {
+    base_url: String,
+    observation_key: String,
+    envelope: KukuriEnvelope,
+}
+
+/// 提供中の node を `limit` 件まで。
+async fn sharing_nodes(tx: &IdbTransaction, limit: usize) -> Result<Vec<ObservationNode>> {
+    let all = IdbKeyRange::lower_bound(&num(i64::MIN)).map_err(js_error)?;
+    rows::scan(
+        tx,
+        TRUST_OBSERVATION_NODES,
+        Some("sharing"),
+        &all,
+        false,
+        limit,
+    )
+    .await
+}
+
+#[async_trait]
+impl TrustObservationStore for IndexedDbCache {
+    async fn trust_observation_node(&self, base_url: &str) -> Result<Option<TrustObservationNode>> {
+        let base = base_url.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_NODES], Mode::Read)?;
+            Ok(
+                rows::get::<ObservationNode>(&tx, TRUST_OBSERVATION_NODES, &text(&base))
+                    .await?
+                    .map(|row| row.node),
+            )
+        })
+        .await
+    }
+
+    async fn save_trust_observation_node(
+        &self,
+        base_url: &str,
+        node: Option<TrustObservationNode>,
+    ) -> Result<()> {
+        let base_url = base_url.to_owned();
+        self.run(move |db| async move {
+            let stores = [TRUST_OBSERVATION_NODES, TRUST_OBSERVATION_PENDING];
+            let tx = Txn::begin(&db.idb, &stores, Mode::Write)?;
+            let id = text(&base_url);
+            match node {
+                Some(node) => {
+                    let sharing = if node.enabled && !node.revocation_pending {
+                        num(1)
+                    } else {
+                        JsValue::UNDEFINED
+                    };
+                    let row = ObservationNode { base_url, node };
+                    rows::put(&tx, TRUST_OBSERVATION_NODES, &row, &[("sharing", sharing)])?;
+                }
+                None => rows::delete(&tx, TRUST_OBSERVATION_NODES, &id)?,
+            }
+            if !node.is_some_and(|node| node.enabled) {
+                let pending = prefix(&[id])?;
+                rows::delete(&tx, TRUST_OBSERVATION_PENDING, &pending)?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn trust_observation_sharing(&self) -> Result<bool> {
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_NODES], Mode::Read)?;
+            Ok(!sharing_nodes(&tx, 1).await?.is_empty())
+        })
+        .await
+    }
+
+    /// `[対象|種別, created_at]` の索引の末尾の 1 件。
+    async fn latest_queued_trust_observation_at(&self, key: &str) -> Result<Option<i64>> {
+        let key = key.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_PENDING], Mode::Read)?;
+            let range = prefix(&[text(&key)])?;
+            let latest: Vec<QueuedObservation> =
+                rows::scan(&tx, TRUST_OBSERVATION_PENDING, Some("key"), &range, true, 1).await?;
+            Ok(latest.first().map(|row| row.envelope.created_at))
+        })
+        .await
+    }
+
+    async fn queue_trust_observation(
+        &self,
+        base_url: Option<&str>,
+        key: &str,
+        envelope: &KukuriEnvelope,
+    ) -> Result<()> {
+        let (base_url, key, envelope) = (
+            base_url.map(str::to_owned),
+            key.to_owned(),
+            envelope.clone(),
+        );
+        self.run(move |db| async move {
+            let stores = [TRUST_OBSERVATION_NODES, TRUST_OBSERVATION_PENDING];
+            let tx = Txn::begin(&db.idb, &stores, Mode::Write)?;
+            let nodes = match &base_url {
+                Some(base_url) => rows::get(&tx, TRUST_OBSERVATION_NODES, &text(base_url))
+                    .await?
+                    .into_iter()
+                    .collect(),
+                None => sharing_nodes(&tx, usize::MAX).await?,
+            };
+            for ObservationNode { base_url, node } in nodes {
+                if node.enabled && !node.revocation_pending {
+                    let row = QueuedObservation {
+                        base_url,
+                        observation_key: key.clone(),
+                        envelope: envelope.clone(),
+                    };
+                    rows::put(&tx, TRUST_OBSERVATION_PENDING, &row, &[])?;
+                }
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn queued_trust_observations(
+        &self,
+        base_url: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, KukuriEnvelope)>> {
+        let base_url = base_url.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_PENDING], Mode::Read)?;
+            let range = prefix(&[text(&base_url)])?;
+            let queued: Vec<QueuedObservation> =
+                rows::scan(&tx, TRUST_OBSERVATION_PENDING, None, &range, false, limit).await?;
+            Ok(queued
+                .into_iter()
+                .map(|row| (row.observation_key, row.envelope))
+                .collect())
+        })
+        .await
+    }
+
+    async fn dequeue_trust_observation(
+        &self,
+        base_url: &str,
+        key: &str,
+        envelope_id: &str,
+    ) -> Result<()> {
+        let [base_url, key, envelope_id] = [base_url, key, envelope_id].map(str::to_owned);
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_PENDING], Mode::Write)?;
+            let id = rows::key(&[text(&base_url), text(&key)]);
+            if rows::get::<QueuedObservation>(&tx, TRUST_OBSERVATION_PENDING, &id)
+                .await?
+                .is_some_and(|row| row.envelope.id.0 == envelope_id)
+            {
+                rows::delete(&tx, TRUST_OBSERVATION_PENDING, &id)?;
+            }
+            tx.commit().await
+        })
+        .await
+    }
+
+    async fn count_queued_trust_observations(&self, base_url: &str) -> Result<i64> {
+        let base_url = base_url.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[TRUST_OBSERVATION_PENDING], Mode::Read)?;
+            let range = prefix(&[text(&base_url)])?;
+            let count = rows::count(&tx, TRUST_OBSERVATION_PENDING, None, &range).await?;
+            Ok(i64::try_from(count).unwrap_or(i64::MAX))
+        })
+        .await
     }
 }

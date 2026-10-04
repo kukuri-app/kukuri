@@ -101,5 +101,9 @@
     "settings": "{{channel}} settings and sharing",
     "showMore": "Show more",
     "loadingMore": "Loading…"
+  },
+  "controllerPending": {
+    "title": "On hold",
+    "description": "This action needs new access to be handed out, which happens on another of your devices. It stays on hold until you open the app on that device, so try again after opening it. You can also switch this to this device in the channel settings."
   }
 }

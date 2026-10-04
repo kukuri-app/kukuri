@@ -876,3 +876,100 @@ async fn general_consent_acceptance_excludes_sharing_document() {
     assert!(!harness.status().await.enabled);
     harness.finish().await;
 }
+
+#[tokio::test]
+async fn sent_observations_leave_no_state_per_author() {
+    // #1510: 状態を 1 つの file に丸ごと書かない。送り終えた観測は、対象ごとの記録を残さない。
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let harness = harness().await;
+    harness.enable(false).await;
+    harness.mute(author('1').as_str()).await;
+    harness.mute(author('2').as_str()).await;
+    harness
+        .runtime
+        .flush_community_node_trust_observations_once()
+        .await;
+    assert_eq!(harness.submitted().await.len(), 2);
+    assert_eq!(harness.status().await.pending_count, 0);
+    assert!(
+        !harness
+            .runtime
+            .db_path
+            .with_extension("trust-observations.json")
+            .exists()
+    );
+    harness.finish().await;
+}
+
+#[tokio::test]
+async fn legacy_state_file_is_imported_on_start() {
+    // #1510: 更新前の版の状態 file を起動時に取り込み、file を消す。
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let harness = harness().await;
+    let db_path = harness.runtime.db_path.clone();
+    let legacy = db_path.with_extension("trust-observations.json");
+    let target = author('1');
+    let envelope = kukuri_core::build_mute_observation_envelope(
+        &harness.runtime.author_keys,
+        &kukuri_core::Pubkey::from(target.clone()),
+        kukuri_core::MuteObservationStatus::Active,
+    )
+    .expect("observation");
+    harness.runtime.shutdown().await;
+    async fn status(
+        runtime: &DesktopRuntime,
+        base_url: &str,
+    ) -> crate::CommunityNodeObservationSharingStatus {
+        runtime
+            .get_community_node_observation_sharing(CommunityNodeTargetRequest {
+                base_url: base_url.to_string(),
+            })
+            .await
+            .expect("status")
+    }
+
+    // 未完了の削除要求を引き継ぎ、再送する。
+    let base_url = harness.base_url.as_str();
+    std::fs::write(
+        &legacy,
+        serde_json::json!({
+            "nodes": { base_url: { "needs_reconsent": true, "revocation_pending": true } },
+        })
+        .to_string(),
+    )
+    .expect("legacy state");
+    let runtime = open_runtime(&db_path, base_url).await;
+    assert!(!legacy.exists());
+    let imported = status(&runtime, base_url).await;
+    assert!(!imported.enabled && imported.needs_reconsent && imported.revocation_pending);
+    runtime.flush_community_node_trust_observations_once().await;
+    assert_eq!(harness.state.revocations.load(Ordering::SeqCst), 1);
+    assert!(!status(&runtime, base_url).await.revocation_pending);
+    runtime.shutdown().await;
+
+    // 提供中の状態と送信待ちを引き継ぎ、送る。
+    std::fs::write(
+        &legacy,
+        serde_json::json!({
+            "nodes": { base_url: {
+                "enabled": true,
+                "pending": { format!("{target}|mute"): envelope },
+            } },
+            "last_signed_at": { format!("{target}|mute"): envelope.created_at },
+        })
+        .to_string(),
+    )
+    .expect("legacy state");
+    let runtime = open_runtime(&db_path, base_url).await;
+    assert!(!legacy.exists());
+    let imported = status(&runtime, base_url).await;
+    assert!(imported.enabled && !imported.needs_reconsent && !imported.revocation_pending);
+    assert_eq!(imported.pending_count, 1);
+    runtime.flush_community_node_trust_observations_once().await;
+    let submitted = harness.submitted().await;
+    assert_eq!(submitted.len(), 1);
+    assert_eq!(submitted[0].target_pubkey.as_str(), target);
+    assert!(submitted[0].active);
+    runtime.shutdown().await;
+    harness.server.abort();
+}

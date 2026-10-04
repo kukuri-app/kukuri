@@ -64,6 +64,17 @@ table cn_private_index_stops
   column cid=0 name=kind type=TEXT notnull=1 default=None pk=1
   column cid=1 name=id type=TEXT notnull=1 default=None pk=2
   column cid=2 name=revision type=INTEGER notnull=1 default=Some("1") pk=0
+table cn_trust_observation_nodes
+  column cid=0 name=base_url type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=enabled type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=2 name=needs_reconsent type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=3 name=revocation_pending type=INTEGER notnull=1 default=Some("0") pk=0
+table cn_trust_observation_pending
+  column cid=0 name=base_url type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=observation_key type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=created_at type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=envelope_id type=TEXT notnull=1 default=None pk=0
+  column cid=4 name=envelope_json type=TEXT notnull=1 default=None pk=0
 table content_observations
   column cid=0 name=subject_kind type=TEXT notnull=1 default=None pk=1
   column cid=1 name=subject_id type=TEXT notnull=1 default=None pk=2
@@ -393,6 +404,10 @@ index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=
   key seqno=3 cid=1 name=Some("topic_id")
   key seqno=4 cid=2 name=Some("channel_id")
   sql=Some("CREATE INDEX cn_private_index_grants_due ON cn_private_index_grants (base_url, active, last_checked_at_ms, topic_id, channel_id)")
+index cn_trust_observation_pending_key table=cn_trust_observation_pending unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("observation_key")
+  key seqno=1 cid=2 name=Some("created_at")
+  sql=Some("CREATE INDEX cn_trust_observation_pending_key ON cn_trust_observation_pending (observation_key, created_at)")
 index idx_account_sync_cursors_updated table=account_sync_cursors unique=0 origin=c partial=0
   key seqno=0 cid=5 name=Some("updated_at")
   sql=Some("CREATE INDEX idx_account_sync_cursors_updated ON account_sync_cursors (updated_at)")
@@ -728,6 +743,13 @@ index sqlite_autoindex_cn_private_index_grants_1 table=cn_private_index_grants u
 index sqlite_autoindex_cn_private_index_stops_1 table=cn_private_index_stops unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("kind")
   key seqno=1 cid=1 name=Some("id")
+  sql=None
+index sqlite_autoindex_cn_trust_observation_nodes_1 table=cn_trust_observation_nodes unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("base_url")
+  sql=None
+index sqlite_autoindex_cn_trust_observation_pending_1 table=cn_trust_observation_pending unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("base_url")
+  key seqno=1 cid=1 name=Some("observation_key")
   sql=None
 index sqlite_autoindex_content_observations_1 table=content_observations unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("subject_kind")

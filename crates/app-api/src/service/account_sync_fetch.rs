@@ -324,12 +324,6 @@ impl AppService {
         Ok(next)
     }
 
-    /// 移行（#1211 AC-2）の送り元・反映の背景 task が持つ handle（account の購読 task と同じく `ServiceHandles` を
-    /// 共有する）。
-    pub fn account_transfer_handle(&self) -> AppService {
-        self.scope_reader()
-    }
-
     /// 移行元の必須 bundle の 1 page（#1211 AC-2）。最初（`cursor` が `None`）に送信待ちの行を replica へ書き、手元の
     /// replica を周回と同じ prefix の木で 1 照会ずつ辿って、封をした item を返す。次の cursor（尽きたら `None`）。
     pub async fn account_transfer_page(

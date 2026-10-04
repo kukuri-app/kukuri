@@ -11,11 +11,14 @@ export type SyncStatusDelta = Extract<RuntimeEvent, { type: 'sync_status_changed
 export function useRuntimeEventBridge(
   onNotificationStatusChanged: () => void,
   onSyncStatusChanged: (delta: SyncStatusDelta) => void,
-  onAdultMediaLabelEvicted: (hash: string | null) => void
+  onAdultMediaLabelEvicted: (hash: string | null) => void,
+  // #1521 AC-1b: 自分を指す相手の follow の edge が届いた。`null` は知らせが溢れたとき。
+  onAuthorRelationshipChanged: (pubkey: string | null) => void
 ): void {
   const notificationCallbackRef = useRef(onNotificationStatusChanged);
   const syncStatusCallbackRef = useRef(onSyncStatusChanged);
   const adultLabelCallbackRef = useRef(onAdultMediaLabelEvicted);
+  const relationshipCallbackRef = useRef(onAuthorRelationshipChanged);
 
   useEffect(() => {
     notificationCallbackRef.current = onNotificationStatusChanged;
@@ -30,6 +33,10 @@ export function useRuntimeEventBridge(
   }, [onAdultMediaLabelEvicted]);
 
   useEffect(() => {
+    relationshipCallbackRef.current = onAuthorRelationshipChanged;
+  }, [onAuthorRelationshipChanged]);
+
+  useEffect(() => {
     const onEvent = (payload: RuntimeEvent | undefined) => {
       switch (payload?.type) {
         case 'notification_status_changed':
@@ -40,6 +47,9 @@ export function useRuntimeEventBridge(
           break;
         case 'adult_media_label_evicted':
           adultLabelCallbackRef.current(payload.hash ?? null);
+          break;
+        case 'author_relationship_changed':
+          relationshipCallbackRef.current(payload.pubkey ?? null);
           break;
       }
     };

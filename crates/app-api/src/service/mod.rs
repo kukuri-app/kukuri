@@ -390,9 +390,20 @@ pub struct ServiceHandles {
     pub(crate) account_sync: Arc<account_sync_fetch::AccountSyncState>,
     /// リンクプレビューの record の読取りの上限（ADR 0051 §7、#1220 AC-2f）。
     pub(crate) link_preview_reads: Arc<link_preview_record::LinkPreviewReads>,
+    /// 自分を指す相手の follow の edge を新しく保存したときに、相手の pubkey を知らせる(#1521 AC-1b)。
+    pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
 }
 
 impl ServiceHandles {
+    /// 自分を指す follow の edge を新しく保存したら、相手を知らせる。画面はその相手の開いている列を読み直す(#1521 AC-1b)。
+    pub(crate) fn author_relationship_changed(&self, edge: &FollowEdge) {
+        if edge.target_pubkey.as_str() == self.keys.public_key_hex() {
+            let _ = self
+                .author_relationship_changes
+                .send(edge.subject_pubkey.as_str().to_string());
+        }
+    }
+
     pub(crate) async fn put_post_projection(&self, row: ObjectProjectionRow) -> Result<()> {
         if row.author_pubkey == self.keys.public_key_hex() {
             self.projection_store.put_object_projection(row).await
@@ -513,6 +524,7 @@ impl ServiceHandles {
             notify_remote_posts: None,
             account_sync: Arc::default(),
             link_preview_reads: Arc::default(),
+            author_relationship_changes: tokio::sync::broadcast::channel(64).0,
         }
     }
 }
@@ -543,6 +555,8 @@ pub struct AppService {
     /// `adult_media_hashes` と違って永続化せず、プロセス内の一時集合に留める(ADR 0028 §8.10)。
     /// 表示経路は必ず index 照会を経由するので、再起動後も表示より先に再登録される。
     pub(crate) advisory_media_hashes: Arc<Mutex<HashSet<String>>>,
+    /// account の状態の持ち主(runtime が持つもの)。`account_handle` は持ち主ではなく、落としても購読の task を止めない。
+    owner: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -672,7 +686,33 @@ impl AppService {
             notification_inserted_notify,
             adult_content_display_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             advisory_media_hashes: Arc::new(Mutex::new(HashSet::new())),
+            owner: true,
         })
+    }
+
+    /// この account の状態(購読の lease の表・参加状態・購読を止めた topic と channel など)を共有する handle。本人の
+    /// 別の端末からの取得(ADR 0061 §10)と移行の反映(#1211)の merge が、channel の参加・世代の変化を、この account
+    /// の購読とメモリへ反映するために使う(#1211 AC-4)。持ち主ではないので、落としても購読の task を止めない。
+    pub fn account_handle(&self) -> AppService {
+        AppService {
+            services: self.services.clone(),
+            subscription_registry: self.subscription_registry.clone(),
+            joined_private_channels: self.joined_private_channels.clone(),
+            metaverse_room_events: self.metaverse_room_events.clone(),
+            dome_host_heartbeats: self.dome_host_heartbeats.clone(),
+            dome_host_sessions: self.dome_host_sessions.clone(),
+            metaverse_blob_cache: self.metaverse_blob_cache.clone(),
+            metaverse_resource_budget: self.metaverse_resource_budget.clone(),
+            last_sync_ts: self.last_sync_ts.clone(),
+            public_topic_delivery: self.public_topic_delivery.clone(),
+            gossip_disabled_topics: self.gossip_disabled_topics.clone(),
+            gossip_disabled_channels: self.gossip_disabled_channels.clone(),
+            private_channel_rows_changed: self.private_channel_rows_changed.clone(),
+            notification_inserted_notify: self.notification_inserted_notify.clone(),
+            adult_content_display_enabled: self.adult_content_display_enabled.clone(),
+            advisory_media_hashes: self.advisory_media_hashes.clone(),
+            owner: false,
+        }
     }
 
     /// 参加の行が変わった印。起動時は立っている。読む側が下ろす。
@@ -688,6 +728,13 @@ impl AppService {
 
     pub fn notification_inserted_notify(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.notification_inserted_notify)
+    }
+
+    /// 自分を指す相手の follow の edge を新しく保存したときの、相手の pubkey(#1521 AC-1b)。
+    pub fn subscribe_author_relationship_changes(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<String> {
+        self.services.author_relationship_changes.subscribe()
     }
 
     pub fn metaverse_resource_budget(&self) -> &kukuri_core::MetaverseResourceBudgetConfig {

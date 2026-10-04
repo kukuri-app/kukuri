@@ -1,0 +1,3 @@
+DROP INDEX cn_trust_observation_pending_key;
+DROP TABLE cn_trust_observation_pending;
+DROP TABLE cn_trust_observation_nodes;
