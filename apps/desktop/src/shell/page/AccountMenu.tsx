@@ -113,10 +113,11 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
         <DialogHeader><DialogTitle>{t(dialogTitle[dialog ?? 'import'])}</DialogTitle><DialogDescription>{t(dialogDescription[dialog ?? 'import'])}</DialogDescription></DialogHeader>
         <DialogBody>
           {dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
-            {/* #1211: 移行先は受け取りが終わったら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。
+            {/* #1211: 移行先は完了の画面の「このアカウントを使う」で、受け取ったアカウントへ切り替える（使っているアカウントなら
+                閉じるだけ）。
                 履歴を受けている間は閉じさせず、「戻る」も出さない（終えるのは「やめる」だけ。2026-10-04 ユーザー決定）。 */}
             <AccountTransferPanel key={`${dialog}:${transferLink}`} role={dialog === 'transfer-source' ? 'source' : 'target'} initialLink={transferLink}
-              onCompleted={(id) => void listAccounts().then((accounts) => accounts.active_account_id === id ? undefined : switchTo(id)).catch(() => setError(t('accountMenu.actionFailed')))}
+              onCompleted={(id) => void listAccounts().then((accounts) => accounts.active_account_id === id ? closeDialog() : switchTo(id)).catch(() => setError(t('accountMenu.actionFailed')))}
               onReceivingHistory={setReceivingHistory} />
             {receivingHistory ? null : <Button variant='ghost' className='mt-4' onClick={() => { setTransferLink(''); setDialog('import'); }}>{t('accountMenu.back')}</Button>}
           </> : dialog === 'import' ? <>

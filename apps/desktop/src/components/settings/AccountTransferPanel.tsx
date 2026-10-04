@@ -22,8 +22,9 @@ const HISTORY_CHOICES = ['none', 'month', 'year', 'all'] as const;
 type HistoryChoice = (typeof HISTORY_CHOICES)[number];
 
 // #1211: QR・専用リンクの移行。移行元は招待を出して QR とリンクを表示し、移行先はリンクを貼り付けて接続する。
-// 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了したら受け取った
-// アカウントを `onCompleted` へ渡す（切替は呼び出し側）。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
+// 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了の画面で「このアカウントを
+// 使う」を押したら、受け取ったアカウントを `onCompleted` へ渡す（切替は呼び出し側。AC-5: 切替は画面を読み込み直すので、
+// 完了の画面の説明を読めるように、すぐには切り替えない）。閉じたら移行を取り消す。リンクは log・URL の query へ出さない。
 // AC-3: 移行先は接続の前に投稿の履歴の範囲を選ぶ（既定は移さない）。履歴は必須の移行の後に受け、受けている間は
 // 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。移行先は履歴を受けている間を
 // `onReceivingHistory` で知らせる（呼び出し側はその間は閉じさせない。終えるのは「やめる」だけ）。
@@ -93,13 +94,6 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
     return () => window.clearInterval(timer);
   }, [active]);
 
-  const receivedAccount = status.state === 'completed' ? status.account_id : null;
-  useEffect(() => {
-    if (receivedAccount) onCompleted?.(receivedAccount);
-    // 受け取ったアカウントごとに 1 回だけ渡す。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [receivedAccount]);
-
   const receivingHistory = role === 'target' && status.state === 'history';
   // 描いた後の paint・操作より前に知らせる（呼び出し側が閉じる操作を隠すのを、履歴の画面と同じ時点にそろえる）。
   useLayoutEffect(() => {
@@ -156,12 +150,17 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   }
   if (status.state === 'completed') {
     const result = status.history;
+    const received = role === 'target' ? status.account_id : null;
     return <section className='space-y-3' data-testid='account-transfer-completed'>
       <Notice tone='accent'>{t(`accountTransfer.completed.${role}`)}</Notice>
       {result ? <div className='space-y-1 text-sm' data-testid='account-transfer-history-result'>
         <p>{t(`accountTransfer.history.${result.stopped ? 'stopped' : 'done'}.${role}`, { count: result.posts })}</p>
         {result.unavailable > 0 ? <p>{t('accountTransfer.history.unavailable', { count: result.unavailable })}</p> : null}
         {result.stopped ? <p className='text-muted-foreground'>{t('accountTransfer.history.resume')}</p> : null}
+      </div> : null}
+      {role === 'target' ? <TransferScope completed /> : null}
+      {received ? <div className='flex justify-end'>
+        <Button onClick={() => onCompleted?.(received)}>{t('accountTransfer.completed.use')}</Button>
       </div> : null}
     </section>;
   }
@@ -182,6 +181,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
     const remaining = Math.max(0, Math.ceil((invite.expires_at_ms - now) / 1000));
     return <section className='space-y-3' data-testid='account-transfer-source'>
       <p className='text-sm'>{t('accountTransfer.source.instructions')}</p>
+      <TransferScope />
       <div className='flex flex-wrap items-center gap-4'>
         <TransferQr link={invite.link} label={t('accountTransfer.source.qrLabel')} />
         <p role='timer' className='text-sm text-muted-foreground'>
@@ -207,10 +207,24 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
         {HISTORY_CHOICES.map((choice) => <option key={choice} value={choice}>{t(`accountTransfer.history.choice.${choice}`)}</option>)}
       </Select>
     </Field>
+    <TransferScope />
     <Button disabled={pending || !link.trim()} onClick={() => void connect()}>
       {t(pending ? 'accountTransfer.target.connecting' : 'accountTransfer.target.connect')}
     </Button>
   </section>;
+}
+
+// #1211 AC-5: 接続の前に移るもの・移らないものを示し、移行先の完了の後に移っていないものを示す。
+function TransferScope({ completed = false }: { completed?: boolean }) {
+  const { t } = useTranslation('settings');
+  return <div className='space-y-1 text-sm' data-testid='account-transfer-scope'>
+    {completed ? null : <p><span className='font-semibold'>{t('accountTransfer.scope.movesLabel')}</span> {t('accountTransfer.scope.moves')}</p>}
+    <p>
+      <span className='font-semibold'>{t(completed ? 'accountTransfer.scope.notMovedDoneLabel' : 'accountTransfer.scope.notMovedLabel')}</span>{' '}
+      {t('accountTransfer.scope.notMoved')}
+    </p>
+    {completed ? null : <p className='text-muted-foreground'>{t('accountTransfer.scope.sourceKept')}</p>}
+  </div>;
 }
 
 // QR は theme に関わらず読み取りやすい白地・黒の module で描く（tokens の例外）。

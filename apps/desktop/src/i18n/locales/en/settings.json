@@ -2,7 +2,12 @@
   "accountKey": {
     "title": "Account",
     "summary": "Key migration and account switching.",
-    "scopeNotice": "This covers only the account key that represents who you are. It does not include posts, settings, attachments, or private-channel secrets. Use Settings > Backup & restore to migrate a whole device or to prepare for device failure.",
+    "methods": {
+      "intro": "You can use your account on another device in these ways.",
+      "transfer": "Move to another device (Add account > Move between devices): moves your account key, profile, follows and blocks, the people you always show, and the private channels you joined with their keys. Your post history moves only if you choose it.",
+      "export": "Export the account key: writes out only the account key.",
+      "backup": "Backup & restore: moves all the data on this device. (desktop only)"
+    },
     "openBackup": "Open backup & restore",
     "accountsTitle": "Accounts on this device",
     "unnamedAccount": "(unnamed)",
@@ -73,6 +78,14 @@
       "connect": "Connect",
       "connecting": "Connecting to the other device…"
     },
+    "scope": {
+      "movesLabel": "Moves:",
+      "moves": "your account key, profile, follows and blocks, the people you always show, and the private channels you joined with their keys. If you choose it, your own post history written on the source device (text, images, and videos).",
+      "notMovedLabel": "Doesn't move:",
+      "notMovedDoneLabel": "Not moved:",
+      "notMoved": "your muted list, DM and notification history, Community Node settings and consent, app consent and age declaration, and the adult content display setting.",
+      "sourceKept": "The account stays on the source device."
+    },
     "confirm": {
       "source": "Check that the other device shows the same confirmation code.",
       "target": "Check that the other device shows the same confirmation code.",
@@ -87,7 +100,8 @@
     },
     "completed": {
       "source": "The other device has saved the account. You can keep using it on this device.",
-      "target": "Everything was received. Opening the account…"
+      "target": "Everything was received.",
+      "use": "Use this account"
     },
     "retry": "Try again",
     "failure": {

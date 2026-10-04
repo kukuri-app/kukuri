@@ -882,6 +882,11 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   await (await dialogWith(browser, 'Import an encrypted account key')).$('button=Move from another device').click();
   const target = browser.$('[role=dialog] [data-testid="account-transfer-target"]');
   await target.waitForExist({ timeout: WAIT });
+  // W7 #1211 AC-5: 接続の前に、移るもの・移らないもの・移行元にアカウントが残ることを示す。
+  const scope = await target.$('[data-testid="account-transfer-scope"]').getText();
+  for (const shown of ['Moves:', 'follows and blocks', "Doesn't move:", 'The account stays on the source device.']) {
+    assert.ok(scope.includes(shown), `the target shows "${shown}" before connecting`);
+  }
   await target.$('input').setValue(link);
   if (history) await target.$('select').selectByAttribute('value', history);
   await target.$('button=Connect').click();
@@ -896,7 +901,14 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
     await browser.$('[data-testid="account-transfer-history"]').waitForExist({ timeout: WAIT });
     await duringHistory(browser);
   }
-  // 受け取ると、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
+  // AC-5: 完了の画面に移っていないもの（履歴を止めたときはその結果も）を示し、「このアカウントを使う」を押すと切り替える。
+  const completed = browser.$('[role=dialog] [data-testid="account-transfer-completed"]');
+  await completed.waitForExist({ timeout: WAIT });
+  const result = await completed.getText();
+  assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
+  if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
+  await completed.$('button=Use this account').click();
+  // 「このアカウントを使う」で、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
   // 同意する（W7 #1211 AC-4）。読み込み直しの途中の要素は使えないので、失敗したら次の回で見直す。
   await eventually(`${browser.label} uses the transferred account`, async () => {
     try {

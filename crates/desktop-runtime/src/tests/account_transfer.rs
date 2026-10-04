@@ -128,6 +128,29 @@ async fn account_transfer_commands_reject_a_broken_link() {
     host.shutdown().await;
 }
 
+/// #1211 AC-5: 移行元のアカウント（登録簿と鍵）は、移行の後も残る。同じ DB から起動し直しても、同じ公開鍵で使える。
+#[tokio::test]
+async fn the_source_keeps_its_account_after_the_transfer() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().unwrap();
+    let source_dir = dir.path().join("source");
+    let source_host = target_host(&source_dir).await;
+    let pubkey = source_host.runtime().local_author_pubkey();
+    let target = target_host(&dir.path().join("target")).await;
+    transfer(&source_host.runtime(), &target).await;
+    let accounts = list_accounts(&source_dir).await.unwrap();
+    let kept = accounts
+        .accounts
+        .iter()
+        .find(|record| record.pubkey == pubkey)
+        .expect("the source account stays registered");
+    assert_eq!(accounts.active_account_id, kept.id);
+    let db = account_db_path(&source_dir, &kept.id);
+    source_host.shutdown().await;
+    assert_eq!(runtime_at(&db).await.local_author_pubkey(), pubkey);
+    target.shutdown().await;
+}
+
 /// 2c・2d: 新規のアカウントは保存の確定で 1 件だけ登録され（やり直しても増えない）、使っているアカウントには何も
 /// 反映しない。受けたアカウントの runtime の起動で、表示例外・profile・参加中の channel が反映され、置き場は消える。
 #[tokio::test]

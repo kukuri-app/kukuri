@@ -105,22 +105,26 @@ async function completeTransferTo(accountId: string) {
   await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
   await user.click(within(target).getByRole('button', { name: 'Connect' }));
   expect(await within(target).findByTestId('account-transfer-completed', {}, { timeout: 2000 })).toBeVisible();
+  // AC-5: 完了の画面の説明を読めるように、「このアカウントを使う」を押すまでは切り替えない。
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(change).not.toHaveBeenCalled();
+  await user.click(within(target).getByRole('button', { name: 'Use this account' }));
   return change;
 }
 
-test('a completed transfer switches to the received account', async () => {
+test('a completed transfer switches to the received account when asked', async () => {
   const change = await completeTransferTo('cccccccccccccccc');
   await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
 });
 
-test('a completed transfer into the active account does not switch', async () => {
+test('a completed transfer into the active account closes the dialog without switching', async () => {
   const change = await completeTransferTo('aaaaaaaaaaaaaaaa');
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move from another device' })).not.toBeInTheDocument());
   expect(change).not.toHaveBeenCalled();
 });
 
 // #1211 AC-3（監査 B-1、2026-10-04 ユーザー決定）: 移行先は履歴を受けている間は Dialog を閉じられず、「戻る」も出ない。
-// 履歴は「やめる」で終え、終えたら受け取ったアカウントへ切り替える。
+// 履歴は「やめる」で終え、終えたら完了の画面から受け取ったアカウントへ切り替える。
 test('the target cannot close the dialog while receiving the history and switches after stopping it', async () => {
   const { user, menu, change } = await setup();
   const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
@@ -150,6 +154,7 @@ test('the target cannot close the dialog while receiving the history and switche
 
   status.mockResolvedValue({ state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: { posts: 3, unavailable: 0, stopped: 'cancelled' } });
   await user.click(within(target).getByRole('button', { name: 'Stop receiving history' }));
+  await user.click(await within(target).findByRole('button', { name: 'Use this account' }, { timeout: 2000 }));
   await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
 });
 
