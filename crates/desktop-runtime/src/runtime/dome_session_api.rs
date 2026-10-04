@@ -104,6 +104,34 @@ impl DesktopRuntime {
         }
     }
 
+    pub(crate) async fn prepare_owner_device_transition(
+        &self,
+        endpoint_id: &str,
+        request: kukuri_core::DomeTransitionAdmissionRequestV1,
+        access_proof: kukuri_core::DomeSpatialAccessProofV1,
+    ) -> Result<kukuri_core::DomeTransitionAdmissionTicketV1> {
+        let request = DomeSessionRequestV1::PrepareTransition {
+            request,
+            access_proof,
+        };
+        match self.request_owner_device_host(endpoint_id, request).await? {
+            DomeSessionResponseV1::Ticket { ticket } => Ok(*ticket),
+            _ => bail!("unexpected Dome host response"),
+        }
+    }
+
+    /// commit / abort。応答は受理だけ。
+    pub(crate) async fn accept_owner_device_transition(
+        &self,
+        endpoint_id: &str,
+        request: DomeSessionRequestV1,
+    ) -> Result<()> {
+        match self.request_owner_device_host(endpoint_id, request).await? {
+            DomeSessionResponseV1::Accepted => Ok(()),
+            _ => bail!("unexpected Dome host response"),
+        }
+    }
+
     /// lease が指す所有者の端末へ要求を 1 件送る。接続できなければ code `DOME_HOST_UNREACHABLE`、host の拒否は
     /// process 内の host と同じ形(resource budget の拒否は型のまま)の失敗にする。
     async fn request_owner_device_host(

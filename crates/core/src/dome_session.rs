@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DomeSpatialAccessProofV1, MetaverseResourceRejection, SignedDomePhysicsSnapshotV1,
-    SignedDomeSessionInputV1,
+    DomeSpatialAccessProofV1, DomeTransitionAdmissionRequestV1, DomeTransitionAdmissionTicketV1,
+    MetaverseResourceRejection, SignedDomePhysicsSnapshotV1, SignedDomeSessionInputV1,
 };
 
 /// 要求 1 件の上限。署名済みの input と access proof が収まる。
@@ -25,6 +25,19 @@ pub enum DomeSessionRequestV1 {
         after_sequence: u64,
         access_proof: DomeSpatialAccessProofV1,
     },
+    /// 遷移先の host への予約(ADR 0042)。access proof で participant 本人を確かめる。
+    PrepareTransition {
+        request: DomeTransitionAdmissionRequestV1,
+        access_proof: DomeSpatialAccessProofV1,
+    },
+    CommitTransition {
+        ticket: DomeTransitionAdmissionTicketV1,
+        position: [i64; 3],
+        rotation: [i64; 3],
+    },
+    AbortTransition {
+        ticket: DomeTransitionAdmissionTicketV1,
+    },
 }
 
 impl DomeSessionRequestV1 {
@@ -32,7 +45,7 @@ impl DomeSessionRequestV1 {
     pub fn response_limit(&self) -> usize {
         match self {
             Self::ResyncSnapshots { .. } => DOME_SESSION_RESYNC_MAX_BYTES,
-            Self::Input { .. } => DOME_SESSION_RESPONSE_MAX_BYTES,
+            _ => DOME_SESSION_RESPONSE_MAX_BYTES,
         }
     }
 }
@@ -46,6 +59,11 @@ pub enum DomeSessionResponseV1 {
     Snapshots {
         snapshots: Vec<SignedDomePhysicsSnapshotV1>,
     },
+    Ticket {
+        ticket: Box<DomeTransitionAdmissionTicketV1>,
+    },
+    /// commit / abort の受理。
+    Accepted,
     /// host が拒否した理由。resource budget の拒否は型のまま返す(ADR 0041)。
     Rejected {
         message: String,
