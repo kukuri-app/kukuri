@@ -475,3 +475,40 @@ async fn held_projection_rows_do_not_stop_the_provider_read() {
     seen.sort();
     assert_eq!(seen, expected);
 }
+
+// #1521 AC-1b: author の読み直しで自分を指す follow の edge を新しく保存したら、相手を 1 回知らせる。他の相手を指す
+// edge(友達の友達の窓)と、同じ edge の読み直しでは知らせない。
+#[tokio::test]
+async fn author_reads_announce_only_a_new_follow_of_me() {
+    let author = generate_keys();
+    let local = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    put_profile(provider.as_ref(), &author).await;
+    put_follow(
+        provider.as_ref(),
+        &author,
+        generate_keys().public_key_hex().as_str(),
+    )
+    .await;
+    put_follow(provider.as_ref(), &author, local.public_key_hex().as_str()).await;
+    let (app, _) = app_over(
+        Arc::new(CountingDocsSync::reading_from(provider)),
+        local.clone(),
+    );
+    let mut changes = app.subscribe_author_relationship_changes();
+    for _ in 0..2 {
+        hydrate_author_state(
+            &app.services,
+            local.public_key_hex().as_str(),
+            author.public_key_hex().as_str(),
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await
+        .expect("hydration");
+    }
+    assert_eq!(changes.try_recv().unwrap(), author.public_key_hex());
+    assert!(
+        changes.try_recv().is_err(),
+        "only a new follow of me announces"
+    );
+}

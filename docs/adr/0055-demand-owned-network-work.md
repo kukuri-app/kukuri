@@ -93,6 +93,9 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   表示名のため、timelineのページの著者のうち手元にprofileの無いものは、購読せずにprofileのkeyだけを背景で1件ずつ
   読む（queue 64件・台帳1024件、同じ著者は10分読み直さない。R6-B、2026-09-28ユーザー決定）。表示中のprofileの列は、
   相手の名前が無い間と自分のprofileの読込みが失敗している間だけ、表示の定期更新（3秒）で読み直す。
+  自分を指す相手のfollowのedgeを手元に新しく保存したとき（followのofferの取込みとauthorのleaseの読み直し）は、
+  runtimeのevent（`author_relationship_changed`、相手のpubkeyつき）で、その相手の開いているprofileと会話の列だけを
+  読み直す（#1521 AC-1b、2026-10-04ユーザー決定）。知らせが溢れたとき（pubkeyなし）は、開いている列を1回ずつ読み直す。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。

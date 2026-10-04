@@ -498,3 +498,42 @@ async fn follow_back_reaches_an_open_profile_after_the_first_offer_is_not_sent()
     app_a.shutdown().await;
     app_b.shutdown().await;
 }
+
+// #1521 AC-1b: 自分を指す相手の follow・unfollow の edge を新しく保存したら、相手の pubkey を 1 回知らせる(画面は
+// その相手の開いている列を読み直す)。同じ edge の再取込み(送り直し)では知らせない。
+#[tokio::test]
+async fn incoming_follow_edges_announce_the_relationship_change_once() {
+    let peer = generate_keys();
+    let local = generate_keys();
+    let memory_blob = Arc::new(MemoryBlobService::default());
+    let app = offer_app(
+        local.clone(),
+        Arc::new(MemoryStore::default()),
+        Arc::new(FakeTransport::new("local", FakeNetwork::default())),
+        Arc::new(OfferBlobService::new(memory_blob.clone())),
+    );
+    let mut changes = app.subscribe_author_relationship_changes();
+    for status in [FollowEdgeStatus::Active, FollowEdgeStatus::Revoked] {
+        let envelope =
+            build_follow_edge_envelope_with_docs_author(&peer, &local.public_key(), status, None)
+                .unwrap();
+        for _ in 0..2 {
+            deliver_public_source(
+                &app,
+                &peer,
+                &local,
+                memory_blob.as_ref(),
+                PublicNotificationSource::Follow {
+                    envelope: envelope.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(changes.try_recv().unwrap(), peer.public_key_hex());
+        assert!(
+            changes.try_recv().is_err(),
+            "a resent edge does not announce again"
+        );
+    }
+}

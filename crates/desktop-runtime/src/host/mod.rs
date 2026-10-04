@@ -205,6 +205,8 @@ pub enum ClientHostStart {
 pub struct ClientEventReceiver {
     events: broadcast::Receiver<(u64, RuntimeEvent)>,
     generation: watch::Receiver<u64>,
+    /// 取りこぼしの後に続けて返す読み直しの event。
+    pending: Option<RuntimeEvent>,
 }
 
 impl ClientEventReceiver {
@@ -217,12 +219,16 @@ impl ClientEventReceiver {
         }
     }
 
-    /// 次の event。取りこぼしたら、画面に読み直しを促す event（`AdultMediaLabelEvicted { hash: None }`）を返す。
-    /// host が止まったら `None`。
+    /// 次の event。取りこぼしたら、画面に読み直しを促す event（`AdultMediaLabelEvicted { hash: None }` と
+    /// `AuthorRelationshipChanged { pubkey: None }`）を続けて返す。host が止まったら `None`。
     pub async fn next(&mut self) -> Option<RuntimeEvent> {
+        if let Some(event) = self.pending.take() {
+            return Some(event);
+        }
         match self.recv().await {
             Ok(event) => Some(event),
             Err(broadcast::error::RecvError::Lagged(_)) => {
+                self.pending = Some(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                 Some(RuntimeEvent::AdultMediaLabelEvicted { hash: None })
             }
             Err(broadcast::error::RecvError::Closed) => None,
@@ -329,6 +335,7 @@ impl ClientHost {
         ClientEventReceiver {
             events: self.events.subscribe(),
             generation: self.generation.subscribe(),
+            pending: None,
         }
     }
 
@@ -565,6 +572,10 @@ impl ClientHost {
                         let _ = sender.send((
                             generation,
                             RuntimeEvent::AdultMediaLabelEvicted { hash: None },
+                        ));
+                        let _ = sender.send((
+                            generation,
+                            RuntimeEvent::AuthorRelationshipChanged { pubkey: None },
                         ));
                     }
                     Err(broadcast::error::RecvError::Closed) => break,

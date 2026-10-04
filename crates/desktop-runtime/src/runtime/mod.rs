@@ -120,6 +120,11 @@ pub enum RuntimeEvent {
         community_node_statuses: Vec<CommunityNodeNodeStatus>,
         removed_community_nodes: Vec<String>,
     },
+    /// 自分を指す相手の follow の edge を新しく保存した(#1521 AC-1b)。画面はその相手の開いている列の関係を読み直す。
+    /// 知らせが溢れたときは `None`(開いている列を読み直す)。
+    AuthorRelationshipChanged {
+        pubkey: Option<String>,
+    },
 }
 
 pub struct DesktopRuntime {
@@ -598,10 +603,13 @@ impl DesktopRuntime {
         let notification_event_task = {
             let notify = app_service.notification_inserted_notify();
             let mut label_evictions = store.subscribe_adult_label_evictions();
+            let mut relationship_changes = app_service.subscribe_author_relationship_changes();
             let sender = event_sender.clone();
             n0_future::task::spawn(async move {
                 loop {
+                    // 通知の Notify は受け損なうと残らないので、先に見る(broadcast の 2 つは溜まる。#1521 AC-1b)。
                     tokio::select! {
+                        biased;
                         _ = notify.notified() => {
                             let _ = sender.send(RuntimeEvent::NotificationStatusChanged);
                         }
@@ -611,6 +619,15 @@ impl DesktopRuntime {
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        },
+                        change = relationship_changes.recv() => match change {
+                            Ok(pubkey) => {
+                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: Some(pubkey) });
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         },

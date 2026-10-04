@@ -289,7 +289,11 @@ impl AppService {
                 let edge = parse_follow_edge(&envelope)?.context("invalid follow offer")?;
                 // #1221 R4-D: 自分を指す署名済みの edge を手元へ保存する。関係(mutual)は読むときに edge から求める。
                 if edge.target_pubkey.as_str() == local {
+                    let changed = services.store.get_envelope(&envelope.id).await?.is_none();
                     services.store.put_envelope(envelope).await?;
+                    if changed {
+                        services.author_relationship_changed(&edge);
+                    }
                     // #1219 AC-5: 参加者からの follow は、本人の端末へも同期する。
                     AppService::from_handles(services.clone())
                         .share_participant_follow(&edge)

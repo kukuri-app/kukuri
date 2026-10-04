@@ -385,6 +385,7 @@ iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流�
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>
 - 初回 Windows cut の対象は `x86_64-pc-windows-msvc` のみ
 - installer build は current-user NSIS + WebView2 download bootstrapper を前提にする
+- Windows の bin は `apps/desktop/src-tauri/build.rs` で main thread の stack reserve を 8 MiB にする（exe 既定の 1 MiB では、Tauri が main thread で値渡しする command の future が約 33 KiB を超えると stack overflow で終了する。#1526）。command の future の上限は `crates/desktop-runtime/tests/command_future_sizes.rs` で固定する
 
 ## Windows packaging
 ```powershell
