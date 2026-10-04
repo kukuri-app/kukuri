@@ -121,7 +121,8 @@ pub enum RuntimeEvent {
         removed_community_nodes: Vec<String>,
     },
     /// 自分を指す相手の follow の edge を新しく保存した(#1521 AC-1b)。画面はその相手の開いている列の関係を読み直す。
-    /// 知らせが溢れたときは `None`(開いている列を読み直す)。
+    /// 自分の pubkey なら、本人の別の端末で変えた自分の profile を採った(#1220 AC-3b。画面は自分の profile を読み直す)。
+    /// 知らせが溢れたときは `None`(開いている列と自分の profile を読み直す)。
     AuthorRelationshipChanged {
         pubkey: Option<String>,
     },

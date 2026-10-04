@@ -24,6 +24,7 @@ use kukuri_desktop_runtime::{
     CommunityNodeConsentDocumentRef, DispatchContext, FetchCommunityNodePoliciesRequest,
     SetCommunityNodeConfigNode, dispatch_command,
 };
+use kukuri_store::AccountSyncStore;
 use serde_json::{Value, json};
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -61,6 +62,8 @@ impl ClientGate for NativeGate {
 struct Fixture {
     gate: NativeGate,
     stack: CommunityNodeStack,
+    /// native の DB（同期の中身の検査で読む）。
+    db: PathBuf,
 }
 
 type Shared = Arc<Fixture>;
@@ -97,6 +100,7 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
             lock: tokio::sync::Mutex::new(()),
         },
         stack,
+        db: db.clone(),
     });
 
     let app = Router::new()
@@ -106,6 +110,7 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/payload.png", get(payload_png))
         .route("/fixture/link-preview", post(link_preview))
         .route("/fixture/shutdown", post(shutdown))
+        .route("/fixture/account-sync-items", get(account_sync_items))
         // 経路の判定の画像（約 1.7 MiB）を base64 で添えた command を受ける。
         .layer(DefaultBodyLimit::max(8 << 20))
         .with_state(fixture.clone())
@@ -275,6 +280,23 @@ async fn relay_bytes(State(fixture): State<Shared>) -> Json<Value> {
         .map(SpawnedIrohRelay::relayed_bytes)
         .unwrap_or_default();
     Json(json!({ "relayed_bytes": relayed }))
+}
+
+/// native の account 同期の item（採用済みの行の key と値。tombstone は除く）。同期の中身の検査に使う（#1220 AC-3b）。
+/// 試験のアカウントの行は少ないので、全部を返す。
+async fn account_sync_items(
+    State(fixture): State<Shared>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let store = SqliteStore::connect_file(&fixture.db)
+        .await
+        .map_err(failed)?;
+    let mut items = Vec::new();
+    for key in store.list_account_sync_keys("").await.map_err(failed)? {
+        if let Some(row) = store.get_account_sync_row(&key).await.map_err(failed)? {
+            items.push(json!({ "key": row.key, "value": row.value }));
+        }
+    }
+    Ok(Json(Value::Array(items)))
 }
 
 /// 投稿・DM に添える画像（driver が Web の投稿欄から添えるか、native の command に base64 で添える）。

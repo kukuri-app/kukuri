@@ -68,8 +68,8 @@ const nativeReact = (target, emoji) =>
     request: { target_topic_id: TOPIC, target_object_id: target.object_id, reaction_key: { kind: 'emoji', emoji }, channel_ref: null },
   });
 
-/** 新しい profile の Chrome を開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
-async function openClient(name, { ice }) {
+/** 新しい profile の Chrome を開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
+async function startClient(name, { ice }) {
   const args = ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'];
   const browser = await remote({
     logLevel: 'warn',
@@ -83,6 +83,12 @@ async function openClient(name, { ice }) {
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
+  return browser;
+}
+
+/** 新しい profile の Chrome を開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
+async function openClient(name, { ice }) {
+  const browser = await startClient(name, { ice });
   const profile = await dialogWith(browser, 'Set up your profile');
   const displayName = profile.$('input');
   await displayName.waitForClickable({ timeout: WAIT });
@@ -486,6 +492,17 @@ async function joinChannel(browser, token, label) {
   await channelDialogClosed(browser);
 }
 
+/** 投稿の作者（`author`）の profile の列を開く。開いていれば閉じて開き直す（列の中の設定は開いたときに読む）。 */
+async function reopenAuthorProfile(browser, authorPost, author) {
+  const opened = columnOf(browser, 'profile', author);
+  if (await opened.isExisting()) await opened.$('button.shell-column-close-button').click();
+  await showNewPosts(browser);
+  await (await card(browser, authorPost)).$('button.post-meta-author').click();
+  const profile = columnOf(browser, 'profile', author);
+  await profile.waitForExist({ timeout: WAIT });
+  return profile;
+}
+
 /** 投稿の作者（`author`）の profile を開き、まだなら follow する。profile の操作の欄を返す。 */
 async function openAuthorProfile(browser, authorPost, author) {
   await showNewPosts(browser);
@@ -812,6 +829,169 @@ const seesOnlyUrl = (browser, post) =>
     const preview = await linkPreviewOf(browser, post.content);
     return preview?.state === 'unavailable' && preview.link === post.url;
   });
+
+/** native の移行の状態が `state` になるまで待つ。 */
+const nativeTransfer = (state) =>
+  eventually(`the native transfer is ${state}`, async () => {
+    const status = await native('get_account_transfer_status');
+    return status.state === state && status;
+  });
+
+/**
+ * 新しい Web が、native が作ったリンクで native のアカウントを受け取り、そのアカウントへ切り替える（#1211、#1220 AC-3b）。
+ * 初回の profile の dialog の「以前のアカウントを戻す」から入る。`history` は履歴の範囲（null は移さない）、`duringHistory` は
+ * 履歴を受けている間の操作。
+ */
+async function transferFromNative(name, nativePubkey, { history = null, duringHistory = null } = {}) {
+  const browser = await startClient(name, { ice: true });
+  const { link } = await native('create_account_transfer_invite');
+  await (await dialogWith(browser, 'Set up your profile')).$('button=Restore a previous account').click();
+  await (await dialogWith(browser, 'Import an encrypted account key')).$('button=Move from another device').click();
+  const target = browser.$('[role=dialog] [data-testid="account-transfer-target"]');
+  await target.waitForExist({ timeout: WAIT });
+  await target.$('input').setValue(link);
+  if (history) await target.$('select').selectByAttribute('value', history);
+  await target.$('button=Connect').click();
+  // 確認コードが両端末で同じことを確かめてから、両方で承認する。
+  const { code } = await nativeTransfer('confirming');
+  const shown = browser.$('[aria-label="Confirmation code"]');
+  await shown.waitForExist({ timeout: WAIT });
+  assert.equal((await shown.getText()).replace(/\s/g, ''), code);
+  await browser.$('button=Codes match').click();
+  await native('decide_account_transfer', { request: { accept: true } });
+  if (duringHistory) {
+    await browser.$('[data-testid="account-transfer-history"]').waitForExist({ timeout: WAIT });
+    await duringHistory(browser);
+  }
+  // 受け取ると、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
+  // 同意する（W7 #1211 AC-4）。読み込み直しの途中の要素は使えないので、失敗したら次の回で見直す。
+  await eventually(`${browser.label} uses the transferred account`, async () => {
+    try {
+      const onboarding = await findDialog(browser, 'What is a community node?');
+      if (onboarding) {
+        await onboarding.$('button=Review terms').click();
+        await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
+        return false;
+      }
+      await openSettings(browser, 'account');
+      const active = browser.$('[data-testid="account-list"]').$('li*=Active');
+      const switched = (await active.isExisting()) && (await active.getText()).includes(nativePubkey);
+      await browser.keys('Escape');
+      return switched;
+    } catch {
+      return false;
+    }
+  });
+  return browser;
+}
+
+/** 設定の「アカウント」の、本人の別の端末との同期の状態（#1220 AC-3b）。section の押下が開く途中の drawer に当たって
+ * 外れたとき（#1559）は null（drawer は開いたままなので、次の回は押し直すだけになる）。 */
+async function accountSyncState(browser) {
+  await openSettings(browser, 'account');
+  const state = await browser.$('[data-testid="account-sync-status"]').getAttribute('data-state').catch(() => null);
+  if (state !== null) await browser.keys('Escape');
+  return state;
+}
+
+/** アカウントの menu の「View profile」で、自分の profile の列（既定の列。id に公開鍵を含まない）を開く。 */
+async function openOwnProfile(browser) {
+  await browser.$('[data-testid="account-menu-trigger"]').click();
+  await browser.$('[role=menu]').$('button=View profile').click();
+  const profile = columnOf(browser, 'profile', '-:-');
+  await profile.waitForExist({ timeout: WAIT });
+  return profile;
+}
+
+/**
+ * AC-3b: native のアカウントを新しい Web（e）へ移し、再 QR なしで profile・著者を常に表示する指定・private channel の鍵が
+ * 届くことを確かめる。同期の状態と中身、別のアカウントへの公開の profile の到達、別の Web（f）へ履歴を移す途中で止めても
+ * 必須の移行が完了のままであることも確かめる（#1220 の範囲の固定、2026-10-04）。`other` は別のアカウントの Web。
+ */
+async function transferAndSync(clients, nativePubkey, other) {
+  const channelLabel = `channel-transfer-${RUN}`;
+  const { channelId } = await nativeCreatesChannel(channelLabel);
+  const e = await transferFromNative('web-e', nativePubkey);
+  clients.push(e);
+
+  // 同期の状態: e の設定と native の通信状態が、どちらも同期済み。
+  await eventually('e is in sync with native', async () => (await accountSyncState(e)) === 'synced');
+  await eventually('native is in sync with e', async () => {
+    const marks = (await native('get_sync_status')).account_sync;
+    return marks && Object.values(marks).every((mark) => !mark);
+  });
+
+  // profile: native で変えると e に、e で変えると native に届く。
+  const mine = await native('get_my_profile');
+  const nativeName = `native name ${RUN}`;
+  await native('set_my_profile', { request: { name: mine.name, display_name: nativeName, about: mine.about, clear_picture: false } });
+  await eventually('e shows the name set on native', async () => (await (await openOwnProfile(e)).getText()).includes(nativeName));
+  const webName = `web-e name ${RUN}`;
+  const own = columnOf(e, 'profile', '-:-');
+  await own.$('button=Edit Profile').click();
+  await own.$('input[placeholder="Visible label"]').setValue(webName);
+  await own.$('button=Save Profile').click();
+  await eventually('native has the name set on e', async () => (await native('get_my_profile')).display_name === webName);
+  // 別のアカウント（other）の Web には、公開の profile の更新がこれまでどおり届く（本人の端末間の同期と混同しない）。
+  const nativePost = `native post for the profile ${RUN}`;
+  await native('create_post', { request: { topic: TOPIC, content: nativePost, reply_to: null } });
+  await sees(other.browser, nativePost);
+  await eventually(`${other.browser.label} sees the profile changed on e`, async () =>
+    (await (await reopenAuthorProfile(other.browser, nativePost, nativePubkey)).getText()).includes(webName)
+  );
+
+  // 著者を常に表示する指定: native で付けると e に、e で外すと native に届く。
+  const otherPost = `post of ${other.browser.label} for the display exception ${RUN}`;
+  await post(other.browser, otherPost);
+  await sees(e, otherPost);
+  await native('set_author_trust_display_exception', { request: { author_pubkey: other.pubkey, always_visible: true } });
+  const toggle = () => columnOf(e, 'profile', other.pubkey).$('[data-testid="author-trust-display-exception-toggle"]');
+  await eventually('e has the display exception set on native', async () => {
+    await reopenAuthorProfile(e, otherPost, other.pubkey);
+    return (await toggle().isExisting()) && toggle().isSelected();
+  });
+  await toggle().click();
+  await eventually('native drops the display exception cleared on e', async () =>
+    !(await native('list_author_trust_display_exceptions')).includes(other.pubkey)
+  );
+
+  // private channel: e は移行の前の channel に投稿でき、native が鍵を更新した後の投稿を読める（新しい世代の鍵が届く）。
+  await (await openChannelDialog(e)).$(`button[aria-label="Open ${channelLabel}"]`).click();
+  await channelDialogClosed(e);
+  const fromE = `web-e in the transferred channel ${RUN}`;
+  await post(e, fromE, channelColumn(e, channelId));
+  await nativeSeesInChannel(channelId, fromE);
+  await native('export_channel_access_token', { request: { topic: TOPIC, channel_id: channelId, expires_at: null } });
+  const afterUpdate = `native after the key update ${RUN}`;
+  await nativePostsInChannel(channelId, afterUpdate);
+  await seesInChannel(e, channelId, afterUpdate);
+  const fromEAfter = `web-e after the key update ${RUN}`;
+  await post(e, fromEAfter, channelColumn(e, channelId));
+  await nativeSeesInChannel(channelId, fromEAfter);
+
+  // 同期の中身: allowlist の種類だけで、接続の交渉（SDP・ICE）・DM・通知の中身を含まない（ADR 0061 §2）。
+  const items = await fixture('/fixture/account-sync-items');
+  assert.ok(items.some((item) => item.key === 'profile'), 'the profile is synced');
+  for (const item of items) {
+    assert.match(item.key, /^(profile$|trust\/always-visible\/|channel\/|follow\/)/, `${item.key} is in the allowlist`);
+  }
+  const payload = JSON.stringify(items);
+  for (const leak of ['a=candidate', 'ice-ufrag', 'ice-pwd', 'a=fingerprint', 'dm from ', 'dm image from ']) {
+    assert.ok(!payload.includes(leak), `the account sync carries no "${leak}"`);
+  }
+
+  // 任意の履歴: 別の新しい Web（f）が履歴を「直近 30 日」で受け、途中で止めても、必須の移行は完了のまま（#1211 AC-3）。
+  // 履歴は本文と添付を送るので、止める間を作るために画像つきの投稿を先に作る。
+  for (let index = 0; index < 8; index++) await postNativeImage(`history image ${RUN} ${index}`)();
+  const f = await transferFromNative('web-f', nativePubkey, {
+    history: 'month',
+    duringHistory: (browser) => browser.$('button=Stop receiving history').click(),
+  });
+  clients.push(f);
+  const done = await native('get_account_transfer_status');
+  assert.equal(done.state, 'completed');
+  assert.ok(done.history?.stopped, `the history stopped partway: ${JSON.stringify(done.history)}`);
+}
 
 /** WebRTC の session の状態（作った順。`trackPeerConnections`）。 */
 const sessionStates = (browser) => browser.execute(() => window.__kukuriPeers.map((peer) => peer.connectionState));
@@ -1229,6 +1409,9 @@ async function main() {
       { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${c.label}` },
       false
     );
+
+    // AC-3b: 同じアカウントの native → Web の移行と同期。
+    await transferAndSync(clients, nativePubkey, { browser: a, pubkey: aPubkey });
 
     // AC-2g: リンクプレビュー。native（投稿者）が record を書いた後に Web が投稿を表示する（表示が先だと、record の無い
     // 結果を 60 秒持つ）ように、a が今は表示していない topic に投稿してから、a をその topic へ切り替える。

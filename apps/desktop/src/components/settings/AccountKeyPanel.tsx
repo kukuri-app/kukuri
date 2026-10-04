@@ -1,4 +1,5 @@
 import { AccountKeyImportForm } from './AccountKeyImportForm';
+import { AccountSyncStatusNotice } from './AccountSyncStatusNotice';
 import { BrowserStorageNotice } from './BrowserStorageNotice';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import type {
   AccountKeyExport,
   AccountsSnapshot,
+  AccountSyncStatus,
 } from '@/lib/api/types.generated';
 
 import { Button } from '@/components/ui/button';
@@ -35,9 +37,11 @@ type AccountKeyPanelProps = {
   onOpenDeviceBackup?: () => void;
   // Web だけ（#1217 AC-5）: このブラウザの保存の状態（`navigator.storage.persisted()`）と、消えたときの戻し方を示す。
   showBrowserStorage?: boolean;
+  // #1220 AC-3b: 本人の別の端末との同期の状態（通信状態の `account_sync`。無ければ出さない）。
+  accountSync?: AccountSyncStatus | null;
 };
 
-export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage }: AccountKeyPanelProps = {}) {
+export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage, accountSync }: AccountKeyPanelProps = {}) {
   const { t } = useTranslation(['settings']);
 
   const [accounts, setAccounts] = useState<AccountsSnapshot | null>(null);
@@ -123,6 +127,7 @@ export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage }: Acco
 
       <Notice>{t('settings:accountKey.scopeNotice')}</Notice>
       {persisted === null ? null : <BrowserStorageNotice persisted={persisted} />}
+      {accountSync ? <AccountSyncStatusNotice status={accountSync} /> : null}
       {onOpenDeviceBackup ? (
         <Button variant='secondary' type='button' onClick={onOpenDeviceBackup}>
           {t('settings:accountKey.openBackup')}

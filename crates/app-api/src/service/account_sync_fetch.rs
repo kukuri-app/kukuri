@@ -615,8 +615,8 @@ impl AppService {
     }
 
     /// rendezvous の応答で、account の hint topic の本人の端末の候補を受けたとき（desktop-runtime が呼ぶ）。前回の
-    /// 応答に無かった端末だけを、lease の task が gossip の合流を待たずに rendezvous の候補から直接読む（ADR 0061
-    /// §10。応答ごとの再読込みはしない）。
+    /// 応答に無かった端末と、前回の取得に失敗した端末だけを、lease の task が gossip の合流を待たずに rendezvous の
+    /// 候補から直接読む（ADR 0061 §10。取得できた端末を応答ごとに読み直すことはしない）。
     pub async fn account_sync_peers_joined(
         &self,
         source: &str,
@@ -633,18 +633,27 @@ impl AppService {
             return;
         }
         let state = &self.services.account_sync;
+        let failed = state
+            .fetch
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .failed
+            .clone();
         let mut rendezvous = state
             .rendezvous
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // どの CN の前回の応答にも居なかった端末だけが「現れた」端末（片方の CN にだけ居る端末で繰り返さない）。
+        // どの CN の前回の応答にも居なかった端末だけが「現れた」端末（片方の CN にだけ居る端末で繰り返さない）。前回の
+        // 取得に失敗した端末も、次の応答で取得し直す（相手の endpoint の作り直しで切れた取得を、続く契機を待たずに。
+        // #1220 AC-3b）。
         let appeared = peers
             .iter()
             .filter(|peer| {
-                !rendezvous
-                    .last
-                    .values()
-                    .any(|seen| seen.contains(&peer.endpoint_id))
+                (failed.contains(&peer.endpoint_id)
+                    || !rendezvous
+                        .last
+                        .values()
+                        .any(|seen| seen.contains(&peer.endpoint_id)))
                     && !rendezvous
                         .pending
                         .iter()
