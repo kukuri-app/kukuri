@@ -741,6 +741,7 @@ async function acceptFirstRun(browser) {
  * 戻る（#1217 AC-5、ADR 0059 §6）。全履歴の回復は確かめない。
  */
 async function siteData() {
+  assert.fail('#1559 AC-1 (1) の確認: この scenario だけを意図的に失敗させる（一時の commit。確かめた後に取り消す）');
   const browser = await openClient('web-a', { ice: true });
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
