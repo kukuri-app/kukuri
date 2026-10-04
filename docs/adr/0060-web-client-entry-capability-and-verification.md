@@ -31,6 +31,13 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - Tauri の API を静的に import する file は bundle に入ってよい（実行時に `__TAURI_INTERNALS__` を触らない限り動く）。Web で使わない機能は §3 の capability で止める。
 - W8 AC-2a の実装（2026-10-03）: Web の mode は `VITE_KUKURI_TARGET=web`。`@kukuri/web-runtime` を wasm-bindgen の出力（`apps/desktop/web-runtime-pkg`、または `KUKURI_WEB_RUNTIME_PKG`）へ解決し、Tauri の build では使えないことを示す代わりの module へ解決する（Tauri の bundle に WASM を入れない）。`main.tsx` は描画の前に `start` を呼ぶ（Community Node の初期設定は native と同じ配布の設定。開発・試験は `VITE_KUKURI_COMMUNITY_NODE_BASE_URL`）。web-runtime の `listen` の callback は外せないので、frontend は 1 つだけ渡して購読者へ配る。device backup の復元の反映と他の account の表示は、Web では呼ばない。live・game・metaverse・Dome の 35 件の command は desktop-runtime の native だけの表に移し、Web の dispatch では `unsupported_platform` を返す。
 - 配信の artifact は「WASM の build → `wasm-bindgen --target web --split-linked-modules` → Web の mode の Vite の build → `_headers`」を 1 つの command にまとめる（W8 AC-6。`cargo xtask` の入口にする）。
+- W8 AC-6 の実装（2026-10-04）: command は `cargo xtask web-build` で、出力は `apps/desktop/dist-web`。
+  - WASM は LTO の profile（root の `Cargo.toml` の `web-release`。fat・codegen-units 1）で build し、wasm-bindgen で名前の section と producers の section を除く（§2 の大きさ）。
+  - Community Node は配布の設定を使う（試験の URL を埋め込まない）。
+  - Vite の Web の build は `apps/desktop/web-public`（`_headers` だけ）を public にする。`public` の metaverse の資源は Web では使わないので含めない。
+  - build の後に、各 file が 25 MiB 以下であることを確かめ、超えたら失敗にする。
+  - 試験（`cargo xtask web-e2e`）の build は、試験の Community Node を埋め込み、速さと失敗時の調べやすさのため LTO と名前の section の除去をしない。
+  - 手順は `docs/runbooks/web-client-publish.md`。
 
 ### 2. 配信の条件
 
@@ -38,8 +45,14 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   `style-src` の inline は、依存の UI 部品が `<style>` を差し込むため（Tauri の CSP と同じ）。script の inline は許さない。
   `connect-src` の `https:`・`wss:` は Community Node の API と iroh relay（WebSocket）のため。第三者の script・analytics を読み込まない。
 - `.wasm` は `Content-Type: application/wasm` で配る。COOP・COEP は付けない（SharedArrayBuffer・thread を使わない）。
+  W8 AC-6 では `_headers` の `/*.wasm` の規則で付ける（Cloudflare Pages の `_headers` の文書に、拡張子の規則 `/*.jpg` の例がある）。
 - secret を扱う Web クライアントは LP と別の origin に置く（同じ origin の第三者 script から IndexedDB の vault を守るため。ADR 0059 §1 の信頼境界）。公開の URL・DNS・公開の時期は artifact の完成と別の操作とする（#1220 の Non-goals）。
 - release build の WASM の大きさを AC-6 で測り、25 MiB を超えるなら分割・圧縮を AC-6 の中で決める。
+- W8 AC-6 の測定（2026-10-04。wasm-bindgen の出力）: 既定の release は 33.8 MB で、上限を超える。
+  - 名前の section の除去だけで 26.1 MB（24.9 MiB）、LTO（fat・codegen-units 1）だけで 25.2 MB になる。
+  - 両方で 20.3 MB（19.4 MiB）になる。機能を変えないので、これを採る。
+  - opt-level を `s` に下げると 15.1 MB になるが、実行の速さが変わり得るので採らない。
+- W8 AC-6 の確認: 実ブラウザの E2E の fixture は、artifact の `_headers` の header を付けて配信する。試験の Community Node と relay は http・ws の 127.0.0.1 なので、CSP の connect-src にだけそれを足す。E2E は、各 client の CSP の違反（`securitypolicyviolation`）が 0 件であることを確かめる（WASM の起動、鍵の export・import の Worker、画像の表示を含む）。
 
 ### 3. capability matrix
 
@@ -76,7 +89,9 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 直接経路と fallback は、受け手が画像（毎回違う乱数の画素の PNG）を取得する間に relay が中継した bytes で判定する。ブラウザには relay と WebRTC の他の経路が無いので、中継が画像より十分小さければ WebRTC を通っている。双方の診断の EndpointId（ブラウザの CONNECTED PEERS と native の接続先）も照合する。
   - fallback の fixture（W10 の T2 の ICE の失敗）は、ページより先に動く script で、送る SDP と受け取る SDP から ICE の候補を除いた Chrome とする。Chrome の UDP を抑える起動の設定（`--force-webrtc-ip-handling-policy=disable_non_proxied_udp`）では ICE が成立し続け、fallback にならなかった。
 - W8 AC-2b の実装（2026-10-03）: 同じ試験で、DM と private channel を直接経路の端と fallback の端で確かめる。
-  - DM は native↔Web と Web↔Web で送り合う。相互 follow は、相手の profile を開いた時（author の購読の開始）の読みで確かめる（follow の offer は宛先の探索が有界で、届かないことがある）。
+  - DM は native↔Web と Web↔Web で送り合う。相互 follow は、相手の profile を開いたまま、同じ列に「Message」が出るのを待って確かめる（#1220 AC-2h、2026-10-04）。
+    - 相手の follow の offer は、送れなかったら約 2 分送り直される（#1521 AC-1a）。届くと、開いている列が読み直される（AC-1b）。
+    - それまでは、profile を閉じ、相手の follow の後に開き直して確かめていた。
   - private channel は、どちらの端でも、Web が作った channel に native と別の Web が共有リンクで参加し、native が作った channel に Web が参加して、投稿を行き来させる。
   - 実データの経路は、AC-2a と同じく画像を添えた DM と channel の投稿で判定する（native→Web と Web→Web）。native の画像は driver が command に base64 で添える。
   - 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の node の保存・同意・認証の状態）は、経路に依らないので直接経路の端だけで確かめる。
@@ -85,6 +100,15 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - native（投稿者）は OGP を取得せず（試験の site は ADR 0051 §3 の宛先の制限で取得できない）、fixture の手順で自分の公開投稿の record（試験の題と小さい PNG）を書く。Web は card と画像（record の画像と同じ data URL）を示し、record の無い投稿は URL だけを示す。
   - Web は record の無い結果を 60 秒持つので、Web が表示していない topic に投稿して record を書いてから、Web をその topic へ切り替える。
   - 最後に native を止め、新しく開いた Web にも、record を読んだ Web から card と画像が出ること（AC-2f の中継）を確かめる。試験の Community Node は docs を保持しないので、この card は参加者の中継による。
+- W8 AC-4 の実装（2026-10-04）: 同じ試験の直接経路の端（Web a）で、fallback の端を開く前に、reload・終了・凍結・回線全断・WebRTC の経路だけの喪失が W4 の保存と復帰の入口（ADR 0059 §4〜§6）へつながり、退会・世代・version を巻き戻さないことを確かめる。reload・終了・凍結・回線全断の各段の後に、投稿の行き来と native の画像の直接経路（relay の中継 bytes）を確かめる。
+  - reload: 同じアカウント・EndpointId・設定（runtime が保存する成人向け表示）・private channel の列の下書きで再開し、初回の同意・profile の dialog は出ない。reload の間の投稿も、利用者が取り直す操作（列の開き直し・再読込）をしなくても出る。先頭にいる列では「Show N new posts」の新着として示されるものを含む（この button は受け取り済みの投稿を並べるだけで、取得はしない。2026-10-04 ユーザー判断）。
+  - 終了: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって WebRTC の session を全て閉じる。新しい tab は保存から同じ EndpointId で再開する。
+  - 凍結: 利用者と同じく、非表示 → freeze → resume → 表示の順にする。chromedriver の freeze は page を非表示にしてから凍結し、resume の後も非表示のまま戻さないので、CDP の `Emulation.setFocusEmulationEnabled` で表示へ戻す（画面は非表示の間は列を読み直さない）。freeze で旧い session を閉じ（旧世代の candidate・callback の解放）、復帰では生きた需要の相手とだけ交渉し直す（試行は有界）。
+  - 回線全断: chromedriver の回線の模擬（`setNetworkConditions` の offline）。offline の間、接続の案内はつながっていないことと次の手順を示し、DM は送信待ち（Pending）と示す。online の後、DM は同じ id で 1 回だけ届いて Delivered になる。
+  - WebRTC の経路だけの喪失（relay は健全）: page より先に動く script で、画像の転送の途中に DataChannel を閉じる（RTCPeerConnection を外から閉じても runtime に event が届かない）。画像が出るまでは、新しい session の SDP から ICE の候補を除いて WebRTC の経路を失ったままにする（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ hash で、card は 1 つ。hash は、画面が blob の URL を作った Blob から読む（AC-6 の CSP の connect-src は `blob:` を許さないので、`fetch` では読まない）。表示の取得は 15 秒の転送の期限で打ち切られて relay で取り直すので、転送中の stream の継続は #1482 で判定する（2026-10-04 ユーザー判断）。
+  - 旧 state の再送: 退会した channel は、owner の世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。native から見た profile の版は reload で変わらない。
+  - 履歴の量: reload と引継ぎの前に native が投稿を足し、2 つの量のどちらでも、最初の頁は 20 件以下、閉じていない WebRTC の session は需要のある相手の数以下になる。件数に比例しないことは、W4（ADR 0059）・W10（ADR 0057）・#1221 の試験に対応付ける（2026-10-04 ユーザー判断）。
+  - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間（#1482）に期限が切れる。直接経路は次の試行（約 30 秒後）で戻る。
 
 ### 5. 測定の workload と STUN
 
@@ -94,7 +118,12 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 ### 6. 説明とデータ分類の変更点（AC-6）
 
 - `docs/legal/app-data-flow-inventory.md`: 対象に Web を加え、秘密鍵の保存先に IndexedDB の vault（ADR 0059）、DHT・P2P・relay の行に STUN と ICE の候補、新しい行に静的配信の取得（配信元へ IP・User-Agent・Referer）とブラウザの storage・persist を足す。自動更新と developer log は Web では該当しないと書く。
-- `docs/legal/external-transmission-notice.md`: 対象に Web を加え、「Web の配信元」と「STUN」の行を足し、relay の行に WebSocket を書く。legal bundle の版を上げる。LP への同期は既存の手順（`apps/lp/scripts/sync-legal.mjs`）を使う。
+- `docs/legal/external-transmission-notice.md`: 対象に Web を加え、「Web の配信元」と「STUN」の行を足し、relay の行に WebSocket を書く。legal bundle の版は上げない（2026-10-04 ユーザー判断。8 のまま再同意を求めず、外部送信表示の「version 8 補記」として記録する）。
+  - Web の利用者は、初回の同意でこの内容に同意する。
+  - native の送信に加わるのは、Web との接続の交渉での STUN（relay と同じ host）だけで、送信先の運営者・目的・項目（IP address とポート）は relay の行の範囲内である。
+  - プライバシーポリシーと利用規約は変えないので、LP への同期は要らない。
+- W8 AC-6 の実装（2026-10-04）: 上の 2 つの文書を改めた。一覧の「確認上の境界」に、Web の秘密の出口（URL・cookie・analytics・公開索引・診断）の照合の結果を書いた。
+- 画面の設定の「リリース」の「外部送信の確認」も Web に合わせる（2026-10-04 ユーザー判断。AC-6 の監査の N-1）。Web では、更新確認の項目を出さず（見出しの説明からも「更新」を外す）、接続の項目を Web の内容（DHT を使わず、同じサーバーの STUN を含む）にし、配信元の項目を出す。
 
 ## 採らない方式
 

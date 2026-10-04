@@ -100,7 +100,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - Web の鍵・設定・projection の保存と、複数 tab・lifecycle: `docs/adr/0059-web-browser-storage-tabs-lifecycle.md`（#1217。非同期の保存 trait、device・vault・cache の 3 つの IndexedDB、projection の IndexedDB 実装、origin で 1 つの runtime、共通の復帰の入口）
 - Web クライアントの entry・capability・配信条件と実ブラウザの検証環境: `docs/adr/0060-web-client-entry-capability-and-verification.md`（#1220。apps/desktop の Web の build mode、CSP と別 origin、174 command の分類、CI の Chromium・Firefox・実 Safari・Android emulator）
 - 本人の端末間の account 同期の専用チャンネル: `docs/adr/0061-account-sync-channel.md`（#1218。アカウント鍵から用途ごとに導出する replica・namespace・payload の鍵・hint の topic、item の allowlist、封、競合の規則、上限）
-- QR・専用リンクの移行の招待と両端末の確認、必須 bundle と任意の投稿の履歴の転送: `docs/adr/0062-account-transfer-pairing.md`（#1211。招待の wire・上限・期限、専用 ALPN の証明と 1 回限りの消費、確認コード、両端末の承認、bundle の frame・上限・保存の確定・反映、履歴の範囲・page・置き場・続きの位置）
+- QR・専用リンクの移行の招待と両端末の確認、必須 bundle と任意の投稿の履歴の転送: `docs/adr/0062-account-transfer-pairing.md`（#1211。招待の wire・上限・期限、専用 ALPN の証明と 1 回限りの消費、確認コード、両端末の承認、bundle の frame・上限・保存の確定・反映、履歴の範囲・page・置き場・続きの位置、移行の後の同意を経た自動同期への接続と端末ごとに残すもの）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）
 - community node trust / relation foundation: `docs/adr/0026-community-node-trust-relation-foundation.md`
@@ -127,3 +127,4 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - 制作仕様の正本（配布候補の事実、JA/EN原稿、shot list、固定出力一覧、公開先）: `docs/progress/2026-09-15-promo-lp-brief.md`
 - 撮影（Playwright）とレンダリング（Remotion）の実行手順: `docs/runbooks/promo-production.md`（実装は `tools/promo/` と `apps/desktop/tests/promo/`）
 - LP（`kukuri.app`、実装は `apps/lp/public`）の確認と Cloudflare Pages への公開: `docs/runbooks/lp-publish.md`
+- Web クライアントの配信の artifact（`cargo xtask web-build`）の作成・確認と、静的な host への配置: `docs/runbooks/web-client-publish.md`

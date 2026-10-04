@@ -119,3 +119,9 @@ iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c04
 unwrap_used = "warn"
 # clippy.toml の一覧。共用 crate の lib.rs だけで warn にする（ADR 0056 §3）。
 disallowed_methods = "allow"
+
+# Web の配信の WASM（`cargo xtask web-build`）。1 file 25 MiB の上限の下に収める（ADR 0060 §2）。
+[profile.web-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

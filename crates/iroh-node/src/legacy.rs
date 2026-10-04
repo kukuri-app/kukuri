@@ -179,7 +179,7 @@ impl LegacyStore {
     }
 
     pub async fn read_blob(&self, hash: &str) -> Result<Option<Vec<u8>>> {
-        let hash = hash.parse::<iroh_blobs::Hash>()?;
+        let hash = crate::parse_blob_hash(hash)?;
         Ok(self
             .blobs
             .blobs()
@@ -192,7 +192,7 @@ impl LegacyStore {
     /// 旧 blob store の bytes を file へ写し、BLAKE3 を照合する。旧 store に無ければ `None`。
     pub async fn export_blob(&self, hash: &str, path: &Path) -> Result<Option<u64>> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let hash = hash.parse::<iroh_blobs::Hash>()?;
+        let hash = crate::parse_blob_hash(hash)?;
         if !self.blobs.blobs().has(hash).await? {
             return Ok(None);
         }
@@ -251,10 +251,7 @@ impl LegacyStore {
     ) -> Result<(String, bool)> {
         let tags = self.tags(prefix, after, limit).await?;
         for tag in &tags {
-            let hash = tag
-                .strip_prefix(prefix)
-                .unwrap_or_default()
-                .parse::<iroh_blobs::Hash>()?;
+            let hash = crate::parse_blob_hash(tag.strip_prefix(prefix).unwrap_or_default())?;
             if !node.blobs().blobs().has(hash).await? {
                 if self
                     .export_blob(&hash.to_string(), staging)

@@ -56,6 +56,7 @@ fn main() -> Result<()> {
         "cn-check" => cn_check(),
         "cn-test" => cn_test(),
         "cn-e2e" => cn_e2e(),
+        "web-build" => web::web_build_artifact(),
         "web-e2e" => web::web_e2e(),
         "desktop-package" => desktop_package(),
         "windows-store-package" => windows_store_package(args),
@@ -129,6 +130,6 @@ fn doctor() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <doctor|check|test|rust-check|rust-test|app-api-slow-test|tauri-check|tauri-test [--package-build] [-- <test args>]|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|web-e2e|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
+        "usage: cargo xtask <doctor|check|test|rust-check|rust-test|app-api-slow-test|tauri-check|tauri-test [--package-build] [-- <test args>]|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|web-build|web-e2e|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
     );
 }

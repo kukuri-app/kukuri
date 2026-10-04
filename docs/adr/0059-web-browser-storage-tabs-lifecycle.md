@@ -114,7 +114,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   - Web の adapter は `crates/web-runtime/src/lifecycle.rs`。`start` で次の event を登録し、`shutdown` で外す。止めた後の event は反映しない。
     - 中断: window の `pagehide`・`offline`、document の `freeze`
     - 復帰: window の `online`・`pageshow`、document の `resume`、可視になった `visibilitychange`
-  - WebRTC の session の開閉と復帰後の経路は、W10 の試験（`Signaling::reset`・`resume`）と、W8（#1220）の実ブラウザの復帰の E2E で照合する。
+  - WebRTC の session の開閉と復帰後の経路は、W10 の試験（`Signaling::reset`・`resume`）と、W8（#1220）の実ブラウザの復帰の E2E で照合する（ADR 0060 §4 の W8 AC-4 の実装）。
 
 ### 6. データの喪失と復旧
 
