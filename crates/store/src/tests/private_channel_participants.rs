@@ -107,6 +107,12 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
     store
         .upsert_follow_edge(follow("owner", "c", FollowEdgeStatus::Revoked, 2))
         .await?;
+    // #1219 AC-5: edge は向きごとに 1 件で読める。
+    assert_eq!(
+        store.get_follow_edge("owner", "c").await?,
+        Some(follow("owner", "c", FollowEdgeStatus::Revoked, 2))
+    );
+    assert_eq!(store.get_follow_edge("c", "z").await?, None);
     assert_eq!(
         store
             .private_channel_participant_counts("channel", "e1")
@@ -174,6 +180,25 @@ async fn participant_table_contract<S: Store + ProjectionStore>(store: &S) -> Re
             .await?
     );
     assert!(!store.has_private_channel_participant("other", "a").await?);
+    // #1219 AC-5: いずれかの channel に行のある相手（退出の行だけの相手を含む）と、channel で参加中の相手。
+    assert!(store.has_private_channel_member("d").await?);
+    assert!(store.has_private_channel_member("c").await?);
+    assert!(!store.has_private_channel_member("z").await?);
+    assert!(
+        !store
+            .is_active_private_channel_participant("other", "b")
+            .await?
+    );
+    assert!(
+        store
+            .is_active_private_channel_participant("channel", "b")
+            .await?
+    );
+    assert!(
+        !store
+            .is_active_private_channel_participant("channel", "a")
+            .await?
+    );
     // 退出より後の参加(再参加)は戻す。
     assert!(
         store

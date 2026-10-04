@@ -288,6 +288,19 @@ impl Store for IndexedDbCache {
         .await
     }
 
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>> {
+        let (subject, target) = (subject_pubkey.to_owned(), target_pubkey.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[FOLLOWS], Mode::Read)?;
+            rows::get(&tx, FOLLOWS, &key(&[text(&subject), text(&target)])).await
+        })
+        .await
+    }
+
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()> {
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[BLOCKS], Mode::Write)?;

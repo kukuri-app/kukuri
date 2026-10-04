@@ -120,6 +120,11 @@ pub enum RuntimeEvent {
         community_node_statuses: Vec<CommunityNodeNodeStatus>,
         removed_community_nodes: Vec<String>,
     },
+    /// 自分を指す相手の follow の edge を新しく保存した(#1521 AC-1b)。画面はその相手の開いている列の関係を読み直す。
+    /// 知らせが溢れたときは `None`(開いている列を読み直す)。
+    AuthorRelationshipChanged {
+        pubkey: Option<String>,
+    },
 }
 
 pub struct DesktopRuntime {
@@ -388,6 +393,13 @@ impl DesktopRuntime {
         let docs_root = db_path.with_extension("iroh-store");
         kukuri_iroh_node::adopt_endpoint_secret(&db_path.with_extension("iroh-data"), &docs_root)?;
         let store = Arc::new(SqliteStore::connect_file(&db_path).await?);
+        // #1510: 更新前の版の観測の状態 file を行へ取り込む。失敗しても file を残し、次の起動で取り込み直す。
+        if let Err(error) =
+            crate::community_node::import_legacy_trust_observation_state(&db_path, store.as_ref())
+                .await
+        {
+            tracing::warn!(%error, "failed to import legacy trust observation state");
+        }
         // #1221 R5-I: 旧 store は読むだけの別の instance として開く。中身の無い旧 root は退役の手順へ回す。
         let legacy_root = db_path.with_extension("iroh-data");
         let legacy_store = kukuri_iroh_node::LegacyStore::open(&legacy_root).await?;
@@ -591,10 +603,13 @@ impl DesktopRuntime {
         let notification_event_task = {
             let notify = app_service.notification_inserted_notify();
             let mut label_evictions = store.subscribe_adult_label_evictions();
+            let mut relationship_changes = app_service.subscribe_author_relationship_changes();
             let sender = event_sender.clone();
             n0_future::task::spawn(async move {
                 loop {
+                    // 通知の Notify は受け損なうと残らないので、先に見る(broadcast の 2 つは溜まる。#1521 AC-1b)。
                     tokio::select! {
+                        biased;
                         _ = notify.notified() => {
                             let _ = sender.send(RuntimeEvent::NotificationStatusChanged);
                         }
@@ -604,6 +619,15 @@ impl DesktopRuntime {
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        },
+                        change = relationship_changes.recv() => match change {
+                            Ok(pubkey) => {
+                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: Some(pubkey) });
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         },

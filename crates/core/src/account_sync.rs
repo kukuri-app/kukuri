@@ -11,7 +11,7 @@ use secp256k1::rand::{RngCore, rng};
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{ACCOUNT_SYNC_REPLICA_PREFIX, ACCOUNT_SYNC_TOPIC_PREFIX};
-use crate::{ChannelId, KukuriEnvelope, KukuriKeys, Pubkey, ReplicaId, TopicId};
+use crate::{ChannelId, FollowEdge, KukuriEnvelope, KukuriKeys, Pubkey, ReplicaId, TopicId};
 
 /// 導出の context（ADR 0061 §1）。変えると全アカウントの同期先が変わるので、変更してはならない。
 const ID_CONTEXT: &str = "kukuri.app 2026-10-01 account sync id v1";
@@ -181,6 +181,15 @@ pub enum AccountSyncItemKey {
     ChannelRotationRequest { channel_id: ChannelId },
     /// 担当を引き取りたい端末から旧担当への移譲の依頼（#1219 AC-4）。値は `ChannelControllerRequestV1`。
     ChannelControllerRequest { channel_id: ChannelId },
+    /// owner の端末が受けた、自分の channel の参加者の最新の参加・退会（#1219 AC-5。参加者の表を本人の端末で集める）。
+    /// 値は `ChannelParticipantV1`。
+    ChannelParticipant {
+        channel_id: ChannelId,
+        participant: Pubkey,
+    },
+    /// 自分と自分の channel の参加者の間の follow の edge の状態（#1219 AC-5。相互フォロー限定の資格の材料で、受け手は
+    /// フォローの表に入れない）。値は `FollowEdgeStatus`。
+    ParticipantFollow { subject: Pubkey, target: Pubkey },
     /// 端末の変更の窓の 1 件（ADR 0061 §10）。値は `AccountSyncChangeV1`。merge の対象ではない。
     ChangeSlot { device_id: String, slot: u16 },
     /// 端末の変更の窓の head。値は `AccountSyncChangeV1`（`docs_key` は空）。
@@ -219,6 +228,17 @@ impl AccountSyncItemKey {
                 "channel/{}/controller-request",
                 hex::encode(channel_id.as_str())
             ),
+            Self::ChannelParticipant {
+                channel_id,
+                participant,
+            } => format!(
+                "channel/{}/participant/{}",
+                hex::encode(channel_id.as_str()),
+                participant.as_str()
+            ),
+            Self::ParticipantFollow { subject, target } => {
+                format!("follow/{}/{}", subject.as_str(), target.as_str())
+            }
             Self::ChangeSlot { device_id, slot } => format!("changes/{device_id}/{slot:03}"),
             Self::ChangeHead { device_id } => format!("changes/{device_id}/head"),
         }
@@ -243,6 +263,10 @@ impl AccountSyncItemKey {
                     channel_id,
                     epoch_id: text(epoch)?,
                 },
+                Some(("participant", participant)) => Self::ChannelParticipant {
+                    channel_id,
+                    participant: Pubkey::from(participant.to_string()),
+                },
                 None if item == "membership" => Self::ChannelMembership { channel_id },
                 None if item == "controller" => Self::ChannelController { channel_id },
                 None if item == "rotation" => Self::ChannelRotationRequest { channel_id },
@@ -250,6 +274,12 @@ impl AccountSyncItemKey {
                     Self::ChannelControllerRequest { channel_id }
                 }
                 _ => anyhow::bail!("unknown channel item"),
+            }
+        } else if let Some(rest) = docs_key.strip_prefix("follow/") {
+            let (subject, target) = rest.split_once('/').context("missing follow target")?;
+            Self::ParticipantFollow {
+                subject: Pubkey::from(subject.to_string()),
+                target: Pubkey::from(target.to_string()),
             }
         } else {
             anyhow::bail!("unknown account sync item key");
@@ -292,6 +322,17 @@ impl AccountSyncItemKey {
             | Self::ChannelController { channel_id }
             | Self::ChannelRotationRequest { channel_id }
             | Self::ChannelControllerRequest { channel_id } => id(channel_id.as_str()),
+            Self::ChannelParticipant {
+                channel_id,
+                participant,
+            } => {
+                id(channel_id.as_str())?;
+                crate::crypto::validate_pubkey(participant.as_str())
+            }
+            Self::ParticipantFollow { subject, target } => {
+                crate::crypto::validate_pubkey(subject.as_str())?;
+                crate::crypto::validate_pubkey(target.as_str())
+            }
             Self::ChangeSlot { device_id, slot } => {
                 ensure!(
                     u64::from(*slot) < ACCOUNT_SYNC_CHANGE_WINDOW,
@@ -370,6 +411,54 @@ impl AccountSyncItem {
             op_id: blake3::hash(&seed).to_hex()[..32].to_string(),
             updated_at,
             value: Some(value),
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    /// 参加者の item（#1219 AC-5）。版は record の時刻（退会なら退会、参加なら参加の時刻）で、op_id は中身から決める
+    /// （同じ record を受け直しても版が増えない）。
+    pub fn channel_participant(
+        channel_id: &ChannelId,
+        participant: &Pubkey,
+        value: &ChannelParticipantV1,
+    ) -> Result<Self> {
+        let encoded = serde_json::to_vec(value).context("failed to encode channel participant")?;
+        let mut seed = b"kukuri channel participant item v1\0".to_vec();
+        seed.extend_from_slice(channel_id.as_str().as_bytes());
+        seed.push(0);
+        seed.extend_from_slice(participant.as_str().as_bytes());
+        seed.push(0);
+        seed.extend_from_slice(&encoded);
+        let item = Self {
+            key: AccountSyncItemKey::ChannelParticipant {
+                channel_id: channel_id.clone(),
+                participant: participant.clone(),
+            },
+            op_id: blake3::hash(&seed).to_hex()[..32].to_string(),
+            updated_at: value.left_at.unwrap_or(value.joined_at),
+            value: Some(serde_json::from_slice(&encoded)?),
+        };
+        item.validate()?;
+        Ok(item)
+    }
+
+    /// 参加者との follow の edge の item（#1219 AC-5）。版は edge の時刻で、op_id は edge の envelope の ID の先頭 32 桁
+    /// （同じ edge を観測し直しても版が増えない）。
+    pub fn participant_follow(edge: &FollowEdge) -> Result<Self> {
+        let item = Self {
+            key: AccountSyncItemKey::ParticipantFollow {
+                subject: edge.subject_pubkey.clone(),
+                target: edge.target_pubkey.clone(),
+            },
+            op_id: edge
+                .envelope_id
+                .as_str()
+                .get(..32)
+                .context("follow envelope id is too short")?
+                .to_string(),
+            updated_at: edge.updated_at,
+            value: Some(serde_json::to_value(&edge.status)?),
         };
         item.validate()?;
         Ok(item)
@@ -455,6 +544,16 @@ pub struct ChannelMembershipV1 {
 #[serde(deny_unknown_fields)]
 pub struct ChannelRotationRequestV1 {
     pub from_epoch_id: String,
+}
+
+/// 参加者の item の値（#1219 AC-5、ADR 0061 §2）。owner の端末が受けた、その参加者の最新の参加・退会の record の
+/// 世代と時刻。受け手は参加者の表と同じ規則（新しい時刻の行だけを置き換え、退会は channel の全行に付く）で取り込む。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelParticipantV1 {
+    pub epoch_id: String,
+    pub joined_at: i64,
+    pub left_at: Option<i64>,
 }
 
 /// 担当の移譲の依頼の item の値（#1219 AC-4、ADR 0018 §8）。旧担当は、自分が担当でその世代が `generation` のときだけ、

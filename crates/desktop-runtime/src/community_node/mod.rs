@@ -104,6 +104,8 @@ pub use trust_gate_support::{
 pub(crate) use trust_gate_support::{
     CachedAuthorTrustEvaluation, import_legacy_trust_display, normalize_trust_node_priority,
 };
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use trust_observation_support::import_legacy_trust_observation_state;
 #[cfg(test)]
 pub(crate) use trust_observation_support::load_trust_observation_pending_count;
 pub(crate) use trust_observation_support::without_observation_sharing_document;

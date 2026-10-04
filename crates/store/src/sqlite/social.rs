@@ -583,6 +583,29 @@ impl SocialProjectionStore for SqliteStore {
         Ok(changed)
     }
 
+    async fn is_active_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM private_channel_participants              WHERE channel_id = ?1 AND participant_pubkey = ?2 AND left_at IS NULL)",
+        )
+        .bind(channel_id)
+        .bind(participant_pubkey)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    async fn has_private_channel_member(&self, participant_pubkey: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM private_channel_participants WHERE participant_pubkey = ?1)",
+        )
+        .bind(participant_pubkey)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,

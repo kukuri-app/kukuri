@@ -24,6 +24,7 @@ ADR 0002（`docs/adr/0002-feature-data-classification-template.md`）に基づ�
 | 任意適用 | workspace layout、theme、locale | previewで利用者が適用を選択する |
 | 移行不可 | iroh endpoint secret、Community Node bearer token、実行中session、通知cursor、OS通知権限 | 新端末で再生成、再認証、再設定する |
 | 新端末で再同意 | app-level同意、Community Node同意、18歳以上の自己申告、成人向け表示許可 | 記録を含めず、成人向け表示をOFFとして明示操作を求める |
+| 引き継ぐ（SQLiteの行） | Community Nodeへのブロック・ミュートの提供の選択、送信待ち、未完了の削除要求（#1510） | 任意文書への同意をやり直さず、必須の同意の再同意後に提供を再開する（ADR 0048 §3） |
 
 ## 脅威モデル
 

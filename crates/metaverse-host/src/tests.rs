@@ -7,6 +7,8 @@ use kukuri_core::{
 
 use super::*;
 
+mod participant_ledger;
+
 fn fixture() -> (
     KukuriKeys,
     SignedDomeHostingLeaseV1,
@@ -124,7 +126,7 @@ fn keepalive_preserves_participant_and_timeout_evicts_all_session_state() {
         .unwrap();
     runtime
         .apply_signed_input_at(
-            &signed_input(&participant, 2, DomeSessionInputKindV1::KeepAlive),
+            &signed_input(&participant, 19_000, DomeSessionInputKindV1::KeepAlive),
             20_000,
         )
         .unwrap();
@@ -944,10 +946,8 @@ fn extreme_impulse_is_rejected_without_changing_sequence() {
     );
     assert!(runtime.apply_signed_input(&excessive).is_err());
     assert_eq!(
-        runtime
-            .last_input_sequence
-            .get(participant.public_key().as_str()),
-        Some(&1)
+        runtime.inputs.sequence(participant.public_key().as_str()),
+        Some(1)
     );
 }
 
@@ -1003,10 +1003,8 @@ fn interaction_rate_is_enforced_at_the_boundary_without_partial_mutation() {
             .contains("METAVERSE_PLAYER_INTERACTION_RATE_RATE_EXCEEDED")
     );
     assert_eq!(
-        runtime
-            .last_input_sequence
-            .get(participant.public_key().as_str()),
-        Some(&2)
+        runtime.inputs.sequence(participant.public_key().as_str()),
+        Some(2)
     );
 }
 

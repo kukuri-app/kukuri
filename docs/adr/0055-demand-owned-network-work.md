@@ -81,6 +81,11 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   へ置き、rotationの宛先（いずれかのepochで参加中のpubkey）をpubkeyの順に128件ずつ読む。現epochの参加者数と
   資格喪失（channelのownerとmutualでない。#1219 AC-2）の数は、表の行とfollowのedgeの書込みで(channel, epoch)ごとに
   保つ1行を読む（参加者の数に比例して数えない）。参加者数はownerの端末だけが返す（owner以外は`None`で表示しない）。更新前からの参加者の移し方はADR 0054 §6。
+  recordを受けるのはownerの端末のうち1台なので、受けた端末は表を変えた参加者のrecordと、自分と参加者の間のfollowの
+  edgeを、本人の端末へ同期する（ADR 0061 §2。#1219 AC-5）。鍵の配布を行う端末（ADR 0018 §8の担当）は、同期した
+  recordも自分で受けたrecordと同じに表へ入れて使う。この版より前に各端末の表にあった行は送り直さない。
+  ownerの端末のgrantは宛先のmutualを求めないが、送るたびに宛先の資格（参加中、相互フォロー限定なら相互フォロー）を
+  確かめ、失っていれば送らずに消す（ADR 0018 §8）。
   参加者は届いたgrantを手元の旧epochのreplicaへ置き、redeemは手元のgrantだけを読む（旧syncによるFrozenの
   policyの受取りに依らない）。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
@@ -88,6 +93,9 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   表示名のため、timelineのページの著者のうち手元にprofileの無いものは、購読せずにprofileのkeyだけを背景で1件ずつ
   読む（queue 64件・台帳1024件、同じ著者は10分読み直さない。R6-B、2026-09-28ユーザー決定）。表示中のprofileの列は、
   相手の名前が無い間と自分のprofileの読込みが失敗している間だけ、表示の定期更新（3秒）で読み直す。
+  自分を指す相手のfollowのedgeを手元に新しく保存したとき（followのofferの取込みとauthorのleaseの読み直し）は、
+  runtimeのevent（`author_relationship_changed`、相手のpubkeyつき）で、その相手の開いているprofileと会話の列だけを
+  読み直す（#1521 AC-1b、2026-10-04ユーザー決定）。知らせが溢れたとき（pubkeyなし）は、開いている列を1回ずつ読み直す。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
@@ -384,6 +392,12 @@ pairwise hintの送信・ACK、送信直後の二重送信を撤去した。送�
 自分を指すedgeを手元へ保存する（unfollowは通知を作らない）。mutualの解除は次の送信・受信の判定へ反映し、
 保護outboxはACKまで残す。DM状態viewの接続peer数（`peer_count`）は撤去し、画面は送信可能／送信不可だけを示す
 （2026-09-26 ユーザー決定）。
+
+follow / unfollowのofferは、宛先が見つからない・2秒の時間切れで送れなかった受け手だけへ、2・4・8・16・32・64秒後に
+送り直す（計6回・約2分。#1521、2026-10-04 ユーザー決定）。相手のprofileを開いたまま相手がfollowし返した場面で、
+最初のofferが落ちると日の境界まで相互followにならなかったため。送り直しを待つofferはofferのworkerが64件まで持ち、
+accountの停止で捨てる。再起動をまたがず、ACKも求めない（旧版はACKを返さない）。follow以外の通知のofferは1回だけ送る。
+閲覧者がauthorごとのhint topicで受ける案は、閲覧の情報がCNと第三者へ出るか、つながる前のfollowを取りこぼすので採らない。
 
 private rotation/freeze/失効には投稿通知と別の制御capsuleを使う。
 現在のhandoff grant作成時に、旧epochの受信者別grantをaccount宛に配送待ちへ登録する。
