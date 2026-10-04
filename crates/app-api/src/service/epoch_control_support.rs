@@ -329,27 +329,20 @@ impl AppService {
         Ok(true)
     }
 
-    /// 自分と、自分の channel の参加者の間の follow の edge を、本人の端末へ同期する(#1219 AC-5。相互フォロー限定の
-    /// 資格の材料)。それ以外の edge は同期しない。
+    /// 自分の channel の参加者から自分への follow の edge を、本人の端末へ同期する(#1219 AC-5。相互フォロー限定の資格の
+    /// 材料)。自分から参加者への edge は、自分のフォローの edge の item が運ぶ(#1211 AC-6)。それ以外の edge は同期しない。
     pub(crate) async fn share_participant_follow(&self, edge: &FollowEdge) -> Result<()> {
-        let local = self.current_author_pubkey();
-        let other = if edge.subject_pubkey.as_str() == local {
-            &edge.target_pubkey
-        } else if edge.target_pubkey.as_str() == local {
-            &edge.subject_pubkey
-        } else {
-            return Ok(());
-        };
-        if self
-            .services
-            .projection_store
-            .has_private_channel_member(other.as_str())
-            .await?
+        if edge.target_pubkey.as_str() != self.current_author_pubkey()
+            || !self
+                .services
+                .projection_store
+                .has_private_channel_member(edge.subject_pubkey.as_str())
+                .await?
         {
-            self.publish_account_sync_item(AccountSyncItem::participant_follow(edge)?)
-                .await?;
+            return Ok(());
         }
-        Ok(())
+        self.publish_account_sync_item(AccountSyncItem::participant_follow(edge)?)
+            .await
     }
 
     /// 自分と相手が相互フォローか(#1219 AC-5)。向きごとに、手元の edge と本人の別の端末から同期した記録の新しい方を

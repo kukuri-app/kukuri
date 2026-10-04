@@ -167,6 +167,82 @@ impl AppService {
                     .adopt_account_sync_row(&row_of(&item)?)
                     .await
             }
+            // 自分のフォロー・ブロックの edge と、自分がフォローしている相手から自分への edge（#1211 AC-6）。手元の edge と
+            // 比べ、手元が新しいか同じ envelope なら何もしない（台帳の行に古い版を置くと、送り直しが古い版を本人の別の端末へ
+            // 広げる。同じ edge を採り直すと、author の replica・bucket を書き直す）。
+            AccountSyncItemKey::OwnFollow { .. }
+            | AccountSyncItemKey::OwnBlock { .. }
+            | AccountSyncItemKey::FollowerEdge { .. } => {
+                let envelope: KukuriEnvelope = serde_json::from_value(
+                    item.value
+                        .clone()
+                        .context("an edge item must carry its envelope")?,
+                )?;
+                let me = self.services.keys.public_key();
+                anyhow::ensure!(
+                    AccountSyncItem::edge(&me, &envelope)? == item,
+                    "the edge item does not match its envelope"
+                );
+                envelope.verify()?;
+                let store = &self.services.store;
+                let (local, other) = match &item.key {
+                    AccountSyncItemKey::OwnFollow { target } => (
+                        store
+                            .get_follow_edge(me.as_str(), target.as_str())
+                            .await?
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
+                        target,
+                    ),
+                    AccountSyncItemKey::OwnBlock { target } => (
+                        store
+                            .get_block_edge(me.as_str(), target.as_str())
+                            .await?
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
+                        target,
+                    ),
+                    AccountSyncItemKey::FollowerEdge { subject } => (
+                        store
+                            .get_follow_edge(subject.as_str(), me.as_str())
+                            .await?
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
+                        subject,
+                    ),
+                    _ => anyhow::bail!("not an edge item"),
+                };
+                if local.is_some_and(|(updated_at, envelope_id)| {
+                    updated_at > item.updated_at || envelope_id == envelope.id
+                }) || !self
+                    .services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await?
+                {
+                    return Ok(false);
+                }
+                let committed = match &item.key {
+                    AccountSyncItemKey::OwnFollow { .. } => {
+                        self.commit_own_follow_edge(&envelope).await?
+                    }
+                    AccountSyncItemKey::OwnBlock { .. } => {
+                        self.commit_own_block_edge(&envelope).await?
+                    }
+                    // 相手の edge は、相手の replica にある。手元はフォローの表にだけ置く。
+                    _ => {
+                        store.put_envelope(envelope).await?;
+                        true
+                    }
+                };
+                if committed {
+                    // 画面は相手の列の関係と、自分の profile の一覧を読み直す。
+                    for pubkey in [other.as_str(), me.as_str()] {
+                        let _ = self
+                            .services
+                            .author_relationship_changes
+                            .send(pubkey.to_string());
+                    }
+                }
+                Ok(committed)
+            }
             // 参加者との follow の edge（#1219 AC-5。相互フォロー限定の資格の材料）。採用の台帳に持つだけで、フォローの表に
             // 入れない。
             AccountSyncItemKey::ParticipantFollow { .. } => {

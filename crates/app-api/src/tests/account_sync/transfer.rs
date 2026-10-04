@@ -6,7 +6,7 @@ use super::*;
 use kukuri_core::{AccountTransferItem, ChannelAudienceKind, CreatePrivateChannelInput, TopicId};
 
 /// 移行元の bundle の全 page。
-async fn bundle(app: &AppService) -> Vec<Vec<AccountTransferItem>> {
+pub(super) async fn bundle(app: &AppService) -> Vec<Vec<AccountTransferItem>> {
     let (mut pages, mut cursor) = (Vec::new(), None);
     loop {
         let (items, next) = app.account_transfer_page(cursor).await.expect("page");
@@ -16,7 +16,7 @@ async fn bundle(app: &AppService) -> Vec<Vec<AccountTransferItem>> {
     }
 }
 
-fn keys_of(pages: &[Vec<AccountTransferItem>]) -> Vec<String> {
+pub(super) fn keys_of(pages: &[Vec<AccountTransferItem>]) -> Vec<String> {
     pages
         .iter()
         .flatten()

@@ -1011,7 +1011,11 @@ async function transfer() {
   const items = await fixture('/fixture/account-sync-items');
   assert.ok(items.some((item) => item.key === 'profile'), 'the profile is synced');
   for (const item of items) {
-    assert.match(item.key, /^(profile$|trust\/always-visible\/|channel\/|follow\/)/, `${item.key} is in the allowlist`);
+    assert.match(
+      item.key,
+      /^(profile$|trust\/always-visible\/|channel\/|follow\/|graph\/(follows|blocks|followers)\/)/,
+      `${item.key} is in the allowlist`
+    );
   }
   const payload = JSON.stringify(items);
   for (const leak of ['a=candidate', 'ice-ufrag', 'ice-pwd', 'a=fingerprint', 'dm from ', 'dm image from ']) {
