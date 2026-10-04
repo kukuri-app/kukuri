@@ -1,0 +1,142 @@
+name: Kukuri Web E2E
+
+# 実ブラウザの E2E（ADR 0060 §4、#1220 W8）。Web の build を、同じ job の Community Node・native の相手と実ブラウザで試し、
+# 直接経路と relay fallback を relay が中継した bytes で判定する。
+# - Chrome: Fast から呼ばれ、全 scenario の job の成功が merge の条件になる（#1559）。
+# - Firefox（#1220 AC-5a）: 夜間と手動の実行。merge の条件にしない（失敗は Issue にする。2026-10-04 ユーザー判断）。
+on:
+  workflow_call:
+    inputs:
+      browser:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      browser:
+        type: choice
+        options: [firefox, chrome]
+        default: firefox
+  schedule:
+    - cron: '30 18 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # schedule の実行には inputs が無い。
+  KUKURI_WEB_E2E_BROWSER: ${{ inputs.browser || 'firefox' }}
+
+jobs:
+  # #1559: build（wasm・Web・fixture）をこの job で 1 回だけ行い、scenario の job へ配る。scenario の一覧の正本は
+  # `main-flow.mjs --list`。
+  linux-web-e2e-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      scenarios: ${{ steps.scenarios.outputs.list }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: wasm32-unknown-unknown
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang llvm pkg-config libdbus-1-dev
+
+      # #1413: key は job id ごと（kukuri-fast.yml 参照）。build の内容は browser に依らないので共有する。
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: cargo xtask-lite web-e2e --build-only
+
+      - name: List scenarios
+        id: scenarios
+        working-directory: apps/desktop
+        run: echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-build
+          path: |
+            apps/desktop/dist-web
+            target/debug/web_e2e_fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  # scenario ごとに新しい fixture と client で、並列の job で試す。失敗は、その scenario の job にだけ出る（#1559）。
+  linux-web-e2e:
+    needs: linux-web-e2e-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-build
+
+      # driver は runner の image のもの。
+      - name: Web E2E
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          chmod +x target/debug/web_e2e_fixture
+          CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" GECKODRIVER="$GECKOWEBDRIVER/geckodriver" \
+            cargo xtask-lite web-e2e --no-build "$SCENARIO"

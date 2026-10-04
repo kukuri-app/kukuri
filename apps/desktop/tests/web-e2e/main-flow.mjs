@@ -1,10 +1,11 @@
-// Web クライアントの主要導線と復帰を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g・AC-4、W4 AC-5、#1482 J2、ADR 0060 §4）。
+// Web クライアントの主要導線と復帰を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g・AC-4・AC-5a、W4 AC-5、#1482 J2、ADR 0060 §4）。
 // `cargo xtask web-e2e [<scenario>...]` が、scenario ごとに新しい fixture を起動して `node main-flow.mjs <scenario>` で呼ぶ
 // （一覧は `--list`。#1559）。相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の
 // 配信）。各 scenario は新しい client で始め、前提もその中で作るので、他の scenario の状態に依存しない。
 //
-// - 直接経路: 通常の Chrome。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
-// - relay fallback: 交換する SDP から ICE の候補を除いた Chrome（ICE が成立しない。W10 の T2 にあたる）。実データが relay
+// ブラウザは `KUKURI_WEB_E2E_BROWSER`（`chrome`（既定）か `firefox`）。driver で作れない段は、未確認の制約として PASS の行に示す。
+// - 直接経路: 通常のブラウザ。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
+// - relay fallback: 交換する SDP から ICE の候補を除いたブラウザ（ICE が成立しない。W10 の T2 にあたる）。実データが relay
 //   を通る。
 // 実データの経路は、受け手が画像（乱数の画素の PNG）を取得する間に relay が中継した bytes で判定する。ブラウザには
 // relay と WebRTC の他の経路が無いので、relay の中継が画像より十分小さければ、画像は WebRTC を通っている。
@@ -25,6 +26,24 @@ const WAIT = 90_000;
 // 開いたままの profile で相手の follow し返しを待つ期限。相手の follow の offer は、送れなかったら 2〜64 秒後に 6 回
 // （間隔の計 126 秒）送り直され（#1521 AC-1a）、各回は宛先の探索と送信で最長 10 秒ほどかかるので、それを覆う。
 const FOLLOW_BACK_WAIT = 210_000;
+const BROWSER = process.env.KUKURI_WEB_E2E_BROWSER ?? 'chrome';
+const CAPABILITIES = {
+  chrome: {
+    browserName: 'chrome',
+    'goog:chromeOptions': { args: ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'] },
+    ...(process.env.CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER } } : {}),
+  },
+  firefox: {
+    browserName: 'firefox',
+    'moz:firefoxOptions': {
+      args: ['-headless', '--width=1280', '--height=900'],
+      prefs: { 'intl.accept_languages': 'en-US', 'intl.locale.requested': 'en-US' },
+    },
+    ...(process.env.GECKODRIVER ? { 'wdio:geckodriverOptions': { binary: process.env.GECKODRIVER } } : {}),
+  },
+}[BROWSER];
+/** この browser の driver で作れず、確かめなかった段（未確認の制約。PASS にしない。#1220 AC-5a）。 */
+const unconfirmed = [];
 
 async function fixture(route, body) {
   const response = await fetch(`${ORIGIN}${route}`, body === undefined ? undefined : {
@@ -72,18 +91,11 @@ const nativeReact = (target, emoji) =>
 /** scenario が開いた client（失敗したときの手がかりと、終わりの CSP の確認・session の終了の対象）。 */
 const clients = [];
 
-/** 新しい profile の Chrome を開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
+/** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
 async function startClient(name, { ice }) {
-  const args = ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'];
-  const browser = await remote({
-    logLevel: 'warn',
-    capabilities: {
-      browserName: 'chrome',
-      'goog:chromeOptions': { args },
-      ...(process.env.CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER } } : {}),
-    },
-  });
+  const browser = await remote({ logLevel: 'warn', capabilities: CAPABILITIES });
   browser.label = `${name}-${RUN}`;
+  console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
@@ -91,7 +103,7 @@ async function startClient(name, { ice }) {
   return browser;
 }
 
-/** 新しい profile の Chrome を開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
+/** 新しい profile のブラウザを開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
 async function openClient(name, { ice }) {
   const browser = await startClient(name, { ice });
   const profile = await dialogWith(browser, 'Set up your profile');
@@ -1266,19 +1278,24 @@ async function lifecycle() {
   // 凍結: 利用者と同じく、非表示 → 凍結 → 復帰 → 表示の順にする（chromedriver の freeze は page を非表示にしてから凍結し、resume
   // の後も非表示のまま戻さない。画面は非表示の間は列を読み直さない）。凍結で旧い session を閉じ、復帰では生きた需要の相手と
   // だけ交渉し直す。交渉は相手ごとに復帰の event（resume と可視）1 回につき 3 回まで（W10 の MAX_ATTEMPTS）。
-  await directPathOpens(a);
-  const beforeFreeze = (await sessionStates(a)).length;
-  await a.freeze();
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-  await a.resume();
-  await a.sendCommandAndGetResult('Emulation.setFocusEmulationEnabled', { enabled: true });
-  await earlierSessionsClose(a, beforeFreeze);
-  await resumesOnTheDirectPath(a, aPubkey, 'the freeze');
-  const renegotiated = (await sessionStates(a)).length - beforeFreeze;
-  console.log('negotiations after the freeze', renegotiated);
-  assert.ok(renegotiated <= 6 * peers, `at most 6 negotiations per peer after the freeze, saw ${renegotiated}`);
+  // freeze と focus の模擬は Chrome の driver（CDP）にしか無い。
+  if (BROWSER === 'chrome') {
+    await directPathOpens(a);
+    const beforeFreeze = (await sessionStates(a)).length;
+    await a.freeze();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await a.resume();
+    await a.sendCommandAndGetResult('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await earlierSessionsClose(a, beforeFreeze);
+    await resumesOnTheDirectPath(a, aPubkey, 'the freeze');
+    const renegotiated = (await sessionStates(a)).length - beforeFreeze;
+    console.log('negotiations after the freeze', renegotiated);
+    assert.ok(renegotiated <= 6 * peers, `at most 6 negotiations per peer after the freeze, saw ${renegotiated}`);
+  } else {
+    unconfirmed.push('freeze (the driver cannot freeze a page)');
+  }
 
-  // 回線全断（chromedriver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
+  // 回線全断（WebDriver BiDi の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
   // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
   // 届いたと示す。
   // native との会話の列は、会話の route で開き直す（前提で開いた会話の列は一時の列）。
@@ -1288,7 +1305,9 @@ async function lifecycle() {
   await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
   await directPathOpens(a);
   const beforeOffline = (await sessionStates(a)).length;
-  const network = (offline) => a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 });
+  const contexts = [await a.getWindowHandle()];
+  const network = (offline) =>
+    a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
   await network(true);
   await earlierSessionsClose(a, beforeOffline);
   await openSettings(a, 'connectivity');
@@ -1542,5 +1561,5 @@ if (name === '--list') {
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
   }
-  console.log(`web e2e ${name}: PASS`);
+  console.log(`web e2e ${name} on ${BROWSER}: PASS${unconfirmed.length ? ` (unconfirmed: ${unconfirmed.join('; ')})` : ''}`);
 }
