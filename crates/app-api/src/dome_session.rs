@@ -2,10 +2,12 @@
 //! 所有者本人の入力と同じ確認点で処理する(ADR 0038、#1527)。
 
 use crate::service::*;
+use crate::views::{AbortDomeTransitionInput, CommitDomeTransitionInput};
 use kukuri_core::{
     DOME_SESSION_RESYNC_MAX_BYTES, DomeInstanceStatusV1, DomeSessionInputKindV1,
     DomeSessionInputV1, DomeSessionRequestV1, DomeSessionResponseV1, DomeSpatialAccessProofV1,
-    DomeTransitionAccessDecisionV1, MetaverseResourceRejection, SignedDomePhysicsSnapshotV1,
+    DomeTransitionAccessDecisionV1, DomeTransitionAdmissionRequestV1,
+    DomeTransitionAdmissionTicketV1, MetaverseResourceRejection, SignedDomePhysicsSnapshotV1,
     SignedDomeSessionInputV1, SpatialContextV1, build_signed_dome_session_input,
 };
 
@@ -56,6 +58,32 @@ impl AppService {
                 .resync_remote_dome_snapshots(&instance_id, after_sequence, &access_proof)
                 .await
                 .map(|snapshots| DomeSessionResponseV1::Snapshots { snapshots }),
+            Ok(DomeSessionRequestV1::PrepareTransition {
+                request,
+                access_proof,
+            }) => self
+                .prepare_remote_dome_transition(request, &access_proof)
+                .await
+                .map(|ticket| DomeSessionResponseV1::Ticket {
+                    ticket: Box::new(ticket),
+                }),
+            // commit / abort は host が発行した ticket と予約の一致で判定する(ADR 0042)。
+            Ok(DomeSessionRequestV1::CommitTransition {
+                ticket,
+                position,
+                rotation,
+            }) => self
+                .commit_dome_transition(CommitDomeTransitionInput {
+                    ticket,
+                    position,
+                    rotation,
+                })
+                .await
+                .map(|()| DomeSessionResponseV1::Accepted),
+            Ok(DomeSessionRequestV1::AbortTransition { ticket }) => self
+                .abort_dome_transition(AbortDomeTransitionInput { ticket })
+                .await
+                .map(|()| DomeSessionResponseV1::Accepted),
             Err(error) => Err(error.into()),
         }
         .unwrap_or_else(|error| DomeSessionResponseV1::Rejected {
@@ -173,6 +201,45 @@ impl AppService {
             runtime.snapshots_after(after_sequence),
             DOME_SESSION_RESYNC_MAX_BYTES,
         ))
+    }
+
+    /// 別の端末の participant の遷移の予約(Community Node と同じ確認。2026-10-04 ユーザー判断)。access proof で本人と
+    /// Spatial Context・遷移先の owner への束縛を確かめ、owner 間と visitor の block、access、定員を key 指定で確かめる。
+    /// topology 全体は照合しない(要求ごとの処理を件数に依存させない。ADR 0038)。Spatial Context・遷移先・世代と
+    /// lease の一致は runtime が確かめる。
+    async fn prepare_remote_dome_transition(
+        &self,
+        request: DomeTransitionAdmissionRequestV1,
+        proof: &DomeSpatialAccessProofV1,
+    ) -> Result<DomeTransitionAdmissionTicketV1> {
+        let now = Utc::now().timestamp_millis();
+        let target_owner = self
+            .dome_host_sessions
+            .lock()
+            .await
+            .get(&request.target_instance_id)
+            .map(|runtime| runtime.lease().owner_pubkey.clone())
+            .context("this device is not the active destination Dome host")?;
+        proof.verify_for(
+            &request.participant_pubkey,
+            &request.spatial_context,
+            &target_owner,
+            now,
+        )?;
+        // 遷移元の owner を導けなければ、owner 間の block を確かめられないので拒否する(fail-closed。ADR 0042)。
+        let source_owner = self
+            .dome_instance_owner(&request.spatial_context, &request.source_instance_id)
+            .await?
+            .context("DOME_TRANSITION_STALE_TOPOLOGY")?;
+        let access = self
+            .evaluate_dome_transition_access(&request, &source_owner, &target_owner)
+            .await?;
+        self.dome_host_sessions
+            .lock()
+            .await
+            .get_mut(&request.target_instance_id)
+            .context("this device is not the active destination Dome host")?
+            .prepare_transition_admission(request, access, now)
     }
 
     async fn ensure_dome_room_access(

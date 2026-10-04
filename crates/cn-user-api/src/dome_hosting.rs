@@ -643,11 +643,13 @@ pub(crate) async fn prepare_dome_transition(
             "Dome Hosting Lease has expired",
         ));
     }
-    let proof_valid = request.access_proof.statement.participant_pubkey
-        == request.request.participant_pubkey
-        && request.access_proof.statement.spatial_context == request.request.spatial_context
-        && request.access_proof.statement.target_owner_pubkey.as_str() == assignment.owner_pubkey
-        && request.access_proof.verify_at(now).is_ok();
+    let proof_valid = dome_entry_access_proof_is_valid(
+        Some(&request.access_proof),
+        &request.request.participant_pubkey,
+        &request.request.spatial_context,
+        &kukuri_core::Pubkey::from(assignment.owner_pubkey.as_str()),
+        now,
+    );
     let access = if proof_valid {
         DomeTransitionAccessDecisionV1::Allowed
     } else {

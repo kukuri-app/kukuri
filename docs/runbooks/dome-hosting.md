@@ -43,7 +43,7 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - clientはactive topologyから最大4方向の隣接Domeを解決し、host状態、空きcapacity、参照assetを先読みする。`ready`以外の境界はconnection zone中心線の10 cm手前で閉じる。
 - avatarがconnection zoneへ入ると、送信元hostへ`prepare_transition`を送り、grabとseatを解除して以後のinteractionをfenceする。宛先hostにはconnection ID、topology digest、両Instance generation、participantを結び付けた15秒のadmission reservationを要求する。
 - 中心線通過時は宛先commitを先に確定し、component座標を保った宛先local transformでavatarを生成する。その後に送信元`complete_transition`を再試行する。中心線前の後退や失敗は宛先reservationと送信元fenceをabortする。
-- transition APIはowner-device hostとCommunity Node hostで同じticket/runtime contractを使う。Community Node endpointは既存bearer authenticationとconsent gateの内側にある。
+- transition APIはowner-device hostとCommunity Node hostで同じticket/runtime contractを使う。Community Node endpointは既存bearer authenticationとconsent gateの内側にある。宛先が別の端末の所有者の端末で稼働中のときは、入室と同じP2Pの経路でprepare/commit/abortを送る。宛先の所有者の端末はCommunity Node hostと同じくtopology全体を照合せず、本人、access、block（visitorとowner間）、定員を確かめる。
 - persistent/guest propは遷移しない。host physicsはprepared/admitted avatarだけにconnection zoneを許可し、propは開口部を含めて送信元半球内へ拘束する。
 
 調査時は、participant raw inputを記録せず、transition ID、connection ID、topology digest、source/target generation、target lease epoch/session、boundary state、denial codeだけを採取する。`DOME_TRANSITION_STALE_TOPOLOGY`はtopology再取得、`DOME_TRANSITION_CAPACITY_FULL`は退出待ち、`DOME_TRANSITION_INVALID_TICKET`は15秒以内の新規prepareで復旧する。宛先commit後に送信元cleanupだけが失敗した場合、宛先をcurrentとして維持し、送信元completeを再試行する。

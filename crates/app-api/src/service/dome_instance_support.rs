@@ -225,38 +225,50 @@ impl AppService {
         }
     }
 
-    /// instance の id の Dome Instance。owner は、自分・一覧の行・hosting の heartbeat から instance の id を導ける
-    /// ものを使う(旧 replica の session は読まない。#1221 R5-H)。
+    /// instance の id の Dome Instance。owner は `dome_instance_owner` で導く(旧 replica の session は読まない。
+    /// #1221 R5-H)。
     pub(crate) async fn hosting_instance(
         &self,
         spatial_context: &SpatialContextV1,
         instance_id: &str,
     ) -> Result<Option<DomeInstanceManifestV1>> {
-        let row_owner = self
-            .services
-            .projection_store
-            .get_game_room(spatial_context.topic_id().as_str(), instance_id)
+        match self
+            .dome_instance_owner(spatial_context, instance_id)
             .await?
-            .map(|row| Pubkey::from(row.host_pubkey));
-        let derives = |owner: &Pubkey| dome_instance_id(spatial_context, owner) == instance_id;
-        let mut owner = std::iter::once(self.services.keys.public_key())
-            .chain(row_owner)
-            .find(derives);
-        // heartbeat の台帳は、自分と一覧の行から導けないときだけ走査する(owner の端末の input ごとに読まない。#1527)。
-        if owner.is_none() {
-            owner = self
-                .heartbeat_dome_owners(spatial_context)
-                .await
-                .into_iter()
-                .find(derives);
-        }
-        match owner {
+        {
             Some(owner) => {
                 self.hosting_instance_for_owner(spatial_context, instance_id, &owner)
                     .await
             }
             None => Ok(None),
         }
+    }
+
+    /// instance の id の owner。自分・一覧の行・hosting の heartbeat のうち、context と合わせて instance の id を
+    /// 導けるもの。heartbeat の台帳は、自分と一覧の行から導けないときだけ instance の id で 1 件引く(#1527)。
+    pub(crate) async fn dome_instance_owner(
+        &self,
+        spatial_context: &SpatialContextV1,
+        instance_id: &str,
+    ) -> Result<Option<Pubkey>> {
+        let derives = |owner: &Pubkey| dome_instance_id(spatial_context, owner) == instance_id;
+        let row_owner = self
+            .services
+            .projection_store
+            .get_game_room(spatial_context.topic_id().as_str(), instance_id)
+            .await?
+            .map(|row| Pubkey::from(row.host_pubkey));
+        if let Some(owner) = std::iter::once(self.services.keys.public_key())
+            .chain(row_owner)
+            .find(derives)
+        {
+            return Ok(Some(owner));
+        }
+        let heartbeats = self.dome_host_heartbeats.lock().await;
+        Ok(heartbeats
+            .get(instance_id)
+            .map(|signed| signed.heartbeat.host_pubkey.clone())
+            .filter(derives))
     }
 
     pub(crate) async fn hosting_instance_for_owner(

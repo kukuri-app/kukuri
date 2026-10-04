@@ -1,12 +1,17 @@
 //! #1527: 所有者の端末の Dome host が、別の端末の participant の要求を Community Node と同じ確認点で処理する。
 //! 別の端末の鍵で署名した要求を、所有者の端末の受け口へ直接渡す(transport の test double)。
 
+use super::dome_connections::{app_with_shared_dome_services, show_domes};
 use super::*;
-use crate::{StartOwnerDomeHostingInput, SubmitDomeSessionInput};
+use crate::{
+    AcceptDomeConnectionProposalInput, CreateDomeConnectionProposalInput,
+    StartOwnerDomeHostingInput, SubmitDomeSessionInput,
+};
 use kukuri_core::{
-    ChannelAudienceKind, ChannelId, CreatePrivateChannelInput, DomePhysicsSnapshotV1,
-    DomeSessionInputKindV1, DomeSessionInputV1, DomeSessionRequestV1, DomeSessionResponseV1,
-    KukuriKeys, MetaverseResourceRejection, SpatialContextV1, build_dome_spatial_access_proof,
+    ChannelAudienceKind, ChannelId, CreatePrivateChannelInput, DomeDirection,
+    DomePhysicsSnapshotV1, DomeSessionInputKindV1, DomeSessionInputV1, DomeSessionRequestV1,
+    DomeSessionResponseV1, DomeTransitionAdmissionRequestV1, KukuriKeys,
+    MetaverseResourceRejection, SpatialContextV1, build_dome_spatial_access_proof,
     build_signed_dome_session_input,
 };
 
@@ -443,4 +448,203 @@ async fn inputs_do_not_read_the_received_heartbeat_ledger() {
     .expect("the inputs never wait for the heartbeat ledger");
     drop(ledger);
     owner.shutdown().await;
+}
+
+fn accepted(response: DomeSessionResponseV1) {
+    assert!(
+        matches!(response, DomeSessionResponseV1::Accepted),
+        "expected acceptance, got {response:?}"
+    );
+}
+
+// 遷移先が別の端末の所有者の端末で稼働中の Dome のとき、prepare / commit / abort が同じ経路で成り立つ(AC-2)。
+// proof の束縛が違う prepare、visitor の block、owner 間の block の prepare は拒否される。
+#[tokio::test]
+async fn a_visitor_transitions_into_a_dome_hosted_on_another_device() {
+    let docs = Arc::new(MemoryDocsSync::default());
+    let blob = Arc::new(MemoryBlobService::default());
+    let visitor_keys = generate_keys();
+    let owner = app_with_shared_dome_services(docs.clone(), blob.clone(), generate_keys());
+    let visitor = app_with_shared_dome_services(docs, blob, visitor_keys.clone());
+    let topic = "kukuri:topic:dome-session-transition";
+    let context = SpatialContextV1::Topic {
+        topic_id: TopicId::new(topic),
+    };
+    let room = |title: &str| CreateMetaverseRoomInput {
+        title: title.into(),
+        description: String::new(),
+        max_peers: Some(8),
+    };
+    let target = owner
+        .create_metaverse_room(topic, room("Target"))
+        .await
+        .expect("target Dome");
+    let source = visitor
+        .create_metaverse_room(topic, room("Source"))
+        .await
+        .expect("source Dome");
+    show_domes(&owner, topic).await;
+    owner
+        .create_dome_connection_proposal(CreateDomeConnectionProposalInput {
+            proposal_id: "transition".into(),
+            spatial_context: context.clone(),
+            proposer_instance_id: target.clone(),
+            receiver_instance_id: source.clone(),
+            proposer_direction: DomeDirection::East,
+        })
+        .await
+        .expect("propose");
+    visitor
+        .accept_dome_connection_proposal(AcceptDomeConnectionProposalInput {
+            spatial_context: context.clone(),
+            proposal_id: "transition".into(),
+        })
+        .await
+        .expect("accept");
+    for (app, dome) in [(&owner, &target), (&visitor, &source)] {
+        app.start_owner_dome_hosting(StartOwnerDomeHostingInput {
+            expected_generation: None,
+            spatial_context: context.clone(),
+            instance_id: dome.clone(),
+            endpoint_id: "endpoint".into(),
+            lease_duration_millis: 60_000,
+        })
+        .await
+        .expect("host");
+    }
+    owner_input(&visitor, &context, &source, 1, JOIN).await;
+    let topology = owner
+        .list_dome_connection_topology(context.clone())
+        .await
+        .expect("topology")
+        .resolution
+        .topology;
+    let request =
+        |transition_id: &str, participant: &KukuriKeys| DomeTransitionAdmissionRequestV1 {
+            transition_id: transition_id.into(),
+            connection_id: topology.active_connection_ids[0].clone(),
+            topology_digest: topology.topology_digest.clone(),
+            spatial_context: context.clone(),
+            source_instance_id: source.clone(),
+            source_instance_generation: 1,
+            target_instance_id: target.clone(),
+            target_instance_generation: 1,
+            participant_pubkey: participant.public_key(),
+            direction: DomeDirection::West,
+            requested_at: Utc::now().timestamp_millis(),
+        };
+    let prepare = |request: DomeTransitionAdmissionRequestV1,
+                   signer: &KukuriKeys,
+                   proof_context: &SpatialContextV1,
+                   proof_owner: &Pubkey| {
+        let now = Utc::now().timestamp_millis();
+        let access_proof = build_dome_spatial_access_proof(
+            signer,
+            proof_context.clone(),
+            proof_owner.clone(),
+            now,
+            None,
+            None,
+        )
+        .expect("access proof");
+        let request = DomeSessionRequestV1::PrepareTransition {
+            request,
+            access_proof,
+        };
+        serde_json::to_vec(&request).expect("request")
+    };
+    let owner_pubkey = owner.services.keys.public_key();
+    let reservations = || async {
+        let sessions = owner.dome_host_sessions.lock().await;
+        let runtime = sessions.get(&target).expect("target session");
+        runtime.transition_reservation_count()
+    };
+    let ticket = |response: DomeSessionResponseV1| match response {
+        DomeSessionResponseV1::Ticket { ticket } => *ticket,
+        other => panic!("expected a ticket, got {other:?}"),
+    };
+
+    // proof の participant・Spatial Context・owner のどれかが要求と違えば、予約を作らずに拒否する。
+    let impostor = generate_keys();
+    let elsewhere = SpatialContextV1::Topic {
+        topic_id: TopicId::new("kukuri:topic:elsewhere"),
+    };
+    let other_owner = generate_keys().public_key();
+    for (signer, proof_context, proof_owner) in [
+        (&impostor, &context, &owner_pubkey),
+        (&visitor_keys, &elsewhere, &owner_pubkey),
+        (&visitor_keys, &context, &other_owner),
+    ] {
+        let request = prepare(
+            request("t0", &visitor_keys),
+            signer,
+            proof_context,
+            proof_owner,
+        );
+        let message = rejection(serve(&owner, request).await);
+        assert!(message.contains("bound to another"), "{message}");
+    }
+    assert_eq!(reservations().await, 0);
+
+    let prepared = |id: &str| {
+        prepare(
+            request(id, &visitor_keys),
+            &visitor_keys,
+            &context,
+            &owner_pubkey,
+        )
+    };
+    // 予約・取消・確定は topology を組み立てず、受信した heartbeat の台帳も読まない(要求ごとの処理を件数に依存させない)。
+    let ledger = owner.dome_host_heartbeats.lock().await;
+    timeout(Duration::from_secs(10), async {
+        let aborted = ticket(serve(&owner, prepared("t1")).await);
+        assert_eq!(reservations().await, 1);
+        let abort = DomeSessionRequestV1::AbortTransition { ticket: aborted };
+        accepted(serve(&owner, serde_json::to_vec(&abort).expect("abort")).await);
+        assert_eq!(reservations().await, 0, "the reservation is withdrawn");
+        let commit = DomeSessionRequestV1::CommitTransition {
+            ticket: ticket(serve(&owner, prepared("t2")).await),
+            position: [-1_500, 90, 0],
+            rotation: [0, 0, 0],
+        };
+        accepted(serve(&owner, serde_json::to_vec(&commit).expect("commit")).await);
+    })
+    .await
+    .expect("the transition never builds the topology");
+    drop(ledger);
+    let arrived = owner_input(&owner, &context, &target, 1, JOIN).await;
+    let avatar = format!("avatar:{}", visitor_keys.public_key().as_str());
+    let body = arrived
+        .bodies
+        .iter()
+        .find(|body| body.entity_id == avatar)
+        .expect("the visitor appears in the owner's Dome");
+    assert_eq!(body.position, [-1_500, 90, 0], "at the arrival position");
+
+    // owner が block した visitor と、遷移元と遷移先の owner の間に block がある prepare は拒否され、予約を作らない。
+    let blocked_visitor = generate_keys();
+    let third = generate_keys();
+    for (blocked, participant, code) in [
+        (
+            &blocked_visitor,
+            &blocked_visitor,
+            "DOME_TRANSITION_VISITOR_BLOCKED",
+        ),
+        (&visitor_keys, &third, "DOME_TRANSITION_OWNERS_BLOCKED"),
+    ] {
+        owner
+            .block_author(blocked.public_key().as_str())
+            .await
+            .expect("block");
+        let request = prepare(
+            request("t3", participant),
+            participant,
+            &context,
+            &owner_pubkey,
+        );
+        assert_eq!(rejection(serve(&owner, request).await), code);
+    }
+    assert_eq!(reservations().await, 0);
+    owner.shutdown().await;
+    visitor.shutdown().await;
 }

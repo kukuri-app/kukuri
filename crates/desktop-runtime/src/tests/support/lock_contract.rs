@@ -66,7 +66,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("community_node/trust_relation.rs", "CommunityNodeServer", 5),
     ("device_backup.rs", "IdentityStorage", 8),
     ("device_backup/recovery.rs", "IdentityStorage", 13),
-    ("dome_session.rs", "IrohNetwork", 2),
+    ("dome_session.rs", "IrohNetwork", 3),
     ("empty_namespace_reclaim.rs", "IdentityStorage", 1),
     ("identity_restart.rs", "IdentityStorage", 2),
     ("legacy_store_retirement.rs", "IdentityStorage", 2),
@@ -145,7 +145,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 193,
+        total, 194,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -161,6 +161,6 @@ fn lock_acquisitions_match_declared_classification() {
          #1221 R2-D で通信状態の差分の試験を 3 件追加し、旧 observer の試験を 1 件撤去、
          #1407 で空の namespace の回収の試験に IdentityStorage 取得を 1 件追加、
          #1510 で観測の状態の行への移し替えと旧 file の取込みの試験に CommunityNodeServer 取得を各 1 件追加、
-         #1527 で別の端末からの Dome の入室と、stack の作り直し・到達できない host の試験に IrohNetwork 取得を各 1 件追加)"
+         #1527 で別の端末からの Dome の入室・遷移と、stack の作り直し・到達できない host の試験に IrohNetwork 取得を各 1 件追加)"
     );
 }

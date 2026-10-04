@@ -2,10 +2,11 @@
 
 use super::*;
 use kukuri_core::{
-    DomeHostingStateKindV1, DomePhysicsSnapshotV1, DomeSessionInputKindV1, SpatialContextV1,
-    TopicId,
+    DomeDirection, DomeHostingStateKindV1, DomePhysicsSnapshotV1, DomeSessionInputKindV1,
+    DomeTransitionAdmissionRequestV1, Pubkey, SpatialContextV1, TopicId,
 };
 use kukuri_test_support::{PollError, PollState, poll_until};
+use std::future::Future;
 
 const TOPIC: &str = "kukuri:topic:dome-session";
 
@@ -301,6 +302,148 @@ async fn the_owner_keeps_answering_after_a_stack_rebuild_and_an_unreachable_host
         "the Join fails within 10 seconds (AC-1 5): {:?}",
         started.elapsed()
     );
+    owner.shutdown().await;
+    visitor.shutdown().await;
+    Ok(())
+}
+
+/// 別の端末の変化が届くまで繰り返す。届く前の失敗と `None` は待ち、期限を過ぎたら最後の失敗を返す。
+async fn eventually<T, Fut>(label: &str, attempt: impl Fn() -> Fut) -> Result<T>
+where
+    Fut: Future<Output = Result<Option<T>>>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let last = match attempt().await {
+            Ok(Some(value)) => return Ok(value),
+            Ok(None) => anyhow::anyhow!("not yet"),
+            Err(error) => error,
+        };
+        if tokio::time::Instant::now() >= deadline {
+            return Err(last.context(format!("{label} never happened")));
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+// 隣の Dome を別の端末の所有者の端末が稼働しているとき、遷移の prepare / abort / commit が P2P の session 経路で
+// 成り立ち、commit の後は遷移先の位置で所有者の Dome に現れる(AC-2)。修正前は prepare が
+// `the active destination Dome host is not reachable from this device` で失敗した。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_device_transitions_into_an_owner_device_hosted_dome() -> Result<()> {
+    let _resource = lock_test_resource(TestResource::IrohNetwork).await;
+    let dir = tempdir()?;
+    let owner = new_runtime(dir.path(), "owner").await?;
+    let visitor = new_runtime(dir.path(), "visitor").await?;
+    let visitor_pubkey = visitor.get_sync_status().await?.local_author_pubkey;
+    // 移行の後の書き込みの形にする(接続の記録は Dome の anchor に置かれ、別の端末が読む。#1221 R5-H)。
+    for runtime in [&owner, &visitor] {
+        runtime.app_service.switch_writer(1);
+    }
+    let (context, target) = host_dome_seen_by(&owner, &visitor).await?;
+    let source = visitor
+        .create_metaverse_room(CreateMetaverseRoomRequest {
+            topic: TOPIC.into(),
+            channel_ref: ChannelRef::Public,
+            title: "Source".into(),
+            description: String::new(),
+            max_peers: None,
+        })
+        .await?;
+    visitor
+        .start_owner_dome_hosting(StartOwnerDomeHostingRequest {
+            expected_generation: None,
+            spatial_context: context.clone(),
+            instance_id: source.clone(),
+            endpoint_id: visitor.get_sync_status().await?.discovery.local_endpoint_id,
+            lease_duration_millis: 600_000,
+        })
+        .await?;
+
+    // 所有者が 2 つの Dome の接続を提案し、別の端末が topology の表示で提案を読んで受け入れる。
+    let proposal = CreateDomeConnectionProposalRequest {
+        proposal_id: "transition".into(),
+        spatial_context: context.clone(),
+        proposer_instance_id: target.clone(),
+        receiver_instance_id: source.clone(),
+        proposer_direction: DomeDirection::East,
+    };
+    eventually("the proposal", || async {
+        owner
+            .create_dome_connection_proposal(proposal.clone())
+            .await
+            .map(Some)
+    })
+    .await?;
+    let shown = ListDomeConnectionTopologyRequest {
+        spatial_context: context.clone(),
+    };
+    eventually("the proposal on the other device", || async {
+        let topology = visitor.list_dome_connection_topology(shown.clone()).await?;
+        let proposed = topology
+            .proposals
+            .iter()
+            .any(|item| item.proposal.proposal_id == "transition");
+        Ok(proposed.then_some(()))
+    })
+    .await?;
+    visitor
+        .accept_dome_connection_proposal(AcceptDomeConnectionProposalRequest {
+            spatial_context: context.clone(),
+            proposal_id: "transition".into(),
+        })
+        .await?;
+    let topology = eventually("the shared topology", || async {
+        let mine = visitor.list_dome_connection_topology(shown.clone()).await?;
+        let theirs = owner.list_dome_connection_topology(shown.clone()).await?;
+        let (mine, theirs) = (mine.resolution.topology, theirs.resolution.topology);
+        let shared = mine.topology_digest == theirs.topology_digest
+            && !mine.active_connection_ids.is_empty();
+        Ok(shared.then_some(mine))
+    })
+    .await?;
+    let join = DomeSessionInputKindV1::Join {
+        avatar_collider: None,
+    };
+    submit(&visitor, &context, &source, 1, join.clone()).await?;
+
+    let request = |transition_id: &str| PrepareDomeTransitionRequest {
+        request: DomeTransitionAdmissionRequestV1 {
+            transition_id: transition_id.into(),
+            connection_id: topology.active_connection_ids[0].clone(),
+            topology_digest: topology.topology_digest.clone(),
+            spatial_context: context.clone(),
+            source_instance_id: source.clone(),
+            source_instance_generation: 1,
+            target_instance_id: target.clone(),
+            target_instance_generation: 1,
+            participant_pubkey: Pubkey::from(visitor_pubkey.as_str()),
+            direction: DomeDirection::West,
+            requested_at: chrono::Utc::now().timestamp_millis(),
+        },
+    };
+    let ticket = visitor.prepare_dome_transition(request("aborted")).await?;
+    visitor
+        .abort_dome_transition(AbortDomeTransitionRequest { ticket })
+        .await?;
+    let ticket = visitor
+        .prepare_dome_transition(request("committed"))
+        .await?;
+    visitor
+        .commit_dome_transition(CommitDomeTransitionRequest {
+            ticket,
+            position: [-1_500, 90, 0],
+            rotation: [0, 0, 0],
+        })
+        .await?;
+    let arrived = submit(&owner, &context, &target, 1, join).await?;
+    let avatar = format!("avatar:{visitor_pubkey}");
+    let body = arrived
+        .bodies
+        .iter()
+        .find(|body| body.entity_id == avatar)
+        .context("the visitor appears in the owner's Dome")?;
+    assert_eq!(body.position, [-1_500, 90, 0], "at the arrival position");
     owner.shutdown().await;
     visitor.shutdown().await;
     Ok(())

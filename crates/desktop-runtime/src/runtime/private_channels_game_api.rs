@@ -594,24 +594,35 @@ impl DesktopRuntime {
                     })
                     .await
             }
-            DomeHostTargetV1::CommunityNode { api_base_url, .. } => Ok(self
-                .prepare_dome_transition_on_community_node(
-                    api_base_url,
-                    &DomeTransitionPrepareRequest {
-                        access_proof: self
-                            .app_service
-                            .build_dome_access_proof(
-                                request.request.spatial_context.clone(),
-                                target_owner_pubkey,
-                            )
-                            .await?,
-                        request: request.request,
-                    },
-                )
-                .await?
-                .ticket),
-            _ => {
-                anyhow::bail!("the active destination Dome host is not reachable from this device")
+            host => {
+                let access_proof = self
+                    .app_service
+                    .build_dome_access_proof(
+                        request.request.spatial_context.clone(),
+                        target_owner_pubkey,
+                    )
+                    .await?;
+                match host {
+                    DomeHostTargetV1::CommunityNode { api_base_url, .. } => Ok(self
+                        .prepare_dome_transition_on_community_node(
+                            api_base_url,
+                            &DomeTransitionPrepareRequest {
+                                access_proof,
+                                request: request.request,
+                            },
+                        )
+                        .await?
+                        .ticket),
+                    // 遷移先が別の端末の所有者の端末の host なら P2P の session 経路で送る(ADR 0038 #1527)。
+                    DomeHostTargetV1::OwnerDevice { endpoint_id, .. } => {
+                        self.prepare_owner_device_transition(
+                            endpoint_id,
+                            request.request,
+                            access_proof,
+                        )
+                        .await
+                    }
+                }
             }
         }
     }
@@ -653,8 +664,14 @@ impl DesktopRuntime {
                 .await?;
                 Ok(())
             }
-            _ => {
-                anyhow::bail!("the active destination Dome host is not reachable from this device")
+            DomeHostTargetV1::OwnerDevice { endpoint_id, .. } => {
+                let request = kukuri_core::DomeSessionRequestV1::CommitTransition {
+                    ticket: request.ticket,
+                    position: request.position,
+                    rotation: request.rotation,
+                };
+                self.accept_owner_device_transition(endpoint_id, request)
+                    .await
             }
         }
     }
@@ -692,8 +709,12 @@ impl DesktopRuntime {
                 .await?;
                 Ok(())
             }
-            _ => {
-                anyhow::bail!("the active destination Dome host is not reachable from this device")
+            DomeHostTargetV1::OwnerDevice { endpoint_id, .. } => {
+                let request = kukuri_core::DomeSessionRequestV1::AbortTransition {
+                    ticket: request.ticket,
+                };
+                self.accept_owner_device_transition(endpoint_id, request)
+                    .await
             }
         }
     }
