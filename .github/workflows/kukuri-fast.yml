@@ -215,9 +215,13 @@ jobs:
 
   # #1220 W8 AC-2a: Web の build の主要導線を、実ブラウザ（Chrome）と同じ job の Community Node・native の相手で試す
   # （ADR 0060 §4）。直接経路と relay fallback を、relay が中継した bytes で判定する。
-  linux-web-e2e:
+  # #1559: build（wasm・Web・fixture）はこの job で 1 回だけ行い、scenario の job へ配る。scenario の一覧の正本は
+  # `main-flow.mjs --list`。
+  linux-web-e2e-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
+    outputs:
+      scenarios: ${{ steps.scenarios.outputs.list }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -258,8 +262,70 @@ jobs:
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: cargo xtask-lite web-e2e --build-only
+
+      - name: List scenarios
+        id: scenarios
+        working-directory: apps/desktop
+        run: echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-build
+          path: |
+            apps/desktop/dist-web
+            target/debug/web_e2e_fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  # #1559: scenario ごとに新しい fixture と client で、並列の job で試す。失敗は、その scenario の job にだけ出る。
+  linux-web-e2e:
+    needs: linux-web-e2e-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-build
+
       - name: Web E2E
-        run: CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" cargo xtask-lite web-e2e
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          chmod +x target/debug/web_e2e_fixture
+          CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" cargo xtask-lite web-e2e --no-build "$SCENARIO"
 
   linux-desktop-ui:
     runs-on: ubuntu-24.04

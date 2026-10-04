@@ -109,6 +109,12 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 旧 state の再送: 退会した channel は、owner の世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。native から見た profile の版は reload で変わらない。
   - 履歴の量: reload と引継ぎの前に native が投稿を足し、2 つの量のどちらでも、最初の頁は 20 件以下、閉じていない WebRTC の session は需要のある相手の数以下になる。件数に比例しないことは、W4（ADR 0059）・W10（ADR 0057）・#1221 の試験に対応付ける（2026-10-04 ユーザー判断）。
   - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間（#1482）に期限が切れる。直接経路は次の試行（約 30 秒後）で戻る。
+- #1559 の実装（2026-10-04）: 主要導線の試験を、経路で分けた独立した scenario にした（2026-10-04 ユーザー判断）。上の AC-2a・2b・2g・AC-4 の実装の「同じ試験で」「同じ試験の最後に」「fallback の端を開く前に」という段の順と、AC-3b（#1561）の段の位置は、この構成に置き換わる。
+  - 各 scenario は、新しい fixture（Community Node の DB・rendezvous の key・native）と新しい client で始め、前提（相互 follow・channel への参加・成人向け表示の有効化など）もその中で作る。fixture の Community Node は rendezvous の key に fixture ごとの DB の名前を使うので、同じ valkey で動く別の fixture と topic の在席情報を共有しない。
+  - 判定を持つ scenario: `direct`（AC-2a・2b の直接経路）、`fallback`（AC-2a・2b の fallback）、`settings`（AC-2b の主要な設定）、`link-preview`（AC-2g）、`lifecycle`（AC-4 の reload・終了・凍結・回線全断）、`webrtc-loss`（AC-4 の WebRTC の経路だけの喪失、#1482 J2）、`site-data`（W4 AC-5）、`transfer`（AC-3b）。各 scenario の最後に、その client の CSP の違反が 0 件であることを確かめる（AC-6）。
+  - 直接経路の判定（relay の中継 bytes）を持つ scenario は、fallback の端を開かない。fallback の端の relay の通信が判定に混ざらない。
+  - CI は、build の job（`linux-web-e2e-build`）が wasm・Web・fixture を 1 回だけ作り、scenario ごとの job（`linux-web-e2e (<scenario>)`）が並列に回す。失敗はその scenario の job にだけ出る。merge の条件は全 scenario の job の成功とする（2026-10-04 ユーザー判断）。
+  - 今後の AC の段で、既存の scenario に自然に属さないものは、新しい scenario にする（2026-10-04 ユーザー判断）。
 
 ### 5. 測定の workload と STUN
 
