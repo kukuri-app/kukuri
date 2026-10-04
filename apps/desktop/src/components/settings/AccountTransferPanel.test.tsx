@@ -56,8 +56,9 @@ test('the source shows the QR code and link, then confirms the matching code', a
 
   status = { state: 'transferring', role: 'source', items: 5 };
   expect(await screen.findByText('Sending keys and settings (5)…', {}, { timeout: 2000 })).toBeInTheDocument();
-  status = { state: 'completed', role: 'source', account_id: null };
+  status = { state: 'completed', role: 'source', account_id: null, history: null };
   expect(await screen.findByText(/The other device has saved the account/, {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(screen.queryByTestId('account-transfer-history-result')).not.toBeInTheDocument();
   unmount();
   expect(identityApi.cancelAccountTransfer).toHaveBeenCalled();
 });
@@ -72,7 +73,7 @@ test('the target reports the received account once and explains a storage failur
   await user.click(screen.getByRole('button', { name: 'Connect' }));
   expect(await screen.findByText('Receiving and saving keys and settings (64)…', {}, { timeout: 2000 })).toBeInTheDocument();
   expect(onCompleted).not.toHaveBeenCalled();
-  status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc' };
+  status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: null };
   expect(await screen.findByText(/Everything was received/, {}, { timeout: 2000 })).toBeInTheDocument();
   await new Promise((resolve) => setTimeout(resolve, 700));
   expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc');
@@ -97,7 +98,7 @@ test('the target pastes the link, connects and can reject a mismatching code', a
     status = { state: 'confirming', role: 'target', code: '000123', local_accepted: false };
   });
   await user.click(connect);
-  expect(identityApi.openAccountTransfer).toHaveBeenCalledWith(LINK);
+  expect(identityApi.openAccountTransfer).toHaveBeenCalledWith(LINK, null);
   expect(await screen.findByText('000 123', {}, { timeout: 2000 })).toBeInTheDocument();
 
   identityApi.decideAccountTransfer.mockImplementation(async () => {
@@ -145,4 +146,46 @@ test('the source still shows a link after the development re-mount cancels the f
   await new Promise((resolve) => setTimeout(resolve, 1200));
   expect(screen.getByLabelText('Transfer link')).toHaveValue(LINK);
   expect(identityApi.createAccountTransferInvite).toHaveBeenCalledTimes(2);
+});
+
+// #1211 AC-3（3g）: 移行先は接続の前に履歴の範囲を選ぶ（既定は移さない）。履歴の間は進捗と「やめる」を出し、完了は
+// 履歴が終わってから（その時点で受け取ったアカウントを渡す）。要約は移行元に無かった数と、途中で止まったときの続きを示す。
+test('the target chooses a history range and is completed only after the history', async () => {
+  const user = userEvent.setup();
+  const onCompleted = vi.fn();
+  render(<AccountTransferPanel role='target' initialLink={LINK} onCompleted={onCompleted} />);
+  const range = screen.getByRole('combobox', { name: /^Post history/ });
+  expect(range).toHaveValue('none');
+  expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(["Don't move", 'Last 30 days', 'Last year', 'All']);
+  await user.selectOptions(range, 'month');
+  identityApi.openAccountTransfer.mockImplementation(async () => {
+    status = { state: 'history', role: 'target', account_id: 'cccccccccccccccc', posts: 12, unavailable: 0 };
+  });
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  expect(identityApi.openAccountTransfer).toHaveBeenCalledWith(LINK, 'month');
+  expect(await screen.findByText('Receiving post history (12)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(screen.getByText('Keys and settings have been moved.')).toBeInTheDocument();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(onCompleted).not.toHaveBeenCalled();
+
+  identityApi.cancelAccountTransfer.mockImplementation(async () => {
+    status = { state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: { posts: 12, unavailable: 2, stopped: 'cancelled' } };
+  });
+  await user.click(screen.getByRole('button', { name: 'Stop receiving history' }));
+  expect(await screen.findByText('Receiving post history stopped partway (12).')).toBeInTheDocument();
+  expect(screen.getByText("Texts or attachments that weren't on the other device couldn't be moved (2).")).toBeInTheDocument();
+  expect(screen.getByText(/choose the same range on the receiving device to continue/)).toBeInTheDocument();
+  await waitFor(() => expect(onCompleted).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc'));
+});
+
+test('the source shows the history it sends and the finished summary', async () => {
+  render(<AccountTransferPanel role='source' />);
+  expect(await screen.findByLabelText('Transfer link')).toHaveValue(LINK);
+  status = { state: 'history', role: 'source', account_id: null, posts: 3, unavailable: 0 };
+  expect(await screen.findByText('Sending post history (3)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop sending history' })).toBeEnabled();
+  status = { state: 'completed', role: 'source', account_id: null, history: { posts: 40, unavailable: 0, stopped: null } };
+  expect(await screen.findByText('Sent post history (40).', {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(screen.queryByText(/couldn't be moved/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/continue where it stopped/)).not.toBeInTheDocument();
 });

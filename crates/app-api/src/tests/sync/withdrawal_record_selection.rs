@@ -6,6 +6,7 @@
 use super::hydration_integrity::{signed_post, write_object_entries};
 use super::shadowing_docs::{ShadowingDocsSync, app_over_docs, honest_header};
 use super::*;
+use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
 /// 本文つきで反映済みの投稿と、その著者の正しい取り下げ。取り下げの key には、`shadows` が先に並ぶ。
 struct ShadowedWithdrawal {
@@ -230,7 +231,7 @@ async fn background_withdrawal_check_applies_the_withdrawal_behind_invalid_recor
     }
     fixture
         .app
-        .schedule_withdrawal_check(fixture.topic.as_str(), &fixture.post.id);
+        .schedule_withdrawal_check(fixture.topic.as_str(), &fixture.post.id, None);
     timeout(Duration::from_secs(5), async {
         while stored_withdrawal(&fixture.store, &fixture.post.id)
             .await
@@ -242,6 +243,79 @@ async fn background_withdrawal_check_applies_the_withdrawal_behind_invalid_recor
     .await
     .expect("the background check did not apply the withdrawal");
     assert_withdrawal_applied(&fixture).await;
+}
+
+// #1211 AC-3（3f）: 時間 bucket へ書いた投稿の取り下げも、背景の確認で反映する（署名した時刻の日の bucket を読む）。
+// 修正前は旧形式の topic replica だけを読み、bucket の取り下げを見落としていた。
+#[tokio::test]
+async fn background_withdrawal_check_reads_the_bucket_of_the_post() {
+    let docs_sync = Arc::new(ShadowingDocsSync::default());
+    let (app, store) = app_over_docs(docs_sync.clone());
+    let topic = TopicId::new("kukuri:topic:withdrawal-bucket");
+    let author_keys = generate_keys();
+    let post = signed_post(
+        &author_keys,
+        &topic,
+        WITHDRAWN_WORDS,
+        ObjectVisibility::Public,
+        None,
+    );
+    let scope = BucketScope::Topic {
+        topic_id: topic.as_str().to_string(),
+    };
+    let bucket = TimeBucket::from_unix_seconds(post.created_at).expect("bucket");
+    let replica = BucketReplica::new(scope, bucket)
+        .expect("bucket replica")
+        .replica_id();
+    write_object_entries(
+        docs_sync.as_ref(),
+        &replica,
+        Some(&post),
+        &honest_header(&post),
+    )
+    .await;
+    assert!(
+        hydrate_object_in_topic(
+            &app.services,
+            topic.as_str(),
+            &replica,
+            &post.id,
+            DocFetchPolicy::LocalOnly,
+        )
+        .await
+        .expect("hydrate")
+    );
+    let withdrawal = build_post_withdrawal_envelope(
+        &author_keys,
+        &post,
+        1,
+        None,
+        WithdrawalReasonVisibility::Public,
+        Some(PostWithdrawalReason::AuthorRequest),
+    )
+    .expect("withdrawal envelope");
+    docs_sync
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: stable_key("withdrawals", &format!("{}/state", post.id.as_str())),
+                value: serde_json::to_value(&withdrawal).expect("withdrawal json"),
+            },
+        )
+        .await
+        .expect("write the withdrawal");
+    app.schedule_withdrawal_check(topic.as_str(), &post.id, Some(post.created_at));
+    timeout(Duration::from_secs(5), async {
+        while stored_withdrawal(&store, &post.id).await.is_none() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the background check did not read the bucket of the post");
+    assert_eq!(
+        projected_content(&store, &post.id).await.as_deref(),
+        Some("")
+    );
 }
 
 // TR-3 / INVAR-1: 検証に通らない record だけでは、他人の投稿を伏せられない。

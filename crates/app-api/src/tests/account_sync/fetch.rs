@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 mod controller_handoff;
 mod controller_requests;
+mod participant_sync;
 
 /// 試験の端末の docs。書込み・読取りを止められ、読取りの回数を数え、`remote` を本人の別の端末の reader として返す。
 #[derive(Clone)]

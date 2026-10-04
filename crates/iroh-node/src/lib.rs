@@ -30,7 +30,7 @@ mod tests;
 
 pub use account_transfer::{
     ACCOUNT_TRANSFER_ALPN, AccountBundleSink, AccountBundleSource, AccountBundleStaging,
-    AccountTransfer,
+    AccountHistoryPage, AccountHistoryResume, AccountHistoryStaging, AccountTransfer,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};

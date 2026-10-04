@@ -1,13 +1,14 @@
 # #1122: 4 つの community node image を 1 回の build session で作る。
 #
-# builder stage は 4 package 分をまとめて compile し、4 target で共有する。各 image は
+# builder stage は 5 package 分（relay の image に入れる cn-stun を含む）をまとめて compile し、
+# 4 target で共有する。各 image は
 # OCI layout（directory）へ書き出すだけで、registry へは出さない。smoke が通ってから
 # `regctl image copy` で GHCR へ push する（`kukuri-cn-images.yml`）。
 # smoke は cn_image_check.py が本番 OCI を読み込んで実行する。既存の cn-indexer
 # docker archive も手動確認用に維持する（attestation を持つ本番 OCI とは別 target）。
 
 variable "TARGET_PACKAGES" {
-  default = "kukuri-cn-user-api kukuri-cn-iroh-relay kukuri-cn-cli kukuri-cn-indexer"
+  default = "kukuri-cn-user-api kukuri-cn-iroh-relay kukuri-cn-stun kukuri-cn-cli kukuri-cn-indexer"
 }
 
 variable "OUT_DIR" {
@@ -53,7 +54,8 @@ target "user-api" {
 
 target "iroh-relay" {
   inherits = ["_common"]
-  args     = { TARGET_BIN = "cn-iroh-relay" }
+  # #1483: STUN（cn-stun）を同じ image に入れ、relay とは別の container で起動する。
+  args     = { TARGET_BIN = "cn-iroh-relay", EXTRA_BIN = "cn-stun" }
   labels   = image_labels("kukuri-cn-iroh-relay")
   attest   = ["type=provenance,mode=max"]
   output   = ["type=oci,dest=${OUT_DIR}/kukuri-cn-iroh-relay,tar=false"]

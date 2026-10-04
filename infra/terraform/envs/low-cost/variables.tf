@@ -250,7 +250,7 @@ variable "monitoring_notification_channels" {
 
 # --- ingress hardening (optional) ---
 variable "extra_ingress_source_ranges" {
-  description = "API/relay public ingress を絞る場合の許可レンジ。既定は全公開。"
+  description = "API/relay/STUN の public ingress を絞る場合の許可レンジ。既定は全公開。"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

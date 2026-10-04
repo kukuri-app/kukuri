@@ -1,8 +1,8 @@
-# ADR 0062: QR・専用リンクの移行の招待と、両端末の確認、必須 bundle の転送
+# ADR 0062: QR・専用リンクの移行の招待と、両端末の確認、必須 bundle と任意の投稿の履歴の転送
 
 ## Status
 
-Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5 に固定した。履歴は AC-3、自動同期への接続は AC-4、画面と既存の鍵の export・backup との対象差の説明は AC-5）
+Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6 に固定した。自動同期への接続は AC-4、画面と既存の鍵の export・backup との対象差の説明は AC-5）
 
 ## Context
 
@@ -45,7 +45,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5 
 
 ### 4. 状態
 
-`AccountTransferStatus`（`crates/core/src/account_transfer.rs`）: `idle`・`waiting`（移行元）・`connecting`（移行先）・`confirming`（確認コードと自分の承認の有無）・`transferring`（両端末の承認の後。送った・保存した item の数）・`completed`（移行先は受けたアカウントの ID を持つ）・`failed`（`expired`・`invalid`・`unreachable`・`rejected`・`cancelled`・`interrupted`・`storage`）。画面は開いている間だけ 500 ms ごとに状態を読み、閉じたら移行を取り消す。AC-1 の `confirmed` は、確認の後に同じ接続で転送を続けるので `transferring` に置き換えた。
+`AccountTransferStatus`（`crates/core/src/account_transfer.rs`）: `idle`・`waiting`（移行元）・`connecting`（移行先）・`confirming`（確認コードと自分の承認の有無）・`transferring`（両端末の承認の後。送った・保存した item の数）・`history`（必須の移行の後、履歴を送っている・受けている。投稿と、移行元に無かった本文・添付の数。§6）・`completed`（移行先は受けたアカウントの ID を持つ。履歴を選んだときはその結果）・`failed`（`expired`・`invalid`・`unreachable`・`rejected`・`cancelled`・`interrupted`・`storage`）。画面は開いている間だけ 500 ms ごとに状態を読み、閉じたら移行を取り消す。AC-1 の `confirmed` は、確認の後に同じ接続で転送を続けるので `transferring` に置き換えた。
 
 ### 5. 必須 bundle の転送と保存（AC-2、2026-10-03 ユーザー決定を含む）
 
@@ -61,6 +61,19 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5 
 - 切替（ユーザー決定）: 移行先は完了したら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。
 - 確認済みの直後に片方だけが切断と表示しうる AC-1 の挙動は、同じ接続で転送を続け、移行元が ACK を受けてから閉じる形にして解消した。
 - 実装: core の `AccountTransferFrame`・`AccountTransferItem`、iroh-node の `AccountBundleSource`・`AccountBundleSink`、app-api の `account_transfer_page`・`merge_account_transfer_items`、desktop-runtime の `accounts/transfer.rs`。
+
+### 6. 任意の投稿の履歴（AC-3、2026-10-04 ユーザー決定を含む）
+
+- 範囲（ユーザー決定）: 移行先がリンクを貼る画面で選ぶ。移さない（既定）・直近 30 日・直近 1 年・すべて。期間は時間 bucket（UTC の日、ADR 0054 §1）の範囲で、最初の bucket は最初の試行の時刻から決め、続きでは同じ値を使う。「すべて」だけが、時間 bucket へ切り替える前の旧形式（`topic::`・`channel::`・自分の `author::` と、旧形式の移行で守った `own:<id>`、#1221 R5-I）も含む。
+- 移すもの（ユーザー決定）: 移行元の保護所有先の自分の record（ADR 0058 §7 の保護参照 `own_docs`。「すべて」は `own:<id>` も）を、replica（bucket locator）・key・docs author・値のまま移す。その日の bucket の自分の記録（投稿・返信・repost・取り下げ・reaction・索引の行など）をすべて含む。account・device の replica と他人の author 領域は送らない。投稿の envelope（`objects/<id>/envelope`）が指す本文（`BlobText`）と添付の blob も送り、移行元に無いものは数える（取得不能）。値が 512 KiB を超える record・読めない record も送らずに同じ数に数える。他の端末で書いて移行元に無い投稿は移らない。
+- wire（同じ接続）: 必須の ACK の後、移行先は履歴を選んでいなければ接続を閉じる。選んでいれば新しい stream で `history`（範囲の最初の bucket。すべては無し。続きの位置）を送る。移行元は page ごとに `records`（64 件・1 MiB まで）、本文・添付ごとの `blob`（512 KiB ずつ、0 から順に長さまで）、`page`（次の位置。範囲の終わりは無し。投稿の数・移行元に無かった数）を送り、移行先の保存の ACK（1 byte）を受けてから次の page を読む（送っている page は常に 1 つ）。frame の待ちは 30 秒、ACK の待ちは 60 秒。
+- 移行元の page: 最初の page の前に、送信待ちの取り下げを書く（取り下げた投稿を取り下げの record とともに送る）。保護参照の索引（参照・replica・key・docs author の順）を続きの位置の次から読み、範囲より前の bucket と対象外の replica は seek で飛ばして行を読まない。1 page は 64 件・照会 8 回まで（届かなければ、その位置を続きにする）。1 page の照会の数・読む行・bytes と、同時の処理（1 つ）は、選択外の履歴の量に依らない。
+- 移行先の置き場: 受けたアカウントの DB の隣の journal（`<db>.account-history.json`。範囲・続きの位置・保存した page の数・反映した page の数）と、page ごとの `<db>.account-history-<n>.json`、blob の部分の `<db>.account-history-<n>-<p>.bin`。record は空でない・NUL を含まない・範囲の replica であることを、blob は順番・長さ・hash を確かめる。page は `page` を受けたら保存して journal を進め、ACK を返す。確定していない page の部分は取消・失敗で消し、再起動で残ったものは次の受信で消す。
+- 反映: そのアカウントの runtime の起動時（使っているアカウントなら page の保存の後）に、page ごとに自分の record（`put_owned_record`）と blob（保護参照 `own_blob:<hash>`）として保存し、反映した page から消す。既にある自分の record は上書きしない。範囲の終わりまで反映したら journal も消す。
+- 中止・失敗・再開（ユーザー決定）: 履歴の途中の取消（どちらの端末からも）・切断・保存の失敗では、必須の移行は完了のまま、履歴は止まった理由（`stopped`）を結果に持つ。もう一度つないで同じ範囲を選ぶと、journal の続きの位置から受ける（受けた page は送り直さない）。別の範囲は最初から。自動の再接続・一時停止はしない。
+- 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）受け取ったアカウントへ切り替える。切替は runtime と endpoint を作り直すので、その時点で移行の接続が切れるため。移行先は履歴を受ける間は Dialog を閉じさせない（「戻る」と閉じるボタンを出さず、Escape・外側のクリックでも閉じない）。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じる操作で履歴が止まり、切り替わらなかった監査の指摘 B-1 による）。
+- 表示: 移行先では、移した投稿は自分のプロフィールに出る（作者の bucket の索引を、手元の自分の record から読む）。topic の timeline は時間 bucket を相手の端末から読むので、移行先の自分の record だけでは出ない（相手の端末が居れば読める）。取り下げは、表示した投稿の背景の確認が投稿の日の bucket を読んで反映する（確認先が旧形式の replica だけだった既存の不具合を、2026-10-04 のユーザー判断でこの AC で直した）。
+- 実装: core の `AccountTransferHistory`・`AccountHistoryRecord`・`AccountHistoryCursor` と frame の `history`・`records`・`blob`・`page`、store の `protected_records_after`、iroh-node の `AccountBundleSource::history_page`・`blob_part`・`AccountBundleSink::history`・`AccountHistoryStaging`、desktop-runtime の `accounts/history.rs`、app-api の `schedule_withdrawal_check`。
 
 ## 採らない方式
 
@@ -79,16 +92,16 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5 
 
 ADR 0002 の template に従う。
 
-- Feature 名: QR・専用リンクの移行の招待と確認、必須 bundle の転送
-- Durable / Transient: 招待と確認の状態は Transient（移行元・移行先の memory だけ。期限・取消・停止で終わる）。移行先の置き場（staging）は Durable で、反映・失敗・取消・次の受信で消す
-- Canonical Source: 移行元の memory の招待（期限・使用済みの正本）。bundle の正本は移行元の account の replica の item
+- Feature 名: QR・専用リンクの移行の招待と確認、必須 bundle と任意の投稿の履歴の転送
+- Durable / Transient: 招待と確認の状態は Transient（移行元・移行先の memory だけ。期限・取消・停止で終わる）。移行先の置き場（staging）は Durable で、反映・失敗・取消・次の受信で消す。履歴の置き場（journal と page）も Durable で、反映した page から消し、範囲の終わりまで反映したら journal も消す（アカウントごとに 1 つ）
+- Canonical Source: 移行元の memory の招待（期限・使用済みの正本）。bundle の正本は移行元の account の replica の item。履歴の正本は移行元の保護所有先の自分の record と blob（移した後は移行先の保護所有先にも同じ値を持つ）
 - Replicated?: しない。明示した 2 端末の間だけ
 - Rebuildable From: 再構築しない。やり直すときは新しい招待を出す（置き場は新しい受信で作り直す）
 - Public Replica / Private Replica / Local Only: Local Only（置き場は受けたアカウントの DB の隣。中身は封のまま）
 - Gossip Hint 必要有無: なし
-- Blob 必要有無: なし
+- Blob 必要有無: 履歴を選んだときだけ、投稿の本文・添付の blob を送る（移行先は自分の blob として保護する）
 - SQLite projection 必要有無: なし（反映は W5 の item 単位の merge で、既存の行へ入る）
-- 必須 contract: 招待の形式・上限・期限、証明と確認コードの束縛、秘密の `Debug` の非出力、bundle の frame の上限と item の検証（core の試験）、正例と負例の接続、確定の境界の故障（iroh-node の試験）、保存・確定・反映・やり直し・再起動（desktop-runtime の試験）
+- 必須 contract: 招待の形式・上限・期限、証明と確認コードの束縛、秘密の `Debug` の非出力、bundle と履歴の frame の上限と item の検証（core の試験）、正例と負例の接続、確定の境界の故障、履歴の中止・失敗・続きの位置（iroh-node の試験）、保存・確定・反映・やり直し・再起動、履歴の page の範囲と読む量・置き場の再開と回収・往復の反映と契約（desktop-runtime の試験）、保護参照の索引の読み出し（store の試験と Web の browser 試験）
 - 必須 scenario: Web↔native の往復（W8）
 - 新しい外部送信: なし（利用者が選んだ自分の端末との P2P の接続。relay は既存の relay だけ）
 

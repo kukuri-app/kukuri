@@ -39,14 +39,17 @@ mod tests;
 
 pub use account_sync::{
     ACCOUNT_SYNC_CHANGE_WINDOW, AccountSyncChangeV1, AccountSyncItem, AccountSyncItemKey,
-    AccountSyncKeys, ChannelControllerRequestV1, ChannelMembershipV1, ChannelRotationRequestV1,
-    MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES, SealedAccountSyncItem,
+    AccountSyncKeys, ChannelControllerRequestV1, ChannelMembershipV1, ChannelParticipantV1,
+    ChannelRotationRequestV1, MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES,
+    SealedAccountSyncItem,
 };
 pub use account_transfer::{
-    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountTransferFailure,
-    AccountTransferFrame, AccountTransferInvite, AccountTransferItem, AccountTransferRole,
-    AccountTransferStatus, MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS, MAX_ACCOUNT_TRANSFER_DIRECT_ADDRS,
-    MAX_ACCOUNT_TRANSFER_FRAME_BYTES, MAX_ACCOUNT_TRANSFER_LINK_BYTES,
+    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountHistoryCursor,
+    AccountHistoryRecord, AccountTransferFailure, AccountTransferFrame, AccountTransferHistory,
+    AccountTransferHistoryResult, AccountTransferInvite, AccountTransferItem, AccountTransferRole,
+    AccountTransferStatus, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES, MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS,
+    MAX_ACCOUNT_TRANSFER_DIRECT_ADDRS, MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+    MAX_ACCOUNT_TRANSFER_LINK_BYTES,
 };
 pub use crypto::{
     DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,

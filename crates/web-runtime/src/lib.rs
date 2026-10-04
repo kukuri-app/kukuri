@@ -19,6 +19,8 @@ mod account_tests;
 mod browser_tests;
 #[cfg(test)]
 mod client_tests;
+#[cfg(test)]
+mod history_tests;
 
 pub use content_cache::IndexedDbCache;
 pub use idb::StorageFailure;

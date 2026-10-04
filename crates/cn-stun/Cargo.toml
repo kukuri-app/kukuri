@@ -1,0 +1,21 @@
+[package]
+name = "kukuri-cn-stun"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[package.metadata.kukuri]
+cn-lane = true
+
+[[bin]]
+name = "cn-stun"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tracing.workspace = true
+kukuri-cn-runtime-support = { path = "../cn-runtime-support" }
+
+[lints]
+workspace = true

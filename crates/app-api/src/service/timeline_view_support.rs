@@ -522,6 +522,7 @@ impl AppService {
         self.schedule_withdrawal_check(
             profile_post.published_topic_id.as_str(),
             &profile_post.object_id,
+            Some(profile_post.created_at),
         );
         // 返信先の preview も同じ topic の投稿で、取り下げの event が届かないことがある。
         // 返信先の本文と添付を出し続けないよう、返信先の取り下げも確認する(ADR 0032 §2)。
@@ -529,6 +530,7 @@ impl AppService {
             self.schedule_withdrawal_check(
                 profile_post.published_topic_id.as_str(),
                 reply_to_object_id,
+                None,
             );
         }
         let withdrawal = self
@@ -647,6 +649,7 @@ impl AppService {
         self.schedule_withdrawal_check(
             profile_repost.published_topic_id.as_str(),
             &profile_repost.object_id,
+            Some(profile_repost.created_at),
         );
         let withdrawal = self
             .services
@@ -759,6 +762,7 @@ impl AppService {
             self.schedule_withdrawal_check(
                 snapshot.source_topic_id.as_str(),
                 &snapshot.source_object_id,
+                None,
             );
         }
         let is_withdrawn = self

@@ -69,7 +69,7 @@ variable "iap_source_ranges" {
 }
 
 variable "extra_ingress_source_ranges" {
-  description = "API/relay public ingress を絞りたい場合の許可レンジ。既定は全公開。"
+  description = "API/relay/STUN の public ingress を絞りたい場合の許可レンジ。既定は全公開。"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

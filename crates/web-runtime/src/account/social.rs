@@ -362,6 +362,36 @@ impl SocialProjectionStore for IndexedDbCache {
         .await
     }
 
+    async fn is_active_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool> {
+        let (channel, pubkey) = (channel_id.to_owned(), participant_pubkey.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Read)?;
+            let range = only(&key(&[text(&channel), text(&pubkey)]))?;
+            let first =
+                rows::scan::<Participant>(&tx, PARTICIPANTS, Some("active"), &range, false, 1)
+                    .await?;
+            Ok(!first.is_empty())
+        })
+        .await
+    }
+
+    async fn has_private_channel_member(&self, participant_pubkey: &str) -> Result<bool> {
+        let pubkey = participant_pubkey.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[PARTICIPANTS], Mode::Read)?;
+            let range = between(&[text(&pubkey)], &top(&[text(&pubkey)]), false, false)?;
+            let first =
+                rows::scan::<Participant>(&tx, PARTICIPANTS, Some("member"), &range, false, 1)
+                    .await?;
+            Ok(!first.is_empty())
+        })
+        .await
+    }
+
     async fn has_private_channel_participant(
         &self,
         channel_id: &str,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10 の AC-1（§7）・AC-2（§9））
+Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10 の AC-1（§7）・AC-2（§9）、STUN の server は #1483（§6））
 
 ## Context
 
@@ -97,9 +97,17 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - STUN の提供元は Community Node の基盤で自前で運用する（2026-09-30 ユーザー決定）。`cn-iroh-relay` は純粋な iroh relay のまま、STUN は別の process とする。
 - 送信先・利用の可否（direct-only・relay 無効・同意の設定との関係）と、Community Node の基盤への配置は W10 が所有する。本番への反映は別の Issue にまとめる。開発と試験は手元の STUN を使う。
 - native backend の server reflexive の候補も同じ STUN から得る（iroh の QAD は iroh 自身の socket の値で、session の socket には使えない）。TURN は使わない（#1213 D-16）。
-- W10 AC-2 の決定: 送信先は、Endpoint が今使っている relay の host の 3478 番（`STUN_PORT`）。Community Node の基盤は relay と同じ host で STUN を動かす（配置は本番への反映の Issue）。
+- W10 AC-2 の決定: 送信先は、Endpoint が今使っている relay の host の 3478 番（`STUN_PORT`）。Community Node の基盤は relay と同じ host で STUN を動かす（配置は #1483。本番への反映は別の Issue）。
   relay が無い（direct-only・relay 無効・同意の無い）ときは STUN を送らない。native は session の socket から、認証の無い binding（RFC 8489）を送信先ごとに 1 回送り、500 ms まで応答を待って server reflexive の候補を足す。
   browser は `RTCPeerConnection` の `iceServers` に渡す。
+- #1483 の決定（2026-10-04 ユーザー判断）: STUN の server は自前の最小実装 `cn-stun`（`crates/cn-stun`）とする。
+  - 認証の無い Binding Request にだけ、送信元の IP・port を XOR-MAPPED-ADDRESS で返す（応答は IPv4 で 32 byte）。TURN・認証・他の method を持たず、要求の属性は読まない。待受けは relay と同じく IPv4 だけ。
+  - 上限: 1 datagram 548 byte まで（RFC 8489 §6.1 の IPv4 の目安）。1 秒の窓ごとに、送信元 IP ごとに 20 件、全体で 2,000 件まで応答し、超えた要求と形式不正の datagram には応答しない。送信元 IP の表は窓ごとに空にし、表に載る数は全体の上限を超えない。
+  - ログ: 送信元の IP・port を残さない。待受けの address と、10 分ごとの件数（応答・上限で捨てた・形式不正）だけを出す。
+  - 配置: relay の image に別の binary として同梱し、relay とは別の container（compose の `cn-stun`、`3478/udp`）で起動する。GCP の firewall は udp 3478 を受け付ける（`infra/terraform`）。
+    送信元を書き換えて UDP を転送する構成（VPS edge）では正しい address を返せないので提供しない（`docs/runbooks/community-node-self-host-vps.md`）。
+  - STUN が無い・届かないとき: 交渉は server reflexive の候補なしで進む。browser は候補集めで最大 3 秒（§7）、native は送信先ごとに 500 ms 待つ。
+    NAT の内側同士では直接経路が成立しにくく、relay（Relay Fallback）で通信する。通信の機能は失われない。
 
 ### 7. W10 へ渡す session の API
 
