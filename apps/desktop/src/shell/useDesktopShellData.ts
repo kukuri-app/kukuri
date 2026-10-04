@@ -666,10 +666,7 @@ export function useDesktopShellData({
                 ? prev
                 : joinedChannelsResult.value));
           }
-          setChannelPanelStateByTopic(setRecordEntry(topic, {
-              status: 'ready',
-              error: null,
-            }));
+          setChannelPanelStateByTopic(setRecordEntry(topic, { status: 'ready', error: null }));
         } else {
           setChannelPanelStateByTopic(setRecordEntry(topic, {
               status: 'error',
