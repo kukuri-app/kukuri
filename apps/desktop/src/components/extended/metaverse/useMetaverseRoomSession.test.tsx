@@ -15,6 +15,7 @@ import { useMetaverseRoomSession } from './useMetaverseRoomSession';
 import { createMetaverseRoomActions } from '@/shell/actions/metaverse';
 import { createDefaultMetaverseRoomState } from './DomeSceneModel';
 import { readLastVisitedDome } from './DomeEntryModel';
+import { InvokeError } from '@/lib/api/invoke/error';
 
 const room: GameRoomView = {
   room_id: 'metaverse-room-1',
@@ -910,5 +911,43 @@ describe('useMetaverseRoomSession', () => {
       expect.objectContaining({ type: 'complete_transition' }),
       1
     );
+  });
+
+  // #1527: 所有者の端末に接続できなかった入室は、code ではなく利用者向けの文言で示す。
+  test('shows a user-facing message when the owner device cannot be reached', async () => {
+    const api: DesktopApi = {
+      ...createDesktopMockApi(),
+      submitDomeSessionInput: vi.fn().mockRejectedValue(
+        new InvokeError('DOME_HOST_UNREACHABLE', 'the Dome host device could not be reached', 503)
+      ),
+    };
+    const session = renderSession({ api });
+    await waitFor(() => expect(session.result.current.admissionStatus).toBe('selection'));
+
+    await act(async () => {
+      await session.result.current.joinRoom(room.room_id);
+    });
+
+    expect(session.onError).toHaveBeenLastCalledWith(
+      "Couldn't connect to the owner's device. Please try again later."
+    );
+    expect(session.result.current.admittedRoom).toBeNull();
+  });
+
+  // #1527: 一覧の取り直し(約 3 秒ごと)で部屋の object が作り直されても、5 秒ごとの keepalive を止めない(ADR 0045)。
+  test('keeps sending keepalives while the room list is re-fetched', async () => {
+    vi.useFakeTimers();
+    const api: DesktopApi = { ...createDesktopMockApi() };
+    const submit = vi.spyOn(api, 'submitDomeSessionInput');
+    const session = renderSession({ api });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(session.result.current.admittedRoom?.room_id).toBe(room.room_id);
+
+    for (let elapsed = 0; elapsed < 15_000; elapsed += 3_000) {
+      session.rerender({ rooms: [{ ...room }], sync: syncStatus() });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    }
+    const keepAlives = submit.mock.calls.filter(([, , , input]) => input.type === 'keep_alive');
+    expect(keepAlives.length).toBeGreaterThanOrEqual(2);
   });
 });

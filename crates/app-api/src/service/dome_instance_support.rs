@@ -238,10 +238,18 @@ impl AppService {
             .get_game_room(spatial_context.topic_id().as_str(), instance_id)
             .await?
             .map(|row| Pubkey::from(row.host_pubkey));
-        let owner = std::iter::once(self.services.keys.public_key())
+        let derives = |owner: &Pubkey| dome_instance_id(spatial_context, owner) == instance_id;
+        let mut owner = std::iter::once(self.services.keys.public_key())
             .chain(row_owner)
-            .chain(self.heartbeat_dome_owners(spatial_context).await)
-            .find(|owner| dome_instance_id(spatial_context, owner) == instance_id);
+            .find(derives);
+        // heartbeat の台帳は、自分と一覧の行から導けないときだけ走査する(owner の端末の input ごとに読まない。#1527)。
+        if owner.is_none() {
+            owner = self
+                .heartbeat_dome_owners(spatial_context)
+                .await
+                .into_iter()
+                .find(derives);
+        }
         match owner {
             Some(owner) => {
                 self.hosting_instance_for_owner(spatial_context, instance_id, &owner)

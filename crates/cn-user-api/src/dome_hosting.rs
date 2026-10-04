@@ -592,17 +592,12 @@ pub(crate) async fn submit_dome_hosting_input(
 
 fn dome_entry_access_proof_is_valid(
     proof: Option<&DomeSpatialAccessProofV1>,
-    participant_pubkey: &kukuri_core::Pubkey,
-    spatial_context: &kukuri_core::SpatialContextV1,
-    target_owner_pubkey: &kukuri_core::Pubkey,
+    participant: &kukuri_core::Pubkey,
+    context: &kukuri_core::SpatialContextV1,
+    owner: &kukuri_core::Pubkey,
     now: i64,
 ) -> bool {
-    proof.is_some_and(|proof| {
-        proof.statement.participant_pubkey == *participant_pubkey
-            && proof.statement.spatial_context == *spatial_context
-            && proof.statement.target_owner_pubkey == *target_owner_pubkey
-            && proof.verify_at(now).is_ok()
-    })
+    proof.is_some_and(|proof| proof.verify_for(participant, context, owner, now).is_ok())
 }
 
 pub(crate) async fn prepare_dome_transition(

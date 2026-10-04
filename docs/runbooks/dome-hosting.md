@@ -36,6 +36,7 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - 保存時は active host が physics tick 境界で persistent prop だけを抽出して署名し、owner が候補を検証・署名した後に新しい manifest revision をpublishする。同一レイアウトはno-op、変更を伴う保存は30秒に1回まで。
 - 保存成功後は同じhost targetでlease epoch/sessionを更新する。新sessionは保存されたtransformから速度0、grab/seatなし、guestなしで開始する。
 - late joinまたは欠落検知時はdesktopの「Physics snapshotを再同期」で最大100件のmemory-only ringから再取得する。ringより古いsequenceの場合は最新baselineを返す。
+- 別の端末で稼働中のDomeでも、入室中の参加者は同じ操作で取得できる（P2Pの経路。受信の上限16 MiBを超える分は新しい側だけ）。入室していない端末の要求は拒否される。
 
 ## 隣接Domeへの遷移
 
@@ -53,6 +54,9 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - Channel entry Domeはchannel ownerだけが同じContextのInstanceへ設定できる。設定変更は既存Connectionを作成、解除、変更しない。
 - Owner hostはcurrent access/blockを、Community Node hostは短命access proofを`Join`直前に確認する。Host snapshotにlocal avatarが現れるまでClientはscene、presence、音声を開始しない。
 - Hostはmanifest default spawnから固定順でavatar/prop colliderと25 cm安全余白を検査する。安全候補が無ければ`DOME_ENTRY_NO_SAFE_SPAWN`となり、participantとavatar bodyは追加されない。
+- 所有者の端末で稼働中のDomeへ別の端末から入るときは、leaseの`OwnerDevice.endpoint_id`へP2Pで接続する（ALPN `/kukuri/dome-session/1`、[ADR-0038](../adr/0038-dome-hosting-lease-session-lifecycle.md)）。所有者の端末はaccessとblockを自分で再評価し、入室していない端末のJoin以外の入力を拒否する。
+- 10秒以内に接続できない場合、入室は`DOME_HOST_UNREACHABLE`で失敗し、画面は「所有者の端末に接続できませんでした」と表示する。所有者の端末が起動していること、同じtopic（またはchannel）に参加していること、relayを含む接続設定を確認する。所有者の端末がこの経路に対応しない旧版の場合も同じ表示になる。
+- 経路の分類は`kukuri_connectivity`のlog「Dome session connection established」の`path`（`direct_p2p` / `relay_supported_p2p` / `relay_fallback`）で確認する。inputとaccess proofの本文はlogに出ない。
 
 ## Manifest/asset cache
 
