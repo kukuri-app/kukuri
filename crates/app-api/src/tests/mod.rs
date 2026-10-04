@@ -60,6 +60,7 @@ mod direct_messages;
 mod dome_connection_remote;
 mod dome_connections;
 mod dome_delete;
+mod dome_heartbeats;
 mod dome_hosting;
 mod dome_listing;
 mod dome_move;

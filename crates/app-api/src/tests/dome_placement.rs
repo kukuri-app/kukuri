@@ -226,7 +226,7 @@ async fn a_participant_lists_a_hosted_private_dome_and_an_outsider_cannot() {
         "private",
     )
     .await;
-    start_hosting(&owner, context, &dome).await;
+    start_hosting(&owner, context.clone(), &dome).await;
     let heartbeat = owner
         .dome_host_sessions
         .lock()
@@ -238,11 +238,12 @@ async fn a_participant_lists_a_hosted_private_dome_and_an_outsider_cannot() {
 
     // 参加者: 同じ docs と channel の capability を持ち、手元に Dome の行が無い。
     let participant = peer_over(&owner, Arc::new(MemoryStore::default()));
-    participant
-        .dome_host_heartbeats
-        .lock()
-        .await
-        .insert(dome.clone(), heartbeat.clone());
+    assert!(participant.dome_host_heartbeats.lock().await.record(
+        &context,
+        &dome,
+        heartbeat.clone(),
+        Utc::now().timestamp_millis()
+    ));
     let scope = TimelineScope::Channel {
         channel_id: channel_id.clone(),
     };
@@ -267,11 +268,12 @@ async fn a_participant_lists_a_hosted_private_dome_and_an_outsider_cannot() {
     // 参加していない端末: channel を読めず、公開の一覧にも出ない。
     let (outsider, _, _, _) = local_app_with_memory_services();
     outsider.switch_writer(1);
-    outsider
-        .dome_host_heartbeats
-        .lock()
-        .await
-        .insert(dome.clone(), heartbeat);
+    assert!(outsider.dome_host_heartbeats.lock().await.record(
+        &context,
+        &dome,
+        heartbeat,
+        Utc::now().timestamp_millis()
+    ));
     assert!(outsider.list_game_rooms_scoped(TOPIC, scope).await.is_err());
     assert!(
         outsider

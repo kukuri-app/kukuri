@@ -238,9 +238,15 @@ impl AppService {
             .get_game_room(spatial_context.topic_id().as_str(), instance_id)
             .await?
             .map(|row| Pubkey::from(row.host_pubkey));
+        let heartbeat_owner = self
+            .dome_host_heartbeats
+            .lock()
+            .await
+            .latest(spatial_context, instance_id, Utc::now().timestamp_millis())
+            .map(|signed| signed.heartbeat.host_pubkey);
         let owner = std::iter::once(self.services.keys.public_key())
             .chain(row_owner)
-            .chain(self.heartbeat_dome_owners(spatial_context).await)
+            .chain(heartbeat_owner)
             .find(|owner| dome_instance_id(spatial_context, owner) == instance_id);
         match owner {
             Some(owner) => {
