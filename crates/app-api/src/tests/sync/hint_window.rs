@@ -23,7 +23,7 @@ struct Fixture {
 
 /// task の日の境界の読み直し(UTC の日付の切れ目)が、この test の窓に入らないようにする。境界まで 2 分未満なら、
 /// 境界を実時間で過ぎてから始める(1 日のうちの 2 分だけ待つ)。
-fn hold_off_the_day_boundary() {
+pub(super) fn hold_off_the_day_boundary() {
     let remaining = until_next_bucket(Utc::now().timestamp());
     if remaining < Duration::from_secs(120) {
         std::thread::sleep(remaining + Duration::from_secs(1));
@@ -64,7 +64,7 @@ async fn fixture(name: &str) -> Fixture {
 }
 
 /// 送った hint が task に取り出されるまで待つ。
-async fn wait_until_consumed(sender: &broadcast::Sender<HintEnvelope>) {
+pub(super) async fn wait_until_consumed(sender: &broadcast::Sender<HintEnvelope>) {
     timeout(Duration::from_secs(30), async {
         while !sender.is_empty() {
             sleep(Duration::from_millis(1)).await;
@@ -74,27 +74,28 @@ async fn wait_until_consumed(sender: &broadcast::Sender<HintEnvelope>) {
     .expect("the lease task must consume the hints");
 }
 
-impl Fixture {
-    fn presence_marker(&self, dropped_before: u64) -> HintEnvelope {
-        HintEnvelope {
-            hint: GossipHint::LivePresence {
-                topic_id: self.topic.clone(),
-                session_id: "barrier".into(),
-                author: Pubkey::from("a".repeat(64)),
-                ttl_ms: 1,
-            },
-            received_at: 0,
-            source_peer: String::new(),
-            dropped_before,
-        }
+/// 同期点に使う短命種の hint。task は 1 件ずつ直列に処理するので、これが取り出された時点で、それより前の hint の処理と
+/// 窓の終わりの読み直しは終わっている。`dropped_before` は transport の取りこぼしの印。
+pub(super) fn presence_marker(topic: &TopicId, dropped_before: u64) -> HintEnvelope {
+    HintEnvelope {
+        hint: GossipHint::LivePresence {
+            topic_id: topic.clone(),
+            session_id: "barrier".into(),
+            author: Pubkey::from("a".repeat(64)),
+            ttl_ms: 1,
+        },
+        received_at: 0,
+        source_peer: String::new(),
+        dropped_before,
     }
+}
 
-    /// 短命種の hint を 1 件送り、task がそれを取り出すまで待つ。task は 1 件ずつ直列に処理するので、それより前の hint の
-    /// 処理と、窓の終わりの読み直しは終わっている。
+impl Fixture {
+    /// 短命種の hint を 1 件送り、task がそれを取り出すまで待つ。
     async fn barrier(&self) {
         let sender = self.transport.hint_sender(&self.topic).await;
         sender
-            .send(self.presence_marker(0))
+            .send(presence_marker(&self.topic, 0))
             .expect("the topic subscription listens for hints");
         wait_until_consumed(&sender).await;
     }
@@ -288,7 +289,7 @@ async fn a_transport_drop_marker_triggers_one_reread_at_the_end_of_the_window() 
 
     let sender = fixture.transport.hint_sender(&fixture.topic).await;
     sender
-        .send(fixture.presence_marker(1))
+        .send(presence_marker(&fixture.topic, 1))
         .expect("the topic subscription listens for hints");
     wait_until_consumed(&sender).await;
     assert!(

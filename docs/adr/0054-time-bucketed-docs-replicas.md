@@ -138,6 +138,9 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
 - 読み取り候補:
   - 公開topicの候補は、同じtopicのgossip neighbor（`topic_read_candidates`）とする。neighborが無いときだけ、全体の台帳から選ぶ。
   - remoteのページ照合は、新しく反映した投稿のうち、provider 1台あたり最大8件の投稿のreactionも読む。
+    台帳つきの表示の照合では、既にprojectionにある投稿も、ページの新しい側から最大8件（新しく反映した8件とは別の残数）のreactionの窓（各32件）を
+    その投稿のreplicaから読み直す（#1567 AC-2。hintの受付の上限で捨てられたreactionを台帳の間隔で補う。起動時・日の境界・溢れの読み直しでは読まない）。
+    読むreplicaは投稿のbucketなので、投稿の翌日以降に別のbucketへ置かれたreactionはこの補いでは入らない（活動量が上限を超えるtopicの表示ページは当日の投稿で埋まる）。
 - 本文・添付・manifestの取得: 見出し・reaction・stateを返したpeerを、そのhashの取得候補に必ず入れる（hashから取得元への表は上限256件）。
   - #1419: 画像は表示した参加者だけが持ち、見出しを返したpeerが持つとは限らない。公開topicの投稿の添付を表示するときは、
     そのtopicの参加者（`topic_read_candidates`、最大4）も取得候補に入れる。表は1つのhashに複数のpeerを持ち、新しい順に
