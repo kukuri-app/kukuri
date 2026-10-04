@@ -13,15 +13,15 @@ cargo xtask web-build
 必要なもの:
 
 - Rust の wasm32 の target（`rustup target add wasm32-unknown-unknown`）。
-- clang と llvm-ar（wasm の C の依存の build に使う）。Windows の手元には無いので、Linux（CI と同じ）か docker で作る。
+- clang と llvm-ar（wasm の C の依存の build に使う）。Windows の手元には無いので、Linux（CI と同じ ubuntu）で作る。
 - wasm-bindgen-cli。`Cargo.lock` の `wasm-bindgen` と同じ版にする。
-- Node.js と pnpm（`apps/desktop` の依存）。
+- Node.js と pnpm。先に `apps/desktop` で依存を入れておく（`npx pnpm@10.16.1 install --frozen-lockfile`）。
 
 中身:
 
 - WASM は LTO の profile（root の `Cargo.toml` の `web-release`）で build し、wasm-bindgen で名前の section を除く。Cloudflare Pages の 1 file の上限（25 MiB）の下に収めるためで、機能は変わらない。2026-10-04 の測定では 20.3 MB だった（既定の release のままだと 33.8 MB）。
 - Community Node の初期設定は、native の配布と同じ（`apps/desktop/src-tauri/distribution/community-nodes.json`）。
-- `_headers`（`apps/desktop/web-public/_headers`）は CSP を付ける（ADR 0060 §2）。
+- `_headers`（`apps/desktop/web-public/_headers`）は、CSP と、`.wasm` の `Content-Type: application/wasm` を付ける（ADR 0060 §2）。
 - metaverse の資源（`apps/desktop/public`）は含めない。Web では使わない。
 
 build の後に、各 file が 25 MiB 以下であることを確かめ、超えたら失敗する。
@@ -41,8 +41,8 @@ E2E の build は配信の build と次の点が違う。
 - HTTPS で配る（IndexedDB の永続化の要求や Web Crypto は、安全な context でだけ使える）。
 - LP（`kukuri.app`）と別の origin に置く。同じ origin の第三者の script から、IndexedDB の鍵の保存を守るため（ADR 0059 §1）。
 - `_headers` の header を付ける。Cloudflare Pages は `_headers` をそのまま読む。他の host では、同じ header を host の設定で付ける。
-- `.wasm` は `Content-Type: application/wasm` で配る。違うと WASM の読み込みが遅い方法に切り替わる。COOP・COEP は付けない（ADR 0060 §2）。
-- 第三者の script・analytics・cookie を足さない（CSP が拒む。外部送信表示にも無い）。
+- `.wasm` は `Content-Type: application/wasm` で配る（`_headers` の `/*.wasm` の規則）。違うと WASM の読み込みが遅い方法に切り替わる。COOP・COEP は付けない（ADR 0060 §2）。
+- 第三者の script・analytics を足さない（CSP が拒み、外部送信表示にも無い）。cookie も使わない。host の機能のうち、script を自動で差し込むもの（Cloudflare の Web Analytics など）や cookie を足すもの（bot 対策など）は有効にしない。
 
 ## Cloudflare Pages に置く
 
@@ -72,6 +72,7 @@ curl -sI https://<置いた先>/assets/<WASM の file 名> | grep -i content-typ
 
 - CSP が `_headers` と同じで、WASM の `content-type` が `application/wasm` であること。
 - ブラウザで開くと初回の同意の画面が出て、開発者 tool の console に CSP の違反が出ないこと。
+- 初回の同意の後、Community Node の同意は「あとで」にして profile を設定し、設定の「アカウント」で鍵の export を試す（鍵の導出の Worker の確認）。console に CSP の違反が出ないこと。
 
 ## 外部送信とデータの説明
 

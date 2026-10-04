@@ -19,7 +19,7 @@ Legal bundle version: 8
 
 | 送信先 | 送信契機 | 目的 | 送信・観測され得る項目 | 保持の考え方 |
 |---|---|---|---|---|
-| Web クライアントの配信元 | Web クライアントを開くとき・読み込み直すとき（HTML・JS・WASM 等の取得） | Web クライアントの配信 | IP address、HTTP／TLS request metadata、User-Agent、要求した path、Referer（リンク元の page が送る場合）。アカウントの鍵、投稿、URL の `#` 以降（移行の招待を含みます）は送りません | 配信元の運営者と通信経路事業者の方針に従います |
+| Web クライアントの配信元 | Web クライアントを開くとき・読み込み直すとき（HTML・JS・WASM 等の取得）と、使っている間に必要になった script（鍵の導出の Worker 等）を読むとき | Web クライアントの配信 | IP address、HTTP／TLS request metadata、User-Agent、要求した path、Referer（リンク元の page が送る場合）。アカウントの鍵、投稿、URL の `#` 以降は送りません | 配信元の運営者と通信経路事業者の方針に従います |
 | 公開投稿の先頭 URL のリンク先と OGP 画像配信先 | アプリ同意後、公開・表示可能・送信確定済みの投稿 card が画面内に入り、先頭 URL の preview を初めて必要とするとき。同一 URL は一時 cache 中に再送しません。Web クライアントは送信しません（投稿者が書いた preview の記録を P2P で読みます） | 投稿内リンクの site、title、説明、任意画像の preview 表示 | IP address、HTTP／TLS request metadata、URL path／query、固定 User-Agent、preview 閲覧の発生。cookie、Authorization、Referer、公開鍵、account／topic／channel／post ID、他の投稿本文は送りません。private channel／DM、折りたたみ中の内容は自動取得しません | kukuri は sanitized metadata／画像を process memory に success 最大10分、failure 最大60秒、合計128件かつ16 MiBまで保持し、再起動後へ残しません。相手方と経路事業者の保持は各主体の方針に従います |
 | GitHub Releases | Direct／NSIS・Linux版だけで、アプリ同意後の起動時、30分ごとの自動更新確認、手動確認、更新download。Microsoft Store版はkukuri内から送信しません。Web クライアントも送信しません | Direct配布の署名済みPreview updateの確認・取得 | IP address、HTTP／TLS通信に必要なrequest metadata、更新確認に必要なapp／platform情報 | GitHubと通信経路事業者の方針に従います。kukuriはDirect版の結果とerrorをruntime stateと診断表示に使用します。Store版の更新はMicrosoft Store／Windowsへ委譲します |
 | Mainline DHT | `seeded_dht` を有効にして接続先を探索するとき。Web クライアントは使いません（ブラウザは UDP を使えないため） | P2P endpoint の発見 | endpoint ID、署名済み address record、通信元 IP address 等 | DHT 参加者に分散して扱われるため、kukuri が一括した保持・削除を制御しません |

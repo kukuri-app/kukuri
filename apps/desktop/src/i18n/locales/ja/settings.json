@@ -526,6 +526,7 @@
     "title": "リリース",
     "summary": "プレビューチャンネル、更新、診断、リソースです。",
     "storeSummary": "Microsoft Store版の更新、診断、リソースです。",
+    "webSummary": "プレビューチャンネル、診断、リソースです。",
     "update": {
       "title": "更新",
       "version": "バージョン",
@@ -582,6 +583,12 @@
       "p2pPurpose": "接続先探索、P2P 接続、選択した共有範囲の同期、必要時の中継",
       "p2pItems": "公開鍵、接続先識別子、IP アドレス、接続情報、共有範囲内の署名済み本文・メタデータ・添付",
       "p2pRetention": "相手端末、DHT 参加者、中継運営者の方針に従い、取得済みコピーを一括消去できません。",
+      "webOriginDestination": "Web クライアントの配信元",
+      "webOriginPurpose": "Web クライアントを開くとき・使っている間の、画面と処理の取得",
+      "webOriginItems": "IP アドレス、HTTP／TLS 通信に必要な要求情報、User-Agent、要求した path、Referer（リンク元のページが送る場合）",
+      "webOriginRetention": "配信元の運営者と通信経路事業者の方針に従います。",
+      "webP2pDestination": "接続相手と、構成された中継サービス（同じサーバーの STUN を含む）",
+      "webP2pRetention": "相手端末と中継運営者の方針に従い、取得済みコピーを一括消去できません。",
       "diagnosticNotice": "診断レポートはコピーまたは書き出しだけでは自動送信されません。利用者が選んだ送信先へ添付した場合だけ端末外へ渡ります。"
     },
     "diagnostics": {

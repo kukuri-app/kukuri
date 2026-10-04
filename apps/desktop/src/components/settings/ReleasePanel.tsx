@@ -185,7 +185,11 @@ export function ReleasePanel({
     <Card className='min-w-0 space-y-5'>
       <CardHeader>
         <h3>{t('settings:release.title')}</h3>
-        <small>{t(selfManagedUpdater ? 'settings:release.summary' : 'settings:release.storeSummary')}</small>
+        <small>
+          {t(IS_WEB_RUNTIME
+            ? 'settings:release.webSummary'
+            : selfManagedUpdater ? 'settings:release.summary' : 'settings:release.storeSummary')}
+        </small>
       </CardHeader>
 
       {externalLink.pending ? <Notice role='status'>{t('common:externalLink.opening')}</Notice> : null}
@@ -315,7 +319,15 @@ export function ReleasePanel({
         </p>
         <div className='grid gap-3 lg:grid-cols-2'>
           {[
-            ...(selfManagedUpdater ? [{
+            // Web は更新を確かめず（配信元から最新を読む）、DHT を使わない。代わりに配信元から取得する（ADR 0060 §6）。
+            ...(IS_WEB_RUNTIME ? [{
+              key: 'origin',
+              destination: t('settings:release.externalTransmission.webOriginDestination'),
+              purpose: t('settings:release.externalTransmission.webOriginPurpose'),
+              items: t('settings:release.externalTransmission.webOriginItems'),
+              retention: t('settings:release.externalTransmission.webOriginRetention'),
+              href: null,
+            }] : selfManagedUpdater ? [{
               key: 'update',
               destination: t('settings:release.externalTransmission.updateDestination'),
               purpose: t('settings:release.externalTransmission.updatePurpose'),
@@ -325,10 +337,14 @@ export function ReleasePanel({
             }] : []),
             {
               key: 'p2p',
-              destination: t('settings:release.externalTransmission.p2pDestination'),
+              destination: t(IS_WEB_RUNTIME
+                ? 'settings:release.externalTransmission.webP2pDestination'
+                : 'settings:release.externalTransmission.p2pDestination'),
               purpose: t('settings:release.externalTransmission.p2pPurpose'),
               items: t('settings:release.externalTransmission.p2pItems'),
-              retention: t('settings:release.externalTransmission.p2pRetention'),
+              retention: t(IS_WEB_RUNTIME
+                ? 'settings:release.externalTransmission.webP2pRetention'
+                : 'settings:release.externalTransmission.p2pRetention'),
               href: null,
             },
           ].map((entry) => (
