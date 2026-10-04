@@ -112,8 +112,9 @@ iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529a
 iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
 iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
 # Upstream #162 includes #161: release idle connections and retired peer state.
-# The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376).
-iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c0433d6e7f3d9d81a37985ec243957af2c32" }
+# The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376),
+# and answer a join while an earlier neighbor request to the peer is pending (#1549).
+iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc76d51582b3678b3b743db72d51ce296d4" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
