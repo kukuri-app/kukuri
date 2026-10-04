@@ -658,13 +658,13 @@ export function useDesktopShellData({
         }
 
         if (joinedChannelsResult.status === 'fulfilled') {
-          applyJoinedChannels(storeApi, topic, refreshedJoinedChannels(
-            currentState.joinedChannelsByTopic[topic],
-            currentState.joinedChannelsNextCursorByTopic[topic], joinedChannelsResult.value));
-          setChannelPanelStateByTopic(setRecordEntry(topic, {
-              status: 'ready',
-              error: null,
-            }));
+          // 取得の間に手元の一覧が変わった(参加・作成など)なら、取得前の一覧で置き換えない。次の読込みでそろえる(#1544)。
+          if (currentState.joinedChannelsByTopic[topic] === requestState.joinedChannelsByTopic[topic]) {
+            applyJoinedChannels(storeApi, topic, refreshedJoinedChannels(
+              currentState.joinedChannelsByTopic[topic],
+              currentState.joinedChannelsNextCursorByTopic[topic], joinedChannelsResult.value));
+          }
+          setChannelPanelStateByTopic(setRecordEntry(topic, { status: 'ready', error: null }));
         } else {
           setChannelPanelStateByTopic(setRecordEntry(topic, {
               status: 'error',
