@@ -95,7 +95,9 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     relay の path が開く前の喪失（`a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay`）も 2 秒以内（手元の実測は約 0.3 秒）。
   - 対象は、WebRTC 層が検出して session を閉じた喪失（DataChannel の close、相手の close の到着、PeerConnection の failed・closed、native の ICE の切断の検出）。
     回線が無言で切れたときは、WebRTC 層が検出するか path の idle 期限が来るまで止まる（#1482 の対象外）。
-    接続の直後、相手の connection ID が届く前（約 1 RTT）に失ったときは、こちらから新しい path を開けないので、閉じ直す契機が来ないことがある（#1482 の判定 J1・J2 の外）。
+    接続の直後、相手の connection ID が届く前（約 1 RTT）に失ったときは、新しい path を開けないので、閉じ直す契機が来ない。
+    その接続は QUIC の idle 期限（30 秒）で閉じるまで止まり、その間は同じ相手への新しい接続の最初の送信も届かない。
+    #1482 より前からの挙動で、#1482 の判定 J1・J2 の外として記録した（2026-10-04 ユーザー判断）。対策は #1571 で扱う。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 - fork の独自差分: 上の custom path を閉じる変更は、上流へ PR を出さず fork だけで持つ（2026-10-04 ユーザー判断、#1213 D-2 の例外）。
