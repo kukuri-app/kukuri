@@ -13,6 +13,18 @@ use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
 /// lease の読み直しで、replica ごとに種類ごとに読む session の索引の上限(判断 5)。
 const SESSION_REREAD_LIMIT: usize = 64;
 
+/// scope の Spatial Context(公開は topic、private channel は channel)。
+fn scope_context(topic_id: &str, scope: &TimelineScope) -> kukuri_core::SpatialContextV1 {
+    let topic_id = TopicId::new(topic_id);
+    match scope {
+        TimelineScope::Public => kukuri_core::SpatialContextV1::Topic { topic_id },
+        TimelineScope::Channel { channel_id } => kukuri_core::SpatialContextV1::Channel {
+            topic_id,
+            channel_id: channel_id.clone(),
+        },
+    }
+}
+
 /// 次の日の境界(UTC、bucket の切れ目)までの時間。
 pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
     let day = BUCKET_SECONDS_V1 as i64;
@@ -50,6 +62,7 @@ impl AppService {
             None => TimelineScope::Public,
             Some(channel_id) => TimelineScope::Channel { channel_id },
         };
+        let context = scope_context(topic_id, &scope);
         let generation = if scope == TimelineScope::Public {
             let generation = self.next_subscription_generation(topic_id).await;
             self.reset_public_topic_delivery_generation(topic_id, generation)
@@ -98,14 +111,12 @@ impl AppService {
                                 }
                             }
                             GossipHint::DomeHostHeartbeat { instance_id, heartbeat, .. } => {
-                                let mut heartbeats = dome_host_heartbeats.lock().await;
-                                let replace = heartbeats.get(instance_id).is_none_or(|current| {
-                                    heartbeat.heartbeat.sequence > current.heartbeat.sequence
-                                        || (heartbeat.heartbeat.sequence == current.heartbeat.sequence
-                                            && heartbeat.heartbeat.sent_at > current.heartbeat.sent_at)
-                                });
-                                if replace {
-                                    heartbeats.insert(instance_id.clone(), heartbeat.as_ref().clone());
+                                if dome_host_heartbeats.lock().await.record(
+                                    &context,
+                                    instance_id,
+                                    heartbeat.as_ref().clone(),
+                                    now,
+                                ) {
                                     last_sync.set(now).await;
                                 }
                             }
@@ -323,17 +334,7 @@ impl AppService {
             }
             // 別の端末の Dome の接続の記録を、知っている Dome の anchor から有界に読む(#1221 R5-H)。
             "dome-topology" => {
-                let context = match scope {
-                    TimelineScope::Public => kukuri_core::SpatialContextV1::Topic {
-                        topic_id: TopicId::new(topic_id),
-                    },
-                    TimelineScope::Channel { channel_id } => {
-                        kukuri_core::SpatialContextV1::Channel {
-                            topic_id: TopicId::new(topic_id),
-                            channel_id: channel_id.clone(),
-                        }
-                    }
-                };
+                let context = scope_context(topic_id, scope);
                 let legacy = self.dome_connection_read_replica(&context).await?;
                 let stores = self.dome_connection_stores(&context, legacy, &[]).await?;
                 self.hydrate_dome_connection_records(&context, &stores)

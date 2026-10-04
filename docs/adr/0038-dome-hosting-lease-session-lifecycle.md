@@ -114,7 +114,7 @@ host session stream は、host の種類ごとに次の経路を使う。所有�
 | --- | --- | --- | --- | --- | --- |
 | Hosting Lease / activation / close | owner signature | SpatialContext replica | docs sync、gossip hint | SQLite projection、Postgres operational mirror | append-only。Instance tombstone / move後は無効として保持し、通常GC規則に従う |
 | host acceptance | target host signature | SpatialContext replica | docs sync、gossip hint | SQLite / Postgres | 対応するlease recordと同じ |
-| heartbeat | active host signature | なし | gossip / WebSocket | memory latest only | grace判定後に破棄 |
+| heartbeat | active host signature | なし | gossip / WebSocket | memory latest only。gossip で受けた owner device host の分は Spatial Context ごとに 100 件まで（ADR-0045） | grace判定後に破棄。gossip で受けた分は署名時刻から 30 秒で破棄（ADR-0045、#1553） |
 | participant input | participant signature | なし | host session stream（owner device host へは P2P の `/kukuri/dome-session/1`、Community Node host へは HTTPS） | host memory queue | 適用またはreject後に破棄。署名者ごとの最後の sequence は参加中と、退出後は受け付けた input の署名から 10 秒まで（participant の上限の件数まで）、owner は session の間 host memory に残す。raw inputをlogへ出さない |
 | physics snapshot | active host signature | なし | host session stream（input と再同期への応答。owner device host からは P2P、Community Node host からは HTTPS） | client / host memory latest only | session終了または置換で破棄。ring bufferは#793 |
 | guest prop expiry metadata | active host | なし | snapshot | host memory | wall-clock expiryまたはsession終了で破棄 |

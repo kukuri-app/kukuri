@@ -264,10 +264,10 @@ impl AppService {
         {
             return Ok(Some(owner));
         }
-        let heartbeats = self.dome_host_heartbeats.lock().await;
+        let mut heartbeats = self.dome_host_heartbeats.lock().await;
         Ok(heartbeats
-            .get(instance_id)
-            .map(|signed| signed.heartbeat.host_pubkey.clone())
+            .latest(spatial_context, instance_id, Utc::now().timestamp_millis())
+            .map(|signed| signed.heartbeat.host_pubkey)
             .filter(derives))
     }
 
