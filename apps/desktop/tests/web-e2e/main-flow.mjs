@@ -96,17 +96,22 @@ async function openClient(name, { ice }) {
 async function addInitScripts(browser, { ice }) {
   await browser.addInitScript(captureClipboard);
   await browser.addInitScript(recordCspViolations);
+  await browser.addInitScript(keepObjectUrls);
   await browser.addInitScript(trackPeerConnections);
-  if (!ice) await browser.addInitScript(withoutIceCandidates);
+  await browser.addInitScript(withoutIceCandidates, !ice);
 }
 
-/** relay fallback の端: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない（ページの script より先に動く）。 */
-function withoutIceCandidates() {
+/** relay fallback の端（`always`）と、WebRTC の経路だけの喪失を保つ間（`__kukuriCut` で DataChannel を閉じてから `released`
+ * まで）: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない（ページの script より先に動く）。 */
+function withoutIceCandidates(always) {
+  const blocked = () => always || (window.__kukuriCut?.done && !window.__kukuriCut.released);
   const strip = (description) =>
-    description && {
-      type: description.type,
-      sdp: description.sdp.split(/\r?\n/).filter((line) => !line.startsWith('a=candidate:')).join('\r\n'),
-    };
+    description && blocked()
+      ? {
+          type: description.type,
+          sdp: description.sdp.split(/\r?\n/).filter((line) => !line.startsWith('a=candidate:')).join('\r\n'),
+        }
+      : description;
   const prototype = RTCPeerConnection.prototype;
   const local = Object.getOwnPropertyDescriptor(prototype, 'localDescription');
   Object.defineProperty(prototype, 'localDescription', { get() { return strip(local.get.call(this)); } });
@@ -120,6 +125,23 @@ function recordCspViolations() {
   document.addEventListener('securitypolicyviolation', (event) =>
     window.__kukuriCspViolations.push(`${event.effectiveDirective} ${event.blockedURI}`)
   );
+}
+
+/** 画面が作った blob の URL から、その Blob を引けるようにする（ページより先に動く）。配信の CSP の `connect-src` は `blob:` を
+ * 許さないので、表示した画像の中身は `fetch` でなく Blob から読む。 */
+function keepObjectUrls() {
+  window.__kukuriObjectUrls = new Map();
+  const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  URL.createObjectURL = (object) => {
+    const url = create.call(URL, object);
+    window.__kukuriObjectUrls.set(url, object);
+    return url;
+  };
+  URL.revokeObjectURL = (url) => {
+    window.__kukuriObjectUrls.delete(url);
+    revoke.call(URL, url);
+  };
 }
 
 /** 今の page で CSP の違反が無い（page を読み込み直すと控えは消えるので、読み込み直す前に呼ぶ）。 */
@@ -907,7 +929,7 @@ const shownImage = (browser, text) =>
     const articles = [...(column?.querySelectorAll('article') ?? [])].filter((node) => node.innerText.includes(value));
     const image = articles[0]?.querySelector('img[src^="blob:"]');
     if (!image) return { cards: articles.length, sha256: null };
-    const digest = await crypto.subtle.digest('SHA-256', await (await fetch(image.src)).arrayBuffer());
+    const digest = await crypto.subtle.digest('SHA-256', await window.__kukuriObjectUrls.get(image.src).arrayBuffer());
     return { cards: articles.length, sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
   }, text);
 
@@ -1049,7 +1071,8 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   // 再送は届いた後も重ならない。
   assert.equal((await copies()).length, 1, 'the message is delivered once');
 
-  // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じる。relay で完了し、表示した画像は原本と同じ
+  // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じ、画像が出るまでは新しい session の ICE も
+  // 成立させない（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ
   // hash で、投稿の card は 1 つ。転送中の stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が
   // 15 秒の期限で打ち切られ、relay で取り直す）。
   await directPathOpens(a);
@@ -1060,6 +1083,9 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   });
   const publish = nativeWithImage('create_post', { topic: TOPIC, content: acrossTheLoss, reply_to: null }, png);
   const loss = await relayedWhileLoading(a, acrossTheLoss, publish);
+  await a.execute(() => {
+    window.__kukuriCut.released = true;
+  });
   console.log('webrtc path loss', loss);
   assert.ok(await a.execute(() => window.__kukuriCut.done), 'the data channel closes during the transfer');
   assert.ok(loss.relayed >= loss.size / 2, `the transfer finishes through the relay: ${JSON.stringify(loss)}`);

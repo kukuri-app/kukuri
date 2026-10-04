@@ -105,7 +105,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 終了: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって WebRTC の session を全て閉じる。新しい tab は保存から同じ EndpointId で再開する。
   - 凍結: 利用者と同じく、非表示 → freeze → resume → 表示の順にする。chromedriver の freeze は page を非表示にしてから凍結し、resume の後も非表示のまま戻さないので、CDP の `Emulation.setFocusEmulationEnabled` で表示へ戻す（画面は非表示の間は列を読み直さない）。freeze で旧い session を閉じ（旧世代の candidate・callback の解放）、復帰では生きた需要の相手とだけ交渉し直す（試行は有界）。
   - 回線全断: chromedriver の回線の模擬（`setNetworkConditions` の offline）。offline の間、接続の案内はつながっていないことと次の手順を示し、DM は送信待ち（Pending）と示す。online の後、DM は同じ id で 1 回だけ届いて Delivered になる。
-  - WebRTC の経路だけの喪失（relay は健全）: page より先に動く script で、画像の転送の途中に DataChannel を閉じる（RTCPeerConnection を外から閉じても runtime に event が届かない）。relay で完了し、表示した画像は原本と同じ hash で、card は 1 つ。表示の取得は 15 秒の転送の期限で打ち切られて relay で取り直すので、転送中の stream の継続は #1482 で判定する（2026-10-04 ユーザー判断）。
+  - WebRTC の経路だけの喪失（relay は健全）: page より先に動く script で、画像の転送の途中に DataChannel を閉じる（RTCPeerConnection を外から閉じても runtime に event が届かない）。画像が出るまでは、新しい session の SDP から ICE の候補を除いて WebRTC の経路を失ったままにする（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ hash で、card は 1 つ。hash は、画面が blob の URL を作った Blob から読む（AC-6 の CSP の connect-src は `blob:` を許さないので、`fetch` では読まない）。表示の取得は 15 秒の転送の期限で打ち切られて relay で取り直すので、転送中の stream の継続は #1482 で判定する（2026-10-04 ユーザー判断）。
   - 旧 state の再送: 退会した channel は、owner の世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。native から見た profile の版は reload で変わらない。
   - 履歴の量: reload と引継ぎの前に native が投稿を足し、2 つの量のどちらでも、最初の頁は 20 件以下、閉じていない WebRTC の session は需要のある相手の数以下になる。件数に比例しないことは、W4（ADR 0059）・W10（ADR 0057）・#1221 の試験に対応付ける（2026-10-04 ユーザー判断）。
   - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間（#1482）に期限が切れる。直接経路は次の試行（約 30 秒後）で戻る。
