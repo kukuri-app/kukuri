@@ -232,9 +232,7 @@ impl Transport for StaticTransport {
 impl HintTransport for StaticTransport {
     async fn subscribe_hints(&self, topic: &TopicId) -> Result<HintStream> {
         let sender = self.hint_sender(topic).await;
-        let stream =
-            BroadcastStream::new(sender.subscribe()).filter_map(|item| async move { item.ok() });
-        Ok(Box::pin(stream))
+        Ok(kukuri_transport::hint_stream_from_sender(&sender))
     }
 
     async fn unsubscribe_hints(&self, _topic: &TopicId) -> Result<()> {
@@ -247,6 +245,7 @@ impl HintTransport for StaticTransport {
             hint,
             received_at: Utc::now().timestamp_millis(),
             source_peer: "static".into(),
+            dropped_before: 0,
         });
         Ok(())
     }
@@ -305,9 +304,7 @@ impl HintTransport for TrackingHintTransport {
             .await
             .insert(topic.as_str().to_string());
         let sender = self.hint_sender(topic).await;
-        let stream =
-            BroadcastStream::new(sender.subscribe()).filter_map(|item| async move { item.ok() });
-        Ok(Box::pin(stream))
+        Ok(kukuri_transport::hint_stream_from_sender(&sender))
     }
 
     async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()> {
@@ -330,6 +327,7 @@ impl HintTransport for TrackingHintTransport {
             hint,
             received_at: Utc::now().timestamp_millis(),
             source_peer: "tracking".into(),
+            dropped_before: 0,
         });
         Ok(())
     }

@@ -42,21 +42,19 @@ Accepted
 
 | 反映 | 契機 | 読む量 |
 | --- | --- | --- |
-| 個別反映 | docs の event（`InsertLocal` / `InsertRemote`）と gossip hint。key 単位。`objects/`・`reactions/` の `/state` と `/envelope`、`withdrawals/`・`sessions/*` の `/state` を扱う | 対象の key とその関連 key だけ |
-| 窓の追いつき | 購読タスクの起動時、docs の同期の完了（`SyncFinished`）、event の取りこぼし（`Lagged`）の検出。定期の polling はしない | 時系列の索引の新しい側から固定件数（窓）。projection に無い object だけを key 指定で反映する |
+| 個別反映 | gossip hint（docs の event を契機にする形は R5-H（#1221）で失効）。lease ごとに窓 30 秒あたり 32 件まで受け付け、超えた分は読まずに捨てる（#1567）。key 単位。`objects/`・`reactions/` の `/state` と `/envelope`、`withdrawals/`・`sessions/*` の `/state` を扱う | 対象の key とその関連 key だけ。窓あたりの反映は 32 件まで |
+| 窓の追いつき（読み直し） | lease の開始・task の作り直し・UTC の日の境界と、hint の受付の窓の終わりに捨てた hint（transport の購読 stream の取りこぼしを含む）が 1 件以上あったとき（#1567）。docs の同期の完了・event の取りこぼしを契機にする形は R5-H で失効。定期の polling はしない | 時系列の索引の新しい側から固定件数（窓）と、session の種類ごとの固定件数。projection に無い object だけを key 指定で反映する |
 | ページの範囲の照合（遡りの取得） | タイムラインで、利用者が遡ったページ（cursor つき）、projection が尽きたページ（空を含む）、private channel の現在 epoch の行が 1 件も無いページを取得するとき。thread のページを取得するとき | そのページの範囲を索引から読み、projection に無い object だけを key 指定で反映する。タイムラインは cursor より古い側を `limit` 件（cursor が無ければ新しい側を `limit` 件）、thread は cursor より新しい側を `limit` 件（cursor が無ければ古い側を `limit` 件） |
 
 - 窓の大きさと 1 ページの件数は、replica の総件数に依存しない定数とする（初期値: 窓 200、ページは呼び出し側の `limit`）。
 - 窓より古い範囲の取りこぼしは、ページの範囲の照合で埋まる。埋まらない範囲が残ることを許容する。
-- 窓の追いつき（購読タスク）の規則:
-  - 契機は、購読タスクの起動、docs の通知（取りこぼし `Lagged`・同期の終わり `SyncFinished`・本体がそろった `ContentReady`）、相手から届いた entry の個別反映が 0 件だったとき
-    （索引の key や、本体がまだ届いていない entry）、replica の内容を指す hint の個別反映が 0 件だったとき。自分が書いた entry の event は契機にしない（書き込みの時点で projection に入っている）。
-  - 契機は覚えておき、間隔を空けて 1 回にまとめる（最小 3 秒）。何も反映できない追いつきが続くあいだは、間隔を 2 倍ずつ伸ばす（上限 5 分）。
-    伸びた間隔を待つのは、反映するものがあるとは限らない契機（同期の終わり）だけとする。静かな replica では再 sync のたびに同期の終わりが届くので、それだけで追いつきを繰り返さない。
-    反映するものがあると分かっている契機（取りこぼし、本体がそろった、相手から届いた entry と hint の個別反映が 0 件）と、個別反映か追いつきで何かが入ったときは、伸びた間隔を捨てて、
-    前回の追いつきから最小間隔で追いつく。そうしないと、静かな時間の後に取りこぼした新着や取り下げの反映が、伸びた間隔（最大 5 分）のあいだ待たされる。
-  - 相手から届いた索引の entry（投稿 1 件につき 2 件。個別反映の対象ではない）は、指す object が projection に既にあれば契機にしない。失敗した追いつきの依頼（読み直しを含む）は失わない。
-  - 読むのは、時系列の索引の新しい側の窓（200 件）と、session の固定件数（live・score game は key の降順、Dome の room は昇順で、それぞれ 32 件）。どちらも key だけの上限つきの一覧で、
+- 窓の追いつき（購読タスクの読み直し。docs の通知を契機にする形は R5-H（#1221）で失効し、#1567 で hint の溢れの回収を足した）の規則:
+  - 契機は、lease の開始・task の作り直し・UTC の日の境界と、hint の受付の窓（30 秒）の終わりに捨てた hint が 1 件以上あったとき。
+    捨てた hint は、窓あたりの上限（32 件）を超えた content hint（短命種以外）と、transport の購読 stream が溢れて取りこぼした分（件数を次の envelope に畳んで渡す）。
+    何を取りこぼしたかは分からないので、対象を特定せずに窓を読み直す。窓の終わりに捨てた hint が無ければ docs を読まない。読み直しで 1 件以上反映したら最後の同期時刻を更新する。
+  - 失効した規則（R5-H 以前）: docs の通知（`Lagged`・`SyncFinished`・`ContentReady`）、相手から届いた entry の個別反映が 0 件だったとき、hint の個別反映が 0 件だったときを契機にし、
+    最小 3 秒から上限 5 分へ伸ばす間隔で 1 回にまとめていた。lease の task は docs の replica を開かず購読しないので、これらの契機は存在しない。
+  - 読むのは、時系列の索引の新しい側の窓（200 件）と、session の固定件数（provider からの読み直しは live・game それぞれ 64 件。一覧が空のときの手元だけの追いつき `catch_up_sessions` は live・score game は key の降順、Dome の room は昇順で、それぞれ 32 件）。どちらも key だけの上限つきの一覧で、
     projection に無い object だけを key 指定で反映する。replica の総 entry 数に依存しない。起動時は `LocalOnly`、それ以外は `LocalThenRemote`。
   - 起動時と取りこぼしの後は、窓の object の取り下げと reaction も読み直す（取りこぼした event に含まれうる）。それ以外の追いつきは、projection に無い object だけを対象にする。
   - recovery tick は docs を読まない。docs の支援 peer がいるあいだ、再 sync を backoff つきで促すだけで、届いた entry は docs の event が、取りこぼしは通知からの追いつきが反映する。
@@ -70,7 +68,7 @@ Accepted
   索引の範囲の 1 ページで、author replica が手元に無く作者に届かないときも、手元にある投稿を出す（ADR 0015 §4.2）。
 - reaction の上限つきの読み出し（1 対象あたり 32 件）は、key の一覧が上限で打ち切られたとき、reaction id（16 進）の先頭の 1 文字ごとに少しずつ（8 key）読んで混ぜる。
   先頭に並ぶ key だけを見ていると、正しい reaction より先に並ぶ key を置くだけで、その投稿の reaction を隠せてしまう。読む量は定数（16 回の一覧）で、reaction の総数に依存しない。
-  hint の個別反映（対象の reaction）も、同じ上限つきの読み出しを使う。32 件を超える reaction は、docs の event の個別反映でしか入らない（best effort）。
+  hint の個別反映（対象の reaction）も、同じ上限つきの読み出しを使う。32 件を超える reaction は、hint の個別反映でしか入らない（docs の event の個別反映は R5-H で失効）。
 - ページの範囲の照合は、表示の経路で行う。次の規則で、表示を待たせず、同じ仕事を繰り返さない。
   - 読み出しは `LocalOnly` とする。entry の本体が手元に無い object は飛ばし、後の照合で拾う。本文が blob の投稿は、手元にある本文だけを読み、
     欠けた本文は行単位の取り直し（`MissingBodyLedger`、背景）に任せる。本文の取り方は、docs の読み出しの policy とは別に決める。
@@ -174,6 +172,16 @@ Accepted
 - reaction・live session・game room でも、検証に通らない record と読めない record は、その object だけを飛ばす（warn）。全件走査・event・hint・利用者の操作を失敗させない。
 - reaction の行と、live session・game room の行は、`projection_version` 2 から検証済みの record だけで作る。それより前の行は migration で消し、手元の docs から反映し直す。
 
+#### 受信の上限と残る比例（#1567、2026-10-04）
+
+- 1 台が hint の受信で行う処理は、lease ごとに窓 30 秒あたり content hint 32 件の反映（peer の学習 2 回と対象の key 指定の読み）と、溢れたときの読み直し 1 回
+  （新しい側 200 entry・session 種類ごと 64 件）で、topic の hint の到着率 R に依存しない。lease は最大 64 なので端末全体でも定数。
+  短命種（LivePresence・DomeHostHeartbeat・MetaverseRoomEvent）は上限を通さず、その場で反映する（率は参加者数に比例し、投稿の頻度とは別の軸。#1396 判断 5）。
+- 残る比例: transport の受信 task の JSON decode、gossip（plumtree）の message id の検証、eager peer（active view 5、送り手を除く最大 4 台）への転送、
+  lazy peer への IHave は、hint topic を購読している限り R に比例する（転送 bytes ≈ R × 4 × message size、IHave ≈ R × lazy peer 数 × 定数）。
+  app 層では有界にできず、有界にするには hint topic を抜ける（同じ topic の provider 候補と短命種を失う）か gossip の protocol を変えるしかない。
+  #1396 の判断（2026-10-04）で、この残差は記録して閉じ、受信側の反映の上限だけを実装した。
+
 ### 2.1 Session の個別反映と表示要求（#1262）
 
 - live session / game room の state と `envelopes/<id>` は、到着したentryを契機に対象keyだけを`LocalOnly`で読む。
@@ -235,7 +243,7 @@ Accepted
 - 読み出しの policy: 利用者の操作の docs の key 指定の読み出しは `LocalOnly` とする（entry の本体が手元に無い対象は、remote 取得で操作を待たせずに失敗として返す）。
   対象の本文が blob のときは、手元に無ければ `MissingBodyLedger` の間隔と回数の内でだけ remote を試す（§2。待ち時間は本文の取得の timeout が上限で、対象 1 件ぶん）。
   repost 元の解決だけは、購読していない topic の投稿を対象にできるよう `LocalThenRemote` とする（取得は #1207 の単一走査・クールダウン・同時実行の上限に従う）。
-  event・hint の個別反映と背景の確認は `LocalThenRemote` とする。
+  hint の個別反映（docs の event の個別反映は R5-H で失効）と背景の確認は `LocalThenRemote` とする。
 - private channel の scope の操作は、対象の行が projection に残っていても、参加状態の確認（`ensure_private_channel_access`）を先に通す。
   退出した channel の投稿を、手元に残った行から操作できないようにする。確認は手元の状態の照会だけで、docs は読まない。
 - 自分の既存の repost の検索など、条件で探す処理は projection の索引で行う。必要な列と索引は projection の schema に足す。
@@ -301,7 +309,8 @@ Context の 5 は、app-api の読み方を直しても残る。iroh-docs を fo
   `MissingBodyLedger`（欠損した本文の行単位の取り直し）は残す。
 - 窓より古い範囲は、遡るまで projection に入らない。検索や集計のように「全件を前提にする」機能は、client 単体では成立しない前提で設計する
   （community index は CN が担う。`docs/architecture/p2p-first-community-node-responsibility-boundary.md`）。
-- docs 同期より先に届いた hint の対象は、doc event の到着か次の窓の追いつきまで表示されない。
+- 窓あたりの上限を超えて捨てた hint の対象は、窓の終わりの読み直し（新しい側 200 件・session 種類ごと 64 件に入るもの）、表示の照合、日の境界まで表示されない（#1567）。
+  読み直しの窓に入らない対象は、表示の照合で埋まる範囲だけ入る。
 - 完了条件は、replica の件数を 1,000 / 10,000 / 100,000 にしても、定期処理・利用者の操作・表示の各操作が読む docs の entry 数と projection の行数が増えないことを、
   回数で assert する test で示す。所要時間の閾値は使わない。
   docs の entry 数は `crates/app-api/src/tests/sync/scale_counts.rs` で、回数で示した（T7）。projection の行数は回数では示していない。代わりに、ページの取得が

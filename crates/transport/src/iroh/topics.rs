@@ -620,6 +620,8 @@ impl IrohGossipTransport {
             let mut rejoin_step = 0u32;
             let mut rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(0);
             let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
+            // gossip の actor からの手渡し(容量 256)が溢れて落ちた回数。次の hint に畳んで渡す(#1567 AC-1)。
+            let mut gossip_lagged = 0u64;
             loop {
                 let idle = neighbors_task.read().await.is_empty();
                 let event = tokio::select! {
@@ -674,6 +676,7 @@ impl IrohGossipTransport {
                                     hint: parsed,
                                     received_at: Utc::now().timestamp_millis(),
                                     source_peer: message.delivered_from.to_string(),
+                                    dropped_before: std::mem::take(&mut gossip_lagged),
                                 });
                             }
                             Err(error) => {
@@ -738,7 +741,11 @@ impl IrohGossipTransport {
                                 tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
                         }
                     }
-                    Ok(GossipEvent::Lagged) => continue,
+                    Ok(GossipEvent::Lagged) => {
+                        // 件数は分からないので、1 回を 1 件として数える。
+                        gossip_lagged = gossip_lagged.saturating_add(1);
+                        continue;
+                    }
                     Err(error) => {
                         let message = format!("gossip receiver closed: {error}");
                         *last_error_task.lock().await = Some(message.clone());
@@ -775,12 +782,6 @@ impl IrohGossipTransport {
         );
 
         Ok(broadcaster)
-    }
-
-    fn stream_from_sender(sender: &broadcast::Sender<HintEnvelope>) -> HintStream {
-        let stream =
-            BroadcastStream::new(sender.subscribe()).filter_map(|event| async move { event.ok() });
-        Box::pin(stream)
     }
 
     async fn shutdown_hint_topics(&self) {
@@ -820,7 +821,7 @@ impl IrohGossipTransport {
             .lock()
             .await
             .retain(|short_term| short_term != hint_topic.as_str());
-        Ok(Self::stream_from_sender(&sender))
+        Ok(crate::hint_stream_from_sender(&sender))
     }
 
     /// 購読していない topic への publish の送信先を覚え、最大数を超えたら最も古い送信先の topic を抜ける
