@@ -229,7 +229,9 @@ impl RangeCheckOutcome {
 /// 索引の entry のうち、projection に無い object を key 指定で反映する。
 ///
 /// projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で
-/// 確認する(取り下げの event を取りこぼした行の本文を出し続けない)。
+/// 確認する(取り下げの event を取りこぼした行の本文を出し続けない)。`present_reaction_targets_left` が残っていれば、
+/// 既にある object の reaction の窓(`RANGE_CHECK_REACTIONS_PER_OBJECT` 件)も、その replica から読み直す
+/// (台帳つきの表示の照合の provider からの読みだけ。#1567 AC-2)。
 ///
 /// 1 件の entry が読めなくても、残りの entry の反映を続ける。索引と `objects/` は、その replica に書ける誰もが
 /// 置けるので、読めない record を 1 件置くだけでページの取得を失敗させられないようにする(ADR 0052 §2)。
@@ -241,6 +243,7 @@ pub(crate) async fn ensure_index_entries_projected(
     entries: &[TimeIndexEntry],
     policy: DocFetchPolicy,
     reaction_targets_left: &mut usize,
+    present_reaction_targets_left: &mut usize,
 ) -> Result<RangeCheckOutcome> {
     let docs_sync = services.docs_sync.as_ref();
     let mut outcome = RangeCheckOutcome::default();
@@ -254,6 +257,7 @@ pub(crate) async fn ensure_index_entries_projected(
             entry,
             policy,
             reaction_targets_left,
+            present_reaction_targets_left,
         )
         .await;
         docs_sync.finish_remote_object().await;
@@ -269,6 +273,7 @@ async fn ensure_index_entry_projected(
     entry: &TimeIndexEntry,
     policy: DocFetchPolicy,
     reaction_targets_left: &mut usize,
+    present_reaction_targets_left: &mut usize,
 ) -> Result<RangeCheckOutcome> {
     let docs_sync = services.docs_sync.as_ref();
     let projection_store = services.projection_store.as_ref();
@@ -341,9 +346,33 @@ async fn ensure_index_entry_projected(
         )
         .await?
         {
-            Some(PostWithdrawalHydration::Applied) => outcome.hydrated += 1,
-            Some(PostWithdrawalHydration::TargetMissing) => outcome.unresolved += 1,
+            Some(PostWithdrawalHydration::Applied) => {
+                outcome.hydrated += 1;
+                return Ok(outcome);
+            }
+            Some(PostWithdrawalHydration::TargetMissing) => {
+                outcome.unresolved += 1;
+                return Ok(outcome);
+            }
             Some(PostWithdrawalHydration::Invalid) | None => {}
+        }
+        // 既に projection にある投稿の reaction は hint でしか更新されず、hint は窓あたりの上限で捨てられる(#1567 AC-1)。
+        // 台帳つきの表示の照合の provider からの読みでは、ページの新しい側から上限の件数だけ、その投稿の replica の
+        // reaction の窓を読み直して補う(#1567 AC-2)。読む量は投稿の数と reaction の総数に依存しない。
+        if *present_reaction_targets_left > 0 {
+            *present_reaction_targets_left -= 1;
+            docs_sync.finish_remote_object().await;
+            hydrate_reaction_cache_for_target_bounded(
+                docs_sync,
+                projection_store,
+                services.blob_service.as_ref(),
+                topic_id,
+                replica,
+                &object_id,
+                policy,
+                RANGE_CHECK_REACTIONS_PER_OBJECT,
+            )
+            .await?;
         }
     }
     Ok(outcome)
@@ -654,6 +683,8 @@ impl AppService {
                         &page.entries,
                         DocFetchPolicy::LocalOnly,
                         &mut reaction_targets_left,
+                        // 手元の replica の照合では、既にある投稿の reaction を読み直さない(他人の reaction は provider から届く)。
+                        &mut 0,
                     )
                     .await?,
                 );
