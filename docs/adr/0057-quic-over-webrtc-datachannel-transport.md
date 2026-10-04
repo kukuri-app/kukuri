@@ -47,8 +47,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     そのため送り手は SACK のたびに送信中の chunk を飛ばす FORWARD-TSN を出し、受け手は受け取り済みの範囲の FORWARD-TSN に SACK を返して、データが流れる間この往復が続く。
     同じ FORWARD-TSN は、2 つの chunk に分かれた QUIC の datagram の先頭の断片を受け手に捨てさせる。
   - 寿命 1 ms の chunk は、最初の送信では abandon されず（経過 0 ms）、最初の送信から 1 ms 以上たって再送する時点で abandon される。損失の無い経路では FORWARD-TSN が出ない。
-    代わりに、失った chunk を SCTP が送り直す（その再送と QUIC の再送が重なりうる）。送り直しは 1 回で、abandon した chunk は再び送らない。
-    RTT が 1 ms 未満の経路で最初の送信から 1 ms 以内に fast retransmit が起き、その再送も失ったときだけ、T3 でもう 1 回送る（最大 2 回）。
+    代わりに、失った chunk を SCTP が送り直す（通常 1 回、最大 2 回。その再送と QUIC の再送が重なりうる）。
   - browser（Chrome の dcSCTP）は、失ったと判定した chunk だけを abandon するので `maxRetransmits=0` のままにする。
   - #1575 より前は native も `maxRetransmits=0` だった。W10 AC-2 の J3（`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`、debug build）では往復の処理で転送が遅れ、
     1 MiB を custom で受け取る段が期限（20 秒）を超えることがあった（手元の再現で 140 回中 5 回）。
