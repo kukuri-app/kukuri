@@ -613,12 +613,19 @@ async function exchangeDirectMessagesBetweenWeb(x, y, direct) {
   assertRoute(`web→web dm (${x.browser.label})`, result, direct);
 }
 
-/** 設定のドロワーの section を開く。 */
+/** 設定のドロワーの section を開く。閉じていた drawer は開くときに滑り込む（180 ms）ので、開き終わってから押す（動いている間の
+ * 押下は、位置を求めてから送るまでの間に drawer が動くと、section の外に当たる。#1559）。 */
 async function openSettings(browser, section) {
   if (!(await browser.$('#shell-settings-drawer[data-open="true"]').isExisting())) {
     await browser.$('[data-testid="control-center-trigger"]').click();
     await browser.$('#shell-control-center button[aria-label="Settings"]').click();
   }
+  await eventually('the settings drawer opens', () =>
+    browser.execute(() => {
+      const drawer = document.querySelector('#shell-settings-drawer');
+      return drawer.dataset.open === 'true' && drawer.getAnimations().length === 0;
+    })
+  );
   await browser.$(`[data-testid="settings-section-${section}"]`).click();
 }
 
@@ -911,8 +918,8 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   return browser;
 }
 
-/** 設定の「アカウント」の、本人の別の端末との同期の状態（#1220 AC-3b）。section の押下が開く途中の drawer に当たって
- * 外れたとき（#1559）は null（drawer は開いたままなので、次の回は押し直すだけになる）。 */
+/** 設定の「アカウント」の、本人の別の端末との同期の状態（#1220 AC-3b）。同期が始まる前で表示が無いときは null（drawer は
+ * 開いたままなので、次の回は読み直すだけになる）。 */
 async function accountSyncState(browser) {
   await openSettings(browser, 'account');
   const state = await browser.$('[data-testid="account-sync-status"]').getAttribute('data-state').catch(() => null);
