@@ -8,7 +8,6 @@
 
 use std::fmt::Display;
 use std::future::Future;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -105,7 +104,7 @@ pub async fn fetch_verified_receive_offer_payload(
         (1..=kukuri_core::RECEIVE_PAYLOAD_MAX_BYTES as u64).contains(&max_bytes),
         "invalid receive offer payload size"
     );
-    let hash = iroh_blobs::Hash::from_str(reference.payload_hash.as_str())?;
+    let hash = crate::parse_blob_hash(reference.payload_hash.as_str())?;
     anyhow::ensure!(
         current_time_ms()? < offer.expires_at_ms(),
         "receive offer expired before fetch"

@@ -70,6 +70,13 @@ pub fn confine_local<F: Future>(future: F) -> F {
     future
 }
 
+/// blob の hash の文字列（64 文字の hex）を読む。`iroh_blobs::Hash::from_str` は 64・52 文字以外の長さで panic する
+/// （data-encoding の assert。ブラウザでは runtime の task の実行器が壊れる）ので、長さを先に確かめる（#1220 AC-4）。
+pub fn parse_blob_hash(hash: &str) -> anyhow::Result<iroh_blobs::Hash> {
+    anyhow::ensure!(hash.len() == 64, "invalid blob hash");
+    Ok(hash.parse()?)
+}
+
 impl IrohDocsNode {
     pub async fn query_remote_docs(
         &self,
@@ -111,7 +118,7 @@ impl IrohDocsNode {
     }
 
     pub async fn read_local_blob(&self, hash: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let hash = hash.parse::<iroh_blobs::Hash>()?;
+        let hash = parse_blob_hash(hash)?;
         Ok(self
             .blobs()
             .blobs()
