@@ -46,7 +46,7 @@ impl DesktopRuntime {
     /// #1211: 移行元として招待を出す。確認の後に、この account の必須 bundle を送る。前の移行は取り消す。
     pub async fn create_account_transfer_invite(&self) -> Result<AccountTransferLink> {
         let source = Arc::new(RuntimeBundleSource {
-            app: self.app_service.account_transfer_handle(),
+            app: self.app_service.account_handle(),
             keys: self.author_keys.clone(),
             store: self.store.clone(),
         });
@@ -75,7 +75,7 @@ impl DesktopRuntime {
     pub(crate) async fn merge_account_transfer(&self) {
         let task = spawn_account_transfer_merge(
             self.db_path.clone(),
-            self.app_service.account_transfer_handle(),
+            self.app_service.account_handle(),
             self.store.clone(),
         );
         if let Some(previous) = self.account_transfer_task.lock().await.replace(task) {
