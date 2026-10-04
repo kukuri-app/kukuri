@@ -109,7 +109,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
     同じ取得が relay で続いて完了する（#1482 J2。閉じた custom path を iroh がすぐ閉じる。ADR 0057 §5）。閉じてから表示まで 10 秒以内で、relay の中継は画像の大きさの 1/4 を超え、画像の大きさ未満（取り直しではない）。表示した画像は原本と同じ hash で、card は 1 つ。hash は、画面が blob の URL を作った Blob から読む（AC-6 の CSP の connect-src は `blob:` を許さないので、`fetch` では読まない）。
   - 旧 state の再送: 退会した channel は、owner の世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。native から見た profile の版は reload で変わらない。
   - 履歴の量: reload と引継ぎの前に native が投稿を足し、2 つの量のどちらでも、最初の頁は 20 件以下、閉じていない WebRTC の session は需要のある相手の数以下になる。件数に比例しないことは、W4（ADR 0059）・W10（ADR 0057）・#1221 の試験に対応付ける（2026-10-04 ユーザー判断）。
-  - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間に期限が切れ、直接経路は次の試行（約 30 秒後）で戻っていた。#1482 で、閉じた custom path を iroh がすぐ閉じるようにした（reset で閉じた path がすぐ消えることは W10 J4・J5 の `resume_renegotiates_only_the_live_demand`、閉じた後も同じ接続が relay で続くことは #1482 の J1 で確かめた）。
+  - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間に期限が切れ、直接経路は次の試行（約 30 秒後）で戻っていた。#1482 で、閉じた custom path を iroh がすぐ閉じるようにした（閉じてから 2 秒以内に同じ接続が relay で続くことは #1482 の J1、reset の後の resume が 1 回の交渉で開くことは W10 J4・J5 の `resume_renegotiates_only_the_live_demand` で確かめた）。
 
 ### 5. 測定の workload と STUN
 
