@@ -26,7 +26,7 @@ mod transition;
 use transition::PreparedExit;
 
 use support::{
-    centimeters_to_meters, check_limit, collider_builder, meters_to_centimeters,
+    InputLedger, centimeters_to_meters, check_limit, collider_builder, meters_to_centimeters,
     milliradians_to_radians, radians_to_milliradians, rejection, window_allows,
 };
 
@@ -75,7 +75,7 @@ pub struct DomeSessionRuntime {
     prepared_exits: BTreeMap<String, PreparedExit>,
     transition_entries: BTreeMap<String, DomeDirection>,
     seated_on: BTreeMap<String, String>,
-    last_input_sequence: BTreeMap<String, u64>,
+    inputs: InputLedger,
     participant_last_seen_at: BTreeMap<String, i64>,
     bodies_by_id: BTreeMap<String, RuntimeBody>,
     pipeline: PhysicsPipeline,
@@ -214,7 +214,7 @@ impl DomeSessionRuntime {
             prepared_exits: BTreeMap::new(),
             transition_entries: BTreeMap::new(),
             seated_on: BTreeMap::new(),
-            last_input_sequence: BTreeMap::new(),
+            inputs: InputLedger::default(),
             participant_last_seen_at: BTreeMap::new(),
             bodies_by_id: BTreeMap::new(),
             pipeline: PhysicsPipeline::new(),
@@ -340,17 +340,25 @@ impl DomeSessionRuntime {
         now_millis: i64,
     ) -> Result<()> {
         verify_signed_dome_session_input(signed, &self.lease.lease, &self.session_id)?;
-        if let Err(error) = self.preflight_input(&signed.input, now_millis) {
+        self.inputs.check(&signed.input, now_millis)?;
+        let participant_id = signed.input.participant_pubkey.as_str().to_string();
+        let applied = self
+            .preflight_input(&signed.input, now_millis)
+            .and_then(|()| self.apply_input(&signed.input));
+        // 拒否された Join や参加していない署名者の budget の行は残さない。
+        let participating = self.participants.contains(&participant_id);
+        if !participating {
+            self.player_budgets.remove(&participant_id);
+        }
+        if let Err(error) = applied {
             if let Some(rejection) = error.downcast_ref::<MetaverseResourceRejection>() {
                 self.record_rejection(rejection.clone());
             }
             return Err(error);
         }
-        self.apply_input(&signed.input)?;
-        let participant_id = signed.input.participant_pubkey.as_str().to_string();
-        if matches!(signed.input.input, DomeSessionInputKindV1::Leave) {
-            self.participant_last_seen_at.remove(&participant_id);
-        } else if self.participants.contains(&participant_id) {
+        let owner = signed.input.participant_pubkey == self.lease.lease.owner_pubkey;
+        self.inputs.record(&signed.input, participating || owner);
+        if participating {
             self.participant_last_seen_at
                 .insert(participant_id, now_millis);
         }
@@ -581,14 +589,6 @@ impl DomeSessionRuntime {
 
     fn apply_input(&mut self, input: &DomeSessionInputV1) -> Result<()> {
         let participant_id = input.participant_pubkey.as_str().to_string();
-        let previous_sequence = self
-            .last_input_sequence
-            .get(&participant_id)
-            .copied()
-            .unwrap_or(0);
-        if input.sequence <= previous_sequence {
-            bail!("stale Dome session input sequence");
-        }
         match &input.input {
             DomeSessionInputKindV1::Join { avatar_collider } => {
                 self.ensure_avatar(&participant_id, avatar_collider.as_ref())?;
@@ -598,16 +598,7 @@ impl DomeSessionRuntime {
                     .max(self.participants.len().try_into().unwrap_or(u32::MAX));
             }
             DomeSessionInputKindV1::Leave => {
-                self.participants.remove(&participant_id);
-                self.prepared_exits.remove(&participant_id);
-                self.transition_entries.remove(&participant_id);
-                self.seated_on.remove(&participant_id);
-                self.remove_body(&format!("avatar:{participant_id}"));
-                for runtime_body in self.bodies_by_id.values_mut() {
-                    if runtime_body.grabbed_by.as_deref() == Some(participant_id.as_str()) {
-                        runtime_body.grabbed_by = None;
-                    }
-                }
+                self.evict_participant(&input.participant_pubkey);
             }
             DomeSessionInputKindV1::KeepAlive => {
                 self.require_participant(&participant_id)?;
@@ -681,7 +672,7 @@ impl DomeSessionRuntime {
                 self.abort_transition_exit(&participant_id, transition_id)?;
             }
             DomeSessionInputKindV1::CompleteTransition { transition_id } => {
-                self.complete_transition_exit(&participant_id, transition_id)?;
+                self.complete_transition_exit(&input.participant_pubkey, transition_id)?;
             }
             DomeSessionInputKindV1::SpawnGuestProp { prop, expires_at } => {
                 self.require_participant(&participant_id)?;
@@ -717,8 +708,6 @@ impl DomeSessionRuntime {
                 self.remove_body(prop_id);
             }
         }
-        self.last_input_sequence
-            .insert(participant_id, input.sequence);
         Ok(())
     }
 

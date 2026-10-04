@@ -53,6 +53,14 @@ participant は movement、grab、throw、push、sit を lease epoch / session /
 
 host は検証済み input を共通 Rust runtime へ適用し、host-signed snapshot を配信する。client prediction / interpolation は表示上の補助であり、active host signature、lease epoch、session id、sequence の検証に失敗した snapshot を破棄する。
 
+#### input の期限と participant ごとの状態（#1538）
+
+- 共通 runtime は、署名時刻 `sent_at` が host の時計で 10 秒（`DOME_ACCESS_PROOF_TTL_MILLIS`。Join と KeepAlive の access proof と同じ）を過ぎた input を `DOME_SESSION_INPUT_EXPIRED` で拒否し、署名者ごとに sequence が前回より大きい input だけを適用する。
+- participant ごとの状態（budget の窓、seat、遷移の準備・到着・commit、最後の input）は参加中だけ持ち、退出（Leave、遷移の完了、30 秒の participant timeout、access 失効）の 1 か所で消す。拒否した Join と、participant でない署名者の input は状態を残さない。到着の commit は participant ごとに最後の 1 件だけを残す。
+- 退出した署名者の最後の sequence だけは、受け付けた input の署名から 10 秒たつまで、participant の上限の件数まで残し（超えたら退出の古い順に捨てる）、同じ session での古い input の再送を拒否する。期限を過ぎた input は署名時刻で拒否するため、記録を消した後も再送は通らない。
+- participant でなくても persistent prop を変えられる owner の sequence は、session の間保つ。
+- 退出済みの署名者からの遷移の完了は、何もせず成功とする（source の完了の再送を冪等にする。ADR-0042）。遷移で出た Dome へ、後から Join で入り直せる。
+
 ### Owner device host への P2P の session 経路（#1527）
 
 host session stream は、host の種類ごとに次の経路を使う。所有者本人の端末は process 内で処理し、Community Node host は HTTPS で処理する（どちらも変更しない）。所有者以外の端末の participant が `OwnerDevice` lease の host へ input を送る経路は、次の P2P の要求・応答とする。
@@ -107,7 +115,7 @@ host session stream は、host の種類ごとに次の経路を使う。所有�
 | Hosting Lease / activation / close | owner signature | SpatialContext replica | docs sync、gossip hint | SQLite projection、Postgres operational mirror | append-only。Instance tombstone / move後は無効として保持し、通常GC規則に従う |
 | host acceptance | target host signature | SpatialContext replica | docs sync、gossip hint | SQLite / Postgres | 対応するlease recordと同じ |
 | heartbeat | active host signature | なし | gossip / WebSocket | memory latest only | grace判定後に破棄 |
-| participant input | participant signature | なし | host session stream（owner device host へは P2P の `/kukuri/dome-session/1`、Community Node host へは HTTPS） | host memory queue | 適用またはreject後に破棄。raw inputをlogへ出さない |
+| participant input | participant signature | なし | host session stream（owner device host へは P2P の `/kukuri/dome-session/1`、Community Node host へは HTTPS） | host memory queue | 適用またはreject後に破棄。署名者ごとの最後の sequence は参加中と、退出後は受け付けた input の署名から 10 秒まで（participant の上限の件数まで）、owner は session の間 host memory に残す。raw inputをlogへ出さない |
 | physics snapshot | active host signature | なし | host session stream（input と再同期への応答。owner device host からは P2P、Community Node host からは HTTPS） | client / host memory latest only | session終了または置換で破棄。ring bufferは#793 |
 | guest prop expiry metadata | active host | なし | snapshot | host memory | wall-clock expiryまたはsession終了で破棄 |
 | Community Node assignment mirror | owner / host署名済みrecord | なし | HTTPS | Postgres | lease expiry / close後にoperational retention規則で削除 |
