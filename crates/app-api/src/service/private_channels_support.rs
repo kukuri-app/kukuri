@@ -425,6 +425,7 @@ impl AppService {
             }
             _ => false,
         };
+        tracing::info!(reachable, "KDIAG rotation requested");
         if !reachable {
             return Err(pending);
         }
@@ -438,6 +439,7 @@ impl AppService {
             }
         })
         .await;
+        tracing::info!(advanced = advanced.is_ok(), "KDIAG rotation wait done");
         advanced.map_err(|_| pending)
     }
     /// 担当を引き取る（#1219 AC-4、ADR 0018 §8）。旧担当が本人の端末の候補にいれば、移譲の依頼を account 同期へ書き、

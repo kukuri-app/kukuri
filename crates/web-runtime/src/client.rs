@@ -331,8 +331,40 @@ async fn invoke_command(
 
 /// 起動する。同意があれば アクティブなアカウント（無ければ作る）の runtime を始める。起動の状態を返す。
 /// `config` は `{ communityNodeConfig }`（省略可）。
+struct DiagConsoleLine(Vec<u8>);
+impl std::io::Write for DiagConsoleLine {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl Drop for DiagConsoleLine {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            web_sys::console::log_1(&format!("KDIAG {}", String::from_utf8_lossy(&self.0).trim_end()).into());
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
+    let _ = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "warn,kukuri_app_api=debug,iroh_gossip=debug,kukuri_iroh_node=debug,kukuri_transport=debug,iroh::socket=debug",
+        ))
+        .with_writer(|| DiagConsoleLine(Vec::new()))
+        .try_init();
+    std::panic::set_hook(Box::new(|info| {
+        web_sys::console::log_1(
+            &format!("KDIAG PANIC {info}
+{}", js_sys::Error::new("").stack()).into(),
+        );
+    }));
     let config = match from_js(&config).map_err(|error| error_value(&error))? {
         Value::Null => StartConfig::default(),
         config => serde_json::from_value(config)

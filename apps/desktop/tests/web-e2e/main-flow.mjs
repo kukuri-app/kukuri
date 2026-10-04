@@ -98,6 +98,9 @@ async function startClient(name, { ice }) {
   browser.label = `${name}-${RUN}`;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
+  browser.__logs = [];
+  await browser.sessionSubscribe({ events: ['log.entryAdded'] });
+  browser.on('log.entryAdded', (entry) => browser.__logs.push({ at: entry.timestamp, text: String(entry.text ?? '') }));
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
@@ -1766,6 +1769,15 @@ const scenarios = {
   transfer,
   'same-account': sameAccount,
 };
+// 一時の診断（#1582）: CI で same-account だけを 6 本並べる。
+for (const key of Object.keys(scenarios)) delete scenarios[key];
+for (let index = 1; index <= 6; index++) scenarios[`same-account-${index}`] = sameAccount;
+const DIAG_LINE = /KDIAG (account sync|rotation)|PANIC|panicked|RuntimeError|closed channel|unreachable|WARN kukuri|ERROR|connect timed out|deselecting|closing (custom path|a connection)|AddConnection|Uncaught/;
+function printLogs(client) {
+  const lines = client.__logs.filter((line) => DIAG_LINE.test(line.text) && !/Not enough addresses/.test(line.text));
+  console.log(`--- logs ${client.label} (${lines.length} of ${client.__logs.length})`);
+  for (const line of lines.slice(-600)) console.log(`${new Date(line.at).toISOString().slice(11, 23)} ${line.text.slice(0, 300)}`);
+}
 
 const [name] = process.argv.slice(2);
 if (name === '--list') {
@@ -1778,6 +1790,7 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
+    for (const client of clients) printLogs(client);
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);

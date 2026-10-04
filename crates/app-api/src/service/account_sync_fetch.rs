@@ -537,6 +537,8 @@ impl AppService {
         if device_id == own_device_id {
             return Ok(());
         }
+        let diag_started = n0_future::time::Instant::now();
+        tracing::info!(device = %device_id, "KDIAG account sync fetch start");
         let result = async {
             let keys = self.services.keys.derive_account_sync();
             let mut secret = [0_u8; 32];
@@ -570,6 +572,13 @@ impl AppService {
                 fetch.failed.insert(device_id.to_string());
             }
         }
+        tracing::info!(
+            device = %device_id,
+            ok = result.is_ok(),
+            error = ?result.as_ref().err().map(ToString::to_string),
+            elapsed_ms = diag_started.elapsed().as_millis() as u64,
+            "KDIAG account sync fetch done"
+        );
         self.refresh_account_sync_status().await;
         result
     }
@@ -746,6 +755,7 @@ impl AppService {
             source.to_string(),
             peers.iter().map(|peer| peer.endpoint_id.clone()).collect(),
         );
+        tracing::info!(appeared = appeared.len(), failed = failed.len(), "KDIAG account sync rendezvous response");
         if !appeared.is_empty() {
             rendezvous.pending.extend(appeared);
             state.peers.notify_one();
@@ -784,6 +794,7 @@ impl AppService {
     /// hint を受けたとき: 書いた端末から取得し、失敗したらすぐに 1 回だけ取り直す（取得の途中で WebRTC の経路を失った
     /// 接続は失敗し、取り直しの接続は届く経路で張られる。#1220 AC-3c2）。それでも届かなければ中継した peer から読む。
     pub(crate) async fn fetch_account_sync_for_hint(&self, device_id: &str, source_peer: &str) {
+        tracing::info!(device = %device_id, source = %source_peer, "KDIAG account sync hint received");
         if self.fetch_account_sync_from(device_id).await.is_ok()
             || self.fetch_account_sync_from(device_id).await.is_ok()
             || source_peer == device_id

@@ -435,8 +435,10 @@ impl AppService {
                     && row.owner_pubkey == self.current_author_pubkey()
             })
         else {
+            tracing::info!(adopted, current, "KDIAG rotation request not for this device");
             return Ok(adopted);
         };
+        tracing::info!("KDIAG rotation request: rotating");
         match self
             .rotate_private_channel(&row.topic_id, channel_id.as_str())
             .await
