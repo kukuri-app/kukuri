@@ -111,8 +111,8 @@ fn channel_config() -> ChannelConfig {
     ChannelConfig {
         label: CHANNEL_LABEL.to_string(),
         ordered: false,
-        // 寿命 1 ms の chunk は最初の送信では abandon されず、損失を検出して再送する時点で abandon される。再送 0 回は
-        // str0m の SCTP が最初の送信で abandon し、SACK と FORWARD-TSN が往復し続ける（ADR 0057 §2、#1575）。
+        // 寿命 1 ms の chunk は最初の送信では abandon されず、最初の送信から 1 ms 以上たって再送する時点で abandon される。
+        // 再送 0 回は str0m の SCTP が最初の送信で abandon し、SACK と FORWARD-TSN が往復し続ける（ADR 0057 §2、#1575）。
         reliability: Reliability::MaxPacketLifetime { lifetime: 1 },
         negotiated: Some(CHANNEL_STREAM_ID),
         protocol: String::new(),
