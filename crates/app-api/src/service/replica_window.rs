@@ -230,8 +230,7 @@ impl RangeCheckOutcome {
 ///
 /// projection に既にある object は、取り下げが未反映のときだけ `withdrawals/<object id>/state` を key 指定で
 /// 確認する(取り下げの event を取りこぼした行の本文を出し続けない)。`present_reaction_targets_left` が残っていれば、
-/// 既にある object の reaction の窓(`RANGE_CHECK_REACTIONS_PER_OBJECT` 件)も、その replica から読み直す
-/// (台帳つきの表示の照合の provider からの読みだけ。#1567 AC-2)。
+/// 既にある object の reaction の窓も読み直す(台帳つきの表示の照合の provider からの読みだけ。#1567 AC-2)。
 ///
 /// 1 件の entry が読めなくても、残りの entry の反映を続ける。索引と `objects/` は、その replica に書ける誰もが
 /// 置けるので、読めない record を 1 件置くだけでページの取得を失敗させられないようにする(ADR 0052 §2)。
@@ -303,20 +302,8 @@ async fn ensure_index_entry_projected(
                     outcome.hydrated += 1;
                     if *reaction_targets_left > 0 {
                         *reaction_targets_left -= 1;
-                        // Newly projected objects can bring a bounded reaction window. The object
-                        // records are settled, so a remote lease starts over for its reactions.
-                        docs_sync.finish_remote_object().await;
-                        hydrate_reaction_cache_for_target_bounded(
-                            docs_sync,
-                            projection_store,
-                            services.blob_service.as_ref(),
-                            topic_id,
-                            replica,
-                            &object_id,
-                            policy,
-                            RANGE_CHECK_REACTIONS_PER_OBJECT,
-                        )
-                        .await?;
+                        read_reaction_window(services, topic_id, replica, &object_id, policy)
+                            .await?;
                     }
                 }
                 ObjectHydration::Missing => {
@@ -337,45 +324,52 @@ async fn ensure_index_entry_projected(
         }
         // 同じ key には docs author ごとの record がありうる。先頭の 1 件だけを見ると、検証に通らない record を
         // 先に置くだけで、著者の正しい取り下げを無効にできてしまうので、上限つきで複数を調べる helper を通す(#1250)。
-        match hydrate_post_withdrawal_for_object(
+        let withdrawal = hydrate_post_withdrawal_for_object(
             docs_sync,
             projection_store,
             replica,
             &object_id,
             policy,
         )
-        .await?
-        {
-            Some(PostWithdrawalHydration::Applied) => {
-                outcome.hydrated += 1;
-                return Ok(outcome);
-            }
-            Some(PostWithdrawalHydration::TargetMissing) => {
-                outcome.unresolved += 1;
-                return Ok(outcome);
-            }
+        .await?;
+        match &withdrawal {
+            Some(PostWithdrawalHydration::Applied) => outcome.hydrated += 1,
+            Some(PostWithdrawalHydration::TargetMissing) => outcome.unresolved += 1,
             Some(PostWithdrawalHydration::Invalid) | None => {}
         }
-        // 既に projection にある投稿の reaction は hint でしか更新されず、hint は窓あたりの上限で捨てられる(#1567 AC-1)。
-        // 台帳つきの表示の照合の provider からの読みでは、ページの新しい側から上限の件数だけ、その投稿の replica の
-        // reaction の窓を読み直して補う(#1567 AC-2)。読む量は投稿の数と reaction の総数に依存しない。
-        if *present_reaction_targets_left > 0 {
+        // 既にある投稿の reaction は hint でしか届かず、hint は上限で捨てられる(AC-1)。表示の照合の provider からの読みで、ページの
+        // 新しい側から上限の件数だけ、その投稿の replica の窓を読み直して補う(#1567 AC-2)。
+        if !matches!(withdrawal, Some(PostWithdrawalHydration::Applied))
+            && *present_reaction_targets_left > 0
+        {
             *present_reaction_targets_left -= 1;
-            docs_sync.finish_remote_object().await;
-            hydrate_reaction_cache_for_target_bounded(
-                docs_sync,
-                projection_store,
-                services.blob_service.as_ref(),
-                topic_id,
-                replica,
-                &object_id,
-                policy,
-                RANGE_CHECK_REACTIONS_PER_OBJECT,
-            )
-            .await?;
+            read_reaction_window(services, topic_id, replica, &object_id, policy).await?;
         }
     }
     Ok(outcome)
+}
+
+/// 対象 1 件の reaction の窓(`RANGE_CHECK_REACTIONS_PER_OBJECT` 件)を、対象の record を読み終えた remote の lease を切ってから読む。
+async fn read_reaction_window(
+    services: &ServiceHandles,
+    topic_id: &str,
+    replica: &ReplicaId,
+    object_id: &EnvelopeId,
+    policy: DocFetchPolicy,
+) -> Result<()> {
+    services.docs_sync.finish_remote_object().await;
+    hydrate_reaction_cache_for_target_bounded(
+        services.docs_sync.as_ref(),
+        services.projection_store.as_ref(),
+        services.blob_service.as_ref(),
+        topic_id,
+        replica,
+        object_id,
+        policy,
+        RANGE_CHECK_REACTIONS_PER_OBJECT,
+    )
+    .await?;
+    Ok(())
 }
 
 /// 取得側へ返す照合の結果。
@@ -683,7 +677,7 @@ impl AppService {
                         &page.entries,
                         DocFetchPolicy::LocalOnly,
                         &mut reaction_targets_left,
-                        // 手元の replica の照合では、既にある投稿の reaction を読み直さない(他人の reaction は provider から届く)。
+                        // 手元の照合は、既にある投稿の reaction を読み直さない。
                         &mut 0,
                     )
                     .await?,
