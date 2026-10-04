@@ -847,6 +847,7 @@ mod connection_path;
 mod connection_release;
 mod controlled_gossip;
 mod receive_offer;
+mod receive_offer_rebind;
 mod relay_connectivity;
 mod relay_overload;
 mod status_diff;
