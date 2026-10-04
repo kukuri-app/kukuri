@@ -633,18 +633,27 @@ impl AppService {
             return;
         }
         let state = &self.services.account_sync;
+        let failed = state
+            .fetch
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .failed
+            .clone();
         let mut rendezvous = state
             .rendezvous
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // どの CN の前回の応答にも居なかった端末だけが「現れた」端末（片方の CN にだけ居る端末で繰り返さない）。
+        // どの CN の前回の応答にも居なかった端末だけが「現れた」端末（片方の CN にだけ居る端末で繰り返さない）。前回の
+        // 取得に失敗した端末も、次の応答で取得し直す（相手の endpoint の作り直しで切れた取得を、続く契機を待たずに。
+        // #1220 AC-3b）。
         let appeared = peers
             .iter()
             .filter(|peer| {
-                !rendezvous
-                    .last
-                    .values()
-                    .any(|seen| seen.contains(&peer.endpoint_id))
+                (failed.contains(&peer.endpoint_id)
+                    || !rendezvous
+                        .last
+                        .values()
+                        .any(|seen| seen.contains(&peer.endpoint_id)))
                     && !rendezvous
                         .pending
                         .iter()

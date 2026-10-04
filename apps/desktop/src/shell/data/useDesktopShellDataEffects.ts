@@ -347,6 +347,10 @@ export function useDesktopShellDataEffects({
   // 読み直す(知らせが溢れたときの `null` は、開いている列を 1 回ずつ)。
   const refreshAuthorRelationship = useCallback(
     (pubkey: string | null) => {
+      // 自分の pubkey は、本人の別の端末で変えた自分の profile（#1220 AC-3b）。
+      if (pubkey === null || pubkey === storeApi.getState().syncStatus.local_author_pubkey) {
+        void loadProfileSection().catch(() => undefined);
+      }
       for (const column of storeApi.getState().workspaceState.columns) {
         const peer = column.entityId;
         if (!peer || (pubkey !== null && peer !== pubkey)) continue;
@@ -358,7 +362,7 @@ export function useDesktopShellDataEffects({
         }
       }
     },
-    [api, loadAuthorSection, setDirectMessageStatusByPeer, storeApi]
+    [api, loadAuthorSection, loadProfileSection, setDirectMessageStatusByPeer, storeApi]
   );
 
   useRuntimeEventBridge(

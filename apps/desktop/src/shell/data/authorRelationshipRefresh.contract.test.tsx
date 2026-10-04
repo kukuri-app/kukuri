@@ -1,5 +1,6 @@
 // #1521 AC-1b: 自分を指す相手の follow の edge が届いた知らせ（`author_relationship_changed`）で、その相手の開いている
 // profile と会話の列だけを読み直す。知らせが溢れたとき（`pubkey: null`）は、開いている列を 1 回ずつ読み直す。
+// #1220 AC-3b: 自分の pubkey の知らせ（本人の別の端末で変えた自分の profile）では、自分の profile を読み直す。
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -37,6 +38,14 @@ async function flush(milliseconds = 0) {
   await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); });
 }
 
+const shellArgs = (api: ReturnType<typeof createDesktopMockApi>) => ({
+  api, translate,
+  loadTopicsRequestRef: { current: new Map<string, number>() },
+  draftPreviewUrlRef: { current: new Map<string, string>() },
+  directMessageDraftPreviewUrlRef: { current: new Map<string, string>() },
+  draftSequenceRef: { current: 0 },
+});
+
 test('a relationship change re-reads only the open columns of that author', async () => {
   const api = createDesktopMockApi();
   const readView = api.getAuthorSocialView.bind(api);
@@ -68,13 +77,7 @@ test('a relationship change re-reads only the open columns of that author', asyn
     workspaceState: workspace,
     visibleListColumnIds: workspace.columns.filter((column) => column.entityId).map((column) => column.id),
   });
-  const args = {
-    api, translate,
-    loadTopicsRequestRef: { current: new Map<string, number>() },
-    draftPreviewUrlRef: { current: new Map<string, string>() },
-    directMessageDraftPreviewUrlRef: { current: new Map<string, string>() },
-    draftSequenceRef: { current: 0 },
-  };
+  const args = shellArgs(api);
   const hook = renderHook(() => useDesktopShellData(args), { wrapper: harness.wrapper });
   await flush(1_000);
   expect(receive).toBeDefined();
@@ -98,5 +101,30 @@ test('a relationship change re-reads only the open columns of that author', asyn
   await flush();
   expect(socialView.mock.calls.map(([pubkey]) => pubkey).sort()).toEqual([peer, other]);
   expect(status.mock.calls.map(([pubkey]) => pubkey).sort()).toEqual([peer, other]);
+  hook.unmount();
+});
+
+test('the own pubkey re-reads the own profile changed on another device', async () => {
+  const api = createDesktopMockApi();
+  const readProfile = api.getMyProfile.bind(api);
+  const profile = vi.spyOn(api, 'getMyProfile');
+  const harness = createShellHookHarness({ hash: '/timeline?topic=kukuri%3Atopic%3Ageneral' });
+  const workspace = openTransientColumn(harness.store.getState().workspaceState, { id: 'profile-own', kind: 'profile', pinned: false });
+  harness.store.getState().patchState({ workspaceState: workspace });
+  const args = shellArgs(api);
+  const hook = renderHook(() => useDesktopShellData(args), { wrapper: harness.wrapper });
+  await flush(1_000);
+  const own = harness.store.getState().syncStatus.local_author_pubkey;
+  expect(own).toBeTruthy();
+  profile.mockImplementation(async () => ({ ...(await readProfile()), display_name: 'changed on another device' }));
+  profile.mockClear();
+
+  // 他の人の pubkey では、自分の profile を読み直さない。
+  await act(async () => { receive?.({ payload: { type: 'author_relationship_changed', pubkey: peer } }); });
+  await flush();
+  expect(profile).not.toHaveBeenCalled();
+
+  await act(async () => { receive?.({ payload: { type: 'author_relationship_changed', pubkey: own } }); });
+  await vi.waitFor(() => expect(harness.store.getState().localProfile?.display_name).toBe('changed on another device'));
   hook.unmount();
 });

@@ -390,7 +390,8 @@ pub struct ServiceHandles {
     pub(crate) account_sync: Arc<account_sync_fetch::AccountSyncState>,
     /// リンクプレビューの record の読取りの上限（ADR 0051 §7、#1220 AC-2f）。
     pub(crate) link_preview_reads: Arc<link_preview_record::LinkPreviewReads>,
-    /// 自分を指す相手の follow の edge を新しく保存したときに、相手の pubkey を知らせる(#1521 AC-1b)。
+    /// 自分を指す相手の follow の edge を新しく保存したときに、相手の pubkey を知らせる(#1521 AC-1b)。本人の別の端末で
+    /// 変えた自分の profile を採ったときは、自分の pubkey を知らせる(#1220 AC-3b)。
     pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
 }
 
@@ -730,7 +731,8 @@ impl AppService {
         Arc::clone(&self.notification_inserted_notify)
     }
 
-    /// 自分を指す相手の follow の edge を新しく保存したときの、相手の pubkey(#1521 AC-1b)。
+    /// 自分を指す相手の follow の edge を新しく保存したときの、相手の pubkey(#1521 AC-1b)。本人の別の端末で変えた自分の
+    /// profile を採ったときは、自分の pubkey(#1220 AC-3b)。
     pub fn subscribe_author_relationship_changes(
         &self,
     ) -> tokio::sync::broadcast::Receiver<String> {

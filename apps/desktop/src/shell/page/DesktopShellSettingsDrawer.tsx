@@ -166,6 +166,7 @@ export function DesktopShellSettingsDrawer({
   const setDeveloperModeEnabled = useDesktopShellFieldSetter('developerModeEnabled');
   const setAdultContentEnabled = useDesktopShellFieldSetter('adultContentEnabled');
   const patchState = useDesktopShellStore((s) => s.patchState);
+  const accountSync = useDesktopShellStore((s) => s.syncStatus.account_sync);
   // #858: canonical は Rust 側。コマンド成功後の値だけを mirror する(失敗時は既定 OFF 側に倒れる)。
   const handleAdultContentEnabledChange = async (enabled: boolean) => {
     try {
@@ -259,6 +260,7 @@ export function DesktopShellSettingsDrawer({
         <AccountKeyPanel
           onOpenDeviceBackup={IS_WEB_RUNTIME ? undefined : () => openDiagnosticSettings('backup')}
           showBrowserStorage={IS_WEB_RUNTIME}
+          accountSync={accountSync}
         />
       ),
     },

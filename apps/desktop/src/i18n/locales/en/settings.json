@@ -42,6 +42,15 @@
       "persisted": "This browser does not delete this site's data automatically. If you clear the site data yourself, your account keys are deleted too.",
       "notPersisted": "This browser may delete this site's data automatically when storage runs low or after a long time without use. If that happens, your account keys are deleted too.",
       "recovery": "If you export your account key, you can bring the account back by importing it from Add account. You can also move it from another device. Not all history, such as posts, comes back."
+    },
+    "accountSync": {
+      "title": "Sync with your other devices",
+      "synced": "In sync.",
+      "noPeers": "No other device of yours has been found. If you use this account on another device, it syncs when you open the app there.",
+      "behind": "Loading changes from your other devices.",
+      "pendingWrites": "Some changes have not been sent to your other devices yet.",
+      "fetchFailed": "Changes could not be loaded from your other devices. It will try again at the next chance.",
+      "rebuilding": "Rebuilding the sync records of this device."
     }
   },
   "accountTransfer": {
