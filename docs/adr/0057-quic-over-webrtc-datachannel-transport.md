@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10 の AC-1（§7）・AC-2（§9）、STUN の server は #1483（§6））
+Accepted（Issue #1421 W9 AC-1。実装は同 Issue の AC-2、接続交渉・経路制御は #1422 W10 の AC-1（§7）・AC-2（§9）、STUN の server は #1483（§6）、native の送信の部分的な信頼性は #1575（§2））
 
 ## Context
 
@@ -39,8 +39,19 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 
 ### 2. DataChannel と datagram の形
 
-- session ごとに DataChannel を 1 本だけ持つ。binary、`ordered=false`、`maxRetransmits=0`、`negotiated=true`（stream id 0）、label `kukuri-quic/1`。順序と再送は QUIC の stream が担う。
+- session ごとに DataChannel を 1 本だけ持つ。binary、`ordered=false`、`negotiated=true`（stream id 0）、label `kukuri-quic/1`。順序と再送は QUIC の stream が担う。
   `negotiated=true` では label は相手へ送られないので、transport の版の互換は W10 の専用 ALPN の値で判定する。
+- 送信の部分的な信頼性は、browser が `maxRetransmits=0`、native（str0m）が寿命 1 ms（`Reliability::MaxPacketLifetime { lifetime: 1 }`）とする（#1575、2026-10-04 ユーザー判断）。
+  部分的な信頼性は送り手だけの設定で、受け手の扱いは変わらないので、旧版の相手ともそのまま通信できる。
+  - str0m 0.24 が使う sctp-proto 0.10.5 は、再送 0 回の chunk を最初の送信の時点で abandon 済みにする（RFC 7496 §3.1 では、上限を超える再送をしようとした時点で abandon する）。
+    そのため送り手は SACK のたびに送信中の chunk を飛ばす FORWARD-TSN を出し、受け手は受け取り済みの範囲の FORWARD-TSN に SACK を返して、データが流れる間この往復が続く。
+    同じ FORWARD-TSN は、2 つの chunk に分かれた QUIC の datagram の先頭の断片を受け手に捨てさせる。
+  - 寿命 1 ms の chunk は、最初の送信では abandon されず（経過 0 ms）、損失を検出して再送する時点で abandon される。損失の無い経路では FORWARD-TSN が出ない。
+    代わりに、失った chunk を SCTP が 1 回だけ送り直す（その再送と QUIC の再送が重なりうる）。
+  - browser（Chrome の dcSCTP）は、失ったと判定した chunk だけを abandon するので `maxRetransmits=0` のままにする。
+  - #1575 より前は native も `maxRetransmits=0` だった。W10 AC-2 の J3（`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`、debug build）では往復の処理で転送が遅れ、
+    1 MiB を custom で受け取る段が期限（20 秒）を超えることがあった（手元の再現で 140 回中 5 回）。
+  - sctp-proto が再送 0 回の chunk を再送の時点で abandon するようになれば、native も `maxRetransmits=0` へ戻せる。戻すときは J3 を同じ条件で繰り返して確かめる。
 - DataChannel の 1 message に QUIC の datagram を 1 つだけ載せる。`segment_size` のある `Transmit` は segment ごとに 1 message へ分けて送る（各 segment は独立した QUIC の datagram なので、再組立ては要らない）。
   `max_transmit_segments` は 64 にする。iroh は Endpoint の GSO の batch 数を全 transport の最小値にする（`socket/transports.rs` の `max_transmit_segments`）ので、1 にすると native の UDP の GSO まで止まる。
 - 送れる datagram（segment）の最大は 16 KiB（DataChannel の相互運用で安全な上限）。これを超える datagram は送らずに破棄する（UDP の MTU 超過と同じ扱いで、QUIC の MTU discovery が下げる）。
