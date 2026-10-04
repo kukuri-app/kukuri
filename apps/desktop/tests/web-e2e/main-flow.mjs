@@ -542,8 +542,8 @@ async function openSettings(browser, section) {
   await browser.$(`[data-testid="settings-section-${section}"]`).click();
 }
 
-/** 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の接続設定）の変更が反映される（2026-10-03 ユーザー判断）。
- * 開発者モード（Community Node の状態の表示）は `assertConnected` で有効にした後に呼ぶ。 */
+/** 主要な 3 つの設定（2026-10-03 ユーザー判断）のうち、表示と言語、成人向け表示の変更が反映される（Community Node の
+ * 接続設定は `changeCommunityNodeSettings`）。 */
 async function changeSettings(browser) {
   await openSettings(browser, 'appearance');
   await browser.$('button[role=radio][aria-label="Light"]').click();
@@ -576,8 +576,9 @@ async function changeSettings(browser) {
 }
 
 /** Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
- * 同意し直して認証し直せる。保存と同意し直しで通信の stack を作り直した後の Web は、受信の offer（参加 record・ACK）を
- * 送れず、作り直しの前に作った private channel を新しい参加者へ提供できない（#1549）ので、a を使う段の最後に行う。 */
+ * 同意し直して認証し直せる。開発者モード（Community Node の状態の表示）は `assertConnected` で有効にした後に呼ぶ。
+ * 保存と同意し直しで通信の stack を作り直した後の Web は、作り直す前から通信していた native へ受信の offer（参加
+ * record・ACK）を送れない（#1549）ので、a を使う段の最後に行う。 */
 async function changeCommunityNodeSettings(browser) {
   await openSettings(browser, 'community-node');
   const extra = 'http://127.0.0.1:9';
