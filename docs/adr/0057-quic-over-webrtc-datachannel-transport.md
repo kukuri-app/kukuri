@@ -110,12 +110,13 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     #1482 の時点では、その接続が QUIC の idle 期限（30 秒）で閉じるまで止まり、その間は同じ相手への新しい接続の最初の送信も届かなかった。
     #1571 で、iroh の fork に次の 2 つを載せた（2026-10-05 ユーザー判断）。
     - 外された custom path は選ばない（選ばれていれば外す）。同じ相手への新しい接続は、その path へ最初の送信を向けず、relay で始まる。
-    - 外された custom path だけが残った接続は、3 秒で閉じる。その接続の利用者は、接続し直して relay で続ける。
+    - 外された custom path だけが残った接続は、3 秒で閉じる。その接続の利用者は、接続し直して relay で続ける。登録より前に local addr を外された接続も、登録の時点で同じ扱いにする。
+    - custom transport の local addr の変化は、相手ごとの actor の run loop の分岐だけが受け取り、ほかの処理は最後に受け取った値を読む。ほかの処理が先に受け取ると、その変化で外された path を閉じる処理が走らない（fork の単体試験 `reading_custom_addrs_leaves_the_update_to_the_watcher_branch`）。
     判定は `a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_peer`（失ってから 2 秒以内に新しい接続で通信でき、止まった接続は 4 秒以内に閉じる）。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 - fork の独自差分: 上の custom path を閉じる変更（#1482）と、外された custom path を選ばず、それだけが残った接続を閉じる変更（#1571）は、上流へ PR を出さず fork だけで持つ（2026-10-04・2026-10-05 ユーザー判断、#1213 D-2 の例外）。
-  branch `kukuri/connection-start-loss-v1.3.0` の rev `2acfa7e1`（`c47e860f` の上の 3 commit）。fork の rev を上げるときは、この 3 commit を載せ直し、上の 3 つの試験を通す。
+  branch `kukuri/connection-start-loss-v1.3.0` の rev `a0e37e8a`（`c47e860f` の上の 4 commit）。fork の rev を上げるときは、この 4 commit を載せ直し、上の 3 つの試験と fork の単体試験を通す。
 
 ### 6. STUN
 

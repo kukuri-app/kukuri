@@ -14,7 +14,7 @@ multi-thread runtime に依存する。基準 commit `8bd3badcf`（main、2026-0
 
 | 対象 | 結果 | 止まる原因 |
 | --- | --- | --- |
-| iroh（`KingYoSun/iroh` fork rev `4d7b079c`、上流 v1.3.0＋上流 #4447。#1422 W10 AC-1 で #4565 を足した `c47e860f`、#1482 で custom path を閉じる変更を足した `523655a7`、#1571 で外された custom path を選ばない変更を足した `2acfa7e1` へ更新）、iroh-gossip（`net`）、iroh-docs、iroh-blobs | 既定 feature を外すと通る | なし（docs・blobs はメモリの store だけ） |
+| iroh（`KingYoSun/iroh` fork rev `4d7b079c`、上流 v1.3.0＋上流 #4447。#1422 W10 AC-1 で #4565 を足した `c47e860f`、#1482 で custom path を閉じる変更を足した `523655a7`、#1571 で外された custom path を選ばない変更を足した `a0e37e8a` へ更新）、iroh-gossip（`net`）、iroh-docs、iroh-blobs | 既定 feature を外すと通る | なし（docs・blobs はメモリの store だけ） |
 | `kukuri-core` | clang があれば通る | secp256k1-sys の C build |
 | `kukuri-metaverse-host` | uuid に `js` を足すと通る（rapier3d を含む） | uuid の乱数源 |
 | reqwest（`json`・`query`・`rustls`） | 通る | なし |
@@ -85,7 +85,7 @@ platform の印が無い module（`runtime/*_api.rs`・community_node の通信�
 - n0-mainline・iroh-mainline-address-lookup（DHT）は native だけで使う。ブラウザには UDP が無いので DHT は成り立たない。Web の接続先の発見は relay・Community Node の rendezvous・peer ticket に限る。未使用の pkarr 依存は W1 AC-2 で消した。
 - uuid は wasm で `js` を有効にする。getrandom の backend は `.cargo/config.toml` の wasm32 target の rustflags（`getrandom_backend="wasm_js"`）で指定する。
 - secp256k1 はそのまま使う。wasm の build には clang が要る（CI の Linux runner。Windows のローカルでは clang 入りの Docker image。手順は W1 AC-2 で `docs/runbooks/dev.md` に書く）。wasm だけ pure Rust の実装へ替えると、同じ鍵・署名の処理が 2 つになる。
-- iroh は fork rev `2acfa7e1`（上流 v1.3.0＋#4447＋#4565 の cherry-pick＋#1482・#1571 の変更。#4565 は接続中に custom path を追加する `Endpoint::add_remote_addrs`。#1422 W10 AC-1）を使い、Web 固有の差分を fork へ加えない（#1213 D-2）。
+- iroh は fork rev `a0e37e8a`（上流 v1.3.0＋#4447＋#4565 の cherry-pick＋#1482・#1571 の変更。#4565 は接続中に custom path を追加する `Endpoint::add_remote_addrs`。#1422 W10 AC-1）を使い、Web 固有の差分を fork へ加えない（#1213 D-2）。
   例外は #1482・#1571 の、custom transport が外した local addr の custom path を閉じ、選ばない変更（上流へ PR を出さない。ADR 0057 §5）。
   iroh-docs・iroh-blobs は fork せず、上流の版（iroh-docs は root `Cargo.toml` の patch rev）を使う（#1213 D-3 の改訂）。
 

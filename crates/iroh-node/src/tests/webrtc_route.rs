@@ -228,7 +228,7 @@ async fn a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay(
 async fn a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_peer() -> Result<()>
 {
     let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
-    let (web, web_transport) = node(&relay, true).await?;
+    let (web, _web_transport) = node(&relay, true).await?;
     let (native, _native_transport) = node(&relay, false).await?;
     let native_addr = via_relay(&native, &relay);
     let _demand = web_e2e::demand(&web, native_addr.clone()).await?;
@@ -242,11 +242,9 @@ async fn a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_p
         .endpoint()
         .connect(native_addr.clone(), iroh_blobs::ALPN)
         .await?;
-    // 相手の connection ID（確立の後に届く）を受け取らせないまま、custom path を失わせる。
-    web_transport.set_receive_blocked(true);
+    // 接続が返った直後、相手の connection ID（確立の後に届く）より先に、同期の reset で custom path を失わせる。
     web.webrtc_signaling().context("webrtc")?.reset();
     let lost_at = n0_future::time::Instant::now();
-    web_transport.set_receive_blocked(false);
     let fresh = n0_future::time::timeout(
         Duration::from_secs(2),
         web.endpoint()
