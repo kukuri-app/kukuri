@@ -416,3 +416,31 @@ async fn resync_requires_a_current_participant_with_a_bound_proof() {
     );
     owner.shutdown().await;
 }
+
+// 入力ごとの処理は、受信した Dome host の heartbeat の台帳を読まない(INVAR-4。台帳の件数に比例する走査をしない)。
+// 台帳の lock を握ったままでも、別の端末と所有者本人の input が処理される。
+#[tokio::test]
+async fn inputs_do_not_read_the_received_heartbeat_ledger() {
+    let (owner, _, _, _) = local_app_with_memory_services();
+    let visitor = generate_keys();
+    let (context, dome) = hosted_dome(&owner, ChannelRef::Public, 8).await;
+
+    let ledger = owner.dome_host_heartbeats.lock().await;
+    timeout(Duration::from_secs(10), async {
+        let keep_alive = DomeSessionInputKindV1::KeepAlive;
+        for (sequence, input) in [(1, JOIN), (2, keep_alive)] {
+            snapshot(
+                serve(
+                    &owner,
+                    input_request(&owner, &visitor, &dome, sequence, input).await,
+                )
+                .await,
+            );
+        }
+        owner_input(&owner, &context, &dome, 1, JOIN).await;
+    })
+    .await
+    .expect("the inputs never wait for the heartbeat ledger");
+    drop(ledger);
+    owner.shutdown().await;
+}

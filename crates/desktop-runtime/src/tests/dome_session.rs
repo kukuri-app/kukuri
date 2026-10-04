@@ -297,8 +297,8 @@ async fn the_owner_keeps_answering_after_a_stack_rebuild_and_an_unreachable_host
         "{error:#}"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "the failure is bounded by the connect timeout: {:?}",
+        started.elapsed() <= Duration::from_secs(10),
+        "the Join fails within 10 seconds (AC-1 5): {:?}",
         started.elapsed()
     );
     owner.shutdown().await;
