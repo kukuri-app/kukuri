@@ -38,3 +38,10 @@ export function latestChatBubbleFromMessage(
     expiresAt: now + METAVERSE_CHAT_BUBBLE_TTL_MS,
   };
 }
+
+/** keepalive の拒否のうち、退避が要るもの(block と access の失効)の理由。 */
+export function keepAliveEvacuationReason(error: unknown): 'blocked' | 'access_revoked' | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('BLOCKED')) return 'blocked';
+  return message.includes('ACCESS_DENIED') || message.includes('ACCESS_REVOKED') ? 'access_revoked' : null;
+}

@@ -933,4 +933,21 @@ describe('useMetaverseRoomSession', () => {
     );
     expect(session.result.current.admittedRoom).toBeNull();
   });
+
+  // #1527: 一覧の取り直し(約 3 秒ごと)で部屋の object が作り直されても、5 秒ごとの keepalive を止めない(ADR 0045)。
+  test('keeps sending keepalives while the room list is re-fetched', async () => {
+    vi.useFakeTimers();
+    const api: DesktopApi = { ...createDesktopMockApi() };
+    const submit = vi.spyOn(api, 'submitDomeSessionInput');
+    const session = renderSession({ api });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(session.result.current.admittedRoom?.room_id).toBe(room.room_id);
+
+    for (let elapsed = 0; elapsed < 15_000; elapsed += 3_000) {
+      session.rerender({ rooms: [{ ...room }], sync: syncStatus() });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    }
+    const keepAlives = submit.mock.calls.filter(([, , , input]) => input.type === 'keep_alive');
+    expect(keepAlives.length).toBeGreaterThanOrEqual(2);
+  });
 });
