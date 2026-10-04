@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
 use js_sys::{Array, Object, Reflect, Uint8Array};
+use kukuri_core::AccountHistoryCursor;
 use kukuri_store::{
     ContentCacheStore, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
     REMOTE_CACHE_TOUCH_INTERVAL_MS, REMOTE_CACHE_UNUSED_MS, RemoteCacheReservation,
@@ -583,6 +584,69 @@ impl ContentCacheStore for IndexedDbCache {
             "owned record was not stored"
         );
         Ok(())
+    }
+
+    /// 保護参照の範囲の record を、`refs` の key（参照, kind, key）の順に位置の次から読む（native と同じ順。#1211 AC-3）。
+    async fn protected_records_after(
+        &self,
+        reference: &str,
+        after: &AccountHistoryCursor,
+        limit: usize,
+    ) -> Result<Vec<(AccountHistoryCursor, Vec<u8>)>> {
+        let (reference, after) = (reference.to_owned(), after.clone());
+        self.run(move |db| async move {
+            // 範囲より前の位置は、範囲の先頭として読む。
+            let lower = match after.reference < reference {
+                true => vec![JsValue::from_str(&reference)],
+                false => vec![
+                    after.reference.as_str().into(),
+                    "record".into(),
+                    record_key(&after.replica, &after.key, &after.author).into(),
+                ],
+            };
+            let range =
+                crate::rows::between(&lower, &[prefix_upper_bound(&reference)], true, true)?;
+            let tx = Tx::begin(&db)?;
+            let request = tx.refs.open_cursor_with_range(&range).map_err(js_error)?;
+            let mut keys = Vec::new();
+            while keys.len() < limit
+                && let Some(cursor) = idb::next(&request).await?
+            {
+                let entry = cursor.value().map_err(js_error)?;
+                let text = |name: &str| {
+                    Reflect::get(&entry, &name.into())
+                        .ok()
+                        .and_then(|value| value.as_string())
+                        .unwrap_or_default()
+                };
+                if text("kind") == "record" {
+                    keys.push((text("reference"), text("key")));
+                }
+                cursor.continue_().map_err(js_error)?;
+            }
+            let now = now_ms()?;
+            let mut records = Vec::with_capacity(keys.len());
+            for (reference, key) in keys {
+                let Some(row) = tx.row("record", &key).await? else {
+                    continue;
+                };
+                let Some(record) = row.record.clone() else {
+                    continue;
+                };
+                if let Some(payload) = tx.payload(row, now).await? {
+                    let position = AccountHistoryCursor {
+                        reference,
+                        replica: record.replica,
+                        key: record.rkey,
+                        author: record.author,
+                    };
+                    records.push((position, payload));
+                }
+            }
+            tx.commit().await?;
+            Ok(records)
+        })
+        .await
     }
 
     async fn reclaim_remote_cache_step(&self) -> Result<usize> {

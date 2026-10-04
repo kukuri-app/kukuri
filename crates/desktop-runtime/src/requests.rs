@@ -797,17 +797,21 @@ impl std::fmt::Debug for ImportAccountKeyRequest {
     }
 }
 
-/// #1211: 移行先が開くリンク。招待の秘密を含むので Debug で redact する。
+/// #1211: 移行先が開くリンクと、受ける投稿の履歴の範囲（移さないときは `None`。AC-3）。リンクは招待の秘密を含む
+/// ので Debug で redact する。
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct OpenAccountTransferRequest {
     pub link: String,
+    #[serde(default)]
+    pub history: Option<kukuri_core::AccountTransferHistory>,
 }
 
 impl std::fmt::Debug for OpenAccountTransferRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAccountTransferRequest")
             .field("link", &"<redacted>")
+            .field("history", &self.history)
             .finish()
     }
 }

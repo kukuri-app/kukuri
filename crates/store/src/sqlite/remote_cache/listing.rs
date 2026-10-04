@@ -9,7 +9,7 @@ use super::*;
 // 一覧の 1 行（`RemoteRecordKey`）は値を読まず、record の hash と長さだけを返す。
 
 /// `prefix` で始まる key の上界(これ未満が範囲)。末尾の文字を次の文字に置き換える。
-fn prefix_upper_bound(prefix: &str) -> Option<String> {
+pub(super) fn prefix_upper_bound(prefix: &str) -> Option<String> {
     let mut chars = prefix.chars();
     let last = chars.next_back()?;
     let next = char::from_u32(last as u32 + 1)?;

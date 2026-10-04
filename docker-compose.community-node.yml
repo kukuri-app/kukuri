@@ -177,6 +177,20 @@ services:
       - "${CN_IROH_RELAY_HTTPS_HOST_BIND_IP:-127.0.0.1}:${CN_IROH_RELAY_HTTPS_PORT:-13443}:3443"
       - "${CN_IROH_RELAY_QUIC_HOST_BIND_IP:-127.0.0.1}:${CN_IROH_RELAY_QUIC_PORT:-17842}:7842/udp"
 
+  # STUN（binding だけ。#1483、ADR 0057 §6）。relay と同じ host で、relay とは別の process として動かす。
+  # クライアントは relay の host の 3478/udp へ送るので、host 側の port は変えない。
+  cn-stun:
+    logging: *cn-logging
+    build:
+      context: .
+      dockerfile: docker/cn/Dockerfile
+      args:
+        TARGET_PACKAGES: kukuri-cn-stun
+        TARGET_BIN: cn-stun
+    restart: unless-stopped
+    ports:
+      - "${CN_STUN_HOST_BIND_IP:-127.0.0.1}:3478:3478/udp"
+
   # 常駐 indexing ワーカー（#613 / #615）。docs replica sync → safety scan → index 投影。
   # provider 未構成なら ingest 無効の fail-closed 常駐（scan なしで index に載せない）。
   # port は status endpoint の loopback bind のみで、iroh 通信は outbound で成立する。

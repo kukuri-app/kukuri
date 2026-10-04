@@ -103,6 +103,15 @@ impl crate::ContentCacheStore for SqliteStore {
         SqliteStore::put_owned_record(self, replica, key, author, payload).await
     }
 
+    async fn protected_records_after(
+        &self,
+        reference: &str,
+        after: &kukuri_core::AccountHistoryCursor,
+        limit: usize,
+    ) -> Result<Vec<(kukuri_core::AccountHistoryCursor, Vec<u8>)>> {
+        SqliteStore::protected_records_after(self, reference, after, limit).await
+    }
+
     async fn reclaim_remote_cache_step(&self) -> Result<usize> {
         SqliteStore::reclaim_remote_cache_step(self).await
     }

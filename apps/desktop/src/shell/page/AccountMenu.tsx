@@ -40,6 +40,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   const [display, setDisplay] = useState<AccountDisplay[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [receivingHistory, setReceivingHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -66,7 +67,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   useAccountTransferLink((link) => { setOpen(false); setError(null); setTransferLink(link); setDialog('transfer-target'); });
   useEffect(() => onAccountAddRequest(() => { setOpen(false); setError(null); setDialog('import'); void refresh(); }), [refresh]);
   const openDialog = (next: 'import' | 'logout') => { moveFocus.current = true; setOpen(false); setError(null); setDialog(next); };
-  const closeDialog = () => { if (!pending) { setDialog(null); setTransferLink(''); moveFocus.current = false; } };
+  const closeDialog = () => { if (!pending && !receivingHistory) { setDialog(null); setTransferLink(''); moveFocus.current = false; } };
   return <>
     <Popover open={open} onOpenChange={(next) => { if (next) onOpen(); moveFocus.current = false; setOpen(next); }}>
       <PopoverTrigger asChild>
@@ -107,15 +108,17 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
       </PopoverContent>
     </Popover>
     <Dialog open={dialog !== null} onOpenChange={(next) => { if (!next) closeDialog(); }}>
-      <DialogContent className='w-[min(34rem,94vw)] max-h-[90vh] overflow-y-auto' onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}
+      <DialogContent hideClose={receivingHistory} className='w-[min(34rem,94vw)] max-h-[90vh] overflow-y-auto' onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}
         onOpenAutoFocus={(event) => { if (dialog === 'logout') { event.preventDefault(); document.querySelector<HTMLButtonElement>('[data-testid="logout-cancel"]')?.focus(); } }}>
         <DialogHeader><DialogTitle>{t(dialogTitle[dialog ?? 'import'])}</DialogTitle><DialogDescription>{t(dialogDescription[dialog ?? 'import'])}</DialogDescription></DialogHeader>
         <DialogBody>
           {dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
-            {/* #1211: 移行先は受け取りが終わったら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。 */}
+            {/* #1211: 移行先は受け取りが終わったら、受け取ったアカウントへ切り替える（使っているアカウントなら切り替えない）。
+                履歴を受けている間は閉じさせず、「戻る」も出さない（終えるのは「やめる」だけ。2026-10-04 ユーザー決定）。 */}
             <AccountTransferPanel key={`${dialog}:${transferLink}`} role={dialog === 'transfer-source' ? 'source' : 'target'} initialLink={transferLink}
-              onCompleted={(id) => void listAccounts().then((accounts) => accounts.active_account_id === id ? undefined : switchTo(id)).catch(() => setError(t('accountMenu.actionFailed')))} />
-            <Button variant='ghost' className='mt-4' onClick={() => { setTransferLink(''); setDialog('import'); }}>{t('accountMenu.back')}</Button>
+              onCompleted={(id) => void listAccounts().then((accounts) => accounts.active_account_id === id ? undefined : switchTo(id)).catch(() => setError(t('accountMenu.actionFailed')))}
+              onReceivingHistory={setReceivingHistory} />
+            {receivingHistory ? null : <Button variant='ghost' className='mt-4' onClick={() => { setTransferLink(''); setDialog('import'); }}>{t('accountMenu.back')}</Button>}
           </> : dialog === 'import' ? <>
             <Button disabled={pending || !active} className='mb-4 w-full' data-testid='create-new-account' onClick={() => {
               if (!active || pending) return;

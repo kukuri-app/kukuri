@@ -3490,6 +3490,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kukuri-cn-stun"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "kukuri-cn-runtime-support",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "kukuri-cn-trust"
 version = "0.3.3"
 dependencies = [

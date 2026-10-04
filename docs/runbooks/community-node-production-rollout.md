@@ -1,6 +1,6 @@
 # Community Node Production Rollout / Live Verification
 
-最終更新日: 2026-09-24
+最終更新日: 2026-10-04
 
 専用 `openai-moderation` を使用する配備は、[動画・OpenAI Moderationの運用](community-node-openai-moderation.md) の設定、tmpfs、合成readiness probe、構成世代更新も適用する。
 
@@ -248,7 +248,7 @@ cd /var/lib/kukuri/community-node
 COMPOSE=/var/lib/toolbox/kukuri/bin/docker-compose
 sudo "$COMPOSE" ps
 for container in community-node-cn-user-api-1 community-node-cn-iroh-relay-1 \
-  community-node-cn-indexer-1; do
+  community-node-cn-stun-1 community-node-cn-indexer-1; do
   sudo docker inspect "$container" \
     --format '{{.Name}}|{{.Config.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}'
 done
@@ -426,6 +426,35 @@ curl -fsS "https://<api-domain>/healthz"
 curl -fsS "https://<relay-domain>/ping"
 curl -fsS "https://<api-domain>/.well-known/kukuri/community-node.json"
 curl -fsS "https://<api-domain>/v1/node/manifest"
+```
+
+STUN（`cn-stun`、#1483）は、VM の外の端末から `3478/udp` へ Binding Request を送り、同じ
+transaction id の成功応答（XOR-MAPPED-ADDRESS つき）が返ることを確かめる。応答の address は
+確認した端末の IP なので、記録には書かない。
+
+```bash
+python3 - <relay-domain> <<'PY'
+import os, socket, sys
+tid = os.urandom(12)
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.settimeout(3)
+    s.sendto(bytes.fromhex("000100002112a442") + tid, (sys.argv[1], 3478))
+    reply = s.recv(64)
+assert reply[:2] == b"\x01\x01" and reply[8:20] == tid and reply[20:22] == b"\x00\x20", reply.hex()
+print("stun ok")
+PY
+```
+
+ブラウザ（Chromium）の offer に server reflexive の候補が載ることは、任意の HTTPS の page の
+DevTools console で確かめる。
+
+```js
+const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:<relay-domain>:3478' }] });
+pc.createDataChannel('probe');
+await pc.setLocalDescription(await pc.createOffer());
+await new Promise((resolve) => setTimeout(resolve, 3000));
+console.log(/ typ srflx /.test(pc.localDescription.sdp) ? 'srflx ok' : 'srflx missing');
+pc.close();
 ```
 
 manifestが示すterms / privacy / external-transmission / moderation-policy / abuse-policy /
@@ -664,6 +693,7 @@ Terraform plan/apply/final plan:
 startup desired/server SHA-256:
 container / timer:
 readiness:
+stun / browser srflx:
 truth / projection / relation:
 live post ID / media hash / posted_at:
 media local-miss -> ephemeral-success -> later local-miss:

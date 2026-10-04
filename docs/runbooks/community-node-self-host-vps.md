@@ -1,6 +1,6 @@
 # Community Node Self-Host With VPS Edge
 
-最終更新日: 2026-06-05
+最終更新日: 2026-10-04
 
 ## 目的
 
@@ -150,6 +150,18 @@ mkdir -p docker/cn/certs
 cp /path/to/iroh-relay.example.com.crt docker/cn/certs/default.crt
 cp /path/to/iroh-relay.example.com.key docker/cn/certs/default.key
 ```
+
+## STUN（3478/udp）を提供しない
+
+Web 版のクライアントは、WebRTC の直接経路の候補（server reflexive）を得るため、relay の host の `3478/udp` へ STUN の要求を送る（ADR 0057 §6）。
+STUN は要求の送信元の address を見て返すので、VPS で送信元を書き換えて（masquerade）Home へ転送するこの構成では、Home の `cn-stun` は VPS の address しか返せない。
+このため VPS edge 構成では STUN を提供しない。VPS の firewall で `3478/udp` を開けず、Home の `CN_STUN_HOST_BIND_IP` は既定の loopback のままにする（service を指定せずに `up` しても外からは届かない）。
+
+STUN が無いときのクライアントの挙動:
+
+- WebRTC の交渉は server reflexive の候補なしで進む。ブラウザは候補集めで最大 3 秒、desktop はブラウザからの交渉に応じるとき 500 ms 待つ。
+- NAT の内側同士では直接経路が成立しにくく、relay（Relay Fallback）で通信する。通信の機能は失われない。
+- native 同士の通信は STUN を使わないので変わらない。
 
 ## 起動
 

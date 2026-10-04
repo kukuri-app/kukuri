@@ -2,6 +2,7 @@
 //! WP-H5 PR2 で timeline_runtime_support.rs から分割。View 変換は timeline_view_support.rs。
 
 use super::*;
+use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
 /// 購読と replica の読み書きの対象(#1280)。app-api の内部だけで使う。
 ///
@@ -566,7 +567,14 @@ impl AppService {
     /// 対象は、購読していない topic の投稿でありうる repost 元と profile の投稿。projection に取り下げが
     /// 既にあれば何もしない。確認は確認先(replica と object id の組)ごとに間隔を空け、
     /// `withdrawals/<object id>/state` を key 指定で読むだけで、replica は走査しない。
-    pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
+    /// 署名した時刻(`created_at` 秒)が分かる投稿は、旧形式の topic replica より先に、その日の時間 bucket を読む
+    /// (ADR 0054 §2: 取り下げは元投稿の bucket に置く。#1211 AC-3)。
+    pub(crate) fn schedule_withdrawal_check(
+        &self,
+        topic_id: &str,
+        object_id: &EnvelopeId,
+        created_at: Option<i64>,
+    ) {
         let Ok(permit) = self
             .services
             .withdrawal_checks
@@ -586,6 +594,13 @@ impl AppService {
         {
             return;
         }
+        let bucket = created_at.and_then(|created_at| {
+            let scope = BucketScope::Topic {
+                topic_id: topic_id.to_string(),
+            };
+            let bucket = TimeBucket::from_unix_seconds(created_at).ok()?;
+            Some(BucketReplica::new(scope, bucket).ok()?.replica_id())
+        });
         let services = self.services.clone();
         let object_id = object_id.clone();
         n0_future::task::spawn(async move {
@@ -600,14 +615,19 @@ impl AppService {
                     return Ok::<_, anyhow::Error>(());
                 }
                 let docs_sync = services.docs_sync.as_ref();
-                hydrate_post_withdrawal_for_object(
-                    docs_sync,
-                    projection_store,
-                    &replica,
-                    &object_id,
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await?;
+                for replica in bucket.iter().chain([&replica]) {
+                    let applied = hydrate_post_withdrawal_for_object(
+                        docs_sync,
+                        projection_store,
+                        replica,
+                        &object_id,
+                        DocFetchPolicy::LocalThenRemote,
+                    )
+                    .await?;
+                    if applied == Some(PostWithdrawalHydration::Applied) {
+                        break;
+                    }
+                }
                 Ok(())
             }
             .await;

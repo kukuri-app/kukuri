@@ -1,8 +1,9 @@
 //! 本人の端末間の account 同期の導出と item の封（ADR 0061 §1・§2）。
 
 use crate::{
-    AccountSyncItem, AccountSyncItemKey, ChannelId, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES,
-    Pubkey, SealedAccountSyncItem, receive_route_for_account,
+    AccountSyncItem, AccountSyncItemKey, ChannelId, ChannelParticipantV1, EnvelopeId, FollowEdge,
+    FollowEdgeStatus, KukuriKeys, MAX_ACCOUNT_SYNC_ITEM_BYTES, Pubkey, SealedAccountSyncItem,
+    receive_route_for_account,
 };
 
 const SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -222,4 +223,55 @@ fn channel_epoch_items_keep_their_op_id_across_rewrites() {
         .docs_key(),
         "channel/726f6f6d/membership"
     );
+}
+
+/// 参加者の item と、参加者との follow の item は docs の key を往復でき、同じ record・edge から作り直しても版が
+/// 変わらない（#1219 AC-5）。
+#[test]
+fn participant_items_round_trip_and_keep_their_version() {
+    let channel = ChannelId::new("room");
+    let participant = keys(SECRET).public_key();
+    let joined = ChannelParticipantV1 {
+        epoch_id: "epoch-1".into(),
+        joined_at: 10,
+        left_at: None,
+    };
+    let first = AccountSyncItem::channel_participant(&channel, &participant, &joined).unwrap();
+    assert_eq!(
+        first,
+        AccountSyncItem::channel_participant(&channel, &participant, &joined).unwrap()
+    );
+    let left = AccountSyncItem::channel_participant(
+        &channel,
+        &participant,
+        &ChannelParticipantV1 {
+            left_at: Some(20),
+            ..joined.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!((first.updated_at, left.updated_at), (10, 20));
+    assert_ne!(first.op_id, left.op_id);
+    let follow = AccountSyncItem::participant_follow(&FollowEdge {
+        subject_pubkey: participant.clone(),
+        target_pubkey: keys(OTHER_SECRET).public_key(),
+        status: FollowEdgeStatus::Active,
+        updated_at: 30,
+        envelope_id: EnvelopeId::from("ab".repeat(32)),
+    })
+    .unwrap();
+    assert_eq!(
+        (follow.op_id.as_str(), follow.updated_at),
+        ("ab".repeat(16).as_str(), 30)
+    );
+    assert_eq!(
+        first.key.docs_key(),
+        format!("channel/726f6f6d/participant/{}", participant.as_str())
+    );
+    for item in [first, follow] {
+        assert_eq!(
+            AccountSyncItemKey::from_docs_key(&item.key.docs_key()).unwrap(),
+            item.key
+        );
+    }
 }

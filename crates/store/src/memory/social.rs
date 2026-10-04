@@ -284,6 +284,32 @@ impl SocialProjectionStore for MemoryStore {
         Ok(self.touched(page.len(), page))
     }
 
+    async fn is_active_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .private_channel_participants
+            .read()
+            .await
+            .values()
+            .any(|row| {
+                row.channel_id == channel_id
+                    && row.participant_pubkey == participant_pubkey
+                    && row.left_at.is_none()
+            }))
+    }
+
+    async fn has_private_channel_member(&self, participant_pubkey: &str) -> Result<bool> {
+        Ok(self
+            .private_channel_participants
+            .read()
+            .await
+            .values()
+            .any(|row| row.participant_pubkey == participant_pubkey))
+    }
+
     async fn has_private_channel_participant(
         &self,
         channel_id: &str,

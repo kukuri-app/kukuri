@@ -4,15 +4,22 @@
 //! 積む。送信・再送・ACK は DM の account 再送 owner が行い、行の `dm_id` の接頭辞で `EpochControl` の offer にする。
 //! 受け手は epoch の識別子で参加中の channel と epoch を選び、owner は参加者の表へ、参加者は grant を手元の旧 epoch の
 //! replica へ置いてから ACK を返す。
+//!
+//! #1219 AC-5（ADR 0061 §2、ADR 0018 §8。2026-10-04 ユーザー判断）: owner の端末は、受けた参加者の record と、参加者
+//! との follow の edge を本人の端末へ同期する。鍵の配布を行う端末（担当）は同期した記録も自分で受けた記録と同じに
+//! 使い、遅れて届いた参加への grant は担当だけが出す。follow の記録はフォローの表に入れず、相互フォロー限定の資格の
+//! 判定にだけ使う。
 
 use kukuri_core::{
-    DirectMessageAckV1, PrivateReceivePayloadV1, ReceiveOfferReferenceV1, ReceiveOfferScopeV1,
+    AccountSyncItem, AccountSyncItemKey, ChannelParticipantV1, DirectMessageAckV1, FollowEdge,
+    FollowEdgeStatus, PrivateReceivePayloadV1, ReceiveOfferReferenceV1, ReceiveOfferScopeV1,
     VerifiedReceiveOffer, build_direct_message_ack, seal_private_receive_payload,
 };
 use kukuri_docs_sync::{DocKeyOrder, DocKeyQuery};
 use kukuri_store::{DirectMessageOutboxRow, PrivateChannelFilter, PrivateChannelParticipantRow};
 use kukuri_transport::EndpointAddr;
 
+use super::account_sync_support::row_of;
 use super::*;
 
 /// `dm_outbox` の行のうち、epoch の制御 record を運ぶ行の `dm_id` の接頭辞(DM の行は `dm-`)。後ろは epoch の識別子。
@@ -205,6 +212,225 @@ impl AppService {
         Ok((next, false))
     }
 
+    /// owner の端末が受けた(または本人の別の端末から同期した)参加者の record を表へ入れる。表を変えたら `true`。
+    /// - その相手を channel に初めて入れたら、手元の 2 方向の follow の edge を同期する(参加より前に観測した edge)。
+    ///   受けた record(`publish`)の同期より先に書く。取り込む端末(担当)が、参加者の record を取り込む前に edge を
+    ///   採り、遅れた参加の grant の資格をその edge でも判断するため(#1219 AC-5 監査 B-1)。
+    /// - 受けた record で表を変えたら、本人の端末へ同期する。
+    /// - 回転の前に参加したのに record の到着が遅れた人(#1221 R5-H B7): 現 epoch でない参加 record は、その相手の行が
+    ///   channel にまだ 1 行も無く(退出した人・既に宛先に入った人は行を持つ)、参加の時刻が回転の時刻(現 epoch の開始)
+    ///   より前のときだけ受け付ける。退出した人が参加の時刻を偽って送り直しても、行は有効へ戻らず、grant も出ない。
+    ///   回転後の grant は担当だけが送る(#1219 AC-5。担当でない端末は同期で担当へ回す)。
+    pub(crate) async fn take_in_private_channel_participant(
+        &self,
+        state: &JoinedPrivateChannelState,
+        participant: &Pubkey,
+        record: &ChannelParticipantV1,
+        publish: bool,
+    ) -> Result<bool> {
+        let store = &self.services.projection_store;
+        let channel_id = state.channel_id.as_str();
+        let known = store
+            .has_private_channel_participant(channel_id, participant.as_str())
+            .await?;
+        let late = record.left_at.is_none() && record.epoch_id != state.current_epoch_id;
+        if late
+            && (known
+                || !super::remote_read_support::epoch_start_millis(&state.current_epoch_id)
+                    .is_some_and(|rotated_at| record.joined_at < rotated_at))
+        {
+            return Ok(false);
+        }
+        if !store
+            .put_private_channel_participant(PrivateChannelParticipantRow {
+                channel_id: channel_id.to_string(),
+                epoch_id: record.epoch_id.clone(),
+                participant_pubkey: participant.as_str().to_string(),
+                left_at: record.left_at,
+                updated_at: record.left_at.unwrap_or(record.joined_at),
+            })
+            .await?
+        {
+            return Ok(false);
+        }
+        if !known {
+            let local = self.current_author_pubkey();
+            for (subject, target) in [
+                (local.as_str(), participant.as_str()),
+                (participant.as_str(), local.as_str()),
+            ] {
+                if let Some(edge) = self.services.store.get_follow_edge(subject, target).await? {
+                    self.publish_account_sync_item(AccountSyncItem::participant_follow(&edge)?)
+                        .await?;
+                }
+            }
+        }
+        if publish {
+            self.publish_account_sync_item(AccountSyncItem::channel_participant(
+                &state.channel_id,
+                participant,
+                record,
+            )?)
+            .await?;
+        }
+        if late && self.controls_private_channel(channel_id).await? {
+            self.grant_current_epoch_to_late_participant(
+                state,
+                &record.epoch_id,
+                participant.as_str(),
+            )
+            .await?;
+        }
+        Ok(true)
+    }
+
+    /// 本人の別の端末が受けた参加者の record の item を取り込む(#1219 AC-5)。自分が owner の参加中の channel の行が
+    /// あるときだけ、採用の台帳へ採って表へ入れる。採ったら `true`(取得が自分の replica へ写す)。
+    pub(super) async fn merge_channel_participant(
+        &self,
+        channel_id: &ChannelId,
+        participant: &Pubkey,
+        item: &AccountSyncItem,
+    ) -> Result<bool> {
+        let record: ChannelParticipantV1 = serde_json::from_value(
+            item.value
+                .clone()
+                .context("a participant item must carry its record")?,
+        )?;
+        let Some(row) = self
+            .services
+            .projection_store
+            .get_private_channel_by_id(channel_id.as_str())
+            .await?
+            .filter(|row| row.joined && row.owner_pubkey == self.current_author_pubkey())
+        else {
+            return Ok(false);
+        };
+        let Some(state) = self
+            .services
+            .stored_private_channel_state(&joined_private_channel_key(
+                &row.topic_id,
+                channel_id.as_str(),
+            ))
+            .await?
+        else {
+            return Ok(false);
+        };
+        if !self
+            .services
+            .projection_store
+            .adopt_account_sync_row(&row_of(item)?)
+            .await?
+        {
+            return Ok(false);
+        }
+        self.take_in_private_channel_participant(&state, participant, &record, false)
+            .await?;
+        Ok(true)
+    }
+
+    /// 自分と、自分の channel の参加者の間の follow の edge を、本人の端末へ同期する(#1219 AC-5。相互フォロー限定の
+    /// 資格の材料)。それ以外の edge は同期しない。
+    pub(crate) async fn share_participant_follow(&self, edge: &FollowEdge) -> Result<()> {
+        let local = self.current_author_pubkey();
+        let other = if edge.subject_pubkey.as_str() == local {
+            &edge.target_pubkey
+        } else if edge.target_pubkey.as_str() == local {
+            &edge.subject_pubkey
+        } else {
+            return Ok(());
+        };
+        if self
+            .services
+            .projection_store
+            .has_private_channel_member(other.as_str())
+            .await?
+        {
+            self.publish_account_sync_item(AccountSyncItem::participant_follow(edge)?)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// 自分と相手が相互フォローか(#1219 AC-5)。向きごとに、手元の edge と本人の別の端末から同期した記録の新しい方を
+    /// 使う。
+    pub(crate) async fn participant_mutual(&self, participant: &str) -> Result<bool> {
+        let local = self.current_author_pubkey();
+        Ok(self.participant_follows(&local, participant).await?
+            && self.participant_follows(participant, &local).await?)
+    }
+
+    async fn participant_follows(&self, subject: &str, target: &str) -> Result<bool> {
+        let local = self
+            .services
+            .store
+            .get_follow_edge(subject, target)
+            .await?
+            .map(|edge| (edge.updated_at, edge.status));
+        let key = AccountSyncItemKey::ParticipantFollow {
+            subject: Pubkey::from(subject.to_string()),
+            target: Pubkey::from(target.to_string()),
+        };
+        let synced = self
+            .services
+            .projection_store
+            .get_account_sync_row(&key.docs_key())
+            .await?
+            .and_then(|row| {
+                Some((
+                    row.updated_at,
+                    serde_json::from_str(row.value.as_deref()?).ok()?,
+                ))
+            });
+        Ok(local
+            .into_iter()
+            .chain(synced)
+            .max_by_key(|(updated_at, _)| *updated_at)
+            .is_some_and(|(_, status)| status == FollowEdgeStatus::Active))
+    }
+
+    /// この端末がその channel の担当か(参加の行の記録で判断する。メモリは書込みの直後に古い)。
+    async fn controls_private_channel(&self, channel_id: &str) -> Result<bool> {
+        let device_id = self.local_device_id().await?;
+        Ok(self
+            .services
+            .projection_store
+            .get_private_channel_by_id(channel_id)
+            .await?
+            .and_then(|row| row.controller)
+            .map(|json| serde_json::from_str::<PrivateChannelController>(&json))
+            .transpose()?
+            .is_some_and(|controller| {
+                controller.device_id == device_id && controller.transfer_to.is_none()
+            }))
+    }
+
+    /// owner の端末の grant の宛先が、まだ資格を持つか(#1219 AC-5。送るたびに確かめる)。その channel の参加中の行が
+    /// あり、相互フォロー限定なら相互フォロー。参加者の端末から owner への参加の record は確かめない。
+    pub(crate) async fn epoch_control_recipient_qualified(
+        services: &ServiceHandles,
+        epoch_key_id: &str,
+        recipient: &str,
+    ) -> Result<bool> {
+        let Some((state, _, _)) = services
+            .private_channel_epoch_by_receive_key(epoch_key_id)
+            .await?
+        else {
+            return Ok(true);
+        };
+        if state.owner_pubkey != services.keys.public_key_hex() || recipient == state.owner_pubkey {
+            return Ok(true);
+        }
+        Ok(services
+            .projection_store
+            .is_active_private_channel_participant(state.channel_id.as_str(), recipient)
+            .await?
+            && (state.audience_kind != ChannelAudienceKind::FriendOnly
+                || AppService::from_handles(services.clone())
+                    .participant_mutual(recipient)
+                    .await?))
+    }
+
     /// 回転の後に届いた、直前の epoch の参加 record の参加者へ、現 epoch の handoff grant を送る(#1221 R5-H)。参加
     /// record は account 経路で届くので、回転より後に着きうる。回転のときに表にあれば受け取れた grant と同じもの。
     async fn grant_current_epoch_to_late_participant(
@@ -295,36 +521,18 @@ impl AppService {
                     && participant.participant_pubkey.as_str() == sender,
                 "participant record does not belong to this owner's epoch"
             );
-            // 回転の前に参加したのに record の到着が遅れた人だけを、表に入れて回転後の grant を送る(#1221 R5-H B7)。
-            // 現 epoch でない参加 record は、その相手の行が channel にまだ 1 行も無く(退出した人・既に宛先に入った人は
-            // 行を持つ)、参加の時刻が回転の時刻(現 epoch の開始)より前のときだけ受け付ける。退出した人が参加の時刻を
-            // 偽って送り直しても、行は有効へ戻らず、grant も出ない。
-            let late_join = participant.left_at.is_none() && epoch_id != state.current_epoch_id;
-            if late_join {
-                let joined_before_rotation =
-                    super::remote_read_support::epoch_start_millis(&state.current_epoch_id)
-                        .is_some_and(|rotated_at| participant.joined_at < rotated_at);
-                let known = services
-                    .projection_store
-                    .has_private_channel_participant(state.channel_id.as_str(), sender)
-                    .await?;
-                if joined_before_rotation
-                    && !known
-                    && services
-                        .projection_store
-                        .put_private_channel_participant(participant_row(&participant))
-                        .await?
-                {
-                    AppService::from_handles(services.clone())
-                        .grant_current_epoch_to_late_participant(&state, &epoch_id, sender)
-                        .await?;
-                }
-            } else {
-                services
-                    .projection_store
-                    .put_private_channel_participant(participant_row(&participant))
-                    .await?;
-            }
+            AppService::from_handles(services.clone())
+                .take_in_private_channel_participant(
+                    &state,
+                    &participant.participant_pubkey,
+                    &ChannelParticipantV1 {
+                        epoch_id: participant.epoch_id.clone(),
+                        joined_at: participant.joined_at,
+                        left_at: participant.left_at,
+                    },
+                    true,
+                )
+                .await?;
         } else if let Some(grant) = parse_private_channel_epoch_handoff_grant(&envelope)? {
             anyhow::ensure!(
                 grant.channel_id == state.channel_id

@@ -230,6 +230,10 @@ impl AppService {
                 // #1221 R4-D: 自分を指す署名済みの edge を手元へ保存する。関係(mutual)は読むときに edge から求める。
                 if edge.target_pubkey.as_str() == local {
                     services.store.put_envelope(envelope).await?;
+                    // #1219 AC-5: 参加者からの follow は、本人の端末へも同期する。
+                    AppService::from_handles(services.clone())
+                        .share_participant_follow(&edge)
+                        .await?;
                 }
                 notification_candidate_from_verified_follow(
                     &local,
