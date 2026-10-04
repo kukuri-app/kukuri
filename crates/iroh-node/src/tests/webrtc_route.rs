@@ -169,6 +169,58 @@ async fn the_route_moves_to_the_custom_path_and_falls_back_to_the_relay() -> Res
     Ok(())
 }
 
+/// #1482 J1（接続の直後の喪失）: 新しい接続は、選ばれた custom path で始まり、relay の path は約 335 ms 後（相手の
+/// connection ID を待つ再試行）に開く。その前に custom を失うと、custom path は接続の最後の path なので、その時点では閉じられない。
+/// relay の path が開いた時点で閉じ直し、同じ接続のまま relay で 2 秒以内に受信が再開する。
+#[tokio::test]
+async fn a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, web_transport) = node(&relay, true).await?;
+    let (native, _native_transport) = node(&relay, false).await?;
+    let native_addr = via_relay(&native, &relay);
+    let _demand = web_e2e::demand(&web, native_addr.clone()).await?;
+    eventually("the custom path is active", async || {
+        custom_is_active(&web, &native).await
+    })
+    .await?;
+    let data: Vec<u8> = (0..4 * 1024 * 1024)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let hash = native.blobs().blobs().add_bytes(data.clone()).await?.hash;
+    let connection = web
+        .endpoint()
+        .connect(native_addr.clone(), iroh_blobs::ALPN)
+        .await?;
+    let started = web_transport.stats().received_bytes;
+    let fetch = tokio::spawn({
+        let blobs = web.blobs().clone();
+        let connection = connection.clone();
+        async move { blobs.remote().fetch(connection, hash).await }
+    });
+    eventually("the transfer starts over the custom path", async || {
+        web_transport.stats().received_bytes >= started + 64 * 1024
+    })
+    .await?;
+    assert!(
+        !connection.paths().iter().any(|path| path.is_relay()),
+        "the relay path is not open yet"
+    );
+    let relayed = || web.endpoint().metrics().socket.recv_data_relay.get();
+    let before = relayed();
+    let closed_at = n0_future::time::Instant::now();
+    web.webrtc_signaling().context("webrtc")?.reset();
+    eventually("the transfer resumes over the relay", async || {
+        relayed() >= before + 64 * 1024
+    })
+    .await?;
+    let stall = closed_at.elapsed();
+    assert!(stall <= Duration::from_secs(2), "stall {stall:?}");
+    fetch.await??;
+    assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
+    assert!(connection.close_reason().is_none());
+    Ok(())
+}
+
 /// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
 /// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
 /// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の

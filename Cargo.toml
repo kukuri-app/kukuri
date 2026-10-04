@@ -107,10 +107,10 @@ iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d148
 # fork だけの変更（#1482。上流へは PR を出さない）: custom transport が外した local addr の custom path をすぐ閉じる。
 # fork の rev は、上流 v1.3.0 に #4447（#1450 で rebase）・#4565 の cherry-pick・#1482 の変更を載せたもの。
 # Keep the shared public types on the same source as the endpoint crate.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "234ff7732289dbc09ed73a88ee5b2bd2e45e9976" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "234ff7732289dbc09ed73a88ee5b2bd2e45e9976" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "234ff7732289dbc09ed73a88ee5b2bd2e45e9976" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "234ff7732289dbc09ed73a88ee5b2bd2e45e9976" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "523655a72295529abae63b952477312bb552ac62" }
 # Upstream #162 includes #161: release idle connections and retired peer state.
 # The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376).
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "4501c0433d6e7f3d9d81a37985ec243957af2c32" }
