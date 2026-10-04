@@ -573,9 +573,12 @@ async function changeSettings(browser) {
   await browser.$('[data-testid="adult-content-display-toggle"]').click();
   await browser.$('button[aria-label="Close settings"]').click();
   await sees(browser, adult);
+}
 
-  // Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
-  // 同意し直して認証し直せる。
+/** Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
+ * 同意し直して認証し直せる。保存と同意し直しで作り直した後の Web は、受信の offer（参加 record・ACK）を送れない（#1549）
+ * ので、受信の offer に頼る段（AC-4 の世代の更新の配布）の後に行う。 */
+async function changeCommunityNodeSettings(browser) {
   await openSettings(browser, 'community-node');
   const extra = 'http://127.0.0.1:9';
   const extraNode = `//h4[normalize-space()="${extra}"]`;
@@ -1059,7 +1062,7 @@ async function main() {
     const direct = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
     assertRoute('native→web direct', direct, true);
     const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
-    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定。
+    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定（Community Node の設定は AC-4 の段の後。#1549）。
     const aPubkey = withA.webPost.author_pubkey;
     await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
     await changeSettings(a);
@@ -1109,6 +1112,7 @@ async function main() {
       channel: { channelId: nativeChannel.channelId, label: nativeChannelLabel },
       peers: 2,
     });
+    await changeCommunityNodeSettings(a);
 
     // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
     for (let index = 0; index < 25; index++) {
