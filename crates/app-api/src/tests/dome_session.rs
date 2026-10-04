@@ -599,6 +599,13 @@ async fn a_visitor_transitions_into_a_dome_hosted_on_another_device() {
     timeout(Duration::from_secs(10), async {
         let aborted = ticket(serve(&owner, prepared("t1")).await);
         assert_eq!(reservations().await, 1);
+        // ticket を持たない端末は、transition id と participant を知っていても取り消せない。
+        let mut forged = aborted.clone();
+        forged.expires_at += 1;
+        let forged = DomeSessionRequestV1::AbortTransition { ticket: forged };
+        let message = rejection(serve(&owner, serde_json::to_vec(&forged).expect("abort")).await);
+        assert_eq!(message, "DOME_TRANSITION_INVALID_TICKET");
+        assert_eq!(reservations().await, 1);
         let abort = DomeSessionRequestV1::AbortTransition { ticket: aborted };
         accepted(serve(&owner, serde_json::to_vec(&abort).expect("abort")).await);
         assert_eq!(reservations().await, 0, "the reservation is withdrawn");

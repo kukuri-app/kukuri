@@ -13,7 +13,7 @@ Domeは独自のmember、role、moderatorを持たず、配置先のpublic topic
 ### Access authority
 
 - Public topicはactive subscription、private channelはcurrent epochのactive participantを参加資格とする。
-- `DomeTransitionAccessDecisionV1`をpreviewとauthoritative prepareで共用する。Previewは表示専用であり、15秒のtransition ticketを発行しない。Prepareはactive topology、Instance generation、session、accessを再確認する（所有者本人の端末のprocess内のprepare。Community Node hostと、所有者以外の端末からのP2Pのprepareはtopologyを照合せず、access、block、lease、定員を確かめる。[ADR-0038](0038-dome-hosting-lease-session-lifecycle.md)、#1527）。
+- `DomeTransitionAccessDecisionV1`をpreviewとauthoritative prepareで共用する。Previewは表示専用であり、15秒のtransition ticketを発行しない。Prepareはactive topology、Instance generation、session、accessを再確認する（所有者本人の端末のprocess内のprepare。所有者以外の端末からのP2Pのprepareと、Community Node hostのprepareはtopologyを照合しない。P2Pはaccess proof、access、block、lease、定員を、Community Node hostはaccess proof、lease、定員を確かめる。[ADR-0038](0038-dome-hosting-lease-session-lifecycle.md)、#1527）。
 - Community Nodeにはchannel secretを渡さない。owner-signed policy、current participant envelope、participant-signedでtarget ownerとSpatial Contextへ束縛した10秒の`DomeSpatialAccessProofV1`を渡す。
 - room eventのpublish/listも同じSpatial Context資格とdestination ownerからvisitorへのblockを確認し、失敗時はpresence、音声、identityを返さない。
 

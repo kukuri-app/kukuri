@@ -2,7 +2,7 @@
 //! 所有者本人の入力と同じ確認点で処理する(ADR 0038、#1527)。
 
 use crate::service::*;
-use crate::views::{AbortDomeTransitionInput, CommitDomeTransitionInput};
+use crate::views::CommitDomeTransitionInput;
 use kukuri_core::{
     DOME_SESSION_RESYNC_MAX_BYTES, DomeInstanceStatusV1, DomeSessionInputKindV1,
     DomeSessionInputV1, DomeSessionRequestV1, DomeSessionResponseV1, DomeSpatialAccessProofV1,
@@ -81,7 +81,7 @@ impl AppService {
                 .await
                 .map(|()| DomeSessionResponseV1::Accepted),
             Ok(DomeSessionRequestV1::AbortTransition { ticket }) => self
-                .abort_dome_transition(AbortDomeTransitionInput { ticket })
+                .abort_remote_dome_transition(&ticket)
                 .await
                 .map(|()| DomeSessionResponseV1::Accepted),
             Err(error) => Err(error.into()),
@@ -240,6 +240,29 @@ impl AppService {
             .get_mut(&request.target_instance_id)
             .context("this device is not the active destination Dome host")?
             .prepare_transition_admission(request, access, now)
+    }
+
+    /// 別の端末の取消。要求者を識別しない経路なので、予約が残っていれば host が発行した ticket との一致を求める
+    /// (ticket の所持で判定する。ADR 0038)。
+    async fn abort_remote_dome_transition(
+        &self,
+        ticket: &DomeTransitionAdmissionTicketV1,
+    ) -> Result<()> {
+        let mut sessions = self.dome_host_sessions.lock().await;
+        let runtime = sessions
+            .get_mut(&ticket.request.target_instance_id)
+            .context("this device is not the active destination Dome host")?;
+        if runtime
+            .transition_reservation(&ticket.request.transition_id)
+            .is_some_and(|reserved| reserved != ticket)
+        {
+            anyhow::bail!("DOME_TRANSITION_INVALID_TICKET");
+        }
+        runtime.abort_transition_admission(
+            &ticket.request.transition_id,
+            &ticket.request.participant_pubkey,
+            Utc::now().timestamp_millis(),
+        )
     }
 
     async fn ensure_dome_room_access(

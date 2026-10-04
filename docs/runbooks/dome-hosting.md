@@ -46,7 +46,7 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - transition APIはowner-device hostとCommunity Node hostで同じticket/runtime contractを使う。Community Node endpointは既存bearer authenticationとconsent gateの内側にある。宛先が別の端末の所有者の端末で稼働中のときは、入室と同じP2Pの経路でprepare/commit/abortを送る。宛先の所有者の端末はCommunity Node hostと同じくtopology全体を照合せず、本人、access、block（visitorとowner間）、定員を確かめる。
 - persistent/guest propは遷移しない。host physicsはprepared/admitted avatarだけにconnection zoneを許可し、propは開口部を含めて送信元半球内へ拘束する。
 
-調査時は、participant raw inputを記録せず、transition ID、connection ID、topology digest、source/target generation、target lease epoch/session、boundary state、denial codeだけを採取する。`DOME_TRANSITION_STALE_TOPOLOGY`はtopology再取得、`DOME_TRANSITION_CAPACITY_FULL`は退出待ち、`DOME_TRANSITION_INVALID_TICKET`は15秒以内の新規prepareで復旧する。宛先commit後に送信元cleanupだけが失敗した場合、宛先をcurrentとして維持し、送信元completeを再試行する。
+調査時は、participant raw inputを記録せず、transition ID、connection ID、topology digest、source/target generation、target lease epoch/session、boundary state、denial codeだけを採取する。`DOME_TRANSITION_STALE_TOPOLOGY`はtopology再取得（宛先が所有者の端末のときは、所有者の端末が遷移元のDomeを一覧の行かheartbeatで知らない場合にも返る。所有者の端末で同じtopicのDome一覧を開き直す）、`DOME_TRANSITION_CAPACITY_FULL`は退出待ち、`DOME_TRANSITION_INVALID_TICKET`は15秒以内の新規prepareで復旧する。宛先commit後に送信元cleanupだけが失敗した場合、宛先をcurrentとして維持し、送信元completeを再試行する。
 
 ## Spatial Contextへの入場
 
