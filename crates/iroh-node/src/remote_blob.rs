@@ -3,7 +3,6 @@
 
 #[cfg(not(target_family = "wasm"))]
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -45,7 +44,7 @@ impl RemoteBlobProtocol {
     async fn serve(&self, connection: &Connection) -> Result<()> {
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request = recv.read_to_end(128).await?;
-        let hash = Hash::from_str(std::str::from_utf8(&request)?)?;
+        let hash = crate::parse_blob_hash(std::str::from_utf8(&request)?)?;
         let Some(cache) = self.cache.get() else {
             send.write_all(&[0]).await?;
             send.finish()?;

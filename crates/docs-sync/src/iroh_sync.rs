@@ -333,7 +333,7 @@ impl IrohDocsSync {
         content_hash: &str,
         policy: DocFetchPolicy,
     ) -> Result<Option<Vec<u8>>> {
-        let hash = iroh_blobs::Hash::from_str(content_hash)?;
+        let hash = kukuri_iroh_node::parse_blob_hash(content_hash)?;
         match self.node.blobs().blobs().get_bytes(hash).await {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(error) => {

@@ -371,7 +371,7 @@ impl BlobService for IrohBlobService {
         {
             return Ok(());
         }
-        iroh_blobs::Hash::from_str(hash.as_str())?;
+        kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let cache = self
             .remote_cache
             .as_ref()
@@ -395,7 +395,7 @@ impl BlobService for IrohBlobService {
         path: &Path,
     ) -> Result<Option<u64>> {
         use tokio::io::AsyncWriteExt;
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Some(cache) = &self.remote_cache
             && let Some(length) = cache
                 .copy_remote_content_to_file("blob", hash.as_str(), path)
@@ -429,12 +429,12 @@ impl BlobService for IrohBlobService {
         remote_fetch::prepare_display_fetch(
             &self.node,
             &self.peers,
-            iroh_blobs::Hash::from_str(hash.as_str())?,
+            kukuri_iroh_node::parse_blob_hash(hash.as_str())?,
         )
         .await
     }
     async fn fetch_local_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Ok(bytes) = self.node.blobs().blobs().get_bytes(parsed).await {
             return Ok(Some(bytes.to_vec()));
         }
@@ -449,7 +449,7 @@ impl BlobService for IrohBlobService {
         max_bytes: u64,
     ) -> Result<Option<Vec<u8>>> {
         use tokio::io::AsyncReadExt;
-        let expected = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let expected = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let blobs = self.node.blobs().clone();
         let local = kukuri_iroh_node::confine_local(async move {
             let mut bytes = Vec::new();
@@ -547,7 +547,7 @@ impl BlobService for IrohBlobService {
         if self.remote_cache.is_some() {
             return self.fetch_blob_ephemeral(hash).await;
         }
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         match self.node.blobs().blobs().get_bytes(parsed).await {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(error) => {
@@ -570,7 +570,7 @@ impl BlobService for IrohBlobService {
             return Ok(Some(bytes));
         }
         let hash_text = hash.as_str().to_string();
-        let hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         match self.node.blobs().blobs().get_bytes(hash).await {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(error) => {
@@ -590,7 +590,7 @@ impl BlobService for IrohBlobService {
     }
 
     async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Some(cache) = &self.remote_cache {
             // #1221 R5-I: pin した asset は pin したときに `dome_pin:` の保護参照で保護所有先に置く(backup・restore)。
             let reference = format!("dome_pin:{}", hash.as_str());
@@ -643,7 +643,7 @@ impl BlobService for IrohBlobService {
         if self.is_pinned(hash).await? {
             return Ok(BlobStatus::Pinned);
         }
-        let iroh_hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let iroh_hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let cached = match &self.remote_cache {
             Some(cache) => cache.has_remote_content("blob", hash.as_str()).await?,
             None => false,
@@ -668,7 +668,7 @@ impl BlobService for IrohBlobService {
     }
 
     async fn learn_content_source(&self, hash: &BlobHash, endpoint_id: &str) -> Result<()> {
-        let hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let peer = iroh::EndpointId::from_str(endpoint_id.trim())?;
         self.peers
             .note_content_source(&hash.to_string(), peer)
