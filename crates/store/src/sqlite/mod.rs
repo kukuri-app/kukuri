@@ -166,4 +166,63 @@ impl Store for SqliteStore {
         self.store_list_block_edges_by_target_impl(target_pubkey)
             .await
     }
+
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM block_edges WHERE subject_pubkey = ?1 AND target_pubkey = ?2",
+        )
+        .bind(subject_pubkey)
+        .bind(target_pubkey)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(crate::row_mapping::row_to_block_edge)
+        .transpose()
+    }
+
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM follow_edges WHERE subject_pubkey = ?1 AND target_pubkey > ?2
+             ORDER BY target_pubkey LIMIT ?3",
+        )
+        .bind(subject_pubkey)
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(crate::row_mapping::row_to_follow_edge)
+        .collect()
+    }
+
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM block_edges WHERE subject_pubkey = ?1 AND target_pubkey > ?2
+             ORDER BY target_pubkey LIMIT ?3",
+        )
+        .bind(subject_pubkey)
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(crate::row_mapping::row_to_block_edge)
+        .collect()
+    }
 }

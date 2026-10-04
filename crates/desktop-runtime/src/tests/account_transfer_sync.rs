@@ -1,12 +1,14 @@
 //! #1211 AC-4: 移行の後、移行先の端末で、受け取ったアカウントの Community Node に同意して認証すると、rendezvous で
 //! 移行元を見つけ、本人の端末間の自動同期（W5）へつながる。identity・同意・担当は端末ごとのまま移らない。
+//! #1211 AC-6: フォロー・ブロックは、移行の必須 bundle と、その後の同期で届く。移行先は、相互フォローの相手と DM を
+//! 送受信できる。
 
-use super::account_transfer::{runtime_at, target_host, transfer_with};
+use super::account_transfer::{runtime_at, target_host, transfer};
 use super::*;
 use crate::accounts::account_db_path;
 use crate::community_node::{load_community_node_local_consents, load_community_node_token};
 use crate::requests::{RotatePrivateChannelRequest, SetMyProfileRequest};
-use kukuri_app_api::PrivateChannelControllerState;
+use kukuri_app_api::{PrivateChannelControllerState, SocialConnectionKind};
 use kukuri_cn_protocol::{
     TopicRendezvousCandidate, TopicRendezvousHeartbeat, TopicRendezvousHeartbeatResponse,
     TopicRendezvousTopicResponse,
@@ -190,6 +192,17 @@ async fn channel_view(runtime: &DesktopRuntime, topic: &str) -> Option<JoinedPri
         .pop()
 }
 
+async fn social(runtime: &DesktopRuntime, kind: SocialConnectionKind) -> Vec<String> {
+    runtime
+        .app_service
+        .list_social_connections(kind)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|view| view.author_pubkey)
+        .collect()
+}
+
 async fn has_own_peer(runtime: &DesktopRuntime) -> bool {
     !runtime
         .get_sync_status()
@@ -212,6 +225,12 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
     let source = runtime_at(dir.path().join("source.db")).await;
     consent(&source, &source_node).await;
     source.set_my_profile(profile("before")).await.unwrap();
+    let (followed, blocked) = (
+        KukuriKeys::generate().public_key_hex(),
+        KukuriKeys::generate().public_key_hex(),
+    );
+    source.app_service.follow_author(&followed).await.unwrap();
+    source.app_service.block_author(&blocked).await.unwrap();
     source
         .set_adult_content_display_enabled(true)
         .await
@@ -240,13 +259,7 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
     .await
     .unwrap();
 
-    let id = match transfer_with(&source, &host, None).await {
-        kukuri_core::AccountTransferStatus::Completed {
-            account_id: Some(id),
-            ..
-        } => id,
-        status => panic!("unexpected {status:?}"),
-    };
+    let id = transfer(&source, &host).await;
     // 切替: 受け取ったアカウントの runtime へ差し替える（起動で置き場を反映し、account 同期の lease を取る）。
     let db = account_db_path(&target_dir, &id);
     host.replace_runtime(Arc::new(runtime_at(&db).await))
@@ -287,6 +300,8 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
             && channel_view(&target, topic)
                 .await
                 .is_some_and(|view| view.channel_id == channel)
+            && social(&target, SocialConnectionKind::Following).await == [followed.clone()]
+            && social(&target, SocialConnectionKind::Blocking).await == [blocked.clone()]
             && !has_own_peer(&target).await
     })
     .await;
@@ -384,6 +399,33 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
         },
     )
     .await;
+    // AC-6: 移行の後のフォロー・解除・ブロック・解除は、両方向に届く。
+    let (later, later_blocked) = (
+        KukuriKeys::generate().public_key_hex(),
+        KukuriKeys::generate().public_key_hex(),
+    );
+    target.app_service.follow_author(&later).await.unwrap();
+    source.app_service.unfollow_author(&followed).await.unwrap();
+    target
+        .app_service
+        .block_author(&later_blocked)
+        .await
+        .unwrap();
+    source.app_service.unblock_author(&blocked).await.unwrap();
+    converge(
+        "the follows and blocks reach both devices",
+        [&source, &target],
+        async || {
+            let mut agreed = true;
+            for runtime in [&source, &target] {
+                agreed &= social(runtime, SocialConnectionKind::Following).await == [later.clone()]
+                    && social(runtime, SocialConnectionKind::Blocking).await
+                        == [later_blocked.clone()];
+            }
+            agreed
+        },
+    )
+    .await;
     let rotated = source
         .rotate_private_channel(RotatePrivateChannelRequest {
             topic: topic.into(),
@@ -408,5 +450,100 @@ async fn a_transferred_account_syncs_with_the_source_after_consent() {
     watcher.abort();
 
     source.shutdown().await;
+    host.shutdown().await;
+}
+
+/// 2 つの端末が互いの peer ticket を取り込む（相手の受信の binding を確かめる接続先になる）。
+async fn introduce(a: &DesktopRuntime, b: &DesktopRuntime) {
+    for (from, to) in [(a, b), (b, a)] {
+        let ticket = from.local_peer_ticket().await.unwrap().unwrap();
+        to.import_peer_ticket(ImportPeerTicketRequest { ticket })
+            .await
+            .unwrap();
+    }
+}
+
+async fn pubkey(runtime: &DesktopRuntime) -> String {
+    runtime.get_sync_status().await.unwrap().local_author_pubkey
+}
+
+async fn mutual(runtime: &DesktopRuntime, author: &str) -> bool {
+    runtime
+        .app_service
+        .get_author_social_view(author)
+        .await
+        .unwrap()
+        .mutual
+}
+
+/// AC-6: 移行先は、移行で受けた自分のフォローと相手から自分への edge で、相互フォローの相手と DM を送受信できる。
+/// 移行元は止める（同じアカウントの端末が 2 つ動いていると、相手の DM はどちらか一方へ届く）。
+#[tokio::test]
+async fn the_target_exchanges_direct_messages_with_a_mutual_follow() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let dir = tempdir().unwrap();
+    let source = runtime_at(dir.path().join("source.db")).await;
+    let partner = runtime_at(dir.path().join("partner.db")).await;
+    introduce(&source, &partner).await;
+    let (account, partner_pubkey) = (pubkey(&source).await, pubkey(&partner).await);
+    source
+        .app_service
+        .follow_author(&partner_pubkey)
+        .await
+        .unwrap();
+    partner.app_service.follow_author(&account).await.unwrap();
+    converge("the follows are mutual", [&source, &partner], async || {
+        mutual(&source, &partner_pubkey).await && mutual(&partner, &account).await
+    })
+    .await;
+
+    let target_dir = dir.path().join("target");
+    let host = target_host(&target_dir).await;
+    let id = transfer(&source, &host).await;
+    source.shutdown().await;
+    host.replace_runtime(Arc::new(
+        runtime_at(account_db_path(&target_dir, &id)).await,
+    ))
+    .await
+    .unwrap()
+    .shutdown()
+    .await;
+    let target = host.runtime();
+    introduce(&target, &partner).await;
+    converge(
+        "the bundle makes the follows mutual",
+        [&target, &partner],
+        async || mutual(&target, &partner_pubkey).await,
+    )
+    .await;
+    for (from, to, text) in [
+        (&*target, &partner, "from the target"),
+        (&partner, &*target, "from the partner"),
+    ] {
+        let (sender, recipient) = (pubkey(from).await, pubkey(to).await);
+        from.send_direct_message(SendDirectMessageRequest {
+            pubkey: recipient,
+            text: Some(text.into()),
+            reply_to_message_id: None,
+            attachments: Vec::new(),
+        })
+        .await
+        .unwrap();
+        converge(text, [&target, &partner], async || {
+            to.list_direct_message_messages(ListDirectMessageMessagesRequest {
+                pubkey: sender.clone(),
+                cursor: None,
+                limit: None,
+            })
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .any(|message| message.text == text && !message.outgoing)
+        })
+        .await;
+    }
+
+    partner.shutdown().await;
     host.shutdown().await;
 }

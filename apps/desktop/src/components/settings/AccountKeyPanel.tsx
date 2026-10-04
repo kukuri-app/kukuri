@@ -125,7 +125,15 @@ export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage, accoun
         <small>{t('settings:accountKey.summary')}</small>
       </CardHeader>
 
-      <Notice>{t('settings:accountKey.scopeNotice')}</Notice>
+      {/* #1211 AC-5: 別の端末で使う 3 つの方法の対象の差。backup・restore は desktop だけ（Web は section を出さない）。 */}
+      <Notice data-testid='account-key-methods'>
+        <p>{t('settings:accountKey.methods.intro')}</p>
+        <ul className='mt-1 list-disc ps-5'>
+          <li>{t('settings:accountKey.methods.transfer')}</li>
+          <li>{t('settings:accountKey.methods.export')}</li>
+          {onOpenDeviceBackup ? <li>{t('settings:accountKey.methods.backup')}</li> : null}
+        </ul>
+      </Notice>
       {persisted === null ? null : <BrowserStorageNotice persisted={persisted} />}
       {accountSync ? <AccountSyncStatusNotice status={accountSync} /> : null}
       {onOpenDeviceBackup ? (

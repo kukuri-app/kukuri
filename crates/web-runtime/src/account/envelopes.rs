@@ -96,6 +96,32 @@ async fn edges<T: DeserializeOwned + Send + 'static>(
         .await
 }
 
+/// subject（主 key の先頭）の edge を、相手の昇順に `after` より後から `limit` 件。
+async fn edges_after<T: DeserializeOwned + Send + 'static>(
+    store: &IndexedDbCache,
+    name: &'static str,
+    subject: &str,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<T>> {
+    let (subject, after) = (subject.to_owned(), after.map(str::to_owned));
+    store
+        .run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[name], Mode::Read)?;
+            let range = match &after {
+                Some(after) => between(
+                    &[text(&subject), text(after)],
+                    &top(&[text(&subject)]),
+                    true,
+                    false,
+                )?,
+                None => prefix(&[text(&subject)])?,
+            };
+            rows::scan(&tx, name, None, &range, false, limit).await
+        })
+        .await
+}
+
 #[async_trait]
 impl Store for IndexedDbCache {
     async fn put_envelope(&self, envelope: KukuriEnvelope) -> Result<()> {
@@ -327,5 +353,36 @@ impl Store for IndexedDbCache {
             (edge.updated_at, edge.subject_pubkey.as_str().to_owned())
         })
         .await
+    }
+
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        let (subject, target) = (subject_pubkey.to_owned(), target_pubkey.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[BLOCKS], Mode::Read)?;
+            rows::get(&tx, BLOCKS, &key(&[text(&subject), text(&target)])).await
+        })
+        .await
+    }
+
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        edges_after(self, FOLLOWS, subject_pubkey, after, limit).await
+    }
+
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>> {
+        edges_after(self, BLOCKS, subject_pubkey, after, limit).await
     }
 }

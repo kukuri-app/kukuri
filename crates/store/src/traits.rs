@@ -61,6 +61,27 @@ pub trait Store: Send + Sync {
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()>;
     async fn list_block_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<BlockEdge>>;
     async fn list_block_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<BlockEdge>>;
+    /// `subject` から `target` への block の edge(#1211 AC-6)。無ければ `None`。
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>>;
+    /// `subject` の follow の edge を、相手の公開鍵の順に `after` より後から `limit` 件(#1211 AC-6。移行で自分の edge を
+    /// 小分けに送る)。
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>>;
+    /// `list_follow_edges_by_subject_after` の block の edge 版。
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>>;
 }
 
 // ProjectionStore はドメイン別 sub-trait の supertrait 合成(WP-H1)。

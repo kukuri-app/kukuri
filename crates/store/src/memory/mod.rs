@@ -229,4 +229,69 @@ impl Store for MemoryStore {
         self.store_list_block_edges_by_target_impl(target_pubkey)
             .await
     }
+
+    async fn get_block_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        Ok(self
+            .block_edges
+            .read()
+            .await
+            .get(&(subject_pubkey.to_string(), target_pubkey.to_string()))
+            .cloned())
+    }
+
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        let edges = self.follow_edges.read().await;
+        Ok(edges_after(
+            edges.values(),
+            subject_pubkey,
+            after,
+            limit,
+            |edge| (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()),
+        ))
+    }
+
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>> {
+        let edges = self.block_edges.read().await;
+        Ok(edges_after(
+            edges.values(),
+            subject_pubkey,
+            after,
+            limit,
+            |edge| (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()),
+        ))
+    }
+}
+
+/// `subject` の edge を、相手の順に `after` より後から `limit` 件(試験用の store なので、全件から選ぶ)。
+fn edges_after<'a, T: Clone + 'a>(
+    edges: impl Iterator<Item = &'a T>,
+    subject: &str,
+    after: Option<&str>,
+    limit: usize,
+    ends: impl Fn(&T) -> (&str, &str),
+) -> Vec<T> {
+    let mut selected = edges
+        .filter(|edge| {
+            let (edge_subject, target) = ends(edge);
+            edge_subject == subject && after.is_none_or(|after| target > after)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| ends(left).1.cmp(ends(right).1));
+    selected.truncate(limit);
+    selected
 }

@@ -45,6 +45,7 @@ use kukuri_core::{
 mod lists;
 mod live_game;
 mod pagination;
+mod social_edges;
 mod trust_observations;
 
 pub use trust_observations::check_trust_observation_store;
@@ -56,6 +57,7 @@ pub async fn check_backend<S: Store + ProjectionStore>(make: impl AsyncFn() -> S
     lists::bookmarked_posts_seek_both_directions_without_loading_the_history(&make).await;
     lists::muted_authors_match_between_backends(&make).await;
     lists::follow_edges_match_between_backends(&make).await;
+    social_edges::own_edges_match_between_backends(&make).await;
     lists::reactions_match_between_backends(&make).await;
     lists::direct_message_outbox_matches_between_backends(&make).await;
     lists::direct_message_conversations_match_between_backends(&make).await;
