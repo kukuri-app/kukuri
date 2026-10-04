@@ -1,7 +1,7 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
-import type { AttachmentView, DirectMessageMessageView, PostView } from '@/lib/api';
+import type { AttachmentView, PostView } from '@/lib/api';
 
 import type {
   TimelineAdvisoryLookupState,
@@ -50,7 +50,6 @@ function renderAttachments(
     communityIndexResolvedPosts?: PostView[];
     activeTimeline?: PostView[];
     profileTimeline?: PostView[];
-    selectedDirectMessageTimeline?: DirectMessageMessageView[];
     gatedMediaHashes?: string[];
     demandedMediaHashes?: ReadonlySet<string>;
     adultContentEnabled?: boolean;
@@ -70,7 +69,7 @@ function renderAttachments(
       profileTimeline: overrides.profileTimeline ?? [],
       selectedAuthorTimeline: [],
       thread: [],
-      selectedDirectMessageTimeline: overrides.selectedDirectMessageTimeline ?? [],
+      selectedDirectMessageTimeline: [],
       directMessages: [],
       ownedReactionAssets: [],
       bookmarkedReactionAssets: [],
@@ -101,23 +100,6 @@ describe('usePreviewableMediaAttachments', () => {
     expect(renderAttachments({ activeTimeline: [imagePost('image-post', INDEX_IMAGE_HASH)], demandedMediaHashes: new Set() }))
       .toEqual([]);
   });
-  // #1220 AC-4: 送信中の投稿・DM の仮の添付（hash の欄が `<id>-attachment-0`）は、見えていても取得しない。
-  test('skips the placeholder attachments of a post and a message that are still sending', () => {
-    const sendingPost = imagePost('local-post:1:abc', 'local-post:1:abc-attachment-0');
-    const sendingMessage = {
-      attachments: [
-        { hash: 'message-1-attachment-0', mime: 'image/png', bytes: 2048, role: 'image_original', status: 'Available' },
-      ],
-    } as DirectMessageMessageView;
-    expect(
-      renderAttachments({
-        activeTimeline: [sendingPost, imagePost('timeline-post', TIMELINE_IMAGE_HASH)],
-        selectedDirectMessageTimeline: [sendingMessage],
-        demandedMediaHashes: new Set([TIMELINE_IMAGE_HASH, 'local-post:1:abc-attachment-0', 'message-1-attachment-0']),
-      })
-    ).toEqual([TIMELINE_IMAGE_HASH]);
-  });
-
   // #1052: 「見つける」の解決済み投稿もタイムラインと同じプリフェッチ対象にする。
   test('includes attachments from resolved community index posts', () => {
     expect(

@@ -60,9 +60,6 @@ type UsePreviewableMediaAttachmentsArgs = {
   adultContentEnabled: boolean;
 };
 
-// blob の hash（64 文字の hex）。送信中の投稿・DM の仮の添付（`<id>-attachment-0`）はこれに合わず、取得しない
-// （runtime は hash でない文字列を受け付けない。表示は実物に置き換わるまで読み込み中のまま。#1220 AC-4）。
-const BLOB_HASH = /^[0-9a-f]{64}$/;
 const EMPTY_ADVISORIES: TimelineContentAdvisoryIndex = {};
 const INACTIVE_LOOKUP: TimelineAdvisoryLookupState = { active: false, settled: {} };
 const EMPTY_POSTS: PostView[] = [];
@@ -113,7 +110,7 @@ export function usePreviewableMediaAttachments({
         });
         return;
       }
-      if (!BLOB_HASH.test(hash) || (demandOnly && !demandedMediaHashes.has(hash))) {
+      if (demandOnly && !demandedMediaHashes.has(hash)) {
         return;
       }
       if (attachments.get(hash)?.source_object_id && !sourceObjectId) return;
