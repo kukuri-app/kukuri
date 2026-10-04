@@ -988,6 +988,11 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   // 回線全断（chromedriver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
   // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
   // 届いたと示す。
+  // native との会話の列は、AC-2b の Web 同士の DM で b との会話に置き換わっている（一時の列）。会話の route で開き直す。
+  await a.execute((topic, peer) => {
+    location.hash = `#/messages?topic=${encodeURIComponent(topic)}&peerPubkey=${peer}`;
+  }, TOPIC, ctx.nativePubkey);
+  await columnOf(a, 'conversation', ctx.nativePubkey).waitForExist({ timeout: WAIT });
   await directPathOpens(a);
   const beforeOffline = (await sessionStates(a)).length;
   const network = (offline) => a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 });
