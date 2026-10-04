@@ -1,6 +1,7 @@
-// Web クライアントの主要導線と復帰を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g・AC-4、ADR 0060 §4）。
-// `cargo xtask web-e2e` から呼ぶ。相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の
-// 配信）。
+// Web クライアントの主要導線と復帰を実ブラウザで試す（#1220 W8 AC-2a・AC-2b・AC-2g・AC-4、W4 AC-5、#1482 J2、ADR 0060 §4）。
+// `cargo xtask web-e2e [<scenario>...]` が、scenario ごとに新しい fixture を起動して `node main-flow.mjs <scenario>` で呼ぶ
+// （一覧は `--list`。#1559）。相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の
+// 配信）。各 scenario は新しい client で始め、前提もその中で作るので、他の scenario の状態に依存しない。
 //
 // - 直接経路: 通常の Chrome。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
 // - relay fallback: 交換する SDP から ICE の候補を除いた Chrome（ICE が成立しない。W10 の T2 にあたる）。実データが relay
@@ -68,6 +69,9 @@ const nativeReact = (target, emoji) =>
     request: { target_topic_id: TOPIC, target_object_id: target.object_id, reaction_key: { kind: 'emoji', emoji }, channel_ref: null },
   });
 
+/** scenario が開いた client（失敗したときの手がかりと、終わりの CSP の確認・session の終了の対象）。 */
+const clients = [];
+
 /** 新しい profile の Chrome を開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
 async function startClient(name, { ice }) {
   const args = ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'];
@@ -80,6 +84,7 @@ async function startClient(name, { ice }) {
     },
   });
   browser.label = `${name}-${RUN}`;
+  clients.push(browser);
   await addInitScripts(browser, { ice });
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
@@ -165,11 +170,13 @@ function captureClipboard() {
 /**
  * WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる口を
  * 持つ（ページより先に動く。#1220 AC-4）。constructor は差し替えない（fallback の端の script が prototype の getter を差し替える）。
- * `window.__kukuriCut = { after }` を置くと、DataChannel で `after` bytes を受け取った時点で DataChannel を閉じる（runtime は close
- * の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。
+ * `window.__kukuriCut = { after }` を置くと、1 本の DataChannel で `after` bytes を受け取った時点で、開いている DataChannel をすべて
+ * 閉じる（runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は出ない）。1 本だけ閉じると、
+ * 他の相手との session が残り、転送が relay を通らずに完了しうる（#1549）。
  */
 function trackPeerConnections() {
   window.__kukuriPeers = [];
+  const channels = [];
   const createDataChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function (...args) {
     window.__kukuriPeers.push(this);
@@ -182,11 +189,13 @@ function trackPeerConnections() {
       return onmessage.get.call(this);
     },
     set(handler) {
+      if (handler) channels.push(this);
+      let received = 0;
       onmessage.set.call(this, handler && ((event) => {
         const cut = window.__kukuriCut;
-        if (cut && !cut.done && (cut.received = (cut.received ?? 0) + event.data.byteLength) >= cut.after) {
+        if (cut && !cut.done && (received += event.data.byteLength) >= cut.after) {
           cut.done = true;
-          this.close();
+          for (const channel of channels) channel.close();
         }
         handler(event);
       }));
@@ -269,8 +278,9 @@ const seesReaction = (browser, target, emoji) =>
 const switchTopic = (browser, name) =>
   browser.$('select[aria-label="Timeline topic"]').selectByAttribute('value', topicId(name));
 
-/** native との主要導線を、同じ操作で確かめる（直接経路の端でも fallback の端でも）。返り値は Web と native の投稿。 */
-async function exchangeWithNative(browser, tag, reaction) {
+/** Web と native が公開の投稿を 1 件ずつ送り合う。返り値は双方の投稿（Web の投稿の `author_pubkey` が Web の公開鍵、native の
+ * 投稿は profile を開く入口）。 */
+async function greetNative(browser, tag) {
   const fromWeb = `hello from ${tag} ${RUN}`;
   await post(browser, fromWeb);
   const webPost = await nativeSees(fromWeb, (item) => item.content === fromWeb);
@@ -278,6 +288,13 @@ async function exchangeWithNative(browser, tag, reaction) {
   await native('create_post', { request: { topic: TOPIC, content: fromNative, reply_to: null } });
   await sees(browser, fromNative);
   const nativePost = (await nativeTimeline()).find((item) => item.content === fromNative);
+  return { fromWeb, webPost, fromNative, nativePost };
+}
+
+/** native との主要導線を、同じ操作で確かめる（直接経路の端でも fallback の端でも）。返り値は Web と native の投稿。 */
+async function exchangeWithNative(browser, tag, reaction) {
+  const greeting = await greetNative(browser, tag);
+  const { fromWeb, webPost, fromNative, nativePost } = greeting;
   const webReply = `reply from ${tag} ${RUN}`;
   await reply(browser, fromNative, webReply);
   await nativeSees(webReply, (item) => item.content === webReply && item.reply_to === nativePost.object_id);
@@ -290,7 +307,7 @@ async function exchangeWithNative(browser, tag, reaction) {
   await sees(browser, nativeReply);
   await nativeReact(webPost, EMOJI['party-popper']);
   await seesReaction(browser, fromWeb, EMOJI['party-popper']);
-  return { fromWeb, webPost, fromNative, nativePost };
+  return greeting;
 }
 
 /** 別の topic へ切り替えて、その topic の投稿が native と行き来する。 */
@@ -442,14 +459,20 @@ async function seesInChannel(browser, channelId, text) {
   await sees(browser, text);
 }
 
-/** channel の投稿が Web と native の間で行き来し、native の画像の経路を判定する。返り値は Web の投稿。 */
-async function exchangeInChannelWithNative(browser, channelId, tag, direct) {
+/** channel の投稿が Web と native の間で行き来する。返り値は Web の投稿。 */
+async function exchangePostsInChannel(browser, channelId, tag) {
   const fromWeb = `${tag} in channel from ${browser.label}`;
   await post(browser, fromWeb, channelColumn(browser, channelId));
   await nativeSeesInChannel(channelId, fromWeb);
   const fromNative = `${tag} in channel from native to ${browser.label}`;
   await nativePostsInChannel(channelId, fromNative);
   await seesInChannel(browser, channelId, fromNative);
+  return fromWeb;
+}
+
+/** channel の投稿が Web と native の間で行き来し、native の画像の経路を判定する。返り値は Web の投稿。 */
+async function exchangeInChannelWithNative(browser, channelId, tag, direct) {
+  const fromWeb = await exchangePostsInChannel(browser, channelId, tag);
   const image = `${tag} channel image from native to ${browser.label}`;
   const publish = nativeWithImage('create_post', { topic: TOPIC, content: image, reply_to: null, channel_ref: channelRef(channelId) });
   assertRoute(`native→web channel (${tag})`, await relayedWhileLoading(browser, image, publish), direct);
@@ -590,18 +613,33 @@ async function exchangeDirectMessagesBetweenWeb(x, y, direct) {
   assertRoute(`web→web dm (${x.browser.label})`, result, direct);
 }
 
-/** 設定のドロワーの section を開く。 */
+/** 設定のドロワーの section を開く。閉じていた drawer は開くときに滑り込む（180 ms）ので、開き終わってから押す（動いている間の
+ * 押下は、位置を求めてから送るまでの間に drawer が動くと、section の外に当たる。#1559）。 */
 async function openSettings(browser, section) {
   if (!(await browser.$('#shell-settings-drawer[data-open="true"]').isExisting())) {
     await browser.$('[data-testid="control-center-trigger"]').click();
     await browser.$('#shell-control-center button[aria-label="Settings"]').click();
   }
+  await eventually('the settings drawer opens', () =>
+    browser.execute(() => {
+      const drawer = document.querySelector('#shell-settings-drawer');
+      return drawer.dataset.open === 'true' && drawer.getAnimations().length === 0;
+    })
+  );
   await browser.$(`[data-testid="settings-section-${section}"]`).click();
 }
 
-/** 主要な 3 つの設定（2026-10-03 ユーザー判断）のうち、表示と言語、成人向け表示の変更が反映される（Community Node の
- * 接続設定は `changeCommunityNodeSettings`）。 */
-async function changeSettings(browser) {
+/** 開発者モード（Community Node の状態と診断の表示）を有効にする。保存されるので、reload の後は有効のまま。 */
+async function enableDeveloperMode(browser) {
+  await openSettings(browser, 'developer');
+  const developerMode = browser.$('label*=Enable developer mode').$('input[type=checkbox]');
+  if (!(await developerMode.isSelected())) await developerMode.click();
+}
+
+/** `settings`（W8 AC-2b）: 主要な 3 つの設定（表示と言語、成人向け表示、Community Node の接続設定）の変更が反映される
+ * （2026-10-03 ユーザー判断）。 */
+async function settings() {
+  const browser = await openClient('web-a', { ice: true });
   await openSettings(browser, 'appearance');
   await browser.$('button[role=radio][aria-label="Light"]').click();
   await eventually('the light theme', () => browser.execute(() => document.documentElement.dataset.theme === 'light'));
@@ -630,13 +668,10 @@ async function changeSettings(browser) {
   await browser.$('[data-testid="adult-content-display-toggle"]').click();
   await browser.$('button[aria-label="Close settings"]').click();
   await sees(browser, adult);
-}
 
-/** Community Node: node の追加と削除を保存できる。同意と認証の状態を示し、同意を撤回すると未同意・未認証になり、
- * 同意し直して認証し直せる。開発者モード（Community Node の状態の表示）は `assertConnected` で有効にした後に呼ぶ。
- * 保存と同意し直しで通信の stack を作り直した後の Web は、作り直す前から通信していた native へ受信の offer（参加
- * record・ACK）を送れない（#1549）ので、a を使う段の最後に行う。 */
-async function changeCommunityNodeSettings(browser) {
+  // Community Node: node の追加と削除を保存できる。同意と認証の状態（開発者モードで出る）を示し、同意を撤回すると未同意・
+  // 未認証になり、同意し直して認証し直せる。
+  await enableDeveloperMode(browser);
   await openSettings(browser, 'community-node');
   const extra = 'http://127.0.0.1:9';
   const extraNode = `//h4[normalize-space()="${extra}"]`;
@@ -680,10 +715,7 @@ async function changeCommunityNodeSettings(browser) {
  * 既知の相手（`peers`）のどれかを持てばよい。native が接続先なら、native もブラウザを接続先に持つ（双方の EndpointId の
  * 照合）。実データがどの経路を通ったかは relay の bytes で判定する。 */
 async function assertConnected(browser, peers, nativeEndpoint) {
-  await openSettings(browser, 'developer');
-  // 開発者モードは保存されるので、reload の後は有効のまま。
-  const developerMode = browser.$('label*=Enable developer mode').$('input[type=checkbox]');
-  if (!(await developerMode.isSelected())) await developerMode.click();
+  await enableDeveloperMode(browser);
   await browser.$('[data-testid="settings-section-discovery"]').click();
   const details = browser.$('//*[normalize-space(text())="Technical diagnostic details"]');
   await details.click();
@@ -715,10 +747,11 @@ async function acceptFirstRun(browser) {
 }
 
 /**
- * サイトデータが消えた後、export した鍵を初回の dialog の入口から import して、同じ公開鍵のアカウントへ戻る（#1217 AC-5、
- * ADR 0059 §6）。全履歴の回復は確かめない。
+ * `site-data`（W4 AC-5）: サイトデータが消えた後、export した鍵を初回の dialog の入口から import して、同じ公開鍵のアカウントへ
+ * 戻る（#1217 AC-5、ADR 0059 §6）。全履歴の回復は確かめない。
  */
-async function recoverAfterSiteDataLoss(browser) {
+async function siteData() {
+  const browser = await openClient('web-a', { ice: true });
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
   // 保存の状態を偽らない: 示す状態は browser の答えと同じ。
@@ -885,8 +918,8 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   return browser;
 }
 
-/** 設定の「アカウント」の、本人の別の端末との同期の状態（#1220 AC-3b）。section の押下が開く途中の drawer に当たって
- * 外れたとき（#1559）は null（drawer は開いたままなので、次の回は押し直すだけになる）。 */
+/** 設定の「アカウント」の、本人の別の端末との同期の状態（#1220 AC-3b）。同期が始まる前で表示が無いときは null（drawer は
+ * 開いたままなので、次の回は読み直すだけになる）。 */
 async function accountSyncState(browser) {
   await openSettings(browser, 'account');
   const state = await browser.$('[data-testid="account-sync-status"]').getAttribute('data-state').catch(() => null);
@@ -904,15 +937,20 @@ async function openOwnProfile(browser) {
 }
 
 /**
- * AC-3b: native のアカウントを新しい Web（e）へ移し、再 QR なしで profile・著者を常に表示する指定・private channel の鍵が
- * 届くことを確かめる。同期の状態と中身、別のアカウントへの公開の profile の到達、別の Web（f）へ履歴を移す途中で止めても
- * 必須の移行が完了のままであることも確かめる（#1220 の範囲の固定、2026-10-04）。`other` は別のアカウントの Web。
+ * `transfer`（#1220 AC-3b）: native のアカウントを新しい Web（e）へ移し、再 QR なしで profile・著者を常に表示する指定・private
+ * channel の鍵が届くことを確かめる。同期の状態と中身、別のアカウントへの公開の profile の到達、別の Web（f）へ履歴を移す途中で
+ * 止めても必須の移行が完了のままであることも確かめる（#1220 の範囲の固定、2026-10-04）。a は別のアカウントの Web で、native と
+ * 投稿と DM を送り合っておく（同期の中身に DM の本文が混ざらないことの確認の対象）。
  */
-async function transferAndSync(clients, nativePubkey, other) {
+async function transfer() {
+  const { pubkey: nativePubkey } = await fixture('/fixture/info');
+  const a = await openClient('web-a', { ice: true });
+  const withA = await greetNative(a, 'web-a');
+  const aPubkey = withA.webPost.author_pubkey;
+  await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
   const channelLabel = `channel-transfer-${RUN}`;
   const { channelId } = await nativeCreatesChannel(channelLabel);
   const e = await transferFromNative('web-e', nativePubkey);
-  clients.push(e);
 
   // 同期の状態: e の設定と native の通信状態が、どちらも同期済み。
   await eventually('e is in sync with native', async () => (await accountSyncState(e)) === 'synced');
@@ -932,27 +970,27 @@ async function transferAndSync(clients, nativePubkey, other) {
   await own.$('input[placeholder="Visible label"]').setValue(webName);
   await own.$('button=Save Profile').click();
   await eventually('native has the name set on e', async () => (await native('get_my_profile')).display_name === webName);
-  // 別のアカウント（other）の Web には、公開の profile の更新がこれまでどおり届く（本人の端末間の同期と混同しない）。
+  // 別のアカウントの Web（a）には、公開の profile の更新がこれまでどおり届く（本人の端末間の同期と混同しない）。
   const nativePost = `native post for the profile ${RUN}`;
   await native('create_post', { request: { topic: TOPIC, content: nativePost, reply_to: null } });
-  await sees(other.browser, nativePost);
-  await eventually(`${other.browser.label} sees the profile changed on e`, async () =>
-    (await (await reopenAuthorProfile(other.browser, nativePost, nativePubkey)).getText()).includes(webName)
+  await sees(a, nativePost);
+  await eventually(`${a.label} sees the profile changed on e`, async () =>
+    (await (await reopenAuthorProfile(a, nativePost, nativePubkey)).getText()).includes(webName)
   );
 
   // 著者を常に表示する指定: native で付けると e に、e で外すと native に届く。
-  const otherPost = `post of ${other.browser.label} for the display exception ${RUN}`;
-  await post(other.browser, otherPost);
+  const otherPost = `post of ${a.label} for the display exception ${RUN}`;
+  await post(a, otherPost);
   await sees(e, otherPost);
-  await native('set_author_trust_display_exception', { request: { author_pubkey: other.pubkey, always_visible: true } });
-  const toggle = () => columnOf(e, 'profile', other.pubkey).$('[data-testid="author-trust-display-exception-toggle"]');
+  await native('set_author_trust_display_exception', { request: { author_pubkey: aPubkey, always_visible: true } });
+  const toggle = () => columnOf(e, 'profile', aPubkey).$('[data-testid="author-trust-display-exception-toggle"]');
   await eventually('e has the display exception set on native', async () => {
-    await reopenAuthorProfile(e, otherPost, other.pubkey);
+    await reopenAuthorProfile(e, otherPost, aPubkey);
     return (await toggle().isExisting()) && toggle().isSelected();
   });
   await toggle().click();
   await eventually('native drops the display exception cleared on e', async () =>
-    !(await native('list_author_trust_display_exceptions')).includes(other.pubkey)
+    !(await native('list_author_trust_display_exceptions')).includes(aPubkey)
   );
 
   // private channel: e は移行の前の channel に投稿でき、native が鍵を更新した後の投稿を読める（新しい世代の鍵が届く）。
@@ -987,11 +1025,10 @@ async function transferAndSync(clients, nativePubkey, other) {
   // 任意の履歴: 別の新しい Web（f）が履歴を「直近 30 日」で受け、途中で止めても、必須の移行は完了のまま（#1211 AC-3）。
   // 履歴は本文と添付を送るので、止める間を作るために画像つきの投稿を先に作る。
   for (let index = 0; index < 8; index++) await postNativeImage(`history image ${RUN} ${index}`)();
-  const f = await transferFromNative('web-f', nativePubkey, {
+  await transferFromNative('web-f', nativePubkey, {
     history: 'month',
     duringHistory: (browser) => browser.$('button=Stop receiving history').click(),
   });
-  clients.push(f);
   const done = await native('get_account_transfer_status');
   assert.equal(done.state, 'completed');
   assert.ok(done.history?.stopped, `the history stopped partway: ${JSON.stringify(done.history)}`);
@@ -1118,20 +1155,52 @@ const shownImage = (browser, text) =>
   }, text);
 
 /**
- * #1220 AC-4: 直接経路の端 a の reload・終了・凍結・回線全断・WebRTC の経路だけの喪失が W4 の保存と復帰の入口へつながり、
- * 退会・世代・version を巻き戻さないことを確かめる（ADR 0059 §4〜§6、ADR 0060 §4）。`ctx` は a の公開鍵と EndpointId、native の
- * 公開鍵と EndpointId、既知の相手の EndpointId（`peerEndpoints`。gossip の隣接はそのどれか）、a が参加中の native の channel
- * （`channel`）、需要のある相手の数（`peers`）。
+ * `lifecycle`（#1220 AC-4）: 直接経路の端 a の reload・終了・凍結・回線全断が W4 の保存と復帰の入口へつながり、退会・世代・
+ * version を巻き戻さないことを確かめる（ADR 0059 §4〜§6、ADR 0060 §4）。WebRTC の経路だけの喪失は `webrtc-loss`。需要のある
+ * 相手は native と b（gossip の隣接は、その EndpointId のどれか）。最後に、AC-4 より前に a が作った channel へ、fallback の端 c が
+ * 参加する（r9）。
  */
-async function lifecycleOnTheDirectPath(a, ctx) {
+async function lifecycle() {
+  const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
+  const a = await openClient('web-a', { ice: true });
+  const withA = await greetNative(a, 'web-a');
+  const aPubkey = withA.webPost.author_pubkey;
+  const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
+  // 前提: native と相互に follow する（回線全断の段の DM）。成人向け表示（runtime が保存し、既定は無効）を有効にする。a は native
+  // の招待制の channel に参加し、投稿が行き来する。b は同じ topic を表示する。
+  await native('follow_author', { request: { pubkey: aPubkey } });
+  await openDirectMessage(a, withA.fromNative, nativePubkey);
+  // r6 の前提: a が DM で画像を送る（画面が送信中の仮の添付を読みに行く。#1220 AC-4 r6）。
+  const dmImage = `dm image from ${a.label} ${RUN}`;
+  await sendWebImage(a, nativePubkey, dmImage)();
+  await nativeSeesDirectMessage(aPubkey, dmImage);
+  await openSettings(a, 'safety');
+  await a.$('[data-testid="adult-content-display-toggle"]').click();
+  await a.$('button[aria-label="Close settings"]').click();
+  const channelLabel = `channel-native-${RUN}`;
+  const channel = await nativeCreatesChannel(channelLabel);
+  await joinChannel(a, channel.token, channelLabel);
+  await exchangePostsInChannel(a, channel.channelId, 'native-owned');
+  const b = await openClient('web-b', { ice: true });
+  await sees(b, withA.fromWeb);
+  const peerEndpoints = [nativeEndpoint, await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint)];
+  const peers = 2;
+  // r9 の前提: a が作った招待制の channel に native と b が参加し、b が投稿する（AC-4 の段の後に fallback の端が参加する）。
+  const ownLabel = `channel-a-${RUN}`;
+  const ownToken = await createChannel(a, ownLabel);
+  const ownChannelId = await nativeJoinsChannel(ownToken);
+  await joinChannel(b, ownToken, ownLabel);
+  const fromBInOwnChannel = `web-b in the channel of web-a ${RUN}`;
+  await post(b, fromBInOwnChannel, channelColumn(b, ownChannelId));
+
   // 旧 state の再送の準備: a が参加中の channel の世代を native が更新し、a は新しい世代の投稿を読める。新しい世代は W6 の背景の
   // 配布（epoch 制御の送信と引継ぎの grant）で届くので、届くまでの時間を記録し、待ちの上限は通常より長くする。次に、a は native
   // の別の channel に参加してから退会し、owner の native はその channel の世代を更新して投稿する（旧い参加への配布）。
-  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: ctx.channel.channelId } });
+  await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: channel.channelId } });
   const afterRotation = `after the rotation ${RUN}`;
-  await nativePostsInChannel(ctx.channel.channelId, afterRotation);
+  await nativePostsInChannel(channel.channelId, afterRotation);
   const rotatedAt = Date.now();
-  await channelColumn(a, ctx.channel.channelId).scrollIntoView();
+  await channelColumn(a, channel.channelId).scrollIntoView();
   await eventually(`${a.label} reads the new generation`, async () => {
     await showNewPosts(a);
     return (await pageText(a)).includes(afterRotation);
@@ -1144,42 +1213,42 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await native('rotate_private_channel', { request: { topic: TOPIC, channel_id: left.channelId } });
   const inTheLeftChannel = `in the left channel ${RUN}`;
   await nativePostsInChannel(left.channelId, inTheLeftChannel);
-  const version = await profileVersion(ctx.aPubkey);
+  const version = await profileVersion(aPubkey);
   assert.ok(version, 'native knows the version of the profile');
   // 編集の途中（private channel の列の下書き）。
   const draft = `draft in the channel ${RUN}`;
-  await (await openComposer(channelColumn(a, ctx.channel.channelId))).setValue(draft);
+  await (await openComposer(channelColumn(a, channel.channelId))).setValue(draft);
 
   // reload（1 つ目の履歴の量）: 同じアカウント・EndpointId・設定・下書きで再開し、初回の dialog を出さない。reload の間の投稿も出る。
   await addHistory('history-a', 25);
   const whileReloading = `posted while reloading ${RUN}`;
   await native('create_post', { request: { topic: TOPIC, content: whileReloading, reply_to: null } });
   await a.refresh();
-  await assertWindowed(a, ctx.peers);
-  assert.equal(await assertConnected(a, ctx.peerEndpoints, ctx.nativeEndpoint), ctx.aEndpoint);
+  await assertWindowed(a, peers);
+  assert.equal(await assertConnected(a, peerEndpoints, nativeEndpoint), aEndpoint);
   for (const text of ['Set up your profile', 'What is a community node?']) assert.equal(await findDialog(a, text), null, text);
   // 設定（成人向け表示。runtime が保存し、既定は無効）は有効のまま。
   await openSettings(a, 'safety');
   await eventually('the adult content display stays enabled', () => a.$('[data-testid="adult-content-display-toggle"]').isSelected());
   await a.$('button[aria-label="Close settings"]').click();
-  await channelColumn(a, ctx.channel.channelId).scrollIntoView();
-  assert.equal(await channelColumn(a, ctx.channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
+  await channelColumn(a, channel.channelId).scrollIntoView();
+  assert.equal(await channelColumn(a, channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
   // reload の間の投稿は、利用者が取り直す操作をしなくても出る（「Show N new posts」は受け取り済みの新着を並べるだけで、取得は
   // しない）。
   await sees(a, whileReloading);
   // 退会した channel は、世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。
   // profile の版は reload で変わらない（再送を新しい編集にしない）。
   const labels = await joinedChannelLabels(a);
-  assert.ok(labels.includes(ctx.channel.label) && !labels.includes(leftLabel), JSON.stringify(labels));
+  assert.ok(labels.includes(channelLabel) && !labels.includes(leftLabel), JSON.stringify(labels));
   assert.ok(!(await pageText(a)).includes(inTheLeftChannel), 'the left channel stays left');
   const afterReload = `after the reload ${RUN}`;
-  await nativePostsInChannel(ctx.channel.channelId, afterReload);
-  await seesInChannel(a, ctx.channel.channelId, afterReload);
+  await nativePostsInChannel(channel.channelId, afterReload);
+  await seesInChannel(a, channel.channelId, afterReload);
   const fromAInChannel = `from ${a.label} after the reload ${RUN}`;
-  await post(a, fromAInChannel, channelColumn(a, ctx.channel.channelId));
-  await nativeSeesInChannel(ctx.channel.channelId, fromAInChannel);
-  assert.equal(await profileVersion(ctx.aPubkey), version);
-  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the reload');
+  await post(a, fromAInChannel, channelColumn(a, channel.channelId));
+  await nativeSeesInChannel(channel.channelId, fromAInChannel);
+  assert.equal(await profileVersion(aPubkey), version);
+  await resumesOnTheDirectPath(a, aPubkey, 'the reload');
 
   // 終了（2 つ目の履歴の量）: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって session を閉じ、新しい
   // tab が保存から同じ EndpointId で再開する。
@@ -1190,14 +1259,14 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await a.url(ORIGIN);
   await sees(a, 'kukuri is open in another tab');
   await a.$('button=Use in this tab').click();
-  await assertWindowed(a, ctx.peers);
+  await assertWindowed(a, peers);
   await a.switchToWindow(first);
   await sees(a, 'kukuri is open in another tab');
   assert.ok((await sessionStates(a)).every((state) => state === 'closed'), 'the first tab closes its sessions');
   await a.closeWindow();
   await a.switchToWindow(second);
-  assert.equal(await assertConnected(a, ctx.peerEndpoints, ctx.nativeEndpoint), ctx.aEndpoint);
-  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the takeover');
+  assert.equal(await assertConnected(a, peerEndpoints, nativeEndpoint), aEndpoint);
+  await resumesOnTheDirectPath(a, aPubkey, 'the takeover');
 
   // 凍結: 利用者と同じく、非表示 → 凍結 → 復帰 → 表示の順にする（chromedriver の freeze は page を非表示にしてから凍結し、resume
   // の後も非表示のまま戻さない。画面は非表示の間は列を読み直さない）。凍結で旧い session を閉じ、復帰では生きた需要の相手と
@@ -1209,19 +1278,19 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await a.resume();
   await a.sendCommandAndGetResult('Emulation.setFocusEmulationEnabled', { enabled: true });
   await earlierSessionsClose(a, beforeFreeze);
-  await resumesOnTheDirectPath(a, ctx.aPubkey, 'the freeze');
+  await resumesOnTheDirectPath(a, aPubkey, 'the freeze');
   const renegotiated = (await sessionStates(a)).length - beforeFreeze;
   console.log('negotiations after the freeze', renegotiated);
-  assert.ok(renegotiated <= 6 * ctx.peers, `at most 6 negotiations per peer after the freeze, saw ${renegotiated}`);
+  assert.ok(renegotiated <= 6 * peers, `at most 6 negotiations per peer after the freeze, saw ${renegotiated}`);
 
   // 回線全断（chromedriver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
   // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
   // 届いたと示す。
-  // native との会話の列は、AC-2b の Web 同士の DM で b との会話に置き換わっている（一時の列）。会話の route で開き直す。
+  // native との会話の列は、会話の route で開き直す（前提で開いた会話の列は一時の列）。
   await a.execute((topic, peer) => {
     location.hash = `#/messages?topic=${encodeURIComponent(topic)}&peerPubkey=${peer}`;
-  }, TOPIC, ctx.nativePubkey);
-  await columnOf(a, 'conversation', ctx.nativePubkey).waitForExist({ timeout: WAIT });
+  }, TOPIC, nativePubkey);
+  await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
   await directPathOpens(a);
   const beforeOffline = (await sessionStates(a)).length;
   const network = (offline) => a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 });
@@ -1235,14 +1304,14 @@ async function lifecycleOnTheDirectPath(a, ctx) {
   await a.$('button[aria-label="Close settings"]').click();
   await post(a, `posted offline ${RUN}`);
   const offlineMessage = `dm while offline ${RUN}`;
-  await sendDirectMessage(a, ctx.nativePubkey, offlineMessage);
+  await sendDirectMessage(a, nativePubkey, offlineMessage);
   const pending = await eventually('the pending message', async () => {
     const state = await directMessageState(a, offlineMessage);
     return state?.chip === 'Pending' && state;
   });
   await network(false);
   const copies = async () =>
-    (await native('list_direct_message_messages', { request: { pubkey: ctx.aPubkey, cursor: null, limit: 50 } })).items.filter(
+    (await native('list_direct_message_messages', { request: { pubkey: aPubkey, cursor: null, limit: 50 } })).items.filter(
       (item) => item.text === offlineMessage
     );
   await eventually('native receives the message', async () => {
@@ -1251,14 +1320,27 @@ async function lifecycleOnTheDirectPath(a, ctx) {
     return received.length === 1 && received[0].message_id === pending.id;
   });
   await eventually('the delivered message', async () => (await directMessageState(a, offlineMessage))?.chip === 'Delivered');
-  await resumesOnTheDirectPath(a, ctx.aPubkey, 'going online');
+  await resumesOnTheDirectPath(a, aPubkey, 'going online');
   // 再送は届いた後も重ならない。
   assert.equal((await copies()).length, 1, 'the message is delivered once');
 
-  // WebRTC の経路だけの喪失（relay は健全）: 画像の転送の途中で DataChannel を閉じ、画像が出るまでは新しい session の ICE も
-  // 成立させない（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ
-  // hash で、投稿の card は 1 つ。転送中の stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が
-  // 15 秒の期限で打ち切られ、relay で取り直す）。
+  // r9: AC-4 の段の後に、AC-4 より前に a が作った招待制の channel へ fallback の端 c が token で参加し、b の投稿を読む（reload など
+  // の後の owner の channel への新しい参加。#1220 AC-4 r9）。c は直接経路の判定を終えた後に開く（relay の通信が判定に混ざらない）。
+  const c = await openClient('web-c', { ice: false });
+  await joinChannel(c, ownToken, ownLabel);
+  await seesInChannel(c, ownChannelId, fromBInOwnChannel);
+}
+
+/**
+ * `webrtc-loss`（#1220 AC-4、#1482 J2）: WebRTC の経路だけの喪失（relay は健全）。native の画像が直接経路を通る状態で、画像の
+ * 転送の途中に開いている DataChannel をすべて閉じ、画像が出るまでは新しい session の ICE も成立させない（直接経路が先に戻ると
+ * relay を通らずに完了し、判定が時機に依る）。relay で完了し、表示した画像は原本と同じ hash で、投稿の card は 1 つ。転送中の
+ * stream が続くこと（取り直しにならないこと）は #1482 が判定する（今は表示の取得が 15 秒の期限で打ち切られ、relay で取り直す）。
+ */
+async function webrtcLoss() {
+  const a = await openClient('web-a', { ice: true });
+  await greetNative(a, 'web-a');
+  await nativeImageGoesDirect(a, 'before the loss');
   await directPathOpens(a);
   const png = await payloadPng();
   const acrossTheLoss = `image across the webrtc loss ${RUN}`;
@@ -1287,151 +1369,171 @@ async function dumpColumns(browser) {
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
 
-async function main() {
-  const clients = [];
-  await nativeShows(TOPIC);
+/**
+ * `direct`（W8 AC-2a・AC-2b の直接経路）: native↔Web と Web↔Web の投稿・返信・反応・topic の切替、画像の経路、双方の
+ * EndpointId。DM と、private channel の作成と参加の両方向。
+ */
+async function direct() {
   const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
+  // native↔Web。
+  const a = await openClient('web-a', { ice: true });
+  const withA = await exchangeWithNative(a, 'web-a', 'thumbs-up');
+  await exchangeInTopic(a, 'dev', 'web-a');
+  const nativeImage = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
+  assertRoute('native→web direct', nativeImage, true);
+  const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
+  // AC-2b: native との DM。
+  const aPubkey = withA.webPost.author_pubkey;
+  await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
+
+  // Web↔Web。
+  const b = await openClient('web-b', { ice: true });
+  await sees(b, withA.fromWeb);
+  await exchangeBetweenWeb(b, a, ['heart', 'fire', 'clap']);
+  const webImage = `web image ${RUN}`;
+  assertRoute('web→web direct', await relayedWhileLoading(b, webImage, postWebImage(a, webImage)), true);
+  await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
+  // AC-2b: Web が作った private channel に native と別の Web が参加し、投稿が行き来する。Web↔Web の DM。
+  const channelLabel = `channel-a-${RUN}`;
+  const channelToken = await createChannel(a, channelLabel);
+  const channelId = await nativeJoinsChannel(channelToken);
+  const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
+  await joinChannel(b, channelToken, channelLabel);
+  await seesInChannel(b, channelId, fromAInChannel);
+  const fromBInChannel = `web-b in channel ${RUN}`;
+  await post(b, fromBInChannel, channelColumn(b, channelId));
+  await seesInChannel(a, channelId, fromBInChannel);
+  const channelImage = `channel image to web-b ${RUN}`;
+  const toB = await relayedWhileLoading(b, channelImage, postWebImage(a, channelImage, channelColumn(a, channelId)));
+  assertRoute('web→web channel direct', toB, true);
+  const bHello = `hello from ${b.label} to ${a.label}`;
+  const bPubkey = (await nativeSees(bHello, (item) => item.content === bHello)).author_pubkey;
+  await exchangeDirectMessagesBetweenWeb(
+    { browser: b, pubkey: bPubkey, post: bHello },
+    { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${b.label}` },
+    true
+  );
+  // native が作った channel に Web が参加する（作成と招待の向きの逆）。
+  const nativeChannelLabel = `channel-native-${RUN}`;
+  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
+  await joinChannel(a, nativeChannel.token, nativeChannelLabel);
+  await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
+}
+
+/**
+ * `fallback`（W8 AC-2a・AC-2b の relay fallback）: ICE の成立しない Web c と、native・直接経路の Web a との投稿・返信・反応・
+ * topic の切替、画像の経路、画像が届く前の表示と操作。DM と、private channel の作成と参加の 3 通り。上限つきの timeline
+ * （1 ページ 20 件）も、新しい端の c で確かめる。
+ */
+async function fallback() {
+  const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
+  // 前提: 直接経路の a。a が作った招待制の channel に native が参加し、a が投稿している。
+  const a = await openClient('web-a', { ice: true });
+  const aPubkey = (await greetNative(a, 'web-a')).webPost.author_pubkey;
+  const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
+  const channelLabel = `channel-a-${RUN}`;
+  const channelToken = await createChannel(a, channelLabel);
+  const channelId = await nativeJoinsChannel(channelToken);
+  const fromAInChannel = `web-a in channel ${RUN}`;
+  await post(a, fromAInChannel, channelColumn(a, channelId));
+
+  for (let index = 0; index < 25; index++) {
+    await native('create_post', { request: { topic: TOPIC, content: `bulk ${RUN} ${index}`, reply_to: null } });
+  }
+  const c = await openClient('web-c', { ice: false });
+  await sees(c, `bulk ${RUN} 24`);
+  const cards = await c.$$('.post-list article').length;
+  assert.ok(cards <= 20, `the first page shows at most 20 posts, saw ${cards}`);
+  await eventually('the next page of the timeline', async () => {
+    await c.execute(() => {
+      for (const body of document.querySelectorAll('.shell-column-body')) body.scrollTop = body.scrollHeight;
+    });
+    const more = await c.$('button=Load more');
+    if (await more.isExisting()) await more.click();
+    return (await c.$$('.post-list article').length) > cards;
+  });
+  const withC = await exchangeWithNative(c, 'web-c', 'clap');
+  await exchangeInTopic(c, 'test', 'web-c');
+  await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands', 'party-popper']);
+  const nativeImage = await relayedWhileLoading(c, `native image fallback ${RUN}`, postNativeImage(`native image fallback ${RUN}`));
+  assertRoute('native→web fallback', nativeImage, false);
+  assert.ok(nativeImage.shownBeforeImage, 'the post and its actions are shown while the image is missing');
+  await assertConnected(c, [nativeEndpoint, aEndpoint], nativeEndpoint);
+  const webFallback = `web image fallback ${RUN}`;
+  assertRoute('web→web fallback', await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback)), false);
+
+  // AC-2b: channel への参加と投稿、native と Web との DM。
+  await joinChannel(c, channelToken, channelLabel);
+  await seesInChannel(c, channelId, fromAInChannel);
+  const fromCInChannel = await exchangeInChannelWithNative(c, channelId, 'fallback', false);
+  await seesInChannel(a, channelId, fromCInChannel);
+  const channelFallback = `channel image to web-c ${RUN}`;
+  const toC = await relayedWhileLoading(c, channelFallback, postWebImage(a, channelFallback, channelColumn(a, channelId)));
+  assertRoute('web→web channel fallback', toC, false);
+  // fallback の端が作った channel に native と直接経路の端が参加し、native が作った channel に fallback の端が参加する
+  // （作成・招待・参加の両方の向き）。
+  const cChannelLabel = `channel-c-${RUN}`;
+  const cChannelToken = await createChannel(c, cChannelLabel);
+  const cChannelId = await nativeJoinsChannel(cChannelToken);
+  const fromCInOwnChannel = await exchangeInChannelWithNative(c, cChannelId, 'fallback-owned', false);
+  await joinChannel(a, cChannelToken, cChannelLabel);
+  await seesInChannel(a, cChannelId, fromCInOwnChannel);
+  const fromAInCChannel = `web-a in channel of web-c ${RUN}`;
+  await post(a, fromAInCChannel, channelColumn(a, cChannelId));
+  await seesInChannel(c, cChannelId, fromAInCChannel);
+  const nativeChannelLabel = `channel-native-c-${RUN}`;
+  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
+  await joinChannel(c, nativeChannel.token, nativeChannelLabel);
+  await exchangeInChannelWithNative(c, nativeChannel.channelId, 'native-owned-fallback', false);
+  const cPubkey = withC.webPost.author_pubkey;
+  await exchangeDirectMessagesWithNative(c, cPubkey, { pubkey: nativePubkey, post: withC.fromNative }, false);
+  await exchangeDirectMessagesBetweenWeb(
+    { browser: c, pubkey: cPubkey, post: `hello from ${c.label} to ${a.label}` },
+    { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${c.label}` },
+    false
+  );
+}
+
+/**
+ * `link-preview`（W8 AC-2g）: native（投稿者）が record を書いた後に Web が投稿を表示する（表示が先だと、record の無い結果を
+ * 60 秒持つ）ように、a が表示していない topic に投稿してから、a をその topic へ切り替える。
+ */
+async function linkPreview() {
+  const a = await openClient('web-a', { ice: true });
+  await greetNative(a, 'web-a');
+  await nativeShows(topicId('dev'));
+  const withPreview = await nativeLinkPost(topicId('dev'), 'with-preview', `preview title ${RUN}`);
+  const urlOnly = await nativeLinkPost(topicId('dev'), 'url-only');
+  await switchTopic(a, 'dev');
+  await seesLinkPreview(a, withPreview);
+  await seesOnlyUrl(a, urlOnly);
+  // 投稿者の native を止めた後に開いた Web にも、record を読んだ Web（a）から card と画像が出る（AC-2f の中継）。
+  await fixture('/fixture/shutdown', {});
+  const d = await openClient('web-d', { ice: true });
+  await switchTopic(d, 'dev');
+  await seesLinkPreview(d, withPreview);
+}
+
+/** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
+const scenarios = {
+  direct,
+  fallback,
+  settings,
+  'link-preview': linkPreview,
+  lifecycle,
+  'webrtc-loss': webrtcLoss,
+  'site-data': siteData,
+  transfer,
+};
+
+const [name] = process.argv.slice(2);
+if (name === '--list') {
+  console.log(JSON.stringify(Object.keys(scenarios)));
+} else {
+  assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
+  await nativeShows(TOPIC);
   try {
-    // 直接経路: native↔Web。
-    const a = await openClient('web-a', { ice: true });
-    clients.push(a);
-    const withA = await exchangeWithNative(a, 'web-a', 'thumbs-up');
-    await exchangeInTopic(a, 'dev', 'web-a');
-    const direct = await relayedWhileLoading(a, `native image ${RUN}`, postNativeImage(`native image ${RUN}`));
-    assertRoute('native→web direct', direct, true);
-    const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
-    // AC-2b（直接経路）: native との DM と、主要な 3 つの設定（Community Node の設定は a を使う段の最後。#1549）。
-    const aPubkey = withA.webPost.author_pubkey;
-    await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
-    await changeSettings(a);
-
-    // 直接経路: Web↔Web。
-    const b = await openClient('web-b', { ice: true });
-    clients.push(b);
-    await sees(b, withA.fromWeb);
-    await exchangeBetweenWeb(b, a, ['heart', 'fire', 'clap']);
-    const webImage = `web image ${RUN}`;
-    assertRoute('web→web direct', await relayedWhileLoading(b, webImage, postWebImage(a, webImage)), true);
-    const bEndpoint = await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
-    // AC-2b（直接経路）: Web が作った private channel に native と別の Web が参加し、投稿が行き来する。Web↔Web の DM。
-    const channelLabel = `channel-a-${RUN}`;
-    const channelToken = await createChannel(a, channelLabel);
-    const channelId = await nativeJoinsChannel(channelToken);
-    const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
-    await joinChannel(b, channelToken, channelLabel);
-    await seesInChannel(b, channelId, fromAInChannel);
-    const fromBInChannel = `web-b in channel ${RUN}`;
-    await post(b, fromBInChannel, channelColumn(b, channelId));
-    await seesInChannel(a, channelId, fromBInChannel);
-    const channelImage = `channel image to web-b ${RUN}`;
-    const toB = await relayedWhileLoading(b, channelImage, postWebImage(a, channelImage, channelColumn(a, channelId)));
-    assertRoute('web→web channel direct', toB, true);
-    const bHello = `hello from ${b.label} to ${a.label}`;
-    const bPubkey = (await nativeSees(bHello, (item) => item.content === bHello)).author_pubkey;
-    await exchangeDirectMessagesBetweenWeb(
-      { browser: b, pubkey: bPubkey, post: bHello },
-      { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${b.label}` },
-      true
-    );
-    // native が作った channel に Web が参加する（作成と招待の向きの逆）。fallback の端を開く前に確かめる（fallback の
-    // 端の通信は relay を通るので、直接経路の判定に混ざる）。
-    const nativeChannelLabel = `channel-native-${RUN}`;
-    const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
-    await joinChannel(a, nativeChannel.token, nativeChannelLabel);
-    await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
-    // AC-4: a の reload・終了・凍結・回線全断・WebRTC の経路だけの喪失と、旧 state の再送。直接経路で判定するので、fallback の
-    // 端を開く前に行う。需要のある相手は native と b。
-    await lifecycleOnTheDirectPath(a, {
-      aPubkey,
-      aEndpoint,
-      nativePubkey,
-      nativeEndpoint,
-      peerEndpoints: [nativeEndpoint, bEndpoint],
-      channel: { channelId: nativeChannel.channelId, label: nativeChannelLabel },
-      peers: 2,
-    });
-
-    // relay fallback: ICE の成立しない Web。上限つきの timeline（1 ページ 20 件）も、この新しい端で確かめる。
-    for (let index = 0; index < 25; index++) {
-      await native('create_post', { request: { topic: TOPIC, content: `bulk ${RUN} ${index}`, reply_to: null } });
-    }
-    const c = await openClient('web-c', { ice: false });
-    clients.push(c);
-    await sees(c, `bulk ${RUN} 24`);
-    const cards = await c.$$('.post-list article').length;
-    assert.ok(cards <= 20, `the first page shows at most 20 posts, saw ${cards}`);
-    await eventually('the next page of the timeline', async () => {
-      await c.execute(() => {
-        for (const body of document.querySelectorAll('.shell-column-body')) body.scrollTop = body.scrollHeight;
-      });
-      const more = await c.$('button=Load more');
-      if (await more.isExisting()) await more.click();
-      return (await c.$$('.post-list article').length) > cards;
-    });
-    const withC = await exchangeWithNative(c, 'web-c', 'clap');
-    await exchangeInTopic(c, 'test', 'web-c');
-    await exchangeBetweenWeb(c, a, ['sparkles', 'raised-hands', 'party-popper']);
-    const fallback = await relayedWhileLoading(c, `native image fallback ${RUN}`, postNativeImage(`native image fallback ${RUN}`));
-    assertRoute('native→web fallback', fallback, false);
-    assert.ok(fallback.shownBeforeImage, 'the post and its actions are shown while the image is missing');
-    await assertConnected(c, [nativeEndpoint, aEndpoint, bEndpoint], nativeEndpoint);
-    const webFallback = `web image fallback ${RUN}`;
-    assertRoute('web→web fallback', await relayedWhileLoading(c, webFallback, postWebImage(a, webFallback)), false);
-
-    // AC-2b（fallback）: channel への参加と投稿、native と Web との DM。
-    await joinChannel(c, channelToken, channelLabel);
-    await seesInChannel(c, channelId, fromBInChannel);
-    const fromCInChannel = await exchangeInChannelWithNative(c, channelId, 'fallback', false);
-    await seesInChannel(a, channelId, fromCInChannel);
-    const channelFallback = `channel image to web-c ${RUN}`;
-    const toC = await relayedWhileLoading(c, channelFallback, postWebImage(a, channelFallback, channelColumn(a, channelId)));
-    assertRoute('web→web channel fallback', toC, false);
-    // fallback の端が作った channel に native と直接経路の端が参加し、native が作った channel に fallback の端が参加する
-    // （作成・招待・参加の両方の向き）。
-    const cChannelLabel = `channel-c-${RUN}`;
-    const cChannelToken = await createChannel(c, cChannelLabel);
-    const cChannelId = await nativeJoinsChannel(cChannelToken);
-    const fromCInOwnChannel = await exchangeInChannelWithNative(c, cChannelId, 'fallback-owned', false);
-    await joinChannel(a, cChannelToken, cChannelLabel);
-    await seesInChannel(a, cChannelId, fromCInOwnChannel);
-    const fromAInCChannel = `web-a in channel of web-c ${RUN}`;
-    await post(a, fromAInCChannel, channelColumn(a, cChannelId));
-    await seesInChannel(c, cChannelId, fromAInCChannel);
-    const nativeChannelForCLabel = `channel-native-c-${RUN}`;
-    const nativeChannelForC = await nativeCreatesChannel(nativeChannelForCLabel);
-    await joinChannel(c, nativeChannelForC.token, nativeChannelForCLabel);
-    await exchangeInChannelWithNative(c, nativeChannelForC.channelId, 'native-owned-fallback', false);
-    const cPubkey = withC.webPost.author_pubkey;
-    await exchangeDirectMessagesWithNative(c, cPubkey, { pubkey: nativePubkey, post: withC.fromNative }, false);
-    await exchangeDirectMessagesBetweenWeb(
-      { browser: c, pubkey: cPubkey, post: `hello from ${c.label} to ${a.label}` },
-      { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${c.label}` },
-      false
-    );
-
-    // AC-3b: 同じアカウントの native → Web の移行と同期。
-    await transferAndSync(clients, nativePubkey, { browser: a, pubkey: aPubkey });
-
-    // AC-2g: リンクプレビュー。native（投稿者）が record を書いた後に Web が投稿を表示する（表示が先だと、record の無い
-    // 結果を 60 秒持つ）ように、a が今は表示していない topic に投稿してから、a をその topic へ切り替える。
-    await nativeShows(topicId('dev'));
-    const withPreview = await nativeLinkPost(topicId('dev'), 'with-preview', `preview title ${RUN}`);
-    const urlOnly = await nativeLinkPost(topicId('dev'), 'url-only');
-    await switchTopic(a, 'dev');
-    await seesLinkPreview(a, withPreview);
-    await seesOnlyUrl(a, urlOnly);
-    // 投稿者の native を止めた後に開いた Web にも、record を読んだ Web（a）から card と画像が出る（AC-2f の中継）。
-    await fixture('/fixture/shutdown', {});
-    const d = await openClient('web-d', { ice: true });
-    clients.push(d);
-    await switchTopic(d, 'dev');
-    await seesLinkPreview(d, withPreview);
-
-    // AC-2b の Community Node の設定（a を使う段の最後。#1549）。
-    await changeCommunityNodeSettings(a);
-
-    // サイトデータが消えた後の復旧（#1217 AC-5）。
-    await recoverAfterSiteDataLoss(a);
+    await scenarios[name]();
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
@@ -1439,7 +1541,5 @@ async function main() {
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
   }
+  console.log(`web e2e ${name}: PASS`);
 }
-
-await main();
-console.log('web e2e: PASS');

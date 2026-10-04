@@ -139,7 +139,8 @@ impl CommunityNodeStack {
             bind_addr: user_api_addr,
             database_url: database.database_url.clone(),
             rendezvous_redis_url: community_node_rendezvous_redis_url(),
-            rendezvous_key_prefix: format!("cn:harness:{prefix}"),
+            // stack ごとの DB 名を使い、同じ valkey の他の stack（並行する試験）と topic の在席情報を共有しない（#1559）。
+            rendezvous_key_prefix: format!("cn:harness:{}", database.database_name),
             base_url: base_url.clone(),
             public_base_url: base_url.clone(),
             connectivity_urls: vec![iroh_relay_url.clone()],

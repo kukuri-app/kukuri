@@ -1,7 +1,7 @@
 //! Web クライアントの build と実ブラウザの試験（ADR 0060 §1・§4、#1220 W8）。
 
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
@@ -123,52 +123,96 @@ pub(crate) fn web_build_artifact() -> Result<()> {
 
 /// Web の build を、同じ process の Community Node・native の相手（harness の `web_e2e_fixture`）と実ブラウザで試す。
 /// driver は `apps/desktop/tests/web-e2e/main-flow.mjs`（WebdriverIO。chromedriver は `CHROMEDRIVER`、無ければ自動）。
-pub(crate) fn web_e2e() -> Result<()> {
-    let root = root_dir();
-    web_build(Some(&format!("http://{WEB_E2E_CN_ADDR}")))?;
-    run(
-        "cargo",
-        ["build", "-p", "kukuri-harness", "--bin", "web_e2e_fixture"],
-        &root,
-    )?;
-    let target = target_dir();
-    let fixture = target
+/// 引数の scenario（省略すると `main-flow.mjs --list` の全部）を、scenario ごとに新しい fixture で順に回す（#1559）。
+/// CI は build の job が `--build-only`、scenario の job が `--no-build <scenario>` で呼ぶ。
+pub(crate) fn web_e2e(args: impl Iterator<Item = String>) -> Result<()> {
+    let mut build = true;
+    let mut run_scenarios = true;
+    let mut scenarios = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--no-build" => build = false,
+            "--build-only" => run_scenarios = false,
+            flag if flag.starts_with("--") => bail!("unsupported web-e2e flag: {flag}"),
+            _ => scenarios.push(arg),
+        }
+    }
+    if build {
+        web_build(Some(&format!("http://{WEB_E2E_CN_ADDR}")))?;
+        run(
+            "cargo",
+            ["build", "-p", "kukuri-harness", "--bin", "web_e2e_fixture"],
+            &root_dir(),
+        )?;
+    }
+    if !run_scenarios {
+        return Ok(());
+    }
+    if scenarios.is_empty() {
+        let output = child_command("node")
+            .args(["tests/web-e2e/main-flow.mjs", "--list"])
+            .current_dir(desktop_dir())
+            .output()
+            .context("failed to list the web e2e scenarios")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "main-flow.mjs --list exited with {}",
+            output.status
+        );
+        scenarios = serde_json::from_slice(&output.stdout)?;
+    }
+    let fixture = target_dir()
         .join("debug")
         .join(format!("web_e2e_fixture{}", std::env::consts::EXE_SUFFIX));
     with_cn_postgres(|| {
-        let mut child = child_command(&fixture)
-            .envs(cn_test_envs())
-            .env("KUKURI_WEB_E2E_DIST", desktop_dir().join("dist-web"))
-            .env("KUKURI_WEB_E2E_CN_ADDR", WEB_E2E_CN_ADDR)
-            .stdout(Stdio::piped())
-            .spawn()
-            .context("failed to start web_e2e_fixture")?;
-        let stdout = child.stdout.take().context("fixture stdout")?;
-        let mut lines = BufReader::new(stdout).lines();
-        let origin = loop {
-            let Some(line) = lines.next() else {
-                let _ = child.wait();
-                bail!("web_e2e_fixture exited before it was ready");
-            };
-            let line = line?;
-            println!("[fixture] {line}");
-            if let Some(origin) = line.strip_prefix("KUKURI_WEB_E2E_READY=") {
-                break origin.to_string();
-            }
-        };
-        std::thread::spawn(move || {
-            for line in lines.map_while(Result::ok) {
-                println!("[fixture] {line}");
-            }
-        });
-        let result = run_with_env(
-            "node",
-            ["tests/web-e2e/main-flow.mjs"],
-            &desktop_dir(),
-            &[("KUKURI_WEB_E2E_ORIGIN", origin.as_str())],
-        );
-        let _ = child.kill();
-        let _ = child.wait();
-        result
+        // 1 つが失敗しても残りを回し、失敗した scenario をまとめて示す。
+        let failed: Vec<&String> = scenarios
+            .iter()
+            .filter(|scenario| {
+                run_scenario(&fixture, scenario)
+                    .inspect_err(|error| eprintln!("[xtask] web e2e {scenario}: {error:#}"))
+                    .is_err()
+            })
+            .collect();
+        anyhow::ensure!(failed.is_empty(), "web e2e failed: {failed:?}");
+        Ok(())
     })
+}
+
+/// 新しい fixture（Community Node の DB・rendezvous の key・native）を起動し、`scenario` を回して止める。
+fn run_scenario(fixture: &Path, scenario: &str) -> Result<()> {
+    let mut child = child_command(fixture)
+        .envs(cn_test_envs())
+        .env("KUKURI_WEB_E2E_DIST", desktop_dir().join("dist-web"))
+        .env("KUKURI_WEB_E2E_CN_ADDR", WEB_E2E_CN_ADDR)
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("failed to start web_e2e_fixture")?;
+    let stdout = child.stdout.take().context("fixture stdout")?;
+    let mut lines = BufReader::new(stdout).lines();
+    let origin = loop {
+        let Some(line) = lines.next() else {
+            let _ = child.wait();
+            bail!("web_e2e_fixture exited before it was ready");
+        };
+        let line = line?;
+        println!("[fixture] {line}");
+        if let Some(origin) = line.strip_prefix("KUKURI_WEB_E2E_READY=") {
+            break origin.to_string();
+        }
+    };
+    std::thread::spawn(move || {
+        for line in lines.map_while(Result::ok) {
+            println!("[fixture] {line}");
+        }
+    });
+    let result = run_with_env(
+        "node",
+        ["tests/web-e2e/main-flow.mjs", scenario],
+        &desktop_dir(),
+        &[("KUKURI_WEB_E2E_ORIGIN", origin.as_str())],
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+    result
 }
