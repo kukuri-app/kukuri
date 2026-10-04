@@ -38,6 +38,19 @@ fn is_ticket_host_candidate(addr: SocketAddr) -> bool {
 
 // リトライ状態のテストは共通実装側(kukuri-transport::peers)へ移動した(WP-H2)。
 
+// 画面の送信中の添付の仮の hash（`<id>-attachment-0`）のような、hash でない文字列は panic せずにエラーにする。
+// `iroh_blobs::Hash::from_str` は 64・52 文字以外の長さで panic し、wasm では runtime の task の実行器を壊す
+// （#1220 AC-4）。
+#[tokio::test]
+async fn a_string_that_is_not_a_hash_is_an_error() {
+    let blobs = IrohBlobService::new(IrohDocsNode::memory().await.expect("memory node"));
+    for text in ["", "x", &"a".repeat(46), &"f".repeat(63), &"0".repeat(65)] {
+        let hash = BlobHash::new(text);
+        assert!(blobs.fetch_blob_ephemeral(&hash).await.is_err(), "{text}");
+        assert!(blobs.fetch_local_blob(&hash).await.is_err(), "{text}");
+    }
+}
+
 #[tokio::test]
 async fn blob_roundtrip_basic() {
     let node = IrohDocsNode::memory().await.expect("memory node");

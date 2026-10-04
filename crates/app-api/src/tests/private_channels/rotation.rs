@@ -13,13 +13,15 @@ use std::sync::atomic::AtomicUsize;
 const TOPIC: &str = "kukuri:topic:private-rotation";
 const OTHER_TOPIC: &str = "kukuri:topic:private-rotation-other";
 
-/// `fail_at` 番目の docs の書込みと、`failing_replica` への書込みを失敗させる docs(0・`None` なら失敗させない)。
+/// `fail_at` 番目の docs の書込みと、`failing_replica` への書込み・`failing_key` の読み出しを失敗させる docs(0・`None`
+/// なら失敗させない)。
 #[derive(Default)]
 struct FaultDocs {
     inner: MemoryDocsSync,
     writes: AtomicUsize,
     fail_at: AtomicUsize,
     failing_replica: std::sync::Mutex<Option<ReplicaId>>,
+    failing_key: std::sync::Mutex<Option<String>>,
 }
 
 #[async_trait]
@@ -48,6 +50,11 @@ impl DocsSync for FaultDocs {
         query: DocQuery,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
+        // namespace を開いていない読み出し先が、保存に無い key に返す失敗(`DocReadProtocol`)。
+        if matches!(&query, DocQuery::Exact(key) if self.failing_key.lock().unwrap().as_ref() == Some(key))
+        {
+            anyhow::bail!("docs namespace is not held");
+        }
         self.inner
             .query_replica_with_policy(replica, query, policy)
             .await
@@ -642,4 +649,38 @@ async fn the_view_and_the_auto_rotate_decision_do_not_grow_with_participants() {
     assert_eq!(small.1, 2, "both non-mutual participants are stale");
     assert_eq!(small.2, 1, "the owner rotates before writing");
     assert_eq!(small, measure_view(10).await);
+}
+
+// 招待制の参加の snapshot は、読み出し先が読む側の参加 record に失敗を返しても、owner の record から読める(#1220 AC-4)。
+// reload の後の Web の owner は namespace を開いておらず(docs は memory)、保存に無い key(新しく参加する人の参加
+// record)には失敗を返す。新しく参加する人に参加 record が無いのは当然なので、無いものとして読む。
+#[tokio::test]
+async fn an_epoch_snapshot_reads_when_the_provider_lacks_the_readers_participant_record() {
+    let store = Arc::new(MemoryStore::default());
+    let fault = Arc::new(FaultDocs::default());
+    let docs: Arc<dyn DocsSync> = fault.clone();
+    let blobs = Arc::new(MemoryBlobService::default());
+    let owner = owner_device(&store, &docs, &blobs, &generate_keys()).await;
+    let channel_id = create(&owner, TOPIC, ChannelAudienceKind::InviteOnly).await;
+    let state = owner
+        .joined_private_channel_state(TOPIC, &channel_id)
+        .await
+        .expect("joined");
+    let joiner = generate_keys().public_key_hex();
+    *fault.failing_key.lock().unwrap() = Some(stable_key(
+        "channels/participants",
+        &format!("{joiner}/envelope"),
+    ));
+
+    let snapshot = read_private_epoch_snapshot(
+        docs.as_ref(),
+        &current_private_channel_replica_id(&state),
+        &joiner,
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("the snapshot reads")
+    .expect("the owner's records");
+    assert_eq!(snapshot.policy.epoch_id, state.current_epoch_id);
+    assert!(snapshot.local_participant.is_none());
 }
