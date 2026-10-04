@@ -43,7 +43,7 @@ pub(super) async fn target_host(dir: &Path) -> Arc<ClientHost> {
 }
 
 /// 移行元の招待で移行先の host が接続し、両端末で承認して、両方の完了を待つ。受けたアカウントの ID を返す。
-async fn transfer(source: &DesktopRuntime, host: &Arc<ClientHost>) -> String {
+pub(super) async fn transfer(source: &DesktopRuntime, host: &Arc<ClientHost>) -> String {
     match transfer_with(source, host, None).await {
         AccountTransferStatus::Completed {
             account_id: Some(id),

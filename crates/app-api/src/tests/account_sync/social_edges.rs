@@ -187,8 +187,7 @@ async fn the_bundle_carries_own_edges_and_the_follow_backs() {
 }
 
 /// 片方の端末のフォロー・解除・ブロックは、もう片方の一覧に届き、画面に相手と自分の profile の読み直しを知らせる。
-/// 参加者でない相手との edge は、参加者との follow の item にしない。手元の新しい edge は古い版で戻らず、別の
-/// アカウントの edge は採らない。
+/// 手元の新しい edge は古い版で戻らず（台帳の行も採らない）、別のアカウントの edge は採らない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
     let keys = generate_keys();
@@ -223,14 +222,6 @@ async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
             .await
             .is_empty()
     );
-    assert!(
-        a.services
-            .projection_store
-            .list_account_sync_keys("follow/")
-            .await
-            .expect("keys")
-            .is_empty()
-    );
 
     let other = generate_keys().public_key();
     let older = follow_at(&keys, &other, FollowEdgeStatus::Active, 1_000);
@@ -253,6 +244,14 @@ async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
             .map(|edge| edge.status),
         Some(FollowEdgeStatus::Revoked)
     );
+    assert!(
+        b.services
+            .projection_store
+            .get_account_sync_row(&format!("graph/follows/{}", other.as_str()))
+            .await
+            .expect("row")
+            .is_none()
+    );
     let foreign = build_follow_edge_envelope(&generate_keys(), &other, FollowEdgeStatus::Active)
         .expect("foreign");
     assert!(AccountSyncItem::edge(&me, &foreign).is_err());
@@ -267,8 +266,9 @@ async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
     assert!(b.merge_account_sync_item(forged).await.is_err());
 }
 
-/// 自分のフォローを 10 倍にしても、周回の 1 照会の読取りは page の上限を超えず、新しい 1 件の取得の読取りの回数と
-/// bytes は増えない（変更の窓の seq の桁がそろう規模で比べる。seq は 10 と 91）。
+/// 自分のフォローを 10 倍にしても、新しい 1 件の取得の読取りの回数と bytes は増えない（変更の窓の seq の桁がそろう
+/// 規模で比べる。seq は 10 と 91）。周回の 1 照会の読取りは page の上限を超えない（全件を 1 照会で読むと、200 件で
+/// 上限を超える）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn own_follows_do_not_grow_a_cycle_page_or_one_change_fetch() {
     let mut fetches = Vec::new();
@@ -282,20 +282,6 @@ async fn own_follows_do_not_grow_a_cycle_page_or_one_change_fetch() {
                 .await
                 .expect("follow");
         }
-        let (mut prefix, mut page) = (Some("profile".to_string()), 0);
-        while let Some(current) = prefix {
-            a_docs.work();
-            prefix = b
-                .account_sync_cycle_step(&a_docs, &current, false)
-                .await
-                .expect("cycle step");
-            page = page.max(a_docs.work().0);
-        }
-        // 1 照会（64 key）と、key ごとの点読（組の 1 件か旧候補）。
-        assert!(
-            page <= 1 + 2 * 64,
-            "{follows} follows: {page} reads in a page"
-        );
         b.fetch_account_sync_from("device-a")
             .await
             .expect("catch up");
@@ -308,4 +294,55 @@ async fn own_follows_do_not_grow_a_cycle_page_or_one_change_fetch() {
         fetches.push((reads, bytes));
     }
     assert_eq!(fetches[0], fetches[1]);
+
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, _) = memory_device(&keys, "device-b").await;
+    for _ in 0..200 {
+        a.follow_author(generate_keys().public_key().as_str())
+            .await
+            .expect("follow");
+    }
+    let (mut prefix, mut page) = (Some("profile".to_string()), 0);
+    while let Some(current) = prefix {
+        a_docs.work();
+        prefix = b
+            .account_sync_cycle_step(&a_docs, &current, false)
+            .await
+            .expect("cycle step");
+        page = page.max(a_docs.work().0);
+    }
+    // 1 照会（64 key）と、key ごとの点読（組の 1 件か旧候補）。
+    assert!(page <= 1 + 2 * 64, "{page} reads in a page");
+}
+
+/// 自分のフォローを 10 倍にしても、移行の 1 page の item の数は変わらない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_bundle_edge_pages_do_not_grow_with_follows() {
+    let mut largest = Vec::new();
+    for follows in [70, 700] {
+        let keys = generate_keys();
+        let (source, _) = memory_device(&keys, "device-a").await;
+        for _ in 0..follows {
+            put(
+                &source,
+                build_follow_edge_envelope(
+                    &keys,
+                    &generate_keys().public_key(),
+                    FollowEdgeStatus::Active,
+                )
+                .expect("follow"),
+            )
+            .await;
+        }
+        let pages = bundle(&source).await;
+        let edges = pages
+            .iter()
+            .filter(|page| page.iter().any(|item| item.key.starts_with("graph/")))
+            .map(Vec::len)
+            .collect::<Vec<_>>();
+        assert_eq!(edges.iter().sum::<usize>(), follows);
+        largest.push(edges.into_iter().max());
+    }
+    assert_eq!(largest[0], largest[1]);
 }

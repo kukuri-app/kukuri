@@ -167,9 +167,9 @@ impl AppService {
                     .adopt_account_sync_row(&row_of(&item)?)
                     .await
             }
-            // 自分のフォロー・ブロックの edge と、自分がフォローしている相手から自分への edge（#1211 AC-6）。この版より前の
-            // edge（行の無いもの）は、手元の edge の時刻と比べる（台帳の行に古い版を置くと、送り直しが古い版を本人の別の
-            // 端末へ広げる）。
+            // 自分のフォロー・ブロックの edge と、自分がフォローしている相手から自分への edge（#1211 AC-6）。手元の edge と
+            // 比べ、手元が新しいか同じ envelope なら何もしない（台帳の行に古い版を置くと、送り直しが古い版を本人の別の端末へ
+            // 広げる。同じ edge を採り直すと、author の replica・bucket を書き直す）。
             AccountSyncItemKey::OwnFollow { .. }
             | AccountSyncItemKey::OwnBlock { .. }
             | AccountSyncItemKey::FollowerEdge { .. } => {
@@ -183,37 +183,39 @@ impl AppService {
                     AccountSyncItem::edge(&me, &envelope)? == item,
                     "the edge item does not match its envelope"
                 );
+                envelope.verify()?;
                 let store = &self.services.store;
                 let (local, other) = match &item.key {
                     AccountSyncItemKey::OwnFollow { target } => (
                         store
                             .get_follow_edge(me.as_str(), target.as_str())
                             .await?
-                            .map(|edge| edge.updated_at),
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
                         target,
                     ),
                     AccountSyncItemKey::OwnBlock { target } => (
                         store
                             .get_block_edge(me.as_str(), target.as_str())
                             .await?
-                            .map(|edge| edge.updated_at),
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
                         target,
                     ),
                     AccountSyncItemKey::FollowerEdge { subject } => (
                         store
                             .get_follow_edge(subject.as_str(), me.as_str())
                             .await?
-                            .map(|edge| edge.updated_at),
+                            .map(|edge| (edge.updated_at, edge.envelope_id)),
                         subject,
                     ),
                     _ => anyhow::bail!("not an edge item"),
                 };
-                if local.is_some_and(|updated_at| updated_at > item.updated_at)
-                    || !self
-                        .services
-                        .projection_store
-                        .adopt_account_sync_row(&row_of(&item)?)
-                        .await?
+                if local.is_some_and(|(updated_at, envelope_id)| {
+                    updated_at > item.updated_at || envelope_id == envelope.id
+                }) || !self
+                    .services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await?
                 {
                     return Ok(false);
                 }
@@ -226,7 +228,6 @@ impl AppService {
                     }
                     // 相手の edge は、相手の replica にある。手元はフォローの表にだけ置く。
                     _ => {
-                        envelope.verify()?;
                         store.put_envelope(envelope).await?;
                         true
                     }
