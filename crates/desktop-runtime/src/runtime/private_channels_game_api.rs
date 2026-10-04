@@ -475,23 +475,7 @@ impl DesktopRuntime {
                     })
                     .await?
             }
-            DomeHostTargetV1::CommunityNode { api_base_url, .. } => {
-                let access_proof = if matches!(
-                    &request.input,
-                    kukuri_core::DomeSessionInputKindV1::Join { .. }
-                        | kukuri_core::DomeSessionInputKindV1::KeepAlive
-                ) {
-                    Some(
-                        self.app_service
-                            .build_dome_access_proof(
-                                request.spatial_context.clone(),
-                                lease.owner_pubkey.clone(),
-                            )
-                            .await?,
-                    )
-                } else {
-                    None
-                };
+            host => {
                 let signed_input = build_signed_dome_session_input(
                     self.author_keys.as_ref(),
                     kukuri_core::DomeSessionInputV1 {
@@ -506,17 +490,37 @@ impl DesktopRuntime {
                         input: request.input,
                     },
                 )?;
-                self.submit_dome_hosting_input_to_community_node(
-                    api_base_url,
-                    &DomeHostingSessionInputRequest {
-                        signed_input,
-                        access_proof,
-                    },
-                )
-                .await?
-                .signed_snapshot
+                match host {
+                    DomeHostTargetV1::CommunityNode { api_base_url, .. } => {
+                        let access_proof = match &signed_input.input.input {
+                            kukuri_core::DomeSessionInputKindV1::Join { .. }
+                            | kukuri_core::DomeSessionInputKindV1::KeepAlive => Some(
+                                self.app_service
+                                    .build_dome_access_proof(
+                                        request.spatial_context,
+                                        lease.owner_pubkey.clone(),
+                                    )
+                                    .await?,
+                            ),
+                            _ => None,
+                        };
+                        self.submit_dome_hosting_input_to_community_node(
+                            api_base_url,
+                            &DomeHostingSessionInputRequest {
+                                signed_input,
+                                access_proof,
+                            },
+                        )
+                        .await?
+                        .signed_snapshot
+                    }
+                    // 別の端末の所有者の端末の host へは P2P の session 経路で送る(ADR 0038 #1527)。
+                    DomeHostTargetV1::OwnerDevice { endpoint_id, .. } => {
+                        self.submit_owner_device_input(endpoint_id, signed_input)
+                            .await?
+                    }
+                }
             }
-            _ => anyhow::bail!("the active Dome host is not reachable from this device"),
         };
         verify_signed_dome_physics_snapshot(&signed_snapshot, &lease, &session_id)?;
         Ok(signed_snapshot.snapshot)
@@ -750,52 +754,6 @@ impl DesktopRuntime {
             )
             .await?;
         Ok(committed)
-    }
-
-    pub async fn resync_dome_snapshots(
-        &self,
-        request: ResyncDomeSnapshotsRequest,
-    ) -> Result<Vec<kukuri_core::DomePhysicsSnapshotV1>> {
-        let hosting = self
-            .get_dome_hosting(GetDomeHostingRequest {
-                spatial_context: request.spatial_context.clone(),
-                instance_id: request.instance_id.clone(),
-            })
-            .await?;
-        let lease = hosting.lease.context("Dome is not currently hosted")?;
-        let session_id = hosting
-            .state
-            .session_id
-            .context("Dome session is not active")?;
-        let signed = match &lease.host {
-            DomeHostTargetV1::OwnerDevice { .. } => {
-                self.app_service
-                    .resync_dome_snapshots(ResyncDomeSnapshotsInput {
-                        spatial_context: request.spatial_context,
-                        instance_id: request.instance_id,
-                        after_sequence: request.after_sequence,
-                    })
-                    .await?
-            }
-            DomeHostTargetV1::CommunityNode { api_base_url, .. } => {
-                self.resync_dome_snapshots_from_community_node(
-                    api_base_url,
-                    &DomeHostingSnapshotResyncRequest {
-                        instance_id: request.instance_id,
-                        after_sequence: request.after_sequence,
-                    },
-                )
-                .await?
-                .snapshots
-            }
-        };
-        signed
-            .into_iter()
-            .map(|snapshot| {
-                verify_signed_dome_physics_snapshot(&snapshot, &lease, &session_id)?;
-                Ok(snapshot.snapshot)
-            })
-            .collect()
     }
 
     // Both entrypoints retain their own preparation/no-op rules. This method owns

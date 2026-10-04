@@ -125,6 +125,19 @@ impl MemoryStore {
         Ok(items)
     }
 
+    pub(super) async fn store_get_block_edge_impl(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        Ok(self
+            .block_edges
+            .read()
+            .await
+            .get(&(subject_pubkey.to_string(), target_pubkey.to_string()))
+            .cloned())
+    }
+
     pub(super) async fn store_list_block_edges_by_target_impl(
         &self,
         target_pubkey: &str,

@@ -32,6 +32,7 @@
     "admitting": "正在检查访问权限并寻找安全出生点…",
     "noAvailable": "当前没有可进入的 Dome。请在有 Dome 开始托管后再选择。",
     "hostUnavailable": "主机不可用",
+    "hostUnreachable": "无法连接到所有者的设备。请稍后再试。",
     "settingTitle": "频道入口 Dome",
     "none": "未指定",
     "save": "保存入口 Dome",

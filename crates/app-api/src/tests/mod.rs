@@ -65,6 +65,7 @@ mod dome_hosting;
 mod dome_listing;
 mod dome_move;
 mod dome_placement;
+mod dome_session;
 mod game;
 mod game_projection_freshness;
 mod live;

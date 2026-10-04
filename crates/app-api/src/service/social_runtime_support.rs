@@ -94,30 +94,11 @@ impl AppService {
         left_pubkey: &str,
         right_pubkey: &str,
     ) -> Result<bool> {
-        let left_blocks_right = self
-            .services
-            .store
-            .list_block_edges_by_subject(left_pubkey)
-            .await?
-            .into_iter()
-            .any(|edge| {
-                edge.target_pubkey.as_str() == right_pubkey
-                    && edge.status == BlockEdgeStatus::Active
-            });
-        if left_blocks_right {
-            return Ok(true);
-        }
-        Ok(self
-            .services
-            .store
-            .list_block_edges_by_subject(right_pubkey)
-            .await?
-            .into_iter()
-            .any(|edge| {
-                edge.target_pubkey.as_str() == left_pubkey && edge.status == BlockEdgeStatus::Active
-            }))
+        Ok(self.owner_blocks_visitor(left_pubkey, right_pubkey).await?
+            || self.owner_blocks_visitor(right_pubkey, left_pubkey).await?)
     }
 
+    /// owner から visitor への block を key 指定の 1 件で読む(owner の block の件数に比例しない。#1527)。
     pub(crate) async fn owner_blocks_visitor(
         &self,
         owner_pubkey: &str,
@@ -126,12 +107,8 @@ impl AppService {
         Ok(self
             .services
             .store
-            .list_block_edges_by_subject(owner_pubkey)
+            .get_block_edge(owner_pubkey, visitor_pubkey)
             .await?
-            .into_iter()
-            .any(|edge| {
-                edge.target_pubkey.as_str() == visitor_pubkey
-                    && edge.status == BlockEdgeStatus::Active
-            }))
+            .is_some_and(|edge| edge.status == BlockEdgeStatus::Active))
     }
 }

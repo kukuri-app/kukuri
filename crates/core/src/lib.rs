@@ -6,6 +6,7 @@ mod dome_envelopes;
 mod dome_hosting;
 mod dome_layout;
 mod dome_recovery;
+mod dome_session;
 mod dome_transition;
 mod envelope;
 mod game;
@@ -89,6 +90,10 @@ pub use dome_recovery::{
     DomeEvacuationCandidateKindV1, DomeEvacuationCandidateV1, DomeEvacuationPhaseV1,
     DomeEvacuationReasonV1, DomeHostLivenessV1, order_dome_evacuation_candidates,
     resolve_dome_host_liveness,
+};
+pub use dome_session::{
+    DOME_SESSION_REQUEST_MAX_BYTES, DOME_SESSION_RESPONSE_MAX_BYTES, DOME_SESSION_RESYNC_MAX_BYTES,
+    DomeSessionRequestV1, DomeSessionResponseV1,
 };
 pub use dome_transition::{
     DOME_ACCESS_PROOF_TTL_MILLIS, DOME_TRANSITION_CROSSING_HYSTERESIS_CM,
