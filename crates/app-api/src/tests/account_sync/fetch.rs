@@ -16,7 +16,9 @@ mod controller_handoff;
 mod controller_requests;
 mod participant_sync;
 
-/// 試験の端末の docs。書込み・読取りを止められ、読取りの回数を数え、`remote` を本人の別の端末の reader として返す。
+/// 試験の端末の docs。書込み・読取りを止められ、account の replica の読取りの回数を数え、`remote` を本人の別の端末の
+/// reader として返す。参加した channel の購読の task が起動時に背景で読む channel の replica は数えない（その読取りが
+/// 計測の窓に入るかは、実行ごとに変わる）。
 #[derive(Clone)]
 pub(super) struct DeviceDocs {
     inner: MemoryDocsSync,
@@ -43,8 +45,10 @@ impl DeviceDocs {
         }
     }
 
-    fn read(&self) -> Result<()> {
-        self.reads.fetch_add(1, Ordering::SeqCst);
+    fn read(&self, replica_id: &ReplicaId) -> Result<()> {
+        if counts(replica_id) {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+        }
         self.reads_left
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
@@ -66,9 +70,11 @@ impl DeviceDocs {
         )
     }
 
-    fn counted(&self, records: &[DocRecord]) {
-        let bytes = records.iter().map(|record| record.value.len()).sum();
-        self.bytes.fetch_add(bytes, Ordering::SeqCst);
+    fn counted(&self, replica_id: &ReplicaId, records: &[DocRecord]) {
+        if counts(replica_id) {
+            let bytes = records.iter().map(|record| record.value.len()).sum();
+            self.bytes.fetch_add(bytes, Ordering::SeqCst);
+        }
     }
 
     fn reachable(&self, reads: usize) {
@@ -78,6 +84,12 @@ impl DeviceDocs {
     fn reading_from(&self, other: &DeviceDocs) {
         *self.remote.lock().expect("remote") = Some(Arc::new(other.clone()));
     }
+}
+
+fn counts(replica_id: &ReplicaId) -> bool {
+    replica_id
+        .as_str()
+        .starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX)
 }
 
 #[async_trait]
@@ -128,12 +140,12 @@ impl DocsSync for DeviceDocs {
         limit: usize,
         policy: DocFetchPolicy,
     ) -> Result<Vec<DocRecord>> {
-        self.read()?;
+        self.read(replica_id)?;
         let records = self
             .inner
             .query_replica_exact_bounded(replica_id, key, limit, policy)
             .await?;
-        self.counted(&records);
+        self.counted(replica_id, &records);
         Ok(records)
     }
     async fn query_replica_keys(
@@ -141,7 +153,7 @@ impl DocsSync for DeviceDocs {
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
     ) -> Result<kukuri_docs_sync::DocKeyPage> {
-        self.read()?;
+        self.read(replica_id)?;
         self.inner.query_replica_keys(replica_id, query).await
     }
     async fn query_replica_keys_by_author(
@@ -150,7 +162,7 @@ impl DocsSync for DeviceDocs {
         docs_author: &str,
         query: kukuri_docs_sync::DocKeyQuery,
     ) -> Result<kukuri_docs_sync::DocKeyPage> {
-        self.read()?;
+        self.read(replica_id)?;
         self.inner
             .query_replica_keys_by_author(replica_id, docs_author, query)
             .await
@@ -165,12 +177,12 @@ impl DocsSync for DeviceDocs {
         key: &str,
         policy: DocFetchPolicy,
     ) -> Result<Option<DocRecord>> {
-        self.read()?;
+        self.read(replica_id)?;
         let record = self
             .inner
             .query_replica_by_author(replica_id, docs_author, key, policy)
             .await?;
-        self.counted(record.as_slice());
+        self.counted(replica_id, record.as_slice());
         Ok(record)
     }
     async fn subscribe_replica(
