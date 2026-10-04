@@ -360,10 +360,7 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         .with_writer(|| DiagConsoleLine(Vec::new()))
         .try_init();
     std::panic::set_hook(Box::new(|info| {
-        web_sys::console::log_1(
-            &format!("KDIAG PANIC {info}
-{}", js_sys::Error::new("").stack()).into(),
-        );
+        web_sys::console::log_1(&format!("KDIAG PANIC {info}").into());
     }));
     let config = match from_js(&config).map_err(|error| error_value(&error))? {
         Value::Null => StartConfig::default(),
