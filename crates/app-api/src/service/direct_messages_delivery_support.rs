@@ -383,7 +383,7 @@ impl AppService {
             if let Err(error) =
                 Self::publish_account_receive_dm_frame(services, row, destination).await
             {
-                tracing::debug!(%error, peer = %row.peer_pubkey.get(..8).unwrap_or_default(), dm = %row.dm_id.get(..20).unwrap_or_default(), "due direct message outbox row deferred");
+                tracing::debug!(%error, "due direct message outbox row deferred");
             }
         }
         Ok(rows.len())
