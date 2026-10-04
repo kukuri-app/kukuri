@@ -221,12 +221,6 @@ jobs:
     with:
       browser: chrome
 
-  # 一時: Firefox の実結果を PR の CI で取る（merge の前に外す）。
-  web-e2e-firefox:
-    uses: ./.github/workflows/kukuri-web-e2e.yml
-    with:
-      browser: firefox
-
   linux-desktop-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
