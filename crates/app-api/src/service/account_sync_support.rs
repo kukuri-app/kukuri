@@ -150,6 +150,11 @@ impl AppService {
                     return Ok(false);
                 }
                 self.commit_my_profile(envelope).await?;
+                // 画面は自分の profile を読み直す（本人の別の端末で変えたもの。#1220 AC-3b）。
+                let _ = self
+                    .services
+                    .author_relationship_changes
+                    .send(self.current_author_pubkey().to_string());
                 Ok(true)
             }
             AccountSyncItemKey::TrustAlwaysVisible { .. } => {

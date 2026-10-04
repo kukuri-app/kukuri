@@ -200,6 +200,7 @@ async fn one_device_reads_and_merges_the_other_devices_edits() {
         })
         .await
         .unwrap();
+    let mut changes = second.subscribe_author_relationship_changes();
     for key in [
         AccountSyncItemKey::TrustAlwaysVisible {
             author: Pubkey::from(author.as_str()),
@@ -221,6 +222,9 @@ async fn one_device_reads_and_merges_the_other_devices_edits() {
         second.get_my_profile().await.unwrap().name.as_deref(),
         Some("from the first device")
     );
+    // 採った自分の profile を、画面が読み直すよう知らせる（#1220 AC-3b）。
+    assert_eq!(changes.try_recv().unwrap(), keys.public_key_hex());
+    assert!(changes.try_recv().is_err(), "only the profile announces");
 }
 
 // 1 item の反映の読み出しは、関係の無い item・同じ key の履歴が 10 倍になっても変わらない。

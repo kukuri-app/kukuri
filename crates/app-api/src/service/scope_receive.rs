@@ -237,6 +237,12 @@ impl AppService {
                 keys.expose_namespace_secret_hex().as_str(),
             )
             .await?;
+        // 購読で namespace を作る。まだ何も書いていない端末（移行の直後の移行先など）も、本人の別の端末の読取りに
+        // 空で答える（namespace が無いと読取りを打ち切り、相手は取得の失敗のままになる。#1220 AC-3b）。
+        self.services
+            .docs_sync
+            .open_replica(keys.replica_id())
+            .await?;
         let hints = self
             .services
             .hint_transport

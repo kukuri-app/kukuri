@@ -107,7 +107,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 | 入口 | 扱い |
 | --- | --- |
-| 起動・import・切替・復帰 | runtime の起動で `AppService::start_account_sync` が scope の lease（`ScopeKey::AccountSync`）を取る。lease の task が replica の namespace の秘密を登録し、hint を購読する。private channel の復元より前に取る（scope の上限 64 の 1 つ）。import は account の追加・切替と同じ runtime の起動を通る。停止・切替は runtime の停止で lease ごと外れ、新しい runtime は新しい account の値だけを持つ。endpoint の作り直し（docs も新しくなる）は、lease の task の作り直しで秘密の登録と購読へ戻る |
+| 起動・import・切替・復帰 | runtime の起動で `AppService::start_account_sync` が scope の lease（`ScopeKey::AccountSync`）を取る。lease の task が replica の namespace の秘密を登録して replica を開き（まだ何も書いていない端末も、本人の別の端末の読取りに空で答える。開かないと読取りを打ち切り、相手は取得の失敗のままになる。#1220 AC-3b）、hint を購読する。private channel の復元より前に取る（scope の上限 64 の 1 つ）。import は account の追加・切替と同じ runtime の起動を通る。停止・切替は runtime の停止で lease ごと外れ、新しい runtime は新しい account の値だけを持つ。endpoint の作り直し（docs も新しくなる）は、lease の task の作り直しで秘密の登録と購読へ戻る |
 | hint | `ScopeKey::AccountSync` は公開の topic の lease（`leased_topics`）に入らない。gossip は rendezvous が返した本人の端末とだけ合流し、bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（送ると、合流できないまま warmup の接続を繰り返して他の通信を乱し、他人に topic を知らせる）。hint を受けた差分の取得は §10（AC-5b） |
 | rendezvous | 購読中の account の hint は、秘密から導出した topic の rendezvous の鍵（`public_topic_rendezvous_key(hint/kukuri:account:<hex>)`）で Community Node へ送り、本人の端末どうしを Relay Supported P2P で会わせる。鍵はアカウント鍵を持つ端末だけが計算でき、node が受け取るのは不透明な鍵だけ。node が同じ account の端末を結び付けられることは、既存の受信 route の rendezvous（公開鍵から導出）と同じで、新しい情報を加えない |
 | 診断 | sync status の topic の一覧と topic の診断から外す（`normalize_topic_name`） |
@@ -365,10 +365,11 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - rendezvous の応答に、どの CN の前回の応答にも無かった本人の端末が現れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、gossip の候補は rendezvous の応答の後にしか入らない。そこで、新しく現れた端末から、gossip の合流を待たずに rendezvous の候補（endpoint ID と addr hint）で直接取得する。
     - 前回の応答は CN ごとに持つ（CN の数 × 応答の上限）。同じ端末が続く応答と、その端末の居ない別の CN の応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
     - account の lease の task の作り直し（起動・復帰）で前回の応答を忘れ、次の応答に居る端末から 1 回読む。
+    - 前回の取得に失敗した端末は、続く応答に居れば取得し直す（#1220 AC-3b、2026-10-04）。Web の移行先は Community Node に同意した後に endpoint を作り直すので、移行元の最初の取得が切れ、端末 ID が同じままなので「現れた」端末にならず、次の契機（hint・日の境界）まで取得されなかった。応答は rendezvous の更新ごとなので、新しい周期処理にはならない。
 - hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
-- owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得は再試行せず、次の契機を待つ。
+- owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得はその場で再試行せず、次の契機（rendezvous の続く応答を含む）を待つ。
   - 取得した item の merge は、account の状態（購読の lease の表・参加状態・購読を止めた topic と channel など）を共有する handle（`AppService::account_handle`）で行う（#1211 AC-4 で直した）。channel の参加・世代の変化を、この account の購読とメモリへ反映するため。それまでは別の lease の表を持つ handle で merge し、世代を進めても購読とメモリは古い世代のままだった。
 - account の切替: 取得は account の runtime の lease の task が持ち、停止で止まる。新しい runtime は、新しい account の store の cursor だけを読む。別の account への遅れた反映は起きない。
 

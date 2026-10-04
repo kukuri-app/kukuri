@@ -633,15 +633,9 @@ impl HintTransport for CandidateHints {
     }
 }
 
-/// 起動・復帰の時点では gossip の候補がまだ無い。rendezvous の応答に新しく現れた本人の端末からは、gossip の合流を
-/// 待たずに取得し、未同期の「候補なし」を下ろす。同じ端末が続く応答（更新ごと）では読み直さない（#1218 AC-5b 監査
-/// B-1・B-3）。
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
-    let keys = generate_keys();
-    let (a, a_docs) = memory_device(&keys, "device-a").await;
+/// rendezvous の候補だけを持つ（gossip の候補は空の）本人の端末 b。a を読むかは `b_docs.reading_from` で決める。
+async fn rendezvous_device(keys: &KukuriKeys) -> (AppService, DeviceDocs) {
     let b_docs = DeviceDocs::new();
-    b_docs.reading_from(&a_docs);
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(FakeTransport::new("device-b", FakeNetwork::default()));
     let hints = CandidateHints {
@@ -658,19 +652,39 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
         keys.clone(),
     );
     b.start_account_sync().await.expect("account sync");
-    let until = |done: fn(&AccountSyncStatus) -> bool| {
-        let b = &b;
-        async move {
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                while !done(&b.account_sync_status().await.expect("status")) {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                }
-            })
-            .await
-            .expect("status");
+    (b, b_docs)
+}
+
+async fn status_until(app: &AppService, done: fn(&AccountSyncStatus) -> bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !done(&app.account_sync_status().await.expect("status")) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-    };
-    until(|status| status.no_peers).await;
+    })
+    .await
+    .expect("status");
+}
+
+async fn trusted_until(app: &AppService, authors: &[String], what: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while trusted(app).await != authors {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect(what);
+}
+
+/// 起動・復帰の時点では gossip の候補がまだ無い。rendezvous の応答に新しく現れた本人の端末からは、gossip の合流を
+/// 待たずに取得し、未同期の「候補なし」を下ろす。同じ端末が続く応答（更新ごと）では読み直さない（#1218 AC-5b 監査
+/// B-1・B-3）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = rendezvous_device(&keys).await;
+    b_docs.reading_from(&a_docs);
+    status_until(&b, |status| status.no_peers).await;
     let authors = trust(&a, 2).await;
     // gossip の候補（`topic_read_candidates`）は空のまま、rendezvous の候補だけで読む。
     let topic = kukuri_core::wire::hint_topic_id(keys.derive_account_sync().hint_topic());
@@ -680,14 +694,8 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     }];
     b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
         .await;
-    until(|status| !status.no_peers).await;
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while trusted(&b).await != authors {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the appeared device is fetched from");
+    status_until(&b, |status| !status.no_peers).await;
+    trusted_until(&b, &authors, "the appeared device is fetched from").await;
 
     // 同じ端末が続く応答と、その端末の居ない別の CN の応答では読み直さない（CN ごとの更新で繰り返さない）。
     a_docs.work();
@@ -711,13 +719,38 @@ async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     .await;
     b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
         .await;
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while trusted(&b).await != authors {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("after the task is rebuilt, the device is fetched from again");
+    trusted_until(
+        &b,
+        &authors,
+        "after the task is rebuilt, the device is fetched from again",
+    )
+    .await;
+}
+
+/// rendezvous に現れた本人の端末からの取得に失敗したら（相手の endpoint の作り直しで切れたなど）、同じ端末が続く応答で
+/// 取得し直す（#1220 AC-3b。Web の移行先は Community Node に同意した後に endpoint を作り直すので、移行元の最初の
+/// 取得が切れ、次の契機が来なかった）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_fetch_from_an_own_device_is_retried_at_the_next_rendezvous_response() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = rendezvous_device(&keys).await;
+    let authors = trust(&a, 2).await;
+    let topic = kukuri_core::wire::hint_topic_id(keys.derive_account_sync().hint_topic());
+    let peers = [kukuri_transport::SeedPeer {
+        endpoint_id: "device-a".into(),
+        addr_hint: None,
+    }];
+    // 最初の応答では、a から読めない。
+    b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
+        .await;
+    status_until(&b, |status| status.fetch_failed).await;
+    // 読めるようになった後の、同じ端末が続く応答で取得し直す。
+    b_docs.reading_from(&a_docs);
+    b.account_sync_peers_joined("cn-1", topic.as_str(), &peers)
+        .await;
+    trusted_until(&b, &authors, "the failed device is fetched from again").await;
+    status_until(&b, |status| !status.fetch_failed && !status.no_peers).await;
 }
 
 /// 本人の別の端末で参加した channel の、参加の版と世代の鍵を `channels` 件、手元の replica に書く。
