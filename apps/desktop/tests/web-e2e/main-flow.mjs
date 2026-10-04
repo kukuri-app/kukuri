@@ -862,6 +862,7 @@ async function transferAndSync(clients, nativePubkey, other) {
   // 別のアカウント（other）の Web には、公開の profile の更新がこれまでどおり届く（本人の端末間の同期と混同しない）。
   const nativePost = `native post for the profile ${RUN}`;
   await native('create_post', { request: { topic: TOPIC, content: nativePost, reply_to: null } });
+  await sees(other.browser, nativePost);
   await eventually(`${other.browser.label} sees the profile changed on e`, async () =>
     (await (await reopenAuthorProfile(other.browser, nativePost, nativePubkey)).getText()).includes(webName)
   );
