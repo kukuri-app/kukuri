@@ -6,6 +6,7 @@
 //! かつては docs-sync が置き場所だったが、「docs-sync が基盤の持ち主」という歪みを
 //! 解消するため独立させた(挙動不変の移動)。
 
+mod dome_session;
 mod legacy;
 mod network_work;
 mod node;
@@ -16,6 +17,7 @@ pub mod remote_fetch;
 #[cfg(test)]
 mod tests;
 
+pub use dome_session::{DomeHostUnreachable, DomeSessionHandler};
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;
 pub type DisplayAdmissionError = NetworkAdmissionError;

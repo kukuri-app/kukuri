@@ -287,6 +287,26 @@ impl SqliteStore {
         rows.into_iter().map(row_to_block_edge).collect()
     }
 
+    pub(super) async fn store_get_block_edge_impl(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<BlockEdge>> {
+        sqlx::query(
+            r#"
+            SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+            FROM block_edges
+            WHERE subject_pubkey = ?1 AND target_pubkey = ?2
+            "#,
+        )
+        .bind(subject_pubkey)
+        .bind(target_pubkey)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(row_to_block_edge)
+        .transpose()
+    }
+
     pub(super) async fn store_list_block_edges_by_target_impl(
         &self,
         target_pubkey: &str,
