@@ -596,7 +596,7 @@ impl DesktopRuntime {
         // 引き取る。
         let account_transfer_task = identity_api::spawn_account_transfer_merge(
             db_path.clone(),
-            app_service.account_transfer_handle(),
+            app_service.account_handle(),
             store.clone(),
         );
         let (event_sender, _) = tokio::sync::broadcast::channel(64);

@@ -450,6 +450,9 @@ pub(crate) fn effective_topic_status_detail(
 
 impl Drop for AppService {
     fn drop(&mut self) {
+        if !self.owner {
+            return;
+        }
         if let Ok(mut leases) = self.subscription_registry.scope_leases.try_lock() {
             drop(leases.clear());
         }

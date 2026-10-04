@@ -245,7 +245,9 @@ impl AppService {
         // 作り直し（起動・復帰）の前の rendezvous の応答を忘れる（task を起こす前に。直後の応答の知らせと入れ替わら
         // ないように）。
         self.forget_account_sync_rendezvous();
-        let handle = n0_future::task::spawn(account_sync_task(self.scope_reader(), hints));
+        // merge は account の状態を共有する handle で行う（届いた channel の参加・世代の変化を、この account の購読と
+        // メモリへ反映する。#1211 AC-4）。
+        let handle = n0_future::task::spawn(account_sync_task(self.account_handle(), hints));
         Ok(ScopeTask {
             handle: AbortOnDropTask::new(handle),
             hint_topic: Some(hint_topic),
