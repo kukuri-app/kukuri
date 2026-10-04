@@ -13,11 +13,21 @@ use super::notifications_support::{
     pubkey_mentions,
 };
 use super::post_integrity::VerifiedPost;
-use super::subscription_registry::PublicNotificationOfferQueue;
+use super::subscription_registry::{PublicNotificationOffer, PublicNotificationOfferQueue};
 use super::*;
 
 const PUBLIC_OFFER_QUEUE_CAPACITY: usize = 64;
 const PUBLIC_OFFER_TIMEOUT: Duration = Duration::from_secs(2);
+/// 送れなかった follow・unfollow の offer を、送れなかった受け手だけへ送り直すまでの間隔(計約 2 分。#1521)。
+/// 相手の手元の edge(相互 follow)を変える offer なので、1 回落ちると相手は日の境界まで知らない。
+const FOLLOW_OFFER_RETRY_DELAYS: [Duration; 6] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+    Duration::from_secs(16),
+    Duration::from_secs(32),
+    Duration::from_secs(64),
+];
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -106,7 +116,7 @@ impl AppService {
             .and_then(|manifest| private_notification_payload(state, &manifest));
         match payload {
             Ok((payload, scope)) => {
-                self.queue_notification_offer(payload, recipients, scope)
+                self.queue_notification_offer(payload, recipients, scope, &[])
                     .await
             }
             Err(error) => tracing::debug!(%error, "private notification offer skipped"),
@@ -139,17 +149,28 @@ impl AppService {
         source: PublicNotificationSource,
         recipients: BTreeSet<String>,
     ) {
+        let retry_delays: &'static [Duration] = match source {
+            PublicNotificationSource::Follow { .. } => &FOLLOW_OFFER_RETRY_DELAYS,
+            PublicNotificationSource::Post { .. } => &[],
+        };
         if let Ok(payload) = encode_public_notification_manifest(source) {
-            self.queue_notification_offer(payload, recipients, ReceiveOfferScopeV1::PublicSource)
-                .await;
+            self.queue_notification_offer(
+                payload,
+                recipients,
+                ReceiveOfferScopeV1::PublicSource,
+                retry_delays,
+            )
+            .await;
         }
     }
 
+    /// `retry_delays` は送れなかった受け手へ送り直すまでの残りの間隔(空なら 1 回だけ送る)。
     async fn queue_notification_offer(
         &self,
         payload: Vec<u8>,
         mut recipients: BTreeSet<String>,
         scope: ReceiveOfferScopeV1,
+        retry_delays: &'static [Duration],
     ) {
         recipients.remove(self.current_author_pubkey().as_str());
         if recipients.is_empty() {
@@ -168,23 +189,62 @@ impl AppService {
             let services = self.services.clone();
             let closed = Arc::clone(&self.subscription_registry.account_receive_offer_closed);
             let task = AbortOnDropTask::new(n0_future::task::spawn(async move {
-                while let Some((payload, recipients, scope)) = receiver.recv().await {
+                // 送り直しを待つ offer と、その期限。queue と同じ件数まで持ち、worker と一緒に消える。
+                let mut waiting: Vec<(n0_future::time::Instant, PublicNotificationOffer)> =
+                    Vec::new();
+                loop {
+                    let due = waiting.iter().map(|(due, _)| *due).min();
+                    let offer = tokio::select! {
+                        offer = receiver.recv() => match offer {
+                            Some(offer) => offer,
+                            None => break,
+                        },
+                        _ = n0_future::time::sleep_until(due.unwrap_or_else(n0_future::time::Instant::now)),
+                            if due.is_some() =>
+                        {
+                            let index = waiting
+                                .iter()
+                                .position(|(at, _)| Some(*at) == due)
+                                .expect("the earliest waiting offer");
+                            waiting.swap_remove(index).1
+                        }
+                    };
                     if closed.load(Ordering::Acquire) {
                         break;
                     }
-                    if let Err(error) = publish_public_notification_offers(
-                        &services, &closed, payload, recipients, scope,
+                    let (payload, recipients, scope, retry_delays) = offer;
+                    let unsent = publish_public_notification_offers(
+                        &services,
+                        &closed,
+                        payload.clone(),
+                        &recipients,
+                        scope.clone(),
                     )
                     .await
-                    {
+                    .unwrap_or_else(|error| {
                         tracing::debug!(%error, "public notification offers deferred");
+                        recipients
+                    });
+                    if let Some((delay, rest)) = retry_delays.split_first()
+                        && !unsent.is_empty()
+                    {
+                        if waiting.len() < PUBLIC_OFFER_QUEUE_CAPACITY {
+                            waiting.push((
+                                n0_future::time::Instant::now() + *delay,
+                                (payload, unsent, scope, rest),
+                            ));
+                        } else {
+                            tracing::debug!("public notification offer retry is full");
+                        }
                     }
                 }
             }));
             *queue = Some(PublicNotificationOfferQueue { sender, task });
         }
         if let Some(worker) = queue.as_ref()
-            && let Err(error) = worker.sender.try_send((payload, recipients, scope))
+            && let Err(error) = worker
+                .sender
+                .try_send((payload, recipients, scope, retry_delays))
         {
             tracing::debug!(%error, "public notification offer queue is full");
         }
@@ -229,7 +289,11 @@ impl AppService {
                 let edge = parse_follow_edge(&envelope)?.context("invalid follow offer")?;
                 // #1221 R4-D: 自分を指す署名済みの edge を手元へ保存する。関係(mutual)は読むときに edge から求める。
                 if edge.target_pubkey.as_str() == local {
+                    let changed = services.store.get_envelope(&envelope.id).await?.is_none();
                     services.store.put_envelope(envelope).await?;
+                    if changed {
+                        services.author_relationship_changed(&edge);
+                    }
                     // #1219 AC-5: 参加者からの follow は、本人の端末へも同期する。
                     AppService::from_handles(services.clone())
                         .share_participant_follow(&edge)
@@ -403,15 +467,17 @@ pub(crate) fn public_post_notification_recipients(
     recipients
 }
 
+/// 送れなかった受け手(宛先が見つからない・時間切れ)を返す。
 async fn publish_public_notification_offers(
     services: &ServiceHandles,
     closed: &AtomicBool,
     payload: Vec<u8>,
-    recipients: BTreeSet<String>,
+    recipients: &BTreeSet<String>,
     scope: ReceiveOfferScopeV1,
-) -> Result<()> {
+) -> Result<BTreeSet<String>> {
+    let mut unsent = BTreeSet::new();
     if closed.load(Ordering::Acquire) {
-        return Ok(());
+        return Ok(unsent);
     }
     let stored = services
         .blob_service
@@ -424,7 +490,7 @@ async fn publish_public_notification_offers(
         }
         if let Err(error) = publish_public_notification_offer(
             services,
-            &recipient,
+            recipient,
             &provider_endpoint_id,
             &stored,
             scope.clone(),
@@ -432,9 +498,10 @@ async fn publish_public_notification_offers(
         .await
         {
             tracing::debug!(%error, recipient, "public notification offer deferred");
+            unsent.insert(recipient.clone());
         }
     }
-    Ok(())
+    Ok(unsent)
 }
 
 async fn publish_public_notification_offer(
@@ -450,7 +517,7 @@ async fn publish_public_notification_offer(
         .resolve_receive_destination(&recipient)
         .await?
     else {
-        return Ok(());
+        anyhow::bail!("receive destination is not resolved");
     };
     let now = Utc::now().timestamp_millis();
     let offer = seal_receive_offer(

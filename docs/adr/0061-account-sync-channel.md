@@ -410,7 +410,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 - core: 変更の窓の key `AccountSyncItemKey::ChangeSlot`・`ChangeHead`（値は `AccountSyncChangeV1`）、行の key から item の key を戻す `AccountSyncItemKey::from_docs_key`、hint の `GossipHint::AccountSyncChanged`。
 - docs-sync: `remote_readers` の要求側の許可に account の replica を加えた。
-- store: `account_sync_items`・`private_channel_epochs` の `written` の欄と未書込みの部分索引、相手ごとの cursor の `account_sync_cursors`（migration `20261004000000`）。Web は IndexedDB の `account_sync`・`private_epochs` の `unwritten` の索引と `account_sync_cursors` の store。
+- store: `account_sync_items`・`private_channel_epochs` の `written` の欄と未書込みの部分索引、相手ごとの cursor の `account_sync_cursors`（migration `20261004010000`）。Web は IndexedDB の `account_sync`・`private_epochs` の `unwritten` の索引と `account_sync_cursors` の store。
 - app-api: `account_sync_fetch`（書込みと窓への追記、取得、周回、送り直し、作り直し、状態）。契機は account の lease の task（`account_sync_task`）。書込みの後の hint は、利用者の操作の経路で待たず、lease の task が送り直しの後に 2 秒の期限で送る。task の本体は `Send` の box に閉じる（取得の merge が channel の lease を取り、lease が task を作るため）。
 
 #### 実装（AC-5c）

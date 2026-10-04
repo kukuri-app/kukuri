@@ -93,6 +93,9 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   表示名のため、timelineのページの著者のうち手元にprofileの無いものは、購読せずにprofileのkeyだけを背景で1件ずつ
   読む（queue 64件・台帳1024件、同じ著者は10分読み直さない。R6-B、2026-09-28ユーザー決定）。表示中のprofileの列は、
   相手の名前が無い間と自分のprofileの読込みが失敗している間だけ、表示の定期更新（3秒）で読み直す。
+  自分を指す相手のfollowのedgeを手元に新しく保存したとき（followのofferの取込みとauthorのleaseの読み直し）は、
+  runtimeのevent（`author_relationship_changed`、相手のpubkeyつき）で、その相手の開いているprofileと会話の列だけを
+  読み直す（#1521 AC-1b、2026-10-04ユーザー決定）。知らせが溢れたとき（pubkeyなし）は、開いている列を1回ずつ読み直す。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。
@@ -389,6 +392,12 @@ pairwise hintの送信・ACK、送信直後の二重送信を撤去した。送�
 自分を指すedgeを手元へ保存する（unfollowは通知を作らない）。mutualの解除は次の送信・受信の判定へ反映し、
 保護outboxはACKまで残す。DM状態viewの接続peer数（`peer_count`）は撤去し、画面は送信可能／送信不可だけを示す
 （2026-09-26 ユーザー決定）。
+
+follow / unfollowのofferは、宛先が見つからない・2秒の時間切れで送れなかった受け手だけへ、2・4・8・16・32・64秒後に
+送り直す（計6回・約2分。#1521、2026-10-04 ユーザー決定）。相手のprofileを開いたまま相手がfollowし返した場面で、
+最初のofferが落ちると日の境界まで相互followにならなかったため。送り直しを待つofferはofferのworkerが64件まで持ち、
+accountの停止で捨てる。再起動をまたがず、ACKも求めない（旧版はACKを返さない）。follow以外の通知のofferは1回だけ送る。
+閲覧者がauthorごとのhint topicで受ける案は、閲覧の情報がCNと第三者へ出るか、つながる前のfollowを取りこぼすので採らない。
 
 private rotation/freeze/失効には投稿通知と別の制御capsuleを使う。
 現在のhandoff grant作成時に、旧epochの受信者別grantをaccount宛に配送待ちへ登録する。

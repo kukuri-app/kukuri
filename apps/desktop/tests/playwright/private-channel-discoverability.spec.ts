@@ -152,6 +152,122 @@ for (const locale of ['ja', 'en'] as const) {
   }
 }
 
+// Issue #1517: 公開の列の見出しから開いた Dialog で channel を作る・参加済みの一覧から開くと、閉じた後も
+// channel の列が active で画面に入っている。入口へ focus を戻すと入口の列が active に戻り、右端の
+// channel の列が画面外に残っていた(画面外の列は読み直さないため新しい投稿が出ない、#765)。
+// focus も channel の列へ移す(入口に残すと、次の Tab で入口の列が active に戻る)。
+test('a channel created or opened from the Timeline Column header stays active and in view (en 1280)', async ({
+  page,
+}) => {
+  const copy = COPY.en;
+  await seed(page, 'en', 'dark');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(TIMELINE_URL);
+  const timelineColumn = (scope: string) =>
+    page
+      .getByRole('region', { name: /^Timeline Column,/ })
+      .filter({ has: page.locator('.shell-column-header', { hasText: scope }) });
+  const publicColumn = timelineColumn('Public · general');
+  const channelColumn = timelineColumn('core · general');
+  const dialog = page.getByRole('dialog', { name: copy.dialog });
+  const expectChannelColumnActiveAfterClose = async () => {
+    await expect(dialog).toBeHidden();
+    // focus は閉じた後の task で戻る。戻った後の frame まで待ってから確かめる。
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
+    );
+    await expect(channelColumn).toHaveAttribute('aria-current', 'true');
+    await expect(channelColumn).toBeInViewport();
+    await expect(channelColumn).toBeFocused();
+  };
+
+  await publicColumn.getByRole('button', { name: copy.entry }).click();
+  await dialog.getByPlaceholder(copy.channelName).fill('core');
+  await dialog.getByRole('button', { name: copy.create }).click();
+  await expect(page).toHaveURL(/channel=channel-1/);
+  await dialog.getByRole('button', { name: copy.closeDialog }).click();
+  await expectChannelColumnActiveAfterClose();
+
+  await publicColumn.locator('.shell-column-title-row').click();
+  await expect(channelColumn).not.toBeInViewport();
+  await publicColumn.getByRole('button', { name: copy.entry }).click();
+  await dialog.getByRole('button', { name: 'Open core' }).click();
+  await expectChannelColumnActiveAfterClose();
+});
+
+// Issue #1533: 参加中の channel の行は、名前の長さによらず接続の切替・設定・退出が Control Center の
+// 「場所」の枠内に見え、その位置を実 pointer で押せる。名前の横に収まらない行だけ操作が名前の下の段へ
+// 移り、行の全幅にも収まらない名前は省略せずに折り返す。修正前は 1280 幅(4 列)で枠が狭く、
+// 17 文字の名前で退出の button が枠の外へ切れていた。
+for (const width of [1280, 390] as const) {
+  test(`joined channel rows keep their actions inside the Places frame (en dark ${width})`, async ({
+    page,
+  }) => {
+    const copy = COPY.en;
+    // 17 文字の名前の段は幅と font で変わるので問わない。退出はこの行で最後に押す。
+    const rows = [
+      { name: 'core', actionsBelowName: false },
+      { name: 'leave-me-musm876p-quarterly-planning-and-review', actionsBelowName: true },
+      { name: 'leave-me-musm876p' },
+    ];
+    await seed(page, 'en', 'dark');
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(TIMELINE_URL);
+    await activeColumn(page).getByRole('button', { name: copy.entry }).click();
+    const dialog = page.getByRole('dialog', { name: copy.dialog });
+    for (const [index, { name }] of rows.entries()) {
+      await dialog.getByPlaceholder(copy.channelName).fill(name);
+      await dialog.getByRole('button', { name: copy.create }).click();
+      await expect(page).toHaveURL(new RegExp(`channel=channel-${index + 1}`));
+    }
+    await dialog.getByRole('button', { name: copy.closeDialog }).click();
+    await expect(dialog).toBeHidden();
+
+    await page.getByTestId('control-center-trigger').click();
+    const places = page.locator('.shell-control-center-place-list');
+    for (const { name, actionsBelowName } of rows) {
+      const row = places.locator('.topic-subitem-row').filter({
+        has: page.getByRole('button', { name: `Leave ${name} channel`, exact: true }),
+      });
+      const layout = await row.evaluate((element) => {
+        element.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const frame = element.closest('.shell-control-center-place-list')!.getBoundingClientRect();
+        const inFrame = (rect: DOMRect) => rect.left >= frame.left && rect.right <= frame.right;
+        const label = element.querySelector('.shell-topic-link-label')!;
+        const nameBottom = element.querySelector('.topic-subitem')!.getBoundingClientRect().bottom;
+        const actions = [...element.querySelectorAll('button:not(.topic-subitem)')].map((button) => {
+          const rect = button.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const reachable = inFrame(rect) && button.contains(document.elementFromPoint(x, y));
+          return { reachable, x, y };
+        });
+        return {
+          nameShown: inFrame(label.getBoundingClientRect()) && label.scrollWidth <= label.clientWidth,
+          actionsReachable: actions.map((action) => action.reachable),
+          actionsBelowName: actions.every((action) => action.y > nameBottom),
+          leave: actions[actions.length - 1],
+        };
+      });
+      expect.soft({
+        name,
+        nameShown: layout.nameShown,
+        actionsReachable: layout.actionsReachable,
+        actionsBelowName: layout.actionsBelowName,
+      }).toEqual({
+        name,
+        nameShown: true,
+        actionsReachable: [true, true, true],
+        actionsBelowName: actionsBelowName ?? layout.actionsBelowName,
+      });
+      if (name === 'leave-me-musm876p') {
+        await page.mouse.click(layout.leave.x, layout.leave.y);
+      }
+    }
+    await expect(page.getByRole('dialog', { name: 'Leave channel' })).toBeVisible();
+  });
+}
+
 test('private channel entry is reachable by keyboard and returns focus on Escape (ja dark 1280)', async ({
   page,
 }) => {
