@@ -54,7 +54,7 @@ Accepted
     何を取りこぼしたかは分からないので、対象を特定せずに窓を読み直す。窓の終わりに捨てた hint が無ければ docs を読まない。読み直しで 1 件以上反映したら最後の同期時刻を更新する。
   - 失効した規則（R5-H 以前）: docs の通知（`Lagged`・`SyncFinished`・`ContentReady`）、相手から届いた entry の個別反映が 0 件だったとき、hint の個別反映が 0 件だったときを契機にし、
     最小 3 秒から上限 5 分へ伸ばす間隔で 1 回にまとめていた。lease の task は docs の replica を開かず購読しないので、これらの契機は存在しない。
-  - 読むのは、時系列の索引の新しい側の窓（200 件）と、session の固定件数（live・score game は key の降順、Dome の room は昇順で、それぞれ 32 件）。どちらも key だけの上限つきの一覧で、
+  - 読むのは、時系列の索引の新しい側の窓（200 件）と、session の固定件数（provider からの読み直しは live・game それぞれ 64 件。一覧が空のときの手元だけの追いつき `catch_up_sessions` は live・score game は key の降順、Dome の room は昇順で、それぞれ 32 件）。どちらも key だけの上限つきの一覧で、
     projection に無い object だけを key 指定で反映する。replica の総 entry 数に依存しない。起動時は `LocalOnly`、それ以外は `LocalThenRemote`。
   - 起動時と取りこぼしの後は、窓の object の取り下げと reaction も読み直す（取りこぼした event に含まれうる）。それ以外の追いつきは、projection に無い object だけを対象にする。
   - recovery tick は docs を読まない。docs の支援 peer がいるあいだ、再 sync を backoff つきで促すだけで、届いた entry は docs の event が、取りこぼしは通知からの追いつきが反映する。
