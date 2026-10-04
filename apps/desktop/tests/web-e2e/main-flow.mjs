@@ -908,7 +908,7 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
   if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
   await completed.$('button=Use this account').click();
-  // 受け取ると、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
+  // 「このアカウントを使う」で、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
   // 同意する（W7 #1211 AC-4）。読み込み直しの途中の要素は使えないので、失敗したら次の回で見直す。
   await eventually(`${browser.label} uses the transferred account`, async () => {
     try {

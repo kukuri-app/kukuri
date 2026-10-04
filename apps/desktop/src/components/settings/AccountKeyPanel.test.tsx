@@ -226,11 +226,17 @@ test.each([
 ])('the account settings compare the ways in %s', async (language, intro, moved, backup) => {
   await i18n.changeLanguage(language);
   try {
-    render(<AccountKeyPanel onOpenDeviceBackup={() => undefined} />);
+    const { unmount } = render(<AccountKeyPanel onOpenDeviceBackup={() => undefined} />);
     const methods = await screen.findByTestId('account-key-methods');
     expect(methods).toHaveTextContent(intro);
     expect(methods).toHaveTextContent(moved);
     expect(methods).toHaveTextContent(backup);
+    unmount();
+
+    render(<AccountKeyPanel />);
+    const web = await screen.findByTestId('account-key-methods');
+    expect(web).toHaveTextContent(intro);
+    expect(web).not.toHaveTextContent(backup);
   } finally {
     await i18n.changeLanguage('en');
   }

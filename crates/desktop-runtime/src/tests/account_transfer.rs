@@ -128,8 +128,6 @@ async fn account_transfer_commands_reject_a_broken_link() {
     host.shutdown().await;
 }
 
-/// 2c・2d: 新規のアカウントは保存の確定で 1 件だけ登録され（やり直しても増えない）、使っているアカウントには何も
-/// 反映しない。受けたアカウントの runtime の起動で、表示例外・profile・参加中の channel が反映され、置き場は消える。
 /// #1211 AC-5: 移行元のアカウント（登録簿と鍵）は、移行の後も残る。同じ DB から起動し直しても、同じ公開鍵で使える。
 #[tokio::test]
 async fn the_source_keeps_its_account_after_the_transfer() {
@@ -153,6 +151,8 @@ async fn the_source_keeps_its_account_after_the_transfer() {
     target.shutdown().await;
 }
 
+/// 2c・2d: 新規のアカウントは保存の確定で 1 件だけ登録され（やり直しても増えない）、使っているアカウントには何も
+/// 反映しない。受けたアカウントの runtime の起動で、表示例外・profile・参加中の channel が反映され、置き場は消える。
 #[tokio::test]
 async fn a_transferred_account_is_registered_once_and_merged_when_it_starts() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;

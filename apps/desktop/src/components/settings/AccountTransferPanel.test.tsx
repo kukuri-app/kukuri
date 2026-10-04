@@ -223,11 +223,18 @@ test('both devices explain what moves before connecting and the target lists wha
 });
 
 test.each([
-  ['ja', '移るもの:', '移らないもの:', '移っていないもの:', 'このアカウントを使う'],
-  ['zh-CN', '会迁移：', '不会迁移：', '未迁移：', '使用此账号'],
-])('the transfer screen explains what moves in %s', async (language, moves, notMoved, notMovedDone, use) => {
+  ['ja', '移るもの:', '移らないもの:', '移っていないもの:', 'このアカウントを使う', '移行元の端末のアカウントは、そのまま残ります。'],
+  ['zh-CN', '会迁移：', '不会迁移：', '未迁移：', '使用此账号', '原设备上的账号会保留。'],
+])('the transfer screen explains what moves in %s', async (language, moves, notMoved, notMovedDone, use, kept) => {
   await i18n.changeLanguage(language);
   try {
+    const { unmount } = render(<AccountTransferPanel role='source' />);
+    await screen.findByRole('img', { name: i18n.t('settings:accountTransfer.source.qrLabel') });
+    const sourceScope = screen.getByTestId('account-transfer-scope');
+    expect(sourceScope).toHaveTextContent(moves);
+    expect(sourceScope).toHaveTextContent(kept);
+    unmount();
+
     const user = userEvent.setup();
     render(<AccountTransferPanel role='target' initialLink={LINK} />);
     const scope = screen.getByTestId('account-transfer-scope');
