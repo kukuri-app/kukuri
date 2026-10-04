@@ -365,7 +365,7 @@ test('browser mock shell can switch topics, publish, open thread, open author, a
   await expect(settingsDialog.getByText('active on current session', { exact: true })).toBeVisible();
   await expect(settingsDialog.getByText('connectivity urls active on current session')).toBeVisible();
 
-  await settingsDialog.locator('button').filter({ hasText: /^Add Node$/ }).click();
+  await settingsDialog.getByRole('button', { name: 'Add Node', exact: true }).click();
   await settingsDialog
     .getByPlaceholder('https://community.example.com')
     .last()
@@ -974,7 +974,7 @@ test('browser mock narrow shell keeps nav, context, and settings flows reachable
   await expect(settingsDialog.getByPlaceholder('nodeid@127.0.0.1:7777')).toHaveValue('');
 
   await settingsDialog.getByTestId('settings-section-community-node').click();
-  await settingsDialog.locator('button').filter({ hasText: /^Add Node$/ }).click();
+  await settingsDialog.getByRole('button', { name: 'Add Node', exact: true }).click();
   await settingsDialog
     .getByPlaceholder('https://community.example.com')
     .last()

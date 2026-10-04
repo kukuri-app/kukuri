@@ -194,6 +194,7 @@ export function CommunityNodePanel({
       {view.panelError ? <Notice tone='destructive'>{view.panelError}</Notice> : null}
 
       <SettingsEditorField
+        as='div'
         label={t('settings:communityNode.nodesLabel')}
         hint={t('settings:communityNode.nodesHint')}
         message={view.editorMessage}

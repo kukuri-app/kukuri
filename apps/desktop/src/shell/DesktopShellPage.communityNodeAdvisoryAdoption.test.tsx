@@ -88,7 +88,7 @@ test('observation sharing is queried once per node each time the settings open',
   const drawer = await openSettingsSection(user, 'community-node');
   await waitFor(() => expect(query.mock.calls).toEqual(once));
   // ノードの下書きを足すと設定は描画し直すが、照会はしない。
-  await user.click(within(drawer).getByText('Add Node'));
+  await user.click(within(drawer).getByRole('button', { name: 'Add Node' }));
   expect(query.mock.calls).toEqual(once);
 
   // 閉じている間は照会せず、同じ section のまま開き直すと 1 回照会する。
