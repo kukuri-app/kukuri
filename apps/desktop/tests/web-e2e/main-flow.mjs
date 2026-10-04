@@ -883,14 +883,52 @@ const nativeTransfer = (state) =>
     return status.state === state && status;
   });
 
+/** 移行元が native のときの、招待リンクと確認コードの承認（#1211）。 */
+const nativeSource = {
+  invite: async () => (await native('create_account_transfer_invite')).link,
+  confirm: async (code) => {
+    assert.equal((await nativeTransfer('confirming')).code, code);
+    await native('decide_account_transfer', { request: { accept: true } });
+  },
+};
+
+/** 移行元が同じアカウントの Web（`source`）のとき。アカウントの menu の「アカウント追加」→「別の端末へ移す」でリンクを出す。 */
+const webSource = (source) => ({
+  invite: async () => {
+    await source.$('[data-testid="account-menu-trigger"]').click();
+    await source.$('[role=menu]').$('button=Add account').click();
+    await (await dialogWith(source, 'Move between devices')).$('button=Move to another device').click();
+    const panel = source.$('[role=dialog] [data-testid="account-transfer-source"]');
+    await panel.waitForExist({ timeout: WAIT });
+    return eventually(`${source.label} shows the transfer link`, async () => (await panel.$('input').getValue()) || false);
+  },
+  confirm: async (code) => {
+    const shown = source.$('[aria-label="Confirmation code"]');
+    await shown.waitForExist({ timeout: WAIT });
+    assert.equal((await shown.getText()).replace(/\s/g, ''), code);
+    await source.$('button=Codes match').click();
+  },
+  // 移行元の完了（移行先の保存の ACK を受けた後）を待ってから閉じる。
+  done: async () => {
+    const completed = 'The other device has saved the account';
+    await dialogWith(source, completed);
+    await eventually(`${source.label} closes the transfer`, async () => {
+      if (!(await findDialog(source, completed))) return true;
+      await source.keys('Escape');
+      return false;
+    });
+  },
+});
+
 /**
- * 新しい Web が、native が作ったリンクで native のアカウントを受け取り、そのアカウントへ切り替える（#1211、#1220 AC-3b）。
- * 初回の profile の dialog の「以前のアカウントを戻す」から入る。`history` は履歴の範囲（null は移さない）、`duringHistory` は
- * 履歴を受けている間の操作。
+ * 新しい Web が、移行元（`from`。`nativeSource` か `webSource`）のリンクで `account` を受け取り、そのアカウントへ切り替える
+ * （#1211、#1220 AC-3b・AC-3c）。初回の profile の dialog の「以前のアカウントを戻す」から入る。`history` は履歴の範囲（null は
+ * 移さない）、`duringHistory` は履歴を受けている間の操作。`cut` を渡すと、接続の後にその bytes を受けた時点で WebRTC の経路だけを
+ * 落とし（`trackPeerConnections`）、完了の後に戻す。
  */
-async function transferFromNative(name, nativePubkey, { history = null, duringHistory = null } = {}) {
+async function transferAccount(from, name, account, { history = null, duringHistory = null, cut = null } = {}) {
   const browser = await startClient(name, { ice: true });
-  const { link } = await native('create_account_transfer_invite');
+  const link = await from.invite();
   await (await dialogWith(browser, 'Set up your profile')).$('button=Restore a previous account').click();
   await (await dialogWith(browser, 'Import an encrypted account key')).$('button=Move from another device').click();
   const target = browser.$('[role=dialog] [data-testid="account-transfer-target"]');
@@ -902,14 +940,17 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   }
   await target.$('input').setValue(link);
   if (history) await target.$('select').selectByAttribute('value', history);
+  if (cut !== null) {
+    await browser.execute((after) => {
+      window.__kukuriCut = { after };
+    }, cut);
+  }
   await target.$('button=Connect').click();
   // 確認コードが両端末で同じことを確かめてから、両方で承認する。
-  const { code } = await nativeTransfer('confirming');
   const shown = browser.$('[aria-label="Confirmation code"]');
   await shown.waitForExist({ timeout: WAIT });
-  assert.equal((await shown.getText()).replace(/\s/g, ''), code);
   await browser.$('button=Codes match').click();
-  await native('decide_account_transfer', { request: { accept: true } });
+  await from.confirm((await shown.getText()).replace(/\s/g, ''));
   if (duringHistory) {
     await browser.$('[data-testid="account-transfer-history"]').waitForExist({ timeout: WAIT });
     await duringHistory(browser);
@@ -920,7 +961,14 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
   const result = await completed.getText();
   assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
   if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
+  if (cut !== null) {
+    assert.ok(await browser.execute(() => window.__kukuriCut.done), `${browser.label} loses its WebRTC paths during the transfer`);
+    await browser.execute(() => {
+      window.__kukuriCut.released = true;
+    });
+  }
   await completed.$('button=Use this account').click();
+  await from.done?.();
   // 「このアカウントを使う」で、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
   // 同意する（W7 #1211 AC-4）。読み込み直しの途中の要素は使えないので、失敗したら次の回で見直す。
   await eventually(`${browser.label} uses the transferred account`, async () => {
@@ -933,7 +981,7 @@ async function transferFromNative(name, nativePubkey, { history = null, duringHi
       }
       await openSettings(browser, 'account');
       const active = browser.$('[data-testid="account-list"]').$('li*=Active');
-      const switched = (await active.isExisting()) && (await active.getText()).includes(nativePubkey);
+      const switched = (await active.isExisting()) && (await active.getText()).includes(account);
       await browser.keys('Escape');
       return switched;
     } catch {
@@ -961,6 +1009,14 @@ async function openOwnProfile(browser) {
   return profile;
 }
 
+/** 自分の profile の表示名を変える。 */
+async function setOwnName(browser, name) {
+  const own = await openOwnProfile(browser);
+  await own.$('button=Edit Profile').click();
+  await own.$('input[placeholder="Visible label"]').setValue(name);
+  await own.$('button=Save Profile').click();
+}
+
 /**
  * `transfer`（#1220 AC-3b）: native のアカウントを新しい Web（e）へ移し、再 QR なしで profile・著者を常に表示する指定・private
  * channel の鍵が届くことを確かめる。同期の状態と中身、別のアカウントへの公開の profile の到達、別の Web（f）へ履歴を移す途中で
@@ -975,7 +1031,7 @@ async function transfer() {
   await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
   const channelLabel = `channel-transfer-${RUN}`;
   const { channelId } = await nativeCreatesChannel(channelLabel);
-  const e = await transferFromNative('web-e', nativePubkey);
+  const e = await transferAccount(nativeSource, 'web-e', nativePubkey);
 
   // 同期の状態: e の設定と native の通信状態が、どちらも同期済み。
   await eventually('e is in sync with native', async () => (await accountSyncState(e)) === 'synced');
@@ -990,10 +1046,7 @@ async function transfer() {
   await native('set_my_profile', { request: { name: mine.name, display_name: nativeName, about: mine.about, clear_picture: false } });
   await eventually('e shows the name set on native', async () => (await (await openOwnProfile(e)).getText()).includes(nativeName));
   const webName = `web-e name ${RUN}`;
-  const own = columnOf(e, 'profile', '-:-');
-  await own.$('button=Edit Profile').click();
-  await own.$('input[placeholder="Visible label"]').setValue(webName);
-  await own.$('button=Save Profile').click();
+  await setOwnName(e, webName);
   await eventually('native has the name set on e', async () => (await native('get_my_profile')).display_name === webName);
   // 別のアカウントの Web（a）には、公開の profile の更新がこれまでどおり届く（本人の端末間の同期と混同しない）。
   const nativePost = `native post for the profile ${RUN}`;
@@ -1050,7 +1103,7 @@ async function transfer() {
   // 任意の履歴: 別の新しい Web（f）が履歴を「直近 30 日」で受け、途中で止めても、必須の移行は完了のまま（#1211 AC-3）。
   // 履歴は本文と添付を送るので、止める間を作るために画像つきの投稿を先に作る。
   for (let index = 0; index < 8; index++) await postNativeImage(`history image ${RUN} ${index}`)();
-  await transferFromNative('web-f', nativePubkey, {
+  await transferAccount(nativeSource, 'web-f', nativePubkey, {
     history: 'month',
     duringHistory: (browser) => browser.$('button=Stop receiving history').click(),
   });
@@ -1554,6 +1607,134 @@ async function linkPreview() {
   await seesLinkPreview(d, withPreview);
 }
 
+/** native の参加中の一覧の、channel の現在の世代と古い世代の数（世代の進みを読む）。一覧に無ければ null。 */
+async function nativeEpochs(channelId) {
+  const page = await native('list_joined_private_channels', { request: { topic: TOPIC, cursor: null } });
+  const view = page.items.find((item) => item.channel_id === channelId);
+  return view ? { current: view.current_epoch_id, archived: view.archived_epoch_ids.length } : null;
+}
+
+/** channel の列の見出しから、その channel の設定を開く（列が無ければ、作成・参加の dialog の一覧から列を開く）。 */
+async function openChannelSettings(browser, channelId, label) {
+  const column = channelColumn(browser, channelId);
+  if (!(await column.isExisting())) {
+    await (await openChannelDialog(browser)).$(`button[aria-label="Open ${label}"]`).click();
+    await channelDialogClosed(browser);
+  }
+  await column.scrollIntoView();
+  await column.$(`button[aria-label="Open ${label} channel settings and sharing"]`).click();
+  return dialogWith(browser, 'Create share link');
+}
+
+/** channel の設定と保留の dialog が閉じ終わるまで Escape を押す。 */
+const closeChannelSettings = (browser) =>
+  eventually(`${browser.label} closes the channel settings`, async () => {
+    if (!(await findDialog(browser, 'Create share link')) && !(await findDialog(browser, 'On hold'))) return true;
+    await browser.keys('Escape');
+    return false;
+  });
+
+/** channel の設定に「新しいアクセスの配布は別の端末で行う」が出ているか（W6 の担当でない端末）。 */
+const OTHER_DEVICE = 'happen on another of your devices';
+async function handledElsewhere(browser, channelId, label) {
+  const shown = (await (await openChannelSettings(browser, channelId, label)).getText()).includes(OTHER_DEVICE);
+  await closeChannelSettings(browser);
+  return shown;
+}
+
+/** channel の設定で共有リンクを作る。作れたら token を、保留のダイアログが出たら null を返す（dialog は閉じる）。 */
+async function createShareLink(browser, channelId, label) {
+  await (await openChannelSettings(browser, channelId, label)).$('button[aria-label="Create share link"]').click();
+  const copy = browser.$('[role=dialog] button[aria-label="Copy link"]');
+  // 結果が出る間に dialog は描き直されるので、外れた要素は次の回で見直す。
+  const outcome = await eventually(`${browser.label} creates or holds the share link`, async () =>
+    ((await findDialog(browser, 'On hold')) && 'held') || ((await copy.isClickable().catch(() => false)) && 'created')
+  );
+  let token = null;
+  if (outcome === 'created') {
+    const copied = await browser.execute(() => window.__kukuriCopied.length);
+    await copy.click();
+    const link = await eventually('the share link', () => browser.execute((index) => window.__kukuriCopied[index], copied));
+    token = new URL(link).searchParams.get('token');
+  }
+  await closeChannelSettings(browser);
+  return token;
+}
+
+/**
+ * `same-account`（#1220 AC-3c1）: 同じアカウントの Web どうし。native → Web e の移行の後、e が作った招待制の channel C を、e の
+ * リンクで同じアカウントを受けた Web g と使う。鍵の更新を担う端末（担当。C を作った e）が居ない間の保留と戻った後の処理、
+ * 「この端末で行う」、移行の途中で WebRTC の経路だけを落とした間の移行と担当を確かめる（範囲の固定、2026-10-04・10-05）。native は
+ * 同じアカウントの端末で、C を本人の端末間の同期で受け、その世代の進みを参加中の一覧で読む。
+ */
+async function sameAccount() {
+  const { pubkey: account } = await fixture('/fixture/info');
+  const e = await transferAccount(nativeSource, 'web-e', account);
+  await eventually('e is in sync with native', async () => (await accountSyncState(e)) === 'synced');
+  await greetNative(e, 'web-e');
+  const label = `channel-same-account-${RUN}`;
+  const created = await native('preview_channel_access_token', { request: { token: await createChannel(e, label) } });
+  const channelId = created.channel_id;
+  await eventually('native receives C through the account sync', () => nativeEpochs(channelId));
+  await nativeShowsChannel(channelId);
+
+  // 2: e のリンクで g が同じアカウントを受け、同期済みになる。g は C に書け（鍵が届いた）、profile は e↔g の両方向に届く。
+  const g = await transferAccount(webSource(e), 'web-g', account);
+  await eventually('g is in sync', async () => (await accountSyncState(g)) === 'synced');
+  const fromG = `web-g in the channel ${RUN}`;
+  await (await openChannelDialog(g)).$(`button[aria-label="Open ${label}"]`).click();
+  await channelDialogClosed(g);
+  await post(g, fromG, channelColumn(g, channelId));
+  await nativeSeesInChannel(channelId, fromG);
+  for (const [from, to] of [[e, g], [g, e]]) {
+    const name = `${from.label} name`;
+    await setOwnName(from, name);
+    await eventually(`${to.label} shows the name set on ${from.label}`, async () =>
+      (await (await openOwnProfile(to)).getText()).includes(name)
+    );
+  }
+
+  // 3: 担当の e が居ない間に g で共有リンクを作ると保留になる。e が戻ると、g が作り直す前に世代がちょうど 1 つ進む。
+  assert.ok(await handledElsewhere(g, channelId, label), 'g leaves new access to another device');
+  assert.ok(!(await handledElsewhere(e, channelId, label)), 'e hands out new access');
+  await e.url('about:blank');
+  const whileAway = await nativeEpochs(channelId);
+  assert.equal(await createShareLink(g, channelId, label), null, 'the share link is on hold while e is away');
+  await e.url(ORIGIN);
+  const handled = await eventually('the request is handled when e returns', async () => {
+    const now = await nativeEpochs(channelId);
+    return now.current !== whileAway.current && now;
+  });
+  assert.equal(handled.archived, whileAway.archived + 1, 'the epoch advances by exactly one');
+  assert.ok(await createShareLink(g, channelId, label), 'g creates the share link after e returns');
+
+  // 4: g で「この端末で行う」を押すと、g で共有リンクを作れ、e は別の端末に任せる表示になる。g が居ない間の e は保留になる。
+  await (await openChannelSettings(g, channelId, label)).$('button=Do this on this device').click();
+  await eventually('g hands out new access', async () => !(await findDialog(g, OTHER_DEVICE)));
+  await closeChannelSettings(g);
+  assert.ok(await createShareLink(g, channelId, label), 'g creates a share link');
+  await eventually('e leaves new access to another device', () => handledElsewhere(e, channelId, label));
+  await g.url('about:blank');
+  const gAway = await nativeEpochs(channelId);
+  assert.equal(await createShareLink(e, channelId, label), null, 'the share link is on hold on e while g is away');
+  await g.url(ORIGIN);
+  await eventually('the request of e is handled when g returns', async () =>
+    (await nativeEpochs(channelId)).current !== gAway.current
+  );
+
+  // 5: 移行の途中で h の WebRTC の経路だけを落としても（relay は健全）、relay で続いて 1 度だけ完了する。h はアカウントを 1 つだけ
+  // 受け取る。
+  const h = await transferAccount(webSource(e), 'web-h', account, { cut: 2048 });
+  await eventually('h is in sync', async () => (await accountSyncState(h)) === 'synced');
+  await openSettings(h, 'account');
+  const rows = await h.$('[data-testid="account-list"]').$$('li').map((row) => row.getText());
+  assert.equal(rows.filter((row) => row.includes(account)).length, 1, `h has the account once: ${JSON.stringify(rows)}`);
+  await h.keys('Escape');
+  // 担当は、経路を戻した後も g のまま。
+  assert.ok(!(await handledElsewhere(g, channelId, label)), 'g still hands out new access');
+  assert.ok(await handledElsewhere(e, channelId, label), 'e still leaves it to g');
+}
+
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
   direct,
@@ -1564,6 +1745,7 @@ const scenarios = {
   'webrtc-loss': webrtcLoss,
   'site-data': siteData,
   transfer,
+  'same-account': sameAccount,
 };
 
 const [name] = process.argv.slice(2);
