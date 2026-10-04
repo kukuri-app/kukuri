@@ -481,9 +481,13 @@ pub(crate) async fn read_private_epoch_snapshot(
     {
         return Ok(None);
     }
+    // 読む側の参加 record は、新しく参加する人には無い。reload の後の Web の owner は namespace を開いておらず(docs は
+    // memory)、保存に無い key には失敗を返すので、読めないときは無いものとして扱う(参加なら記録し直す。#1220 AC-4)。
     let local_participant =
         fetch_private_channel_participant_from_replica(docs_sync, replica, local_pubkey, policy)
-            .await?
+            .await
+            .ok()
+            .flatten()
             .filter(in_epoch);
     Ok(Some(PrivateEpochSnapshot {
         metadata,
