@@ -101,5 +101,9 @@
     "settings": "{{channel}} 的设置与分享",
     "showMore": "显示更多",
     "loadingMore": "加载中…"
+  },
+  "controllerPending": {
+    "title": "已暂停",
+    "description": "此操作需要分发新的访问权限，而分发在你的另一台设备上进行。在该设备上打开应用之前，此操作将暂停，打开后请重试。也可以在频道设置中切换为在此设备上进行。"
   }
 }
