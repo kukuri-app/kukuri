@@ -122,7 +122,8 @@ pub(crate) fn web_build_artifact() -> Result<()> {
 }
 
 /// Web の build を、同じ process の Community Node・native の相手（harness の `web_e2e_fixture`）と実ブラウザで試す。
-/// driver は `apps/desktop/tests/web-e2e/main-flow.mjs`（WebdriverIO。chromedriver は `CHROMEDRIVER`、無ければ自動）。
+/// driver は `apps/desktop/tests/web-e2e/main-flow.mjs`（WebdriverIO。ブラウザは `KUKURI_WEB_E2E_BROWSER`、driver は
+/// `CHROMEDRIVER`・`GECKODRIVER`、無ければ自動）。
 /// 引数の scenario（省略すると `main-flow.mjs --list` の全部）を、scenario ごとに新しい fixture で順に回す（#1559）。
 /// CI は build の job が `--build-only`、scenario の job が `--no-build <scenario>` で呼ぶ。
 pub(crate) fn web_e2e(args: impl Iterator<Item = String>) -> Result<()> {
