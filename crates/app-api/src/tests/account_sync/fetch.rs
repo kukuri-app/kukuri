@@ -25,6 +25,8 @@ pub(super) struct DeviceDocs {
     writes_down: Arc<AtomicBool>,
     /// 0 になったら読取りが失敗する（相手が離れた）。
     reads_left: Arc<AtomicUsize>,
+    /// 0 になるまでの読取りが失敗する（取得の途中で経路を失った接続）。
+    fails_left: Arc<AtomicUsize>,
     reads: Arc<AtomicUsize>,
     /// 読んだ record の値の bytes と、書込みの回数。
     bytes: Arc<AtomicUsize>,
@@ -38,6 +40,7 @@ impl DeviceDocs {
             inner: MemoryDocsSync::with_docs_author(ACCOUNT_DOCS_AUTHOR),
             writes_down: Arc::default(),
             reads_left: Arc::new(AtomicUsize::new(usize::MAX)),
+            fails_left: Arc::default(),
             reads: Arc::default(),
             bytes: Arc::default(),
             writes: Arc::default(),
@@ -48,6 +51,15 @@ impl DeviceDocs {
     fn read(&self, replica_id: &ReplicaId) -> Result<()> {
         if counts(replica_id) {
             self.reads.fetch_add(1, Ordering::SeqCst);
+        }
+        if self
+            .fails_left
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            anyhow::bail!("the connection was lost");
         }
         self.reads_left
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
@@ -79,6 +91,10 @@ impl DeviceDocs {
 
     fn reachable(&self, reads: usize) {
         self.reads_left.store(reads, Ordering::SeqCst);
+    }
+
+    fn failing(&self, reads: usize) {
+        self.fails_left.store(reads, Ordering::SeqCst);
     }
 
     pub(super) fn reading_from(&self, other: &DeviceDocs) {
@@ -608,6 +624,20 @@ async fn a_hint_makes_the_other_device_fetch() {
     })
     .await
     .expect("the hint makes the other device fetch");
+}
+
+/// hint を受けた端末からの取得が失敗したら（取得の途中で経路を失った接続）、次の契機を待たずに 1 回だけ取り直す
+/// （#1220 AC-3c2）。
+#[tokio::test]
+async fn a_hinted_fetch_that_fails_is_retried_once_right_away() {
+    let keys = generate_keys();
+    let (a, a_docs) = memory_device(&keys, "device-a").await;
+    let (b, b_docs) = memory_device(&keys, "device-b").await;
+    b_docs.reading_from(&a_docs);
+    let authors = trust(&a, 1).await;
+    a_docs.failing(1);
+    b.fetch_account_sync_for_hint("device-a", "device-a").await;
+    assert_eq!(trusted(&b).await, authors);
 }
 
 /// 本人の端末の候補を返す hint の transport（rendezvous の応答で入る候補を、試験が後から足す）。

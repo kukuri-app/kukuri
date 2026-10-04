@@ -781,9 +781,13 @@ impl AppService {
         }
     }
 
-    /// hint を受けたとき: 書いた端末から取得し、届かなければ中継した peer から読む。
+    /// hint を受けたとき: 書いた端末から取得し、失敗したらすぐに 1 回だけ取り直す（取得の途中で WebRTC の経路を失った
+    /// 接続は失敗し、取り直しの接続は届く経路で張られる。#1220 AC-3c2）。それでも届かなければ中継した peer から読む。
     pub(crate) async fn fetch_account_sync_for_hint(&self, device_id: &str, source_peer: &str) {
-        if self.fetch_account_sync_from(device_id).await.is_ok() || source_peer == device_id {
+        if self.fetch_account_sync_from(device_id).await.is_ok()
+            || self.fetch_account_sync_from(device_id).await.is_ok()
+            || source_peer == device_id
+        {
             return;
         }
         if let Err(error) = self.fetch_account_sync_from(source_peer).await {

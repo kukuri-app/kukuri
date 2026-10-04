@@ -221,6 +221,40 @@ async fn e4_browser_closing_a_session_releases_its_resources() {
     assert_eq!(pair.transport.stats().sessions, 0);
 }
 
+/// E5（browser↔native）: browser の DataChannel を transport の外から閉じても、native が応答（stream の reset）を送り切って
+/// から session を終えるので、browser の close の event で session が閉じる（PeerConnection の failed を待たない。#1220 AC-3c2）。
+#[wasm_bindgen_test]
+async fn e5_a_data_channel_closed_outside_the_transport_closes_the_session() {
+    // 作られる DataChannel を page で控える（transport を通さずに閉じるため）。
+    js_sys::eval(
+        "window.__kukuriChannels = [];
+         const create = RTCPeerConnection.prototype.createDataChannel;
+         RTCPeerConnection.prototype.createDataChannel = function (...args) {
+           const channel = create.apply(this, args);
+           window.__kukuriChannels.push(channel);
+           return channel;
+         };",
+    )
+    .expect("record the data channels");
+    let mut pair = native_pair().await;
+    js_sys::eval("for (const channel of window.__kukuriChannels) channel.close();")
+        .expect("close the data channels");
+    let closed = n0_future::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match pair.events.recv().await {
+                Some(SessionEvent::Closed { session, .. }) if session == pair.session => break,
+                Some(_) => continue,
+                None => panic!("the session events ended"),
+            }
+        }
+    })
+    .await;
+    assert!(
+        closed.is_ok(),
+        "the session stays open after its data channel closed"
+    );
+}
+
 /// 相手の手元の iroh relay だけで届き、custom transport と専用 ALPN の交渉を持つ endpoint。
 async fn relay_node(relay: &iroh::RelayUrl) -> (Endpoint, Arc<Signaling>, Router) {
     let transport = WebRtcTransport::new(config());

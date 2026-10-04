@@ -355,7 +355,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
   - 周回を始めたときの head を覚え、周回が終わったら cursor をその head にする。周回の間の変更は、その後の窓で読む。
 - 1 回の取得の仕事は、head 1 件、slot と item 64 件ずつまで（周回は照会 1 回と item 64 件まで）。窓の外の休止した channel・過去の履歴の量は、仕事に入らない。
 - 契機で始めた取得は、相手の head（周回なら周回の終わり）に届くまで、lease の task が背景で 1 回ずつ続ける。1 回の間は他の要求を待たせない。
-  - 途中で止まった（取得の失敗、相手が離れた、lease が外れた）ら、cursor に残した位置から次の契機で再開する。失敗した 1 回は再試行しない。
+  - 途中で止まった（取得の失敗、相手が離れた、lease が外れた）ら、cursor に残した位置から次の契機で再開する。失敗した 1 回は再試行しない（hint の取得の 1 回の取り直しを除く。下の「契機と owner」）。
 - 取得した item の merge は §8・§9 の規則（AC-3・AC-4c）で行う。
 - 読んだ head・slot・item は、remote の保持（`persist_verified_record`）に置かない（古い head を返し続ける）。object ごとに reader の lease を閉じる（`finish_remote_object`。1 lease は 32 key・1 MiB）。
   - account の replica の読み出しは、手元の保持分で短絡せず、相手に問う（#1211 AC-4 で直した）。本人の端末は同じ docs author なので、自分で書いた item も同じ key・author の保持分になり、短絡すると相手の新しい版を隠す。
@@ -364,7 +364,8 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 
 - 周期処理を新設しない（ADR 0055 §6）。契機は ADR 0055 の受信と同じ。
   - account の lease の開始（起動・import・切替）、endpoint の世代の変化（復帰）、日の境界（UTC）: 本人の端末の候補（account の hint topic の rendezvous の候補、最大 4）それぞれから取得する。lease の開始の後に、hint を 1 回送る（offline の間の自分の変更を、online の端末に読ませる）。
-  - hint を受けたとき: hint の端末 ID の端末から取得する（届かなければ、中継した peer から読む）。
+  - hint を受けたとき: hint の端末 ID の端末から取得する。失敗したら、すぐに 1 回だけ取り直す（2026-10-05 ユーザー判断、#1220 AC-3c2）。それでも届かなければ、中継した peer から読む。
+    - 取得の途中で WebRTC の経路を失った接続は失敗し（handshake の途中なら docs の読取りの接続の期限 5 秒。ADR 0057 §5）、取り直しの接続は届く経路（relay）で張られる。次の契機（rendezvous の続く応答は最長約 25 秒後）を待つと、担当の端末が鍵の更新の依頼を 15 秒の待ち（AC-3）の内に処理できなかった。
   - rendezvous の応答に、どの CN の前回の応答にも無かった本人の端末が現れたとき（AC-5b 監査で追加）: 起動・復帰の時点では、gossip の候補は rendezvous の応答の後にしか入らない。そこで、新しく現れた端末から、gossip の合流を待たずに rendezvous の候補（endpoint ID と addr hint）で直接取得する。
     - 前回の応答は CN ごとに持つ（CN の数 × 応答の上限）。同じ端末が続く応答と、その端末の居ない別の CN の応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
     - account の lease の task の作り直し（起動・復帰）で前回の応答を忘れ、次の応答に居る端末から 1 回読む。
@@ -372,7 +373,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
-- owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得はその場で再試行せず、次の契機（rendezvous の続く応答を含む）を待つ。
+- owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得は、hint の取得の 1 回の取り直しのほかはその場で再試行せず、次の契機（rendezvous の続く応答を含む）を待つ。
   - 取得した item の merge は、account の状態（購読の lease の表・参加状態・購読を止めた topic と channel など）を共有する handle（`AppService::account_handle`）で行う（#1211 AC-4 で直した）。channel の参加・世代の変化を、この account の購読とメモリへ反映するため。それまでは別の lease の表を持つ handle で merge し、世代を進めても購読とメモリは古い世代のままだった。
 - account の切替: 取得は account の runtime の lease の task が持ち、停止で止まる。新しい runtime は、新しい account の store の cursor だけを読む。別の account への遅れた反映は起きない。
 
