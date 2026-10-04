@@ -170,15 +170,15 @@ test('a channel created or opened from the Timeline Column header stays active a
   const publicColumn = timelineColumn('Public · general');
   const channelColumn = timelineColumn('core · general');
   const dialog = page.getByRole('dialog', { name: copy.dialog });
-  const expectChannelColumnActiveAfterClose = async () => {
+  const expectChannelColumnActiveAfterClose = async (column: Locator) => {
     await expect(dialog).toBeHidden();
     // focus は閉じた後の task で戻る。戻った後の frame まで待ってから確かめる。
     await page.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
     );
-    await expect(channelColumn).toHaveAttribute('aria-current', 'true');
-    await expect(channelColumn).toBeInViewport();
-    await expect(channelColumn).toBeFocused();
+    await expect(column).toHaveAttribute('aria-current', 'true');
+    await expect(column).toBeInViewport();
+    await expect(column).toBeFocused();
   };
 
   await publicColumn.getByRole('button', { name: copy.entry }).click();
@@ -186,13 +186,31 @@ test('a channel created or opened from the Timeline Column header stays active a
   await dialog.getByRole('button', { name: copy.create }).click();
   await expect(page).toHaveURL(/channel=channel-1/);
   await dialog.getByRole('button', { name: copy.closeDialog }).click();
-  await expectChannelColumnActiveAfterClose();
+  await expectChannelColumnActiveAfterClose(channelColumn);
 
   await publicColumn.locator('.shell-column-title-row').click();
   await expect(channelColumn).not.toBeInViewport();
   await publicColumn.getByRole('button', { name: copy.entry }).click();
   await dialog.getByRole('button', { name: 'Open core' }).click();
-  await expectChannelColumnActiveAfterClose();
+  await expectChannelColumnActiveAfterClose(channelColumn);
+
+  // Issue #1528: token で参加した直後の「Open <channel>」は、channel の列が active のまま同じ channel を選ぶ。
+  // 閉じた後も channel の列が active で focus を持ち、その列から投稿できる。
+  await publicColumn.locator('.shell-column-title-row').click();
+  await publicColumn.getByRole('button', { name: copy.entry }).click();
+  await dialog.getByPlaceholder(/Paste a private channel invite/).fill('invite-token');
+  await dialog.getByRole('button', { name: 'Join', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Open Imported' }).click();
+  const importedColumn = timelineColumn('Imported · general');
+  await expectChannelColumnActiveAfterClose(importedColumn);
+  await importedColumn.getByRole('button', { name: 'Post to Imported · general' }).click();
+  await importedColumn.getByPlaceholder('Write a post').fill('posted right after joining');
+  await importedColumn
+    .locator('.shell-column-composer')
+    .getByRole('button', { name: 'Post', exact: true })
+    .click();
+  await expect(importedColumn.getByText('posted right after joining')).toBeVisible();
+  await expect(importedColumn).toHaveAttribute('aria-current', 'true');
 });
 
 // Issue #1533: 参加中の channel の行は、名前の長さによらず接続の切替・設定・退出が Control Center の
