@@ -37,7 +37,8 @@ const CAPABILITIES = {
     browserName: 'firefox',
     'moz:firefoxOptions': {
       args: ['-headless', '--width=1280', '--height=900'],
-      prefs: { 'intl.accept_languages': 'en-US', 'intl.locale.requested': 'en-US' },
+      // JSON の viewer は特権の文書になり、page の script から保存先を消せない（site-data の `/fixture/info`）。
+      prefs: { 'intl.accept_languages': 'en-US', 'intl.locale.requested': 'en-US', 'devtools.jsonview.enabled': false },
     },
     ...(process.env.GECKODRIVER ? { 'wdio:geckodriverOptions': { binary: process.env.GECKODRIVER } } : {}),
   },
