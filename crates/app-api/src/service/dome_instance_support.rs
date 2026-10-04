@@ -242,13 +242,14 @@ impl AppService {
         let mut owner = std::iter::once(self.services.keys.public_key())
             .chain(row_owner)
             .find(derives);
-        // heartbeat の台帳は、自分と一覧の行から導けないときだけ走査する(owner の端末の input ごとに読まない。#1527)。
+        // heartbeat の台帳は、自分と一覧の行から導けないときだけ引く(owner の端末の input ごとに読まない。#1527)。
         if owner.is_none() {
             owner = self
-                .heartbeat_dome_owners(spatial_context)
+                .dome_host_heartbeats
+                .lock()
                 .await
-                .into_iter()
-                .find(derives);
+                .latest(spatial_context, instance_id, Utc::now().timestamp_millis())
+                .map(|signed| signed.heartbeat.host_pubkey);
         }
         match owner {
             Some(owner) => {

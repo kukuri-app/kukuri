@@ -813,14 +813,13 @@ impl AppService {
         let mut heartbeat_at = local_heartbeat;
         if heartbeat_at.is_none() {
             let preliminary = resolve_dome_hosting_state(instance, records, now, Some(now))?;
-            // lock は `if let` の前で手放す(条件式の中で取ると、下の else の取り直しが自分を待って止まる。#1252)。
-            let heartbeats = self.dome_host_heartbeats.lock().await;
-            let received_heartbeat = heartbeats.get(&instance.instance_id).cloned();
-            drop(heartbeats);
+            // 受け取った heartbeat の検証と、合わないものの削除は同じ lock の中で行う(取り直す間に届いた新しい
+            // heartbeat を消さない)。
+            let mut heartbeats = self.dome_host_heartbeats.lock().await;
             if let (Some(lease), Some(session_id), Some(signed)) = (
                 current_unique_lease(records)?,
                 preliminary.session_id.as_deref(),
-                received_heartbeat,
+                heartbeats.latest(&instance.spatial_context, &instance.instance_id, now),
             ) {
                 if signed.heartbeat.sent_at <= now.saturating_add(5_000)
                     && verify_signed_dome_host_heartbeat(&signed, &lease.lease, session_id).is_ok()
@@ -829,15 +828,10 @@ impl AppService {
                     participants = signed.heartbeat.participants;
                     sleeping = signed.heartbeat.sleeping;
                 } else {
-                    let mut heartbeats = self.dome_host_heartbeats.lock().await;
-                    if heartbeats
-                        .get(&instance.instance_id)
-                        .is_some_and(|current| current.envelope.id == signed.envelope.id)
-                    {
-                        heartbeats.remove(&instance.instance_id);
-                    }
+                    heartbeats.remove(&instance.spatial_context, &instance.instance_id);
                 }
             }
+            drop(heartbeats);
             if heartbeat_at.is_none()
                 && matches!(
                     preliminary.kind,
