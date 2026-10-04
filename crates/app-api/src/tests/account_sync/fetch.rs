@@ -621,9 +621,6 @@ impl HintTransport for CandidateHints {
     }
 }
 
-/// 起動・復帰の時点では gossip の候補がまだ無い。rendezvous の応答に新しく現れた本人の端末からは、gossip の合流を
-/// 待たずに取得し、未同期の「候補なし」を下ろす。同じ端末が続く応答（更新ごと）では読み直さない（#1218 AC-5b 監査
-/// B-1・B-3）。
 /// rendezvous の候補だけを持つ（gossip の候補は空の）本人の端末 b。a を読むかは `b_docs.reading_from` で決める。
 async fn rendezvous_device(keys: &KukuriKeys) -> (AppService, DeviceDocs) {
     let b_docs = DeviceDocs::new();
@@ -666,6 +663,9 @@ async fn trusted_until(app: &AppService, authors: &[String], what: &str) {
     .expect(what);
 }
 
+/// 起動・復帰の時点では gossip の候補がまだ無い。rendezvous の応答に新しく現れた本人の端末からは、gossip の合流を
+/// 待たずに取得し、未同期の「候補なし」を下ろす。同じ端末が続く応答（更新ごと）では読み直さない（#1218 AC-5b 監査
+/// B-1・B-3）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn own_devices_appearing_in_rendezvous_are_fetched_from_once() {
     let keys = generate_keys();

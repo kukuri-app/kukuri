@@ -615,8 +615,8 @@ impl AppService {
     }
 
     /// rendezvous の応答で、account の hint topic の本人の端末の候補を受けたとき（desktop-runtime が呼ぶ）。前回の
-    /// 応答に無かった端末だけを、lease の task が gossip の合流を待たずに rendezvous の候補から直接読む（ADR 0061
-    /// §10。応答ごとの再読込みはしない）。
+    /// 応答に無かった端末と、前回の取得に失敗した端末だけを、lease の task が gossip の合流を待たずに rendezvous の
+    /// 候補から直接読む（ADR 0061 §10。取得できた端末を応答ごとに読み直すことはしない）。
     pub async fn account_sync_peers_joined(
         &self,
         source: &str,
