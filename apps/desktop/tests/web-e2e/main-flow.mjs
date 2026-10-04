@@ -127,6 +127,7 @@ async function addInitScripts(browser, { ice }) {
   await browser.addInitScript(keepObjectUrls);
   await browser.addInitScript(trackPeerConnections);
   await browser.addInitScript(withoutIceCandidates, !ice);
+  await browser.addInitScript(diagPeers);
 }
 
 /** relay fallback の端（`always`）と、WebRTC の経路だけの喪失を保つ間（`__kukuriCut` で DataChannel を閉じてから `released`
@@ -145,6 +146,41 @@ function withoutIceCandidates(always) {
   Object.defineProperty(prototype, 'localDescription', { get() { return strip(local.get.call(this)); } });
   const setRemote = prototype.setRemoteDescription;
   prototype.setRemoteDescription = function (description) { return setRemote.call(this, strip(description)); };
+}
+
+// DIAG（一時）
+function diagPeers() {
+  window.__diag = [];
+  const t0 = Date.now();
+  const push = (line) => window.__diag.push(`${Date.now() - t0} ${line}`);
+  const lines = (sdp) => (sdp ?? '').split(/\r?\n/).filter((l) => /^a=(candidate|setup|ice-lite|end-of)/.test(l) || l.startsWith('c=') || l.startsWith('m=')).join(' | ');
+  const C = RTCPeerConnection.prototype;
+  const setLocal = C.setLocalDescription;
+  C.setLocalDescription = function (...args) {
+    const id = (this.__diagId ??= Math.random().toString(36).slice(2, 6));
+    return setLocal.apply(this, args).then((v) => { push(`${id} setLocal ok ${this.localDescription?.type}`); return v; }, (e) => { push(`${id} setLocal err ${e}`); throw e; });
+  };
+  const setRemote = C.setRemoteDescription;
+  C.setRemoteDescription = function (d) {
+    const id = (this.__diagId ??= Math.random().toString(36).slice(2, 6));
+    push(`${id} setRemote ${d?.type} ${lines(d?.sdp)}`);
+    if (!this.__diagHooked) {
+      this.__diagHooked = true;
+      const pc = this;
+      const dump = async (why) => {
+        const out = [];
+        try { (await pc.getStats()).forEach((s) => {
+          if (s.type === 'candidate-pair') out.push(`pair ${s.state} nom=${s.nominated} ${s.localCandidateId}->${s.remoteCandidateId} reqS=${s.requestsSent} resR=${s.responsesReceived} reqR=${s.requestsReceived} resS=${s.responsesSent}`);
+          if (s.type === 'local-candidate' || s.type === 'remote-candidate') out.push(`${s.type} ${s.id} ${s.candidateType} ${s.address}:${s.port}`);
+        }); } catch (e) { out.push(String(e)); }
+        push(`${id} stats(${why}) local=[${lines(pc.localDescription?.sdp)}] ${out.join(' ; ')}`);
+      };
+      pc.addEventListener('iceconnectionstatechange', () => { push(`${id} ice ${pc.iceConnectionState}`); if (/failed|disconnected|checking/.test(pc.iceConnectionState)) dump(pc.iceConnectionState); });
+      pc.addEventListener('connectionstatechange', () => push(`${id} conn ${pc.connectionState}`));
+      setTimeout(() => dump('5s'), 5000);
+    }
+    return setRemote.call(this, d).then((v) => { push(`${id} setRemote ok`); return v; }, (e) => { push(`${id} setRemote err ${e}`); throw e; });
+  };
 }
 
 /** CSP の違反を控える（ページより先に動く）。配信の `_headers` の CSP の下で動くことを確かめる（#1220 AC-6）。 */
@@ -1395,22 +1431,8 @@ async function dumpColumns(browser) {
   );
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
-  // DIAG（一時）
-  const diag = await browser.executeAsync((done) => {
-    Promise.all(window.__kukuriPeers.map(async (peer) => {
-      const stats = [];
-      (await peer.getStats()).forEach((s) => {
-        if (s.type === 'candidate-pair') stats.push(`pair ${s.state} nom=${s.nominated} ${s.localCandidateId}->${s.remoteCandidateId} sent=${s.bytesSent} recv=${s.bytesReceived}`);
-        if (s.type === 'local-candidate' || s.type === 'remote-candidate') stats.push(`${s.type} ${s.id} ${s.candidateType} ${s.address}:${s.port} ${s.protocol}`);
-      });
-      return { conn: peer.connectionState, ice: peer.iceConnectionState, gather: peer.iceGatheringState, sig: peer.signalingState,
-        local: peer.localDescription?.type, remote: peer.remoteDescription?.type,
-        remoteCands: (peer.remoteDescription?.sdp ?? '').split(/\r?\n/).filter((l) => l.startsWith('a=candidate') || l.startsWith('a=setup') || l.startsWith('a=fingerprint')),
-        localCands: (peer.localDescription?.sdp ?? '').split(/\r?\n/).filter((l) => l.startsWith('a=candidate') || l.startsWith('a=setup')),
-        stats };
-    })).then((v) => done(JSON.stringify(v, null, 1)), (e) => done(String(e)));
-  }).catch((e) => String(e));
-  console.log(`DIAG ${browser.label} peers ${diag}`);
+  const diag = await browser.execute(() => (window.__diag ?? []).slice(-120).join('\n')).catch((e) => String(e));
+  console.log(`DIAG ${browser.label} peers\n${diag}`);
   console.log(`DIAG ${browser.label} console (last 150)\n${(browser.diagLogs ?? []).slice(-150).join('\n')}`);
 }
 
