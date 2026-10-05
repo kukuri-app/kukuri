@@ -50,6 +50,13 @@ const BROWSERS = {
   },
   // safaridriver は WebDriver BiDi を持たない。
   safari: { browserName: 'safari', 'wdio:enforceWebDriverClassic': true },
+  // emulator の Chrome（chromedriver の Android の操作。#1220 AC-5c）。emulator の Chrome の版に合う driver を `ANDROID_CHROMEDRIVER` で渡す。
+  android: {
+    browserName: 'chrome',
+    'goog:chromeOptions': { androidPackage: 'com.android.chrome' },
+    ...(process.env.ANDROID_CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.ANDROID_CHROMEDRIVER } } : {}),
+    'wdio:enforceWebDriverClassic': true,
+  },
 };
 /** 全選択の修飾 key（macOS は Command）。 */
 const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
@@ -104,9 +111,20 @@ const clients = [];
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
 async function startClient(name, { ice }) {
-  const kind = BROWSER === 'safari' && clients.length > 0 ? 'chrome' : BROWSER;
-  const paired = 'Safari with Safari (safaridriver opens one session at a time)';
+  // safaridriver と Android の chromedriver は、同時に 1 つの session しか開けない。
+  const single = { safari: 'Safari with Safari (safaridriver opens one session at a time)', android: 'Android with Android (one Chrome session on the emulator)' };
+  const kind = single[BROWSER] && clients.length > 0 ? 'chrome' : BROWSER;
+  const paired = single[BROWSER];
   if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
+  if (kind === 'android') {
+    // emulator の 127.0.0.1 から、fixture の配信・Community Node・relay へ届かせる（adb の port の転送は TCP だけ）。
+    const { community_node: communityNode, relay_port: relayPort } = await fixture('/fixture/info');
+    for (const port of [new URL(ORIGIN).port, new URL(communityNode).port, relayPort]) {
+      await new Promise((resolve, reject) =>
+        execFile('adb', ['reverse', `tcp:${port}`, `tcp:${port}`], (error) => (error ? reject(error) : resolve()))
+      );
+    }
+  }
   const browser = await remote({ logLevel: 'warn', capabilities: BROWSERS[kind] });
   browser.label = `${name}-${RUN}`;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
