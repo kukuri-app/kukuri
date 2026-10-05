@@ -1870,9 +1870,10 @@ const scenarios = {
   'same-account': sameAccount,
 };
 
-const [name] = process.argv.slice(2);
+const [name] = process.argv.slice(2).map((arg) => arg.replace(/-diag[0-9]+$/, ''));
 if (name === '--list') {
-  console.log(JSON.stringify(Object.keys(scenarios)));
+  // DIAG（一時）: 落ちた scenario を 2 本ずつ
+  console.log(JSON.stringify(['direct', 'fallback', 'same-account', 'lifecycle'].flatMap((key) => [`${key}-diag1`, `${key}-diag2`])));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
