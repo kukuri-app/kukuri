@@ -433,6 +433,7 @@ impl AppService {
             return Err(pending);
         }
         let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            let deadline = n0_future::time::Instant::now() + PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT;
             let mut resend =
                 n0_future::time::Instant::now() + PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
             while self
@@ -440,7 +441,8 @@ impl AppService {
                 .await
                 .is_some_and(|current| current.current_epoch_id == state.current_epoch_id)
             {
-                if n0_future::time::Instant::now() >= resend {
+                // 送り直しは待ちの期限より前の予定だけ（15 秒の待ちに 2 回）。
+                if n0_future::time::Instant::now() >= resend && resend < deadline {
                     self.publish_account_sync_hint().await;
                     resend += PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
                 }
