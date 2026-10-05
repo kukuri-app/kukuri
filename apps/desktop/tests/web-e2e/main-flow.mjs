@@ -297,23 +297,27 @@ async function post(browser, content, column = publicColumn(browser), file = nul
   await sees(browser, content);
 }
 
-/** 列の投稿欄に画像（`file`）を添える。safaridriver と Android の chromedriver は手元の file を file の input へ入れられないので、
- * page で File を作って入れる。 */
+/** 列の投稿欄に画像（`file`）を添え、非同期の準備が終わってプレビューが出るまで待つ（#1577）。 */
 async function attach(browser, column, file) {
   const input = await column.$('input[type=file]');
-  if (browser.kind !== 'safari' && browser.kind !== 'android') return input.addValue(file);
-  const data = (await readFile(file)).toString('base64');
-  await browser.execute(
-    (element, name, data) => {
-      const transfer = new DataTransfer();
-      transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
-      element.files = transfer.files;
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    input,
-    path.basename(file),
-    data
-  );
+  if (browser.kind !== 'safari' && browser.kind !== 'android') {
+    await input.addValue(file);
+  } else {
+    // Safari・Android の driver は手元の file を渡せないので、page で File を作って入れる。
+    const data = (await readFile(file)).toString('base64');
+    await browser.execute(
+      (element, name, data) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
+        element.files = transfer.files;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      input,
+      path.basename(file),
+      data
+    );
+  }
+  await column.$(`img[alt="draft preview ${path.basename(file)}"]`).waitForDisplayed({ timeout: WAIT });
 }
 
 const card = (browser, text) => browser.$(`article*=${text}`);
