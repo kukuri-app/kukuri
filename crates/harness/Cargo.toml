@@ -19,6 +19,7 @@ kukuri-app-api = { path = "../app-api" }
 kukuri-blob-service = { path = "../blob-service" }
 kukuri-cn-core = { path = "../cn-core" }
 kukuri-cn-protocol = { path = "../cn-protocol" }
+kukuri-cn-stun = { path = "../cn-stun" }
 kukuri-cn-iroh-relay = { path = "../cn-iroh-relay" }
 kukuri-cn-operator = { path = "../cn-operator" }
 kukuri-cn-user-api = { path = "../cn-user-api" }

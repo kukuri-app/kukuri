@@ -3665,6 +3665,7 @@ dependencies = [
  "kukuri-cn-iroh-relay",
  "kukuri-cn-operator",
  "kukuri-cn-protocol",
+ "kukuri-cn-stun",
  "kukuri-cn-user-api",
  "kukuri-core",
  "kukuri-desktop-runtime",
