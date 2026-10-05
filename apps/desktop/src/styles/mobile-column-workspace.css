@@ -27,6 +27,10 @@
 
 @media (max-width: 759px) {
   .shell-phase1[data-workspace-layout='column'] {
+    /* Keep Columns aligned with the fixed controls when mobile browser chrome
+       leaves a document scroll range (100vh can exceed 100dvh). */
+    position: fixed;
+    inset: 0;
     width: 100%;
     min-height: 100dvh;
     padding: 0;
