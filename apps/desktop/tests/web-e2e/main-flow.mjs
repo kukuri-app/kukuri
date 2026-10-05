@@ -1301,19 +1301,6 @@ async function lifecycle() {
   // tab が保存から同じ EndpointId で再開する。
   await addHistory('history-b', 25);
   const first = await a.getWindowHandle();
-  // #1586 の診断。WebDriver Classic の newWindow は handle 一覧の末尾を選ぶ。
-  const guessed = await a.newWindow(ORIGIN);
-  const handles = await a.getWindowHandles();
-  const created = handles.find((handle) => handle !== first);
-  console.log('newWindow handles', { first, guessed, handles, current: await a.getWindowHandle() });
-  if (created) {
-    await a.switchToWindow(created);
-    await sees(a, 'kukuri is open in another tab');
-    assert.equal((await sessionStates(a)).length, 0, 'the correctly selected window does not start sessions');
-    await a.closeWindow();
-    await a.switchToWindow(first);
-  }
-
   const tab = await a.createWindow('tab');
   assert.equal(tab.type, 'tab');
   assert.notEqual(tab.handle, first);

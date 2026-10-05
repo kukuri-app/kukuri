@@ -221,12 +221,6 @@ jobs:
     with:
       browser: chrome
 
-  # #1586 の Safari 確認用。一時配線は確認後に除去する。
-  web-e2e-safari:
-    uses: ./.github/workflows/kukuri-web-e2e.yml
-    with:
-      browser: safari
-
   linux-desktop-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

@@ -86,17 +86,13 @@ jobs:
         id: scenarios
         working-directory: apps/desktop
         run: |
-          if [ "$KUKURI_WEB_E2E_BROWSER" = safari ]; then
-            echo 'list=["lifecycle"]' >> "$GITHUB_OUTPUT"
-          else
-            echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
-          fi
+          echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
           echo "browser=$KUKURI_WEB_E2E_BROWSER" >> "$GITHUB_OUTPUT"
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: web-e2e-build-${{ env.KUKURI_WEB_E2E_BROWSER }}
+          name: web-e2e-build
           path: |
             apps/desktop/dist-web
             target/debug/web_e2e_fixture
@@ -142,7 +138,7 @@ jobs:
       - name: Download build
         uses: actions/download-artifact@v4
         with:
-          name: web-e2e-build-${{ env.KUKURI_WEB_E2E_BROWSER }}
+          name: web-e2e-build
 
       # driver は runner の image のもの。
       - name: Web E2E
@@ -163,14 +159,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # #1586: native fixture の source は同一。前の run の binary を再利用する一時配線。
-      - name: Download unchanged fixture
-        uses: actions/download-artifact@v4
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
         with:
-          name: web-e2e-fixture-macos
-          path: target/debug
-          run-id: '37304208733'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: 1.98.1
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Build fixture
+        run: cargo build -p kukuri-harness --bin web_e2e_fixture
 
       - name: Upload fixture
         uses: actions/upload-artifact@v4
@@ -217,7 +217,7 @@ jobs:
       - name: Download build
         uses: actions/download-artifact@v4
         with:
-          name: web-e2e-build-${{ env.KUKURI_WEB_E2E_BROWSER }}
+          name: web-e2e-build
 
       - name: Download fixture
         uses: actions/download-artifact@v4
