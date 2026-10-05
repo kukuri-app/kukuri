@@ -1403,7 +1403,10 @@ async function lifecycle() {
   // tab が保存から同じ EndpointId で再開する。
   await addHistory('history-b', 25);
   const first = await a.getWindowHandle();
-  const { handle: second } = await a.newWindow(ORIGIN);
+  // WebdriverIO の newWindow は電話の platform では使えないので、WebDriver の命令で tab を開く。
+  const { handle: second } = await a.createWindow('tab');
+  await a.switchToWindow(second);
+  await a.url(ORIGIN);
   await sees(a, 'kukuri is open in another tab');
   await a.$('button=Use in this tab').click();
   await assertWindowed(a, peers);
