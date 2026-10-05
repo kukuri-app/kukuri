@@ -110,12 +110,10 @@ async function startClient(name, { ice }) {
   clients.push(browser);
   if (kind === 'safari') {
     await browser.setWindowSize(1280, 900);
-    // 同じ macOS で Chrome の client が動くと Safari の window が前面でなくなり、safaridriver の押下と入力が page に届かない。
-    // 押下・入力の前に Safari を前面へ戻す。
+    // 同じ macOS で Chrome の client が動くと Safari の page が focus を失い、safaridriver の押下と入力が page に届かない。
+    // 押下・入力の前に Safari を開き直して focus を戻す（AppleScript の activate では page に focus が戻らなかった）。
     const activate = () =>
-      new Promise((resolve, reject) =>
-        execFile('osascript', ['-e', 'tell application "Safari" to activate'], (error) => (error ? reject(error) : resolve()))
-      );
+      new Promise((resolve, reject) => execFile('open', ['-a', 'Safari'], (error) => (error ? reject(error) : resolve())));
     for (const command of ['click', 'addValue', 'setValue']) {
       browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), true);
     }
@@ -1725,26 +1723,6 @@ if (name === '--list') {
     // DIAG（一時）
     await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
     for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
-    if (BROWSER === 'safari') {
-      // DIAG（一時）: 前面へ戻す方法ごとに、page の focus と押下が届くかを確かめる。
-      const safari = clients[0];
-      const probe = async (step) => {
-        const before = await safari.execute(() => window.__kukuriDiag.length);
-        await safari.$('button[aria-label^="Post to "]').click().catch((e) => console.info('DIAG click error', String(e).slice(0, 200)));
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const after = await safari.execute(() => [document.hasFocus(), window.__kukuriDiag.length]);
-        console.info('DIAG probe', step, JSON.stringify({ before, after }));
-      };
-      const run = (args) => new Promise((resolve) => execFile(args[0], args.slice(1), (error, out, err) => resolve(`${error ?? ''} ${out} ${err}`)));
-      await probe('none').catch((e) => console.info('DIAG probe none failed', String(e).slice(0, 200)));
-      console.info('DIAG osascript', await run(['osascript', '-e', 'tell application "Safari" to activate']));
-      await probe('osascript').catch(() => undefined);
-      console.info('DIAG frontmost', await run(['osascript', '-e', 'tell application "System Events" to get name of first process whose frontmost is true']));
-      console.info('DIAG open', await run(['open', '-a', 'Safari']));
-      await probe('open').catch(() => undefined);
-      await safari.switchToWindow(await safari.getWindowHandle()).catch((e) => console.info('DIAG switch failed', String(e).slice(0, 200)));
-      await probe('switchToWindow').catch(() => undefined);
-    }
     for (const client of clients) {
       const events = await client
         .execute(() => [
