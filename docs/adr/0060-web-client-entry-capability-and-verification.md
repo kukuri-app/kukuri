@@ -159,6 +159,19 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
     - native→Android の画像は、直接経路で 16〜61 KB（channel の 1 回は 416 KB）、fallback で画像の大きさ 1.77 MB 以上の中継になり、2 つの経路が分かれた。
     - 電話の幅の列のページの表示が列の右下の主操作に重なる不具合を #1588 にした。
 
+- W8 AC-5d1 の記録（2026-10-05）: 4 つのブラウザの実結果の matrix。scenario は `main-flow.mjs` の 9 本で、主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、主要な 3 つの設定）と復帰（reload・終了・凍結・回線全断・WebRTC の経路だけの喪失・サイトデータの消去）を含む。経路は relay の中継 bytes で判定した（native→Web の画像 1.77 MB）。
+
+| browser | 実行先・版 | PASS | 未確認の制約 | 制限・不具合 | run |
+| --- | --- | --- | --- | --- | --- |
+| desktop Chromium | ubuntu-24.04、Chrome 154、chromedriver | 9 本すべて（直接経路 16〜46 KB、fallback 1.77 MB 以上、Web↔Web の直接経路は数百 bytes まで） | なし | `same-account` の場面 5 が時々落ちる（#1590、試験の時機） | [37306057045](https://github.com/kukuri-app/kukuri/actions/runs/37306057045) |
+| desktop Firefox | ubuntu-24.04、Firefox 156.0、geckodriver | 8 本（`same-account` は AC-5a の時点で無く、未実行） | 凍結と focus の模擬、`same-account` | Web 間の画像が受け手に出ないことがある（#1577） | [37204873801](https://github.com/kukuri-app/kukuri/actions/runs/37204873801)・[37205906717](https://github.com/kukuri-app/kukuri/actions/runs/37205906717) |
+| Safari | macOS 15 arm64、Safari 26.6.1、safaridriver（2 台目からは同じ runner の Chrome） | 8 本（`lifecycle` 以外） | 凍結と focus の模擬、回線全断、Safari どうし、同じ runner の Chrome との WebRTC の経路 | 別の window で別の tab の案内が出ない（#1586、`lifecycle` が落ちる） | [37268403845](https://github.com/kukuri-app/kukuri/actions/runs/37268403845) |
+| Android Chrome | ubuntu-24.04 の emulator（API 35、電話の幅）、Chrome 124、chromedriver の Android の操作（2 台目からは同じ runner の Chrome） | 9 本すべて（凍結と回線全断を含む。直接経路 16〜61 KB、private channel の 1 回は 416 KB） | Android どうし、同じ runner の Chrome との WebRTC の経路、復帰の直後の emulator の NAT の上の直接経路の揺れ | 電話の幅で列のページの表示が主操作に重なった（#1588、PR #1589 で修正済み） | [37304034027](https://github.com/kukuri-app/kukuri/actions/runs/37304034027) |
+
+  - 設定のうち、主要な 3 つ（表示と言語、セーフティの成人向け表示の切替、Community Node の接続設定）は E2E で判定した。その他の設定（About / Legal、Keyboard、Account、Connectivity、Discovery、Reactions、Release、Developer）は、Web で使える（画面に出る）と記録し、E2E では判定しない（2026-10-03 ユーザー判断）。Account の鍵の export・import と、Connectivity・Discovery の診断は、`site-data` と各 scenario の接続の確認で使っている。
+  - CI で作れない条件（別の機器との同じ LAN の直接経路、実回線の切替、モバイル回線）は、4 つのどれでも CI では判定していない。Chromium と `local2` での判定は AC-5d2 が所有する。Firefox・Safari・Android では確かめない制約とする。
+  - 未確認を PASS にしない: 未確認の段は、各 scenario の PASS の行に `unconfirmed:` として出る。
+
 ### 5. 測定の workload と STUN
 
 - 接続の確立時間・blob の転送・CPU とメモリ・queue の高水位・relay を通った実データの bytes を、ADR 0057 §8 の固定 workload（E1〜E6、S1〜S3）で測る。W9・W10 の予算と判定方法を使い、測定だけで高速化や費用の削減を宣言しない。
