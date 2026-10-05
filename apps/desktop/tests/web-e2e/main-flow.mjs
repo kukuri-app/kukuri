@@ -1768,6 +1768,13 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
+    // DIAG（一時）
+    await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
+    for (const client of clients) {
+      await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
+      const events = await client.execute(() => window.__kukuriDiag?.slice(-80)).catch((e) => String(e));
+      console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
+    }
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
