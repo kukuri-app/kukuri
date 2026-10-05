@@ -54,6 +54,7 @@ const BROWSERS = {
   android: {
     browserName: 'chrome',
     'goog:chromeOptions': { androidPackage: 'com.android.chrome' },
+    'goog:loggingPrefs': { browser: 'ALL' }, // DIAG（一時）
     ...(process.env.ANDROID_CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.ANDROID_CHROMEDRIVER } } : {}),
     'wdio:enforceWebDriverClassic': true,
   },
@@ -155,7 +156,27 @@ async function startClient(name, { ice }) {
       await closeKeyboard();
       return result;
     };
-    browser.overwriteCommand('click', async (original, ...args) => (await closeKeyboard(), original(...args)), true);
+    // 狭い画面では、別の列の要素は横の画面の外にあり、下の端の要素は下に固定された操作の帯に覆われる。chromedriver の scroll は
+    // 列の scroll-snap と固定の帯に負けるので、押す前に要素を列ごと画面の中央へ動かし、位置が止まるのを待つ。
+    browser.overwriteCommand(
+      'click',
+      async function (original, ...args) {
+        await closeKeyboard();
+        await this.waitForExist({ timeout: WAIT });
+        await browser.execute(async (element) => {
+          element.scrollIntoView({ block: 'center', inline: 'center' });
+          let last = '';
+          for (let i = 0; i < 40; i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            const { left, top } = element.getBoundingClientRect();
+            if (`${left},${top}` === last) break;
+            last = `${left},${top}`;
+          }
+        }, this);
+        return original(...args);
+      },
+      true
+    );
     browser.overwriteCommand('addValue', async (original, ...args) => typed(await original(...args)), true);
     browser.overwriteCommand('keys', async (original, ...args) => typed(await original(...args)));
     // Android の chromedriver は長い文字列（鍵の export・移行のリンク）を打つと 1 文字も入らないことがある。利用者が貼り付けるのと
@@ -1811,6 +1832,8 @@ if (name === '--list') {
       await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
       const events = await client.execute(() => window.__kukuriDiag?.slice(-80)).catch((e) => String(e));
       console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
+      const logs = await client.getLogs('browser').catch((e) => String(e));
+      console.info(`DIAG-LOG ${client.label} ${JSON.stringify(logs).slice(0, 6000)}`);
     }
     throw error;
   } finally {
