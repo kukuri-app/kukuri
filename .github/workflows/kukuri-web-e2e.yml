@@ -144,6 +144,24 @@ jobs:
         with:
           name: web-e2e-build
 
+      - name: STUN (diag 1590)
+        run: |
+          cat > /tmp/stun.py <<'EOF'
+          import socket, struct
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.bind(('0.0.0.0', 3478))
+          while True:
+              d, a = s.recvfrom(2048)
+              if len(d) < 20 or d[0:2] != b'\x00\x01' or d[4:8] != b'\x21\x12\xa4\x42':
+                  continue
+              port = a[1] ^ 0x2112
+              ip = struct.unpack('!I', socket.inet_aton(a[0]))[0] ^ 0x2112A442
+              attr = struct.pack('!HHBBHI', 0x20, 8, 0, 1, port, ip)
+              s.sendto(b'\x01\x01' + struct.pack('!H', len(attr)) + d[4:20] + attr, a)
+              print('answered', a[0], flush=True)
+          EOF
+          nohup python3 /tmp/stun.py > /tmp/stun.log 2>&1 &
+
       # driver は runner の image のもの。
       - name: Web E2E
         env:
@@ -152,6 +170,10 @@ jobs:
           chmod +x target/debug/web_e2e_fixture
           CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" GECKODRIVER="$GECKOWEBDRIVER/geckodriver" \
             cargo xtask-lite web-e2e --no-build "$SCENARIO"
+
+      - name: STUN log (diag 1590)
+        if: always()
+        run: sort /tmp/stun.log | uniq -c
 
   # Safari の fixture は macOS で作る（Web の build は linux-web-e2e-build のものを使う）。
   macos-web-e2e-build:
