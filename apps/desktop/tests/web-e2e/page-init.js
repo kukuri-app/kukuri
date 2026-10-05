@@ -50,7 +50,13 @@
     set(handler) {
       if (handler) channels.push(this);
       let received = 0;
+      // DIAG（一時）
+      const record = { created: Date.now(), label: this.label, bytes: 0, armedBytes: 0 };
+      (window.__kukuriChannelLog ||= []).push(record);
+      this.addEventListener('close', () => { record.closed = Date.now(); });
       onmessage.set.call(this, handler && ((event) => {
+        record.bytes += event.data.byteLength;
+        if (window.__kukuriCut && !window.__kukuriCut.done) record.armedBytes += event.data.byteLength;
         const cut = window.__kukuriCut;
         if (cut && !cut.done && (received += event.data.byteLength) >= cut.after) {
           cut.done = Date.now();

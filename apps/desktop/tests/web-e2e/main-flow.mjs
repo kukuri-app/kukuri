@@ -1015,10 +1015,11 @@ async function transferAccount(from, name, account, { history = null, duringHist
   if (history) await target.$('select').selectByAttribute('value', history);
   if (cut !== null) {
     await browser.execute((after) => {
-      window.__kukuriCut = { after };
+      window.__kukuriCut = { after, armedAt: Date.now() };
     }, cut);
   }
   await target.$('button=Connect').click();
+  const diagConnectAt = Date.now();
   // 確認コードが両端末で同じことを確かめてから、両方で承認する。
   const shown = browser.$('[aria-label="Confirmation code"]');
   await shown.waitForExist({ timeout: WAIT });
@@ -1037,6 +1038,8 @@ async function transferAccount(from, name, account, { history = null, duringHist
   if (cut !== null) {
     // Safari・Android と同じ runner の Chrome の間には WebRTC の経路が張れず、移行の途中に落とす経路が無い（ADR 0060 §4）。
     const lost = await browser.execute(() => window.__kukuriCut.done);
+    // DIAG（一時）
+    console.info('DIAG-1590', JSON.stringify({ lost, connectAt: diagConnectAt, completedAt: Date.now(), log: await browser.execute(() => ({ cut: window.__kukuriCut, channels: window.__kukuriChannelLog, peers: window.__kukuriPeers.map((peer) => peer.connectionState) })) }));
     if (SINGLE && !lost) unconfirmed.push(`losing the WebRTC paths during a transfer from ${SINGLE} to Chrome`);
     else assert.ok(lost, `${browser.label} loses its WebRTC paths during the transfer`);
     await browser.execute(() => {
@@ -1868,9 +1871,10 @@ const scenarios = {
   'same-account': sameAccount,
 };
 
-const [name] = process.argv.slice(2);
+const [name] = process.argv.slice(2).map((arg) => arg.replace(/-diag\d+$/, ''));
 if (name === '--list') {
-  console.log(JSON.stringify(Object.keys(scenarios)));
+  // DIAG（一時）: same-account を 8 本
+  console.log(JSON.stringify(Array.from({ length: 8 }, (_, index) => `same-account-diag${index + 1}`)));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
