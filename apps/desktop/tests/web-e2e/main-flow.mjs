@@ -1868,9 +1868,10 @@ const scenarios = {
   'same-account': sameAccount,
 };
 
-const [name] = process.argv.slice(2);
+const [name] = process.argv.slice(2).map((arg) => arg.replace(/-diag[0-9]+$/, ''));
 if (name === '--list') {
-  console.log(JSON.stringify(Object.keys(scenarios)));
+  // DIAG（一時）: same-account を 8 本
+  console.log(JSON.stringify(Array.from({ length: 8 }, (_, index) => `same-account-diag${index + 1}`)));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
