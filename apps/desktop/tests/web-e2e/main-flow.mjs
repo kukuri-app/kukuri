@@ -127,6 +127,7 @@ async function startClient(name, { ice }) {
   }
   const browser = await remote({ logLevel: 'warn', capabilities: BROWSERS[kind] });
   browser.label = `${name}-${RUN}`;
+  browser.kind = kind;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
   if (kind === 'safari') {
@@ -287,10 +288,11 @@ async function post(browser, content, column = publicColumn(browser), file = nul
   await sees(browser, content);
 }
 
-/** 列の投稿欄に画像（`file`）を添える。safaridriver は file の input へ入力できないので、Safari では page で File を作って入れる。 */
+/** 列の投稿欄に画像（`file`）を添える。safaridriver と Android の chromedriver は手元の file を file の input へ入れられないので、
+ * page で File を作って入れる。 */
 async function attach(browser, column, file) {
   const input = await column.$('input[type=file]');
-  if (browser.capabilities.browserName !== 'Safari') return input.addValue(file);
+  if (browser.kind !== 'safari' && browser.kind !== 'android') return input.addValue(file);
   const data = (await readFile(file)).toString('base64');
   await browser.execute(
     (element, name, data) => {
@@ -581,7 +583,12 @@ async function joinChannel(browser, token, label) {
 /** 投稿の作者（`author`）の profile の列を開く。開いていれば閉じて開き直す（列の中の設定は開いたときに読む）。 */
 async function reopenAuthorProfile(browser, authorPost, author) {
   const opened = columnOf(browser, 'profile', author);
-  if (await opened.isExisting()) await opened.$('button.shell-column-close-button').click();
+  if (await opened.isExisting()) {
+    // 列の menu から閉じる（電話の幅では列の見出しの閉じる button は出ない）。
+    await opened.$('button[aria-label^="Open "][aria-label$=" menu"]').click();
+    await browser.$('button[role=menuitem]*=Close').click();
+    await opened.waitForExist({ reverse: true, timeout: WAIT });
+  }
   await showNewPosts(browser);
   await (await card(browser, authorPost)).$('button.post-meta-author').click();
   const profile = columnOf(browser, 'profile', author);
@@ -1351,6 +1358,9 @@ async function lifecycle() {
   // 編集の途中（private channel の列の下書き）。
   const draft = `draft in the channel ${RUN}`;
   await (await openComposer(channelColumn(a, channel.channelId))).setValue(draft);
+  // DIAG（一時）
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  console.info('DIAG draft', await a.execute(() => localStorage.getItem('kukuri:column-drafts:v1')));
 
   // reload（1 つ目の履歴の量）: 同じアカウント・EndpointId・設定・下書きで再開し、初回の dialog を出さない。reload の間の投稿も出る。
   await addHistory('history-a', 25);
@@ -1841,6 +1851,10 @@ if (name === '--list') {
     for (const client of clients) {
       await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
       const events = await client.execute(() => window.__kukuriDiag?.slice(-80)).catch((e) => String(e));
+      const dialogs = await client
+        .execute(() => [...document.querySelectorAll('[role=dialog]')].map((dialog) => dialog.innerText.slice(-1500)))
+        .catch((e) => String(e));
+      console.info(`DIAG-DIALOGS ${client.label} ${JSON.stringify(dialogs)}`);
       console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
       const logs = await client.getLogs('browser').catch((e) => String(e));
       console.info(`DIAG-LOG ${client.label} ${JSON.stringify(logs).slice(0, 6000)}`);
