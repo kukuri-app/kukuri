@@ -163,6 +163,7 @@ async function startClient(name, { ice }) {
     browser.overwriteCommand(
       'setValue',
       async function (original, value) {
+        await this.waitForExist({ timeout: WAIT });
         await browser.execute(
           (element, text) => {
             Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value').set.call(element, text);
