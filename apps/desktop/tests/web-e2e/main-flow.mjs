@@ -59,6 +59,8 @@ const BROWSERS = {
     'wdio:enforceWebDriverClassic': true,
   },
 };
+/** 同時に 1 つの session しか開けない driver のブラウザ（safaridriver と Android の chromedriver）。2 台目からの client は Chrome。 */
+const SINGLE = { safari: 'Safari', android: 'Android' }[BROWSER];
 /** 全選択の修飾 key（macOS は Command）。 */
 const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 /** この browser の driver で作れず、確かめなかった段（未確認の制約。PASS にしない。#1220 AC-5a）。 */
@@ -115,10 +117,8 @@ const clients = [];
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
 async function startClient(name, { ice }) {
-  // safaridriver と Android の chromedriver は、同時に 1 つの session しか開けない。
-  const single = { safari: 'Safari with Safari (safaridriver opens one session at a time)', android: 'Android with Android (one Chrome session on the emulator)' };
-  const kind = single[BROWSER] && clients.length > 0 ? 'chrome' : BROWSER;
-  const paired = single[BROWSER];
+  const kind = SINGLE && clients.length > 0 ? 'chrome' : BROWSER;
+  const paired = `${SINGLE} with ${SINGLE} (the driver opens one session at a time)`;
   if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
   if (kind === 'android') {
     // emulator の 127.0.0.1 から、fixture の配信・Community Node・relay へ届かせる（adb の port の転送は TCP だけ）。
@@ -432,9 +432,9 @@ async function relayedWhileLoading(browser, content, publish) {
 /** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
 function assertRoute(name, result, direct) {
   console.log(name, result);
-  // Safari と同じ runner の Chrome との Web↔Web の直接経路は、Safari の判定の範囲の外（ADR 0060 §4）。測った bytes だけを示す。
-  if (BROWSER === 'safari' && direct && name.startsWith('web→web')) {
-    const note = 'the direct path between Safari and Chrome (outside the range judged on Safari)';
+  // Safari・Android と同じ runner の Chrome との Web↔Web の直接経路は、その判定の範囲の外（ADR 0060 §4）。測った bytes だけを示す。
+  if (SINGLE && direct && name.startsWith('web→web')) {
+    const note = `the direct path between ${SINGLE} and Chrome (outside the range judged on ${SINGLE})`;
     if (!unconfirmed.includes(note)) unconfirmed.push(note);
     return;
   }
@@ -1022,9 +1022,9 @@ async function transferAccount(from, name, account, { history = null, duringHist
   assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
   if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
   if (cut !== null) {
-    // Safari と同じ runner の Chrome の間には WebRTC の経路が張れず、移行の途中に落とす経路が無い（ADR 0060 §4）。
+    // Safari・Android と同じ runner の Chrome の間には WebRTC の経路が張れず、移行の途中に落とす経路が無い（ADR 0060 §4）。
     const lost = await browser.execute(() => window.__kukuriCut.done);
-    if (BROWSER === 'safari' && !lost) unconfirmed.push('losing the WebRTC paths during a transfer from Safari to Chrome');
+    if (SINGLE && !lost) unconfirmed.push(`losing the WebRTC paths during a transfer from ${SINGLE} to Chrome`);
     else assert.ok(lost, `${browser.label} loses its WebRTC paths during the transfer`);
     await browser.execute(() => {
       window.__kukuriCut.released = true;
