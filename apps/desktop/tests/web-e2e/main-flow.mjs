@@ -108,7 +108,19 @@ async function startClient(name, { ice }) {
   browser.label = `${name}-${RUN}`;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
-  if (kind === 'safari') await browser.setWindowSize(1280, 900);
+  if (kind === 'safari') {
+    await browser.setWindowSize(1280, 900);
+    // 同じ macOS で Chrome の client が動くと Safari の window が前面でなくなり、safaridriver の押下と入力が page に届かない。
+    // 押下・入力の前に Safari を前面へ戻す。
+    const activate = () =>
+      new Promise((resolve, reject) =>
+        execFile('osascript', ['-e', 'tell application "Safari" to activate'], (error) => (error ? reject(error) : resolve()))
+      );
+    for (const command of ['click', 'addValue', 'setValue']) {
+      browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), true);
+    }
+    browser.overwriteCommand('keys', async (original, ...args) => (await activate(), original(...args)));
+  }
   if (!ice) {
     // relay fallback の端の印（`page-init.js` が読む）。cookie は同じ origin の文書で置く。
     await browser.url(`${ORIGIN}/fixture/info`);
@@ -118,10 +130,6 @@ async function startClient(name, { ice }) {
   }
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
-  // macOS で Chrome を起動すると Safari の window が前面でなくなり、safaridriver の押下が page に届かない。
-  if (kind !== BROWSER) await new Promise((resolve, reject) =>
-    execFile('osascript', ['-e', 'tell application "Safari" to activate'], (error) => (error ? reject(error) : resolve()))
-  );
   return browser;
 }
 
@@ -1717,7 +1725,14 @@ if (name === '--list') {
     await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
     for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
     for (const client of clients) {
-      const events = await client.execute(() => window.__kukuriDiag?.slice(-80)).catch((e) => String(e));
+      const events = await client
+        .execute(() => [
+          document.hasFocus(),
+          document.visibilityState,
+          [...document.querySelectorAll('[role=dialog]')].map((dialog) => [...dialog.querySelectorAll('button')].map((b) => b.textContent)),
+          ...(window.__kukuriDiag?.slice(-60) ?? []),
+        ])
+        .catch((e) => String(e));
       console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
     }
     throw error;
