@@ -238,8 +238,13 @@ jobs:
           "$PG/psql" -h 127.0.0.1 -d postgres -c "ALTER USER cn PASSWORD 'cn_password'"
           "$PG/createdb" -h 127.0.0.1 -O cn cn
 
+      # 画面が休止すると、safaridriver の押下が page に届かない（一時の切り分け）。
       - name: Enable Safari automation
-        run: sudo safaridriver --enable
+        run: |
+          sudo safaridriver --enable
+          sudo pmset -a displaysleep 0 sleep 0
+          defaults -currentHost write com.apple.screensaver idleTime 0
+          nohup caffeinate -dimsu -t 3600 > /dev/null 2>&1 &
 
       - name: Web E2E
         env:

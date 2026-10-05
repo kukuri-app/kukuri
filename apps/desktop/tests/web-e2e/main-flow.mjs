@@ -151,8 +151,9 @@ const assertNoCspViolations = async (browser) =>
 
 async function findDialog(browser, text) {
   for await (const dialog of browser.$$('[role=dialog]')) {
-    // 閉じかけの dialog は、一覧を取ってから読むまでの間に消える（stale element）。
-    if ((await dialog.getText().catch(() => '')).includes(text)) return dialog;
+    // 閉じかけの dialog は、一覧を取ってから読むまでの間に消える（stale element）。safaridriver は表示していない要素の文も
+    // 返すので、表示も確かめる。
+    if ((await dialog.getText().catch(() => '')).includes(text) && (await dialog.isDisplayed().catch(() => false))) return dialog;
   }
   return null;
 }
