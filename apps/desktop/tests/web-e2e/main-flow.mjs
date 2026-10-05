@@ -1013,15 +1013,17 @@ async function transferAccount(from, name, account, { history = null, duringHist
   }
   await target.$('input').setValue(link);
   if (history) await target.$('select').selectByAttribute('value', history);
+  await target.$('button=Connect').click();
+  // 確認コードが両端末で同じことを確かめてから、両方で承認する。
+  const shown = browser.$('[aria-label="Confirmation code"]');
+  await shown.waitForExist({ timeout: WAIT });
+  // 落とす仕掛けは、移行の接続ができた（確認コードが出た）後に置く。接続の前に置くと、既に開いている他の相手との経路の受信で
+  // 接続の handshake の最中に発火し、移行の途中の喪失にならない（#1590）。
   if (cut !== null) {
     await browser.execute((after) => {
       window.__kukuriCut = { after };
     }, cut);
   }
-  await target.$('button=Connect').click();
-  // 確認コードが両端末で同じことを確かめてから、両方で承認する。
-  const shown = browser.$('[aria-label="Confirmation code"]');
-  await shown.waitForExist({ timeout: WAIT });
   await browser.$('button=Codes match').click();
   await from.confirm((await shown.getText()).replace(/\s/g, ''));
   if (duringHistory) {
