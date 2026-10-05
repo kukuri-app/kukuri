@@ -174,11 +174,14 @@ async function openComposer(column) {
 }
 
 /** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。欄に残った文（復元した下書き）は、利用者と同じく欄を押して
- * 全選択から打ち替える（`setValue` の clear は Chrome では React の state を消さず、列が active になる再描画で文が戻る）。 */
+ * 全選択から消す（`setValue` の clear は Chrome では React の state を消さず、列が active になる再描画で文が戻る）。本文は要素へ
+ * 入れる（safaridriver の key の操作は、同じ文字が続くと 2 つ目を落とす）。 */
 async function post(browser, content, column = publicColumn(browser), file = null) {
-  await (await openComposer(column)).click();
+  const composer = await openComposer(column);
+  await composer.click();
   await browser.keys([SELECT_ALL, 'a']);
-  await browser.keys(content);
+  await browser.keys(Key.Backspace);
+  await composer.addValue(content);
   if (file) await column.$('input[type=file]').addValue(file);
   await column.$('button=Post').click();
   await sees(browser, content);
