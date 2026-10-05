@@ -418,7 +418,7 @@ async function relayedWhileLoading(browser, content, publish) {
       const article = [...document.querySelectorAll('article')].find((node) => node.innerText.includes(text));
       if (!article) return 'none';
       // media は画面内の投稿だけ取得する。
-      article.scrollIntoView({ block: 'center' });
+      article.scrollIntoView({ block: 'center', inline: 'center' });
       const image = article.querySelector('img[src^="blob:"]');
       if (image?.complete && image.naturalWidth > 0) return 'loaded';
       return article.querySelector('button[aria-label="Reply"]') ? 'card' : 'none';
@@ -836,8 +836,8 @@ async function siteData() {
   await browser.$('[data-testid="export-submit"]').click();
   const envelope = browser.$('[data-testid="export-envelope"]');
   await envelope.waitForExist({ timeout: WAIT });
-  // 欄は値より先に現れる（鍵の導出の Worker が後で値を入れる）。
-  const exported = await eventually('the export envelope', () => envelope.getValue());
+  // 値は page で読む（Android の chromedriver の getValue は textarea の値を空で返す）。
+  const exported = await browser.execute((element) => element.value, await envelope);
   const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
   // 鍵の導出の Worker（export）が CSP の下で動いた。
   await assertNoCspViolations(browser);
@@ -1358,9 +1358,6 @@ async function lifecycle() {
   // 編集の途中（private channel の列の下書き）。
   const draft = `draft in the channel ${RUN}`;
   await (await openComposer(channelColumn(a, channel.channelId))).setValue(draft);
-  // DIAG（一時）
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  console.info('DIAG draft', await a.execute(() => localStorage.getItem('kukuri:column-drafts:v1')));
 
   // reload（1 つ目の履歴の量）: 同じアカウント・EndpointId・設定・下書きで再開し、初回の dialog を出さない。reload の間の投稿も出る。
   await addHistory('history-a', 25);
@@ -1375,7 +1372,8 @@ async function lifecycle() {
   await eventually('the adult content display stays enabled', () => a.$('[data-testid="adult-content-display-toggle"]').isSelected());
   await a.$('button[aria-label="Close settings"]').click();
   await channelColumn(a, channel.channelId).scrollIntoView();
-  assert.equal(await channelColumn(a, channel.channelId).$('textarea[placeholder="Write a post"]').getValue(), draft);
+  const restored = await channelColumn(a, channel.channelId).$('textarea[placeholder="Write a post"]');
+  assert.equal(await a.execute((element) => element.value, restored), draft);
   // reload の間の投稿は、利用者が取り直す操作をしなくても出る（「Show N new posts」は受け取り済みの新着を並べるだけで、取得は
   // しない）。
   await sees(a, whileReloading);
