@@ -1892,6 +1892,11 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
+    for (const client of clients) {
+      const lines = (client.__logs ?? []).filter((line) => /KDIAG/.test(line.text) && !/docs-read|KD demand|docs namespace/.test(line.text));
+      console.log(`--- KD-FAIL ${client.label} (${lines.length})`);
+      for (const line of lines.slice(-250)) console.log(`${new Date(line.at).toISOString().slice(11, 23)} ${line.text.replace(/^KDIAG\s+/, '').slice(0, 260)}`);
+    }
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
