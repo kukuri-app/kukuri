@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { writeFile, mkdtemp } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -35,6 +35,9 @@ const BROWSERS = {
     browserName: 'chrome',
     'goog:chromeOptions': { args: ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'] },
     ...(process.env.CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER } } : {}),
+    // 版を指定すると、WebdriverIO が自動更新されない Chrome for Testing と driver を組で入れる（macOS の runner の Chrome は
+    // job の途中で自動更新され、runner の chromedriver と合わなくなる）。
+    ...(process.env.KUKURI_WEB_E2E_CHROME_VERSION ? { browserVersion: process.env.KUKURI_WEB_E2E_CHROME_VERSION } : {}),
   },
   firefox: {
     browserName: 'firefox',
@@ -194,9 +197,27 @@ async function post(browser, content, column = publicColumn(browser), file = nul
   await browser.keys([SELECT_ALL, 'a']);
   await browser.keys(Key.Backspace);
   await composer.addValue(content);
-  if (file) await column.$('input[type=file]').addValue(file);
+  if (file) await attach(browser, column, file);
   await column.$('button=Post').click();
   await sees(browser, content);
+}
+
+/** 列の投稿欄に画像（`file`）を添える。safaridriver は file の input へ入力できないので、Safari では page で File を作って入れる。 */
+async function attach(browser, column, file) {
+  const input = column.$('input[type=file]');
+  if (browser.capabilities.browserName !== 'Safari') return input.addValue(file);
+  const data = (await readFile(file)).toString('base64');
+  await browser.execute(
+    (element, name, data) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
+      element.files = transfer.files;
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    input,
+    path.basename(file),
+    data
+  );
 }
 
 const card = (browser, text) => browser.$(`article*=${text}`);
@@ -512,7 +533,7 @@ async function sendDirectMessage(browser, peer, text, file = null) {
   const composer = column.$('textarea[placeholder="Write a message"]');
   if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Message to "]').click();
   await composer.setValue(text);
-  if (file) await column.$('input[type=file]').addValue(file);
+  if (file) await attach(browser, column, file);
   await column.$('button=Send').click();
   await sees(browser, text);
 }
@@ -1723,6 +1744,15 @@ if (name === '--list') {
     // DIAG（一時）
     await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
     for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
+    if (BROWSER === 'safari') {
+      // DIAG（一時）: 各 window の Web Locks の状態。
+      const safari = clients[0];
+      for (const handle of await safari.getWindowHandles().catch(() => [])) {
+        await safari.switchToWindow(handle).catch(() => undefined);
+        const locks = await safari.execute(async () => JSON.stringify(await navigator.locks.query())).catch((e) => String(e));
+        console.info('DIAG locks', handle, await safari.getUrl().catch(() => ''), locks);
+      }
+    }
     for (const client of clients) {
       const events = await client
         .execute(() => [

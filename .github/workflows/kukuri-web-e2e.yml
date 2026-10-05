@@ -253,7 +253,7 @@ jobs:
           CN_VALKEY_PORT: '6379'
         run: |
           chmod +x target/debug/web_e2e_fixture
-          CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
+          KUKURI_WEB_E2E_CHROME_VERSION=stable cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
 
       # DIAG（一時）
       - name: Upload diag
