@@ -1895,6 +1895,7 @@ if (name === '--list') {
     for (const client of clients) {
       const lines = (client.__logs ?? []).filter((line) => /KDIAG/.test(line.text) && !/docs-read|KD demand|docs namespace/.test(line.text));
       console.log(`--- KD-FAIL ${client.label} (${lines.length})`);
+      console.log('KD-FAIL-STATE', JSON.stringify(await client.execute(() => ({ now: Date.now(), cut: window.__kukuriCut, channels: window.__kukuriChannelLog })).catch((error) => String(error))));
       for (const line of lines.slice(-250)) console.log(`${new Date(line.at).toISOString().slice(11, 23)} ${line.text.replace(/^KDIAG\s+/, '').slice(0, 260)}`);
     }
     throw error;
