@@ -363,7 +363,9 @@ impl AppService {
         else {
             anyhow::bail!("private channel is not joined");
         };
-        if state.owner_pubkey != self.current_author_pubkey() {
+        if action == PrivateChannelOwnerAction::Read
+            || state.owner_pubkey != self.current_author_pubkey()
+        {
             return Ok(());
         }
         let required = match state.audience_kind {

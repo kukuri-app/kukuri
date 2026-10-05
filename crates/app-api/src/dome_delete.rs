@@ -49,7 +49,11 @@ impl AppService {
         context: SpatialContextV1,
     ) -> Result<Vec<PendingDomeDeletionView>> {
         let mut records = Vec::new();
-        for replica in self.dome_deletion_replicas(&context).await?.1 {
+        for replica in self
+            .dome_deletion_replicas(&context, PrivateChannelOwnerAction::Read)
+            .await?
+            .1
+        {
             records.extend(
                 self.services
                     .docs_sync
@@ -90,7 +94,9 @@ impl AppService {
 
     pub async fn finish_dome_deletion_release(&self, input: &DeleteDomeInput) -> Result<()> {
         let _guard = self.services.dome_mutations.lock().await;
-        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
+        let replicas = self
+            .dome_deletion_replicas(&input.spatial_context, PrivateChannelOwnerAction::Write)
+            .await?;
         let mut record = self
             .load_dome_deletion(&replicas, input)
             .await?
@@ -113,7 +119,9 @@ impl AppService {
         {
             anyhow::bail!("DOME_DELETE_INVALID_OPERATION");
         }
-        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
+        let replicas = self
+            .dome_deletion_replicas(&input.spatial_context, PrivateChannelOwnerAction::Write)
+            .await?;
         let owner = self.services.keys.public_key();
         let mut operation = match self.load_dome_deletion(&replicas, &input).await? {
             Some(record) => {
@@ -266,7 +274,9 @@ impl AppService {
         &self,
         input: &DeleteDomeInput,
     ) -> Result<Option<(String, String)>> {
-        let replicas = self.dome_deletion_replicas(&input.spatial_context).await?;
+        let replicas = self
+            .dome_deletion_replicas(&input.spatial_context, PrivateChannelOwnerAction::Write)
+            .await?;
         let record = self
             .load_dome_deletion(&replicas, input)
             .await?
@@ -283,7 +293,9 @@ impl AppService {
         id: &str,
         generation: u64,
     ) -> Result<()> {
-        let replicas = self.dome_deletion_replicas(context).await?;
+        let replicas = self
+            .dome_deletion_replicas(context, PrivateChannelOwnerAction::Write)
+            .await?;
         let input = DeleteDomeInput {
             spatial_context: context.clone(),
             instance_id: id.into(),
@@ -301,6 +313,7 @@ impl AppService {
     async fn dome_deletion_replicas(
         &self,
         context: &SpatialContextV1,
+        action: PrivateChannelOwnerAction,
     ) -> Result<(Option<ReplicaId>, Vec<ReplicaId>)> {
         let owner = self.services.keys.public_key();
         let (write, legacy) = match context {
@@ -319,7 +332,7 @@ impl AppService {
                 channel_id,
             } => {
                 let state = self
-                    .private_channel_write_state(topic_id.as_str(), channel_id)
+                    .private_channel_state_for_owner_action(topic_id.as_str(), channel_id, action)
                     .await?;
                 let anchor = self
                     .dome_anchors(context, &dome_instance_id(context, &owner), &owner)
@@ -339,7 +352,9 @@ impl AppService {
         id: &str,
         generation: u64,
     ) -> Result<()> {
-        let replicas = self.dome_deletion_replicas(context).await?;
+        let replicas = self
+            .dome_deletion_replicas(context, PrivateChannelOwnerAction::Write)
+            .await?;
         let input = DeleteDomeInput {
             spatial_context: context.clone(),
             instance_id: id.into(),

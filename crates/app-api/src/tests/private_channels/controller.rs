@@ -2,7 +2,11 @@
 
 use super::super::*;
 
-use crate::{PrivateChannelCapability, PrivateChannelControllerPending};
+use crate::{
+    PrivateChannelCapability, PrivateChannelControllerPending, StartOwnerDomeHostingInput,
+    SubmitDomeSessionInput,
+};
+use kukuri_core::{DomeSessionInputKindV1, SpatialContextV1};
 use kukuri_store::PrivateChannelParticipantRow;
 
 const TOPIC: &str = "kukuri:topic:private-controller";
@@ -158,6 +162,88 @@ async fn only_the_controlling_device_creates_a_new_epoch() {
 /// 同じ account の B は旧鍵のまま投稿せずに保留する。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_write_needing_a_rotation_waits_on_the_other_device() {
+    let (app_a, app_b, store_b, channel_id, created) =
+        a_rotation_needed_on_the_other_device().await;
+    let held = post(&app_b, &channel_id)
+        .await
+        .expect_err("the old key is not used");
+    assert!(is_pending(&held));
+    assert_nothing_written(&app_b, &store_b, &channel_id, &created.current_epoch_id).await;
+
+    post(&app_a, &channel_id)
+        .await
+        .expect("the controller rotates and posts");
+    assert_ne!(
+        state(&app_a, &channel_id).await.current_epoch_id,
+        created.current_epoch_id
+    );
+}
+
+/// #1552: Dome の読取り(hosting の取得・削除待ちの一覧)と session の入力は、鍵更新が要る channel でも担当でない端末で
+/// 鍵更新の判定(自動の鍵更新・依頼・保留)を通らず、保留にならず何も書かない(ADR 0018 §8)。hosting の開始などの
+/// 書き込みは、今のまま判定を通って保留になる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dome_reads_and_inputs_skip_the_key_update_on_the_other_device() {
+    let (_app_a, app_b, store_b, channel_id, created) =
+        a_rotation_needed_on_the_other_device().await;
+    let context = SpatialContextV1::Channel {
+        topic_id: TopicId::new(TOPIC),
+        channel_id: ChannelId::new(channel_id.as_str()),
+    };
+    let not_pending = |result: Result<()>, what: &str| {
+        if let Err(error) = result {
+            assert!(!is_pending(&error), "{what} is held: {error:#}");
+        }
+    };
+    not_pending(
+        app_b
+            .get_dome_hosting(context.clone(), "room")
+            .await
+            .map(drop),
+        "reading the hosting",
+    );
+    not_pending(
+        app_b
+            .list_pending_dome_deletions(context.clone())
+            .await
+            .map(drop),
+        "listing the pending deletions",
+    );
+    not_pending(
+        app_b
+            .submit_dome_session_input(SubmitDomeSessionInput {
+                expected_generation: None,
+                spatial_context: context.clone(),
+                instance_id: "room".into(),
+                sequence: 1,
+                input: DomeSessionInputKindV1::KeepAlive,
+            })
+            .await
+            .map(drop),
+        "a session input",
+    );
+    assert_nothing_written(&app_b, &store_b, &channel_id, &created.current_epoch_id).await;
+    let held = app_b
+        .start_owner_dome_hosting(StartOwnerDomeHostingInput {
+            expected_generation: None,
+            spatial_context: context,
+            instance_id: "room".into(),
+            endpoint_id: "device-b".into(),
+            lease_duration_millis: 60_000,
+        })
+        .await
+        .expect_err("starting the hosting writes with the old key");
+    assert!(is_pending(&held));
+}
+
+/// 担当 A と同じ account の B が friend_only の channel を持ち、資格を失った参加者がいる(鍵更新が要る)。
+async fn a_rotation_needed_on_the_other_device() -> (
+    AppService,
+    AppService,
+    Arc<MemoryStore>,
+    String,
+    PrivateChannelCapability,
+) {
     let keys = generate_keys();
     let (app_a, store_a) = device(&keys, "device-a");
     let (app_b, store_b) = device(&keys, "device-b");
@@ -191,19 +277,7 @@ async fn a_write_needing_a_rotation_waits_on_the_other_device() {
             .await
             .expect("stale participant");
     }
-    let held = post(&app_b, &channel_id)
-        .await
-        .expect_err("the old key is not used");
-    assert!(is_pending(&held));
-    assert_nothing_written(&app_b, &store_b, &channel_id, &created.current_epoch_id).await;
-
-    post(&app_a, &channel_id)
-        .await
-        .expect("the controller rotates and posts");
-    assert_ne!(
-        state(&app_a, &channel_id).await.current_epoch_id,
-        created.current_epoch_id
-    );
+    (app_a, app_b, store_b, channel_id, created)
 }
 
 /// 担当が不明な channel は、どの端末でも世代を作らない。本変更前の保存(担当の欄が無い)は、保存していた端末を担当にし、
