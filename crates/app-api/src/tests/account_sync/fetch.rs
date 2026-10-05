@@ -640,11 +640,19 @@ async fn a_hinted_fetch_that_fails_is_retried_once_right_away() {
     assert_eq!(trusted(&b).await, authors);
 }
 
-/// 本人の端末の候補を返す hint の transport（rendezvous の応答で入る候補を、試験が後から足す）。
+/// 本人の端末の候補を返す hint の transport（rendezvous の応答で入る候補を、試験が後から足す）。送った account 同期の
+/// hint を控え、`dropping` の数だけ落とす（切れたばかりの接続へ送られて失われた hint）。
 #[derive(Clone)]
 struct CandidateHints {
     inner: Arc<FakeTransport>,
     peers: Arc<std::sync::Mutex<Vec<kukuri_transport::SeedPeer>>>,
+    account_hints: AccountHints,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct AccountHints {
+    pub(super) dropping: Arc<AtomicUsize>,
+    pub(super) sent: Arc<std::sync::Mutex<Vec<GossipHint>>>,
 }
 
 #[async_trait]
@@ -656,6 +664,23 @@ impl HintTransport for CandidateHints {
         self.inner.unsubscribe_hints(topic).await
     }
     async fn publish_hint(&self, topic: &TopicId, hint: GossipHint) -> Result<()> {
+        if matches!(hint, GossipHint::AccountSyncChanged { .. }) {
+            self.account_hints
+                .sent
+                .lock()
+                .expect("hints")
+                .push(hint.clone());
+            if self
+                .account_hints
+                .dropping
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
         self.inner.publish_hint(topic, hint).await
     }
     async fn topic_read_candidates(&self, _: &TopicId) -> Result<Vec<kukuri_transport::SeedPeer>> {
@@ -671,6 +696,7 @@ async fn rendezvous_device(keys: &KukuriKeys) -> (AppService, DeviceDocs) {
     let hints = CandidateHints {
         inner: transport.clone(),
         peers: Arc::default(),
+        account_hints: AccountHints::default(),
     };
     let b = app_service_from_dependencies(
         store.clone(),

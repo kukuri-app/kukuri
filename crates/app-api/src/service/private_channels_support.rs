@@ -7,6 +7,10 @@ use kukuri_core::{
 /// 担当でない端末が、担当へ依頼した鍵更新の新しい世代を待つ上限（#1219 AC-3。2026-10-03 ユーザー判断）。
 const PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT: std::time::Duration =
     std::time::Duration::from_secs(15);
+/// その待ちの間に account 同期の hint を送り直す間隔。依頼の hint は、WebRTC の経路を失って止まった接続へ送られて
+/// 失われうる（#1220 AC-3c2。2026-10-05 ユーザー判断）。
+const PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND: std::time::Duration =
+    std::time::Duration::from_secs(5);
 
 impl AppService {
     pub(crate) async fn maybe_redeem_epoch_handoff_grants_for_channel(
@@ -430,11 +434,17 @@ impl AppService {
             return Err(pending);
         }
         let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            let mut resend =
+                n0_future::time::Instant::now() + PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
             while self
                 .joined_private_channel_state(topic_id, channel_id)
                 .await
                 .is_some_and(|current| current.current_epoch_id == state.current_epoch_id)
             {
+                if n0_future::time::Instant::now() >= resend {
+                    self.publish_account_sync_hint().await;
+                    resend += PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
+                }
                 n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         })

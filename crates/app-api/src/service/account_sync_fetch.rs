@@ -189,6 +189,7 @@ impl AppService {
                     GossipHint::AccountSyncChanged {
                         device_id,
                         seq: head.seq,
+                        sent_at: Some(Utc::now().timestamp_millis()),
                     },
                 ),
             )

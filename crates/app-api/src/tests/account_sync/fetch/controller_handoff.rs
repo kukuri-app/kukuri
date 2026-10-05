@@ -121,6 +121,7 @@ async fn device_seeing(
                 })
                 .collect(),
         )),
+        account_hints: AccountHints::default(),
     };
     let app = app_service_from_dependencies(
         store.clone(),
@@ -140,7 +141,7 @@ async fn device_seeing(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_device_that_takes_over_becomes_the_only_one_that_updates_keys() {
     let keys = generate_keys();
-    let (a, b, _, _) = running_devices(&keys).await;
+    let (a, b, _, _, _) = running_devices(&keys).await;
     let channel = create(&a, ChannelAudienceKind::InviteOnly).await;
     joined_on(&b, &channel).await;
     assert_eq!(
