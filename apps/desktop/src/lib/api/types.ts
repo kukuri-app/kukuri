@@ -57,6 +57,7 @@ import type {
   GameRoomStatus,
   GameRoomView,
   GameScoreView,
+  JoinedPrivateChannelPage,
   JoinedPrivateChannelView,
   LiveSessionView,
   MetaverseAssetKind,
@@ -74,6 +75,7 @@ import type {
   NotificationCursor,
   PostView as WirePostView,
   PostWithdrawalReasonRequest,
+  PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
   Profile,
   ReactionStateView,
@@ -140,7 +142,9 @@ export type DesktopStartupStatus =
       documents: AppConsentDocumentStatus[];
       age_attestation: AgeAttestationStatus;
     }
-  | { status: 'failed'; error: DesktopStartupErrorView };
+  | { status: 'failed'; error: DesktopStartupErrorView }
+  // Web だけ: 同じ origin の別の tab が runtime を動かしている（ADR 0059 §4）。
+  | { status: 'in_use_elsewhere' };
 
 // #858: 18歳以上の自己申告の状態。文書同意とは別レコード(ADR 0046)。
 export type AgeAttestationStatus = {
@@ -425,13 +429,15 @@ export interface DesktopApi {
   importFriendPlusShare(token: string): Promise<FriendPlusSharePreview>;
   freezePrivateChannel(topic: string, channelId: string): Promise<JoinedPrivateChannelView>;
   rotatePrivateChannel(topic: string, channelId: string): Promise<JoinedPrivateChannelView>;
+  // 共有リンクの作成と新しいアクセスの配布を、この端末で行うように切り替える(#1219 AC-4)。
+  takePrivateChannelController(topic: string, channelId: string): Promise<PrivateChannelControllerTake>;
   setPrivateChannelEntryDome(
     topic: string,
     channelId: string,
     entryDomeInstanceId: string | null
   ): Promise<JoinedPrivateChannelView>;
   leavePrivateChannel(topic: string, channelId: string): Promise<void>;
-  listJoinedPrivateChannels(topic: string): Promise<JoinedPrivateChannelView[]>;
+  listJoinedPrivateChannels(topic: string, cursor?: string | null): Promise<JoinedPrivateChannelPage>;
   updateGameRoom(
     topic: string,
     roomId: string,

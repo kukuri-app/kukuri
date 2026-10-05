@@ -100,13 +100,6 @@ async fn mock_evaluations(
     .into_response()
 }
 
-async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse> {
-    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
-        expires_in_seconds: 45,
-        topics: Vec::new(),
-    })
-}
-
 struct GateNode {
     base_url: String,
     state: MockTrustGateNode,
@@ -170,6 +163,7 @@ async fn spawn_node(db_path: &std::path::Path, token: &str) -> GateNode {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     GateNode {
         base_url,
@@ -205,7 +199,7 @@ async fn open_runtime(
             .collect(),
     };
     for node in nodes {
-        seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1);
+        seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1).await;
         // mock は既定でこの runtime の閲覧者として応答する（照合の対象は別テストで確認する）。
         *node.state.viewer_override.lock().await = Some(runtime.author_keys.public_key_hex());
     }
@@ -403,7 +397,7 @@ async fn priority_and_display_exceptions_restore_after_restart() {
     )
     .await
     .expect("runtime");
-    seed_local_community_node_consents(&restarted, node.base_url.as_str(), 1);
+    seed_local_community_node_consents(&restarted, node.base_url.as_str(), 1).await;
     assert_eq!(
         restarted
             .community_node_config
@@ -433,6 +427,58 @@ async fn priority_and_display_exceptions_restore_after_restart() {
 
     restarted.shutdown().await;
     node.server.abort();
+}
+
+// #1218 AC-3: 旧版が端末内の file に置いた例外は、起動時に本人の端末で共有する item へ取り込み、file を消す。
+#[tokio::test]
+async fn legacy_display_exceptions_are_imported_into_account_sync_items() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("trust-gates.db");
+    let legacy = db_path.with_extension("trust-display.json");
+    std::fs::write(
+        &legacy,
+        serde_json::json!({ "always_visible": [author(0)] }).to_string(),
+    )
+    .expect("legacy file");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        &db_path,
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("runtime");
+    assert_eq!(
+        runtime
+            .list_author_trust_display_exceptions()
+            .await
+            .expect("exceptions"),
+        vec![author(0)]
+    );
+    assert!(!legacy.exists());
+    runtime.shutdown().await;
+}
+
+// 旧版の表示例外の file が読めなくても、表示設定にすぎないので起動を止めない。
+#[tokio::test]
+async fn an_unreadable_legacy_display_exception_file_does_not_block_startup() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("trust-gates.db");
+    std::fs::write(db_path.with_extension("trust-display.json"), b"{not json").expect("file");
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        &db_path,
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .expect("startup continues");
+    assert!(
+        runtime
+            .list_author_trust_display_exceptions()
+            .await
+            .expect("exceptions")
+            .is_empty()
+    );
+    runtime.shutdown().await;
 }
 
 /// 表示設定にすぎないため、読めない優先順位があっても起動を止めず、有効な分だけ復元する。
@@ -469,7 +515,7 @@ async fn unusable_priority_entries_are_dropped_without_blocking_startup() {
     )
     .await
     .expect("runtime starts with a broken priority");
-    seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, node.base_url.as_str(), 1).await;
     *node.state.viewer_override.lock().await = Some(runtime.author_keys.public_key_hex());
 
     assert_eq!(

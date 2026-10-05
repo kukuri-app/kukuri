@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use kukuri_core::{
     PrivateReceivePayloadV1, RECEIVE_PAYLOAD_MAX_BYTES, ReceiveOfferReferenceV1,
-    ReceiveOfferScopeV1, VerifiedReceiveOffer, receive_epoch_key_id, seal_private_receive_payload,
-    seal_receive_offer,
+    ReceiveOfferScopeV1, VerifiedReceiveOffer, seal_private_receive_payload, seal_receive_offer,
 };
 use kukuri_transport::EndpointAddr;
 use serde::Deserialize;
@@ -189,9 +188,10 @@ impl AppService {
             let (sender, mut receiver) = tokio::sync::mpsc::channel(PUBLIC_OFFER_QUEUE_CAPACITY);
             let services = self.services.clone();
             let closed = Arc::clone(&self.subscription_registry.account_receive_offer_closed);
-            let task = AbortOnDropTask::new(tokio::spawn(async move {
+            let task = AbortOnDropTask::new(n0_future::task::spawn(async move {
                 // 送り直しを待つ offer と、その期限。queue と同じ件数まで持ち、worker と一緒に消える。
-                let mut waiting: Vec<(tokio::time::Instant, PublicNotificationOffer)> = Vec::new();
+                let mut waiting: Vec<(n0_future::time::Instant, PublicNotificationOffer)> =
+                    Vec::new();
                 loop {
                     let due = waiting.iter().map(|(due, _)| *due).min();
                     let offer = tokio::select! {
@@ -199,7 +199,7 @@ impl AppService {
                             Some(offer) => offer,
                             None => break,
                         },
-                        _ = tokio::time::sleep_until(due.unwrap_or_else(tokio::time::Instant::now)),
+                        _ = n0_future::time::sleep_until(due.unwrap_or_else(n0_future::time::Instant::now)),
                             if due.is_some() =>
                         {
                             let index = waiting
@@ -230,7 +230,7 @@ impl AppService {
                     {
                         if waiting.len() < PUBLIC_OFFER_QUEUE_CAPACITY {
                             waiting.push((
-                                tokio::time::Instant::now() + *delay,
+                                n0_future::time::Instant::now() + *delay,
                                 (payload, unsent, scope, rest),
                             ));
                         } else {
@@ -294,6 +294,10 @@ impl AppService {
                     if changed {
                         services.author_relationship_changed(&edge);
                     }
+                    // #1219 AC-5: 参加者からの follow は、本人の端末へも同期する。
+                    AppService::from_handles(services.clone())
+                        .share_participant_follow(&edge)
+                        .await?;
                 }
                 notification_candidate_from_verified_follow(
                     &local,
@@ -316,22 +320,16 @@ impl AppService {
         offer: &VerifiedReceiveOffer,
         epoch_key_id: &str,
     ) -> Result<bool> {
-        let joined = services
-            .joined_private_channels
-            .lock()
-            .await
-            .values()
-            .find_map(|state| {
-                let mut secret = [0_u8; 32];
-                hex::decode_to_slice(&state.current_epoch_secret_hex, &mut secret).ok()?;
-                (receive_epoch_key_id(&secret, state.channel_id.as_str(), &state.current_epoch_id)
-                    .ok()?
-                    == epoch_key_id)
-                    .then(|| (state.clone(), secret))
-            });
-        let Some((state, secret)) = joined else {
+        // 受信 route の識別子の索引で 1 件引き、参加中の channel の現在の世代のときだけ受け取る(ADR 0061 §9)。
+        let Some((state, epoch_id, secret)) = services
+            .private_channel_epoch_by_receive_key(epoch_key_id)
+            .await?
+        else {
             return Ok(false);
         };
+        if epoch_id != state.current_epoch_id {
+            return Ok(false);
+        }
         let (topic, channel) = (state.topic_id.as_str(), state.channel_id.as_str());
         let provider = EndpointAddr::new(offer.reference().provider_endpoint_id.parse()?);
         let Some(payload) = services
@@ -534,7 +532,7 @@ async fn publish_public_notification_offer(
         now,
         now + 60_000,
     )?;
-    tokio::time::timeout(
+    n0_future::time::timeout(
         PUBLIC_OFFER_TIMEOUT,
         services
             .hint_transport

@@ -21,6 +21,8 @@ pub(crate) struct SubscriptionRegistry {
     /// One account-wide owner for due protected DM outbox work.
     pub(crate) dm_outbox_retry_task: Arc<Mutex<Option<AbortOnDropTask>>>,
     pub(crate) dm_outbox_retry_closed: Arc<std::sync::atomic::AtomicBool>,
+    /// 復帰の契機（ADR 0059 §5）で、次の間隔を待たずに 1 回分を行わせる。
+    pub(crate) dm_outbox_retry_wake: Arc<tokio::sync::Notify>,
     #[cfg(test)]
     pub(crate) dm_outbox_retry_starts: Arc<std::sync::atomic::AtomicUsize>,
     /// 購読する scope の lease と、その task(上限 64。#1221 R2-C)。

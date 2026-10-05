@@ -13,8 +13,8 @@ use iroh::endpoint::{Connection, TransportAddrUsage};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{EndpointAddr, EndpointId, RelayUrl};
 use kukuri_core::DOME_SESSION_REQUEST_MAX_BYTES;
+use n0_future::time::{Instant, timeout};
 use tokio::sync::{Mutex, Semaphore};
-use tokio::time::{Instant, timeout, timeout_at};
 use tracing::info;
 
 use crate::IrohDocsNode;
@@ -224,7 +224,12 @@ impl IrohDocsNode {
             } else {
                 deadline
             };
-            match timeout_at(limit, self.endpoint().connect(candidate, DOME_SESSION_ALPN)).await {
+            match timeout(
+                limit.saturating_duration_since(Instant::now()),
+                self.endpoint().connect(candidate, DOME_SESSION_ALPN),
+            )
+            .await
+            {
                 Ok(Ok(connection)) => {
                     self.log_dome_host_path(id, relay_supported).await;
                     return Ok(connection);

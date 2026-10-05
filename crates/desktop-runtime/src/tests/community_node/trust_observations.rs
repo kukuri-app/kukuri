@@ -160,13 +160,6 @@ async fn mock_revoke(State(state): State<MockObservationState>, headers: HeaderM
     Json(TrustObservationsRevokeResponse { deleted: 0 }).into_response()
 }
 
-async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse> {
-    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
-        expires_in_seconds: 45,
-        topics: Vec::new(),
-    })
-}
-
 struct Harness {
     runtime: DesktopRuntime,
     base_url: String,
@@ -258,9 +251,10 @@ async fn harness() -> Harness {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     let runtime = open_runtime(&db_path, base_url.as_str()).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     Harness {
         runtime,
         base_url,
@@ -806,7 +800,7 @@ async fn consent_withdrawal_and_node_removal_request_observation_deletion() {
     assert!(!status.revocation_pending);
 
     // 再同意 → 提供を再開 → CN を削除すると、削除を要求してから状態を破棄する。
-    seed_local_community_node_consents(&harness.runtime, harness.base_url.as_str(), 1);
+    seed_local_community_node_consents(&harness.runtime, harness.base_url.as_str(), 1).await;
     persist_community_node_token(
         &harness.runtime.db_path,
         IdentityStorageMode::FileOnly,
@@ -816,6 +810,7 @@ async fn consent_withdrawal_and_node_removal_request_observation_deletion() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     harness.enable(false).await;
     harness
@@ -870,6 +865,7 @@ async fn general_consent_acceptance_excludes_sharing_document() {
         IdentityStorageMode::FileOnly,
         harness.base_url.as_str(),
     )
+    .await
     .expect("local consents");
     assert!(
         consents

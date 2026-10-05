@@ -194,9 +194,6 @@ impl DesktopRuntime {
                 "community node required policies must be accepted before report submission",
             ));
         }
-        let client = community_node_report_http_client().map_err(|error| {
-            CommunityNodeReportError::new("REPORT_CLIENT_UNAVAILABLE", error.to_string())
-        })?;
         let payload = CommunityNodeReportRequest {
             subject_kind: request.subject_kind.clone(),
             subject_id: request.subject_id.clone(),
@@ -206,15 +203,15 @@ impl DesktopRuntime {
             reporter_contact: request.reporter_contact.clone(),
             appeal: request.appeal.clone(),
         };
-        let response = client
-            .post(endpoint)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|error| {
-                CommunityNodeReportError::new("REPORT_SUBMISSION_FAILED", error.to_string())
-            })?;
-        let status = response.status();
+        let payload = serde_json::to_vec(&payload).map_err(|error| {
+            CommunityNodeReportError::new("REPORT_SUBMISSION_FAILED", error.to_string())
+        })?;
+        let (status, body) = post_report(endpoint, payload).await.map_err(|error| {
+            CommunityNodeReportError::new("REPORT_SUBMISSION_FAILED", format!("{error:#}"))
+        })?;
+        let status = StatusCode::from_u16(status).map_err(|error| {
+            CommunityNodeReportError::new("REPORT_SUBMISSION_FAILED", error.to_string())
+        })?;
         if status.is_redirection() {
             // 転送は追跡しない。受付先の境界を越えて本文を再送しないために拒否する(#703)。
             return Err(CommunityNodeReportError {
@@ -224,13 +221,10 @@ impl DesktopRuntime {
             });
         }
         if !status.is_success() {
-            let body = response.json::<ApiErrorBody>().await.ok();
+            let body = serde_json::from_slice::<ApiErrorBody>(&body).ok();
             return Err(CommunityNodeReportError::from_response(status, body));
         }
-        let ack = response
-            .json::<CommunityNodeReportResponse>()
-            .await
-            .unwrap_or_default();
+        let ack = serde_json::from_slice::<CommunityNodeReportResponse>(&body).unwrap_or_default();
         Ok(SubmitCommunityNodeReportResult {
             status: SubmitCommunityNodeReportStatus::Submitted,
             reference_id: ack.reference_id,

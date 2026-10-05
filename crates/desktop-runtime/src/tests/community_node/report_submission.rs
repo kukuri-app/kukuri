@@ -147,7 +147,7 @@ fn appeal_request(base_url: &str) -> SubmitCommunityNodeReportRequest {
 async fn community_node_report_client_sends_anonymous_appeal_and_reads_disputed_signal() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = report_runtime(false).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let result = runtime
         .submit_community_node_report(appeal_request(base_url.as_str()))
@@ -168,7 +168,7 @@ async fn community_node_report_client_sends_anonymous_appeal_and_reads_disputed_
 async fn community_node_report_client_preserves_invalid_appeal_code() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, _state, server, _dir) = report_runtime(true).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let error = runtime
         .submit_community_node_report(appeal_request(base_url.as_str()))
@@ -221,7 +221,7 @@ async fn community_node_report_client_rejects_endpoint_on_another_origin() {
 async fn community_node_report_client_does_not_follow_redirects() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = report_runtime(false).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     let mut request = appeal_request(base_url.as_str());
     request.report_endpoint = format!("{base_url}/v1/report-moved");
@@ -262,7 +262,7 @@ async fn community_node_report_client_stops_before_http_without_active_local_con
 async fn community_node_report_client_stops_before_http_after_consent_withdrawal() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = report_runtime(false).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     runtime
         .withdraw_community_node_consents(crate::CommunityNodeTargetRequest {
             base_url: base_url.clone(),
@@ -292,7 +292,8 @@ async fn community_node_report_client_stops_before_body_post_on_snapshot_update(
         base_url.as_str(),
         1,
         Some("snapshot-1"),
-    );
+    )
+    .await;
     state.simulate_snapshot_update.store(true, Ordering::SeqCst);
 
     let error = runtime
@@ -312,7 +313,7 @@ async fn community_node_report_client_stops_before_body_post_on_snapshot_update(
 async fn community_node_report_client_stops_before_http_when_reconsent_is_pending() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, state, server, _dir) = report_runtime(false).await;
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     runtime
         .set_community_node_local_consent_update_pending(base_url.as_str(), true)
         .await;

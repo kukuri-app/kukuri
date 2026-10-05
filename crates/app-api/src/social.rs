@@ -1,4 +1,5 @@
 use crate::service::*;
+use kukuri_core::AccountSyncItem;
 
 impl AppService {
     /// 起動時に、block の関係にある相手との Dome 接続を解く。author は購読しない(#1221 R2-C)。
@@ -120,30 +121,40 @@ impl AppService {
         self.services
             .persist_author_event(profile.pubkey.as_str(), &envelope)
             .await?;
+        // 本人の別の端末へ同じ envelope を渡す（ADR 0061 §2。公開の正本と同じ ID）。
+        self.publish_profile_item(&envelope).await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(profile)
     }
 
     pub async fn follow_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
+        self.set_follow_edge(pubkey, FollowEdgeStatus::Active).await
+    }
+
+    pub async fn unfollow_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
+        self.set_follow_edge(pubkey, FollowEdgeStatus::Revoked)
+            .await
+    }
+
+    async fn set_follow_edge(
+        &self,
+        pubkey: &str,
+        status: FollowEdgeStatus,
+    ) -> Result<AuthorSocialView> {
         let target_pubkey = Pubkey::from(normalize_author_pubkey(pubkey)?);
         let docs_author = self.services.docs_sync.local_docs_author().await?;
         let envelope = build_follow_edge_envelope_with_docs_author(
             self.services.keys.as_ref(),
             &target_pubkey,
-            FollowEdgeStatus::Active,
+            status,
             docs_author.as_deref(),
         )?;
-        let edge = parse_follow_edge(&envelope)?
-            .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
-        self.services.store.put_envelope(envelope.clone()).await?;
-        persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
-        self.services
-            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
-            .await?;
+        self.commit_own_follow_edge(&envelope).await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         let view = self
             .build_author_social_view(target_pubkey.as_str())
             .await?;
+        // 解除でも送る(#1221 R4-D: 相手の手元の edge を更新する。mutual の解除。通知は作られない)。
         self.queue_public_notification_offer(
             PublicNotificationSource::Follow { envelope },
             BTreeSet::from([target_pubkey.as_str().to_string()]),
@@ -152,33 +163,70 @@ impl AppService {
         Ok(view)
     }
 
-    pub async fn unfollow_author(&self, pubkey: &str) -> Result<AuthorSocialView> {
-        let target_pubkey = Pubkey::from(normalize_author_pubkey(pubkey)?);
-        let docs_author = self.services.docs_sync.local_docs_author().await?;
-        let envelope = build_follow_edge_envelope_with_docs_author(
-            self.services.keys.as_ref(),
-            &target_pubkey,
-            FollowEdgeStatus::Revoked,
-            docs_author.as_deref(),
-        )?;
-        let edge = parse_follow_edge(&envelope)?
-            .ok_or_else(|| anyhow::anyhow!("failed to parse follow edge"))?;
+    /// 自分のフォローの edge を採る(この端末の操作と、本人の別の端末から受けたもの。#1211 AC-6)。手元の edge の方が
+    /// 新しければ何もせず false。
+    pub(crate) async fn commit_own_follow_edge(&self, envelope: &KukuriEnvelope) -> Result<bool> {
+        envelope.verify()?;
+        let edge = parse_follow_edge(envelope)?.context("not a follow edge envelope")?;
+        anyhow::ensure!(
+            edge.subject_pubkey.as_str() == self.current_author_pubkey(),
+            "follow edge belongs to another account"
+        );
+        if self
+            .services
+            .store
+            .get_follow_edge(edge.subject_pubkey.as_str(), edge.target_pubkey.as_str())
+            .await?
+            .is_some_and(|local| local.updated_at > edge.updated_at)
+        {
+            return Ok(false);
+        }
         self.services.store.put_envelope(envelope.clone()).await?;
-        persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
+        persist_follow_edge_doc(self.services.docs_sync.as_ref(), &edge, envelope).await?;
         self.services
-            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
+            .persist_author_event(edge.subject_pubkey.as_str(), envelope)
             .await?;
-        self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
-        let view = self
-            .build_author_social_view(target_pubkey.as_str())
+        // 本人の別の端末へ同じ envelope を渡す(ADR 0061 §2。公開の正本と同じ ID)。
+        self.publish_account_sync_item(AccountSyncItem::edge(
+            &self.services.keys.public_key(),
+            envelope,
+        )?)
+        .await?;
+        Ok(true)
+    }
+
+    /// 自分のブロックの edge を採る(`commit_own_follow_edge` の block 版)。
+    pub(crate) async fn commit_own_block_edge(&self, envelope: &KukuriEnvelope) -> Result<bool> {
+        envelope.verify()?;
+        let edge = parse_block_edge(envelope)?.context("not a block edge envelope")?;
+        anyhow::ensure!(
+            edge.subject_pubkey.as_str() == self.current_author_pubkey(),
+            "block edge belongs to another account"
+        );
+        if self
+            .services
+            .store
+            .get_block_edge(edge.subject_pubkey.as_str(), edge.target_pubkey.as_str())
+            .await?
+            .is_some_and(|local| local.updated_at > edge.updated_at)
+        {
+            return Ok(false);
+        }
+        self.services.store.put_envelope(envelope.clone()).await?;
+        persist_block_edge_doc(self.services.docs_sync.as_ref(), &edge, envelope).await?;
+        self.services
+            .persist_author_event(edge.subject_pubkey.as_str(), envelope)
             .await?;
-        // #1221 R4-D: 相手の手元の edge を更新する(mutual の解除)。通知は作られない。
-        self.queue_public_notification_offer(
-            PublicNotificationSource::Follow { envelope },
-            BTreeSet::from([target_pubkey.as_str().to_string()]),
-        )
-        .await;
-        Ok(view)
+        self.publish_account_sync_item(AccountSyncItem::edge(
+            &self.services.keys.public_key(),
+            envelope,
+        )?)
+        .await?;
+        if edge.status == BlockEdgeStatus::Active {
+            self.reconcile_blocked_dome_connections(&edge.target_pubkey)
+                .await?;
+        }
+        Ok(true)
     }
 
     pub async fn get_author_social_view(&self, pubkey: &str) -> Result<AuthorSocialView> {
@@ -238,18 +286,8 @@ impl AppService {
             status,
             docs_author.as_deref(),
         )?;
-        let edge = parse_block_edge(&envelope)?
-            .ok_or_else(|| anyhow::anyhow!("failed to parse block edge"))?;
-        self.services.store.put_envelope(envelope.clone()).await?;
-        persist_block_edge_doc(self.services.docs_sync.as_ref(), &edge, &envelope).await?;
-        self.services
-            .persist_author_event(edge.subject_pubkey.as_str(), &envelope)
-            .await?;
+        self.commit_own_block_edge(&envelope).await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
-        if edge.status == BlockEdgeStatus::Active {
-            self.reconcile_blocked_dome_connections(&target_pubkey)
-                .await?;
-        }
         self.build_author_social_view(target_pubkey.as_str()).await
     }
 

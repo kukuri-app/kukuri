@@ -5,178 +5,226 @@ use crate::identity::load_existing_keys;
 
 const MODE: IdentityStorageMode = IdentityStorageMode::FileOnly;
 
-#[test]
-fn explicit_creation_preserves_accounts_and_reuses_operation_on_retry() {
+#[tokio::test]
+async fn explicit_creation_preserves_accounts_and_reuses_operation_on_retry() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let original = list_accounts(dir.path()).unwrap().active_account_id;
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let original = list_accounts(dir.path()).await.unwrap().active_account_id;
     let request = CreateAccountRequest {
         account_id: original.clone(),
         operation_id: uuid::Uuid::new_v4().to_string(),
     };
-    let first = prepare_account_creation(dir.path(), MODE, &request).unwrap();
-    let retry = prepare_account_creation(dir.path(), MODE, &request).unwrap();
+    let first = prepare_account_creation(dir.path(), MODE, &request)
+        .await
+        .unwrap();
+    let retry = prepare_account_creation(dir.path(), MODE, &request)
+        .await
+        .unwrap();
     assert_eq!(first, retry);
-    assert_eq!(list_accounts(dir.path()).unwrap().accounts.len(), 1);
-    commit_account_creation(dir.path(), &retry).unwrap();
-    let snapshot = list_accounts(dir.path()).unwrap();
+    assert_eq!(list_accounts(dir.path()).await.unwrap().accounts.len(), 1);
+    commit_account_creation(dir.path(), &retry).await.unwrap();
+    let snapshot = list_accounts(dir.path()).await.unwrap();
     assert_eq!(snapshot.accounts.len(), 2);
     assert_eq!(snapshot.active_account_id, first.next.id);
     assert_eq!(
         prepare_account_creation(dir.path(), MODE, &request)
+            .await
             .unwrap()
             .next,
         first.next
     );
-    let logout = prepare_logout(dir.path(), MODE, &first.next.id).unwrap();
+    let logout = prepare_logout(dir.path(), MODE, &first.next.id)
+        .await
+        .unwrap();
     assert_eq!(logout.next.id, original);
-    assert!(profile_setup_required(dir.path(), &first.next.id).unwrap());
+    assert!(
+        profile_setup_required(dir.path(), &first.next.id)
+            .await
+            .unwrap()
+    );
 }
 
-#[test]
-fn completed_creation_cannot_reactivate_a_logged_out_account_after_other_creations() {
+#[tokio::test]
+async fn completed_creation_cannot_reactivate_a_logged_out_account_after_other_creations() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let a = list_accounts(dir.path()).unwrap().active_account_id;
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let a = list_accounts(dir.path()).await.unwrap().active_account_id;
     let x = CreateAccountRequest {
         account_id: a.clone(),
         operation_id: uuid::Uuid::new_v4().to_string(),
     };
-    let b = prepare_account_creation(dir.path(), MODE, &x).unwrap();
-    commit_account_creation(dir.path(), &b).unwrap();
+    let b = prepare_account_creation(dir.path(), MODE, &x)
+        .await
+        .unwrap();
+    commit_account_creation(dir.path(), &b).await.unwrap();
     let y = CreateAccountRequest {
         account_id: b.next.id.clone(),
         operation_id: uuid::Uuid::new_v4().to_string(),
     };
-    let c = prepare_account_creation(dir.path(), MODE, &y).unwrap();
-    commit_account_creation(dir.path(), &c).unwrap();
-    set_active_account(dir.path(), &b.next.id).unwrap();
-    let logout = prepare_logout(dir.path(), MODE, &b.next.id).unwrap();
-    commit_logout(dir.path(), &logout).unwrap();
-    set_active_account(dir.path(), &a).unwrap();
+    let c = prepare_account_creation(dir.path(), MODE, &y)
+        .await
+        .unwrap();
+    commit_account_creation(dir.path(), &c).await.unwrap();
+    set_active_account(dir.path(), &b.next.id).await.unwrap();
+    let logout = prepare_logout(dir.path(), MODE, &b.next.id).await.unwrap();
+    commit_logout(dir.path(), &logout).await.unwrap();
+    set_active_account(dir.path(), &a).await.unwrap();
     let before = fs::read(dir.path().join("accounts.json")).unwrap();
-    assert!(prepare_account_creation(dir.path(), MODE, &x).is_err());
+    assert!(
+        prepare_account_creation(dir.path(), MODE, &x)
+            .await
+            .is_err()
+    );
     assert_eq!(fs::read(dir.path().join("accounts.json")).unwrap(), before);
 }
 
-#[test]
-fn logout_returns_to_previous_account_and_retains_local_data() {
+#[tokio::test]
+async fn logout_returns_to_previous_account_and_retains_local_data() {
     let dir = tempdir().unwrap();
-    let first_db = ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let a = list_accounts(dir.path()).unwrap().active_account_id;
+    let first_db = ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let a = list_accounts(dir.path()).await.unwrap().active_account_id;
     let b_keys = KukuriKeys::generate();
-    let b = add_account(dir.path(), MODE, &b_keys, None, false).unwrap();
-    set_active_account(dir.path(), &b.id).unwrap();
+    let b = add_account(dir.path(), MODE, &b_keys, None, false)
+        .await
+        .unwrap();
+    set_active_account(dir.path(), &b.id).await.unwrap();
     let b_db = account_db_path(dir.path(), &b.id);
     fs::write(&b_db, b"retained database").unwrap();
-    let prepared = prepare_logout(dir.path(), MODE, &b.id).unwrap();
+    let prepared = prepare_logout(dir.path(), MODE, &b.id).await.unwrap();
     assert_eq!(prepared.next.id, a);
-    assert_eq!(list_accounts(dir.path()).unwrap().active_account_id, b.id);
-    commit_logout(dir.path(), &prepared).unwrap();
-    let snapshot = list_accounts(dir.path()).unwrap();
+    assert_eq!(
+        list_accounts(dir.path()).await.unwrap().active_account_id,
+        b.id
+    );
+    commit_logout(dir.path(), &prepared).await.unwrap();
+    let snapshot = list_accounts(dir.path()).await.unwrap();
     assert_eq!(snapshot.active_account_id, a);
     assert_eq!(snapshot.accounts.len(), 1);
     assert_eq!(fs::read(&b_db).unwrap(), b"retained database");
     assert_eq!(
-        ensure_accounts_initialized(dir.path(), MODE).unwrap(),
+        ensure_accounts_initialized(dir.path(), MODE).await.unwrap(),
         first_db
     );
-    let restored = add_account(dir.path(), MODE, &b_keys, None, false).unwrap();
+    let restored = add_account(dir.path(), MODE, &b_keys, None, false)
+        .await
+        .unwrap();
     assert_eq!(restored.id, b.id);
     assert_eq!(fs::read(&b_db).unwrap(), b"retained database");
 }
 
-#[test]
-fn last_logout_preparation_reuses_generated_account_across_retry() {
+#[tokio::test]
+async fn last_logout_preparation_reuses_generated_account_across_retry() {
     let dir = tempdir().unwrap();
-    let original_db = ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let original = list_accounts(dir.path()).unwrap().active_account_id;
+    let original_db = ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let original = list_accounts(dir.path()).await.unwrap().active_account_id;
     let before = load_existing_keys(&original_db, MODE)
+        .await
         .unwrap()
         .unwrap()
         .public_key_hex();
-    let first = prepare_logout(dir.path(), MODE, &original).unwrap();
-    let retry = prepare_logout(dir.path(), MODE, &original).unwrap();
+    let first = prepare_logout(dir.path(), MODE, &original).await.unwrap();
+    let retry = prepare_logout(dir.path(), MODE, &original).await.unwrap();
     assert_eq!(first.next, retry.next);
     assert_ne!(first.next.pubkey, before);
-    commit_logout(dir.path(), &retry).unwrap();
-    assert!(prepare_logout(dir.path(), MODE, &original).is_err());
-    assert_eq!(list_accounts(dir.path()).unwrap().accounts.len(), 1);
+    commit_logout(dir.path(), &retry).await.unwrap();
+    assert!(prepare_logout(dir.path(), MODE, &original).await.is_err());
+    assert_eq!(list_accounts(dir.path()).await.unwrap().accounts.len(), 1);
     assert_eq!(
-        ensure_accounts_initialized(dir.path(), MODE).unwrap(),
+        ensure_accounts_initialized(dir.path(), MODE).await.unwrap(),
         account_db_path(dir.path(), &first.next.id)
     );
     assert_eq!(
         load_existing_keys(&original_db, MODE)
+            .await
             .unwrap()
             .unwrap()
             .public_key_hex(),
         before
     );
-    assert!(profile_setup_required(dir.path(), &first.next.id).unwrap());
+    assert!(
+        profile_setup_required(dir.path(), &first.next.id)
+            .await
+            .unwrap()
+    );
 }
 
-#[test]
-fn logout_rejects_stale_target_without_mutating_registry() {
+#[tokio::test]
+async fn logout_rejects_stale_target_without_mutating_registry() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
     let before = fs::read(dir.path().join("accounts.json")).unwrap();
-    assert!(prepare_logout(dir.path(), MODE, "unknown").is_err());
+    assert!(prepare_logout(dir.path(), MODE, "unknown").await.is_err());
     assert_eq!(fs::read(dir.path().join("accounts.json")).unwrap(), before);
 }
 
-#[test]
-fn missing_registered_identity_does_not_generate_a_replacement_on_logout_or_restart() {
+#[tokio::test]
+async fn missing_registered_identity_does_not_generate_a_replacement_on_logout_or_restart() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let a = list_accounts(dir.path()).unwrap().active_account_id;
-    let b = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false).unwrap();
-    set_active_account(dir.path(), &b.id).unwrap();
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let a = list_accounts(dir.path()).await.unwrap().active_account_id;
+    let b = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false)
+        .await
+        .unwrap();
+    set_active_account(dir.path(), &b.id).await.unwrap();
     let a_db = account_db_path(dir.path(), &a);
     fs::remove_file(a_db.with_extension("identity-key")).unwrap();
     fs::remove_file(a_db.with_extension("identity-store")).unwrap();
     let before = fs::read(dir.path().join("accounts.json")).unwrap();
-    assert!(prepare_logout(dir.path(), MODE, &b.id).is_err());
+    assert!(prepare_logout(dir.path(), MODE, &b.id).await.is_err());
     assert_eq!(fs::read(dir.path().join("accounts.json")).unwrap(), before);
-    set_active_account(dir.path(), &a).unwrap();
-    assert!(ensure_accounts_initialized(dir.path(), MODE).is_err());
-    assert!(load_existing_keys(&a_db, MODE).unwrap().is_none());
+    set_active_account(dir.path(), &a).await.unwrap();
+    assert!(ensure_accounts_initialized(dir.path(), MODE).await.is_err());
+    assert!(load_existing_keys(&a_db, MODE).await.unwrap().is_none());
 }
 
-#[test]
-fn prepared_last_logout_reselects_an_imported_account_before_commit() {
+#[tokio::test]
+async fn prepared_last_logout_reselects_an_imported_account_before_commit() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let target = list_accounts(dir.path()).unwrap().active_account_id;
-    let generated = prepare_logout(dir.path(), MODE, &target).unwrap();
-    let imported = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false).unwrap();
-    let next = prepare_logout(dir.path(), MODE, &target).unwrap();
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let target = list_accounts(dir.path()).await.unwrap().active_account_id;
+    let generated = prepare_logout(dir.path(), MODE, &target).await.unwrap();
+    let imported = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false)
+        .await
+        .unwrap();
+    let next = prepare_logout(dir.path(), MODE, &target).await.unwrap();
     assert_eq!(next.next.id, imported.id);
     assert!(!next.generated);
-    assert!(commit_logout(dir.path(), &generated).is_err());
-    commit_logout(dir.path(), &next).unwrap();
-    let remaining = list_accounts(dir.path()).unwrap().accounts;
+    assert!(commit_logout(dir.path(), &generated).await.is_err());
+    commit_logout(dir.path(), &next).await.unwrap();
+    let remaining = list_accounts(dir.path()).await.unwrap().accounts;
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, imported.id);
     assert_eq!(remaining[0].pubkey, imported.pubkey);
     assert!(remaining[0].last_used_at >= imported.last_used_at);
 }
 
-#[test]
-fn commit_reconciliation_distinguishes_applied_old_and_unknown_registry() {
+#[tokio::test]
+async fn commit_reconciliation_distinguishes_applied_old_and_unknown_registry() {
     let dir = tempdir().unwrap();
-    ensure_accounts_initialized(dir.path(), MODE).unwrap();
-    let target = list_accounts(dir.path()).unwrap().active_account_id;
-    let prepared = prepare_logout(dir.path(), MODE, &target).unwrap();
-    assert!(!reconcile_account_commit(dir.path(), &target, &prepared.next.id, true).unwrap());
-    commit_logout(dir.path(), &prepared).unwrap();
-    assert!(reconcile_account_commit(dir.path(), &target, &prepared.next.id, true).unwrap());
+    ensure_accounts_initialized(dir.path(), MODE).await.unwrap();
+    let target = list_accounts(dir.path()).await.unwrap().active_account_id;
+    let prepared = prepare_logout(dir.path(), MODE, &target).await.unwrap();
+    assert!(
+        !reconcile_account_commit(dir.path(), &target, &prepared.next.id, true)
+            .await
+            .unwrap()
+    );
+    commit_logout(dir.path(), &prepared).await.unwrap();
+    assert!(
+        reconcile_account_commit(dir.path(), &target, &prepared.next.id, true)
+            .await
+            .unwrap()
+    );
     fs::write(dir.path().join("accounts.json"), b"corrupt").unwrap();
-    assert!(reconcile_account_commit(dir.path(), &target, &prepared.next.id, true).is_err());
+    assert!(
+        reconcile_account_commit(dir.path(), &target, &prepared.next.id, true)
+            .await
+            .is_err()
+    );
 }
 
 async fn profile_test_host(dir: &Path) -> Arc<ClientHost> {
-    let db = ensure_accounts_initialized(dir, MODE).unwrap();
+    let db = ensure_accounts_initialized(dir, MODE).await.unwrap();
     let runtime =
         DesktopRuntime::new_with_config_and_identity(&db, TransportNetworkConfig::loopback(), MODE)
             .await
@@ -191,22 +239,24 @@ async fn host_switch_rejects_missing_registered_keys_without_changing_identity()
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().unwrap();
     let host = profile_test_host(dir.path()).await;
-    let before = list_accounts(dir.path()).unwrap();
+    let before = list_accounts(dir.path()).await.unwrap();
     let author = host.runtime().get_my_profile().await.unwrap().pubkey;
-    let b = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false).unwrap();
+    let b = add_account(dir.path(), MODE, &KukuriKeys::generate(), None, false)
+        .await
+        .unwrap();
     let db = account_db_path(dir.path(), &b.id);
     fs::remove_file(db.with_extension("identity-key")).unwrap();
     fs::remove_file(db.with_extension("identity-store")).unwrap();
     assert!(host.switch_account(&b.id).await.is_err());
     assert_eq!(
-        list_accounts(dir.path()).unwrap().active_account_id,
+        list_accounts(dir.path()).await.unwrap().active_account_id,
         before.active_account_id
     );
     assert_eq!(
         host.runtime().get_my_profile().await.unwrap().pubkey,
         author
     );
-    assert!(load_existing_keys(&db, MODE).unwrap().is_none());
+    assert!(load_existing_keys(&db, MODE).await.unwrap().is_none());
     host.shutdown().await;
 }
 
@@ -215,7 +265,7 @@ async fn initial_profile_journal_recovers_without_new_envelope_and_honors_edited
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().unwrap();
     let host = profile_test_host(dir.path()).await;
-    let account_id = list_accounts(dir.path()).unwrap().active_account_id;
+    let account_id = list_accounts(dir.path()).await.unwrap().active_account_id;
     let request = InitialProfileRequest {
         account_id: account_id.clone(),
         profile: SetMyProfileRequest {

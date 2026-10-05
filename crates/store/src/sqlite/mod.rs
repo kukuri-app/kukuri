@@ -20,14 +20,12 @@ use crate::models::{
     NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
     PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
-use crate::pagination::{
-    direct_message_page_from_rows, envelope_page_from_rows, object_projection_page_from_rows,
-};
 use crate::row_mapping::{
-    block_edge_status_name, follow_edge_status_name, game_room_kind_name, game_status_name,
-    live_status_name, notification_kind_name, object_status_name, reaction_key_kind_name,
-    row_to_block_edge, row_to_bookmarked_custom_reaction, row_to_bookmarked_post,
-    row_to_direct_message_conversation, row_to_direct_message_message,
+    block_edge_status_name, direct_message_page_from_rows, envelope_page_from_rows,
+    follow_edge_status_name, game_room_kind_name, game_status_name, live_status_name,
+    notification_kind_name, object_projection_page_from_rows, object_status_name,
+    reaction_key_kind_name, row_to_block_edge, row_to_bookmarked_custom_reaction,
+    row_to_bookmarked_post, row_to_direct_message_conversation, row_to_direct_message_message,
     row_to_direct_message_outbox, row_to_direct_message_tombstone, row_to_envelope,
     row_to_follow_edge, row_to_game_room_projection, row_to_live_session_projection,
     row_to_muted_author, row_to_notification, row_to_object_projection, row_to_reaction_projection,
@@ -38,6 +36,7 @@ use crate::traits::{
     SocialProjectionStore, Store,
 };
 
+mod account_sync;
 mod bookmarks;
 mod connection;
 mod direct_messages;
@@ -47,11 +46,12 @@ pub(crate) mod live_game;
 mod notifications;
 mod observations;
 mod peer_candidates;
+pub(crate) mod private_channel_keys;
 mod private_index_grants;
 pub(crate) mod projections;
 mod protected_migration;
 mod remote_cache;
-mod social;
+pub(crate) mod social;
 mod trust_observations;
 mod withdrawals;
 
@@ -59,16 +59,10 @@ pub use connection::StoreStartupError;
 pub use legacy_store_retirement::{
     EMPTY_NAMESPACES_KIND, LEGACY_STORE_KINDS, LEGACY_STORE_PAGE, LegacyProjectionPage,
 };
-pub use private_index_grants::PrivateIndexGrant;
 pub use protected_migration::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
     ProtectedMigrationPage, ProtectedSource,
 };
-pub use remote_cache::{
-    OWNED_INLINE_BLOB_BYTES, REMOTE_CACHE_CAPACITY_BYTES, REMOTE_CACHE_RECLAIM_STEP,
-    RemoteCacheReservation, RemoteRecordKey,
-};
-pub use trust_observations::TrustObservationNode;
 
 #[derive(Clone)]
 pub struct SqliteStore {
@@ -142,6 +136,23 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM follow_edges WHERE subject_pubkey = ?1 AND target_pubkey = ?2",
+        )
+        .bind(subject_pubkey)
+        .bind(target_pubkey)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(crate::row_mapping::row_to_follow_edge)
+        .transpose()
+    }
+
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()> {
         self.store_upsert_block_edge_impl(edge).await
     }
@@ -163,5 +174,47 @@ impl Store for SqliteStore {
     ) -> Result<Option<BlockEdge>> {
         self.store_get_block_edge_impl(subject_pubkey, target_pubkey)
             .await
+    }
+
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM follow_edges WHERE subject_pubkey = ?1 AND target_pubkey > ?2
+             ORDER BY target_pubkey LIMIT ?3",
+        )
+        .bind(subject_pubkey)
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(crate::row_mapping::row_to_follow_edge)
+        .collect()
+    }
+
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM block_edges WHERE subject_pubkey = ?1 AND target_pubkey > ?2
+             ORDER BY target_pubkey LIMIT ?3",
+        )
+        .bind(subject_pubkey)
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(crate::row_mapping::row_to_block_edge)
+        .collect()
     }
 }

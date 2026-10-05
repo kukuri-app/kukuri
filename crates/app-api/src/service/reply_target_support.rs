@@ -441,9 +441,9 @@ fn spawn_remote_reply_target_reflection(
     let services = services.clone();
     let source = source.clone();
     let target = target.clone();
-    tokio::spawn(async move {
+    n0_future::task::spawn(async move {
         let _permit = permit;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         let Some(generation) = services
             .active_content_scope_generation(&source.topic_id, &source.channel_id)
             .await
@@ -468,7 +468,7 @@ fn spawn_remote_reply_target_reflection(
                     BodyFetch::LocalOnly,
                 ),
             );
-            let result = match tokio::time::timeout_at(deadline, read).await {
+            let result = match crate::timeout_at(deadline, read).await {
                 Ok(result) => result,
                 Err(_) => break,
             };
@@ -537,7 +537,7 @@ fn spawn_reply_target_reflection(
     let replica_id = replica_id.clone();
     let topic_id = topic_id.to_string();
     let object_id = object_id.clone();
-    tokio::spawn(async move {
+    n0_future::task::spawn(async move {
         let _permit = permit;
         if let Err(error) = attempt_reply_target_reflection(
             &services,
@@ -673,13 +673,13 @@ async fn reflect_reply_target_with(
         let content = match (&post.header().payload_ref, body) {
             (PayloadRef::InlineText { text }, _) => Some(text.clone()),
             (PayloadRef::BlobText { hash, .. }, ReplyTargetBody::Remote) => {
-                let deadline = tokio::time::Instant::now() + projection_blob_fetch_timeout();
+                let deadline = n0_future::time::Instant::now() + projection_blob_fetch_timeout();
                 let Some(Ok(Ok(fetch))) = services
                     .until_content_invalid(
                         topic_id,
                         &channel,
                         scope_generation,
-                        tokio::time::timeout_at(
+                        crate::timeout_at(
                             deadline,
                             services.blob_service.prepare_retry_fetch(hash),
                         ),
@@ -693,7 +693,7 @@ async fn reflect_reply_target_with(
                         topic_id,
                         &channel,
                         scope_generation,
-                        tokio::time::timeout_at(deadline, fetch),
+                        crate::timeout_at(deadline, fetch),
                     )
                     .await
                     .and_then(Result::ok)

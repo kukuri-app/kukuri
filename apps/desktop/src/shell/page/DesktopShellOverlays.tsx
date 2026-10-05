@@ -47,6 +47,7 @@ type OverlayActions = Pick<
   | 'handleLeavePrivateChannel'
   | 'handleProfileAvatarFile'
   | 'handleShareChannelAccess'
+  | 'handleTakePrivateChannelController'
 >;
 type ShellDialogs = Pick<
   ReturnType<typeof useShellDialogs>,
@@ -95,6 +96,7 @@ type DesktopShellOverlaysProps = {
   onRequestPrivateIndexing: (target: CommunityIndexingTarget) => void;
   // 作成・参加 Dialog の参加済み一覧から設定・共有 Dialog へ進む(Issue #966)。
   onOpenChannelSettings: (topicId: string, channelId: string) => void;
+  onLoadMoreJoinedChannels: (topicId: string) => Promise<void>;
 };
 
 // Issue #966: Radix の既定の focus 復元はこの shell では body へ落ちるため、
@@ -159,6 +161,7 @@ export function DesktopShellOverlays({
   clipboardToastId,
   onRequestPrivateIndexing,
   onOpenChannelSettings,
+  onLoadMoreJoinedChannels,
 }: DesktopShellOverlaysProps) {
   const {
     handleCreateGameRoom,
@@ -168,6 +171,7 @@ export function DesktopShellOverlays({
     handleSelectPrivateChannel,
     handleProfileAvatarFile,
     handleShareChannelAccess,
+    handleTakePrivateChannelController,
   } = actions;
   const {
     channelDialogOpen,
@@ -216,6 +220,7 @@ export function DesktopShellOverlays({
     inviteOutputLabel,
     inviteTokenInput,
     joinedChannelsByTopic,
+    joinedChannelsNextCursorByTopic,
     knownAuthorsByPubkey,
     localProfile,
     liveCreatePending,
@@ -239,6 +244,7 @@ export function DesktopShellOverlays({
       inviteOutputLabel: s.inviteOutputLabel,
       inviteTokenInput: s.inviteTokenInput,
       joinedChannelsByTopic: s.joinedChannelsByTopic,
+      joinedChannelsNextCursorByTopic: s.joinedChannelsNextCursorByTopic,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       localProfile: s.localProfile,
       liveCreatePending: s.liveCreatePending,
@@ -328,6 +334,8 @@ export function DesktopShellOverlays({
               onChannelAudienceChange={setChannelAudienceInput}
               onInviteTokenChange={setInviteTokenInput}
               joinedChannels={joinedChannelsByTopic[activeTopic] ?? []}
+              onLoadMoreJoinedChannels={joinedChannelsNextCursorByTopic[activeTopic]
+                ? () => onLoadMoreJoinedChannels(activeTopic) : undefined}
               onCreateChannel={(event) => void handleCreatePrivateChannel(event)}
               onJoin={(event) => void handleJoinChannelAccess(event)}
               onCopyInviteOutput={handleCopyInternalLink}
@@ -361,6 +369,7 @@ export function DesktopShellOverlays({
                 inviteOutput={inviteOutput}
                 inviteOutputLabel={inviteOutputLabel}
                 onShare={() => void handleShareChannelAccess()}
+                onTakeController={handleTakePrivateChannelController}
                 onRequestIndexing={() =>
                   onRequestPrivateIndexing({
                     kind: 'private_channel',

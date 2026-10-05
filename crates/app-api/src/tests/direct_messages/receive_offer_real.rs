@@ -31,6 +31,7 @@ async fn real_public_offer_reaches_offscreen_account_from_bounded_app_cache() {
         .unwrap();
     let sender_blob = Arc::new(IrohBlobService::with_account_store(
         sender_stack._node.clone(),
+        sender_store.clone().clone(),
         sender_store.clone(),
     ));
     let recipient_store = Arc::new(MemoryStore::default());
@@ -481,6 +482,7 @@ async fn real_private_offer_reaches_a_member_without_channel_sync() {
         sender_stack.docs_sync.clone(),
         Arc::new(IrohBlobService::with_account_store(
             sender_stack._node.clone(),
+            sender_store.clone().clone(),
             sender_store.clone(),
         )),
         generate_keys(),
@@ -509,10 +511,7 @@ async fn real_private_offer_reaches_a_member_without_channel_sync() {
         .await
         .unwrap();
     // 参加者は channel を購読しない(docs を同期しない)。account の受信 route だけが届く経路になる。
-    member_app.joined_private_channels.lock().await.insert(
-        joined_private_channel_key(topic, channel.channel_id.as_str()),
-        state,
-    );
+    insert_joined_private_channel(&member_app, state, &[]).await;
     let member = member_app.current_author_pubkey();
     let outsider = outsider_app.current_author_pubkey();
     let object_id = sender_app

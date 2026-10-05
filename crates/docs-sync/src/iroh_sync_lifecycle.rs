@@ -21,7 +21,11 @@ impl IrohDocsSync {
     ) -> Result<()> {
         // registry変更より前のcancelは無変更。変更を始めた後はownerのtaskが完了まで持つ。
         let mut tasks = self.close_tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
+        // tokio の try_join_next と同じく coop の budget に左右されずに回収する（wasm の JoinSet には無い）。
+        while futures_util::FutureExt::now_or_never(tokio::task::unconstrained(tasks.join_next()))
+            .flatten()
+            .is_some()
+        {}
         if tasks.len() >= 32 {
             tasks.join_next().await;
         }
@@ -30,17 +34,32 @@ impl IrohDocsSync {
         let mut replicas = self.replicas.clone().lock_owned().await;
         let secrets = self.private_replica_secrets.clone();
         let id = replica_id.as_str().to_string();
+        #[cfg(target_family = "wasm")]
+        let (docs, namespace) = (
+            self.node.docs().clone(),
+            self.replica_secret(replica_id)
+                .await
+                .map(|secret| secret.id()),
+        );
         let (send, receive) = oneshot::channel();
         tasks.spawn(async move {
             let result = close_replica_under_guard(
                 &mut replicas,
-                &secrets,
+                &secrets.registered,
                 id,
                 revoke,
                 #[cfg(test)]
                 hook,
             )
             .await;
+            // Web は閉じた replica を drop し、その内容を memory store の GC に任せる。本人の record は保存 trait に
+            // 確定しており、保持分として読める(ADR 0058 §7)。
+            #[cfg(target_family = "wasm")]
+            if result.is_ok()
+                && let Ok(namespace) = namespace
+            {
+                let _ = docs.drop_doc(namespace).await;
+            }
             let _ = send.send(result);
         });
         drop(tasks);

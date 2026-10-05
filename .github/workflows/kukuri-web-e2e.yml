@@ -1,0 +1,314 @@
+name: Kukuri Web E2E
+
+# 実ブラウザの E2E（ADR 0060 §4、#1220 W8）。Web の build を、同じ job の Community Node・native の相手と実ブラウザで試し、
+# 直接経路と relay fallback を relay が中継した bytes で判定する。
+# - Chrome: Fast から呼ばれ、全 scenario の job の成功が merge の条件になる（#1559）。
+# - Firefox（#1220 AC-5a）: 夜間と手動の実行。merge の条件にしない（失敗は Issue にする。2026-10-04 ユーザー判断）。
+# - Safari（#1220 AC-5b）: macOS の runner で、夜間と手動の実行。各 scenario の最初の client だけが Safari で、2 台目からは同じ
+#   runner の Chrome（safaridriver は同時に 1 つの session しか開けない。2026-10-05 ユーザー判断）。merge の条件にしない。
+# - Android（#1220 AC-5c）: ubuntu-24.04 の emulator（電話の幅）の Chrome で、夜間と手動の実行。各 scenario の最初の client だけが
+#   Android で、2 台目からは同じ runner の Chrome（2026-10-05 ユーザー判断）。merge の条件にしない。
+on:
+  workflow_call:
+    inputs:
+      browser:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      browser:
+        type: choice
+        options: [firefox, chrome, safari, android]
+        default: firefox
+  schedule:
+    - cron: '30 18 * * *'
+    # Safari。
+    - cron: '45 18 * * *'
+    # Android。
+    - cron: '0 19 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # schedule の実行には inputs が無い。
+  KUKURI_WEB_E2E_BROWSER: ${{ inputs.browser || (github.event.schedule == '45 18 * * *' && 'safari') || (github.event.schedule == '0 19 * * *' && 'android') || 'firefox' }}
+
+jobs:
+  # #1559: build（wasm・Web・fixture）をこの job で 1 回だけ行い、scenario の job へ配る。scenario の一覧の正本は
+  # `main-flow.mjs --list`。
+  linux-web-e2e-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      scenarios: ${{ steps.scenarios.outputs.list }}
+      browser: ${{ steps.scenarios.outputs.browser }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: wasm32-unknown-unknown
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang llvm pkg-config libdbus-1-dev
+
+      # #1413: key は job id ごと（kukuri-fast.yml 参照）。build の内容は browser に依らないので共有する。
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: cargo xtask-lite web-e2e --build-only
+
+      - name: List scenarios
+        id: scenarios
+        working-directory: apps/desktop
+        run: |
+          echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
+          echo "browser=$KUKURI_WEB_E2E_BROWSER" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-build
+          path: |
+            apps/desktop/dist-web
+            target/debug/web_e2e_fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  # scenario ごとに新しい fixture と client で、並列の job で試す。失敗は、その scenario の job にだけ出る（#1559）。
+  linux-web-e2e:
+    needs: linux-web-e2e-build
+    if: ${{ !contains(fromJSON('["safari", "android"]'), needs.linux-web-e2e-build.outputs.browser) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-build
+
+      # driver は runner の image のもの。
+      - name: Web E2E
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          chmod +x target/debug/web_e2e_fixture
+          CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" GECKODRIVER="$GECKOWEBDRIVER/geckodriver" \
+            cargo xtask-lite web-e2e --no-build "$SCENARIO"
+
+  # Safari の fixture は macOS で作る（Web の build は linux-web-e2e-build のものを使う）。
+  macos-web-e2e-build:
+    needs: linux-web-e2e-build
+    if: needs.linux-web-e2e-build.outputs.browser == 'safari'
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Build fixture
+        run: cargo build -p kukuri-harness --bin web_e2e_fixture
+
+      - name: Upload fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-fixture-macos
+          path: target/debug/web_e2e_fixture
+          if-no-files-found: error
+          retention-days: 1
+
+  macos-web-e2e:
+    needs: [linux-web-e2e-build, macos-web-e2e-build]
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-build
+
+      - name: Download fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-fixture-macos
+          path: target/debug
+
+      # macOS の runner には Docker が無いので、Community Node の Postgres・valkey は Homebrew のものを使う（`--no-compose`）。
+      - name: Start Postgres and Valkey
+        run: |
+          brew install postgresql@17 valkey
+          brew services start postgresql@17
+          brew services start valkey
+          PG="$(brew --prefix postgresql@17)/bin"
+          until "$PG/pg_isready" -h 127.0.0.1; do sleep 1; done
+          until valkey-cli ping; do sleep 1; done
+          "$PG/createuser" -h 127.0.0.1 -s cn
+          "$PG/psql" -h 127.0.0.1 -d postgres -c "ALTER USER cn PASSWORD 'cn_password'"
+          "$PG/createdb" -h 127.0.0.1 -O cn cn
+
+      - name: Enable Safari automation
+        run: sudo safaridriver --enable
+
+      - name: Web E2E
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          CN_POSTGRES_PORT: '5432'
+          CN_VALKEY_PORT: '6379'
+        run: |
+          chmod +x target/debug/web_e2e_fixture
+          KUKURI_WEB_E2E_CHROME_VERSION=stable cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
+
+  # emulator の Chrome（各 scenario の最初の client）と、同じ runner の Chrome。build は linux-web-e2e-build のものを使う。
+  android-web-e2e:
+    needs: linux-web-e2e-build
+    if: needs.linux-web-e2e-build.outputs.browser == 'android'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-e2e-build
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          chmod +x target/debug/web_e2e_fixture
+
+      - name: Web E2E
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/ci/android_web_e2e.sh ${{ matrix.scenario }}

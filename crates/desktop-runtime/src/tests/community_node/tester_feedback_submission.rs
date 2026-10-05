@@ -89,6 +89,7 @@ async fn tester_feedback_runtime(
         unauthorized_remaining: Arc::new(AtomicUsize::new(usize::from(unauthorized_first))),
     };
     let managed_router = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/policies", get(mock_managed_policies))
@@ -117,6 +118,7 @@ async fn tester_feedback_runtime(
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -129,7 +131,7 @@ async fn tester_feedback_runtime(
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     (runtime, base_url, feedback, server, dir)
 }
 

@@ -83,9 +83,10 @@ fn export_ipc_types() {
         StartOwnerDomeHostingRequest, SubmitCommunityNodeReportRequest,
         SubmitCommunityNodeReportResult, SubmitCommunityNodeReportStatus,
         SubmitDomeSessionInputRequest, SubmitIndexingRequestResponse, SwitchAccountRequest,
-        ToggleReactionRequest, TrustUserReadResponse, UnsubscribeTopicRequest,
-        UpdateGameRoomRequest, UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest,
-        WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
+        TakePrivateChannelControllerRequest, ToggleReactionRequest, TrustUserReadResponse,
+        UnsubscribeTopicRequest, UpdateGameRoomRequest, UpdateMetaverseRoomRequest,
+        WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
+        WithdrawalReasonVisibilityRequest,
     };
     use kukuri_app_api::*;
     use kukuri_cn_protocol::{
@@ -176,6 +177,9 @@ fn export_ipc_types() {
         TimelineView,
         DirectMessageTimelineView,
         JoinedPrivateChannelView,
+        PrivateChannelControllerState,
+        PrivateChannelControllerTake,
+        kukuri_app_api::JoinedPrivateChannelPage,
         PrivateChannelEpochCapability,
         PrivateChannelCapability,
         ChannelAccessTokenExport,
@@ -183,6 +187,7 @@ fn export_ipc_types() {
         TopicSyncStatus,
         DiscoveryStatus,
         SyncStatus,
+        AccountSyncStatus,
         // metaverse / game / live
         LiveSessionStatus,
         LiveSessionView,
@@ -426,6 +431,7 @@ fn export_ipc_types() {
         ImportFriendPlusShareRequest,
         FreezePrivateChannelRequest,
         RotatePrivateChannelRequest,
+        TakePrivateChannelControllerRequest,
         SetPrivateChannelEntryDomeRequest,
         LeavePrivateChannelRequest,
         ListJoinedPrivateChannelsRequest,
@@ -464,6 +470,14 @@ fn export_ipc_types() {
         AccountsSnapshot,
         AccountKeyExport,
         AccountKeyImportPreview,
+        // #1211: QR・専用リンクの移行
+        crate::AccountTransferLink,
+        crate::OpenAccountTransferRequest,
+        crate::DecideAccountTransferRequest,
+        kukuri_core::AccountTransferStatus,
+        kukuri_core::AccountTransferRole,
+        kukuri_core::AccountTransferFailure,
+        kukuri_core::AccountTransferHistory,
         // #855: 端末バックアップ / 復元
         CreateDeviceBackupRequest,
         PreviewDeviceBackupRequest,

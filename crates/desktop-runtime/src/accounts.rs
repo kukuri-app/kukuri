@@ -12,10 +12,13 @@
 
 use std::fs;
 pub(crate) mod create;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod display;
+pub(crate) mod history;
 pub(crate) mod lifecycle;
+pub(crate) mod transfer;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use kukuri_core::KukuriKeys;
@@ -28,7 +31,6 @@ use crate::community_node::{
 use crate::identity::{
     IdentityStorageMode, delete_identity, delete_optional_secret, load_existing_keys,
     load_optional_secret, load_or_create_keys, persist_keys, persist_optional_secret,
-    write_private_file_atomically,
 };
 use crate::paths::DB_FILE_NAME;
 use crate::runtime::{
@@ -112,6 +114,23 @@ pub struct AccountKeyExport {
     pub public_key: String,
 }
 
+/// #1211: 移行元が表示する QR・リンク。招待の秘密を含むので Debug で redact する。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AccountTransferLink {
+    pub link: String,
+    pub expires_at_ms: i64,
+}
+
+impl std::fmt::Debug for AccountTransferLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountTransferLink")
+            .field("link", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 /// インポート前にパスフレーズなしで確認できるメタデータ。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -124,13 +143,14 @@ pub struct AccountKeyImportPreview {
 }
 
 /// インポート前の fingerprint 確認用メタデータを返す。復号は行わない。
-pub fn preview_account_key_import(
+pub async fn preview_account_key_import(
     app_data_dir: &Path,
     export: &str,
 ) -> Result<AccountKeyImportPreview> {
     let preview = kukuri_core::preview_account_key_export(export)?;
     let public_key = preview.public_key.as_str().to_string();
-    let already_registered = load_registry(app_data_dir)?
+    let already_registered = load_registry(app_data_dir)
+        .await?
         .map(|registry| {
             registry
                 .accounts
@@ -148,14 +168,19 @@ pub fn preview_account_key_import(
 
 /// エクスポート envelope を復号・検証し、新しいアカウントとして追加する。
 /// アクティブアカウントは切り替えない(切替は `switch_account` 側の責務)。
-pub fn import_account_key_from_env(
+pub async fn import_account_key_from_env(
     app_data_dir: &Path,
     export: &str,
     passphrase: &str,
     label: Option<String>,
 ) -> Result<AccountRecord> {
-    let keys = kukuri_core::decrypt_account_key_export(export, passphrase)?;
-    add_account_from_env(app_data_dir, &keys, label, false)
+    let keys = kukuri_core::decrypt_account_key_export(
+        export,
+        passphrase,
+        crate::kdf::derive_passphrase_key,
+    )
+    .await?;
+    add_account_from_env(app_data_dir, &keys, label, false).await
 }
 
 pub(crate) fn account_id_for_pubkey(pubkey_hex: &str) -> Result<String> {
@@ -184,14 +209,15 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-fn load_registry(app_data_dir: &Path) -> Result<Option<AccountsRegistryFile>> {
+async fn load_registry(app_data_dir: &Path) -> Result<Option<AccountsRegistryFile>> {
     let path = registry_path(app_data_dir);
-    if !path.exists() {
+    let Some(raw) = crate::storage::read_file(&path)
+        .await
+        .with_context(|| format!("failed to read accounts registry `{}`", path.display()))?
+    else {
         return Ok(None);
-    }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read accounts registry `{}`", path.display()))?;
-    let registry: AccountsRegistryFile = serde_json::from_str(&raw)
+    };
+    let registry: AccountsRegistryFile = serde_json::from_slice(&raw)
         .with_context(|| format!("failed to parse accounts registry `{}`", path.display()))?;
     if registry.version != ACCOUNTS_REGISTRY_VERSION {
         bail!(
@@ -203,21 +229,22 @@ fn load_registry(app_data_dir: &Path) -> Result<Option<AccountsRegistryFile>> {
     Ok(Some(registry))
 }
 
-fn save_registry(app_data_dir: &Path, registry: &AccountsRegistryFile) -> Result<()> {
+async fn save_registry(app_data_dir: &Path, registry: &AccountsRegistryFile) -> Result<()> {
     let path = registry_path(app_data_dir);
     let bytes =
         serde_json::to_vec_pretty(registry).context("failed to encode accounts registry")?;
-    write_private_file_atomically(&path, &bytes)
+    crate::storage::write_file(&path, &bytes)
+        .await
         .with_context(|| format!("failed to persist accounts registry `{}`", path.display()))
 }
 
 /// `ensure_accounts_initialized` の環境変数版(`KUKURI_DISABLE_KEYRING` を反映)。
-pub fn ensure_accounts_initialized_from_env(app_data_dir: &Path) -> Result<PathBuf> {
-    ensure_accounts_initialized(app_data_dir, IdentityStorageMode::from_env())
+pub async fn ensure_accounts_initialized_from_env(app_data_dir: &Path) -> Result<PathBuf> {
+    ensure_accounts_initialized(app_data_dir, IdentityStorageMode::from_env()).await
 }
 
 /// `add_account` の環境変数版。
-pub fn add_account_from_env(
+pub async fn add_account_from_env(
     app_data_dir: &Path,
     keys: &KukuriKeys,
     label: Option<String>,
@@ -230,6 +257,7 @@ pub fn add_account_from_env(
         label,
         set_active,
     )
+    .await
 }
 
 /// accounts レイアウトを初期化し、アクティブアカウントの db path を返す。
@@ -237,13 +265,13 @@ pub fn add_account_from_env(
 /// - registry なし + flat レイアウトあり → 一括移行
 /// - registry なし + 何もなし → 初回アカウント生成
 /// - registry あり → 未完了の移行残骸があれば再開してから active を返す
-pub(crate) fn ensure_accounts_initialized(
+pub(crate) async fn ensure_accounts_initialized(
     app_data_dir: &Path,
     mode: IdentityStorageMode,
 ) -> Result<PathBuf> {
-    match load_registry(app_data_dir)? {
+    match load_registry(app_data_dir).await? {
         Some(registry) => {
-            let registry = resume_flat_migration_if_needed(app_data_dir, mode, registry)?;
+            let registry = resume_flat_migration_if_needed(app_data_dir, mode, registry).await?;
             let active = registry
                 .accounts
                 .iter()
@@ -255,23 +283,24 @@ pub(crate) fn ensure_accounts_initialized(
                     )
                 })?;
             let db = account_db_path(app_data_dir, active.id.as_str());
-            verify_persisted_identity(&db, mode, &active.pubkey)?;
+            verify_persisted_identity(&db, mode, &active.pubkey).await?;
             Ok(db)
         }
         None => {
             let flat_db = app_data_dir.join(DB_FILE_NAME);
-            let has_flat_identity = load_existing_keys(&flat_db, mode)?.is_some();
+            let has_flat_identity = load_existing_keys(&flat_db, mode).await?.is_some();
             if has_flat_identity || flat_db.exists() {
-                migrate_flat_layout(app_data_dir, mode)
+                migrate_flat_layout(app_data_dir, mode).await
             } else {
-                create_first_account(app_data_dir, mode)
+                create_first_account(app_data_dir, mode).await
             }
         }
     }
 }
 
-pub fn list_accounts(app_data_dir: &Path) -> Result<AccountsSnapshot> {
-    let registry = load_registry(app_data_dir)?
+pub async fn list_accounts(app_data_dir: &Path) -> Result<AccountsSnapshot> {
+    let registry = load_registry(app_data_dir)
+        .await?
         .ok_or_else(|| anyhow!("accounts registry is not initialized"))?;
     Ok(AccountsSnapshot {
         active_account_id: registry.active_account_id,
@@ -284,14 +313,15 @@ pub fn list_accounts(app_data_dir: &Path) -> Result<AccountsSnapshot> {
 /// 同一 pubkey が登録済みならエラーで拒否し、既存アカウントには一切触れない。
 /// アカウントディレクトリと identity を作り切ってから registry へ追記するため、
 /// 途中失敗時は registry が変わらず、残骸ディレクトリは再実行で上書きされる。
-pub(crate) fn add_account(
+pub(crate) async fn add_account(
     app_data_dir: &Path,
     mode: IdentityStorageMode,
     keys: &KukuriKeys,
     label: Option<String>,
     set_active: bool,
 ) -> Result<AccountRecord> {
-    let mut registry = load_registry(app_data_dir)?
+    let mut registry = load_registry(app_data_dir)
+        .await?
         .ok_or_else(|| anyhow!("accounts registry is not initialized"))?;
     let pubkey = keys.public_key_hex();
     let id = account_id_for_pubkey(pubkey.as_str())?;
@@ -305,7 +335,7 @@ pub(crate) fn add_account(
 
     let db_path = account_db_path(app_data_dir, id.as_str());
     create_account_dir(&db_path)?;
-    if let Some(existing) = load_existing_keys(&db_path, mode)? {
+    if let Some(existing) = load_existing_keys(&db_path, mode).await? {
         if existing.public_key_hex() != pubkey {
             bail!("retained account identity does not match imported key");
         }
@@ -314,9 +344,9 @@ pub(crate) fn add_account(
         if db_path.exists() {
             bail!("retained account identity is missing");
         }
-        persist_keys(&db_path, mode, keys)?;
+        persist_keys(&db_path, mode, keys).await?;
     }
-    verify_persisted_identity(&db_path, mode, pubkey.as_str())?;
+    verify_persisted_identity(&db_path, mode, pubkey.as_str()).await?;
 
     let now = now_millis();
     let record = AccountRecord {
@@ -330,13 +360,14 @@ pub(crate) fn add_account(
     if set_active {
         registry.active_account_id = id;
     }
-    save_registry(app_data_dir, &registry)?;
+    save_registry(app_data_dir, &registry).await?;
     Ok(record)
 }
 
 /// アクティブアカウントを切り替え、切替後の record を返す。
-pub fn set_active_account(app_data_dir: &Path, account_id: &str) -> Result<AccountRecord> {
-    let mut registry = load_registry(app_data_dir)?
+pub async fn set_active_account(app_data_dir: &Path, account_id: &str) -> Result<AccountRecord> {
+    let mut registry = load_registry(app_data_dir)
+        .await?
         .ok_or_else(|| anyhow!("accounts registry is not initialized"))?;
     let previous = registry.active_account_id.clone();
     let record = registry
@@ -353,18 +384,20 @@ pub fn set_active_account(app_data_dir: &Path, account_id: &str) -> Result<Accou
             .retain(|id| id != &previous && id != account_id);
         registry.history.insert(0, previous);
     }
-    save_registry(app_data_dir, &registry)?;
+    save_registry(app_data_dir, &registry).await?;
     Ok(snapshot)
 }
 
 /// 検証とstagingを完了した復元先をregistryへ登録し、active accountにする。
 /// directoryとidentityの設置はbackup moduleが先に完了させる。
-pub(crate) fn register_restored_account(
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn register_restored_account(
     app_data_dir: &Path,
     pubkey: &str,
     label: Option<String>,
 ) -> Result<AccountRecord> {
-    let mut registry = load_registry(app_data_dir)?
+    let mut registry = load_registry(app_data_dir)
+        .await?
         .ok_or_else(|| anyhow!("accounts registry is not initialized"))?;
     let id = account_id_for_pubkey(pubkey)?;
     let now = now_millis();
@@ -390,11 +423,15 @@ pub(crate) fn register_restored_account(
         record
     };
     registry.active_account_id = id;
-    save_registry(app_data_dir, &registry)?;
+    save_registry(app_data_dir, &registry).await?;
     Ok(record)
 }
 
 fn create_account_dir(db_path: &Path) -> Result<()> {
+    // Web の保存は path を key にするので、dir は無い。
+    if cfg!(target_family = "wasm") {
+        return Ok(());
+    }
     let dir = db_path
         .parent()
         .ok_or_else(|| anyhow!("invalid account db path `{}`", db_path.display()))?;
@@ -402,12 +439,13 @@ fn create_account_dir(db_path: &Path) -> Result<()> {
         .with_context(|| format!("failed to create account dir `{}`", dir.display()))
 }
 
-pub(crate) fn verify_persisted_identity(
+pub(crate) async fn verify_persisted_identity(
     db_path: &Path,
     mode: IdentityStorageMode,
     expected_pubkey: &str,
 ) -> Result<()> {
-    let restored = load_existing_keys(db_path, mode)?
+    let restored = load_existing_keys(db_path, mode)
+        .await?
         .ok_or_else(|| anyhow!("persisted account identity is not readable back"))?;
     if restored.public_key_hex() != expected_pubkey {
         bail!("persisted account identity does not match the expected public key");
@@ -415,16 +453,16 @@ pub(crate) fn verify_persisted_identity(
     Ok(())
 }
 
-fn migrate_flat_layout(app_data_dir: &Path, mode: IdentityStorageMode) -> Result<PathBuf> {
+async fn migrate_flat_layout(app_data_dir: &Path, mode: IdentityStorageMode) -> Result<PathBuf> {
     let flat_db = app_data_dir.join(DB_FILE_NAME);
     // 鍵ファイルのない flat db(孤児 db)は従来どおり新規生成で救済する。
-    let keys = load_or_create_keys(&flat_db, mode)?;
+    let keys = load_or_create_keys(&flat_db, mode).await?;
     let pubkey = keys.public_key_hex();
     let id = account_id_for_pubkey(pubkey.as_str())?;
     let new_db = account_db_path(app_data_dir, id.as_str());
     create_account_dir(&new_db)?;
-    persist_keys(&new_db, mode, &keys)?;
-    verify_persisted_identity(&new_db, mode, pubkey.as_str())?;
+    persist_keys(&new_db, mode, &keys).await?;
+    verify_persisted_identity(&new_db, mode, pubkey.as_str()).await?;
 
     let now = now_millis();
     let registry = AccountsRegistryFile {
@@ -445,20 +483,20 @@ fn migrate_flat_layout(app_data_dir: &Path, mode: IdentityStorageMode) -> Result
         }],
     };
     // commit point。ここまでは flat レイアウトに一切触れていない。
-    save_registry(app_data_dir, &registry)?;
+    save_registry(app_data_dir, &registry).await?;
 
-    finish_flat_migration(app_data_dir, mode, &new_db)?;
+    finish_flat_migration(app_data_dir, mode, &new_db).await?;
     Ok(new_db)
 }
 
-fn create_first_account(app_data_dir: &Path, mode: IdentityStorageMode) -> Result<PathBuf> {
+async fn create_first_account(app_data_dir: &Path, mode: IdentityStorageMode) -> Result<PathBuf> {
     let keys = KukuriKeys::generate();
     let pubkey = keys.public_key_hex();
     let id = account_id_for_pubkey(pubkey.as_str())?;
     let new_db = account_db_path(app_data_dir, id.as_str());
     create_account_dir(&new_db)?;
-    persist_keys(&new_db, mode, &keys)?;
-    verify_persisted_identity(&new_db, mode, pubkey.as_str())?;
+    persist_keys(&new_db, mode, &keys).await?;
+    verify_persisted_identity(&new_db, mode, pubkey.as_str()).await?;
 
     let now = now_millis();
     let registry = AccountsRegistryFile {
@@ -478,7 +516,7 @@ fn create_first_account(app_data_dir: &Path, mode: IdentityStorageMode) -> Resul
             last_used_at: now,
         }],
     };
-    save_registry(app_data_dir, &registry)?;
+    save_registry(app_data_dir, &registry).await?;
     Ok(new_db)
 }
 
@@ -488,21 +526,21 @@ fn create_first_account(app_data_dir: &Path, mode: IdentityStorageMode) -> Resul
 /// 続行する(registry 未登録なら非アクティブの新規アカウントとして登録する)。
 /// flat identity がなく db ファイルだけが残っている場合は手動配置とみなして
 /// 触らない。
-fn resume_flat_migration_if_needed(
+async fn resume_flat_migration_if_needed(
     app_data_dir: &Path,
     mode: IdentityStorageMode,
     mut registry: AccountsRegistryFile,
 ) -> Result<AccountsRegistryFile> {
     let flat_db = app_data_dir.join(DB_FILE_NAME);
-    let Some(keys) = load_existing_keys(&flat_db, mode)? else {
+    let Some(keys) = load_existing_keys(&flat_db, mode).await? else {
         return Ok(registry);
     };
     let pubkey = keys.public_key_hex();
     let id = account_id_for_pubkey(pubkey.as_str())?;
     let new_db = account_db_path(app_data_dir, id.as_str());
     create_account_dir(&new_db)?;
-    persist_keys(&new_db, mode, &keys)?;
-    verify_persisted_identity(&new_db, mode, pubkey.as_str())?;
+    persist_keys(&new_db, mode, &keys).await?;
+    verify_persisted_identity(&new_db, mode, pubkey.as_str()).await?;
     if !registry.accounts.iter().any(|record| record.id == id) {
         let now = now_millis();
         registry.accounts.push(AccountRecord {
@@ -512,16 +550,16 @@ fn resume_flat_migration_if_needed(
             created_at: now,
             last_used_at: now,
         });
-        save_registry(app_data_dir, &registry)?;
+        save_registry(app_data_dir, &registry).await?;
     }
-    finish_flat_migration(app_data_dir, mode, &new_db)?;
+    finish_flat_migration(app_data_dir, mode, &new_db).await?;
     Ok(registry)
 }
 
 /// flat レイアウトの実体をアカウントディレクトリへ移し、旧実体を削除する。
 /// すべての操作は「元があれば移す / 消す」の冪等な形で書かれており、途中で
 /// クラッシュしても再実行で完了する。
-fn finish_flat_migration(
+async fn finish_flat_migration(
     app_data_dir: &Path,
     mode: IdentityStorageMode,
     new_db: &Path,
@@ -556,7 +594,7 @@ fn finish_flat_migration(
             GOSSIP_SUBSCRIPTION_STATE_KEY.to_string(),
         ),
     ];
-    if let Ok(Some(config)) = load_community_node_config_from_file(new_db) {
+    if let Ok(Some(config)) = load_community_node_config_from_file(new_db).await {
         for node in config.nodes {
             pairs.push((
                 COMMUNITY_NODE_TOKEN_PURPOSE.to_string(),
@@ -570,20 +608,22 @@ fn finish_flat_migration(
     }
     for (purpose, key) in pairs {
         if let Ok(Some(value)) =
-            load_optional_secret(&flat_db, mode, purpose.as_str(), key.as_str())
+            load_optional_secret(&flat_db, mode, purpose.as_str(), key.as_str()).await
             && load_optional_secret(new_db, mode, purpose.as_str(), key.as_str())
+                .await
                 .ok()
                 .flatten()
                 .is_none()
         {
-            persist_optional_secret(new_db, mode, purpose.as_str(), key.as_str(), value.as_str())?;
+            persist_optional_secret(new_db, mode, purpose.as_str(), key.as_str(), value.as_str())
+                .await?;
         }
-        let _ = delete_optional_secret(&flat_db, mode, purpose.as_str(), key.as_str());
+        let _ = delete_optional_secret(&flat_db, mode, purpose.as_str(), key.as_str()).await;
     }
 
     // 最後に旧 identity 実体を削除する。ここまでのどこで落ちても、鍵は
     // 新レイアウト側(persist_keys 済み)か旧レイアウト側の少なくとも一方に残る。
-    delete_identity(&flat_db, mode)?;
+    delete_identity(&flat_db, mode).await?;
     Ok(())
 }
 

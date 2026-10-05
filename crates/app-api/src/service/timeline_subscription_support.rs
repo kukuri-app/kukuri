@@ -2,6 +2,7 @@
 //! WP-H5 PR2 で timeline_runtime_support.rs から分割。View 変換は timeline_view_support.rs。
 
 use super::*;
+use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
 /// 購読と replica の読み書きの対象(#1280)。app-api の内部だけで使う。
 ///
@@ -182,7 +183,7 @@ impl AppService {
         {
             readers.push((reader, DocFetchPolicy::LocalThenRemote));
         }
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         for (reader, policy) in readers {
             let read = async {
                 if load_verified_post(
@@ -225,7 +226,7 @@ impl AppService {
                     projection.topic_id.as_str(),
                     channel,
                     generation,
-                    tokio::time::timeout_at(deadline, read),
+                    crate::timeout_at(deadline, read),
                 )
                 .await;
             match result {
@@ -337,17 +338,17 @@ impl AppService {
             let hash = hash.clone();
             let topic_id = row.topic_id.clone();
             let channel_id = row.channel_id.clone();
-            let task = tokio::spawn(async move {
+            let task = n0_future::task::spawn(async move {
                 let _permit = permit;
                 // 背景の取得なので、node の取得の予算で待つ。応答しない peer の接続待ちで打ち切ると、次の peer を試せない(#1390)。
                 let deadline =
-                    tokio::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
+                    n0_future::time::Instant::now() + kukuri_blob_service::DISPLAY_FETCH_TIMEOUT;
                 let Some(Ok(Ok(fetch))) = services
                     .until_content_invalid(
                         &topic_id,
                         &channel_id,
                         scope_generation,
-                        tokio::time::timeout_at(
+                        crate::timeout_at(
                             deadline,
                             services.blob_service.prepare_retry_fetch(&hash),
                         ),
@@ -367,7 +368,7 @@ impl AppService {
                         &topic_id,
                         &channel_id,
                         scope_generation,
-                        tokio::time::timeout_at(deadline, fetch),
+                        crate::timeout_at(deadline, fetch),
                     )
                     .await
                 else {
@@ -439,7 +440,7 @@ impl AppService {
         // 多くの場合は最初の表示から本文が入る。待つ時間は件数に依存せず、過ぎた取得は背景で続く
         // (台帳があるので、次の表示が同じ本文を重ねて取りに行くことはない)。
         let (indexes, tasks): (Vec<_>, Vec<_>) = started.into_iter().unzip();
-        let _ = tokio::time::timeout(
+        let _ = n0_future::time::timeout(
             std::time::Duration::from_millis(hydration_limits::MISSING_BODY_DISPLAY_GRACE_MS),
             futures_util::future::join_all(tasks),
         )
@@ -518,7 +519,7 @@ impl AppService {
         else {
             return Ok(false);
         };
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, epoch) in self
             .remote_page_replicas(topic_id, scope, None, false, false)
             .await?
@@ -536,7 +537,7 @@ impl AppService {
             for reader in readers {
                 let mut services = self.services.clone();
                 services.docs_sync = reader;
-                let read = tokio::time::timeout_at(
+                let read = crate::timeout_at(
                     deadline,
                     hydrate_object_in_topic(
                         &services,
@@ -566,7 +567,14 @@ impl AppService {
     /// 対象は、購読していない topic の投稿でありうる repost 元と profile の投稿。projection に取り下げが
     /// 既にあれば何もしない。確認は確認先(replica と object id の組)ごとに間隔を空け、
     /// `withdrawals/<object id>/state` を key 指定で読むだけで、replica は走査しない。
-    pub(crate) fn schedule_withdrawal_check(&self, topic_id: &str, object_id: &EnvelopeId) {
+    /// 署名した時刻(`created_at` 秒)が分かる投稿は、旧形式の topic replica より先に、その日の時間 bucket を読む
+    /// (ADR 0054 §2: 取り下げは元投稿の bucket に置く。#1211 AC-3)。
+    pub(crate) fn schedule_withdrawal_check(
+        &self,
+        topic_id: &str,
+        object_id: &EnvelopeId,
+        created_at: Option<i64>,
+    ) {
         let Ok(permit) = self
             .services
             .withdrawal_checks
@@ -586,9 +594,16 @@ impl AppService {
         {
             return;
         }
+        let bucket = created_at.and_then(|created_at| {
+            let scope = BucketScope::Topic {
+                topic_id: topic_id.to_string(),
+            };
+            let bucket = TimeBucket::from_unix_seconds(created_at).ok()?;
+            Some(BucketReplica::new(scope, bucket).ok()?.replica_id())
+        });
         let services = self.services.clone();
         let object_id = object_id.clone();
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             let _permit = permit;
             let checked = async {
                 let projection_store = services.projection_store.as_ref();
@@ -600,14 +615,19 @@ impl AppService {
                     return Ok::<_, anyhow::Error>(());
                 }
                 let docs_sync = services.docs_sync.as_ref();
-                hydrate_post_withdrawal_for_object(
-                    docs_sync,
-                    projection_store,
-                    &replica,
-                    &object_id,
-                    DocFetchPolicy::LocalThenRemote,
-                )
-                .await?;
+                for replica in bucket.iter().chain([&replica]) {
+                    let applied = hydrate_post_withdrawal_for_object(
+                        docs_sync,
+                        projection_store,
+                        replica,
+                        &object_id,
+                        DocFetchPolicy::LocalThenRemote,
+                    )
+                    .await?;
+                    if applied == Some(PostWithdrawalHydration::Applied) {
+                        break;
+                    }
+                }
                 Ok(())
             }
             .await;
@@ -621,8 +641,8 @@ impl AppService {
         });
     }
 
-    /// scope が読む replica。件数は「参加中の private channel × epoch」で決まり、投稿数に依存しない。
-    /// private channel は、参加状態の確認(`ensure_private_channel_access`)を通ったものだけを返す。
+    /// scope が読む replica。private channel は、参加状態の確認(`ensure_private_channel_access`)を通った channel の
+    /// 新しい順に 8 世代まで(全世代を列挙しない。ADR 0061 §9)。件数は投稿数にも世代の数にも依存しない。
     pub(crate) async fn scope_replicas(
         &self,
         topic_id: &str,
@@ -630,32 +650,73 @@ impl AppService {
     ) -> Result<Vec<ReplicaId>> {
         let scope = scope.into();
         let mut replicas = Vec::new();
-        let states = match &scope {
+        let channels = match &scope {
             ReplicaScope::Public => {
                 replicas.push(topic_replica_id(topic_id));
                 Vec::new()
             }
             ReplicaScope::AllJoined => {
                 replicas.push(topic_replica_id(topic_id));
-                self.joined_private_channel_states_for_topic(topic_id).await
+                self.joined_private_channel_states_for_topic(topic_id, "")
+                    .await?
+                    .0
+                    .into_iter()
+                    .map(|state| state.channel_id)
+                    .collect()
             }
             ReplicaScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
-                self.joined_private_channel_state(topic_id, channel_id.as_str())
-                    .await
-                    .into_iter()
-                    .collect()
+                vec![channel_id.clone()]
             }
         };
-        for state in states {
-            for epoch in private_channel_epoch_capabilities(&state) {
-                replicas.push(private_channel_replica_for_epoch(
-                    state.channel_id.as_str(),
-                    epoch.epoch_id.as_str(),
-                ));
+        for channel in channels {
+            for epoch in self
+                .services
+                .private_channel_epoch_ids(
+                    channel.as_str(),
+                    kukuri_store::PrivateChannelEpochRange::AtOrBefore(i64::MAX),
+                    PRIVATE_CHANNEL_EPOCH_WINDOW,
+                )
+                .await?
+            {
+                replicas.push(private_channel_replica_for_epoch(channel.as_str(), &epoch));
             }
         }
         Ok(replicas)
     }
+
+    /// session の replica が scope のものか。private は replica id の channel と、その世代の鍵の行の点読で確かめる。
+    pub(crate) async fn session_replica_in_scope(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        replica: &ReplicaId,
+    ) -> Result<bool> {
+        let TimelineScope::Channel { channel_id } = scope else {
+            return Ok(replica == &topic_replica_id(topic_id));
+        };
+        self.ensure_private_channel_access(topic_id, channel_id)
+            .await?;
+        let Some((channel, epoch)) = kukuri_docs_sync::private_channel_epoch_of(replica) else {
+            return Ok(false);
+        };
+        Ok(
+            session_replica_channel(replica).as_deref() == Some(channel_id.as_str())
+                && self
+                    .services
+                    .projection_store
+                    .get_private_channel_epoch(&channel, &epoch)
+                    .await?
+                    .is_some(),
+        )
+    }
+}
+
+/// session を置く private channel の replica(`channel::<c>`・`channel::<c>::epoch::<e>`。bucket は含めない)の channel。
+pub(crate) fn session_replica_channel(replica: &ReplicaId) -> Option<String> {
+    if replica.as_str().starts_with("bucket::") {
+        return None;
+    }
+    kukuri_docs_sync::private_channel_epoch_of(replica).map(|(channel, _)| channel)
 }

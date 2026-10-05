@@ -15,6 +15,10 @@ use std::path::{Path, PathBuf};
 /// (tests/ からの相対パス, TestResource variant 名, 取得数)。
 const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("account_logout.rs", "IdentityStorage", 2),
+    ("account_transfer.rs", "IdentityStorage", 4),
+    ("account_transfer_history.rs", "IdentityStorage", 2),
+    ("account_transfer_sync.rs", "IdentityStorage", 2),
+    ("command_dispatch.rs", "IdentityStorage", 2),
     ("community_node/admission.rs", "CommunityNodeServer", 6),
     ("community_node/config.rs", "ProcessEnvironment", 5),
     ("community_node/connectivity.rs", "IrohNetwork", 6),
@@ -24,7 +28,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
         "CommunityNodeServer",
         7,
     ),
-    ("community_node/index_query.rs", "CommunityNodeServer", 14),
+    ("community_node/index_query.rs", "CommunityNodeServer", 15),
     // #1055 で content advisory の合成・issuer 照合・無効化の 4 test を追加。
     // #1056 で採用 OFF と既定有効の 2 test を追加。
     // oversized-files の上限に合わせ、index_query.rs から子モジュールへ分けている。
@@ -50,7 +54,7 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
         "CommunityNodeServer",
         9,
     ),
-    ("community_node/scheduler.rs", "CommunityNodeServer", 6),
+    ("community_node/scheduler.rs", "CommunityNodeServer", 7),
     ("community_node/session.rs", "CommunityNodeServer", 7),
     (
         "community_node/tester_feedback_submission.rs",
@@ -65,16 +69,20 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ),
     ("community_node/trust_relation.rs", "CommunityNodeServer", 5),
     ("device_backup.rs", "IdentityStorage", 8),
+    // #1219 AC-4 の復元の後の担当の引取り。
+    ("device_backup/controller_claim.rs", "IdentityStorage", 1),
     ("device_backup/recovery.rs", "IdentityStorage", 13),
     ("dome_session.rs", "IrohNetwork", 3),
     ("empty_namespace_reclaim.rs", "IdentityStorage", 1),
+    // #1214 AC-3 の host の世代の 2 test（account の identity を作る）。
+    ("host_generation.rs", "IdentityStorage", 4),
     ("identity_restart.rs", "IdentityStorage", 2),
     ("legacy_store_retirement.rs", "IdentityStorage", 2),
     ("media_blob_restore.rs", "IrohNetwork", 11),
     ("private_channels/friend_only.rs", "IrohNetwork", 1),
     ("private_channels/friend_plus.rs", "IrohNetwork", 1),
     ("private_channels/invite.rs", "IrohNetwork", 3),
-    ("private_channels/persistence.rs", "IrohNetwork", 2),
+    ("private_channels/persistence.rs", "IrohNetwork", 3),
     ("protected_migration.rs", "IdentityStorage", 5),
     ("receive_binding.rs", "IdentityStorage", 1),
     ("runtime_events.rs", "CommunityNodeServer", 4),
@@ -145,7 +153,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 194,
+        total, 212,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -160,7 +168,20 @@ fn lock_acquisitions_match_declared_classification() {
          #1221 R2-B で正常な CN と失敗する CN の同居の試験に CommunityNodeServer 取得を 3 件追加し、強制の再適用の試験を 1 件撤去、監査の再現で node_isolation に 1 件・trust_observations に 2 件追加、
          #1221 R2-D で通信状態の差分の試験を 3 件追加し、旧 observer の試験を 1 件撤去、
          #1407 で空の namespace の回収の試験に IdentityStorage 取得を 1 件追加、
+         #1214 AC-3 で host の世代の試験に IdentityStorage 取得を 2 件追加、
+         #1218 AC-2 で account 同期の切替の試験に IdentityStorage 取得を 1 件、索引の依頼の拒否の試験に CommunityNodeServer 取得を 1 件追加、
+         #1211 AC-1 で移行の command の試験に IdentityStorage 取得を 1 件追加、
+         #1218 AC-4b で旧 registry の行への移行の試験に IrohNetwork 取得を 1 件追加、
+         #1214 AC-5 で command の dispatch 表の試験に IdentityStorage 取得を 2 件追加、
+         #1217 AC-3 で lifecycle の復帰の試験に CommunityNodeServer 取得を 1 件追加、
+         #1217 AC-4 で復帰・中断の排他の試験に IdentityStorage 取得を 1 件追加、
+         #1211 AC-2 で必須 bundle の移行・保存の試験に IdentityStorage 取得を 2 件追加、
+         #1219 AC-4 で復元の後の担当の引取りの試験に IdentityStorage 取得を 1 件追加、
          #1510 で観測の状態の行への移し替えと旧 file の取込みの試験に CommunityNodeServer 取得を各 1 件追加、
+         #1211 AC-3 で履歴の移行の往復・置き場の試験に IdentityStorage 取得を 2 件追加、
+         #1211 AC-4 で移行の後の自動同期の試験に IdentityStorage 取得を 1 件追加、
+         #1211 AC-6 で移行先と相互フォローの相手の DM の試験に IdentityStorage 取得を 1 件追加、
+         #1211 AC-5 で移行元のアカウントが残る試験に IdentityStorage 取得を 1 件追加、
          #1527 で別の端末からの Dome の入室・遷移と、stack の作り直し・到達できない host の試験に IrohNetwork 取得を各 1 件追加)"
     );
 }

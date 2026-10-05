@@ -17,6 +17,7 @@ impl DesktopRuntime {
     ) -> std::result::Result<(), CommunityNodeRequestError> {
         let consent_at_request =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .map_err(CommunityNodeRequestError::Other)?;
         if !consent_at_request.has_active_consent() {
             return Err(CommunityNodeRequestError::Other(anyhow!(
@@ -71,7 +72,7 @@ impl DesktopRuntime {
             .await
             .map_err(CommunityNodeRequestError::Other)?;
         let client = community_node_http_client().map_err(CommunityNodeRequestError::Other)?;
-        let mut response = client
+        let response = client
             .post(format!("{base_url}{TOPIC_RENDEZVOUS_HEARTBEAT_PATH}"))
             .bearer_auth(access_token)
             .json(&TopicRendezvousHeartbeat {
@@ -97,12 +98,14 @@ impl DesktopRuntime {
                 )
             })?;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error| {
-            Self::map_community_node_send_error(
-                "failed to read account receive rendezvous response",
-                error,
-            )
-        })? {
+        let mut body = std::pin::pin!(response.bytes_stream());
+        while let Some(chunk) = futures_util::StreamExt::next(&mut body).await {
+            let chunk = chunk.map_err(|error| {
+                Self::map_community_node_send_error(
+                    "failed to read account receive rendezvous response",
+                    error,
+                )
+            })?;
             if bytes.len().saturating_add(chunk.len()) > MAX_ACCOUNT_RENDEZVOUS_RESPONSE_BYTES {
                 return Err(CommunityNodeRequestError::Other(anyhow!(
                     "account receive rendezvous response is too large"
@@ -117,6 +120,7 @@ impl DesktopRuntime {
         // consent status and compare the local consent across the HTTP await.
         let consent_now =
             load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)
+                .await
                 .map_err(CommunityNodeRequestError::Other)?;
         let configured = self
             .community_node_config

@@ -440,5 +440,6 @@ pub(crate) fn sync_status_with_topic(
         },
         gossip_disabled_topics: Vec::new(),
         gossip_disabled_channels: Vec::new(),
+        account_sync: Default::default(),
     }
 }

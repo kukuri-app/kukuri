@@ -2,7 +2,12 @@
   "accountKey": {
     "title": "账户",
     "summary": "账户密钥迁移与账户切换。",
-    "scopeNotice": "此处仅涉及代表你身份的账户密钥，不包含帖子、设置、附件或私密频道密钥。整机迁移或为设备故障做准备时，请使用设置的「备份与恢复」。",
+    "methods": {
+      "intro": "要在其他设备上使用账号，有以下方法。",
+      "transfer": "迁移到其他设备（「添加账号」中的「在设备之间迁移」）：迁移账户密钥、个人资料、关注和屏蔽、始终显示的用户、已加入的私密频道及其密钥。帖子记录仅在你选择时迁移。",
+      "export": "导出账户密钥：只导出账户密钥。",
+      "backup": "备份与恢复：迁移此设备上的全部数据。（仅限桌面版）"
+    },
     "openBackup": "打开备份与恢复",
     "accountsTitle": "此设备上的账户",
     "unnamedAccount": "(未命名)",
@@ -37,6 +42,106 @@
       "pending": "导入中…",
       "success": "已添加账户。切换后即可使用导入的身份。",
       "switchNow": "立即切换"
+    },
+    "browserStorage": {
+      "persisted": "此浏览器不会自动删除本网站的数据。如果你自行清除网站数据，账户密钥也会被删除。",
+      "notPersisted": "当存储空间不足或长时间未使用时，此浏览器可能会自动删除本网站的数据。届时账户密钥也会被删除。",
+      "recovery": "如果你导出了账户密钥，可以在“添加账号”中导入以恢复账号。也可以从其他设备迁移。帖子等历史记录不会全部恢复。"
+    },
+    "accountSync": {
+      "title": "与你的其他设备同步",
+      "synced": "已同步。",
+      "noPeers": "尚未找到你的其他设备。如果你在其他设备上使用此账户，在该设备上打开应用后即会同步。",
+      "behind": "正在读取其他设备上的更改。",
+      "pendingWrites": "有尚未发送到其他设备的更改。",
+      "fetchFailed": "未能从其他设备读取更改。将在下次有机会时重试。",
+      "rebuilding": "正在重建此设备的同步记录。"
+    }
+  },
+  "accountTransfer": {
+    "source": {
+      "title": "迁移到其他设备",
+      "description": "显示用于将此账号迁移到其他设备的二维码和链接。",
+      "preparing": "正在准备链接…",
+      "instructions": "请在目标设备上打开此链接，或粘贴到“从其他设备迁移”中。链接只能使用一次，有效期 5 分钟。请勿展示给他人。",
+      "qrLabel": "迁移链接的二维码",
+      "remaining": "剩余 {{time}}",
+      "linkLabel": "迁移链接",
+      "copy": "复制链接",
+      "copied": "已复制"
+    },
+    "target": {
+      "title": "从其他设备迁移",
+      "description": "使用其他设备上显示的迁移链接迁移账号。",
+      "linkLabel": "迁移链接",
+      "instructions": "请粘贴源设备上“迁移到其他设备”显示的链接。",
+      "connect": "连接",
+      "connecting": "正在连接源设备…"
+    },
+    "scope": {
+      "movesLabel": "会迁移：",
+      "moves": "账户密钥、个人资料、关注和屏蔽、始终显示的用户、已加入的私密频道及其密钥。如果选择，还会迁移你在原设备上发布的帖子记录（正文和图片、视频）。",
+      "notMovedLabel": "不会迁移：",
+      "notMovedDoneLabel": "未迁移：",
+      "notMoved": "静音列表、私信和通知记录、社区节点的设置和同意、应用的同意和年龄声明、成人内容的显示设置。",
+      "sourceKept": "原设备上的账号会保留。"
+    },
+    "confirm": {
+      "source": "请确认目标设备上显示相同的确认码。",
+      "target": "请确认源设备上显示相同的确认码。",
+      "codeLabel": "确认码",
+      "match": "一致",
+      "mismatch": "不一致",
+      "waitingPeer": "正在等待另一台设备确认…"
+    },
+    "transferring": {
+      "source": "正在发送密钥和设置（{{count}} 项）…",
+      "target": "正在接收并保存密钥和设置（{{count}} 项）…"
+    },
+    "completed": {
+      "source": "目标设备已保存完毕。此设备上的账号可以继续使用。",
+      "target": "接收完毕。",
+      "use": "使用此账号"
+    },
+    "retry": "重试",
+    "failure": {
+      "expired": "已过期。请在源设备上显示新的链接后重试。",
+      "invalid": "此链接无法使用。可能已被使用、已过期或内容有误。请在源设备上显示新的链接。",
+      "unreachable": "无法连接到源设备。请确认两台设备都已联网。",
+      "rejected": "确认码不一致，已中止迁移。",
+      "cancelled": "已中止迁移。",
+      "interrupted": "确认或传输过程中连接中断。请重试。",
+      "prepareFailed": "无法准备链接。请重试。",
+      "storage": "目标设备无法保存。请确认可用空间后重试。"
+    },
+    "history": {
+      "label": "帖子历史",
+      "hint": "迁移你在原设备上发布的帖子，包括正文、图片和视频（在其他设备上发布的帖子不会迁移）。帖子较多时需要一些时间。以旧格式保存的帖子仅在选择“全部”时迁移。",
+      "choice": {
+        "none": "不迁移",
+        "month": "最近 30 天",
+        "year": "最近 1 年",
+        "all": "全部"
+      },
+      "bundleDone": "密钥和设置已迁移完成。",
+      "progress": {
+        "source": "正在发送帖子历史（{{count}} 条）…",
+        "target": "正在接收帖子历史（{{count}} 条）…"
+      },
+      "stop": {
+        "source": "停止发送历史",
+        "target": "停止接收历史"
+      },
+      "done": {
+        "source": "已发送 {{count}} 条帖子历史。",
+        "target": "已接收 {{count}} 条帖子历史。"
+      },
+      "stopped": {
+        "source": "帖子历史的发送中途停止（已发送 {{count}} 条）。",
+        "target": "帖子历史的接收中途停止（已接收 {{count}} 条）。"
+      },
+      "unavailable": "有 {{count}} 个正文或附件不在原设备上，无法迁移。",
+      "resume": "再次连接并在目标设备上选择相同的范围，即可从中断处继续。"
     }
   },
   "deviceBackup": {
@@ -444,6 +549,7 @@
     "title": "发布",
     "summary": "预览频道、更新、诊断和资源。",
     "storeSummary": "Microsoft Store 版本的更新、诊断和资源。",
+    "webSummary": "预览频道、诊断和资源。",
     "update": {
       "title": "更新",
       "version": "版本",
@@ -500,6 +606,12 @@
       "p2pPurpose": "发现连接对象、建立P2P连接、在所选共享范围内同步，以及必要时中继",
       "p2pItems": "公钥、连接端标识符、IP地址、连接元数据，以及所选范围内的签名正文、元数据和附件",
       "p2pRetention": "遵循接收设备、DHT参与者或中继运营者的政策；已取得的副本无法集中删除。",
+      "webOriginDestination": "Web 客户端的分发源",
+      "webOriginPurpose": "打开 Web 客户端时及使用期间获取界面和程序",
+      "webOriginItems": "IP地址、HTTP／TLS请求元数据、User-Agent、请求的路径、Referer（链接来源页面发送时）",
+      "webOriginRetention": "遵循分发源运营者及网络服务商的政策。",
+      "webP2pDestination": "连接设备和已配置的中继服务（含同一主机上的STUN）",
+      "webP2pRetention": "遵循接收设备或中继运营者的政策；已取得的副本无法集中删除。",
       "diagnosticNotice": "复制或导出诊断报告不会自动发送。只有您将报告附加到自己选择的接收方时，它才会离开设备。"
     },
     "diagnostics": {

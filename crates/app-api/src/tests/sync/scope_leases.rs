@@ -108,6 +108,7 @@ fn capability(topic: &str, channel: &str, archived_epochs: usize) -> PrivateChan
         participant_count: 0,
         stale_participant_count: 0,
         namespace_secret_hex: String::new(),
+        controller: None,
     }
 }
 
@@ -207,7 +208,7 @@ async fn reads_and_writes_do_not_start_subscriptions() {
         .await
         .expect("profile timeline");
     app.get_my_profile().await.expect("my profile");
-    app.list_joined_private_channels(topic)
+    app.list_joined_private_channels(topic, None)
         .await
         .expect("joined channels");
 

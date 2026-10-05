@@ -1,19 +1,5 @@
 use super::*;
 
-pub(crate) async fn register_private_channel_replica_secrets(
-    docs_sync: &dyn DocsSync,
-    state: &JoinedPrivateChannelState,
-) -> Result<()> {
-    for epoch in private_channel_epoch_capabilities(state) {
-        let replica =
-            private_channel_replica_for_epoch(state.channel_id.as_str(), epoch.epoch_id.as_str());
-        docs_sync
-            .register_private_replica_secret(&replica, epoch.namespace_secret_hex.as_str())
-            .await?;
-    }
-    Ok(())
-}
-
 pub(crate) async fn blob_view_status_for_payload(
     blob_service: &dyn BlobService,
     payload_ref: &PayloadRef,
@@ -340,16 +326,14 @@ pub(crate) fn short_id_suffix(author_pubkey: &str) -> &str {
 }
 
 pub(crate) fn normalize_topic_name(topic: String) -> Option<String> {
-    let normalized = topic
-        .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
-        .map_or(topic.clone(), ToOwned::to_owned);
-    if normalized.starts_with(kukuri_core::wire::PRIVATE_CHANNEL_TOPIC_PREFIX)
-        || normalized.starts_with(kukuri_core::wire::DM_TOPIC_PREFIX)
-    {
-        None
-    } else {
-        Some(normalized)
+    if kukuri_core::wire::is_non_public_topic(&topic) {
+        return None;
     }
+    Some(
+        topic
+            .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
+            .map_or(topic.clone(), ToOwned::to_owned),
+    )
 }
 
 pub(crate) fn normalize_topics(topics: Vec<String>) -> Vec<String> {
@@ -466,6 +450,9 @@ pub(crate) fn effective_topic_status_detail(
 
 impl Drop for AppService {
     fn drop(&mut self) {
+        if !self.owner {
+            return;
+        }
         if let Ok(mut leases) = self.subscription_registry.scope_leases.try_lock() {
             drop(leases.clear());
         }

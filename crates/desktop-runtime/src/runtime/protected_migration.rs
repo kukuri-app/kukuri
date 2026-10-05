@@ -76,7 +76,7 @@ impl DesktopRuntime {
         // #1221 R5-I: 旧 store が無い account(新規・退役済み・復元)は、移すものが無い。移行を済んだものとし、
         // 新形式の writer へ切り替える(台帳のページは読まない)。
         let Some(legacy) = self.legacy_store.lock().await.clone() else {
-            if let Some(switched_at) = self.store.settle_without_legacy_store().await? {
+            if let Some(switched_at) = self.sqlite.settle_without_legacy_store().await? {
                 self.app_service.switch_writer(switched_at);
             }
             return Ok(true);
@@ -96,23 +96,19 @@ impl DesktopRuntime {
                 && self
                     .private_migration_dirty
                     .swap(false, std::sync::atomic::Ordering::SeqCst)
-                && let Err(error) = self.store.reset_protected_migration(kind).await
+                && let Err(error) = self.sqlite.reset_protected_migration(kind).await
             {
                 self.private_migration_dirty
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 return Err(error);
             }
-            let cursor = self.store.protected_migration_cursor(kind).await?;
+            let cursor = self.sqlite.protected_migration_cursor(kind).await?;
             let (plans, cursor, done) = match kind {
                 "private" => {
                     let channels = self
                         .app_service
-                        .joined_private_channel_replicas()
-                        .await
-                        .into_iter()
-                        .filter(|(key, _)| key.as_str() > cursor.as_str())
-                        .take(PROTECTED_MIGRATION_PAGE)
-                        .collect::<Vec<_>>();
+                        .joined_private_channel_replicas(&cursor, PROTECTED_MIGRATION_PAGE)
+                        .await?;
                     let mut plans = Vec::new();
                     for (key, replica) in &channels {
                         plans.extend(self.private_plan(&source, key, replica, &local).await?);
@@ -147,7 +143,7 @@ impl DesktopRuntime {
                     (Vec::new(), next, done)
                 }
                 _ => {
-                    let page = self.store.protected_migration_page(kind, &local).await?;
+                    let page = self.sqlite.protected_migration_page(kind, &local).await?;
                     let (mut next, mut done) = (page.cursor, page.done);
                     let mut plans = Vec::new();
                     for candidate in page.candidates {
@@ -168,13 +164,13 @@ impl DesktopRuntime {
             for plan in plans {
                 self.protect(&source, plan).await?;
             }
-            self.store
+            self.sqlite
                 .finish_protected_migration_page(kind, &cursor, done)
                 .await?;
             caught_up &= done;
         }
         // #1221 R5-H: 移行が全 kind で終端へ達したら、新形式の writer へ 1 回だけ切り替える。
-        if caught_up && let Some(switched_at) = self.store.switch_writer_if_migrated().await? {
+        if caught_up && let Some(switched_at) = self.sqlite.switch_writer_if_migrated().await? {
             self.app_service.switch_writer(switched_at);
         }
         Ok(caught_up)
@@ -215,7 +211,7 @@ impl DesktopRuntime {
                 let frame_hash = plan.blobs.first().cloned().unwrap_or_default();
                 let bytes = match source.legacy.read_blob(&frame_hash).await {
                     Ok(Some(bytes)) => Some(bytes),
-                    _ => self.store.get_remote_content("blob", &frame_hash).await?,
+                    _ => self.sqlite.get_remote_content("blob", &frame_hash).await?,
                 };
                 let payload = bytes
                     .and_then(|bytes| serde_json::from_slice::<DirectMessageFrameV1>(&bytes).ok())
@@ -291,7 +287,7 @@ impl DesktopRuntime {
                     .chain(post.repost_of.iter().flat_map(|repost| &repost.attachments))
                     .map(|asset| asset.hash.as_str().to_string()),
             );
-            let replica = match self.store.get_object_projection(&post.object_id).await? {
+            let replica = match self.sqlite.get_object_projection(&post.object_id).await? {
                 Some(row) => row.source_replica_id,
                 None if post.channel_id.is_none() => topic_replica_id(post.topic_id.as_str()),
                 None => return Ok(settled),
@@ -417,7 +413,7 @@ impl DesktopRuntime {
         desired.sort();
         desired.dedup();
         if !self
-            .store
+            .sqlite
             .set_protected_refs(&plan.reference, &desired)
             .await?
         {
@@ -434,7 +430,7 @@ impl DesktopRuntime {
                 content_len: record.content_len,
                 docs_author: author.clone(),
             })?;
-            self.store
+            self.sqlite
                 .put_remote_record(replica.as_str(), &record.key, &author, &payload)
                 .await?;
         }
@@ -442,7 +438,7 @@ impl DesktopRuntime {
     }
 
     pub(crate) async fn copy_legacy_blob(&self, legacy: &LegacyStore, hash: &str) -> Result<()> {
-        if self.store.has_remote_content("blob", hash).await? {
+        if self.sqlite.has_remote_content("blob", hash).await? {
             return Ok(());
         }
         let staging = self.db_path.with_extension("protected-migration.tmp");
@@ -457,12 +453,12 @@ impl DesktopRuntime {
         };
         let result = if length <= OWNED_INLINE_BLOB_BYTES {
             let bytes = tokio::fs::read(&staging).await?;
-            self.store
+            self.sqlite
                 .put_remote_content("blob", hash, "blob", &bytes)
                 .await
                 .map(|_| ())
         } else {
-            self.store.put_remote_blob_file(hash, &staging).await
+            self.sqlite.put_remote_blob_file(hash, &staging).await
         };
         let _ = tokio::fs::remove_file(&staging).await;
         result

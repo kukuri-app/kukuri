@@ -55,6 +55,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -73,6 +74,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -85,7 +87,7 @@ async fn session_scheduler_keeps_bootstrap_registration_alive_without_getter_pol
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // トレイ常駐相当: get_sync_status / get_community_node_statuses は一切呼ばない。
     runtime
@@ -179,6 +181,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
         bootstrap_hits: Arc::new(AtomicUsize::new(0)),
     });
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/policies", get(mock_current_policies))
         .route("/v1/consents/status", get(mock_bootstrap_consent_status))
         .route("/v1/bootstrap/heartbeat", post(mock_bootstrap_heartbeat))
@@ -197,6 +200,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -209,7 +213,7 @@ async fn get_sync_status_is_read_only_for_community_node_session() {
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // heartbeat deadline 未設定(= 常に due)の状態でも、getter は refresh を駆動しない。
     let _status = runtime.get_sync_status().await.expect("sync status");
@@ -255,6 +259,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
         Arc::new(Mutex::new("near-expiry-token".into())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -279,6 +284,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
             expires_at: Utc::now().timestamp() + 60,
         },
     )
+    .await
     .expect("persist near-expiry token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -291,7 +297,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // トレイ常駐相当: getter を一切呼ばない。
     runtime
@@ -306,6 +312,7 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
         IdentityStorageMode::FileOnly,
         base_url.as_str(),
     )
+    .await
     .expect("load token")
     .expect("stored token");
     assert_ne!(stored.access_token, "near-expiry-token");
@@ -314,16 +321,15 @@ async fn session_scheduler_reauthenticates_near_expiry_token_without_getter_poll
     server.abort();
 }
 
-/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
-/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
-/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
-/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
-/// due なら refresh POST が独立して打たれることを検証する。
-#[tokio::test]
-async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
-    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
-    let dir = tempdir().expect("tempdir");
-    let db_path = dir.path().join("community-rendezvous-refresh.db");
+/// topic を購読し、rendezvous に応じる mock の Community Node と session の前提（token・設定・同意）を置いた runtime。
+async fn rendezvous_runtime(
+    dir: &Path,
+) -> (
+    DesktopRuntime,
+    Arc<MockRendezvousCommunityNodeState>,
+    tokio::task::JoinHandle<()>,
+) {
+    let db_path = dir.join("community-rendezvous-refresh.db");
     let runtime = DesktopRuntime::new_with_config_and_identity(
         &db_path,
         TransportNetworkConfig::loopback(),
@@ -391,6 +397,7 @@ async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -403,7 +410,21 @@ async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
+
+    (runtime, state, server)
+}
+
+/// topic rendezvous presence の refresh が bootstrap heartbeat の合間にも発火することを固定する
+/// characterization test(#572)。修正前は rendezvous refresh が heartbeat 便乗(実効約 60 秒毎)
+/// のみで、サーバ TTL 45 秒に対し毎サイクル約 15 秒 presence が失効していた。
+/// heartbeat が not-due のままでも maintenance pass 毎に rendezvous deadline が判定され、
+/// due なら refresh POST が独立して打たれることを検証する。
+#[tokio::test]
+async fn topic_rendezvous_refresh_fires_between_bootstrap_heartbeats() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let dir = tempdir().expect("tempdir");
+    let (runtime, state, server) = rendezvous_runtime(dir.path()).await;
 
     // 1 回目: セッション確立(heartbeat 1 発 + 便乗 rendezvous refresh)。
     // 2 回目: ready 遷移で立った ready_refresh_pending の metadata refresh(便乗 refresh)を消化。
@@ -569,6 +590,7 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .unwrap();
     persist_community_node_token(
         &db_path,
@@ -579,6 +601,7 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .unwrap();
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -593,8 +616,8 @@ async fn account_rendezvous_queries_one_due_recipient_without_public_topic_snaps
             })
             .collect(),
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
-    seed_local_community_node_consents(&runtime, base_url_b.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
+    seed_local_community_node_consents(&runtime, base_url_b.as_str(), 1).await;
     for _ in 0..4 {
         runtime.run_community_node_session_maintenance_once().await;
         if state
@@ -776,6 +799,10 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
     let missing_private_topic = kukuri_core::wire::hint_topic_id(&missing_private_base);
     let forbidden_missing_private =
         kukuri_core::public_topic_rendezvous_key(&missing_private_topic);
+    // 本人の端末間の account 同期の hint（ADR 0061 §6）は、秘密から導出した topic の鍵で本人の端末どうしを会わせる。
+    let account_hint =
+        kukuri_core::wire::hint_topic_id(runtime.author_keys.derive_account_sync().hint_topic());
+    let expected_account = kukuri_core::public_topic_rendezvous_key(&account_hint);
     let _missing_private_stream = kukuri_transport::HintTransport::subscribe_hints(
         runtime.iroh_stack.transport.as_ref(),
         &missing_private_base,
@@ -827,6 +854,7 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("コミュニティノードの認証情報を保存できる");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -839,7 +867,7 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     runtime.run_community_node_session_maintenance_once().await;
     runtime.run_community_node_session_maintenance_once().await;
@@ -857,6 +885,18 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
             .any(|request| request.refreshes.contains(&expected_public)),
         "公開話題のランデブー鍵は変わらない"
     );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.refreshes.contains(&expected_account)),
+        "account 同期の hint のランデブー鍵が更新される"
+    );
+    assert!(requests.iter().all(|request| {
+        !request
+            .refreshes
+            .iter()
+            .any(|key| key == account_hint.as_str())
+    }));
     assert!(requests.iter().all(|request| {
         !request.refreshes.contains(&forbidden_public_private)
             && !request.refreshes.contains(&forbidden_missing_private)
@@ -919,6 +959,29 @@ async fn private_channel_rendezvous_refresh_uses_only_the_current_epoch_secret()
         rotated_requests
             .iter()
             .all(|request| !request.refreshes.contains(&old_private))
+    );
+
+    runtime.shutdown().await;
+    server.abort();
+}
+
+/// W4 AC-3（ADR 0059 §5）: lifecycle の復帰は Community Node の確認を 1 回行うだけで、期限前の node には要求しない。
+#[tokio::test]
+async fn a_lifecycle_resume_contacts_a_community_node_only_when_due() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let dir = tempdir().expect("tempdir");
+    let (runtime, state, server) = rendezvous_runtime(dir.path()).await;
+    runtime.run_community_node_session_maintenance_once().await;
+    runtime.run_community_node_session_maintenance_once().await;
+    assert_eq!(state.heartbeat_hits.load(Ordering::SeqCst), 1);
+
+    for _ in 0..3 {
+        runtime.resume_after_lifecycle().await;
+    }
+    assert_eq!(
+        state.heartbeat_hits.load(Ordering::SeqCst),
+        1,
+        "a resume must not refresh a session before its due time"
     );
 
     runtime.shutdown().await;

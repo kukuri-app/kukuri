@@ -9,7 +9,7 @@ use crate::models::{
     BookmarkedCustomReactionRow, BookmarkedPostRow, DirectMessageConversationRow,
     DirectMessageMessageRow, DirectMessageOutboxRow, DirectMessageTombstoneRow,
     GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow, NotificationKind,
-    NotificationRow, ObjectProjectionRow, ReactionProjectionRow,
+    NotificationRow, ObjectProjectionRow, Page, ReactionProjectionRow, TimelineCursor,
 };
 
 /// NULL 許容列の読み出し。sqlx-sqlite は NULL を `String` なら `Ok("")`、`i64` なら
@@ -124,17 +124,14 @@ pub(crate) fn row_to_bookmarked_custom_reaction(
         asset_id: row.get("asset_id"),
         owner_pubkey: row.get("owner_pubkey"),
         blob_hash: BlobHash::new(row.get::<String, _>("blob_hash")),
-        search_key: row
-            .try_get::<String, _>("search_key")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| row.get("asset_id")),
+        search_key: row.try_get("search_key").unwrap_or_default(),
         mime: row.get("mime"),
         bytes: row.get::<i64, _>("bytes") as u64,
         width: row.get::<i64, _>("width") as u32,
         height: row.get::<i64, _>("height") as u32,
         bookmarked_at: row.get("bookmarked_at"),
-    })
+    }
+    .with_search_key_fallback())
 }
 
 pub(crate) fn row_to_bookmarked_post(row: sqlx::sqlite::SqliteRow) -> Result<BookmarkedPostRow> {
@@ -501,4 +498,61 @@ pub(crate) fn parse_game_status(value: &str) -> Result<GameRoomStatus> {
         "finished" | "ended" => Ok(GameRoomStatus::Ended),
         _ => anyhow::bail!("unknown game room status: {value}"),
     }
+}
+
+pub(crate) fn envelope_page_from_rows(
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+    limit: usize,
+) -> Result<Page<KukuriEnvelope>> {
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(row_to_envelope(row)?);
+    }
+    let next_cursor = if items.len() == limit {
+        items.last().map(|envelope| TimelineCursor {
+            created_at: envelope.created_at,
+            object_id: envelope.id.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
+}
+
+pub(crate) fn object_projection_page_from_rows(
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+    limit: usize,
+) -> Result<Page<ObjectProjectionRow>> {
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(row_to_object_projection(row)?);
+    }
+    let next_cursor = if items.len() == limit {
+        items.last().map(|row| TimelineCursor {
+            created_at: row.created_at,
+            object_id: row.object_id.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
+}
+
+pub(crate) fn direct_message_page_from_rows(
+    rows: Vec<sqlx::sqlite::SqliteRow>,
+    limit: usize,
+) -> Result<Page<DirectMessageMessageRow>> {
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(row_to_direct_message_message(row)?);
+    }
+    let next_cursor = if items.len() == limit {
+        items.last().map(|row| TimelineCursor {
+            created_at: row.created_at,
+            object_id: EnvelopeId::from(row.message_id.clone()),
+        })
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
 }

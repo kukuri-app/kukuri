@@ -6,7 +6,7 @@ pub(crate) async fn apply_relay_backed_community_node_seed_peers(
     relay_url: &str,
     seed_peers: Vec<CommunityNodeSeedPeer>,
 ) {
-    seed_local_community_node_consents(runtime, base_url, 1);
+    seed_local_community_node_consents(runtime, base_url, 1).await;
     mark_community_node_session_ready_for_test(runtime, base_url).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -37,6 +37,7 @@ pub(crate) async fn mark_community_node_session_ready_for_test(
         runtime.identity_mode,
         base_url,
     )
+    .await
     .expect("load local consent");
     runtime
         .set_community_node_session_ready(base_url, false, local_consent)
@@ -181,6 +182,16 @@ pub(crate) struct MockRendezvousCommunityNodeState {
     pub(crate) rendezvous_requests: Arc<Mutex<Vec<kukuri_cn_protocol::TopicRendezvousHeartbeat>>>,
     pub(crate) account_candidate: Option<(String, kukuri_cn_protocol::TopicRendezvousCandidate)>,
     pub(crate) rendezvous_failure: Arc<AtomicBool>,
+}
+
+/// topic の rendezvous に、会う相手のいない応答を返す。起動から account 同期の hint を購読するので（ADR 0061 §7）、
+/// session を確立する試験の node は必ずこの要求を受ける。
+pub(crate) async fn mock_rendezvous() -> Json<kukuri_cn_protocol::TopicRendezvousHeartbeatResponse>
+{
+    Json(kukuri_cn_protocol::TopicRendezvousHeartbeatResponse {
+        expires_in_seconds: 45,
+        topics: Vec::new(),
+    })
 }
 
 pub(crate) async fn mock_rendezvous_bootstrap_heartbeat(
@@ -334,15 +345,15 @@ pub(crate) const MOCK_MANAGED_POLICY_SLUG: &str = "builder-preview";
 
 /// #857: ユーザーが同意モーダルで受諾した状態をローカル同意記録として直接シードする。
 /// version は同意した版(mock カタログの現行版は 1、pending update 時は 2)。
-pub(crate) fn seed_local_community_node_consents(
+pub(crate) async fn seed_local_community_node_consents(
     runtime: &DesktopRuntime,
     base_url: &str,
     version: i32,
 ) {
-    seed_local_community_node_consents_with_snapshot(runtime, base_url, version, None);
+    seed_local_community_node_consents_with_snapshot(runtime, base_url, version, None).await;
 }
 
-pub(crate) fn seed_local_community_node_consents_with_snapshot(
+pub(crate) async fn seed_local_community_node_consents_with_snapshot(
     runtime: &DesktopRuntime,
     base_url: &str,
     version: i32,
@@ -366,6 +377,7 @@ pub(crate) fn seed_local_community_node_consents_with_snapshot(
         base_url,
         &state,
     )
+    .await
     .expect("persist local community-node consents");
 }
 

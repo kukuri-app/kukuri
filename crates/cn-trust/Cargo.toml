@@ -29,7 +29,7 @@ kukuri-cn-protocol = { path = "../cn-protocol" }
 # 自分自身を testing feature 付き dev-dependency にすることで、tests/ から共有スイートを使える
 # （feature unification によりテストビルド時のみ有効になる。cn-safety の mock と同じ流儀）。
 kukuri-cn-trust = { path = ".", features = ["testing"] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
 [lints]
 workspace = true

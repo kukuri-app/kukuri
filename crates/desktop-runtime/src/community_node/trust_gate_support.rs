@@ -5,11 +5,10 @@
 //! - 上位から順に、対象・閲覧者・期限・版を照合して最初に有効だった評価を採用する。失敗・401・期限切れは
 //!   次の選択済み CN へ進み、どれも採れなければ「未評価」（非表示にしない）とする。
 //! - 判断は表示だけを変える。mute / block canonical も観測も作らない。
-//! - 著者ごとの「常に表示する」例外は端末内（`<db>.trust-display.json`）に保存する。
+//! - 著者ごとの「常に表示する」例外は、本人の端末で共有する account 同期の item（ADR 0061 §2）として保存する。
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -24,7 +23,8 @@ use tracing::warn;
 use super::{CommunityNodeSessionOutcome, CommunityNodeTrustRelationError};
 use crate::runtime::DesktopRuntime;
 
-pub(crate) const TRUST_DISPLAY_STATE_FILE_EXTENSION: &str = "trust-display.json";
+/// 旧版が端末内に置いた例外の file。起動時に account 同期の item へ取り込んで消す。
+const LEGACY_TRUST_DISPLAY_FILE_EXTENSION: &str = "trust-display.json";
 
 /// 著者 1 人分の表示判断。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct AuthorTrustGateResult {
     pub gates: Vec<AuthorTrustGate>,
 }
 
-/// 著者ごとの表示例外（この端末だけの設定）。
+/// 著者ごとの表示例外（本人の端末で共有する）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SetAuthorTrustDisplayExceptionRequest {
@@ -80,9 +80,9 @@ pub struct SetAuthorTrustDisplayExceptionRequest {
     pub always_visible: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct TrustDisplayState {
-    /// 常に表示する著者 pubkey。
+/// 旧版の端末内の例外の file の中身。
+#[derive(Deserialize)]
+struct LegacyTrustDisplayState {
     #[serde(default)]
     always_visible: BTreeSet<String>,
 }
@@ -97,33 +97,22 @@ pub(crate) struct CachedAuthorTrustEvaluation {
     pub(crate) generation: u64,
 }
 
-fn state_path(db_path: &Path) -> PathBuf {
-    db_path.with_extension(TRUST_DISPLAY_STATE_FILE_EXTENSION)
-}
-
-fn load_state(db_path: &Path) -> Result<TrustDisplayState> {
-    let path = state_path(db_path);
-    if !path.exists() {
-        return Ok(TrustDisplayState::default());
+/// 旧版が端末内に置いた例外を、account 同期の item へ取り込んで file を消す（起動時に 1 回）。
+/// 編集した時刻は分からないので、どの編集よりも古い扱いにする。
+pub(crate) async fn import_legacy_trust_display(
+    db_path: &Path,
+    app_service: &kukuri_app_api::AppService,
+) -> Result<()> {
+    let path = db_path.with_extension(LEGACY_TRUST_DISPLAY_FILE_EXTENSION);
+    let Some(raw) = crate::storage::read_file(&path).await? else {
+        return Ok(());
+    };
+    let state: LegacyTrustDisplayState = serde_json::from_slice(&raw)
+        .with_context(|| format!("failed to parse trust display state `{}`", path.display()))?;
+    for author in state.always_visible {
+        app_service.import_trust_always_visible(&author).await?;
     }
-    let raw = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read trust display state `{}`", path.display()))?;
-    serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse trust display state `{}`", path.display()))
-}
-
-fn save_state(db_path: &Path, state: &TrustDisplayState) -> Result<()> {
-    let path = state_path(db_path);
-    let json = serde_json::to_vec_pretty(state).context("failed to encode trust display state")?;
-    let temporary = path.with_extension(format!("{TRUST_DISPLAY_STATE_FILE_EXTENSION}.tmp"));
-    fs::write(&temporary, json).with_context(|| {
-        format!(
-            "failed to write trust display state `{}`",
-            temporary.display()
-        )
-    })?;
-    fs::rename(&temporary, &path)
-        .with_context(|| format!("failed to replace trust display state `{}`", path.display()))
+    crate::storage::delete_file(&path).await
 }
 
 fn evaluation_is_fresh(evaluation: &TrustEvaluation, now: DateTime<Utc>) -> bool {
@@ -156,7 +145,7 @@ impl DesktopRuntime {
         }
         targets.sort();
         targets.dedup();
-        let always_visible = load_state(&self.db_path)?.always_visible;
+        let always_visible = self.app_service.trust_always_visible(&targets).await?;
         if targets.is_empty() {
             return Ok(AuthorTrustGateResult { gates: Vec::new() });
         }
@@ -316,16 +305,9 @@ impl DesktopRuntime {
         request: SetAuthorTrustDisplayExceptionRequest,
     ) -> Result<AuthorTrustGate> {
         let author_pubkey = normalize_pubkey(request.author_pubkey.as_str())?;
-        {
-            let _guard = self.trust_display_guard.lock().await;
-            let mut state = load_state(&self.db_path)?;
-            if request.always_visible {
-                state.always_visible.insert(author_pubkey.clone());
-            } else {
-                state.always_visible.remove(author_pubkey.as_str());
-            }
-            save_state(&self.db_path, &state)?;
-        }
+        self.app_service
+            .set_trust_always_visible(&author_pubkey, request.always_visible)
+            .await?;
         let mut result = self
             .evaluate_author_trust_gates(AuthorTrustGateRequest {
                 author_pubkeys: vec![author_pubkey.clone()],
@@ -339,11 +321,7 @@ impl DesktopRuntime {
 
     /// 「常に表示する」例外の一覧（管理導線用）。
     pub async fn list_author_trust_display_exceptions(&self) -> Result<Vec<String>> {
-        let _guard = self.trust_display_guard.lock().await;
-        Ok(load_state(&self.db_path)?
-            .always_visible
-            .into_iter()
-            .collect())
+        self.app_service.list_trust_always_visible().await
     }
 }
 

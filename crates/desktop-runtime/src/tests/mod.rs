@@ -51,6 +51,9 @@ pub(crate) use kukuri_test_support::{TestResource, lock_test_resource};
 mod support;
 pub(crate) use support::*;
 
+mod account_transfer;
+mod account_transfer_history;
+mod account_transfer_sync;
 mod accounts_migration;
 mod attachments;
 mod community_node;
@@ -60,6 +63,7 @@ mod empty_namespace_reclaim;
 mod identity_restart;
 mod legacy_store_retirement;
 mod media_blob_restore;
+mod memory_node_rebuild;
 mod private_channels;
 mod protected_migration;
 mod receive_binding;
@@ -70,3 +74,5 @@ mod seeded_dht;
 mod static_peer;
 
 mod account_logout;
+mod command_dispatch;
+mod host_generation;

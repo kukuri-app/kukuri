@@ -165,6 +165,7 @@ async fn run(config: IndexerConfig) -> Result<()> {
                     iroh_relay_urls: config.relay.runtime_relay_urls(),
                 }
                 .normalized(),
+                false,
             )
             .await
             .context("failed to start the cn-indexer iroh node")?,

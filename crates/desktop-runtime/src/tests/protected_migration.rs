@@ -29,7 +29,7 @@ use crate::backup::{
 
 pub(super) const TOPIC: &str = "kukuri:topic:protected-migration";
 
-async fn open_runtime(db: &Path) -> DesktopRuntime {
+pub(super) async fn open_runtime(db: &Path) -> DesktopRuntime {
     DesktopRuntime::new_with_config_and_identity(
         db,
         TransportNetworkConfig::loopback(),
@@ -57,7 +57,7 @@ async fn is_protected(store: &SqliteStore, hash: &str) -> bool {
 }
 
 /// backup を作り、`target` の新しい account として復元する。archive の entry 名と、復元した db の path を返す。
-pub(super) fn backup_and_restore(
+pub(super) async fn backup_and_restore(
     source: &Path,
     db: &Path,
     target: &Path,
@@ -87,7 +87,9 @@ pub(super) fn backup_and_restore(
         .iter()
         .map(|entry| entry.name.clone())
         .collect::<Vec<_>>();
-    ensure_accounts_initialized(target, IdentityStorageMode::FileOnly).expect("target account");
+    ensure_accounts_initialized(target, IdentityStorageMode::FileOnly)
+        .await
+        .expect("target account");
     let prepared = prepare_device_restore(
         target,
         &RestoreDeviceBackupRequest {
@@ -130,7 +132,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
     let remote = KukuriKeys::generate();
     for index in 0..200 {
         runtime
-            .store
+            .sqlite
             .put_envelope(
                 build_post_envelope(
                     &remote,
@@ -160,7 +162,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
         .await
         .expect("own post");
     let projection = runtime
-        .store
+        .sqlite
         .get_object_projection(&EnvelopeId::from(post_id.as_str()))
         .await
         .expect("projection")
@@ -213,7 +215,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
         .await
         .expect("remote reaction asset");
     runtime
-        .store
+        .sqlite
         .put_bookmarked_custom_reaction(BookmarkedCustomReactionRow {
             asset_id: "remote-asset".into(),
             owner_pubkey: remote.public_key_hex(),
@@ -245,7 +247,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
         .await
         .expect("live session");
     let live_manifest = runtime
-        .store
+        .sqlite
         .get_live_session(TOPIC, &session_id)
         .await
         .expect("live row")
@@ -308,7 +310,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
         .await
         .expect("frame blob");
     runtime
-        .store
+        .sqlite
         .put_direct_message_message(DirectMessageMessageRow {
             dm_id: dm_id.clone(),
             message_id: "message-1".into(),
@@ -324,7 +326,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
         .await
         .expect("dm history");
     runtime
-        .store
+        .sqlite
         .put_direct_message_outbox(DirectMessageOutboxRow {
             dm_id,
             message_id: "message-1".into(),
@@ -366,6 +368,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
     let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("source account");
     // #1221 R5-I: 更新前の端末の保存状態(旧 store に本人のデータ、保護所有先は空)を作る。
     create_empty_legacy_store(&db).await;
@@ -387,14 +390,14 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     );
     assert!(
         runtime
-            .store
-            .get_remote_records(&topic_replica, &own_record, None, 8)
+            .sqlite
+            .get_remote_records(&topic_replica, &own_record, None, 8, false)
             .await
             .expect("records")
             .is_empty()
     );
     assert!(
-        is_protected(&runtime.store, &fixture.body_hash).await,
+        is_protected(&runtime.sqlite, &fixture.body_hash).await,
         "bookmark page shares the body"
     );
     runtime.shutdown().await;
@@ -408,7 +411,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         .expect("finish migration");
     assert!(
         runtime
-            .store
+            .sqlite
             .protected_migration_caught_up_at()
             .await
             .expect("caught up")
@@ -416,8 +419,8 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     );
     assert!(
         !runtime
-            .store
-            .get_remote_records(&topic_replica, &own_record, None, 8)
+            .sqlite
+            .get_remote_records(&topic_replica, &own_record, None, 8, false)
             .await
             .expect("records")
             .is_empty(),
@@ -436,7 +439,11 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         .finish_protected_migration()
         .await
         .expect("migrate the new channel");
-    let channels = runtime.app_service.joined_private_channel_replicas().await;
+    let channels = runtime
+        .app_service
+        .joined_private_channel_replicas("", 16)
+        .await
+        .unwrap();
     assert_eq!(channels.len(), 2);
     assert!(
         channels
@@ -447,8 +454,8 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         for key in ["channels/metadata", "channels/policy/envelope"] {
             assert!(
                 !runtime
-                    .store
-                    .get_remote_records(channel_replica.as_str(), key, None, 8)
+                    .sqlite
+                    .get_remote_records(channel_replica.as_str(), key, None, 8, false)
                     .await
                     .expect("private records")
                     .is_empty(),
@@ -470,7 +477,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
     ] {
         let legacy = legacy_blob(&runtime, hash).await.expect("legacy bytes");
         let copied = runtime
-            .store
+            .sqlite
             .get_remote_content("blob", hash)
             .await
             .expect("copied bytes")
@@ -478,7 +485,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         assert_eq!(copied, legacy);
         assert_eq!(blake3::hash(&copied).to_hex().as_str(), hash.as_str());
         assert!(
-            is_protected(&runtime.store, hash).await,
+            is_protected(&runtime.sqlite, hash).await,
             "{hash} is not protected"
         );
     }
@@ -493,7 +500,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
 
     // backup は旧 `iroh-data` を含めず、保護所有先を含める。
     let target = tempdir().expect("target dir");
-    let (names, restored_db) = backup_and_restore(source.path(), &db, target.path());
+    let (names, restored_db) = backup_and_restore(source.path(), &db, target.path()).await;
     assert!(
         names.iter().all(|name| !name.contains("iroh-data")),
         "{names:?}"
@@ -565,14 +572,16 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         restored
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: TOPIC.into(),
+                cursor: None,
             })
             .await
             .expect("restored channels")
+            .items
             .iter()
             .any(|channel| channel.channel_id == fixture.channel_id)
     );
     let outbox = restored
-        .store
+        .sqlite
         .list_direct_message_outbox()
         .await
         .expect("restored outbox");
@@ -597,7 +606,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         "SELECT COUNT(*) FROM remote_content_cache \
          WHERE kind = 'record' AND record_key = 'channels/metadata' AND is_protected = 1",
     )
-    .fetch_one(restored.store.pool())
+    .fetch_one(restored.sqlite.pool())
     .await
     .expect("protected private records");
     assert_eq!(protected_metadata, 2);
@@ -607,7 +616,7 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
         &fixture.frame_hash,
     ] {
         assert!(
-            is_protected(&restored.store, hash).await,
+            is_protected(&restored.sqlite, hash).await,
             "{hash} lost protection"
         );
     }
@@ -619,22 +628,23 @@ async fn legacy_protected_data_moves_in_pages_and_restores_without_the_legacy_tr
 async fn a_pinned_asset_is_protected_when_pinned() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let blobs = runtime.iroh_stack.blob_service.clone();
     let asset = blobs
         .put_remote_blob(b"visited dome asset".to_vec(), "model/gltf-binary")
         .await
         .expect("cached asset");
-    assert!(!is_protected(&runtime.store, asset.hash.as_str()).await);
+    assert!(!is_protected(&runtime.sqlite, asset.hash.as_str()).await);
     blobs.pin_blob(&asset.hash).await.expect("pin");
-    assert!(is_protected(&runtime.store, asset.hash.as_str()).await);
+    assert!(is_protected(&runtime.sqlite, asset.hash.as_str()).await);
     let refs: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM remote_content_cache_protected_ref WHERE ref_id = ?1",
     )
     .bind(format!("dome_pin:{}", asset.hash.as_str()))
-    .fetch_one(runtime.store.pool())
+    .fetch_one(runtime.sqlite.pool())
     .await
     .expect("refs");
     assert_eq!(refs, 1);
@@ -646,8 +656,9 @@ async fn a_pinned_asset_is_protected_when_pinned() {
 async fn own_envelope_waits_for_its_docs_records() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let envelope = build_post_envelope(
@@ -658,7 +669,7 @@ async fn own_envelope_waits_for_its_docs_records() {
     )
     .expect("own envelope");
     runtime
-        .store
+        .sqlite
         .put_envelope(envelope.clone())
         .await
         .expect("envelope row before its records");
@@ -673,7 +684,7 @@ async fn own_envelope_waits_for_its_docs_records() {
         "SELECT COUNT(*) FROM remote_content_cache_protected_ref WHERE ref_id = ?1",
     )
     .bind(&reference)
-    .fetch_one(runtime.store.pool())
+    .fetch_one(runtime.sqlite.pool())
     .await
     .expect("refs");
     assert_eq!(refs, 0, "the row is not treated as migrated");
@@ -685,8 +696,9 @@ async fn own_envelope_waits_for_its_docs_records() {
 async fn the_writer_switches_once_after_the_migration_and_keeps_it_across_restarts() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     assert_eq!(runtime.app_service.writer_switched_at(), None);
@@ -713,6 +725,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
     let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("source account");
     let runtime = open_runtime(&db).await;
     let channel = runtime
@@ -750,7 +763,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
             .await
             .expect("own post after the switch");
         let projection = runtime
-            .store
+            .sqlite
             .get_object_projection(&EnvelopeId::from(post_id.as_str()))
             .await
             .expect("projection")
@@ -792,8 +805,8 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
     for (replica, key) in &protected_records {
         assert!(
             !runtime
-                .store
-                .get_remote_records(replica.as_str(), key, None, 8)
+                .sqlite
+                .get_remote_records(replica.as_str(), key, None, 8, false)
                 .await
                 .expect("records")
                 .is_empty(),
@@ -804,13 +817,13 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
     drop(runtime);
 
     let target = tempdir().expect("target dir");
-    let (_, restored_db) = backup_and_restore(source.path(), &db, target.path());
+    let (_, restored_db) = backup_and_restore(source.path(), &db, target.path()).await;
     let restored = open_runtime(&restored_db).await;
     for (replica, key) in &protected_records {
         assert!(
             !restored
-                .store
-                .get_remote_records(replica.as_str(), key, None, 8)
+                .sqlite
+                .get_remote_records(replica.as_str(), key, None, 8, false)
                 .await
                 .expect("restored records")
                 .is_empty(),

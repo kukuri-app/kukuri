@@ -1,0 +1,84 @@
+[package]
+name = "kukuri-web-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Web の入口と、ブラウザ専用の保存 adapter（ADR 0056 §2）。lib はブラウザ（wasm32）でだけ中身を持つ。
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+blake3.workspace = true
+js-sys = "0.3.106"
+kukuri-core = { path = "../core" }
+kukuri-desktop-runtime = { path = "../desktop-runtime" }
+kukuri-store = { path = "../store" }
+kukuri-webrtc-transport = { path = "../webrtc-transport" }
+n0-future.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = [
+  "Crypto",
+  "CryptoKey",
+  "Document",
+  "DomException",
+  "Event",
+  "EventTarget",
+  "IdbCursor",
+  "IdbCursorDirection",
+  "IdbCursorWithValue",
+  "IdbDatabase",
+  "IdbFactory",
+  "IdbIndex",
+  "IdbIndexParameters",
+  "IdbKeyRange",
+  "IdbObjectStore",
+  "IdbObjectStoreParameters",
+  "IdbOpenDbRequest",
+  "IdbRequest",
+  "IdbTransaction",
+  "IdbTransactionMode",
+  "Navigator",
+  "StorageEstimate",
+  "StorageManager",
+  "SubtleCrypto",
+  "VisibilityState",
+  "Window",
+] }
+web-time.workspace = true
+
+# browser↔native の blob・docs の record の試験（scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer）。
+[dev-dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+kukuri-app-api = { path = "../app-api" }
+hex.workspace = true
+iroh.workspace = true
+kukuri-blob-service = { path = "../blob-service" }
+kukuri-core = { path = "../core" }
+kukuri-docs-sync = { path = "../docs-sync" }
+kukuri-iroh-node = { path = "../iroh-node" }
+kukuri-store = { path = "../store", features = ["test-support"] }
+kukuri-transport = { path = "../transport" }
+kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }
+n0-future.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+[[example]]
+name = "web_storage_peer"
+test = false
+
+[lints]
+workspace = true

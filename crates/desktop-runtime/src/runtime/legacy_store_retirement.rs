@@ -55,7 +55,7 @@ impl DesktopRuntime {
         let local = self.author_keys.public_key_hex();
         let mut caught_up = true;
         for kind in LEGACY_STORE_KINDS {
-            let (cursor, done) = self.store.legacy_store_position(kind).await?;
+            let (cursor, done) = self.sqlite.legacy_store_position(kind).await?;
             // 成人向けの hash の行は、本人の projection の行に参照を置き終えてから外す。
             if done || (kind == "adult_marker" && !caught_up) {
                 caught_up &= done;
@@ -80,7 +80,7 @@ impl DesktopRuntime {
                 }
                 "legacy_projection" => {
                     let page = self
-                        .store
+                        .sqlite
                         .retire_legacy_projection_page(&local, &cursor)
                         .await?;
                     // 最近使った他人の内容は、予算に入る分だけ cache へ写す(入らなければ写さずに進む)。
@@ -91,9 +91,9 @@ impl DesktopRuntime {
                     }
                     (page.cursor, page.done)
                 }
-                _ => self.store.retire_legacy_adult_marker_page(&cursor).await?,
+                _ => self.sqlite.retire_legacy_adult_marker_page(&cursor).await?,
             };
-            self.store
+            self.sqlite
                 .finish_legacy_store_page(kind, &next, done)
                 .await?;
             caught_up &= done;
@@ -102,7 +102,7 @@ impl DesktopRuntime {
         if !(migrated && caught_up) {
             return Ok(LegacyStoreProgress::More);
         }
-        if !self.store.legacy_store_retirable().await? {
+        if !self.sqlite.legacy_store_retirable().await? {
             return Ok(LegacyStoreProgress::Waiting);
         }
         let Some(legacy) = self.legacy_store.lock().await.take() else {
@@ -124,7 +124,7 @@ impl DesktopRuntime {
     /// 終端を記録した後は namespace を列挙しない。
     async fn empty_namespaces_step(&self) -> Result<LegacyStoreProgress> {
         let (cursor, done) = self
-            .store
+            .sqlite
             .legacy_store_position(EMPTY_NAMESPACES_KIND)
             .await?;
         if done {
@@ -142,7 +142,7 @@ impl DesktopRuntime {
         let (next, done) = docs_sync
             .drop_empty_namespaces_step(&cursor, LEGACY_STORE_PAGE)
             .await?;
-        self.store
+        self.sqlite
             .finish_legacy_store_page(EMPTY_NAMESPACES_KIND, &next, done)
             .await?;
         Ok(if done {

@@ -1,1 +1,18 @@
 allow-unwrap-in-tests = true
+# 共用 crate（ADR 0056 §2・§3）はブラウザでも動くので、tokio の時刻・task と std の時刻を直接使わない
+# （wasm32 でも compile できて、実行時に止まる）。lint は workspace で allow にし、共用 crate の lib.rs で wasm32 の時だけ warn にする。
+disallowed-methods = [
+  { path = "tokio::time::sleep", reason = "n0_future::time を使う（ADR 0056 §3）" },
+  { path = "tokio::time::sleep_until", reason = "n0_future::time を使う（ADR 0056 §3）" },
+  { path = "tokio::time::timeout", reason = "n0_future::time を使う（ADR 0056 §3）" },
+  { path = "tokio::time::timeout_at", reason = "n0_future::time の timeout と期限までの残りを使う（ADR 0056 §3）" },
+  { path = "tokio::time::interval", reason = "n0_future::time を使う（ADR 0056 §3）" },
+  { path = "tokio::time::Instant::now", reason = "n0_future::time を使う（ADR 0056 §3）" },
+  { path = "tokio::spawn", reason = "n0_future::task を使う（ADR 0056 §3）" },
+  { path = "tokio::task::spawn", reason = "n0_future::task を使う（ADR 0056 §3）" },
+  { path = "tokio::task::spawn_blocking", reason = "ブラウザには blocking の thread が無い（ADR 0056 §3）" },
+  { path = "std::thread::spawn", reason = "ブラウザには thread が無い（ADR 0056 §3）" },
+  { path = "std::thread::sleep", reason = "n0_future::time::sleep を使う（ADR 0056 §3）" },
+  { path = "std::time::Instant::now", reason = "n0_future::time か web_time を使う（ADR 0056 §3）" },
+  { path = "std::time::SystemTime::now", reason = "web_time を使う（ADR 0056 §3）" },
+]

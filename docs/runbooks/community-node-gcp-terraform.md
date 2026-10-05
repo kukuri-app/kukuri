@@ -1,6 +1,6 @@
 # Community Node GCP Terraform Deploy
 
-最終更新日: 2026-09-17
+最終更新日: 2026-10-04
 
 `openai-moderation` の非秘密設定は `deploy.moderation`、キーは既存の `deploy.vlm_api_key_secret_id` から注入する。詳細は[専用providerの運用](community-node-openai-moderation.md)を参照。
 
@@ -36,6 +36,8 @@ live確認は `docs/runbooks/community-node-production-rollout.md` を先に参�
 - profile ごとに変わるのは data/cache/blob/backup 階層。
 - `low-cost` は単一 VM 上で既存 community node スタックを GHCR image から動かし、
   Caddy が API/relay-HTTP の HTTPS を終端、QUIC は VM の `7842/udp` で直接公開する。
+- 全 profile で、relay の image に同梱した STUN（`cn-stun`、binding だけ）を relay とは別の
+  container で動かし、VM の `3478/udp` で直接公開する（#1483、ADR 0057 §6）。
 
 GHCR の repository owner は software image の配布元を示すだけで、配備された Node の運営主体を
 示さない。Node の operator、domain、連絡先、監査 actor、公開文書は各 operator の
@@ -47,6 +49,7 @@ GHCR の repository owner は software image の配布元を示すだけで、�
 client ──https://api_domain      ─▶ Caddy(:443) ─▶ cn-user-api(:8080)
 client ──https://relay_domain    ─▶ Caddy(:443) ─▶ cn-iroh-relay(:3340)
 client ──relay_domain :7842/udp  ─────────────────▶ cn-iroh-relay QUIC(:7842)
+client ──relay_domain :3478/udp  ─────────────────▶ cn-stun(:3478)
 VM 内: cn-postgres / cn-valkey は private（公開しない）
 deploy_indexer_stack=true 時（#615）:
 VM 内: cn-arcadedb(:2480) / cn-indexer(:8630) も private（compose network 内のみ。
@@ -219,6 +222,9 @@ terraform output ssh_iap_command   # IAP 経由 SSH
 terraform output admin_iap_tunnel_command # IAP 内部 admin UI
 ```
 
+STUN（`cn-stun`、`3478/udp`）の応答は、[本番反映の runbook](community-node-production-rollout.md) の
+「5.3 public surface」の確認 script を `<relay_domain>` へ実行して確かめる。
+
 VM 内のサービスは `/var/lib/kukuri/community-node` の docker compose で動く。SSH は IAP のみ
 （`22/tcp` と admin UI の `9090/tcp` は GCP IAP レンジからのみ許可）。admin UI を使う場合は、
 別 terminal で output の tunnel command を実行し、`http://localhost:9090` を開く。到達には
@@ -341,8 +347,8 @@ startup は relation analyze の service / timer を再生成する。boot か�
 手動で解析する場合は `sudo systemctl start kukuri-relation-analyze.service` を使う
 （`docker-compose run` だけでは timer の記録が残らない）。
 
-外部からの port scan で 80/443/`relay_quic_port`/udp 以外（2480 / 8630 / 5432 / 6379）が
-閉じていることも確認する（firewall には新規 ingress を追加していない）。
+外部からの port scan で 80/443/`relay_quic_port`/udp/3478/udp 以外（2480 / 8630 / 5432 / 6379）が
+閉じていることも確認する（index stack のために firewall の ingress は追加していない）。
 
 ### readiness（読み取り面の解禁判定、#616）
 

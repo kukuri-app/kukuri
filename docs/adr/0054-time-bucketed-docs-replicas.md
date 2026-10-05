@@ -48,6 +48,7 @@ replica の識別、取得理由、解放、保存の回収を定める。
 | --- | --- | --- |
 | 投稿・返信・repost、state/envelope、timeline/thread/profile索引 | 作成時のscope bucket。返信はrootの古いbucketへ追記しない | そのbucketのevent/hint |
 | 投稿のmedia manifest | 投稿と同じbucket。refはsource locatorを持つ | 投稿と同じ |
+| 投稿者のリンクプレビュー（ADR 0051 §7） | 投稿と同じbucketの `link-previews/<id>/state`（投稿ごとに1回だけ書く） | 表示時に投稿者のdocs authorとkeyの組で読む |
 | reaction | reaction作成時のbucket。元投稿のbucketへ無期限追記しない | 現在bucketのeventと対象locator |
 | 取り下げ | 元投稿bucketの `withdrawals/<id>/state`（署名済みenvelopeを同じkeyへ上書き） | 操作時bucketにも同じ取り下げとtarget locatorを置く |
 | live/game等の継続状態 | entity別の最新state。更新履歴envelopeを永久に積まない。日が変わった更新は、最新stateと署名済みenvelopeを更新時bucketへ移す（R5-H） | 移した先の更新時bucketにlocatorを置く |
@@ -121,6 +122,7 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - 取り下げのrecord
   - reactionのenvelope
   - live/game sessionのstate・署名済みenvelope・manifest blob（署名済みmanifestの無い旧Domeは除く）
+  - リンクプレビューのrecord（投稿者の名義）と、それが指す画像のblob（ADR 0051 §7、#1220 AC-2f。表示した参加者が読んで検証したもの）
   - 更新されるもの（reaction、session）は、projectionがより新しい版として受け入れたときだけ保持を上書きし、古い版を提供しない。
     sessionは反映の経路（読み直し・hint）で受け入れたときだけ保持し、操作（参加・終了・Domeなど）が読んだ版は保持しない。
   - 手元の読み取りは、保持した他人の版も返す。自分のdocs authorが書いていないsessionの版が反映済みより新しくなければ、

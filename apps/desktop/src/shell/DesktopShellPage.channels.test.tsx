@@ -17,7 +17,7 @@ import {
   selectWorkspace,
   setViewportWidth,
 } from './DesktopShellPage.testHelpers';
-import type { JoinedPrivateChannelView } from '@/lib/api';
+import type { JoinedPrivateChannelPage, PrivateChannelControllerState } from '@/lib/api';
 
 beforeEach(() => {
   setViewportWidth(1024);
@@ -170,13 +170,13 @@ test('desktop shell joins an imported private channel and selects its topic scop
 
 test('channel route restore waits for joined channel list before normalizing', async () => {
   const user = userEvent.setup();
-  const joinedChannels = createDeferred<JoinedPrivateChannelView[]>();
+  const joinedChannels = createDeferred<JoinedPrivateChannelPage>();
   const api = createDesktopMockApi();
   const listJoinedPrivateChannels = vi
     .spyOn(api, 'listJoinedPrivateChannels')
     .mockImplementation(async (topic) => {
       if (topic !== 'kukuri:topic:general') {
-        return [];
+        return { items: [], next_cursor: null };
       }
       return joinedChannels.promise;
     });
@@ -190,7 +190,7 @@ test('channel route restore waits for joined channel list before normalizing', a
     '#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=channel-restored'
   );
 
-  joinedChannels.resolve([
+  joinedChannels.resolve({ next_cursor: null, items: [
     {
       topic_id: 'kukuri:topic:general',
       channel_id: 'channel-restored',
@@ -207,7 +207,7 @@ test('channel route restore waits for joined channel list before normalizing', a
       participant_count: 1,
       stale_participant_count: 0,
     },
-  ]);
+  ] });
 
   await waitFor(() => {
     expect(window.location.hash).toBe(
@@ -538,3 +538,74 @@ test('desktop shell metaverse workspace hides the legacy score game room list', 
   expect(screen.queryByLabelText(/game-.*-status/)).not.toBeInTheDocument();
 });
 
+
+test('joined channel list reads the next page and keeps it across periodic refresh', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  for (let index = 0; index < 130; index += 1) {
+    await api.createPrivateChannel('kukuri:topic:general', `paged ${index}`);
+  }
+  const listJoinedPrivateChannels = vi.spyOn(api, 'listJoinedPrivateChannels');
+  render(<App api={api} />);
+  const channelDialog = await openChannelManager(user);
+  const joinedRows = () => within(channelDialog).getAllByRole('button', { name: /^Open paged/ });
+
+  await waitFor(() => expect(joinedRows()).toHaveLength(128));
+  await user.click(within(channelDialog).getByRole('button', { name: 'Show more' }));
+  await waitFor(() => expect(joinedRows()).toHaveLength(130));
+  expect(within(channelDialog).queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+  expect(new Set(joinedRows().map((row) => row.getAttribute('aria-label'))).size).toBe(130);
+
+  // 定期の再読み込みは最初の page だけを読み直し、読み込んだ続きを消さない。
+  const callsBeforeRefresh = listJoinedPrivateChannels.mock.calls.length;
+  window.dispatchEvent(new Event('focus'));
+  await waitFor(() =>
+    expect(listJoinedPrivateChannels.mock.calls.length).toBeGreaterThan(callsBeforeRefresh)
+  );
+  expect(listJoinedPrivateChannels.mock.calls.at(-1)).toEqual(['kukuri:topic:general']);
+  await waitFor(() => expect(joinedRows()).toHaveLength(130));
+  expect(within(channelDialog).queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+});
+
+// #1219 AC-4: 共有リンクの作成と新しいアクセスの配布を別の端末で行っている channel の設定から、この端末で行うように
+// 切り替えると、その channel を案内の無い表示にする。
+test('channel settings switches the access updates to this device', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  let controller: PrivateChannelControllerState = 'other_device';
+  vi.spyOn(api, 'listJoinedPrivateChannels').mockImplementation(async (topic) => ({
+    next_cursor: null,
+    items: topic === 'kukuri:topic:general' ? [{
+      topic_id: 'kukuri:topic:general',
+      channel_id: 'channel-owned',
+      label: 'owned',
+      creator_pubkey: 'f'.repeat(64),
+      owner_pubkey: 'f'.repeat(64),
+      joined_via_pubkey: null,
+      audience_kind: 'invite_only',
+      is_owner: true,
+      current_epoch_id: 'epoch-owned',
+      archived_epoch_ids: [],
+      sharing_state: 'open',
+      rotation_required: false,
+      participant_count: 1,
+      stale_participant_count: 0,
+      controller,
+    }] : [],
+  }));
+  const take = vi.spyOn(api, 'takePrivateChannelController').mockImplementation(async () => {
+    controller = 'this_device';
+    return 'taken';
+  });
+  renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=channel-owned', api);
+
+  const settingsDialog = await openChannelSettings(user, 'owned');
+  expect(within(settingsDialog).getByText(/happen on another of your devices/)).toBeInTheDocument();
+  await user.click(within(settingsDialog).getByRole('button', { name: 'Do this on this device' }));
+
+  expect(take).toHaveBeenCalledWith('kukuri:topic:general', 'channel-owned');
+  await waitFor(() => {
+    expect(within(settingsDialog).queryByText(/happen on another of your devices/)).not.toBeInTheDocument();
+  });
+  expect(within(settingsDialog).getByRole('button', { name: 'Create share link' })).toBeEnabled();
+});

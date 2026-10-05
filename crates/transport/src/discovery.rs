@@ -17,7 +17,7 @@ pub async fn prepare_endpoint_for_discovery(
     if relay_backed {
         let endpoint = endpoint.clone();
         let discovery = Arc::clone(discovery);
-        tokio::spawn(async move {
+        n0_future::task::spawn(async move {
             endpoint.online().await;
             discovery.add_endpoint_info(endpoint.addr());
         });
@@ -35,9 +35,9 @@ mod tests {
     use iroh::SecretKey;
     use iroh::address_lookup::{AddrFilter, AddressLookup};
     use iroh_mainline_address_lookup::DhtAddressLookup;
+    use n0_future::time::timeout;
     use n0_mainline::{DhtBuilder, Testnet};
     use std::time::Duration;
-    use tokio::time::timeout;
 
     use crate::config::DhtDiscoveryOptions;
     use crate::iroh::bind_endpoint_with_options;
@@ -118,7 +118,7 @@ mod tests {
                 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                n0_future::time::sleep(Duration::from_millis(100)).await;
             }
         })
         .await

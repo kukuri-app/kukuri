@@ -1,7 +1,5 @@
 use super::*;
-use crate::traits::CONTENT_OBSERVATION_RETENTION_MS;
-
-const MAX_CONTENT_OBSERVATIONS: i64 = 2048;
+use crate::traits::{CONTENT_OBSERVATION_RETENTION_MS, MAX_CONTENT_OBSERVATIONS};
 
 #[async_trait]
 impl ContentObservationStore for SqliteStore {
@@ -66,7 +64,7 @@ impl ContentObservationStore for SqliteStore {
             )
             "#,
         )
-        .bind(MAX_CONTENT_OBSERVATIONS)
+        .bind(MAX_CONTENT_OBSERVATIONS as i64)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;

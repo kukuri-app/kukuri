@@ -51,7 +51,7 @@ impl AppService {
             .take();
         if let Some(task) = task {
             task.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(2), task.wait()).await;
+            let _ = n0_future::time::timeout(Duration::from_secs(2), task.wait()).await;
         }
         let public_queue = std::mem::take(
             &mut *self
@@ -62,7 +62,7 @@ impl AppService {
         );
         if let Some(queue) = public_queue {
             queue.task.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(2), queue.task.wait()).await;
+            let _ = n0_future::time::timeout(Duration::from_secs(2), queue.task.wait()).await;
         }
         if let Err(error) = self
             .unsubscribe_account_receive_offer_lease(&self.services.keys.public_key())
@@ -122,7 +122,7 @@ impl AppService {
         let lease_slot = Arc::clone(&self.subscription_registry.account_receive_offer_lease);
         let last_sync = Arc::clone(&self.last_sync_ts);
         let notification_inserted = Arc::clone(&self.notification_inserted_notify);
-        *owner = Some(AbortOnDropTask::new(tokio::spawn(async move {
+        *owner = Some(AbortOnDropTask::new(n0_future::task::spawn(async move {
             let mut stream = Some((stream, stop));
             let mut active_lease = lease;
             loop {
@@ -163,7 +163,7 @@ impl AppService {
                 if closed.load(Ordering::Acquire) {
                     return;
                 }
-                tokio::time::sleep(RECEIVE_OFFER_RESTART_DELAY).await;
+                n0_future::time::sleep(RECEIVE_OFFER_RESTART_DELAY).await;
                 if closed.load(Ordering::Acquire) {
                     return;
                 }

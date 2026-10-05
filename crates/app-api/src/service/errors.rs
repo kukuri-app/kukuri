@@ -115,6 +115,14 @@ impl PrivateChannelImportError {
     }
 }
 
+/// 鍵更新の担当端末でないので、新しい世代を作らずに保留した(#1219 W6、ADR 0018 §8)。画面は code で判別してダイアログ
+/// を出し、操作の失敗の表示もこの文言でなく画面の文言にする(W8 #1220 AC-3a)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "PRIVATE_CHANNEL_CONTROLLER_PENDING: the channel key update waits for the owner's controlling device"
+)]
+pub struct PrivateChannelControllerPending;
+
 pub(crate) enum PrivateChannelSnapshotWaitContext {
     Import(PrivateChannelImportKind),
     EpochHandoff,

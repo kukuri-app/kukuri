@@ -224,9 +224,10 @@ async fn friend_only_grant_requires_mutual_and_rotate_requires_fresh_grant() {
     let channel_a = timeout(Duration::from_secs(20), async {
         loop {
             let channel_a = app_a
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
                 .expect("list joined channels on a")
+                .items
                 .into_iter()
                 .find(|entry| entry.channel_id == channel.channel_id)
                 .expect("friend-only channel view");

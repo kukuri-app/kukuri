@@ -27,7 +27,9 @@ async fn persisted_community_node_connectivity_is_not_applied_without_local_cons
             ),
         }],
     };
-    save_community_node_config(&db_path, &persisted).expect("save community-node config");
+    save_community_node_config(&db_path, &persisted)
+        .await
+        .expect("save community-node config");
 
     let runtime = DesktopRuntime::new_with_config_and_identity(
         &db_path,
@@ -96,6 +98,7 @@ async fn startup_does_not_apply_persisted_community_node_connectivity_before_pre
             }],
         },
     )
+    .await
     .expect("save community-node config");
     let mut local_consent = crate::CommunityNodeLocalConsentState::default();
     crate::community_node::record_community_node_local_consents(
@@ -115,6 +118,7 @@ async fn startup_does_not_apply_persisted_community_node_connectivity_before_pre
         base_url,
         &local_consent,
     )
+    .await
     .expect("persist local consent");
     let mut discovery_config = DiscoveryConfig::static_peer_default();
     discovery_config.seed_peers = vec![configured_seed.clone()];
@@ -161,7 +165,7 @@ async fn connectivity_apply_ignores_local_consent_without_verified_ready_session
     )
     .await
     .expect("runtime");
-    seed_local_community_node_consents(&runtime, base_url, 1);
+    seed_local_community_node_consents(&runtime, base_url, 1).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![CommunityNodeNodeConfig {
@@ -204,8 +208,8 @@ async fn connectivity_apply_keeps_only_the_node_with_verified_ready_session() {
     .expect("runtime");
     let verified_base_url = "https://verified.example.com";
     let unverified_base_url = "https://unverified.example.com";
-    seed_local_community_node_consents(&runtime, verified_base_url, 1);
-    seed_local_community_node_consents(&runtime, unverified_base_url, 1);
+    seed_local_community_node_consents(&runtime, verified_base_url, 1).await;
+    seed_local_community_node_consents(&runtime, unverified_base_url, 1).await;
     mark_community_node_session_ready_for_test(&runtime, verified_base_url).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -279,7 +283,7 @@ async fn withdrawing_community_node_consent_removes_transport_assist() {
     )
     .await
     .expect("runtime");
-    seed_local_community_node_consents(&runtime, base_url, 1);
+    seed_local_community_node_consents(&runtime, base_url, 1).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![CommunityNodeNodeConfig {
@@ -344,7 +348,7 @@ async fn community_node_connectivity_filter_is_scoped_per_node() {
     .expect("runtime");
     let consented_base_url = "https://consented.example.com";
     let pending_base_url = "https://pending.example.com";
-    seed_local_community_node_consents(&runtime, consented_base_url, 1);
+    seed_local_community_node_consents(&runtime, consented_base_url, 1).await;
     let config = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![
@@ -545,8 +549,8 @@ async fn local_community_node_seed_peer_keeps_addr_hint_when_relay_urls_exist() 
     runtime.shutdown().await;
 }
 
-#[test]
-fn stored_community_node_config_restores_cached_connectivity_union() {
+#[tokio::test]
+async fn stored_community_node_config_restores_cached_connectivity_union() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("community-relay.db");
     save_community_node_config(
@@ -567,8 +571,10 @@ fn stored_community_node_config_restores_cached_connectivity_union() {
             }],
         },
     )
+    .await
     .expect("save community node config");
     let restored = load_community_node_config_from_file(&db_path)
+        .await
         .expect("load community node config")
         .expect("community node config");
     assert_eq!(
@@ -589,8 +595,8 @@ fn stored_community_node_config_restores_cached_connectivity_union() {
     );
 }
 
-#[test]
-fn legacy_auto_approve_field_is_ignored_and_removed_on_save() {
+#[tokio::test]
+async fn legacy_auto_approve_field_is_ignored_and_removed_on_save() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("community-legacy-auto-approve.db");
     let config_path = community_node_config_path(&db_path);
@@ -609,12 +615,15 @@ fn legacy_auto_approve_field_is_ignored_and_removed_on_save() {
     .expect("write legacy config");
 
     let config = load_community_node_config_from_file(&db_path)
+        .await
         .expect("load legacy config")
         .expect("stored config");
     assert_eq!(config.nodes.len(), 1);
     assert_eq!(config.nodes[0].base_url, "https://community.example.com");
 
-    save_community_node_config(&db_path, &config).expect("save normalized config");
+    save_community_node_config(&db_path, &config)
+        .await
+        .expect("save normalized config");
     let saved = std::fs::read_to_string(config_path).expect("read normalized config");
     assert!(!saved.contains("auto_approve"));
 }
@@ -663,6 +672,7 @@ async fn runtime_does_not_restore_distribution_node_after_user_clears_config() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("community-distribution-cleared.db");
     save_community_node_config(&db_path, &CommunityNodeConfig::default())
+        .await
         .expect("save cleared config");
 
     let runtime = DesktopRuntime::new_with_config_and_identity_and_discovery(
@@ -710,6 +720,7 @@ async fn runtime_does_not_restore_distribution_node_after_user_replaces_config()
             }],
         },
     )
+    .await
     .expect("save replacement config");
 
     let runtime = DesktopRuntime::new_with_config_and_identity_and_discovery(
@@ -740,8 +751,8 @@ async fn runtime_does_not_restore_distribution_node_after_user_replaces_config()
 }
 
 // #1056: 採用設定の欄が無い既存の設定ファイルは「採用」として読み、保存で欄を持つ。
-#[test]
-fn legacy_config_without_content_advisory_field_defaults_to_enabled() {
+#[tokio::test]
+async fn legacy_config_without_content_advisory_field_defaults_to_enabled() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("community-legacy-advisory.db");
     let config_path = community_node_config_path(&db_path);
@@ -752,14 +763,18 @@ fn legacy_config_without_content_advisory_field_defaults_to_enabled() {
     .expect("write legacy config");
 
     let config = load_community_node_config_from_file(&db_path)
+        .await
         .expect("load legacy config")
         .expect("stored config");
     assert!(config.nodes[0].content_advisory_enabled);
 
     let mut disabled = config.clone();
     disabled.nodes[0].content_advisory_enabled = false;
-    save_community_node_config(&db_path, &disabled).expect("save");
+    save_community_node_config(&db_path, &disabled)
+        .await
+        .expect("save");
     let reloaded = load_community_node_config_from_file(&db_path)
+        .await
         .expect("reload")
         .expect("stored config");
     assert!(!reloaded.nodes[0].content_advisory_enabled);
@@ -855,6 +870,7 @@ async fn set_community_node_config_keeps_or_updates_content_advisory_adoption() 
         .expect("save enabled");
     assert!(saved.nodes[0].content_advisory_enabled);
     let reloaded = load_community_node_config_from_file(&db_path)
+        .await
         .expect("reload")
         .expect("stored config");
     assert!(reloaded.nodes[0].content_advisory_enabled);

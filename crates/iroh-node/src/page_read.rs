@@ -1,7 +1,6 @@
 //! Demand-owned, bounded reads from an already local docs namespace.
 //! Bounded bucket pages are served without starting docs sync. Private reads prove the epoch capability.
 
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -17,16 +16,18 @@ use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
 use irpc::channel::mpsc;
 use kukuri_core::ReplicaId;
-use kukuri_store::SqliteStore;
+use kukuri_store::ContentCacheStore;
+use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
-use tokio::sync::{Mutex, Semaphore};
-use tokio::time::timeout;
+use tokio::sync::Semaphore;
 
 pub const DOC_READ_ALPN: &[u8] = b"/kukuri/docs-read/1";
 
 fn private_replica(replica: &str) -> bool {
-    replica.starts_with("bucket::v1::channel::") || replica.starts_with("channel::")
+    replica.starts_with("bucket::v1::channel::")
+        || replica.starts_with("channel::")
+        || replica.starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX)
 }
 
 /// 公開 topic の bucket(と旧形式)。保持している他の参加者の record も一覧で提供する(#1395)。
@@ -195,22 +196,23 @@ impl Request {
     }
 }
 
-/// 登録簿から replica の secret を引く(private bucket の secret は epoch の capability から導出する)。
-pub type PrivateSecretLookup =
-    fn(&ReplicaId, &HashMap<String, NamespaceSecret>) -> Option<NamespaceSecret>;
+/// 手元の private の capability から replica の secret を引く。登録・削除と引き方は docs-sync が持ち、相手への
+/// private の応答もこれで確かめる(参加中の channel の世代の秘密は store の行から引く。ADR 0061 §9)。
+#[async_trait::async_trait]
+pub trait PrivateSecretLookup: Send + Sync {
+    async fn private_secret(&self, replica: &ReplicaId) -> Option<NamespaceSecret>;
+}
 
-/// 手元で登録した private の capability。登録・削除と引き方は docs-sync が持ち、相手への private の応答もこれで確かめる。
 #[derive(Clone, Default)]
 pub(crate) struct PrivateCapabilities {
-    pub(crate) secrets: Arc<Mutex<HashMap<String, NamespaceSecret>>>,
-    pub(crate) lookup: Arc<OnceLock<PrivateSecretLookup>>,
+    pub(crate) lookup: Arc<OnceLock<Arc<dyn PrivateSecretLookup>>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct DocReadProtocol {
     sync: SyncHandle,
     blobs: BlobStore,
-    remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+    remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     capabilities: PrivateCapabilities,
     permits: Arc<Semaphore>,
 }
@@ -225,7 +227,7 @@ impl DocReadProtocol {
     pub(crate) fn new(
         sync: SyncHandle,
         blobs: BlobStore,
-        remote_cache: Arc<OnceLock<Arc<SqliteStore>>>,
+        remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
         capabilities: PrivateCapabilities,
     ) -> Self {
         Self {
@@ -286,14 +288,15 @@ impl DocReadProtocol {
         if private_replica(&request.replica) {
             // 保持分は要求の replica の文字列で引くので、証明は docs の namespace ではなく、要求の replica に登録した
             // capability で確かめる(#1459)。
-            let secrets = self.capabilities.secrets.lock().await;
-            let secret = self
+            let lookup = self
                 .capabilities
                 .lookup
                 .get()
-                .and_then(|lookup| lookup(&ReplicaId::new(request.replica.as_str()), &secrets))
                 .context("private replica capability is not registered")?;
-            drop(secrets);
+            let secret = lookup
+                .private_secret(&ReplicaId::new(request.replica.as_str()))
+                .await
+                .context("private replica capability is not registered")?;
             ensure!(
                 secret.id() == namespace,
                 "docs namespace is not the requested private replica"
@@ -343,10 +346,6 @@ impl DocReadProtocol {
                     )
                     .await?
                 } else {
-                    ensure!(
-                        topic_replica(&request.replica),
-                        "docs namespace is not held"
-                    );
                     Vec::new()
                 };
                 let mut reached_limit = stream.len() > limit;
@@ -365,10 +364,12 @@ impl DocReadProtocol {
                         docs_author: entry.author_bytes().to_string(),
                     });
                 }
-                if topic_replica(&request.replica)
-                    && let Some(cache) = self.remote_cache.get()
-                {
-                    // 手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせれば、和集合の先頭 `limit` 件が決まる。
+                // 保持分を合わせる。公開 topic の replica は保持分のすべて(#1395)、それ以外は自分の record だけ
+                // (ADR 0058 §7。namespace の無い Web の reload・native の restore の後も一覧から消えない)。
+                // 手元の先頭 `limit` 件と保持分の先頭 `limit` 件を合わせれば、和集合の先頭 `limit` 件が決まる。
+                let topic = topic_replica(&request.replica);
+                let mut held_any = false;
+                if let Some(cache) = self.remote_cache.get() {
                     let (held, more) = cache
                         .remote_record_keys(
                             &request.replica,
@@ -376,33 +377,32 @@ impl DocReadProtocol {
                             descending,
                             author.as_deref(),
                             limit,
+                            !topic,
                         )
                         .await?;
-                    reached_limit |= more;
-                    entries.extend(
-                        held.into_iter()
-                            .filter(|held| held.key.len() <= MAX_KEY_BYTES)
-                            .map(|held| DocReadKey {
-                                key: held.key,
-                                content_hash: held.content_hash,
-                                content_len: held.content_len,
-                                docs_author: held.author,
-                            }),
+                    held_any = !held.is_empty();
+                    let held = held
+                        .into_iter()
+                        .filter(|held| held.key.len() <= MAX_KEY_BYTES)
+                        .map(|held| DocReadKey {
+                            key: held.key,
+                            content_hash: held.content_hash,
+                            content_len: held.content_len,
+                            docs_author: held.author,
+                        });
+                    let truncated;
+                    (entries, truncated) = kukuri_store::merge_record_keys(
+                        entries,
+                        held,
+                        |entry| (entry.key.as_str(), entry.docs_author.as_str()),
+                        descending,
+                        limit,
                     );
-                    entries.sort_by(|left, right| {
-                        (&left.key, &left.docs_author).cmp(&(&right.key, &right.docs_author))
-                    });
-                    entries.dedup_by(|left, right| {
-                        left.key == right.key && left.docs_author == right.docs_author
-                    });
-                    if descending {
-                        entries.reverse();
-                    }
-                    if entries.len() > limit {
-                        entries.truncate(limit);
-                        reached_limit = true;
-                    }
+                    reached_limit |= more || truncated;
                 }
+                // 手元に無い namespace は、公開 topic の bucket か保持分があるときだけ答える。それ以外は読取りの失敗に
+                // して、呼出元が次の provider(書き手本人)へ進めるようにする。
+                ensure!(opened || topic || held_any, "docs namespace is not held");
                 DocReadResponse::Keys {
                     entries,
                     reached_limit,
@@ -412,7 +412,13 @@ impl DocReadProtocol {
                 let cached = match self.remote_cache.get() {
                     Some(cache) => {
                         cache
-                            .get_remote_records(&request.replica, &key, author.as_deref(), limit)
+                            .get_remote_records(
+                                &request.replica,
+                                &key,
+                                author.as_deref(),
+                                limit,
+                                false,
+                            )
                             .await?
                     }
                     None => Vec::new(),
@@ -443,13 +449,19 @@ impl DocReadProtocol {
                         entry.content_len() <= MAX_RECORD_BYTES as u64,
                         "docs record too large"
                     );
-                    let mut reader = self
-                        .blobs
-                        .blobs()
-                        .reader(entry.content_hash())
-                        .take((MAX_RECORD_BYTES + 1) as u64);
-                    let mut value = Vec::new();
-                    reader.read_to_end(&mut value).await?;
+                    let blobs = self.blobs.clone();
+                    let hash = entry.content_hash();
+                    let value = crate::confine_local(async move {
+                        let mut value = Vec::new();
+                        blobs
+                            .blobs()
+                            .reader(hash)
+                            .take((MAX_RECORD_BYTES + 1) as u64)
+                            .read_to_end(&mut value)
+                            .await
+                            .map(|_| value)
+                    })
+                    .await?;
                     ensure!(value.len() <= MAX_RECORD_BYTES, "docs record too large");
                     records.push(DocReadRecord {
                         key: String::from_utf8(entry.key().to_vec())?,
@@ -506,7 +518,14 @@ pub(crate) async fn fetch(
     peer: EndpointAddr,
     request: Request,
 ) -> Result<DocReadResponse> {
-    let connection = endpoint.connect(peer, DOC_READ_ALPN).await?;
+    // 答えの返らない handshake（途中で WebRTC の経路を失った接続など）を QUIC の idle 期限まで待たない。期限は blob の
+    // 取得と同じ（#1220 AC-3c2）。
+    let connection = timeout(
+        crate::remote_fetch::REMOTE_FETCH_CONNECT_TIMEOUT,
+        endpoint.connect(peer, DOC_READ_ALPN),
+    )
+    .await
+    .context("docs read connect timed out")??;
     let (mut send, mut recv) = connection.open_bi().await?;
     let bytes = serde_json::to_vec(&request)?;
     ensure!(

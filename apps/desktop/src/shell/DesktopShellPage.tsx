@@ -57,6 +57,7 @@ import {
   DesktopShellNotificationsSurface,
 } from '@/shell/page/DesktopShellAuxiliaryPanels';
 import { DesktopShellOverlays } from '@/shell/page/DesktopShellOverlays';
+import { loadMoreJoinedChannels } from '@/shell/data/joinedChannelPages';
 import { CommunityNodeOnboarding } from '@/shell/page/CommunityNodeOnboarding';
 import { DesktopShellColumnWorkspace } from '@/shell/page/DesktopShellColumnWorkspace';
 import { DesktopShellControlCenter } from '@/shell/page/DesktopShellControlCenter';
@@ -80,6 +81,7 @@ import {
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
 import { PostRecoveryProviders } from '@/components/core/PostRecoveryProviders';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 const CLIPBOARD_TOAST_TIMEOUT_MS = 2200;
 export function DesktopShellPage({
@@ -378,7 +380,7 @@ export function DesktopShellPage({
         });
         return;
       }
-      if ((reference.kind === 'live' || reference.kind === 'game') && !developerModeEnabled) {
+      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || IS_WEB_RUNTIME)) {
         // WIP機能が隠れている間は live/game リンクを topic timeline へ落とす。
         await syncTopicContext(reference.topic, reference.channelId);
         setSelectedLiveSessionId(null);
@@ -554,7 +556,7 @@ export function DesktopShellPage({
       handleOpenNotification={(notification) =>
         shellActions.handleOpenNotification(notification, column.id)
       }
-      onOpenNotificationSettings={() => handleOpenSettingsSection('notifications')}
+      onOpenNotificationSettings={IS_WEB_RUNTIME ? undefined : () => handleOpenSettingsSection('notifications')}
       onNavigatePage={navigateNotificationPage}
     />
   );
@@ -935,6 +937,7 @@ export function DesktopShellPage({
         clipboardToastId={clipboardToastId}
         onRequestPrivateIndexing={setIndexingTarget}
         onOpenChannelSettings={channelEntries.openChannelSettingsDialog}
+        onLoadMoreJoinedChannels={(topic) => loadMoreJoinedChannels(api, storeApi, topic)}
       />
       <CommunityNodeOnboarding api={api} onAccept={shellActions.handleAcceptCommunityNodeConsents}
         onOpenSettings={handleOpenCommunityNodeSettings} onRetry={retryCommunityNode} />

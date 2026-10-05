@@ -15,7 +15,6 @@ pub(crate) struct ScenarioRuntime {
     pub(crate) docs_sync: Arc<MemoryDocsSync>,
     pub(crate) blob_service: Arc<MemoryBlobService>,
     pub(crate) keys: KukuriKeys,
-    pub(crate) private_channel_capabilities: Arc<StdMutex<Vec<PrivateChannelCapability>>>,
 }
 
 impl ScenarioRuntime {
@@ -37,22 +36,8 @@ impl ScenarioRuntime {
             self.blob_service.clone(),
             self.keys.clone(),
         ));
-        let capabilities = self
-            .private_channel_capabilities
-            .lock()
-            .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"))?
-            .clone();
-        for capability in capabilities {
-            app.restore_private_channel_capability(capability).await?;
-        }
-        let persisted_capabilities = self.private_channel_capabilities.clone();
-        app.set_private_channel_capability_persist(Arc::new(move |capabilities| {
-            *persisted_capabilities
-                .lock()
-                .map_err(|_| anyhow::anyhow!("private channel capability lock is poisoned"))? =
-                capabilities.to_vec();
-            Ok(())
-        }));
+        // 再起動では同じ store の参加の行から戻す(ADR 0061 §9)。
+        app.restore_joined_private_channels().await?;
         self.app = Some(app);
         Ok(())
     }
@@ -92,20 +77,29 @@ pub(crate) struct CommunityNodeStack {
     pub(crate) external: bool,
     pub(crate) database: Option<TestDatabase>,
     pub(crate) user_api_task: Option<tokio::task::JoinHandle<()>>,
-    pub(crate) _iroh_relay: Option<SpawnedIrohRelay>,
+    pub(crate) iroh_relay: Option<SpawnedIrohRelay>,
     pub(crate) base_url: String,
     pub(crate) expected_connectivity_urls: Option<Vec<String>>,
 }
 
 impl CommunityNodeStack {
     pub(crate) async fn spawn(prefix: &str) -> Result<Self> {
+        Self::spawn_with(prefix, "127.0.0.1:0", &[]).await
+    }
+
+    /// user-api を `user_api_bind` で起動し、`cors_origins` の Web クライアントに CORS で応答する（Web の試験。#1220）。
+    pub(crate) async fn spawn_with(
+        prefix: &str,
+        user_api_bind: &str,
+        cors_origins: &[String],
+    ) -> Result<Self> {
         if let Some(base_url) = external_community_node_base_url() {
             let expected_connectivity_urls = external_community_node_connectivity_urls();
             return Ok(Self {
                 external: true,
                 database: None,
                 user_api_task: None,
-                _iroh_relay: None,
+                iroh_relay: None,
                 base_url,
                 expected_connectivity_urls,
             });
@@ -123,7 +117,7 @@ impl CommunityNodeStack {
         .await?;
         let iroh_relay_url = format!("http://{}", iroh_relay.http_addr());
 
-        let user_api_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let user_api_listener = tokio::net::TcpListener::bind(user_api_bind)
             .await
             .context("failed to bind community-node user-api listener")?;
         let user_api_addr = user_api_listener.local_addr()?;
@@ -145,7 +139,8 @@ impl CommunityNodeStack {
             bind_addr: user_api_addr,
             database_url: database.database_url.clone(),
             rendezvous_redis_url: community_node_rendezvous_redis_url(),
-            rendezvous_key_prefix: format!("cn:harness:{prefix}"),
+            // stack ごとの DB 名を使い、同じ valkey の他の stack（並行する試験）と topic の在席情報を共有しない（#1559）。
+            rendezvous_key_prefix: format!("cn:harness:{}", database.database_name),
             base_url: base_url.clone(),
             public_base_url: base_url.clone(),
             connectivity_urls: vec![iroh_relay_url.clone()],
@@ -162,11 +157,11 @@ impl CommunityNodeStack {
         })
         .await
         .context("failed to build community-node user-api state")?;
+        let app = kukuri_cn_user_api::with_cors(user_api_app_router(user_api_state), cors_origins)?;
         let user_api_task = tokio::spawn(async move {
             axum::serve(
                 user_api_listener,
-                user_api_app_router(user_api_state)
-                    .into_make_service_with_connect_info::<SocketAddr>(),
+                app.into_make_service_with_connect_info::<SocketAddr>(),
             )
             .await
             .expect("community-node user-api server");
@@ -176,7 +171,7 @@ impl CommunityNodeStack {
             external: false,
             database: Some(database),
             user_api_task: Some(user_api_task),
-            _iroh_relay: Some(iroh_relay),
+            iroh_relay: Some(iroh_relay),
             base_url,
             expected_connectivity_urls: Some(vec![iroh_relay_url]),
         })
@@ -301,21 +296,6 @@ pub(crate) fn cleanup_runtime_artifacts(db_path: &Path) -> Result<()> {
                 }
             }
         }
-    }
-    Ok(())
-}
-
-pub(crate) fn remove_sqlite_runtime_db(db_path: &Path) -> Result<()> {
-    for path in [
-        db_path.to_path_buf(),
-        db_path.with_extension("db-shm"),
-        db_path.with_extension("db-wal"),
-    ] {
-        if !path.exists() {
-            continue;
-        }
-        std::fs::remove_file(&path)
-            .with_context(|| format!("failed to remove sqlite artifact {}", path.display()))?;
     }
     Ok(())
 }

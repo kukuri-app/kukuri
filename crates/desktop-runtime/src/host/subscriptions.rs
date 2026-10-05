@@ -2,8 +2,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::identity::write_private_file_atomically;
-
 const DESIRED_SUBSCRIPTIONS_VERSION: u32 = 1;
 const DESIRED_SUBSCRIPTIONS_EXTENSION: &str = "subscriptions.json";
 
@@ -116,17 +114,17 @@ pub fn desired_subscriptions_path(db_path: &Path) -> PathBuf {
     db_path.with_extension(DESIRED_SUBSCRIPTIONS_EXTENSION)
 }
 
-pub(crate) fn load_desired_subscriptions(
+pub(crate) async fn load_desired_subscriptions(
     db_path: &Path,
 ) -> Result<Vec<DesiredSubscription>, SubscriptionStateError> {
     let path = desired_subscriptions_path(db_path);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+    let bytes = match crate::storage::read_file(&path).await {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Ok(Vec::new()),
         Err(error) => {
             return Err(SubscriptionStateError::new(
                 SubscriptionStateErrorKind::ReadFailed,
-                format!("failed to read `{}`: {error}", path.display()),
+                format!("failed to read `{}`: {error:#}", path.display()),
             ));
         }
     };
@@ -157,7 +155,7 @@ pub(crate) fn load_desired_subscriptions(
     Ok(store.subscriptions)
 }
 
-pub(crate) fn save_desired_subscriptions(
+pub(crate) async fn save_desired_subscriptions(
     db_path: &Path,
     subscriptions: &[DesiredSubscription],
 ) -> Result<(), SubscriptionStateError> {
@@ -178,12 +176,14 @@ pub(crate) fn save_desired_subscriptions(
         )
     })?;
     let path = desired_subscriptions_path(db_path);
-    write_private_file_atomically(&path, &bytes).map_err(|error| {
-        SubscriptionStateError::new(
-            SubscriptionStateErrorKind::PersistFailed,
-            format!("failed to persist `{}`: {error:#}", path.display()),
-        )
-    })
+    crate::storage::write_file(&path, &bytes)
+        .await
+        .map_err(|error| {
+            SubscriptionStateError::new(
+                SubscriptionStateErrorKind::PersistFailed,
+                format!("failed to persist `{}`: {error:#}", path.display()),
+            )
+        })
 }
 
 fn validate_identifier(label: &str, value: &str) -> Result<(), SubscriptionStateError> {
@@ -208,14 +208,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn subscription_state_round_trips_in_canonical_order() {
+    #[tokio::test]
+    async fn subscription_state_round_trips_in_canonical_order() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("kukuri.db");
         save_desired_subscriptions(&db_path, &[public("z"), public("a"), public("z")])
+            .await
             .expect("save");
         assert_eq!(
-            load_desired_subscriptions(&db_path).expect("load"),
+            load_desired_subscriptions(&db_path).await.expect("load"),
             vec![public("a"), public("z")]
         );
         #[cfg(unix)]
@@ -232,14 +233,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn malformed_and_unknown_version_state_fail_closed() {
+    #[tokio::test]
+    async fn malformed_and_unknown_version_state_fail_closed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("kukuri.db");
         let path = desired_subscriptions_path(&db_path);
         std::fs::write(&path, b"not-json").expect("fixture");
         assert_eq!(
             load_desired_subscriptions(&db_path)
+                .await
                 .expect_err("malformed")
                 .kind,
             SubscriptionStateErrorKind::DecodeFailed
@@ -247,6 +249,7 @@ mod tests {
         std::fs::write(&path, br#"{"version":2,"subscriptions":[]}"#).expect("fixture");
         assert_eq!(
             load_desired_subscriptions(&db_path)
+                .await
                 .expect_err("unknown version")
                 .kind,
             SubscriptionStateErrorKind::UnsupportedVersion

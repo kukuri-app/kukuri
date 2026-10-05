@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use bech32::{Bech32, Hrp};
@@ -49,6 +49,11 @@ impl KukuriKeys {
 
     pub fn export_secret_hex(&self) -> String {
         hex::encode(self.secret_key.to_secret_bytes())
+    }
+
+    /// 導出の入力に使う秘密鍵の bytes。crate の外へ出さない。
+    pub(crate) fn secret_bytes(&self) -> [u8; 32] {
+        self.secret_key.to_secret_bytes()
     }
 
     pub fn sign_schnorr(&self, message: &[u8]) -> Signature {

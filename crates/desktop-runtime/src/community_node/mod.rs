@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -67,6 +66,8 @@ pub use content_advisory_lookup_support::{
     CommunityNodeContentAdvisoryLookupResult, CommunityNodeContentAdvisoryNodeResult,
 };
 pub use dome_hosting_support::DomeHostingRequestError;
+#[cfg(target_family = "wasm")]
+pub use http_client_support::post_report;
 pub(crate) use http_client_support::*;
 pub(crate) use index_query_support::{CONTENT_ADVISORY_SYNTHESIS_DEFAULT, IndexOperation};
 pub use index_query_support::{CommunityNodeIndexQueryError, CommunityNodeIndexQueryRequest};
@@ -100,7 +101,10 @@ pub use trust_gate_support::{
     AuthorTrustGate, AuthorTrustGateRequest, AuthorTrustGateResult,
     SetAuthorTrustDisplayExceptionRequest,
 };
-pub(crate) use trust_gate_support::{CachedAuthorTrustEvaluation, normalize_trust_node_priority};
+pub(crate) use trust_gate_support::{
+    CachedAuthorTrustEvaluation, import_legacy_trust_display, normalize_trust_node_priority,
+};
+#[cfg(not(target_family = "wasm"))]
 pub(crate) use trust_observation_support::import_legacy_trust_observation_state;
 #[cfg(test)]
 pub(crate) use trust_observation_support::load_trust_observation_pending_count;

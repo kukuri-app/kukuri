@@ -2,8 +2,8 @@
 //! A peer address is only a candidate until its live signed binding is checked.
 
 use super::*;
+use n0_future::time::Instant;
 use std::ops::Bound::{Excluded, Unbounded};
-use tokio::time::Instant;
 
 use crate::receive_binding::fetch_receive_endpoint_binding;
 use kukuri_core::receive_route_for_account;

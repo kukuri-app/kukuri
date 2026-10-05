@@ -105,14 +105,43 @@ pub struct MemoryStore {
     post_withdrawal_rows: Arc<RwLock<HashMap<EnvelopeId, PostWithdrawalRow>>>,
     withdrawal_write_rows: Arc<RwLock<Vec<WithdrawalWriteRow>>>,
     private_channel_participants: Arc<RwLock<MemoryPrivateChannelParticipants>>,
+    account_sync: Arc<RwLock<MemoryAccountSync>>,
+    private_channel_keys: Arc<RwLock<MemoryPrivateChannelKeys>>,
+    /// private channel の参加と鍵の行を読み書きした数(試験が、操作ごとに対象の行だけを触ることを確かめる)。
+    private_channel_key_rows_touched: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+impl MemoryStore {
+    pub fn private_channel_key_rows_touched(&self) -> usize {
+        self.private_channel_key_rows_touched
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[derive(Default)]
+struct MemoryPrivateChannelKeys {
+    channels: BTreeMap<String, crate::PrivateChannelRow>,
+    epochs: BTreeMap<(String, String), crate::PrivateChannelEpochRow>,
+    /// replica へ未書込みの世代の鍵の行。
+    unwritten: BTreeSet<(String, String)>,
+}
+
+#[derive(Default)]
+struct MemoryAccountSync {
+    rows: BTreeMap<String, crate::AccountSyncRow>,
+    /// replica へ未書込みの行の key。
+    unwritten: BTreeSet<String>,
+    cursors: BTreeMap<String, crate::AccountSyncCursor>,
+}
+
+mod account_sync;
 mod bookmarks;
 mod direct_messages;
 mod envelopes;
 mod live_game;
 mod notifications;
 mod observations;
+mod private_channel_keys;
 mod projections;
 mod social;
 mod withdrawals;
@@ -174,6 +203,19 @@ impl Store for MemoryStore {
             .await
     }
 
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>> {
+        Ok(self
+            .follow_edges
+            .read()
+            .await
+            .get(&(subject_pubkey.to_string(), target_pubkey.to_string()))
+            .cloned())
+    }
+
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()> {
         self.store_upsert_block_edge_impl(edge).await
     }
@@ -196,4 +238,56 @@ impl Store for MemoryStore {
         self.store_get_block_edge_impl(subject_pubkey, target_pubkey)
             .await
     }
+
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        let edges = self.follow_edges.read().await;
+        Ok(edges_after(
+            edges.values(),
+            subject_pubkey,
+            after,
+            limit,
+            |edge| (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()),
+        ))
+    }
+
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>> {
+        let edges = self.block_edges.read().await;
+        Ok(edges_after(
+            edges.values(),
+            subject_pubkey,
+            after,
+            limit,
+            |edge| (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()),
+        ))
+    }
+}
+
+/// `subject` の edge を、相手の順に `after` より後から `limit` 件(試験用の store なので、全件から選ぶ)。
+fn edges_after<'a, T: Clone + 'a>(
+    edges: impl Iterator<Item = &'a T>,
+    subject: &str,
+    after: Option<&str>,
+    limit: usize,
+    ends: impl Fn(&T) -> (&str, &str),
+) -> Vec<T> {
+    let mut selected = edges
+        .filter(|edge| {
+            let (edge_subject, target) = ends(edge);
+            edge_subject == subject && after.is_none_or(|after| target > after)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| ends(left).1.cmp(ends(right).1));
+    selected.truncate(limit);
+    selected
 }

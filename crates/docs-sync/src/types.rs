@@ -170,6 +170,14 @@ pub trait DocsSync: Send + Sync {
     async fn remove_private_replica_secret(&self, _replica_id: &ReplicaId) -> Result<()> {
         Ok(())
     }
+    /// 参加中の private channel の世代の秘密の参照を入れる(ADR 0061 §9)。登録簿に無い世代の replica は、
+    /// 開くときと相手に応えるときにこれで引く。
+    async fn install_private_epoch_secrets(
+        &self,
+        _source: Arc<dyn crate::PrivateEpochSecrets>,
+    ) -> Result<()> {
+        Ok(())
+    }
     async fn apply_doc_op(&self, replica_id: &ReplicaId, op: DocOp) -> Result<()>;
     async fn query_replica_with_policy(
         &self,

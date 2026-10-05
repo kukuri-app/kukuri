@@ -61,6 +61,17 @@ fn registrations(source: &str) -> Vec<String> {
     visitor.registrations
 }
 
+/// GUI の入口: Tauri の handler の登録と、desktop-runtime の dispatch 表（W1 AC-5。名前だけで表す）。
+fn gui_commands() -> Vec<String> {
+    let mut commands = registrations(TAURI_SOURCE);
+    commands.extend(
+        kukuri_desktop_runtime::dispatched_commands()
+            .into_iter()
+            .map(String::from),
+    );
+    commands
+}
+
 fn manifest() -> Manifest {
     serde_json::from_str(MANIFEST).expect("対応表のJSON")
 }
@@ -120,8 +131,8 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
             tauri,
             "commands::device_backup::get_pending_device_restore_frontend_state"
                 | "commands::device_backup::acknowledge_pending_device_restore_frontend_state"
-                | "commands::identity::get_profile_setup_required"
-                | "commands::identity::save_initial_profile"
+                | "get_profile_setup_required"
+                | "save_initial_profile"
         ),
         // #978: GUI process内のin-memory診断(開発者モードのミラーとログ閲覧)。
         "gui_diagnostics" => matches!(
@@ -133,15 +144,22 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         "gui_content_preview" => matches!(
             tauri,
             "commands::link_preview::fetch_link_preview"
+                | "read_link_preview_record"
                 | "commands::posts::get_blob_media_file"
                 | "commands::posts::release_blob_media_file"
         ),
         // #1284: 表示中の投稿cardだけに作用する局所的な欠損blobの回復。
-        "gui_content_recovery" => tauri == "commands::posts::retry_post_elements",
+        "gui_content_recovery" => tauri == "retry_post_elements",
         // #1221 R2-C: GUIの表示中の要素・列だけを対象にする照会と購読の需要。
-        "gui_visible_membership" => matches!(
+        "gui_visible_membership" => matches!(tauri, "bookmarked_post_ids" | "set_scope_display"),
+        // #1211: QR・確認コードを両端末の画面で比べる移行の接続。
+        "gui_device_pairing" => matches!(
             tauri,
-            "commands::posts::bookmarked_post_ids" | "commands::community_node::set_scope_display"
+            "create_account_transfer_invite"
+                | "open_account_transfer"
+                | "get_account_transfer_status"
+                | "decide_account_transfer"
+                | "cancel_account_transfer"
         ),
         _ => false,
     }
@@ -187,8 +205,8 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 174);
-    check_inventory(&registrations(TAURI_SOURCE), &manifest.entries).expect("全入口の分類");
+    assert_eq!(manifest.entries.len(), 181);
+    check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 
 #[test]
@@ -206,7 +224,7 @@ fn mapped_commands_and_runtime_registry_match() {
 #[test]
 fn detects_added_removed_and_duplicate_gui_commands() {
     let entries = manifest().entries;
-    let original = registrations(TAURI_SOURCE);
+    let original = gui_commands();
     let mut added = original.clone();
     added.push("commands::fixture::new_operation".into());
     assert!(check_inventory(&added, &entries).is_err());
@@ -245,13 +263,13 @@ fn detects_missing_cli_command_and_invalid_exclusions() {
         .find(|entry| entry.excluded.is_some())
         .expect("除外行");
     excluded.reason = Some(" ".into());
-    assert!(check_inventory(&registrations(TAURI_SOURCE), &entries).is_err());
+    assert!(check_inventory(&gui_commands(), &entries).is_err());
     let mut entries = manifest().entries;
     entries[0].cli = None;
     entries[0].inventory = None;
     entries[0].excluded = Some("os".into());
     entries[0].reason = Some("未実装をOS固有として除外してはいけない".into());
-    assert!(check_inventory(&registrations(TAURI_SOURCE), &entries).is_err());
+    assert!(check_inventory(&gui_commands(), &entries).is_err());
 }
 
 #[test]

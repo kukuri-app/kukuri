@@ -18,6 +18,7 @@ export type PrivateChannelPendingAction =
   | 'join'
   | 'leave'
   | 'share'
+  | 'take'
   | null;
 
 export type InviteOutputLabel = 'invite' | 'grant' | 'share';

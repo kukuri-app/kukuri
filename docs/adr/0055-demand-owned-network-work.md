@@ -83,8 +83,14 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   blobを§4の`EpochControl`のofferで届ける。DMと同じoutbox（`dm_outbox`。`dm_id`は`epoch-control:<epochの識別子>`）
   に積み、DMのaccount再送ownerがACK（`DirectMessageAck`）まで送り直す。制御recordの宛先はmutualを求めない。
   ownerは届いたrecordを参加者の表（channel・epoch・pubkeyが主キー、退出時刻と更新時刻。退出はchannelの全epochに及ぶ）
-  へ置き、rotationの宛先（いずれかのepochで参加中のpubkey）と参加者数（現epoch）をpubkeyの順に128件ずつ読む。
-  参加者数はownerの端末だけが返す（owner以外は`None`で表示しない）。更新前からの参加者の移し方はADR 0054 §6。
+  へ置き、rotationの宛先（いずれかのepochで参加中のpubkey）をpubkeyの順に128件ずつ読む。現epochの参加者数と
+  資格喪失（channelのownerとmutualでない。#1219 AC-2）の数は、表の行とfollowのedgeの書込みで(channel, epoch)ごとに
+  保つ1行を読む（参加者の数に比例して数えない）。参加者数はownerの端末だけが返す（owner以外は`None`で表示しない）。更新前からの参加者の移し方はADR 0054 §6。
+  recordを受けるのはownerの端末のうち1台なので、受けた端末は表を変えた参加者のrecordと、自分と参加者の間のfollowの
+  edgeを、本人の端末へ同期する（ADR 0061 §2。#1219 AC-5）。鍵の配布を行う端末（ADR 0018 §8の担当）は、同期した
+  recordも自分で受けたrecordと同じに表へ入れて使う。この版より前に各端末の表にあった行は送り直さない。
+  ownerの端末のgrantは宛先のmutualを求めないが、送るたびに宛先の資格（参加中、相互フォロー限定なら相互フォロー）を
+  確かめ、失っていれば送らずに消す（ADR 0018 §8）。
   参加者は届いたgrantを手元の旧epochのreplicaへ置き、redeemは手元のgrantだけを読む（旧syncによるFrozenの
   policyの受取りに依らない）。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。

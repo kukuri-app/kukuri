@@ -125,8 +125,12 @@ async fn restart_restores_seeded_dht_config_and_endpoint_identity() {
     drop(runtime_a);
     drop(runtime_b);
 
-    let restored_a = resolve_discovery_config_from_env(&db_a).expect("restored discovery config a");
-    let restored_b = resolve_discovery_config_from_env(&db_b).expect("restored discovery config b");
+    let restored_a = resolve_discovery_config_from_env(&db_a)
+        .await
+        .expect("restored discovery config a");
+    let restored_b = resolve_discovery_config_from_env(&db_b)
+        .await
+        .expect("restored discovery config b");
     let restarted_a = new_seeded_dht_runtime_with_config(&db_a, &testnet, restored_a.clone()).await;
     let restarted_b = new_seeded_dht_runtime_with_config(&db_b, &testnet, restored_b.clone()).await;
     let restarted_endpoint_a = restarted_a

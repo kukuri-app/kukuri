@@ -580,7 +580,11 @@
     "cancel": "Cancel",
     "yes": "Yes",
     "pending": "Working…",
-    "create": "Create a new account"
+    "create": "Create a new account",
+    "transferHeading": "Move between devices",
+    "transferOut": "Move to another device",
+    "transferIn": "Move from another device",
+    "back": "Back"
   },
   "initialProfile": {
     "title": "Set up your profile",
@@ -588,7 +592,11 @@
     "save": "Save",
     "later": "Later",
     "nodeUnavailable": "The community node status is unavailable. Retry or skip to continue setting up your profile.",
-    "skipNode": "Skip and continue"
+    "skipNode": "Skip and continue",
+    "restore": {
+      "description": "You can bring back an account you used before by importing an exported account key or by moving it from another device (not all history, such as posts, comes back).",
+      "action": "Restore a previous account"
+    }
   },
   "scopeLimit": {
     "title": "Limit reached",

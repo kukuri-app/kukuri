@@ -346,9 +346,10 @@ async fn dome_moves_from_a_public_topic_into_a_private_channel_context() {
         .await
         .expect("rotate channel with entry Dome");
     let rotated = app
-        .list_joined_private_channels(topic)
+        .list_joined_private_channels(topic, None)
         .await
         .expect("list rotated channel")
+        .items
         .into_iter()
         .find(|candidate| candidate.channel_id == channel.channel_id)
         .expect("rotated channel view");

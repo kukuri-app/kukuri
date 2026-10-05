@@ -13,12 +13,8 @@ impl AddressLookup for RelayFallbackLookup {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<
-        futures_util::stream::BoxStream<
-            'static,
-            Result<AddressLookupItem, iroh::address_lookup::Error>,
-        >,
-    > {
+    ) -> Option<n0_future::boxed::BoxStream<Result<AddressLookupItem, iroh::address_lookup::Error>>>
+    {
         let relay_urls = self
             .relay_urls
             .read()
@@ -74,6 +70,10 @@ pub fn build_endpoint_builder(
         builder = builder.transport_config(transport_config);
     }
     builder = builder.address_lookup(RelayFallbackLookup::new(relay_urls));
+    // DHT は UDP を使うので native だけ（ADR 0056 §3）。
+    #[cfg(target_family = "wasm")]
+    let _ = dht_options;
+    #[cfg(not(target_family = "wasm"))]
     if let Some(dht_options) = dht_options.filter(|options| options.enabled) {
         let mut dht_builder = DhtAddressLookup::builder().addr_filter(AddrFilter::unfiltered());
         if let Some(builder_override) = dht_options.resolved_dht_builder() {

@@ -1,9 +1,12 @@
 mod accounts;
 #[cfg(test)]
 mod accounts_tests;
+mod command_gate;
 mod consent;
 mod consent_acceptance;
+#[cfg(not(target_family = "wasm"))]
 mod profile;
+#[cfg(not(target_family = "wasm"))]
 mod restore_lifecycle;
 mod subscriptions;
 
@@ -15,13 +18,20 @@ use std::{
     },
 };
 
-use tokio::{sync::broadcast, task::JoinHandle};
+use n0_future::task::JoinHandle;
+use tokio::sync::{broadcast, watch};
 
+#[cfg(not(target_family = "wasm"))]
+use crate::StoreStartupError;
 use crate::{
-    AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, StoreStartupError,
-    account_db_path, ensure_accounts_initialized_from_env, list_accounts, set_active_account,
+    AccountRecord, CommunityNodeConfig, DesktopRuntime, RuntimeEvent, account_db_path,
+    ensure_accounts_initialized_from_env, list_accounts, set_active_account,
 };
 
+pub use command_gate::{
+    NON_READY_COMMAND_ALLOWLIST, admit_command, require_runtime_operation_ready,
+    runtime_access_allowed,
+};
 pub use consent::{
     AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
     APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AgeAttestationStatus, AppConsentDocumentRecord,
@@ -35,16 +45,19 @@ pub use consent_acceptance::{
     AcceptedAppConsentDocument, AppConsentStatus, app_consent_status, record_app_consents,
     require_consent_acceptance_state, validate_app_consent_documents,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use profile::{
     ClientProfile, ClientProfileKind, ProfileError, ProfileErrorKind, ProfileLease, gui_profile,
     resolve_cli_profile,
 };
+#[cfg(not(target_family = "wasm"))]
 pub use restore_lifecycle::{
     ClientOperationState, RestoreActivationFailure, RestoreActivationOrchestrationFailure,
     RestoreStartupAction, advance_committed_restore_to_consent, orchestrate_restore_activation,
     persist_restore_activation_phase, recover_device_restore_before_startup,
-    require_runtime_operation_ready, restore_startup_action, runtime_access_allowed,
+    restore_startup_action,
 };
+#[cfg(not(target_family = "wasm"))]
 pub(crate) use subscriptions::load_desired_subscriptions;
 #[cfg(test)]
 pub(crate) use subscriptions::save_desired_subscriptions;
@@ -68,17 +81,21 @@ impl ClientStartupError {
     }
 
     pub fn from_error(error: anyhow::Error) -> Self {
+        #[cfg(not(target_family = "wasm"))]
         let kind = match error.downcast_ref::<StoreStartupError>() {
             Some(StoreStartupError::Migration(_)) => ClientStartupErrorKind::DatabaseMigration,
             Some(StoreStartupError::Open { .. }) => ClientStartupErrorKind::DatabaseOpen,
             None => ClientStartupErrorKind::Unknown,
         };
+        #[cfg(target_family = "wasm")]
+        let kind = ClientStartupErrorKind::Unknown;
         Self {
             kind,
             message: format!("{error:#}"),
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub fn from_profile_error(error: ProfileError) -> Self {
         let kind = match error.kind {
             ProfileErrorKind::ProfileInUse => ClientStartupErrorKind::ProfileInUse,
@@ -145,13 +162,35 @@ impl ClientStartupState {
     }
 }
 
+/// account の runtime を組み立てる platform の手順（native は SQLite と永続の node、Web は IndexedDB とメモリの
+/// node。ADR 0056 §2）。アカウントの作成・切替・logout・作り直しが使う。
+#[async_trait::async_trait]
+pub trait RuntimeBuilder: Send + Sync {
+    async fn build(&self, db_path: &Path) -> Result<Arc<DesktopRuntime>, ClientStartupError>;
+}
+
+/// native の手順（`build_detached_runtime`）。
+#[cfg(not(target_family = "wasm"))]
+pub struct NativeRuntimeBuilder;
+
+#[cfg(not(target_family = "wasm"))]
+#[async_trait::async_trait]
+impl RuntimeBuilder for NativeRuntimeBuilder {
+    async fn build(&self, db_path: &Path) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
+        ClientHost::build_detached_runtime(db_path).await
+    }
+}
+
 /// UI adapterに依存せず、一つのactive account runtimeとevent転送を所有する。
+/// runtime の世代は起動で 1、runtime の差し替え（切替・restore・restart）と停止のたびに進む（#1214 AC-3）。
 pub struct ClientHost {
     runtime: RwLock<Arc<DesktopRuntime>>,
     app_data_dir: PathBuf,
-    events: broadcast::Sender<RuntimeEvent>,
+    builder: Arc<dyn RuntimeBuilder>,
+    events: broadcast::Sender<(u64, RuntimeEvent)>,
+    generation: watch::Sender<u64>,
     event_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-    operation_guard: tokio::sync::Mutex<()>,
+    pub(crate) operation_guard: tokio::sync::Mutex<()>,
     shutdown_guard: tokio::sync::Mutex<()>,
     shutdown_started: AtomicBool,
 }
@@ -162,34 +201,84 @@ pub enum ClientHostStart {
 }
 
 /// 購読した後の event を受け取る。通信状態は差分の event なので再送しない。購読した側は、状態を読み直してから
-/// 差分を適用する(#1221 R2-D)。
-pub type ClientEventReceiver = broadcast::Receiver<RuntimeEvent>;
+/// 差分を適用する(#1221 R2-D)。差し替え・停止の前の世代の event は返さない（#1214 AC-3）。
+pub struct ClientEventReceiver {
+    events: broadcast::Receiver<(u64, RuntimeEvent)>,
+    generation: watch::Receiver<u64>,
+    /// 取りこぼしの後に続けて返す読み直しの event。
+    pending: Option<RuntimeEvent>,
+}
+
+impl ClientEventReceiver {
+    pub async fn recv(&mut self) -> Result<RuntimeEvent, broadcast::error::RecvError> {
+        loop {
+            let (generation, event) = self.events.recv().await?;
+            if generation == *self.generation.borrow() {
+                return Ok(event);
+            }
+        }
+    }
+
+    /// 次の event。取りこぼしたら、画面に読み直しを促す event（`AdultMediaLabelEvicted { hash: None }` と
+    /// `AuthorRelationshipChanged { pubkey: None }`）を続けて返す。host が止まったら `None`。
+    pub async fn next(&mut self) -> Option<RuntimeEvent> {
+        if let Some(event) = self.pending.take() {
+            return Some(event);
+        }
+        match self.recv().await {
+            Ok(event) => Some(event),
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                self.pending = Some(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
+                Some(RuntimeEvent::AdultMediaLabelEvicted { hash: None })
+            }
+            Err(broadcast::error::RecvError::Closed) => None,
+        }
+    }
+}
 
 impl ClientHost {
+    #[cfg(not(target_family = "wasm"))]
     pub async fn start_if_consented(
         app_data_dir: PathBuf,
     ) -> Result<ClientHostStart, ClientStartupError> {
-        let consent = load_app_consent_store(&app_data_dir.join(crate::paths::DB_FILE_NAME));
+        Self::start_if_consented_with(app_data_dir, Arc::new(NativeRuntimeBuilder)).await
+    }
+
+    /// アプリの同意があれば、アクティブなアカウント（無ければ作る）の runtime を `builder` で組み立てて始める。
+    pub async fn start_if_consented_with(
+        app_data_dir: PathBuf,
+        builder: Arc<dyn RuntimeBuilder>,
+    ) -> Result<ClientHostStart, ClientStartupError> {
+        let consent = load_app_consent_store(&app_data_dir.join(crate::paths::DB_FILE_NAME)).await;
         if !app_consent_satisfied(&consent) {
             return Ok(ClientHostStart::ConsentRequired(consent_required_status(
                 &consent,
             )));
         }
-        Self::start(app_data_dir).await.map(ClientHostStart::Ready)
-    }
-
-    async fn start(app_data_dir: PathBuf) -> Result<Arc<Self>, ClientStartupError> {
         let db_path = ensure_accounts_initialized_from_env(&app_data_dir)
+            .await
             .map_err(ClientStartupError::from_error)?;
-        let runtime = Self::build_detached_runtime(db_path).await?;
-        Self::from_runtime(app_data_dir, runtime).await
+        let runtime = builder.build(&db_path).await?;
+        Self::from_runtime_with_builder(app_data_dir, runtime, builder)
+            .await
+            .map(ClientHostStart::Ready)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn from_runtime(
         app_data_dir: PathBuf,
         runtime: Arc<DesktopRuntime>,
     ) -> Result<Arc<Self>, ClientStartupError> {
-        let desired = match subscriptions::load_desired_subscriptions(runtime.db_path()) {
+        Self::from_runtime_with_builder(app_data_dir, runtime, Arc::new(NativeRuntimeBuilder)).await
+    }
+
+    /// 組み立てた runtime から host を始める。`builder` は、アカウントの作成・切替・logout で次の runtime を作る。
+    pub async fn from_runtime_with_builder(
+        app_data_dir: PathBuf,
+        runtime: Arc<DesktopRuntime>,
+        builder: Arc<dyn RuntimeBuilder>,
+    ) -> Result<Arc<Self>, ClientStartupError> {
+        let desired = match subscriptions::load_desired_subscriptions(runtime.db_path()).await {
             Ok(desired) => desired,
             Err(error) => {
                 runtime.shutdown().await;
@@ -200,7 +289,9 @@ impl ClientHost {
         let host = Arc::new(Self {
             runtime: RwLock::new(runtime.clone()),
             app_data_dir,
+            builder,
             events,
+            generation: watch::channel(1).0,
             event_task: tokio::sync::Mutex::new(None),
             operation_guard: tokio::sync::Mutex::new(()),
             shutdown_guard: tokio::sync::Mutex::new(()),
@@ -213,12 +304,14 @@ impl ClientHost {
             return Err(ClientStartupError::from_subscription_error(error));
         }
         host.runtime().start_sync_status_observer().await;
+        #[cfg(not(target_family = "wasm"))]
         host.runtime().start_legacy_store_retirement().await;
         Ok(host)
     }
 
     /// runtimeを構築するが、schedulerとobserverはまだ開始しない。
     /// `from_runtime`または`replace_runtime`へ渡してhostのevent購読後に有効化する。
+    #[cfg(not(target_family = "wasm"))]
     pub async fn build_detached_runtime(
         db_path: impl AsRef<Path>,
     ) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
@@ -239,7 +332,16 @@ impl ClientHost {
     }
 
     pub fn subscribe_events(&self) -> ClientEventReceiver {
-        self.events.subscribe()
+        ClientEventReceiver {
+            events: self.events.subscribe(),
+            generation: self.generation.subscribe(),
+            pending: None,
+        }
+    }
+
+    /// 今の runtime の世代。
+    pub fn generation(&self) -> u64 {
+        *self.generation.borrow()
     }
 
     pub async fn replace_runtime(
@@ -259,7 +361,7 @@ impl ClientHost {
         &self,
         next: Arc<DesktopRuntime>,
     ) -> Result<Arc<DesktopRuntime>, ClientStartupError> {
-        let desired = match subscriptions::load_desired_subscriptions(next.db_path()) {
+        let desired = match subscriptions::load_desired_subscriptions(next.db_path()).await {
             Ok(desired) => desired,
             Err(error) => {
                 next.shutdown().await;
@@ -271,17 +373,20 @@ impl ClientHost {
             &mut *self.runtime.write().expect("runtime lock poisoned"),
             next.clone(),
         );
+        self.generation.send_modify(|generation| *generation += 1);
         self.replace_event_task(next.clone()).await;
         if let Err(error) = self.restore_desired_subscriptions(&desired).await {
             let failed = std::mem::replace(
                 &mut *self.runtime.write().expect("runtime lock poisoned"),
                 previous.clone(),
             );
+            self.generation.send_modify(|generation| *generation += 1);
             self.replace_event_task(previous).await;
             failed.shutdown().await;
             return Err(ClientStartupError::from_subscription_error(error));
         }
         next.start_sync_status_observer().await;
+        #[cfg(not(target_family = "wasm"))]
         next.start_legacy_store_retirement().await;
         Ok(previous)
     }
@@ -296,7 +401,7 @@ impl ClientHost {
                 "client host is shutting down".to_string(),
             ));
         }
-        let next = Self::build_detached_runtime(db_path).await?;
+        let next = self.builder.build(db_path.as_ref()).await?;
         let previous = self.replace_runtime_locked(next).await?;
         previous.shutdown().await;
         Ok(())
@@ -307,7 +412,7 @@ impl ClientHost {
         if self.shutdown_started.load(Ordering::Acquire) {
             anyhow::bail!("client host is shutting down");
         }
-        let snapshot = list_accounts(&self.app_data_dir)?;
+        let snapshot = list_accounts(&self.app_data_dir).await?;
         let record = snapshot
             .accounts
             .iter()
@@ -323,23 +428,28 @@ impl ClientHost {
             &db_path,
             crate::identity::IdentityStorageMode::from_env(),
             &record.pubkey,
-        )?;
-        let next = Self::build_detached_runtime(db_path)
+        )
+        .await?;
+        let next = self
+            .builder
+            .build(&db_path)
             .await
             .map_err(|error| anyhow::anyhow!("failed to start the account runtime: {error}"))?;
         let previous = self
             .replace_runtime_locked(next)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let commit = set_active_account(&self.app_data_dir, account_id).map(|_| ());
+        let commit = set_active_account(&self.app_data_dir, account_id)
+            .await
+            .map(|_| ());
         self.finish_account_change(previous, &snapshot.active_account_id, record, false, commit)
             .await
     }
 
-    pub fn desired_subscriptions(
+    pub async fn desired_subscriptions(
         &self,
     ) -> Result<Vec<DesiredSubscription>, SubscriptionStateError> {
-        subscriptions::load_desired_subscriptions(self.runtime().db_path())
+        subscriptions::load_desired_subscriptions(self.runtime().db_path()).await
     }
 
     pub async fn add_desired_subscription(
@@ -355,7 +465,7 @@ impl ClientHost {
             ));
         }
         let runtime = self.runtime();
-        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path())?;
+        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path()).await?;
         if desired.contains(&subscription) {
             return runtime
                 .set_desired_subscription(&subscription, true)
@@ -370,7 +480,9 @@ impl ClientHost {
             .await
             .map_err(SubscriptionStateError::activation)?;
         desired.push(subscription.clone());
-        if let Err(error) = subscriptions::save_desired_subscriptions(runtime.db_path(), &desired) {
+        if let Err(error) =
+            subscriptions::save_desired_subscriptions(runtime.db_path(), &desired).await
+        {
             let _ = runtime.set_desired_subscription(&subscription, false).await;
             return Err(error);
         }
@@ -390,12 +502,12 @@ impl ClientHost {
             ));
         }
         let runtime = self.runtime();
-        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path())?;
+        let mut desired = subscriptions::load_desired_subscriptions(runtime.db_path()).await?;
         if !desired.iter().any(|current| current == subscription) {
             return Ok(());
         }
         desired.retain(|current| current != subscription);
-        subscriptions::save_desired_subscriptions(runtime.db_path(), &desired)?;
+        subscriptions::save_desired_subscriptions(runtime.db_path(), &desired).await?;
         runtime
             .set_desired_subscription(subscription, false)
             .await
@@ -405,6 +517,26 @@ impl ClientHost {
                     format!("failed to remove active subscription: {error:#}"),
                 )
             })
+    }
+
+    /// browser・Android の lifecycle の復帰（可視・online・pageshow・resume。ADR 0059 §5）。既存の処理を 1 回ずつ呼ぶ:
+    /// 経路の確かめ直しと WebRTC の交渉の再開、Community Node の期限・同意の確認（期限前の node には要求しない）、
+    /// 送信待ちの再送（既存の owner と実行枠、同じ ID）。
+    pub async fn resume(&self) {
+        let _guard = self.operation_guard.lock().await;
+        if self.is_stopped() {
+            return;
+        }
+        self.runtime().resume_after_lifecycle().await;
+    }
+
+    /// browser・Android の lifecycle の中断（pagehide・freeze・offline。ADR 0059 §5）: WebRTC の交渉の世代を終える。
+    pub async fn suspend(&self) {
+        let _guard = self.operation_guard.lock().await;
+        if self.is_stopped() {
+            return;
+        }
+        self.runtime().iroh_stack.suspend_network().await;
     }
 
     pub async fn shutdown(&self) {
@@ -417,6 +549,7 @@ impl ClientHost {
             task.abort();
             let _ = task.await;
         }
+        self.generation.send_modify(|generation| *generation += 1);
         self.runtime().shutdown().await;
     }
 
@@ -428,16 +561,22 @@ impl ClientHost {
         }
         let mut events = runtime.subscribe_events();
         let sender = self.events.clone();
-        *task = Some(tokio::spawn(async move {
+        let generation = self.generation();
+        *task = Some(n0_future::task::spawn(async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
-                        let _ = sender.send(event);
+                        let _ = sender.send((generation, event));
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
-                        let _ =
-                            sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
+                        let _ = sender.send((
+                            generation,
+                            RuntimeEvent::AdultMediaLabelEvicted { hash: None },
+                        ));
+                        let _ = sender.send((
+                            generation,
+                            RuntimeEvent::AuthorRelationshipChanged { pubkey: None },
+                        ));
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -514,7 +653,7 @@ mod tests {
             .await
             .expect("add desired subscription");
         assert_eq!(
-            first.desired_subscriptions().expect("list desired"),
+            first.desired_subscriptions().await.expect("list desired"),
             vec![desired.clone()]
         );
         let first_status = first
@@ -547,6 +686,7 @@ mod tests {
         assert!(
             second
                 .desired_subscriptions()
+                .await
                 .expect("list desired")
                 .is_empty()
         );
@@ -588,7 +728,9 @@ mod tests {
         let desired = (0..70)
             .map(|index| public(&format!("kukuri:topic:desired-{index:02}")))
             .collect::<Vec<_>>();
-        subscriptions::save_desired_subscriptions(&db_path, &desired).expect("seventy desired");
+        subscriptions::save_desired_subscriptions(&db_path, &desired)
+            .await
+            .expect("seventy desired");
         let runtime = Arc::new(DesktopRuntime::new(&db_path).await.expect("runtime"));
         runtime
             .set_scope_display(column("kukuri:topic:column"))
@@ -598,7 +740,7 @@ mod tests {
             .await
             .expect("startup continues over the limit");
         assert_eq!(
-            host.desired_subscriptions().expect("desired"),
+            host.desired_subscriptions().await.expect("desired"),
             desired[..kukuri_app_api::MAX_ACTIVE_SCOPES].to_vec()
         );
         let subscribed = host
@@ -607,9 +749,11 @@ mod tests {
             .await
             .expect("status")
             .subscribed_topics;
-        assert_eq!(subscribed.len(), kukuri_app_api::MAX_ACTIVE_SCOPES);
+        // 1 枠は本人の端末間の account 同期が使う（ADR 0061 §7）。診断の topic の一覧には出ない。
+        assert_eq!(subscribed.len(), kukuri_app_api::MAX_ACTIVE_SCOPES - 1);
         assert!(subscribed.contains(&"kukuri:topic:column".to_string()));
-        assert!(!subscribed.contains(&"kukuri:topic:desired-63".to_string()));
+        assert!(subscribed.contains(&"kukuri:topic:desired-61".to_string()));
+        assert!(!subscribed.contains(&"kukuri:topic:desired-62".to_string()));
         let error = host
             .add_desired_subscription(public("kukuri:topic:extra"))
             .await

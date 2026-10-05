@@ -5,17 +5,19 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+n0-future.workspace = true
+web-time.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 blake3.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
+iroh.workspace = true
 image.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
@@ -26,6 +28,7 @@ kukuri-cn-protocol = { path = "../cn-protocol" }
 kukuri-core = { path = "../core" }
 kukuri-docs-sync = { path = "../docs-sync" }
 kukuri-iroh-node = { path = "../iroh-node" }
+kukuri-webrtc-transport = { path = "../webrtc-transport" }
 kukuri-store = { path = "../store" }
 kukuri-transport = { path = "../transport" }
 ts-rs = { workspace = true, optional = true }
@@ -42,15 +45,31 @@ ts = [
   "kukuri-cn-protocol/ts",
 ]
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# backup・restore・旧 store の退役・profile lock 等の native だけの処理（ADR 0056 §2）。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 keyring = { workspace = true, features = ["v1"] }
+sqlx.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { workspace = true, features = ["v1"] }
+# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）と、passphrase の鍵の導出の Worker（src/kdf.rs）。
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys = "0.3.106"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = [
+  "AbortSignal",
+  "Headers",
+  "MessageEvent",
+  "RequestInit",
+  "RequestRedirect",
+  "Response",
+  "Window",
+  "Worker",
+] }
 
 [dev-dependencies]
 kukuri-transport = { path = "../transport", features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "test-util"] }
 kukuri-test-support = { path = "../test-support" }
 axum.workspace = true
 tempfile.workspace = true

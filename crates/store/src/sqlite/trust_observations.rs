@@ -7,20 +7,11 @@ use kukuri_core::KukuriEnvelope;
 use sqlx::Row;
 
 use super::SqliteStore;
+use crate::{TrustObservationNode, TrustObservationStore};
 
-/// CN ごとの観測の提供の状態。提供していない node は送信待ちを持たない。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TrustObservationNode {
-    pub enabled: bool,
-    pub needs_reconsent: bool,
-    pub revocation_pending: bool,
-}
-
-impl SqliteStore {
-    pub async fn trust_observation_node(
-        &self,
-        base_url: &str,
-    ) -> Result<Option<TrustObservationNode>> {
+#[async_trait::async_trait]
+impl TrustObservationStore for SqliteStore {
+    async fn trust_observation_node(&self, base_url: &str) -> Result<Option<TrustObservationNode>> {
         sqlx::query(
             "SELECT enabled, needs_reconsent, revocation_pending
              FROM cn_trust_observation_nodes WHERE base_url = ?",
@@ -38,8 +29,7 @@ impl SqliteStore {
         .transpose()
     }
 
-    /// node の状態を書く(`None` は node を忘れる)。提供していない node の送信待ちは消す。
-    pub async fn save_trust_observation_node(
+    async fn save_trust_observation_node(
         &self,
         base_url: &str,
         node: Option<TrustObservationNode>,
@@ -78,8 +68,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// 提供中(有効で、削除要求が未完了でない)の node があるか。
-    pub async fn trust_observation_sharing(&self) -> Result<bool> {
+    async fn trust_observation_sharing(&self) -> Result<bool> {
         Ok(sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM cn_trust_observation_nodes
              WHERE enabled = 1 AND revocation_pending = 0)",
@@ -88,8 +77,7 @@ impl SqliteStore {
         .await?)
     }
 
-    /// `key` の送信待ちのうち、最も新しい署名の時刻。次の署名はこれより後にする。
-    pub async fn latest_queued_trust_observation_at(&self, key: &str) -> Result<Option<i64>> {
+    async fn latest_queued_trust_observation_at(&self, key: &str) -> Result<Option<i64>> {
         Ok(sqlx::query_scalar(
             "SELECT MAX(created_at) FROM cn_trust_observation_pending WHERE observation_key = ?",
         )
@@ -98,8 +86,7 @@ impl SqliteStore {
         .await?)
     }
 
-    /// 提供中の node の送信待ちへ置き、同じ key の古いものを置き換える。`base_url` を渡すと、その node だけへ置く。
-    pub async fn queue_trust_observation(
+    async fn queue_trust_observation(
         &self,
         base_url: Option<&str>,
         key: &str,
@@ -125,8 +112,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// node の送信待ちを、key の順に最大 `limit` 件。
-    pub async fn queued_trust_observations(
+    async fn queued_trust_observations(
         &self,
         base_url: &str,
         limit: usize,
@@ -150,8 +136,7 @@ impl SqliteStore {
         .collect()
     }
 
-    /// 送信待ちから外す。その間に新しい観測へ置き換わった key は残す。
-    pub async fn dequeue_trust_observation(
+    async fn dequeue_trust_observation(
         &self,
         base_url: &str,
         key: &str,
@@ -169,7 +154,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub async fn count_queued_trust_observations(&self, base_url: &str) -> Result<i64> {
+    async fn count_queued_trust_observations(&self, base_url: &str) -> Result<i64> {
         Ok(sqlx::query_scalar(
             "SELECT COUNT(*) FROM cn_trust_observation_pending WHERE base_url = ?",
         )

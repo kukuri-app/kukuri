@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { InitialProfileSetup } from './InitialProfileSetup';
 import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
 
-function SetupStory({ failure = false, nodeFailed = false }: { failure?: boolean; nodeFailed?: boolean }) {
+function SetupStory({ failure = false, nodeFailed = false, restore = false }: { failure?: boolean; nodeFailed?: boolean; restore?: boolean }) {
   const pubkey = 'a'.repeat(64);
   const store = useMemo(() => {
     const result = createDesktopShellStore();
@@ -18,7 +18,7 @@ function SetupStory({ failure = false, nodeFailed = false }: { failure?: boolean
       return { pubkey, name: 'new-user', display_name: 'New User', about: null, picture_asset: null, updated_at: 1 };
     },
   }), [failure, pubkey]);
-  return <DesktopShellStoreContext.Provider value={store}><InitialProfileSetup ready={!nodeFailed} nodeFailed={nodeFailed} onSkipNode={() => {}} accountAccess={access} /></DesktopShellStoreContext.Provider>;
+  return <DesktopShellStoreContext.Provider value={store}><InitialProfileSetup ready={!nodeFailed} nodeFailed={nodeFailed} onSkipNode={() => {}} accountAccess={access} onRestore={restore ? () => {} : undefined} /></DesktopShellStoreContext.Provider>;
 }
 
 const meta = { title: 'Shell/InitialProfileSetup', component: SetupStory, parameters: { layout: 'fullscreen' } } satisfies Meta<typeof SetupStory>;
@@ -27,3 +27,5 @@ type Story = StoryObj<typeof meta>;
 export const Ready: Story = {};
 export const SaveFailure: Story = { args: { failure: true } };
 export const NodeUnavailable: Story = { args: { nodeFailed: true } };
+// Web の build（#1217 AC-5）: 以前のアカウントを戻す案内と入口。
+export const WebRestore: Story = { args: { restore: true } };

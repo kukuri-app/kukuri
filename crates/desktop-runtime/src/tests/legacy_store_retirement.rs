@@ -123,8 +123,9 @@ async fn node_blob(runtime: &DesktopRuntime, hash: &str) -> Option<Vec<u8>> {
 async fn own_writes_go_to_the_protected_owner_when_written() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let dir = tempdir().expect("dir");
-    let db =
-        ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let attachment = vec![7u8; 1024 * 1024 + 5];
     let post_id = runtime
@@ -143,7 +144,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
         .await
         .expect("own post");
     let projection = runtime
-        .store
+        .sqlite
         .get_object_projection(&EnvelopeId::from(post_id.as_str()))
         .await
         .expect("projection")
@@ -155,7 +156,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
     let attached = projection.attachments[0].hash.as_str().to_string();
     for hash in [&body, &attached] {
         assert!(
-            protected(&runtime.store, "blob", None, hash).await,
+            protected(&runtime.sqlite, "blob", None, hash).await,
             "{hash}"
         );
         assert!(
@@ -166,7 +167,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
     assert!(db.with_extension("remote-blobs").join(&attached).is_file());
     assert!(
         protected(
-            &runtime.store,
+            &runtime.sqlite,
             "record",
             Some(projection.source_replica_id.as_str()),
             &format!("objects/{post_id}/envelope"),
@@ -186,7 +187,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
     let local = runtime.author_keys.public_key_hex();
     assert!(
         protected(
-            &runtime.store,
+            &runtime.sqlite,
             "record",
             Some(author_replica_id(&local).as_str()),
             "profile/latest",
@@ -211,7 +212,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
     let others: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM remote_content_cache WHERE scope_key = ?1")
             .bind(other.as_str())
-            .fetch_one(runtime.store.pool())
+            .fetch_one(runtime.sqlite.pool())
             .await
             .expect("count");
     assert_eq!(others, 0);
@@ -228,7 +229,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
         .await
         .expect("frame");
     runtime
-        .store
+        .sqlite
         .put_direct_message_outbox(DirectMessageOutboxRow {
             dm_id: "dm-1".into(),
             message_id: "message-1".into(),
@@ -239,13 +240,13 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
         })
         .await
         .expect("outbox");
-    assert!(protected(&runtime.store, "blob", None, frame.hash.as_str()).await);
+    assert!(protected(&runtime.sqlite, "blob", None, frame.hash.as_str()).await);
     runtime
-        .store
+        .sqlite
         .remove_direct_message_outbox("dm-1", "message-1")
         .await
         .expect("ack");
-    assert!(!protected(&runtime.store, "blob", None, frame.hash.as_str()).await);
+    assert!(!protected(&runtime.sqlite, "blob", None, frame.hash.as_str()).await);
     runtime.shutdown().await;
 }
 
@@ -320,8 +321,9 @@ async fn count(store: &SqliteStore, table: &str) -> i64 {
 async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
-    let db =
-        ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     create_empty_legacy_store(&db).await;
     let runtime = open_runtime(&db).await;
     let endpoint_id = runtime.iroh_stack.endpoint().await.id();
@@ -342,7 +344,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
         .await
         .expect("own adult post");
     let own_adult_hash = runtime
-        .store
+        .sqlite
         .get_object_projection(&EnvelopeId::from(own_adult.as_str()))
         .await
         .expect("projection")
@@ -366,7 +368,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     let old = remote_projection(&remote, 200, &recent_body, now - 30 * 24 * 60 * 60 * 1000);
     rows.push(old.clone());
     runtime
-        .store
+        .sqlite
         .put_object_projections(rows)
         .await
         .expect("legacy projections");
@@ -375,14 +377,14 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     into_legacy_layout(&db).await;
 
     let runtime = open_runtime(&db).await;
-    let envelopes = count(&runtime.store, "envelopes").await;
-    let outbox = count(&runtime.store, "dm_outbox").await;
+    let envelopes = count(&runtime.sqlite, "envelopes").await;
+    let outbox = count(&runtime.sqlite, "dm_outbox").await;
     assert!(matches!(
         runtime.legacy_store_step().await.expect("first step"),
         crate::runtime::LegacyStoreProgress::More
     ));
     let (cursor, done) = runtime
-        .store
+        .sqlite
         .legacy_store_position("legacy_projection")
         .await
         .expect("position");
@@ -418,8 +420,8 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     assert!(!retiring.exists(), "no file of the legacy store is left");
     assert!(runtime.legacy_store.lock().await.is_none());
     assert_eq!(runtime.iroh_stack.endpoint().await.id(), endpoint_id);
-    assert_eq!(count(&runtime.store, "envelopes").await, envelopes);
-    assert_eq!(count(&runtime.store, "dm_outbox").await, outbox);
+    assert_eq!(count(&runtime.sqlite, "envelopes").await, envelopes);
+    assert_eq!(count(&runtime.sqlite, "dm_outbox").await, outbox);
 
     // 本人のデータと保護種別の再表示。
     let timeline = runtime
@@ -496,9 +498,11 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
         runtime
             .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                 topic: FIXTURE_TOPIC.into(),
+                cursor: None,
             })
             .await
             .expect("channels")
+            .items
             .iter()
             .any(|channel| channel.channel_id == fixture.channel_id)
     );
@@ -515,7 +519,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     );
     // 最近の他人の内容は cache から出て、古いものは消える。成人向けの hash は行の参照がある分だけ残る。
     let recent = runtime
-        .store
+        .sqlite
         .get_object_projection(&EnvelopeId::from("remote-post-0000"))
         .await
         .expect("recent")
@@ -530,7 +534,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     );
     assert!(
         runtime
-            .store
+            .sqlite
             .get_object_projection(&old.object_id)
             .await
             .expect("old")
@@ -538,14 +542,14 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     );
     assert!(
         !runtime
-            .store
+            .sqlite
             .is_adult_media_hash(&old.attachments[0].hash)
             .await
             .expect("old marker")
     );
     assert!(
         runtime
-            .store
+            .sqlite
             .is_adult_media_hash(&own_adult_hash)
             .await
             .expect("own marker")
@@ -562,7 +566,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     );
     assert!(
         runtime
-            .store
+            .sqlite
             .protected_migration_caught_up_at()
             .await
             .expect("caught up")
@@ -638,7 +642,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
     // backup → restore でも戻る。
     let target = tempdir().expect("target dir");
     let (names, restored_db) =
-        super::protected_migration::backup_and_restore(source.path(), &db, target.path());
+        super::protected_migration::backup_and_restore(source.path(), &db, target.path()).await;
     assert!(
         names.iter().all(|name| !name.contains("iroh-")),
         "{names:?}"
@@ -673,6 +677,6 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
             "{hash} was not restored"
         );
     }
-    assert_eq!(count(&restored.store, "dm_outbox").await, outbox);
+    assert_eq!(count(&restored.sqlite, "dm_outbox").await, outbox);
     restored.shutdown().await;
 }

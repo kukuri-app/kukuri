@@ -13,6 +13,7 @@ async fn runtime_reopen_requires_existing_data_without_initializing_a_profile() 
         kukuri_transport::TransportNetworkConfig::loopback(),
         kukuri_transport::DhtDiscoveryOptions::disabled(),
         kukuri_transport::TransportRelayConfig::default(),
+        false,
     )
     .await;
     assert!(result.is_err());

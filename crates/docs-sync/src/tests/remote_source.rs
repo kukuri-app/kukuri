@@ -214,7 +214,7 @@ async fn fetched_public_record_remains_local_and_can_be_reprovided() -> Result<(
     let cache = Arc::new(SqliteStore::connect_memory().await?);
     requester.install_remote_cache(cache.clone())?;
     let writer = IrohDocsSync::new(provider.clone());
-    let reader = IrohDocsSync::with_account_store(requester.clone(), cache.clone());
+    let reader = IrohDocsSync::with_account_store(requester.clone(), cache.clone(), cache.clone());
     let replica = BucketReplica::new(
         BucketScope::Topic {
             topic_id: "cached-public-record".into(),
@@ -239,7 +239,13 @@ async fn fetched_public_record_remains_local_and_can_be_reprovided() -> Result<(
     assert_eq!(fetched[0].value, b"cached record");
     assert!(
         cache
-            .get_remote_records(replica.as_str(), key, fetched[0].docs_author.as_deref(), 1)
+            .get_remote_records(
+                replica.as_str(),
+                key,
+                fetched[0].docs_author.as_deref(),
+                1,
+                false
+            )
             .await?
             .is_empty(),
         "remote read must not persist before the caller's save guard"
@@ -284,7 +290,7 @@ async fn private_held_records_require_the_requested_replica_capability() -> Resu
     let requester = IrohDocsNode::memory().await?;
     let cache = Arc::new(SqliteStore::connect_memory().await?);
     provider.install_remote_cache(cache.clone())?;
-    let docs = IrohDocsSync::with_account_store(provider.clone(), cache.clone());
+    let docs = IrohDocsSync::with_account_store(provider.clone(), cache.clone(), cache.clone());
     let joined = crate::private_channel_epoch_replica_id("joined", "e1");
     let other = crate::private_channel_epoch_replica_id("other", "e1");
     let joined_secret = iroh_docs::NamespaceSecret::from_bytes(&[7; 32]);

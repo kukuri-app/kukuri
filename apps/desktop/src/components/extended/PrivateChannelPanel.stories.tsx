@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from 'react';
 
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent, within } from 'storybook/test';
+
+import type { PrivateChannelControllerTake } from '@/lib/api';
 
 import { PrivateChannelPanel, PrivateChannelSettingsPanel } from './PrivateChannelPanel';
-import type { PrivateChannelListItemView } from './types';
+import type { PrivateChannelListItemView, PrivateChannelPendingAction } from './types';
 
 const meta = {
   title: 'Extended/PrivateChannelPanel',
@@ -164,6 +167,22 @@ export const WithJoinedChannels: Story = {
   ),
 };
 
+// Issue #1218 AC-4d: 一覧に続きがあるときの「さらに表示」(押すと読み込み中、失敗で 1 行のエラー)。
+export const WithMoreJoinedChannels: Story = {
+  args: STORY_ARGS,
+  render: () => (
+    <PrivateChannelPanel
+      {...STORY_ARGS}
+      channelLabel=''
+      channelAudience='invite_only'
+      joinedChannels={BASE_CHANNELS.map((item) => item.channel)}
+      onSelectJoinedChannel={() => undefined}
+      onOpenJoinedChannelSettings={() => undefined}
+      onLoadMoreJoinedChannels={() => new Promise((_, reject) => setTimeout(() => reject(new Error('offline')), 800))}
+    />
+  ),
+};
+
 export const SettingsOwnerOnlyBlocked: Story = {
   args: STORY_ARGS,
   render: () => (
@@ -209,4 +228,56 @@ export const SettingsPending: Story = {
       onShare={() => undefined}
     />
   ),
+};
+
+// #1219 AC-4: 共有リンクの作成と新しいアクセスの配布を行う端末の案内(owner の端末だけ)。
+function controllerSettings(
+  controller: PrivateChannelListItemView['channel']['controller'],
+  result: PrivateChannelControllerTake = 'not_connected',
+  pendingAction: PrivateChannelPendingAction = null
+) {
+  return (
+    <PrivateChannelSettingsPanel
+      error={null}
+      pendingAction={pendingAction}
+      channel={{ ...BASE_CHANNELS[0].channel, controller }}
+      inviteOutput={null}
+      inviteOutputLabel='share'
+      onShare={() => undefined}
+      onTakeController={() => Promise.resolve(result)}
+    />
+  );
+}
+
+const TAKE_BUTTON = /Do this on this device|この端末で行う|在此设备上进行/;
+
+export const SettingsOtherDevice: Story = {
+  args: STORY_ARGS,
+  render: () => controllerSettings('other_device'),
+};
+
+export const SettingsTaking: Story = {
+  args: STORY_ARGS,
+  render: () => controllerSettings('other_device', 'taken', 'take'),
+};
+
+export const SettingsTakeNotConnected: Story = {
+  args: STORY_ARGS,
+  render: () => controllerSettings('other_device', 'not_connected'),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: TAKE_BUTTON }));
+    await expect(await canvas.findByRole('status')).toBeVisible();
+  },
+};
+
+export const SettingsTakeWaiting: Story = {
+  args: STORY_ARGS,
+  render: () => controllerSettings('other_device', 'waiting'),
+  play: SettingsTakeNotConnected.play,
+};
+
+export const SettingsMoving: Story = {
+  args: STORY_ARGS,
+  render: () => controllerSettings('moving'),
 };

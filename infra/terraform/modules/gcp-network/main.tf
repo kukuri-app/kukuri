@@ -82,6 +82,20 @@ resource "google_compute_firewall" "relay_quic" {
   target_tags   = var.network_tags
 }
 
+# STUN（#1483、ADR 0057 §6）。relay と同じ host で cn-stun が 3478/udp を待ち受ける。
+resource "google_compute_firewall" "stun" {
+  name    = "${var.name_prefix}-allow-stun"
+  network = local.network_name
+
+  allow {
+    protocol = "udp"
+    ports    = ["3478"]
+  }
+
+  source_ranges = var.extra_ingress_source_ranges
+  target_tags   = var.network_tags
+}
+
 resource "google_compute_firewall" "iap_ssh" {
   count   = var.enable_iap_ssh ? 1 : 0
   name    = "${var.name_prefix}-allow-iap-ssh"

@@ -327,7 +327,8 @@ impl AppService {
             ];
         if self.services.writes_buckets() {
             let bucket = TimeBucket::from_unix_seconds(created_at / 1_000)?;
-            for (epoch_id, _) in private_epochs_for_bucket(&private, bucket) {
+            for (epoch_id, _) in private_epochs_for_bucket(&self.services, &private, bucket).await?
+            {
                 let replica = BucketReplica::new(
                     BucketScope::PrivateChannel {
                         channel_id: channel_id.as_str().to_owned(),
@@ -713,14 +714,8 @@ pub(crate) async fn persist_dome_locator(
         anyhow::bail!("a Dome locator is only for a private context");
     };
     let state = services
-        .joined_private_channels
-        .lock()
+        .joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
         .await
-        .get(&joined_private_channel_key(
-            topic_id.as_str(),
-            channel_id.as_str(),
-        ))
-        .cloned()
         .context("private channel is not joined")?;
     let bucket = TimeBucket::from_unix_seconds(now_secs)?;
     let replica = BucketReplica::new(

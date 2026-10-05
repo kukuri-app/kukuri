@@ -19,13 +19,31 @@ const tauriDevPort =
     ? rawTauriDevPort
     : 5173;
 
+// Web の build（ADR 0060 §1）。web-runtime の `wasm-bindgen --target web` の出力を読み、`dist-web` へ出す。
+// 出力の場所は `cargo xtask web-build` が渡す。Tauri の build では読まない（代わりの module を解決する）。
+const webTarget = env?.VITE_KUKURI_TARGET === 'web';
+const webRuntimePkg = env?.KUKURI_WEB_RUNTIME_PKG ?? path.resolve(import.meta.dirname, './web-runtime-pkg');
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
+      '@kukuri/web-runtime': webTarget
+        ? path.join(webRuntimePkg, 'kukuri_web_runtime.js')
+        : path.resolve(import.meta.dirname, './src/lib/webRuntimeUnavailable.ts'),
     },
   },
+  // Web の配信の header（`_headers`。ADR 0060 §2）だけを置く。`public` の metaverse の資源は Web では使わない。
+  publicDir: webTarget ? 'web-public' : 'public',
+  build: webTarget
+    ? {
+        outDir: 'dist-web',
+        // 鍵の導出の Worker の script（wasm-bindgen の snippet）を data: の URL に埋め込まない。CSP の
+        // `script-src 'self'` が data: の Worker を拒む（ADR 0060 §2）。
+        assetsInlineLimit: (file: string) => (file.endsWith('.js') ? false : undefined),
+      }
+    : undefined,
   server: {
     host: tauriDevHost,
     port: tauriDevPort,

@@ -481,9 +481,13 @@ pub(crate) async fn read_private_epoch_snapshot(
     {
         return Ok(None);
     }
+    // 読む側の参加 record は、新しく参加する人には無い。reload の後の Web の owner は namespace を開いておらず(docs は
+    // memory)、保存に無い key には失敗を返すので、読めないときは無いものとして扱う(参加なら記録し直す。#1220 AC-4)。
     let local_participant =
         fetch_private_channel_participant_from_replica(docs_sync, replica, local_pubkey, policy)
-            .await?
+            .await
+            .ok()
+            .flatten()
             .filter(in_epoch);
     Ok(Some(PrivateEpochSnapshot {
         metadata,
@@ -505,7 +509,7 @@ pub(crate) async fn fetch_manifest_blob<T: DeserializeOwned>(
     blob_service: &dyn BlobService,
     blob_ref: &ManifestBlobRef,
 ) -> Result<Option<T>> {
-    let Some(bytes) = (match tokio::time::timeout(
+    let Some(bytes) = (match n0_future::time::timeout(
         projection_blob_fetch_timeout(),
         blob_service.fetch_blob(&blob_ref.hash),
     )
@@ -519,19 +523,19 @@ pub(crate) async fn fetch_manifest_blob<T: DeserializeOwned>(
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
-pub(crate) fn projection_blob_fetch_timeout() -> tokio::time::Duration {
+pub(crate) fn projection_blob_fetch_timeout() -> n0_future::time::Duration {
     if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
-        tokio::time::Duration::from_secs(5)
+        n0_future::time::Duration::from_secs(5)
     } else {
-        tokio::time::Duration::from_secs(2)
+        n0_future::time::Duration::from_secs(2)
     }
 }
 
-pub(crate) fn projection_blob_status_timeout() -> tokio::time::Duration {
+pub(crate) fn projection_blob_status_timeout() -> n0_future::time::Duration {
     if cfg!(target_os = "windows") || std::env::var_os("GITHUB_ACTIONS").is_some() {
-        tokio::time::Duration::from_secs(1)
+        n0_future::time::Duration::from_secs(1)
     } else {
-        tokio::time::Duration::from_millis(250)
+        n0_future::time::Duration::from_millis(250)
     }
 }
 
@@ -539,7 +543,7 @@ pub(crate) async fn fetch_projection_blob_text(
     blob_service: &dyn BlobService,
     hash: &kukuri_core::BlobHash,
 ) -> Option<String> {
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         projection_blob_fetch_timeout(),
         blob_service.fetch_blob(hash),
     )
@@ -560,7 +564,7 @@ pub(crate) async fn best_effort_blob_cache_status(
     blob_service: &dyn BlobService,
     hash: &kukuri_core::BlobHash,
 ) -> BlobCacheStatus {
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         projection_blob_status_timeout(),
         blob_service.local_blob_status(hash),
     )
@@ -576,7 +580,7 @@ pub(crate) async fn best_effort_blob_view_status(
     blob_service: &dyn BlobService,
     hash: &kukuri_core::BlobHash,
 ) -> BlobViewStatus {
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         projection_blob_status_timeout(),
         blob_service.local_blob_status(hash),
     )

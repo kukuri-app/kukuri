@@ -61,6 +61,53 @@ async fn unsubscribing_during_initial_join_stops_its_warmup_task() {
     transport._router.take().unwrap().shutdown().await.unwrap();
 }
 
+// 本人の端末間の account 同期の hint は、bootstrap・ticket の peer（他人の端末・node）と合流しない（ADR 0061 §7）。
+// 公開の topic は、同じ候補で最初の合流の warmup を始める（対照）。
+#[tokio::test]
+async fn account_sync_hints_never_join_bootstrap_peers() {
+    let mut transport = IrohGossipTransport::bind_local().await.unwrap();
+    let peer = iroh::SecretKey::from_bytes(&[48; 32]).public();
+    transport
+        .insert_imported_peer_addr(EndpointAddr::new(peer))
+        .await
+        .unwrap();
+    let warmups = || {
+        transport
+            .topic_warmups
+            .initial_warmup_tasks
+            .load(Ordering::SeqCst)
+    };
+    let account = TopicId::new(format!("kukuri:account:{}", "ab".repeat(32)));
+    let _account_stream = transport.subscribe_hints(&account).await.unwrap();
+    let _public_stream = transport
+        .subscribe_hints(&TopicId::new("kukuri:topic:bootstrap-warmup"))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(2), async {
+        while warmups() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the public topic warms up its bootstrap peer");
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(warmups(), 1, "the account sync topic must not warm up");
+    // 後から ticket で取り込んだ peer にも join を送らない。
+    let account_hint = kukuri_core::wire::hint_topic_id(&account);
+    transport
+        .insert_imported_peer_addr(EndpointAddr::new(
+            iroh::SecretKey::from_bytes(&[49; 32]).public(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        transport.topic_join_counts(account_hint.as_str()).await,
+        (0, 0)
+    );
+    transport.shutdown().await;
+    transport._router.take().unwrap().shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn unsubscribing_stops_a_registered_peer_update_warmup() {
     let mut transport = IrohGossipTransport::bind_local().await.unwrap();

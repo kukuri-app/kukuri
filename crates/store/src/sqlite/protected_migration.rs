@@ -139,7 +139,7 @@ impl SqliteStore {
                     let bookmark = row_to_bookmarked_post(row)?;
                     candidates.push(blob_candidate(
                         format!("bookmark:{}", bookmark.source_object_id.as_str()),
-                        super::bookmarks::bookmark_cache_refs(&bookmark)
+                        crate::bookmark_cache_refs(&bookmark)
                             .into_iter()
                             .map(|(_, hash)| hash)
                             .collect(),

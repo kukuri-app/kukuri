@@ -73,7 +73,8 @@ impl DesktopRuntime {
         )?;
         let verify_url = format!("{base_url}{AUTH_VERIFY_PATH}");
         let invite_code =
-            load_community_node_invite_code(&self.db_path, self.identity_mode, base_url.as_str())?;
+            load_community_node_invite_code(&self.db_path, self.identity_mode, base_url.as_str())
+                .await?;
         let verify_response = client
             .post(verify_url)
             .json(&AuthVerifyRequest {
@@ -115,7 +116,8 @@ impl DesktopRuntime {
             access_token: verify.access_token,
             expires_at: verify.expires_at,
         };
-        persist_community_node_token(&self.db_path, self.identity_mode, base_url.as_str(), &token)?;
+        persist_community_node_token(&self.db_path, self.identity_mode, base_url.as_str(), &token)
+            .await?;
         Ok(token)
     }
 
@@ -314,6 +316,7 @@ impl DesktopRuntime {
         let normalized = normalize_community_node_config(next_config)
             .map_err(CommunityNodeRequestError::Other)?;
         save_community_node_config(&self.db_path, &normalized)
+            .await
             .map_err(CommunityNodeRequestError::Other)?;
         *current_config = normalized.clone();
         drop(current_config);
@@ -528,7 +531,12 @@ impl DesktopRuntime {
                     endpoint_id: peer.endpoint_id,
                     addr_hint: peer.addr_hint,
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            // account の hint topic なら、新しく現れた本人の端末から差分を取る(起動・復帰の時点では gossip の候補が
+            // まだ無い。ADR 0061 §10)。
+            self.app_service
+                .account_sync_peers_joined(base_url, topic, &peers)
+                .await;
             self.iroh_stack
                 .transport
                 .join_topic_peers(base_url, &TopicId::new(topic.clone()), peers)
@@ -782,7 +790,7 @@ impl DesktopRuntime {
             return Ok(true);
         }
         let local_consent =
-            load_community_node_local_consents(&self.db_path, self.identity_mode, base_url)?;
+            load_community_node_local_consents(&self.db_path, self.identity_mode, base_url).await?;
         if !community_node_local_consent_covers_status(&local_consent, &consent_status) {
             self.set_community_node_local_consent_update_pending(base_url, true)
                 .await;

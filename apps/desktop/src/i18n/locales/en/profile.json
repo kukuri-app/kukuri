@@ -177,7 +177,7 @@
   },
   "authorTrustDisplay": {
     "label": "Always show this person",
-    "description": "Do not collapse posts from this person based on the evaluation from the community node you adopted. This setting is local to this device and does not change blocks or mutes.",
+    "description": "Do not collapse posts from this person based on the evaluation from the community node you adopted. This setting is shared across your devices signed in to this account and does not change blocks or mutes.",
     "failed": "Could not change the setting."
   }
 }

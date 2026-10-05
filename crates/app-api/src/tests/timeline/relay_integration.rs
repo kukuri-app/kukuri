@@ -199,10 +199,12 @@ impl Relay {
         node.install_remote_cache(store.clone())?;
         let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::with_account_store(
             node.clone(),
+            store.clone().clone(),
             store.clone(),
         ));
         let blobs = Arc::new(IrohBlobService::with_account_store(
             node.clone(),
+            store.clone().clone(),
             store.clone(),
         ));
         // 本番と同じく、アカウントの鍵から導いた docs author で書く(ADR 0053)。

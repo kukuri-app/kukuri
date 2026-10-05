@@ -12,7 +12,7 @@ use crate::backup::{
     DeviceRestoreTestFailurePoint, PreviewDeviceBackupRequest, RestoreDeviceBackupRequest,
     acknowledge_pending_device_restore_frontend_state, commit_device_restore, create_device_backup,
     fail_device_backup_writes_after, fail_device_restore_at, finalize_device_restore,
-    install_prepared_device_restore, install_prepared_device_restore_with_keyring,
+    install_prepared_device_restore, install_prepared_device_restore_with_storage,
     mark_device_restore_activated, mark_device_restore_awaiting_consent,
     pending_device_restore_frontend_state, pending_device_restore_phase, prepare_device_restore,
     preview_device_backup, recover_interrupted_restore, validate_prepared_device_restore,
@@ -27,24 +27,29 @@ use crate::host::{
     save_desired_subscriptions,
 };
 use crate::identity::{
-    IdentityStorageMode, KeyringStore, load_existing_keys, load_optional_secret,
-    load_optional_secret_with_keyring, persist_optional_secret,
-    persist_optional_secret_with_keyring,
+    IdentityStorageMode, load_existing_keys, load_optional_secret,
+    load_optional_secret_with_storage, persist_optional_secret,
+    persist_optional_secret_with_storage,
 };
 use crate::runtime::{
     GOSSIP_SUBSCRIPTION_STATE_KEY, GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
     PRIVATE_CHANNEL_CAPABILITIES_KEY, PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
 };
+use crate::storage::{ClientStorage, FILE_SERVICE, NativeStorage};
 
 const PASSPHRASE: &str = "correct horse battery staple";
 
 #[derive(Default)]
 struct FakeDeviceBackupKeyring {
-    entries: std::sync::Mutex<BTreeMap<(String, String), String>>,
+    entries: std::sync::Mutex<BTreeMap<(String, String), Vec<u8>>>,
 }
 
-impl KeyringStore for FakeDeviceBackupKeyring {
-    fn get_password(&self, service: &str, account: &str) -> anyhow::Result<Option<String>> {
+#[async_trait::async_trait]
+impl ClientStorage for FakeDeviceBackupKeyring {
+    async fn get(&self, service: &str, account: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        if service == FILE_SERVICE {
+            return NativeStorage.get(service, account).await;
+        }
         Ok(self
             .entries
             .lock()
@@ -53,15 +58,21 @@ impl KeyringStore for FakeDeviceBackupKeyring {
             .cloned())
     }
 
-    fn set_password(&self, service: &str, account: &str, secret: &str) -> anyhow::Result<()> {
-        self.entries.lock().expect("fake keyring lock").insert(
-            (service.to_string(), account.to_string()),
-            secret.to_string(),
-        );
+    async fn set(&self, service: &str, account: &str, value: &[u8]) -> anyhow::Result<()> {
+        if service == FILE_SERVICE {
+            return NativeStorage.set(service, account, value).await;
+        }
+        self.entries
+            .lock()
+            .expect("fake keyring lock")
+            .insert((service.to_string(), account.to_string()), value.to_vec());
         Ok(())
     }
 
-    fn delete_password(&self, service: &str, account: &str) -> anyhow::Result<()> {
+    async fn delete(&self, service: &str, account: &str) -> anyhow::Result<()> {
+        if service == FILE_SERVICE {
+            return NativeStorage.delete(service, account).await;
+        }
         self.entries
             .lock()
             .expect("fake keyring lock")
@@ -73,6 +84,7 @@ impl KeyringStore for FakeDeviceBackupKeyring {
 async fn initialized_app_data() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempdir().expect("tempdir");
     let db_path = ensure_accounts_initialized(dir.path(), IdentityStorageMode::FileOnly)
+        .await
         .expect("initialize accounts");
     let store = SqliteStore::connect_file(&db_path)
         .await
@@ -234,6 +246,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let (source, source_db) = initialized_app_data().await;
     let source_keys = load_existing_keys(&source_db, IdentityStorageMode::FileOnly)
+        .await
         .expect("load source identity")
         .expect("source identity");
     // #1221 R5-G: 旧 `iroh-data` は含めず、保護された file だけを含める。
@@ -257,12 +270,14 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             }],
         },
     )
+    .await
     .expect("persist community node config");
     let desired_subscription = DesiredSubscription {
         topic: "kukuri:topic:backup-subscription".to_string(),
         scope: DesiredSubscriptionScope::Public,
     };
     save_desired_subscriptions(&source_db, std::slice::from_ref(&desired_subscription))
+        .await
         .expect("persist desired subscription fixture");
     assert!(
         !source_db
@@ -303,6 +318,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             key,
             value,
         )
+        .await
         .expect("persist backup secret fixture");
     }
 
@@ -394,11 +410,14 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
     finalize_device_restore(installed).expect("finalize restored account");
 
     let restored_keys = load_existing_keys(&restored_db, IdentityStorageMode::FileOnly)
+        .await
         .expect("load restored identity")
         .expect("restored identity");
     assert_eq!(restored_keys.public_key_hex(), source_keys.public_key_hex());
     assert_eq!(
-        load_desired_subscriptions(&restored_db).expect("load restored desired subscriptions"),
+        load_desired_subscriptions(&restored_db)
+            .await
+            .expect("load restored desired subscriptions"),
         vec![desired_subscription]
     );
     assert!(
@@ -406,11 +425,14 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             .with_file_name("kukuri.idempotency.sqlite3")
             .exists()
     );
-    let snapshot = list_accounts(target.path()).expect("list restored accounts");
+    let snapshot = list_accounts(target.path())
+        .await
+        .expect("list restored accounts");
     assert_eq!(snapshot.active_account_id, result.account.id);
     assert_eq!(snapshot.accounts.len(), 2);
     assert_eq!(
         load_community_node_config_from_file(&restored_db)
+            .await
             .expect("load restored community node config")
             .expect("restored community node config"),
         CommunityNodeConfig {
@@ -443,6 +465,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
     ] {
         assert_eq!(
             load_optional_secret(&restored_db, IdentityStorageMode::FileOnly, purpose, key)
+                .await
                 .expect("load restored optional secret")
                 .as_deref(),
             expected,
@@ -469,7 +492,9 @@ async fn restore_failures_preserve_the_existing_account_registry() {
         |_| {},
     )
     .expect("create backup");
-    let before = list_accounts(app_data.path()).expect("list accounts before failure");
+    let before = list_accounts(app_data.path())
+        .await
+        .expect("list accounts before failure");
     let state_before = app_data_snapshot(app_data.path());
 
     let wrong_passphrase = prepare_device_restore(
@@ -485,7 +510,9 @@ async fn restore_failures_preserve_the_existing_account_registry() {
     );
     assert!(wrong_passphrase.is_err());
     assert_eq!(
-        list_accounts(app_data.path()).expect("list accounts after wrong passphrase"),
+        list_accounts(app_data.path())
+            .await
+            .expect("list accounts after wrong passphrase"),
         before
     );
     assert_eq!(app_data_snapshot(app_data.path()), state_before);
@@ -540,7 +567,9 @@ async fn restore_failures_preserve_the_existing_account_registry() {
     );
     assert!(replacement_without_confirmation.is_err());
     assert_eq!(
-        list_accounts(app_data.path()).expect("list accounts after rejected replacement"),
+        list_accounts(app_data.path())
+            .await
+            .expect("list accounts after rejected replacement"),
         before
     );
     assert_eq!(app_data_snapshot(app_data.path()), state_before);
@@ -718,8 +747,11 @@ async fn storage_exhaustion_during_restore_preserves_existing_state() {
 async fn interrupted_replacement_is_rolled_back_on_recovery() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let (app_data, db_path) = initialized_app_data().await;
-    let before = list_accounts(app_data.path()).expect("list accounts before replacement");
+    let before = list_accounts(app_data.path())
+        .await
+        .expect("list accounts before replacement");
     let original_identity = load_existing_keys(&db_path, IdentityStorageMode::FileOnly)
+        .await
         .expect("load original identity")
         .expect("original identity")
         .public_key_hex();
@@ -755,14 +787,18 @@ async fn interrupted_replacement_is_rolled_back_on_recovery() {
 
     recover_interrupted_restore(app_data.path()).expect("recover interrupted replacement");
     assert_eq!(
-        list_accounts(app_data.path()).expect("list accounts after recovery"),
+        list_accounts(app_data.path())
+            .await
+            .expect("list accounts after recovery"),
         before
     );
     let recovered_identity = load_existing_keys(&db_path, IdentityStorageMode::FileOnly)
+        .await
         .expect("load recovered identity")
         .expect("recovered identity")
         .public_key_hex();
     assert_eq!(recovered_identity, original_identity);
 }
 
+mod controller_claim;
 mod recovery;

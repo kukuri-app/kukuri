@@ -129,3 +129,16 @@ fn private_or_unknown_bucket_cannot_derive_a_public_secret() {
         assert!(public_replica_secret(&ReplicaId::new(id)).is_none(), "{id}");
     }
 }
+
+// ADR 0061 §1: account 同期の replica は、replica id から namespace を導出しない（公開 fallback を作らない）。
+#[test]
+fn account_sync_replicas_are_never_public() {
+    let keys = kukuri_core::KukuriKeys::parse(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    )
+    .expect("test key");
+    let derived = keys.derive_account_sync();
+    assert!(public_replica_secret(derived.replica_id()).is_none());
+    assert!(public_replica_secret(&ReplicaId::new("account::v1::anything")).is_none());
+    assert!(post_replica_kind(derived.replica_id()).is_none());
+}

@@ -237,7 +237,7 @@ async fn isolation_runtime(dir: &Path, nodes: &[&Arc<FlakyNode>]) -> DesktopRunt
     .await
     .expect("runtime");
     for node in nodes {
-        seed_local_community_node_consents(&runtime, &node.base_url, 1);
+        seed_local_community_node_consents(&runtime, &node.base_url, 1).await;
     }
     timeout(
         Duration::from_secs(60),
@@ -475,15 +475,17 @@ async fn admission_rejection_on_token_refresh_drops_the_node_connectivity() {
             .contains(&B_SEED.to_string())
     );
     // 更新の要る token にして、その期限を来させる。
+    let access_token = b.token.lock().unwrap().clone();
     persist_community_node_token(
         &runtime.db_path,
         runtime.identity_mode,
         &b.base_url,
         &StoredCommunityNodeToken {
-            access_token: b.token.lock().unwrap().clone(),
+            access_token,
             expires_at: Utc::now().timestamp() + 10,
         },
     )
+    .await
     .expect("expiring token");
     if let Some(session) = runtime
         .community_node_sessions

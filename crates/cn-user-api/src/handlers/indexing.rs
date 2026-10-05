@@ -65,6 +65,14 @@ pub(crate) async fn submit_indexing_request(
             "target_id is required",
         ));
     }
+    // 公開ではない topic（account 同期の hint 等）は公開 topic の索引にしない（ADR 0061 §6）。
+    if kind == IndexScopeKind::PublicTopic && kukuri_core::wire::is_non_public_topic(target_id) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDEXING_REQUEST",
+            "target_id is not a public topic",
+        ));
+    }
 
     // private channel は capability(secret)の提示が必須。これが権限の証明を兼ねる。
     if kind == IndexScopeKind::PrivateChannel {

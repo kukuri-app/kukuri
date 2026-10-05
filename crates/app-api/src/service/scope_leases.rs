@@ -15,13 +15,15 @@ pub(crate) enum ScopeKey {
     Topic(String),
     Channel(String, String),
     Author(String),
+    /// 本人の端末間の account 同期の hint の topic（ADR 0061）。公開の topic ではない。
+    AccountSync(String),
 }
 
 impl ScopeKey {
     fn topic(&self) -> Option<&str> {
         match self {
             Self::Topic(topic) | Self::Channel(topic, _) => Some(topic),
-            Self::Author(_) => None,
+            Self::Author(_) | Self::AccountSync(_) => None,
         }
     }
 }
@@ -64,6 +66,8 @@ pub(crate) struct ScopeLeases {
 pub(crate) struct LeaseChange {
     pub(crate) started: Vec<ScopeKey>,
     pub(crate) stopped: Vec<ScopeTask>,
+    /// lease の外れた key。
+    pub(crate) released: Vec<ScopeKey>,
 }
 
 impl ScopeLeases {
@@ -107,6 +111,7 @@ impl ScopeLeases {
                     && let Some(lease) = self.leases.remove(key)
                 {
                     change.stopped.extend(lease.task);
+                    change.released.push(key.clone());
                 }
             }
         }
@@ -223,9 +228,9 @@ pub(crate) fn participation_keys(topic: &str, channel: Option<&ChannelId>) -> Ve
 /// task を止め、hint の購読を抜ける。
 pub(crate) async fn stop_scope_task(services: &ServiceHandles, task: ScopeTask) {
     task.handle.abort();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task.handle.wait()).await;
+    let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), task.handle.wait()).await;
     if let Some(hint_topic) = &task.hint_topic {
-        match tokio::time::timeout(
+        match n0_future::time::timeout(
             std::time::Duration::from_secs(2),
             services.hint_transport.unsubscribe_hints(hint_topic),
         )
@@ -247,14 +252,14 @@ pub(crate) async fn release_scope_holder(
     holder: &str,
 ) {
     let mut leases = leases.lock().await;
-    let stopped = leases
+    let change = leases
         .set_holder(holder, BTreeSet::new())
-        .map(|change| change.stopped)
         .unwrap_or_default();
     // 同じ key の取り直しが、止める前の hint 購読の上に乗らないよう、lock の中で止める。
-    for task in stopped {
+    for task in change.stopped {
         stop_scope_task(services, task).await;
     }
+    services.evict_private_channels(&change.released).await;
 }
 
 impl AppService {
@@ -269,6 +274,7 @@ impl AppService {
         for task in change.stopped {
             stop_scope_task(&self.services, task).await;
         }
+        self.services.evict_private_channels(&change.released).await;
         for key in change.started {
             let task = self.start_scope_task(&key).await;
             if let Some(slot) = leases.slot(&key) {
@@ -314,10 +320,11 @@ impl AppService {
                     .await
             }
             ScopeKey::Channel(topic, channel) => {
+                // lease のある channel の参加状態だけをメモリに持つ(ADR 0061 §9)。
+                let state = self.load_leased_private_channel(topic, channel).await?;
                 if self.is_channel_gossip_disabled(topic, channel).await {
                     return None;
                 }
-                let state = self.joined_private_channel_state(topic, channel).await?;
                 self.spawn_subscription_task(
                     topic,
                     Some(state.channel_id.clone()),
@@ -326,6 +333,10 @@ impl AppService {
                 .await
             }
             ScopeKey::Author(author) => self.spawn_author_subscription(author).await,
+            ScopeKey::AccountSync(hint_topic) => {
+                self.spawn_account_sync_subscription(TopicId::new(hint_topic))
+                    .await
+            }
         };
         started
             .inspect_err(|error| warn!(?key, %error, "failed to start a scope subscription"))
@@ -387,19 +398,10 @@ impl AppService {
             .collect()
     }
 
-    /// endpoint の作り直しの後に 1 回呼ぶ。private channel の秘密を新しい docs へ登録し直し、
+    /// endpoint の作り直しの後に 1 回呼ぶ。新しい docs へ private channel の世代の秘密の参照を入れ直し、
     /// lease のある key の task だけを作り直す(最大 [`MAX_ACTIVE_SCOPES`] 件)。
     pub async fn rebuild_scope_subscriptions(&self) -> Result<()> {
-        let joined = self
-            .joined_private_channels
-            .lock()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for state in joined {
-            register_private_channel_replica_secrets(self.docs_sync(), &state).await?;
-        }
+        self.install_private_epoch_secrets().await?;
         self.restart_scope_subscriptions(|_| true).await;
         Ok(())
     }

@@ -185,7 +185,9 @@ async fn bookmark_private_post_remains_local_only_and_readable_after_access_loss
     app.bookmark_post(topic, object_id.as_str())
         .await
         .expect("bookmark private post");
-    app.joined_private_channels.lock().await.clear();
+    app.remove_joined_private_channel(topic, &channel.channel_id)
+        .await
+        .expect("leave private channel");
     ObjectProjectionStore::rebuild_object_projections(store.as_ref(), Vec::new())
         .await
         .expect("clear object projections");

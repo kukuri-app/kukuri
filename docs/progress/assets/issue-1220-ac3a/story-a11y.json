@@ -1,0 +1,80 @@
+[
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "en",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "On hold This action needs new access to be handed out, which happens on another of your devices. It stays on hold until you open the app on that device, so try again after opening it. You can also switch this to this device in the channel settings. Close"
+  },
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "en",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "On hold This action needs new access to be handed out, which happens on another of your devices. It stays on hold until you open the app on that device, so try again after opening it. You can also switch this to this device in the channel settings. Close"
+  },
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "ja",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "保留になりました この操作には、新しいアクセスの配布が必要です。配布はあなたの別の端末で行っているので、その端末でアプリを開くまで保留になります。開いた後に、もう一度お試しください。チャンネルの設定から、この端末で行うように切り替えることもできます。 閉じる"
+  },
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "ja",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "保留になりました この操作には、新しいアクセスの配布が必要です。配布はあなたの別の端末で行っているので、その端末でアプリを開くまで保留になります。開いた後に、もう一度お試しください。チャンネルの設定から、この端末で行うように切り替えることもできます。 閉じる"
+  },
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "zh-CN",
+    "theme": "dark",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "已暂停 此操作需要分发新的访问权限，而分发在你的另一台设备上进行。在该设备上打开应用之前，此操作将暂停，打开后请重试。也可以在频道设置中切换为在此设备上进行。 关闭"
+  },
+  {
+    "id": "shell-controllerpendingnotice--pending",
+    "locale": "zh-CN",
+    "theme": "light",
+    "violations": [],
+    "incomplete": [
+      {
+        "id": "aria-hidden-focus",
+        "nodes": 2
+      }
+    ],
+    "text": "已暂停 此操作需要分发新的访问权限，而分发在你的另一台设备上进行。在该设备上打开应用之前，此操作将暂停，打开后请重试。也可以在频道设置中切换为在此设备上进行。 关闭"
+  }
+]

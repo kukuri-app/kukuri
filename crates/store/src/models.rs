@@ -84,7 +84,7 @@ pub struct PostWithdrawalRow {
 
 /// 取り下げの docs への書込み 1 件(R5-H)。元投稿の位置と操作時の bucket の 2 か所を別の行にし、
 /// 書けた行だけを消す(片側の失敗を成功として落とさない)。宛先は積んだ時に決め、再開で変えない。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawalWriteRow {
     pub withdrawal_envelope_id: EnvelopeId,
     pub replica_id: ReplicaId,
@@ -136,6 +136,16 @@ pub struct BookmarkedCustomReactionRow {
     pub bookmarked_at: i64,
 }
 
+impl BookmarkedCustomReactionRow {
+    /// 読み出しの値: search_key が空文字・空白だけの行は asset_id を使う（置いた値は書き換えない。WP-S6 T7）。
+    pub fn with_search_key_fallback(mut self) -> Self {
+        if self.search_key.trim().is_empty() {
+            self.search_key = self.asset_id.clone();
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BookmarkedPostRow {
     pub source_object_id: EnvelopeId,
@@ -161,6 +171,30 @@ pub struct BookmarkCursor {
     pub bookmarked_at: i64,
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub source_object_id: EnvelopeId,
+}
+
+/// bookmark した投稿が保護する cache の内容（本文の blob と添付、引用の添付。native と Web で同じ）。
+pub fn bookmark_cache_refs(row: &BookmarkedPostRow) -> Vec<(String, String)> {
+    let mut refs = Vec::new();
+    if let PayloadRef::BlobText { hash, .. } = &row.payload_ref {
+        refs.push(("blob".to_string(), hash.as_str().to_string()));
+    }
+    refs.extend(
+        row.attachments
+            .iter()
+            .map(|attachment| ("blob".to_string(), attachment.hash.as_str().to_string())),
+    );
+    if let Some(snapshot) = &row.repost_of {
+        refs.extend(
+            snapshot
+                .attachments
+                .iter()
+                .map(|attachment| ("blob".to_string(), attachment.hash.as_str().to_string())),
+        );
+    }
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 impl From<&BookmarkedPostRow> for BookmarkCursor {
@@ -280,8 +314,8 @@ impl AuthorRelationshipProjectionRow {
             mutual: following && followed_by,
             friend_of_friend: !via.is_empty(),
             friend_of_friend_via_pubkeys: via,
-            derived_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            derived_at: web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_millis() as i64)
                 .unwrap_or_default(),
         })

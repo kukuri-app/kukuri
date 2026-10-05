@@ -15,7 +15,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 iroh-relay.workspace = true
 rustls.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 tracing.workspace = true
 kukuri-cn-runtime-support = { path = "../cn-runtime-support" }
 kukuri-transport = { path = "../transport" }

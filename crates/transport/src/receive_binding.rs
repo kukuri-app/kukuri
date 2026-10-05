@@ -14,8 +14,8 @@ use kukuri_core::{
     RECEIVE_ENDPOINT_BINDING_MAX_LIFETIME_MS, ReceiveEndpointBindingV1,
     VerifiedReceiveEndpointBinding, receive_route_for_account,
 };
+use n0_future::time::{Instant, timeout};
 use tokio::sync::{RwLock, Semaphore};
-use tokio::time::{Instant, timeout, timeout_at};
 
 pub const RECEIVE_BINDING_ALPN: &[u8] = b"/kukuri/receive-binding/1";
 /// 1 endpoint が同時に応じる binding 要求の数。超えた要求は待たせずに接続を閉じる。
@@ -208,7 +208,7 @@ pub async fn fetch_receive_endpoint_binding(
 ) -> Result<VerifiedReceiveEndpointBinding> {
     receive_route_for_account(expected_account)?;
     ensure!(deadline > Instant::now(), "receive binding request expired");
-    timeout_at(deadline, async {
+    timeout(deadline.saturating_duration_since(Instant::now()), async {
         let connection =
             CloseBindingConnection(endpoint.connect(candidate, RECEIVE_BINDING_ALPN).await?);
         let (mut send, mut recv) = connection.0.open_bi().await?;

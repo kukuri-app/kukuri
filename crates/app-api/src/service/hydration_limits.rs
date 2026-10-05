@@ -317,14 +317,14 @@ pub(crate) async fn fetch_projection_blob_text_bounded(
             attempt: None,
         });
     }
-    let deadline = tokio::time::Instant::now() + projection_blob_fetch_timeout();
-    let fetch = tokio::time::timeout_at(deadline, blob_service.prepare_retry_fetch(hash))
+    let deadline = n0_future::time::Instant::now() + projection_blob_fetch_timeout();
+    let fetch = crate::timeout_at(deadline, blob_service.prepare_retry_fetch(hash))
         .await
         .ok()?
         .ok()?;
     // 共有network枠の受付後にだけ試行を数える。abort時はattemptのDropで失敗を記録する。
     let attempt = missing_bodies.try_begin(hash, Utc::now().timestamp_millis())?;
-    let bytes = match tokio::time::timeout_at(deadline, fetch).await {
+    let bytes = match crate::timeout_at(deadline, fetch).await {
         Ok(Err(error)) if error.is::<RemoteCacheDeferred>() => {
             attempt.defer();
             return None;
@@ -350,7 +350,7 @@ pub(crate) async fn fetch_local_projection_blob_text(
     blob_service: &dyn BlobService,
     hash: &kukuri_core::BlobHash,
 ) -> Option<String> {
-    match tokio::time::timeout(
+    match n0_future::time::timeout(
         projection_blob_fetch_timeout(),
         blob_service.fetch_local_blob(hash),
     )

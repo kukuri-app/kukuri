@@ -1,5 +1,6 @@
 use super::*;
 use iroh::endpoint::presets;
+use kukuri_store::SqliteStore;
 
 #[tokio::test]
 async fn account_candidate_history_is_indexed_and_survives_book_rebuild() {

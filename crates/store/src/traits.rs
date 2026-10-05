@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -17,7 +17,9 @@ use crate::models::{
     PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 
-pub(crate) const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// 内容の観測を残す期間と、残す行の数（新しい順）。
+pub const CONTENT_OBSERVATION_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+pub const MAX_CONTENT_OBSERVATIONS: usize = 2048;
 
 #[async_trait]
 pub trait Store: Send + Sync {
@@ -50,6 +52,12 @@ pub trait Store: Send + Sync {
     async fn upsert_follow_edge(&self, edge: FollowEdge) -> Result<()>;
     async fn list_follow_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<FollowEdge>>;
     async fn list_follow_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<FollowEdge>>;
+    /// `subject` から `target` への follow の edge(#1219 AC-5)。無ければ `None`。
+    async fn get_follow_edge(
+        &self,
+        subject_pubkey: &str,
+        target_pubkey: &str,
+    ) -> Result<Option<FollowEdge>>;
     async fn upsert_block_edge(&self, edge: BlockEdge) -> Result<()>;
     async fn list_block_edges_by_subject(&self, subject_pubkey: &str) -> Result<Vec<BlockEdge>>;
     async fn list_block_edges_by_target(&self, target_pubkey: &str) -> Result<Vec<BlockEdge>>;
@@ -59,6 +67,21 @@ pub trait Store: Send + Sync {
         subject_pubkey: &str,
         target_pubkey: &str,
     ) -> Result<Option<BlockEdge>>;
+    /// `subject` の follow の edge を、相手の公開鍵の順に `after` より後から `limit` 件(#1211 AC-6。移行で自分の edge を
+    /// 小分けに送る)。
+    async fn list_follow_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>>;
+    /// `list_follow_edges_by_subject_after` の block の edge 版。
+    async fn list_block_edges_by_subject_after(
+        &self,
+        subject_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<BlockEdge>>;
 }
 
 // ProjectionStore はドメイン別 sub-trait の supertrait 合成(WP-H1)。
@@ -337,19 +360,29 @@ pub trait SocialProjectionStore: Send + Sync {
         channel_id: &str,
         participant_pubkey: &str,
     ) -> Result<bool>;
-    /// 参加中の pubkey を `after` より後ろから昇順に最大 `limit` 件。`epoch_id` が `None` なら channel の全 epoch から重複なく。
+    /// いずれかの channel にその pubkey の行が(epoch と退出を問わず)1 行でもあれば `true`(#1219 AC-5)。
+    async fn has_private_channel_member(&self, participant_pubkey: &str) -> Result<bool>;
+    /// 同じ channel にその pubkey の参加中の行があれば `true`(#1219 AC-5。参加中の行の索引で 1 件を引く)。
+    async fn is_active_private_channel_participant(
+        &self,
+        channel_id: &str,
+        participant_pubkey: &str,
+    ) -> Result<bool>;
+    /// いずれかの epoch で参加中の pubkey を、`after` より後ろから昇順に重複なく最大 `limit` 件。次の pubkey を索引で
+    /// 1 回ずつ引く(#1219 AC-2。参加者が過去の世代の行を持っていても、1 件の仕事は世代の数に比例しない)。
     async fn list_private_channel_participants(
         &self,
         channel_id: &str,
-        epoch_id: Option<&str>,
         after: &str,
         limit: usize,
     ) -> Result<Vec<String>>;
-    async fn count_private_channel_participants(
+    /// (channel, epoch) の参加中の数と、そのうち資格喪失(channel の owner と mutual でない。#1219 AC-2)の数。
+    /// 行の書込みと follow の edge の書込みで保つ数を 1 件読む。
+    async fn private_channel_participant_counts(
         &self,
         channel_id: &str,
         epoch_id: &str,
-    ) -> Result<usize>;
+    ) -> Result<(usize, usize)>;
 }
 
 /// `list_author_relationships` の既定動作: 1 件ずつ `get_author_relationship` を呼ぶ。
@@ -565,7 +598,9 @@ pub trait NotificationStore: Send + Sync {
 /// 注入点はこれまでどおり `dyn ProjectionStore` を使える。個別ドメインだけが必要な
 /// 場面では対応する sub-trait を直接使う。
 pub trait ProjectionStore:
-    ObjectProjectionStore
+    crate::AccountSyncStore
+    + crate::PrivateChannelKeyStore
+    + ObjectProjectionStore
     + ContentObservationStore
     + PostWithdrawalStore
     + LiveGameProjectionStore
@@ -577,7 +612,9 @@ pub trait ProjectionStore:
 }
 
 impl<T> ProjectionStore for T where
-    T: ObjectProjectionStore
+    T: crate::AccountSyncStore
+        + crate::PrivateChannelKeyStore
+        + ObjectProjectionStore
         + ContentObservationStore
         + PostWithdrawalStore
         + LiveGameProjectionStore

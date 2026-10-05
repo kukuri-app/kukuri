@@ -10,8 +10,8 @@ use kukuri_core::{
 };
 use tempfile::tempdir;
 
+mod account_sync_rows;
 mod author_docs_authors;
-mod backend_parity;
 mod content_observations;
 mod direct_messages;
 mod legacy_store_retirement;
@@ -21,6 +21,7 @@ mod notifications_dispatch;
 mod page_query_plans;
 mod pagination;
 mod post_withdrawals;
+mod private_channel_keys;
 mod private_channel_participants;
 mod private_index_grants;
 mod protected_migration;
@@ -32,3 +33,17 @@ mod row_mapping_roundtrip_live_game;
 mod row_mapping_roundtrip_social;
 mod sqlite_projection;
 mod sqlite_store;
+
+#[tokio::test]
+async fn sqlite_matches_memory_in_every_parity_scenario() {
+    crate::parity::check_backend(async || {
+        SqliteStore::connect_memory().await.expect("sqlite store")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn sqlite_trust_observation_rows_follow_the_shared_scenario() {
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    crate::parity::check_trust_observation_store(&store).await;
+}

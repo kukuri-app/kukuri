@@ -47,8 +47,9 @@ async fn empty_namespace(runtime: &DesktopRuntime, name: &str) -> ReplicaId {
 async fn empty_namespaces_are_reclaimed_in_bounded_steps_and_once() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
     let source = tempdir().expect("source dir");
-    let db =
-        ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly).expect("account");
+    let db = ensure_accounts_initialized(source.path(), IdentityStorageMode::FileOnly)
+        .await
+        .expect("account");
     let runtime = open_runtime(&db).await;
     let docs = runtime.iroh_stack.docs_sync.clone();
     let written = ReplicaId::new("author::written-before-the-update");
@@ -73,7 +74,7 @@ async fn empty_namespaces_are_reclaimed_in_bounded_steps_and_once() {
         LegacyStoreProgress::More
     ));
     let (cursor, done) = runtime
-        .store
+        .sqlite
         .legacy_store_position(EMPTY_NAMESPACES_KIND)
         .await
         .expect("position");
@@ -110,7 +111,7 @@ async fn empty_namespaces_are_reclaimed_in_bounded_steps_and_once() {
     // 終端の後は列挙しないので、後から置いた空の namespace は残る。位置を先頭へ戻しても、終端の記録があれば読まない
     // (位置より後ろだけを調べる列挙では、後から置いた namespace は位置より前に並びうるため)。
     runtime
-        .store
+        .sqlite
         .finish_legacy_store_page(EMPTY_NAMESPACES_KIND, "", true)
         .await
         .expect("keep the end");

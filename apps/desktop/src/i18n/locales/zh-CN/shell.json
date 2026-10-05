@@ -580,7 +580,11 @@
     "cancel": "取消",
     "yes": "是",
     "pending": "处理中…",
-    "create": "创建新账号"
+    "create": "创建新账号",
+    "transferHeading": "在设备之间迁移",
+    "transferOut": "迁移到其他设备",
+    "transferIn": "从其他设备迁移",
+    "back": "返回"
   },
   "initialProfile": {
     "title": "首次设置个人资料",
@@ -588,7 +592,11 @@
     "save": "保存",
     "later": "以后再说",
     "nodeUnavailable": "无法确认社区节点状态。请重试或跳过并继续设置个人资料。",
-    "skipNode": "跳过并继续"
+    "skipNode": "跳过并继续",
+    "restore": {
+      "description": "你可以通过导入已导出的账户密钥或从其他设备迁移，恢复以前使用的账号（帖子等历史记录不会全部恢复）。",
+      "action": "恢复以前的账号"
+    }
   },
   "scopeLimit": {
     "title": "已达到上限",

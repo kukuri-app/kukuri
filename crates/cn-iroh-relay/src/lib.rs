@@ -92,7 +92,7 @@ impl IrohRelayConfig {
 }
 
 pub struct SpawnedIrohRelay {
-    _server: Server,
+    server: Server,
     http_addr: SocketAddr,
     https_addr: Option<SocketAddr>,
     quic_addr: Option<SocketAddr>,
@@ -109,6 +109,11 @@ impl SpawnedIrohRelay {
 
     pub fn quic_addr(&self) -> Option<SocketAddr> {
         self.quic_addr
+    }
+
+    /// relay が中継した実データの bytes（client へ送った datagram の合計）。経路の判定に使う（ADR 0060 §5）。
+    pub fn relayed_bytes(&self) -> u64 {
+        self.server.metrics().server.bytes_sent.get()
     }
 }
 
@@ -168,7 +173,7 @@ pub async fn spawn_server(config: IrohRelayConfig) -> Result<SpawnedIrohRelay> {
     let https_addr = server.https_addr();
     let quic_addr = server.quic_addr();
     Ok(SpawnedIrohRelay {
-        _server: server,
+        server,
         http_addr,
         https_addr,
         quic_addr,

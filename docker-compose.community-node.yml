@@ -114,6 +114,8 @@ services:
       COMMUNITY_NODE_RATE_LIMIT_PER_SECOND: ${COMMUNITY_NODE_RATE_LIMIT_PER_SECOND:-10}
       COMMUNITY_NODE_RATE_LIMIT_BURST: ${COMMUNITY_NODE_RATE_LIMIT_BURST:-30}
       COMMUNITY_NODE_RATE_LIMIT_TRUST_FORWARDED_FOR: ${COMMUNITY_NODE_RATE_LIMIT_TRUST_FORWARDED_FOR:-false}
+      # Web クライアントの配信 origin（ADR 0060 §2）。未設定なら CORS に応答しない。
+      COMMUNITY_NODE_CORS_ALLOWED_ORIGINS: ${COMMUNITY_NODE_CORS_ALLOWED_ORIGINS:-}
       # 公開ノード情報の node_id と、cn-indexer がリスク判定に載せる発行元識別子(署名鍵の
       # 公開鍵 hex、または明示識別子)の一致を起動時に検査する(#706)。cn-indexer と同じ値を渡す。
       COMMUNITY_NODE_SAFETY_SIGNING_KEY: ${COMMUNITY_NODE_SAFETY_SIGNING_KEY:-}
@@ -174,6 +176,20 @@ services:
       - "${CN_IROH_RELAY_HTTP_HOST_BIND_IP:-127.0.0.1}:${CN_IROH_RELAY_PORT:-13340}:3340"
       - "${CN_IROH_RELAY_HTTPS_HOST_BIND_IP:-127.0.0.1}:${CN_IROH_RELAY_HTTPS_PORT:-13443}:3443"
       - "${CN_IROH_RELAY_QUIC_HOST_BIND_IP:-127.0.0.1}:${CN_IROH_RELAY_QUIC_PORT:-17842}:7842/udp"
+
+  # STUN（binding だけ。#1483、ADR 0057 §6）。relay と同じ host で、relay とは別の process として動かす。
+  # クライアントは relay の host の 3478/udp へ送るので、host 側の port は変えない。
+  cn-stun:
+    logging: *cn-logging
+    build:
+      context: .
+      dockerfile: docker/cn/Dockerfile
+      args:
+        TARGET_PACKAGES: kukuri-cn-stun
+        TARGET_BIN: cn-stun
+    restart: unless-stopped
+    ports:
+      - "${CN_STUN_HOST_BIND_IP:-127.0.0.1}:3478:3478/udp"
 
   # 常駐 indexing ワーカー（#613 / #615）。docs replica sync → safety scan → index 投影。
   # provider 未構成なら ingest 無効の fail-closed 常駐（scan なしで index に載せない）。

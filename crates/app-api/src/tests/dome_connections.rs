@@ -11,6 +11,12 @@ struct ConnectionIoProbe {
 }
 #[async_trait]
 impl DocsSync for ConnectionIoProbe {
+    async fn install_private_epoch_secrets(
+        &self,
+        source: Arc<dyn kukuri_docs_sync::PrivateEpochSecrets>,
+    ) -> Result<()> {
+        self.inner.install_private_epoch_secrets(source).await
+    }
     async fn register_private_replica_secret(
         &self,
         replica: &ReplicaId,

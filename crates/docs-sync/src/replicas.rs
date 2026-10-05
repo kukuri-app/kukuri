@@ -3,7 +3,12 @@ use iroh_docs::NamespaceSecret;
 use kukuri_core::{ReplicaId, TopicId, blob_hash};
 
 pub(crate) fn public_replica_secret(replica_id: &ReplicaId) -> Option<NamespaceSecret> {
-    if replica_id.as_str().starts_with("channel::") {
+    // private channel と、本人の端末間の account 同期（ADR 0061）は、replica id から namespace を導出しない。
+    if replica_id.as_str().starts_with("channel::")
+        || replica_id
+            .as_str()
+            .starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX)
+    {
         return None;
     }
     if replica_id.as_str().starts_with("bucket::") {
@@ -84,6 +89,26 @@ pub fn post_replica_kind(replica_id: &ReplicaId) -> Option<PostReplicaKind> {
             channel_id: channel_id.to_string(),
         }
     })
+}
+
+/// private channel の世代の replica(旧形式の `channel::<c>`・`channel::<c>::epoch::<e>`・private の bucket)の
+/// (channel id, epoch id)。`legacy` の世代は `channel::<c>`。
+pub fn private_channel_epoch_of(replica_id: &ReplicaId) -> Option<(String, String)> {
+    let raw = replica_id.as_str();
+    if raw.starts_with("bucket::") {
+        return match BucketReplica::parse(replica_id).ok()?.scope() {
+            BucketScope::PrivateChannel {
+                channel_id,
+                epoch_id,
+            } => Some((channel_id.clone(), epoch_id.clone())),
+            _ => None,
+        };
+    }
+    let rest = raw.strip_prefix("channel::")?;
+    let (channel_id, epoch_id) = rest.split_once("::epoch::").unwrap_or((rest, "legacy"));
+    let well_formed = |part: &str| !part.is_empty() && !part.contains("::");
+    (well_formed(channel_id) && well_formed(epoch_id))
+        .then(|| (channel_id.to_string(), epoch_id.to_string()))
 }
 
 pub fn private_channel_hint_topic(channel_id: &str) -> TopicId {

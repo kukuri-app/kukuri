@@ -194,7 +194,7 @@ async fn community_node_connectivity_assist_backfills_public_timeline_with_relay
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime_a, base_url, 1);
+    seed_local_community_node_consents(&runtime_a, base_url, 1).await;
     mark_community_node_session_ready_for_test(&runtime_a, base_url).await;
     *runtime_b.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -212,7 +212,7 @@ async fn community_node_connectivity_assist_backfills_public_timeline_with_relay
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime_b, base_url, 1);
+    seed_local_community_node_consents(&runtime_b, base_url, 1).await;
     mark_community_node_session_ready_for_test(&runtime_b, base_url).await;
     timeout(
         Duration::from_secs(30),
@@ -343,7 +343,7 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime_a, base_url, 1);
+    seed_local_community_node_consents(&runtime_a, base_url, 1).await;
     *runtime_b.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![CommunityNodeNodeConfig::new(
@@ -360,7 +360,7 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
             ),
         )],
     };
-    seed_local_community_node_consents(&runtime_b, base_url, 1);
+    seed_local_community_node_consents(&runtime_b, base_url, 1).await;
 
     timeout(
         Duration::from_secs(30),
@@ -670,6 +670,7 @@ async fn runtime_starts_with_unreachable_community_node_and_recovers_via_manual_
             )],
         },
     )
+    .await
     .expect("save community-node config");
 
     let runtime_a = timeout(
@@ -707,7 +708,7 @@ async fn runtime_starts_with_unreachable_community_node_and_recovers_via_manual_
 
     // WP-Q2: 到達不能ノードへのregistration refresh試行はscheduler tickが駆動し、getterは読み取り専用。
     // #857: local consentだけでは保存済みrelayを有効化しない。到達不能Nodeはpreflightを完了できないためDirectOnlyを維持する。
-    seed_local_community_node_consents(&runtime_a, community_base_url, 1);
+    seed_local_community_node_consents(&runtime_a, community_base_url, 1).await;
     runtime_a
         .sync_community_node_connectivity(community_base_url)
         .await

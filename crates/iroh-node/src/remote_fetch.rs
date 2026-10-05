@@ -8,7 +8,6 @@
 
 use std::fmt::Display;
 use std::future::Future;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,13 +17,13 @@ use kukuri_transport::{
     EndpointAddr, PeerAddrBook, PeerConnectionStatus, PeerFetchFailure, RemoteFetchRetryState,
     RequestRateDecision, SharedRemoteFetchResult, fetch_receive_endpoint_binding,
 };
+use n0_future::time::{Instant, timeout};
 use tokio::sync::Mutex;
-use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 
 use crate::IrohDocsNode;
 use crate::network_work::{FetchIdentity, FetchRequest, NetworkWorkRuntime};
-use crate::remote_blob;
+use crate::remote_blob::{self, BlobOutput};
 use kukuri_transport::work_admission::WorkPersistence;
 
 pub const REMOTE_FETCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -42,7 +41,10 @@ async fn within_remote_fetch_budget<T>(future: impl Future<Output = T>) -> Optio
 pub type DisplayBlobFetch = std::pin::Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send>>;
 pub type DisplayBlobFileFetch = std::pin::Pin<Box<dyn Future<Output = Result<Option<u64>>> + Send>>;
 
+// 表示用の file への取得は native だけ（ADR 0056 §5）。
+#[cfg(not(target_family = "wasm"))]
 mod display_file;
+#[cfg(not(target_family = "wasm"))]
 pub use display_file::prepare_display_file_fetch;
 
 pub async fn prepare_display_fetch(
@@ -72,7 +74,7 @@ pub async fn prepare_display_fetch(
         let result = tokio::select! {
             biased;
             _ = lease.cancelled() => Ok(None),
-            result = tokio::time::timeout_at(deadline, walk) => result.unwrap_or(Ok(None)),
+            result = n0_future::time::timeout(deadline.saturating_duration_since(Instant::now()), walk) => result.unwrap_or(Ok(None)),
         };
         if lease.finish() { result } else { Ok(None) }
     }))
@@ -102,7 +104,7 @@ pub async fn fetch_verified_receive_offer_payload(
         (1..=kukuri_core::RECEIVE_PAYLOAD_MAX_BYTES as u64).contains(&max_bytes),
         "invalid receive offer payload size"
     );
-    let hash = iroh_blobs::Hash::from_str(reference.payload_hash.as_str())?;
+    let hash = crate::parse_blob_hash(reference.payload_hash.as_str())?;
     anyhow::ensure!(
         current_time_ms()? < offer.expires_at_ms(),
         "receive offer expired before fetch"
@@ -177,7 +179,7 @@ pub async fn fetch_verified_receive_offer_payload(
     let result = tokio::select! {
         biased;
         _ = lease.cancelled() => anyhow::bail!("receive offer payload fetch cancelled"),
-        result = tokio::time::timeout_at(deadline, work) => {
+        result = n0_future::time::timeout(deadline.saturating_duration_since(Instant::now()), work) => {
             result.context("receive offer payload fetch timed out")?
         }
     };
@@ -214,8 +216,8 @@ async fn fetch_offer_sdk_bytes(
 }
 
 fn current_time_ms() -> Result<i64> {
-    Ok(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
+    Ok(web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)?
         .as_millis()
         .try_into()?)
 }
@@ -279,7 +281,7 @@ async fn fetch_ephemeral(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     mode: FetchMode,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
 ) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     fetch_ephemeral_into(
@@ -293,11 +295,12 @@ async fn fetch_ephemeral(
     Ok(bytes)
 }
 
+#[cfg(not(target_family = "wasm"))]
 async fn fetch_ephemeral_to_file(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     path: &std::path::Path,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
 ) -> Result<u64> {
     let mut file = tokio::fs::File::create(path).await?;
     fetch_ephemeral_into(
@@ -310,22 +313,16 @@ async fn fetch_ephemeral_to_file(
     .await
 }
 
-enum BlobOutput<'a> {
-    Memory(&'a mut Vec<u8>),
-    File(&'a mut tokio::fs::File),
-}
-
 async fn fetch_ephemeral_into(
     connection: iroh::endpoint::Connection,
     hash: iroh_blobs::Hash,
     mode: FetchMode,
-    cache: Option<&kukuri_store::SqliteStore>,
+    cache: Option<&dyn kukuri_store::ContentCacheStore>,
     mut output: BlobOutput<'_>,
 ) -> Result<u64> {
     use bao_tree::io::BaoContentItem;
     use futures_util::StreamExt;
     use iroh_blobs::get::request::{GetBlobItem, get_blob};
-    use tokio::io::AsyncWriteExt;
 
     let max_bytes = match mode {
         FetchMode::EphemeralBounded(limit) => limit,
@@ -334,7 +331,7 @@ async fn fetch_ephemeral_into(
     let mut stream = get_blob(connection, hash);
     let mut received = 0u64;
     let mut hasher = blake3::Hasher::new();
-    let mut reservation = cache.map(kukuri_store::SqliteStore::empty_remote_cache_reservation);
+    let mut reservation = cache.map(|cache| cache.empty_remote_cache_reservation());
     while let Some(item) = stream.next().await {
         match item {
             GetBlobItem::Item(BaoContentItem::Leaf(leaf)) => {
@@ -346,7 +343,8 @@ async fn fetch_ephemeral_into(
                     leaf.offset == received,
                     "non-contiguous ephemeral blob stream"
                 );
-                if incoming > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64 {
+                let capacity = cache.map_or(0, |cache| cache.remote_cache_capacity());
+                if incoming > capacity {
                     reservation = None;
                 } else if let (Some(cache), Some(reservation)) = (cache, reservation.as_mut())
                     && incoming > reservation.bytes()
@@ -354,7 +352,7 @@ async fn fetch_ephemeral_into(
                     let target = incoming
                         .div_ceil(1024 * 1024)
                         .saturating_mul(1024 * 1024)
-                        .min(kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64);
+                        .min(capacity);
                     let additional = target - reservation.bytes();
                     if !cache
                         .reserve_remote_cache_bytes(reservation, additional)
@@ -364,10 +362,7 @@ async fn fetch_ephemeral_into(
                     }
                 }
                 hasher.update(&leaf.data);
-                match &mut output {
-                    BlobOutput::Memory(bytes) => bytes.extend_from_slice(&leaf.data),
-                    BlobOutput::File(file) => file.write_all(&leaf.data).await?,
-                }
+                output.write(&leaf.data).await?;
                 received = incoming;
             }
             GetBlobItem::Item(_) => {}
@@ -376,9 +371,7 @@ async fn fetch_ephemeral_into(
                     hasher.finalize().as_bytes() == hash.as_bytes(),
                     "ephemeral blob hash mismatch"
                 );
-                if let BlobOutput::File(file) = &mut output {
-                    file.flush().await?;
-                }
+                output.flush().await?;
                 return Ok(received);
             }
             GetBlobItem::Error(error) => return Err(error.into()),
@@ -730,9 +723,12 @@ async fn fetch_bytes_from_remote(
                     match mode {
                         FetchMode::Store => {
                             let transfer_started = Instant::now();
+                            let blobs = node.blobs().clone();
                             match timeout(
                                 REMOTE_FETCH_TRANSFER_TIMEOUT,
-                                node.blobs().remote().fetch(conn, hash),
+                                crate::confine_local(async move {
+                                    blobs.remote().fetch(conn, hash).await
+                                }),
                             )
                             .await
                             {
@@ -803,6 +799,7 @@ async fn fetch_bytes_from_remote(
                             let transfer_started = Instant::now();
                             match timeout(REMOTE_FETCH_TRANSFER_TIMEOUT, async {
                                 match file_path {
+                                    #[cfg(not(target_family = "wasm"))]
                                     Some(path) => fetch_ephemeral_to_file(
                                         conn,
                                         hash,
@@ -811,7 +808,7 @@ async fn fetch_bytes_from_remote(
                                     )
                                     .await
                                     .map(|_| Vec::new()),
-                                    None => {
+                                    _ => {
                                         fetch_ephemeral(
                                             conn,
                                             hash,
@@ -856,6 +853,7 @@ async fn fetch_bytes_from_remote(
                                                     + REMOTE_FETCH_TRANSFER_TIMEOUT,
                                                 async {
                                                     match file_path {
+                                                        #[cfg(not(target_family = "wasm"))]
                                                         Some(path) => remote_blob::fetch_to_file(
                                                             node.endpoint(),
                                                             peer.clone(),
@@ -864,7 +862,7 @@ async fn fetch_bytes_from_remote(
                                                         )
                                                         .await
                                                         .map(|found| found.map(|_| Vec::new())),
-                                                        None => {
+                                                        _ => {
                                                             remote_blob::fetch(
                                                                 node.endpoint(),
                                                                 peer.clone(),
@@ -970,4 +968,5 @@ async fn fetch_bytes_from_remote(
 }
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod tests;

@@ -21,7 +21,8 @@ async fn remote_display_file_larger_than_cache_budget_remains_displayable() {
             .await
             .unwrap(),
     );
-    let service = IrohBlobService::with_account_store(node.clone(), cache.clone());
+    let service =
+        IrohBlobService::with_account_store(node.clone(), cache.clone().clone(), cache.clone());
     let display = dir.path().join("large-display.mp4");
     tokio::fs::File::create(&display)
         .await

@@ -85,7 +85,7 @@ impl AppService {
     ) -> Result<PrivateEpochSnapshot> {
         let local = self.current_author_pubkey();
         let local = local.as_str();
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        n0_future::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 if let Some(snapshot) = self
                     .read_private_control(
@@ -102,7 +102,7 @@ impl AppService {
                 {
                     return Ok::<_, anyhow::Error>(snapshot);
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                n0_future::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         })
         .await

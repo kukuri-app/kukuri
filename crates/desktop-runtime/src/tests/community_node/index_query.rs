@@ -354,6 +354,7 @@ pub(super) async fn index_runtime(
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -366,7 +367,7 @@ pub(super) async fn index_runtime(
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     (runtime, base_url, managed, index, server, dir)
 }
 
@@ -426,8 +427,6 @@ async fn community_node_index_client_uses_session_and_preserves_query_contract()
 
 #[tokio::test]
 async fn community_node_index_records_and_restores_existing_local_subjects() {
-    use kukuri_store::ContentObservationStore;
-
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let (runtime, base_url, _managed, state, server, dir) = index_runtime(None).await;
     let db_path = dir.path().join("community-index-query.db");
@@ -643,6 +642,34 @@ async fn community_node_index_client_rejects_half_scope_before_http() {
         .expect_err("half scope should fail");
     assert_eq!(error.code, "INVALID_INDEX_QUERY");
     assert!(state.requests.lock().await.is_empty());
+    runtime.shutdown().await;
+    server.abort();
+}
+
+// 本人の端末間の account 同期の hint（ADR 0061 §6）は、公開 topic として node へ送らない。
+#[tokio::test]
+async fn community_node_indexing_request_rejects_the_account_sync_topic_before_http() {
+    let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
+    let (runtime, base_url, _managed, state, server, _dir) = index_runtime(None).await;
+    let hint = runtime
+        .author_keys
+        .derive_account_sync()
+        .hint_topic()
+        .clone();
+    for topic_id in [hint.clone(), kukuri_core::wire::hint_topic_id(&hint)] {
+        let error = runtime
+            .submit_community_node_indexing_request(CommunityNodeIndexingRequest {
+                base_url: base_url.clone(),
+                scope_kind: IndexScopeKind::PublicTopic,
+                topic_id: topic_id.as_str().to_string(),
+                channel_id: None,
+                confirm_private_channel_secret_disclosure: false,
+            })
+            .await
+            .expect_err("account sync topic is not public");
+        assert_eq!(error.code, "INVALID_INDEXING_REQUEST");
+    }
+    assert!(state.indexing_requests.lock().await.is_empty());
     runtime.shutdown().await;
     server.abort();
 }
@@ -928,6 +955,7 @@ async fn awaiting_admission_manual_refresh_rechecks_policy_and_blocks_protected_
         base_url.as_str(),
         "invalid persisted token",
     )
+    .await
     .expect("persist invalid token sentinel");
 
     let status = runtime

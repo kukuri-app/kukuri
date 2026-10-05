@@ -257,6 +257,56 @@ async fn unverified_object_projections_are_dropped_and_other_tables_are_kept() {
     assert_eq!(notifications, 1, "other tables must be kept");
 }
 
+// #1219 AC-2: 既存の参加者の行から、資格喪失(owner と mutual でない)の印と (channel, epoch) の数を作る。
+#[tokio::test]
+async fn participant_counts_are_backfilled_from_existing_rows() {
+    let tempdir = tempdir().expect("tempdir");
+    let db_path = tempdir.path().join("pre-participant-counts.db");
+    materialize_sqlite_fixture(&db_path, 20261003000000)
+        .await
+        .expect("materialize the schema before the participant counts");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}", db_path.display()))
+        .await
+        .expect("open the database before the migration");
+    for statement in [
+        "INSERT INTO private_channels VALUES ('t::c', 't', 'c', 'c', 'o', 'o', NULL, 'friend_only', 'e2', NULL, 1, 1, '')",
+        "INSERT INTO follow_edges VALUES ('o', 'a', 'active', 1, 'f1')",
+        "INSERT INTO follow_edges VALUES ('a', 'o', 'active', 1, 'f2')",
+        "INSERT INTO follow_edges VALUES ('o', 'b', 'active', 1, 'f3')",
+        "INSERT INTO private_channel_participants VALUES ('c', 'e2', 'o', NULL, 1)",
+        "INSERT INTO private_channel_participants VALUES ('c', 'e2', 'a', NULL, 1)",
+        "INSERT INTO private_channel_participants VALUES ('c', 'e2', 'b', NULL, 1)",
+        "INSERT INTO private_channel_participants VALUES ('c', 'e2', 'x', 5, 5)",
+        "INSERT INTO private_channel_participants VALUES ('c', 'e1', 'a', NULL, 1)",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("{statement}: {error}"));
+    }
+    pool.close().await;
+
+    let migrated = SqliteStore::connect_file(&db_path)
+        .await
+        .expect("apply the migration");
+    assert_eq!(
+        migrated
+            .private_channel_participant_counts("c", "e2")
+            .await
+            .unwrap(),
+        (3, 1)
+    );
+    assert_eq!(
+        migrated
+            .private_channel_participant_counts("c", "e1")
+            .await
+            .unwrap(),
+        (1, 0)
+    );
+}
+
 // #1252: 署名と replica を確かめる前に保存された reaction・live session・game room の行は、migration で消える。
 // 検証済みの版の行は残る。
 #[tokio::test]
@@ -530,8 +580,8 @@ async fn all_generations_have_paired_down() {
 
     assert_eq!(
         generations.len(),
-        47,
-        "store migrations must cover exactly 47 generations, found versions: {:?}",
+        51,
+        "store migrations must cover exactly 51 generations, found versions: {:?}",
         generations.keys().collect::<Vec<_>>()
     );
 
@@ -623,8 +673,8 @@ async fn full_migration_round_trip() {
     expected_versions.dedup();
     assert_eq!(
         applied_versions.len(),
-        47,
-        "round trip must restore all 47 migration generations"
+        51,
+        "round trip must restore all 51 migration generations"
     );
     assert_eq!(applied_versions, expected_versions);
 }

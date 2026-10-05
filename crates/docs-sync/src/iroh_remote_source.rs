@@ -5,20 +5,32 @@ use crate::replicas::{PostReplicaKind, post_replica_kind};
 use kukuri_iroh_node::{DocReadQuery, DocReadResponse};
 
 impl IrohDocsSync {
-    pub fn with_account_store(node: Arc<IrohDocsNode>, store: Arc<SqliteStore>) -> Self {
-        let mut docs = Self::new(node.clone());
+    /// 保存 trait を持つ。Web は IndexedDB の実装を渡し、peer candidate は保存しない（ADR 0056 §5、ADR 0058 §7）。
+    pub fn with_content_cache(node: Arc<IrohDocsNode>, cache: Arc<dyn ContentCacheStore>) -> Self {
+        Self {
+            remote_cache: Some(cache),
+            ..Self::new(node)
+        }
+    }
+
+    /// account の保存先（native は SQLite、Web は IndexedDB）を、remote の cache と peer candidate の保存先に使う。
+    pub fn with_account_store(
+        node: Arc<IrohDocsNode>,
+        cache: Arc<dyn ContentCacheStore>,
+        candidates: Arc<dyn kukuri_store::PeerCandidateStore>,
+    ) -> Self {
+        let mut docs = Self::with_content_cache(node.clone(), cache);
         docs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
-            Arc::new(BlobPeerHealth::default()),
-            store.clone(),
+            Arc::new(kukuri_transport::BlobPeerHealth::default()),
+            candidates,
             "docs",
         ));
-        docs.remote_cache = Some(store);
         docs
     }
 
-    pub(crate) fn remote_cache(&self) -> Option<&SqliteStore> {
+    pub(crate) fn remote_cache(&self) -> Option<&dyn ContentCacheStore> {
         self.remote_cache.as_deref()
     }
 
@@ -67,7 +79,14 @@ impl IrohDocsSync {
         let private = match post_replica_kind(replica) {
             Some(kind) => matches!(kind, PostReplicaKind::PrivateChannel { .. }),
             None if author_replica(replica) => false,
-            None => anyhow::bail!("remote reader requires a post or author replica"),
+            // 本人の端末の account 同期の replica(ADR 0061 §10)。秘密は account の namespace の秘密。
+            None if replica
+                .as_str()
+                .starts_with(kukuri_core::wire::ACCOUNT_SYNC_REPLICA_PREFIX) =>
+            {
+                true
+            }
+            None => anyhow::bail!("remote reader requires a post, author or account replica"),
         };
         anyhow::ensure!(
             private == private_secret.is_some(),
@@ -113,7 +132,7 @@ impl IrohDocsSync {
             Some(secret) => secret.clone(),
             None => self.replica_secret(replica).await?,
         };
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let response = self
             .node
             .query_remote_docs(peer.clone(), replica, &secret, query)

@@ -25,17 +25,23 @@ impl AppService {
         );
         let services = self.services.clone();
         let closed = Arc::clone(closed);
+        let wake = Arc::clone(&self.subscription_registry.dm_outbox_retry_wake);
         #[cfg(test)]
         self.subscription_registry
             .dm_outbox_retry_starts
             .fetch_add(1, Ordering::SeqCst);
-        *owner = Some(AbortOnDropTask::new(tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+        *owner = Some(AbortOnDropTask::new(n0_future::task::spawn(async move {
+            let mut interval = n0_future::time::interval(std::time::Duration::from_millis(
                 DIRECT_MESSAGE_RETRY_INTERVAL_MS,
             ));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Skip);
+            // #1219 AC-2: private channel の鍵更新の配布の続きも、tick ごとに 1 操作 1 page ずつ進める。
+            let mut rotation_cursor = Default::default();
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    _ = wake.notified() => {}
+                }
                 if closed.load(Ordering::Acquire) {
                     return;
                 }
@@ -47,9 +53,22 @@ impl AppService {
                 {
                     warn!(%error, "account DM outbox retry deferred");
                 }
+                if let Err(error) =
+                    AppService::step_private_channel_rotations(&services, &mut rotation_cursor)
+                        .await
+                {
+                    warn!(%error, "private channel rotation step deferred");
+                }
             }
         })));
         Ok(())
+    }
+
+    /// 復帰の契機（ADR 0059 §5）。DM・epoch 制御の送信待ちの再送を、再送の owner に次の間隔を待たずに 1 回行わせ、
+    /// 取り下げの書込みを再開する。どちらも既存の実行枠で、同じ ID で送る。
+    pub async fn resume_pending_writes(&self) -> Result<()> {
+        self.subscription_registry.dm_outbox_retry_wake.notify_one();
+        self.resume_withdrawal_writes().await
     }
 
     pub(crate) async fn shutdown_direct_message_outbox_retry(&self) {
@@ -64,7 +83,7 @@ impl AppService {
             .take();
         if let Some(task) = task {
             task.abort();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task.wait()).await;
+            let _ = n0_future::time::timeout(std::time::Duration::from_secs(2), task.wait()).await;
         }
     }
 }

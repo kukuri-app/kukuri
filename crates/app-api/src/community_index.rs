@@ -1,6 +1,7 @@
 use crate::service::*;
+use crate::timeout_at;
+use n0_future::time::{Instant, timeout};
 use std::time::Duration;
-use tokio::time::{Instant, timeout, timeout_at};
 
 /// 1 候補 peer への試行の上限。batch 全体の 30 秒の内に、候補 4 peer を順に試せる長さ(ADR 0055 §3)。
 const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(7);
@@ -155,7 +156,11 @@ impl AppService {
         for (source, topic, scope, entries) in ready_groups {
             let write_allowed = match &scope {
                 TimelineScope::Channel { channel_id } => self
-                    .private_channel_write_state(topic.as_str(), channel_id)
+                    .private_channel_state_for_owner_action(
+                        topic.as_str(),
+                        channel_id,
+                        PrivateChannelOwnerAction::WriteCheck,
+                    )
                     .await
                     .is_ok(),
                 TimelineScope::Public => true,

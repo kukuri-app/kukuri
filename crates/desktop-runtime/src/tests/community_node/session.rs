@@ -29,6 +29,7 @@ async fn consented_node_bootstraps_session_on_maintenance_tick() {
         Arc::new(Mutex::new(String::new())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -57,7 +58,7 @@ async fn consented_node_bootstraps_session_on_maintenance_tick() {
     };
     // #857: ユーザーが同意モーダルで受諾済み(ローカル同意記録あり)の node だけが
     // スケジューラ tick でセッションを確立する。
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // WP-Q2: セッション確立はスケジューラ tick が駆動し、getter は読み取り専用。
     runtime.run_community_node_session_maintenance_once().await;
@@ -127,6 +128,7 @@ async fn status_getter_is_read_only_and_does_not_bootstrap_session() {
         Arc::new(Mutex::new(String::new())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -153,7 +155,7 @@ async fn status_getter_is_read_only_and_does_not_bootstrap_session() {
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // getter 単独では同意済みノードでもセッションを bootstrap しない。
     let statuses = runtime
@@ -219,6 +221,7 @@ async fn near_expiry_token_triggers_proactive_community_node_reauthentication() 
         Arc::new(Mutex::new("near-expiry-token".into())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -243,6 +246,7 @@ async fn near_expiry_token_triggers_proactive_community_node_reauthentication() 
             expires_at: Utc::now().timestamp() + 60,
         },
     )
+    .await
     .expect("persist near-expiry token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -255,7 +259,7 @@ async fn near_expiry_token_triggers_proactive_community_node_reauthentication() 
             ),
         }],
     };
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // WP-Q2: 近接失効トークンの proactive 再認証はスケジューラ tick が駆動する。
     runtime.run_community_node_session_maintenance_once().await;
@@ -281,6 +285,7 @@ async fn near_expiry_token_triggers_proactive_community_node_reauthentication() 
         IdentityStorageMode::FileOnly,
         base_url.as_str(),
     )
+    .await
     .expect("load token")
     .expect("stored token");
     assert_ne!(stored.access_token, "near-expiry-token");
@@ -316,6 +321,7 @@ async fn node_without_local_consent_is_never_contacted() {
         Arc::new(Mutex::new("legacy-token".into())),
     ));
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -343,6 +349,7 @@ async fn node_without_local_consent_is_never_contacted() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -498,8 +505,9 @@ async fn community_node_status_does_not_require_restart_when_verified_connectivi
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist community-node token");
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![node.clone()],
@@ -587,6 +595,7 @@ async fn policy_update_is_not_silently_reaccepted() {
     ));
     state.simulate_pending_update.store(true, Ordering::SeqCst);
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -611,6 +620,7 @@ async fn policy_update_is_not_silently_reaccepted() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -624,7 +634,7 @@ async fn policy_update_is_not_silently_reaccepted() {
         }],
     };
     // ユーザーは旧版(1)に同意済み。サーバの現行版は 2(simulate_pending_update)。
-    seed_local_community_node_consents(&runtime, base_url.as_str(), 1);
+    seed_local_community_node_consents(&runtime, base_url.as_str(), 1).await;
 
     // WP-Q2: consent 判定もスケジューラ tick が駆動する。
     runtime.run_community_node_session_maintenance_once().await;
@@ -705,6 +715,7 @@ async fn saved_token_does_not_bypass_same_version_snapshot_preflight() {
     ));
     state.simulate_snapshot_update.store(true, Ordering::SeqCst);
     let app = Router::new()
+        .route("/v1/rendezvous/topics/heartbeat", post(mock_rendezvous))
         .route("/v1/auth/challenge", post(mock_managed_auth_challenge))
         .route("/v1/auth/verify", post(mock_managed_auth_verify))
         .route("/v1/consents/status", get(mock_managed_consent_status))
@@ -729,6 +740,7 @@ async fn saved_token_does_not_bypass_same_version_snapshot_preflight() {
             expires_at: Utc::now().timestamp() + 3600,
         },
     )
+    .await
     .expect("persist token");
     *runtime.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
@@ -746,7 +758,8 @@ async fn saved_token_does_not_bypass_same_version_snapshot_preflight() {
         base_url.as_str(),
         1,
         Some("snapshot-1"),
-    );
+    )
+    .await;
 
     runtime.run_community_node_session_maintenance_once().await;
     let statuses = runtime

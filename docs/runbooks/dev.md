@@ -179,12 +179,13 @@ WP-H8（CSS 改名・整理）の安全網として、主要 14 サーフェス�
 ## community-node compose
 ```bash
 docker compose --env-file .env.community-node -f docker-compose.community-node.yml run --rm cn-migrate
-docker compose --env-file .env.community-node -f docker-compose.community-node.yml up --build cn-user-api cn-iroh-relay
+docker compose --env-file .env.community-node -f docker-compose.community-node.yml up --build cn-user-api cn-iroh-relay cn-stun
 ```
 
-- host port の既定値は `18080` (`cn-user-api`), `13340` (`cn-iroh-relay`), `15432` (`cn-postgres`), `16379` (`cn-valkey`)
+- host port の既定値は `18080` (`cn-user-api`), `13340` (`cn-iroh-relay`), `15432` (`cn-postgres`), `16379` (`cn-valkey`)。`cn-stun` の `3478/udp` は、クライアントが relay の host の 3478 番へ送るので変えない
 - host 側 bind の既定値は loopback (`127.0.0.1`) なので、LAN/WireGuard 越しに公開する場合は `CN_*_HOST_BIND_IP` を上書きする
-- compose 内の service 名は `cn-postgres`, `cn-migrate`, `cn-user-api`, `cn-iroh-relay`
+- `cn-stun`（STUN、binding だけ。ADR 0057 §6）は client の送信元の address を見て返すので、送信元を書き換えずに受ける IP で公開する。送信元を書き換えて UDP を転送する VPS edge 構成では起動しない（[VPS edge の手順](community-node-self-host-vps.md)）。応答は[本番反映の runbook](community-node-production-rollout.md) の「5.3 public surface」の確認 script を、公開した host へ実行して確かめる
+- compose 内の service 名は `cn-postgres`, `cn-migrate`, `cn-user-api`, `cn-iroh-relay`, `cn-stun`
 - public URL を変える場合は `CN_BASE_URL`, `CN_PUBLIC_BASE_URL`, `COMMUNITY_NODE_CONNECTIVITY_URLS` を上書きする
 - `cn-user-api` は `COMMUNITY_NODE_DATABASE_INIT_MODE=require_ready` で起動するので、`cn-migrate` または `cn-cli prepare` を先に流さないと fail-fast する
 
@@ -336,6 +337,54 @@ npx pnpm@10.16.1 tauri:dev
 - `pnpm tauri dev` / `pnpm tauri:dev` は loopback の空き port を自動選択し、5173 が使用中なら次の空き port へ退避する。
 - desktop shell UI の primary route は hash-based (`#/timeline`, `#/channels`, `#/live`, `#/game`, `#/messages`, `#/profile`, `#/notifications`) に固定されている。settings / context deep-link も hash search param で復元する。
 - desktop の Tauri backend は `mainline::rpc::socket`, `noq_proto::connection`, `iroh::socket::remote_map::remote_state`, `iroh_docs::engine::live`, `iroh_gossip::net` を既定で `error` へ落としている。community-node connectivity assist / DHT / docs sync の内部 warning を調べたいときだけ `RUST_LOG=warn,mainline::rpc::socket=warn,noq_proto::connection=warn,iroh::socket::remote_map::remote_state=warn,iroh_docs::engine::live=warn,iroh_gossip::net=warn` を明示する。
+
+## Web（wasm32）の build と browser 試験
+ブラウザでも動く共用 crate（ADR 0056 §2・§3）の wasm32 の clippy と、headless の Chromium での browser 試験は CI の `linux-web-transport` が行う。
+browser 試験は native の相手（example）を起動し、その URL を試験の build に渡す（`scripts/ci/browser_peer_test.sh <package> <example> [cargo の引数]`）。
+
+- Linux: `clang`・`llvm`（`llvm-ar`）、`rustup target add wasm32-unknown-unknown`、`Cargo.lock` の wasm-bindgen と同じ版の `wasm-bindgen-cli`、chromedriver が要る。
+  `CC_wasm32_unknown_unknown=clang AR_wasm32_unknown_unknown=llvm-ar CHROMEDRIVER=<chromedriver の path>` を付けて実行する。
+- Windows: host に clang が無い（secp256k1 の C の build が通らない）ので、`docker/wasm-dev/Dockerfile` の image を使う。Git Bash では次のとおり。
+
+```bash
+docker build -t kukuri-wasm-dev docker/wasm-dev
+```
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$PWD"):/src" -v kukuri-wasm-cargo:/usr/local/cargo/registry -v kukuri-wasm-git:/usr/local/cargo/git -v kukuri-wasm-target:/target -e CARGO_TARGET_DIR=/target -w /src kukuri-wasm-dev bash scripts/ci/browser_peer_test.sh kukuri-iroh-node web_peer
+```
+
+- 共用 crate の wasm32 の clippy は `cargo clippy --target wasm32-unknown-unknown -p kukuri-core -p kukuri-store -p kukuri-transport -p kukuri-iroh-node -p kukuri-docs-sync -p kukuri-blob-service -p kukuri-webrtc-transport -p kukuri-app-api -p kukuri-metaverse-host -p kukuri-desktop-runtime -p kukuri-web-runtime -- -D warnings`（image では `rustup component add clippy` を先に行う）。
+  共用 crate では tokio・std の時刻と task を直接使わず `n0_future`・`web_time` を使う。直接使うと wasm32 の clippy が `disallowed_methods` で止める。
+- W9 の transport の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-webrtc-transport webrtc_peer --features test-signaling`。
+- W2・W3 の IndexedDB の保存（blob と docs の record）と native との送受信の browser 試験は `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`。
+  W4 AC-2 の鍵・設定・projection・peer の接続候補の保存（reload、失敗の区別、EndpointId の保持、store の parity の scenario）も同じ試験に含む（`src/account_tests.rs`）。
+
+### Web の build と実ブラウザの主要導線の試験（ADR 0060 §1・§4、#1220 W8）
+- Web の build: `apps/desktop` の Vite を `VITE_KUKURI_TARGET=web` で動かす（出力は `apps/desktop/dist-web`）。入力の web-runtime は `wasm-bindgen --target web --split-linked-modules` の出力を `apps/desktop/web-runtime-pkg`（別の場所なら `KUKURI_WEB_RUNTIME_PKG`）に置く。Community Node の初期設定は native の配布の設定（`src-tauri/distribution/community-nodes.json`）で、開発・試験では `VITE_KUKURI_COMMUNITY_NODE_BASE_URL` で替える。
+- 主要導線の試験は `cargo xtask-lite web-e2e [<scenario>...]`。wasm と Web の build、harness の `web_e2e_fixture`（in-process の Community Node と relay、native の相手、`dist-web` の配信。Postgres と valkey は `cn-test` と同じ compose）、WebdriverIO の driver（`apps/desktop/tests/web-e2e/main-flow.mjs`。ブラウザは `KUKURI_WEB_E2E_BROWSER` の `chrome`（既定）・`firefox`・`safari`・`android`。driver は `CHROMEDRIVER`・`GECKODRIVER`、無ければ自動で入れる。Safari は macOS の safaridriver）を順に動かす。Linux で wasm の build の要件（上）と Docker が要る。`--no-compose` は compose を起動せず、`CN_POSTGRES_PORT`・`CN_VALKEY_PORT` の既存の Postgres・valkey（user `cn`、password `cn_password`、DB `cn`。DB を作れる権限が要る）を使う。
+  - ページより先に動く試験の script（`tests/web-e2e/page-init.js`）は、fixture が配信の `index.html` に同じ origin の script として足す（driver の機能に依らず、どのブラウザ・tab でも動く。配信の artifact は変えない）。fallback の端は、driver が置く cookie `kukuri-e2e-without-ice` で示す。
+  - scenario（一覧は `node tests/web-e2e/main-flow.mjs --list`）は、それぞれ新しい fixture と新しい client で始め、他の scenario の状態に依存しない。scenario を省くと全部を順に回し、失敗した scenario をまとめて示す（#1559）。
+  - CI は、build の job（`linux-web-e2e-build`。`--build-only`）が `dist-web` と fixture を 1 回だけ作る。scenario ごとの job（`linux-web-e2e (<scenario>)`）は、その成果物を受け取って `--no-build <scenario>` で並列に回す。scenario の一覧は、build の job が `--list` で matrix に渡す。
+  - この 2 つの job は再利用の workflow `.github/workflows/kukuri-web-e2e.yml` にある。Fast は Chrome で呼び（merge の条件）、同じ workflow を夜間と手動（workflow_dispatch の `browser`）で Firefox で回す（merge の条件にしない。失敗は Issue にする。#1220 AC-5a）。Safari も夜間と手動で、macOS 15 arm64 の runner で回す（`macos-web-e2e-build` が fixture を macOS で作り、`macos-web-e2e (<scenario>)` が Web の build を linux の build の job から受け取る。Postgres・valkey は Homebrew のもので `--no-compose`。Chrome は `KUKURI_WEB_E2E_CHROME_VERSION=stable` で、自動更新されない Chrome for Testing を driver と組で使う）。safaridriver は同時に 1 つの session しか開けないので、各 scenario の最初の client だけが Safari で、2 台目からは同じ runner の Chrome にする（#1220 AC-5b）。Android も夜間と手動で、ubuntu-24.04 の emulator（電話の幅）の Chrome で回す（`android-web-e2e (<scenario>)`。`scripts/ci/android_web_e2e.sh` が emulator の Chrome に合う chromedriver を取り、driver が adb reverse で fixture へ届かせる）。各 scenario の最初の client だけが Android で、2 台目からは同じ runner の Chrome にする（#1220 AC-5c）。driver で作れない段は、PASS の行に `unconfirmed:` として示す。
+- Windows では wasm の build（上の image）と Web の build を行ってから、手元の Postgres・valkey を `COMMUNITY_NODE_DATABASE_URL`・`COMMUNITY_NODE_RENDEZVOUS_REDIS_URL` で渡して `web_e2e_fixture` を起動し（`KUKURI_WEB_E2E_DIST` に `dist-web`）、`node tests/web-e2e/main-flow.mjs <scenario>` を `apps/desktop` で動かす。scenario ごとに fixture を起動し直す。Web の build は fixture の user-api の URL（既定 `http://127.0.0.1:4181`）を `VITE_KUKURI_COMMUNITY_NODE_BASE_URL` に渡して作る。
+  - fixture の Community Node は、rendezvous の key に fixture ごとの DB の名前を使う。同じ valkey で動く別の fixture（並行する作業の試験）と topic の在席情報を共有しないので、他の試験の投稿が混ざらない（#1559）。
+
+### 上流 iroh-blobs の版を上げるとき（ADR 0058 §5、#1215 W2 AC-4）
+iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供・取得の既存の protocol（`iroh_blobs::ALPN` の ephemeral の取得と、`/kukuri/remote-blob/1` の fallback）だけを使い、blob の保存は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。版を上げる PR では、上流の変更点を読んでから次を順に行い、どれかが通らない版は採らない。
+
+1. root `Cargo.toml` の `iroh-blobs` の版を上げ、`cargo update -p iroh-blobs` で lockfile を更新する。workspace では `default-features = false`、native だけの feature（`fs-store`・`rpc` 等）は `crates/iroh-node/Cargo.toml` の native の節にある。
+2. native の互換: `cargo test -p kukuri-iroh-node -p kukuri-blob-service -p kukuri-docs-sync`（remote の取得・`/kukuri/remote-blob/1`・`FsStore` の読み直し・表示用の状態確認が remote から取らない契約・docs の entry の取得）。取得 gate そのものの試験（`cargo test -p kukuri-app-api tests::media`）は PR の CI で確かめる。iroh-docs（下）も iroh-blobs に依存するので、型が合わなければ iroh-docs の patch rev も同じ PR で上げる。
+3. WASM の build: 上の共用 crate の wasm32 の clippy。
+4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
+
+### 上流 iroh-docs の patch rev を上げるとき（ADR 0058 §7、#1216 W3 AC-4）
+iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流の rev を固定する。native は redb の永続 store、Web は `Store::memory()` を使い、Web の本人の record は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。Web の memory store は、上流の GC と iroh-docs の保護（`ProtectCallbackHandler`）で閉じた replica の内容を消す。上流の変更点（特に store の形式、`drop_doc`、`ProtectCallbackHandler`、`get_many` の並び）を読んでから次を順に行い、どれかが通らない rev は採らない。型の compile が通ることだけを Web の保存の成功としない。
+
+1. root `Cargo.toml` の iroh-docs の patch rev を上げ、`cargo update -p iroh-docs` で lockfile を更新する。
+2. native の保存互換: `cargo test -p kukuri-docs-sync -p kukuri-iroh-node`（既存の redb の store を開き直す試験、有界な reader、本人の record の保護と保持分の併合）と `cargo test -p kukuri-desktop-runtime protected_migration`（旧 store からの移行）。
+3. WASM の build: 上の共用 crate の wasm32 の clippy。
+4. browser での動作: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（本人の record の保護、reload の後の復元、native との読み合い、閉じた replica の memory からの回収、失敗の負例）。
 
 ## Windows 前提
 - Windows prerequisites は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#windows>

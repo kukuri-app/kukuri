@@ -302,7 +302,7 @@ async fn public_delegation_preserves_each_transfer_failure_boundary_and_retry() 
     for failure in 0..=3 {
         let node = TransferNode::new();
         let (runtime, base_url, _, server, _dir) = dome_runtime_with_routes(node.routes()).await;
-        seed_local_community_node_consents(&runtime, &base_url, 1);
+        seed_local_community_node_consents(&runtime, &base_url, 1).await;
         let (context, instance) = create_owner(&runtime).await;
         node.failure.store(failure, Ordering::SeqCst);
         let result = runtime
@@ -364,7 +364,7 @@ async fn public_layout_restart_preserves_transfer_failure_and_operation_retry() 
     for failure in 0..=3 {
         let node = TransferNode::new();
         let (runtime, base_url, _, server, _dir) = dome_runtime_with_routes(node.routes()).await;
-        seed_local_community_node_consents(&runtime, &base_url, 1);
+        seed_local_community_node_consents(&runtime, &base_url, 1).await;
         let (context, instance) = create_owner(&runtime).await;
         runtime
             .delegate_dome_hosting(delegate_request(&node, &base_url, &context, &instance))
@@ -449,7 +449,7 @@ async fn cn_noop_and_owner_layout_changes_do_not_send_transfer_requests() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let node = TransferNode::new();
     let (runtime, base_url, _, server, _dir) = dome_runtime_with_routes(node.routes()).await;
-    seed_local_community_node_consents(&runtime, &base_url, 1);
+    seed_local_community_node_consents(&runtime, &base_url, 1).await;
     let (context, instance) = create_owner(&runtime).await;
     let no_op = runtime
         .commit_dome_layout(layout_request(&context, &instance))
@@ -523,7 +523,7 @@ async fn activation_rechecks_current_consent_after_assignment_for_both_entries()
         let node = TransferNode::new();
         let (runtime, base_url, managed, server, _dir) =
             dome_runtime_with_routes(node.routes()).await;
-        seed_local_community_node_consents(&runtime, &base_url, 1);
+        seed_local_community_node_consents(&runtime, &base_url, 1).await;
         let (context, instance) = create_owner(&runtime).await;
         if layout {
             runtime
@@ -578,7 +578,7 @@ async fn public_transfer_entries_cannot_bypass_current_consent_or_configured_nod
             let (runtime, base_url, managed, server, _dir) =
                 dome_runtime_with_routes(node.routes()).await;
             if guard != 0 {
-                seed_local_community_node_consents(&runtime, &base_url, 1);
+                seed_local_community_node_consents(&runtime, &base_url, 1).await;
             }
             let (context, instance) = create_owner(&runtime).await;
             if layout {
@@ -682,7 +682,7 @@ async fn deletion_preserves_canonical_close_and_retries_the_same_node_release() 
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let node = TransferNode::new();
     let (runtime, url, _, server, _dir) = dome_runtime_with_routes(node.routes()).await;
-    seed_local_community_node_consents(&runtime, &url, 1);
+    seed_local_community_node_consents(&runtime, &url, 1).await;
     let (context, instance) = create_owner(&runtime).await;
     runtime
         .delegate_dome_hosting(delegate_request(&node, &url, &context, &instance))
@@ -748,7 +748,7 @@ async fn stale_session_input_never_reaches_recreated_community_node_host() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;
     let node = TransferNode::new();
     let (runtime, url, _, server, _dir) = dome_runtime_with_routes(node.routes()).await;
-    seed_local_community_node_consents(&runtime, &url, 1);
+    seed_local_community_node_consents(&runtime, &url, 1).await;
     let (context, instance) = create_owner(&runtime).await;
     runtime
         .delete_dome(crate::DeleteDomeRequest {

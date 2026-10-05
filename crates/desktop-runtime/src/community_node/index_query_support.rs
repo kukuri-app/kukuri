@@ -6,7 +6,7 @@ use kukuri_cn_protocol::{
     CONSENT_REQUIRED_CODE, INDEX_DISCOVERY_PATH, INDEX_RECOMMENDATIONS_PATH, INDEX_SEARCH_PATH,
     IndexQueryParams, IndexQueryResponse, IndexScopeKind, normalize_http_url,
 };
-use kukuri_store::{ContentObservationRow, ContentObservationStore};
+use kukuri_store::ContentObservationRow;
 use reqwest::{StatusCode, header::RETRY_AFTER};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -211,6 +211,7 @@ impl DesktopRuntime {
             None
         };
         let token = load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
+            .await
             .map_err(|error| {
                 CommunityNodeIndexQueryError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
             })?

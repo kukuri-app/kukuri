@@ -1,3 +1,7 @@
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 

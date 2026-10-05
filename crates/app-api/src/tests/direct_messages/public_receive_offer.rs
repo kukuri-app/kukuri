@@ -161,7 +161,7 @@ async fn public_account_offer_rejects_a_signed_private_post() {
             &recipient,
             memory_blob.as_ref(),
             PublicNotificationSource::Post {
-                replica: private_channel_replica_id(channel.as_str()),
+                replica: kukuri_docs_sync::private_channel_replica_id(channel.as_str()),
                 envelope,
                 content,
                 reply_target: None,

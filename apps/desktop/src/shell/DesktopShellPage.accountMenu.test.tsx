@@ -1,12 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import * as identity from '@/lib/api/identity';
 import * as session from '@/lib/accountSession';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
+import { requestAccountAdd } from '@/shell/page/accountAddRequest';
 import { renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
 
-async function setup() {
+async function renderShell() {
   setViewportWidth(1280);
   const api = createDesktopMockApi();
   const profile = await api.getMyProfile();
@@ -20,6 +21,11 @@ async function setup() {
   ]);
   const change = vi.spyOn(session, 'changeAccountSession').mockResolvedValue(undefined);
   renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral', api);
+  return { change, a, b };
+}
+
+async function setup() {
+  const { change, a, b } = await renderShell();
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Account menu' }));
   const menu = await screen.findByRole('menu', { name: 'Account menu' });
@@ -69,4 +75,98 @@ test('add account dialog offers key import and explicit account creation', async
   await user.click(within(dialog).getByRole('button', { name: 'Create a new account' }));
   expect(change).toHaveBeenCalledExactlyOnceWith(a.id, false, expect.stringMatching(/^[a-f0-9-]{36}$/));
   expect(within(dialog).getByRole('button', { name: 'Working…' })).toBeDisabled();
+});
+
+test('add account dialog opens both device transfer entries and returns with Back', async () => {
+  const { user, menu } = await setup();
+  const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'waiting', expires_at_ms: Date.now() + 300_000 });
+  vi.spyOn(identity, 'createAccountTransferInvite').mockResolvedValue({ link: 'kukuri://transfer#v1.ZXhhbXBsZQ', expires_at_ms: Date.now() + 300_000 });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Add account' });
+  await user.click(within(dialog).getByRole('button', { name: 'Move to another device' }));
+  const source = await screen.findByRole('dialog', { name: 'Move to another device' });
+  expect(await within(source).findByRole('img', { name: 'QR code of the transfer link' })).toBeVisible();
+  await user.click(within(source).getByRole('button', { name: 'Back' }));
+  await waitFor(() => expect(cancel).toHaveBeenCalled());
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  expect(within(target).getByRole('textbox', { name: /^Transfer link/ })).toHaveValue('');
+});
+
+async function completeTransferTo(accountId: string) {
+  const { user, menu, change } = await setup();
+  vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'openAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'completed', role: 'target', account_id: accountId, history: null });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
+  await user.click(within(target).getByRole('button', { name: 'Connect' }));
+  expect(await within(target).findByTestId('account-transfer-completed', {}, { timeout: 2000 })).toBeVisible();
+  // AC-5: 完了の画面の説明を読めるように、「このアカウントを使う」を押すまでは切り替えない。
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(change).not.toHaveBeenCalled();
+  await user.click(within(target).getByRole('button', { name: 'Use this account' }));
+  return change;
+}
+
+test('a completed transfer switches to the received account when asked', async () => {
+  const change = await completeTransferTo('cccccccccccccccc');
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
+});
+
+test('a completed transfer into the active account closes the dialog without switching', async () => {
+  const change = await completeTransferTo('aaaaaaaaaaaaaaaa');
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move from another device' })).not.toBeInTheDocument());
+  expect(change).not.toHaveBeenCalled();
+});
+
+// #1211 AC-3（監査 B-1、2026-10-04 ユーザー決定）: 移行先は履歴を受けている間は Dialog を閉じられず、「戻る」も出ない。
+// 履歴は「やめる」で終え、終えたら完了の画面から受け取ったアカウントへ切り替える。
+test('the target cannot close the dialog while receiving the history and switches after stopping it', async () => {
+  const { user, menu, change } = await setup();
+  const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'openAccountTransfer').mockResolvedValue(undefined);
+  const status = vi.spyOn(identity, 'getAccountTransferStatus')
+    .mockResolvedValue({ state: 'history', role: 'target', account_id: 'cccccccccccccccc', posts: 3, unavailable: 0 });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Add account' }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Add account' })).getByRole('button', { name: 'Move from another device' }));
+  const target = await screen.findByRole('dialog', { name: 'Move from another device' });
+  expect(within(target).getByRole('button', { name: 'Close dialog' })).toBeVisible();
+  await user.type(within(target).getByRole('textbox', { name: /^Transfer link/ }), 'kukuri://transfer#v1.ZXhhbXBsZQ');
+  // 履歴の画面が出た時点から「戻る」と閉じるボタンは無い（描いた後の次の更新を待たない）。DOM が変わるたびに記録する。
+  const closable: boolean[] = [];
+  const observer = new MutationObserver(() => {
+    if (!within(target).queryByText('Receiving post history (3)…')) return;
+    closable.push(within(target).queryAllByRole('button', { name: /^(Back|Close dialog)$/ }).length > 0);
+  });
+  observer.observe(target, { childList: true, subtree: true });
+  await user.click(within(target).getByRole('button', { name: 'Connect' }));
+  expect(await within(target).findByText('Receiving post history (3)…', {}, { timeout: 2000 })).toBeVisible();
+  observer.disconnect();
+  expect(closable.length).toBeGreaterThan(0);
+  expect(closable).not.toContain(true);
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('dialog', { name: 'Move from another device' })).toBeVisible();
+  expect(cancel).not.toHaveBeenCalled();
+
+  status.mockResolvedValue({ state: 'completed', role: 'target', account_id: 'cccccccccccccccc', history: { posts: 3, unavailable: 0, stopped: 'cancelled' } });
+  await user.click(within(target).getByRole('button', { name: 'Stop receiving history' }));
+  await user.click(await within(target).findByRole('button', { name: 'Use this account' }, { timeout: 2000 }));
+  await waitFor(() => expect(change).toHaveBeenCalledExactlyOnceWith('cccccccccccccccc', false));
+});
+
+// #1217 AC-5: 初回の profile 設定の「以前のアカウントを戻す」は、menu を開いていなくても、menu から開くときと同じ
+// アカウント追加の dialog（作成・import・移行）を開く。
+test('a restore request opens the add account dialog with every action available', async () => {
+  await renderShell();
+  await screen.findByRole('button', { name: 'Account menu' });
+  act(() => requestAccountAdd());
+  const dialog = await screen.findByRole('dialog', { name: 'Add account' });
+  expect(within(dialog).getByTestId('import-input')).toBeVisible();
+  await waitFor(() => expect(within(dialog).getByTestId('create-new-account')).toBeEnabled());
+  expect(within(dialog).getByRole('button', { name: 'Move to another device' })).toBeEnabled();
+  expect(within(dialog).getByRole('button', { name: 'Move from another device' })).toBeEnabled();
 });

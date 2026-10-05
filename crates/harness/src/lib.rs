@@ -3,6 +3,7 @@ mod runtime;
 mod scenario;
 mod scenarios;
 mod waiters;
+mod web_e2e;
 
 #[cfg(test)]
 mod tests;
@@ -13,11 +14,12 @@ pub use scenario::{
     ScenarioStep, ScenarioTimeouts, load_scenario,
 };
 pub use scenarios::{run_named_scenario, run_scenario};
+pub use web_e2e::run_web_e2e_fixture;
 
 pub(crate) use artifacts::{push_named_step, write_result_artifact};
 pub(crate) use runtime::{
     CommunityNodeStack, ScenarioRuntime, cleanup_runtime_artifacts, persist_runtime_identity,
-    remove_sqlite_runtime_db, shutdown_runtime,
+    shutdown_runtime,
 };
 pub(crate) use waiters::*;
 
@@ -25,7 +27,6 @@ pub(crate) use std::collections::BTreeMap;
 pub(crate) use std::net::SocketAddr;
 pub(crate) use std::path::{Path, PathBuf};
 pub(crate) use std::sync::Arc;
-pub(crate) use std::sync::Mutex as StdMutex;
 pub(crate) use std::time::{Duration, Instant};
 
 pub(crate) use anyhow::{Context, Result};
@@ -37,9 +38,9 @@ pub(crate) use kukuri_app_api::{
     CreateDomeConnectionProposalInput, CreateGameRoomInput, CreateLiveSessionInput,
     CreateMetaverseRoomInput, DirectMessageConversationView, DirectMessageMessageView,
     DirectMessageStatusView, DomeLayoutCommitOutcome, GameScoreView, MoveDomeInput,
-    PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, PrivateChannelCapability,
-    RevokeDomeConnectionInput, ServiceHandles, StartOwnerDomeHostingInput, SubmitDomeSessionInput,
-    SyncStatus, UpdateGameRoomInput, UpdateMetaverseRoomInput,
+    PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, RevokeDomeConnectionInput,
+    ServiceHandles, StartOwnerDomeHostingInput, SubmitDomeSessionInput, SyncStatus,
+    UpdateGameRoomInput, UpdateMetaverseRoomInput,
 };
 pub(crate) use kukuri_blob_service::MemoryBlobService;
 pub(crate) use kukuri_cn_core::{JwtConfig, TestDatabase};

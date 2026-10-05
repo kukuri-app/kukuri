@@ -2,7 +2,7 @@ use super::topic_rendezvous::{topic_rejoin_delay, topic_rejoin_window};
 use super::*;
 
 async fn remember_connected_peer(
-    store: &kukuri_store::SqliteStore,
+    store: &crate::PeerCandidateStore,
     peer_id: EndpointId,
 ) -> Result<()> {
     let address = EndpointAddr::new(peer_id);
@@ -27,6 +27,15 @@ pub(crate) fn initial_topic_join_timeout() -> Duration {
     } else {
         Duration::from_secs(15)
     }
+}
+
+/// 本人の端末間の account 同期の hint の topic は、rendezvous が返した本人の端末とだけ合流する（ADR 0061 §7）。
+/// bootstrap・ticket の peer（他人の端末・node）へ topic の join を送らない（合流できないまま warmup を繰り返し、
+/// 他人に topic を知らせることになる）。
+fn joins_own_devices_only(hint_topic: &str) -> bool {
+    hint_topic
+        .strip_prefix(kukuri_core::wire::HINT_TOPIC_PREFIX)
+        .is_some_and(|topic| topic.starts_with(kukuri_core::wire::ACCOUNT_SYNC_TOPIC_PREFIX))
 }
 
 fn topic_warmup_retry_delay(attempt: usize, relay_backed: bool) -> Duration {
@@ -113,7 +122,7 @@ impl TopicWarmupCoordinator {
         // so the peer forgets us while we keep it. Finish the dial and the handover
         // even when the warmup is stopped on join or unsubscribe.
         let warmup_addr = direct_warmup_addr(&peer);
-        let _ = tokio::spawn(async move {
+        let _ = n0_future::task::spawn(async move {
             let _owned = (permit, in_flight_guard);
             if let Ok(connection) = endpoint.connect(warmup_addr, GOSSIP_ALPN).await {
                 let _ = gossip.handle_connection(connection).await;
@@ -306,7 +315,8 @@ impl IrohGossipTransport {
         true
     }
 
-    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。
+    /// 候補を topic へ join する。`only` を指定すると、その topic だけを対象にする。指定しないときは、本人の端末とだけ
+    /// 合流する topic を除く。
     pub(crate) async fn extend_topic_peers(
         &self,
         only: Option<&str>,
@@ -322,10 +332,10 @@ impl IrohGossipTransport {
             if self.hint_closed.load(Ordering::Acquire) {
                 return;
             }
-            for (topic, state) in topic_states
-                .iter_mut()
-                .filter(|(topic, _)| only.is_none_or(|only| only == topic.as_str()))
-            {
+            for (topic, state) in topic_states.iter_mut().filter(|(topic, _)| match only {
+                Some(only) => only == topic.as_str(),
+                None => !joins_own_devices_only(topic),
+            }) {
                 let mut join_peer_ids = Vec::new();
                 let mut added_peer_ids = Vec::new();
                 let mut join_endpoint_addrs = Vec::new();
@@ -413,8 +423,8 @@ impl IrohGossipTransport {
                 previous.abort();
                 let _ = previous.await;
             }
-            let task = tokio::spawn(async move {
-                let join_deadline = tokio::time::Instant::now() + initial_topic_join_timeout();
+            let task = n0_future::task::spawn(async move {
+                let join_deadline = n0_future::time::Instant::now() + initial_topic_join_timeout();
                 let relay_backed = peers_use_relay(&join_endpoint_addrs);
                 let mut attempt = 0usize;
                 loop {
@@ -424,13 +434,13 @@ impl IrohGossipTransport {
                             .iter()
                             .any(|peer| guard.contains(&peer.id.to_string()))
                     };
-                    if already_connected || tokio::time::Instant::now() >= join_deadline {
+                    if already_connected || n0_future::time::Instant::now() >= join_deadline {
                         return;
                     }
                     warmups
                         .warmup_peers_once(&endpoint, &gossip, &join_endpoint_addrs)
                         .await;
-                    if tokio::time::Instant::now() >= join_deadline {
+                    if n0_future::time::Instant::now() >= join_deadline {
                         return;
                     }
                     let retry_delay = topic_warmup_retry_delay(attempt, relay_backed);
@@ -487,7 +497,12 @@ impl IrohGossipTransport {
                 .await;
         }
 
-        let bootstrap_peers = self.bootstrap_peers().await?;
+        let own_devices_only = joins_own_devices_only(topic.as_str());
+        let bootstrap_peers = if own_devices_only {
+            Vec::new()
+        } else {
+            self.bootstrap_peers().await?
+        };
         let bootstrap_peer_ids = bootstrap_peers
             .iter()
             .map(|peer| peer.id.to_string())
@@ -518,7 +533,7 @@ impl IrohGossipTransport {
         let rejoin_sender = Arc::clone(&sender);
         let rejoin_rendezvous = Arc::clone(&rendezvous);
         let rejoin_joins = Arc::clone(&joins);
-        let rejoin_candidates = self.bootstrap_candidates();
+        let rejoin_candidates = (!own_devices_only).then(|| self.bootstrap_candidates());
         let rejoin_endpoint = self.endpoint.clone();
         let rejoin_gossip = self.gossip.clone();
         let rejoin_warmups = Arc::clone(&self.topic_warmups);
@@ -565,22 +580,22 @@ impl IrohGossipTransport {
             return Ok(current.broadcaster.clone());
         }
 
-        let task = tokio::spawn(async move {
+        let task = n0_future::task::spawn(async move {
             if imported_count > 0 {
                 let join_timeout = initial_topic_join_timeout();
                 #[cfg(test)]
                 let task_guard = CountedWarmupTask::new(Arc::clone(&warmups.initial_warmup_tasks));
-                let warmup_task = AbortWarmupOnDrop(tokio::spawn(async move {
+                let warmup_task = AbortWarmupOnDrop(n0_future::task::spawn(async move {
                     #[cfg(test)]
                     let _task_guard = task_guard;
-                    let join_deadline = tokio::time::Instant::now() + join_timeout;
+                    let join_deadline = n0_future::time::Instant::now() + join_timeout;
                     let relay_backed = peers_use_relay(&warm_bootstrap_peers);
                     let mut attempt = 0usize;
                     loop {
                         warmups
                             .warmup_peers_once(&warm_endpoint, &warm_gossip, &warm_bootstrap_peers)
                             .await;
-                        if tokio::time::Instant::now() >= join_deadline {
+                        if n0_future::time::Instant::now() >= join_deadline {
                             return;
                         }
                         let retry_delay = topic_warmup_retry_delay(attempt, relay_backed);
@@ -618,7 +633,7 @@ impl IrohGossipTransport {
             // neighbor の無い間だけ、候補の窓で再 join する。回復は neighbor の成立(NeighborUp)で判定し、
             // seed の適用の成功や別の protocol の成功では判定しない(ADR 0055 §3、#1221 R2-B)。
             let mut rejoin_step = 0u32;
-            let mut rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(0);
+            let mut rejoin_at = n0_future::time::Instant::now() + topic_rejoin_delay(0);
             let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
             // gossip の actor からの手渡し(容量 256)が溢れて落ちた回数。次の hint に畳んで渡す(#1567 AC-1)。
             let mut gossip_lagged = 0u64;
@@ -630,15 +645,15 @@ impl IrohGossipTransport {
                         if changed.is_err() {
                             break;
                         }
-                        rejoin_at = tokio::time::Instant::now();
+                        rejoin_at = n0_future::time::Instant::now();
                         continue;
                     }
-                    () = tokio::time::sleep_until(rejoin_at), if idle => {
+                    () = n0_future::time::sleep_until(rejoin_at), if idle => {
                         let peers =
-                            topic_rejoin_window(&rejoin_candidates, &rejoin_rendezvous, rejoin_step)
+                            topic_rejoin_window(rejoin_candidates.as_ref(), &rejoin_rendezvous, rejoin_step)
                                 .await;
                         rejoin_step = rejoin_step.saturating_add(1);
-                        rejoin_at = tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                        rejoin_at = n0_future::time::Instant::now() + topic_rejoin_delay(rejoin_step);
                         if !peers.is_empty() {
                             rejoin_joins[1].fetch_add(1, Ordering::Relaxed);
                             let ids = peers.iter().map(|peer| peer.id).collect();
@@ -648,7 +663,7 @@ impl IrohGossipTransport {
                                 rejoin_gossip.clone(),
                                 Arc::clone(&rejoin_warmups),
                             );
-                            _rejoin_warmup = Some(AbortWarmupOnDrop(tokio::spawn(async move {
+                            _rejoin_warmup = Some(AbortWarmupOnDrop(n0_future::task::spawn(async move {
                                 warmups.warmup_peers_once(&endpoint, &gossip, &peers).await;
                             })));
                         }
@@ -728,7 +743,8 @@ impl IrohGossipTransport {
                         *transport_last_error.lock().await = None;
                         drop(guard);
                         if let Some(store) = &candidate_store
-                            && let Err(error) = remember_connected_peer(store, peer_id).await
+                            && let Err(error) =
+                                remember_connected_peer(store.as_ref(), peer_id).await
                         {
                             debug!(%error, "failed to remember connected peer for account receive");
                         }
@@ -738,7 +754,7 @@ impl IrohGossipTransport {
                         guard.remove(peer_id.to_string().as_str());
                         if guard.is_empty() {
                             rejoin_at =
-                                tokio::time::Instant::now() + topic_rejoin_delay(rejoin_step);
+                                n0_future::time::Instant::now() + topic_rejoin_delay(rejoin_step);
                         }
                     }
                     Ok(GossipEvent::Lagged) => {

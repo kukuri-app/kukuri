@@ -186,13 +186,36 @@ impl IrohGossipTransport {
         Self::bind(TransportNetworkConfig::loopback()).await
     }
 
+    /// 同じ EndpointId で bind し直す試験用（stack の作り直しの模擬）。
+    #[cfg(test)]
+    pub(crate) async fn bind_local_with_secret(secret_key: SecretKey) -> Result<Self> {
+        let network_config = TransportNetworkConfig::loopback();
+        let relay_config = TransportRelayConfig::default().normalized();
+        let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
+        let (endpoint, discovery) = bind_endpoint_with_options(
+            network_config.bind_addr,
+            &DhtDiscoveryOptions::disabled(),
+            &relay_config,
+            Arc::clone(&relay_urls),
+            Some(secret_key),
+        )
+        .await?;
+        Ok(Self::spawn_gossip_transport(
+            endpoint,
+            discovery,
+            network_config,
+            &relay_config,
+            relay_urls,
+        ))
+    }
+
     /// 通信状態の変わった部分の印を、この印へ付ける(#1221 R2-D)。topic を購読する前に呼ぶ。
     pub fn with_status_changes(mut self, changes: StatusChanges) -> Self {
         self.status_changes = changes;
         self
     }
 
-    pub fn with_account_store(mut self, store: Arc<kukuri_store::SqliteStore>) -> Self {
+    pub fn with_account_store(mut self, store: Arc<crate::PeerCandidateStore>) -> Self {
         self.account_store = Some(store);
         self
     }
@@ -219,7 +242,13 @@ pub(crate) async fn bind_endpoint_with_options(
     {
         builder = builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
     }
-    builder = apply_bind(builder, bind_addr)?;
+    // ブラウザには UDP の socket が無い（ADR 0056 §8）。
+    #[cfg(not(target_family = "wasm"))]
+    {
+        builder = apply_bind(builder, bind_addr)?;
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = bind_addr;
     let endpoint = builder
         .bind()
         .await
@@ -251,6 +280,7 @@ async fn bind_endpoint_relay_only(
     Ok((endpoint, discovery))
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn apply_bind(builder: EndpointBuilder, bind_addr: SocketAddr) -> Result<EndpointBuilder> {
     match bind_addr {
         SocketAddr::V4(addr) => builder

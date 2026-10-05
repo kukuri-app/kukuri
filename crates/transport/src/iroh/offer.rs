@@ -123,7 +123,7 @@ impl IrohGossipTransport {
         );
         #[cfg(test)]
         let task_guard = CountedOfferTask::new(Arc::clone(&self.offer_receiver_tasks));
-        let task = tokio::spawn(async move {
+        let task = n0_future::task::spawn(async move {
             #[cfg(test)]
             let _task_guard = task_guard;
             while let Some(event) = receiver.next().await {
@@ -239,10 +239,10 @@ impl IrohGossipTransport {
 
         // Keep the sending subscription alive briefly after the gossip actor
         // accepts the message. Eviction and transport shutdown abort every hold.
-        let now = tokio::time::Instant::now();
+        let now = n0_future::time::Instant::now();
         #[cfg(test)]
         let task_guard = CountedOfferTask::new(Arc::clone(&self.offer_hold_tasks));
-        let task = tokio::spawn(async move {
+        let task = n0_future::task::spawn(async move {
             #[cfg(test)]
             let _task_guard = task_guard;
             sleep(OUTBOUND_OFFER_HOLD).await;

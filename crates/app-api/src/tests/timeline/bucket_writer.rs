@@ -194,8 +194,10 @@ async fn private_posts_go_to_the_current_epoch_bucket_with_the_derived_capabilit
     assert!(has_key(&docs, &bucket, &key).await);
     let legacy = private_channel_replica_for_epoch(&channel.channel_id, &channel.current_epoch_id);
     assert!(!has_key(&docs, &legacy, &key).await);
-    // epoch の capability を外すと、導出した bucket も読めない。
-    docs.remove_private_replica_secret(&legacy)
+    // epoch の鍵の行を消すと、導出した bucket も読めない(ADR 0061 §9)。
+    app.services
+        .projection_store
+        .delete_private_channel_epochs(&channel.channel_id, 8)
         .await
         .expect("remove");
     assert!(

@@ -61,17 +61,21 @@ impl ClientSession {
         db: PathBuf,
         previous: &AccountsSnapshot,
     ) -> Result<(), ProtocolError> {
-        let verification = (|| {
+        let verification = async {
             rollback_pending_device_restore(&self.app_data_dir).map_err(|_| failed())?;
             if pending_device_restore_phase(&self.app_data_dir)
                 .map_err(|_| failed())?
                 .is_some()
-                || &list_accounts(&self.app_data_dir).map_err(|_| failed())? != previous
+                || &list_accounts(&self.app_data_dir)
+                    .await
+                    .map_err(|_| failed())?
+                    != previous
             {
                 return Err(failed());
             }
             Ok(())
-        })();
+        }
+        .await;
         if verification.is_err() {
             self.set_failed();
             return verification;
@@ -90,7 +94,9 @@ impl ClientSession {
             return Err(failed());
         }
         let host = self.host().ok_or_else(failed)?;
-        let previous = list_accounts(&self.app_data_dir).map_err(|_| failed())?;
+        let previous = list_accounts(&self.app_data_dir)
+            .await
+            .map_err(|_| failed())?;
         let runtime = host.runtime();
         let db = runtime.db_path().to_path_buf();
         self.operation.begin_cancellable_device_backup();
@@ -135,7 +141,9 @@ impl ClientSession {
             }
         };
         // commit後は旧runtimeを公開しない。失敗時はjournalからfinish-forwardする。
-        match advance_committed_restore_to_consent(&self.app_data_dir, &self.consent_db_path()) {
+        match advance_committed_restore_to_consent(&self.app_data_dir, &self.consent_db_path())
+            .await
+        {
             Ok(status) => {
                 self.startup.set_status(status);
                 Ok(result)

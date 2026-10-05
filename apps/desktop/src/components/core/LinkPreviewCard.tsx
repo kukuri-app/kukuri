@@ -2,6 +2,7 @@ import { useRef, type MouseEvent } from 'react';
 
 import {
   fetchLinkPreview,
+  readLinkPreviewRecord,
   type LinkPreviewFetcher,
 } from '@/lib/api';
 import { firstExternalUrl } from '@/lib/externalUrls';
@@ -16,18 +17,27 @@ function safePreviewImageData(value: string | null): string | null {
 
 export function LinkPreviewCard({
   content,
+  objectId,
   enabled,
   fetcher,
 }: {
   content: string;
+  objectId: string;
   enabled: boolean;
   fetcher?: LinkPreviewFetcher;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const externalLink = useExternalLinkOpener();
   const url = enabled ? firstExternalUrl(content) : null;
-  const resolver = fetcher ?? (isTauriRuntime() ? fetchLinkPreview : null);
-  const state = useLinkPreview({ enabled, fetcher: resolver, targetRef: containerRef, url });
+  // Web は外部 URL を取得せず、投稿者が書いた record を読む(ADR 0051 §7)。
+  const resolver = fetcher ?? (isTauriRuntime() ? fetchLinkPreview : readLinkPreviewRecord);
+  const state = useLinkPreview({
+    enabled,
+    fetcher: resolver,
+    objectId,
+    targetRef: containerRef,
+    url,
+  });
   const imageData =
     state.status === 'available' ? safePreviewImageData(state.preview.image_data_url) : null;
 

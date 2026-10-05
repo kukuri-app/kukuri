@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{PrivateIndexGrant, SqliteStore};
+use crate::{PrivateIndexGrant, PrivateIndexGrantStore, SqliteStore};
 
 #[tokio::test]
 async fn grants_round_robin_and_stop_without_loading_the_whole_table() -> Result<()> {

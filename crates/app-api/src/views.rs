@@ -751,6 +751,15 @@ pub struct DirectMessageTimelineView {
     pub next_cursor: Option<TimelineCursor>,
 }
 
+/// topic の参加中の channel の 1 page(ADR 0061 §9)。`next_cursor` があれば続きがある。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct JoinedPrivateChannelPage {
+    pub items: Vec<JoinedPrivateChannelView>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
@@ -771,6 +780,34 @@ pub struct JoinedPrivateChannelView {
     pub participant_count: Option<usize>,
     pub stale_participant_count: usize,
     pub entry_dome_instance_id: Option<String>,
+    /// owner の端末で、鍵更新の担当がこの端末から見てどこにあるか（#1219 AC-4）。owner 以外は `None`。
+    pub controller: Option<PrivateChannelControllerState>,
+}
+
+/// 鍵更新の担当の、この端末から見た状態（#1219 AC-4、ADR 0018 §8）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateChannelControllerState {
+    ThisDevice,
+    OtherDevice,
+    /// 引継ぎ中（旧担当は停止し、移譲先の有効化を待っている）。
+    Moving,
+    /// 記録がまだ届いていない。
+    Unknown,
+}
+
+/// 担当の引き取り（`take_private_channel_controller`）の結果（#1219 AC-4）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateChannelControllerTake {
+    /// この端末が担当になった。
+    Taken,
+    /// 旧担当が本人の端末の候補にいない。何も書いていない。
+    NotConnected,
+    /// 依頼を書いたが、期限までに移らなかった。依頼は残り、旧担当が取得したときに処理する。
+    Waiting,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -809,6 +846,31 @@ pub struct PrivateChannelCapability {
     pub stale_participant_count: usize,
     #[serde(default)]
     pub namespace_secret_hex: String,
+    /// 鍵更新の担当端末の記録(#1219 W6、ADR 0018 §8)。`None` は欄の無い本変更前の保存、`Some(None)` は担当が不明。
+    #[serde(default, deserialize_with = "present_field")]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub controller: Option<Option<PrivateChannelController>>,
+}
+
+/// 欄があれば `Some`(値が null でも)。欄の有無を `#[serde(default)]` の `None` と区別する。
+fn present_field<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// private channel の鍵更新の担当端末(#1219 W6、ADR 0018 §8)。account 同期の `channel/<hex>/controller` の値でもある。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrivateChannelController {
+    /// 担当端末の iroh endpoint ID。
+    pub device_id: String,
+    /// 担当の世代。作成で 1、担当が移るごとに増える。
+    pub generation: u64,
+    /// 引継ぎ中の移譲先。あれば旧担当は停止しており、どの端末も新しい世代を作らない。
+    #[serde(default)]
+    pub transfer_to: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -865,6 +927,27 @@ pub struct SyncStatus {
     pub discovery: DiscoveryStatus,
     pub gossip_disabled_topics: Vec<String>,
     pub gossip_disabled_channels: Vec<String>,
+    // account 同期の状態（W5 AC-6a、ADR 0061 §10）。front では任意（旧い runtime の応答と mock は持たない）。
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<AccountSyncStatus>"))]
+    pub account_sync: AccountSyncStatus,
+}
+
+// account 同期の状態（ADR 0061 §10）。どれかが true なら、本人の別の端末と同期できていない。
+// 説明は `//` に置き、生成する TS の型（types.generated.ts）に出さない。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AccountSyncStatus {
+    // 本人の端末の候補が無い。
+    pub no_peers: bool,
+    // 最後の取得が失敗した相手がある。
+    pub fetch_failed: bool,
+    // 読み残しがある（cursor が最後に読んだ head より手前、または周回の途中）。
+    pub behind: bool,
+    // replica へ書けていない行がある。
+    pub pending_writes: bool,
+    // DB を失ったときの作り直しの途中。
+    pub rebuilding: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

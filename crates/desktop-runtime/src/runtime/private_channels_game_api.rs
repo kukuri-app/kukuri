@@ -214,9 +214,9 @@ impl DesktopRuntime {
     pub async fn list_joined_private_channels(
         &self,
         request: ListJoinedPrivateChannelsRequest,
-    ) -> Result<Vec<JoinedPrivateChannelView>> {
+    ) -> Result<JoinedPrivateChannelPage> {
         self.app_service
-            .list_joined_private_channels(request.topic.as_str())
+            .list_joined_private_channels(request.topic.as_str(), request.cursor.as_deref())
             .await
     }
 
@@ -1005,7 +1005,7 @@ impl DesktopRuntime {
             bail!("discovery configuration is locked by environment variables");
         }
         next_config.seed_peers = parse_seed_entries(&request.seed_entries)?;
-        save_discovery_config(&self.db_path, &next_config.stored())?;
+        save_discovery_config(&self.db_path, &next_config.stored()).await?;
         *self.discovery_config.lock().await = next_config.clone();
         self.apply_community_node_connectivity(None).await?;
         Ok(next_config)
@@ -1130,6 +1130,7 @@ impl DesktopRuntime {
             .await
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn get_blob_media_file(
         &self,
         request: GetBlobMediaRequest,

@@ -20,6 +20,27 @@ pub const PRIVATE_CHANNEL_TOPIC_PREFIX: &str = "private/";
 /// 診断表示からの除外判定にも使われる。
 pub const DM_TOPIC_PREFIX: &str = "kukuri:dm:";
 
+/// 本人の端末間の account 同期の hint topic の prefix（アカウントの秘密鍵から導出した hex 64 桁が続く。
+/// ADR 0061）。公開の topic・通知の受信 route（`receive::v1::`）と区別する。
+pub const ACCOUNT_SYNC_TOPIC_PREFIX: &str = "kukuri:account:";
+
+/// 本人の端末間の account 同期の docs の replica の prefix（hex 64 桁が続く。ADR 0061）。
+/// 公開の namespace の導出の対象外。
+pub const ACCOUNT_SYNC_REPLICA_PREFIX: &str = "account::v1::";
+
+/// 公開の topic として扱わない topic（private channel・DM・account 同期の hint。`hint/` の有無によらない）。
+/// 診断の topic の一覧と、Community Node の公開 topic の索引・対応 topic から外す（ADR 0061 §6）。
+pub fn is_non_public_topic(topic: &str) -> bool {
+    let topic = topic.strip_prefix(HINT_TOPIC_PREFIX).unwrap_or(topic);
+    [
+        PRIVATE_CHANNEL_TOPIC_PREFIX,
+        DM_TOPIC_PREFIX,
+        ACCOUNT_SYNC_TOPIC_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| topic.starts_with(prefix))
+}
+
 /// topic に対応する gossip hint topic id を返す。
 pub fn hint_topic_id(topic: &TopicId) -> TopicId {
     TopicId::new(format!("{HINT_TOPIC_PREFIX}{}", topic.as_str()))

@@ -412,3 +412,21 @@ pub(crate) async fn create_remote_object_notification(
         .await
         .expect("put notification")
 }
+
+/// 参加状態を参加の行・世代の鍵の行とメモリへ置く(lease のある channel と同じ状態。ADR 0061 §9)。
+pub(crate) async fn insert_joined_private_channel(
+    app: &AppService,
+    state: JoinedPrivateChannelState,
+    archived: &[PrivateChannelEpochCapability],
+) {
+    app.install_private_epoch_secrets()
+        .await
+        .expect("install private epoch secrets");
+    app.persist_private_channel(&state, 0, archived, true)
+        .await
+        .expect("persist private channel rows");
+    app.joined_private_channels.lock().await.insert(
+        joined_private_channel_key(&state.topic_id, state.channel_id.as_str()),
+        state,
+    );
+}

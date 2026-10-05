@@ -22,10 +22,7 @@ use crate::state::{
 
 const PROGRESS_EVENT: &str = "kukuri://device-backup-progress";
 
-async fn rebuild_runtime(
-    state: &DesktopState,
-    db_path: PathBuf,
-) -> Result<(), CommandError> {
+async fn rebuild_runtime(state: &DesktopState, db_path: PathBuf) -> Result<(), CommandError> {
     let runtime = build_runtime(db_path).await.map_err(|error| {
         CommandError::from(format!("failed to restart desktop runtime: {error}"))
     })?;
@@ -98,17 +95,17 @@ async fn restore_previous_runtime_after_rollback(
     previous_accounts: &AccountsSnapshot,
     operation_error: CommandError,
 ) -> CommandError {
-    let rollback_result = rollback_pending_device_restore(&state.app_data_dir);
-    let verification = rollback_result
-        .map_err(|error| format!("failed to roll back pending device restore: {error:#}"))
-        .and_then(|()| {
-            let pending = pending_device_restore_phase(&state.app_data_dir)
-                .map_err(|error| format!("failed to verify restore journal cleanup: {error:#}"))?;
-            let snapshot = list_accounts(&state.app_data_dir).map_err(|error| {
-                format!("failed to verify restored account registry: {error:#}")
-            })?;
-            verify_previous_account_restored(previous_accounts, pending, &snapshot)
-        });
+    let verification = async {
+        rollback_pending_device_restore(&state.app_data_dir)
+            .map_err(|error| format!("failed to roll back pending device restore: {error:#}"))?;
+        let pending = pending_device_restore_phase(&state.app_data_dir)
+            .map_err(|error| format!("failed to verify restore journal cleanup: {error:#}"))?;
+        let snapshot = list_accounts(&state.app_data_dir)
+            .await
+            .map_err(|error| format!("failed to verify restored account registry: {error:#}"))?;
+        verify_previous_account_restored(previous_accounts, pending, &snapshot)
+    }
+    .await;
 
     if let Err(rollback_error) = verification {
         let message = format!("{}; additionally {rollback_error}", operation_error.message);
@@ -241,7 +238,9 @@ pub async fn restore_device_backup_command(
     }
     operation.begin_cancellable_device_backup();
 
-    let previous_accounts = list_accounts(&state.app_data_dir).map_err(map_error)?;
+    let previous_accounts = list_accounts(&state.app_data_dir)
+        .await
+        .map_err(map_error)?;
     startup.set_status(DesktopStartupStatus::Initializing);
 
     let current = state.runtime();
@@ -391,7 +390,7 @@ pub async fn restore_device_backup_command(
         }
     };
 
-    let consent_status = match reset_app_consent_after_device_restore(&app_handle) {
+    let consent_status = match reset_app_consent_after_device_restore(&app_handle).await {
         Ok(status) => status,
         Err(error) => {
             // registry commit後は旧runtimeへ戻さない。Committed journalを残し、次回起動で

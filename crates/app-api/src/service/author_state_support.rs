@@ -113,7 +113,7 @@ struct AuthorKeyReader<'a> {
     docs_author: Option<String>,
     relays: Vec<SeedPeer>,
     remote: Option<Vec<Arc<dyn DocsSync>>>,
-    deadline: Option<tokio::time::Instant>,
+    deadline: Option<n0_future::time::Instant>,
 }
 
 impl<'a> AuthorKeyReader<'a> {
@@ -165,7 +165,7 @@ impl<'a> AuthorKeyReader<'a> {
         for reader in self.remote.iter().flatten() {
             let mut services = self.services.clone();
             services.docs_sync = reader.clone();
-            let read = tokio::time::timeout_at(
+            let read = crate::timeout_at(
                 deadline,
                 hydrate_author_record(
                     &services,
@@ -189,9 +189,9 @@ impl<'a> AuthorKeyReader<'a> {
     }
 
     /// provider を最初に要るときに一度だけ選び、同じ操作の期限を返す。
-    async fn select_remote(&mut self) -> tokio::time::Instant {
+    async fn select_remote(&mut self) -> n0_future::time::Instant {
         if self.remote.is_none() {
-            self.deadline = Some(tokio::time::Instant::now() + REMOTE_READ_DEADLINE);
+            self.deadline = Some(n0_future::time::Instant::now() + REMOTE_READ_DEADLINE);
             self.remote = Some(
                 writer_readers(
                     self.services,
@@ -203,14 +203,14 @@ impl<'a> AuthorKeyReader<'a> {
                 .await,
             );
         }
-        self.deadline.unwrap_or_else(tokio::time::Instant::now)
+        self.deadline.unwrap_or_else(n0_future::time::Instant::now)
     }
 
     /// provider の follow の窓の key(最初に答えた provider の 1 ページ)。remote を読まない回と、答えが無いときは空。
     async fn remote_follow_keys(&mut self) -> Vec<String> {
         let deadline = self.select_remote().await;
         for reader in self.remote.iter().flatten() {
-            let page = tokio::time::timeout_at(
+            let page = crate::timeout_at(
                 deadline,
                 edge_key_window(
                     reader.as_ref(),
@@ -585,14 +585,18 @@ async fn hydrate_author_record(
             .upsert_profile_cache(profile)
             .await?;
     }
-    // #1221 R5-H: 自分を指す Active の follow edge を新しく保存したら、followed の通知を作る。通知の id は
-    // envelope から決まるので、account 経路(follow の offer)で届いた通知と二重にならない。
     let local = services.keys.public_key_hex();
     if changed
         && kind == AuthorKeyKind::Follow
         && let Ok(Some(edge)) = parse_follow_edge(&envelope)
     {
         services.author_relationship_changed(&edge);
+        // #1219 AC-5: 自分と自分の channel の参加者の間の edge は、本人の端末へも同期する。
+        AppService::from_handles(services.clone())
+            .share_participant_follow(&edge)
+            .await?;
+        // #1221 R5-H: 自分を指す Active の follow edge を新しく保存したら、followed の通知を作る。通知の id は
+        // envelope から決まるので、account 経路(follow の offer)で届いた通知と二重にならない。
         if let Some(candidate) =
             super::notifications_support::notification_candidate_from_verified_follow(
                 &local,

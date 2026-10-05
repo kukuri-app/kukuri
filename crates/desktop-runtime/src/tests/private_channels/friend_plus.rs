@@ -365,9 +365,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let joined_before_restart = runtime_c
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined channels before restart");
+        .expect("joined channels before restart")
+        .items;
     assert_eq!(joined_before_restart.len(), 1);
     assert_eq!(joined_before_restart[0].channel_id, channel.channel_id);
     let restored_epoch_id = joined_before_restart[0].current_epoch_id.clone();
@@ -381,6 +383,7 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
         .await
         .expect("runtime c shutdown timeout");
     drop(runtime_c);
+    // #1218 AC-5c: DB を消して再起動し、手元の account 同期の replica から参加と鍵を作り直す(ADR 0061 §9・§10)。
     delete_sqlite_artifacts(&db_c);
 
     let restarted_c = DesktopRuntime::new_with_config_and_identity(
@@ -390,6 +393,16 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     )
     .await
     .expect("restart runtime c");
+    // 作り直しは起動の後に背景で進む。参加が戻るまで待つ。
+    wait_for_joined_private_channel_epoch(
+        &restarted_c,
+        topic,
+        channel.channel_id.as_str(),
+        restored_epoch_id.as_str(),
+        None,
+        "rebuild after the db is lost",
+    )
+    .await;
     restarted_c
         .import_peer_ticket(ImportPeerTicketRequest {
             ticket: ticket_a.clone(),
@@ -453,9 +466,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
     let joined_after_restart = restarted_c
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("joined channels after restart");
+        .expect("joined channels after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(joined_after_restart[0].current_epoch_id, restored_epoch_id);
@@ -718,9 +733,11 @@ async fn friend_plus_channel_restore_accepts_fresh_share_after_restart() {
             let joined = restarted_c
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.into(),
+                    cursor: None,
                 })
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .items;
             let private_timeline = restarted_c
                 .list_timeline(ListTimelineRequest {
                     topic: topic.into(),

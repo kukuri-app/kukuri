@@ -57,6 +57,7 @@ import type {
   NotificationStatusView,
   NotificationPageView,
   NotificationCursor,
+  PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
   Profile,
   ReactionStateView,
@@ -140,6 +141,7 @@ import type {
   SetTopicGossipEnabledRequest,
   StartOwnerDomeHostingRequest,
   SubmitDomeSessionInputRequest,
+  TakePrivateChannelControllerRequest,
   ToggleReactionRequest,
   UnsubscribeTopicRequest,
   UpdateGameRoomRequest,
@@ -588,6 +590,14 @@ export const runtimeApi: DesktopApi = {
       } satisfies RotatePrivateChannelRequest,
     });
   }),
+  takePrivateChannelController: command('takePrivateChannelController', async (topic, channelId) => {
+    return invokeDesktop<PrivateChannelControllerTake>('take_private_channel_controller', {
+      request: {
+        topic,
+        channel_id: channelId,
+      } satisfies TakePrivateChannelControllerRequest,
+    });
+  }),
   setPrivateChannelEntryDome: command('setPrivateChannelEntryDome', async (
     topic,
     channelId,
@@ -609,9 +619,9 @@ export const runtimeApi: DesktopApi = {
       } satisfies LeavePrivateChannelRequest,
     });
   }),
-  listJoinedPrivateChannels: command('listJoinedPrivateChannels', async (topic) => {
-    return invokeDesktop<JoinedPrivateChannelView[]>('list_joined_private_channels', {
-      request: { topic } satisfies ListJoinedPrivateChannelsRequest,
+  listJoinedPrivateChannels: command('listJoinedPrivateChannels', async (topic, cursor) => {
+    return invokeDesktop('list_joined_private_channels', {
+      request: { topic, cursor: cursor ?? null } satisfies ListJoinedPrivateChannelsRequest,
     });
   }),
   updateGameRoom: command('updateGameRoom', async (topic, roomId, status, phaseLabel, scores) => {

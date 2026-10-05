@@ -9,11 +9,11 @@
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1194,
+      "lines": 1198,
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1167,
+      "lines": 1168,
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
@@ -21,24 +21,20 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
+      "lines": 1132,
+      "path": "docs/THIRD_PARTY_NOTICES.md"
+    },
+    {
       "lines": 1131,
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
-      "lines": 1121,
-      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
-    },
-    {
-      "lines": 1116,
+      "lines": 1126,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
-      "lines": 1099,
-      "path": "crates/app-api/src/private_channels.rs"
-    },
-    {
-      "lines": 1095,
-      "path": "docs/THIRD_PARTY_NOTICES.md"
+      "lines": 1118,
+      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1093,
@@ -49,11 +45,11 @@
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
-      "lines": 1048,
-      "path": "crates/store/src/tests/backend_parity/lists.rs"
+      "lines": 1052,
+      "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
-      "lines": 1044,
+      "lines": 1043,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
@@ -61,8 +57,8 @@
       "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
     },
     {
-      "lines": 1024,
-      "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
+      "lines": 1026,
+      "path": "crates/store/src/parity/lists.rs"
     },
     {
       "lines": 1018,

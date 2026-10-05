@@ -7,11 +7,10 @@
 //! - 無効化・同意取消・CN の削除では送信待ちを破棄し、CN に保存された自分の観測の削除を要求する。
 //!   削除要求が完了するまで、その CN には新しい観測を送らない。
 //!
-//! 状態は account DB の、CN ごとの行と CN × 対象 × 種別の送信待ちの行に置く（#1510）。
+//! 状態は account DB の、CN ごとの行と CN × 対象 × 種別の送信待ちの行に置く（#1510）。native は SQLite、Web は
+//! IndexedDB（`kukuri_store::TrustObservationStore`）。
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::Path;
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
@@ -27,7 +26,7 @@ use kukuri_core::{
     BlockEdgeStatus, KukuriEnvelope, MuteObservationStatus, Pubkey, TrustObservationKind,
     build_block_edge_envelope, build_mute_observation_envelope, parse_trust_observation,
 };
-use kukuri_store::{SqliteStore, TrustObservationNode};
+use kukuri_store::TrustObservationNode;
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -39,7 +38,8 @@ use super::{
 };
 use crate::runtime::DesktopRuntime;
 
-/// 更新前の版が状態を置いていた file（#1510 で行へ移した）。
+/// 更新前の版が状態を置いていた file（#1510 で行へ移した）。Web の旧版の file は取り込まない（2026-10-04 の判断）。
+#[cfg(not(target_family = "wasm"))]
 const LEGACY_STATE_FILE_EXTENSION: &str = "trust-observations.json";
 
 /// 観測提供の状態（CN ごと）。
@@ -78,6 +78,7 @@ pub struct EnableCommunityNodeObservationSharingRequest {
     pub include_existing: bool,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Deserialize)]
 struct LegacyNodeState {
     #[serde(default)]
@@ -87,25 +88,28 @@ struct LegacyNodeState {
     #[serde(default)]
     revocation_pending: bool,
     #[serde(default)]
-    pending: BTreeMap<String, KukuriEnvelope>,
+    pending: std::collections::BTreeMap<String, KukuriEnvelope>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Deserialize)]
 struct LegacyState {
     #[serde(default)]
-    nodes: BTreeMap<String, LegacyNodeState>,
+    nodes: std::collections::BTreeMap<String, LegacyNodeState>,
 }
 
 /// 更新前の版の状態 file を行へ取り込み、file を消す（#1510）。署名時刻の台帳は送信待ちの行から求めるので捨てる。
+#[cfg(not(target_family = "wasm"))]
 pub(crate) async fn import_legacy_trust_observation_state(
-    db_path: &Path,
-    store: &SqliteStore,
+    db_path: &std::path::Path,
+    store: &dyn kukuri_store::TrustObservationStore,
 ) -> Result<()> {
     let path = db_path.with_extension(LEGACY_STATE_FILE_EXTENSION);
     if !path.exists() {
         return Ok(());
     }
-    let raw = fs::read_to_string(&path).context("failed to read legacy trust observation state")?;
+    let raw =
+        std::fs::read_to_string(&path).context("failed to read legacy trust observation state")?;
     let state: LegacyState =
         serde_json::from_str(&raw).context("failed to parse legacy trust observation state")?;
     for (base_url, node) in state.nodes {
@@ -125,7 +129,7 @@ pub(crate) async fn import_legacy_trust_observation_state(
                 .await?;
         }
     }
-    fs::remove_file(&path).context("failed to remove legacy trust observation state")
+    std::fs::remove_file(&path).context("failed to remove legacy trust observation state")
 }
 
 fn pending_key(target: &str, kind: TrustObservationKind) -> String {
@@ -215,7 +219,7 @@ impl DesktopRuntime {
             if envelope.created_at > last {
                 return Ok(envelope);
             }
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            n0_future::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         Err(anyhow!("failed to sign a newer trust observation"))
     }
@@ -375,13 +379,14 @@ impl DesktopRuntime {
     ///
     /// 取消は必須同意の状態によらず受け付けられる（本人認証だけ）ため、session の Ready は要求しない。
     async fn complete_trust_observation_revocation(&self, base_url: &str) -> Result<()> {
-        let token = match load_community_node_token(&self.db_path, self.identity_mode, base_url)? {
-            Some(token) => token,
-            None => {
-                self.request_community_node_authentication_token(base_url)
-                    .await?
-            }
-        };
+        let token =
+            match load_community_node_token(&self.db_path, self.identity_mode, base_url).await? {
+                Some(token) => token,
+                None => {
+                    self.request_community_node_authentication_token(base_url)
+                        .await?
+                }
+            };
         let mut status = self
             .send_trust_observation_revocation(base_url, token.access_token.as_str())
             .await?;
@@ -574,7 +579,8 @@ impl DesktopRuntime {
             ));
         }
         let mut token =
-            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())?
+            load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
+                .await?
                 .ok_or_else(|| anyhow!("community node authentication is required"))?;
         self.accept_community_node_consents_with_retry(
             base_url.as_str(),
@@ -587,7 +593,8 @@ impl DesktopRuntime {
             &self.db_path,
             self.identity_mode,
             base_url.as_str(),
-        )?;
+        )
+        .await?;
         let withdrawn_at = consents.withdrawn_at;
         let verified_before = consents.clone();
         record_community_node_local_consents(
@@ -608,7 +615,8 @@ impl DesktopRuntime {
             self.identity_mode,
             base_url.as_str(),
             &consents,
-        )?;
+        )
+        .await?;
         // 任意文書の追記は、確認済みの必須の同意を変えない。確認済みの状態も同じ操作で揃え、
         // 次の期限の登録でその CN の relay と seed を外さない(#1221 R2-B)。
         if let Some(session) = self

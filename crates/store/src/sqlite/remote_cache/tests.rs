@@ -238,7 +238,7 @@ async fn fresh_cache_reads_do_not_take_the_sqlite_writer_lock() {
         );
         assert_eq!(
             store
-                .get_remote_records("replica", "key", Some("author"), 1)
+                .get_remote_records("replica", "key", Some("author"), 1, false)
                 .await
                 .unwrap(),
             vec![b"record".to_vec()]
@@ -691,7 +691,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
         |page: &[RemoteRecordKey]| page.iter().map(|row| row.key.clone()).collect::<Vec<_>>();
 
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2, false)
         .await
         .unwrap();
     assert_eq!(
@@ -703,7 +703,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     assert_eq!(page[0].content_hash, "hash-indexes/timeline/1/a");
     assert_eq!(page[0].content_len, 3);
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", true, None, 5)
+        .remote_record_keys(replica, "indexes/timeline/", true, None, 5, false)
         .await
         .unwrap();
     assert_eq!(
@@ -716,7 +716,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     );
     assert!(!more);
     let (page, _) = store
-        .remote_record_keys(replica, "indexes/timeline/", true, Some("other"), 5)
+        .remote_record_keys(replica, "indexes/timeline/", true, Some("other"), 5, false)
         .await
         .unwrap();
     assert!(page.is_empty());
@@ -735,7 +735,7 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     .await
     .unwrap();
     let (page, more) = store
-        .remote_record_keys(replica, "indexes/timeline/", false, None, 2)
+        .remote_record_keys(replica, "indexes/timeline/", false, None, 2, false)
         .await
         .unwrap();
     assert_eq!(keys(&page), ["indexes/timeline/1/a"]);
@@ -748,4 +748,234 @@ async fn held_records_are_listed_by_a_bounded_prefix_range_without_touching_them
     .await
     .unwrap();
     assert_eq!(untouched, stale);
+}
+
+/// 自分の record（保護参照 `own_docs`）だけの読み出しは、他人の保持分を読まず、(key, author) の順で返す（ADR 0058 §7）。
+#[tokio::test]
+async fn own_record_reads_return_only_records_protected_as_own() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    let replica = "author::0a";
+    let record = |key: &str, author: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "key": key, "value": "", "content_hash": format!("hash-{key}-{author}"),
+            "content_len": 3, "docs_author": author,
+        }))
+        .unwrap()
+    };
+    for key in [
+        "indexes/timeline/1",
+        "indexes/timeline/2",
+        "indexes/timeline/3",
+    ] {
+        store
+            .put_owned_record(replica, key, "own", &record(key, "own"))
+            .await
+            .unwrap();
+        let other = record(key, "other");
+        assert!(
+            store
+                .put_remote_record(replica, key, "other", &other)
+                .await
+                .unwrap()
+        );
+    }
+    store
+        .put_owned_record(
+            "author::0b",
+            "indexes/timeline/9",
+            "own",
+            &record("x", "own"),
+        )
+        .await
+        .unwrap();
+
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", true, None, 2, true)
+        .await
+        .unwrap();
+    let keys = page
+        .iter()
+        .map(|row| (row.key.as_str(), row.author.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        [("indexes/timeline/3", "own"), ("indexes/timeline/2", "own")]
+    );
+    assert!(more);
+    let (page, more) = store
+        .remote_record_keys(replica, "indexes/timeline/", false, Some("other"), 5, true)
+        .await
+        .unwrap();
+    assert!(page.is_empty() && !more);
+
+    let exact = store
+        .get_remote_records(replica, "indexes/timeline/2", None, 8, true)
+        .await
+        .unwrap();
+    assert_eq!(exact, [record("indexes/timeline/2", "own")]);
+    let all = store
+        .get_remote_records(replica, "indexes/timeline/2", None, 8, false)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+    let by_other = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("other"), 1, true)
+        .await
+        .unwrap();
+    assert!(by_other.is_empty());
+    // 他の保護参照で保護した他人の record は、自分の record に含めない。
+    store
+        .add_protected_ref(
+            "bookmark:x",
+            "record",
+            &SqliteStore::remote_record_cache_key(replica, "indexes/timeline/2", "other"),
+        )
+        .await
+        .unwrap();
+    let protected_other = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("other"), 1, true)
+        .await
+        .unwrap();
+    assert!(protected_other.is_empty());
+    let own = store
+        .get_remote_records(replica, "indexes/timeline/2", Some("own"), 1, true)
+        .await
+        .unwrap();
+    assert_eq!(own, [record("indexes/timeline/2", "own")]);
+}
+
+/// #1211 AC-3: 保護参照の範囲の record を、位置の次から (参照, replica, key, author) の順に読む。手前の行・範囲の外の
+/// 参照・保護の無い record は返さない。位置は replica の先頭・replica の後ろへの seek にも使える。
+#[tokio::test]
+async fn protected_records_are_read_after_a_position_in_index_order() {
+    use kukuri_core::AccountHistoryCursor;
+    use sqlx::Row;
+    let store = SqliteStore::connect_memory().await.unwrap();
+    let payload = |key: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "key": key, "value": "", "content_hash": format!("hash-{key}"),
+            "content_len": 0, "docs_author": "own",
+        }))
+        .unwrap()
+    };
+    let at = |reference: &str, replica: &str, key: &str, author: &str| AccountHistoryCursor {
+        reference: reference.into(),
+        replica: replica.into(),
+        key: key.into(),
+        author: author.into(),
+    };
+    let own = [
+        ("bucket::v1::author::6f776e::20000", "indexes/profile/1"),
+        ("bucket::v1::topic::61::20000", "objects/b/envelope"),
+        ("bucket::v1::topic::61::20001", "objects/a/envelope"),
+        ("topic::x", "objects/c/envelope"),
+    ];
+    for (replica, key) in own {
+        store
+            .put_owned_record(replica, key, "own", &payload(key))
+            .await
+            .unwrap();
+    }
+    // 保護の無い他人の record と、旧形式の移行の参照（`own:<id>`）で守った record。
+    assert!(
+        store
+            .put_remote_record(
+                "bucket::v1::topic::61::20000",
+                "objects/z/envelope",
+                "other",
+                &payload("objects/z/envelope"),
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .put_remote_record(
+                "topic::x",
+                "objects/old/envelope",
+                "legacy",
+                &payload("objects/old/envelope"),
+            )
+            .await
+            .unwrap()
+    );
+    store
+        .add_protected_ref(
+            "own:old",
+            "record",
+            &SqliteStore::remote_record_cache_key("topic::x", "objects/old/envelope", "legacy"),
+        )
+        .await
+        .unwrap();
+
+    let read = |after: AccountHistoryCursor, reference: &'static str, limit| {
+        let store = &store;
+        async move {
+            store
+                .protected_records_after(reference, &after, limit)
+                .await
+                .unwrap()
+        }
+    };
+    let start = at("own_docs", "", "", "");
+    let first = read(start.clone(), "own_docs", 3).await;
+    assert_eq!(
+        first
+            .iter()
+            .map(|(position, _)| (position.replica.as_str(), position.key.as_str()))
+            .collect::<Vec<_>>(),
+        own[..3]
+    );
+    assert_eq!(first[0].1, payload(own[0].1));
+    assert_eq!(first[0].0, at("own_docs", own[0].0, own[0].1, "own"));
+    let rest = read(first[2].0.clone(), "own_docs", 3).await;
+    assert_eq!(rest.len(), 1);
+    assert_eq!(rest[0].0.replica, "topic::x");
+    assert!(read(rest[0].0.clone(), "own_docs", 3).await.is_empty());
+
+    // replica の先頭への seek と、replica の後ろへの seek。
+    let seek = read(at("own_docs", own[2].0, "", ""), "own_docs", 8).await;
+    assert_eq!(seek.len(), 2);
+    assert_eq!(seek[0].0.replica, own[2].0);
+    let past = read(at("own_docs", own[1].0, "\u{FFFF}", ""), "own_docs", 8).await;
+    assert_eq!(past[0].0.replica, own[2].0);
+
+    // 旧形式の移行の参照は、参照の範囲で読む。
+    let legacy = read(at("own:", "", "", ""), "own:", 8).await;
+    assert_eq!(legacy.len(), 1);
+    assert_eq!(
+        legacy[0].0,
+        at("own:old", "topic::x", "objects/old/envelope", "legacy")
+    );
+
+    // 索引を位置から読む（参照の範囲の先頭から読まず、範囲の全体を並べ替えない。後ろの参照は参照ごとの行だけを並べる）。
+    for (sql, expected) in [
+        (
+            super::owned::PROTECTED_RECORDS_REST,
+            "remote_content_cache_protected_ref_owner (ref_id=? AND kind=? AND cache_key>?)",
+        ),
+        (
+            super::owned::PROTECTED_RECORDS_NEXT,
+            "remote_content_cache_protected_ref_owner (ref_id>? AND ref_id<?)",
+        ),
+    ] {
+        let plan = sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+            .bind("own_docs")
+            .bind("own_doct")
+            .bind(8_i64)
+            .fetch_all(store.pool())
+            .await
+            .unwrap();
+        let details = plan
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| detail.contains(expected))
+                && !details
+                    .iter()
+                    .any(|detail| detail.contains("TEMP B-TREE FOR ORDER BY")),
+            "{details:?}"
+        );
+    }
 }

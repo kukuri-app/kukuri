@@ -14,16 +14,20 @@ impl IrohDocsSync {
         value: Vec<u8>,
         content_hash: iroh_blobs::Hash,
     ) -> Result<()> {
-        let Some(cache) = self.remote_cache.as_ref() else {
-            return Ok(());
-        };
-        let Some(owner) = self
+        let owner = self
             .account_docs_author
             .lock()
             .await
             .as_ref()
-            .map(|account| account.owner.clone())
-        else {
+            .map(|account| account.owner.clone());
+        let (Some(cache), Some(owner)) = (self.remote_cache.as_ref(), owner) else {
+            // Web には常に保存 trait と account の docs author がある。無いまま書いた record を保護の成功として扱わない
+            // (reload で失われる。ADR 0058 §7)。
+            #[cfg(target_family = "wasm")]
+            anyhow::bail!(
+                "own records cannot be protected without the cache and the account docs author"
+            );
+            #[cfg(not(target_family = "wasm"))]
             return Ok(());
         };
         let author_scope = match replica_id.as_str().strip_prefix("author::") {

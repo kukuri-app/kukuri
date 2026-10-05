@@ -10,6 +10,9 @@ export default tseslint.config(
       'dist',
       // 告知素材の撮影用 preview の build 出力 (#1038)
       'dist-promo',
+      // Web の build の出力と、その入力の wasm-bindgen の出力 (#1220)
+      'dist-web',
+      'web-runtime-pkg',
       'storybook-static',
       'playwright-report',
       'test-results',
@@ -47,6 +50,14 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
+    },
+  },
+  {
+    // Web の実ブラウザの試験 (#1220)。driver は node、`browser.execute` の関数と page-init.js はページで動く。
+    files: ['tests/web-e2e/**/*.{mjs,js}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: { ...globals.node, ...globals.browser },
     },
   },
   {

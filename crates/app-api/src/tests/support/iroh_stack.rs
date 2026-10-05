@@ -54,6 +54,7 @@ impl TestIrohStack {
             network_config.clone(),
             dht_options,
             relay_config.clone(),
+            false,
         )
         .await
         .expect("iroh docs node");

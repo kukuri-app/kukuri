@@ -7,14 +7,20 @@ import type {
   AccountKeyImportPreview,
   AccountRecord,
   AccountsSnapshot,
+  AccountTransferHistory,
+  AccountTransferLink,
+  AccountTransferStatus,
+  DecideAccountTransferRequest,
   ExportAccountKeyRequest,
   ImportAccountKeyRequest,
+  OpenAccountTransferRequest,
   PreviewAccountKeyImportRequest,
   SwitchAccountRequest,
 } from './types.generated';
 
 import { invokeDesktop } from './invoke/desktop';
 import { isDesktopMockActive } from './invoke/dispatch';
+import { IS_WEB_RUNTIME } from '../webRuntime';
 
 // #859: アカウント鍵の export / import と複数アカウント管理。DesktopApi 外の
 // スタンドアロンコマンド(appConsent.ts と同じ形)。mock ビルドでは in-memory の
@@ -56,6 +62,8 @@ export async function listAccounts(): Promise<AccountsSnapshot> {
 
 export async function getAccountDisplay(): Promise<AccountDisplay[]> {
   if (isDesktopMockActive()) return mockAccounts.accounts.map((a) => ({ id: a.id, name: null, display_name: a.label, picture: null, unavailable: false }));
+  // 他のアカウントの DB を読む表示は native だけ（ADR 0056 §2）。Web では他のアカウントの profile を出さない。
+  if (IS_WEB_RUNTIME) return [];
   return invokeDesktop<AccountDisplay[]>('get_account_display');
 }
 
@@ -169,4 +177,77 @@ export async function switchAccount(accountId: string): Promise<AccountRecord> {
   return invokeDesktop<AccountRecord>('switch_account', {
     request: { account_id: accountId } satisfies SwitchAccountRequest,
   });
+}
+
+// #1211: QR・専用リンクの移行。リンクは招待の秘密を含むので、log・URL の query へ出さない。
+// mock ビルドでは、接続と相手の承認を即座に済ませ、1.5 秒の転送中の後に完了にする（移行先は今のアカウントを受けた
+// ことにして、切り替えない）。履歴を選んだときは、完了の前に 2 秒の履歴の受信を挟む（AC-3）。
+let mockTransfer: AccountTransferStatus = { state: 'idle' };
+let mockTransferDoneAt = 0;
+let mockHistory: AccountTransferHistory | null = null;
+const MOCK_HISTORY_POSTS = 24;
+
+export async function createAccountTransferInvite(): Promise<AccountTransferLink> {
+  if (isDesktopMockActive()) {
+    const expires_at_ms = Date.now() + 5 * 60 * 1000;
+    mockTransfer = { state: 'waiting', expires_at_ms };
+    return { link: 'kukuri://transfer#v1.bW9jay1hY2NvdW50LXRyYW5zZmVyLWludml0ZQ', expires_at_ms };
+  }
+  return invokeDesktop<AccountTransferLink>('create_account_transfer_invite');
+}
+
+// `history` は受ける投稿の履歴の範囲（移さないときは `null`）。
+export async function openAccountTransfer(link: string, history: AccountTransferHistory | null = null): Promise<void> {
+  if (isDesktopMockActive()) {
+    if (!link.trim().startsWith('kukuri://transfer#v1.')) throw new Error('not an account transfer link');
+    mockHistory = history;
+    mockTransfer = { state: 'confirming', role: 'target', code: '482915', local_accepted: false };
+    return;
+  }
+  return invokeDesktop<void>('open_account_transfer', { request: { link, history } satisfies OpenAccountTransferRequest });
+}
+
+export async function getAccountTransferStatus(): Promise<AccountTransferStatus> {
+  if (isDesktopMockActive()) {
+    const now = Date.now();
+    if (mockTransfer.state === 'transferring' && now >= mockTransferDoneAt) {
+      const { role } = mockTransfer;
+      const account_id = role === 'target' ? mockAccounts.active_account_id : null;
+      mockTransferDoneAt = now + 2000;
+      mockTransfer = mockHistory
+        ? { state: 'history', role, account_id, posts: 0, unavailable: 0 }
+        : { state: 'completed', role, account_id, history: null };
+    }
+    if (mockTransfer.state === 'history') {
+      const { role, account_id } = mockTransfer;
+      const posts = Math.min(MOCK_HISTORY_POSTS, Math.round(MOCK_HISTORY_POSTS * (1 - (mockTransferDoneAt - now) / 2000)));
+      mockTransfer = now >= mockTransferDoneAt
+        ? { state: 'completed', role, account_id, history: { posts: MOCK_HISTORY_POSTS, unavailable: 1, stopped: null } }
+        : { state: 'history', role, account_id, posts, unavailable: 0 };
+    }
+    return mockTransfer;
+  }
+  return invokeDesktop<AccountTransferStatus>('get_account_transfer_status');
+}
+
+export async function decideAccountTransfer(accept: boolean): Promise<void> {
+  if (isDesktopMockActive()) {
+    if (mockTransfer.state !== 'confirming') throw new Error('account transfer is not awaiting confirmation');
+    mockTransferDoneAt = Date.now() + 1500;
+    mockTransfer = accept ? { state: 'transferring', role: mockTransfer.role, items: 12 } : { state: 'failed', role: mockTransfer.role, reason: 'rejected' };
+    return;
+  }
+  return invokeDesktop<void>('decide_account_transfer', { request: { accept } satisfies DecideAccountTransferRequest });
+}
+
+// 履歴の途中なら、必須の移行は完了のまま履歴だけを止める（AC-3）。
+export async function cancelAccountTransfer(): Promise<void> {
+  if (isDesktopMockActive()) {
+    const current = mockTransfer;
+    mockTransfer = current.state === 'history'
+      ? { state: 'completed', role: current.role, account_id: current.account_id, history: { posts: current.posts, unavailable: current.unavailable, stopped: 'cancelled' } }
+      : { state: 'idle' };
+    return;
+  }
+  return invokeDesktop<void>('cancel_account_transfer');
 }

@@ -92,6 +92,7 @@ pub(crate) fn hint_targets_topic(hint: &GossipHint, topic: &str) -> bool {
         | GossipHint::DirectMessageFrame { topic_id, .. }
         | GossipHint::DirectMessageAck { topic_id, .. } => topic_id.as_str() == topic,
         GossipHint::ThreadUpdated { .. } | GossipHint::ProfileUpdated { .. } => true,
+        GossipHint::AccountSyncChanged { .. } => false,
     }
 }
 

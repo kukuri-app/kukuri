@@ -1,3 +1,4 @@
+#[cfg(not(target_family = "wasm"))]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,6 +16,7 @@ use kukuri_docs_sync::{
     IrohDocsSync, ReplicaNoticeStream,
 };
 use kukuri_iroh_node::IrohDocsNode;
+#[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
 use kukuri_transport::StatusChanges;
 use kukuri_transport::{
@@ -22,6 +24,7 @@ use kukuri_transport::{
     HintTransport, IrohGossipTransport, PeerSnapshot, ReceiveCandidateFence, ReceiveOfferLease,
     ReceiveOfferSubscription, SeedPeer, Transport, TransportNetworkConfig, TransportRelayConfig,
 };
+use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport};
 #[cfg(test)]
 use tokio::sync::oneshot;
 use tokio::sync::{Mutex, RwLock};
@@ -34,12 +37,31 @@ pub(crate) struct BoundIrohStack {
     pub(crate) transport: Arc<IrohGossipTransport>,
     pub(crate) docs_sync: Arc<IrohDocsSync>,
     pub(crate) blob_service: Arc<IrohBlobService>,
+    /// 停止を終えた。作り直しの失敗で止めた stack を止め直すと、その後に始まって返事の来ない actor を待つ操作（docs の
+    /// replicas の lock を持つ）の終わりを待ち続ける。途中で取り消された停止は、次の停止でやり直す。
+    shut_down: AtomicBool,
+}
+
+/// stack が使う、remote の cache と peer の接続候補の保存先（native は SQLite、Web は IndexedDB。ADR 0056 §5）。
+pub trait StackStore: kukuri_store::ContentCacheStore + kukuri_store::PeerCandidateStore {}
+impl<T: kukuri_store::ContentCacheStore + kukuri_store::PeerCandidateStore> StackStore for T {}
+
+/// node の開き方。native は永続の root、Web はメモリの store と保存した endpoint の秘密鍵・WebRTC の transport
+/// （ADR 0056 §2・§8）。作り直しも同じ開き方で開く。
+pub enum NodeSource {
+    #[cfg(not(target_family = "wasm"))]
+    Persistent(PathBuf),
+    Memory {
+        secret_key: Box<iroh::SecretKey>,
+        /// WebRTC の transport を持つか。transport は 1 回しか bind できないので、開くたびに作る（native と同じ）。
+        webrtc: bool,
+    },
 }
 
 /// 候補の台帳と、通信状態の変わった部分の印(#1221 R2-D。作り直しても同じ印へ付ける)。
 enum StackOpen {
-    Initial(Arc<SqliteStore>, StatusChanges),
-    Reopen(Arc<SqliteStore>, StatusChanges),
+    Initial(Arc<dyn StackStore>, StatusChanges),
+    Reopen(Arc<dyn StackStore>, StatusChanges),
 }
 
 /// ホットスワップ可能なサービスラッパーを 1 つ生成する。
@@ -60,6 +82,7 @@ macro_rules! reloadable_service {
             $(#[$impl_meta:meta])*
             impl $trait:path {
                 $(
+                    $(#[$method_meta:meta])*
                     async fn $method:ident ( $( $arg:ident : $arg_ty:ty ),* $(,)? ) -> $ret:ty;
                 )*
             }
@@ -91,6 +114,7 @@ macro_rules! reloadable_service {
             $(#[$impl_meta])*
             impl $trait for $name {
                 $(
+                    $(#[$method_meta])*
                     async fn $method(&self, $( $arg : $arg_ty ),* ) -> $ret {
                         self.current().await.$method($( $arg ),*).await
                     }
@@ -164,6 +188,10 @@ reloadable_service! {
             namespace_secret_hex: &str,
         ) -> Result<()>;
         async fn remove_private_replica_secret(replica_id: &ReplicaId) -> Result<()>;
+        // ADR 0061 §9: 宣言が無いと trait の既定実装(何もしない)に落ち、参加中の channel の世代の秘密を引けない。
+        async fn install_private_epoch_secrets(
+            source: Arc<dyn kukuri_docs_sync::PrivateEpochSecrets>,
+        ) -> Result<()>;
         async fn apply_doc_op(replica_id: &ReplicaId, op: DocOp) -> Result<()>;
         async fn query_replica_with_policy(
             replica_id: &ReplicaId,
@@ -214,13 +242,12 @@ reloadable_service! {
     pub(crate) struct ReloadableBlobService wrapping IrohBlobService;
 
     // 宣言の無い trait メソッドは内側へ転送されず、trait の既定実装に落ちる(#1157)。
-    // `fetch_blob_ephemeral_bounded` は CN の indexer 専用で desktop からは呼ばれないため
-    // 宣言しない(既定実装は bail なので、誤って呼ばれても無制限取得にはならない)。
     #[async_trait]
     impl BlobService {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
         async fn put_owned_blob(data: Vec<u8>, mime: &str, reference: &str) -> Result<StoredBlob>;
         async fn put_remote_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+        #[cfg(not(target_family = "wasm"))]
         async fn put_remote_blob_file(path: &std::path::Path, hash: &BlobHash, adult: bool) -> Result<()>;
         async fn forget_adult_media_step() -> Result<usize>;
         async fn fetch_blob(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
@@ -229,6 +256,9 @@ reloadable_service! {
         // #1152: trait の既定実装は永続化する `fetch_blob` へ委譲するため、必ず実体へ転送する
         // (成人向け表示 ON の取得は ephemeral で永続化しない。ADR 0046 §6.2)。
         async fn fetch_blob_ephemeral(hash: &BlobHash) -> Result<Option<Vec<u8>>>;
+        // #1220 AC-2d: リンクプレビューの record の画像は、record の bytes 数までだけ取得する(既定実装は bail)。
+        async fn fetch_blob_ephemeral_bounded(hash: &BlobHash, max_bytes: u64) -> Result<Option<Vec<u8>>>;
+        #[cfg(not(target_family = "wasm"))]
         async fn fetch_blob_ephemeral_to_file(hash: &BlobHash, path: &std::path::Path) -> Result<Option<u64>>;
         async fn fetch_verified_receive_offer_payload(
             offer: &VerifiedReceiveOffer, provider: EndpointAddr,
@@ -253,13 +283,13 @@ pub(crate) struct SharedIrohStack {
     pub(crate) transport: Arc<ReloadableTransport>,
     pub(crate) docs_sync: Arc<ReloadableDocsSync>,
     pub(crate) blob_service: Arc<ReloadableBlobService>,
-    pub(crate) root: PathBuf,
+    pub(crate) source: NodeSource,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
     /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
     dht_enabled: AtomicBool,
-    candidate_store: Arc<SqliteStore>,
-    remote_cache_reaper: tokio::task::JoinHandle<()>,
+    candidate_store: Arc<dyn StackStore>,
+    remote_cache_reaper: n0_future::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
     docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
@@ -305,6 +335,8 @@ impl SharedIrohStack {
         self.generation.load(Ordering::Relaxed)
     }
 
+    // 永続の node と SQLite の候補の台帳で組み立てる（無ければメモリの SQLite）。
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn new(
         root: &Path,
         network_config: TransportNetworkConfig,
@@ -314,14 +346,36 @@ impl SharedIrohStack {
         relay_config: TransportRelayConfig,
         candidate_store: Option<Arc<SqliteStore>>,
     ) -> Result<Self> {
-        let dht_options = effective_dht_options(&dht_options, bootstrap_seed_peers, &relay_config);
         let candidate_store = match candidate_store {
             Some(store) => store,
             None => Arc::new(SqliteStore::connect_memory().await?),
         };
+        Self::open(
+            NodeSource::Persistent(root.to_path_buf()),
+            network_config,
+            discovery_config,
+            bootstrap_seed_peers,
+            dht_options,
+            relay_config,
+            candidate_store,
+        )
+        .await
+    }
+
+    /// node を開き、cache と候補の保存先で組み立てる（native と Web で共用）。
+    pub async fn open(
+        source: NodeSource,
+        network_config: TransportNetworkConfig,
+        discovery_config: &DiscoveryConfig,
+        bootstrap_seed_peers: &[SeedPeer],
+        dht_options: DhtDiscoveryOptions,
+        relay_config: TransportRelayConfig,
+        candidate_store: Arc<dyn StackStore>,
+    ) -> Result<Self> {
+        let dht_options = effective_dht_options(&dht_options, bootstrap_seed_peers, &relay_config);
         let status_changes = StatusChanges::default();
         let current = BoundIrohStack::new(
-            root,
+            &source,
             network_config.clone(),
             discovery_config,
             bootstrap_seed_peers,
@@ -334,7 +388,7 @@ impl SharedIrohStack {
         let docs_sync = Arc::new(ReloadableDocsSync::new(current.docs_sync.clone()));
         let blob_service = Arc::new(ReloadableBlobService::new(current.blob_service.clone()));
         let reaper_store = candidate_store.clone();
-        let remote_cache_reaper = tokio::spawn(async move {
+        let remote_cache_reaper = n0_future::task::spawn(async move {
             loop {
                 let full_step = match reaper_store.reclaim_remote_cache_step().await {
                     Ok(reclaimed) => reclaimed == kukuri_store::REMOTE_CACHE_RECLAIM_STEP,
@@ -343,7 +397,7 @@ impl SharedIrohStack {
                         false
                     }
                 };
-                tokio::time::sleep(if full_step {
+                n0_future::time::sleep(if full_step {
                     std::time::Duration::from_millis(100)
                 } else {
                     std::time::Duration::from_secs(60 * 60)
@@ -358,7 +412,7 @@ impl SharedIrohStack {
             transport,
             docs_sync,
             blob_service,
-            root: root.to_path_buf(),
+            source,
             network_config,
             dht_enabled: AtomicBool::new(dht_options.enabled),
             dht_options,
@@ -473,9 +527,9 @@ impl SharedIrohStack {
             let _ = reached.send(());
             let _ = resume.await;
         }
-        previous.shutdown().await;
+        let _ = previous.shutdown().await;
         let next = BoundIrohStack::new(
-            &self.root,
+            &self.source,
             self.network_config.clone(),
             discovery_config,
             bootstrap_seed_peers,
@@ -524,7 +578,7 @@ impl SharedIrohStack {
             namespaces.try_next().await?;
             Ok::<_, anyhow::Error>(())
         };
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), probe)
+        let result = n0_future::time::timeout(std::time::Duration::from_secs(2), probe)
             .await
             .context("local docs actor health probe timed out")?;
         if let Err(error) = &result {
@@ -608,11 +662,10 @@ impl SharedIrohStack {
     }
 
     pub(crate) async fn shutdown_checked(&self) -> Result<()> {
+        #[cfg(not(target_family = "wasm"))]
         self.remote_cache_reaper.abort();
         if let Some(current) = self.current.lock().await.take() {
-            current.transport.shutdown().await;
-            current.docs_sync.shutdown().await;
-            current.node.clone().shutdown().await?;
+            current.shutdown().await?;
         }
         Ok(())
     }
@@ -625,6 +678,45 @@ impl SharedIrohStack {
         let (resume_tx, resume_rx) = oneshot::channel();
         *self.rebuild_before_shutdown_gate.lock().await = Some((reached_tx, resume_rx));
         (reached_rx, resume_tx)
+    }
+
+    /// 復帰（ADR 0059 §5）: 経路を確かめ直し、WebRTC の交渉を、生きた需要のうち session の無い相手とだけやり直す
+    /// （ADR 0057 §9）。
+    pub(crate) async fn resume_network(&self) {
+        let current = self.current.lock().await;
+        let Some(current) = current.as_ref() else {
+            return;
+        };
+        current.node.endpoint().network_change().await;
+        if let Some(signaling) = current.node.webrtc_signaling() {
+            signaling.resume();
+        }
+    }
+
+    /// 中断（ADR 0059 §5）: WebRTC の交渉の世代を終え、旧世代の交渉・候補・session を捨てる。
+    pub(crate) async fn suspend_network(&self) {
+        if let Some(signaling) = self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|current| current.node.webrtc_signaling())
+        {
+            signaling.reset();
+        }
+    }
+
+    /// QR・専用リンクの移行（#1211）。stack を作り直すと、進行中の移行は終わる。
+    pub(crate) async fn account_transfer(&self) -> Result<kukuri_iroh_node::AccountTransfer> {
+        Ok(self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .account_transfer()
+            .clone())
     }
 
     #[cfg(test)]
@@ -647,8 +739,15 @@ impl Drop for SharedIrohStack {
 }
 
 impl BoundIrohStack {
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(
+            unused_variables,
+            reason = "DHT と永続の node の開き直しは native だけ"
+        )
+    )]
     async fn new(
-        root: &Path,
+        source: &NodeSource,
         network_config: TransportNetworkConfig,
         discovery_config: &DiscoveryConfig,
         bootstrap_seed_peers: &[SeedPeer],
@@ -661,22 +760,45 @@ impl BoundIrohStack {
             StackOpen::Reopen(store, changes) => (true, store, changes),
         };
         let relay_config = relay_config.normalized();
-        let node = if reopening {
-            IrohDocsNode::reopen_with_discovery_config(
-                root,
-                network_config.clone(),
-                dht_options,
-                relay_config.clone(),
-            )
-            .await?
-        } else {
-            IrohDocsNode::persistent_with_discovery_config(
-                root,
-                network_config.clone(),
-                dht_options,
-                relay_config.clone(),
-            )
-            .await?
+        let node = match source {
+            // 末尾の true: ブラウザからの接続交渉に応じる（交渉は始めない。ADR 0057 §9）。
+            #[cfg(not(target_family = "wasm"))]
+            NodeSource::Persistent(root) if reopening => {
+                IrohDocsNode::reopen_with_discovery_config(
+                    root,
+                    network_config.clone(),
+                    dht_options,
+                    relay_config.clone(),
+                    true,
+                )
+                .await?
+            }
+            #[cfg(not(target_family = "wasm"))]
+            NodeSource::Persistent(root) => {
+                IrohDocsNode::persistent_with_discovery_config(
+                    root,
+                    network_config.clone(),
+                    dht_options,
+                    relay_config.clone(),
+                    true,
+                )
+                .await?
+            }
+            // Web: DHT は使えない（ADR 0056 §3）。作り直しも同じ秘密鍵で開き、WebRTC の transport は開くたびに作る。
+            NodeSource::Memory { secret_key, webrtc } => {
+                IrohDocsNode::memory_with(kukuri_iroh_node::NodeOptions {
+                    network_config: network_config.clone(),
+                    relay_config: relay_config.clone(),
+                    secret_key: Some((**secret_key).clone()),
+                    webrtc: webrtc.then(|| {
+                        WebRtcTransport::new(WebRtcConfig {
+                            #[cfg(not(target_family = "wasm"))]
+                            bind_ip: network_config.bind_addr.ip(),
+                        })
+                    }),
+                })
+                .await?
+            }
         };
         node.install_remote_cache(candidate_store.clone())?;
         let transport = Arc::new(
@@ -693,9 +815,11 @@ impl BoundIrohStack {
         let docs_sync = Arc::new(IrohDocsSync::with_account_store(
             node.clone(),
             candidate_store.clone(),
+            candidate_store.clone(),
         ));
         let blob_service = Arc::new(IrohBlobService::with_account_store(
             node.clone(),
+            candidate_store.clone(),
             candidate_store,
         ));
         transport
@@ -716,13 +840,19 @@ impl BoundIrohStack {
             transport,
             docs_sync,
             blob_service,
+            shut_down: AtomicBool::new(false),
         })
     }
 
-    pub(crate) async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) -> Result<()> {
+        if self.shut_down.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         self.transport.shutdown().await;
         self.docs_sync.shutdown().await;
-        let _ = self.node.clone().shutdown().await;
+        let result = self.node.clone().shutdown().await;
+        self.shut_down.store(true, Ordering::SeqCst);
+        result
     }
 }
 

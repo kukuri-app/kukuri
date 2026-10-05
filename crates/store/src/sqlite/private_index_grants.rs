@@ -2,17 +2,11 @@ use anyhow::Result;
 use sqlx::Row;
 
 use super::SqliteStore;
+use crate::{PrivateIndexGrant, PrivateIndexGrantStore};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrivateIndexGrant {
-    pub base_url: String,
-    pub topic_id: String,
-    pub channel_id: String,
-    pub applied_epoch_id: String,
-}
-
-impl SqliteStore {
-    pub async fn save_private_index_grant(&self, grant: &PrivateIndexGrant) -> Result<()> {
+#[async_trait::async_trait]
+impl PrivateIndexGrantStore for SqliteStore {
+    async fn save_private_index_grant(&self, grant: &PrivateIndexGrant) -> Result<()> {
         sqlx::query(
             "INSERT INTO cn_private_index_grants
              (base_url, topic_id, channel_id, applied_epoch_id, node_revision, channel_revision, active)
@@ -39,7 +33,7 @@ impl SqliteStore {
 
     /// One indexed row per CN tick. Advancing the timestamp keeps all grants
     /// eligible without materializing the account's complete grant set.
-    pub async fn next_private_index_grant(
+    async fn next_private_index_grant(
         &self,
         base_url: &str,
         now_ms: i64,
@@ -103,7 +97,7 @@ impl SqliteStore {
         Ok(None)
     }
 
-    pub async fn mark_private_index_grant_applied(
+    async fn mark_private_index_grant_applied(
         &self,
         grant: &PrivateIndexGrant,
         epoch_id: &str,
@@ -123,7 +117,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub async fn stop_private_index_grant(
+    async fn stop_private_index_grant(
         &self,
         base_url: &str,
         topic_id: &str,
@@ -141,7 +135,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub async fn stop_private_index_grants_for_node(&self, base_url: &str) -> Result<()> {
+    async fn stop_private_index_grants_for_node(&self, base_url: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO cn_private_index_stops (kind, id) VALUES ('node', ?)
              ON CONFLICT(kind, id) DO UPDATE SET revision=revision+1",
@@ -152,7 +146,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub async fn stop_private_index_grants_for_channel(
+    async fn stop_private_index_grants_for_channel(
         &self,
         topic_id: &str,
         channel_id: &str,

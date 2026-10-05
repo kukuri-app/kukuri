@@ -2,7 +2,12 @@
   "accountKey": {
     "title": "Account",
     "summary": "Key migration and account switching.",
-    "scopeNotice": "This covers only the account key that represents who you are. It does not include posts, settings, attachments, or private-channel secrets. Use Settings > Backup & restore to migrate a whole device or to prepare for device failure.",
+    "methods": {
+      "intro": "You can use your account on another device in these ways.",
+      "transfer": "Move to another device (Add account > Move between devices): moves your account key, profile, follows and blocks, the people you always show, and the private channels you joined with their keys. Your post history moves only if you choose it.",
+      "export": "Export the account key: writes out only the account key.",
+      "backup": "Backup & restore: moves all the data on this device. (desktop only)"
+    },
     "openBackup": "Open backup & restore",
     "accountsTitle": "Accounts on this device",
     "unnamedAccount": "(unnamed)",
@@ -37,6 +42,106 @@
       "pending": "Importing…",
       "success": "Account added. Switch to it to start using the imported account.",
       "switchNow": "Switch now"
+    },
+    "browserStorage": {
+      "persisted": "This browser does not delete this site's data automatically. If you clear the site data yourself, your account keys are deleted too.",
+      "notPersisted": "This browser may delete this site's data automatically when storage runs low or after a long time without use. If that happens, your account keys are deleted too.",
+      "recovery": "If you export your account key, you can bring the account back by importing it from Add account. You can also move it from another device. Not all history, such as posts, comes back."
+    },
+    "accountSync": {
+      "title": "Sync with your other devices",
+      "synced": "In sync.",
+      "noPeers": "No other device of yours has been found. If you use this account on another device, it syncs when you open the app there.",
+      "behind": "Loading changes from your other devices.",
+      "pendingWrites": "Some changes have not been sent to your other devices yet.",
+      "fetchFailed": "Changes could not be loaded from your other devices. It will try again at the next chance.",
+      "rebuilding": "Rebuilding the sync records of this device."
+    }
+  },
+  "accountTransfer": {
+    "source": {
+      "title": "Move to another device",
+      "description": "Show a QR code and link for moving this account to another device.",
+      "preparing": "Preparing the link…",
+      "instructions": "Open this link on the other device, or paste it into “Move from another device”. The link works once, for 5 minutes. Don't show it to anyone else.",
+      "qrLabel": "QR code of the transfer link",
+      "remaining": "{{time}} left",
+      "linkLabel": "Transfer link",
+      "copy": "Copy link",
+      "copied": "Copied"
+    },
+    "target": {
+      "title": "Move from another device",
+      "description": "Move an account using the transfer link shown on another device.",
+      "linkLabel": "Transfer link",
+      "instructions": "Paste the link shown by “Move to another device” on the other device.",
+      "connect": "Connect",
+      "connecting": "Connecting to the other device…"
+    },
+    "scope": {
+      "movesLabel": "Moves:",
+      "moves": "your account key, profile, follows and blocks, the people you always show, and the private channels you joined with their keys. If you choose it, your own post history written on the source device (text, images, and videos).",
+      "notMovedLabel": "Doesn't move:",
+      "notMovedDoneLabel": "Not moved:",
+      "notMoved": "your muted list, DM and notification history, Community Node settings and consent, app consent and age declaration, and the adult content display setting.",
+      "sourceKept": "The account stays on the source device."
+    },
+    "confirm": {
+      "source": "Check that the other device shows the same confirmation code.",
+      "target": "Check that the other device shows the same confirmation code.",
+      "codeLabel": "Confirmation code",
+      "match": "Codes match",
+      "mismatch": "Codes don't match",
+      "waitingPeer": "Waiting for the other device to confirm…"
+    },
+    "transferring": {
+      "source": "Sending keys and settings ({{count}})…",
+      "target": "Receiving and saving keys and settings ({{count}})…"
+    },
+    "completed": {
+      "source": "The other device has saved the account. You can keep using it on this device.",
+      "target": "Everything was received.",
+      "use": "Use this account"
+    },
+    "retry": "Try again",
+    "failure": {
+      "expired": "The link has expired. Show a new link on the other device and try again.",
+      "invalid": "This link can't be used. It may have been used already, expired, or be incorrect. Show a new link on the other device.",
+      "unreachable": "Couldn't connect to the other device. Check that both devices are online.",
+      "rejected": "The confirmation codes didn't match, so the transfer was stopped.",
+      "cancelled": "The transfer was stopped.",
+      "interrupted": "The connection was lost during confirmation or transfer. Please try again.",
+      "prepareFailed": "Couldn't prepare the link. Please try again.",
+      "storage": "The other device couldn't save the account. Check its free space and try again."
+    },
+    "history": {
+      "label": "Post history",
+      "hint": "Moves your posts written on the other device, with their text, images and videos (posts written on other devices aren't moved). A lot of posts can take a while. Posts saved in the older format move only with “All”.",
+      "choice": {
+        "none": "Don't move",
+        "month": "Last 30 days",
+        "year": "Last year",
+        "all": "All"
+      },
+      "bundleDone": "Keys and settings have been moved.",
+      "progress": {
+        "source": "Sending post history ({{count}})…",
+        "target": "Receiving post history ({{count}})…"
+      },
+      "stop": {
+        "source": "Stop sending history",
+        "target": "Stop receiving history"
+      },
+      "done": {
+        "source": "Sent post history ({{count}}).",
+        "target": "Received post history ({{count}})."
+      },
+      "stopped": {
+        "source": "Sending post history stopped partway ({{count}}).",
+        "target": "Receiving post history stopped partway ({{count}})."
+      },
+      "unavailable": "Texts or attachments that weren't on the other device couldn't be moved ({{count}}).",
+      "resume": "Connect again and choose the same range on the receiving device to continue where it stopped."
     }
   },
   "deviceBackup": {
@@ -444,6 +549,7 @@
     "title": "Release",
     "summary": "Preview channel, updater, diagnostics, and resources.",
     "storeSummary": "Microsoft Store updates, diagnostics, and resources.",
+    "webSummary": "Preview channel, diagnostics, and resources.",
     "update": {
       "title": "Updates",
       "version": "Version",
@@ -500,6 +606,12 @@
       "p2pPurpose": "Peer discovery, P2P connectivity, synchronization within the selected audience, and relay when needed",
       "p2pItems": "Public key, endpoint identifier, IP address, connection metadata, and signed content, metadata, and attachments within the selected audience",
       "p2pRetention": "Subject to the receiving peer, DHT participant, or relay operator; copies already obtained cannot be erased centrally.",
+      "webOriginDestination": "The server that delivers the web client",
+      "webOriginPurpose": "Loading the screens and code of the web client when it opens and while it is in use",
+      "webOriginItems": "IP address, HTTP/TLS request metadata, User-Agent, requested path, and Referer (when the linking page sends it)",
+      "webOriginRetention": "Subject to the policies of the delivering operator and network providers.",
+      "webP2pDestination": "Peers and configured relays (including STUN on the same host)",
+      "webP2pRetention": "Subject to the receiving peer or relay operator; copies already obtained cannot be erased centrally.",
       "diagnosticNotice": "Copying or exporting a diagnostic report does not send it automatically. It leaves the device only if you attach it to a destination you choose."
     },
     "diagnostics": {

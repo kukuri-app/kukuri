@@ -1,5 +1,12 @@
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
+#[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -67,6 +74,7 @@ pub trait BlobService: Send + Sync {
     }
     /// 表示用ファイルを cache へ置く。`adult` は成人向け表示 ON の間に表示した添付で、OFF に戻したときに
     /// `forget_adult_media_step` が消す(#1419)。
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(
         &self,
         _path: &Path,
@@ -109,6 +117,7 @@ pub trait BlobService: Send + Sync {
     }
     /// Write display bytes in bounded chunks. Unsupported adapters must not
     /// fall back to a whole-blob allocation on the desktop path.
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         _hash: &BlobHash,
@@ -165,7 +174,7 @@ pub trait BlobService: Send + Sync {
 #[derive(Clone)]
 pub struct IrohBlobService {
     node: Arc<IrohDocsNode>,
-    remote_cache: Option<Arc<kukuri_store::SqliteStore>>,
+    remote_cache: Option<Arc<dyn kukuri_store::ContentCacheStore>>,
     pinned: Arc<RwLock<HashSet<String>>>,
     // ピア台帳・接続候補・リトライ状態は kukuri-transport の共通実装(WP-H2)。
     // 台帳変化の bool は blob-service では使わない(レプリカへの配り直しが無いため)。
@@ -209,19 +218,31 @@ impl IrohBlobService {
         self.peers.ranked_peers().await
     }
 
+    /// 保存 trait を持つ。Web は IndexedDB の実装を渡し、peer candidate は保存しない（ADR 0056 §5、ADR 0058 §1）。
+    pub fn with_content_cache(
+        node: Arc<IrohDocsNode>,
+        cache: Arc<dyn kukuri_store::ContentCacheStore>,
+    ) -> Self {
+        Self {
+            remote_cache: Some(cache),
+            ..Self::new(node)
+        }
+    }
+
+    /// account の保存先（native は SQLite、Web は IndexedDB）を、remote の cache と peer candidate の保存先に使う。
     pub fn with_account_store(
         node: Arc<IrohDocsNode>,
-        store: Arc<kukuri_store::SqliteStore>,
+        cache: Arc<dyn kukuri_store::ContentCacheStore>,
+        candidates: Arc<dyn kukuri_store::PeerCandidateStore>,
     ) -> Self {
-        let mut blobs = Self::new(node.clone());
+        let mut blobs = Self::with_content_cache(node.clone(), cache);
         blobs.peers = Arc::new(PeerAddrBook::with_account_store(
             node.endpoint().clone(),
             node.discovery(),
             node.fetch_peer_health(),
-            store.clone(),
+            candidates,
             "blob",
         ));
-        blobs.remote_cache = Some(store);
         blobs
     }
 
@@ -253,6 +274,7 @@ impl IrohBlobService {
 
 #[async_trait]
 impl BlobService for MemoryBlobService {
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, _adult: bool) -> Result<()> {
         let bytes = tokio::fs::read(path).await?;
         anyhow::ensure!(
@@ -262,6 +284,7 @@ impl BlobService for MemoryBlobService {
         self.put_blob(bytes, "application/octet-stream").await?;
         Ok(())
     }
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         hash: &BlobHash,
@@ -342,12 +365,13 @@ impl BlobService for MemoryBlobService {
 
 #[async_trait]
 impl BlobService for IrohBlobService {
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, adult: bool) -> Result<()> {
         if tokio::fs::metadata(path).await?.len() > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64
         {
             return Ok(());
         }
-        iroh_blobs::Hash::from_str(hash.as_str())?;
+        kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let cache = self
             .remote_cache
             .as_ref()
@@ -364,13 +388,14 @@ impl BlobService for IrohBlobService {
             None => Ok(0),
         }
     }
+    #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         hash: &BlobHash,
         path: &Path,
     ) -> Result<Option<u64>> {
         use tokio::io::AsyncWriteExt;
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Some(cache) = &self.remote_cache
             && let Some(length) = cache
                 .copy_remote_content_to_file("blob", hash.as_str(), path)
@@ -404,12 +429,12 @@ impl BlobService for IrohBlobService {
         remote_fetch::prepare_display_fetch(
             &self.node,
             &self.peers,
-            iroh_blobs::Hash::from_str(hash.as_str())?,
+            kukuri_iroh_node::parse_blob_hash(hash.as_str())?,
         )
         .await
     }
     async fn fetch_local_blob(&self, hash: &BlobHash) -> Result<Option<Vec<u8>>> {
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Ok(bytes) = self.node.blobs().blobs().get_bytes(parsed).await {
             return Ok(Some(bytes.to_vec()));
         }
@@ -424,22 +449,25 @@ impl BlobService for IrohBlobService {
         max_bytes: u64,
     ) -> Result<Option<Vec<u8>>> {
         use tokio::io::AsyncReadExt;
-        let expected = iroh_blobs::Hash::from_str(hash.as_str())?;
-        let mut bytes = Vec::new();
-        let mut reader = self
-            .node
-            .blobs()
-            .blobs()
-            .reader(expected)
-            .take(max_bytes.saturating_add(1));
-        let result = match reader.read_to_end(&mut bytes).await {
-            Ok(_) if bytes.len() as u64 > max_bytes => {
+        let expected = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
+        let blobs = self.node.blobs().clone();
+        let local = kukuri_iroh_node::confine_local(async move {
+            let mut bytes = Vec::new();
+            blobs
+                .blobs()
+                .reader(expected)
+                .take(max_bytes.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .await
+                .map(|_| bytes)
+        });
+        let result = match local.await {
+            Ok(bytes) if bytes.len() as u64 > max_bytes => {
                 return Err(remote_fetch::BlobTooLarge { limit: max_bytes }.into());
             }
-            Ok(_) => Some(bytes),
+            Ok(bytes) => Some(bytes),
+            // 途中まで読んだ手元の分は、有界な remote の取得を始める前に解放済み。
             Err(_) => {
-                // Free any partial local read before beginning a bounded remote transfer.
-                drop(bytes);
                 remote_fetch::fetch_bytes_ephemeral_bounded_with_cooldown(
                     &self.node,
                     &self.peers,
@@ -479,12 +507,14 @@ impl BlobService for IrohBlobService {
         let hash = iroh_blobs::Hash::new(&data);
         let byte_len = data.len() as u64;
         // #1221 R5-I: 本人の書込みは、書いたときに保護参照つきで保護所有先へも入れる(backup・restore の対象)。
-        // iroh の store にも置き、SQLite を失っても docs から戻せるようにする。
+        // native は iroh の store にも置き、SQLite を失っても docs から戻せるようにする。Web は `MemStore` へ書かない
+        // （reload で消えるので、保存 trait だけが正本。ADR 0058 §1）。
         if let Some(cache) = &self.remote_cache {
             cache
                 .put_owned_blob(reference, &hash.to_string(), &data)
                 .await?;
         }
+        #[cfg(not(target_family = "wasm"))]
         self.node.blobs().blobs().add_bytes(data).await?;
         Ok(StoredBlob {
             hash: BlobHash::new(hash.to_string()),
@@ -498,7 +528,7 @@ impl BlobService for IrohBlobService {
             return self.put_blob(data, mime).await;
         };
         let hash = iroh_blobs::Hash::new(&data);
-        if data.len() as i64 <= kukuri_store::REMOTE_CACHE_CAPACITY_BYTES {
+        if data.len() as u64 <= cache.remote_cache_capacity() {
             anyhow::ensure!(
                 cache
                     .put_remote_content("blob", &hash.to_string(), "blob", &data)
@@ -517,7 +547,7 @@ impl BlobService for IrohBlobService {
         if self.remote_cache.is_some() {
             return self.fetch_blob_ephemeral(hash).await;
         }
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         match self.node.blobs().blobs().get_bytes(parsed).await {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(error) => {
@@ -540,7 +570,7 @@ impl BlobService for IrohBlobService {
             return Ok(Some(bytes));
         }
         let hash_text = hash.as_str().to_string();
-        let hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         match self.node.blobs().blobs().get_bytes(hash).await {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(error) => {
@@ -560,7 +590,7 @@ impl BlobService for IrohBlobService {
     }
 
     async fn pin_blob(&self, hash: &BlobHash) -> Result<()> {
-        let parsed = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         if let Some(cache) = &self.remote_cache {
             // #1221 R5-I: pin した asset は pin したときに `dome_pin:` の保護参照で保護所有先に置く(backup・restore)。
             let reference = format!("dome_pin:{}", hash.as_str());
@@ -573,6 +603,7 @@ impl BlobService for IrohBlobService {
                     .put_owned_blob(&reference, hash.as_str(), &bytes)
                     .await?;
             }
+            #[cfg(not(target_family = "wasm"))]
             if !self.node.blobs().blobs().has(parsed).await?
                 && let Some(bytes) = cache.get_remote_content("blob", hash.as_str()).await?
             {
@@ -612,7 +643,7 @@ impl BlobService for IrohBlobService {
         if self.is_pinned(hash).await? {
             return Ok(BlobStatus::Pinned);
         }
-        let iroh_hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let iroh_hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let cached = match &self.remote_cache {
             Some(cache) => cache.has_remote_content("blob", hash.as_str()).await?,
             None => false,
@@ -637,7 +668,7 @@ impl BlobService for IrohBlobService {
     }
 
     async fn learn_content_source(&self, hash: &BlobHash, endpoint_id: &str) -> Result<()> {
-        let hash = iroh_blobs::Hash::from_str(hash.as_str())?;
+        let hash = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
         let peer = iroh::EndpointId::from_str(endpoint_id.trim())?;
         self.peers
             .note_content_source(&hash.to_string(), peer)

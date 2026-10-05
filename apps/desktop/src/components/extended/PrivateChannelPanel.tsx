@@ -1,17 +1,17 @@
-import type { FormEventHandler } from 'react';
+import { useState, type FormEventHandler } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Copy, Settings } from 'lucide-react';
 
 import { buildChannelAccessPreviewDeepLink } from '@/lib/internalLinks';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { IconButton } from '@/components/ui/icon-button';
+import { IconButton, IconButtonTooltip } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Notice } from '@/components/ui/notice';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import type { JoinedPrivateChannelView } from '@/lib/api';
+import type { JoinedPrivateChannelView, PrivateChannelControllerTake } from '@/lib/api';
 
 import {
   type ChannelAudienceOption,
@@ -56,6 +56,8 @@ type PrivateChannelPanelProps = {
   inviteOutputLabel?: InviteOutputLabel;
   // 同じトピックで参加済みのチャンネル(Issue #966)。未参加なら空配列または省略。
   joinedChannels?: JoinedPrivateChannelView[];
+  // 一覧の続きがあるときの「さらに表示」(#1218 AC-4d)。失敗は reject で受け取る。
+  onLoadMoreJoinedChannels?: () => Promise<void>;
   onChannelLabelChange: (value: string) => void;
   onChannelAudienceChange: (value: ChannelAudienceOption['value']) => void;
   onInviteTokenChange: (value: string) => void;
@@ -75,6 +77,8 @@ type PrivateChannelSettingsPanelProps = {
   onShare: () => void;
   onRequestIndexing?: () => void;
   onCopyInviteOutput?: (token: string) => void;
+  // 共有リンクの作成と新しいアクセスの配布を、この端末で行うように切り替える(#1219 AC-4)。失敗は error で示し null を返す。
+  onTakeController?: () => Promise<PrivateChannelControllerTake | null>;
 };
 
 export function PrivateChannelPanel({
@@ -88,6 +92,7 @@ export function PrivateChannelPanel({
   inviteOutput = null,
   inviteOutputLabel = 'invite',
   joinedChannels = [],
+  onLoadMoreJoinedChannels,
   onChannelLabelChange,
   onChannelAudienceChange,
   onInviteTokenChange,
@@ -103,6 +108,11 @@ export function PrivateChannelPanel({
     ? buildChannelAccessPreviewDeepLink(inviteOutput)
     : null;
   const audienceDescription = policyDescription(channelAudience, t);
+  const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const loadMore = () => {
+    setMoreState('loading');
+    onLoadMoreJoinedChannels?.().then(() => setMoreState('idle'), () => setMoreState('error'));
+  };
 
   return (
     <div className='extended-module-stack'>
@@ -129,20 +139,45 @@ export function PrivateChannelPanel({
                   <small>{t(`channels:audienceOptions.${channel.audience_kind}`)}</small>
                 </button>
                 {onOpenJoinedChannelSettings ? (
-                  <Button
-                    variant='ghost'
-                    size='sm'
-                    type='button'
-                    aria-label={t('channels:joinedList.settings', { channel: channel.label })}
-                    onClick={() => onOpenJoinedChannelSettings(channel.channel_id)}
+                  <IconButtonTooltip
+                    className='private-channel-joined-settings-tooltip'
+                    label={t('channels:joinedList.settings', { channel: channel.label })}
                   >
-                    <Settings className='size-4' aria-hidden='true' />
-                    {t('shell:workspace.channelSettingsEntry')}
-                  </Button>
+                    <Button
+                      className='private-channel-joined-settings'
+                      variant='ghost'
+                      size='sm'
+                      type='button'
+                      aria-label={t('channels:joinedList.settings', { channel: channel.label })}
+                      onClick={() => onOpenJoinedChannelSettings(channel.channel_id)}
+                    >
+                      <Settings className='size-4' aria-hidden='true' />
+                      <span>{t('shell:workspace.channelSettingsEntry')}</span>
+                    </Button>
+                  </IconButtonTooltip>
                 ) : null}
               </li>
             ))}
           </ul>
+          {onLoadMoreJoinedChannels ? (
+            <div className='private-channel-joined-more'>
+              <Button
+                variant='secondary'
+                size='sm'
+                type='button'
+                aria-busy={moreState === 'loading'}
+                disabled={moreState === 'loading'}
+                onClick={loadMore}
+              >
+                {moreState === 'loading'
+                  ? t('channels:joinedList.loadingMore')
+                  : t('channels:joinedList.showMore')}
+              </Button>
+              {moreState === 'error' ? (
+                <p className='error error-inline'>{t('common:errors.failedToLoadPrivateChannels')}</p>
+              ) : null}
+            </div>
+          ) : null}
         </Card>
       ) : null}
 
@@ -245,9 +280,15 @@ export function PrivateChannelSettingsPanel({
   onShare,
   onRequestIndexing,
   onCopyInviteOutput,
+  onTakeController,
 }: PrivateChannelSettingsPanelProps) {
   const { t } = useTranslation(['channels', 'common', 'shell']);
   const channelActionDisabled = pendingAction !== null;
+  const [takeResult, setTakeResult] = useState<PrivateChannelControllerTake | null>(null);
+  const takeController = () => {
+    setTakeResult(null);
+    void onTakeController?.().then(setTakeResult);
+  };
   const policyLabel = policyDescription(channel.audience_kind, t);
   const channelAccessDeepLink = inviteOutput
     ? buildChannelAccessPreviewDeepLink(inviteOutput)
@@ -282,6 +323,38 @@ export function PrivateChannelSettingsPanel({
             <span>{t('channels:rotationRequired')}</span>
             <span>{t('channels:settings.rotationNextStep')}</span>
           </div>
+        ) : null}
+        {/* owner の端末だけが持つ。この端末で行うとき・まだ分からないときは出さない(#1219 AC-4)。 */}
+        {channel.controller === 'other_device' ? (
+          <Notice>
+            <p>{t('channels:settings.controller.otherDevice')}</p>
+            {takeResult === 'not_connected' || takeResult === 'waiting' ? (
+              <p role='status'>
+                {t(takeResult === 'waiting'
+                  ? 'channels:settings.controller.waiting'
+                  : 'channels:settings.controller.notConnected')}
+              </p>
+            ) : null}
+            {onTakeController ? (
+              <Button
+                variant='secondary'
+                size='sm'
+                type='button'
+                aria-busy={pendingAction === 'take'}
+                disabled={channelActionDisabled}
+                onClick={takeController}
+              >
+                {pendingAction === 'take'
+                  ? t('channels:settings.controller.taking')
+                  : t('channels:settings.controller.take')}
+              </Button>
+            ) : null}
+          </Notice>
+        ) : channel.controller === 'moving' ? (
+          <Notice>
+            <p>{t('channels:settings.controller.moving')}</p>
+            <p>{t('channels:settings.controller.movingStuck')}</p>
+          </Notice>
         ) : null}
         {ownerOnlyShareBlocked ? (
           <Notice id='private-channel-share-reason'>{t('channels:settings.ownerOnlyShare')}</Notice>

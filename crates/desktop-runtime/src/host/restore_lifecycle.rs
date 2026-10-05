@@ -53,21 +53,6 @@ impl ClientOperationState {
     }
 }
 
-/// runtimeへ触れてよいのは、公開済みruntimeとstartup statusの両方がReadyの時だけ。
-pub fn runtime_access_allowed(status: &ClientStartupStatus) -> bool {
-    matches!(status, ClientStartupStatus::Ready)
-}
-
-pub fn require_runtime_operation_ready(status: &ClientStartupStatus) -> Result<(), String> {
-    if runtime_access_allowed(status) {
-        Ok(())
-    } else {
-        Err(format!(
-            "desktop runtime operation requires Ready startup state; current state is {status:?}"
-        ))
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreStartupAction {
     Normal,
@@ -114,25 +99,24 @@ pub fn recover_device_restore_before_startup(
     })
 }
 
-pub fn advance_committed_restore_to_consent(
+pub async fn advance_committed_restore_to_consent(
     app_data_dir: &Path,
     consent_db_path: &Path,
 ) -> Result<ClientStartupStatus, ClientStartupError> {
     advance_committed_restore_to_consent_with(
-        || reset_app_consent_at_path(consent_db_path),
+        reset_app_consent_at_path(consent_db_path).await,
         || mark_device_restore_awaiting_consent(app_data_dir).map_err(|error| format!("{error:#}")),
     )
 }
 
-fn advance_committed_restore_to_consent_with<Reset, Mark>(
-    reset_consent: Reset,
+fn advance_committed_restore_to_consent_with<Mark>(
+    reset_consent: Result<ClientStartupStatus, String>,
     mark_awaiting_consent: Mark,
 ) -> Result<ClientStartupStatus, ClientStartupError>
 where
-    Reset: FnOnce() -> Result<ClientStartupStatus, String>,
     Mark: FnOnce() -> Result<(), String>,
 {
-    let status = reset_consent().map_err(|error| {
+    let status = reset_consent.map_err(|error| {
         ClientStartupError::unknown(format!("device restore consent reset failed: {error}"))
     })?;
     mark_awaiting_consent().map_err(|error| {
@@ -231,6 +215,7 @@ mod tests {
         consent_required_status, failed_startup_status as failed_status, load_app_consent_store,
         reset_app_consent_at_path, save_app_consent_store,
     };
+    use crate::host::{require_runtime_operation_ready, runtime_access_allowed};
 
     #[test]
     fn runtime_access_is_allowed_only_for_ready() {
@@ -307,8 +292,8 @@ mod tests {
             .expect("cancel arriving after install boundary must be ignored");
     }
 
-    #[test]
-    fn restore_consent_reset_is_persisted_before_consent_required_status() {
+    #[tokio::test]
+    async fn restore_consent_reset_is_persisted_before_consent_required_status() {
         let dir = std::env::temp_dir().join(format!(
             "kukuri-consent-restore-reset-test-{}-{}",
             std::process::id(),
@@ -336,20 +321,26 @@ mod tests {
                 build_profile: None,
             }],
         };
-        save_app_consent_store(&db_path, &accepted).expect("save accepted consent");
+        save_app_consent_store(&db_path, &accepted)
+            .await
+            .expect("save accepted consent");
 
-        let status = reset_app_consent_at_path(&db_path).expect("reset restored consent");
+        let status = reset_app_consent_at_path(&db_path)
+            .await
+            .expect("reset restored consent");
         assert!(matches!(
             status,
             ClientStartupStatus::ConsentRequired { .. }
         ));
-        assert!(!app_consent_satisfied(&load_app_consent_store(&db_path)));
+        assert!(!app_consent_satisfied(
+            &load_app_consent_store(&db_path).await
+        ));
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn consent_reset_failure_leaves_committed_phase_unchanged() {
+    #[tokio::test]
+    async fn consent_reset_failure_leaves_committed_phase_unchanged() {
         let dir = std::env::temp_dir().join(format!(
             "kukuri-consent-reset-failure-test-{}-{}",
             std::process::id(),
@@ -361,7 +352,7 @@ mod tests {
         let db_path = blocked_parent.join("kukuri.db");
         let phase = std::cell::Cell::new(DeviceRestorePhase::Committed);
         let result = advance_committed_restore_to_consent_with(
-            || reset_app_consent_at_path(&db_path),
+            reset_app_consent_at_path(&db_path).await,
             || {
                 phase.set(DeviceRestorePhase::AwaitingConsent);
                 Ok(())

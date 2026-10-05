@@ -416,8 +416,10 @@ export function ProductionColumnWorkspaceStory({
     });
     return {
       ...mock,
-      listJoinedPrivateChannels: async (topic: string) =>
-        topic === DEMO_SCOPE.topicId ? [REVIEW_CHANNEL] : [],
+      listJoinedPrivateChannels: async (topic: string) => ({
+        items: topic === DEMO_SCOPE.topicId ? [REVIEW_CHANNEL] : [],
+        next_cursor: null,
+      }),
       // Messages Column を空 state にしないため、seed した会話一覧を loader へも返す。
       listDirectMessages: async () =>
         scenario === 'activity-surfaces' ? REVIEW_DIRECT_MESSAGES : mock.listDirectMessages(),

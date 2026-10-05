@@ -80,11 +80,12 @@ async fn local_only_bootstrap_reads_return_empty_without_remote_docs() {
 
     let joined = timeout(
         Duration::from_secs(2),
-        app.list_joined_private_channels(topic),
+        app.list_joined_private_channels(topic, None),
     )
     .await
     .expect("joined channels should not wait for remote docs")
-    .expect("joined channels");
+    .expect("joined channels")
+    .items;
     assert!(joined.is_empty());
 
     timeout(
@@ -170,11 +171,12 @@ async fn local_only_bootstrap_reads_return_cached_content_without_remote_docs() 
 
     let joined = timeout(
         Duration::from_secs(2),
-        reader.list_joined_private_channels(topic),
+        reader.list_joined_private_channels(topic, None),
     )
     .await
     .expect("joined channels should use cached local docs")
-    .expect("joined channels");
+    .expect("joined channels")
+    .items;
     assert_eq!(joined.len(), 1);
     assert_eq!(joined[0].channel_id, channel.channel_id);
 

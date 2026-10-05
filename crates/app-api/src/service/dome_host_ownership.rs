@@ -31,11 +31,11 @@ impl AppService {
         let hint_transport = Arc::clone(&self.services.hint_transport);
         let services = self.services.clone();
         let key = instance_id.clone();
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+        let handle = n0_future::task::spawn(async move {
+            let mut interval = n0_future::time::interval(std::time::Duration::from_millis(
                 kukuri_core::DOME_HOST_HEARTBEAT_INTERVAL_MILLIS as u64,
             ));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            interval.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Delay);
             let mut located = None;
             loop {
                 interval.tick().await;

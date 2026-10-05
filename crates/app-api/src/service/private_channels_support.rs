@@ -1,4 +1,17 @@
+use super::channel_sync_merge::controller_item;
 use super::*;
+use kukuri_core::{
+    AccountSyncItem, AccountSyncItemKey, ChannelControllerRequestV1, ChannelRotationRequestV1,
+};
+
+/// 担当でない端末が、担当へ依頼した鍵更新の新しい世代を待つ上限（#1219 AC-3。2026-10-03 ユーザー判断）。
+const PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT: std::time::Duration =
+    std::time::Duration::from_secs(15);
+/// その待ちの間に account 同期の hint を送り直す間隔。依頼の hint は、WebRTC の経路を失って止まった接続へ送られて
+/// 失われうる（#1220 AC-3c2。2026-10-05 ユーザー判断）。
+const PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND: std::time::Duration =
+    std::time::Duration::from_secs(5);
+
 impl AppService {
     pub(crate) async fn maybe_redeem_epoch_handoff_grants_for_channel(
         &self,
@@ -13,7 +26,6 @@ impl AppService {
             else {
                 return Ok(redeemed_any);
             };
-            let local_author = self.current_author_pubkey();
             let Some(grant_doc) = self.own_epoch_handoff_grant(&state).await? else {
                 return Ok(redeemed_any);
             };
@@ -31,98 +43,127 @@ impl AppService {
                     return Ok(redeemed_any);
                 }
             };
-            if payload.old_epoch_id != state.current_epoch_id
-                || private_channel_epoch_capabilities(&state)
-                    .iter()
-                    .any(|known_epoch| known_epoch.epoch_id == payload.new_epoch_id)
-            {
+            // 止めるのは、grant の旧世代が手元の現在の世代でないときだけ。新しい世代の鍵の行が本人の別の端末から
+            // 先に届いていても、同じ redeem で現在の世代を進める(ADR 0061 §9)。
+            if payload.old_epoch_id != state.current_epoch_id {
                 return Ok(redeemed_any);
             }
             let next_replica =
                 private_channel_epoch_replica_id(channel_id, payload.new_epoch_id.as_str());
+            // 検証の間は、新しい世代の秘密を一時の登録で引く。成否によらず外す(成功のときは行の commit の後)。
             self.docs_sync()
                 .register_private_replica_secret(
                     &next_replica,
                     payload.new_namespace_secret_hex.as_str(),
                 )
                 .await?;
-            let snapshot = match self
-                .load_private_epoch_snapshot(
-                    topic_id,
-                    channel_id,
-                    &next_replica,
-                    payload.new_namespace_secret_hex.as_str(),
-                    &[state.owner_pubkey.as_str()],
-                    PrivateChannelSnapshotWaitContext::EpochHandoff,
-                )
-                .await
-            {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    warn!(
-                        topic = %topic_id,
-                        channel_id = %channel_id,
-                        epoch_id = %payload.new_epoch_id,
-                        error = %error,
-                        "failed to load rotated private channel replica"
-                    );
-                    return Ok(redeemed_any);
-                }
-            };
-            let PrivateEpochSnapshot {
-                metadata,
-                policy,
-                local_participant,
-            } = snapshot;
-            if policy.audience_kind != state.audience_kind
-                || policy.epoch_id != payload.new_epoch_id
-                || policy.previous_epoch_id.as_deref() != Some(payload.old_epoch_id.as_str())
-            {
+            let redeemed = self
+                .redeem_epoch_handoff(&state, &payload, &next_replica)
+                .await;
+            self.docs_sync()
+                .remove_private_replica_secret(&next_replica)
+                .await?;
+            if !redeemed? {
+                return Ok(redeemed_any);
+            }
+            redeemed_any = true;
+        }
+    }
+    /// 検証を通った handoff を、鍵の行と現在の世代へ 1 transaction で書き、その後に新しい世代の参加の記録を書く。
+    /// 書いたら true。
+    async fn redeem_epoch_handoff(
+        &self,
+        state: &JoinedPrivateChannelState,
+        payload: &PrivateChannelEpochHandoffGrantPayloadV1,
+        next_replica: &ReplicaId,
+    ) -> Result<bool> {
+        let topic_id = state.topic_id.as_str();
+        let channel_id = state.channel_id.as_str();
+        let snapshot = match self
+            .load_private_epoch_snapshot(
+                topic_id,
+                channel_id,
+                next_replica,
+                payload.new_namespace_secret_hex.as_str(),
+                &[state.owner_pubkey.as_str()],
+                PrivateChannelSnapshotWaitContext::EpochHandoff,
+            )
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
                 warn!(
                     topic = %topic_id,
                     channel_id = %channel_id,
                     epoch_id = %payload.new_epoch_id,
-                    audience_kind = ?policy.audience_kind,
-                    "private channel epoch handoff payload does not match rotated policy"
+                    error = %error,
+                    "failed to load rotated private channel replica"
                 );
-                return Ok(redeemed_any);
+                return Ok(false);
             }
-            let local_pubkey = Pubkey::from(local_author.clone());
-            if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
-                self.record_private_channel_participant(
-                    &PrivateChannelParticipantDocV1 {
-                        channel_id: metadata.channel_id.clone(),
-                        topic_id: metadata.topic_id.clone(),
-                        epoch_id: policy.epoch_id.clone(),
-                        participant_pubkey: local_pubkey,
-                        joined_at: Utc::now().timestamp_millis(),
-                        is_owner: false,
-                        join_mode: Some(PrivateChannelJoinMode::RotationRedeem),
-                        sponsor_pubkey: Some(policy.owner_pubkey.clone()),
-                        share_token_id: None,
-                        left_at: None,
-                    },
-                    policy.owner_pubkey.as_str(),
-                    payload.new_namespace_secret_hex.as_str(),
-                    &next_replica,
-                )
-                .await?;
-            }
-            let next_state = merged_private_channel_state_from_epoch_join(
-                Some(state.clone()),
-                metadata.topic_id.as_str(),
-                metadata.channel_id.clone(),
-                metadata.label.as_str(),
-                metadata.creator_pubkey.as_str(),
-                policy.owner_pubkey.as_str(),
-                state.joined_via_pubkey.as_deref(),
-                policy.audience_kind.clone(),
-                payload.new_epoch_id.as_str(),
-                payload.new_namespace_secret_hex.as_str(),
+        };
+        let PrivateEpochSnapshot {
+            metadata,
+            policy,
+            local_participant,
+        } = snapshot;
+        if policy.audience_kind != state.audience_kind
+            || policy.epoch_id != payload.new_epoch_id
+            || policy.previous_epoch_id.as_deref() != Some(payload.old_epoch_id.as_str())
+        {
+            warn!(
+                topic = %topic_id,
+                channel_id = %channel_id,
+                epoch_id = %payload.new_epoch_id,
+                audience_kind = ?policy.audience_kind,
+                "private channel epoch handoff payload does not match rotated policy"
             );
-            self.register_joined_private_channel(next_state).await?;
-            redeemed_any = true;
+            return Ok(false);
         }
+        let next_state = merged_private_channel_state_from_epoch_join(
+            Some(state.clone()),
+            metadata.topic_id.as_str(),
+            metadata.channel_id.clone(),
+            metadata.label.as_str(),
+            metadata.creator_pubkey.as_str(),
+            policy.owner_pubkey.as_str(),
+            state.joined_via_pubkey.as_deref(),
+            policy.audience_kind.clone(),
+            payload.new_epoch_id.as_str(),
+            payload.new_namespace_secret_hex.as_str(),
+        );
+        let Some(membership_at) = self
+            .commit_joined_private_channel_state(
+                next_state,
+                ChannelCommit::Advance {
+                    from_epoch: payload.old_epoch_id.as_str(),
+                },
+            )
+            .await?
+        else {
+            return Ok(false);
+        };
+        if local_participant.is_none_or(|participant| participant.left_at.is_some()) {
+            self.record_private_channel_participant(
+                &PrivateChannelParticipantDocV1 {
+                    channel_id: metadata.channel_id.clone(),
+                    topic_id: metadata.topic_id.clone(),
+                    epoch_id: policy.epoch_id.clone(),
+                    participant_pubkey: Pubkey::from(self.current_author_pubkey()),
+                    joined_at: membership_at,
+                    is_owner: false,
+                    join_mode: Some(PrivateChannelJoinMode::RotationRedeem),
+                    sponsor_pubkey: Some(policy.owner_pubkey.clone()),
+                    share_token_id: None,
+                    left_at: None,
+                },
+                policy.owner_pubkey.as_str(),
+                payload.new_namespace_secret_hex.as_str(),
+                next_replica,
+            )
+            .await?;
+        }
+        Ok(true)
     }
     pub(crate) async fn private_channel_diagnostics(
         &self,
@@ -141,51 +182,26 @@ impl AppService {
             .unwrap_or(ChannelSharingState::Open);
         // #1221 R5-H: 参加者数は参加者の表(owner は account 経路で届いた参加・退出)の現 epoch の行で数える。
         // 参加・退出 record は owner にだけ届くため、人数は owner の端末だけが返す(2026-09-27 ユーザー決定)。
-        let store = &self.services.projection_store;
-        let channel_id = state.channel_id.as_str();
-        let epoch_id = state.current_epoch_id.as_str();
+        // #1219 AC-2: 数と資格喪失(owner と mutual でない)の数は、store が行と follow の edge の書込みで保つ 1 行を
+        // 読む(参加者の数に比例しない)。
         let is_owner = state.owner_pubkey == self.current_author_pubkey();
-        let participant_count = if is_owner {
-            Some(
-                store
-                    .count_private_channel_participants(channel_id, epoch_id)
-                    .await?,
-            )
+        let (participant_count, stale) = if is_owner {
+            self.services
+                .projection_store
+                .private_channel_participant_counts(
+                    state.channel_id.as_str(),
+                    &state.current_epoch_id,
+                )
+                .await?
         } else {
-            None
+            (0, 0)
         };
-        let mut stale_participant_count = 0usize;
-        if state.audience_kind == ChannelAudienceKind::FriendOnly && is_owner {
-            let mut after = String::new();
-            loop {
-                let page = store
-                    .list_private_channel_participants(
-                        channel_id,
-                        Some(epoch_id),
-                        &after,
-                        PRIVATE_CHANNEL_PARTICIPANT_PAGE,
-                    )
-                    .await?;
-                let Some(last) = page.last().cloned() else {
-                    break;
-                };
-                for participant in page {
-                    if participant == state.owner_pubkey {
-                        continue;
-                    }
-                    let relationship = store
-                        .get_author_relationship(
-                            self.current_author_pubkey().as_str(),
-                            participant.as_str(),
-                        )
-                        .await?;
-                    if relationship.as_ref().is_some_and(|value| !value.mutual) {
-                        stale_participant_count += 1;
-                    }
-                }
-                after = last;
-            }
-        }
+        let participant_count = is_owner.then_some(participant_count);
+        let stale_participant_count = if state.audience_kind == ChannelAudienceKind::FriendOnly {
+            stale
+        } else {
+            0
+        };
         Ok(PrivateChannelDiagnostics {
             sharing_state,
             participant_count,
@@ -200,6 +216,22 @@ impl AppService {
         state: &JoinedPrivateChannelState,
     ) -> Result<JoinedPrivateChannelView> {
         let diagnostics = self.private_channel_diagnostics(state).await?;
+        let is_owner = state.owner_pubkey == self.current_author_pubkey();
+        let controller = if is_owner {
+            let device_id = self.local_device_id().await?;
+            Some(match &state.controller {
+                None => PrivateChannelControllerState::Unknown,
+                Some(controller) if controller.transfer_to.is_some() => {
+                    PrivateChannelControllerState::Moving
+                }
+                Some(controller) if controller.device_id == device_id => {
+                    PrivateChannelControllerState::ThisDevice
+                }
+                Some(_) => PrivateChannelControllerState::OtherDevice,
+            })
+        } else {
+            None
+        };
         Ok(JoinedPrivateChannelView {
             topic_id: state.topic_id.clone(),
             channel_id: state.channel_id.as_str().to_string(),
@@ -208,18 +240,20 @@ impl AppService {
             owner_pubkey: state.owner_pubkey.clone(),
             joined_via_pubkey: state.joined_via_pubkey.clone(),
             audience_kind: state.audience_kind.clone(),
-            is_owner: state.owner_pubkey == self.current_author_pubkey(),
+            is_owner,
             current_epoch_id: state.current_epoch_id.clone(),
-            archived_epoch_ids: state
-                .archived_epochs
-                .iter()
-                .map(|epoch| epoch.epoch_id.clone())
+            archived_epoch_ids: self
+                .archived_private_channel_epochs(state, PRIVATE_CHANNEL_EPOCH_WINDOW)
+                .await?
+                .into_iter()
+                .map(|(epoch_id, _)| epoch_id)
                 .collect(),
             sharing_state: diagnostics.sharing_state,
             rotation_required: diagnostics.rotation_required,
             participant_count: diagnostics.participant_count,
             stale_participant_count: diagnostics.stale_participant_count,
             entry_dome_instance_id: diagnostics.entry_dome_instance_id,
+            controller,
         })
     }
     /// テスト専用: 唯一の呼び出し元が cfg(test) の get_private_channel_capability。
@@ -239,11 +273,23 @@ impl AppService {
             audience_kind: state.audience_kind.clone(),
             current_epoch_id: state.current_epoch_id.clone(),
             current_epoch_secret_hex: state.current_epoch_secret_hex.clone(),
-            archived_epochs: state.archived_epochs.clone(),
+            archived_epochs: self
+                .archived_private_channel_epochs(state, PRIVATE_CHANNEL_EPOCH_WINDOW)
+                .await?
+                .into_iter()
+                .rev()
+                .map(
+                    |(epoch_id, namespace_secret_hex)| PrivateChannelEpochCapability {
+                        epoch_id,
+                        namespace_secret_hex,
+                    },
+                )
+                .collect(),
             rotation_required: diagnostics.rotation_required,
             participant_count: diagnostics.participant_count.unwrap_or_default(),
             stale_participant_count: diagnostics.stale_participant_count,
             namespace_secret_hex: state.current_epoch_secret_hex.clone(),
+            controller: Some(state.controller.clone()),
         })
     }
     pub(crate) async fn audience_label_for_storage(
@@ -254,46 +300,52 @@ impl AppService {
         if channel_id == PUBLIC_CHANNEL_ID {
             return "Public".to_string();
         }
-        self.joined_private_channels
-            .lock()
+        self.joined_private_channel_state(topic_id, channel_id)
             .await
-            .get(joined_private_channel_key(topic_id, channel_id).as_str())
-            .map(|channel| channel.label.clone())
+            .map(|channel| channel.label)
             .unwrap_or_else(|| "Private channel".to_string())
     }
-    pub(crate) async fn joined_private_channel_states_for_topic(
+    /// 現在の世代より前に始まった世代を、新しい順に `limit` 件まで(本人の別の端末から届いて、まだ現在の世代に
+    /// なっていない新しい世代は含めない)。
+    pub(crate) async fn archived_private_channel_epochs(
         &self,
-        topic_id: &str,
-    ) -> Vec<JoinedPrivateChannelState> {
-        self.joined_private_channels
-            .lock()
+        state: &JoinedPrivateChannelState,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
+        // `legacy`(開始時刻が最小)の世代より前の世代は無い。
+        let current_at = epoch_started_at(&state.current_epoch_id);
+        if current_at == i64::MIN {
+            return Ok(Vec::new());
+        }
+        self.services
+            .private_channel_epochs(
+                state.channel_id.as_str(),
+                kukuri_store::PrivateChannelEpochRange::AtOrBefore(current_at - 1),
+                limit,
+            )
             .await
-            .values()
-            .filter(|state| state.topic_id == topic_id)
-            .cloned()
-            .collect()
     }
-    pub(crate) async fn joined_private_channel_state(
-        &self,
-        topic_id: &str,
-        channel_id: &str,
-    ) -> Option<JoinedPrivateChannelState> {
-        self.joined_private_channels
-            .lock()
-            .await
-            .get(joined_private_channel_key(topic_id, channel_id).as_str())
-            .cloned()
+    /// この端末の ID(iroh endpoint ID)。鍵更新の担当端末の判定に使う(#1219 W6)。
+    pub(crate) async fn local_device_id(&self) -> Result<String> {
+        Ok(self.services.transport.discovery().await?.local_endpoint_id)
+    }
+    /// この端末を最初の担当(世代 1)にする記録。
+    pub(crate) async fn first_controller(&self) -> Result<PrivateChannelController> {
+        Ok(PrivateChannelController {
+            device_id: self.local_device_id().await?,
+            generation: 1,
+            transfer_to: None,
+        })
     }
     pub(crate) async fn ensure_private_channel_access(
         &self,
         topic_id: &str,
         channel_id: &ChannelId,
     ) -> Result<()> {
-        if !self
-            .joined_private_channels
-            .lock()
+        if self
+            .joined_private_channel_state(topic_id, channel_id.as_str())
             .await
-            .contains_key(&joined_private_channel_key(topic_id, channel_id.as_str()))
+            .is_none()
         {
             anyhow::bail!("private channel is not joined");
         }
@@ -311,28 +363,223 @@ impl AppService {
         else {
             anyhow::bail!("private channel is not joined");
         };
-        if state.owner_pubkey != self.current_author_pubkey() {
+        if action == PrivateChannelOwnerAction::Read
+            || state.owner_pubkey != self.current_author_pubkey()
+        {
             return Ok(());
         }
-        match state.audience_kind {
+        let required = match state.audience_kind {
             ChannelAudienceKind::InviteOnly | ChannelAudienceKind::FriendPlus => {
-                if matches!(action, PrivateChannelOwnerAction::Share) {
-                    let _ = self
-                        .rotate_private_channel(topic_id, channel_id.as_str())
-                        .await?;
-                }
+                matches!(action, PrivateChannelOwnerAction::Share)
             }
             ChannelAudienceKind::FriendOnly => {
-                let diagnostics = self.private_channel_diagnostics(&state).await?;
-                if diagnostics.rotation_required {
-                    let _ = self
-                        .rotate_private_channel(topic_id, channel_id.as_str())
-                        .await?;
-                }
+                self.private_channel_diagnostics(&state)
+                    .await?
+                    .rotation_required
             }
+        };
+        if !required {
+            return Ok(());
         }
-        Ok(())
+        if action == PrivateChannelOwnerAction::WriteCheck {
+            self.rotate_private_channel(topic_id, channel_id.as_str())
+                .await?;
+            return Ok(());
+        }
+        self.rotate_or_request_private_channel(topic_id, &state)
+            .await
     }
+
+    /// 担当の端末が本人の端末の候補（account の hint topic の rendezvous の候補、ADR 0061 §10）にいるか（#1219 AC-3・
+    /// AC-4）。
+    async fn controller_is_reachable(&self, controller: &PrivateChannelController) -> bool {
+        self.services
+            .hint_transport
+            .topic_read_candidates(self.services.keys.derive_account_sync().hint_topic())
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|peer| peer.endpoint_id == controller.device_id)
+    }
+
+    /// 共有・投稿の前の鍵更新。担当でなければ、担当への依頼を account 同期へ書き、担当が本人の端末の候補にいれば
+    /// 新しい世代が届くまで待つ。候補にいない・期限までに届かなければ保留を返す（依頼は残り、担当が取得したときに
+    /// 処理する。#1219 AC-3、ADR 0018 §8）。
+    async fn rotate_or_request_private_channel(
+        &self,
+        topic_id: &str,
+        state: &JoinedPrivateChannelState,
+    ) -> Result<()> {
+        let channel_id = state.channel_id.as_str();
+        let pending = match self.rotate_private_channel(topic_id, channel_id).await {
+            Err(error) if error.is::<PrivateChannelControllerPending>() => error,
+            result => return result.map(|_| ()),
+        };
+        self.publish_account_sync_item(AccountSyncItem::edit(
+            AccountSyncItemKey::ChannelRotationRequest {
+                channel_id: state.channel_id.clone(),
+            },
+            Utc::now().timestamp_millis(),
+            Some(serde_json::to_value(ChannelRotationRequestV1 {
+                from_epoch_id: state.current_epoch_id.clone(),
+            })?),
+        ))
+        .await?;
+        let reachable = match &state.controller {
+            Some(controller) if controller.transfer_to.is_none() => {
+                self.controller_is_reachable(controller).await
+            }
+            _ => false,
+        };
+        if !reachable {
+            return Err(pending);
+        }
+        let advanced = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            let deadline = n0_future::time::Instant::now() + PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT;
+            let mut resend =
+                n0_future::time::Instant::now() + PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
+            while self
+                .joined_private_channel_state(topic_id, channel_id)
+                .await
+                .is_some_and(|current| current.current_epoch_id == state.current_epoch_id)
+            {
+                // 送り直しは待ちの期限より前の予定だけ（15 秒の待ちに 2 回）。
+                if n0_future::time::Instant::now() >= resend && resend < deadline {
+                    self.publish_account_sync_hint().await;
+                    resend += PRIVATE_CHANNEL_ROTATION_REQUEST_RESEND;
+                }
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        advanced.map_err(|_| pending)
+    }
+    /// 担当を引き取る（#1219 AC-4、ADR 0018 §8）。旧担当が本人の端末の候補にいれば、移譲の依頼を account 同期へ書き、
+    /// この端末が担当になるまで待つ（期限は鍵更新の依頼と同じ）。候補にいなければ何も書かない。期限までに移らなければ、
+    /// 依頼を残して待ちを返す。判断は参加の行で行う（メモリは書込みの直後に古い）。
+    pub async fn take_private_channel_controller(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<PrivateChannelControllerTake> {
+        let key = joined_private_channel_key(topic_id, channel_id);
+        let state = self
+            .services
+            .stored_private_channel_state(&key)
+            .await?
+            .context("private channel is not joined")?;
+        if state.owner_pubkey != self.current_author_pubkey() {
+            anyhow::bail!("only the channel owner can take over key updates");
+        }
+        let controller = state
+            .controller
+            .context("the device that updates keys is not known yet")?;
+        let device_id = self.local_device_id().await?;
+        let taken = |controller: &PrivateChannelController| {
+            controller.device_id == device_id && controller.transfer_to.is_none()
+        };
+        if taken(&controller) {
+            return Ok(PrivateChannelControllerTake::Taken);
+        }
+        if controller.transfer_to.is_some() {
+            return Ok(PrivateChannelControllerTake::Waiting);
+        }
+        if !self.controller_is_reachable(&controller).await {
+            return Ok(PrivateChannelControllerTake::NotConnected);
+        }
+        self.publish_account_sync_item(AccountSyncItem::edit(
+            AccountSyncItemKey::ChannelControllerRequest {
+                channel_id: ChannelId::new(channel_id),
+            },
+            Utc::now().timestamp_millis(),
+            Some(serde_json::to_value(ChannelControllerRequestV1 {
+                to_device_id: device_id.clone(),
+                generation: controller.generation,
+            })?),
+        ))
+        .await?;
+        let waited = n0_future::time::timeout(PRIVATE_CHANNEL_ROTATION_REQUEST_WAIT, async {
+            loop {
+                let state = self.services.stored_private_channel_state(&key).await?;
+                if state
+                    .and_then(|state| state.controller)
+                    .is_some_and(|controller| taken(&controller))
+                {
+                    return anyhow::Ok(());
+                }
+                n0_future::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        match waited {
+            Ok(result) => result.map(|()| PrivateChannelControllerTake::Taken),
+            Err(_) => Ok(PrivateChannelControllerTake::Waiting),
+        }
+    }
+
+    /// backup から復元した端末が、自分の channel の担当を引き取る（#1219 AC-4、2026-10-02 のユーザー判断）。owner の
+    /// 参加中の行を `after` より後から `limit` 件読み、記録を `{この端末, 世代 + 1}`（記録が無ければ世代 1）にする。
+    /// 既にこの端末が担当の channel（行の後・台帳の前で止まった起動の後のやり直し）は、世代を進めずに同じ記録を書き直す。
+    /// 続きの cursor を返す（終わりは `None`）。
+    pub async fn claim_private_channel_controllers(
+        &self,
+        after: &str,
+        limit: usize,
+    ) -> Result<Option<String>> {
+        let device_id = self.local_device_id().await?;
+        let owner = self.current_author_pubkey();
+        let store = &self.services.projection_store;
+        let rows = store
+            .list_joined_private_channels(
+                kukuri_store::PrivateChannelFilter::Owner(owner.as_str()),
+                after,
+                limit,
+            )
+            .await?;
+        for listed in &rows {
+            let claimed = {
+                let _access = self.services.content_save_access.lock().await;
+                let Some(row) = store
+                    .get_private_channel(&listed.channel_key)
+                    .await?
+                    .filter(|row| row.joined)
+                else {
+                    continue;
+                };
+                let local = row
+                    .controller
+                    .as_deref()
+                    .map(serde_json::from_str::<PrivateChannelController>)
+                    .transpose()?;
+                let next = match local {
+                    Some(local) if local.device_id == device_id && local.transfer_to.is_none() => {
+                        local
+                    }
+                    local => PrivateChannelController {
+                        device_id: device_id.clone(),
+                        generation: local.map_or(1, |local| local.generation + 1),
+                        transfer_to: None,
+                    },
+                };
+                let channel_id = ChannelId::new(row.channel_id.clone());
+                let item = controller_item(&channel_id, &next)?;
+                let topic_id = row.topic_id.clone();
+                self.put_private_channel_controller(row, &next, Some(&item))
+                    .await?;
+                (
+                    ScopeKey::Channel(topic_id, channel_id.as_str().to_string()),
+                    item,
+                )
+            };
+            self.write_account_sync_item(&claimed.1).await?;
+            self.restart_scope_subscription(&claimed.0).await;
+        }
+        Ok(rows
+            .last()
+            .filter(|_| rows.len() == limit)
+            .map(|row| row.channel_key.clone()))
+    }
+
     pub(crate) async fn private_channel_state_for_owner_action(
         &self,
         topic_id: &str,
@@ -374,32 +621,18 @@ impl AppService {
         .await
     }
 
-    /// registry 変異時の write-through 永続化。callback 未接続(テスト・harness・復元前)
-    /// なら no-op。persist 同士を専用 guard で直列化し、スナップショットを guard 内で
-    /// 取ることで「古いスナップショットが新しい書き込みを上書きする」lost-update を防ぐ
-    /// (全量スナップショットのため、最後に走った persist が必ず最新の registry を反映する)。
-    pub(crate) async fn persist_private_channel_capabilities_if_configured(&self) -> Result<()> {
-        let Some(persist) = self.private_channel_capability_persist.get() else {
-            return Ok(());
-        };
-        let _guard = self.private_channel_capability_persist_guard.lock().await;
-        let snapshot = {
-            let map = self.joined_private_channels.lock().await;
-            map.values()
-                .map(private_channel_capability_snapshot)
-                .collect::<Vec<_>>()
-        };
-        persist(&snapshot)
-    }
-
-    /// 参加を登録する。新しい参加は参加の holder で channel key を取る。上限なら何も保存しない(#1221 R2-C)。
+    /// 参加を登録する(参加の版を時刻 `joined_at` で新しくする)。新しい参加は参加の holder で channel key を取る。
+    /// 上限なら何も保存しない(#1221 R2-C)。
     pub(crate) async fn register_joined_private_channel(
         &self,
         state: JoinedPrivateChannelState,
+        joined_at: i64,
     ) -> Result<()> {
         self.hold_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
             .await?;
-        self.register_joined_private_channel_state(state).await
+        self.commit_joined_private_channel_state(state, ChannelCommit::Join(joined_at))
+            .await
+            .map(|_| ())
     }
 
     /// 参加の holder で channel key を取る。既に持っていれば何もしない。戻り値は今回取ったか。
@@ -423,134 +656,106 @@ impl AppService {
         Ok(true)
     }
 
-    /// 起動時の復元。上限を超えた channel は購読せずに参加状態だけを戻す(起動を失敗させない)。
-    pub(crate) async fn restore_joined_private_channel(
-        &self,
-        state: JoinedPrivateChannelState,
-    ) -> Result<()> {
-        if let Err(error) = self
-            .hold_joined_private_channel(state.topic_id.as_str(), state.channel_id.as_str())
-            .await
-        {
-            if error.downcast_ref::<ScopeLimitReached>().is_none() {
-                return Err(error);
+    /// 旧 registry から移した channel の lease を取る。上限を超えた channel は購読しない(起動を失敗させない)。
+    /// 既に lease があれば、移した行をメモリへ読み直す。
+    pub(crate) async fn restore_joined_private_channel(&self, topic_id: &str, channel_id: &str) {
+        match self.hold_joined_private_channel(topic_id, channel_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                self.restart_scope_subscription(&ScopeKey::Channel(
+                    topic_id.to_string(),
+                    channel_id.to_string(),
+                ))
+                .await;
             }
-            warn!(
-                topic = %state.topic_id,
-                channel_id = %state.channel_id.as_str(),
+            Err(error) => warn!(
+                topic = %topic_id,
+                channel_id = %channel_id,
+                %error,
                 "private channel is not subscribed because the active scopes are full"
-            );
+            ),
         }
-        self.register_joined_private_channel_state(state).await
     }
 
-    pub(crate) async fn register_joined_private_channel_state(
+    /// 参加状態を行へ書き、メモリと購読を合わせる。
+    /// - `ChannelCommit::Join(t)`: 参加・再参加・取り込み直し。参加の版を時刻 `t` で新しくする。
+    /// - `ChannelCommit::Advance`: 世代を進める。行が参加中でその世代が現在の世代のときだけ書く(照合は書込みと
+    ///   同じ排他の中。退会と並行した世代の追加で参加に戻さない。ADR 0061 §9)。
+    ///
+    /// 書いたら参加の版の時刻(owner への参加の記録の時刻)。メモリは lease の task が行から読む(lease の無い channel
+    /// はメモリへ載せない)。
+    pub(crate) async fn commit_joined_private_channel_state(
         &self,
-        mut state: JoinedPrivateChannelState,
-    ) -> Result<()> {
-        register_private_channel_replica_secrets(self.docs_sync(), &state).await?;
-        let _save_access = self.services.content_save_access.lock().await;
+        state: JoinedPrivateChannelState,
+        commit: ChannelCommit<'_>,
+    ) -> Result<Option<i64>> {
+        self.install_private_epoch_secrets().await?;
         let key = joined_private_channel_key(state.topic_id.as_str(), state.channel_id.as_str());
-        let mut joined = self.joined_private_channels.lock().await;
-        if let Some(previous) = joined.get(&key) {
-            state.generation = previous.generation;
+        let ((membership_at, writes), changed) = {
+            let _save_access = self.services.content_save_access.lock().await;
+            let persisted = match commit {
+                ChannelCommit::Join(joined_at) => {
+                    self.persist_private_channel(&state, joined_at, &[], true)
+                        .await?
+                }
+                ChannelCommit::Advance { from_epoch } => {
+                    if !self
+                        .services
+                        .projection_store
+                        .get_private_channel(&key)
+                        .await?
+                        .is_some_and(|row| row.joined && row.current_epoch_id == from_epoch)
+                    {
+                        return Ok(None);
+                    }
+                    self.persist_private_channel(&state, Utc::now().timestamp_millis(), &[], false)
+                        .await?
+                }
+            };
+            let changed = self
+                .joined_private_channels
+                .lock()
+                .await
+                .get(&key)
+                .is_none_or(|current| !same_private_channel_state(current, &state));
+            (persisted, changed)
+        };
+        for item in &writes {
+            self.write_account_sync_item(item).await?;
         }
-        let changed = joined.get(&key).is_none_or(|previous| *previous != state);
         if changed {
-            state.generation = self
-                .services
-                .content_scope_generation
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                .saturating_add(1);
-        }
-        joined.insert(key, state.clone());
-        drop(joined);
-        if changed {
-            self.services
-                .content_scope_changes
-                .send_replace(state.generation);
-        }
-        drop(_save_access);
-        self.persist_private_channel_capabilities_if_configured()
-            .await?;
-        // 現 epoch の replica だけを購読する。epoch が変わったら task を作り直す。
-        if changed {
+            // 現 epoch の replica だけを購読する。epoch が変わったら task を作り直す。
             self.restart_scope_subscription(&ScopeKey::Channel(
                 state.topic_id.clone(),
                 state.channel_id.as_str().to_string(),
             ))
             .await;
         }
-        Ok(())
+        Ok(Some(membership_at))
     }
 
+    /// 退会。参加の行を tombstone にしてメモリから外し、鍵の行を消して lease を外す。
     pub(crate) async fn remove_joined_private_channel(
         &self,
         topic_id: &str,
         channel_id: &str,
     ) -> Result<Option<JoinedPrivateChannelState>> {
-        let _display_access = self.services.content_save_access.lock().await;
         let removed = self
-            .joined_private_channels
-            .lock()
-            .await
-            .remove(joined_private_channel_key(topic_id, channel_id).as_str());
-        if removed.is_some() {
-            let generation = self
-                .services
-                .content_scope_generation
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                .saturating_add(1);
-            self.services.content_scope_changes.send_replace(generation);
-        }
-        if let Some(state) = &removed {
-            let replicas = private_channel_epoch_capabilities(state)
-                .iter()
-                .map(|epoch| private_channel_replica_for_epoch(channel_id, epoch.epoch_id.as_str()))
-                .collect::<Vec<_>>();
-            self.services
-                .session_projections
-                .remove_replicas(&replicas)
-                .await;
-        }
-        if removed.is_some() {
-            self.persist_private_channel_capabilities_if_configured()
-                .await?;
-        }
-        self.release_scope_holder(&private_channel_holder(topic_id, channel_id))
+            .joined_private_channel_state(topic_id, channel_id)
             .await;
-        // 列が channel を開いたままでも、参加していない channel は購読しない。
-        self.restart_scope_subscription(&ScopeKey::Channel(
-            topic_id.to_string(),
-            channel_id.to_string(),
-        ))
-        .await;
+        if let Some(state) = &removed {
+            self.tombstone_private_channel(state, None).await?;
+        }
+        self.forget_private_channel_keys(topic_id, channel_id)
+            .await?;
         Ok(removed)
     }
 }
 
-/// write-through 永続化用の state-only スナップショット。
-/// `private_channel_capability_from_state` と異なり diagnostics(docs 読みを伴う
-/// async/fallible 処理)に依存しない純関数。diagnostics 派生 3 フィールドは復元時に
-/// 一切読まれない(capability_registry_snapshot テストで固定)ため既定値で永続化する。
-/// JSON のフィールド名・形状(凍結境界)は不変。
-pub(crate) fn private_channel_capability_snapshot(
-    state: &JoinedPrivateChannelState,
-) -> PrivateChannelCapability {
-    PrivateChannelCapability {
-        topic_id: state.topic_id.clone(),
-        channel_id: state.channel_id.as_str().to_string(),
-        label: state.label.clone(),
-        creator_pubkey: state.creator_pubkey.clone(),
-        owner_pubkey: state.owner_pubkey.clone(),
-        joined_via_pubkey: state.joined_via_pubkey.clone(),
-        audience_kind: state.audience_kind.clone(),
-        current_epoch_id: state.current_epoch_id.clone(),
-        current_epoch_secret_hex: state.current_epoch_secret_hex.clone(),
-        archived_epochs: state.archived_epochs.clone(),
-        rotation_required: false,
-        participant_count: 0,
-        stale_participant_count: 0,
-        namespace_secret_hex: state.current_epoch_secret_hex.clone(),
-    }
+/// 参加状態の書き込みの種類(ADR 0061 §9)。
+pub(crate) enum ChannelCommit<'a> {
+    /// 参加・再参加・取り込み直し。参加の版をこの時刻で新しくする。
+    Join(i64),
+    /// 世代を進める。行が参加中で、現在の世代が `from_epoch` のときだけ書く。
+    Advance { from_epoch: &'a str },
 }

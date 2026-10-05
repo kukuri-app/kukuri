@@ -617,7 +617,7 @@ pub(crate) async fn profile_timeline_page(
             })
             .collect(),
     };
-    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
     let load = |row| async move {
         let (reader, replica, position, policy) = match row {
             ProfileRow::Local(item) => {
@@ -628,7 +628,7 @@ pub(crate) async fn profile_timeline_page(
                 (reader, replica, position, policy)
             }
         };
-        let read = tokio::time::timeout_at(
+        let read = crate::timeout_at(
             deadline,
             load_profile_item(
                 reader.as_ref(),
@@ -667,7 +667,7 @@ pub(crate) async fn profile_timeline_page(
     }
     'replicas: for replica in replicas {
         for reader in &readers {
-            let read = tokio::time::timeout_at(
+            let read = crate::timeout_at(
                 deadline,
                 remote_profile_index(
                     reader.as_ref(),
@@ -749,7 +749,7 @@ pub(crate) async fn reread_author_buckets(
         Vec::new(),
     )
     .await;
-    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
     let now = TimeBucket::from_unix_seconds(Utc::now().timestamp())?;
     let mut budget = PROFILE_REMOTE_ROWS;
     let mut placed = 0;
@@ -762,7 +762,7 @@ pub(crate) async fn reread_author_buckets(
         )?
         .replica_id();
         for reader in &readers {
-            let read = tokio::time::timeout_at(
+            let read = crate::timeout_at(
                 deadline,
                 place_remote_profile_rows(
                     services,

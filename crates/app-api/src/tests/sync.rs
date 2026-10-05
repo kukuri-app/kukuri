@@ -29,7 +29,7 @@ impl CountingDocsSync {
     }
 
     /// 書き込みの名義(docs author)を持つ docs(ADR 0053)。
-    fn with_docs_author(docs_author: &str) -> Self {
+    pub(super) fn with_docs_author(docs_author: &str) -> Self {
         Self {
             inner: kukuri_docs_sync::MemoryDocsSync::with_docs_author(docs_author),
             ..Self::default()
@@ -90,6 +90,12 @@ impl DocsSync for CountingDocsSync {
         self.inner.open_replica(replica_id).await
     }
 
+    async fn install_private_epoch_secrets(
+        &self,
+        source: Arc<dyn kukuri_docs_sync::PrivateEpochSecrets>,
+    ) -> Result<()> {
+        self.inner.install_private_epoch_secrets(source).await
+    }
     async fn register_private_replica_secret(
         &self,
         replica_id: &ReplicaId,
@@ -218,6 +224,12 @@ impl DocsSync for HangingRemoteOnMissDocsSync {
         self.inner.open_replica(replica_id).await
     }
 
+    async fn install_private_epoch_secrets(
+        &self,
+        source: Arc<dyn kukuri_docs_sync::PrivateEpochSecrets>,
+    ) -> Result<()> {
+        self.inner.install_private_epoch_secrets(source).await
+    }
     async fn register_private_replica_secret(
         &self,
         replica_id: &ReplicaId,
@@ -377,6 +389,7 @@ mod hydration_integrity_contract;
 mod hydration_integrity_sessions;
 mod hydration_integrity_sessions_contract;
 mod hydration_limits;
+mod link_preview_records;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod page_bounds;

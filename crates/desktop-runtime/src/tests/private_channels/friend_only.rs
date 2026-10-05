@@ -267,6 +267,7 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
         .expect("runtime b shutdown timeout");
     drop(runtime_a);
     drop(runtime_b);
+    // #1218 AC-5c: DB を消して再起動し、手元の account 同期の replica から参加と鍵を作り直す(ADR 0061 §9・§10)。
     delete_sqlite_artifacts(&db_b);
 
     let restarted_b = DesktopRuntime::new_with_config_and_identity(
@@ -276,13 +277,25 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
     )
     .await
     .expect("restart runtime b");
+    // 作り直しは起動の後に背景で進む。参加が戻るまで待つ。
+    wait_for_joined_private_channel_epoch(
+        &restarted_b,
+        topic,
+        channel.channel_id.as_str(),
+        rotated.current_epoch_id.as_str(),
+        None,
+        "rebuild after the db is lost",
+    )
+    .await;
 
     let joined_after_restart = restarted_b
         .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
             topic: topic.into(),
+            cursor: None,
         })
         .await
-        .expect("list joined channels after restart");
+        .expect("list joined channels after restart")
+        .items;
     assert_eq!(joined_after_restart.len(), 1);
     assert_eq!(joined_after_restart[0].channel_id, channel.channel_id);
     assert_eq!(

@@ -1,4 +1,3 @@
-use super::projection_support::legacy_epoch_id;
 use super::replica_window::{
     IndexRange, RangeCheckResult, RangeReconcile, TIME_INDEX_FUTURE_ALLOWANCE_SECS,
     ensure_index_entries_projected,
@@ -8,6 +7,7 @@ use kukuri_docs_sync::{
     BucketReplica, BucketScope, DocKeyOrder, PostReplicaKind, TimeBucket, TimeIndexCursor,
     post_replica_kind, query_time_index_asc, query_time_index_desc, query_time_index_window,
 };
+use kukuri_store::PrivateChannelEpochRange;
 use std::time::Duration;
 
 pub(super) type RemotePostReplica = (ReplicaId, Option<(String, String)>);
@@ -34,9 +34,9 @@ where
     if let Some(value) = read(local, DocFetchPolicy::LocalOnly).await? {
         return Ok(Some(value));
     }
-    let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+    let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
     for reader in readers.await {
-        let result = tokio::time::timeout_at(
+        let result = crate::timeout_at(
             deadline,
             read(reader.clone(), DocFetchPolicy::LocalThenRemote),
         )
@@ -67,7 +67,7 @@ pub(crate) async fn writer_readers(
 ) -> Vec<Arc<dyn DocsSync>> {
     let mut peers: Vec<SeedPeer> = Vec::new();
     for writer in writers {
-        let resolved = tokio::time::timeout(
+        let resolved = n0_future::time::timeout(
             WRITER_DESTINATION_TIMEOUT,
             services
                 .hint_transport
@@ -195,10 +195,10 @@ impl AppService {
         if count_sources == 0 {
             return Ok(RangeReconcile::default());
         }
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let deadline = n0_future::time::Instant::now() + Duration::from_secs(30);
         let mut total = RangeReconcile::default();
         for (source_index, (replica, reader, provider_slot)) in sources.into_iter().enumerate() {
-            if tokio::time::Instant::now() >= deadline {
+            if n0_future::time::Instant::now() >= deadline {
                 break;
             }
             let budget = max_entries
@@ -349,7 +349,7 @@ impl AppService {
                     topic_id,
                     channel,
                     generation,
-                    tokio::time::timeout_at(deadline, read),
+                    crate::timeout_at(deadline, read),
                 )
                 .await
             {
@@ -397,47 +397,20 @@ impl AppService {
         channel_id: &str,
         replica: &ReplicaId,
     ) -> Result<Option<(String, String)>> {
-        let epoch_id = if replica.as_str().starts_with("bucket::") {
-            let bucket = BucketReplica::parse(replica)?;
-            let BucketScope::PrivateChannel {
-                channel_id: source,
-                epoch_id,
-            } = bucket.scope()
-            else {
-                return Ok(None);
-            };
-            if source != channel_id {
-                return Ok(None);
-            }
-            epoch_id.clone()
-        } else if replica == &private_channel_replica_id(channel_id) {
-            legacy_epoch_id().to_owned()
-        } else {
-            let prefix = format!("channel::{channel_id}::epoch::");
-            let Some(epoch) = replica.as_str().strip_prefix(&prefix) else {
-                return Ok(None);
-            };
-            if epoch.is_empty() || epoch.contains("::") {
-                return Ok(None);
-            }
-            epoch.to_owned()
+        let Some((source, epoch_id)) = kukuri_docs_sync::private_channel_epoch_of(replica) else {
+            return Ok(None);
         };
-        let joined = self.joined_private_channels.lock().await;
-        let state = joined
-            .get(&joined_private_channel_key(topic_id, channel_id))
-            .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
-        if epoch_id == state.current_epoch_id {
-            return Ok(Some((epoch_id, state.current_epoch_secret_hex.clone())));
+        if source != channel_id {
+            return Ok(None);
         }
-        let start = epoch_start_millis(&epoch_id).unwrap_or(i64::MIN);
-        let index = state
-            .archived_epochs
-            .partition_point(|item| epoch_start_millis(&item.epoch_id).unwrap_or(i64::MIN) < start);
-        Ok(state
-            .archived_epochs
-            .get(index)
-            .filter(|item| item.epoch_id == epoch_id)
-            .map(|item| (item.epoch_id.clone(), item.namespace_secret_hex.clone())))
+        self.ensure_private_channel_access(topic_id, &ChannelId::new(channel_id))
+            .await?;
+        // その世代の鍵の行を key で 1 件読む(過去の世代をメモリに持たない。ADR 0061 §9)。
+        Ok(self
+            .services
+            .private_channel_epoch_secret(channel_id, &epoch_id)
+            .await?
+            .map(|secret| (epoch_id, secret)))
     }
     /// Legacy writer namespaces still supply local projections during the
     /// transition. Select a fixed window without cloning the epoch history.
@@ -451,43 +424,50 @@ impl AppService {
         let TimelineScope::Channel { channel_id } = scope else {
             return Ok(vec![topic_replica_id(topic_id)]);
         };
-        self.ensure_private_channel_access(topic_id, channel_id)
-            .await?;
-        let joined = self.joined_private_channels.lock().await;
-        let state = joined
-            .get(&joined_private_channel_key(topic_id, channel_id.as_str()))
+        let state = self
+            .joined_private_channel_state(topic_id, channel_id.as_str())
+            .await
             .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
+        let channel = channel_id.as_str();
         let mut replicas = vec![private_channel_replica_for_epoch(
-            channel_id.as_str(),
+            channel,
             &state.current_epoch_id,
         )];
-        let archived = &state.archived_epochs;
-        let selected = anchor_seconds
-            .filter(|_| !archived.is_empty())
-            .map(|seconds| {
-                let at = seconds.saturating_mul(1_000);
-                archived
-                    .partition_point(|epoch| {
-                        epoch_start_millis(&epoch.epoch_id).unwrap_or(i64::MIN) <= at
-                    })
-                    .saturating_sub(1)
-            });
-        let candidates: Vec<_> = match selected {
-            Some(index) => {
-                let neighbor = if ascending {
-                    index.saturating_add(1)
-                } else {
-                    index.saturating_sub(1)
-                };
-                [archived.get(index), archived.get(neighbor), archived.last()]
-                    .into_iter()
-                    .flatten()
-                    .collect()
+        // 過去の世代は開始時刻の索引で、anchor に掛かる世代と隣・最新の過去の世代だけを読む(履歴を列挙しない)。
+        let archived_before = epoch_started_at(&state.current_epoch_id).saturating_sub(1);
+        let mut candidates = Vec::with_capacity(3);
+        if let Some(seconds) = anchor_seconds {
+            let at = seconds.saturating_mul(1_000).min(archived_before);
+            candidates.extend(
+                self.services
+                    .private_channel_epoch_ids(
+                        channel,
+                        PrivateChannelEpochRange::AtOrBefore(at),
+                        if ascending { 1 } else { 2 },
+                    )
+                    .await?,
+            );
+            if ascending {
+                candidates.extend(
+                    self.services
+                        .private_channel_epoch_ids(channel, PrivateChannelEpochRange::After(at), 1)
+                        .await?
+                        .into_iter()
+                        .filter(|epoch| epoch_started_at(epoch) <= archived_before),
+                );
             }
-            None => archived.iter().rev().take(3).collect(),
-        };
+        }
+        candidates.extend(
+            self.services
+                .private_channel_epoch_ids(
+                    channel,
+                    PrivateChannelEpochRange::AtOrBefore(archived_before),
+                    if anchor_seconds.is_some() { 1 } else { 3 },
+                )
+                .await?,
+        );
         for epoch in candidates {
-            let replica = private_channel_replica_for_epoch(channel_id.as_str(), &epoch.epoch_id);
+            let replica = private_channel_replica_for_epoch(channel, &epoch);
             if !replicas.contains(&replica) {
                 replicas.push(replica);
             }
@@ -738,16 +718,17 @@ impl AppService {
                 candidates.push((topic_replica_id(topic_id), None));
             }
             TimelineScope::Channel { channel_id } => {
-                let joined = self.joined_private_channels.lock().await;
-                let state = joined
-                    .get(&joined_private_channel_key(topic_id, channel_id.as_str()))
+                let state = self
+                    .joined_private_channel_state(topic_id, channel_id.as_str())
+                    .await
                     .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
-                let anchor_epoch = private_epochs_for_bucket(state, bucket)
+                let anchor_epoch = private_epochs_for_bucket(&self.services, &state, bucket)
+                    .await?
                     .into_iter()
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("private epoch missing"))?;
                 for time in [Some(bucket), adjacent, current].into_iter().flatten() {
-                    for epoch in private_epochs_for_bucket(state, time) {
+                    for epoch in private_epochs_for_bucket(&self.services, &state, time).await? {
                         let replica = BucketReplica::new(
                             BucketScope::PrivateChannel {
                                 channel_id: channel_id.as_str().to_owned(),
@@ -839,47 +820,48 @@ pub(super) fn epoch_start_millis(id: &str) -> Option<i64> {
     id.strip_prefix("epoch-")?.split('-').next()?.parse().ok()
 }
 
-pub(super) fn private_epochs_for_bucket(
+/// bucket に掛かる世代(現在の世代か、bucket の終わりより前に始まった最新の過去の世代と、その直前の世代)。
+/// 開始時刻の索引で 2 件まで読む(過去の世代をメモリに持たない。ADR 0061 §9)。
+pub(super) async fn private_epochs_for_bucket(
+    services: &ServiceHandles,
     state: &JoinedPrivateChannelState,
     bucket: TimeBucket,
-) -> Vec<(String, String)> {
+) -> Result<Vec<(String, String)>> {
     let end = (bucket.end_seconds() as i64)
         .saturating_mul(1_000)
         .saturating_sub(1);
     let start = (bucket.start_seconds() as i64).saturating_mul(1_000);
-    let current_at = epoch_start_millis(&state.current_epoch_id).unwrap_or(i64::MIN);
-    let archived = &state.archived_epochs;
-    let position = archived
-        .partition_point(|epoch| epoch_start_millis(&epoch.epoch_id).unwrap_or(i64::MIN) <= end);
-    let mut epochs = Vec::with_capacity(2);
-    if end >= current_at || archived.is_empty() {
-        epochs.push((
+    let channel = state.channel_id.as_str();
+    let current_at = epoch_started_at(&state.current_epoch_id);
+    let primary = if end >= current_at {
+        Some((
             state.current_epoch_id.clone(),
             state.current_epoch_secret_hex.clone(),
-        ));
-        if current_at > start
-            && let Some(previous) = archived.last()
-        {
-            epochs.push((
-                previous.epoch_id.clone(),
-                previous.namespace_secret_hex.clone(),
-            ));
-        }
-    } else if let Some(primary) = archived.get(position.saturating_sub(1)) {
-        epochs.push((
-            primary.epoch_id.clone(),
-            primary.namespace_secret_hex.clone(),
-        ));
-        if epoch_start_millis(&primary.epoch_id).is_some_and(|at| at > start)
-            && let Some(previous) = position
-                .checked_sub(2)
-                .and_then(|index| archived.get(index))
-        {
-            epochs.push((
-                previous.epoch_id.clone(),
-                previous.namespace_secret_hex.clone(),
-            ));
-        }
+        ))
+    } else {
+        services
+            .private_channel_epochs(channel, PrivateChannelEpochRange::AtOrBefore(end), 1)
+            .await?
+            .pop()
+    };
+    let Some(primary) = primary else {
+        return Ok(vec![(
+            state.current_epoch_id.clone(),
+            state.current_epoch_secret_hex.clone(),
+        )]);
+    };
+    let primary_at = epoch_started_at(&primary.0);
+    let mut epochs = vec![primary];
+    if primary_at > start {
+        epochs.extend(
+            services
+                .private_channel_epochs(
+                    channel,
+                    PrivateChannelEpochRange::AtOrBefore(primary_at.saturating_sub(1)),
+                    1,
+                )
+                .await?,
+        );
     }
-    epochs
+    Ok(epochs)
 }

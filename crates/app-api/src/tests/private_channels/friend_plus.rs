@@ -380,9 +380,10 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
     let joined_b = match timeout(rotation_timeout, async {
         loop {
             let joined = app_b
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("list joined on b");
+                .expect("list joined on b")
+                .items;
             let Some(item) = joined
                 .iter()
                 .find(|entry| entry.channel_id == channel.channel_id)
@@ -401,9 +402,10 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
         Ok(item) => item,
         Err(_) => {
             let joined = app_b
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("list joined on b after timeout");
+                .expect("list joined on b after timeout")
+                .items;
             let current = joined
                 .iter()
                 .find(|entry| entry.channel_id == channel.channel_id)
@@ -441,9 +443,10 @@ async fn friend_plus_share_freeze_rotate_and_new_epoch_visibility() {
     let joined_c = timeout(rotation_timeout, async {
         loop {
             let joined = app_c
-                .list_joined_private_channels(topic)
+                .list_joined_private_channels(topic, None)
                 .await
-                .expect("list joined on c");
+                .expect("list joined on c")
+                .items;
             let Some(item) = joined
                 .iter()
                 .find(|entry| entry.channel_id == channel.channel_id)

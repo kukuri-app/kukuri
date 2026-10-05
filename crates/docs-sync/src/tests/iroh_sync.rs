@@ -227,7 +227,7 @@ async fn private_exact_reads_include_moved_records_only_with_the_capability() {
             .await
             .expect("store"),
     );
-    let docs = IrohDocsSync::with_account_store(node.clone(), store.clone());
+    let docs = IrohDocsSync::with_account_store(node.clone(), store.clone(), store.clone());
     let replica = crate::private_channel_epoch_replica_id("channel", "epoch");
     let key = "channels/metadata";
     let value = br#"{"moved":true}"#.to_vec();
@@ -304,6 +304,55 @@ async fn has_local_replica_does_not_create_a_namespace() -> Result<()> {
     docs.close_replica(&written).await?;
     assert!(docs.has_local_replica(&written).await?);
     docs.shutdown().await;
+    node.shutdown().await?;
+    Ok(())
+}
+
+// ADR 0061 §1: account 同期は、アカウント鍵だけから導出した namespace を登録して使う（通常の epoch と独立）。
+// 登録が無いと書けず、登録すれば封をした item を書いて読み戻せる。
+#[tokio::test]
+async fn the_account_sync_replica_needs_the_derived_secret() -> Result<()> {
+    let node = IrohDocsNode::memory().await?;
+    let docs = IrohDocsSync::new(node.clone());
+    let keys = kukuri_core::KukuriKeys::parse(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    )?;
+    let derived = keys.derive_account_sync();
+    let item = kukuri_core::AccountSyncItem {
+        key: kukuri_core::AccountSyncItemKey::Profile,
+        op_id: "0123456789abcdef0123456789abcdef".to_string(),
+        updated_at: 1,
+        value: Some(serde_json::json!({ "name": "alice" })),
+    };
+    let docs_key = item.key.docs_key();
+    let sealed = serde_json::to_value(derived.seal(&keys.public_key(), &item)?)?;
+    let write = |value: serde_json::Value| DocOp::SetJson {
+        key: docs_key.clone(),
+        value,
+    };
+    assert!(
+        docs.apply_doc_op(derived.replica_id(), write(sealed.clone()))
+            .await
+            .is_err(),
+        "the account replica must not fall back to a public namespace"
+    );
+    docs.register_private_replica_secret(
+        derived.replica_id(),
+        &derived.expose_namespace_secret_hex(),
+    )
+    .await?;
+    docs.apply_doc_op(derived.replica_id(), write(sealed))
+        .await?;
+    let records = docs
+        .query_replica_with_policy(
+            derived.replica_id(),
+            DocQuery::Exact(docs_key.clone()),
+            crate::DocFetchPolicy::LocalOnly,
+        )
+        .await?;
+    assert_eq!(records.len(), 1);
+    let read: kukuri_core::SealedAccountSyncItem = serde_json::from_slice(&records[0].value)?;
+    assert_eq!(derived.open(&keys.public_key(), &docs_key, &read)?, item);
     node.shutdown().await?;
     Ok(())
 }

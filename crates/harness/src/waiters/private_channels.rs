@@ -1,4 +1,4 @@
-﻿use crate::*;
+use crate::*;
 
 #[cfg(test)]
 fn is_retryable_friend_only_grant_import_error(message: &str) -> bool {
@@ -136,8 +136,10 @@ pub(crate) async fn wait_for_joined_private_channel(
             let joined = runtime
                 .list_joined_private_channels(ListJoinedPrivateChannelsRequest {
                     topic: topic.to_string(),
+                    cursor: None,
                 })
-                .await?;
+                .await?
+                .items;
             if joined.iter().any(|entry| entry.channel_id == channel_id) {
                 return Ok::<(), anyhow::Error>(());
             }

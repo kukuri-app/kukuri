@@ -7,6 +7,8 @@ import type {
   AccountsSnapshot,
 } from '@/lib/api/types.generated';
 
+import i18n from '@/i18n';
+
 import { AccountKeyPanel } from './AccountKeyPanel';
 
 const identityApi = vi.hoisted(() => ({
@@ -176,4 +178,66 @@ test('successful import offers switching to the new account', async () => {
     expect(reload).toHaveBeenCalled();
   });
   vi.unstubAllGlobals();
+});
+
+// #1217 AC-5: Web では、このブラウザの保存の状態と、消えたときの戻し方を示す。許可が無いのに「消えない」と示さない。
+test.each([
+  [true, "This browser does not delete this site's data automatically."],
+  [false, "This browser may delete this site's data automatically"],
+])('the web build shows whether this browser keeps the site data (persisted: %s)', async (persisted, state) => {
+  Object.defineProperty(navigator, 'storage', {
+    configurable: true,
+    value: { persisted: vi.fn().mockResolvedValue(persisted) },
+  });
+  try {
+    render(<AccountKeyPanel showBrowserStorage />);
+    const notice = await screen.findByTestId('browser-storage-notice');
+    expect(notice).toHaveTextContent(state);
+    expect(notice).toHaveTextContent('importing it from Add account');
+    expect(notice).toHaveTextContent('Not all history, such as posts, comes back.');
+  } finally {
+    Reflect.deleteProperty(navigator, 'storage');
+  }
+});
+
+test('the desktop build does not show the browser storage notice', async () => {
+  render(<AccountKeyPanel />);
+  await screen.findByText(ACTIVE_PUBKEY);
+  expect(screen.queryByTestId('browser-storage-notice')).not.toBeInTheDocument();
+});
+
+// #1211 AC-5: 別の端末で使う方法の対象の差。backup・restore の行は、それを開ける desktop だけに出す。
+test('the account settings compare the ways to use the account on another device', async () => {
+  const { unmount } = render(<AccountKeyPanel onOpenDeviceBackup={() => undefined} />);
+  const methods = await screen.findByTestId('account-key-methods');
+  expect(methods).toHaveTextContent('Move to another device (Add account > Move between devices)');
+  expect(methods).toHaveTextContent('follows and blocks');
+  expect(methods).toHaveTextContent('Export the account key: writes out only the account key.');
+  expect(methods).toHaveTextContent('Backup & restore: moves all the data on this device.');
+  unmount();
+
+  render(<AccountKeyPanel />);
+  expect(await screen.findByTestId('account-key-methods')).not.toHaveTextContent('Backup & restore');
+});
+
+test.each([
+  ['ja', 'アカウントを別の端末で使うには、次の方法があります。', 'フォローとブロック', 'バックアップと復元'],
+  ['zh-CN', '要在其他设备上使用账号，有以下方法。', '关注和屏蔽', '备份与恢复'],
+])('the account settings compare the ways in %s', async (language, intro, moved, backup) => {
+  await i18n.changeLanguage(language);
+  try {
+    const { unmount } = render(<AccountKeyPanel onOpenDeviceBackup={() => undefined} />);
+    const methods = await screen.findByTestId('account-key-methods');
+    expect(methods).toHaveTextContent(intro);
+    expect(methods).toHaveTextContent(moved);
+    expect(methods).toHaveTextContent(backup);
+    unmount();
+
+    render(<AccountKeyPanel />);
+    const web = await screen.findByTestId('account-key-methods');
+    expect(web).toHaveTextContent(intro);
+    expect(web).not.toHaveTextContent(backup);
+  } finally {
+    await i18n.changeLanguage('en');
+  }
 });

@@ -37,6 +37,18 @@ fn normalize_topic_name_excludes_private_channel_and_dm_topics() {
 }
 
 #[test]
+fn normalize_topic_name_excludes_account_sync_topics() {
+    assert_eq!(
+        normalize_topic_name("kukuri:account:abc123".to_string()),
+        None
+    );
+    assert_eq!(
+        normalize_topic_name("hint/kukuri:account:abc123".to_string()),
+        None
+    );
+}
+
+#[test]
 fn normalize_topics_dedupes_and_preserves_order() {
     let normalized = normalize_topics(vec![
         "hint/kukuri:topic:a".to_string(),

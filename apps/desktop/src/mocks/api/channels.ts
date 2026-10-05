@@ -11,6 +11,8 @@ import {
 import { parseMockChannelAccessTokenPreview, withJoinedChannelDefaults } from '../desktopMockModel';
 import { type MockRuntime } from '../mockRuntime';
 
+const JOINED_CHANNEL_PAGE = 128;
+
 type ChannelsMock = Pick<
   DesktopApi,
   | 'createPrivateChannel'
@@ -25,6 +27,7 @@ type ChannelsMock = Pick<
   | 'importFriendPlusShare'
   | 'freezePrivateChannel'
   | 'rotatePrivateChannel'
+  | 'takePrivateChannelController'
   | 'setPrivateChannelEntryDome'
   | 'leavePrivateChannel'
   | 'listJoinedPrivateChannels'
@@ -246,6 +249,12 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
       joinedChannelsByTopic[topic] = next;
       return next.find((channel) => channel.channel_id === channelId)!;
     },
+    async takePrivateChannelController(topic, channelId) {
+      joinedChannelsByTopic[topic] = (joinedChannelsByTopic[topic] ?? []).map((channel) =>
+        channel.channel_id === channelId ? { ...channel, controller: 'this_device' } : channel
+      );
+      return 'taken';
+    },
     async setPrivateChannelEntryDome(topic, channelId, entryDomeInstanceId) {
       const channels = joinedChannelsByTopic[topic] ?? [];
       const next = channels.map((channel) =>
@@ -264,8 +273,17 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
         (channel) => channel.channel_id !== channelId
       );
     },
-    async listJoinedPrivateChannels(topic) {
-      return joinedChannelsByTopic[topic] ?? [];
+    // runtime と同じく channel id の順に 128 件の page を返す。cursor は page の最後の channel id。
+    async listJoinedPrivateChannels(topic, cursor) {
+      const items = (joinedChannelsByTopic[topic] ?? [])
+        .filter((channel) => !cursor || channel.channel_id > cursor)
+        .sort((left, right) => (left.channel_id < right.channel_id ? -1 : 1))
+        .slice(0, JOINED_CHANNEL_PAGE);
+      const last = items.at(-1);
+      return {
+        items,
+        next_cursor: items.length === JOINED_CHANNEL_PAGE && last ? last.channel_id : null,
+      };
     },
   };
 }

@@ -23,7 +23,7 @@ impl AppService {
         context: &SpatialContextV1,
         stores: &[ReplicaId],
     ) {
-        let deadline = tokio::time::Instant::now() + REMOTE_READ_DEADLINE;
+        let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
         let anchors = stores
             .iter()
             .filter(|replica| replica.as_str().starts_with("bucket::"))
@@ -46,7 +46,7 @@ impl AppService {
                 }
             };
             for reader in readers {
-                let read = tokio::time::timeout_at(
+                let read = crate::timeout_at(
                     deadline,
                     self.hydrate_connection_anchor(reader.as_ref(), anchor),
                 )

@@ -656,6 +656,14 @@ pub struct RotatePrivateChannelRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct TakePrivateChannelControllerRequest {
+    pub topic: String,
+    pub channel_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct SetPrivateChannelEntryDomeRequest {
     pub topic: String,
     pub channel_id: String,
@@ -675,6 +683,9 @@ pub struct LeavePrivateChannelRequest {
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct ListJoinedPrivateChannelsRequest {
     pub topic: String,
+    /// 前の page の `next_cursor`。無ければ最初の page。
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -784,6 +795,32 @@ impl std::fmt::Debug for ImportAccountKeyRequest {
             .field("label", &self.label)
             .finish()
     }
+}
+
+/// #1211: 移行先が開くリンクと、受ける投稿の履歴の範囲（移さないときは `None`。AC-3）。リンクは招待の秘密を含む
+/// ので Debug で redact する。
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct OpenAccountTransferRequest {
+    pub link: String,
+    #[serde(default)]
+    pub history: Option<kukuri_core::AccountTransferHistory>,
+}
+
+impl std::fmt::Debug for OpenAccountTransferRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAccountTransferRequest")
+            .field("link", &"<redacted>")
+            .field("history", &self.history)
+            .finish()
+    }
+}
+
+/// #1211: 確認コードが一致したか。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DecideAccountTransferRequest {
+    pub accept: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

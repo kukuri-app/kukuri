@@ -32,3 +32,28 @@ test('a delayed save response cannot overwrite the newly active account profile'
   expect(save).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ account_id: a.pubkey }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
+
+// #1217 AC-5: Web では、以前のアカウントを戻す案内と入口を出す。押すと dialog を閉じて入口を開く。Tauri（`onRestore` なし）では出さない。
+test('the web build offers to restore a previous account from the initial profile setup', async () => {
+  const store = createDesktopShellStore();
+  const pubkey = 'a'.repeat(64);
+  store.getState().patchState({ syncStatus: { ...store.getState().syncStatus, local_author_pubkey: pubkey } });
+  const access = {
+    listAccounts: async () => ({ active_account_id: 'account-a', accounts: [{ id: 'account-a', pubkey, label: null, created_at: 1, last_used_at: 1 }] }),
+    getProfileSetupRequired: async () => true,
+    saveInitialProfile: vi.fn(),
+  };
+  const view = (onRestore?: () => void) => <DesktopShellStoreContext.Provider value={store}><InitialProfileSetup ready nodeFailed={false} onSkipNode={() => {}} accountAccess={access} onRestore={onRestore} /></DesktopShellStoreContext.Provider>;
+  const desktop = render(view());
+  await screen.findByRole('dialog', { name: 'Set up your profile' });
+  expect(screen.queryByRole('button', { name: 'Restore a previous account' })).not.toBeInTheDocument();
+  desktop.unmount();
+
+  const restore = vi.fn();
+  render(view(restore));
+  const dialog = await screen.findByRole('dialog', { name: 'Set up your profile' });
+  expect(dialog).toHaveTextContent('importing an exported account key or by moving it from another device');
+  await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Restore a previous account' }));
+  expect(restore).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});

@@ -13,6 +13,9 @@ use super::*;
 use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
 use tracing::debug;
 
+/// account 同期の scope の holder。
+const ACCOUNT_SYNC_HOLDER: &str = "account-sync";
+
 /// lease の読み直しで、replica ごとに種類ごとに読む session の索引の上限(判断 5)。
 const SESSION_REREAD_LIMIT: usize = 64;
 
@@ -68,7 +71,7 @@ pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
 
 impl AppService {
     /// task の中で使う読み手。`ServiceHandles` を共有する(参加状態・通知の Notify は同じ Arc)。
-    fn scope_reader(&self) -> AppService {
+    pub(crate) fn scope_reader(&self) -> AppService {
         let mut services = self.services.clone();
         // 読み直しは lease の開始・再接続(task の作り直し)と日の境界だけ。表示の照合の間隔の台帳を共有すると、
         // 直前に表示が照合した範囲を読み飛ばすので、task ごとの台帳にする。
@@ -107,16 +110,16 @@ impl AppService {
             .hint_transport
             .subscribe_hints(&hint_topic)
             .await?;
-        let handle = tokio::spawn(async move {
+        let handle = n0_future::task::spawn(async move {
             reread_and_mark(&reader, &topic, &scope, &last_sync).await;
             // 窓あたりの content hint の受付(#1567 AC-1)。`dropped` は、この窓で読まずに捨てた hint の数(transport の
             // 購読 stream が取りこぼした分を含む)。1 件以上なら、何を落としたか分からないので窓の終わりに 1 回読み直す。
-            let mut window_end = tokio::time::Instant::now() + HINT_WINDOW;
+            let mut window_end = n0_future::time::Instant::now() + HINT_WINDOW;
             let mut window_used = 0usize;
             let mut dropped = 0u64;
             loop {
-                let boundary = tokio::time::sleep(until_next_bucket(Utc::now().timestamp()));
-                let window = tokio::time::sleep_until(window_end);
+                let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
+                let window = n0_future::time::sleep_until(window_end);
                 tokio::select! {
                     Some(event) = hint_stream.next() => {
                         dropped = dropped.saturating_add(event.dropped_before);
@@ -204,7 +207,7 @@ impl AppService {
                         }
                     }
                     _ = window => {
-                        window_end = tokio::time::Instant::now() + HINT_WINDOW;
+                        window_end = n0_future::time::Instant::now() + HINT_WINDOW;
                         window_used = 0;
                         let overflowed = std::mem::take(&mut dropped);
                         if overflowed > 0 {
@@ -231,7 +234,7 @@ impl AppService {
         let last_sync = Arc::clone(&self.last_sync_ts);
         let author = normalize_author_pubkey(author_pubkey)?;
         let local_author = self.current_author_pubkey();
-        let handle = tokio::spawn(async move {
+        let handle = n0_future::task::spawn(async move {
             loop {
                 match hydrate_author_state(
                     &services,
@@ -260,12 +263,66 @@ impl AppService {
                         warn!(author_pubkey = %author, %error, "failed to reread author buckets")
                     }
                 }
-                tokio::time::sleep(until_next_bucket(Utc::now().timestamp())).await;
+                n0_future::time::sleep(until_next_bucket(Utc::now().timestamp())).await;
             }
         });
         Ok(ScopeTask {
             handle: AbortOnDropTask::new(handle),
             hint_topic: None,
+        })
+    }
+
+    /// 本人の端末間の account 同期を始める（ADR 0061）。scope の lease で hint を購読する。
+    /// 購読は account の runtime と一緒に止まる（停止・切替で runtime を作り直す）。
+    pub async fn start_account_sync(&self) -> Result<()> {
+        let hint_topic = self
+            .services
+            .keys
+            .derive_account_sync()
+            .hint_topic()
+            .clone();
+        self.set_scope_holder(
+            ACCOUNT_SYNC_HOLDER,
+            [ScopeKey::AccountSync(hint_topic.as_str().to_string())],
+        )
+        .await
+    }
+
+    /// replica の namespace の秘密を登録し、hint の購読を持つ。endpoint の作り直しで docs が新しくなっても、
+    /// task の作り直しで登録し直す。差分の取得の契機（ADR 0061 §10）: task の開始（lease の開始・endpoint の世代の
+    /// 変化）と日の境界、hint、書込みの後の送り直しと hint の送信の要求、rendezvous の応答に新しく現れた本人の端末。
+    pub(crate) async fn spawn_account_sync_subscription(
+        &self,
+        hint_topic: TopicId,
+    ) -> Result<ScopeTask> {
+        let keys = self.services.keys.derive_account_sync();
+        self.services
+            .docs_sync
+            .register_private_replica_secret(
+                keys.replica_id(),
+                keys.expose_namespace_secret_hex().as_str(),
+            )
+            .await?;
+        // 購読で namespace を作る。まだ何も書いていない端末（移行の直後の移行先など）も、本人の別の端末の読取りに
+        // 空で答える（namespace が無いと読取りを打ち切り、相手は取得の失敗のままになる。#1220 AC-3b）。
+        self.services
+            .docs_sync
+            .open_replica(keys.replica_id())
+            .await?;
+        let hints = self
+            .services
+            .hint_transport
+            .subscribe_hints(&hint_topic)
+            .await?;
+        // 作り直し（起動・復帰）の前の rendezvous の応答を忘れる（task を起こす前に。直後の応答の知らせと入れ替わら
+        // ないように）。
+        self.forget_account_sync_rendezvous();
+        // merge は account の状態を共有する handle で行う（届いた channel の参加・世代の変化を、この account の購読と
+        // メモリへ反映する。#1211 AC-4）。
+        let handle = n0_future::task::spawn(account_sync_task(self.account_handle(), hints));
+        Ok(ScopeTask {
+            handle: AbortOnDropTask::new(handle),
+            hint_topic: Some(hint_topic),
         })
     }
 
@@ -315,7 +372,7 @@ impl AppService {
                 ("sessions/game/", "game-session"),
             ] {
                 for reader in &readers {
-                    let page = tokio::time::timeout(
+                    let page = n0_future::time::timeout(
                         super::remote_read_support::REMOTE_READ_DEADLINE,
                         reader.query_replica_keys(
                             &replica,
@@ -508,7 +565,7 @@ impl AppService {
             )
             .await?
         {
-            let read = tokio::time::timeout(
+            let read = n0_future::time::timeout(
                 super::remote_read_support::REMOTE_READ_DEADLINE,
                 hydrate_post_withdrawal_for_object(
                     reader.as_ref(),
@@ -564,7 +621,7 @@ impl AppService {
                 )
                 .await?
             {
-                let read = tokio::time::timeout(
+                let read = n0_future::time::timeout(
                     super::remote_read_support::REMOTE_READ_DEADLINE,
                     hydrate_reaction_cache_for_target_bounded(
                         reader.as_ref(),
@@ -612,4 +669,38 @@ impl AppService {
             .await?
             .map(VerifiedGameRoom::into_parts))
     }
+}
+
+/// account 同期の lease の task の本体。取得の merge が channel の lease を取り、lease が task を作るので、型を
+/// `Send` の box に閉じて、task の作成の型が自分自身に戻らないようにする。
+fn account_sync_task(
+    reader: AppService,
+    mut hints: kukuri_transport::HintStream,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        reader.catch_up_account_sync().await;
+        loop {
+            let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
+            tokio::select! {
+                Some(event) = hints.next() => {
+                    if let GossipHint::AccountSyncChanged { device_id, .. } = &event.hint {
+                        reader
+                            .fetch_account_sync_for_hint(device_id, &event.source_peer)
+                            .await;
+                    }
+                }
+                _ = reader.services.account_sync.changed.notified() => {
+                    if let Err(error) = reader.resend_account_sync_items().await {
+                        warn!(%error, "account sync resend stopped; it resumes at the next trigger");
+                    }
+                    reader.publish_account_sync_hint().await;
+                }
+                _ = reader.services.account_sync.peers.notified() => {
+                    reader.fetch_account_sync_from_appeared().await;
+                }
+                _ = boundary => reader.catch_up_account_sync().await,
+                else => break,
+            }
+        }
+    })
 }

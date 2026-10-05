@@ -83,8 +83,8 @@ iroh-docs 0.101.0（pin `e7233d14853cb4db9966e30050bac1e689cdeec8`）。
 採用候補を固定して再現・回帰を確認した。irohは`adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155`
 （上流#4447）。#1450でiroh 1.3.0へ上げる際、#4447をv1.3.0へ載せ直し`KingYoSun/iroh`の
 `4d7b079c124fae615c456c97a592a3c067ef8a27`へ移した（crateのsourceはv1.3.0＋#4447と同一、
-fork側の`.github/workflows`だけ既存のまま）。gossipは`KingYoSun/iroh-gossip`の`4501c0433d6e7f3d9d81a37985ec243957af2c32`
-（#161を含む#162の`c42f40a1`に、#1376の修正1件を加えたもの）。
+fork側の`.github/workflows`だけ既存のまま）。gossipは`KingYoSun/iroh-gossip`の`23cd6cc76d51582b3678b3b743db72d51ce296d4`
+（#161を含む#162の`c42f40a1`に、#1376と#1549の修正各1件を加えたもの）。
 rootとstandalone Tauriの5packageを同じsourceへ揃え、型の二重化を避ける。
 package version、MSRV、wire、永続形式を変更せず、両lockの無関係な依存edgeも維持する。
 
@@ -95,6 +95,11 @@ package version、MSRV、wire、永続形式を変更せず、両lockの無関�
 - gossip（#1376）: 同時dialで各端末が別の接続を主に選び、一方が全topicのstreamを開いた後で
   主を切り替えると、切替先にstreamが無いまま相手のidle回収（5秒）で閉じられ`NeighborDown`になる。
   切替時に近傍であるtopicのstreamを開き直す。`gossip_keeps_connection_a_peer_switched_to_after_joining`で確認。
+- gossip（#1549）: 相手がneighborのままJoinし直すと（account routeへのofferは送信ごとにJoinする）、
+  送り直したNeighborを相手は返事と受け取り、こちらの返事待ち（`pending_neighbor_requests`）が残る。相手が同じ
+  EndpointIdで作り直し、旧接続の終了が届かないまま新しい接続が主に置き換わると（`PeerDisconnected`は出ない）、
+  新しいJoinへの`send_neighbor`が返事待ちを理由に何も送らず、相手は`joined()`を得られない。Joinを受けたら
+  その相手への返事待ちを消して答える。再現は`account_receive_offer_reaches_a_peer_after_the_sender_rebinds_with_the_same_endpoint_id`。
 - これは協調peerの退役漏れの修正。64は全active actor込みの絶対上限ではなく、actor idleの60秒も別にある。
   relay mapのretain走査、remoteがstream/headerを終わらせない場合、pending joinの容量は共通ownerに残す。
   現行で未使用のcustom transportを、この修正で対応済みとは扱わない。
@@ -350,3 +355,9 @@ N70は旧全購読topic snapshotから自account受信routeを除き、own route
 #1221の[現行Scope revision](https://github.com/kukuri-app/kukuri/issues/1221)ではCNなしの未知endpoint発見を要求せず、
 既存のticket/seed/既知peerとCN候補を実QUIC bindingで検証する。#1333の本番未使用locatorページAPIと
 停止中の制御recordは不採用とし、旧計画を残件に数えない。前節の「著者制御state」は当時の残件記録である。
+
+## ブラウザとの直接経路の接続交渉（#1422 W10 AC-2）
+
+| ID | 入口 → helper → sink | guard / 停止 | 対応contract |
+| --- | --- | --- | --- |
+| N72 | 既存の需要の owner が張った iroh の接続（gossip・docs reader・blob）→ `DemandHooks::after_handshake` → `Signaling` の需要の表 → 専用 ALPN の交渉 → `add_remote_addrs` の custom path | 始めるのは IP の transport の無いブラウザの node だけ（native は応じるだけ）。表は相手 16 件、満杯は既存の経路。需要の接続がすべて閉じたら session を閉じて表から消す。1 回の需要で相手ごとに 3 回まで（間隔 15 秒）。開いた session は相手ごとに 1 本で、後の接続へも同じ path を足す。`reset`（停止・切替・freeze 等）で世代を進めて全 session を閉じ、`resume` は生きた需要で session の無い相手だけ。発見済み・履歴の peer、topic ごとの交渉は無い。STUN は今の relay の host の 3478 番だけ（relay 無効なら送らない） | `a_demand_connection_shares_one_session_until_the_demand_ends`、`a_peer_without_the_alpn_is_tried_a_bounded_number_of_times`、`native_nodes_do_not_negotiate_with_each_other`、`a_demand_that_ends_during_the_negotiation_leaves_no_session`、`resume_renegotiates_only_the_live_demand`、`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`、`the_offer_carries_a_reflexive_candidate_only_with_stun`、browser の `a_demand_connection_to_the_native_node_moves_to_the_custom_path`・`two_browser_nodes_share_one_session_over_the_custom_path` |

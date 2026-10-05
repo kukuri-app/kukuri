@@ -96,7 +96,17 @@ export type JoinedPrivateChannelView = { topic_id: string, channel_id: string, l
 /**
  * 参加者数。参加・退出 record が届く owner の端末だけが持ち、owner 以外は `None`(#1221 R5-H)。
  */
-participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, };
+participant_count?: number | null, stale_participant_count: number, entry_dome_instance_id?: string | null, 
+/**
+ * owner の端末で、鍵更新の担当がこの端末から見てどこにあるか（#1219 AC-4）。owner 以外は `None`。
+ */
+controller?: PrivateChannelControllerState | null, };
+
+export type PrivateChannelControllerState = "this_device" | "other_device" | "moving" | "unknown";
+
+export type PrivateChannelControllerTake = "taken" | "not_connected" | "waiting";
+
+export type JoinedPrivateChannelPage = { items: Array<JoinedPrivateChannelView>, next_cursor?: string | null, };
 
 export type PrivateChannelEpochCapability = { epoch_id: string, namespace_secret_hex: string, };
 
@@ -114,7 +124,9 @@ export type DiscoveryStatus = { mode: DiscoveryMode, connect_mode: ConnectMode, 
  */
 docs_assist_peer_count: number, blob_assist_peer_count: number, local_endpoint_id: string, last_discovery_error?: string | null, };
 
-export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peer_count: number, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_count: number, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, };
+export type SyncStatus = { connected: boolean, delivery_state: DeliveryState, last_sync_ts?: number | null, peer_count: number, pending_events: number, status_detail: string, last_error?: string | null, configured_peer_count: number, subscribed_topics: Array<string>, active_path: ConnectionPath, fallback_peer_count: number, topic_diagnostics: Array<TopicSyncStatus>, local_author_pubkey: string, discovery: DiscoveryStatus, gossip_disabled_topics: Array<string>, gossip_disabled_channels: Array<string>, account_sync?: AccountSyncStatus | null, };
+
+export type AccountSyncStatus = { no_peers: boolean, fetch_failed: boolean, behind: boolean, pending_writes: boolean, rebuilding: boolean, };
 
 export type LiveSessionStatus = "Scheduled" | "Live" | "Paused" | "Ended";
 
@@ -728,7 +740,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, };
 
 export type CreatePostRequest = { topic: string, content: string, reply_to?: string | null, channel_ref: ChannelRef, attachments: Array<CreateAttachmentRequest>, 
 /**
@@ -868,11 +880,17 @@ export type FreezePrivateChannelRequest = { topic: string, channel_id: string, }
 
 export type RotatePrivateChannelRequest = { topic: string, channel_id: string, };
 
+export type TakePrivateChannelControllerRequest = { topic: string, channel_id: string, };
+
 export type SetPrivateChannelEntryDomeRequest = { topic: string, channel_id: string, entry_dome_instance_id?: string | null, };
 
 export type LeavePrivateChannelRequest = { topic: string, channel_id: string, };
 
-export type ListJoinedPrivateChannelsRequest = { topic: string, };
+export type ListJoinedPrivateChannelsRequest = { topic: string, 
+/**
+ * 前の page の `next_cursor`。無ければ最初の page。
+ */
+cursor?: string | null, };
 
 export type UpdateGameRoomRequest = { topic: string, room_id: string, status: GameRoomStatus, phase_label?: string | null, scores: Array<GameScoreView>, };
 
@@ -947,6 +965,20 @@ export type AccountsSnapshot = { active_account_id: string, accounts: Array<Acco
 export type AccountKeyExport = { export: string, public_key: string, };
 
 export type AccountKeyImportPreview = { version: number, kdf: string, public_key: string, already_registered: boolean, };
+
+export type AccountTransferLink = { link: string, expires_at_ms: number, };
+
+export type OpenAccountTransferRequest = { link: string, history: AccountTransferHistory | null, };
+
+export type DecideAccountTransferRequest = { accept: boolean, };
+
+export type AccountTransferStatus = { "state": "idle" } | { "state": "waiting", expires_at_ms: number, } | { "state": "connecting" } | { "state": "confirming", role: AccountTransferRole, code: string, local_accepted: boolean, } | { "state": "transferring", role: AccountTransferRole, items: number, } | { "state": "history", role: AccountTransferRole, account_id: string | null, posts: number, unavailable: number, } | { "state": "completed", role: AccountTransferRole, account_id: string | null, history: { posts: number, unavailable: number, stopped: AccountTransferFailure | null, } | null, } | { "state": "failed", role: AccountTransferRole, reason: AccountTransferFailure, };
+
+export type AccountTransferRole = "source" | "target";
+
+export type AccountTransferFailure = "expired" | "invalid" | "unreachable" | "rejected" | "cancelled" | "interrupted" | "storage";
+
+export type AccountTransferHistory = "month" | "year" | "all";
 
 export type CreateDeviceBackupRequest = { path: string, passphrase: string, frontend_state: { [key in string]: string }, };
 

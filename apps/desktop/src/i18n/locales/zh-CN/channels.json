@@ -37,7 +37,8 @@
     "failedCreateShare": "创建分享失败",
     "failedJoinChannel": "加入私密频道失败",
     "failedLeaveChannel": "退出私密频道失败",
-    "failedShareChannel": "分享私密频道失败"
+    "failedShareChannel": "分享私密频道失败",
+    "failedTakeController": "切换失败"
   },
   "inspectHint": "在这里查看谁可以加入以及可执行的操作。",
   "joined": "已加入 {{count}} 个",
@@ -81,13 +82,28 @@
     "pending": "处理中，请等待完成。",
     "rotationNextStep": "创建分享链接后，只有仍符合条件的参与者会获得新的访问权限。可在对方的个人资料中确认关注关系。",
     "ownerOnlyShare": "只有所有者才能为互相关注频道创建分享链接。请向所有者索取邀请。",
-    "shareHint": "分享链接只发给你想邀请的人。收到链接的人在满足参与条件时即可加入。"
+    "shareHint": "分享链接只发给你想邀请的人。收到链接的人在满足参与条件时即可加入。",
+    "controller": {
+      "otherDevice": "创建分享链接，以及在参与者变化时分发新的访问权限，都在你的另一台设备上进行。",
+      "take": "在此设备上进行",
+      "taking": "正在切换…",
+      "notConnected": "当前进行这些操作的设备未连接，无法切换。请在该设备上打开应用后重试。",
+      "waiting": "正在等待当前进行这些操作的设备响应。在该设备上打开应用后，将切换到此设备。",
+      "moving": "正在切换进行这些操作的设备。完成之前，创建分享链接和分发新的访问权限将暂停。",
+      "movingStuck": "如果要切换到的设备已无法使用，请重新创建频道。"
+    }
   },
   "title": "私密频道",
   "intro": "私密频道是此主题内仅参与者可以读写投稿的范围。可以自己创建，或使用参与者发来的邀请／分享链接加入。邀请和分享链接在加入后的频道设置中创建。",
   "joinedList": {
     "title": "此主题中已加入",
     "open": "打开 {{channel}}",
-    "settings": "{{channel}} 的设置与分享"
+    "settings": "{{channel}} 的设置与分享",
+    "showMore": "显示更多",
+    "loadingMore": "加载中…"
+  },
+  "controllerPending": {
+    "title": "已暂停",
+    "description": "此操作需要分发新的访问权限，而分发在你的另一台设备上进行。在该设备上打开应用之前，此操作将暂停，打开后请重试。也可以在频道设置中切换为在此设备上进行。"
   }
 }

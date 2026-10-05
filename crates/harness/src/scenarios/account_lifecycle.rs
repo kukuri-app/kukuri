@@ -35,12 +35,12 @@ pub(crate) async fn run_account_lifecycle(
     let mut steps = Vec::new();
     timeout(Duration::from_millis(scenario.timeouts.overall_ms), async {
         let started = Instant::now();
-        let db = ensure_accounts_initialized_from_env(&dir)?;
+        let db = ensure_accounts_initialized_from_env(&dir).await?;
         let runtime = DesktopRuntime::new(&db).await?;
         let host = ClientHost::from_runtime(dir.clone(), Arc::new(runtime))
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let a = list_accounts(&dir)?.active_account_id;
+        let a = list_accounts(&dir).await?.active_account_id;
         host.save_initial_profile(InitialProfileRequest {
             account_id: a.clone(),
             profile: SetMyProfileRequest {
@@ -49,9 +49,12 @@ pub(crate) async fn run_account_lifecycle(
             },
         })
         .await?;
-        let exported = host.runtime().export_account_key(ExportAccountKeyRequest {
-            passphrase: "account-lifecycle-fixture".into(),
-        })?;
+        let exported = host
+            .runtime()
+            .export_account_key(ExportAccountKeyRequest {
+                passphrase: "account-lifecycle-fixture".into(),
+            })
+            .await?;
         let post = host
             .runtime()
             .create_post(kukuri_desktop_runtime::CreatePostRequest {
@@ -73,7 +76,7 @@ pub(crate) async fn run_account_lifecycle(
             })
             .await?;
         anyhow::ensure!(
-            list_accounts(&dir)?.accounts.len() == 2,
+            list_accounts(&dir).await?.accounts.len() == 2,
             "creation removed an account"
         );
         let next = host.logout_account(&b.id).await?;
@@ -96,18 +99,18 @@ pub(crate) async fn run_account_lifecycle(
             "last logout did not generate a new identity"
         );
         anyhow::ensure!(
-            list_accounts(&dir)?.accounts.len() == 1,
+            list_accounts(&dir).await?.accounts.len() == 1,
             "logout registration mismatch"
         );
         host.shutdown().await;
         drop(host);
-        let restarted_db = ensure_accounts_initialized_from_env(&dir)?;
+        let restarted_db = ensure_accounts_initialized_from_env(&dir).await?;
         let runtime = DesktopRuntime::new(&restarted_db).await?;
         let host = ClientHost::from_runtime(dir.clone(), Arc::new(runtime))
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         anyhow::ensure!(
-            list_accounts(&dir)?.active_account_id == c.id,
+            list_accounts(&dir).await?.active_account_id == c.id,
             "restart generated another identity"
         );
         anyhow::ensure!(

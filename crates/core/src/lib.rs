@@ -1,3 +1,11 @@
+// ブラウザでも動く共用 crate（ADR 0056 §3）。tokio の時刻・task と std の時刻を直接使わない（native では
+// n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
+#![cfg_attr(
+    all(target_family = "wasm", not(test)),
+    warn(clippy::disallowed_methods)
+)]
+mod account_sync;
+mod account_transfer;
 mod crypto;
 mod device_backup;
 mod direct_messages;
@@ -12,6 +20,7 @@ mod envelope;
 mod game;
 mod identity_export;
 mod ids;
+mod link_preview;
 mod live;
 mod media;
 mod metaverse_audio;
@@ -29,6 +38,20 @@ pub mod wire;
 #[cfg(test)]
 mod tests;
 
+pub use account_sync::{
+    ACCOUNT_SYNC_CHANGE_WINDOW, AccountSyncChangeV1, AccountSyncItem, AccountSyncItemKey,
+    AccountSyncKeys, ChannelControllerRequestV1, ChannelMembershipV1, ChannelParticipantV1,
+    ChannelRotationRequestV1, MAX_ACCOUNT_SYNC_ITEM_BYTES, MAX_SEALED_ACCOUNT_SYNC_ITEM_BYTES,
+    SealedAccountSyncItem,
+};
+pub use account_transfer::{
+    ACCOUNT_TRANSFER_INVITE_TTL_MS, ACCOUNT_TRANSFER_LINK_PREFIX, AccountHistoryCursor,
+    AccountHistoryRecord, AccountTransferFailure, AccountTransferFrame, AccountTransferHistory,
+    AccountTransferHistoryResult, AccountTransferInvite, AccountTransferItem, AccountTransferRole,
+    AccountTransferStatus, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES, MAX_ACCOUNT_TRANSFER_CHUNK_ITEMS,
+    MAX_ACCOUNT_TRANSFER_DIRECT_ADDRS, MAX_ACCOUNT_TRANSFER_FRAME_BYTES,
+    MAX_ACCOUNT_TRANSFER_LINK_BYTES,
+};
 pub use crypto::{
     DocsAuthorSeed, KukuriKeys, LEGACY_SECRET_HRP, encode_secret_key_bech32, generate_keys,
     is_placeholder_secret,
@@ -129,11 +152,17 @@ pub use game::{
 };
 pub use identity_export::{
     ACCOUNT_KEY_EXPORT_KDF, ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS, ACCOUNT_KEY_EXPORT_PREFIX,
-    ACCOUNT_KEY_EXPORT_VERSION, AccountKeyExportPreview, decrypt_account_key_export,
+    ACCOUNT_KEY_EXPORT_VERSION, AccountKeyExportPreview, PassphraseKdf, decrypt_account_key_export,
     encrypt_account_key_export, preview_account_key_export,
 };
 pub use ids::{
     BlobHash, ChannelId, EnvelopeId, Pubkey, ReplicaId, TopicId, author_profile_topic_id,
+};
+pub use link_preview::{
+    KukuriLinkPreviewContentV1, KukuriLinkPreviewImageV1, LINK_PREVIEW_KIND,
+    LINK_PREVIEW_MAX_DESCRIPTION_CHARS, LINK_PREVIEW_MAX_IMAGE_BYTES,
+    LINK_PREVIEW_MAX_SITE_NAME_CHARS, LINK_PREVIEW_MAX_TITLE_CHARS, LINK_PREVIEW_MAX_URL_BYTES,
+    build_link_preview_envelope, link_preview_image_mime, verify_link_preview,
 };
 pub use live::{
     LiveSessionManifestBlobV1, LiveSessionStateDocV1, LiveSessionStatus, LiveSignalKind,
@@ -175,8 +204,8 @@ pub use private_channels::{
     KukuriPrivateChannelInviteEnvelopeContentV1, PrivateChannelEpochHandoffGrantDocV1,
     PrivateChannelEpochHandoffGrantPayloadV1, PrivateChannelInvitePreview,
     PrivateChannelInviteTokenParams, PrivateChannelInviteTokenV1, PrivateChannelJoinMode,
-    PrivateChannelMetadataDocV1, PrivateChannelParticipantDocV1, PrivateChannelPolicyDocV1,
-    build_friend_only_grant_token, build_friend_plus_share_token,
+    PrivateChannelKeyRowSeal, PrivateChannelMetadataDocV1, PrivateChannelParticipantDocV1,
+    PrivateChannelPolicyDocV1, build_friend_only_grant_token, build_friend_plus_share_token,
     build_private_channel_epoch_handoff_grant_envelope, build_private_channel_invite_token,
     build_private_channel_participant_envelope, build_private_channel_policy_envelope,
     decrypt_private_channel_epoch_handoff_grant, encrypt_private_channel_epoch_handoff_grant,

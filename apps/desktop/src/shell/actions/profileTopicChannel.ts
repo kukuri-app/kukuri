@@ -539,6 +539,33 @@ export function createProfileTopicChannelActions({
     }
   }
 
+  // 結果は設定の dialog が示す。失敗は channelError に出して null を返す(#1219 AC-4)。
+  async function handleTakePrivateChannelController() {
+    if (!activePrivateChannel) {
+      return null;
+    }
+    const topicId = activeTopic;
+    const channelId = activePrivateChannel.channel_id;
+    setChannelActionPending('take');
+    try {
+      const result = await api.takePrivateChannelController(topicId, channelId);
+      if (result === 'taken') {
+        setJoinedChannelsByTopic(updateRecordEntry(topicId, (prev) => (prev ?? []).map((channel) =>
+          channel.channel_id === channelId ? { ...channel, controller: 'this_device' } : channel
+        )));
+      }
+      setChannelError(null);
+      return result;
+    } catch (takeError) {
+      setChannelError(
+        messageFromError(takeError, translate('channels:errors.failedTakeController'))
+      );
+      return null;
+    } finally {
+      setChannelActionPending(null);
+    }
+  }
+
   async function activateImportedPrivateChannel(
     topicId: string,
     channelId: string,
@@ -850,6 +877,7 @@ export function createProfileTopicChannelActions({
     handleCreatePrivateChannel,
     handleLeavePrivateChannel,
     handleShareChannelAccess,
+    handleTakePrivateChannelController,
     handleJoinChannelAccess,
     handleImportChannelAccessToken,
     handleSaveDiscoverySeeds,

@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use secp256k1::XOnlyPublicKey;
@@ -81,6 +81,16 @@ pub enum GossipHint {
     DirectMessageAck {
         topic_id: TopicId,
         ack: DirectMessageAckV1,
+    },
+    /// 本人の端末の account 同期の変更の手掛かり（ADR 0061 §10）。書いた端末の ID と、その変更の窓の head の seq
+    /// だけを運び、item の内容を含まない。
+    AccountSyncChanged {
+        device_id: String,
+        seq: u64,
+        /// 送った時刻(ミリ秒)。gossip は同じ内容の message を重複として落とすので、鍵更新の依頼を待つ間に送り直す
+        /// hint を別の message にする(#1220 AC-3c2)。旧版は読まずに無視する。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sent_at: Option<i64>,
     },
 }
 
