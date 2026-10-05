@@ -586,7 +586,7 @@ async function reopenAuthorProfile(browser, authorPost, author) {
   if (await opened.isExisting()) {
     // 列の menu から閉じる（電話の幅では列の見出しの閉じる button は出ない）。
     await opened.$('button[aria-label^="Open "][aria-label$=" menu"]').click();
-    await browser.$('button[role=menuitem]*=Close').click();
+    await browser.$('//button[@role="menuitem"][starts-with(normalize-space(.), "Close ")]').click();
     await opened.waitForExist({ reverse: true, timeout: WAIT });
   }
   await showNewPosts(browser);
