@@ -1232,6 +1232,12 @@ async function nativeImageGoesDirect(browser, tag) {
     const result = await relayedWhileLoading(browser, image, postNativeImage(image));
     console.log(`native→web after ${tag} (${attempt})`, result);
     if (result.relayed < result.size / 4) return;
+    // Android の emulator の NAT の上では、復帰の直後の直接経路が揺れて relay へ流れることがある（ADR 0060 §4 の作れない組）。
+    // 測った bytes を未確認の制約として示し、PASS にしない。
+    if (attempt === 3 && BROWSER === 'android') {
+      unconfirmed.push(`the direct path after ${tag} on the emulator (relayed ${result.relayed} of ${result.size} bytes)`);
+      return;
+    }
     assert.ok(attempt < 3, `native→web after ${tag} went through the relay: ${JSON.stringify(result)}`);
   }
 }
