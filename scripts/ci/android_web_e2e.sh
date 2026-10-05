@@ -8,6 +8,8 @@ adb wait-for-device
 # Chrome の初回の画面（利用規約・同期の案内）を出さない。
 adb shell am set-debug-app --persistent com.android.chrome
 adb shell "echo '_ --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line"
+# 物理の keyboard があるときは画面の keyboard を出さない（workflow の enable-hw-keyboard と組）。
+adb shell settings put secure show_ime_with_hard_keyboard 0
 
 # emulator の Chrome の版に合う chromedriver（Chrome for Testing は 115 から。それより前は旧い配布先）。
 version=$(adb shell dumpsys package com.android.chrome | sed -n 's/.*versionName=\([0-9.]*\).*/\1/p' | head -1)
