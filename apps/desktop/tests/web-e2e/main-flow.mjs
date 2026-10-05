@@ -345,6 +345,12 @@ async function relayedWhileLoading(browser, content, publish) {
 /** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
 function assertRoute(name, result, direct) {
   console.log(name, result);
+  // Safari と同じ runner の Chrome との Web↔Web の直接経路は、Safari の判定の範囲の外（ADR 0060 §4）。測った bytes だけを示す。
+  if (BROWSER === 'safari' && direct && name.startsWith('web→web')) {
+    const note = 'the direct path between Safari and Chrome (outside the range judged on Safari)';
+    if (!unconfirmed.includes(note)) unconfirmed.push(note);
+    return;
+  }
   assert.ok(
     direct ? result.relayed < result.size / 4 : result.relayed >= result.size * 0.9,
     `${name} ${direct ? 'went through' : 'did not use'} the relay: ${JSON.stringify(result)}`
@@ -923,7 +929,10 @@ async function transferAccount(from, name, account, { history = null, duringHist
   assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
   if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
   if (cut !== null) {
-    assert.ok(await browser.execute(() => window.__kukuriCut.done), `${browser.label} loses its WebRTC paths during the transfer`);
+    // Safari と同じ runner の Chrome の間には WebRTC の経路が張れず、移行の途中に落とす経路が無い（ADR 0060 §4）。
+    const lost = await browser.execute(() => window.__kukuriCut.done);
+    if (BROWSER === 'safari' && !lost) unconfirmed.push('losing the WebRTC paths during a transfer from Safari to Chrome');
+    else assert.ok(lost, `${browser.label} loses its WebRTC paths during the transfer`);
     await browser.execute(() => {
       window.__kukuriCut.released = true;
     });
@@ -1741,29 +1750,6 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
-    // DIAG（一時）
-    await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
-    for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
-    if (BROWSER === 'safari') {
-      // DIAG（一時）: 各 window の Web Locks の状態。
-      const safari = clients[0];
-      for (const handle of await safari.getWindowHandles().catch(() => [])) {
-        await safari.switchToWindow(handle).catch(() => undefined);
-        const locks = await safari.execute(async () => JSON.stringify(await navigator.locks.query())).catch((e) => String(e));
-        console.info('DIAG locks', handle, await safari.getUrl().catch(() => ''), locks);
-      }
-    }
-    for (const client of clients) {
-      const events = await client
-        .execute(() => [
-          document.hasFocus(),
-          document.visibilityState,
-          [...document.querySelectorAll('[role=dialog]')].map((dialog) => [...dialog.querySelectorAll('button')].map((b) => b.textContent)),
-          ...(window.__kukuriDiag?.slice(-60) ?? []),
-        ])
-        .catch((e) => String(e));
-      console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
-    }
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);
