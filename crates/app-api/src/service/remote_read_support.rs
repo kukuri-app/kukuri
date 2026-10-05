@@ -253,6 +253,13 @@ impl AppService {
                 let mut read_past = None;
                 let mut reaction_targets_left =
                     super::replica_window::REMOTE_RANGE_CHECK_REACTION_TARGETS;
+                // 既に projection にある投稿の reaction の窓は、台帳つきの表示の照合だけが読み直す(#1567 AC-2)。
+                // 起動時・日境界・溢れの読み直し(台帳なし)では読まない(読む量を変えない)。
+                let mut present_reaction_targets_left = if ledger {
+                    super::replica_window::REMOTE_RANGE_CHECK_REACTION_TARGETS
+                } else {
+                    0
+                };
                 loop {
                     let wanted = range
                         .limit
@@ -314,6 +321,7 @@ impl AppService {
                                 &page.entries,
                                 DocFetchPolicy::LocalThenRemote,
                                 &mut reaction_targets_left,
+                                &mut present_reaction_targets_left,
                             )
                             .await?,
                         );

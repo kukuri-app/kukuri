@@ -25,11 +25,7 @@ import {
 
 import { authorDisplayLabel } from '@/shell/presentation';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
-import {
-  activateColumn,
-  activeWorkspaceScope,
-  timelineColumnIdForScope,
-} from '@/shell/slices/workspace';
+import { activeWorkspaceScope } from '@/shell/slices/workspace';
 import type { Translate } from '@/shell/actions/shared';
 import type { useShellDialogs } from '@/shell/page/useShellDialogs';
 import type { useSharePreview } from '@/shell/page/useSharePreview';
@@ -260,7 +256,6 @@ export function DesktopShellOverlays({
   );
   const channelDialogFocus = useDialogReturnFocus();
   const channelSettingsFocus = useDialogReturnFocus();
-  const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
   const setChannelLabelInput = useDesktopShellFieldSetter('channelLabelInput');
   const setChannelAudienceInput = useDesktopShellFieldSetter('channelAudienceInput');
   const setInviteTokenInput = useDesktopShellFieldSetter('inviteTokenInput');
@@ -347,15 +342,6 @@ export function DesktopShellOverlays({
               onSelectJoinedChannel={(channelId) => {
                 setChannelDialogOpen(false);
                 handleSelectPrivateChannel(activeTopic, channelId);
-                // Issue #1517: handleSelectPrivateChannel は公開の Column を active にし、channel の
-                // Column は route の同期で後から active になる。閉じる時点で active にしておき、
-                // focus を開いた要素ではなく channel の Column へ戻す。
-                setWorkspaceState((current) =>
-                  activateColumn(
-                    current,
-                    timelineColumnIdForScope(current, { topicId: activeTopic, channelId })
-                  )
-                );
               }}
               onOpenJoinedChannelSettings={(channelId) => {
                 setChannelDialogOpen(false);

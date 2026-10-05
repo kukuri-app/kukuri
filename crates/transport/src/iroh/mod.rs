@@ -39,7 +39,6 @@ use kukuri_core::{HintObjectRef, KukuriEnvelope, build_post_envelope, generate_k
 use n0_future::task::JoinHandle;
 use n0_future::time::{sleep, timeout};
 use tokio::sync::{Mutex, Notify, RwLock, Semaphore, broadcast, watch};
-use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, info, warn};
 
 use crate::config::ConnectivityPeerKind;

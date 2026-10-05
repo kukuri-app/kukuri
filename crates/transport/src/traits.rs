@@ -3,11 +3,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 pub use iroh::EndpointAddr;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId};
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
 use crate::config::{
     ConnectionPath, ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, SeedPeer,
@@ -78,6 +79,84 @@ pub struct HintEnvelope {
     pub hint: GossipHint,
     pub received_at: i64,
     pub source_peer: String,
+    /// この envelope の前に、受け手へ渡せずに捨てた hint の数(購読 stream の broadcast が溢れた `Lagged` と、gossip 層の
+    /// `Lagged` を次の envelope に畳んだもの)。受け手は 1 以上なら取りこぼしがあったとみなす(#1567 AC-1)。
+    #[serde(default)]
+    pub dropped_before: u64,
+}
+
+/// broadcast の購読を hint の stream にする。受け手が遅れて捨てられた分(`Lagged(n)`)は黙って落とさず、次に届く envelope の
+/// `dropped_before` に畳んで渡す(#1567 AC-1)。
+pub fn hint_stream_from_sender(sender: &broadcast::Sender<HintEnvelope>) -> HintStream {
+    let stream = BroadcastStream::new(sender.subscribe())
+        .scan(0u64, |dropped, event| {
+            std::future::ready(Some(match event {
+                Ok(mut envelope) => {
+                    envelope.dropped_before = envelope
+                        .dropped_before
+                        .saturating_add(std::mem::take(dropped));
+                    Some(envelope)
+                }
+                Err(BroadcastStreamRecvError::Lagged(count)) => {
+                    *dropped = dropped.saturating_add(count);
+                    None
+                }
+            }))
+        })
+        .filter_map(std::future::ready);
+    Box::pin(stream)
+}
+
+#[cfg(test)]
+mod hint_stream_tests {
+    use super::*;
+
+    fn envelope(received_at: i64) -> HintEnvelope {
+        HintEnvelope {
+            hint: GossipHint::ProfileUpdated {
+                author: Pubkey::from("a".repeat(64)),
+            },
+            received_at,
+            source_peer: String::new(),
+            dropped_before: 0,
+        }
+    }
+
+    // #1567 AC-1: 受け手を読まずに容量 + k 件送ってから読むと、届く envelope は容量ぶんで、捨てた k 件は最初の envelope に載る。
+    #[tokio::test]
+    async fn dropped_hints_are_counted_on_the_next_envelope() {
+        let capacity = 4;
+        let dropped = 3;
+        let (sender, receiver) = broadcast::channel(capacity);
+        let mut stream = hint_stream_from_sender(&sender);
+        drop(receiver);
+        for index in 0..(capacity + dropped) {
+            sender
+                .send(envelope(index as i64))
+                .expect("the stream subscribes");
+        }
+        let mut delivered = Vec::new();
+        while let Some(envelope) = stream.next().await {
+            delivered.push(envelope);
+            if delivered.len() == capacity {
+                break;
+            }
+        }
+        assert_eq!(delivered[0].received_at, dropped as i64);
+        assert_eq!(delivered[0].dropped_before, dropped as u64);
+        assert!(
+            delivered[1..]
+                .iter()
+                .all(|envelope| envelope.dropped_before == 0)
+        );
+        assert_eq!(
+            delivered
+                .iter()
+                .map(|envelope| envelope.dropped_before)
+                .sum::<u64>(),
+            dropped as u64
+        );
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

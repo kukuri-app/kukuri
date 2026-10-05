@@ -347,6 +347,7 @@ export function DesktopShellSettingsDrawer({
             void handleSetCommunityNodeTrustPriority(priority);
           }}
           observationSharing={{
+            settingsOpen: shellChromeState.settingsOpen,
             getObservationSharing: (baseUrl) => api.getCommunityNodeObservationSharing(baseUrl),
             enableObservationSharing: (request) =>
               api.enableCommunityNodeObservationSharing(request),

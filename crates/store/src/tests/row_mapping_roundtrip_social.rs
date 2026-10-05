@@ -330,7 +330,19 @@ async fn block_edge_roundtrip_and_latest_wins() {
         Store::list_block_edges_by_target(&store, target.as_str())
             .await
             .expect("list by target"),
-        vec![active]
+        vec![active.clone()]
+    );
+    assert_eq!(
+        Store::get_block_edge(&store, subject.as_str(), target.as_str())
+            .await
+            .expect("get the edge"),
+        Some(active)
+    );
+    assert_eq!(
+        Store::get_block_edge(&store, target.as_str(), subject.as_str())
+            .await
+            .expect("the reverse direction is another edge"),
+        None
     );
 }
 

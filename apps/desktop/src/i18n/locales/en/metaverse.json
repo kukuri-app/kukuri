@@ -32,6 +32,7 @@
     "admitting": "Checking access and finding a safe spawn point…",
     "noAvailable": "No Dome is currently available. Choose a hosted Dome when one becomes available.",
     "hostUnavailable": "Host unavailable",
+    "hostUnreachable": "Couldn't connect to the owner's device. Please try again later.",
     "settingTitle": "Channel entry Dome",
     "none": "No configured Dome",
     "save": "Save entry Dome",

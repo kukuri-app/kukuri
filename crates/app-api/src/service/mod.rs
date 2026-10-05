@@ -179,6 +179,8 @@ pub(crate) use reaction_hydration::{
     hydrate_reaction_cache_for_target_bounded, hydrate_reaction_cache_from_key,
 };
 mod reaction_integrity;
+mod received_dome_heartbeats;
+pub(crate) use received_dome_heartbeats::ReceivedDomeHeartbeats;
 mod remote_read_support;
 mod replica_window;
 pub(crate) use replica_window::RangeReconcile;
@@ -536,8 +538,7 @@ pub struct AppService {
     pub(crate) subscription_registry: SubscriptionRegistry,
     pub(crate) joined_private_channels: Arc<Mutex<HashMap<String, JoinedPrivateChannelState>>>,
     pub(crate) metaverse_room_events: Arc<Mutex<HashMap<String, VecDeque<MetaverseRoomEventView>>>>,
-    pub(crate) dome_host_heartbeats:
-        Arc<Mutex<HashMap<String, kukuri_core::SignedDomeHostHeartbeatV1>>>,
+    pub(crate) dome_host_heartbeats: Arc<Mutex<ReceivedDomeHeartbeats>>,
     pub(crate) dome_host_sessions: Arc<Mutex<HashMap<String, DomeSessionRuntime>>>,
     pub(crate) metaverse_blob_cache: Arc<Mutex<MetaverseBlobCacheIndex>>,
     pub(crate) metaverse_resource_budget: kukuri_core::MetaverseResourceBudgetConfig,
@@ -675,7 +676,7 @@ impl AppService {
             subscription_registry: SubscriptionRegistry::default(),
             joined_private_channels,
             metaverse_room_events: Arc::new(Mutex::new(HashMap::new())),
-            dome_host_heartbeats: Arc::new(Mutex::new(HashMap::new())),
+            dome_host_heartbeats: Arc::default(),
             dome_host_sessions: Arc::new(Mutex::new(HashMap::new())),
             metaverse_blob_cache: Arc::new(Mutex::new(cache)),
             metaverse_resource_budget: budget,

@@ -32,6 +32,7 @@
     "admitting": "参加条件を確認し、安全な出現位置を探しています…",
     "noAvailable": "現在入場できるDomeがありません。稼働中のDomeができたら選択してください。",
     "hostUnavailable": "ホスト停止中",
+    "hostUnreachable": "所有者の端末に接続できませんでした。時間をおいてもう一度お試しください。",
     "settingTitle": "チャンネルの入場先Dome",
     "none": "指定なし",
     "save": "入場先Domeを保存",

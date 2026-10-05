@@ -81,6 +81,7 @@ use crate::stack::SharedIrohStack;
 
 mod community_node_api;
 mod content_profile_api;
+mod dome_session_api;
 mod identity_api;
 #[cfg(not(target_family = "wasm"))]
 mod legacy_store_retirement;
@@ -129,7 +130,7 @@ pub enum RuntimeEvent {
 }
 
 pub struct DesktopRuntime {
-    pub(crate) app_service: AppService,
+    pub(crate) app_service: Arc<AppService>,
     pub(crate) author_keys: Arc<KukuriKeys>,
     pub(crate) db_path: PathBuf,
     pub(crate) identity_mode: IdentityStorageMode,
@@ -529,9 +530,10 @@ impl DesktopRuntime {
                 .as_deref(),
         )?;
         let status_changes = iroh_stack.status_changes.clone();
-        let app_service =
+        let app_service = Arc::new(
             AppService::from_handles_with_metaverse_budget(services, metaverse_budget)?
-                .with_status_changes(status_changes.clone());
+                .with_status_changes(status_changes.clone()),
+        );
         // #1221 R5-H: 保存済みの切替状態は、最初の書込みより前に渡す(再起動で旧 writer へ戻らない)。
         if let Some(switched_at) = writer_switched_at {
             app_service.switch_writer(switched_at);
@@ -592,6 +594,12 @@ impl DesktopRuntime {
             tracing::warn!(%error, "account receive route could not start; legacy receivers remain active");
         }
         app_service.resume_direct_message_state().await?;
+        // 所有者の端末で稼働中の Dome へ、別の端末の participant が入る受け口(ADR 0038 #1527)。初期化の後に付ける。
+        iroh_stack
+            .use_dome_session_handler(dome_session_api::dome_session_handler(Arc::downgrade(
+                &app_service,
+            )))
+            .await?;
 
         // #1211 AC-2・AC-3: 移行で保存した必須 bundle と履歴があれば、背景で反映する。#1219 AC-4: 復元の後なら担当を
         // 引き取る。

@@ -58,12 +58,7 @@ impl AppService {
         self.dome_host_heartbeats
             .lock()
             .await
-            .iter()
-            .filter(|(instance_id, signed)| {
-                dome_instance_id(context, &signed.heartbeat.host_pubkey) == **instance_id
-            })
-            .map(|(_, signed)| signed.heartbeat.host_pubkey.clone())
-            .collect()
+            .hosts(context, Utc::now().timestamp_millis())
     }
 
     async fn context_dome_view(

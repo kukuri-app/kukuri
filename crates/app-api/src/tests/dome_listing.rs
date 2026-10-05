@@ -384,7 +384,7 @@ async fn a_hosted_dome_is_listed_from_the_heartbeat_and_the_owner_control_area()
     owner
         .start_owner_dome_hosting(crate::StartOwnerDomeHostingInput {
             expected_generation: None,
-            spatial_context: context,
+            spatial_context: context.clone(),
             instance_id: dome_id.clone(),
             endpoint_id: "owner-endpoint".into(),
             lease_duration_millis: 60_000,
@@ -410,11 +410,12 @@ async fn a_hosted_dome_is_listed_from_the_heartbeat_and_the_owner_control_area()
         .expect("owner session")
         .signed_heartbeat(Utc::now().timestamp_millis())
         .expect("signed heartbeat");
-    visitor
-        .dome_host_heartbeats
-        .lock()
-        .await
-        .insert(dome_id.clone(), heartbeat);
+    assert!(visitor.dome_host_heartbeats.lock().await.record(
+        &context,
+        &dome_id,
+        heartbeat,
+        Utc::now().timestamp_millis()
+    ));
     let rooms = visitor.list_game_rooms(TOPIC).await.unwrap();
     let room = rooms
         .iter()

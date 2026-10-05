@@ -38,12 +38,14 @@ import {
 } from '../MetaverseSceneModel';
 import {
   chatMessageFromApi,
+  keepAliveEvacuationReason,
   latestChatBubbleFromMessage,
   topicDiagnosticFor,
 } from './MetaverseRoomSessionSupport';
 import { useSpatialAudio } from './useSpatialAudio';
 import { mergePeerPresence, useMetaverseBackendEvents } from './useMetaverseBackendEvents';
 import {
+  domeEntryErrorMessage,
   readLastVisitedDome,
   resolveDomeEntryOrder,
   spatialContextKey,
@@ -516,23 +518,23 @@ export function useMetaverseRoomSession({
       });
   }, [admittedRoom, applyPhysicsSnapshot, domeRecovery.state, submitInputForRoom]);
 
+  // 一覧の取り直しで部屋の object が作り直されても、5 秒ごとの keepalive を止めない(ADR 0045、#1527)。
+  const keepAliveRef = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (!admittedRoom?.metaverse || domeRecovery.state !== 'online') return;
-    const keepAlive = () => {
-      void submitInputForRoom(admittedRoom, { type: 'keep_alive' })
-        .then(applyPhysicsSnapshot)
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.includes('BLOCKED') || message.includes('VISITOR_BLOCKED')) {
-            setPendingEvacuationReason('blocked');
-          } else if (message.includes('ACCESS_DENIED') || message.includes('ACCESS_REVOKED')) {
-            setPendingEvacuationReason('access_revoked');
-          }
-        });
+    keepAliveRef.current = () => {
+      if (!admittedRoom?.metaverse) return;
+      void submitInputForRoom(admittedRoom, { type: 'keep_alive' }).then(applyPhysicsSnapshot).catch((error: unknown) => {
+        const reason = keepAliveEvacuationReason(error);
+        if (reason) setPendingEvacuationReason(reason);
+      });
     };
-    const intervalId = window.setInterval(keepAlive, 5_000);
+  });
+  const admittedKey = admittedRoom?.metaverse ? `${admittedRoom.room_id}:${admittedRoom.metaverse.instance_generation}` : null;
+  useEffect(() => {
+    if (!admittedKey || domeRecovery.state !== 'online') return;
+    const intervalId = window.setInterval(() => keepAliveRef.current(), 5_000);
     return () => window.clearInterval(intervalId);
-  }, [admittedRoom, applyPhysicsSnapshot, domeRecovery.state, submitInputForRoom]);
+  }, [admittedKey, domeRecovery.state]);
 
   useEffect(() => {
     if (!admittedRoom || domeRecovery.state !== 'online') {
@@ -675,10 +677,7 @@ export function useMetaverseRoomSession({
     try {
       const avatarCollider = await resolveLocalAvatarCollider();
       if (attempt !== admissionAttempt.current) return false;
-      const snapshot = await submitInputForRoom(room, {
-        type: 'join',
-        avatar_collider: avatarCollider,
-      });
+      const snapshot = await submitInputForRoom(room, { type: 'join', avatar_collider: avatarCollider });
       if (attempt !== admissionAttempt.current) return false;
       if (snapshot.instance_id !== room.metaverse.instance_id || snapshot.instance_generation !== room.metaverse.instance_generation) throw new Error('DOME_ENTRY_STALE_INSTANCE');
       const body = snapshot.bodies.find(
@@ -719,7 +718,7 @@ export function useMetaverseRoomSession({
         setAdmissionStatus('joined');
       }
       if (reportError) {
-        onError(entryError instanceof Error ? entryError.message : 'Dome entry failed');
+        onError(domeEntryErrorMessage(entryError, t));
       }
       return false;
     }
@@ -735,6 +734,7 @@ export function useMetaverseRoomSession({
     rooms,
     submitInputForRoom,
     syncStatus.local_author_pubkey,
+    t,
   ]);
 
   const evacuate = useCallback(async (

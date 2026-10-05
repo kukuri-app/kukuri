@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { MarkdownDocument } from '@/components/MarkdownDocument';
@@ -21,6 +21,8 @@ import { TRUST_OBSERVATION_SHARING_POLICY_SLUG } from '@/lib/api/observationShar
 /// 提供はノードの任意同意文書への同意で成立する（ADR 0026 §8.5）。文書を公開していない
 /// ノードでは選択肢を出さない。やめると、そのノードに保存された観測の削除を要求する。
 export type CommunityNodeObservationSharingHandlers = {
+  /// 設定を開いている間だけ照会し、開くたびに照会し直す（省略時は開いている扱い）。
+  settingsOpen?: boolean;
   getObservationSharing: (baseUrl: string) => Promise<CommunityNodeObservationSharingStatus>;
   enableObservationSharing: (request: {
     base_url: string;
@@ -44,6 +46,7 @@ export function CommunityNodeObservationSharingField({
   baseUrl,
   disabled = false,
   language,
+  settingsOpen = true,
   getObservationSharing,
   enableObservationSharing,
   disableObservationSharing,
@@ -57,18 +60,18 @@ export function CommunityNodeObservationSharingField({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [includeExisting, setIncludeExisting] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!baseUrl.trim()) return;
+  // handlers は親が描画し直すたびに作り直されるので、照会の契機にしない（#1546）。
+  const load = useEffectEvent(async (url: string) => {
     try {
-      setStatus(await getObservationSharing(baseUrl));
+      setStatus(await getObservationSharing(url));
     } catch {
       setStatus(null);
     }
-  }, [baseUrl, getObservationSharing]);
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (settingsOpen && baseUrl.trim()) void load(baseUrl);
+  }, [baseUrl, settingsOpen]);
 
   // 文書を公開していないノードでは提供の選択肢を出さない。
   if (

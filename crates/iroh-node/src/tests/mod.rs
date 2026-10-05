@@ -1,3 +1,4 @@
+mod dome_session;
 mod legacy;
 mod node;
 mod page_read;

@@ -211,7 +211,7 @@ impl AppService {
         self.dome_host_heartbeats
             .lock()
             .await
-            .remove(&input.instance_id);
+            .remove(&input.spatial_context, &input.instance_id);
         let mut manifest = operation.manifest.clone();
         let metaverse = manifest.metaverse.as_mut().context("Dome state missing")?;
         metaverse.instance_status = DomeInstanceStatusV1::Tombstoned;

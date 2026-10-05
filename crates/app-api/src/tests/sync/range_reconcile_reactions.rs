@@ -2,7 +2,8 @@
 //!
 //! 独立監査(PR #1247 の delta)の再現 test を恒久化したものを含む。
 
-use super::range_reconcile::{BASE_TIME, put_post_at};
+use super::hint_window::{hold_off_the_day_boundary, presence_marker, wait_until_consumed};
+use super::range_reconcile::{BASE_TIME, project, put_post_at};
 use super::range_reconcile_access::{RecordingDocsSync, recording_app_with_blobs};
 use super::*;
 use crate::service::reaction_hydration::REACTION_KEYS_PER_LEAD;
@@ -84,8 +85,9 @@ async fn reconcile_a_post_with_reactions(topic: &str, reactions: usize) -> (usiz
     (rows.len(), reads)
 }
 
-// reaction を読むのは、投稿が projection に入るときの 1 回だけ。projection に既にある投稿では読まない
-// (ADR 0052 §2)。「既にある」側でも reaction を読む形にすると、表示のたびに投稿の数ぶんの読み出しが走る。
+// 手元の replica の照合が reaction を読むのは、投稿が projection に入るときの 1 回だけ。projection に既にある投稿では
+// 読まない(ADR 0052 §2)。「既にある」側でも reaction を読む形にすると、表示のたびに投稿の数ぶんの読み出しが走る。
+// provider からの表示の照合だけが、ページの新しい側 8 件までを上限つきで読み直す(#1567 AC-2。下の test)。
 #[tokio::test]
 async fn reactions_are_read_only_when_the_post_enters_the_projection() {
     let topic = "kukuri:topic:range-reactions-once";
@@ -346,4 +348,218 @@ async fn one_reconcile_reads_the_reactions_of_a_bounded_number_of_posts() {
     }
     viewer.shutdown().await;
     assert_eq!(with_reactions, RANGE_CHECK_REACTION_TARGETS);
+}
+
+/// #1567 AC-2 の fixture。topic の投稿は provider にあり、viewer ではすべて projection にある(present)。新しい側 20 件には
+/// 他端末(`author`)の reaction が 1 件ずつ付いている。viewer は列を開いていて、lease の task の起動時の読み直しは終わっている。
+struct PresentFixture {
+    viewer: AppService,
+    viewer_store: Arc<MemoryStore>,
+    author: AppService,
+    provider: Arc<CountingDocsSync>,
+    topic: String,
+    replica: ReplicaId,
+    /// 新しい順の object id(新しい側 20 件)。
+    newest: Vec<String>,
+}
+
+async fn present_fixture(name: &str, posts: usize) -> PresentFixture {
+    let topic = format!("kukuri:topic:present-reactions-{name}-{posts}");
+    let topic_id = TopicId::new(topic.as_str());
+    let replica = topic_replica_id(topic.as_str());
+    let provider = Arc::new(CountingDocsSync::default());
+    let blobs = Arc::new(MemoryBlobService::default());
+    let author_store = Arc::new(MemoryStore::default());
+    let author = app_service_from_dependencies(
+        author_store.clone(),
+        author_store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        provider.clone(),
+        blobs.clone(),
+        generate_keys(),
+    );
+    let viewer_store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let viewer = app_service_from_dependencies(
+        viewer_store.clone(),
+        viewer_store.clone(),
+        transport.clone(),
+        transport.clone(),
+        Arc::new(CountingDocsSync::reading_from(provider.clone())),
+        blobs,
+        generate_keys(),
+    );
+    let poster = generate_keys();
+    let mut objects = Vec::with_capacity(posts);
+    for index in 0..posts {
+        let post = put_post_at(
+            provider.as_ref(),
+            &replica,
+            &poster,
+            &topic_id,
+            BASE_TIME + index as i64,
+            format!("post {index}").as_str(),
+            None,
+        )
+        .await;
+        project(viewer_store.as_ref(), &post, &replica).await;
+        objects.push(post);
+    }
+    let newest = objects
+        .iter()
+        .rev()
+        .take(20)
+        .map(|post| post.object_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    for object_id in &newest {
+        author
+            .toggle_reaction(
+                topic.as_str(),
+                object_id.as_str(),
+                ReactionKeyV1::Emoji {
+                    emoji: "👍".into()
+                },
+                Some(ChannelRef::Public),
+            )
+            .await
+            .expect("another device reacts");
+    }
+    display_topic(&viewer, topic.as_str())
+        .await
+        .expect("open the topic column");
+    let sender = transport.hint_sender(&topic_id).await;
+    sender
+        .send(presence_marker(&topic_id, 0))
+        .expect("the topic subscription listens for hints");
+    wait_until_consumed(&sender).await;
+    provider.clear_queries().await;
+    PresentFixture {
+        viewer,
+        viewer_store,
+        author,
+        provider,
+        topic,
+        replica,
+        newest,
+    }
+}
+
+impl PresentFixture {
+    async fn reaction_rows(&self, object_id: &str) -> usize {
+        let projection_store: &dyn ProjectionStore = self.viewer_store.as_ref();
+        projection_store
+            .list_reaction_cache_for_target(&self.replica, &EnvelopeId::from(object_id))
+            .await
+            .expect("reaction rows")
+            .len()
+    }
+
+    /// 表示の照合(台帳つき)を 1 回走らせる。
+    async fn display_page(&self) {
+        self.viewer
+            .list_timeline(self.topic.as_str(), None, 20)
+            .await
+            .expect("timeline page");
+    }
+}
+
+/// 表示の照合 1 回の、provider への key 一覧の回数と、新しい側 20 件のうち reaction が projection に入った投稿の数。
+async fn observe_present_reactions(posts: usize) -> (usize, usize, bool) {
+    let fixture = present_fixture("bounded", posts).await;
+    let keys_before = fixture.provider.key_queries();
+    fixture.display_page().await;
+    let key_queries = fixture.provider.key_queries() - keys_before;
+    let mut with_reactions = 0usize;
+    for object_id in &fixture.newest {
+        with_reactions += usize::from(fixture.reaction_rows(object_id).await > 0);
+    }
+    let ninth_has_reactions = fixture.reaction_rows(fixture.newest[8].as_str()).await > 0;
+    fixture.viewer.shutdown().await;
+    fixture.author.shutdown().await;
+    (key_queries, with_reactions, ninth_has_reactions)
+}
+
+// #1567 AC-2: 表示の照合(台帳つき)で provider から読んだページの present 行は、新しい側から
+// `REMOTE_RANGE_CHECK_REACTION_TARGETS` 件まで reaction の窓を読み直す。読む量は topic の投稿数に依存しない。
+// 修正前は、既に projection にある投稿の reaction は照合では一切入らなかった。
+#[tokio::test]
+async fn display_reconcile_refreshes_the_reactions_of_a_bounded_number_of_present_posts() {
+    use crate::service::reaction_hydration::REACTION_KEYS_PER_LEAD;
+    use crate::service::replica_window::REMOTE_RANGE_CHECK_REACTION_TARGETS;
+
+    hold_off_the_day_boundary();
+    let mut observed = Vec::new();
+    for posts in [20usize, 200, 2000] {
+        observed.push((posts, observe_present_reactions(posts).await));
+    }
+    for (posts, (key_queries, with_reactions, ninth_has_reactions)) in &observed {
+        assert_eq!(
+            *with_reactions, REMOTE_RANGE_CHECK_REACTION_TARGETS,
+            "{posts} posts: the newest present rows get their reactions, up to the limit"
+        );
+        assert!(
+            !ninth_has_reactions,
+            "{posts} posts: the row past the limit is not read in this reconcile"
+        );
+        // 時系列索引の一覧(replica ごと)と、対象ごとの reaction の一覧(打ち切られたときは先頭 1 文字ごとの 16 回を足す)。
+        let _ = REACTION_KEYS_PER_LEAD;
+        assert!(
+            *key_queries > 0 && *key_queries <= 3 + REMOTE_RANGE_CHECK_REACTION_TARGETS * 17,
+            "{posts} posts: {key_queries} key listings"
+        );
+    }
+    let key_queries = observed
+        .iter()
+        .map(|(_, (key_queries, _, _))| *key_queries)
+        .collect::<Vec<_>>();
+    assert!(
+        key_queries.windows(2).all(|pair| pair[0] == pair[1]),
+        "the number of key listings must not grow with the number of posts: {key_queries:?}"
+    );
+}
+
+// #1567 AC-2: 他端末が付けた reaction は、台帳の間隔の内では読まず、間隔を過ぎた次の表示の照合で projection に入る。
+#[tokio::test]
+async fn a_reaction_from_another_device_arrives_at_the_next_display_reconcile() {
+    hold_off_the_day_boundary();
+    let fixture = present_fixture("next", 20).await;
+    fixture.display_page().await;
+    let newest = fixture.newest[0].as_str();
+    assert_eq!(fixture.reaction_rows(newest).await, 1);
+
+    fixture
+        .author
+        .toggle_reaction(
+            fixture.topic.as_str(),
+            newest,
+            ReactionKeyV1::Emoji {
+                emoji: "🎉".into()
+            },
+            Some(ChannelRef::Public),
+        )
+        .await
+        .expect("another device reacts again");
+
+    // 台帳の間隔の内: provider を読まず、reaction も増えない。
+    let keys_before = fixture.provider.key_queries();
+    fixture.display_page().await;
+    assert_eq!(
+        fixture.provider.key_queries(),
+        keys_before,
+        "within the ledger interval the provider is not read"
+    );
+    assert_eq!(fixture.reaction_rows(newest).await, 1);
+
+    // 間隔を過ぎた次の照合で入る。
+    fixture
+        .viewer
+        .services
+        .range_checks
+        .expire_all_for_test()
+        .await;
+    fixture.display_page().await;
+    assert_eq!(fixture.reaction_rows(newest).await, 2);
+    fixture.viewer.shutdown().await;
+    fixture.author.shutdown().await;
 }
