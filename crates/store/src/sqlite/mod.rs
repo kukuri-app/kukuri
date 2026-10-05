@@ -172,16 +172,8 @@ impl Store for SqliteStore {
         subject_pubkey: &str,
         target_pubkey: &str,
     ) -> Result<Option<BlockEdge>> {
-        sqlx::query(
-            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
-             FROM block_edges WHERE subject_pubkey = ?1 AND target_pubkey = ?2",
-        )
-        .bind(subject_pubkey)
-        .bind(target_pubkey)
-        .fetch_optional(&self.pool)
-        .await?
-        .map(crate::row_mapping::row_to_block_edge)
-        .transpose()
+        self.store_get_block_edge_impl(subject_pubkey, target_pubkey)
+            .await
     }
 
     async fn list_follow_edges_by_subject_after(

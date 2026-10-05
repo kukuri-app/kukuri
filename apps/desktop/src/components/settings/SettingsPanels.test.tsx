@@ -770,6 +770,46 @@ test('community node panel hides diagnostics but keeps node editing when showDia
   expect(screen.queryByText('Session Activation')).not.toBeInTheDocument();
 });
 
+// #1550: 「Add Node」は欄の label で包まない。読み上げ名は button 自身の文字で、欄の文字を押してもノードは足されない。
+test('community node add button keeps its own name and ignores clicks on the field text', async () => {
+  const user = userEvent.setup();
+  const onAddNode = vi.fn();
+
+  render(
+    <CommunityNodePanel
+      view={createCommunityNodePanelFixture()}
+      saveDisabled={false}
+      resetDisabled={false}
+      clearDisabled={false}
+      onAddNode={onAddNode}
+      onNodeBaseUrlChange={() => {}}
+      onRemoveNode={() => {}}
+      onSaveNodes={() => {}}
+      onReset={() => {}}
+      onClearNodes={() => {}}
+      onAuthenticate={() => {}}
+      onSubmitInviteCode={async () => {}}
+      onFetchConsents={() => {}}
+      onAcceptConsents={() => {}}
+      onWithdrawConsents={() => {}}
+      onRefresh={() => {}}
+      onClearToken={() => {}}
+    />
+  );
+
+  for (const text of [
+    'Configured Nodes',
+    'Each community node has a base URL and requires separate consent before use.',
+    'Save nodes before authenticating.',
+  ]) {
+    await user.click(screen.getByText(text));
+  }
+  expect(onAddNode).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: 'Add Node' }));
+  expect(onAddNode).toHaveBeenCalledTimes(1);
+});
+
 test('developer panel toggle reports the requested developer mode state', async () => {
   const user = userEvent.setup();
   const onDeveloperModeChange = vi.fn();

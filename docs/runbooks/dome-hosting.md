@@ -36,16 +36,17 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - 保存時は active host が physics tick 境界で persistent prop だけを抽出して署名し、owner が候補を検証・署名した後に新しい manifest revision をpublishする。同一レイアウトはno-op、変更を伴う保存は30秒に1回まで。
 - 保存成功後は同じhost targetでlease epoch/sessionを更新する。新sessionは保存されたtransformから速度0、grab/seatなし、guestなしで開始する。
 - late joinまたは欠落検知時はdesktopの「Physics snapshotを再同期」で最大100件のmemory-only ringから再取得する。ringより古いsequenceの場合は最新baselineを返す。
+- 別の端末で稼働中のDomeでも、入室中の参加者は同じ操作で取得できる（P2Pの経路。受信の上限16 MiBを超える分は新しい側だけ）。入室していない端末の要求は拒否される。
 
 ## 隣接Domeへの遷移
 
 - clientはactive topologyから最大4方向の隣接Domeを解決し、host状態、空きcapacity、参照assetを先読みする。`ready`以外の境界はconnection zone中心線の10 cm手前で閉じる。
 - avatarがconnection zoneへ入ると、送信元hostへ`prepare_transition`を送り、grabとseatを解除して以後のinteractionをfenceする。宛先hostにはconnection ID、topology digest、両Instance generation、participantを結び付けた15秒のadmission reservationを要求する。
 - 中心線通過時は宛先commitを先に確定し、component座標を保った宛先local transformでavatarを生成する。その後に送信元`complete_transition`を再試行する。中心線前の後退や失敗は宛先reservationと送信元fenceをabortする。
-- transition APIはowner-device hostとCommunity Node hostで同じticket/runtime contractを使う。Community Node endpointは既存bearer authenticationとconsent gateの内側にある。
+- transition APIはowner-device hostとCommunity Node hostで同じticket/runtime contractを使う。Community Node endpointは既存bearer authenticationとconsent gateの内側にある。宛先が別の端末の所有者の端末で稼働中のときは、入室と同じP2Pの経路でprepare/commit/abortを送る。宛先の所有者の端末はCommunity Node hostと同じくtopology全体を照合せず、本人、access、block（visitorとowner間）、定員を確かめる。
 - persistent/guest propは遷移しない。host physicsはprepared/admitted avatarだけにconnection zoneを許可し、propは開口部を含めて送信元半球内へ拘束する。
 
-調査時は、participant raw inputを記録せず、transition ID、connection ID、topology digest、source/target generation、target lease epoch/session、boundary state、denial codeだけを採取する。`DOME_TRANSITION_STALE_TOPOLOGY`はtopology再取得、`DOME_TRANSITION_CAPACITY_FULL`は退出待ち、`DOME_TRANSITION_INVALID_TICKET`は15秒以内の新規prepareで復旧する。宛先commit後に送信元cleanupだけが失敗した場合、宛先をcurrentとして維持し、送信元completeを再試行する。
+調査時は、participant raw inputを記録せず、transition ID、connection ID、topology digest、source/target generation、target lease epoch/session、boundary state、denial codeだけを採取する。`DOME_TRANSITION_STALE_TOPOLOGY`はtopology再取得（宛先が所有者の端末のときは、所有者の端末が遷移元のDomeを一覧の行か受信中のheartbeatで知らない場合にも返る。遷移元がCommunity Node hostで、所有者の端末にその行が無い場合など）、`DOME_TRANSITION_CAPACITY_FULL`は退出待ち、`DOME_TRANSITION_INVALID_TICKET`は15秒以内の新規prepareで復旧する。宛先commit後に送信元cleanupだけが失敗した場合、宛先をcurrentとして維持し、送信元completeを再試行する。
 
 ## Spatial Contextへの入場
 
@@ -53,6 +54,9 @@ owner が online に戻っても自動 reclaim はしない。「この端末で
 - Channel entry Domeはchannel ownerだけが同じContextのInstanceへ設定できる。設定変更は既存Connectionを作成、解除、変更しない。
 - Owner hostはcurrent access/blockを、Community Node hostは短命access proofを`Join`直前に確認する。Host snapshotにlocal avatarが現れるまでClientはscene、presence、音声を開始しない。
 - Hostはmanifest default spawnから固定順でavatar/prop colliderと25 cm安全余白を検査する。安全候補が無ければ`DOME_ENTRY_NO_SAFE_SPAWN`となり、participantとavatar bodyは追加されない。
+- 所有者の端末で稼働中のDomeへ別の端末から入るときは、leaseの`OwnerDevice.endpoint_id`へP2Pで接続する（ALPN `/kukuri/dome-session/1`、[ADR-0038](../adr/0038-dome-hosting-lease-session-lifecycle.md)）。所有者の端末はaccessとblockを自分で再評価し、入室していない端末のJoin以外の入力を拒否する。
+- 10秒以内に接続できない場合、入室は`DOME_HOST_UNREACHABLE`で失敗し、画面は「所有者の端末に接続できませんでした」と表示する。所有者の端末が起動していること、同じtopic（またはchannel）に参加していること、relayを含む接続設定を確認する。所有者の端末がこの経路に対応しない旧版の場合も同じ表示になる。
+- 経路の分類は`kukuri_connectivity`のlog「Dome session connection established」の`path`（`direct_p2p` / `relay_supported_p2p` / `relay_fallback`）で確認する。inputとaccess proofの本文はlogに出ない。
 
 ## Manifest/asset cache
 

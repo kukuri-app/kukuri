@@ -5,7 +5,12 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { App } from '@/App';
 
-import { buildImagePost, openSettingsSection, setViewportWidth } from './DesktopShellPage.testHelpers';
+import {
+  buildImagePost,
+  openControlCenter,
+  openSettingsSection,
+  setViewportWidth,
+} from './DesktopShellPage.testHelpers';
 
 // #1056 / TR-10: 設定で採用を OFF にして保存すると、その node の採用設定が保存され、
 // 以後そのノードへは照会しない。
@@ -70,4 +75,25 @@ test('turning adoption off and saving stores the setting and stops lookups', asy
   expect(
     within(drawer).getByRole('checkbox', { name: "Use this node's estimates of adult material" })
   ).not.toBeChecked();
+});
+
+// #1546: 観測提供の照会（#1061）は設定の描画し直しでは行わず、ノードごとに設定を開くたびに 1 回だけ行う。
+test('observation sharing is queried once per node each time the settings open', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const query = vi.spyOn(api, 'getCommunityNodeObservationSharing');
+  const once = [['https://api.kukuri.app']];
+
+  render(<App api={api} />);
+  const drawer = await openSettingsSection(user, 'community-node');
+  await waitFor(() => expect(query.mock.calls).toEqual(once));
+  // ノードの下書きを足すと設定は描画し直すが、照会はしない。
+  await user.click(within(drawer).getByRole('button', { name: 'Add Node' }));
+  expect(query.mock.calls).toEqual(once);
+
+  // 閉じている間は照会せず、同じ section のまま開き直すと 1 回照会する。
+  await user.click(within(drawer).getByRole('button', { name: 'Close settings' }));
+  const controlCenter = await openControlCenter(user);
+  await user.click(within(controlCenter).getByRole('button', { name: 'Open Community Node Settings' }));
+  await waitFor(() => expect(query.mock.calls).toEqual([...once, ...once]));
 });

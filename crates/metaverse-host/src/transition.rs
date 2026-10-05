@@ -20,6 +20,19 @@ impl DomeSessionRuntime {
         self.transition_reservations.len()
     }
 
+    /// 予約中の admission ticket。要求者を識別しない P2P の取消で、ticket の一致を確かめる(#1527)。
+    pub fn transition_reservation(
+        &self,
+        transition_id: &str,
+    ) -> Option<&DomeTransitionAdmissionTicketV1> {
+        self.transition_reservations.get(transition_id)
+    }
+
+    /// 現在の participant か。別の端末から届く Join 以外の input と再同期の受け付けに使う(#1527)。
+    pub fn is_participant(&self, participant_pubkey: &kukuri_core::Pubkey) -> bool {
+        self.participants.contains(participant_pubkey.as_str())
+    }
+
     pub fn revoke_transition_access(
         &mut self,
         participant_pubkey: &kukuri_core::Pubkey,

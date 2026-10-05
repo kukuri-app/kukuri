@@ -1,6 +1,17 @@
+import type { TFunction } from 'i18next';
+
 import type { GameRoomView, SpatialContextV1 } from '@/lib/api';
+import { InvokeError } from '@/lib/api/invoke/error';
 
 const LAST_VISITED_PREFIX = 'kukuri.metaverse.last-visited.v1';
+
+/** 入室の失敗の表示。所有者の端末に接続できないときは code ではなく利用者向けの文言にする(ADR 0038 #1527)。 */
+export function domeEntryErrorMessage(error: unknown, t: TFunction): string {
+  if (error instanceof InvokeError && error.code === 'DOME_HOST_UNREACHABLE') {
+    return t('entry.hostUnreachable');
+  }
+  return error instanceof Error ? error.message : 'Dome entry failed';
+}
 
 export function spatialContextKey(context: SpatialContextV1): string {
   return context.kind === 'channel'

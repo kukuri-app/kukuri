@@ -235,12 +235,8 @@ impl Store for MemoryStore {
         subject_pubkey: &str,
         target_pubkey: &str,
     ) -> Result<Option<BlockEdge>> {
-        Ok(self
-            .block_edges
-            .read()
+        self.store_get_block_edge_impl(subject_pubkey, target_pubkey)
             .await
-            .get(&(subject_pubkey.to_string(), target_pubkey.to_string()))
-            .cloned())
     }
 
     async fn list_follow_edges_by_subject_after(

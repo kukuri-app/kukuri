@@ -14,6 +14,7 @@
 
 mod account_transfer;
 // 旧 store の退役は native だけ（file を使う）。
+mod dome_session;
 #[cfg(not(target_family = "wasm"))]
 mod legacy;
 mod network_work;
@@ -32,6 +33,7 @@ pub use account_transfer::{
     ACCOUNT_TRANSFER_ALPN, AccountBundleSink, AccountBundleSource, AccountBundleStaging,
     AccountHistoryPage, AccountHistoryResume, AccountHistoryStaging, AccountTransfer,
 };
+pub use dome_session::{DomeHostUnreachable, DomeSessionHandler};
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use network_work::NetworkAdmissionError;

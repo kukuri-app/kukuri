@@ -86,8 +86,8 @@ host session stream は、host の種類ごとに次の経路を使う。所有�
 - Join と KeepAlive: owner device が自分の状態で current Spatial Context access と owner からの block を再評価する（ADR-0044）。channel の状態を持たない Community Node と違い、access proof は要らない。
 - Join 以外の input: 署名者が現在の participant でなければ、runtime の状態を変えず、snapshot も返さずに拒否する。process 内の host と Community Node host の挙動は変えない。
 - `resync_snapshots`: access proof の署名で要求者本人と、Spatial Context・owner への束縛と有効期限を確かめ、要求者が現在の participant であること、Join と同じ access と block を満たすことを確かめてから ring を返す。
-- `prepare_transition`: access proof の署名で participant 本人と、Spatial Context・遷移先 owner への束縛と有効期限を確かめる（Community Node と共通の helper）。そのうえで owner device が topology・access・block を再評価して ticket を発行する（ADR-0042 / 0043）。
-- `commit_transition` / `abort_transition`: host が発行した ticket と runtime の予約の一致、lease epoch・session・期限で判定する（ADR-0042）。ticket はこの暗号化された接続でだけ要求者へ渡る。
+- `prepare_transition`: access proof の署名で participant 本人と、Spatial Context・遷移先 owner への束縛と有効期限を確かめる（Community Node と共通の helper）。そのうえで owner device は、遷移元と遷移先の owner の間の block、遷移先の owner からの visitor block、Spatial Context の access を key 指定で再評価し、runtime が lease との一致（Spatial Context・Instance・generation）と定員を確かめて ticket を発行する（ADR-0042）。遷移元の owner は自分・一覧の行・heartbeat から instance の id で導き、導けなければ拒否する（fail-closed）。topology 全体（digest と接続の解決）は照合しない。この点は Community Node host と同じである（Community Node host は block を評価せず、access proof・lease・定員を確かめる）（2026-10-04 ユーザー判断。topology 全体の再評価は context の Dome と接続の数に比例し、他の端末の記録の読み出しが要求の打ち切りを超えうるため）。接続の取り消し直後に古い表示のまま遷移した participant を止めない場合があるが、Join でも入れる相手なので access・block の迂回にはならない。
+- `commit_transition` / `abort_transition`: host が発行した ticket と runtime の予約の一致で判定する（commit はさらに lease epoch・session・期限を確かめる。ADR-0042）。要求者を識別しない経路なので ticket の所持で判定し、Community Node host のように transition id と participant だけでは取り消さない。ticket はこの暗号化された接続でだけ要求者へ渡る。
 
 #### 接続先の解決
 
@@ -114,7 +114,7 @@ host session stream は、host の種類ごとに次の経路を使う。所有�
 | --- | --- | --- | --- | --- | --- |
 | Hosting Lease / activation / close | owner signature | SpatialContext replica | docs sync、gossip hint | SQLite projection、Postgres operational mirror | append-only。Instance tombstone / move後は無効として保持し、通常GC規則に従う |
 | host acceptance | target host signature | SpatialContext replica | docs sync、gossip hint | SQLite / Postgres | 対応するlease recordと同じ |
-| heartbeat | active host signature | なし | gossip / WebSocket | memory latest only | grace判定後に破棄 |
+| heartbeat | active host signature | なし | gossip / WebSocket | memory latest only。gossip で受けた owner device host の分は Spatial Context ごとに 100 件まで（ADR-0045） | grace判定後に破棄。gossip で受けた分は署名時刻から 30 秒で破棄（ADR-0045、#1553） |
 | participant input | participant signature | なし | host session stream（owner device host へは P2P の `/kukuri/dome-session/1`、Community Node host へは HTTPS） | host memory queue | 適用またはreject後に破棄。署名者ごとの最後の sequence は参加中と、退出後は受け付けた input の署名から 10 秒まで（participant の上限の件数まで）、owner は session の間 host memory に残す。raw inputをlogへ出さない |
 | physics snapshot | active host signature | なし | host session stream（input と再同期への応答。owner device host からは P2P、Community Node host からは HTTPS） | client / host memory latest only | session終了または置換で破棄。ring bufferは#793 |
 | guest prop expiry metadata | active host | なし | snapshot | host memory | wall-clock expiryまたはsession終了で破棄 |

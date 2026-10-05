@@ -10,6 +10,10 @@ pub(super) struct CountingDocsSync {
     restarts: Arc<TokioMutex<Vec<String>>>,
     /// query が返した record(または key)の総数。replica の大きさに比例する読み出しを検出する。
     records_returned: Arc<std::sync::atomic::AtomicUsize>,
+    /// key 一覧(`query_replica_keys` と docs author 指定)の回数。読み直しの回数を数える(#1567)。
+    key_queries: Arc<std::sync::atomic::AtomicUsize>,
+    /// `learn_peer` の回数。hint 1 件ごとの peer の学習を数える(#1567)。
+    learned_peers: Arc<std::sync::atomic::AtomicUsize>,
     assist_peer_ids: Vec<String>,
     /// `remote_readers` が返す provider(#1221 R5-C)。無ければ remote の provider は無い。
     remote: Option<Arc<dyn DocsSync>>,
@@ -70,6 +74,14 @@ impl CountingDocsSync {
         self.records_returned
             .store(0, std::sync::atomic::Ordering::SeqCst);
     }
+
+    pub(super) fn key_queries(&self) -> usize {
+        self.key_queries.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(super) fn learned_peers(&self) -> usize {
+        self.learned_peers.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -123,6 +135,8 @@ impl DocsSync for CountingDocsSync {
         replica_id: &ReplicaId,
         query: kukuri_docs_sync::DocKeyQuery,
     ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.key_queries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let page = self.inner.query_replica_keys(replica_id, query).await?;
         self.records_returned
             .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
@@ -135,6 +149,8 @@ impl DocsSync for CountingDocsSync {
         docs_author: &str,
         query: kukuri_docs_sync::DocKeyQuery,
     ) -> Result<kukuri_docs_sync::DocKeyPage> {
+        self.key_queries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let page = self
             .inner
             .query_replica_keys_by_author(replica_id, docs_author, query)
@@ -142,6 +158,12 @@ impl DocsSync for CountingDocsSync {
         self.records_returned
             .fetch_add(page.entries.len(), std::sync::atomic::Ordering::SeqCst);
         Ok(page)
+    }
+
+    async fn learn_peer(&self, endpoint_id: &str) -> Result<()> {
+        self.learned_peers
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.learn_peer(endpoint_id).await
     }
 
     async fn local_docs_author(&self) -> Result<Option<String>> {
@@ -361,6 +383,7 @@ mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;
 mod hint_rehydration;
+mod hint_window;
 mod hydration_integrity;
 mod hydration_integrity_contract;
 mod hydration_integrity_sessions;

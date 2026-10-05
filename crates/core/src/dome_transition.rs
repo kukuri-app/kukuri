@@ -174,6 +174,23 @@ pub fn build_dome_spatial_access_proof(
 }
 
 impl DomeSpatialAccessProofV1 {
+    /// 要求者・Spatial Context・owner への束縛と、署名・有効期限を確かめる(Community Node と owner device host で共通)。
+    pub fn verify_for(
+        &self,
+        participant_pubkey: &Pubkey,
+        spatial_context: &SpatialContextV1,
+        target_owner_pubkey: &Pubkey,
+        now_millis: i64,
+    ) -> Result<()> {
+        if self.statement.participant_pubkey != *participant_pubkey
+            || self.statement.spatial_context != *spatial_context
+            || self.statement.target_owner_pubkey != *target_owner_pubkey
+        {
+            bail!("Dome access proof is bound to another participant, context, or owner");
+        }
+        self.verify_at(now_millis)
+    }
+
     pub fn verify_at(&self, now_millis: i64) -> Result<()> {
         self.participant_signature.verify()?;
         if self.participant_signature.kind != "dome-access-proof"
@@ -478,6 +495,23 @@ mod tests {
         assert_eq!(proof.statement.spatial_context, context);
         assert_eq!(proof.statement.target_owner_pubkey, owner);
         assert!(proof.verify_at(11_000).is_err());
+
+        let me = participant.public_key();
+        let other = crate::generate_keys().public_key();
+        let other_context = SpatialContextV1::Topic {
+            topic_id: crate::TopicId::new("kukuri:topic:other"),
+        };
+        proof
+            .verify_for(&me, &context, &owner, 1_001)
+            .expect("bound proof");
+        assert!(proof.verify_for(&other, &context, &owner, 1_001).is_err());
+        assert!(
+            proof
+                .verify_for(&me, &other_context, &owner, 1_001)
+                .is_err()
+        );
+        assert!(proof.verify_for(&me, &context, &other, 1_001).is_err());
+        assert!(proof.verify_for(&me, &context, &owner, 11_000).is_err());
     }
 
     #[test]

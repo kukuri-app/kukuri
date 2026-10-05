@@ -3,18 +3,61 @@
 //! - gossip hint を受けた対象だけを exact に読む(手元 → 有界な provider)。
 //! - lease の開始(task の作成)・endpoint の世代の変化(task の作り直し)・日の境界で、現在と直前の bucket を
 //!   1 ページ(最大 200 行)だけ読み直す。続きを全件読みに行かない。
+//! - content hint(短命種以外)の受付は窓あたり `HINT_WINDOW_BUDGET` 件まで。超えた分は読まずに捨て、窓の終わりに同じ
+//!   読み直しを 1 回行う(#1567 AC-1)。topic の活動量が増えても、1 つの lease が読む量は窓あたりの定数に収まる。
 //! - 取り込んだ投稿から、従来どおり通知を作る(`ServiceHandles::notify_remote_posts`)。
 
 use super::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
 use super::subscription_catch_up::REPLICA_WINDOW_ENTRIES;
 use super::*;
 use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
+use tracing::debug;
 
 /// account 同期の scope の holder。
 const ACCOUNT_SYNC_HOLDER: &str = "account-sync";
 
 /// lease の読み直しで、replica ごとに種類ごとに読む session の索引の上限(判断 5)。
 const SESSION_REREAD_LIMIT: usize = 64;
+
+/// lease の task が 1 つの窓で受け付ける content hint(短命種以外)の上限(#1567 AC-1)。件数の上限であって「足りる」の
+/// 根拠ではない。超えた分は peer の学習も docs の読みもせずに捨て、窓の終わりの読み直し 1 回で回収する。
+pub(crate) const HINT_WINDOW_BUDGET: usize = 32;
+/// 受付の窓の長さ。表示の照合の間隔(`RANGE_CHECK_INTERVAL_MS`)と同じ。
+pub(crate) const HINT_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 短命種(その場で反映し、一覧では回収できない)。受付の上限を通さない(#1567 INVAR-1)。
+fn is_ephemeral_hint(hint: &GossipHint) -> bool {
+    matches!(
+        hint,
+        GossipHint::MetaverseRoomEvent { .. }
+            | GossipHint::DomeHostHeartbeat { .. }
+            | GossipHint::LivePresence { .. }
+    )
+}
+
+/// 読み直して、1 件以上反映したら最後の同期時刻を更新する(live/game 一覧の再取得の契機。#1567 AC-1)。
+async fn reread_and_mark(
+    reader: &AppService,
+    topic_id: &str,
+    scope: &TimelineScope,
+    last_sync: &session_projection::SyncClock,
+) {
+    if reader.reread_scope(topic_id, scope).await > 0 {
+        last_sync.set(Utc::now().timestamp_millis()).await;
+    }
+}
+
+/// scope の Spatial Context(公開は topic、private channel は channel)。
+fn scope_context(topic_id: &str, scope: &TimelineScope) -> kukuri_core::SpatialContextV1 {
+    let topic_id = TopicId::new(topic_id);
+    match scope {
+        TimelineScope::Public => kukuri_core::SpatialContextV1::Topic { topic_id },
+        TimelineScope::Channel { channel_id } => kukuri_core::SpatialContextV1::Channel {
+            topic_id,
+            channel_id: channel_id.clone(),
+        },
+    }
+}
 
 /// 次の日の境界(UTC、bucket の切れ目)までの時間。
 pub(crate) fn until_next_bucket(now_secs: i64) -> std::time::Duration {
@@ -53,6 +96,7 @@ impl AppService {
             None => TimelineScope::Public,
             Some(channel_id) => TimelineScope::Channel { channel_id },
         };
+        let context = scope_context(topic_id, &scope);
         let generation = if scope == TimelineScope::Public {
             let generation = self.next_subscription_generation(topic_id).await;
             self.reset_public_topic_delivery_generation(topic_id, generation)
@@ -67,13 +111,28 @@ impl AppService {
             .subscribe_hints(&hint_topic)
             .await?;
         let handle = n0_future::task::spawn(async move {
-            reader.reread_scope(&topic, &scope).await;
+            reread_and_mark(&reader, &topic, &scope, &last_sync).await;
+            // 窓あたりの content hint の受付(#1567 AC-1)。`dropped` は、この窓で読まずに捨てた hint の数(transport の
+            // 購読 stream が取りこぼした分を含む)。1 件以上なら、何を落としたか分からないので窓の終わりに 1 回読み直す。
+            let mut window_end = n0_future::time::Instant::now() + HINT_WINDOW;
+            let mut window_used = 0usize;
+            let mut dropped = 0u64;
             loop {
                 let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
+                let window = n0_future::time::sleep_until(window_end);
                 tokio::select! {
                     Some(event) = hint_stream.next() => {
+                        dropped = dropped.saturating_add(event.dropped_before);
                         if !hint_targets_topic(&event.hint, topic.as_str()) {
                             continue;
+                        }
+                        // 短命種以外は窓あたり HINT_WINDOW_BUDGET 件まで。超えた分は peer の学習も docs の読みもせずに捨てる。
+                        if !is_ephemeral_hint(&event.hint) {
+                            if window_used >= HINT_WINDOW_BUDGET {
+                                dropped = dropped.saturating_add(1);
+                                continue;
+                            }
+                            window_used += 1;
                         }
                         let now = Utc::now().timestamp_millis();
                         // hint の送り手を reader・blob の候補台帳へ入れる(hint の exact 読取りの provider になる)。
@@ -101,14 +160,12 @@ impl AppService {
                                 }
                             }
                             GossipHint::DomeHostHeartbeat { instance_id, heartbeat, .. } => {
-                                let mut heartbeats = dome_host_heartbeats.lock().await;
-                                let replace = heartbeats.get(instance_id).is_none_or(|current| {
-                                    heartbeat.heartbeat.sequence > current.heartbeat.sequence
-                                        || (heartbeat.heartbeat.sequence == current.heartbeat.sequence
-                                            && heartbeat.heartbeat.sent_at > current.heartbeat.sent_at)
-                                });
-                                if replace {
-                                    heartbeats.insert(instance_id.clone(), heartbeat.as_ref().clone());
+                                if dome_host_heartbeats.lock().await.record(
+                                    &context,
+                                    instance_id,
+                                    heartbeat.as_ref().clone(),
+                                    now,
+                                ) {
                                     last_sync.set(now).await;
                                 }
                             }
@@ -149,7 +206,16 @@ impl AppService {
                             }
                         }
                     }
-                    _ = boundary => reader.reread_scope(&topic, &scope).await,
+                    _ = window => {
+                        window_end = n0_future::time::Instant::now() + HINT_WINDOW;
+                        window_used = 0;
+                        let overflowed = std::mem::take(&mut dropped);
+                        if overflowed > 0 {
+                            debug!(topic = %topic, dropped = overflowed, "hint window overflowed; rereading the scope");
+                            reread_and_mark(&reader, &topic, &scope, &last_sync).await;
+                        }
+                    }
+                    _ = boundary => reread_and_mark(&reader, &topic, &scope, &last_sync).await,
                     // hint の購読を抜けるのは lease の持ち主(`stop_scope_task`)。
                     else => break,
                 }
@@ -261,21 +327,27 @@ impl AppService {
     }
 
     /// 現在と直前の bucket(と旧形式の保存済みデータ)を 1 ページだけ読み直す。live・game の session も含める。
-    pub(crate) async fn reread_scope(&self, topic_id: &str, scope: &TimelineScope) {
-        if let Err(error) = self
+    /// 戻り値は反映した件数。
+    pub(crate) async fn reread_scope(&self, topic_id: &str, scope: &TimelineScope) -> usize {
+        let mut applied = 0;
+        match self
             .reconcile_timeline_range_checked(topic_id, scope, None, REPLICA_WINDOW_ENTRIES, false)
             .await
         {
-            warn!(topic = %topic_id, %error, "failed to reread the current buckets");
+            Ok(reconcile) => applied += reconcile.hydrated,
+            Err(error) => warn!(topic = %topic_id, %error, "failed to reread the current buckets"),
         }
-        if let Err(error) = self.reread_sessions(topic_id, scope).await {
-            warn!(topic = %topic_id, %error, "failed to reread the current sessions");
+        match self.reread_sessions(topic_id, scope).await {
+            Ok(count) => applied += count,
+            Err(error) => warn!(topic = %topic_id, %error, "failed to reread the current sessions"),
         }
+        applied
     }
 
     /// 現在と直前の bucket(と旧形式)の session の索引を、provider から種類ごとに `SESSION_REREAD_LIMIT` 件まで読み、
     /// hint を受けたときと同じ読取りで反映する。途中から参加した端末も、既存の session を hint を待たずに表示できる。
-    async fn reread_sessions(&self, topic_id: &str, scope: &TimelineScope) -> Result<()> {
+    /// 戻り値は反映した件数。
+    async fn reread_sessions(&self, topic_id: &str, scope: &TimelineScope) -> Result<usize> {
         let channel = match scope {
             TimelineScope::Public => None,
             TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
@@ -326,12 +398,15 @@ impl AppService {
                 }
             }
         }
+        let mut applied = 0;
         for (session_id, kind) in sessions {
-            if let Err(error) = self.read_session(topic_id, scope, &session_id, kind).await {
-                warn!(%error, "failed to reread a session");
+            match self.read_session(topic_id, scope, &session_id, kind).await {
+                Ok(true) => applied += 1,
+                Ok(false) => {}
+                Err(error) => warn!(%error, "failed to reread a session"),
             }
         }
-        Ok(())
+        Ok(applied)
     }
 
     /// session 1 件を、操作と同じ lock の下で読み、projection より新しい版だけを一覧へ反映する。
@@ -380,17 +455,7 @@ impl AppService {
             }
             // 別の端末の Dome の接続の記録を、知っている Dome の anchor から有界に読む(#1221 R5-H)。
             "dome-topology" => {
-                let context = match scope {
-                    TimelineScope::Public => kukuri_core::SpatialContextV1::Topic {
-                        topic_id: TopicId::new(topic_id),
-                    },
-                    TimelineScope::Channel { channel_id } => {
-                        kukuri_core::SpatialContextV1::Channel {
-                            topic_id: TopicId::new(topic_id),
-                            channel_id: channel_id.clone(),
-                        }
-                    }
-                };
+                let context = scope_context(topic_id, scope);
                 let legacy = self.dome_connection_read_replica(&context).await?;
                 let stores = self.dome_connection_stores(&context, legacy, &[]).await?;
                 self.hydrate_dome_connection_records(&context, &stores)

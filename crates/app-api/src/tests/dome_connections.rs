@@ -275,13 +275,13 @@ async fn restored_friend_only_map_read_does_not_rotate_or_subscribe() {
 use kukuri_core::{DomeDirection, DomeProposalDerivedStatusV1, SpatialContextV1};
 
 /// 提案する owner は、相手の Dome を手元の一覧で知っている(#1221 R5-H: context の replica を走査しない)。
-async fn show_domes(app: &AppService, topic: &str) {
+pub(super) async fn show_domes(app: &AppService, topic: &str) {
     app.catch_up_scope_sessions(topic, &TimelineScope::Public)
         .await
         .expect("read the Dome sessions");
 }
 
-fn app_with_shared_dome_services(
+pub(super) fn app_with_shared_dome_services(
     docs_sync: Arc<MemoryDocsSync>,
     blob_service: Arc<MemoryBlobService>,
     keys: KukuriKeys,

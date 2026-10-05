@@ -424,6 +424,7 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
         &[entry(None)],
         DocFetchPolicy::LocalOnly,
         &mut usize::MAX.clone(),
+        &mut 0,
     )
     .await
     .expect("range check without a hint");
@@ -437,6 +438,7 @@ async fn index_entry_docs_author_projects_a_post_behind_a_flooded_envelope_key()
         &[entry(Some(author_docs_author()))],
         DocFetchPolicy::LocalOnly,
         &mut usize::MAX.clone(),
+        &mut 0,
     )
     .await
     .expect("range check");

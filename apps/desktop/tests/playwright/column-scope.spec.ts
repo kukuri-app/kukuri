@@ -277,3 +277,44 @@ for (const viewport of [
     }
   });
 }
+
+// Issue #1528 INVAR-1: Control Center で別の topic の channel を選ぶと、その topic の公開の列と channel の列が
+// この順で末尾に開き、channel の列が active で URL もその channel になる(呼び出し順の修正の前後で変わらない)。
+test("selecting another topic's channel from the Control Center appends that topic's public and channel Columns", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 980 });
+  await page.goto('/');
+
+  // dev topic に channel を作り、作成で開いた dev の 2 列は閉じる(dev の列が無い状態から選ぶ)。
+  let controlCenter = await openControlCenter(page);
+  const devTopicRow = controlCenter
+    .getByRole('button', { name: 'dev', exact: true })
+    .locator('xpath=ancestor::li[1]');
+  await devTopicRow.getByRole('button', { name: 'Create or join' }).click();
+  const channelDialog = page.getByRole('dialog', { name: 'Create / Join Private Channel' });
+  await channelDialog.getByPlaceholder('Channel name').fill('devcore');
+  await channelDialog.getByRole('button', { name: 'Create Channel' }).click();
+  await expect(page).toHaveURL(/#\/timeline\?topic=kukuri%3Atopic%3Adev&channel=channel-1$/);
+  await page.keyboard.press('Escape');
+  await expect(channelDialog).toBeHidden();
+  const devChannelColumn = timelineColumnByScope(page, 'devcore · dev');
+  const devPublicColumn = timelineColumnByScope(page, 'Public · dev');
+  await devChannelColumn.getByRole('button', { name: 'Close Timeline', exact: true }).click();
+  await devPublicColumn.getByRole('button', { name: 'Close Timeline', exact: true }).click();
+  await expect(devChannelColumn).toHaveCount(0);
+  await expect(devPublicColumn).toHaveCount(0);
+
+  controlCenter = await openControlCenter(page);
+  await controlCenter.getByRole('button', { name: /^devcore/ }).click();
+
+  await expect(devChannelColumn).toHaveAttribute('aria-current', 'true');
+  await expect(page).toHaveURL(/#\/timeline\?topic=kukuri%3Atopic%3Adev&channel=channel-1$/);
+  const columnIds = await page
+    .locator('[data-column-id]')
+    .evaluateAll((columns) => columns.map((column) => (column as HTMLElement).dataset.columnId));
+  expect(columnIds.slice(-2)).toEqual([
+    'column:timeline:kukuri%3Atopic%3Adev:-:-',
+    'column:timeline:kukuri%3Atopic%3Adev:channel-1:-',
+  ]);
+});

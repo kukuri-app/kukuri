@@ -29,6 +29,7 @@ pub use dome_delete::{DeleteDomeInput, DeleteDomeView, PendingDomeDeletionView};
 mod dome_hosting;
 mod dome_management;
 mod dome_move;
+mod dome_session;
 mod game;
 mod live;
 mod session_display;

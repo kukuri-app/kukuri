@@ -294,6 +294,7 @@ pub(crate) struct SharedIrohStack {
     docs_author_seed: Mutex<Option<(kukuri_core::DocsAuthorSeed, String)>>,
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
     receive_binding_keys: Mutex<Option<Arc<KukuriKeys>>>,
+    dome_session_handler: Mutex<Option<kukuri_iroh_node::DomeSessionHandler>>,
     /// `current` の stack が shutdown 済みか。作り直しが古い stack の shutdown の後で失敗すると、shutdown 済みの stack が残る。
     /// その stack の docs actor への要求は、返事が来ないまま時間切れになりうるので、健全性の確認をせず、作り直しが要るとみなす。
     current_shut_down: AtomicBool,
@@ -419,6 +420,7 @@ impl SharedIrohStack {
             remote_cache_reaper,
             docs_author_seed: Mutex::new(None),
             receive_binding_keys: Mutex::new(None),
+            dome_session_handler: Mutex::new(None),
             current_shut_down: AtomicBool::new(false),
             #[cfg(test)]
             rebuild_before_shutdown_gate: Mutex::new(None),
@@ -456,6 +458,40 @@ impl SharedIrohStack {
             .await?;
         *self.receive_binding_keys.lock().await = Some(keys);
         Ok(())
+    }
+
+    /// 所有者の端末の Dome host の受け口を、今の node と作り直す node へ付ける(ADR 0038 #1527)。
+    pub(crate) async fn use_dome_session_handler(
+        &self,
+        handler: kukuri_iroh_node::DomeSessionHandler,
+    ) -> Result<()> {
+        let current = self.current.lock().await;
+        current
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .install_dome_session_handler(handler.clone());
+        *self.dome_session_handler.lock().await = Some(handler);
+        Ok(())
+    }
+
+    /// 所有者の端末の Dome host へ要求を 1 件送る(ADR 0038 #1527)。
+    pub(crate) async fn dome_session_request(
+        &self,
+        endpoint_id: &str,
+        request: &[u8],
+        response_limit: usize,
+    ) -> Result<Vec<u8>> {
+        let node = self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .clone();
+        node.dome_session_request(endpoint_id, request, response_limit)
+            .await
     }
 
     pub(crate) async fn rebuild(
@@ -508,6 +544,9 @@ impl SharedIrohStack {
         }
         if let Some(keys) = self.receive_binding_keys.lock().await.as_ref() {
             next.node.install_receive_binding(keys.clone()).await?;
+        }
+        if let Some(handler) = self.dome_session_handler.lock().await.as_ref() {
+            next.node.install_dome_session_handler(handler.clone());
         }
         self.transport.replace(next.transport.clone()).await;
         self.docs_sync.replace(next.docs_sync.clone()).await;

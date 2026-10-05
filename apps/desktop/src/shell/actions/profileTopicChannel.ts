@@ -250,6 +250,9 @@ export function createProfileTopicChannelActions({
   }
 
   function handleSelectPrivateChannel(topicId: string, channelId: string) {
+    // topic の公開の列を先に開き、最後に channel の列を開いて active にする。逆順だと setActiveTopic が
+    // 公開の列を active に戻し、channel の列は route の同期で後から active になっていた(Issue #1528)。
+    setActiveTopic(topicId);
     setSelectedChannelIdByTopic(setRecordEntry(topicId, channelId));
     setTimelineScopeByTopic(setRecordEntry(topicId, {
         kind: 'channel',
@@ -259,7 +262,6 @@ export function createProfileTopicChannelActions({
         kind: 'private_channel',
         channel_id: channelId,
       }));
-    setActiveTopic(topicId);
     setShellChromeState((current) => ({
       ...current,
     }));
@@ -275,6 +277,8 @@ export function createProfileTopicChannelActions({
         channel_id: channelId,
       },
     });
+    // 選んだ channel の timeline を読み込む。旧順序では route の同期が選択を投影し直すときに読み込んでいた。
+    void loadTopics(trackedTopics, topicId, selectedThread).catch(() => undefined);
   }
 
   async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
