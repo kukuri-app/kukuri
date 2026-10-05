@@ -202,22 +202,27 @@ async function post(browser, content, column = publicColumn(browser), file = nul
   await sees(browser, content);
 }
 
-/** 列の投稿欄に画像（`file`）を添える。safaridriver は file の input へ入力できないので、Safari では page で File を作って入れる。 */
+/** 列の投稿欄に画像（`file`）を添え、非同期の準備が終わってプレビューが出るまで待つ（#1577）。 */
 async function attach(browser, column, file) {
   const input = await column.$('input[type=file]');
-  if (browser.capabilities.browserName !== 'Safari') return input.addValue(file);
-  const data = (await readFile(file)).toString('base64');
-  await browser.execute(
-    (element, name, data) => {
-      const transfer = new DataTransfer();
-      transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
-      element.files = transfer.files;
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    input,
-    path.basename(file),
-    data
-  );
+  if (browser.capabilities.browserName !== 'Safari') {
+    await input.addValue(file);
+  } else {
+    // safaridriver は file の input へ入力できないので、page で File を作って入れる。
+    const data = (await readFile(file)).toString('base64');
+    await browser.execute(
+      (element, name, data) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
+        element.files = transfer.files;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      input,
+      path.basename(file),
+      data
+    );
+  }
+  await column.$(`img[alt="draft preview ${path.basename(file)}"]`).waitForDisplayed({ timeout: WAIT });
 }
 
 const card = (browser, text) => browser.$(`article*=${text}`);
