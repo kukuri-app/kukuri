@@ -518,7 +518,14 @@ pub(crate) async fn fetch(
     peer: EndpointAddr,
     request: Request,
 ) -> Result<DocReadResponse> {
-    let connection = endpoint.connect(peer, DOC_READ_ALPN).await?;
+    // 答えの返らない handshake（途中で WebRTC の経路を失った接続など）を QUIC の idle 期限まで待たない。期限は blob の
+    // 取得と同じ（#1220 AC-3c2）。
+    let connection = timeout(
+        crate::remote_fetch::REMOTE_FETCH_CONNECT_TIMEOUT,
+        endpoint.connect(peer, DOC_READ_ALPN),
+    )
+    .await
+    .context("docs read connect timed out")??;
     let (mut send, mut recv) = connection.open_bi().await?;
     let bytes = serde_json::to_vec(&request)?;
     ensure!(

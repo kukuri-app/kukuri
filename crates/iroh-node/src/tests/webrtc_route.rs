@@ -268,6 +268,40 @@ async fn a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_p
     Ok(())
 }
 
+/// #1220 AC-3c2: docs の読取りの接続は、handshake に答えが返らなければ接続の期限（5 秒）で終わる。handshake の途中で WebRTC
+/// の経路を失った接続は、相手の側が失った path に結び付いたままになり、QUIC の idle 期限（30 秒）まで待っていた。答えない相手
+/// （止めた node）で同じ待ちを作る。
+#[tokio::test]
+async fn a_docs_read_whose_handshake_gets_no_answer_ends_at_the_connect_timeout() -> Result<()> {
+    let (relay, _relay_server) = signaling_fixture::spawn_relay().await?;
+    let (web, _web_transport) = node(&relay, true).await?;
+    let (native, _native_transport) = node(&relay, false).await?;
+    let native_addr = via_relay(&native, &relay);
+    native.shutdown().await?;
+    let result = n0_future::time::timeout(
+        Duration::from_secs(7),
+        web.query_remote_docs(
+            native_addr,
+            &kukuri_core::ReplicaId::new("bucket::v1::channel::6368::6570::1"),
+            &iroh_docs::NamespaceSecret::from_bytes(&[9; 32]),
+            DocReadQuery::Keys {
+                prefix: String::new(),
+                descending: false,
+                limit: 1,
+                author: None,
+            },
+        ),
+    )
+    .await
+    .context("the docs read waits past the connect timeout")?;
+    let error = result.expect_err("nobody answers the handshake");
+    assert!(
+        format!("{error:#}").contains("docs read connect timed out"),
+        "{error:#}"
+    );
+    Ok(())
+}
+
 /// J4・J5（T4・T5・S3）: 需要の表は相手 16 件まで。需要の終わった相手が増えても表に残らない。`reset` で両端の
 /// session と backend が 0 に戻り、再開の入力が来るまで交渉しない。`resume` は生きた需要の相手とだけ交渉し直す
 /// （需要の終わった 40 件とは交渉しない）。reset で閉じた custom path は iroh がすぐ閉じる（#1482）。満杯の表の

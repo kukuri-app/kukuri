@@ -106,6 +106,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     relay の path が開く前の喪失（`a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay`）も 2 秒以内（手元の実測は約 0.3 秒）。
   - 対象は、WebRTC 層が検出して session を閉じた喪失（DataChannel の close、相手の close の到着、PeerConnection の failed・closed、native の ICE の切断の検出）。
     回線が無言で切れたときは、WebRTC 層が検出するか path の idle 期限が来るまで止まる（#1482 の対象外）。
+    native は、相手が閉じた DataChannel への応答（こちらの stream の reset）を送り切ってから session を終える。送らずに終えると、相手の browser の DataChannel は closing のまま close の event が出ず、browser は PeerConnection の failed（約 30 秒）まで喪失を知らなかった（#1220 AC-3c2。browser の試験 `a_data_channel_closed_outside_the_transport_closes_the_session`）。
   - 接続の直後、相手の connection ID が届く前（約 1 RTT）に失ったときは、新しい path を開けないので、閉じ直す契機が来ない。
     #1482 の時点では、その接続が QUIC の idle 期限（30 秒）で閉じるまで止まり、その間は同じ相手への新しい接続の最初の送信も届かなかった。
     #1571 で、iroh の fork に次の 2 つを載せた（2026-10-05 ユーザー判断）。
@@ -113,6 +114,9 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     - 外された custom path だけが残った接続は、3 秒で閉じる。その接続の利用者は、接続し直して relay で続ける。登録より前に local addr を外された接続も、登録の時点で同じ扱いにする。
     - custom transport の local addr の変化は、相手ごとの actor の run loop の分岐だけが受け取る。ほかの処理は watcher の写しで最新の値を読む。ほかの処理が先に受け取ると、その変化で外された path を閉じる処理が走らず、最後に受け取った値を読むと、新しい session の生きた custom path を外されたものと扱う（fork の単体試験 `reading_custom_addrs_sees_the_latest_and_leaves_the_update_to_the_watcher_branch`）。
     判定は `a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_peer`（失ってから 2 秒以内に新しい接続で通信でき、止まった接続は 4 秒以内に閉じる）。
+  - handshake の途中で失ったときは、相手の側の接続が失った path に結び付いたままになり、relay では handshake を終えられず、QUIC の idle 期限（30 秒）まで止まる。
+    docs の読取りの接続は、blob の取得と同じ 5 秒の期限で打ち切る（2026-10-05 ユーザー判断、#1220 AC-3c2。`a_docs_read_whose_handshake_gets_no_answer_ends_at_the_connect_timeout`）。
+    接続に 5 秒より長くかかる相手からの docs の読取りは失敗になり、ほかの提供元か次の契機で読み直す。本人の端末間の同期の取り直しは ADR 0061 §10。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 - fork の独自差分: 上の custom path を閉じる変更（#1482）と、外された custom path を選ばず、それだけが残った接続を閉じる変更（#1571）は、上流へ PR を出さず fork だけで持つ（2026-10-04・2026-10-05 ユーザー判断、#1213 D-2 の例外）。

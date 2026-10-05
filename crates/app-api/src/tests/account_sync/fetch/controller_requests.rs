@@ -308,12 +308,19 @@ async fn a_request_without_the_controller_online_is_held_until_it_fetches() {
     assert_eq!(epoch(&b, &channel).await, rotated);
 }
 
-/// 本人の端末の候補を `peers` で返す、hint の流れる 2 端末（account 同期の task を起こす）。
+/// 本人の端末の候補を `peers` で返す、hint の流れる 2 端末（account 同期の task を起こす）。最後は B の account 同期の hint。
 pub(super) async fn running_devices(
     keys: &KukuriKeys,
-) -> (AppService, AppService, Arc<MemoryStore>, Arc<MemoryStore>) {
+) -> (
+    AppService,
+    AppService,
+    Arc<MemoryStore>,
+    Arc<MemoryStore>,
+    AccountHints,
+) {
     let network = FakeNetwork::default();
     let mut devices = Vec::new();
+    let b_hints = AccountHints::default();
     for (id, other) in [("device-a", "device-b"), ("device-b", "device-a")] {
         let docs = DeviceDocs::new();
         let store = Arc::new(MemoryStore::default());
@@ -324,6 +331,11 @@ pub(super) async fn running_devices(
                 endpoint_id: other.into(),
                 addr_hint: None,
             }])),
+            account_hints: if id == "device-b" {
+                b_hints.clone()
+            } else {
+                AccountHints::default()
+            },
         };
         let app = app_service_from_dependencies(
             store.clone(),
@@ -344,7 +356,7 @@ pub(super) async fn running_devices(
     for app in [&a, &b] {
         app.start_account_sync().await.expect("account sync");
     }
-    (a, b, a_store, b_store)
+    (a, b, a_store, b_store, b_hints)
 }
 
 pub(super) async fn joined_on(app: &AppService, channel_id: &str) {
@@ -367,7 +379,7 @@ pub(super) async fn joined_on(app: &AppService, channel_id: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_online_controller_rotates_for_a_share_and_a_post_on_the_other_device() {
     let keys = generate_keys();
-    let (a, b, a_store, b_store) = running_devices(&keys).await;
+    let (a, b, a_store, b_store, _) = running_devices(&keys).await;
 
     let shared = create(&a, ChannelAudienceKind::InviteOnly).await;
     joined_on(&b, &shared).await;
@@ -462,4 +474,30 @@ async fn the_online_controller_rotates_for_a_share_and_a_post_on_the_other_devic
         "B posts with the new epoch"
     );
     assert_b_created_nothing(&b_store).await;
+}
+
+/// 依頼の hint は、切れたばかりの接続へ送られて失われうる（#1220 AC-3c2）。B は待つ間に 5 秒ごとに hint を送り直すので、
+/// 最初の hint が届かなくても A は依頼を知り、B の共有は 15 秒の待ちの内に新しい世代で完了する。送り直しの hint は別の
+/// message になる（gossip は同じ内容の message を重複として落とす）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lost_request_hint_is_sent_again_while_waiting() {
+    let keys = generate_keys();
+    let (a, b, _, _, b_hints) = running_devices(&keys).await;
+    let shared = create(&a, ChannelAudienceKind::InviteOnly).await;
+    joined_on(&b, &shared).await;
+    let old = epoch(&b, &shared).await;
+    b_hints.sent.lock().expect("hints").clear();
+    b_hints.dropping.store(1, Ordering::SeqCst);
+    b.export_channel_access_token(TOPIC, &shared, None)
+        .await
+        .expect("the controller rotates after the hint is sent again");
+    assert_ne!(epoch(&b, &shared).await, old);
+    let sent = b_hints.sent.lock().expect("hints").clone();
+    assert!(sent.len() >= 2, "the hint is sent again: {sent:?}");
+    for (index, hint) in sent.iter().enumerate() {
+        assert!(
+            !sent[index + 1..].contains(hint),
+            "a hint repeats the same message: {sent:?}"
+        );
+    }
 }

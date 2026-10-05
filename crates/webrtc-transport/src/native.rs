@@ -145,6 +145,9 @@ impl Driver {
                 }
                 Output::Event(event) => {
                     if !self.handle_event(event) {
+                        // 相手が閉じた DataChannel への応答（こちらの stream の reset）を送り切ってから終える。送らずに終えると、
+                        // 相手の DataChannel は closing のまま close の event が出ない。
+                        self.flush().await;
                         return Ok(None);
                     }
                 }
@@ -183,20 +186,25 @@ impl Driver {
         if let Some(id) = self.channel {
             self.rtc.direct_api().close_data_channel(id);
             // 自分の `ChannelClose` の event では止めずに、要求を送り切る。
-            while let Ok(output) = self.rtc.poll_output() {
-                match output {
-                    Output::Timeout(_) => break,
-                    Output::Transmit(transmit) => {
-                        let _ = self
-                            .socket
-                            .send_to(&transmit.contents, transmit.destination)
-                            .await;
-                    }
-                    Output::Event(_) => {}
-                }
-            }
+            self.flush().await;
         }
         "closed".to_string()
+    }
+
+    /// 出力を `Timeout` まで出し、送信を送り切る（event は捨てる）。
+    async fn flush(&mut self) {
+        while let Ok(output) = self.rtc.poll_output() {
+            match output {
+                Output::Timeout(_) => break,
+                Output::Transmit(transmit) => {
+                    let _ = self
+                        .socket
+                        .send_to(&transmit.contents, transmit.destination)
+                        .await;
+                }
+                Output::Event(_) => {}
+            }
+        }
     }
 
     fn send(&mut self, datagram: &[u8]) -> Result<()> {

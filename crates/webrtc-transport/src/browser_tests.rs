@@ -1,5 +1,5 @@
-//! ADR 0057 §8 の browser の固定 workload（E1〜E4）。headless の Chromium で
-//! `scripts/ci/browser_peer_test.sh` から実行する。browser↔native の相手は `examples/webrtc_peer.rs`。
+//! ADR 0057 §8 の browser の固定 workload（E1〜E4）と、transport の外から閉じた DataChannel（#1220 AC-3c2）。headless
+//! の Chromium で `scripts/ci/browser_peer_test.sh` から実行する。browser↔native の相手は `examples/webrtc_peer.rs`。
 //! 末尾は #1422 W10 AC-1 の browser↔browser の専用 ALPN の交渉（相手の手元の iroh relay で始めた接続の上）。
 
 use std::{future::poll_fn, time::Duration};
@@ -219,6 +219,40 @@ async fn e4_browser_closing_a_session_releases_its_resources() {
         .shared
         .deliver(pair.session, Bytes::from_static(b"late"));
     assert_eq!(pair.transport.stats().sessions, 0);
+}
+
+/// browser↔native: browser の DataChannel を transport の外から閉じても、native が応答（stream の reset）を送り切って
+/// から session を終えるので、browser の close の event で session が閉じる（PeerConnection の failed を待たない。#1220 AC-3c2）。
+#[wasm_bindgen_test]
+async fn a_data_channel_closed_outside_the_transport_closes_the_session() {
+    // 作られる DataChannel を page で控える（transport を通さずに閉じるため）。
+    js_sys::eval(
+        "window.__kukuriChannels = [];
+         const create = RTCPeerConnection.prototype.createDataChannel;
+         RTCPeerConnection.prototype.createDataChannel = function (...args) {
+           const channel = create.apply(this, args);
+           window.__kukuriChannels.push(channel);
+           return channel;
+         };",
+    )
+    .expect("record the data channels");
+    let mut pair = native_pair().await;
+    js_sys::eval("for (const channel of window.__kukuriChannels) channel.close();")
+        .expect("close the data channels");
+    let closed = n0_future::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match pair.events.recv().await {
+                Some(SessionEvent::Closed { session, .. }) if session == pair.session => break,
+                Some(_) => continue,
+                None => panic!("the session events ended"),
+            }
+        }
+    })
+    .await;
+    assert!(
+        closed.is_ok(),
+        "the session stays open after its data channel closed"
+    );
 }
 
 /// 相手の手元の iroh relay だけで届き、custom transport と専用 ALPN の交渉を持つ endpoint。
