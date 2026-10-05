@@ -118,12 +118,28 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 今後の AC の段で、既存の scenario に自然に属さないものは、新しい scenario にする（2026-10-04 ユーザー判断）。
 - W8 AC-5a の実装（2026-10-04）: 同じ scenario を desktop Firefox で回す。
   - 上の 2 つの job は、再利用の workflow `kukuri-web-e2e.yml` に置く。Fast は Chrome で呼ぶ（merge の条件）。同じ workflow を、夜間（schedule）と手動（workflow_dispatch）で Firefox で回す。Firefox の job は merge の条件にせず、失敗は Issue にする（2026-10-04 ユーザー判断）。schedule と workflow_dispatch は、workflow が default branch に入ってから動く。
-  - driver は、ブラウザを `KUKURI_WEB_E2E_BROWSER`（`chrome`・`firefox`）で選ぶ。Firefox は geckodriver で操作し、ページより先に動く script は WebDriver BiDi の preload script として Chrome と同じに動く。
+  - driver は、ブラウザを `KUKURI_WEB_E2E_BROWSER`（`chrome`・`firefox`）で選ぶ。Firefox は geckodriver で操作し、ページより先に動く script は Chrome と同じに動く（AC-5b で fixture の配信に移した）。
   - fixture の native は、WebRTC の候補を loopback でない既定の経路の IP で出す。Firefox は loopback の候補と組を作らず、`127.0.0.1` の候補では ICE が成立しなかった。Chrome も同じ候補で接続する。
   - 回線全断は、Firefox では WebDriver BiDi の `emulation.setNetworkConditions`（offline）で作り、Chrome と同じ判定（offline の間の案内と送信待ち、online の後の 1 回だけの配送と直接経路での再開）で確かめる。Chrome は chromedriver の命令のままにする（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
   - 凍結（と、復帰の後の focus の模擬）は Firefox の driver で作れない。Firefox では未確認の制約とし、PASS にしない（`lifecycle` の PASS の行に `unconfirmed: freeze …` と示す）。
   - Firefox の JSON の viewer は止める（特権の文書になり、`site-data` の page から保存先を消せない）。
   - 実結果（2026-10-04、Firefox 156.0、PR #1573 の CI。一時に Fast から Firefox も呼んだ run）: `settings`・`link-preview`・`transfer`・`webrtc-loss` は毎回 PASS。`lifecycle` は凍結を未確認として 3 回とも PASS。`site-data` は、重なった初回の dialog の閉じ方を直した後に PASS。direct と fallback は relay の中継 bytes で分かれた（native→Web の画像は、直接経路で 17〜47 KB、fallback で画像の大きさ 1.77 MB 以上）。`direct`・`fallback` には、Web 間の画像が受け手に出ない失敗が時々あり、#1577 にした。
+- W8 AC-5b の実装（2026-10-05）: 同じ scenario を macOS 15 arm64 の runner の実 Safari で回す。
+  - safaridriver は同時に 1 つの session しか開けない。各 scenario の最初の Web の client だけを Safari にし、2 台目からは同じ runner の Chrome にする（2026-10-05 ユーザー判断）。Safari どうしの組は未確認の制約とする。
+  - job は `kukuri-web-e2e.yml` の `macos-web-e2e-build`（fixture を macOS で作る）と `macos-web-e2e (<scenario>)`（Web の build は `linux-web-e2e-build` のものを使う）。夜間と手動で回し、merge の条件にしない。macOS の runner には Docker が無いので、Postgres・valkey は Homebrew のものを `cargo xtask-lite web-e2e --no-compose` で使う。Chrome は job の途中で自動更新され runner の chromedriver と合わなくなるので、Chrome for Testing を driver と組で使う。
+  - ページより先に動く試験の script（`apps/desktop/tests/web-e2e/page-init.js`）は、fixture が配信の `index.html` に同じ origin の script として足す。Safari の driver には WebDriver BiDi が無い。どのブラウザでも同じ script を使い、配信の artifact は変えない。fallback の端は driver が置く cookie で示す。
+  - safaridriver の制約への対処:
+    - Chrome の client が動くと、Safari の page が focus を失い、押下と入力が page に届かない。押下・入力の前に `open -a Safari` で focus を戻す（AppleScript の `activate` では、Safari が最前面になっても page に focus が戻らなかった）。
+    - key の操作は、同じ文字が続くと 2 つ目を落とすので、本文は要素への入力で入れる。
+    - 表示していない要素の文も返すので、dialog は表示も確かめて選ぶ。
+    - file の input へ入力できないので、画像は page で File を作って入れる。
+  - 未確認の制約（`unconfirmed:` として PASS の行に示す）:
+    - 凍結と、復帰の後の focus の模擬。回線全断。Safari の driver で作れない。
+    - Safari と同じ runner の Chrome の間の WebRTC の経路。同じ runner では直接の経路が張れず、Web↔Web の画像は relay を通った（約 2〜4 MB）。Web↔Web の直接経路は Safari の判定の範囲の外（上の表）なので、測った bytes だけを示す。移行の途中にこの経路を落とす段（AC-3c1）も作れない。
+  - 実結果（2026-10-05、Safari 26.6.1、PR #1584 の CI。一時に Fast から Safari も呼んだ run 37268403845）:
+    - `direct`・`fallback`・`settings`・`link-preview`・`webrtc-loss`・`site-data`・`transfer`・`same-account` は PASS。
+    - native→Web の画像は、直接経路で 16〜46 KB、fallback で画像の大きさ 1.77 MB 以上の中継になり、2 つの経路が分かれた。
+    - `lifecycle` は「終了」の段で落ちる。別の window を開くと、別の tab で開いている案内が出ずに app が動く。#1586 にした。
 
 ### 5. 測定の workload と STUN
 

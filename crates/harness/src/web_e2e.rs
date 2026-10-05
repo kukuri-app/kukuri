@@ -3,7 +3,8 @@
 //! 同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信 origin に CORS で応答する）、
 //! Web の build（`dist-web`。その `_headers` の header を付ける）の配信、Community Node に同意した native の相手を
 //! 起動する。試験の driver（WebdriverIO）は `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を
-//! 判定する（ADR 0060 §4・§5）。
+//! 判定する（ADR 0060 §4・§5）。`index.html` には、試験の page の script（`page-init.js`）を同じ origin の script として
+//! 足す（driver の機能に頼らず、どのブラウザでも page の script より先に動く。#1220 AC-5b）。
 //!
 //! 環境変数:
 //! - `KUKURI_WEB_E2E_DIST`: 配信する `dist-web`（必須）
@@ -26,7 +27,7 @@ use kukuri_desktop_runtime::{
 };
 use kukuri_store::AccountSyncStore;
 use serde_json::{Value, json};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::*;
 
@@ -34,6 +35,8 @@ use crate::*;
 const PAYLOAD_IMAGE_SIDE: u32 = 768;
 /// リンクプレビューの record の画像の 1 辺（約 12 KiB。record の画像の上限 1 MiB に収まる）。
 const PREVIEW_IMAGE_SIDE: u32 = 64;
+/// page の script より先に動く試験の script。
+const PAGE_INIT: &str = include_str!("../../../apps/desktop/tests/web-e2e/page-init.js");
 
 struct NativeGate {
     host: Arc<ClientHost>,
@@ -82,6 +85,12 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let cn_addr = env_or("KUKURI_WEB_E2E_CN_ADDR", "127.0.0.1:4181");
     let web_origin = format!("http://{web_addr}");
     let rules = Arc::new(artifact_headers(&dist)?);
+    let html = axum::response::Html(std::fs::read_to_string(dist.join("index.html"))?.replacen(
+        "<head>",
+        r#"<head><script src="/fixture/page-init.js"></script>"#,
+        1,
+    ));
+    let index = move || std::future::ready(html.clone());
 
     let stack =
         CommunityNodeStack::spawn_with("web_e2e", &cn_addr, std::slice::from_ref(&web_origin))
@@ -112,12 +121,15 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/link-preview", post(link_preview))
         .route("/fixture/shutdown", post(shutdown))
         .route("/fixture/account-sync-items", get(account_sync_items))
+        .route(
+            "/fixture/page-init.js",
+            get(|| async { ([("content-type", "text/javascript")], PAGE_INIT) }),
+        )
+        .route("/", get(index.clone()))
         // 経路の判定の画像（約 1.7 MiB）を base64 で添えた command を受ける。
         .layer(DefaultBodyLimit::max(8 << 20))
         .with_state(fixture.clone())
-        .fallback_service(
-            ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
-        )
+        .fallback_service(ServeDir::new(&dist).not_found_service(get(index)))
         .layer(axum::middleware::from_fn(
             move |request: Request, next: Next| {
                 let rules = rules.clone();

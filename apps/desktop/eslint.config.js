@@ -53,8 +53,8 @@ export default tseslint.config(
     },
   },
   {
-    // Web の実ブラウザの試験 (#1220)。driver は node、`browser.execute` の関数はページで動く。
-    files: ['tests/web-e2e/**/*.mjs'],
+    // Web の実ブラウザの試験 (#1220)。driver は node、`browser.execute` の関数と page-init.js はページで動く。
+    files: ['tests/web-e2e/**/*.{mjs,js}'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: { ...globals.node, ...globals.browser },

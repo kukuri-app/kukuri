@@ -3,7 +3,9 @@
 // （一覧は `--list`。#1559）。相手は harness の web_e2e_fixture（同じ job の Community Node・native の相手・`dist-web` の
 // 配信）。各 scenario は新しい client で始め、前提もその中で作るので、他の scenario の状態に依存しない。
 //
-// ブラウザは `KUKURI_WEB_E2E_BROWSER`（`chrome`（既定）か `firefox`）。driver で作れない段は、未確認の制約として PASS の行に示す。
+// ブラウザは `KUKURI_WEB_E2E_BROWSER`（`chrome`（既定）・`firefox`・`safari`）。safaridriver は同時に 1 つの session しか開けない
+// ので、`safari` では各 scenario の最初の client だけを Safari にし、2 台目からは Chrome にする（#1220 AC-5b）。driver で作れない
+// 段は、未確認の制約として PASS の行に示す。page の script より先に動く試験の script は、fixture が配信に足す（`page-init.js`）。
 // - 直接経路: 通常のブラウザ。native↔Web と Web↔Web の実データが WebRTC DataChannel の上の QUIC を通る。
 // - relay fallback: 交換する SDP から ICE の候補を除いたブラウザ（ICE が成立しない。W10 の T2 にあたる）。実データが relay
 //   を通る。
@@ -11,8 +13,9 @@
 // relay と WebRTC の他の経路が無いので、relay の中継が画像より十分小さければ、画像は WebRTC を通っている。
 
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { writeFile, mkdtemp } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -27,11 +30,14 @@ const WAIT = 90_000;
 // （間隔の計 126 秒）送り直され（#1521 AC-1a）、各回は宛先の探索と送信で最長 10 秒ほどかかるので、それを覆う。
 const FOLLOW_BACK_WAIT = 210_000;
 const BROWSER = process.env.KUKURI_WEB_E2E_BROWSER ?? 'chrome';
-const CAPABILITIES = {
+const BROWSERS = {
   chrome: {
     browserName: 'chrome',
     'goog:chromeOptions': { args: ['--headless=new', '--lang=en-US', '--window-size=1280,900', '--no-sandbox'] },
     ...(process.env.CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER } } : {}),
+    // 版を指定すると、WebdriverIO が自動更新されない Chrome for Testing と driver を組で入れる（macOS の runner の Chrome は
+    // job の途中で自動更新され、runner の chromedriver と合わなくなる）。
+    ...(process.env.KUKURI_WEB_E2E_CHROME_VERSION ? { browserVersion: process.env.KUKURI_WEB_E2E_CHROME_VERSION } : {}),
   },
   firefox: {
     browserName: 'firefox',
@@ -42,7 +48,11 @@ const CAPABILITIES = {
     },
     ...(process.env.GECKODRIVER ? { 'wdio:geckodriverOptions': { binary: process.env.GECKODRIVER } } : {}),
   },
-}[BROWSER];
+  // safaridriver は WebDriver BiDi を持たない。
+  safari: { browserName: 'safari', 'wdio:enforceWebDriverClassic': true },
+};
+/** 全選択の修飾 key（macOS は Command）。 */
+const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 /** この browser の driver で作れず、確かめなかった段（未確認の制約。PASS にしない。#1220 AC-5a）。 */
 const unconfirmed = [];
 
@@ -94,11 +104,31 @@ const clients = [];
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
 async function startClient(name, { ice }) {
-  const browser = await remote({ logLevel: 'warn', capabilities: CAPABILITIES });
+  const kind = BROWSER === 'safari' && clients.length > 0 ? 'chrome' : BROWSER;
+  const paired = 'Safari with Safari (safaridriver opens one session at a time)';
+  if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
+  const browser = await remote({ logLevel: 'warn', capabilities: BROWSERS[kind] });
   browser.label = `${name}-${RUN}`;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
   clients.push(browser);
-  await addInitScripts(browser, { ice });
+  if (kind === 'safari') {
+    await browser.setWindowSize(1280, 900);
+    // 同じ macOS で Chrome の client が動くと Safari の page が focus を失い、safaridriver の押下と入力が page に届かない。
+    // 押下・入力の前に Safari を開き直して focus を戻す（AppleScript の activate では page に focus が戻らなかった）。
+    const activate = () =>
+      new Promise((resolve, reject) => execFile('open', ['-a', 'Safari'], (error) => (error ? reject(error) : resolve())));
+    for (const command of ['click', 'addValue', 'setValue']) {
+      browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), true);
+    }
+    browser.overwriteCommand('keys', async (original, ...args) => (await activate(), original(...args)));
+  }
+  if (!ice) {
+    // relay fallback の端の印（`page-init.js` が読む）。cookie は同じ origin の文書で置く。
+    await browser.url(`${ORIGIN}/fixture/info`);
+    await browser.execute(() => {
+      document.cookie = 'kukuri-e2e-without-ice=1; path=/';
+    });
+  }
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
   return browser;
@@ -116,110 +146,15 @@ async function openClient(name, { ice }) {
   return browser;
 }
 
-/** ページの script より先に動く script を、今の tab に入れる（WebdriverIO の addInitScript は今の tab にだけ効く）。 */
-async function addInitScripts(browser, { ice }) {
-  await browser.addInitScript(captureClipboard);
-  await browser.addInitScript(recordCspViolations);
-  await browser.addInitScript(keepObjectUrls);
-  await browser.addInitScript(trackPeerConnections);
-  await browser.addInitScript(withoutIceCandidates, !ice);
-}
-
-/** relay fallback の端（`always`）と、WebRTC の経路だけの喪失を保つ間（`__kukuriCut` で DataChannel を閉じてから `released`
- * まで）: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない（ページの script より先に動く）。 */
-function withoutIceCandidates(always) {
-  const blocked = () => always || (window.__kukuriCut?.done && !window.__kukuriCut.released);
-  const strip = (description) =>
-    description && blocked()
-      ? {
-          type: description.type,
-          sdp: description.sdp.split(/\r?\n/).filter((line) => !line.startsWith('a=candidate:')).join('\r\n'),
-        }
-      : description;
-  const prototype = RTCPeerConnection.prototype;
-  const local = Object.getOwnPropertyDescriptor(prototype, 'localDescription');
-  Object.defineProperty(prototype, 'localDescription', { get() { return strip(local.get.call(this)); } });
-  const setRemote = prototype.setRemoteDescription;
-  prototype.setRemoteDescription = function (description) { return setRemote.call(this, strip(description)); };
-}
-
-/** CSP の違反を控える（ページより先に動く）。配信の `_headers` の CSP の下で動くことを確かめる（#1220 AC-6）。 */
-function recordCspViolations() {
-  window.__kukuriCspViolations = [];
-  document.addEventListener('securitypolicyviolation', (event) =>
-    window.__kukuriCspViolations.push(`${event.effectiveDirective} ${event.blockedURI}`)
-  );
-}
-
-/** 画面が作った blob の URL から、その Blob を引けるようにする（ページより先に動く）。配信の CSP の `connect-src` は `blob:` を
- * 許さないので、表示した画像の中身は `fetch` でなく Blob から読む。 */
-function keepObjectUrls() {
-  window.__kukuriObjectUrls = new Map();
-  const create = URL.createObjectURL;
-  const revoke = URL.revokeObjectURL;
-  URL.createObjectURL = (object) => {
-    const url = create.call(URL, object);
-    window.__kukuriObjectUrls.set(url, object);
-    return url;
-  };
-  URL.revokeObjectURL = (url) => {
-    window.__kukuriObjectUrls.delete(url);
-    revoke.call(URL, url);
-  };
-}
-
 /** 今の page で CSP の違反が無い（page を読み込み直すと控えは消えるので、読み込み直す前に呼ぶ）。 */
 const assertNoCspViolations = async (browser) =>
   assert.deepEqual(await browser.execute(() => window.__kukuriCspViolations), [], `${browser.label} has no CSP violations`);
 
-/** 共有リンク（clipboard へ書く値）を控える（ページより先に動く）。headless では clipboard へ書けないことがある。 */
-function captureClipboard() {
-  window.__kukuriCopied = [];
-  navigator.clipboard.writeText = async (text) => {
-    window.__kukuriCopied.push(text);
-  };
-}
-
-/**
- * WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる口を
- * 持つ（ページより先に動く。#1220 AC-4）。constructor は差し替えない（fallback の端の script が prototype の getter を差し替える）。
- * `window.__kukuriCut = { after }` を置くと、1 本の DataChannel で `after` bytes を受け取った時点で、開いている DataChannel をすべて
- * 閉じ、閉じた時刻を `done` に残す（runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても event は
- * 出ない）。1 本だけ閉じると、他の相手との session が残り、転送が relay を通らずに完了しうる（#1549）。
- */
-function trackPeerConnections() {
-  window.__kukuriPeers = [];
-  const channels = [];
-  const createDataChannel = RTCPeerConnection.prototype.createDataChannel;
-  RTCPeerConnection.prototype.createDataChannel = function (...args) {
-    window.__kukuriPeers.push(this);
-    return createDataChannel.apply(this, args);
-  };
-  const onmessage = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage');
-  Object.defineProperty(RTCDataChannel.prototype, 'onmessage', {
-    configurable: true,
-    get() {
-      return onmessage.get.call(this);
-    },
-    set(handler) {
-      if (handler) channels.push(this);
-      let received = 0;
-      onmessage.set.call(this, handler && ((event) => {
-        const cut = window.__kukuriCut;
-        if (cut && !cut.done && (received += event.data.byteLength) >= cut.after) {
-          cut.done = Date.now();
-          for (const channel of channels) channel.close();
-        }
-        handler(event);
-      }));
-    },
-  });
-}
-
 async function findDialog(browser, text) {
   for await (const dialog of browser.$$('[role=dialog]')) {
-    // 閉じかけの dialog は、一覧を取ってから読むまでの間に消える（stale element）。
-    if ((await dialog.getText().catch(() => '')).includes(text)) return dialog;
+    // 閉じかけの dialog は、一覧を取ってから読むまでの間に消える（stale element）。safaridriver は表示していない要素の文も
+    // 返すので、表示も確かめる。
+    if ((await dialog.getText().catch(() => '')).includes(text) && (await dialog.isDisplayed().catch(() => false))) return dialog;
   }
   return null;
 }
@@ -254,14 +189,35 @@ async function openComposer(column) {
 }
 
 /** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。欄に残った文（復元した下書き）は、利用者と同じく欄を押して
- * 全選択から打ち替える（`setValue` の clear は Chrome では React の state を消さず、列が active になる再描画で文が戻る）。 */
+ * 全選択から消す（`setValue` の clear は Chrome では React の state を消さず、列が active になる再描画で文が戻る）。本文は要素へ
+ * 入れる（safaridriver の key の操作は、同じ文字が続くと 2 つ目を落とす）。 */
 async function post(browser, content, column = publicColumn(browser), file = null) {
-  await (await openComposer(column)).click();
-  await browser.keys([Key.Ctrl, 'a']);
-  await browser.keys(content);
-  if (file) await column.$('input[type=file]').addValue(file);
+  const composer = await openComposer(column);
+  await composer.click();
+  await browser.keys([SELECT_ALL, 'a']);
+  await browser.keys(Key.Backspace);
+  await composer.addValue(content);
+  if (file) await attach(browser, column, file);
   await column.$('button=Post').click();
   await sees(browser, content);
+}
+
+/** 列の投稿欄に画像（`file`）を添える。safaridriver は file の input へ入力できないので、Safari では page で File を作って入れる。 */
+async function attach(browser, column, file) {
+  const input = await column.$('input[type=file]');
+  if (browser.capabilities.browserName !== 'Safari') return input.addValue(file);
+  const data = (await readFile(file)).toString('base64');
+  await browser.execute(
+    (element, name, data) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], name, { type: 'image/png' }));
+      element.files = transfer.files;
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    input,
+    path.basename(file),
+    data
+  );
 }
 
 const card = (browser, text) => browser.$(`article*=${text}`);
@@ -389,6 +345,12 @@ async function relayedWhileLoading(browser, content, publish) {
 /** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
 function assertRoute(name, result, direct) {
   console.log(name, result);
+  // Safari と同じ runner の Chrome との Web↔Web の直接経路は、Safari の判定の範囲の外（ADR 0060 §4）。測った bytes だけを示す。
+  if (BROWSER === 'safari' && direct && name.startsWith('web→web')) {
+    const note = 'the direct path between Safari and Chrome (outside the range judged on Safari)';
+    if (!unconfirmed.includes(note)) unconfirmed.push(note);
+    return;
+  }
   assert.ok(
     direct ? result.relayed < result.size / 4 : result.relayed >= result.size * 0.9,
     `${name} ${direct ? 'went through' : 'did not use'} the relay: ${JSON.stringify(result)}`
@@ -577,7 +539,7 @@ async function sendDirectMessage(browser, peer, text, file = null) {
   const composer = column.$('textarea[placeholder="Write a message"]');
   if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Message to "]').click();
   await composer.setValue(text);
-  if (file) await column.$('input[type=file]').addValue(file);
+  if (file) await attach(browser, column, file);
   await column.$('button=Send').click();
   await sees(browser, text);
 }
@@ -756,7 +718,9 @@ async function assertConnected(browser, peers, nativeEndpoint) {
 
 /** 新しいアカウントの初回（同意・Community Node の同意）を進める。 */
 async function acceptFirstRun(browser) {
-  await browser.$('[data-testid="age-attestation-checkbox"]').click();
+  const age = browser.$('[data-testid="age-attestation-checkbox"]');
+  await age.waitForClickable({ timeout: WAIT });
+  await age.click();
   await browser.$('button=Accept and continue').click();
   await (await dialogWith(browser, 'What is a community node?')).$('button=Review terms').click();
   await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
@@ -927,7 +891,7 @@ const webSource = (source) => ({
  * 新しい Web が、移行元（`from`。`nativeSource` か `webSource`）のリンクで `account` を受け取り、そのアカウントへ切り替える
  * （#1211、#1220 AC-3b・AC-3c）。初回の profile の dialog の「以前のアカウントを戻す」から入る。`history` は履歴の範囲（null は
  * 移さない）、`duringHistory` は履歴を受けている間の操作。`cut` を渡すと、接続の後にその bytes を受けた時点で WebRTC の経路だけを
- * 落とし（`trackPeerConnections`）、完了の後に戻す。
+ * 落とし（`page-init.js`）、完了の後に戻す。
  */
 async function transferAccount(from, name, account, { history = null, duringHistory = null, cut = null } = {}) {
   const browser = await startClient(name, { ice: true });
@@ -965,7 +929,10 @@ async function transferAccount(from, name, account, { history = null, duringHist
   assert.ok(result.includes('Not moved:'), 'the target lists what was not moved');
   if (duringHistory) assert.ok(result.includes('stopped partway'), 'the target shows that the history stopped partway');
   if (cut !== null) {
-    assert.ok(await browser.execute(() => window.__kukuriCut.done), `${browser.label} loses its WebRTC paths during the transfer`);
+    // Safari と同じ runner の Chrome の間には WebRTC の経路が張れず、移行の途中に落とす経路が無い（ADR 0060 §4）。
+    const lost = await browser.execute(() => window.__kukuriCut.done);
+    if (BROWSER === 'safari' && !lost) unconfirmed.push('losing the WebRTC paths during a transfer from Safari to Chrome');
+    else assert.ok(lost, `${browser.label} loses its WebRTC paths during the transfer`);
     await browser.execute(() => {
       window.__kukuriCut.released = true;
     });
@@ -1115,7 +1082,7 @@ async function transfer() {
   assert.ok(done.history?.stopped, `the history stopped partway: ${JSON.stringify(done.history)}`);
 }
 
-/** WebRTC の session の状態（作った順。`trackPeerConnections`）。 */
+/** WebRTC の session の状態（作った順。`page-init.js`）。 */
 const sessionStates = (browser) => browser.execute(() => window.__kukuriPeers.map((peer) => peer.connectionState));
 
 /** WebRTC の session が 1 つ以上開き、交渉の途中の session が無くなるまで待つ。 */
@@ -1334,9 +1301,7 @@ async function lifecycle() {
   // tab が保存から同じ EndpointId で再開する。
   await addHistory('history-b', 25);
   const first = await a.getWindowHandle();
-  const { handle: second } = await a.newWindow('about:blank');
-  await addInitScripts(a, { ice: true });
-  await a.url(ORIGIN);
+  const { handle: second } = await a.newWindow(ORIGIN);
   await sees(a, 'kukuri is open in another tab');
   await a.$('button=Use in this tab').click();
   await assertWindowed(a, peers);
@@ -1368,51 +1333,56 @@ async function lifecycle() {
     unconfirmed.push('freeze (the driver cannot freeze a page)');
   }
 
-  // 回線全断（driver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
-  // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
-  // 届いたと示す。
-  // native との会話の列は、会話の route で開き直す（前提で開いた会話の列は一時の列）。
-  await a.execute((topic, peer) => {
-    location.hash = `#/messages?topic=${encodeURIComponent(topic)}&peerPubkey=${peer}`;
-  }, TOPIC, nativePubkey);
-  await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
-  await directPathOpens(a);
-  const beforeOffline = (await sessionStates(a)).length;
-  // Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
-  const contexts = [await a.getWindowHandle()];
-  const network = (offline) =>
-    BROWSER === 'chrome'
-      ? a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 })
-      : a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
-  await network(true);
-  await earlierSessionsClose(a, beforeOffline);
-  await openSettings(a, 'connectivity');
-  await eventually('the guidance without a live connection', async () => {
-    const text = await pageText(a);
-    return text.includes('There is no live connection') && !/A live connection is available|This topic has a live connection/.test(text);
-  });
-  await a.$('button[aria-label="Close settings"]').click();
-  await post(a, `posted offline ${RUN}`);
-  const offlineMessage = `dm while offline ${RUN}`;
-  await sendDirectMessage(a, nativePubkey, offlineMessage);
-  const pending = await eventually('the pending message', async () => {
-    const state = await directMessageState(a, offlineMessage);
-    return state?.chip === 'Pending' && state;
-  });
-  await network(false);
-  const copies = async () =>
-    (await native('list_direct_message_messages', { request: { pubkey: aPubkey, cursor: null, limit: 50 } })).items.filter(
-      (item) => item.text === offlineMessage
-    );
-  await eventually('native receives the message', async () => {
-    const received = await copies();
-    assert.ok(received.length <= 1, `the message arrives once: ${JSON.stringify(received)}`);
-    return received.length === 1 && received[0].message_id === pending.id;
-  });
-  await eventually('the delivered message', async () => (await directMessageState(a, offlineMessage))?.chip === 'Delivered');
-  await resumesOnTheDirectPath(a, aPubkey, 'going online');
-  // 再送は届いた後も重ならない。
-  assert.equal((await copies()).length, 1, 'the message is delivered once');
+  // 回線の模擬は safaridriver に無い。
+  if (BROWSER === 'safari') {
+    unconfirmed.push('network offline (the driver cannot emulate the network)');
+  } else {
+    // 回線全断（driver の回線の模擬）: offline で session を閉じる。その間、接続の案内はつながっていないことと次の手順を示し
+    // （つながっているとは示さない）、自分の投稿は手元に出て、DM は送信待ちと示す。online の後、DM は同じ id で 1 回だけ届き、
+    // 届いたと示す。
+    // native との会話の列は、会話の route で開き直す（前提で開いた会話の列は一時の列）。
+    await a.execute((topic, peer) => {
+      location.hash = `#/messages?topic=${encodeURIComponent(topic)}&peerPubkey=${peer}`;
+    }, TOPIC, nativePubkey);
+    await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
+    await directPathOpens(a);
+    const beforeOffline = (await sessionStates(a)).length;
+    // Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
+    const contexts = [await a.getWindowHandle()];
+    const network = (offline) =>
+      BROWSER === 'chrome'
+        ? a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 })
+        : a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
+    await network(true);
+    await earlierSessionsClose(a, beforeOffline);
+    await openSettings(a, 'connectivity');
+    await eventually('the guidance without a live connection', async () => {
+      const text = await pageText(a);
+      return text.includes('There is no live connection') && !/A live connection is available|This topic has a live connection/.test(text);
+    });
+    await a.$('button[aria-label="Close settings"]').click();
+    await post(a, `posted offline ${RUN}`);
+    const offlineMessage = `dm while offline ${RUN}`;
+    await sendDirectMessage(a, nativePubkey, offlineMessage);
+    const pending = await eventually('the pending message', async () => {
+      const state = await directMessageState(a, offlineMessage);
+      return state?.chip === 'Pending' && state;
+    });
+    await network(false);
+    const copies = async () =>
+      (await native('list_direct_message_messages', { request: { pubkey: aPubkey, cursor: null, limit: 50 } })).items.filter(
+        (item) => item.text === offlineMessage
+      );
+    await eventually('native receives the message', async () => {
+      const received = await copies();
+      assert.ok(received.length <= 1, `the message arrives once: ${JSON.stringify(received)}`);
+      return received.length === 1 && received[0].message_id === pending.id;
+    });
+    await eventually('the delivered message', async () => (await directMessageState(a, offlineMessage))?.chip === 'Delivered');
+    await resumesOnTheDirectPath(a, aPubkey, 'going online');
+    // 再送は届いた後も重ならない。
+    assert.equal((await copies()).length, 1, 'the message is delivered once');
+  }
 
   // r9: AC-4 の段の後に、AC-4 より前に a が作った招待制の channel へ fallback の端 c が token で参加し、b の投稿を読む（reload など
   // の後の owner の channel への新しい参加。#1220 AC-4 r9）。c は直接経路の判定を終えた後に開く（relay の通信が判定に混ざらない）。

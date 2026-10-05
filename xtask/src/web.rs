@@ -125,15 +125,18 @@ pub(crate) fn web_build_artifact() -> Result<()> {
 /// driver は `apps/desktop/tests/web-e2e/main-flow.mjs`（WebdriverIO。ブラウザは `KUKURI_WEB_E2E_BROWSER`、driver は
 /// `CHROMEDRIVER`・`GECKODRIVER`、無ければ自動）。
 /// 引数の scenario（省略すると `main-flow.mjs --list` の全部）を、scenario ごとに新しい fixture で順に回す（#1559）。
-/// CI は build の job が `--build-only`、scenario の job が `--no-build <scenario>` で呼ぶ。
+/// CI は build の job が `--build-only`、scenario の job が `--no-build <scenario>` で呼ぶ。`--no-compose` は Postgres・valkey を
+/// compose で起動せず、`CN_POSTGRES_PORT`・`CN_VALKEY_PORT` の既存のものを使う（Docker の無い macOS の runner。#1220 AC-5b）。
 pub(crate) fn web_e2e(args: impl Iterator<Item = String>) -> Result<()> {
     let mut build = true;
     let mut run_scenarios = true;
+    let mut compose = true;
     let mut scenarios = Vec::new();
     for arg in args {
         match arg.as_str() {
             "--no-build" => build = false,
             "--build-only" => run_scenarios = false,
+            "--no-compose" => compose = false,
             flag if flag.starts_with("--") => bail!("unsupported web-e2e flag: {flag}"),
             _ => scenarios.push(arg),
         }
@@ -165,7 +168,7 @@ pub(crate) fn web_e2e(args: impl Iterator<Item = String>) -> Result<()> {
     let fixture = target_dir()
         .join("debug")
         .join(format!("web_e2e_fixture{}", std::env::consts::EXE_SUFFIX));
-    with_cn_postgres(|| {
+    let run_all = || {
         // 1 つが失敗しても残りを回し、失敗した scenario をまとめて示す。
         let failed: Vec<&String> = scenarios
             .iter()
@@ -177,7 +180,12 @@ pub(crate) fn web_e2e(args: impl Iterator<Item = String>) -> Result<()> {
             .collect();
         anyhow::ensure!(failed.is_empty(), "web e2e failed: {failed:?}");
         Ok(())
-    })
+    };
+    if compose {
+        with_cn_postgres(run_all)
+    } else {
+        run_all()
+    }
 }
 
 /// 新しい fixture（Community Node の DB・rendezvous の key・native）を起動し、`scenario` を回して止める。
