@@ -1725,6 +1725,26 @@ if (name === '--list') {
     // DIAG（一時）
     await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
     for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
+    if (BROWSER === 'safari') {
+      // DIAG（一時）: 前面へ戻す方法ごとに、page の focus と押下が届くかを確かめる。
+      const safari = clients[0];
+      const probe = async (step) => {
+        const before = await safari.execute(() => window.__kukuriDiag.length);
+        await safari.$('button[aria-label^="Post to "]').click().catch((e) => console.info('DIAG click error', String(e).slice(0, 200)));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const after = await safari.execute(() => [document.hasFocus(), window.__kukuriDiag.length]);
+        console.info('DIAG probe', step, JSON.stringify({ before, after }));
+      };
+      const run = (args) => new Promise((resolve) => execFile(args[0], args.slice(1), (error, out, err) => resolve(`${error ?? ''} ${out} ${err}`)));
+      await probe('none').catch((e) => console.info('DIAG probe none failed', String(e).slice(0, 200)));
+      console.info('DIAG osascript', await run(['osascript', '-e', 'tell application "Safari" to activate']));
+      await probe('osascript').catch(() => undefined);
+      console.info('DIAG frontmost', await run(['osascript', '-e', 'tell application "System Events" to get name of first process whose frontmost is true']));
+      console.info('DIAG open', await run(['open', '-a', 'Safari']));
+      await probe('open').catch(() => undefined);
+      await safari.switchToWindow(await safari.getWindowHandle()).catch((e) => console.info('DIAG switch failed', String(e).slice(0, 200)));
+      await probe('switchToWindow').catch(() => undefined);
+    }
     for (const client of clients) {
       const events = await client
         .execute(() => [
