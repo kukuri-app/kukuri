@@ -47,6 +47,7 @@ ts = [
 
 # backup・restore・旧 store の退役・profile lock 等の native だけの処理（ADR 0056 §2）。
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+keyring = { workspace = true, features = ["v1"] }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
@@ -65,12 +66,6 @@ web-sys = { version = "0.3.106", features = [
   "Window",
   "Worker",
 ] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { workspace = true, features = ["v1"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { workspace = true, features = ["v1"] }
 
 [dev-dependencies]
 kukuri-transport = { path = "../transport", features = ["test-support"] }
