@@ -61,6 +61,8 @@ const BROWSERS = {
 };
 /** 同時に 1 つの session しか開けない driver のブラウザ（safaridriver と Android の chromedriver）。2 台目からの client は Chrome。 */
 const SINGLE = { safari: 'Safari', android: 'Android' }[BROWSER];
+/** 最初の client が chromedriver の Chrome（desktop か Android）。 */
+const CHROMEDRIVER = BROWSER === 'chrome' || BROWSER === 'android';
 /** 全選択の修飾 key（macOS は Command）。 */
 const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 /** この browser の driver で作れず、確かめなかった段（未確認の制約。PASS にしない。#1220 AC-5a）。 */
@@ -1421,8 +1423,8 @@ async function lifecycle() {
   // 凍結: 利用者と同じく、非表示 → 凍結 → 復帰 → 表示の順にする（chromedriver の freeze は page を非表示にしてから凍結し、resume
   // の後も非表示のまま戻さない。画面は非表示の間は列を読み直さない）。凍結で旧い session を閉じ、復帰では生きた需要の相手と
   // だけ交渉し直す。交渉は相手ごとに復帰の event（resume と可視）1 回につき 3 回まで（W10 の MAX_ATTEMPTS）。
-  // freeze と focus の模擬は Chrome の driver（CDP）にしか無い。
-  if (BROWSER === 'chrome') {
+  // freeze と focus の模擬は chromedriver（CDP。desktop と Android の Chrome）にしか無い。
+  if (CHROMEDRIVER) {
     await directPathOpens(a);
     const beforeFreeze = (await sessionStates(a)).length;
     await a.freeze();
@@ -1452,10 +1454,10 @@ async function lifecycle() {
     await columnOf(a, 'conversation', nativePubkey).waitForExist({ timeout: WAIT });
     await directPathOpens(a);
     const beforeOffline = (await sessionStates(a)).length;
-    // Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
+    // chromedriver の Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
     const contexts = [await a.getWindowHandle()];
     const network = (offline) =>
-      BROWSER === 'chrome'
+      CHROMEDRIVER
         ? a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 })
         : a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
     await network(true);
