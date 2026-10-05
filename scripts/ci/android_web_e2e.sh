@@ -8,9 +8,6 @@ adb wait-for-device
 # Chrome の初回の画面（利用規約・同期の案内）を出さない。
 adb shell am set-debug-app --persistent com.android.chrome
 adb shell "echo '_ --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line"
-# 画面の keyboard を出さない（出ると表示の範囲が縮み、chromedriver の押下の位置がずれて button に当たらない）。chromedriver は
-# 文字を IME を通さずに送る。
-for ime in $(adb shell ime list -s); do adb shell ime disable "$ime"; done
 
 # emulator の Chrome の版に合う chromedriver（Chrome for Testing は 115 から。それより前は旧い配布先）。
 version=$(adb shell dumpsys package com.android.chrome | sed -n 's/.*versionName=\([0-9.]*\).*/\1/p' | head -1)
