@@ -63,6 +63,9 @@ const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 /** この browser の driver で作れず、確かめなかった段（未確認の制約。PASS にしない。#1220 AC-5a）。 */
 const unconfirmed = [];
 
+const adb = (...args) =>
+  new Promise((resolve, reject) => execFile('adb', args, (error) => (error ? reject(error) : resolve())));
+
 async function fixture(route, body) {
   const response = await fetch(`${ORIGIN}${route}`, body === undefined ? undefined : {
     method: 'POST',
@@ -119,11 +122,7 @@ async function startClient(name, { ice }) {
   if (kind === 'android') {
     // emulator の 127.0.0.1 から、fixture の配信・Community Node・relay へ届かせる（adb の port の転送は TCP だけ）。
     const { community_node: communityNode, relay_port: relayPort } = await fixture('/fixture/info');
-    for (const port of [new URL(ORIGIN).port, new URL(communityNode).port, relayPort]) {
-      await new Promise((resolve, reject) =>
-        execFile('adb', ['reverse', `tcp:${port}`, `tcp:${port}`], (error) => (error ? reject(error) : resolve()))
-      );
-    }
+    for (const port of [new URL(ORIGIN).port, new URL(communityNode).port, relayPort]) await adb('reverse', `tcp:${port}`, `tcp:${port}`);
   }
   const browser = await remote({ logLevel: 'warn', capabilities: BROWSERS[kind] });
   browser.label = `${name}-${RUN}`;
@@ -139,6 +138,22 @@ async function startClient(name, { ice }) {
       browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), true);
     }
     browser.overwriteCommand('keys', async (original, ...args) => (await activate(), original(...args)));
+  }
+  if (kind === 'android') {
+    // 入力の後に出る画面の keyboard は表示の範囲を縮めて動かし、chromedriver の押下を下へずらす（button に当たらない）。押下の前に
+    // 閉じる（keyboard が出ている間の戻る key は keyboard を閉じるだけ）。
+    const keyboardShown = () => browser.execute(() => window.visualViewport.height < window.innerHeight * 0.8);
+    browser.overwriteCommand(
+      'click',
+      async (original, ...args) => {
+        if (await keyboardShown()) {
+          await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+          await eventually('the on-screen keyboard closes', async () => !(await keyboardShown()));
+        }
+        return original(...args);
+      },
+      true
+    );
   }
   if (!ice) {
     // relay fallback の端の印（`page-init.js` が読む）。cookie は同じ origin の文書で置く。

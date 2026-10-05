@@ -311,9 +311,6 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          # 物理の keyboard を付け、画面の keyboard を出さない（出ると表示の範囲が縮んでずれ、chromedriver の押下が button に
-          # 当たらない）。
-          enable-hw-keyboard: true
           script: bash scripts/ci/android_web_e2e.sh ${{ matrix.scenario }}
 
       # DIAG（一時）
