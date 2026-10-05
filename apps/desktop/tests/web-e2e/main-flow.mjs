@@ -145,18 +145,26 @@ async function startClient(name, { ice }) {
     // 入力の後に出る画面の keyboard は表示の範囲を縮めて動かし、chromedriver の押下を下へずらす（button に当たらない）。打った後と
     // 押下の前に閉じる（keyboard は focus から少し遅れて出る。keyboard が出ている間の戻る key は keyboard を閉じるだけ）。
     const closeKeyboard = async () => {
-      if (await browser.execute(() => window.visualViewport.height < window.innerHeight * 0.8)) {
+      // 入力の欄に focus があれば、keyboard が出きって表示の範囲の高さが落ち着くまで待つ（最短 0.5 秒）。
+      const shrunk = await browser.execute(async () => {
+        if (document.activeElement?.matches('input, textarea')) {
+          let last = -1;
+          for (let i = 0, same = 0; i < 30 && same < 3; i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            same = i >= 4 && window.visualViewport.height === last ? same + 1 : 0;
+            last = window.visualViewport.height;
+          }
+        }
+        return window.visualViewport.height < window.innerHeight * 0.8;
+      });
+      if (shrunk) {
         await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
         await eventually('the on-screen keyboard closes', () =>
           browser.execute(() => window.visualViewport.height >= window.innerHeight * 0.8)
         );
       }
     };
-    const typed = async (result) => {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await closeKeyboard();
-      return result;
-    };
+    const typed = async (result) => (await closeKeyboard(), result);
     // 狭い画面では、別の列の要素は横の画面の外にあり、下の端の要素は下に固定された操作の帯に覆われる。chromedriver の scroll は
     // 列の scroll-snap と固定の帯に負けるので、押す前に要素を列ごと画面の中央へ動かし、位置が止まるのを待つ。
     browser.overwriteCommand(
