@@ -1,6 +1,6 @@
 //! Web クライアントの実ブラウザ試験の相手（#1220 W8 AC-2a）。
 //!
-//! 同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信 origin に CORS で応答する）、
+//! 同じ process で、in-process の Community Node（user-api と iroh relay。Web の配信 origin に CORS で応答する）と STUN、
 //! Web の build（`dist-web`。その `_headers` の header を付ける）の配信、Community Node に同意した native の相手を
 //! 起動する。試験の driver（WebdriverIO）は `/fixture/*` で native を操作し、relay が中継した bytes で実データの経路を
 //! 判定する（ADR 0060 §4・§5）。`index.html` には、試験の page の script（`page-init.js`）を同じ origin の script として
@@ -95,6 +95,12 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let stack =
         CommunityNodeStack::spawn_with("web_e2e", &cn_addr, std::slice::from_ref(&web_origin))
             .await?;
+    // 本番と同じく relay の host の 3478 番で STUN に応答する（ADR 0060 §5）。応答が無いと、browser の offer は候補集めの
+    // 上限（3 秒）まで待つ（#1590）。
+    let stun = tokio::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, kukuri_cn_stun::PORT))
+        .await
+        .context("failed to bind the stun socket")?;
+    tokio::spawn(async move { kukuri_cn_stun::serve(&stun).await });
     let dir = tempfile::tempdir()?;
     let db = dir.path().join("native.db");
     // 未指定の bind では、WebRTC の候補は既定の経路の IP になる。Firefox は loopback の候補と組を作らない（#1220 AC-5a）。

@@ -183,6 +183,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - 接続の確立時間・blob の転送・CPU とメモリ・queue の高水位・relay を通った実データの bytes を、ADR 0057 §8 の固定 workload（E1〜E6、S1〜S3）で測る。W9・W10 の予算と判定方法を使い、測定だけで高速化や費用の削減を宣言しない。
 - W8 AC-5d3 の実測（2026-10-05）: 固定 workload の接続の時間・転送・CPU 時間と最大 RSS・`bufferedAmount` の高水位・relay を通った bytes を、ADR 0057 §8 に記録した。native の UDP・relay の既存の試験は PR CI で全件成功し、回帰していない。
 - 開発と試験の STUN は、試験の環境の中で動かすもの（native の相手と同じ job）を使う。本番の STUN（Community Node の基盤、ADR 0057 §6）への反映は別の Issue にまとめる。
+  - 実ブラウザの E2E は、fixture が同じ process で `cn-stun` を 3478 番に起動する（#1590）。STUN が応答しないと、browser の offer は候補集めの上限（3 秒、ADR 0057 §7）まで待ち、行き違いの交渉で相手の offer を待つ側の経路の確立が遅れる。
 
 ### 6. 説明とデータ分類の変更点（AC-6）
 
