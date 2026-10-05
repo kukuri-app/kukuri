@@ -168,6 +168,7 @@ impl EndpointHooks for DemandHooks {
         if connection.alpn() != SIGNALING_ALPN
             && let Some(signaling) = self.0.get().and_then(Weak::upgrade)
         {
+            tracing::debug!("KD hook {} alpn={}", connection.remote_id().fmt_short(), String::from_utf8_lossy(connection.alpn()));
             signaling.demand(connection.remote_id(), connection.weak_handle());
         }
         async { AfterHandshakeOutcome::accept() }
@@ -231,6 +232,7 @@ impl Signaling {
         if let Some(hooks) = demand {
             let _ = hooks.0.set(Arc::downgrade(&signaling));
         }
+        tracing::debug!("KD me {}", signaling.endpoint.id().fmt_short());
         let weak = Arc::downgrade(&signaling);
         n0_future::task::spawn(async move {
             while let Some(event) = events.recv().await {
@@ -283,6 +285,7 @@ impl Signaling {
                         _ => false,
                     }
                 };
+                tracing::debug!("KD opened {} s={} current={current}", remote.fmt_short(), kd(&session));
                 if current {
                     self.add_path(remote, addr.clone()).await;
                     let _ = self.changes.send((session, remote, Some(addr)));
@@ -290,6 +293,7 @@ impl Signaling {
             }
             SessionEvent::Closed { session, .. } => {
                 let removed = self.state().sessions.remove(&session);
+                tracing::debug!("KD closed s={} known={:?}", kd(&session), removed.as_ref().map(|(r, ..)| r.fmt_short().to_string()));
                 if let Some((remote, ..)) = removed {
                     let _ = self.changes.send((session, remote, None));
                 }
@@ -300,6 +304,7 @@ impl Signaling {
     /// 世代を終え、この交渉が作った session をすべて閉じる（pagehide・freeze・offline・account の切替・停止）。
     /// 古い世代の応答では session を作らない。
     pub fn reset(&self) {
+        tracing::debug!("KD reset");
         let sessions: Vec<_> = {
             let mut state = self.state();
             state.generation += 1;
@@ -317,6 +322,7 @@ impl Signaling {
     /// 生きた需要の接続が残り、今の世代の session が無い相手とだけ交渉し直す（可視・online・pageshow・resume）。
     /// 開いている session は閉じない（閉じると、交渉し直すまで relay の経路になるため）。
     pub fn resume(&self) {
+        tracing::debug!("KD resume");
         let drivers: Vec<_> = {
             let mut state = self.state();
             let peers: Vec<_> = state
@@ -350,6 +356,7 @@ impl Signaling {
             let demand = state.demand.entry(remote).or_default();
             demand.live += 1;
             let start = demand.driver == 0;
+            tracing::debug!("KD demand {} live={} start={start} open={}", remote.fmt_short(), demand.live, open.is_some());
             (start.then(|| state.new_driver(remote)).flatten(), open)
         };
         let Some(this) = self.this.upgrade() else {
@@ -378,6 +385,7 @@ impl Signaling {
                 return;
             };
             demand.live -= 1;
+            tracing::debug!("KD demand_ended {} live={}", remote.fmt_short(), demand.live);
             if demand.live > 0 {
                 return;
             }
@@ -390,6 +398,7 @@ impl Signaling {
                 .collect()
         };
         for session in sessions {
+            tracing::debug!("KD demand_ended closes {} s={}", remote.fmt_short(), kd(&session));
             self.transport.close(session);
         }
     }
@@ -424,13 +433,21 @@ impl Signaling {
                 }
                 existing
             };
+            tracing::debug!("KD run_demand {} existing={:?} attempts={attempts}", remote.fmt_short(), existing.as_ref().map(kd));
             let session = match existing {
                 Some(session) => Some(session),
-                None => self.connect(self.route(remote).await).await.ok(),
+                None => match self.connect(self.route(remote).await).await {
+                    Ok(session) => Some(session),
+                    Err(error) => {
+                        tracing::debug!("KD connect failed {} {error:#}", remote.fmt_short());
+                        None
+                    }
+                },
             };
             if let Some(session) = session {
                 // 交渉の途中で需要が終わっていたら（登録の前で `demand_ended` が閉じられない）、ここで閉じる。
                 if !self.state().demand.contains_key(&remote) {
+                    tracing::debug!("KD run_demand closes after demand ended {} s={}", remote.fmt_short(), kd(&session));
                     self.transport.close(session);
                     return;
                 }
@@ -529,7 +546,9 @@ impl Signaling {
                 .await?;
             session = Some(id);
             self.track(id, peer, generation)?;
-            match self.exchange(remote, id, &offer).await? {
+            let response = self.exchange(remote, id, &offer).await?;
+            tracing::debug!("KD connect {} s={} response={:?}", peer.fmt_short(), kd(&id), response.as_ref().map(|_| "answer"));
+            match response {
                 Ok(answer) => {
                     self.transport.accept_answer(id, &answer).await?;
                     Self::opened(opened, peer, Some(id)).await
@@ -591,6 +610,7 @@ impl Signaling {
                 state.open_session_with(remote).is_some(),
             )
         };
+        tracing::debug!("KD answer_request {} s={} glare={glare} open={open} lower={}", remote.fmt_short(), kd(&session), self.endpoint.id() < remote);
         if open || (glare && self.endpoint.id() < remote) {
             return Err(Rejection::Glare);
         }
@@ -624,6 +644,7 @@ impl Signaling {
             )
             .await;
             if !matches!(open, Ok(Ok(_))) && this.state().sessions.remove(&session).is_some() {
+                tracing::debug!("KD answer not opened {} s={}", remote.fmt_short(), kd(&session));
                 this.transport.close(session);
             }
             this.release(None);
@@ -633,6 +654,10 @@ impl Signaling {
 }
 
 type Response = std::result::Result<String, Rejection>;
+
+fn kd(session: &SessionId) -> String {
+    format!("{:02x}{:02x}", session.0[0], session.0[1])
+}
 
 impl ProtocolHandler for Signaling {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
