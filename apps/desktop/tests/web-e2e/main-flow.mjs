@@ -204,7 +204,7 @@ async function post(browser, content, column = publicColumn(browser), file = nul
 
 /** 列の投稿欄に画像（`file`）を添える。safaridriver は file の input へ入力できないので、Safari では page で File を作って入れる。 */
 async function attach(browser, column, file) {
-  const input = column.$('input[type=file]');
+  const input = await column.$('input[type=file]');
   if (browser.capabilities.browserName !== 'Safari') return input.addValue(file);
   const data = (await readFile(file)).toString('base64');
   await browser.execute(
