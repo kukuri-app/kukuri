@@ -44,7 +44,7 @@ pub(crate) async fn acquire(
     let callback = {
         let (decided, granted) = (decided.clone(), granted.clone());
         Closure::once_into_js(move |lock: JsValue| -> JsValue {
-            granted.set(!lock.is_null());
+            granted.set(!lock.is_null_or_undefined());
             if let Some(sender) = decided.borrow_mut().take() {
                 let _ = sender.send(granted.get());
             }
@@ -71,5 +71,35 @@ pub(crate) async fn acquire(
         Ok(Some(RuntimeLock { release }))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen(inline_js = r#"
+    export function unavailable_as_undefined() {
+      const locks = navigator.locks;
+      const request = locks.request;
+      locks.request = (name, options, callback) =>
+        request.call(locks, name, options, lock => callback(lock ?? undefined));
+      return () => { locks.request = request; };
+    }
+    "#)]
+    extern "C" {
+        fn unavailable_as_undefined() -> Function;
+    }
+
+    #[wasm_bindgen_test]
+    async fn unavailable_lock_does_not_grant_a_second_runtime() {
+        let first = acquire(false, || {}).await.unwrap().unwrap();
+        assert!(acquire(false, || {}).await.unwrap().is_none());
+        let restore = unavailable_as_undefined();
+        let second = acquire(false, || {}).await;
+        restore.call0(&JsValue::NULL).unwrap();
+        assert!(second.unwrap().is_none(), "undefined is not a granted lock");
+        drop(first);
     }
 }

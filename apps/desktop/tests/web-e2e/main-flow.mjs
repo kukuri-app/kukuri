@@ -1301,8 +1301,20 @@ async function lifecycle() {
   // tab が保存から同じ EndpointId で再開する。
   await addHistory('history-b', 25);
   const first = await a.getWindowHandle();
+  const unavailable = await a.execute(() => new Promise((resolve) => {
+    navigator.locks.request('kukuri-runtime-v1', { ifAvailable: true }, (lock) =>
+      resolve({ type: typeof lock, isNull: lock === null })
+    );
+  }));
+  console.log('unavailable runtime lock callback', unavailable);
+  await a.newWindow(ORIGIN, { type: 'tab' });
+  await sees(a, 'kukuri is open in another tab');
+  assert.equal((await sessionStates(a)).length, 0, 'the blocked tab does not start sessions');
+  await a.closeWindow();
+  await a.switchToWindow(first);
   const { handle: second } = await a.newWindow(ORIGIN);
   await sees(a, 'kukuri is open in another tab');
+  assert.equal((await sessionStates(a)).length, 0, 'the blocked window does not start sessions');
   await a.$('button=Use in this tab').click();
   await assertWindowed(a, peers);
   await a.switchToWindow(first);
