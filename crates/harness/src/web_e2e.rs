@@ -259,6 +259,9 @@ async fn info(State(fixture): State<Shared>) -> Result<Json<Value>, (StatusCode,
     Ok(Json(json!({
         "pubkey": status.local_author_pubkey,
         "endpoint_id": status.discovery.local_endpoint_id,
+        // Web が TCP でつなぐ先（Android の emulator は adb の port の転送で届かせる。#1220 AC-5c）。
+        "community_node": fixture.stack.base_url,
+        "relay_port": fixture.stack.iroh_relay.as_ref().map(|relay| relay.http_addr().port()),
     })))
 }
 
