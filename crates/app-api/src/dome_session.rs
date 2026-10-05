@@ -109,7 +109,8 @@ impl AppService {
         };
         let join = matches!(kind, DomeSessionInputKindV1::Join { .. });
         let keep_alive = matches!(kind, DomeSessionInputKindV1::KeepAlive);
-        self.hosting_context_replica(context).await?;
+        self.hosting_context_replica_for(context, PrivateChannelOwnerAction::Read)
+            .await?;
         let instance = self
             .hosting_instance(context, instance_id)
             .await?

@@ -27,7 +27,8 @@ impl AppService {
         spatial_context: SpatialContextV1,
         instance_id: &str,
     ) -> Result<DomeHostingView> {
-        self.hosting_context_replica(&spatial_context).await?;
+        self.hosting_context_replica_for(&spatial_context, PrivateChannelOwnerAction::Read)
+            .await?;
         let instance = self
             .hosting_instance(&spatial_context, instance_id)
             .await?
@@ -684,6 +685,16 @@ impl AppService {
         &self,
         context: &SpatialContextV1,
     ) -> Result<ReplicaId> {
+        self.hosting_context_replica_for(context, PrivateChannelOwnerAction::Write)
+            .await
+    }
+
+    /// `action` が `Read` なら、鍵更新の判定を通さない（hosting の取得と session の入力。#1552）。
+    pub(crate) async fn hosting_context_replica_for(
+        &self,
+        context: &SpatialContextV1,
+        action: PrivateChannelOwnerAction,
+    ) -> Result<ReplicaId> {
         let replica = match context {
             SpatialContextV1::Topic { topic_id } => topic_replica_id(topic_id.as_str()),
             SpatialContextV1::Channel {
@@ -691,7 +702,7 @@ impl AppService {
                 channel_id,
             } => {
                 let state = self
-                    .private_channel_write_state(topic_id.as_str(), channel_id)
+                    .private_channel_state_for_owner_action(topic_id.as_str(), channel_id, action)
                     .await?;
                 current_private_channel_replica_id(&state)
             }
