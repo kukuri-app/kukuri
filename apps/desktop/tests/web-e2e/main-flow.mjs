@@ -13,6 +13,7 @@
 // relay と WebRTC の他の経路が無いので、relay の中継が画像より十分小さければ、画像は WebRTC を通っている。
 
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -117,6 +118,10 @@ async function startClient(name, { ice }) {
   }
   await browser.url(ORIGIN);
   await acceptFirstRun(browser);
+  // macOS で Chrome を起動すると Safari の window が前面でなくなり、safaridriver の押下が page に届かない。
+  if (kind !== BROWSER) await new Promise((resolve, reject) =>
+    execFile('osascript', ['-e', 'tell application "Safari" to activate'], (error) => (error ? reject(error) : resolve()))
+  );
   return browser;
 }
 
@@ -679,7 +684,9 @@ async function assertConnected(browser, peers, nativeEndpoint) {
 
 /** 新しいアカウントの初回（同意・Community Node の同意）を進める。 */
 async function acceptFirstRun(browser) {
-  await browser.$('[data-testid="age-attestation-checkbox"]').click();
+  const age = browser.$('[data-testid="age-attestation-checkbox"]');
+  await age.waitForClickable({ timeout: WAIT });
+  await age.click();
   await browser.$('button=Accept and continue').click();
   await (await dialogWith(browser, 'What is a community node?')).$('button=Review terms').click();
   await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
