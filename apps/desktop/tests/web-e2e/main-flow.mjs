@@ -163,7 +163,8 @@ async function startClient(name, { ice }) {
       async function (original, ...args) {
         await closeKeyboard();
         await this.waitForExist({ timeout: WAIT });
-        await browser.execute(async (element) => {
+        // 中心が覆われていれば（列のページの表示が列の右下の操作に重なる。#1588）、利用者と同じく見えている部分を押す。
+        const offset = await browser.execute(async (element) => {
           element.scrollIntoView({ block: 'center', inline: 'center' });
           let last = '';
           for (let i = 0; i < 40; i += 1) {
@@ -172,8 +173,17 @@ async function startClient(name, { ice }) {
             if (`${left},${top}` === last) break;
             last = `${left},${top}`;
           }
+          const rect = element.getBoundingClientRect();
+          for (const fx of [0.5, 0.85, 0.15, 0.95, 0.05]) {
+            const x = rect.left + rect.width * fx;
+            const y = rect.top + rect.height / 2;
+            if (element.contains(document.elementFromPoint(x, y))) {
+              return { x: Math.round(x - (rect.left + rect.width / 2)), y: 0 };
+            }
+          }
+          return null;
         }, this);
-        return original(...args);
+        return offset && offset.x !== 0 ? original(offset) : original(...args);
       },
       true
     );
