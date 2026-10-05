@@ -798,7 +798,8 @@ async function siteData() {
   await browser.$('[data-testid="export-submit"]').click();
   const envelope = browser.$('[data-testid="export-envelope"]');
   await envelope.waitForExist({ timeout: WAIT });
-  const exported = await envelope.getValue();
+  // 欄は値より先に現れる（鍵の導出の Worker が後で値を入れる）。
+  const exported = await eventually('the export envelope', () => envelope.getValue());
   const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
   // 鍵の導出の Worker（export）が CSP の下で動いた。
   await assertNoCspViolations(browser);
