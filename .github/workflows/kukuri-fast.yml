@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox, safari, android]
+        browser: [firefox]
     uses: ./.github/workflows/kukuri-web-e2e.yml
     with:
       browser: ${{ matrix.browser }}

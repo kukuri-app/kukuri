@@ -1563,6 +1563,9 @@ async function dumpColumns(browser) {
     )
   );
   const sessions = await sessionStates(browser).catch(() => []);
+  // DIAG（一時）: 開いている dialog の文
+  const dialogs = await browser.execute(() => [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].map((node) => node.innerText.slice(0, 600))).catch((error) => [String(error)]);
+  console.log(`--- ${browser.label} dialogs=${JSON.stringify(dialogs)}`);
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
 
@@ -1873,7 +1876,7 @@ const scenarios = {
 const [name] = process.argv.slice(2).map((arg) => arg.replace(/-diag[0-9]+$/, ''));
 if (name === '--list') {
   // DIAG（一時）: 落ちた scenario を 2 本ずつ
-  console.log(JSON.stringify(['direct', 'fallback', 'same-account', 'lifecycle'].flatMap((key) => [`${key}-diag1`, `${key}-diag2`])));
+  console.log(JSON.stringify(['same-account'].flatMap((key) => [`${key}-diag1`, `${key}-diag2`])));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
