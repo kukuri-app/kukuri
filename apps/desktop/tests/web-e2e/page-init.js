@@ -2,40 +2,6 @@
 // `index.html` の head の先頭に同じ origin の script として足す。driver の機能（BiDi の addInitScript）に頼らないので、Safari
 // でも、driver が開いた別の tab でも動く。配信の artifact は変えない。
 (() => {
-  // DIAG（一時）: dialog の出入り・押下・focus・入力の時系列。
-  window.__kukuriDiag = [];
-  const note = (...entry) => window.__kukuriDiag.push([Date.now() % 1000000, ...entry]);
-  const label = (node) => {
-    const button = node?.closest?.('button');
-    return button ? `button:${button.getAttribute('aria-label') ?? button.textContent.slice(0, 30)}` : node?.tagName ?? String(node);
-  };
-  const dialogs = (node) => node.nodeType === 1 && (node.matches('[role=dialog]') || node.querySelector('[role=dialog]'));
-  new MutationObserver((records) => {
-    for (const record of records) {
-      for (const node of record.addedNodes) if (dialogs(node)) note('dialog+', node.textContent.slice(0, 40));
-      for (const node of record.removedNodes) if (dialogs(node)) note('dialog-', node.textContent.slice(0, 40));
-    }
-  }).observe(document, { childList: true, subtree: true });
-  for (const type of ['touchstart', 'click', 'focusin']) {
-    document.addEventListener(type, (event) => note(type, label(event.target), event.key ?? ''), true);
-  }
-  document.addEventListener(
-    'pointerdown',
-    (event) => {
-      const viewport = window.visualViewport;
-      const post = [...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Post');
-      const rect = post?.getBoundingClientRect();
-      const canvas = document.querySelector('.shell-column-canvas, [data-column-canvas]');
-      note('pointerdown', label(event.target), JSON.stringify({
-        x: Math.round(event.clientX), y: Math.round(event.clientY),
-        scale: viewport?.scale, vx: Math.round(viewport?.offsetLeft ?? 0), vy: Math.round(viewport?.offsetTop ?? 0), vw: Math.round(viewport?.width ?? 0), vh: Math.round(viewport?.height ?? 0),
-        iw: innerWidth, ih: innerHeight, sx: scrollX, sy: scrollY, canvas: canvas?.scrollLeft,
-        post: rect && [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)],
-      }));
-    },
-    true
-  );
-  document.addEventListener('input', (event) => note('input', label(event.target), String(event.target.value ?? '').slice(0, 40)), true);
   // 共有リンク（clipboard へ書く値）を控える。headless では clipboard へ書けないことがある。
   window.__kukuriCopied = [];
   navigator.clipboard.writeText = async (text) => {

@@ -54,7 +54,6 @@ const BROWSERS = {
   android: {
     browserName: 'chrome',
     'goog:chromeOptions': { androidPackage: 'com.android.chrome' },
-    'goog:loggingPrefs': { browser: 'ALL' }, // DIAG（一時）
     ...(process.env.ANDROID_CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.ANDROID_CHROMEDRIVER } } : {}),
     'wdio:enforceWebDriverClassic': true,
   },
@@ -1863,19 +1862,6 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
-    // DIAG（一時）
-    await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
-    for (const client of clients) {
-      await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
-      const events = await client.execute(() => window.__kukuriDiag?.slice(-80)).catch((e) => String(e));
-      const dialogs = await client
-        .execute(() => [...document.querySelectorAll('[role=dialog]')].map((dialog) => dialog.innerText.slice(-1500)))
-        .catch((e) => String(e));
-      console.info(`DIAG-DIALOGS ${client.label} ${JSON.stringify(dialogs)}`);
-      console.info(`DIAG ${client.label} ${JSON.stringify(events)}`);
-      const logs = await client.getLogs('browser').catch((e) => String(e));
-      console.info(`DIAG-LOG ${client.label} ${JSON.stringify(logs).slice(0, 6000)}`);
-    }
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);

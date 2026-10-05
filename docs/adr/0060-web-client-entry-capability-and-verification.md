@@ -140,6 +140,24 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
     - `direct`・`fallback`・`settings`・`link-preview`・`webrtc-loss`・`site-data`・`transfer`・`same-account` は PASS。
     - native→Web の画像は、直接経路で 16〜46 KB、fallback で画像の大きさ 1.77 MB 以上の中継になり、2 つの経路が分かれた。
     - `lifecycle` は「終了」の段で落ちる。別の window を開くと、別の tab で開いている案内が出ずに app が動く。#1586 にした。
+- W8 AC-5c の実装（2026-10-05）: 同じ scenario を、ubuntu-24.04 の Android の emulator（電話の幅、412×783 の CSS px）の Chrome で回す。
+  - Android の chromedriver は同時に 1 つの session しか持てない。各 scenario の最初の Web の client だけを emulator の Chrome にし、2 台目からは同じ runner の desktop の Chrome にする（2026-10-05 ユーザー判断）。Android どうしの組は未確認の制約とする。emulator は電話の幅にし、Android の client の操作は狭い画面の作りで行う（同日ユーザー判断）。
+  - job は `kukuri-web-e2e.yml` の `android-web-e2e (<scenario>)`（android-emulator-runner、API 35 の google_apis、x86_64、pixel_7。build は `linux-web-e2e-build` のもの）。夜間と手動で回し、merge の条件にしない。`scripts/ci/android_web_e2e.sh` が emulator の Chrome の版に合う chromedriver を取る（Chrome for Testing。115 より前は旧い配布先）。
+  - emulator の `127.0.0.1` から、fixture の配信・Community Node・relay へは adb の port の転送（TCP だけ）で届かせる。fixture の `/fixture/info` が転送する Community Node と relay の port を示す。
+  - Android の chromedriver の制約への対処（試験の側だけ）:
+    - 入力の欄に focus があると画面の keyboard が出て表示の範囲が縮み、chromedriver の押下が下へずれて button に当たらない。押下と入力の後に、表示の範囲の高さが落ち着くのを待ち、keyboard が出ていれば戻る key で閉じる。IME の停止や物理の keyboard の指定では、keyboard は出続けた。
+    - 狭い画面では、別の列の要素は横の画面の外にあり、下の端の要素は下の固定の帯に覆われる。押す前に要素を列ごと画面の中央へ動かす。中心が覆われていれば、利用者と同じく見えている部分を押す（列のページの表示が列の右下の操作に重なる。#1588）。
+    - `setValue` は文字が入らないことがあるので、値を入れて input の event を出す（貼り付けと同じ入り方）。1 文字ずつ打つ操作は投稿の本文で確かめる。`getValue` は textarea の値を空で返すので、page で読む。手元の file を file の input へ入れられないので、画像は page で File を作って入れる。
+    - WebdriverIO の `newWindow` は電話の platform では使えないので、WebDriver の命令で tab を開く（全ブラウザ共通）。列は列の menu から閉じる（電話の幅では列の見出しの閉じる button は出ない。全ブラウザ共通）。
+    - 凍結と回線全断は、desktop の Chrome と同じく chromedriver の命令で作る。
+  - 未確認の制約（`unconfirmed:` として PASS の行に示す）:
+    - Android どうしの組。
+    - Android と同じ runner の Chrome の間の WebRTC の経路。emulator の NAT の外の Chrome との直接の経路は張れず、Web↔Web の画像は relay を通った（約 2〜4 MB）。Web↔Web の直接経路は Android の判定の範囲の外（上の表）なので、測った bytes だけを示す。移行の途中にこの経路を落とす段（AC-3c1）も作れない。
+    - `lifecycle` の復帰の直後の native→Android の直接経路。emulator の NAT の上で揺れ、3 回とも画像の 1/4 を超えて relay を通った回があった（47 万〜90 万 bytes）。そのときは測った bytes を示す。
+  - 実結果（2026-10-05、emulator の Chrome 124.0.6367.219、PR #1587 の CI。一時に Fast から Android も呼んだ run 37304034027）:
+    - 9 本すべて PASS。`lifecycle` は凍結と回線全断も Android で作って確かめた。
+    - native→Android の画像は、直接経路で 16〜61 KB（channel の 1 回は 416 KB）、fallback で画像の大きさ 1.77 MB 以上の中継になり、2 つの経路が分かれた。
+    - 電話の幅の列のページの表示が列の右下の主操作に重なる不具合を #1588 にした。
 
 ### 5. 測定の workload と STUN
 

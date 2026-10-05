@@ -312,12 +312,3 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash scripts/ci/android_web_e2e.sh ${{ matrix.scenario }}
-
-      # DIAG（一時）
-      - name: Upload diag
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diag-android-${{ matrix.scenario }}
-          path: apps/desktop/test-results/diag-*.png
-          if-no-files-found: ignore
