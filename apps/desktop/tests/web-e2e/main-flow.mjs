@@ -169,7 +169,22 @@ const channelColumn = (browser, channelId) => columnOf(browser, 'timeline', `${c
 async function openComposer(column) {
   await column.waitForExist({ timeout: WAIT });
   const composer = column.$('textarea[placeholder="Write a post"]');
-  if (!(await composer.isDisplayed())) await column.$('button[aria-label^="Post to "]').click();
+  // DIAG（一時）
+  const diag = async (when) => {
+    const exists = await composer.isExisting();
+    const shown = exists && (await composer.isDisplayed());
+    const rect = exists ? await composer.getElementRect().catch((e) => String(e)) : null;
+    const toggle = column.$('button[aria-label^="Post to "]');
+    const toggleState = (await toggle.isExisting())
+      ? { label: await toggle.getAttribute('aria-label'), expanded: await toggle.getAttribute('aria-expanded'), shown: await toggle.isDisplayed() }
+      : null;
+    console.info('DIAG openComposer', when, JSON.stringify({ exists, shown, rect, toggleState }));
+  };
+  await diag('before');
+  if (!(await composer.isDisplayed())) {
+    await column.$('button[aria-label^="Post to "]').click();
+    await diag('after-click');
+  }
   return composer;
 }
 
@@ -1706,6 +1721,9 @@ if (name === '--list') {
     for (const client of clients) await assertNoCspViolations(client);
   } catch (error) {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
+    // DIAG（一時）
+    await import('node:fs/promises').then(({ mkdir }) => mkdir('test-results', { recursive: true }));
+    for (const client of clients) await client.saveScreenshot(`test-results/diag-${client.label}.png`).catch(() => undefined);
     throw error;
   } finally {
     for (const client of clients) await client.deleteSession().catch(() => undefined);

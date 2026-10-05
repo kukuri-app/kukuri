@@ -249,3 +249,12 @@ jobs:
         run: |
           chmod +x target/debug/web_e2e_fixture
           CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver" cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
+
+      # DIAG（一時）
+      - name: Upload diag
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-safari-${{ matrix.scenario }}
+          path: apps/desktop/test-results/diag-*.png
+          if-no-files-found: ignore
