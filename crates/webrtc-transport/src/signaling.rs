@@ -584,7 +584,9 @@ impl Signaling {
         offer: &str,
     ) -> Result<std::result::Result<String, Rejection>> {
         let to = remote.id;
+        tracing::debug!("KD exchange dial {} addrs={:?}", to.fmt_short(), remote.addrs.iter().map(|addr| format!("{addr:?}").chars().take(60).collect::<String>()).collect::<Vec<_>>());
         let connection = self.endpoint.connect(remote, SIGNALING_ALPN).await?;
+        tracing::debug!("KD exchange connected {} paths={:?}", to.fmt_short(), connection.paths().iter().map(|path| format!("{:?}", path.remote_addr()).chars().take(40).collect::<String>()).collect::<Vec<_>>());
         let (mut send, mut recv) = connection.open_bi().await?;
         send.write_all(&encode_request(to, session, offer)).await?;
         send.finish()?;
@@ -662,6 +664,7 @@ fn kd(session: &SessionId) -> String {
 impl ProtocolHandler for Signaling {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
         let remote = connection.remote_id();
+        tracing::debug!("KD accept {}", remote.fmt_short());
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request = recv
             .read_to_end(REQUEST_HEADER_BYTES + MAX_SDP_BYTES)
