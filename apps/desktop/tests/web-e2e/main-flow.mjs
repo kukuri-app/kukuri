@@ -1410,28 +1410,24 @@ async function lifecycle() {
   // tab が保存から同じ EndpointId で再開する。
   await addHistory('history-b', 25);
   const first = await a.getWindowHandle();
-  if (BROWSER === 'safari') {
-    const tab = await a.createWindow('tab');
-    assert.equal(tab.type, 'tab');
-    assert.notEqual(tab.handle, first);
-    await a.switchToWindow(tab.handle);
+  // 作成結果の handle を使う。Safari は tab と window、他の browser は従来どおり tab を確かめる。
+  let second;
+  for (const windowType of BROWSER === 'safari' ? ['tab', 'window'] : ['tab']) {
+    const created = await a.createWindow(windowType);
+    second = created.handle;
+    if (BROWSER === 'safari') {
+      assert.equal(created.type, windowType);
+      assert.notEqual(second, first);
+    }
+    await a.switchToWindow(second);
     await a.url(ORIGIN);
     await sees(a, 'kukuri is open in another tab');
-    assert.equal((await sessionStates(a)).length, 0, 'the blocked tab does not start sessions');
-    await a.closeWindow();
-    await a.switchToWindow(first);
+    if (BROWSER === 'safari') assert.equal((await sessionStates(a)).length, 0, `the blocked ${windowType} does not start sessions`);
+    if (BROWSER === 'safari' && windowType === 'tab') {
+      await a.closeWindow();
+      await a.switchToWindow(first);
+    }
   }
-  // 作成結果の handle を使う。Safari は別 window も確認し、電話では従来どおり tab を開く。
-  const windowType = BROWSER === 'safari' ? 'window' : 'tab';
-  const { handle: second, type } = await a.createWindow(windowType);
-  if (BROWSER === 'safari') {
-    assert.equal(type, 'window');
-    assert.notEqual(second, first);
-  }
-  await a.switchToWindow(second);
-  await a.url(ORIGIN);
-  await sees(a, 'kukuri is open in another tab');
-  if (BROWSER === 'safari') assert.equal((await sessionStates(a)).length, 0, 'the blocked window does not start sessions');
   await a.$('button=Use in this tab').click();
   await assertWindowed(a, peers);
   await a.switchToWindow(first);
