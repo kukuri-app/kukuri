@@ -183,6 +183,24 @@ W10 AC-2 では、relay だけで届き交渉を始める端（ブラウザ相�
 S1・S2 は gossip の同じ購読・有界な reader・4 MiB の blob で 1 つの試験にまとめた（reset の時点で custom を通った bytes は約 1 MiB、残りは relay で届いた）。
 S3 の回線の全断は、W4 の offline の入力（`reset`）と、その後の `resume` で代えた（§9）。
 
+W8 AC-5d3 の実測（2026-10-05、#1220）: E1〜E6・S1〜S3 の既存の試験を、統合 branch の `c518048c2` で 1 本ずつ別の process で 3 回ずつ回した。
+環境は Windows 11 の Docker Desktop の Linux VM（4 vCPU）、Rust 1.98.1、debug build。CPU 時間（user＋sys）と最大 RSS は process ごとの `wait4` の値。
+接続の時間・QUIC の失った packet の数・S1・S2 の bytes は、計測のための一時の出力で取った（commit していない）。予算は §4・§5 の上限で、測定だけで高速化や費用の削減を宣言しない（ADR 0060 §5）。
+
+| ID | 実測（3 回の範囲） | 予算・判定との対応 | CPU 時間 | 最大 RSS |
+| --- | --- | --- | --- | --- |
+| E1 | 交渉と接続 52〜55 ms、1 MiB の往復 315〜376 ms。送信で捨てた datagram 42〜236（QUIC が再送）、`bufferedAmount` の高水位 約 128 KiB | 高水位は上限 1 MiB の内 | 0.82〜0.87 s | 52〜53 MiB |
+| E2 | 1452 byte の datagram 1000 個: 2 回はすべて届き、1 回は送信の待ちの上限で 91 個を送る前に捨てた（届いた分の境界と中身は一致）。所要 0.24〜5.25 s | 部分的な信頼性（§2）のとおり捨てた数を記録 | 0.36〜0.40 s | 30〜31 MiB |
+| E3 | 読み出しを止めて 8 MiB: 送信で捨てた datagram 496〜1210、`bufferedAmount` の高水位 131,070 bytes、再開後に完走。所要 3.3〜3.6 s | 高水位は上限 1 MiB＋1 datagram の内 | 5.7〜6.6 s | 86〜88 MiB |
+| E4 | 転送の途中の close の後、session・backend が 0 | 資源が 0 に戻る | 0.47〜0.48 s | 53 MiB |
+| E5 | native の UDP・relay の既存の試験（`crates/transport/src/iroh/tests/`）と、WebRTC の transport を付けた native 同士が session を作らない試験（J8）が成功 | PR CI の `linux-rust-tests`（[run 37306057045](https://github.com/kukuri-app/kukuri/actions/runs/37306057045)）で全件成功。J8 は手元で CPU 0.10 s・最大 RSS 69 MiB | — | — |
+| E6 | 送信の 5% を捨てて 1 MiB の往復: 621〜677 ms、QUIC の失った packet 43〜45、各端の送信で捨てた datagram 44 | 完走して bytes が一致 | 0.80〜0.82 s | 51〜52 MiB |
+| S1 | 4 MiB の blob: custom を通った 1.05〜1.09 MB の後に custom だけを閉じ、残りの 3.24〜3.28 MB は relay で届いた。relay で受信が再開するまで 110〜241 ms | 2 秒以内（§5）、hash が一致 | 1.60〜1.68 s（S1・S2 の 1 本） | 104 MiB |
+| S2 | relay だけで始めてから custom path が選ばれるまで 1.07 s | 再接続なしで custom へ移る | （S1 と同じ試験） | （同上） |
+| S3 | `reset`・`resume` の後、生きた需要の相手とだけ交渉し直し、旧 session の資源が 0 に戻る。所要 23.2 s（期限の待ちを含む） | 交渉は相手ごとに `MAX_ATTEMPTS` 3 回まで（§9） | 2.14〜2.19 s | 110〜111 MiB |
+
+browser の組の relay の bytes（実データの経路）は、W8 の実ブラウザの E2E の matrix（ADR 0060 §4）に記録した。browser の組の E1〜E4 は PR CI の `linux-web-transport` で成功しているが、数値は出力していない。
+
 ### 9. 需要・経路選択・停止との接続（W10 AC-2）
 
 - 需要: 交渉は、相手との iroh の接続（gossip・docs の有界な reader・blob。既存の需要の owner が張る）だけを需要とみなす。
