@@ -87,6 +87,10 @@ pub enum GossipHint {
     AccountSyncChanged {
         device_id: String,
         seq: u64,
+        /// 送った時刻(ミリ秒)。gossip は同じ内容の message を重複として落とすので、鍵更新の依頼を待つ間に送り直す
+        /// hint を別の message にする(#1220 AC-3c2)。旧版は読まずに無視する。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sent_at: Option<i64>,
     },
 }
 

@@ -1664,9 +1664,9 @@ async function createShareLink(browser, channelId, label) {
 /**
  * `same-account`（#1220 AC-3c1・AC-3c2）: 同じアカウントの Web どうし。native → Web e の移行の後、e が作った招待制の channel C を、
  * e のリンクで同じアカウントを受けた Web g と使う。鍵の更新を担う端末（担当。C を作った e）が居ない間の保留と戻った後の処理、
- * 「この端末で行う」、WebRTC の経路だけを落とした間の担当でない端末の鍵の更新（AC-3c2）、移行の途中で経路だけを落とした間の移行と
- * 担当を確かめる（範囲の固定、2026-10-04・10-05）。native は同じアカウントの端末で、C を本人の端末間の同期で受け、その世代の進みを
- * 参加中の一覧で読む。
+ * 「この端末で行う」、移行の途中で WebRTC の経路だけを落とした間の移行と担当、経路だけを落とした間の担当でない端末の鍵の更新
+ * （AC-3c2）を確かめる（範囲の固定、2026-10-04・10-05）。native は同じアカウントの端末で、C を本人の端末間の同期で受け、その世代の
+ * 進みを参加中の一覧で読む。
  */
 async function sameAccount() {
   const { pubkey: account } = await fixture('/fixture/info');
@@ -1723,9 +1723,21 @@ async function sameAccount() {
     (await nativeEpochs(channelId)).current !== gAway.current
   );
 
-  // 5: WebRTC の経路だけを落とした間（relay は健全）。担当でない e の共有リンクは relay で g の鍵の更新を経て 15 秒の待ちの内に
-  // 作れ、その token の世代は native の現在の世代と同じで、1 回の依頼で世代は高々 1 つしか進まない（AC-3c2。#1571 の窓を通る、
-  // 依頼の直前に落とす形）。
+  // 5: 移行の途中で h の WebRTC の経路だけを落としても（relay は健全）、relay で続いて 1 度だけ完了する。h はアカウントを 1 つだけ
+  // 受け取る。
+  const h = await transferAccount(webSource(e), 'web-h', account, { cut: 2048 });
+  await eventually('h is in sync', async () => (await accountSyncState(h)) === 'synced');
+  await openSettings(h, 'account');
+  const rows = await h.$('[data-testid="account-list"]').$$('li').map((row) => row.getText());
+  assert.equal(rows.filter((row) => row.includes(account)).length, 1, `h has the account once: ${JSON.stringify(rows)}`);
+  await h.keys('Escape');
+  // 担当は、経路を戻した後も g のまま。
+  assert.ok(!(await handledElsewhere(g, channelId, label)), 'g still hands out new access');
+  assert.ok(await handledElsewhere(e, channelId, label), 'e still leaves it to g');
+
+  // 6: WebRTC の経路だけを落とした間（relay は健全）。担当でない e の共有リンクは relay で g の鍵の更新を経て 15 秒の待ちの内に
+  // 作れ、その token の世代は native の現在の世代と同じで、1 回の依頼で世代は高々 1 つしか進まない（AC-3c2。依頼の直前に落とす
+  // 形）。移行の後に置く: 切られた直後の e は移行の WebRTC の経路を張れず、場面 4 で読み込み直した g の起動とも重ならない。
   const beforeLoss = await nativeEpochs(channelId);
   await e.execute(() => {
     window.__kukuriCut = { after: 1 };
@@ -1739,19 +1751,6 @@ async function sameAccount() {
     return now.current === tokenEpoch && now;
   });
   assert.ok(afterLoss.archived - beforeLoss.archived <= 1, 'one request advances the epoch at most once');
-  await e.execute(() => {
-    window.__kukuriCut.released = true;
-  });
-  // 移行: e → h の途中で h の WebRTC の経路だけを落としても、relay で続いて 1 度だけ完了する。h はアカウントを 1 つだけ受け取る。
-  const h = await transferAccount(webSource(e), 'web-h', account, { cut: 2048 });
-  await eventually('h is in sync', async () => (await accountSyncState(h)) === 'synced');
-  await openSettings(h, 'account');
-  const rows = await h.$('[data-testid="account-list"]').$$('li').map((row) => row.getText());
-  assert.equal(rows.filter((row) => row.includes(account)).length, 1, `h has the account once: ${JSON.stringify(rows)}`);
-  await h.keys('Escape');
-  // 担当は、経路を戻した後も g のまま。
-  assert.ok(!(await handledElsewhere(g, channelId, label)), 'g still hands out new access');
-  assert.ok(await handledElsewhere(e, channelId, label), 'e still leaves it to g');
 }
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */

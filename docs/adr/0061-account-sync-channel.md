@@ -370,7 +370,8 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
     - 前回の応答は CN ごとに持つ（CN の数 × 応答の上限）。同じ端末が続く応答と、その端末の居ない別の CN の応答（rendezvous の更新ごと）では読み直さない。周期処理を新設しない。
     - account の lease の task の作り直し（起動・復帰）で前回の応答を忘れ、次の応答に居る端末から 1 回読む。
     - 前回の取得に失敗した端末は、続く応答に居れば取得し直す（#1220 AC-3b、2026-10-04）。Web の移行先は Community Node に同意した後に endpoint を作り直すので、移行元の最初の取得が切れ、端末 ID が同じままなので「現れた」端末にならず、次の契機（hint・日の境界）まで取得されなかった。応答は rendezvous の更新ごとなので、新しい周期処理にはならない。
-- hint は `GossipHint::AccountSyncChanged { device_id, seq }`（書いた端末の ID と、その窓の head の seq だけ。item の内容は含まない）。
+- hint は `GossipHint::AccountSyncChanged { device_id, seq, sent_at }`（書いた端末の ID と、その窓の head の seq と、送った時刻だけ。item の内容は含まない）。
+  - `sent_at` は、鍵更新の依頼の待ちの間に送り直す hint を別の message にするため（#1220 AC-3c2）。旧版は読まずに無視し、無い hint も読む。
   - 端末 ID を含めるのは、gossip が同じ内容の message を重複として落とすため（別の端末が同じ seq を送っても、別の message になる）と、中継された hint でも読む相手を書いた端末にするため。
   - item を書いて窓に足したら送る。取りこぼした hint は、次の hint か契機の取得が cursor から読むので回復する。
 - owner は account の lease の task。同じ相手への取得は 1 つに合流し、相手は 1 台ずつ処理する。失敗した取得は、hint の取得の 1 回の取り直しのほかはその場で再試行せず、次の契機（rendezvous の続く応答を含む）を待つ。
