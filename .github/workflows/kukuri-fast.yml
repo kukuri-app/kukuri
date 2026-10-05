@@ -221,12 +221,6 @@ jobs:
     with:
       browser: chrome
 
-  # 一時（#1220 AC-5b の実結果を取る。merge の前に戻す）。
-  web-e2e-safari:
-    uses: ./.github/workflows/kukuri-web-e2e.yml
-    with:
-      browser: safari
-
   linux-desktop-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
