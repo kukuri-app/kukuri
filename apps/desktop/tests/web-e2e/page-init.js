@@ -35,7 +35,8 @@
   // すべて閉じ、閉じた時刻を `done` に残す（runtime は close の event で session を閉じる。RTCPeerConnection を外から閉じても
   // event は出ない）。1 本だけ閉じると、他の相手との session が残り、転送が relay を通らずに完了しうる（#1549）。
   window.__kukuriPeers = [];
-  const channels = [];
+  // 受け手の側の DataChannel も含む（`__kukuriPeers` は自分が始めた session だけ）。
+  const channels = (window.__kukuriChannels = []);
   const createDataChannel = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function (...args) {
     window.__kukuriPeers.push(this);

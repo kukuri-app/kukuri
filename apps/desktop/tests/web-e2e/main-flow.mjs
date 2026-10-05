@@ -1013,15 +1013,23 @@ async function transferAccount(from, name, account, { history = null, duringHist
   }
   await target.$('input').setValue(link);
   if (history) await target.$('select').selectByAttribute('value', history);
-  if (cut !== null) {
-    await browser.execute((after) => {
-      window.__kukuriCut = { after };
-    }, cut);
-  }
+  const channelsBefore = await browser.execute(() => window.__kukuriChannels.length);
   await target.$('button=Connect').click();
   // 確認コードが両端末で同じことを確かめてから、両方で承認する。
   const shown = browser.$('[aria-label="Confirmation code"]');
   await shown.waitForExist({ timeout: WAIT });
+  if (cut !== null) {
+    // 移行の接続が需要になって移行元との WebRTC の経路が開いてから、承認する（開く前に移行が relay で終わると、落とす
+    // 経路が無い。#1590）。Safari・Android と同じ runner の Chrome の間には経路が張れない（ADR 0060 §4）。
+    if (!SINGLE) {
+      await eventually(`${browser.label} opens a WebRTC path to the source`, () =>
+        browser.execute((before) => window.__kukuriChannels.slice(before).some((channel) => channel.readyState === 'open'), channelsBefore)
+      );
+    }
+    await browser.execute((after) => {
+      window.__kukuriCut = { after };
+    }, cut);
+  }
   await browser.$('button=Codes match').click();
   await from.confirm((await shown.getText()).replace(/\s/g, ''));
   if (duringHistory) {
