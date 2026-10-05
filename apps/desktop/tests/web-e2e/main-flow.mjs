@@ -140,17 +140,37 @@ async function startClient(name, { ice }) {
     browser.overwriteCommand('keys', async (original, ...args) => (await activate(), original(...args)));
   }
   if (kind === 'android') {
-    // 入力の後に出る画面の keyboard は表示の範囲を縮めて動かし、chromedriver の押下を下へずらす（button に当たらない）。押下の前に
-    // 閉じる（keyboard が出ている間の戻る key は keyboard を閉じるだけ）。
-    const keyboardShown = () => browser.execute(() => window.visualViewport.height < window.innerHeight * 0.8);
+    // 入力の後に出る画面の keyboard は表示の範囲を縮めて動かし、chromedriver の押下を下へずらす（button に当たらない）。打った後と
+    // 押下の前に閉じる（keyboard は focus から少し遅れて出る。keyboard が出ている間の戻る key は keyboard を閉じるだけ）。
+    const closeKeyboard = async () => {
+      if (await browser.execute(() => window.visualViewport.height < window.innerHeight * 0.8)) {
+        await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+        await eventually('the on-screen keyboard closes', () =>
+          browser.execute(() => window.visualViewport.height >= window.innerHeight * 0.8)
+        );
+      }
+    };
+    const typed = async (result) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await closeKeyboard();
+      return result;
+    };
+    browser.overwriteCommand('click', async (original, ...args) => (await closeKeyboard(), original(...args)), true);
+    browser.overwriteCommand('addValue', async (original, ...args) => typed(await original(...args)), true);
+    browser.overwriteCommand('keys', async (original, ...args) => typed(await original(...args)));
+    // Android の chromedriver は長い文字列（鍵の export・移行のリンク）を打つと 1 文字も入らないことがある。利用者が貼り付けるのと
+    // 同じく、値を入れて input の event を出す（1 文字ずつ打つ操作は投稿の本文の addValue で確かめる）。
     browser.overwriteCommand(
-      'click',
-      async (original, ...args) => {
-        if (await keyboardShown()) {
-          await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
-          await eventually('the on-screen keyboard closes', async () => !(await keyboardShown()));
-        }
-        return original(...args);
+      'setValue',
+      async function (original, value) {
+        await browser.execute(
+          (element, text) => {
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value').set.call(element, text);
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+          },
+          this,
+          value
+        );
       },
       true
     );
