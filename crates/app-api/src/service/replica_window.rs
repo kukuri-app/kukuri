@@ -3,7 +3,6 @@
 //! replica は走査しない。1 回の照合が読む索引の entry 数には上限があり、replica の総 entry 数に依存しない。
 //! 読み出しは `LocalOnly` で、表示を remote 取得で待たせない。
 
-use super::remote_read_support::REMOTE_READ_DEADLINE;
 use super::*;
 use kukuri_docs_sync::{
     DocKeyOrder, TimeIndexCursor, TimeIndexEntry, query_time_index_asc, query_time_index_desc,
@@ -32,8 +31,6 @@ pub(crate) const RANGE_CHECK_REACTION_TARGETS: usize = 64;
 /// remote の提供者 1 台のページの照合で、reaction を読む投稿の数の上限。表示を待たせる経路なので手元の照合より
 /// 小さくする。後から来た参加者が、その時点で提供者が持つ reaction を得られるようにする(#1395)。
 pub(crate) const REMOTE_RANGE_CHECK_REACTION_TARGETS: usize = 8;
-/// 表示の経路で、先頭のページの provider の照合を待つ時間の上限。件数に依存しない。過ぎた照合は背景で続く(#1624)。
-const HEAD_PROVIDER_GRACE_MS: u64 = 300;
 
 #[derive(Clone, Debug, Default)]
 struct RangeCheckState {
@@ -547,69 +544,6 @@ impl AppService {
             .await?;
         result.merge_from(local, range.order);
         Ok(result)
-    }
-
-    /// 先頭のページ(cursor なし)の provider の照合。表示を provider の応答で待たせない(#1624)。
-    ///
-    /// 照合は背景の task で始め、`HEAD_PROVIDER_GRACE_MS` だけ待つ。猶予の内に答えた provider の投稿は従来どおり
-    /// この取得で返る。過ぎた照合は背景で続き、反映した投稿は次の取得で出る(起動直後は既知の peer がまだ繋がって
-    /// いないか応答せず、期限の 30 秒まで手元の投稿も返せなかった)。同じページの背景の照合は 1 つまでとし、
-    /// 続いている間の取得は provider を読まない。
-    async fn reconcile_remote_head(
-        &self,
-        topic_id: &str,
-        scope: &TimelineScope,
-        limit: usize,
-    ) -> Result<RangeReconcile> {
-        let hold = format!("head\n{topic_id}\n{scope:?}");
-        let busy_ms = REMOTE_READ_DEADLINE.as_millis() as i64;
-        if self
-            .services
-            .range_checks
-            .try_begin_for(&hold, Utc::now().timestamp_millis(), busy_ms)
-            .await
-            .is_none()
-        {
-            return Ok(RangeReconcile::default());
-        }
-        let app = self.account_handle();
-        let (topic_id, scope) = (topic_id.to_owned(), scope.clone());
-        let task = n0_future::task::spawn(async move {
-            let range = IndexRange {
-                index_prefix: "indexes/timeline/",
-                order: DocKeyOrder::Descending,
-                start: None,
-                limit,
-            };
-            let result = app
-                .reconcile_remote_index_range(
-                    &topic_id,
-                    &scope,
-                    None,
-                    &range,
-                    RANGE_CHECK_ENTRY_LIMIT / 2,
-                    true,
-                )
-                .await;
-            app.services.range_checks.forget(&hold).await;
-            if result
-                .as_ref()
-                .is_ok_and(|reconcile| reconcile.hydrated > 0)
-            {
-                app.last_sync_ts.set(Utc::now().timestamp_millis()).await;
-            }
-            result
-        });
-        match n0_future::time::timeout(
-            std::time::Duration::from_millis(HEAD_PROVIDER_GRACE_MS),
-            task,
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            // 猶予を過ぎた照合は背景で続く。
-            _ => Ok(RangeReconcile::default()),
-        }
     }
 
     async fn reconcile_index_range(

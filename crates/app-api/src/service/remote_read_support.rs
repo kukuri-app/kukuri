@@ -1,6 +1,6 @@
 use super::replica_window::{
-    IndexRange, RangeCheckResult, RangeReconcile, TIME_INDEX_FUTURE_ALLOWANCE_SECS,
-    ensure_index_entries_projected,
+    IndexRange, RANGE_CHECK_ENTRY_LIMIT, RangeCheckResult, RangeReconcile,
+    TIME_INDEX_FUTURE_ALLOWANCE_SECS, ensure_index_entries_projected,
 };
 use super::*;
 use kukuri_docs_sync::{
@@ -15,6 +15,8 @@ pub(super) type SessionTargetReader = (ReplicaId, Arc<dyn DocsSync>, DocFetchPol
 
 /// 1 操作の remote 読取りの期限(R5-B と同じ)。
 pub(crate) const REMOTE_READ_DEADLINE: Duration = Duration::from_secs(30);
+/// 表示の経路で、先頭のページの provider の照合を待つ時間の上限。件数に依存しない。過ぎた照合は背景で続く(#1624)。
+const HEAD_PROVIDER_GRACE: Duration = Duration::from_millis(300);
 const WRITER_PROVIDERS: usize = 4;
 const WRITER_DESTINATION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -125,6 +127,64 @@ pub(crate) async fn writer_readers(
 }
 
 impl AppService {
+    /// 先頭のページ(cursor なし)の provider の照合。表示を provider の応答で待たせない(#1624)。
+    ///
+    /// 照合は背景の task で始め、`HEAD_PROVIDER_GRACE` だけ待つ。猶予の内に答えた provider の投稿は従来どおり
+    /// この取得で返る。過ぎた照合は背景で続き、反映した投稿は次の取得で出る(起動直後は既知の peer がまだ繋がって
+    /// いないか応答せず、期限の 30 秒まで手元の投稿も返せなかった)。同じページの背景の照合は 1 つまでとし、
+    /// 続いている間の取得は provider を読まない。
+    pub(super) async fn reconcile_remote_head(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        limit: usize,
+    ) -> Result<RangeReconcile> {
+        let hold = format!("head\n{topic_id}\n{scope:?}");
+        let busy_ms = REMOTE_READ_DEADLINE.as_millis() as i64;
+        if self
+            .services
+            .range_checks
+            .try_begin_for(&hold, Utc::now().timestamp_millis(), busy_ms)
+            .await
+            .is_none()
+        {
+            return Ok(RangeReconcile::default());
+        }
+        let app = self.account_handle();
+        let (topic_id, scope) = (topic_id.to_owned(), scope.clone());
+        let task = n0_future::task::spawn(async move {
+            let range = IndexRange {
+                index_prefix: "indexes/timeline/",
+                order: DocKeyOrder::Descending,
+                start: None,
+                limit,
+            };
+            let result = app
+                .reconcile_remote_index_range(
+                    &topic_id,
+                    &scope,
+                    None,
+                    &range,
+                    RANGE_CHECK_ENTRY_LIMIT / 2,
+                    true,
+                )
+                .await;
+            app.services.range_checks.forget(&hold).await;
+            if result
+                .as_ref()
+                .is_ok_and(|reconcile| reconcile.hydrated > 0)
+            {
+                app.last_sync_ts.set(Utc::now().timestamp_millis()).await;
+            }
+            result
+        });
+        match n0_future::time::timeout(HEAD_PROVIDER_GRACE, task).await {
+            Ok(Ok(result)) => result,
+            // 猶予を過ぎた照合は背景で続く。
+            _ => Ok(RangeReconcile::default()),
+        }
+    }
+
     /// Read the selected bucket page from one provider at a time. It shares
     /// the signed post/withdrawal projector with the local range check.
     ///

@@ -65,6 +65,10 @@
       "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
+      "lines": 1015,
+      "path": "crates/app-api/src/service/replica_window.rs"
+    },
+    {
       "lines": 1000,
       "path": "apps/desktop/tests/playwright/shell.smoke.spec.ts"
     }
