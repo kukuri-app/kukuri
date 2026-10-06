@@ -90,6 +90,8 @@ job成功後のregistry manifestである。VMからも `docker manifest inspect
 取得した4参照を `operator-config.yaml` と
 `infra/terraform/envs/low-cost/terraform.tfvars` の両方へ反映し、差異が無いことを確認する。
 
+`operator-config.yaml` に項目を足すときは、配置する `cn-user-api` の image がその項目を読める source かを先に確かめる。user-api は同じ file を読み、知らない項目があると起動しない（#1615 では `deploy.cors_allowed_origins` で約 3 分止まった）。読めない間は、値を tfvars にだけ書く。
+
 ## 2. apply前 gate
 
 ### 2.1 検証とbackup
@@ -139,7 +141,7 @@ gcloud storage ls -l "gs://<backup-bucket>/postgres/**"
 Compute Engine metadataの `startup-script` だけを更新する。作業用fileはsecret値を含まない設計だが、
 operator configや内部URLを含み得るので一時fileとして扱う。
 
-`jq` を使う例:
+`jq` を使う例（Windows の jq は既定で改行を CRLF にするので、`--binary` を付ける）:
 
 ```bash
 rollout_tmp="$(mktemp -d)"
