@@ -2,12 +2,7 @@
   "accountKey": {
     "title": "Account",
     "summary": "Key migration and account switching.",
-    "methods": {
-      "intro": "You can use your account on another device in these ways.",
-      "transfer": "Move to another device (Add account > Move between devices): moves your account key, profile, follows and blocks, the people you always show, and the private channels you joined with their keys. Your post history moves only if you choose it.",
-      "export": "Export the account key: writes out only the account key.",
-      "backup": "Backup & restore: moves all the data on this device. (desktop only)"
-    },
+    "transferOut": "Move your account to another device",
     "openBackup": "Open backup & restore",
     "accountsTitle": "Accounts on this device",
     "unnamedAccount": "(unnamed)",
