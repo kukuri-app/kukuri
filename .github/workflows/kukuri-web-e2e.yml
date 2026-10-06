@@ -14,6 +14,12 @@ on:
       browser:
         type: string
         required: true
+      scenario:
+        type: string
+        default: ''
+      repeats:
+        type: string
+        default: '1'
   workflow_dispatch:
     inputs:
       browser:
@@ -89,8 +95,10 @@ jobs:
       - name: List scenarios
         id: scenarios
         working-directory: apps/desktop
+        env:
+          SCENARIO: ${{ inputs.scenario }}
         run: |
-          echo "list=$(node tests/web-e2e/main-flow.mjs --list)" >> "$GITHUB_OUTPUT"
+          echo "list=$(node tests/web-e2e/main-flow.mjs --list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const all=JSON.parse(s),one=process.env.SCENARIO;if(one&&!all.includes(one))throw Error(`unknown scenario: ${one}`);console.log(JSON.stringify(one?[one]:all))})')" >> "$GITHUB_OUTPUT"
           echo "browser=$KUKURI_WEB_E2E_BROWSER" >> "$GITHUB_OUTPUT"
 
       - name: Upload build
@@ -187,7 +195,7 @@ jobs:
   macos-web-e2e:
     needs: [linux-web-e2e-build, macos-web-e2e-build]
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -250,9 +258,12 @@ jobs:
           SCENARIO: ${{ matrix.scenario }}
           CN_POSTGRES_PORT: '5432'
           CN_VALKEY_PORT: '6379'
+          KUKURI_PROBE_REPEATS: ${{ inputs.repeats || '1' }}
+          KUKURI_PROBE_LABEL: Safari ${{ matrix.scenario }}
+          KUKURI_WEB_E2E_CHROME_VERSION: stable
         run: |
           chmod +x target/debug/web_e2e_fixture
-          KUKURI_WEB_E2E_CHROME_VERSION=stable cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
+          bash scripts/ci/flake_probe.sh cargo xtask-lite web-e2e --no-build --no-compose "$SCENARIO"
 
   # emulator の Chrome（各 scenario の最初の client）と、同じ runner の Chrome。build は linux-web-e2e-build のものを使う。
   android-web-e2e:
