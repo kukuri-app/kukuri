@@ -1,5 +1,7 @@
 use super::*;
 
+mod provider_discovery;
+
 #[test]
 fn cached_transfer_distinguishes_explicit_absence_from_temporary_failure() -> Result<()> {
     assert_eq!(

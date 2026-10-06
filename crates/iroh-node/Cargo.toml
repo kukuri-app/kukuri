@@ -42,6 +42,11 @@ kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-sign
 axum.workspace = true
 iroh = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
+# #1596: loopback Testnetだけで使う公開blob発見PoC。productionには接続しない。
+n0-mainline = "0.7.1"
+iroh-mainline-address-lookup.workspace = true
+iroh-mainline-endpoint-discovery = { git = "https://github.com/n0-computer/iroh-content-discovery", rev = "b4493bae93be89d654c0263190870ebb49cd9922" }
+udp-addr-index = { git = "https://github.com/n0-computer/iroh-content-discovery", rev = "b4493bae93be89d654c0263190870ebb49cd9922" }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen-test = "0.3.79"
