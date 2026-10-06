@@ -162,11 +162,18 @@ impl<'a> AuthorKeyReader<'a> {
             return Ok(local);
         }
         let deadline = self.select_remote().await;
-        for reader in self.remote.iter().flatten() {
+        let readers = self.remote.as_deref().unwrap_or_default();
+        for (index, reader) in readers.iter().enumerate() {
+            let now = n0_future::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            // 無応答の先行 provider に期限を使い切らせず、後続にも残り時間を配る(#1637)。
+            let provider_deadline = now + (deadline - now) / (readers.len() - index) as u32;
             let mut services = self.services.clone();
             services.docs_sync = reader.clone();
             let read = crate::timeout_at(
-                deadline,
+                provider_deadline,
                 hydrate_author_record(
                     &services,
                     self.author_pubkey,
@@ -182,7 +189,7 @@ impl<'a> AuthorKeyReader<'a> {
                 Ok(Ok(outcome)) if outcome.reflected > 0 => return Ok(outcome),
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => warn!(%error, key, "author record read from a provider failed"),
-                Err(_) => break,
+                Err(_) => {}
             }
         }
         Ok(AuthorHydration::default())

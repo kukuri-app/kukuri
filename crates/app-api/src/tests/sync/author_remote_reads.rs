@@ -45,6 +45,220 @@ async fn put_profile(docs_sync: &dyn DocsSync, keys: &KukuriKeys) {
         .expect("persist profile");
 }
 
+// #1637: 空のclient cacheと、応答しないauthor/providerを再現する。
+struct ProfileReadSource {
+    inner: Arc<CountingDocsSync>,
+    readers: Vec<Arc<dyn DocsSync>>,
+    stalled: Option<ReplicaId>,
+}
+
+#[async_trait]
+impl DocsSync for ProfileReadSource {
+    fn remote_reader_id(&self) -> Option<String> {
+        Some(
+            if self.stalled.is_some() {
+                "stalled"
+            } else {
+                "ready"
+            }
+            .into(),
+        )
+    }
+
+    async fn open_replica(&self, _: &ReplicaId) -> Result<()> {
+        panic!("profile reads must not open a namespace")
+    }
+
+    async fn apply_doc_op(&self, _: &ReplicaId, _: DocOp) -> Result<()> {
+        panic!("profile reads must not write docs")
+    }
+
+    async fn query_replica_with_policy(
+        &self,
+        replica: &ReplicaId,
+        query: DocQuery,
+        policy: DocFetchPolicy,
+    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
+        assert!(
+            matches!(&query, DocQuery::Exact(key) if key == "profile/latest" || key.starts_with("envelopes/"))
+        );
+        let result = self
+            .inner
+            .query_replica_with_policy(replica, query, policy)
+            .await;
+        if policy == DocFetchPolicy::LocalThenRemote
+            && self
+                .stalled
+                .as_ref()
+                .is_some_and(|stalled| stalled == replica || stalled.as_str() == "*")
+        {
+            std::future::pending::<()>().await;
+        }
+        result
+    }
+
+    async fn subscribe_replica(&self, _: &ReplicaId) -> Result<kukuri_docs_sync::DocEventStream> {
+        panic!("profile reads must not subscribe")
+    }
+
+    async fn import_peer_ticket(&self, _: &str) -> Result<()> {
+        panic!("profile reads must not import")
+    }
+
+    async fn remote_readers(
+        &self,
+        _: &ReplicaId,
+        _: Option<[u8; 32]>,
+        _: Vec<SeedPeer>,
+    ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        Ok(self.readers.clone())
+    }
+}
+
+fn profile_viewer(readers: Vec<Arc<dyn DocsSync>>) -> (AppService, Arc<MemoryStore>) {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        Arc::new(ProfileReadSource {
+            inner: Arc::default(),
+            readers,
+            stalled: None,
+        }),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    (app, store)
+}
+
+async fn wait_for_profile(store: &MemoryStore, author: &str) {
+    loop {
+        if store.get_profile(author).await.expect("profile").is_some() {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn missing_profile_retries_after_a_startup_miss_without_waiting_ten_minutes() {
+    let author = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    let (app, store) = profile_viewer(vec![provider.clone()]);
+    let request = (author.public_key_hex(), None);
+    app.request_missing_profiles([request.clone()]).await;
+    sleep(Duration::from_secs(6)).await;
+    assert!(
+        !provider.queries().await.is_empty(),
+        "the first read missed"
+    );
+    put_profile(provider.as_ref(), &author).await;
+    app.request_missing_profiles([request]).await;
+    timeout(
+        Duration::from_secs(1),
+        wait_for_profile(&store, &author.public_key_hex()),
+    )
+    .await
+    .expect("retry after provider becomes ready");
+    app.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unresponsive_author_does_not_block_the_next_missing_profile() {
+    let stalled = generate_keys();
+    let ready = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    put_profile(provider.as_ref(), &ready).await;
+    let (app, store) = profile_viewer(vec![Arc::new(ProfileReadSource {
+        inner: provider.clone(),
+        readers: Vec::new(),
+        stalled: Some(author_replica_id(&stalled.public_key_hex())),
+    })]);
+    let requests = [
+        (stalled.public_key_hex(), None),
+        (ready.public_key_hex(), None),
+    ];
+    app.request_missing_profiles(requests.clone()).await;
+    timeout(
+        Duration::from_secs(1),
+        wait_for_profile(&store, &ready.public_key_hex()),
+    )
+    .await
+    .expect("the responsive author is not queued behind the stalled one");
+    app.request_missing_profiles(requests).await;
+    sleep(Duration::from_secs(6)).await;
+    let stalled_reads = provider
+        .queries()
+        .await
+        .into_iter()
+        .filter(|(replica, _)| replica == author_replica_id(&stalled.public_key_hex()).as_str())
+        .count();
+    assert_eq!(stalled_reads, 1, "a pending author is not enqueued again");
+    app.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unresponsive_profile_provider_leaves_time_for_the_next_provider() {
+    let author = generate_keys();
+    let provider = Arc::new(CountingDocsSync::default());
+    put_profile(provider.as_ref(), &author).await;
+    let (app, store) = profile_viewer(vec![
+        Arc::new(ProfileReadSource {
+            inner: Arc::default(),
+            readers: Vec::new(),
+            stalled: Some(author_replica_id(&author.public_key_hex())),
+        }),
+        provider,
+    ]);
+    timeout(
+        Duration::from_secs(20),
+        crate::service::author_state_support::hydrate_author_profile(
+            &app.services,
+            &app.current_author_pubkey(),
+            &author.public_key_hex(),
+            None,
+        ),
+    )
+    .await
+    .expect("the second provider gets a share of the deadline")
+    .expect("hydrate");
+    assert!(
+        store
+            .get_profile(&author.public_key_hex())
+            .await
+            .expect("profile")
+            .is_some()
+    );
+    app.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn missing_profile_work_is_bounded_deduplicated_and_cancelled_at_shutdown() {
+    let provider = Arc::new(CountingDocsSync::default());
+    let (app, _) = profile_viewer(vec![Arc::new(ProfileReadSource {
+        inner: provider.clone(),
+        readers: Vec::new(),
+        stalled: Some(ReplicaId::new("*")),
+    })]);
+    let requests = (0..80)
+        .map(|_| (generate_keys().public_key_hex(), None))
+        .collect::<Vec<_>>();
+    app.request_missing_profiles(requests.clone()).await;
+    sleep(Duration::from_secs(1)).await;
+    app.request_missing_profiles(requests).await;
+    assert_eq!(provider.queries().await.len(), 4, "only four reads execute");
+    app.shutdown().await;
+    sleep(Duration::from_secs(60)).await;
+    assert_eq!(
+        provider.queries().await.len(),
+        4,
+        "shutdown cancels running reads and queued work"
+    );
+}
+
 async fn put_follow(docs_sync: &dyn DocsSync, keys: &KukuriKeys, target: &str) {
     let envelope =
         build_follow_edge_envelope(keys, &Pubkey::from(target), FollowEdgeStatus::Active)

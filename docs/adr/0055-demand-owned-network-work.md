@@ -95,8 +95,11 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   policyの受取りに依らない）。
 - 読み書きの操作（timeline・thread・profileの読込、投稿・返信・reaction・follow等）は購読を開始しない。
   一覧の行の著者ごとの購読と、起動時のfollow/block全員の購読は行わない。
-  表示名のため、timelineのページの著者のうち手元にprofileの無いものは、購読せずにprofileのkeyだけを背景で1件ずつ
-  読む（queue 64件・台帳1024件、同じ著者は10分読み直さない。R6-B、2026-09-28ユーザー決定）。表示中のprofileの列は、
+  表示名のため、timelineのページの著者のうち手元にprofileの無いものは、購読せずにprofileのkeyとその署名つきenvelopeだけを
+  背景で読む（同時4件・queue 64件・台帳1024件）。待機・取得中の同じ著者は合流し、未取得なら完了から5秒後の表示要求で
+  読み直せる。1取得はprovider選択を含め30秒まで。account停止でworkerと取得中futureを取り消す。
+  #1637（2026-10-07）の初回未取得と先行author無応答による遅延修正により、R6-B（2026-09-28）の直列取得と受付時10分の
+  再取得抑止は失効する。表示中のprofileの列は、
   相手の名前が無い間と自分のprofileの読込みが失敗している間だけ、表示の定期更新（3秒）で読み直す。
   自分を指す相手のfollowのedgeを手元に新しく保存したとき（followのofferの取込みとauthorのleaseの読み直し）は、
   runtimeのevent（`author_relationship_changed`、相手のpubkeyつき）で、その相手の開いているprofileと会話の列だけを
@@ -176,6 +179,8 @@ R5-Cでauthorの現在値（profile/latest、自分を指すfollow/block、docs 
 プロフィールの履歴ページ、private参加の制御record（metadata・policy・ownerと自分の参加record・自分宛grant）を
 同じreaderへ接続する。手元に無いkeyだけを読み、providerは書き手（author本人、channel owner、tokenの発行者）の
 R4-A検証済み宛先を先頭に、公開は全体の候補窓、privateは当該channelのgossip scopeで埋めて最大4件とする。
+authorの現在値のkey取得は、操作の残り時間を残るprovider数で割り、先行providerの無応答後にも次のproviderを試す
+（#1637）。手元の取得成功とproviderの優先順、操作全体30秒の期限は維持する。
 参加前の取込みは書き手だけへcapabilityの証明つきで要求する。他の相手を指すedgeの窓は手元だけを読み、
 全参加者の読取り・sync再開による待機は行わない（R5-Hでfollowの窓はauthorのleaseの読み直しに限りproviderからも
 1ページ読むよう改めた。§1.1）。
