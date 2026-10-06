@@ -2,6 +2,10 @@
 
 現行の受入条件と予算は [#1221](https://github.com/kukuri-app/kukuri/issues/1221) の R1-C・R3-B/C・R5-A に従う。本書は保存先と取得経路の対応を示す。旧 #1207 時点の試行回数や無期限 cache の記録は現行仕様ではない。
 
+blobの取得候補（[#1594](https://github.com/kukuri-app/kukuri/issues/1594)）は、既存のpeer台帳の有限cursor窓とhash別の取得元を合わせて最大4件。取得元とhash別の失敗抑止は一つの台帳に全体256組まで保持し、hint/検証済み取得成功から600秒で失効する。SDKの明確な欠損、またはSDKの欠損/拒否後に独自cache配信が明示した欠損では、そのhashの優先を解除し、残りのTTL中は一般候補経由でも再選択しない。同じpeerが提供する別hashやpeer全体のtrustは下げない。SDKの`ERR_INTERNAL`等の曖昧な拒否を、それだけで欠損とは扱わない。
+
+接続/転送の失敗・timeout・曖昧な拒否は、そのhashとpeerの組だけを3秒抑止する。独自cache配信のtimeoutや通信エラーも欠損にはしない。抑止中の同じtopic/見出しのhint再登録では抑止を取り消さず、期限後に再選択し、検証済み成功でTTLを更新する。通常取得の3秒cooldown、表示需要の最大4試行・5/30/120秒、1取得の総期限30秒と需要ownerは維持する。選択・更新時に期限切れの組を回収し、常駐probeや新規provider探索は行わない。
+
 | 所有者 | 内容と取得 | 保持・回収 |
 | --- | --- | --- |
 | Iroh SDK `<db>.iroh-store`（新しい store、#1221 R5-I） | 新形式の docs の内容、本人が書いた本文・添付（保護所有先と両方）、pin された資産 | backup には含めない。SQLite を失ったときに docs から本人の投稿を戻す既存の復元に使う |

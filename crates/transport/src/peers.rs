@@ -339,9 +339,8 @@ pub struct PeerAddrBook {
     health: Arc<BlobPeerHealth>,
     fetch_cursor: Mutex<[Option<String>; 3]>,
     recent_peers: Mutex<VecDeque<RecentPeer>>,
-    /// hash ごとの取得元(その内容を含む見出しを返した peer と、表示時の同じ topic の参加者)。1 つの hash に複数の
-    /// peer を持ち、新しいものが先頭(#1395、#1419)。
-    content_sources: Mutex<VecDeque<(String, EndpointId)>>,
+    /// hash 別の取得元と失敗抑止。全体の上限は256組で、期限の切れた組は選択・更新時に外す。
+    content_sources: Mutex<VecDeque<ContentSource>>,
     #[cfg(test)]
     sampled_peer_count: std::sync::atomic::AtomicUsize,
 }
@@ -350,6 +349,13 @@ struct RecentPeer {
     id: String,
     expires_at: Instant,
     imported: bool,
+}
+
+struct ContentSource {
+    hash: String,
+    peer: EndpointId,
+    expires_at: Instant,
+    retry_after: Instant,
 }
 
 impl PeerAddrBook {
@@ -464,26 +470,75 @@ impl PeerAddrBook {
 
     /// `hash` の内容の取得元を覚える。台帳の外の peer でもよい(`ranked_peers_for` で候補に入る)。
     pub async fn note_content_source(&self, hash: &str, peer: EndpointId) {
+        self.update_content_source(hash, peer, None).await;
+    }
+
+    pub async fn record_content_fetch_result(
+        &self,
+        hash: &str,
+        peer: EndpointId,
+        result: Result<(), PeerFetchFailure>,
+    ) {
+        if result == Err(PeerFetchFailure::Cancelled) {
+            return;
+        }
+        self.update_content_source(hash, peer, Some(result)).await;
+    }
+
+    async fn update_content_source(
+        &self,
+        hash: &str,
+        peer: EndpointId,
+        result: Option<Result<(), PeerFetchFailure>>,
+    ) {
         let mut sources = self.content_sources.lock().await;
-        sources.retain(|(known, known_peer)| !(known == hash && *known_peer == peer));
-        sources.push_front((hash.to_string(), peer));
+        let now = Instant::now();
+        sources.retain(|source| source.expires_at > now);
+        let existing = sources
+            .iter()
+            .position(|source| source.hash == hash && source.peer == peer);
+        // 同じtopic/見出しのhintを再登録しても、観測済みの欠損・一時失敗を取り消さない。
+        if result.is_none() && existing.is_some_and(|index| sources[index].retry_after > now) {
+            return;
+        }
+        let mut source = existing
+            .and_then(|index| sources.remove(index))
+            .unwrap_or_else(|| ContentSource {
+                hash: hash.to_string(),
+                peer,
+                expires_at: now + PEER_FETCH_SUCCESS_TTL,
+                retry_after: now,
+            });
+        match result {
+            Some(Err(PeerFetchFailure::NotFound)) => source.retry_after = source.expires_at,
+            Some(Err(_)) => source.retry_after = now + REMOTE_FETCH_RETRY_COOLDOWN,
+            _ => {
+                source.expires_at = now + PEER_FETCH_SUCCESS_TTL;
+                source.retry_after = now;
+            }
+        }
+        sources.push_front(source);
         sources.truncate(MAX_CONTENT_SOURCES);
     }
 
-    /// `ranked_peers` に、`hash` の取得元を必ず含めた候補(最大 4)。取得元は巡回する窓の外や台帳の外にいても、新しい順に
-    /// 先頭へ置く(#1395、#1419)。
+    /// hashの有効な取得元を新しい順に優先し、抑止中のpeerは一般候補経由でも選ばない(最大4件)。
     pub async fn ranked_peers_for(&self, hash: &str) -> Vec<EndpointAddr> {
         let mut peers = self.ranked_peers().await;
-        let sources = self
-            .content_sources
-            .lock()
-            .await
+        let mut sources = self.content_sources.lock().await;
+        let now = Instant::now();
+        sources.retain(|source| source.expires_at > now);
+        peers.retain(|peer| {
+            !sources.iter().any(|source| {
+                source.hash == hash && source.peer == peer.id && source.retry_after > now
+            })
+        });
+        let preferred = sources
             .iter()
-            .filter(|(known, _)| known == hash)
-            .map(|(_, peer)| *peer)
+            .filter(|source| source.hash == hash && source.retry_after <= now)
+            .map(|source| source.peer)
             .take(4)
             .collect::<Vec<_>>();
-        for source in sources.into_iter().rev() {
+        for source in preferred.into_iter().rev() {
             let addr = match peers.iter().position(|peer| peer.id == source) {
                 Some(position) => peers.remove(position),
                 None => EndpointAddr::new(source),

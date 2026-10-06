@@ -266,8 +266,21 @@ fn remote_fetch_failure_history_has_a_fixed_capacity() {
 #[tokio::test]
 async fn fetch_candidates_read_a_fixed_window_instead_of_all_peer_history() {
     let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
-    for history in [100_u64, 1_000] {
-        let book = PeerAddrBook::new(endpoint.clone(), Arc::new(MemoryLookup::new()));
+    let mut read_steps = Vec::new();
+    for history in [20_u64, 200, 2_000] {
+        let steps = Arc::new(AtomicU64::new(0));
+        let store = Arc::new(
+            SqliteStore::connect_memory_counting_vm_steps(steps.clone())
+                .await
+                .unwrap(),
+        );
+        let book = PeerAddrBook::with_account_store(
+            endpoint.clone(),
+            Arc::new(MemoryLookup::new()),
+            Arc::new(BlobPeerHealth::default()),
+            store,
+            "blob",
+        );
         for index in 0..history {
             let mut secret = [0; 32];
             secret[..8].copy_from_slice(&index.to_be_bytes());
@@ -277,13 +290,15 @@ async fn fetch_candidates_read_a_fixed_window_instead_of_all_peer_history() {
                 .unwrap();
         }
         book.recent_peers.lock().await.clear(); // Historical rows, not fresh hint/import demand.
-        let first = book.ranked_peers().await;
+        let before = steps.load(Ordering::Relaxed);
+        let first = book.ranked_peers_for("fixed-demand").await;
+        read_steps.push(steps.load(Ordering::Relaxed) - before);
         assert!(
             book.sampled_peer_count.load(Ordering::Relaxed) <= 12,
             "must bound materialized candidates before ranking, history={history}"
         );
         assert_eq!(first.len(), 4);
-        let second = book.ranked_peers().await;
+        let second = book.ranked_peers_for("fixed-demand").await;
         assert!(
             second
                 .iter()
@@ -291,6 +306,58 @@ async fn fetch_candidates_read_a_fixed_window_instead_of_all_peer_history() {
             "cursor must advance"
         );
     }
+    eprintln!("candidate SQLite VM steps for 20/200/2000 peers: {read_steps:?}");
+    assert!(read_steps.iter().max().unwrap() <= &(2 * read_steps.iter().min().unwrap()));
+    endpoint.close().await;
+}
+
+#[tokio::test]
+async fn content_source_failure_is_hash_scoped_and_success_renews_its_lifetime() {
+    let endpoint = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+    let book = PeerAddrBook::new(endpoint.clone(), Arc::new(MemoryLookup::new()));
+    let source = iroh::SecretKey::from_bytes(&[42; 32]).public();
+    tokio::time::pause();
+    book.note_content_source("H", source).await;
+    book.note_content_source("K", source).await;
+    let attempt = book.begin_fetch_attempt(source).await.unwrap();
+    attempt.success(Duration::from_millis(1)).await;
+    attempt.failure(PeerFetchFailure::NotFound).await;
+    book.record_content_fetch_result("H", source, Err(PeerFetchFailure::NotFound))
+        .await;
+    book.note_content_source("H", source).await;
+    assert!(
+        book.ranked_peers_for("H").await.is_empty(),
+        "a repeated hint must not undo a miss"
+    );
+    assert_eq!(book.ranked_peers_for("K").await[0].id, source);
+    let health = book.peer_state_snapshot(source).await.unwrap();
+    assert_eq!(health.fetch_misses, 1);
+    assert_eq!(health.consecutive_fetch_failures, 0);
+    assert_eq!(health.fetch_failures, 0);
+    book.record_content_fetch_result("H", source, Ok(())).await;
+    for failure in [
+        PeerFetchFailure::ConnectFailed,
+        PeerFetchFailure::ConnectTimeout,
+        PeerFetchFailure::TransferFailed,
+        PeerFetchFailure::TransferTimeout,
+        PeerFetchFailure::Rejected,
+    ] {
+        book.record_content_fetch_result("H", source, Err(failure))
+            .await;
+        book.note_content_source("H", source).await;
+        assert!(book.ranked_peers_for("H").await.is_empty());
+        assert_eq!(book.ranked_peers_for("K").await[0].id, source);
+        tokio::time::advance(REMOTE_FETCH_RETRY_COOLDOWN).await;
+        assert_eq!(book.ranked_peers_for("H").await[0].id, source);
+    }
+    book.record_content_fetch_result("H", source, Ok(())).await;
+    tokio::time::advance(PEER_FETCH_SUCCESS_TTL - Duration::from_secs(1)).await;
+    book.record_content_fetch_result("H", source, Ok(())).await;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert_eq!(book.ranked_peers_for("H").await[0].id, source);
+    tokio::time::advance(PEER_FETCH_SUCCESS_TTL).await;
+    assert!(book.ranked_peers_for("H").await.is_empty());
+    tokio::time::resume();
     endpoint.close().await;
 }
 
