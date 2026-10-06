@@ -1,5 +1,165 @@
 use super::*;
 
+#[test]
+fn cached_transfer_distinguishes_explicit_absence_from_temporary_failure() -> Result<()> {
+    assert_eq!(
+        cached_transfer_outcome(Some(Ok(None)))?,
+        Err(PeerFetchFailure::NotFound)
+    );
+    assert_eq!(
+        cached_transfer_outcome(None)?,
+        Err(PeerFetchFailure::TransferTimeout)
+    );
+    assert_eq!(
+        cached_transfer_outcome(Some(Err(anyhow::anyhow!("connection closed"))))?,
+        Err(PeerFetchFailure::TransferFailed)
+    );
+    assert_eq!(
+        cached_transfer_outcome(Some(Ok(Some(vec![1, 2, 3]))))?,
+        Ok(vec![1, 2, 3])
+    );
+    assert!(
+        cached_transfer_outcome(Some(Err(BlobTooLarge { limit: 1 }.into())))
+            .unwrap_err()
+            .is::<BlobTooLarge>()
+    );
+    assert!(
+        cached_transfer_outcome(Some(Err(RemoteCacheDeferred.into())))
+            .unwrap_err()
+            .is::<RemoteCacheDeferred>()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn temporary_cached_provider_recovers_after_hash_suppression() -> Result<()> {
+    let client = IrohDocsNode::memory().await?;
+    let provider = IrohDocsNode::memory().await?;
+    let cache = Arc::new(kukuri_store::SqliteStore::connect_memory().await?);
+    provider.install_remote_cache(cache.clone())?;
+    let bytes = b"recovered cached provider";
+    let hash = iroh_blobs::Hash::new(bytes);
+    assert!(
+        cache
+            .put_remote_content("blob", &hash.to_string(), "blob", bytes)
+            .await?
+    );
+    let peers = Arc::new(PeerAddrBook::new(
+        client.endpoint().clone(),
+        client.discovery(),
+    ));
+    peers
+        .insert_imported_peer_addr(provider.endpoint().addr())
+        .await?;
+    peers
+        .note_content_source(&hash.to_string(), provider.endpoint().id())
+        .await;
+    let failure =
+        cached_transfer_outcome(Some(Err(anyhow::anyhow!("connection closed"))))?.unwrap_err();
+    tokio::time::pause();
+    peers
+        .record_content_fetch_result(&hash.to_string(), provider.endpoint().id(), Err(failure))
+        .await;
+    assert_eq!(
+        prepare_display_fetch(&client, &peers, hash).await?.await?,
+        None
+    );
+    tokio::time::advance(kukuri_transport::REMOTE_FETCH_RETRY_COOLDOWN).await;
+    tokio::time::resume();
+    assert_eq!(
+        prepare_display_fetch(&client, &peers, hash)
+            .await?
+            .await?
+            .as_deref(),
+        Some(bytes.as_slice())
+    );
+    let state = peers
+        .peer_state_snapshot(provider.endpoint().id())
+        .await
+        .unwrap();
+    assert_eq!(state.fetch_successes, 1);
+    assert_eq!(state.fetch_misses, 0);
+    assert!(
+        !client.blobs().blobs().has(hash).await?,
+        "displayed bytes must stay ephemeral"
+    );
+    client.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stale_content_sources_yield_to_a_known_provider_on_retry() -> Result<()> {
+    let client = IrohDocsNode::memory().await?;
+    let provider = IrohDocsNode::memory().await?;
+    let bytes = b"available from the fifth peer";
+    let tag = provider.blobs().blobs().add_bytes(bytes.to_vec()).await?;
+    let hash = tag.hash;
+    let hash_text = hash.to_string();
+    let peers = Arc::new(PeerAddrBook::new(
+        client.endpoint().clone(),
+        client.discovery(),
+    ));
+    let mut stale = Vec::new();
+    for _ in 0..4 {
+        let peer = IrohDocsNode::memory().await?;
+        peers
+            .insert_imported_peer_addr(peer.endpoint().addr())
+            .await?;
+        peers
+            .note_content_source(&hash_text, peer.endpoint().id())
+            .await;
+        stale.push(peer);
+    }
+    peers
+        .insert_imported_peer_addr(provider.endpoint().addr())
+        .await?;
+    let selected = peers.ranked_peers_for(&hash_text).await;
+    assert_eq!(selected.len(), 4);
+    assert!(
+        selected
+            .iter()
+            .all(|peer| peer.id != provider.endpoint().id())
+    );
+    let retries = Arc::new(Mutex::new(RemoteFetchRetryState::default()));
+    let fetch = || {
+        fetch_bytes_with_cooldown_mode(
+            &client,
+            &peers,
+            &retries,
+            "stale sources",
+            &hash_text,
+            hash,
+            "missing locally",
+            FetchMode::Ephemeral,
+        )
+    };
+    assert_eq!(fetch().await?, None);
+    for peer in &stale {
+        assert_eq!(
+            peers
+                .peer_state_snapshot(peer.endpoint().id())
+                .await
+                .unwrap()
+                .fetch_misses,
+            1
+        );
+    }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let result = fetch().await?;
+    client.shutdown().await?;
+    provider.shutdown().await?;
+    for peer in stale {
+        peer.shutdown().await?;
+    }
+    assert_eq!(
+        result.as_deref(),
+        Some(bytes.as_slice()),
+        "the existing retry must reach peer E"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn missing_blob_does_not_penalize_a_reachable_peer() {
     let client = IrohDocsNode::memory().await.unwrap();
@@ -35,6 +195,17 @@ async fn missing_blob_does_not_penalize_a_reachable_peer() {
         .await
         .unwrap();
         assert_eq!(result, None);
+        if mode == FetchMode::Store {
+            let state = peers
+                .peer_state_snapshot(provider.endpoint().id())
+                .await
+                .unwrap();
+            assert_eq!(
+                state.fetch_rejections, 1,
+                "SDK ERR_INTERNAL alone is ambiguous"
+            );
+            assert_eq!(state.fetch_misses, 0);
+        }
     }
     let state = peers
         .peer_state_snapshot(provider.endpoint().id())

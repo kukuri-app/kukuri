@@ -659,6 +659,25 @@ fn classify_blob_transfer(error: &iroh_blobs::get::GetError) -> BlobTransferFail
     }
 }
 
+/// Only an explicit cache miss is NotFound; timeout and protocol/transport
+/// errors keep the provider eligible after the hash-specific cooldown.
+fn cached_transfer_outcome(
+    result: Option<Result<Option<Vec<u8>>>>,
+) -> Result<Result<Vec<u8>, PeerFetchFailure>> {
+    Ok(match result {
+        Some(Ok(Some(bytes))) => Ok(bytes),
+        Some(Ok(None)) => Err(PeerFetchFailure::NotFound),
+        Some(Err(error)) if error.is::<BlobTooLarge>() || error.is::<RemoteCacheDeferred>() => {
+            return Err(error);
+        }
+        Some(Err(error)) => {
+            warn!(%error, "fetch cached transfer failed");
+            Err(PeerFetchFailure::TransferFailed)
+        }
+        None => Err(PeerFetchFailure::TransferTimeout),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fetch_bytes_from_remote(
     node: &IrohDocsNode,
@@ -680,32 +699,19 @@ async fn fetch_bytes_from_remote(
         "fetch local miss, trying remote peers"
     );
     for imported_peer in imported_peers {
-        let candidates = peers.connect_candidates(&imported_peer).await;
-        info!(
-            subject,
-            hash = %hash_text,
-            peer_id = %imported_peer.id,
-            imported_addrs = ?imported_peer.addrs,
-            candidate_count = candidates.len(),
-            "fetch prepared remote peer candidates"
-        );
-        for peer in candidates {
+        for peer in peers.connect_candidates(&imported_peer).await {
             if let RequestRateDecision::Limited { retry_after } =
                 peers.record_peer_fetch_request(imported_peer.id).await
             {
-                info!(
-                    subject,
-                    hash = %hash_text,
-                    peer_id = %imported_peer.id,
-                    retry_after_ms = retry_after.as_millis(),
-                    "peer fetch request deferred by the shared request-frequency ledger"
-                );
+                info!(subject, hash = %hash_text, peer_id = %peer.id,
+                    retry_after_ms = retry_after.as_millis(), "peer fetch request deferred");
                 break;
             }
             let Some(attempt) = peers.begin_fetch_attempt(imported_peer.id).await else {
                 break;
             };
-            match timeout(
+            let mut attempt_started = Instant::now();
+            let outcome = match timeout(
                 REMOTE_FETCH_CONNECT_TIMEOUT,
                 node.endpoint().connect(peer.clone(), iroh_blobs::ALPN),
             )
@@ -713,248 +719,143 @@ async fn fetch_bytes_from_remote(
             {
                 Ok(Ok(conn)) => {
                     attempt.connection(PeerConnectionStatus::Connected).await;
-                    info!(
-                        subject,
-                        hash = %hash_text,
-                        peer_id = %peer.id,
-                        addrs = ?peer.addrs,
-                        "fetch connected to remote peer"
-                    );
-                    match mode {
-                        FetchMode::Store => {
-                            let transfer_started = Instant::now();
-                            let blobs = node.blobs().clone();
-                            match timeout(
-                                REMOTE_FETCH_TRANSFER_TIMEOUT,
+                    attempt_started = Instant::now();
+                    let transfer = timeout(REMOTE_FETCH_TRANSFER_TIMEOUT, async {
+                        match mode {
+                            FetchMode::Store => {
+                                let blobs = node.blobs().clone();
                                 crate::confine_local(async move {
                                     blobs.remote().fetch(conn, hash).await
-                                }),
-                            )
-                            .await
-                            {
-                                Ok(Ok(_)) => {
-                                    attempt.success(transfer_started.elapsed()).await;
-                                    info!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        "fetch remote transfer completed"
-                                    );
-                                }
-                                Ok(Err(error)) => {
-                                    match classify_blob_transfer(&error) {
-                                        BlobTransferFailure::Missing => {
-                                            attempt.failure(PeerFetchFailure::NotFound).await;
-                                            break;
-                                        }
-                                        BlobTransferFailure::Rejected => {
-                                            attempt.failure(PeerFetchFailure::Rejected).await;
-                                            break;
-                                        }
-                                        BlobTransferFailure::Local => return Err(error.into()),
-                                        BlobTransferFailure::Remote => {
-                                            had_transport_failure = true;
-                                            attempt.failure(PeerFetchFailure::TransferFailed).await
-                                        }
-                                    }
-                                    warn!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        addrs = ?peer.addrs,
-                                        error = %error,
-                                        "fetch remote transfer failed"
-                                    );
-                                    continue;
-                                }
-                                Err(_) => {
-                                    had_transport_failure = true;
-                                    attempt.failure(PeerFetchFailure::TransferTimeout).await;
-                                    warn!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        addrs = ?peer.addrs,
-                                        timeout_ms = REMOTE_FETCH_TRANSFER_TIMEOUT.as_millis(),
-                                        "fetch remote transfer timed out"
-                                    );
-                                    continue;
-                                }
+                                })
+                                .await
+                                .map(|_| Vec::new())
+                                .map_err(anyhow::Error::from)
                             }
-                            match node.blobs().blobs().get_bytes(hash).await {
-                                Ok(bytes) => return Ok(Some(bytes.to_vec())),
-                                Err(error) => {
-                                    warn!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        error = %error,
-                                        "fetch transfer completed but content is still missing locally"
-                                    );
-                                }
-                            }
-                        }
-                        FetchMode::Ephemeral | FetchMode::EphemeralBounded(_) => {
-                            // ストアへ書き込まず、検証付きで memory へ直接取得する。
-                            let transfer_started = Instant::now();
-                            match timeout(REMOTE_FETCH_TRANSFER_TIMEOUT, async {
-                                match file_path {
-                                    #[cfg(not(target_family = "wasm"))]
-                                    Some(path) => fetch_ephemeral_to_file(
+                            _ => match file_path {
+                                #[cfg(not(target_family = "wasm"))]
+                                Some(path) => fetch_ephemeral_to_file(
+                                    conn,
+                                    hash,
+                                    path,
+                                    node.remote_cache().map(AsRef::as_ref),
+                                )
+                                .await
+                                .map(|_| Vec::new()),
+                                _ => {
+                                    fetch_ephemeral(
                                         conn,
                                         hash,
-                                        path,
+                                        mode,
                                         node.remote_cache().map(AsRef::as_ref),
                                     )
                                     .await
-                                    .map(|_| Vec::new()),
-                                    _ => {
-                                        fetch_ephemeral(
-                                            conn,
-                                            hash,
-                                            mode,
-                                            node.remote_cache().map(AsRef::as_ref),
-                                        )
-                                        .await
-                                    }
                                 }
-                            })
-                            .await
+                            },
+                        }
+                    })
+                    .await;
+                    match transfer {
+                        Ok(Ok(bytes)) => Ok(bytes),
+                        Ok(Err(error)) => {
+                            if error.is::<BlobTooLarge>() || error.is::<RemoteCacheDeferred>() {
+                                return Err(error);
+                            }
+                            let failure = match error
+                                .downcast_ref::<iroh_blobs::get::GetError>()
+                                .map(classify_blob_transfer)
+                                .unwrap_or(BlobTransferFailure::Remote)
                             {
-                                Ok(Ok(bytes)) => {
-                                    attempt.success(transfer_started.elapsed()).await;
-                                    info!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        "ephemeral fetch remote transfer completed"
-                                    );
-                                    return Ok(Some(bytes));
-                                }
-                                Ok(Err(error)) => {
-                                    if error.is::<BlobTooLarge>()
-                                        || error.is::<RemoteCacheDeferred>()
-                                    {
-                                        return Err(error);
-                                    }
-                                    match error
-                                        .downcast_ref::<iroh_blobs::get::GetError>()
-                                        .map(classify_blob_transfer)
-                                        .unwrap_or(BlobTransferFailure::Remote)
-                                    {
-                                        BlobTransferFailure::Missing
-                                        | BlobTransferFailure::Rejected => {
-                                            let limit = match mode {
-                                                FetchMode::EphemeralBounded(limit) => Some(limit),
-                                                _ => None,
-                                            };
-                                            match timeout(
-                                                REMOTE_FETCH_CONNECT_TIMEOUT
-                                                    + REMOTE_FETCH_TRANSFER_TIMEOUT,
-                                                async {
-                                                    match file_path {
-                                                        #[cfg(not(target_family = "wasm"))]
-                                                        Some(path) => remote_blob::fetch_to_file(
-                                                            node.endpoint(),
-                                                            peer.clone(),
-                                                            hash,
-                                                            path,
-                                                        )
-                                                        .await
-                                                        .map(|found| found.map(|_| Vec::new())),
-                                                        _ => {
-                                                            remote_blob::fetch(
-                                                                node.endpoint(),
-                                                                peer.clone(),
-                                                                hash,
-                                                                limit,
-                                                                node.remote_cache()
-                                                                    .map(AsRef::as_ref),
-                                                            )
-                                                            .await
-                                                        }
-                                                    }
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(Ok(Some(bytes))) => {
-                                                    attempt
-                                                        .success(transfer_started.elapsed())
-                                                        .await;
-                                                    return Ok(Some(bytes));
-                                                }
-                                                Ok(Err(cache_error))
-                                                    if cache_error.is::<BlobTooLarge>()
-                                                        || cache_error
-                                                            .is::<RemoteCacheDeferred>() =>
-                                                {
-                                                    return Err(cache_error);
-                                                }
+                                BlobTransferFailure::Missing => PeerFetchFailure::NotFound,
+                                BlobTransferFailure::Rejected => PeerFetchFailure::Rejected,
+                                BlobTransferFailure::Local => return Err(error),
+                                BlobTransferFailure::Remote => PeerFetchFailure::TransferFailed,
+                            };
+                            warn!(subject, hash = %hash_text, peer_id = %peer.id, %error,
+                                "fetch SDK transfer failed");
+                            if mode != FetchMode::Store
+                                && matches!(
+                                    failure,
+                                    PeerFetchFailure::NotFound | PeerFetchFailure::Rejected,
+                                )
+                            {
+                                let limit = match mode {
+                                    FetchMode::EphemeralBounded(limit) => Some(limit),
+                                    _ => None,
+                                };
+                                cached_transfer_outcome(
+                                    timeout(
+                                        REMOTE_FETCH_CONNECT_TIMEOUT
+                                            + REMOTE_FETCH_TRANSFER_TIMEOUT,
+                                        async {
+                                            match file_path {
+                                                #[cfg(not(target_family = "wasm"))]
+                                                Some(path) => remote_blob::fetch_to_file(
+                                                    node.endpoint(),
+                                                    peer.clone(),
+                                                    hash,
+                                                    path,
+                                                )
+                                                .await
+                                                .map(|found| found.map(|_| Vec::new())),
                                                 _ => {
-                                                    attempt
-                                                        .failure(PeerFetchFailure::NotFound)
-                                                        .await;
-                                                    break;
+                                                    remote_blob::fetch(
+                                                        node.endpoint(),
+                                                        peer.clone(),
+                                                        hash,
+                                                        limit,
+                                                        node.remote_cache().map(AsRef::as_ref),
+                                                    )
+                                                    .await
                                                 }
                                             }
-                                        }
-                                        BlobTransferFailure::Local => return Err(error),
-                                        BlobTransferFailure::Remote => {
-                                            had_transport_failure = true;
-                                            attempt.failure(PeerFetchFailure::TransferFailed).await
-                                        }
-                                    }
-                                    warn!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        addrs = ?peer.addrs,
-                                        error = %error,
-                                        "ephemeral fetch remote transfer failed"
-                                    );
-                                    continue;
-                                }
-                                Err(_) => {
-                                    had_transport_failure = true;
-                                    attempt.failure(PeerFetchFailure::TransferTimeout).await;
-                                    warn!(
-                                        subject,
-                                        hash = %hash_text,
-                                        peer_id = %peer.id,
-                                        addrs = ?peer.addrs,
-                                        timeout_ms = REMOTE_FETCH_TRANSFER_TIMEOUT.as_millis(),
-                                        "ephemeral fetch remote transfer timed out"
-                                    );
-                                    continue;
-                                }
+                                        },
+                                    )
+                                    .await
+                                    .ok(),
+                                )?
+                            } else {
+                                Err(failure)
                             }
                         }
+                        Err(_) => Err(PeerFetchFailure::TransferTimeout),
                     }
                 }
                 Ok(Err(error)) => {
-                    had_transport_failure = true;
-                    attempt.failure(PeerFetchFailure::ConnectFailed).await;
-                    warn!(
-                        subject,
-                        hash = %hash_text,
-                        peer_id = %peer.id,
-                        addrs = ?peer.addrs,
-                        error = %error,
-                        "fetch connect failed"
-                    );
+                    warn!(subject, hash = %hash_text, peer_id = %peer.id, %error,
+                        "fetch connect failed");
+                    Err(PeerFetchFailure::ConnectFailed)
                 }
-                Err(_) => {
+                Err(_) => Err(PeerFetchFailure::ConnectTimeout),
+            };
+            match outcome {
+                Ok(bytes) => {
+                    attempt.success(attempt_started.elapsed()).await;
+                    peers
+                        .record_content_fetch_result(hash_text, peer.id, Ok(()))
+                        .await;
+                    if mode != FetchMode::Store {
+                        return Ok(Some(bytes));
+                    }
+                    match node.blobs().blobs().get_bytes(hash).await {
+                        Ok(bytes) => return Ok(Some(bytes.to_vec())),
+                        Err(error) => warn!(subject, hash = %hash_text, peer_id = %peer.id, %error,
+                            "fetch transfer completed but content is still missing locally"),
+                    }
+                }
+                Err(failure) => {
+                    peers
+                        .record_content_fetch_result(hash_text, peer.id, Err(failure))
+                        .await;
+                    attempt.failure(failure).await;
+                    if matches!(
+                        failure,
+                        PeerFetchFailure::NotFound | PeerFetchFailure::Rejected
+                    ) {
+                        break;
+                    }
                     had_transport_failure = true;
-                    attempt.failure(PeerFetchFailure::ConnectTimeout).await;
-                    warn!(
-                        subject,
-                        hash = %hash_text,
-                        peer_id = %peer.id,
-                        addrs = ?peer.addrs,
-                        timeout_ms = REMOTE_FETCH_CONNECT_TIMEOUT.as_millis(),
-                        "fetch connect timed out"
-                    );
+                    warn!(subject, hash = %hash_text, peer_id = %peer.id, ?failure,
+                        "fetch peer attempt failed");
                 }
             }
         }
