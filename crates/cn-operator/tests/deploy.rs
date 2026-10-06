@@ -92,6 +92,34 @@ fn generate_tfvars_emits_only_the_explicit_admin_actor() {
 }
 
 #[test]
+fn generate_tfvars_emits_the_web_client_cors_origins() {
+    let yaml = config_with_deploy(
+        "  relay_domain: relay.example-kukuri.net
+  cors_allowed_origins:
+    - https://app.example-kukuri.net
+",
+        "",
+        false,
+    );
+    let resolved = load_and_validate(&yaml).expect("cors origins should be accepted");
+    let tfvars = generate_tfvars(&resolved).expect("tfvars");
+    assert!(tfvars.contains("cors_allowed_origins = [\"https://app.example-kukuri.net\"]"));
+
+    let omitted = load_and_validate(&config_with_deploy(
+        "  relay_domain: relay.example-kukuri.net
+",
+        "",
+        false,
+    ))
+    .unwrap();
+    assert!(
+        generate_tfvars(&omitted)
+            .unwrap()
+            .contains("cors_allowed_origins = []")
+    );
+}
+
+#[test]
 fn generate_tfvars_keeps_admin_writes_disabled_when_actor_is_omitted() {
     let yaml = config_with_deploy("  relay_domain: relay.example-kukuri.net\n", "", false);
     let resolved = load_and_validate(&yaml).unwrap();

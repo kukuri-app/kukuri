@@ -359,6 +359,9 @@ pub struct DeployConfig {
     /// 空なら admin UI は read-only で、write endpoint は fail-closed する。
     #[serde(default)]
     pub admin_actor: String,
+    /// user-api が CORS で応答する origin（別の origin で配る Web クライアント。ADR 0060 §2）。空なら応答しない。
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
     /// true なら Cloud DNS の既存 zone に A レコードを作成する。
     #[serde(default)]
     pub manage_cloud_dns: bool,
