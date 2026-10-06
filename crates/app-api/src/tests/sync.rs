@@ -382,6 +382,7 @@ mod bucket_receive_integration;
 mod diagnostics;
 mod docs_author_reads;
 mod gossip_toggle;
+mod head_page_provider;
 mod hint_rehydration;
 mod hint_window;
 mod hydration_integrity;

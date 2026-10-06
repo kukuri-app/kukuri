@@ -828,8 +828,20 @@ impl AppService {
         // index range; this also sees new buckets before local sync exists.
         let unavailable;
         {
+            let preexisting = !page.items.is_empty()
+                && page
+                    .items
+                    .iter()
+                    .all(|row| row.derived_at <= self.services.started_at_ms);
             let reconcile = self
-                .reconcile_timeline_range_checked(topic_id, &scope, cursor.as_ref(), limit, true)
+                .reconcile_timeline_range_checked(
+                    topic_id,
+                    &scope,
+                    cursor.as_ref(),
+                    limit,
+                    true,
+                    preexisting,
+                )
                 .await?;
             if reconcile.hydrated > 0 {
                 self.last_sync_ts.set(Utc::now().timestamp_millis()).await;

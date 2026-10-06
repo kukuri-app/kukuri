@@ -384,6 +384,8 @@ pub struct ServiceHandles {
     pub(crate) withdrawal_checks: Arc<hydration_limits::BackgroundCheckLedger>,
     /// #1239: ページの範囲と時系列の索引の照合の台帳。
     pub(crate) range_checks: Arc<replica_window::RangeCheckLedger>,
+    /// 構築した時刻(ms)。これより前に反映した投稿だけの先頭のページは、provider の照合を待たない(#1624)。
+    pub(crate) started_at_ms: i64,
     /// #1221 R5-H: 新形式の writer へ切り替えた時刻。切替前は空。
     pub(crate) writer_switched_at: Arc<std::sync::OnceLock<i64>>,
     /// 取り込んだ remote の投稿から通知を作り、この Notify で知らせる(R5-H)。`AppService` の構築時に入る。
@@ -523,6 +525,7 @@ impl ServiceHandles {
             missing_body_ledger,
             withdrawal_checks: Arc::default(),
             range_checks: Arc::default(),
+            started_at_ms: Utc::now().timestamp_millis(),
             writer_switched_at: Arc::default(),
             notify_remote_posts: None,
             account_sync: Arc::default(),

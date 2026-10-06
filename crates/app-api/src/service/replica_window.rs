@@ -73,12 +73,24 @@ impl RangeCheckLedger {
         range_key: &str,
         now_ms: i64,
     ) -> Option<Option<TimeIndexCursor>> {
+        self.try_begin_for(range_key, now_ms, RANGE_CHECK_RETRY_INTERVAL_MS)
+            .await
+    }
+
+    /// `try_begin` の、次の照合までの間隔を `interval_ms` にしたもの。背景で続く照合を、終えて `release` するまで
+    /// 重ねて始めないために使う(期限で外れるので、終えられなかった照合も残らない。#1624)。
+    pub(crate) async fn try_begin_for(
+        &self,
+        range_key: &str,
+        now_ms: i64,
+        interval_ms: i64,
+    ) -> Option<Option<TimeIndexCursor>> {
         let mut entries = self.entries.lock().await;
         if let Some(state) = entries.get_mut(range_key) {
             if state.next_check_at_ms > now_ms {
                 return None;
             }
-            state.next_check_at_ms = now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS);
+            state.next_check_at_ms = now_ms.saturating_add(interval_ms);
             return Some(state.resume_from.clone());
         }
         if entries.len() >= RANGE_CHECK_LEDGER_LIMIT {
@@ -91,7 +103,7 @@ impl RangeCheckLedger {
         entries.insert(
             range_key.to_string(),
             RangeCheckState {
-                next_check_at_ms: now_ms.saturating_add(RANGE_CHECK_RETRY_INTERVAL_MS),
+                next_check_at_ms: now_ms.saturating_add(interval_ms),
                 resume_from: None,
                 stalled_checks: 0,
                 last_missing: 0,
@@ -162,6 +174,22 @@ impl RangeCheckLedger {
     /// 間隔を空けずに次も照合する範囲を、台帳から外す。
     pub(crate) async fn forget(&self, range_key: &str) {
         self.entries.lock().await.remove(range_key);
+    }
+
+    /// 背景で続けた照合を終えた範囲(#1624)。結果(本体が手元に無かった数と、読み終えていない範囲の読み進めた位置)を
+    /// `last_result` に残し、次の照合はすぐ始めてよい。
+    pub(crate) async fn release(
+        &self,
+        range_key: &str,
+        now_ms: i64,
+        missing: usize,
+        read_past: Option<TimeIndexCursor>,
+    ) {
+        if let Some(state) = self.entries.lock().await.get_mut(range_key) {
+            state.next_check_at_ms = now_ms;
+            state.resume_from = read_past;
+            state.last_missing = missing;
+        }
     }
 
     #[cfg(test)]
@@ -475,13 +503,14 @@ impl AppService {
         limit: usize,
     ) -> Result<usize> {
         Ok(self
-            .reconcile_timeline_range_checked(topic_id, scope, before, limit, true)
+            .reconcile_timeline_range_checked(topic_id, scope, before, limit, true, false)
             .await?
             .hydrated)
     }
 
     /// `reconcile_timeline_range` の本体。取得側は、照合したかどうかでページの読み直しを決める。`ledger` は remote の
-    /// 照合の台帳を使うか(読み直しは使わない。`reconcile_remote_index_range`)。
+    /// 照合の台帳を使うか(読み直しは使わない。`reconcile_remote_index_range`)。`preexisting` は、先頭のページが
+    /// 構築より前に反映した投稿だけか(そうなら provider の照合を待たない。`reconcile_remote_head`)。
     pub(crate) async fn reconcile_timeline_range_checked(
         &self,
         topic_id: &str,
@@ -489,6 +518,7 @@ impl AppService {
         before: Option<&TimelineCursor>,
         limit: usize,
         ledger: bool,
+        preexisting: bool,
     ) -> Result<RangeReconcile> {
         if limit == 0 {
             return Ok(RangeReconcile::default());
@@ -508,8 +538,11 @@ impl AppService {
                 false,
             )
             .await?;
-        let mut result = self
-            .reconcile_remote_index_range(
+        let mut result = if ledger && preexisting && before.is_none() {
+            self.reconcile_remote_head(topic_id, scope, range.limit)
+                .await?
+        } else {
+            self.reconcile_remote_index_range(
                 topic_id,
                 scope,
                 before.as_ref().map(|c| c.created_at),
@@ -517,7 +550,8 @@ impl AppService {
                 RANGE_CHECK_ENTRY_LIMIT / 2,
                 ledger,
             )
-            .await?;
+            .await?
+        };
         let local = self
             .reconcile_index_range(
                 topic_id,
