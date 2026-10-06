@@ -104,13 +104,13 @@ test('the Control Center system section opens backup & restore directly', async 
   expectNoSinkCalls();
 });
 
-test('backup and account sections explain the scope difference and link to each other', async () => {
+// #1629: 対象の差は backup の側だけが示す（設定の「アカウント」の 3 つの方法の一覧は削除した）。
+test('backup and account sections link to each other and backup explains the scope difference', async () => {
   const user = userEvent.setup();
   render(<App api={createDesktopMockApi()} />);
   const drawer = await openSettingsDrawer(user);
 
   await user.click(within(drawer).getByTestId('settings-section-account'));
-  expect(within(drawer).getByText(/only the account key/i)).toBeVisible();
   await user.click(within(drawer).getByRole('button', { name: 'Open backup & restore' }));
   expect(within(drawer).getByTestId('settings-section-backup')).toHaveAttribute('aria-current', 'location');
   expect(window.location.hash).toContain('settings=backup');
