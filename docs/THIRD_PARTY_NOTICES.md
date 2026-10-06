@@ -52,7 +52,7 @@ None.
 
 ## Rust crates
 
-Total packages: 930
+Total packages: 937
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -93,6 +93,8 @@ Total packages: 930
 | async-process | 2.5.0 | Apache-2.0 OR MIT | https://crates.io/crates/async-process |
 | async-recursion | 1.1.1 | MIT OR Apache-2.0 | https://crates.io/crates/async-recursion |
 | async-signal | 0.2.14 | Apache-2.0 OR MIT | https://crates.io/crates/async-signal |
+| async-stream | 0.3.6 | MIT | https://crates.io/crates/async-stream |
+| async-stream-impl | 0.3.6 | MIT | https://crates.io/crates/async-stream-impl |
 | async-task | 4.7.1 | Apache-2.0 OR MIT | https://crates.io/crates/async-task |
 | async-trait | 0.1.92 | MIT OR Apache-2.0 | https://crates.io/crates/async-trait |
 | async_io_stream | 0.3.3 | Unlicense | https://crates.io/crates/async_io_stream |
@@ -400,6 +402,7 @@ Total packages: 930
 | iroh-gossip | 0.101.0 | MIT/Apache-2.0 | https://crates.io/crates/iroh-gossip |
 | iroh-io | 0.6.2 | Apache-2.0 OR MIT | https://crates.io/crates/iroh-io |
 | iroh-mainline-address-lookup | 0.6.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-mainline-address-lookup |
+| iroh-mainline-endpoint-discovery | 0.1.3 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-mainline-endpoint-discovery |
 | iroh-metrics | 1.0.2 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-metrics |
 | iroh-metrics-derive | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-metrics-derive |
 | iroh-relay | 1.3.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-relay |
@@ -475,6 +478,7 @@ Total packages: 930
 | n0-error-macros | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/n0-error-macros |
 | n0-future | 0.3.2 | MIT OR Apache-2.0 | https://crates.io/crates/n0-future |
 | n0-mainline | 0.7.0 | MIT OR Apache-2.0 | https://crates.io/crates/n0-mainline |
+| n0-mainline | 0.7.1 | MIT OR Apache-2.0 | https://crates.io/crates/n0-mainline |
 | n0-watcher | 1.0.0 | MIT OR Apache-2.0 | https://crates.io/crates/n0-watcher |
 | nalgebra | 0.35.0 | Apache-2.0 | https://crates.io/crates/nalgebra |
 | nalgebra-macros | 0.3.0 | Apache-2.0 | https://crates.io/crates/nalgebra-macros |
@@ -841,6 +845,8 @@ Total packages: 930
 | tungstenite | 0.29.0 | MIT OR Apache-2.0 | https://crates.io/crates/tungstenite |
 | typeid | 1.0.3 | MIT OR Apache-2.0 | https://crates.io/crates/typeid |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | https://crates.io/crates/typenum |
+| udp-addr-index | 0.1.3 | MIT OR Apache-2.0 | https://crates.io/crates/udp-addr-index |
+| udp-addr-index-proto | 0.1.3 | MIT OR Apache-2.0 | https://crates.io/crates/udp-addr-index-proto |
 | uds_windows | 1.2.1 | MIT | https://crates.io/crates/uds_windows |
 | unicase | 2.9.0 | MIT OR Apache-2.0 | https://crates.io/crates/unicase |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | https://crates.io/crates/unicode-bidi |
@@ -964,6 +970,7 @@ Total packages: 930
 | yasna | 0.6.0 | MIT OR Apache-2.0 | https://crates.io/crates/yasna |
 | yoke | 0.8.3 | Unicode-3.0 | https://crates.io/crates/yoke |
 | yoke-derive | 0.8.3 | Unicode-3.0 | https://crates.io/crates/yoke-derive |
+| z32 | 1.3.0 | MIT | https://crates.io/crates/z32 |
 | zbus | 5.19.0 | MIT | https://crates.io/crates/zbus |
 | zbus-secret-service-keyring-store | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/zbus-secret-service-keyring-store |
 | zbus_macros | 5.19.0 | MIT | https://crates.io/crates/zbus_macros |
