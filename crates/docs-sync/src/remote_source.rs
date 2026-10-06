@@ -77,8 +77,14 @@ impl RemoteDocsSource {
             return Ok(Vec::new());
         }
         ensure!((1..=8).contains(&limit), "remote exact read limit exceeded");
-        if let Some(records) = self.cache.lock().await.records.get(key) {
-            return Ok(filter_records(records, author, limit));
+        // 名義を絞った結果（空を含む）で、旧 record の有界な再照会を打ち切らない(#1619)。
+        if let Some(author) = author
+            && let Some(records) = self.cache.lock().await.records.get(key)
+            && records
+                .iter()
+                .any(|record| record.docs_author.as_deref() == Some(author))
+        {
+            return Ok(filter_records(records, Some(author), limit));
         }
         if policy == DocFetchPolicy::LocalOnly {
             return Ok(Vec::new());

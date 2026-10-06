@@ -455,9 +455,17 @@ async fn later_reader_gets_a_stored_legacy_profile_without_author_docs() -> Resu
         .await?;
     relay.app.import_peer_ticket(&ticket(&author.node)).await?;
     assert!(eventually(|| shows_author(&relay.app, &topic, &post)).await?);
+    let source_docs_author = author.docs_author.clone();
     author.go_offline().await?;
 
     let reader = Relay::new(Arc::new(ScopedReadHints(seed(&relay.node)))).await?;
+    // 移行後の投稿から docs author を既に知っていても、tag の無い旧 profile へ有界に落ちる。
+    reader
+        .app
+        .services
+        .projection_store
+        .put_author_docs_author(post.pubkey.as_str(), &source_docs_author)
+        .await?;
     assert!(
         eventually(|| shows_author(&reader.app, &topic, &post)).await?,
         "a stored signed profile must be available to a later topic participant"
