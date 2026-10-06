@@ -43,11 +43,13 @@ E2E の build は配信の build と次の点が違う。
 - `_headers` の header を付ける。Cloudflare Pages は `_headers` をそのまま読む。他の host では、同じ header を host の設定で付ける。
 - Web クライアントが使う Community Node は、配信の origin を CORS の許可に入れる（`COMMUNITY_NODE_CORS_ALLOWED_ORIGINS`。本番の VM は Terraform の `cors_allowed_origins`）。入れないと、ブラウザが Community Node の API の応答を読めない。
 - `.wasm` は `Content-Type: application/wasm` で配る（`_headers` の `/*.wasm` の規則）。違うと WASM の読み込みが遅い方法に切り替わる。COOP・COEP は付けない（ADR 0060 §2）。
-- 第三者の script・analytics を足さない（CSP が拒み、外部送信表示にも無い）。cookie も使わない。host の機能のうち、script を自動で差し込むもの（Cloudflare の Web Analytics など）や cookie を足すもの（bot 対策など）は有効にしない。
+- 第三者の script・analytics を足さない（CSP が拒み、外部送信表示にも無い）。zone の Web Analytics（RUM）の自動の差し込みも止める（#1615 で `kukuri.app` の zone に有効になっていて、HTML に計測の script が足されていた）。cookie も使わない。host の機能のうち、script を自動で差し込むもの（Cloudflare の Web Analytics など）や cookie を足すもの（bot 対策など）は有効にしない。
 
 ## Cloudflare Pages に置く
 
-Cloudflare の資格情報は、公開作業をする人が扱う。LP とは別の project にする。
+Cloudflare の資格情報は、公開作業をする人が扱う。LP とは別の project にする（本番は `kukuri-web`、custom domain `app.kukuri.app`。#1615）。
+
+新しい版の wrangler は、Pages の project の作成を Workers へ回して失敗することがある。そのときは作成だけ `--force` を付けて Pages に作る（2 回目からの deploy には付けない）。
 
 ```bash
 npx wrangler pages project create <Web クライアントの project> --production-branch main
