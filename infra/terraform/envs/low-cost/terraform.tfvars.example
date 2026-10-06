@@ -10,6 +10,8 @@ relay_domain = "iroh-relay.example.com"
 acme_email   = "ops@example.com"
 # 空なら admin UI は read-only。write を有効にする場合だけ operator 自身の actor を明示する。
 admin_actor  = "ops@example.com"
+# Web クライアントの配信元（ADR 0060 §2）。空なら CORS で応答しない。
+cors_allowed_origins = ["https://app.example.com"]
 safety_operator_review = true
 
 # Cloud DNS で A レコードを自動作成する場合は true + zone 名。

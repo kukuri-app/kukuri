@@ -191,3 +191,28 @@ run "stun_runs_beside_the_relay" {
     error_message = "cn-stun must run from the relay image as its own service on 3478/udp (#1483)."
   }
 }
+
+run "user_api_answers_cors_only_for_the_web_origin" {
+  command = plan
+  variables {
+    cors_allowed_origins = ["https://app.kukuri.app"]
+  }
+  assert {
+    condition = strcontains(
+      base64decode(regex("echo \"([A-Za-z0-9+/=]+)\" [|] base64 -d > \"[$]INSTALL_DIR/docker-compose[.]yml\"", nonsensitive(module.vm.startup_script))[0]),
+      "      COMMUNITY_NODE_CORS_ALLOWED_ORIGINS: \"https://app.kukuri.app\"\n"
+    )
+    error_message = "user-api must answer CORS for the configured Web client origin (#1615)."
+  }
+}
+
+run "user_api_has_no_cors_origin_by_default" {
+  command = plan
+  assert {
+    condition = !strcontains(
+      base64decode(regex("echo \"([A-Za-z0-9+/=]+)\" [|] base64 -d > \"[$]INSTALL_DIR/docker-compose[.]yml\"", nonsensitive(module.vm.startup_script))[0]),
+      "COMMUNITY_NODE_CORS_ALLOWED_ORIGINS"
+    )
+    error_message = "user-api must not answer CORS unless an origin is configured."
+  }
+}

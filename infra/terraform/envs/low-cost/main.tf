@@ -47,6 +47,8 @@ module "vm" {
   acme_email   = var.acme_email
   admin_actor  = var.admin_actor
 
+  cors_allowed_origins = var.cors_allowed_origins
+
   cn_user_api_image   = var.cn_user_api_image
   cn_iroh_relay_image = var.cn_iroh_relay_image
   cn_cli_image        = var.cn_cli_image

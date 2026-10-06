@@ -81,6 +81,7 @@ locals {
     api_port                 = local.api_port
     admin_port               = local.admin_port
     admin_actor              = trimspace(var.admin_actor)
+    cors_allowed_origins     = join(",", var.cors_allowed_origins)
     project_id               = var.project_id
     relay_http_port          = local.relay_http_port
     certs_mount              = local.certs_mount
