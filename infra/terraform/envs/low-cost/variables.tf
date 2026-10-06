@@ -48,6 +48,12 @@ variable "acme_email" {
   type        = string
 }
 
+variable "cors_allowed_origins" {
+  description = "user-api が CORS で応答する origin（Web クライアントの配信元）。空なら CORS で応答しない。"
+  type        = list(string)
+  default     = []
+}
+
 variable "admin_actor" {
   description = "IAP 内部 admin browser write の監査 actor。空なら write 無効。"
   type        = string

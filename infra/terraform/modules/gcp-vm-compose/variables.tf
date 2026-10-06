@@ -256,6 +256,12 @@ variable "rate_limit_burst" {
   default     = 30
 }
 
+variable "cors_allowed_origins" {
+  description = "user-api が CORS で応答する origin（別の origin で配る Web クライアント。ADR 0060 §2）。空なら CORS で応答しない。"
+  type        = list(string)
+  default     = []
+}
+
 variable "admin_actor" {
   description = "IAP 内部 admin browser write の append-only audit に記録する deployment-controlled actor。空なら write を fail-closed で無効化する。"
   type        = string

@@ -79,6 +79,9 @@ services:
       # Deployment-controlled actor. IAP TCP forwarding does not inject an HTTP principal.
       COMMUNITY_NODE_ADMIN_ACTOR: ${jsonencode(admin_actor)}
 %{ endif ~}
+%{ if cors_allowed_origins != "" ~}
+      COMMUNITY_NODE_CORS_ALLOWED_ORIGINS: ${jsonencode(cors_allowed_origins)}
+%{ endif ~}
 %{ if legal_data_key_secret_id != "" ~}
       COMMUNITY_NODE_LEGAL_DATA_KEY: $${COMMUNITY_NODE_LEGAL_DATA_KEY:?set COMMUNITY_NODE_LEGAL_DATA_KEY}
 %{ endif ~}
