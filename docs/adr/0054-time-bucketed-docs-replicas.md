@@ -162,6 +162,15 @@ timelineに表示名とアバターが出るようにするためである。
   profileより古い版は反映せず、次のproviderへ進む。
 - アバター: profileを返したpeerを、アバターのhashの取得候補に入れる。
 
+#1619（2026-10-06）: 作者がv0.3.0で形式を移行していても、参加者には表示用のprofile行と署名付きenvelopeだけが
+残り、中継用のrecordを持たない場合がある。nativeの提供側は、既存recordが無い公開`author::<pubkey>`のExactに限り、
+`profile/latest`と`envelopes/<id>`を保存済みenvelopeから返す。標準builderと同じ署名対象からenvelope IDの候補を求め、
+profileとenvelopeの既存主キーで個別に読む。docs authorの既知のtag付きとtag無しの候補は最大2件で、全件走査・索引作成・
+移行taskは置かない。候補が見つからないときは従来どおり取得できない。提供前にも署名・作者・profile種別を検証し、
+原envelopeを変更しない。応答のdocs authorは署名付きtagがあればその値、無い旧形式では提供端末のdocs authorを使う。
+docs author指定がその名義に一致しなければ空を返し、readerが既存の有界な旧recordの読み出しへ進めるようにする。
+保存・cacheの予算と削除、privateのcapabilityと提供範囲は変えない。
+
 R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
 `author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
 author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。

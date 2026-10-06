@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use kukuri_core::AccountHistoryCursor;
+use kukuri_core::{AccountHistoryCursor, KukuriEnvelope};
 
 /// 非保護分の容量の上限。
 pub const REMOTE_CACHE_CAPACITY_BYTES: i64 = 3 * 1024 * 1024 * 1024;
@@ -114,6 +114,14 @@ pub trait ContentCacheStore: Send + Sync {
         limit: usize,
         own_only: bool,
     ) -> Result<Vec<Vec<u8>>>;
+    /// 表示用の行と envelope を保持する native の旧 profile。署名・作者の検証は提供側が行う。
+    async fn stored_profile_envelope(
+        &self,
+        _pubkey: &str,
+        _envelope_id: Option<&str>,
+    ) -> Result<Option<KukuriEnvelope>> {
+        Ok(None)
+    }
     /// `own_only` の意味は `get_remote_records` と同じ。
     async fn remote_record_keys(
         &self,

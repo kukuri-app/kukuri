@@ -112,7 +112,7 @@ impl Store for SqliteStore {
     }
 
     async fn get_profile(&self, pubkey: &str) -> Result<Option<Profile>> {
-        self.store_get_profile_impl(pubkey).await
+        self.store_get_profile_impl(pubkey, false).await
     }
 
     async fn get_profiles(

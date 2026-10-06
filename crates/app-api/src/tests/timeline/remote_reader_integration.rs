@@ -199,12 +199,18 @@ async fn real_iroh_private_reader_stops_after_leave() -> Result<()> {
         audience_kind: ChannelAudienceKind::InviteOnly,
         current_epoch_id: current_epoch,
         current_epoch_secret_hex: hex::encode([7; 32]),
-        archived_epochs: vec![PrivateChannelEpochCapability {
+        controller: None,
+    };
+    app.persist_private_channel(
+        &state,
+        0,
+        &[PrivateChannelEpochCapability {
             epoch_id: old_epoch,
             namespace_secret_hex: hex::encode([8; 32]),
         }],
-        controller: None,
-    };
+        true,
+    )
+    .await?;
     app.joined_private_channels.lock().await.insert(
         joined_private_channel_key(topic.as_str(), channel.as_str()),
         state.clone(),
@@ -231,7 +237,7 @@ async fn real_iroh_private_reader_stops_after_leave() -> Result<()> {
     );
     assert_eq!(client_node.docs().list().await?.count().await, 0);
     // channel の timeline は参加の登録と同じく秘密を登録してから読む(読み出しは秘密を登録しない。#1221 R2-C)。
-    register_private_channel_replica_secrets(client.as_ref(), &state).await?;
+    app.install_private_epoch_secrets().await?;
     let page = app
         .list_timeline_scoped(
             topic.as_str(),

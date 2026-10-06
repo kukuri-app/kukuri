@@ -11,6 +11,7 @@ use iroh::endpoint::{Connection, Endpoint};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh_blobs::api::Store as BlobStore;
 use iroh_docs::actor::{OpenOpts, SyncHandle};
+use iroh_docs::api::DocsApi;
 use iroh_docs::store::{Query, SortBy, SortDirection};
 use iroh_docs::sync::SignedEntry;
 use iroh_docs::{NamespaceId, NamespaceSecret};
@@ -211,6 +212,7 @@ pub(crate) struct PrivateCapabilities {
 #[derive(Clone)]
 pub(crate) struct DocReadProtocol {
     sync: SyncHandle,
+    docs: DocsApi,
     blobs: BlobStore,
     remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
     capabilities: PrivateCapabilities,
@@ -226,12 +228,14 @@ impl std::fmt::Debug for DocReadProtocol {
 impl DocReadProtocol {
     pub(crate) fn new(
         sync: SyncHandle,
+        docs: DocsApi,
         blobs: BlobStore,
         remote_cache: Arc<OnceLock<Arc<dyn ContentCacheStore>>>,
         capabilities: PrivateCapabilities,
     ) -> Self {
         Self {
             sync,
+            docs,
             blobs,
             remote_cache,
             capabilities,
@@ -251,6 +255,61 @@ impl DocReadProtocol {
             entries.push(entry?);
         }
         Ok(entries)
+    }
+
+    /// 旧 profile の SQL 行から、公開 author の指定された 1 key だけを提供する(#1619)。
+    async fn stored_profile_record(
+        &self,
+        replica: &str,
+        key: &str,
+    ) -> Result<Option<DocReadRecord>> {
+        let Some(pubkey) = replica.strip_prefix("author::") else {
+            return Ok(None);
+        };
+        let envelope_id = if key == "profile/latest" {
+            None
+        } else if let Some(id) = key.strip_prefix("envelopes/") {
+            Some(id)
+        } else {
+            return Ok(None);
+        };
+        let Some(cache) = self.remote_cache.get() else {
+            return Ok(None);
+        };
+        let Some(envelope) = cache.stored_profile_envelope(pubkey, envelope_id).await? else {
+            return Ok(None);
+        };
+        if envelope.pubkey.as_str() != pubkey || envelope.verify().is_err() {
+            return Ok(None);
+        }
+        let Some(profile) = kukuri_core::parse_profile(&envelope)? else {
+            return Ok(None);
+        };
+        let value = if envelope_id.is_some() {
+            serde_json::to_vec(&envelope)?
+        } else {
+            serde_json::to_vec(&kukuri_core::AuthorProfileDocV1 {
+                author_pubkey: profile.pubkey,
+                name: profile.name,
+                display_name: profile.display_name,
+                about: profile.about,
+                picture_asset: profile.picture_asset,
+                updated_at: profile.updated_at,
+                envelope_id: envelope.id.clone(),
+            })?
+        };
+        ensure!(value.len() <= MAX_RECORD_BYTES, "docs record too large");
+        let docs_author = match envelope.docs_author() {
+            Some(author) => author.to_string(),
+            None => self.docs.author_default().await?.to_string(),
+        };
+        Ok(Some(DocReadRecord {
+            key: key.to_string(),
+            content_hash: iroh_blobs::Hash::new(&value).to_string(),
+            content_len: value.len() as u64,
+            value,
+            docs_author,
+        }))
     }
 
     async fn serve(&self, connection: &Connection) -> Result<()> {
@@ -437,13 +496,28 @@ impl DocReadProtocol {
                     )
                     .await?
                 } else {
-                    ensure!(
-                        topic_replica(&request.replica) || !cached.is_empty(),
-                        "docs namespace is not held"
-                    );
                     Vec::new()
                 };
+                let stored = if limit > 0 && stream.is_empty() && cached.is_empty() {
+                    self.stored_profile_record(&request.replica, &key).await?
+                } else {
+                    None
+                };
+                ensure!(
+                    opened
+                        || topic_replica(&request.replica)
+                        || !cached.is_empty()
+                        || stored.is_some(),
+                    "docs namespace is not held"
+                );
                 let mut records = Vec::new();
+                if let Some(record) = stored
+                    && author
+                        .as_ref()
+                        .is_none_or(|author| record.docs_author == *author)
+                {
+                    records.push(record);
+                }
                 for entry in stream {
                     ensure!(
                         entry.content_len() <= MAX_RECORD_BYTES as u64,

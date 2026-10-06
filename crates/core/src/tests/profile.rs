@@ -3,37 +3,44 @@ use crate::*;
 #[test]
 fn profile_envelope_roundtrip() {
     let keys = generate_keys();
-    let envelope = build_profile_envelope(
-        &keys,
-        &KukuriProfileEnvelopeContentV1 {
-            author_pubkey: keys.public_key(),
-            name: Some("alice".into()),
-            display_name: Some("Alice".into()),
-            about: Some("hello".into()),
-            picture_asset: Some(AssetRef {
-                hash: BlobHash::new("avatar-hash"),
-                mime: "image/png".into(),
-                bytes: 42,
-                role: AssetRole::ProfileAvatar,
-            }),
-        },
-    )
-    .expect("profile envelope");
+    let content = KukuriProfileEnvelopeContentV1 {
+        author_pubkey: keys.public_key(),
+        name: Some("alice".into()),
+        display_name: Some("Alice".into()),
+        about: Some("hello".into()),
+        picture_asset: Some(AssetRef {
+            hash: BlobHash::new("avatar-hash"),
+            mime: "image/png".into(),
+            bytes: 42,
+            role: AssetRole::ProfileAvatar,
+        }),
+    };
+    for docs_author in [None, Some("a".repeat(64))] {
+        let envelope =
+            build_profile_envelope_with_docs_author(&keys, &content, docs_author.as_deref())
+                .expect("profile envelope");
 
-    envelope.verify().expect("signature verification");
-    let profile = parse_profile(&envelope)
-        .expect("parse profile")
-        .expect("profile");
-    assert_eq!(profile.pubkey, keys.public_key());
-    assert_eq!(profile.display_name.as_deref(), Some("Alice"));
-    assert_eq!(profile.about.as_deref(), Some("hello"));
-    assert_eq!(
-        profile
-            .picture_asset
-            .as_ref()
-            .map(|asset| asset.role.clone()),
-        Some(AssetRole::ProfileAvatar)
-    );
+        envelope.verify().expect("signature verification");
+        let profile = parse_profile(&envelope)
+            .expect("parse profile")
+            .expect("profile");
+        assert_eq!(
+            profile
+                .envelope_id_hint(docs_author.as_deref())
+                .expect("ID hint"),
+            envelope.id
+        );
+        assert_eq!(profile.pubkey, keys.public_key());
+        assert_eq!(profile.display_name.as_deref(), Some("Alice"));
+        assert_eq!(profile.about.as_deref(), Some("hello"));
+        assert_eq!(
+            profile
+                .picture_asset
+                .as_ref()
+                .map(|asset| asset.role.clone()),
+            Some(AssetRole::ProfileAvatar)
+        );
+    }
 }
 
 #[test]

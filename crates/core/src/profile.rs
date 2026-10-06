@@ -27,6 +27,31 @@ pub struct Profile {
     pub updated_at: i64,
 }
 
+impl Profile {
+    /// 標準 builder の profile なら、表示用の行から元の envelope ID を求められる。
+    /// 候補であり、取得した envelope の署名と作者は呼出元で検証する。
+    pub fn envelope_id_hint(&self, docs_author: Option<&str>) -> Result<EnvelopeId> {
+        let content = KukuriProfileEnvelopeContentV1 {
+            author_pubkey: self.pubkey.clone(),
+            name: self.name.clone(),
+            display_name: self.display_name.clone(),
+            about: self.about.clone(),
+            picture_asset: self.picture_asset.clone(),
+        };
+        let (encoded, tags) = profile_envelope_parts(&content, docs_author)?;
+        let canonical = crate::envelope::canonical_envelope_payload(
+            self.pubkey.as_str(),
+            self.updated_at,
+            "identity-profile",
+            &tags,
+            &encoded,
+        )?;
+        Ok(EnvelopeId::from(hex::encode(crate::crypto::sha256_digest(
+            canonical.as_bytes(),
+        ))))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KukuriProfileEnvelopeContentV1 {
     pub author_pubkey: Pubkey,
@@ -279,13 +304,21 @@ pub fn build_profile_envelope_with_docs_author(
         bail!("profile author pubkey must match signer");
     }
     let created_at = now_timestamp_millis()?;
+    let (encoded, tags) = profile_envelope_parts(content, docs_author)?;
+    crate::sign_envelope_at(keys, "identity-profile", tags, encoded, created_at)
+}
+
+fn profile_envelope_parts(
+    content: &KukuriProfileEnvelopeContentV1,
+    docs_author: Option<&str>,
+) -> Result<(String, Vec<Vec<String>>)> {
     let encoded = serde_json::to_string(content).context("failed to encode envelope content")?;
     let mut tags = vec![
         vec!["author".into(), content.author_pubkey.as_str().to_string()],
         vec!["object".into(), "identity-profile".into()],
     ];
     crate::posts::push_docs_author_tag(&mut tags, docs_author)?;
-    crate::sign_envelope_at(keys, "identity-profile", tags, encoded, created_at)
+    Ok((encoded, tags))
 }
 
 pub fn build_profile_post_envelope(

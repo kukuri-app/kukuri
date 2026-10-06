@@ -103,7 +103,11 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub(super) async fn store_get_profile_impl(&self, pubkey: &str) -> Result<Option<Profile>> {
+    pub(super) async fn store_get_profile_impl(
+        &self,
+        pubkey: &str,
+        keep_nulls: bool,
+    ) -> Result<Option<Profile>> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -117,28 +121,7 @@ impl SqliteStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|row| Profile {
-            pubkey: row.get::<String, _>("pubkey").into(),
-            name: row.try_get("name").ok(),
-            display_name: row.try_get("display_name").ok(),
-            about: row.try_get("about").ok(),
-            picture_asset: row
-                .try_get::<String, _>("picture_blob_hash")
-                .ok()
-                .map(|hash| kukuri_core::AssetRef {
-                    hash: kukuri_core::BlobHash::new(hash),
-                    mime: row
-                        .try_get::<String, _>("picture_mime")
-                        .ok()
-                        .unwrap_or_else(|| "application/octet-stream".into()),
-                    bytes: row
-                        .try_get::<i64, _>("picture_bytes")
-                        .ok()
-                        .unwrap_or_default() as u64,
-                    role: kukuri_core::AssetRole::ProfileAvatar,
-                }),
-            updated_at: row.get("updated_at"),
-        }))
+        Ok(row.map(|row| profile_from_row(row, keep_nulls)))
     }
 
     pub(super) async fn store_get_profiles_impl(
@@ -167,28 +150,7 @@ impl SqliteStore {
         let rows = builder.build().fetch_all(&self.pool).await?;
         let mut profiles = std::collections::HashMap::with_capacity(rows.len());
         for row in rows {
-            let profile = Profile {
-                pubkey: row.get::<String, _>("pubkey").into(),
-                name: row.try_get("name").ok(),
-                display_name: row.try_get("display_name").ok(),
-                about: row.try_get("about").ok(),
-                picture_asset: row
-                    .try_get::<String, _>("picture_blob_hash")
-                    .ok()
-                    .map(|hash| kukuri_core::AssetRef {
-                        hash: kukuri_core::BlobHash::new(hash),
-                        mime: row
-                            .try_get::<String, _>("picture_mime")
-                            .ok()
-                            .unwrap_or_else(|| "application/octet-stream".into()),
-                        bytes: row
-                            .try_get::<i64, _>("picture_bytes")
-                            .ok()
-                            .unwrap_or_default() as u64,
-                        role: kukuri_core::AssetRole::ProfileAvatar,
-                    }),
-                updated_at: row.get("updated_at"),
-            };
+            let profile = profile_from_row(row, false);
             profiles.insert(profile.pubkey.as_str().to_string(), profile);
         }
         Ok(profiles)
@@ -382,6 +344,33 @@ impl SqliteStore {
         .await?;
 
         rows.into_iter().map(row_to_block_edge).collect()
+    }
+}
+
+fn profile_from_row(row: sqlx::sqlite::SqliteRow, keep_nulls: bool) -> Profile {
+    // 表示 API の旧変換は維持し、署名対象の復元でだけ未設定値を残す。
+    let text = |column: &str| {
+        let value: Option<String> = row.get(column);
+        if keep_nulls {
+            value
+        } else {
+            Some(value.unwrap_or_default())
+        }
+    };
+    Profile {
+        pubkey: row.get::<String, _>("pubkey").into(),
+        name: text("name"),
+        display_name: text("display_name"),
+        about: text("about"),
+        picture_asset: text("picture_blob_hash").map(|hash| kukuri_core::AssetRef {
+            hash: kukuri_core::BlobHash::new(hash),
+            mime: text("picture_mime").unwrap_or_default(),
+            bytes: row
+                .get::<Option<i64>, _>("picture_bytes")
+                .unwrap_or_default() as u64,
+            role: kukuri_core::AssetRole::ProfileAvatar,
+        }),
+        updated_at: row.get("updated_at"),
     }
 }
 

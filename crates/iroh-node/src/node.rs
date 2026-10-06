@@ -531,6 +531,7 @@ impl IrohDocsNode {
         let private_capabilities = PrivateCapabilities::default();
         let page_read = DocReadProtocol::new(
             docs.sync,
+            docs.protocol.api().clone(),
             blobs.clone(),
             remote_cache.clone(),
             private_capabilities.clone(),

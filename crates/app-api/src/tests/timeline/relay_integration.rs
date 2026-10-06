@@ -433,6 +433,47 @@ async fn later_reader_gets_an_offline_authors_profile_and_avatar_from_a_topic_pe
     relay.finish().await
 }
 
+/// #1619: 中継の導入前に保存した profile は、署名つきの envelope と表示用の行だけが残る。
+#[tokio::test]
+async fn later_reader_gets_a_stored_legacy_profile_without_author_docs() -> Result<()> {
+    let topic = TopicId::new("relay-legacy-profile");
+    let author = Author::new().await?;
+    let profile = kukuri_core::build_profile_envelope(
+        &author.keys,
+        &KukuriProfileEnvelopeContentV1 {
+            author_pubkey: author.keys.public_key(),
+            name: None,
+            display_name: Some("Relayed Author".into()),
+            about: None,
+            picture_asset: None,
+        },
+    )?;
+    let relay = Relay::new(Arc::new(NoopHintTransport)).await?;
+    relay.app.services.store.put_envelope(profile).await?;
+    let post = author
+        .post(&topic, "post with a legacy profile", None)
+        .await?;
+    relay.app.import_peer_ticket(&ticket(&author.node)).await?;
+    assert!(eventually(|| shows_author(&relay.app, &topic, &post)).await?);
+    let source_docs_author = author.docs_author.clone();
+    author.go_offline().await?;
+
+    let reader = Relay::new(Arc::new(ScopedReadHints(seed(&relay.node)))).await?;
+    // 移行後の投稿から docs author を既に知っていても、tag の無い旧 profile へ有界に落ちる。
+    reader
+        .app
+        .services
+        .projection_store
+        .put_author_docs_author(post.pubkey.as_str(), &source_docs_author)
+        .await?;
+    assert!(
+        eventually(|| shows_author(&reader.app, &topic, &post)).await?,
+        "a stored signed profile must be available to a later topic participant"
+    );
+    reader.finish().await?;
+    relay.finish().await
+}
+
 /// #1419 INVAR-4: 読んだ profile を中継のために保持した C も、A がオンラインなら A が更新した profile を反映する
 /// (保持した旧い版で提供者の新しい版を隠さない)。
 #[tokio::test]

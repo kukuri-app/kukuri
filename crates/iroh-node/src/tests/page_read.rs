@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures_util::StreamExt;
 use iroh_docs::{Capability, NamespaceSecret};
 use kukuri_core::ReplicaId;
 use kukuri_store::SqliteStore;
@@ -18,6 +19,97 @@ impl crate::PrivateSecretLookup for OneSecret {
 
 async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &NamespaceSecret) {
     node.set_private_secret_lookup(Arc::new(OneSecret(replica.clone(), secret.clone())));
+}
+
+#[tokio::test]
+async fn stored_profiles_are_verified_and_limited_to_public_author_profile_keys() -> Result<()> {
+    use kukuri_core::{KukuriProfileEnvelopeContentV1, build_profile_envelope, generate_keys};
+    use kukuri_store::Store;
+    let keys = generate_keys();
+    let mut envelope = build_profile_envelope(
+        &keys,
+        &KukuriProfileEnvelopeContentV1 {
+            author_pubkey: keys.public_key(),
+            display_name: Some("Stored Author".into()),
+            ..Default::default()
+        },
+    )?;
+    let store = Arc::new(SqliteStore::connect_memory().await?);
+    store.put_envelope(envelope.clone()).await?;
+    let provider = IrohDocsNode::memory().await?;
+    provider.install_remote_cache(store.clone())?;
+    let requester = IrohDocsNode::memory().await?;
+    let read = |pubkey: String, key: String| {
+        let provider = provider.clone();
+        let requester = requester.clone();
+        async move {
+            let replica = ReplicaId::new(format!("author::{pubkey}"));
+            let secret = NamespaceSecret::from_bytes(
+                blake3::hash(format!("kukuri-docs:{}", replica.as_str()).as_bytes()).as_bytes(),
+            );
+            requester
+                .query_remote_docs(
+                    provider.endpoint().addr(),
+                    &replica,
+                    &secret,
+                    DocReadQuery::Exact {
+                        key,
+                        limit: 1,
+                        author: None,
+                    },
+                )
+                .await
+        }
+    };
+    let key = format!("envelopes/{}", envelope.id.as_str());
+    let DocReadResponse::Records(records) = read(keys.public_key_hex(), key.clone()).await? else {
+        anyhow::bail!("expected profile record");
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<kukuri_core::KukuriEnvelope>(&records[0].value)?,
+        envelope
+    );
+    assert_eq!(
+        records[0].docs_author,
+        provider.docs().author_default().await?.to_string()
+    );
+    assert!(
+        read(generate_keys().public_key_hex(), key.clone())
+            .await
+            .is_err()
+    );
+    assert!(
+        read(keys.public_key_hex(), "graph/follows/target".into())
+            .await
+            .is_err()
+    );
+    let other = kukuri_core::sign_envelope_json(
+        &keys,
+        "direct-message",
+        Vec::new(),
+        &serde_json::json!({"text": "private"}),
+    )?;
+    store.put_envelope(other.clone()).await?;
+    assert!(
+        read(
+            keys.public_key_hex(),
+            format!("envelopes/{}", other.id.as_str())
+        )
+        .await
+        .is_err()
+    );
+    envelope.sig = "0".repeat(128);
+    store.put_envelope(envelope).await?;
+    assert!(read(keys.public_key_hex(), key).await.is_err());
+    assert!(
+        read(keys.public_key_hex(), "profile/latest".into())
+            .await
+            .is_err()
+    );
+    assert_eq!(provider.docs().list().await?.count().await, 0);
+    requester.shutdown().await?;
+    provider.shutdown().await
 }
 
 /// private の bucket と本人の端末間の account 同期の replica（ADR 0061）は、登録した capability でだけ読める。
