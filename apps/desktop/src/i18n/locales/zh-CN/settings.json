@@ -75,6 +75,10 @@
       "description": "使用其他设备上显示的迁移链接迁移账号。",
       "linkLabel": "迁移链接",
       "instructions": "请粘贴源设备上“迁移到其他设备”显示的链接。",
+      "scan": "扫描二维码",
+      "scanning": "请将摄像头对准源设备上显示的二维码。",
+      "stopScan": "停止扫描",
+      "cameraUnavailable": "无法使用摄像头。请在浏览器中允许使用摄像头，或粘贴链接。",
       "connect": "连接",
       "connecting": "正在连接源设备…"
     },

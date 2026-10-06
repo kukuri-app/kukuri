@@ -18,6 +18,9 @@ const identityApi = vi.hoisted(() => ({
 
 vi.mock('@/lib/api/identity', () => identityApi);
 
+const jsQR = vi.hoisted(() => vi.fn());
+vi.mock('jsqr', () => ({ default: jsQR }));
+
 const LINK = 'kukuri://transfer#v1.ZXhhbXBsZQ';
 let status: AccountTransferStatus;
 
@@ -248,5 +251,88 @@ test.each([
     expect(screen.getByTestId('account-transfer-scope')).toHaveTextContent(notMovedDone);
   } finally {
     await i18n.changeLanguage('en');
+  }
+});
+
+// #1628: Web 版の移行先は、カメラで QR を読んで入力欄へ入れる（接続は利用者の操作）。読み取り・やめる・閉じるで
+// カメラを止め、カメラを使えないときは理由を示して貼り付けを残す。desktop（Tauri）には出さない。
+function installCamera(getUserMedia: () => Promise<MediaStream>) {
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn(getUserMedia) } });
+  vi.spyOn(HTMLVideoElement.prototype, 'videoWidth', 'get').mockReturnValue(640);
+  vi.spyOn(HTMLVideoElement.prototype, 'videoHeight', 'get').mockReturnValue(480);
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    drawImage: vi.fn(),
+    getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+  } as unknown as CanvasRenderingContext2D);
+  return navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>;
+}
+
+function cameraStream() {
+  const track = { stop: vi.fn() };
+  return { track, stream: { getTracks: () => [track] } as unknown as MediaStream };
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'mediaDevices');
+});
+
+test('on the web the target reads the transfer link from the camera without connecting', async () => {
+  const user = userEvent.setup();
+  const { track, stream } = cameraStream();
+  const getUserMedia = installCamera(async () => stream);
+  jsQR.mockReturnValueOnce(null).mockReturnValueOnce({ data: 'https://example.com/' }).mockReturnValue({ data: LINK });
+  render(<AccountTransferPanel role='target' />);
+  await user.click(screen.getByRole('button', { name: 'Scan QR code' }));
+  expect(screen.getByText('Point the camera at the QR code shown on the other device.')).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('textbox', { name: /^Transfer link/ })).toHaveValue(LINK), { timeout: 2000 });
+  expect(getUserMedia).toHaveBeenCalledExactlyOnceWith({ video: { facingMode: 'environment' }, audio: false });
+  expect(jsQR).toHaveBeenCalledTimes(3);
+  expect(track.stop).toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Stop scanning' })).not.toBeInTheDocument();
+  expect(identityApi.openAccountTransfer).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Connect' }));
+  expect(identityApi.openAccountTransfer).toHaveBeenCalledWith(LINK, null);
+});
+
+test('the camera stops when scanning stops or the panel closes, and an unusable camera is explained', async () => {
+  const user = userEvent.setup();
+  const first = cameraStream();
+  const second = cameraStream();
+  const getUserMedia = installCamera(async () => first.stream);
+  getUserMedia.mockResolvedValueOnce(first.stream).mockResolvedValueOnce(second.stream);
+  jsQR.mockReturnValue(null);
+  const { unmount } = render(<AccountTransferPanel role='target' />);
+  await user.click(screen.getByRole('button', { name: 'Scan QR code' }));
+  await waitFor(() => expect(jsQR).toHaveBeenCalled());
+  await user.click(screen.getByRole('button', { name: 'Stop scanning' }));
+  expect(first.track.stop).toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: /^Transfer link/ })).toHaveValue('');
+  await user.click(screen.getByRole('button', { name: 'Scan QR code' }));
+  await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(jsQR).toHaveBeenCalledTimes(2));
+  unmount();
+  expect(second.track.stop).toHaveBeenCalled();
+
+  getUserMedia.mockRejectedValueOnce(new DOMException('denied', 'NotAllowedError'));
+  render(<AccountTransferPanel role='target' />);
+  await user.click(screen.getByRole('button', { name: 'Scan QR code' }));
+  const unavailable = /The camera is not available/;
+  expect(await screen.findByText(unavailable)).toBeInTheDocument();
+  await user.type(screen.getByRole('textbox', { name: /^Transfer link/ }), LINK);
+  expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
+
+  Reflect.deleteProperty(navigator, 'mediaDevices');
+  await user.click(screen.getByRole('button', { name: 'Scan QR code' }));
+  expect(await screen.findByText(unavailable)).toBeInTheDocument();
+});
+
+test('the desktop app does not offer the camera', () => {
+  Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} });
+  try {
+    render(<AccountTransferPanel role='target' />);
+    expect(screen.getByRole('textbox', { name: /^Transfer link/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Scan QR code' })).not.toBeInTheDocument();
+  } finally {
+    Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
   }
 });

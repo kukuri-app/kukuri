@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encode } from 'uqr';
 import type { AccountTransferHistory, AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
@@ -9,7 +9,9 @@ import {
   getAccountTransferStatus,
   openAccountTransfer,
 } from '@/lib/api/identity';
+import { isTauriRuntime } from '@/lib/releaseReadiness';
 import { copyTextToClipboard } from '@/lib/utils';
+import { TRANSFER_LINK_PREFIX } from '@/shell/page/useAccountTransferLink';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -17,6 +19,7 @@ import { Notice } from '@/components/ui/notice';
 import { Select } from '@/components/ui/select';
 
 const POLL_MS = 500;
+const SCAN_MS = 200;
 const IDLE: AccountTransferStatus = { state: 'idle' };
 const HISTORY_CHOICES = ['none', 'month', 'year', 'all'] as const;
 type HistoryChoice = (typeof HISTORY_CHOICES)[number];
@@ -28,6 +31,7 @@ type HistoryChoice = (typeof HISTORY_CHOICES)[number];
 // AC-3: 移行先は接続の前に投稿の履歴の範囲を選ぶ（既定は移さない）。履歴は必須の移行の後に受け、受けている間は
 // 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。移行先は履歴を受けている間を
 // `onReceivingHistory` で知らせる（呼び出し側はその間は閉じさせない。終えるのは「やめる」だけ）。
+// #1628: Web 版の移行先は、移行元の QR をカメラで読んで入力欄へ入れる（desktop は貼り付けと OS のリンク起動だけ）。
 export function AccountTransferPanel({ role, initialLink = '', onCompleted, onReceivingHistory }: {
   role: 'source' | 'target';
   initialLink?: string;
@@ -43,6 +47,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   const [pending, setPending] = useState(false);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [scan, setScan] = useState<'off' | 'on' | 'failed'>('off');
 
   // 開発時の StrictMode の再 mount では、取り消した側の結果を採らない。
   const issue = async (active: () => boolean = () => true) => {
@@ -202,6 +207,15 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
       tone={error ? 'danger' : 'default'} message={error ? t('accountTransfer.failure.invalid') : undefined}>
       <Input value={link} onChange={(event) => { setLink(event.target.value); setError(null); }} autoComplete='off' spellCheck={false} />
     </Field>
+    {isTauriRuntime() ? null : scan === 'on'
+      ? <div className='space-y-2'>
+        <TransferQrScanner onRead={(read) => { setLink(read); setError(null); setScan('off'); }} onFailed={() => setScan('failed')} />
+        <Button variant='secondary' onClick={() => setScan('off')}>{t('accountTransfer.target.stopScan')}</Button>
+      </div>
+      : <div className='space-y-2'>
+        {scan === 'failed' ? <Notice tone='destructive'>{t('accountTransfer.target.cameraUnavailable')}</Notice> : null}
+        <Button variant='secondary' onClick={() => setScan('on')}>{t('accountTransfer.target.scan')}</Button>
+      </div>}
     <Field label={t('accountTransfer.history.label')} hint={t('accountTransfer.history.hint')}>
       <Select value={history} onChange={(event) => setHistory(event.target.value as HistoryChoice)}>
         {HISTORY_CHOICES.map((choice) => <option key={choice} value={choice}>{t(`accountTransfer.history.choice.${choice}`)}</option>)}
@@ -224,6 +238,56 @@ function TransferScope({ completed = false }: { completed?: boolean }) {
       {t('accountTransfer.scope.notMoved')}
     </p>
     {completed ? null : <p className='text-muted-foreground'>{t('accountTransfer.scope.sourceKept')}</p>}
+  </div>;
+}
+
+// #1628: カメラ（背面を優先）の映像を一定間隔で読み、移行用のリンクの QR を認識したら渡す。映像の frame は
+// メモリの中の canvas でだけ読み、保存・送信しない。読み取り・やめる・閉じる（unmount）でカメラを止める。
+// decoder は読み取りを開いたときだけ読み込む。
+function TransferQrScanner({ onRead, onFailed }: { onRead: (link: string) => void; onFailed: () => void }) {
+  const { t } = useTranslation('settings');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    let stopped = false;
+    let stream: MediaStream | undefined;
+    let timer = 0;
+    const stop = () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+    void (async () => {
+      const { default: jsQR } = await import('jsqr');
+      if (stopped) return;
+      const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      stream = media;
+      const video = videoRef.current;
+      if (stopped || !video) { stop(); return; }
+      video.srcObject = media;
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      const read = () => {
+        if (stopped) return;
+        const { videoWidth: width, videoHeight: height } = video;
+        if (context && width > 0) {
+          canvas.width = width;
+          canvas.height = height;
+          context.drawImage(video, 0, 0, width, height);
+          const code = jsQR(context.getImageData(0, 0, width, height).data, width, height, { inversionAttempts: 'dontInvert' });
+          if (code?.data.startsWith(TRANSFER_LINK_PREFIX)) { stop(); onRead(code.data); return; }
+        }
+        timer = window.setTimeout(read, SCAN_MS);
+      };
+      read();
+    })().catch(() => { if (!stopped) { stop(); onFailed(); } });
+    return stop;
+    // 開いている間に 1 回だけカメラを起動する（渡す先は呼び出し側の state の setter だけ）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <div className='space-y-2'>
+    <p role='status' className='text-sm'>{t('accountTransfer.target.scanning')}</p>
+    <video ref={videoRef} autoPlay muted playsInline aria-hidden='true'
+      className='aspect-square w-full max-w-xs rounded-[var(--radius-input)] bg-[var(--surface-panel-muted)] object-cover' />
   </div>;
 }
 

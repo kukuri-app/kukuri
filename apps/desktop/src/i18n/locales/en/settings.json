@@ -75,6 +75,10 @@
       "description": "Move an account using the transfer link shown on another device.",
       "linkLabel": "Transfer link",
       "instructions": "Paste the link shown by “Move to another device” on the other device.",
+      "scan": "Scan QR code",
+      "scanning": "Point the camera at the QR code shown on the other device.",
+      "stopScan": "Stop scanning",
+      "cameraUnavailable": "The camera is not available. Allow camera access in your browser, or paste the link.",
       "connect": "Connect",
       "connecting": "Connecting to the other device…"
     },
