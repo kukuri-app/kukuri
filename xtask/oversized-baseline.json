@@ -1,7 +1,7 @@
 {
   "files": [
     {
-      "lines": 1337,
+      "lines": 1340,
       "path": "crates/cn-operator/src/config.rs"
     },
     {
@@ -9,16 +9,16 @@
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1198,
+      "lines": 1187,
       "path": "crates/metaverse-host/src/lib.rs"
-    },
-    {
-      "lines": 1168,
-      "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
       "lines": 1152,
       "path": "crates/cn-operator/src/docs.rs"
+    },
+    {
+      "lines": 1147,
+      "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
       "lines": 1132,
@@ -37,16 +37,16 @@
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1093,
-      "path": "crates/app-api/src/dome_hosting.rs"
-    },
-    {
-      "lines": 1056,
+      "lines": 1054,
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
       "lines": 1052,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
+    },
+    {
+      "lines": 1044,
+      "path": "crates/app-api/src/dome_hosting.rs"
     },
     {
       "lines": 1043,

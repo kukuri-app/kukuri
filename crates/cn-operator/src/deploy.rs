@@ -125,6 +125,13 @@ fn render_low_cost_tfvars(config: &ResolvedConfig, deploy: &DeployConfig) -> Str
     let _ = writeln!(out, "admin_actor  = {}", hcl_string(admin_actor));
     let _ = writeln!(out);
 
+    let _ = writeln!(
+        out,
+        "cors_allowed_origins = {}",
+        hcl_string_list(&deploy.cors_allowed_origins)
+    );
+    let _ = writeln!(out);
+
     let _ = writeln!(out, "manage_cloud_dns = {}", deploy.manage_cloud_dns);
     let _ = writeln!(out, "dns_zone_name    = {}", hcl_string(dns_zone_name));
     let _ = writeln!(out);
