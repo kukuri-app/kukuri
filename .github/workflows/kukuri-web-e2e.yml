@@ -98,7 +98,7 @@ jobs:
         env:
           SCENARIO: ${{ inputs.scenario }}
         run: |
-          echo "list=$(node tests/web-e2e/main-flow.mjs --list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const all=JSON.parse(s),one=process.env.SCENARIO;if(one&&!all.includes(one))throw Error(`unknown scenario: ${one}`);console.log(JSON.stringify(one?[one]:all))})')" >> "$GITHUB_OUTPUT"
+          echo "list=$(node tests/web-e2e/main-flow.mjs --list "$SCENARIO")" >> "$GITHUB_OUTPUT"
           echo "browser=$KUKURI_WEB_E2E_BROWSER" >> "$GITHUB_OUTPUT"
 
       - name: Upload build

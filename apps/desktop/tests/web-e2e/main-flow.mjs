@@ -258,16 +258,16 @@ const dialogWith = (browser, text) => eventually(`dialog "${text}"`, () => findD
 
 const pageText = (browser) => browser.execute(() => document.body.innerText);
 
-/** 先頭にいないときの新着は「Show N new post(s)」を押すと並ぶ。 */
-async function showNewPosts(browser) {
-  const button = browser.$('//button[starts-with(normalize-space(.), "Show ") and contains(., "new post")]');
+/** 先頭にいないときの新着は「Show N new post(s)」を押すと並ぶ。列の待機では、その列のボタンだけを押す。 */
+async function showNewPosts(root) {
+  const button = root.$('.//button[starts-with(normalize-space(.), "Show ") and contains(., "new post")]');
   if (await button.isExisting()) await button.click().catch(() => undefined);
 }
 
-const sees = (browser, text) =>
+const sees = (browser, text, root = browser) =>
   eventually(`${browser.label} sees "${text}"`, async () => {
-    await showNewPosts(browser);
-    return (await pageText(browser)).includes(text);
+    await showNewPosts(root);
+    return (root === browser ? await pageText(browser) : await root.getText()).includes(text);
   });
 
 /** 列（id は `column:<kind>:<topic>:<channel>:<相手>`。channel と相手は無ければ `-`）。 */
@@ -533,8 +533,9 @@ async function nativeCreatesChannel(label) {
 /** channel の列を画面に入れて、投稿が出るのを待つ。画面外の列は読み直さない（#765）。作成・参加の dialog を閉じると
  * focus が元の列へ戻り、channel の列は画面外に残る（#1517）ので、利用者と同じく列を画面に入れてから見る。 */
 async function seesInChannel(browser, channelId, text) {
-  await channelColumn(browser, channelId).scrollIntoView();
-  await sees(browser, text);
+  const column = channelColumn(browser, channelId);
+  await column.scrollIntoView();
+  await sees(browser, text, column);
 }
 
 /** channel の投稿が Web と native の間で行き来する。返り値は Web の投稿。 */
@@ -1269,6 +1270,7 @@ const closeControlCenter = (browser) =>
 /** Control Center に出る、参加中の channel の名前（退会の操作の label から）。 */
 async function joinedChannelLabels(browser) {
   await browser.$('[data-testid="control-center-trigger"]').click();
+  await browser.$('#shell-control-center').waitForDisplayed({ timeout: WAIT });
   const labels = await browser.execute(() =>
     [...document.querySelectorAll('#shell-control-center button[aria-label^="Leave "]')].map((node) =>
       node.getAttribute('aria-label').replace(/^Leave (.*) channel$/, '$1')
@@ -1870,9 +1872,10 @@ const scenarios = {
   'same-account': sameAccount,
 };
 
-const [name] = process.argv.slice(2);
+const [name, selected] = process.argv.slice(2);
 if (name === '--list') {
-  console.log(JSON.stringify(Object.keys(scenarios)));
+  assert.ok(!selected || Object.hasOwn(scenarios, selected), `unknown scenario "${selected}"`);
+  console.log(JSON.stringify(selected ? [selected] : Object.keys(scenarios)));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
