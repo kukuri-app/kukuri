@@ -22,6 +22,7 @@ import {
 } from '@/lib/api/identity';
 import { copyTextToClipboard } from '@/lib/utils';
 import { changeAccountSession } from '@/lib/accountSession';
+import { requestAccountAdd } from '@/shell/page/accountAddRequest';
 
 const MIN_PASSPHRASE_CHARS = 8;
 
@@ -125,15 +126,10 @@ export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage, accoun
         <small>{t('settings:accountKey.summary')}</small>
       </CardHeader>
 
-      {/* #1211 AC-5: 別の端末で使う 3 つの方法の対象の差。backup・restore は desktop だけ（Web は section を出さない）。 */}
-      <Notice data-testid='account-key-methods'>
-        <p>{t('settings:accountKey.methods.intro')}</p>
-        <ul className='mt-1 list-disc ps-5'>
-          <li>{t('settings:accountKey.methods.transfer')}</li>
-          <li>{t('settings:accountKey.methods.export')}</li>
-          {onOpenDeviceBackup ? <li>{t('settings:accountKey.methods.backup')}</li> : null}
-        </ul>
-      </Notice>
+      {/* #1629: 3 つの方法の一覧に代えて、アカウントメニューの「別の端末へ移す」の dialog を開く。 */}
+      <Button variant='secondary' type='button' onClick={() => requestAccountAdd('transfer-source')}>
+        {t('settings:accountKey.transferOut')}
+      </Button>
       {persisted === null ? null : <BrowserStorageNotice persisted={persisted} />}
       {accountSync ? <AccountSyncStatusNotice status={accountSync} /> : null}
       {onOpenDeviceBackup ? (
