@@ -423,6 +423,7 @@ async function exchangeBetweenWeb(x, y, reactions) {
  * media があっても表示と操作が成り立つ）も返す。 */
 async function relayedWhileLoading(browser, content, publish) {
   const before = await relayedBytes();
+  const received = await browser.execute(() => window.__kukuriReceivedBytes);
   const size = await publish();
   let shownBeforeImage = false;
   await eventually(`${browser.label} loads the image of "${content}"`, async () => {
@@ -439,7 +440,7 @@ async function relayedWhileLoading(browser, content, publish) {
     shownBeforeImage ||= state === 'card';
     return state === 'loaded';
   });
-  return { relayed: (await relayedBytes()) - before, size, shownBeforeImage };
+  return { relayed: (await relayedBytes()) - before, received: (await browser.execute(() => window.__kukuriReceivedBytes)) - received, size, shownBeforeImage };
 }
 
 /** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
@@ -1563,6 +1564,7 @@ async function dumpColumns(browser) {
     )
   );
   const sessions = await sessionStates(browser).catch(() => []);
+  console.log(`${browser.label} media events`, await browser.execute(() => window.__kukuriMediaEvents));
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
 

@@ -2,6 +2,19 @@
 // `index.html` の head の先頭に同じ origin の script として足す。driver の機能（BiDi の addInitScript）に頼らないので、Safari
 // でも、driver が開いた別の tab でも動く。配信の artifact は変えない。
 (() => {
+  localStorage.setItem('kukuri:media-debug', '1');
+  window.__kukuriMediaEvents = [];
+  for (const level of ['info', 'warn']) {
+    const log = console[level];
+    console[level] = (...args) => {
+      if (String(args[0]).startsWith('[kukuri.media]')) {
+        window.__kukuriMediaEvents.push(args);
+        if (window.__kukuriMediaEvents.length > 32) window.__kukuriMediaEvents.shift();
+      }
+      log.apply(console, args);
+    };
+  }
+  window.__kukuriReceivedBytes = 0;
   // 共有リンク（clipboard へ書く値）を控える。headless では clipboard へ書けないことがある。
   window.__kukuriCopied = [];
   navigator.clipboard.writeText = async (text) => {
@@ -51,6 +64,7 @@
       if (handler) channels.push(this);
       let received = 0;
       onmessage.set.call(this, handler && ((event) => {
+        window.__kukuriReceivedBytes += event.data.byteLength;
         const cut = window.__kukuriCut;
         if (cut && !cut.done && (received += event.data.byteLength) >= cut.after) {
           cut.done = Date.now();
