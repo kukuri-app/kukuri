@@ -94,6 +94,20 @@ test('add account dialog opens both device transfer entries and returns with Bac
   expect(within(target).getByRole('textbox', { name: /^Transfer link/ })).toHaveValue('');
 });
 
+// #1629: 設定の「アカウント」は 3 つの方法の一覧に代えて、アカウントメニューの「別の端末へ移す」の dialog を開くボタンを置く。
+test('the account settings open the move to another device dialog', async () => {
+  const { user, menu } = await setup();
+  vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'waiting', expires_at_ms: Date.now() + 300_000 });
+  vi.spyOn(identity, 'createAccountTransferInvite').mockResolvedValue({ link: 'kukuri://transfer#v1.ZXhhbXBsZQ', expires_at_ms: Date.now() + 300_000 });
+  await user.click(within(menu).getByRole('menuitem', { name: 'Manage accounts' }));
+  const settings = await screen.findByRole('dialog', { name: 'Settings' });
+  expect(within(settings).queryByText('You can use your account on another device in these ways.')).not.toBeInTheDocument();
+  await user.click(await within(settings).findByRole('button', { name: 'Move your account to another device' }));
+  const source = await screen.findByRole('dialog', { name: 'Move to another device' });
+  expect(await within(source).findByRole('img', { name: 'QR code of the transfer link' })).toBeVisible();
+});
+
 async function completeTransferTo(accountId: string) {
   const { user, menu, change } = await setup();
   vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
