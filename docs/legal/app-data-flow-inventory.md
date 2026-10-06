@@ -35,4 +35,4 @@
 - `iroh-relay.kukuri.app` を含む relay URL は、選択した Node の connectivity metadata や runtime config から得る。任意 Node が別の relay を提示し得る。
 - Community Node 運営者と kukuri 運営者が同一とは限らない。Node ごとの受信項目、保持、外部送信、削除・通報は当該 Node の公開文書を確認する。
 - P2P で受信済みの第三者 copy、第三者 Node の index／cache、経路事業者の log を kukuri アプリから一括消去することはできない。
-- Web の秘密の出口の照合（#1220 AC-6、2026-10-04）: URL: 移行の招待の秘密はリンクの `#` 以降にあり（#1211 AC-1）、Web では貼り付けて受け取るので、page の URL・HTTP の要求・Referer に出ない。cookie は読み書きしない（Community Node の認証は request の header の token）。analytics・第三者の script は読み込まない（配信の CSP が `script-src 'self'` で拒む）。公開索引へ送るものは native と同じ公開の投稿・profile の範囲で、鍵・capability を含めない。診断レポートとアプリ内ログの規則は native と同じで、アプリ内ログは Web に無い。
+- Web の秘密の出口の照合（#1220 AC-6、2026-10-04）: URL: 移行の招待の秘密はリンクの `#` 以降にあり（#1211 AC-1）、Web では貼り付けるか、移行元の QR をカメラで読んで受け取るので、page の URL・HTTP の要求・Referer に出ない。カメラの映像は読み取りの間だけ memory の canvas で読み、保存・送信しない（#1628、ADR 0062 §1）。cookie は読み書きしない（Community Node の認証は request の header の token）。analytics・第三者の script は読み込まない（配信の CSP が `script-src 'self'` で拒む）。公開索引へ送るものは native と同じ公開の投稿・profile の範囲で、鍵・capability を含めない。診断レポートとアプリ内ログの規則は native と同じで、アプリ内ログは Web に無い。

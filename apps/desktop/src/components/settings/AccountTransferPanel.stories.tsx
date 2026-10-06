@@ -26,6 +26,14 @@ export const Source: Story = {};
 
 export const Target: Story = { args: { role: 'target' } };
 
+/** #1628: Web 版はカメラで QR を読む（ブラウザがカメラの許可を求める。使えないときは理由を示す）。 */
+export const TargetScanning: Story = {
+  args: { role: 'target' },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /Scan QR code|QR コードを読み込む/ }));
+  },
+};
+
 export const TargetConfirming: Story = {
   args: { role: 'target', initialLink: 'kukuri://transfer#v1.bW9jay1hY2NvdW50LXRyYW5zZmVyLWludml0ZQ' },
   play: async ({ canvasElement }) => {

@@ -1,0 +1,25 @@
+# 2026-10-06 account transfer QR scan
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1628 AC-1 の実装PR
+- Preview: [読み取りの後・en・light・desktop 幅](./issue-1628-read-en-light.png) / [読み取り中・ja・dark・電話の幅](./issue-1628-scanning-ja-dark-phone.png) / [カメラを使えない・zh-CN・dark・電話の幅](./issue-1628-unavailable-zh-dark-phone.png)
+- Surface / user / purpose: Web 版の「アカウント追加」Dialog の「別の端末から移す」。移行元の端末に QR を表示した本人が、Web 版の端末のカメラで QR を読み、移行用のリンクを入力欄へ入れる（QR の中身は `kukuri://` のリンクで、OS のカメラで読んでも Web 版では開けない）。
+- Summary: [2026-10-02 の record](./2026-10-02-1211-account-transfer.md) の移行先の画面に、次を足した（2026-10-06 ユーザー決定。ADR 0062 §1）。
+  - リンクの入力欄の下に「QR コードを読み込む」（secondary）。押すと案内の文、カメラの映像（正方形、最大 20rem）、「読み込みをやめる」に替わる。
+  - 移行用のリンクの QR を読んだら、カメラを止めて映像を閉じ、リンクを入力欄へ入れる。接続は始めない（履歴の範囲を選んで「接続する」を押す）。
+  - カメラを使えない（許可の拒否・カメラ無し・API 無し）ときは、ボタンの上に理由の Notice（destructive）を示す。貼り付けはそのまま使える。もう一度押すとやり直す。
+  - desktop（Tauri）には出さない。
+- Conditions:
+  - Platform: Web（Chromium。mock の build を Web の配信の CSP を付けて配信し、Chromium の模擬カメラで確認）。desktop は表示しないことを Vitest で確認。
+  - Viewport: 1280×900（desktop 幅）、412×783（電話の幅。Android の emulator の E2E と同じ CSS px）
+  - Theme: light / dark
+  - Locale: en / ja / zh-CN
+  - State: 入力（ボタン）、読み取り中、読み取りの後（入力欄にリンク）、カメラを使えない
+- Accessibility / interaction: 読み取り中の案内は `role="status"`。映像は視覚だけの補助なので `aria-hidden`、操作は名前付きのボタン（「QR コードを読み込む」「読み込みをやめる」）。読み取りの後の入力欄は貼り付けと同じく編集できる。
+- Performance: decoder（jsQR、gzip 47 kB）は読み取りを開いたときだけ読み込む別 chunk。読み取り中だけ 200 ms ごとに 1 frame を読む。件数に依存する処理はない。
+- Validation: Vitest（`AccountTransferPanel.test.tsx` 14 件。読み取り・やめる・閉じるでの track の停止、他の QR の読み飛ばし、接続を始めないこと、許可の拒否と API 無しの案内、desktop で出さないこと）、eslint、tsc。実ブラウザ（ローカル、CI 外）: Chromium の模擬カメラに、実際の形の招待（直接の addr 4 件・relay URL を含む 469 文字、QR は 93 module）を 1 module 4 px・ぼかしと雑音つきで映した映像を流し、413 ms で入力欄に入ること、読み取り・やめる・閉じるのそれぞれで track が `ended` になること、Web の配信の CSP の違反が 0 件であることを確かめた。Storybook の `TargetScanning`。
+- Not verified: 実機の電話（Android の Chrome・iOS の Safari）のカメラでの読み取りと、ブラウザの許可の画面。
+- Review result: 対象条件の採用判定は PASS。
+- Exceptions: なし。

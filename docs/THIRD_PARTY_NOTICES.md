@@ -989,7 +989,7 @@ Total packages: 930
 
 ## Desktop npm packages
 
-Total packages: 137
+Total packages: 138
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -1085,6 +1085,7 @@ Total packages: 137
 | is-promise | 2.2.2 | MIT | https://github.com/then/is-promise#readme |
 | isexe | 2.0.0 | ISC | https://github.com/isaacs/isexe#readme |
 | its-fine | 2.1.1 | MIT | https://github.com/pmndrs/its-fine |
+| jsqr | 1.4.0 | Apache-2.0 | https://github.com/cozmo/jsQR#readme |
 | lie | 3.3.0 | MIT | https://github.com/calvinmetcalf/lie#readme |
 | lucide-react | 1.49.0 | ISC | https://lucide.dev |
 | maath | 0.10.8 | MIT | - |

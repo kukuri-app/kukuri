@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 
-const TRANSFER_LINK_PREFIX = 'kukuri://transfer#';
+export const TRANSFER_LINK_PREFIX = 'kukuri://transfer#';
 // getCurrent() は WebView の再読込・account 切替の後も起動時のリンクを返す。招待の秘密を含むので
 // browser の storage へ置かず、この process の中だけで処理済みを覚える。
 const consumedInitialLinks = new Set<string>();
