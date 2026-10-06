@@ -18,6 +18,29 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.1-preview.2] - 2026-10-06
+
+### Features
+
+- Web 版の「別の端末から移す」で移行元の QR をカメラで読み、リンクを入力欄へ入れる (#1628 AC-1) ([#1631](https://github.com/kukuri-app/kukuri/pull/1631))
+- 設定の「アカウント」に「アカウントを別の端末へ移す」ボタンを置く (#1629 AC-1) ([#1630](https://github.com/kukuri-app/kukuri/pull/1630))
+- operator-config の deploy から CORS の許可 origin を tfvars へ書き出す (#1615 AC-1) ([#1618](https://github.com/kukuri-app/kukuri/pull/1618))
+
+### Fixes
+
+- 起動直後の Timeline の先頭ページを provider の応答で待たせない ([#1624](https://github.com/kukuri-app/kukuri/pull/1624), [#1626](https://github.com/kukuri-app/kukuri/pull/1626))
+- expire stale blob providers per hash (#1594 AC-1) ([#1625](https://github.com/kukuri-app/kukuri/pull/1625))
+- 保存済みの署名付きプロフィールを個別に中継する ([#1619](https://github.com/kukuri-app/kukuri/pull/1619), [#1622](https://github.com/kukuri-app/kukuri/pull/1622))
+- web版に favicon を付ける (#1620 AC-1) ([#1623](https://github.com/kukuri-app/kukuri/pull/1623))
+
+### Other
+
+- sync third-party notices for 0.4.1 release ([#1635](https://github.com/kukuri-app/kukuri/pull/1635))
+- bump release version to 0.4.1 ([#1634](https://github.com/kukuri-app/kukuri/pull/1634))
+- DHT発見導入の影響調査を記録 ([#1632](https://github.com/kukuri-app/kukuri/pull/1632), [#1633](https://github.com/kukuri-app/kukuri/pull/1633))
+- bound public blob provider discovery PoC (#1596 AC-1) ([#1627](https://github.com/kukuri-app/kukuri/pull/1627))
+- v0.4.0-preview.1 の公開の記録・CHANGELOG・LP（ブラウザ版への導線）(#1615 AC-7) ([#1621](https://github.com/kukuri-app/kukuri/pull/1621))
+
 ## [v0.4.0-preview.1] - 2026-10-06
 
 ### Features
