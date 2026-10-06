@@ -1567,6 +1567,16 @@ async function direct() {
   const aPubkey = withA.webPost.author_pubkey;
   await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
 
+  // relay 全体の bytes を測る native↔Web の段は、他の Web の画像取得が重ならない間に行う。
+  const channelLabel = `channel-a-${RUN}`;
+  const channelToken = await createChannel(a, channelLabel);
+  const channelId = await nativeJoinsChannel(channelToken);
+  const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
+  const nativeChannelLabel = `channel-native-${RUN}`;
+  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
+  await joinChannel(a, nativeChannel.token, nativeChannelLabel);
+  await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
+
   // Web↔Web。
   const b = await openClient('web-b', { ice: true });
   await sees(b, withA.fromWeb);
@@ -1575,10 +1585,6 @@ async function direct() {
   assertRoute('web→web direct', await relayedWhileLoading(b, webImage, postWebImage(a, webImage)), true);
   await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
   // AC-2b: Web が作った private channel に native と別の Web が参加し、投稿が行き来する。Web↔Web の DM。
-  const channelLabel = `channel-a-${RUN}`;
-  const channelToken = await createChannel(a, channelLabel);
-  const channelId = await nativeJoinsChannel(channelToken);
-  const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
   await joinChannel(b, channelToken, channelLabel);
   await seesInChannel(b, channelId, fromAInChannel);
   const fromBInChannel = `web-b in channel ${RUN}`;
@@ -1594,11 +1600,6 @@ async function direct() {
     { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${b.label}` },
     true
   );
-  // native が作った channel に Web が参加する（作成と招待の向きの逆）。
-  const nativeChannelLabel = `channel-native-${RUN}`;
-  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
-  await joinChannel(a, nativeChannel.token, nativeChannelLabel);
-  await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
 }
 
 /**
