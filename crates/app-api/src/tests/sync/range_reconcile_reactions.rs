@@ -455,7 +455,8 @@ impl PresentFixture {
             .len()
     }
 
-    /// 表示の照合(台帳つき)を 1 回走らせる。
+    /// 表示の照合(台帳つき)を 1 回走らせる。先頭のページの provider の照合は猶予を過ぎると背景で続くので(#1624)、
+    /// 呼ぶ test は時刻を止め(`start_paused`)、手元の処理の時間で猶予を過ぎずに照合を終えるようにする。
     async fn display_page(&self) {
         self.viewer
             .list_timeline(self.topic.as_str(), None, 20)
@@ -483,7 +484,7 @@ async fn observe_present_reactions(posts: usize) -> (usize, usize, bool) {
 // #1567 AC-2: 表示の照合(台帳つき)で provider から読んだページの present 行は、新しい側から
 // `REMOTE_RANGE_CHECK_REACTION_TARGETS` 件まで reaction の窓を読み直す。読む量は topic の投稿数に依存しない。
 // 修正前は、既に projection にある投稿の reaction は照合では一切入らなかった。
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn display_reconcile_refreshes_the_reactions_of_a_bounded_number_of_present_posts() {
     use crate::service::reaction_hydration::REACTION_KEYS_PER_LEAD;
     use crate::service::replica_window::REMOTE_RANGE_CHECK_REACTION_TARGETS;
@@ -520,7 +521,7 @@ async fn display_reconcile_refreshes_the_reactions_of_a_bounded_number_of_presen
 }
 
 // #1567 AC-2: 他端末が付けた reaction は、台帳の間隔の内では読まず、間隔を過ぎた次の表示の照合で projection に入る。
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_reaction_from_another_device_arrives_at_the_next_display_reconcile() {
     hold_off_the_day_boundary();
     let fixture = present_fixture("next", 20).await;
