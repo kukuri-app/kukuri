@@ -127,12 +127,15 @@ pub(crate) async fn writer_readers(
 }
 
 impl AppService {
-    /// 先頭のページ(cursor なし)の provider の照合。表示を provider の応答で待たせない(#1624)。
+    /// 起動より前に反映した投稿だけの先頭のページ(cursor なし)の provider の照合。表示を provider の応答で待たせない
+    /// (#1624)。
     ///
     /// 照合は背景の task で始め、`HEAD_PROVIDER_GRACE` だけ待つ。猶予の内に答えた provider の投稿は従来どおり
     /// この取得で返る。過ぎた照合は背景で続き、反映した投稿は次の取得で出る(起動直後は既知の peer がまだ繋がって
     /// いないか応答せず、期限の 30 秒まで手元の投稿も返せなかった)。同じページの背景の照合は 1 つまでとし、
-    /// 続いている間の取得は provider を読まない。
+    /// 続いている間の取得は provider を読まずに前回の照合の結果を返す。それ以外のページ(手元に投稿が無い、または
+    /// この起動の間に反映した投稿を含む)は、従来どおり照合を待って provider のページと続きの位置を返す(反映の途中を
+    /// 先に返すと、画面はそれを最初のページにし、後の取得を新しい投稿として保留して、続きのページを読めない)。
     pub(super) async fn reconcile_remote_head(
         &self,
         topic_id: &str,
@@ -140,49 +143,62 @@ impl AppService {
         limit: usize,
     ) -> Result<RangeReconcile> {
         let hold = format!("head\n{topic_id}\n{scope:?}");
-        let busy_ms = REMOTE_READ_DEADLINE.as_millis() as i64;
-        if self
-            .services
-            .range_checks
+        // 照合は provider を選んでから期限(30 秒)の内に終わり、終えた照合が保持を外す。保持の期限はその 2 倍とし、
+        // 照合を終える前に外れて同じページの照合が重ならないようにする(期限は、終えられなかった照合を残さないため)。
+        let busy_ms = 2 * REMOTE_READ_DEADLINE.as_millis() as i64;
+        let ledger = &self.services.range_checks;
+        if ledger
             .try_begin_for(&hold, Utc::now().timestamp_millis(), busy_ms)
             .await
-            .is_none()
+            .is_some()
         {
-            return Ok(RangeReconcile::default());
-        }
-        let app = self.account_handle();
-        let (topic_id, scope) = (topic_id.to_owned(), scope.clone());
-        let task = n0_future::task::spawn(async move {
-            let range = IndexRange {
-                index_prefix: "indexes/timeline/",
-                order: DocKeyOrder::Descending,
-                start: None,
-                limit,
-            };
-            let result = app
-                .reconcile_remote_index_range(
-                    &topic_id,
-                    &scope,
-                    None,
-                    &range,
-                    RANGE_CHECK_ENTRY_LIMIT / 2,
-                    true,
-                )
-                .await;
-            app.services.range_checks.forget(&hold).await;
-            if result
-                .as_ref()
-                .is_ok_and(|reconcile| reconcile.hydrated > 0)
-            {
-                app.last_sync_ts.set(Utc::now().timestamp_millis()).await;
+            let app = self.account_handle();
+            let (topic_id, scope, hold) = (topic_id.to_owned(), scope.clone(), hold.clone());
+            let task = n0_future::task::spawn(async move {
+                let range = IndexRange {
+                    index_prefix: "indexes/timeline/",
+                    order: DocKeyOrder::Descending,
+                    start: None,
+                    limit,
+                };
+                let result = app
+                    .reconcile_remote_index_range(
+                        &topic_id,
+                        &scope,
+                        None,
+                        &range,
+                        RANGE_CHECK_ENTRY_LIMIT / 2,
+                        true,
+                    )
+                    .await;
+                let (missing, read_past) = result
+                    .as_ref()
+                    .map(|reconcile| (reconcile.unavailable, reconcile.read_past.clone()))
+                    .unwrap_or_default();
+                app.services
+                    .range_checks
+                    .release(&hold, Utc::now().timestamp_millis(), missing, read_past)
+                    .await;
+                if result
+                    .as_ref()
+                    .is_ok_and(|reconcile| reconcile.hydrated > 0)
+                {
+                    app.last_sync_ts.set(Utc::now().timestamp_millis()).await;
+                }
+                result
+            });
+            if let Ok(Ok(result)) = n0_future::time::timeout(HEAD_PROVIDER_GRACE, task).await {
+                return result;
             }
-            result
-        });
-        match n0_future::time::timeout(HEAD_PROVIDER_GRACE, task).await {
-            Ok(Ok(result)) => result,
-            // 猶予を過ぎた照合は背景で続く。
-            _ => Ok(RangeReconcile::default()),
         }
+        // 照合が続く間と猶予を過ぎた取得は、前回の照合の結果(本体が手元に無い投稿の数と読み進めた位置)を返す
+        // (台帳の間隔の内の取得と同じ。#1239 AC-4)。
+        let (unavailable, read_past) = ledger.last_result(&hold).await;
+        Ok(RangeReconcile {
+            unavailable,
+            read_past,
+            ..RangeReconcile::default()
+        })
     }
 
     /// Read the selected bucket page from one provider at a time. It shares

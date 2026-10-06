@@ -65,7 +65,7 @@
       "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
-      "lines": 1015,
+      "lines": 1033,
       "path": "crates/app-api/src/service/replica_window.rs"
     },
     {

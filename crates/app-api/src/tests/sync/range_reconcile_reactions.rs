@@ -455,8 +455,8 @@ impl PresentFixture {
             .len()
     }
 
-    /// 表示の照合(台帳つき)を 1 回走らせる。先頭のページの provider の照合は猶予を過ぎると背景で続くので(#1624)、
-    /// 呼ぶ test は時刻を止め(`start_paused`)、手元の処理の時間で猶予を過ぎずに照合を終えるようにする。
+    /// 表示の照合(台帳つき)を 1 回走らせる。viewer の構築と同じ時刻(ms)に反映した投稿だけのページは、provider の
+    /// 照合が猶予を過ぎると背景で続くので(#1624)、呼ぶ test は時刻を止め(`start_paused`)、猶予を過ぎずに照合を終える。
     async fn display_page(&self) {
         self.viewer
             .list_timeline(self.topic.as_str(), None, 20)

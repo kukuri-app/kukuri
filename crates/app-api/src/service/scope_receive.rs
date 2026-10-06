@@ -331,7 +331,14 @@ impl AppService {
     pub(crate) async fn reread_scope(&self, topic_id: &str, scope: &TimelineScope) -> usize {
         let mut applied = 0;
         match self
-            .reconcile_timeline_range_checked(topic_id, scope, None, REPLICA_WINDOW_ENTRIES, false)
+            .reconcile_timeline_range_checked(
+                topic_id,
+                scope,
+                None,
+                REPLICA_WINDOW_ENTRIES,
+                false,
+                false,
+            )
             .await
         {
             Ok(reconcile) => applied += reconcile.hydrated,

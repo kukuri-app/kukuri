@@ -61,25 +61,6 @@ impl RealPublicPair {
     }
 }
 
-/// 先頭のページは、provider の照合が猶予を過ぎると、その結果を次の取得で返す(#1624)。`ready` になるまで取り直す。
-#[cfg(feature = "iroh-integration-tests")]
-async fn head_page_when(
-    app: &AppService,
-    topic: &TopicId,
-    ready: impl Fn(&TimelineView) -> bool,
-) -> Result<TimelineView> {
-    tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        loop {
-            let page = app.list_timeline(topic.as_str(), None, 20).await?;
-            if ready(&page) {
-                break Ok::<_, anyhow::Error>(page);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-    })
-    .await?
-}
-
 #[cfg(feature = "iroh-integration-tests")]
 #[async_trait]
 impl HintTransport for ScopedReadHints {
@@ -721,21 +702,18 @@ async fn remote_missing_window_keeps_its_cursor_and_resumes() -> Result<()> {
         post.clone(),
     )
     .await?;
-    let cursor = head_page_when(&pair.app, &topic, |page| page.next_cursor.is_some())
-        .await
-        .context("the next page remains reachable")?
-        .next_cursor
-        .expect("the page is ready");
+    let first = pair.app.list_timeline(topic.as_str(), None, 20).await?;
+    let cursor = first.next_cursor.expect("the next page remains reachable");
     let repeated = pair.app.list_timeline(topic.as_str(), None, 20).await?;
     assert_eq!(repeated.next_cursor, Some(cursor.clone()));
     pair.app.services.range_checks.expire_all_for_test().await;
-    head_page_when(&pair.app, &topic, |page| {
-        page.items
+    let resumed = pair.app.list_timeline(topic.as_str(), None, 20).await?;
+    assert!(
+        resumed
+            .items
             .iter()
             .any(|item| item.object_id == post.id.as_str())
-    })
-    .await
-    .context("the resumed read reaches the post")?;
+    );
     let older = pair
         .app
         .list_timeline(topic.as_str(), Some(cursor), 20)
@@ -831,14 +809,13 @@ async fn remote_page_reads_past_twenty_missing_records() -> Result<()> {
         post.clone(),
     )
     .await?;
-    head_page_when(&pair.app, &topic, |page| {
+    let page = pair.app.list_timeline(topic.as_str(), None, 20).await?;
+    assert!(
         page.items
             .iter()
             .any(|item| item.object_id == post.id.as_str())
-            && page.unavailable_count >= 20
-    })
-    .await
-    .context("the page reads past the missing records")?;
+    );
+    assert!(page.unavailable_count >= 20);
     pair.finish().await
 }
 
