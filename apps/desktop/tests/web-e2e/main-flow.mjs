@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Key, remote } from 'webdriverio';
+import { androidClickOffset } from './android-click.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -172,27 +173,8 @@ async function startClient(name, { ice }) {
       'click',
       async function (original, ...args) {
         await closeKeyboard();
-        await this.waitForExist({ timeout: WAIT });
         // 中心が覆われていれば（列のページの表示が列の右下の操作に重なる。#1588）、利用者と同じく見えている部分を押す。
-        const offset = await browser.execute(async (element) => {
-          element.scrollIntoView({ block: 'center', inline: 'center' });
-          let last = '';
-          for (let i = 0; i < 40; i += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            const { left, top } = element.getBoundingClientRect();
-            if (`${left},${top}` === last) break;
-            last = `${left},${top}`;
-          }
-          const rect = element.getBoundingClientRect();
-          for (const fx of [0.5, 0.85, 0.15, 0.95, 0.05]) {
-            const x = rect.left + rect.width * fx;
-            const y = rect.top + rect.height / 2;
-            if (element.contains(document.elementFromPoint(x, y))) {
-              return { x: Math.round(x - (rect.left + rect.width / 2)), y: 0 };
-            }
-          }
-          return null;
-        }, this);
+        const offset = await androidClickOffset(browser, this, WAIT);
         return offset && offset.x !== 0 ? original(offset) : original(...args);
       },
       true

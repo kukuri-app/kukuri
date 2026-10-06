@@ -101,6 +101,7 @@ jobs:
         env:
           SCENARIOS: ${{ inputs.scenarios || '[]' }}
         run: |
+          node --test tests/web-e2e/*.test.mjs
           node tests/web-e2e/main-flow.mjs --list | node --input-type=module -e '
             import { readFileSync, appendFileSync } from "node:fs";
             import assert from "node:assert/strict";
