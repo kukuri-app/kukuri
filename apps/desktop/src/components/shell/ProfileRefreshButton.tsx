@@ -26,7 +26,7 @@ export function ProfileRefreshButton({ refreshing, saving, onRefresh }: ProfileR
         void onRefresh();
       }}
     >
-      <RefreshCw className={`size-4${busy ? ' profile-refresh-spinning' : ''}`} aria-hidden='true' />
+      <RefreshCw className={`size-4${busy ? ' icon-spinning' : ''}`} aria-hidden='true' />
     </IconButton>
   );
 }

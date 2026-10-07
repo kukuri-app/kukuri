@@ -593,7 +593,10 @@ export function useDesktopShellData({
             (post) => !visiblePostIds.has(postIdentityKey(post))
           );
           const pendingCount = pendingTimelineItems.length;
-          const shouldBuffer = mode === 'buffer' && hasAuthoritativeBaseline && pendingCount > 0;
+          // Flow モードの Column が表示する scope は、新着を保留せずに反映する(#1647)。
+          const flow = currentState.workspaceState.columns.some((column) => column.timelineFlow &&
+            column.scope?.topicId === topic && column.scope.channelId === selectedChannelId);
+          const shouldBuffer = mode === 'buffer' && !flow && hasAuthoritativeBaseline && pendingCount > 0;
 
           if (shouldBuffer) {
             setPendingTimelineSnapshotsByKey(setRecordEntry(timelineKey, normalizedTimelineItems));
@@ -609,11 +612,9 @@ export function useDesktopShellData({
                 preserveTimelinePages
               )));
             setTimelineNextCursorByKey(setTimelineCursorEntry(timelineKey, resolvedTimelineCursor));
-            if (!preserveTimelinePages) {
-              setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey, timelineHeadCursor));
-            }
             // 読んだ範囲を残すときは、その範囲の数も残す(#1239 AC-4)。
             if (!preserveTimelinePages) {
+              setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey, timelineHeadCursor));
               setTimelineUnavailableByKey(
                 setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
               );
@@ -649,8 +650,6 @@ export function useDesktopShellData({
           );
           if (!preservePublicTimelinePages) {
             setTimelineWindowHeadCursorByKey(setRecordEntry(publicTimelineKey, publicHeadCursor));
-          }
-          if (!preservePublicTimelinePages) {
             setTimelineUnavailableByKey(
               setRecordEntry(publicTimelineKey, publicTimeline.unavailable_count ?? 0)
             );
