@@ -36,7 +36,8 @@ async function setup() {
 test('account menu orders profile first and switches a row without extra confirmation', async () => {
   const { user, menu, change, b } = await setup();
   const buttons = within(menu).getAllByRole('menuitem');
-  expect(buttons.map((button) => button.textContent)).toEqual(['View profile', 'Add account', 'Manage accounts', 'Log out']);
+  expect(buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent))
+    .toEqual(['View profile', 'Sync profile across devices', 'Add account', 'Manage accounts', 'Log out']);
   await user.click(within(menu).getByRole('menuitemradio', { name: /Second Account.*@second-user/ }));
   expect(change).toHaveBeenCalledExactlyOnceWith(b.id, false);
 });
@@ -183,4 +184,23 @@ test('a restore request opens the add account dialog with every action available
   await waitFor(() => expect(within(dialog).getByTestId('create-new-account')).toBeEnabled());
   expect(within(dialog).getByRole('button', { name: 'Move to another device' })).toBeEnabled();
   expect(within(dialog).getByRole('button', { name: 'Move from another device' })).toBeEnabled();
+});
+
+// #1650: 同期のボタンは使用中のアカウントの行だけに、チェックの右に置く。押すと同期の dialog が開いて待ち受け、閉じると
+// 止める。
+test('the current account row syncs the profile across devices', async () => {
+  const { user, menu, change } = await setup();
+  const cancel = vi.spyOn(identity, 'cancelAccountTransfer').mockResolvedValue(undefined);
+  const start = vi.spyOn(identity, 'startAccountUnionSync').mockResolvedValue(undefined);
+  vi.spyOn(identity, 'getAccountTransferStatus').mockResolvedValue({ state: 'waiting', expires_at_ms: Date.now() + 300_000 });
+  const sync = within(menu).getByRole('menuitem', { name: 'Sync profile across devices' });
+  expect(within(menu).getAllByRole('menuitem', { name: 'Sync profile across devices' })).toHaveLength(1);
+  expect(within(menu).getByRole('menuitemradio', { checked: true }).nextElementSibling).toBe(sync);
+  await user.click(sync);
+  const dialog = await screen.findByRole('dialog', { name: 'Sync profile across devices' });
+  expect(await within(dialog).findByText(/On the other device, also choose/)).toBeVisible();
+  expect(start).toHaveBeenCalledTimes(1);
+  expect(change).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
+  await waitFor(() => expect(cancel).toHaveBeenCalled());
 });

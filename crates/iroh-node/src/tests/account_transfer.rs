@@ -146,6 +146,7 @@ impl AccountBundleSink for FakeSink {
         &self,
         _: &str,
         _: AccountTransferHistory,
+        _: &str,
     ) -> Result<AccountHistoryResume, Failure> {
         Err(Failure::Invalid)
     }
@@ -399,7 +400,7 @@ async fn an_invite_expired_at_the_source_is_rejected() -> Result<()> {
     source.account_transfer().replace(
         Some(Session::new(
             Role::Source,
-            invite,
+            Pairing::Invite(invite),
             Status::Waiting { expires_at_ms },
             Some(fake_source()),
             None,

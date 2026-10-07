@@ -31,10 +31,9 @@ const CYCLE_ROOTS: [&str; 5] = [
 /// 自分のフォロー・ブロックの edge の根（#1211 AC-6）。移行では、replica の木の代わりに store から送る（AC-6 より前の
 /// edge は replica に無い）。
 const OWN_EDGES_ROOT: &str = "graph/";
-/// 移行で store から edge を送る段の cursor（自分のフォローとその相手から自分への edge、自分のブロックの順）。`:` は
-/// key の文字に無いので、replica の prefix と重ならない。
-const TRANSFER_FOLLOWS: &str = "@follows:";
-const TRANSFER_BLOCKS: &str = "@blocks:";
+/// 移行・端末間の同期で store から edge を送る段の cursor（自分のフォロー、自分のブロック、自分へのフォロー（#1650）の
+/// 順）。`:` は key の文字に無いので、replica の prefix と重ならない。
+const TRANSFER_PHASES: [&str; 3] = ["@follows:", "@blocks:", "@followers:"];
 /// item の key に使う文字（ASCII の順）。周回は prefix にこの順で 1 文字ずつ足して降りる。
 const KEY_ALPHABET: &str = "-/0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -371,51 +370,42 @@ impl AppService {
         Ok((items, next))
     }
 
-    /// 移行の edge の 1 page（#1211 AC-6）。store から相手の順に読み、envelope の item にして返す。自分のフォローは 32 件
-    /// ずつ、それぞれの相手から自分への edge（移行先が相互フォローを判定するため）と同じ page で送り（1 frame は 64 件
-    /// まで）、次に自分のブロックを 64 件ずつ送り、その後に周回の次の根へ進む。
+    /// 移行の edge の 1 page（#1211 AC-6）。store から相手の順に読み、envelope の item にして返す。自分のフォロー、自分の
+    /// ブロック、自分へのフォロー（フォロワー全員。#1650）を 64 件ずつ送り、その後に周回の次の根へ進む。
     async fn account_transfer_edges_page(
         &self,
         cursor: &str,
     ) -> Result<(Vec<AccountTransferItem>, Option<String>)> {
         let account = self.services.keys.public_key();
         let me = account.as_str();
-        let (phase, after, limit) = match cursor.strip_prefix(TRANSFER_BLOCKS) {
-            Some(after) => (TRANSFER_BLOCKS, after, ACCOUNT_SYNC_PAGE),
-            None => (
-                TRANSFER_FOLLOWS,
-                cursor.strip_prefix(TRANSFER_FOLLOWS).unwrap_or_default(),
-                ACCOUNT_SYNC_PAGE / 2,
-            ),
-        };
+        let (phase, after) = TRANSFER_PHASES
+            .iter()
+            .enumerate()
+            .find_map(|(phase, prefix)| cursor.strip_prefix(prefix).map(|after| (phase, after)))
+            .unwrap_or_default();
         let after = (!after.is_empty()).then_some(after);
         let store = &self.services.store;
         // 読んだ edge の相手と、送る envelope の ID。
-        let mut targets = Vec::new();
-        let mut envelope_ids = Vec::new();
-        if phase == TRANSFER_BLOCKS {
-            for edge in store
-                .list_block_edges_by_subject_after(me, after, limit)
+        let (others, envelope_ids): (Vec<Pubkey>, Vec<EnvelopeId>) = match phase {
+            0 => store
+                .list_follow_edges_by_subject_after(me, after, ACCOUNT_SYNC_PAGE)
                 .await?
-            {
-                envelope_ids.push(edge.envelope_id);
-                targets.push(edge.target_pubkey);
-            }
-        } else {
-            for edge in store
-                .list_follow_edges_by_subject_after(me, after, limit)
+                .into_iter()
+                .map(|edge| (edge.target_pubkey, edge.envelope_id))
+                .unzip(),
+            1 => store
+                .list_block_edges_by_subject_after(me, after, ACCOUNT_SYNC_PAGE)
                 .await?
-            {
-                envelope_ids.push(edge.envelope_id);
-                if let Some(reverse) = store
-                    .get_follow_edge(edge.target_pubkey.as_str(), me)
-                    .await?
-                {
-                    envelope_ids.push(reverse.envelope_id);
-                }
-                targets.push(edge.target_pubkey);
-            }
-        }
+                .into_iter()
+                .map(|edge| (edge.target_pubkey, edge.envelope_id))
+                .unzip(),
+            _ => store
+                .list_follow_edges_by_target_after(me, after, ACCOUNT_SYNC_PAGE)
+                .await?
+                .into_iter()
+                .map(|edge| (edge.subject_pubkey, edge.envelope_id))
+                .unzip(),
+        };
         let sync_keys = self.services.keys.derive_account_sync();
         let mut items = Vec::with_capacity(envelope_ids.len());
         for envelope_id in &envelope_ids {
@@ -427,10 +417,14 @@ impl AppService {
                 });
             }
         }
-        let next = match targets.last() {
-            Some(target) if targets.len() == limit => Some(format!("{phase}{}", target.as_str())),
-            _ if phase == TRANSFER_FOLLOWS => Some(TRANSFER_BLOCKS.to_string()),
-            _ => next_cycle_prefix(OWN_EDGES_ROOT),
+        let next = match others.last() {
+            Some(other) if others.len() == ACCOUNT_SYNC_PAGE => {
+                Some(format!("{}{}", TRANSFER_PHASES[phase], other.as_str()))
+            }
+            _ => TRANSFER_PHASES
+                .get(phase + 1)
+                .map(|next| next.to_string())
+                .or_else(|| next_cycle_prefix(OWN_EDGES_ROOT)),
         };
         Ok((items, next))
     }

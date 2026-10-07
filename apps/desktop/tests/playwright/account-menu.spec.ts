@@ -37,3 +37,26 @@ test('logout cancellation retains the account in the menu', async ({ page }) => 
   await trigger.click();
   await expect(menu.getByRole('menuitemradio')).toHaveCount(1);
 });
+
+// #1650: 使用中の行の同期のボタンは、tooltip と keyboard（行からの下の矢印）でも届き、同期の dialog を開く。mock の相手の
+// 端末とつながって投稿まで受けて完了し、閉じたら menu の入口へ focus を戻す（keyboard で開いた dialog の最初の Escape は、
+// 閉じるボタンの tooltip を閉じる。既存の dialog と同じ）。
+test('the current account row opens the profile sync across devices', async ({ page }) => {
+  await page.goto('/');
+  const trigger = page.getByTestId('account-menu-trigger');
+  await trigger.click();
+  const menu = page.getByRole('menu', { name: 'Account menu' });
+  const sync = menu.getByRole('menuitem', { name: 'Sync profile across devices' });
+  await sync.hover();
+  await expect(page.getByRole('tooltip', { name: 'Sync profile across devices' })).toBeVisible();
+  await menu.getByRole('menuitemradio').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(sync).toBeFocused();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Sync profile across devices' });
+  await expect(dialog.getByText(/On the other device, also choose/)).toBeVisible();
+  await expect(dialog.getByTestId('account-transfer-history-result')).toBeVisible({ timeout: 10_000 });
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});

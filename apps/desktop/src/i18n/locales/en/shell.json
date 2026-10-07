@@ -565,6 +565,7 @@
     "unknown": "Unknown user",
     "noUsername": "Username not set",
     "current": "Current account",
+    "sync": "Sync profile across devices",
     "add": "Add account",
     "manage": "Manage accounts",
     "logout": "Log out",

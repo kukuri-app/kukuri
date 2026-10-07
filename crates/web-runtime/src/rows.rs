@@ -120,7 +120,7 @@ pub(crate) enum Source {
 }
 
 impl Source {
-    fn cursor(&self, range: &JsValue, reverse: bool) -> Result<web_sys::IdbRequest> {
+    pub(crate) fn cursor(&self, range: &JsValue, reverse: bool) -> Result<web_sys::IdbRequest> {
         let direction = if reverse {
             IdbCursorDirection::Prev
         } else {

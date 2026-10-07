@@ -1,5 +1,5 @@
 //! #1211 AC-6: 自分の follow・block の edge を相手の順に小分けに読む口と、block の edge の 1 件の読取り（移行で自分の
-//! edge を 64 件ずつ送る）。
+//! edge を 64 件ずつ送る）。#1650: 自分への follow の edge（フォロワー）を相手の順に小分けに読む口。
 
 use super::*;
 use kukuri_core::{BlockEdge, BlockEdgeStatus, FollowEdge, Pubkey};
@@ -11,12 +11,22 @@ struct OwnEdgesScenarioResult {
     after_a: Vec<FollowEdge>,
     block_c: Option<BlockEdge>,
     blocks_after_a: Vec<BlockEdge>,
+    /// a へ follow する edge の先頭から 1 件と、subject より後・other より後（先頭の行より後の位置へ飛ぶ）。
+    followers_of_a: Vec<FollowEdge>,
+    followers_of_a_after_subject: Vec<FollowEdge>,
+    followers_of_a_after_other: Vec<FollowEdge>,
 }
 
 async fn own_edges_scenario<S: Store + ProjectionStore>(store: &S) -> OwnEdgesScenarioResult {
-    let (subject, other) = ("1".repeat(64), "2".repeat(64));
+    let (subject, other, third) = ("1".repeat(64), "2".repeat(64), "3".repeat(64));
     let [a, b, c] = ["a", "b", "c"].map(|target| target.repeat(64));
-    for (from, to) in [(&subject, &b), (&subject, &a), (&subject, &c), (&other, &a)] {
+    for (from, to) in [
+        (&subject, &b),
+        (&subject, &a),
+        (&subject, &c),
+        (&other, &a),
+        (&third, &a),
+    ] {
         Store::upsert_follow_edge(
             store,
             parity_follow_edge(
@@ -57,6 +67,25 @@ async fn own_edges_scenario<S: Store + ProjectionStore>(store: &S) -> OwnEdgesSc
         blocks_after_a: Store::list_block_edges_by_subject_after(store, &subject, Some(&a), 10)
             .await
             .expect("Store::list_block_edges_by_subject_after"),
+        followers_of_a: Store::list_follow_edges_by_target_after(store, &a, None, 1)
+            .await
+            .expect("Store::list_follow_edges_by_target_after"),
+        followers_of_a_after_subject: Store::list_follow_edges_by_target_after(
+            store,
+            &a,
+            Some(&subject),
+            10,
+        )
+        .await
+        .expect("Store::list_follow_edges_by_target_after"),
+        followers_of_a_after_other: Store::list_follow_edges_by_target_after(
+            store,
+            &a,
+            Some(&other),
+            10,
+        )
+        .await
+        .expect("Store::list_follow_edges_by_target_after"),
     }
 }
 
@@ -88,4 +117,16 @@ pub(super) async fn own_edges_match_between_backends<S: Store + ProjectionStore>
             .collect::<Vec<_>>(),
         ["c"]
     );
+    let subjects = |edges: &[FollowEdge]| {
+        edges
+            .iter()
+            .map(|edge| edge.subject_pubkey.as_str()[..1].to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(subjects(&from_backend.followers_of_a), ["1"]);
+    assert_eq!(
+        subjects(&from_backend.followers_of_a_after_subject),
+        ["2", "3"]
+    );
+    assert_eq!(subjects(&from_backend.followers_of_a_after_other), ["3"]);
 }

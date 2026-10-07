@@ -14,6 +14,7 @@ const identityApi = vi.hoisted(() => ({
   getAccountTransferStatus: vi.fn(),
   decideAccountTransfer: vi.fn(),
   cancelAccountTransfer: vi.fn(),
+  startAccountUnionSync: vi.fn(),
 }));
 
 vi.mock('@/lib/api/identity', () => identityApi);
@@ -335,4 +336,54 @@ test('the desktop app does not offer the camera', () => {
   } finally {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
   }
+});
+
+// #1650: 同期は開いたら待ち受け、もう一方の端末を待つ間に手順・残り時間・合わせるものを示す。つながったら受けた数を
+// 示し、投稿の途中で止めると、続きから同期できることを示す。閉じたら止める。
+test('the sync waits for the other device and shows what it received', async () => {
+  const user = userEvent.setup();
+  identityApi.startAccountUnionSync.mockImplementation(async () => {
+    status = { state: 'waiting', expires_at_ms: Date.now() + 5 * 60 * 1000 };
+  });
+  const { unmount } = render(<AccountTransferPanel role='sync' />);
+  expect(await screen.findByText(/On the other device, also choose/)).toBeInTheDocument();
+  expect(screen.getByRole('timer')).toHaveTextContent(/[45]:\d\d left/);
+  expect(screen.getByTestId('account-transfer-scope')).toHaveTextContent(/followers/);
+  expect(identityApi.startAccountUnionSync).toHaveBeenCalledTimes(1);
+
+  status = { state: 'transferring', role: 'sync', items: 7 };
+  expect(await screen.findByText('Syncing (7 items received)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  status = { state: 'history', role: 'sync', account_id: null, posts: 3, unavailable: 0 };
+  expect(await screen.findByText('Syncing posts (3 received)…', {}, { timeout: 2000 })).toBeInTheDocument();
+  expect(screen.queryByText('Keys and settings have been moved.')).not.toBeInTheDocument();
+  identityApi.cancelAccountTransfer.mockImplementation(async () => {
+    status = { state: 'completed', role: 'sync', account_id: null, history: { posts: 3, unavailable: 1, stopped: 'cancelled' } };
+  });
+  await user.click(screen.getByRole('button', { name: 'Stop syncing' }));
+  expect(await screen.findByText('The sync has finished.')).toBeInTheDocument();
+  expect(screen.getByText('Syncing posts stopped partway (3).')).toBeInTheDocument();
+  expect(screen.getByText(/weren't on the other device couldn't be received \(1\)/)).toBeInTheDocument();
+  expect(screen.getByText(/continue syncing posts where it stopped/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Use this account' })).not.toBeInTheDocument();
+  unmount();
+  expect(identityApi.cancelAccountTransfer).toHaveBeenCalled();
+});
+
+// #1650: 同期を始められない・期限切れ・それ以外の失敗（接続が切れたとして示す）を区別し、「もう一度試す」で待ち受け直す。
+test('the sync explains its failures and waits again on retry', async () => {
+  const user = userEvent.setup();
+  identityApi.startAccountUnionSync.mockRejectedValueOnce(new Error('no runtime'));
+  render(<AccountTransferPanel role='sync' />);
+  expect(await screen.findByText("Couldn't start the sync. Please try again.")).toBeInTheDocument();
+  identityApi.startAccountUnionSync.mockImplementation(async () => {
+    status = { state: 'failed', role: 'sync', reason: 'expired' };
+  });
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByText(/The other device didn't connect in time/)).toBeInTheDocument();
+  identityApi.startAccountUnionSync.mockImplementation(async () => {
+    status = { state: 'failed', role: 'sync', reason: 'invalid' };
+  });
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByText(/The connection was lost while syncing/)).toBeInTheDocument();
+  expect(identityApi.startAccountUnionSync).toHaveBeenCalledTimes(3);
 });

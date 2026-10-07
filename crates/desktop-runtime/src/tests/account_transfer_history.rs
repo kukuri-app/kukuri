@@ -24,6 +24,8 @@ use kukuri_store::{ObjectProjectionStore, SqliteStore};
 
 const SINCE: u64 = 20_000;
 const DOCS_AUTHOR: &str = "docs-author";
+/// 履歴の送り元の端末（endpoint id）。
+const PEER: &str = "source-device";
 
 fn payload(key: &str) -> Vec<u8> {
     let value = key.as_bytes().to_vec();
@@ -207,7 +209,7 @@ async fn all_history_includes_the_legacy_records_but_not_other_replicas() {
 }
 
 /// 移行元の範囲（`since` の bucket から）の自分の record（replica・key・docs author・値）。
-async fn own_records_since(
+pub(super) async fn own_records_since(
     store: &SqliteStore,
     since: u64,
 ) -> Vec<(String, String, String, Vec<u8>)> {
@@ -435,8 +437,8 @@ async fn a_history_transfer_reflects_the_selected_records_and_blobs() {
 }
 
 /// 3c・3d: 移行先の置き場。範囲の外の record・hash の合わない blob・揃わない blob の page は保存せず、落とされた page の
-/// 部分の file は消える。同じ範囲は確定した続きの位置から、別の範囲は最初から始める。反映は確定した page を自分の
-/// record・blob として保存し、範囲の終わりまで反映したら置き場と journal を消す。
+/// 部分の file は消える。同じ送り元の同じ範囲は確定した続きの位置から、別の送り元（#1650）・別の範囲は最初から始める。
+/// 反映は確定した page を自分の record・blob として保存し、範囲の終わりまで反映したら置き場と journal を消す。
 #[tokio::test]
 async fn history_staging_resumes_and_reclaims_its_files() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
@@ -469,7 +471,7 @@ async fn history_staging_resumes_and_reclaims_its_files() {
     let month = AccountTransferHistory::Month;
     let invalid = Err(AccountTransferFailure::Invalid);
 
-    let mut resume = sink.history(&id, month).await.unwrap();
+    let mut resume = sink.history(&id, month, PEER).await.unwrap();
     assert!(resume.cursor.is_none() && resume.since.is_some());
     let old = resume
         .staging
@@ -494,7 +496,7 @@ async fn history_staging_resumes_and_reclaims_its_files() {
         key: "objects/a/envelope".into(),
         author: DOCS_AUTHOR.into(),
     };
-    let mut resume = sink.history(&id, month).await.unwrap();
+    let mut resume = sink.history(&id, month, PEER).await.unwrap();
     let staging = &mut resume.staging;
     staging
         .records(vec![record(today, "objects/a/envelope")])
@@ -506,11 +508,14 @@ async fn history_staging_resumes_and_reclaims_its_files() {
     staging.blob(&hash, len, half as u64, rest).await.unwrap();
     staging.commit(Some(next.clone())).await.unwrap();
     drop(resume);
-    let again = sink.history(&id, month).await.unwrap();
+    let again = sink.history(&id, month, PEER).await.unwrap();
     assert_eq!(again.cursor, Some(next));
     drop(again);
+    let other = sink.history(&id, month, "other-device").await.unwrap();
+    assert!(other.cursor.is_none());
+    drop(other);
     let mut resume = sink
-        .history(&id, AccountTransferHistory::Year)
+        .history(&id, AccountTransferHistory::Year, PEER)
         .await
         .unwrap();
     assert!(resume.cursor.is_none());
@@ -544,7 +549,7 @@ async fn history_staging_resumes_and_reclaims_its_files() {
     moved.shutdown().await;
 
     // 反映の task は止めて作り直すので、blob を保存した後の部分の削除の途中で止まることがある。残りの部分も消す。
-    let mut resume = sink.history(&id, month).await.unwrap();
+    let mut resume = sink.history(&id, month, PEER).await.unwrap();
     let first = blob[..half].to_vec();
     resume.staging.blob(&hash, len, 0, first).await.unwrap();
     let rest = blob[half..].to_vec();

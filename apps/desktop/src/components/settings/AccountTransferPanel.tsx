@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encode } from 'uqr';
-import type { AccountTransferHistory, AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
+import type { AccountTransferFailure, AccountTransferHistory, AccountTransferLink, AccountTransferStatus } from '@/lib/api/types.generated';
 import {
   cancelAccountTransfer,
   createAccountTransferInvite,
   decideAccountTransfer,
   getAccountTransferStatus,
   openAccountTransfer,
+  startAccountUnionSync,
 } from '@/lib/api/identity';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 import { copyTextToClipboard } from '@/lib/utils';
@@ -23,6 +24,14 @@ const SCAN_MS = 200;
 const IDLE: AccountTransferStatus = { state: 'idle' };
 const HISTORY_CHOICES = ['none', 'month', 'year', 'all'] as const;
 type HistoryChoice = (typeof HISTORY_CHOICES)[number];
+// 同期の失敗は、期限切れ・中止・保存の失敗を分けて示し、ほかは接続が切れたとして示す（#1650）。
+const SYNC_FAILURES = ['expired', 'cancelled', 'storage', 'prepareFailed'] as const;
+
+/** 期限までの残り（分:秒）。 */
+function remainingTime(expiresAt: number, now: number) {
+  const left = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+}
 
 // #1211: QR・専用リンクの移行。移行元は招待を出して QR とリンクを表示し、移行先はリンクを貼り付けて接続する。
 // 両端末の確認の後に鍵と設定を送り、移行先が保存を終えたら両端末を完了にする。移行先は完了の画面で「このアカウントを
@@ -32,8 +41,10 @@ type HistoryChoice = (typeof HISTORY_CHOICES)[number];
 // 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。移行先は履歴を受けている間を
 // `onReceivingHistory` で知らせる（呼び出し側はその間は閉じさせない。終えるのは「やめる」だけ）。
 // #1628: Web 版の移行先は、移行元の QR をカメラで読んで入力欄へ入れる（desktop は貼り付けと OS のリンク起動だけ）。
+// #1650: `sync` は同じアカウントの別の端末との同期。開いたら待ち受け、両端末がつながったら互いのものを送り合って受け、
+// 受けた数を示す。閉じたら止める。
 export function AccountTransferPanel({ role, initialLink = '', onCompleted, onReceivingHistory }: {
-  role: 'source' | 'target';
+  role: 'source' | 'target' | 'sync';
   initialLink?: string;
   onCompleted?: (accountId: string) => void;
   onReceivingHistory?: (receiving: boolean) => void;
@@ -68,6 +79,23 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
     }
   };
 
+  const startSync = async (active: () => boolean = () => true) => {
+    setPending(true);
+    setError(null);
+    try {
+      await startAccountUnionSync();
+      const next = await getAccountTransferStatus();
+      if (!active()) return;
+      setStatus(next);
+      setNow(Date.now());
+    } catch {
+      setStatus(IDLE);
+      setError('prepareFailed');
+    } finally {
+      setPending(false);
+    }
+  };
+
   const connect = async () => {
     setPending(true);
     setError(null);
@@ -84,8 +112,9 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   useEffect(() => {
     let active = true;
     if (role === 'source') void issue(() => active);
+    if (role === 'sync') void startSync(() => active);
     return () => { active = false; void cancelAccountTransfer().catch(() => undefined); };
-    // 開いたときに招待を出し、閉じたら取り消す。
+    // 開いたときに招待を出す・同期を待ち受け、閉じたら取り消す。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -126,8 +155,12 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   const retry = () => {
     setError(null);
     if (role === 'source') void issue();
+    else if (role === 'sync') void startSync();
     else setStatus(IDLE);
   };
+  const failure = (reason: AccountTransferFailure | 'prepareFailed') => role !== 'sync'
+    ? `accountTransfer.failure.${reason}` as const
+    : `accountTransfer.sync.failure.${SYNC_FAILURES.find((known) => known === reason) ?? 'interrupted'}` as const;
 
   if (status.state === 'confirming') {
     return <section className='space-y-3' data-testid='account-transfer-confirming'>
@@ -148,7 +181,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   }
   if (status.state === 'history') {
     return <section className='space-y-3' data-testid='account-transfer-history'>
-      <p className='text-sm'>{t('accountTransfer.history.bundleDone')}</p>
+      {role === 'sync' ? null : <p className='text-sm'>{t('accountTransfer.history.bundleDone')}</p>}
       <p role='status'>{t(`accountTransfer.history.progress.${role}`, { count: status.posts })}</p>
       <Button variant='secondary' disabled={pending} onClick={() => void stopHistory()}>{t(`accountTransfer.history.stop.${role}`)}</Button>
     </section>;
@@ -160,8 +193,8 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
       <Notice tone='accent'>{t(`accountTransfer.completed.${role}`)}</Notice>
       {result ? <div className='space-y-1 text-sm' data-testid='account-transfer-history-result'>
         <p>{t(`accountTransfer.history.${result.stopped ? 'stopped' : 'done'}.${role}`, { count: result.posts })}</p>
-        {result.unavailable > 0 ? <p>{t('accountTransfer.history.unavailable', { count: result.unavailable })}</p> : null}
-        {result.stopped ? <p className='text-muted-foreground'>{t('accountTransfer.history.resume')}</p> : null}
+        {result.unavailable > 0 ? <p>{t(role === 'sync' ? 'accountTransfer.sync.unavailable' : 'accountTransfer.history.unavailable', { count: result.unavailable })}</p> : null}
+        {result.stopped ? <p className='text-muted-foreground'>{t(role === 'sync' ? 'accountTransfer.sync.resume' : 'accountTransfer.history.resume')}</p> : null}
       </div> : null}
       {role === 'target' ? <TransferScope completed /> : null}
       {received ? <div className='flex justify-end'>
@@ -171,26 +204,38 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
   }
   if (status.state === 'failed') {
     return <section className='space-y-3' data-testid='account-transfer-failed'>
-      <Notice tone='destructive'>{t(`accountTransfer.failure.${status.reason}`)}</Notice>
+      <Notice tone='destructive'>{t(failure(status.reason))}</Notice>
       <Button variant='secondary' disabled={pending} onClick={retry}>{t('accountTransfer.retry')}</Button>
     </section>;
   }
   if (error === 'prepareFailed') {
     return <section className='space-y-3'>
-      <Notice tone='destructive'>{t('accountTransfer.failure.prepareFailed')}</Notice>
+      <Notice tone='destructive'>{t(failure('prepareFailed'))}</Notice>
       <Button variant='secondary' disabled={pending} onClick={retry}>{t('accountTransfer.retry')}</Button>
+    </section>;
+  }
+  if (role === 'sync') {
+    if (status.state !== 'waiting') return <p role='status'>{t('accountTransfer.sync.preparing')}</p>;
+    return <section className='space-y-3' data-testid='account-transfer-sync'>
+      <p className='text-sm'>{t('accountTransfer.sync.instructions')}</p>
+      <p role='timer' className='text-sm text-muted-foreground'>
+        {t('accountTransfer.source.remaining', { time: remainingTime(status.expires_at_ms, now) })}
+      </p>
+      <div className='space-y-1 text-sm' data-testid='account-transfer-scope'>
+        <p><span className='font-semibold'>{t('accountTransfer.sync.scopeLabel')}</span> {t('accountTransfer.sync.scope')}</p>
+        <p><span className='font-semibold'>{t('accountTransfer.sync.notSyncedLabel')}</span> {t('accountTransfer.scope.notMoved')}</p>
+      </div>
     </section>;
   }
   if (role === 'source') {
     if (!invite || status.state !== 'waiting') return <p role='status'>{t('accountTransfer.source.preparing')}</p>;
-    const remaining = Math.max(0, Math.ceil((invite.expires_at_ms - now) / 1000));
     return <section className='space-y-3' data-testid='account-transfer-source'>
       <p className='text-sm'>{t('accountTransfer.source.instructions')}</p>
       <TransferScope />
       <div className='flex flex-wrap items-center gap-4'>
         <TransferQr link={invite.link} label={t('accountTransfer.source.qrLabel')} />
         <p role='timer' className='text-sm text-muted-foreground'>
-          {t('accountTransfer.source.remaining', { time: `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}` })}
+          {t('accountTransfer.source.remaining', { time: remainingTime(invite.expires_at_ms, now) })}
         </p>
       </div>
       <Field label={t('accountTransfer.source.linkLabel')}>

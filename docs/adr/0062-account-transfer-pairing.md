@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6、自動同期への接続は AC-4 で §7 に固定した。画面と既存の鍵の export・backup との対象差の説明は AC-5 で §8 に固定した。Web 版の移行先のカメラでの QR の読み取りは #1628 で §1 に足した）
+Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5、任意の投稿の履歴は AC-3 で §6、自動同期への接続は AC-4 で §7 に固定した。画面と既存の鍵の export・backup との対象差の説明は AC-5 で §8 に固定した。Web 版の移行先のカメラでの QR の読み取りは #1628 で §1 に足した。同じ protocol と置き場を使う本人の端末どうしの和集合の同期は #1650 で §9 に固定した）
 
 ## Context
 
@@ -56,7 +56,8 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 
 - 両端末の承認の後、同じ接続の新しい stream で移行元が frame（長さ 4 byte の後に JSON）を送る: `key`（アカウントの秘密鍵、1 回）→ `items`（0 回以上）→ `end`（送った item の総数）。
   - item は移行元の account の replica（ADR 0061）の docs の key と、その封（§3 の封。AAD はアカウントの公開鍵と docs の key）。種類は W5 の allowlist のうち profile・表示例外・channel の参加・世代の鍵・担当（tombstone を含む）で、変更の窓・投稿・履歴は送らない。
-  - フォロー・ブロック（#1211 AC-6、2026-10-04 ユーザー判断）は、replica の `graph/` の木の代わりに、移行元の store から相手の順に読んで送る（AC-6 より前の edge は replica に無いため）。自分のフォローは 32 件ずつ、それぞれの相手から自分への follow（移行先が相互フォローを判定して DM を送受信するため）と同じ page で送り（1 frame は 64 件まで）、次に自分のブロックを 64 件ずつ送る。`channel/` の item より先に送る。ミュートは端末ごとのまま送らない（ADR 0022）。
+  - フォロー・ブロック（#1211 AC-6、2026-10-04 ユーザー判断）は、replica の `graph/` の木の代わりに、移行元の store から相手の順に読んで送る（AC-6 より前の edge は replica に無いため）。自分のフォロー、自分のブロック、自分への follow（フォロワー）の順に、それぞれ 64 件ずつ送る。`channel/` の item より先に送る。
+    - フォロワーは、#1650 から全員を送る（移行先のフォロワーの一覧を移行元とそろえる。2026-10-07 ユーザー判断）。それまでは、移行先が相互フォローを判定して DM を送受信するため、自分がフォローしている相手からの follow だけを、そのフォローと同じ page で送っていた。ミュートは端末ごとのまま送らない（ADR 0022）。
   - 移行元は、送信待ちの行を先に replica へ書き、replica を W5 の周回と同じ prefix の木（1 照会 64 key）で辿る。送り直しは、行の無い旧 profile（W5 AC-3 より前の確定）も行にしてから書く（ADR 0061 §8、#1646）。読む量はアカウントの item の数で、投稿・履歴の量に依らない。
   - 上限: 1 frame は 1 MiB、`items` は 64 件まで。総量では打ち切らない（ユーザー決定）。frame の待ちは 30 秒、確定の ACK の待ちは 60 秒。
 - 移行先は frame の大きさ・件数・順序・総数と、各 item の封（受けた鍵から導出した payload の鍵で開く）と種類を確かめる。外れたら確定せず、保存を消して `invalid` にする。
@@ -76,7 +77,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 移行元の page: 最初の page の前に、送信待ちの取り下げを書く（取り下げた投稿を取り下げの record とともに送る）。保護参照の索引（参照・replica・key・docs author の順）を続きの位置の次から読み、範囲より前の bucket と対象外の replica は seek で飛ばして行を読まない。1 page は 64 件・照会 8 回まで（届かなければ、その位置を続きにする）。1 page の照会の数・読む行・bytes と、同時の処理（1 つ）は、選択外の履歴の量に依らない。
 - 移行先の置き場: 受けたアカウントの DB の隣の journal（`<db>.account-history.json`。範囲・続きの位置・保存した page の数・反映した page の数）と、page ごとの `<db>.account-history-<n>.json`、blob の部分の `<db>.account-history-<n>-<p>.bin`。record は空でない・NUL を含まない・範囲の replica であることを、blob は順番・長さ・hash を確かめる。page は `page` を受けたら保存して journal を進め、ACK を返す。確定していない page の部分は取消・失敗で消し、再起動で残ったものは次の受信で消す。
 - 反映: そのアカウントの runtime の起動時（使っているアカウントなら page の保存の後）に、page ごとに自分の record（`put_owned_record`）と blob（保護参照 `own_blob:<hash>`）として保存し、反映した page から消す。既にある自分の record は上書きしない。範囲の終わりまで反映したら journal も消す。
-- 中止・失敗・再開（ユーザー決定）: 履歴の途中の取消（どちらの端末からも）・切断・保存の失敗では、必須の移行は完了のまま、履歴は止まった理由（`stopped`）を結果に持つ。もう一度つないで同じ範囲を選ぶと、journal の続きの位置から受ける（受けた page は送り直さない）。別の範囲は最初から。自動の再接続・一時停止はしない。
+- 中止・失敗・再開（ユーザー決定）: 履歴の途中の取消（どちらの端末からも）・切断・保存の失敗では、必須の移行は完了のまま、履歴は止まった理由（`stopped`）を結果に持つ。もう一度つないで同じ範囲を選ぶと、journal の続きの位置から受ける（受けた page は送り直さない）。別の範囲は最初から。続きの位置は送り元の端末の索引の位置なので、journal に送り元の端末（endpoint id）を持ち、別の端末からは最初から受ける（#1650）。自動の再接続・一時停止はしない。
 - 切替（ユーザー決定）: 移行先は履歴を受ける間は完了にせず、履歴が終わったら（完了・中止・失敗）完了の画面を示す（切替は §8 の「このアカウントを使う」から）。切替は runtime と endpoint を作り直し、移行の接続が切れるので、履歴を受ける間は切り替えない。移行先は履歴を受ける間は Dialog を閉じさせない（「戻る」と閉じるボタンを出さず、Escape・外側のクリックでも閉じない）。履歴を終えるのは「履歴の受け取りをやめる」だけ（2026-10-04 ユーザー決定。閉じる操作で履歴が止まり、切り替わらなかった監査の指摘 B-1 による）。
 - 表示: 移行先では、移した投稿は自分のプロフィールに出る（作者の bucket の索引を、手元の自分の record から読む）。topic の timeline は時間 bucket を相手の端末から読むので、移行先の自分の record だけでは出ない（相手の端末が居れば読める）。取り下げは、表示した投稿の背景の確認が投稿の日の bucket を読んで反映する（確認先が旧形式の replica だけだった既存の不具合を、2026-10-04 のユーザー判断でこの AC で直した）。
 - 実装: core の `AccountTransferHistory`・`AccountHistoryRecord`・`AccountHistoryCursor` と frame の `history`・`records`・`blob`・`page`、store の `protected_records_after`、iroh-node の `AccountBundleSource::history_page`・`blob_part`・`AccountBundleSink::history`・`AccountHistoryStaging`、desktop-runtime の `accounts/history.rs`、app-api の `schedule_withdrawal_check`。
@@ -101,6 +102,22 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 - 設定の「アカウント」は、「アカウントを別の端末へ移す」ボタンで移行元の dialog を開く（#1629、2026-10-06。3 つの方法の差を示す旧い形を改めた。差は ADR 0047 §6）。
 - 実装: `apps/desktop/src/components/settings/AccountTransferPanel.tsx` の `TransferScope` と完了の画面、`apps/desktop/src/shell/page/AccountMenu.tsx`、`AccountKeyPanel.tsx`。
 
+### 9. 本人の端末どうしの和集合の同期（#1650、2026-10-07 ユーザー判断）
+
+同じアカウントを使う 2 台の端末で、プロフィール・フォロー・フォロワー・投稿などを、両端末の和集合にそろえる。W5 の自動同期（ADR 0061）が運ばない旧データ（同期の行を作る前の edge）とフォロワー、投稿の記録も合わせる。
+
+- 入口: アカウントメニューの、使用中のアカウントの行の右端（チェックの右）の「プロフィールの端末間同期」（`refresh-cw`）。同期できるのは起動中のアカウントだけなので、使用中でない行には出さない（menu のために他のアカウントの通信を起動しない）。押すと同じ名前の Dialog を開いて待ち受け、閉じると止める。
+- 待ち受けと接続: 押した端末は 5 分間待ち受け、本人の端末の候補（account の hint topic の購読の相手と、その topic の rendezvous の応答の本人の端末。ADR 0061 §7）へ、ALPN `/kukuri/account-union/1` でつなぐ。待つ間は rendezvous の応答のたびに、まだつないでいない候補へつなぐ（相手ごとに 1 つ。周期処理を新設しない）。移行と同じ枠（端末ごとに 1 つ）を使い、新しい同期・移行は前のものを取り消す。
+- 確かめ方: つないだ端末は、アカウント鍵から導出した鍵（ADR 0061 §1）で両端末の endpoint id と向きに束縛した証明を送る。受けた端末は、待ち受けていて証明が正しいときだけ受けて、自分の証明を返す。つないだ端末は相手の証明を確かめてから送る。どちらの端末も、相手が同じアカウント鍵を持つことを確かめる前に何も送らない。
+  - 確認コードは出さない（両端末で利用者が押したことと、同じアカウント鍵を持つことで足りる）。
+  - 待ち受けは最初に確かめた 1 台とだけ使う。両端末が互いへつないだときは、endpoint id の小さい端末からの接続を使う（受けた端末は、同じ相手へつないでいる最中で自分の id が小さいときは断る）。
+- 送るもの: 両端末が同じ接続で同時に、§5 の必須 bundle から鍵を除いたもの（profile・表示例外・channel の参加と鍵・担当と依頼・参加者、store の自分のフォローとブロック・フォロワー全員）と、§6 の投稿の履歴の「すべて」（本文・添付の blob つき）を、移行と同じ frame で送る。stream は向きごとに 1 本で、bundle の総数の ACK の後に、受ける側が範囲と続きの位置を送り、page ごとに ACK する。
+- 取り込み: 移行と同じ置き場と反映（§5・§6。使っているアカウントなので、確定・page の保存の直後に反映する）。item は W5 の item 単位の merge（ADR 0061 §4）で、片方にしか無いものは足し、同じ key は新しい版を採る。同じ相手へのフォロー・ブロックは新しい操作を採る（後で解除していれば解除のまま）。投稿の記録は、既にある自分の record を上書きしない。
+- 結果: 受けた item・投稿の数と、相手に無かった本文・添付の数を示す。どちらかの向きが止まったら止まった理由を示し、相手に取り消されて送り終える前に止まったときも、受け終えていても中断として示す（独立監査 B-1）。閉じる側は、どの stream も最後の書込みの受取りを確かめてから閉じ（相手の ACK を読むか、`stopped` を待つ）、iroh の QUIC（noq）は閉じた接続でも受け取り済みの data を読ませるので、送り終えた向きが閉じる順で失敗になることはない（この前提は noq の実装に依る。版を上げるときは、正常な終わりで止まった理由が無いことを判定する試験で確かめる）。投稿の途中で止まったら、同じ相手ともう一度両端末で押すと、続きの位置から受ける（§6）。
+- 量: 送る量は、アカウントの item・フォロー・フォロワー・自分の投稿の記録の数に比例する。利用者の明示の操作で両端末の全件を比べるため、毎回すべてを送る（続きの位置は止まったときだけ使う）。読み出しは移行と同じ page（64 件・1 MiB）で背景で進め、画面の操作を待たせない。
+- 前提と対象外: 両端末が新しい版で、Community Node に同意して rendezvous で互いを見つけられること（自動同期と同じ）。3 台以上の同時の同期、旧版の端末との同期、同期の後に届いたフォロワーの自動の同期は扱わない。
+- 実装: core の `AccountSyncKeys::pairing_proof`、iroh-node の `AccountTransfer::sync`・`sync_peers`（`account_transfer/sync.rs`）、desktop-runtime の `start_account_union_sync`・`account_union_sync_peers`、app-api の `account_transfer_edges_page` のフォロワーの段、store の `list_follow_edges_by_target_after`、画面の `AccountMenu`・`AccountTransferPanel`（`sync` の役）。
+
 ## 採らない方式
 
 - 秘密鍵・チャンネルの秘密を QR に直接載せる: 画面を見た人・リンクを受け取った経路に秘密が渡る（#1213 の Non-goals）。
@@ -121,7 +138,7 @@ ADR 0002 の template に従う。
 - Feature 名: QR・専用リンクの移行の招待と確認、必須 bundle と任意の投稿の履歴の転送
 - Durable / Transient: 招待と確認の状態は Transient（移行元・移行先の memory だけ。期限・取消・停止で終わる）。Web 版の QR の読み取りの映像の frame も Transient（読み取りの間の memory の canvas だけ）。移行先の置き場（staging）は Durable で、反映・失敗・取消・次の受信で消す。履歴の置き場（journal と page）も Durable で、反映した page から消し、範囲の終わりまで反映したら journal も消す（アカウントごとに 1 つ）
 - Canonical Source: 移行元の memory の招待（期限・使用済みの正本）。bundle の正本は移行元の account の replica の item。履歴の正本は移行元の保護所有先の自分の record と blob（移した後は移行先の保護所有先にも同じ値を持つ）
-- Replicated?: しない。明示した 2 端末の間だけ
+- Replicated?: しない。明示した 2 端末の間だけ（§9 の同期は、同じアカウント鍵を持つことを確かめた本人の 2 端末の間だけ）
 - Rebuildable From: 再構築しない。やり直すときは新しい招待を出す（置き場は新しい受信で作り直す）
 - Public Replica / Private Replica / Local Only: Local Only（置き場は受けたアカウントの DB の隣。中身は封のまま）
 - Gossip Hint 必要有無: なし
@@ -129,7 +146,8 @@ ADR 0002 の template に従う。
 - SQLite projection 必要有無: なし（反映は W5 の item 単位の merge で、既存の行へ入る）
 - 必須 contract: 招待の形式・上限・期限、証明と確認コードの束縛、秘密の `Debug` の非出力、bundle と履歴の frame の上限と item の検証（core の試験）、正例と負例の接続、確定の境界の故障、履歴の中止・失敗・続きの位置（iroh-node の試験）、保存・確定・反映・やり直し・再起動、履歴の page の範囲と読む量・置き場の再開と回収・往復の反映と契約（desktop-runtime の試験）、保護参照の索引の読み出し（store の試験と Web の browser 試験）、移行の後の同意を経た自動同期への接続と、端末ごとに残すもの・担当の分離（desktop-runtime の 2 端末の試験）
 - 必須 scenario: Web↔native の往復（W8）
-- 新しい外部送信: なし（利用者が選んだ自分の端末との P2P の接続。relay は既存の relay だけ）
+- 新しい外部送信: なし（利用者が選んだ自分の端末との P2P の接続。relay は既存の relay だけ。§9 の同期が Community Node へ送るのは、既存の account の hint topic の rendezvous の不透明な鍵だけ）
+- §9 の同期の待ち受けと接続の状態は Transient（memory だけ。期限・取消・停止で終わる）。受けたものの置き場・反映・消し方は移行と同じ
 
 ## References
 

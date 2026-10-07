@@ -6,6 +6,7 @@ import { SettingsStoryFrame } from './SettingsStoryFrame';
 
 // #1211: QR・専用リンクの移行。mock の API は接続と相手の承認を即座に済ませ、1.5 秒の転送中の後に完了にする。
 // 履歴を選んだときは、完了の前に 2 秒の履歴の受信を挟む（AC-3）。
+// #1650: 本人の端末どうしの同期は、1.5 秒待ってからもう一方の端末とつながり、同じ流れで投稿まで受けて完了する。
 const meta = {
   title: 'Settings/AccountTransferPanel',
   component: AccountTransferPanel,
@@ -86,5 +87,16 @@ export const TargetCompletedWithHistory: Story = {
     await chooseHistoryAndConfirm(context);
     const canvas = within(context.canvasElement);
     await expect(await canvas.findByTestId('account-transfer-history-result', {}, { timeout: 6000 })).toBeVisible();
+  },
+};
+
+/** #1650: アカウントメニューの使用中の行から開く同期。もう一方の端末を待つ間の手順・残り時間・合わせるもの。 */
+export const SyncWaiting: Story = { args: { role: 'sync' } };
+
+export const SyncCompleted: Story = {
+  args: { role: 'sync' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByTestId('account-transfer-history-result', {}, { timeout: 8000 })).toBeVisible();
   },
 };

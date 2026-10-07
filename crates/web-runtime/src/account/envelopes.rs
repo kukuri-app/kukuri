@@ -1,5 +1,6 @@
 //! 署名済み envelope と、それから作る profile・follow・block の行（`Store`。native の `sqlite/envelopes.rs`・`social.rs`）。
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -17,7 +18,7 @@ use super::social::{PARTICIPANT_STORES, restale_participants};
 use super::{newest_first, next_cursor};
 use crate::IndexedDbCache;
 use crate::content_cache::{BLOCKS, ENVELOPES, FOLLOWS, PROFILES};
-use crate::idb::Mode;
+use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, between, key, num, prefix, text, top};
 
 fn envelope_cursor(envelope: &KukuriEnvelope) -> TimelineCursor {
@@ -384,5 +385,49 @@ impl Store for IndexedDbCache {
         limit: usize,
     ) -> Result<Vec<BlockEdge>> {
         edges_after(self, BLOCKS, subject_pubkey, after, limit).await
+    }
+
+    /// target の索引の中は主 key（subject・target）の順。続きの位置へは主 key で飛び、手前の行を読まない。
+    async fn list_follow_edges_by_target_after(
+        &self,
+        target_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        let (target, after) = (target_pubkey.to_owned(), after.map(str::to_owned));
+        self.run(move |db| async move {
+            let mut edges = Vec::new();
+            if limit == 0 {
+                return Ok(edges);
+            }
+            let tx = Txn::begin(&db.idb, &[FOLLOWS], Mode::Read)?;
+            let range = rows::only(&text(&target))?;
+            let request = rows::source(&tx, FOLLOWS, Some("target"))?.cursor(&range, false)?;
+            while let Some(cursor) = idb::next(&request).await? {
+                let edge: FollowEdge = rows::decode(&cursor.value().map_err(js_error)?)?;
+                match after
+                    .as_deref()
+                    .map(|after| (edge.subject_pubkey.as_str().cmp(after), after))
+                {
+                    Some((Ordering::Less, after)) => {
+                        let to = key(&[text(after), text(&target)]);
+                        cursor
+                            .continue_primary_key(&text(&target), &to)
+                            .map_err(js_error)?;
+                        continue;
+                    }
+                    Some((Ordering::Equal, _)) => {}
+                    _ => {
+                        edges.push(edge);
+                        if edges.len() == limit {
+                            break;
+                        }
+                    }
+                }
+                cursor.continue_().map_err(js_error)?;
+            }
+            Ok(edges)
+        })
+        .await
     }
 }
