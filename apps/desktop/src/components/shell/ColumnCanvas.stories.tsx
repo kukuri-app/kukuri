@@ -30,6 +30,7 @@ function CanvasStory({ count = 1 }: { count?: number }) {
   const visibleColumns = columns.slice(0, count);
   const [activeColumnId, setActiveColumnId] = useState(visibleColumns[0].id);
   const [timelineView, setTimelineView] = useState<TimelineViewId>('feed');
+  const [timelineFlow, setTimelineFlow] = useState(false);
   return (
     <div className='shell-phase1 min-h-screen'>
       <ColumnCanvas activeColumnId={activeColumnId} onActivateColumn={setActiveColumnId}>
@@ -53,6 +54,8 @@ function CanvasStory({ count = 1 }: { count?: number }) {
                     { id: 'bookmarks', label: 'Bookmarks' },
                   ]}
                   onSelect={setTimelineView}
+                  flow={timelineFlow}
+                  onToggleFlow={() => setTimelineFlow((flow) => !flow)}
                 />
               ) : undefined
             }

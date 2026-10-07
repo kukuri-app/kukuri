@@ -74,6 +74,7 @@ import {
   columnIdentityId,
   openTransientColumn,
   setColumnTimelineView,
+  toggleColumnTimelineFlow,
   setTimelineColumnTopic,
   type ColumnKind,
   type ColumnState,
@@ -750,6 +751,8 @@ export function DesktopShellPage({
     );
     focusTimelineView(view);
   };
+  const toggleTimelineFlow = (column: ColumnState) =>
+    setWorkspaceState((current) => activateColumn(toggleColumnTimelineFlow(current, column.id), column.id));
   const selectColumnTimelineTopic = async (column: ColumnState, topicId: string) => {
     const scope = { topicId, channelId: null };
     const nextColumn = { ...column, scope };
@@ -830,6 +833,7 @@ export function DesktopShellPage({
         void selectColumnTimelineTopic(column, topicId)
       }
       onSelectTimelineView={selectColumnTimelineView}
+      onToggleTimelineFlow={toggleTimelineFlow}
       onOpenChannelManager={channelEntries.openChannelManagerForColumn}
       onOpenChannelSettings={channelEntries.openChannelSettingsForColumn}
       onRefreshNotifications={refreshNotificationsColumn}

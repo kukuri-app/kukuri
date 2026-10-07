@@ -264,6 +264,7 @@
     "columnPages": "カラムページ",
     "composeTarget": "投稿先",
     "feed": "フィード",
+    "feedFlow": "フィード（Flowモード）",
     "noBookmarks": "まだブックマークした投稿がありません。",
     "bookmarksLoading": "ブックマークを読み込み中…",
     "bookmarksEmpty": {

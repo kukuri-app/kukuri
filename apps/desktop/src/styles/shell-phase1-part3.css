@@ -503,19 +503,19 @@
   display: block;
 }
 
-.profile-refresh-spinning {
-  animation: profile-refresh-rotation calc(var(--motion-duration-standard) * 5) linear infinite;
+.icon-spinning {
+  animation: icon-spinning-rotation calc(var(--motion-duration-standard) * 5) linear infinite;
 }
 
-@keyframes profile-refresh-rotation {
+@keyframes icon-spinning-rotation {
   to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .profile-refresh-spinning { animation: none; }
+  .icon-spinning { animation: none; }
 }
 
-[data-reduced-motion='reduce'] .profile-refresh-spinning {
+[data-reduced-motion='reduce'] .icon-spinning {
   animation: none;
 }
 

@@ -106,6 +106,34 @@ async fn the_bundle_carries_every_transferred_kind_and_merges_on_a_new_device() 
     assert_eq!(epoch(&target).await, epoch(&source).await);
 }
 
+/// #1646: AC-3 より前に確定した profile（item の行が無い）も bundle に入り、移行先に自分の名前が出る。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_profile_confirmed_before_account_sync_is_transferred() {
+    let keys = generate_keys();
+    let (source, _) = memory_device(&keys, "device-a").await;
+    legacy_profile(&source, "before account sync").await;
+    let pages = bundle(&source).await;
+    let keys_sent = keys_of(&pages);
+    assert!(keys_sent.contains(&"profile".to_string()), "{keys_sent:?}");
+
+    let (target, _) = memory_device(&keys, "device-b").await;
+    for page in pages {
+        target
+            .merge_account_transfer_items(page)
+            .await
+            .expect("merge");
+    }
+    assert_eq!(
+        target
+            .get_my_profile()
+            .await
+            .expect("profile")
+            .name
+            .as_deref(),
+        Some("before account sync")
+    );
+}
+
 /// 2b: 投稿を 10 倍にしても、bundle の page の数・item・bytes は変わらない（投稿・履歴は bundle に入らない）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_bundle_does_not_grow_with_posts() {

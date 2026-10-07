@@ -576,8 +576,10 @@ impl AppService {
     }
 
     /// 送信待ちの行を、未書込みの索引から 64 件ずつ、索引が空になるまで送り直す。手元の replica の同じ key の版が
-    /// 行の版と同じなら書いたとし、違えば行の版を書く。書けなければ止め、次の契機で再開する。
+    /// 行の版と同じなら書いたとし、違えば行の版を書く。書けなければ止め、次の契機で再開する。先に、行の無い旧い
+    /// profile を行にする（#1646）。
     pub(crate) async fn resend_account_sync_items(&self) -> Result<()> {
+        self.adopt_unsynced_profile().await?;
         let store = &self.services.projection_store;
         loop {
             let rows = store

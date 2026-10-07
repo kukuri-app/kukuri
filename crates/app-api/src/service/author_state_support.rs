@@ -491,13 +491,86 @@ async fn relay_author_profile(
     }
 }
 
-/// `profile/latest`・`graph/follows/<target>`・`graph/blocks/<target>` の key を 1 つ読んで反映する。
-/// それ以外の key は何もしない。
+/// key の record を読み、検証に通った最も新しい envelope と、その record の docs author を返す。
 ///
 /// 著者の docs author が分かっていれば、docs author と key の組で 1 件読む(ADR 0053 §6)。誰でも書ける replica でも、
 /// 他の名義の record は何件あっても読まない。組の record が無い・検証に通らないとき(docs author を申告する前の旧 record、
 /// 端末ごとの旧名義)と、docs author が分からないときは、上限つき(`AUTHOR_RECORDS_PER_KEY` 件)で調べ、
 /// 検証に通ったものから最も新しい envelope を選ぶ(best effort)。
+async fn newest_author_envelope(
+    docs_sync: &dyn DocsSync,
+    author_pubkey: &str,
+    replica: &ReplicaId,
+    kind: AuthorKeyKind,
+    key: &str,
+    docs_author: Option<&str>,
+    policy: DocFetchPolicy,
+) -> Result<Option<(KukuriEnvelope, Option<String>)>> {
+    if let Some(docs_author) = docs_author
+        && let Some(record) = docs_sync
+            .query_replica_by_author(replica, docs_author, key, policy)
+            .await?
+        && let Some(envelope) = verified_author_envelope(
+            docs_sync,
+            replica,
+            author_pubkey,
+            kind,
+            &record,
+            Some(docs_author),
+            policy,
+        )
+        .await?
+    {
+        return Ok(Some((envelope, Some(docs_author.to_string()))));
+    }
+    let mut newest: Option<(KukuriEnvelope, Option<String>)> = None;
+    let records = docs_sync
+        .query_replica_exact_bounded(replica, key, AUTHOR_RECORDS_PER_KEY, policy)
+        .await?;
+    for record in &records {
+        if let Some(envelope) = verified_author_envelope(
+            docs_sync,
+            replica,
+            author_pubkey,
+            kind,
+            record,
+            None,
+            policy,
+        )
+        .await?
+            && newest.as_ref().is_none_or(|(current, _)| {
+                (envelope.created_at, envelope.id.as_str())
+                    > (current.created_at, current.id.as_str())
+            })
+        {
+            newest = Some((envelope, record.docs_author.clone()));
+        }
+    }
+    Ok(newest)
+}
+
+/// 自分の author の replica の手元の profile(検証に通った最も新しい envelope)。account 同期の item の行が無い、
+/// W5 AC-3 より前に確定した profile を行として採るときに読む(ADR 0061 §8、#1646)。
+pub(crate) async fn own_profile_envelope(
+    services: &ServiceHandles,
+) -> Result<Option<KukuriEnvelope>> {
+    let local = services.keys.public_key_hex();
+    let docs_author = services.docs_sync.local_docs_author().await?;
+    Ok(newest_author_envelope(
+        services.docs_sync.as_ref(),
+        &local,
+        &author_replica_id(&local),
+        AuthorKeyKind::Profile,
+        &stable_key("profile", "latest"),
+        docs_author.as_deref(),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await?
+    .map(|(envelope, _)| envelope))
+}
+
+/// `profile/latest`・`graph/follows/<target>`・`graph/blocks/<target>` の key を 1 つ読んで反映する。
+/// それ以外の key は何もしない。読む record の選び方は `newest_author_envelope`。
 ///
 /// 反映した envelope が docs author を申告していれば(署名つきの tag)、その著者の docs author として覚える。
 async fn hydrate_author_record(
@@ -511,51 +584,17 @@ async fn hydrate_author_record(
     let Some(kind) = AuthorKeyKind::of(key) else {
         return Ok(AuthorHydration::default());
     };
-    let docs_sync = services.docs_sync.as_ref();
-    let mut newest: Option<KukuriEnvelope> = None;
-    let mut record_author = docs_author.map(str::to_string);
-    if let Some(docs_author) = docs_author
-        && let Some(record) = docs_sync
-            .query_replica_by_author(replica, docs_author, key, policy)
-            .await?
-    {
-        newest = verified_author_envelope(
-            docs_sync,
-            replica,
-            author_pubkey,
-            kind,
-            &record,
-            Some(docs_author),
-            policy,
-        )
-        .await?;
-    }
-    if newest.is_none() {
-        let records = docs_sync
-            .query_replica_exact_bounded(replica, key, AUTHOR_RECORDS_PER_KEY, policy)
-            .await?;
-        for record in &records {
-            if let Some(envelope) = verified_author_envelope(
-                docs_sync,
-                replica,
-                author_pubkey,
-                kind,
-                record,
-                None,
-                policy,
-            )
-            .await?
-                && newest.as_ref().is_none_or(|current| {
-                    (envelope.created_at, envelope.id.as_str())
-                        > (current.created_at, current.id.as_str())
-                })
-            {
-                newest = Some(envelope);
-                record_author = record.docs_author.clone();
-            }
-        }
-    }
-    let Some(envelope) = newest else {
+    let Some((envelope, record_author)) = newest_author_envelope(
+        services.docs_sync.as_ref(),
+        author_pubkey,
+        replica,
+        kind,
+        key,
+        docs_author,
+        policy,
+    )
+    .await?
+    else {
         return Ok(AuthorHydration::default());
     };
     if kind == AuthorKeyKind::Profile {

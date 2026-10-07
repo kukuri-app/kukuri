@@ -71,7 +71,7 @@ for (const width of [1280, 1024, 390]) {
       await page.evaluate(() => { window.__profileRefreshTest.hold = true; });
       await refresh.click();
       await expect(refresh).toHaveAttribute('aria-busy', 'true');
-      await expect(refresh.locator('svg')).toHaveCSS('animation-name', 'profile-refresh-rotation');
+      await expect(refresh.locator('svg')).toHaveCSS('animation-name', 'icon-spinning-rotation');
       await refresh.press('Enter');
       await expect.poll(() => page.evaluate(() => window.__profileRefreshTest.calls)).toBe(initialCalls + 1);
       // Sample while the response is held; a final screenshot would miss the original flicker.

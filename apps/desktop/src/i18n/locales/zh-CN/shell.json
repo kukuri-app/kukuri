@@ -264,6 +264,7 @@
     "columnPages": "栏目页面",
     "composeTarget": "发布目标",
     "feed": "动态",
+    "feedFlow": "动态（Flow 模式）",
     "noBookmarks": "还没有收藏的帖子。",
     "bookmarksLoading": "正在加载收藏…",
     "bookmarksEmpty": {
