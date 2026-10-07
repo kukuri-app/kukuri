@@ -17,7 +17,7 @@ impl IrohGossipTransport {
     ) -> Result<Self> {
         let relay_config = relay_config.normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
-        let (endpoint, discovery) = bind_endpoint_with_options(
+        let (endpoint, discovery, connection_paths) = bind_endpoint_with_options(
             network_config.bind_addr,
             &dht_options,
             &relay_config,
@@ -31,6 +31,7 @@ impl IrohGossipTransport {
             network_config,
             &relay_config,
             relay_urls,
+            connection_paths,
         ))
     }
 
@@ -44,7 +45,7 @@ impl IrohGossipTransport {
     ) -> Result<Self> {
         let relay_config = relay_config.normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
-        let (endpoint, discovery) =
+        let (endpoint, discovery, connection_paths) =
             bind_endpoint_relay_only(&relay_config, Arc::clone(&relay_urls)).await?;
         Ok(Self::spawn_gossip_transport(
             endpoint,
@@ -52,6 +53,7 @@ impl IrohGossipTransport {
             network_config,
             &relay_config,
             relay_urls,
+            connection_paths,
         ))
     }
 
@@ -61,6 +63,7 @@ impl IrohGossipTransport {
         network_config: TransportNetworkConfig,
         relay_config: &TransportRelayConfig,
         relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
+        connection_paths: GossipConnectionPaths,
     ) -> Self {
         let gossip = Gossip::builder().spawn(endpoint.clone());
         let router = Router::builder(endpoint.clone())
@@ -111,6 +114,7 @@ impl IrohGossipTransport {
             relay_urls,
             env_locked: Arc::new(Mutex::new(false)),
             status_changes: StatusChanges::default(),
+            connection_paths,
             #[cfg(any(test, feature = "test-support"))]
             status_read_steps: Arc::new(AtomicU64::new(0)),
         }
@@ -177,6 +181,7 @@ impl IrohGossipTransport {
             relay_urls,
             env_locked: Arc::new(Mutex::new(false)),
             status_changes: StatusChanges::default(),
+            connection_paths: GossipConnectionPaths::default(),
             #[cfg(any(test, feature = "test-support"))]
             status_read_steps: Arc::new(AtomicU64::new(0)),
         })
@@ -192,7 +197,7 @@ impl IrohGossipTransport {
         let network_config = TransportNetworkConfig::loopback();
         let relay_config = TransportRelayConfig::default().normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
-        let (endpoint, discovery) = bind_endpoint_with_options(
+        let (endpoint, discovery, connection_paths) = bind_endpoint_with_options(
             network_config.bind_addr,
             &DhtDiscoveryOptions::disabled(),
             &relay_config,
@@ -206,12 +211,19 @@ impl IrohGossipTransport {
             network_config,
             &relay_config,
             relay_urls,
+            connection_paths,
         ))
     }
 
     /// 通信状態の変わった部分の印を、この印へ付ける(#1221 R2-D)。topic を購読する前に呼ぶ。
     pub fn with_status_changes(mut self, changes: StatusChanges) -> Self {
         self.status_changes = changes;
+        self
+    }
+
+    /// 共有endpointへbind前に取り付けたhookを渡す。topicの購読前に呼ぶ。
+    pub fn with_connection_paths(mut self, paths: GossipConnectionPaths) -> Self {
+        self.connection_paths = paths;
         self
     }
 
@@ -227,14 +239,16 @@ pub(crate) async fn bind_endpoint_with_options(
     relay_config: &TransportRelayConfig,
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
     secret_key: Option<SecretKey>,
-) -> Result<(Endpoint, Arc<MemoryLookup>)> {
+) -> Result<(Endpoint, Arc<MemoryLookup>, GossipConnectionPaths)> {
     let discovery = Arc::new(MemoryLookup::new());
+    let connection_paths = GossipConnectionPaths::default();
     let mut builder = build_endpoint_builder(
         EndpointBuilder::new(presets::Minimal).relay_mode(relay_config.relay_mode()?),
         &discovery,
         Some(dht_options),
         relay_urls,
     )?;
+    builder = builder.hooks(connection_paths.clone());
     if let Some(secret_key) = secret_key {
         builder = builder.secret_key(secret_key);
     }
@@ -254,7 +268,7 @@ pub(crate) async fn bind_endpoint_with_options(
         .await
         .context("failed to bind iroh endpoint")?;
     prepare_endpoint_for_discovery(&endpoint, &discovery, relay_config).await?;
-    Ok((endpoint, discovery))
+    Ok((endpoint, discovery, connection_paths))
 }
 /// relay-only endpoint bind(テスト専用)。IP transport を除去し、実データを relay 経由に強制する。
 /// iroh 本家の relay-only テストと同じ `relay_mode(Custom) + clear_ip_transports` パターン。
@@ -262,14 +276,16 @@ pub(crate) async fn bind_endpoint_with_options(
 async fn bind_endpoint_relay_only(
     relay_config: &TransportRelayConfig,
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
-) -> Result<(Endpoint, Arc<MemoryLookup>)> {
+) -> Result<(Endpoint, Arc<MemoryLookup>, GossipConnectionPaths)> {
     let discovery = Arc::new(MemoryLookup::new());
+    let connection_paths = GossipConnectionPaths::default();
     let mut builder = build_endpoint_builder(
         EndpointBuilder::new(presets::Minimal).relay_mode(relay_config.relay_mode()?),
         &discovery,
         Some(&DhtDiscoveryOptions::disabled()),
         relay_urls,
     )?;
+    builder = builder.hooks(connection_paths.clone());
     builder = builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
     builder = builder.clear_ip_transports();
     let endpoint = builder
@@ -277,7 +293,7 @@ async fn bind_endpoint_relay_only(
         .await
         .context("failed to bind relay-only iroh endpoint")?;
     prepare_endpoint_for_discovery(&endpoint, &discovery, relay_config).await?;
-    Ok((endpoint, discovery))
+    Ok((endpoint, discovery, connection_paths))
 }
 
 #[cfg(not(target_family = "wasm"))]

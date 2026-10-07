@@ -558,6 +558,8 @@ impl IrohGossipTransport {
         let transport_last_error = Arc::clone(&self.last_error);
         let status_changes = self.status_changes.clone();
         let status_key = StatusKey::Topic(topic.as_str().to_string());
+        let connection_paths = self.connection_paths.clone();
+        let mut connections = connection_paths.subscribe();
         let imported_count = bootstrap_peers.len();
         let warm_endpoint = self.endpoint.clone();
         let warm_bootstrap_peers = bootstrap_peers.clone();
@@ -637,9 +639,36 @@ impl IrohGossipTransport {
             let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
             // gossip の actor からの手渡し(容量 256)が溢れて落ちた回数。次の hint に畳んで渡す(#1567 AC-1)。
             let mut gossip_lagged = 0u64;
+            let mut paths = tokio_stream::StreamMap::new();
+            for peer in neighbors_task.read().await.iter() {
+                if let Ok(peer) = peer.parse::<EndpointId>() {
+                    connection_paths.watch_peer(peer, &mut paths);
+                }
+            }
             loop {
                 let idle = neighbors_task.read().await.is_empty();
                 let event = tokio::select! {
+                    Some(_) = paths.next(), if !paths.is_empty() => {
+                        status_changes.mark(status_key.clone());
+                        continue;
+                    }
+                    connected = connections.recv() => {
+                        match connected {
+                            Ok(peer) if neighbors_task.read().await.contains(&peer.to_string()) => {
+                                connection_paths.watch_peer(peer, &mut paths);
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => {
+                                for peer in neighbors_task.read().await.iter() {
+                                    if let Ok(peer) = peer.parse::<EndpointId>() {
+                                        connection_paths.watch_peer(peer, &mut paths);
+                                    }
+                                }
+                                status_changes.mark(status_key.clone());
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     event = receiver.next() => event,
                     changed = candidates_added.changed(), if idle => {
                         if changed.is_err() {
@@ -725,6 +754,7 @@ impl IrohGossipTransport {
                         }
                     }
                     Ok(GossipEvent::NeighborUp(peer_id)) => {
+                        connection_paths.watch_peer(peer_id, &mut paths);
                         rejoin_step = 0;
                         gossip_health.success(peer_id, Duration::ZERO).await;
                         joined_task_state.store(true, Ordering::SeqCst);
@@ -750,6 +780,14 @@ impl IrohGossipTransport {
                         }
                     }
                     Ok(GossipEvent::NeighborDown(peer_id)) => {
+                        let removed = paths
+                            .keys()
+                            .filter(|(peer, _)| *peer == peer_id)
+                            .copied()
+                            .collect::<Vec<_>>();
+                        for key in removed {
+                            paths.remove(&key);
+                        }
                         let mut guard = neighbors_task.write().await;
                         guard.remove(peer_id.to_string().as_str());
                         if guard.is_empty() {
@@ -819,6 +857,7 @@ impl IrohGossipTransport {
                 let _ = update.await;
             }
         }
+        self.connection_paths.clear();
     }
 
     pub async fn shutdown(&self) {
