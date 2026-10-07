@@ -255,15 +255,19 @@ async function openComposer(column) {
   return composer;
 }
 
-/** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。欄に残った文（復元した下書き）は、利用者と同じく欄を押して
- * 全選択から消す（`setValue` の clear は Chrome では React の state を消さず、列が active になる再描画で文が戻る）。本文は要素へ
- * 入れる（safaridriver の key の操作は、同じ文字が続くと 2 つ目を落とす）。 */
-async function post(browser, content, column = publicColumn(browser), file = null) {
-  const composer = await openComposer(column);
-  await composer.click();
+/** 欄に残った文を、利用者と同じく欄を押して全選択から消し、`text` を打つ（`setValue` の clear は Chrome では React の state を
+ * 消さない。clear から打つまでの間に再描画（列の active 化・定期の読み直し）が入ると、消した文が欄に戻り、打った文がその後ろに
+ * つながる。#1579・#1660）。文は要素へ入れる（safaridriver の key の操作は、同じ文字が続くと 2 つ目を落とす）。 */
+async function replaceValue(browser, field, text) {
+  await field.click();
   await browser.keys([SELECT_ALL, 'a']);
   await browser.keys(Key.Backspace);
-  await composer.addValue(content);
+  await field.addValue(text);
+}
+
+/** 列（既定は公開の列）の投稿欄から投稿する。`file` は添える画像。欄に残った文（復元した下書き）は置き換える。 */
+async function post(browser, content, column = publicColumn(browser), file = null) {
+  await replaceValue(browser, await openComposer(column), content);
   if (file) await attach(browser, column, file);
   await column.$('button=Post').click();
   await sees(browser, content);
@@ -1064,11 +1068,11 @@ async function openOwnProfile(browser) {
   return profile;
 }
 
-/** 自分の profile の表示名を変える。 */
+/** 自分の profile の表示名を変える（編集の欄には今の表示名が入っている）。 */
 async function setOwnName(browser, name) {
   const own = await openOwnProfile(browser);
   await own.$('button=Edit Profile').click();
-  await own.$('input[placeholder="Visible label"]').setValue(name);
+  await replaceValue(browser, own.$('input[placeholder="Visible label"]'), name);
   await own.$('button=Save Profile').click();
 }
 
