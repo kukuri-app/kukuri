@@ -30,7 +30,7 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r2`）。依存の fork（AC
 - 対象は、公開 topic の検証済み投稿の本文・添付・repost の snapshot の添付・リンクプレビュー画像、検証済み profile の画像、公開 topic の有効な custom reaction の asset。live session・game room・Dome の資産は対象外とし、DHT の告知・検索をしない。
 - 公開参照の索引 `public_blob_refs(source_kind, source_id, blob_hash)` を、公開記録を書く transaction で記録ごとに置き換える（`post`・`link_preview`・`profile`・`reaction`）。投稿の取り下げと projection の回収は、その投稿の `post`・`link_preview` を外す。同じ hash を別の公開記録が参照している間は公開のまま。
 - DM・private channel・pin/保護だけの保存物は公開の根拠にしない。`own_blob:` などの保護参照は、公開の判定にも告知の目印にも使わない（優先度だけに使う。§2）。
-- 導入前の行は、告知の task が種類ごとに rowid の位置から 1 回 128 行ずつ取り込む（`public_blob_ref_backfill`。終えた種類の行は消す）。導入後に書く行は書込みの transaction で載るので、位置を巻き戻さない。
+- 導入前の行は、告知の task が種類ごとに rowid の位置から 1 回 128 行ずつ取り込む（`public_blob_ref_backfill`。投稿・profile・reaction。終えた種類の行は消す）。リンクプレビュー画像は手元に表の行が無いので取り込まず、record を書く・読み直すときに載る。導入後に書く行は書込みの transaction で載るので、位置を巻き戻さない。
 
 ### 2. 告知の資格・予定・上限（D4）
 

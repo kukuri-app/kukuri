@@ -360,7 +360,7 @@ N70は旧全購読topic snapshotから自account受信routeを除き、own route
 
 | ID | 入口 → helper → sink | guard / 停止 | 対応contract |
 | --- | --- | --- | --- |
-| N73 | node の組立て（設定オン・補助 index の一覧あり）→ `PublicBlobDiscovery::start`（補助 index の client を 30 秒ごとに組み立て直す）→ `remote_fetch::public_blob_providers` → `Resolver::resolve_stream`。告知は `install_remote_cache` → `start_announcing` → store の予定（時刻順・2 件ずつ）→ `acquire_announce`（Background lane）→ `Announcer::announce` | node ごとに DHT 1 つ・告知 task 1 つ。検索は取得の受付・30 秒・1 要求 4 端末の中で、stream から 16 件まで。告知は予定 512 件・同時 2 件・1 件 30 秒、失敗の後は 30 秒待つ。node 停止で発見と住所解決を外し、DHT の socket を手放す。設定の切替は stack を作り直す | `a_public_blob_comes_from_an_unknown_holder_found_through_the_dht`、`a_blob_without_a_public_record_is_not_searched`、`dropping_a_fetch_and_stopping_the_node_leave_no_search_behind`、`discovered_holders_use_a_fixed_window`、store の `public_blobs::tests`、desktop-runtime の `public_blob_discovery` |
+| N73 | node の組立て（設定オン・補助 index の一覧あり）→ `PublicBlobDiscovery::start`（補助 index の一覧が引けない間は 30 秒ごとにやり直す）→ `remote_fetch::public_blob_providers` → `Resolver::resolve_stream`。告知は `install_remote_cache` → `start_announcing` → store の予定（時刻順・2 件ずつ）→ `acquire_announce`（Background lane）→ `Announcer::announce` | node ごとに DHT 1 つ・告知 task 1 つ。検索は取得の受付・30 秒・1 要求 4 端末の中で、stream から 16 件まで。告知は予定 512 件・同時 2 件・1 件 30 秒、失敗の後は 30 秒待つ。node 停止で発見と住所解決を外し、DHT の socket を手放す。設定の切替は stack を作り直す | `a_public_blob_comes_from_an_unknown_holder_found_through_the_dht`、`a_blob_without_a_public_record_is_not_searched`、`dropping_a_fetch_and_stopping_the_node_leave_no_search_behind`、`discovered_holders_use_a_fixed_window`、store の `public_blobs::tests`、desktop-runtime の `public_blob_discovery` |
 
 ## ブラウザとの直接経路の接続交渉（#1422 W10 AC-2）
 

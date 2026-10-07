@@ -517,7 +517,7 @@
       "mode": "Mode"
     },
     "publicBlobDiscovery": {
-      "description": "When on, this device lets the P2P network (Mainline DHT) and kukuri's auxiliary index know which public post text and attachments, profile images, and custom reaction images in public topics it holds. Items that are neither on this device nor on peers you have connected to are fetched by finding a device that holds them. Content in private channels and DMs is not included.",
+      "description": "When on, this device lets the P2P network (Mainline DHT) know which public post text and attachments, profile images, and custom reaction images in public topics it holds, and registers how to reach this device with kukuri's auxiliary index. Items that are neither on this device nor on peers you have connected to are fetched by finding a device that holds them. Content in private channels and DMs is not included.",
       "label": "Public content discovery",
       "pending": "Switching…"
     },
