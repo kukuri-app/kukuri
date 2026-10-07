@@ -28,6 +28,7 @@ pub enum PolicyPurpose {
     IntakeRightsRequests,
     CollectTesterFeedback,
     HostDomeSessions,
+    FindPublicBlobHolders,
 }
 
 impl PolicyPurpose {
@@ -57,6 +58,7 @@ impl PolicyPurpose {
             Self::IntakeRightsRequests => "権利侵害、削除、訂正、停止等の申出を受け付けて追跡する",
             Self::CollectTesterFeedback => "品質改善のためtester feedbackを受け付ける",
             Self::HostDomeSessions => "owner署名leaseの範囲でDome sessionをhostする",
+            Self::FindPublicBlobHolders => "公開blobの保持端末を探し、到達情報を返す",
         }
     }
 }
@@ -109,6 +111,7 @@ pub enum PolicyDataClass {
     RightsClaim,
     TesterFeedback,
     DomeSession,
+    PublicBlobHolderLookup,
 }
 
 impl PolicyDataClass {
@@ -133,6 +136,9 @@ impl PolicyDataClass {
             Self::RightsClaim => "申出人情報・権利根拠・対象・証拠参照",
             Self::TesterFeedback => "自由記述 feedback・client version・OS",
             Self::DomeSession => "Hosting Lease・manifest・input・ephemeral state",
+            Self::PublicBlobHolderLookup => {
+                "依頼された公開 blob の hash と、見つけた保持端末の endpoint ID・到達情報"
+            }
         }
     }
 }
@@ -183,6 +189,7 @@ pub enum PolicyRetentionRef {
     RightsRequestLifecycle,
     TesterFeedbackDays,
     LeaseOrSessionEnd,
+    BoundedMemoryCache,
 }
 
 impl PolicyRetentionRef {
@@ -205,6 +212,7 @@ impl PolicyRetentionRef {
             Self::RightsRequestLifecycle => "retention.rights_request_*_days",
             Self::TesterFeedbackDays => "retention.tester_feedback_days",
             Self::LeaseOrSessionEnd => "lease close・期限または session 終了まで",
+            Self::BoundedMemoryCache => "件数・時間の上限つきのメモリの cache（保存しない）",
         }
     }
 }
@@ -317,6 +325,7 @@ impl Capability {
             Self::RightsRequestEndpoint => PolicyPurpose::IntakeRightsRequests,
             Self::TesterFeedback => PolicyPurpose::CollectTesterFeedback,
             Self::DomeHosting => PolicyPurpose::HostDomeSessions,
+            Self::PublicBlobSearch => PolicyPurpose::FindPublicBlobHolders,
         };
 
         let common = |data_classes, processing, usage_condition, retention, effect_scope| {
@@ -521,6 +530,20 @@ impl Capability {
                 &[LeaseOrSessionEnd],
                 PolicyEffectScope::OwnerSignedLease,
             ),
+            Self::PublicBlobSearch => CapabilityPolicyDescriptor {
+                external_destinations: &[
+                    ExternalDestination::MainlineDht,
+                    ExternalDestination::KukuriAddrIndex,
+                ],
+                rights_request_paths: &[DisconnectNode, OperatorContact],
+                ..common(
+                    &[ConnectivityMetadata, PublicBlobHolderLookup],
+                    &[MatchPeers],
+                    ConnectionAttempt,
+                    &[BoundedMemoryCache],
+                    ConnectionOnly,
+                )
+            },
         }
     }
 }

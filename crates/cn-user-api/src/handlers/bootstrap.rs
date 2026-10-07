@@ -40,6 +40,7 @@ pub(crate) async fn bootstrap_nodes(
     for node in &mut nodes {
         if node.base_url == state.self_node.base_url {
             node.resolved_urls.seed_peers = seed_peers.clone();
+            node.resolved_urls.public_blob_search = state.blob_provider_search.is_some();
         }
     }
     Ok(Json(BootstrapNodesResponse { nodes }))

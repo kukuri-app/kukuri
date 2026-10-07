@@ -24,6 +24,7 @@ use kukuri_cn_protocol::{
 use kukuri_cn_trust::{RelationStore, TrustParams};
 use sqlx::postgres::PgPool;
 
+use crate::blob_providers::BlobProviderSearch;
 use crate::config::UserApiConfig;
 use crate::dome_hosting::DomeHostingNodeState;
 
@@ -57,6 +58,8 @@ pub struct UserApiState {
     /// user / post surfacing に適用する node-local distance opt-out 判定依存。
     pub(crate) relation_visibility: Option<Arc<RelationVisibilityState>>,
     pub(crate) dome_hosting: Option<Arc<DomeHostingNodeState>>,
+    /// 公開 blob の保持端末の検索（#1632）。None = 提供しない（404、bootstrap の `public_blob_search` は false）。
+    pub(crate) blob_provider_search: Option<Arc<BlobProviderSearch>>,
     readiness_activation_requirement: Option<ReadinessActivationRequirement>,
 }
 
@@ -121,6 +124,12 @@ impl UserApiState {
         self
     }
 
+    /// 公開 blob の保持端末の検索を差し込む（テスト用）。
+    pub fn with_blob_provider_search(mut self, search: Arc<BlobProviderSearch>) -> Self {
+        self.blob_provider_search = Some(search);
+        self
+    }
+
     /// 起動後もactivationの期限・失効を各read requestで再確認する。
     pub(crate) async fn readiness_activation_is_valid(&self) -> bool {
         let Some(requirement) = self.readiness_activation_requirement.as_ref() else {
@@ -178,6 +187,7 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         operator_config_yaml,
         retention,
     } = load_manifest(config.operator_config_path.as_deref())?;
+    let blob_provider_search = blob_provider_search(manifest.as_deref())?;
     if !policies_to_sync.is_empty() {
         sync_policies(&pool, &policies_to_sync)
             .await
@@ -385,8 +395,25 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         trust_read,
         relation_visibility,
         dome_hosting,
+        blob_provider_search,
         readiness_activation_requirement,
     })
+}
+
+/// 公開 blob の保持端末の検索（#1632 D7）。capability を有効にした node だけが、kukuri の補助 index の一覧の鍵（D6）
+/// が入った build で提供する。鍵の無い build で有効にした config は起動しない。
+fn blob_provider_search(
+    manifest: Option<&CommunityNodeManifest>,
+) -> Result<Option<Arc<BlobProviderSearch>>> {
+    if !manifest.is_some_and(|manifest| manifest.capabilities.public_blob_search) {
+        return Ok(None);
+    }
+    let index = kukuri_transport::KUKURI_PUBLIC_BLOB_INDEX
+        .context("public_blob_search requires a build with the kukuri public blob index list")?;
+    Ok(Some(Arc::new(BlobProviderSearch::start(
+        &n0_mainline::DhtBuilder::default(),
+        index,
+    )?)))
 }
 
 async fn activation_is_valid(
@@ -526,7 +553,7 @@ mod tests {
     use anyhow::Result;
     use tempfile::NamedTempFile;
 
-    use super::load_manifest;
+    use super::{blob_provider_search, load_manifest};
 
     #[test]
     fn manifest_node_id_must_match_expected_issuer() {
@@ -536,6 +563,28 @@ mod tests {
         assert!(err.to_string().contains("server.node_id"), "{err}");
         assert!(err.to_string().contains("79be66"), "{err}");
         assert!(super::ensure_manifest_node_id_matches_issuer("node-a", "node-b").is_err());
+    }
+
+    /// #1632 D7: 検索は capability を有効にした node だけが提供する。一覧の鍵の無い今の build では、有効にした
+    /// config で起動しない。
+    #[tokio::test]
+    async fn public_blob_search_follows_the_capability() -> Result<()> {
+        let manifest = |enabled: bool| -> Result<_> {
+            let config = kukuri_cn_operator::SAMPLE_CONFIG.replace(
+                "public_blob_search: false",
+                &format!("public_blob_search: {enabled}"),
+            );
+            Ok(kukuri_cn_operator::build_manifest(
+                &kukuri_cn_operator::load_and_validate(&config)?,
+            ))
+        };
+        assert!(blob_provider_search(None)?.is_none());
+        assert!(blob_provider_search(Some(&manifest(false)?))?.is_none());
+        let error = blob_provider_search(Some(&manifest(true)?))
+            .err()
+            .expect("an enabled search needs the index list");
+        assert!(error.to_string().contains("public_blob_search requires"));
+        Ok(())
     }
 
     #[test]

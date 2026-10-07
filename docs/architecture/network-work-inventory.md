@@ -356,11 +356,12 @@ N70は旧全購読topic snapshotから自account受信routeを除き、own route
 既存のticket/seed/既知peerとCN候補を実QUIC bindingで検証する。#1333の本番未使用locatorページAPIと
 停止中の制御recordは不採用とし、旧計画を残件に数えない。前節の「著者制御state」は当時の残件記録である。
 
-## 公開 blob の発見（#1632 AC-4、ADR 0063）
+## 公開 blob の発見（#1632 AC-4・AC-5、ADR 0063）
 
 | ID | 入口 → helper → sink | guard / 停止 | 対応contract |
 | --- | --- | --- | --- |
 | N73 | node の組立て（設定オン・補助 index の一覧あり）→ `PublicBlobDiscovery::start`（補助 index の一覧が引けない間は 30 秒ごとにやり直す）→ `remote_fetch::public_blob_providers` → `Resolver::resolve_stream`。告知は `install_remote_cache` → `start_announcing` → store の予定（時刻順・2 件ずつ）→ `acquire_announce`（Background lane）→ `Announcer::announce` | node ごとに DHT 1 つ・告知 task 1 つ。検索は取得の受付・30 秒・1 要求 4 端末の中で、stream から 16 件まで。告知は予定 512 件・同時 2 件・1 件 30 秒、失敗の後は 30 秒待つ。node 停止で発見を外し、endpoint を閉じて DHT の socket を手放す。設定の切替は stack を作り直す | `a_public_blob_comes_from_an_unknown_holder_found_through_the_dht`、`a_blob_without_a_public_record_is_not_searched`、`dropping_a_fetch_and_stopping_the_node_leave_no_search_behind`、`discovered_holders_use_a_fixed_window`、store の `public_blobs::tests`、desktop-runtime の `public_blob_discovery` |
+| N74 | 認証・同意済みの `POST /v1/blob-providers/search` → `cn-user-api/src/blob_providers.rs::search_blob_providers` → `BlobProviderSearch::search`（受付）→ `Resolver::resolve_stream` → `DhtAddressLookup::resolve`（住所 record）。補助 index の client は起動時に背景でつなぐ（capability `public_blob_search` を有効にした node だけ。一覧の鍵が要る） | node ごとに DHT 1 つ。進行中の検索は全体 32 件・端末ごと 8 件（超えたら待たせずに 429）。1 検索は stream から 16 件・住所の解決は同時 4 件・候補 4 件、期限は `min(budget_ms, 10 秒)`。HTTP の切断・期限で stream と DHT・補助 index の要求を取り消し、受付を戻す。blob の取得・保存は無い | `a_search_reads_a_fixed_window`、`a_search_ends_at_the_deadline`、`admission_holds_a_fixed_number_of_searches`、`a_holder_with_a_relay_url_is_found_through_the_common_index`、`requests_are_rejected_bounded_and_released`、`public_blob_search_follows_the_capability`、cn-operator の `public_blob_search_is_opt_in_and_disclosed` |
 
 ## ブラウザとの直接経路の接続交渉（#1422 W10 AC-2）
 

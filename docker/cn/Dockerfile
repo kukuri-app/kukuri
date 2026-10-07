@@ -50,8 +50,9 @@ RUN test -n "$TARGET_BIN"
 COPY --from=builder /workspace/target/release/${TARGET_BIN} /usr/local/bin/app
 
 # #1483: relay の image に、relay とは別の process として動かす STUN の binary（cn-stun）を同梱する。
+# #1632: 公開 blob の発見の補助 index（cn-addr-index）も同じ形で同梱する（空白区切りで複数）。
 ARG EXTRA_BIN
 RUN --mount=type=bind,from=builder,source=/workspace/target/release,target=/release \
-    if [ -n "$EXTRA_BIN" ]; then cp "/release/$EXTRA_BIN" /usr/local/bin/; fi
+    for bin in $EXTRA_BIN; do cp "/release/$bin" /usr/local/bin/; done
 
 ENTRYPOINT ["/usr/local/bin/app"]

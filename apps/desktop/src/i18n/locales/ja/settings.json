@@ -796,7 +796,8 @@
         "report_endpoint": "通報受付",
         "rights_request_endpoint": "権利侵害申出の受付",
         "tester_feedback": "テスターからのフィードバック",
-        "dome_hosting": "Dome のホスティング"
+        "dome_hosting": "Dome のホスティング",
+        "public_blob_search": "公開コンテンツの保持端末の検索"
       },
       "authority": {
         "this_node": "このノード",
