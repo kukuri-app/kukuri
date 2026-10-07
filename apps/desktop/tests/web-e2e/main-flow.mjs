@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Key, remote } from 'webdriverio';
-import { androidClickOffset } from './android-click.mjs';
+import { androidClick } from './android-click.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -171,11 +171,10 @@ async function startClient(name, { ice }) {
     // 列の scroll-snap と固定の帯に負けるので、押す前に要素を列ごと画面の中央へ動かし、位置が止まるのを待つ。
     browser.overwriteCommand(
       'click',
-      async function (original, ...args) {
+      async function (original) {
         await closeKeyboard();
         // 中心が覆われていれば（列のページの表示が列の右下の操作に重なる。#1588）、利用者と同じく見えている部分を押す。
-        const offset = await androidClickOffset(browser, this, WAIT);
-        return offset && offset.x !== 0 ? original(offset) : original(...args);
+        return androidClick(browser, this, original, WAIT);
       },
       true
     );
