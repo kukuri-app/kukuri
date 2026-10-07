@@ -1046,27 +1046,25 @@ async function transferAccount(from, name, account, { history = null, duringHist
       window.__kukuriCut.released = true;
     });
   }
+  const documentStarted = await browser.execute(() => performance.timeOrigin);
   await completed.$('button=Use this account').click();
   await from.done?.();
   // 「このアカウントを使う」で、そのアカウントへ切り替えて読み込み直す。Community Node の同意は端末とアカウントごとなので、もう一度
-  // 同意する（W7 #1211 AC-4）。読み込み直しの途中の要素は使えないので、失敗したら次の回で見直す。
+  // 同意する（W7 #1211 AC-4）。古い画面と、同意の保存中の覆いを操作しないよう、各段の完了を待つ（#1610）。
+  await eventually(`${browser.label} reloads after switching accounts`, () =>
+    browser.execute((started) => performance.timeOrigin !== started, documentStarted).catch(() => false)
+  );
+  await (await dialogWith(browser, 'What is a community node?')).$('button=Review terms').click();
+  const consent = await dialogWith(browser, 'Not now');
+  const consentId = await consent.getAttribute('id');
+  await consent.$('button=Accept').click();
+  await browser.$(`[role=dialog][id="${consentId}"]`).waitForExist({ reverse: true, timeout: WAIT });
+  await openSettings(browser, 'account');
   await eventually(`${browser.label} uses the transferred account`, async () => {
-    try {
-      const onboarding = await findDialog(browser, 'What is a community node?');
-      if (onboarding) {
-        await onboarding.$('button=Review terms').click();
-        await (await dialogWith(browser, 'Not now')).$('button=Accept').click();
-        return false;
-      }
-      await openSettings(browser, 'account');
-      const active = browser.$('[data-testid="account-list"]').$('li*=Active');
-      const switched = (await active.isExisting()) && (await active.getText()).includes(account);
-      await browser.keys('Escape');
-      return switched;
-    } catch {
-      return false;
-    }
+    const active = browser.$('[data-testid="account-list"]').$('li*=Active');
+    return (await active.isExisting()) && (await active.getText()).includes(account);
   });
+  await browser.keys('Escape');
   return browser;
 }
 
