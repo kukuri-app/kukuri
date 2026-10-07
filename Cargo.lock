@@ -2623,7 +2623,7 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 [[package]]
 name = "iroh"
 version = "1.3.0"
-source = "git+https://github.com/KingYoSun/iroh?rev=e0b0ad9892e8881480d0f48a74a3148c8b896d79#e0b0ad9892e8881480d0f48a74a3148c8b896d79"
+source = "git+https://github.com/KingYoSun/iroh?rev=eef6af69364b5df1aa33c30e4c5731aad9d32046#eef6af69364b5df1aa33c30e4c5731aad9d32046"
 dependencies = [
  "axum",
  "backon",
@@ -2674,7 +2674,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.3.0"
-source = "git+https://github.com/KingYoSun/iroh?rev=e0b0ad9892e8881480d0f48a74a3148c8b896d79#e0b0ad9892e8881480d0f48a74a3148c8b896d79"
+source = "git+https://github.com/KingYoSun/iroh?rev=eef6af69364b5df1aa33c30e4c5731aad9d32046#eef6af69364b5df1aa33c30e4c5731aad9d32046"
 dependencies = [
  "curve25519-dalek 5.0.0",
  "data-encoding",
@@ -2733,7 +2733,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.3.0"
-source = "git+https://github.com/KingYoSun/iroh?rev=e0b0ad9892e8881480d0f48a74a3148c8b896d79#e0b0ad9892e8881480d0f48a74a3148c8b896d79"
+source = "git+https://github.com/KingYoSun/iroh?rev=eef6af69364b5df1aa33c30e4c5731aad9d32046#eef6af69364b5df1aa33c30e4c5731aad9d32046"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2909,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.3.0"
-source = "git+https://github.com/KingYoSun/iroh?rev=e0b0ad9892e8881480d0f48a74a3148c8b896d79#e0b0ad9892e8881480d0f48a74a3148c8b896d79"
+source = "git+https://github.com/KingYoSun/iroh?rev=eef6af69364b5df1aa33c30e4c5731aad9d32046#eef6af69364b5df1aa33c30e4c5731aad9d32046"
 dependencies = [
  "blake3",
  "bytes",

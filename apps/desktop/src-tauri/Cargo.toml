@@ -60,10 +60,10 @@ tempfile = "3.27.0"
 # Keep the standalone Tauri workspace on the same docs error-path fix as the root.
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d14853cb4db9966e30050bac1e689cdeec8" }
 # Match the root workspace's inactive address/connection reclamation fixes.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc76d51582b3678b3b743db72d51ce296d4" }
 # Match the root workspace's Mainline forks (#1632).
 n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }

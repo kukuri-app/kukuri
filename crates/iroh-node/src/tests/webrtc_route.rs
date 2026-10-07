@@ -1,7 +1,14 @@
 //! #1422 W10 AC-2 の native の固定 fixture。ブラウザの端（IP の transport が無く relay だけで届き、交渉を始める）を
 //! native で作り、native の node（UDP・relay・交渉に応じるだけ）と手元の iroh relay でつなぐ。
 
-use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{
+    net::Ipv4Addr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context as _, Result};
 use futures_util::StreamExt;
@@ -151,7 +158,9 @@ async fn the_route_moves_to_the_custom_path_and_falls_back_to_the_relay() -> Res
     .await?;
     let stall = closed_at.elapsed();
     assert!(stall <= Duration::from_secs(2), "stall {stall:?}");
-    fetch.await??;
+    n0_future::time::timeout(WAIT, fetch)
+        .await
+        .context("the transfer does not finish over the relay")???;
     assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
     // 残りは relay で届いた（custom の受信は reset の後に増えていない）。接続はそのままで、開いた path は relay だけ。
     assert_eq!(web_transport.stats().received_bytes, at_reset);
@@ -216,6 +225,111 @@ async fn a_custom_path_lost_before_the_relay_path_opens_falls_back_to_the_relay(
     let stall = closed_at.elapsed();
     assert!(stall <= Duration::from_secs(2), "stall {stall:?}");
     fetch.await??;
+    assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
+    assert!(connection.close_reason().is_none());
+    Ok(())
+}
+
+/// 手元の relay の前に置く TCP の中継。`capture` が true の間に受けた接続（その間に作った端の接続）は、relay から届く向きを
+/// `held` が true の間だけ止める。
+async fn holding_relay(
+    relay: std::net::SocketAddr,
+    capture: Arc<AtomicBool>,
+    held: tokio::sync::watch::Receiver<bool>,
+) -> Result<RelayUrl> {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let url = format!("http://{}", listener.local_addr()?).parse()?;
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let Ok(server) = tokio::net::TcpStream::connect(relay).await else {
+                continue;
+            };
+            let (client_read, client_write) = client.into_split();
+            let (server_read, server_write) = server.into_split();
+            let held = capture.load(Ordering::Relaxed).then(|| held.clone());
+            tokio::spawn(forward(client_read, server_write, None));
+            tokio::spawn(forward(server_read, client_write, held));
+        }
+    });
+    Ok(url)
+}
+
+async fn forward(
+    mut from: tokio::net::tcp::OwnedReadHalf,
+    mut to: tokio::net::tcp::OwnedWriteHalf,
+    mut held: Option<tokio::sync::watch::Receiver<bool>>,
+) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut buf = vec![0; 64 * 1024];
+    while let Ok(read @ 1..) = from.read(&mut buf).await {
+        if let Some(held) = &mut held {
+            let _ = held.wait_for(|held| !held).await;
+        }
+        if to.write_all(&buf[..read]).await.is_err() {
+            break;
+        }
+    }
+}
+
+/// #1654: relay の path の検証が済む前に custom を失っても、custom は relay の path が確立してから閉じ、同じ接続のまま relay で
+/// 完走する。検証済みの path が他に無いうちに閉じると、noq は PATH_ABANDON を失った custom path にしか送れず、再送しない。
+/// 両端でそうなると、どちらも custom で送りかけた packet を失ったと判定せず、relay の keepalive だけが続いて転送が止まる。
+/// relay から web へ届く向きを止めて、検証（相手の PATH_RESPONSE と PATH_CHALLENGE）の済まない状態を作る。
+#[tokio::test]
+async fn a_custom_path_lost_before_the_relay_path_is_validated_falls_back_to_the_relay()
+-> Result<()> {
+    let (_, relay_server) = signaling_fixture::spawn_relay().await?;
+    let capture = Arc::new(AtomicBool::new(true));
+    let (hold, held) = tokio::sync::watch::channel(false);
+    let relay = holding_relay(
+        relay_server.http_addr().context("relay addr")?,
+        capture.clone(),
+        held,
+    )
+    .await?;
+    let (web, _web_transport) = node(&relay, true).await?;
+    capture.store(false, Ordering::Relaxed);
+    let (native, native_transport) = node(&relay, false).await?;
+    let native_addr = via_relay(&native, &relay);
+    let _demand = web_e2e::demand(&web, native_addr.clone()).await?;
+    eventually("the custom path is active", async || {
+        custom_is_active(&web, &native).await
+    })
+    .await?;
+    let data: Vec<u8> = (0..4 * 1024 * 1024)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let hash = native.blobs().blobs().add_bytes(data.clone()).await?.hash;
+    hold.send(true)?;
+    let connection = web
+        .endpoint()
+        .connect(native_addr, iroh_blobs::ALPN)
+        .await?;
+    let fetch = tokio::spawn({
+        let blobs = web.blobs().clone();
+        let connection = connection.clone();
+        async move { blobs.remote().fetch(connection, hash).await }
+    });
+    eventually("the relay path opens", async || {
+        connection.stats().frame_tx.path_challenge > 0
+    })
+    .await?;
+    web.webrtc_signaling().context("webrtc")?.reset();
+    eventually("the native node loses the custom path", async || {
+        native_transport.stats().sessions == 0
+    })
+    .await?;
+    // 両端が外された custom path を扱う間、検証を止めておく（custom path だけが残った接続を閉じる 3 秒より短く）。
+    n0_future::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        connection.stats().frame_tx.path_abandon,
+        0,
+        "the custom path is abandoned before the relay path is validated"
+    );
+    hold.send(false)?;
+    n0_future::time::timeout(WAIT, fetch)
+        .await
+        .context("the transfer does not finish over the relay")???;
     assert_eq!(web.blobs().blobs().get_bytes(hash).await?, data);
     assert!(connection.close_reason().is_none());
     Ok(())
