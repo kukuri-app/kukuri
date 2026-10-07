@@ -105,6 +105,27 @@ fn profile_at(keys: &KukuriKeys, name: &str, created_at: i64) -> KukuriEnvelope 
         .expect("profile envelope")
 }
 
+/// AC-3 より前の版の profile の確定（#1646）。envelope と自分の author の replica の `profile/latest` だけを置き、
+/// account 同期の item の行は作らない。
+async fn legacy_profile(app: &AppService, name: &str) {
+    let envelope = app
+        .prepare_my_profile(ProfileInput {
+            name: Some(name.into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let profile = parse_profile(&envelope).unwrap().unwrap();
+    app.services
+        .store
+        .put_envelope(envelope.clone())
+        .await
+        .unwrap();
+    persist_profile_doc(app.services.docs_sync.as_ref(), &profile, &envelope)
+        .await
+        .unwrap();
+}
+
 fn always_visible(author: &str, updated_at: i64, op: char, visible: bool) -> AccountSyncItem {
     AccountSyncItem {
         key: AccountSyncItemKey::TrustAlwaysVisible {
@@ -300,4 +321,35 @@ async fn importing_a_legacy_setting_does_not_overwrite_a_newer_edit_on_the_repli
         .unwrap()
         .expect("the newer edit");
     assert_eq!(item.value, None, "the replica keeps the newer tombstone");
+}
+
+// #1646: AC-3 より前に確定した profile は、送り直しで行になり、profile の無い本人の別の端末へ届く。採る版は envelope の
+// 時刻なので、別の端末の新しい profile を戻さず、両端末は新しい方にそろう。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_profile_confirmed_before_account_sync_reaches_the_other_devices() {
+    let keys = generate_keys();
+    let (a, a_docs) = fetch::memory_device(&keys, "device-a").await;
+    let (b, b_docs) = fetch::memory_device(&keys, "device-b").await;
+    let (c, c_docs) = fetch::memory_device(&keys, "device-c").await;
+    for docs in [&b_docs, &c_docs] {
+        docs.reading_from(&a_docs);
+    }
+    a_docs.reading_from(&b_docs);
+    legacy_profile(&a, "before account sync").await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    b.set_my_profile(ProfileInput {
+        name: Some("newer".into()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let name = async |app: &AppService| app.get_my_profile().await.unwrap().name;
+
+    a.resend_account_sync_items().await.unwrap();
+    c.fetch_account_sync_from("device-a").await.unwrap();
+    assert_eq!(name(&c).await.as_deref(), Some("before account sync"));
+    b.fetch_account_sync_from("device-a").await.unwrap();
+    assert_eq!(name(&b).await.as_deref(), Some("newer"));
+    a.fetch_account_sync_from("device-b").await.unwrap();
+    assert_eq!(name(&a).await.as_deref(), Some("newer"));
 }

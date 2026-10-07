@@ -4,6 +4,7 @@
 //! 読むのは account の docs author の組の 1 件と、それが無いときの key ごとの上限つきの旧候補だけで、replica の
 //! 全件・全 snapshot を比べない。hint・起動・復帰で差分を取りに行く経路は `account_sync_fetch`（AC-5b）。
 
+use super::author_state_support::own_profile_envelope;
 use super::*;
 use kukuri_core::{AccountSyncItem, AccountSyncItemKey, SealedAccountSyncItem};
 use kukuri_store::AccountSyncRow;
@@ -54,6 +55,24 @@ impl AppService {
     pub(crate) async fn publish_profile_item(&self, envelope: &KukuriEnvelope) -> Result<()> {
         self.publish_account_sync_item(AccountSyncItem::profile(envelope)?)
             .await
+    }
+
+    /// 行の無い profile（AC-3 より前に確定したもの）を、手元の author の replica の署名済みの envelope から行として採る
+    /// （ADR 0061 §8、#1646）。版は envelope の `created_at` と ID なので、本人の別の端末の新しい版を戻さない。replica へは
+    /// 送り直しが書き、移行の bundle と本人の別の端末の取得に載る。
+    pub(crate) async fn adopt_unsynced_profile(&self) -> Result<()> {
+        let store = &self.services.projection_store;
+        if store
+            .get_account_sync_row(&AccountSyncItemKey::Profile.docs_key())
+            .await?
+            .is_none()
+            && let Some(envelope) = own_profile_envelope(&self.services).await?
+        {
+            store
+                .adopt_account_sync_row(&row_of(&AccountSyncItem::profile(&envelope)?)?)
+                .await?;
+        }
+        Ok(())
     }
 
     /// item を点読する。account の docs author の組の 1 件を読み、無い・開けないときだけ key の旧候補（上限 8 件）から
