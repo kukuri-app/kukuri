@@ -187,6 +187,7 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         operator_config_yaml,
         retention,
     } = load_manifest(config.operator_config_path.as_deref())?;
+    let blob_provider_search = blob_provider_search(manifest.as_deref())?;
     if !policies_to_sync.is_empty() {
         sync_policies(&pool, &policies_to_sync)
             .await
@@ -372,7 +373,6 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
     } else {
         None
     };
-    let blob_provider_search = blob_provider_search(manifest.as_deref())?;
     Ok(UserApiState {
         pool,
         rendezvous_store,

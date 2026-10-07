@@ -294,7 +294,8 @@ impl Capability {
                     補助 index で保持端末を探し、relay URL を持つ候補の到達情報を返す",
                 telecom_note: "検索の metadata だけを扱い、blob を取得・保存・中継しない。",
                 privacy_note: "依頼された公開 blob の hash から導いた infohash を Mainline DHT の参加者へ、見つけた\
-                    端末の IP アドレス・port を kukuri の補助 index へ送る。受け取った hash は保存しない。",
+                    端末の IP アドレス・port を kukuri の補助 index へ送る。受け取った hash と見つけた端末の情報は保存せず、\
+                    件数・時間の上限つきのメモリの cache だけに持つ。",
                 terms_note: "検索結果は保持・権限の証明ではなく、取得は client が P2P で行う旨を記載する。",
             },
         }
@@ -377,7 +378,7 @@ impl ExternalDestination {
             ExternalDestination::AnalyticsProvider => "利用状況データの送信先。",
             ExternalDestination::CrashReportProvider => "クラッシュ診断データの送信先。",
             ExternalDestination::MainlineDht => {
-                "公開 blob の保持端末の検索で、依頼された hash から導いた infohash と本ノードの IP アドレスが届く。"
+                "公開 blob の保持端末の検索で、依頼された hash から導いた infohash、見つけた端末の住所 record の問い合わせと、本ノードの IP アドレスが届く。"
             }
             ExternalDestination::KukuriAddrIndex => {
                 "DHT で見つけた端末の IP アドレス・port を照会し、署名つきの endpoint ID を得る。"

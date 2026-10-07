@@ -307,7 +307,7 @@ impl Capability {
                 ],
                 recommended_practices: &[
                     "検索の同時数を全体 32 件・端末ごと 8 件、1 件を 10 秒までに制限する（実装の既定）。",
-                    "受け取った hash を保存しない。",
+                    "受け取った hash と見つけた端末の情報を保存しない（log にも出さない）。",
                 ],
                 small_scale_tips: "kukuri の補助 index の一覧の鍵が入った配布物で、必要になってから有効化する。",
                 how_to_reduce: "`features.public_blob_search: false`（既定）で無効化できる。",

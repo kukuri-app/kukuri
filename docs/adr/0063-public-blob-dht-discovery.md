@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1632、Scope revision `2026-10-07-r2`）。依存の fork（AC-1〜AC-3）と native の公開参照・告知・取得（AC-4）を §1〜§6 に、Community Node の保持端末の検索と補助 index の process（AC-5）を §7 に固定した。Web の取得（AC-6）は、その成果で §8 に足す。
+Accepted（Issue #1632、Scope revision `2026-10-07-r3`）。依存の fork（AC-1〜AC-3）と native の公開参照・告知・取得（AC-4）を §1〜§6 に、Community Node の保持端末の検索と補助 index の process（AC-5）を §7 に固定した。Web の取得（AC-6）は、その成果で §8 に足す。
 
 ## Context
 
@@ -76,17 +76,17 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r2`）。依存の fork（AC
 ### 7. Community Node の保持端末の検索（D5・D6・D7）
 
 - `POST /v1/blob-providers/search`（`kukuri_cn_protocol::BLOB_PROVIDER_SEARCH_PATH`）。要求は `{hash, budget_ms}`、応答は `{candidates: [{endpoint_id, relay_urls, direct_addrs}], partial}`。認証（bearer）と必須の同意を求め、未認証は 401 `AUTH_REQUIRED`、未同意は 403 `CONSENT_REQUIRED`、hash が 64 桁の 16 進でない・`budget_ms` が 0 は 400 `INVALID_BLOB_PROVIDER_SEARCH`、検索を提供しない node は 404 `BLOB_PROVIDER_SEARCH_NOT_CONFIGURED`。
-- 検索は operator config の capability `public_blob_search`（`features.public_blob_search`、全 profile で既定は無効。D7）を有効にした node だけが提供する。有効にした node の生成文書は、プライバシーポリシーに取扱いデータ（依頼された公開 blob の hash と、見つけた保持端末の endpoint ID・到達情報。応答まで保存しない）を、外部送信表示に送信先（Mainline DHT・kukuri が運用する補助 index）を載せ、同意の revision が変わる（利用者はその node で再同意する）。manifest の `capabilities` にも出る。
-- 提供には補助 index の一覧の鍵（`KUKURI_PUBLIC_BLOB_INDEX`。native と同じ鍵・同じ `PublicBlobIndex::connect`）も要り、鍵の無い build で capability を有効にした config では `cn-user-api` を起動しない（開示と提供を食い違わせない）。提供の有無は、bootstrap の応答でこの node 自身の `resolved_urls.public_blob_search` が示す（旧 node の応答には無く、false と読む）。node は DHT（client）を 1 つ組み立て、補助 index の client へ背景でつなぐ。つながるまでの検索は候補なしの `partial` を返す。
+- 検索は operator config の capability `public_blob_search`（`features.public_blob_search`、全 profile で既定は無効。D7）を有効にした node だけが提供する。有効にした node の生成文書は、プライバシーポリシーに取扱いデータ（依頼された公開 blob の hash と、見つけた保持端末の endpoint ID・到達情報。保存せず、件数・時間の上限つきのメモリの cache だけに持つ）を、外部送信表示に送信先（Mainline DHT・kukuri が運用する補助 index）を載せ、同意の revision が変わる（利用者はその node で再同意する）。manifest の `capabilities` にも出る。
+- 提供には補助 index の一覧の鍵（`KUKURI_PUBLIC_BLOB_INDEX`。native と同じ鍵・同じ `PublicBlobIndex::connect`）も要り、鍵の無い build で capability を有効にした config では `cn-user-api` を起動しない（開示と提供を食い違わせない）。提供の有無は、bootstrap の応答でこの node 自身の `resolved_urls.public_blob_search` が示す（旧 node の応答には無く、false と読む）。node は DHT を 1 つ組み立て、補助 index の client へ背景でつなぐ。つながるまでの検索は候補なしの `partial` を返す。
 - 1 検索は `Resolver::resolve_stream` から重複を含めて 16 件まで読み、重複を除いて署名つきの住所 record（同じ DHT の `DhtAddressLookup`、公開はしない）を同時 4 件まで引き、relay URL を持つ候補だけを最大 4 件返す（直接の address だけの候補は返さない）。候補ごとの relay URL は 4 件、直接の address は 8 件まで。期限は `min(budget_ms, 10 秒)` で、過ぎたら集めた分で打ち切り `partial` を立てる。候補が空でも保持端末が無いことの証明ではない。
 - 受付は、進行中の検索が全体 32 件・端末（bearer の endpoint ID、無ければ公開鍵）ごとに 8 件（client の取得の実行枠と同じ）まで。超えた要求は待たせずに 429 `BLOB_PROVIDER_SEARCH_BUSY`（`Retry-After: 5`。取得の次の試行と同じ）。全体 32 件は、1 検索の DHT の検索（保持端末 1・住所 record 最大 4）が DHT の進行する検索の上限（256）に収まる数。期限・応答・HTTP の切断で handler の処理が落ちると、stream・DHT の受信先・補助 index の要求を取り消し、受付を戻す。端末ごとの数の表は、全体の上限と同じ 32 件まで。
-- node は iroh の endpoint を持たず、blob の取得・保存・size の確認をしない（読むのは DHT・補助 index・住所 record だけ）。受け取った hash を保存せず、住所の解決が info で出す見つけた端末の endpoint ID・到達情報も既定の log の絞り込みで出さない。一般の native へ探索を依頼せず、`cn-iroh-relay` の責務は変えない。候補は保持・権限の証明ではなく、client は既存の接続と hash の検証で取得する。
-- 補助 index の server は `cn-addr-index`（`udp-addr-index` の `Server` を自分の Mainline DHT の socket に付ける別の process。blob・投稿は持たない）。relay の image に同梱し、compose の profile `addr-index` で起動する。port は DHT と共有の `60125/udp`。保持する record の数（既定 2,000,000）・送信元 IP ごとの record の数（16）・送信元 IP ごとの毎秒の照会数（50）を環境変数で変えられる（record の期限は 1 時間で固定）。record は送信元の address で引くので、送信元を書き換えて転送する edge 構成では提供しない。kukuri が運用する server だけで動かし（D6）、上流の共通の rendezvous には告知しない。その最大 2 台を、fork の `iroh-index-list`（一覧の鍵を持ち、10 分ごとに更新し続ける）で署名つきの一覧として公開する。server の配置と鍵の発行は、本番反映をまとめる別 Issue で行う。
+- node は iroh の endpoint を持たず、blob の取得・保存・size の確認をしない（読むのは DHT・補助 index・住所 record だけ）。受け取った hash と見つけた端末の情報は DB・log に保存せず（住所の解決が info で出す見つけた端末の endpoint ID・到達情報は、既定の log の絞り込みで出さない）、検索の処理のメモリの cache（補助 index の照会の結果は 5 分、DHT の問い合わせの記録は件数の上限まで）だけに持つ。一般の native へ探索を依頼せず、`cn-iroh-relay` の責務は変えない。候補は保持・権限の証明ではなく、client は既存の接続と hash の検証で取得する。
+- 補助 index の server は `cn-addr-index`（`udp-addr-index` の `Server` を自分の Mainline DHT の socket に付ける別の process。blob・投稿は持たない）。relay の image に同梱し、compose の profile `addr-index` で起動する。port は DHT と共有の `60125/udp`。保持する record の数（既定 2,000,000）・送信元 IP ごとの record の数（16）・送信元 IP ごとの毎秒の要求数（50。登録と照会）を環境変数で変えられる（record の期限は 1 時間で固定）。record は送信元の address で引くので、送信元を書き換えて転送する edge 構成では提供しない。kukuri が運用する server だけで動かし（D6）、上流の共通の rendezvous には告知しない。その最大 2 台を、fork の `iroh-index-list`（一覧の鍵を持ち、10 分ごとに更新し続ける）で署名つきの一覧として公開する。server の配置と鍵の発行は、本番反映をまとめる別 Issue で行う。
 
 ## Consequences
 
 - 告知・予定の読取り・取込みの 1 回の処理量と、検索の 1 要求の読取り・試行・保持は、公開記録・保持・候補の総件数に比例しない（store の VM step・query plan と、20/200/2000 件の候補の試験）。
 - 端末が公開 blob を保持していることは、その IP address・port とともに DHT の参加者から観測されうる。検索した infohash も観測されうる。設定でオフにできる。
 - 補助 index の一覧の鍵が配布されるまで、本番では発見が働かない（住所の公開・解決の DHT の扱いも今までどおり）。Community Node は検索の capability を有効にできない（無効の node は 404 を返し、bootstrap で提供しないと示す）。
-- 検索を提供する Community Node は、検索した hash から導いた infohash と自分の IP address を DHT の参加者へ、見つけた端末の IP address・port を補助 index へ送る。
+- 検索を提供する Community Node は、検索した hash から導いた infohash・見つけた端末の住所 record の問い合わせと自分の IP address を DHT の参加者へ、見つけた端末の IP address・port を補助 index へ送る。
 - 復元した端末は、backup に含まれない保護されていない大きな cache の file の hash を、7 日の期限か回収まで告知しうる。取得側はその端末を欠損として 10 分間選ばない。

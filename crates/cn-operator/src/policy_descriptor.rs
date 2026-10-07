@@ -189,7 +189,7 @@ pub enum PolicyRetentionRef {
     RightsRequestLifecycle,
     TesterFeedbackDays,
     LeaseOrSessionEnd,
-    UntilResponse,
+    BoundedMemoryCache,
 }
 
 impl PolicyRetentionRef {
@@ -212,7 +212,7 @@ impl PolicyRetentionRef {
             Self::RightsRequestLifecycle => "retention.rights_request_*_days",
             Self::TesterFeedbackDays => "retention.tester_feedback_days",
             Self::LeaseOrSessionEnd => "lease close・期限または session 終了まで",
-            Self::UntilResponse => "応答まで（保存しない）",
+            Self::BoundedMemoryCache => "件数・時間の上限つきのメモリの cache（保存しない）",
         }
     }
 }
@@ -540,7 +540,7 @@ impl Capability {
                     &[ConnectivityMetadata, PublicBlobHolderLookup],
                     &[MatchPeers],
                     ConnectionAttempt,
-                    &[UntilResponse],
+                    &[BoundedMemoryCache],
                     ConnectionOnly,
                 )
             },
