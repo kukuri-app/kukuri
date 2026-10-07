@@ -16,10 +16,15 @@ hintを送らずにrelay→IP / IP→relayを観測した。Windowsの実irohと
 topicの印が3秒以内に届かず、`missing path-only status trigger`で失敗した（11.33秒）。
 IP経路の開閉は`paths_stream`で判定し、statusの定期・手動読取りは使っていない。
 
-最終fixtureは、切替ごとに新しいUDP転送の到達候補を通知し、実IP経路を開いてselectorを再評価させる。
+最終fixtureは、loopbackのIPv4だけをbindし、切替ごとに新しいUDP転送の到達候補を通知して
+実IP経路を開き、selectorを再評価させる。QUIC datagramを選択中の経路だけへ送り、hintは送らない。
+backup経路はidle timeoutで閉じる。全経路のkeep-aliveや外部IPの観測reportは使わず、
 一度閉じた候補の再試行の有無や、選択変更だけで開いたままのIP経路に依存しない。
 差分の印が届いた時だけ診断を読む1秒coalesceの受信fixtureで、各方向の`active_path`と
 `fallback_peer_count`（1→0→1）、hint受信時刻が未設定、接続・neighborの維持、退出の通知を照合する。
+pushの連番も照合し、古いfallback値が残っているだけではIP→relayの通知成功と扱わない。
+最終fixtureで経路変化のmarkだけを一時的に外した対照実行でも、両方向が新しいpushを受け取れず
+失敗した（7.28秒）。その際の実IP/relayのActive状態は期待どおりで、診断は古い値のままだった。
 実desktop-runtime observerの差分適用・1秒coalesce・停止は既存のruntime testで別途検証した。
 
 ## 実装と所有・停止
@@ -51,6 +56,12 @@ Windowsで以下を実行した。
   既存observerの差分・1秒coalesce・停止・休止した履歴への非依存を含む。
   共有nodeとdesktop-runtimeのcompileも成功。MSVCのリンク成果物作成メッセージのみwarningとして出力。
 - `cargo fmt --all -- --check` / `git diff --check`: 成功。
+
+PRの初回CI（head `9d6b7526ced872e2b9400bdf370a57423d7f5559`）では、LinuxがbackupのIP経路を
+keep-aliveで保持し続け、fixtureの最初のrelayのみの状態を作れずに失敗した。診断のassertへ到達する前の
+準備条件の不足であり、上記の選択経路だけのdatagramとloopback限定へfixtureを修正した。
+本番の通知実装・受入条件は変更していない。修正後は同じconnection_pathの3件をWindowsと
+WSL Ubuntu 22.04のLinuxで確認し、いずれも成功した。
 
 全体・Linux/Webの確認はPR CIで行う。CI・merge・Issueの最終判定はIssueのCurrent statusに集約する。
 AC-2 / PR-2のログ修正は [PR #1643](https://github.com/kukuri-app/kukuri/pull/1643) として別に実施し、

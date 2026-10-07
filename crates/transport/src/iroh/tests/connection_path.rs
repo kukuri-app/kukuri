@@ -25,19 +25,22 @@ async fn path_only_switch_marks_the_topic_without_hints() {
     let (relay_map, _, _relay) = iroh::test_utils::run_relay_server().await.expect("relay");
     let selector = Arc::new(SwitchPath::default());
     let connection_paths = GossipConnectionPaths::default();
-    let config = QuicTransportConfig::builder()
-        .keep_alive_interval(Duration::from_millis(100))
-        .default_path_max_idle_timeout(Duration::from_millis(500))
-        .default_path_keep_alive_interval(Duration::from_secs(1))
-        .build();
     let bind = async || {
         EndpointBuilder::new(presets::Minimal)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .ca_tls_config(CaTlsConfig::insecure_skip_verify())
             .alpns(vec![GOSSIP_ALPN.to_vec()])
+            .clear_ip_transports()
             .bind_addr(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
             .expect("bind address")
-            .transport_config(config.clone())
+            .transport_config(
+                QuicTransportConfig::builder()
+                    .default_path_max_idle_timeout(Duration::from_millis(500))
+                    .default_path_keep_alive_interval(Duration::from_secs(1))
+                    .send_observed_address_reports(false)
+                    .receive_observed_address_reports(false)
+                    .build(),
+            )
             .path_selector(selector.clone())
             .hooks(connection_paths.clone())
             .bind()
@@ -48,7 +51,7 @@ async fn path_only_switch_marks_the_topic_without_hints() {
     tokio::join!(a.online(), b.online());
     // 既存接続に別の実IP経路を開き、selectorを再評価させるためのUDP転送。gossip接続は作り直さない。
     let mut proxies = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         let proxy = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .expect("UDP proxy");
@@ -96,14 +99,19 @@ async fn path_only_switch_marks_the_topic_without_hints() {
     let hint_topic = kukuri_core::wire::hint_topic_id(&topic);
     let key = StatusKey::Topic(hint_topic.as_str().to_string());
     // 実observerと同じく、印の付いた時だけ診断を読み、1秒にまとめる。定期・手動読取りは行わない。
-    let (pushed, mut statuses) = watch::channel(None::<PeerSnapshot>);
+    let (pushed, mut statuses) = watch::channel(None::<(u64, PeerSnapshot)>);
     let observer = n0_future::task::spawn({
         let transport = transport_a.clone();
         async move {
+            let mut sequence = 0;
             loop {
                 assert_eq!(changes.changed().await, BTreeSet::from([key.clone()]));
+                sequence += 1;
                 pushed
-                    .send(Some(transport.peers().await.expect("dirty status")))
+                    .send(Some((
+                        sequence,
+                        transport.peers().await.expect("dirty status"),
+                    )))
                     .expect("push");
                 sleep(Duration::from_secs(1)).await;
             }
@@ -120,6 +128,18 @@ async fn path_only_switch_marks_the_topic_without_hints() {
         b.accept().await.expect("incoming").await.expect("accept")
     });
     let connection = connection.expect("connect");
+    // hintを送らず、選択中の経路だけを維持する。backupのIPはidle timeoutで閉じる。
+    let keep_alive = n0_future::task::spawn({
+        let connection = connection.clone();
+        async move {
+            loop {
+                connection
+                    .send_datagram(vec![0].into())
+                    .expect("QUIC keep alive");
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    });
     gossip_a
         .handle_connection(connection.clone())
         .await
@@ -159,10 +179,13 @@ async fn path_only_switch_marks_the_topic_without_hints() {
     let mut paths = connection.paths_stream();
     let mut missed = Vec::new();
     for (step, ip) in [false, true, false].into_iter().enumerate() {
+        let previous_sequence = statuses
+            .borrow()
+            .as_ref()
+            .map_or(0, |(sequence, _)| *sequence);
         selector.0.store(ip, Ordering::Release);
-        if step > 0 {
-            b.add_external_addr(proxies[step - 1].0).await;
-        }
+        // 新しい到達候補でselectorを再評価させる。QUICの全経路keep-aliveは有効にしない。
+        b.add_external_addr(proxies[step].0).await;
         tokio::join!(a.network_change(), b.network_change());
         timeout(Duration::from_secs(20), async {
             while let Some(paths) = paths.next().await {
@@ -189,8 +212,9 @@ async fn path_only_switch_marks_the_topic_without_hints() {
         match timeout(
             Duration::from_secs(3),
             statuses.wait_for(|status| {
-                status.as_ref().is_some_and(|status| {
-                    status.peer_count == 1
+                status.as_ref().is_some_and(|(sequence, status)| {
+                    *sequence > previous_sequence
+                        && status.peer_count == 1
                         && status.active_path == expected
                         && status.fallback_peer_count == usize::from(!ip)
                 })
@@ -200,7 +224,7 @@ async fn path_only_switch_marks_the_topic_without_hints() {
         .map(|result| result.map(|status| status.clone()))
         {
             Ok(Ok(status)) => {
-                let topic_status = &status.as_ref().expect("status").topic_diagnostics[0];
+                let topic_status = &status.as_ref().expect("status").1.topic_diagnostics[0];
                 assert_eq!(topic_status.active_path, expected);
                 assert_eq!(topic_status.fallback_peer_count, usize::from(!ip));
                 assert_eq!(topic_status.last_received_at, None, "no hints");
@@ -243,7 +267,7 @@ async fn path_only_switch_marks_the_topic_without_hints() {
         statuses.wait_for(|status| {
             status
                 .as_ref()
-                .is_some_and(|status| status.topic_diagnostics.is_empty())
+                .is_some_and(|(_, status)| status.topic_diagnostics.is_empty())
         }),
     )
     .await
@@ -251,6 +275,7 @@ async fn path_only_switch_marks_the_topic_without_hints() {
     .expect("status channel");
     transport_a.shutdown().await;
     observer.abort();
+    keep_alive.abort();
     gossip_a.shutdown().await.expect("shutdown a");
     gossip_b.shutdown().await.expect("shutdown b");
     tokio::join!(a.close(), b.close());
