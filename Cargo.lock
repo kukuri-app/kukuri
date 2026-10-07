@@ -3258,6 +3258,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kukuri-cn-addr-index"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "kukuri-cn-runtime-support",
+ "n0-mainline",
+ "tokio",
+ "tracing",
+ "udp-addr-index",
+]
+
+[[package]]
 name = "kukuri-cn-cli"
 version = "0.4.1"
 dependencies = [
@@ -3567,7 +3579,11 @@ dependencies = [
  "axum",
  "blake3",
  "chrono",
+ "futures-util",
  "hex",
+ "iroh",
+ "iroh-mainline-address-lookup",
+ "iroh-mainline-endpoint-discovery",
  "kukuri-cn-core",
  "kukuri-cn-indexer",
  "kukuri-cn-operator",
@@ -3580,6 +3596,7 @@ dependencies = [
  "kukuri-metaverse-host",
  "kukuri-test-support",
  "kukuri-transport",
+ "n0-mainline",
  "redis",
  "reqwest",
  "serde",
@@ -3592,6 +3609,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tower_governor",
  "tracing",
+ "udp-addr-index",
  "url",
  "uuid",
 ]
@@ -3813,6 +3831,7 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "iroh-mainline-address-lookup",
+ "iroh-mainline-endpoint-discovery",
  "kukuri-core",
  "kukuri-store",
  "n0-future",

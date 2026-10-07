@@ -1,0 +1,23 @@
+[package]
+name = "kukuri-cn-addr-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[package.metadata.kukuri]
+cn-lane = true
+
+[[bin]]
+name = "cn-addr-index"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+n0-mainline.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing.workspace = true
+udp-addr-index.workspace = true
+kukuri-cn-runtime-support = { path = "../cn-runtime-support" }
+
+[lints]
+workspace = true

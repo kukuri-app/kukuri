@@ -191,6 +191,25 @@ services:
     ports:
       - "${CN_STUN_HOST_BIND_IP:-127.0.0.1}:3478:3478/udp"
 
+  # 公開 blob の発見の補助 index（#1632 D6、ADR 0063 §7）。kukuri が運用する server だけで起動する（profile `addr-index`）。
+  # 端末と node は署名つきの一覧でこの server を見つけ、送信元の address で record を引くので、送信元を書き換えずに受ける。
+  cn-addr-index:
+    logging: *cn-logging
+    profiles: ["addr-index"]
+    build:
+      context: .
+      dockerfile: docker/cn/Dockerfile
+      args:
+        TARGET_PACKAGES: kukuri-cn-addr-index
+        TARGET_BIN: cn-addr-index
+    restart: unless-stopped
+    environment:
+      CN_ADDR_INDEX_MAX_ENTRIES: ${CN_ADDR_INDEX_MAX_ENTRIES:-}
+      CN_ADDR_INDEX_MAX_ENTRIES_PER_IP: ${CN_ADDR_INDEX_MAX_ENTRIES_PER_IP:-}
+      CN_ADDR_INDEX_REQUESTS_PER_IP_PER_SEC: ${CN_ADDR_INDEX_REQUESTS_PER_IP_PER_SEC:-}
+    ports:
+      - "${CN_ADDR_INDEX_HOST_BIND_IP:-127.0.0.1}:60125:60125/udp"
+
   # 常駐 indexing ワーカー（#613 / #615）。docs replica sync → safety scan → index 投影。
   # provider 未構成なら ingest 無効の fail-closed 常駐（scan なしで index に載せない）。
   # port は status endpoint の loopback bind のみで、iroh 通信は outbound で成立する。

@@ -4142,6 +4142,7 @@ dependencies = [
  "iroh",
  "iroh-gossip",
  "iroh-mainline-address-lookup",
+ "iroh-mainline-endpoint-discovery",
  "kukuri-core",
  "kukuri-store",
  "n0-future",

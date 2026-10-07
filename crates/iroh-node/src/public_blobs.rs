@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iroh::{EndpointId, SecretKey};
-use iroh_mainline_endpoint_discovery::{AddrIndex, Announcer, Resolver, infohash_from_blake3};
+use iroh_mainline_endpoint_discovery::{Announcer, Resolver, infohash_from_blake3};
 use kukuri_store::ContentCacheStore;
 use kukuri_transport::PublicBlobIndex;
 use n0_future::task::AbortOnDropHandle;
@@ -20,10 +20,6 @@ use tracing::{debug, warn};
 use crate::network_work::NetworkWorkRuntime;
 use crate::remote_fetch::current_time_ms;
 
-/// 補助 index の一覧が引けないときに、やり直すまでの間。
-const INDEX_RETRY: Duration = Duration::from_secs(30);
-/// 補助 index の照会の結果を覚える時間。
-const INDEX_LOOKUP_CACHE: Duration = Duration::from_secs(5 * 60);
 /// 告知を更新する間隔と、hash ごとに時刻をずらす幅。
 const ANNOUNCE_INTERVAL_MS: i64 = 10 * 60 * 1000;
 const ANNOUNCE_JITTER_MS: i64 = 60 * 1000;
@@ -57,22 +53,7 @@ impl PublicBlobDiscovery {
     pub(crate) fn start(dht: Dht, index: PublicBlobIndex, secret: SecretKey) -> Self {
         let (sender, ready) = watch::channel(None);
         let task = n0_future::task::spawn(async move {
-            let addr_index = loop {
-                let builder = AddrIndex::builder(dht.clone()).lookup_cache(INDEX_LOOKUP_CACHE);
-                let builder = match &index {
-                    PublicBlobIndex::ListKey(key) => builder.list_key(*key),
-                    PublicBlobIndex::Servers(servers) => servers
-                        .iter()
-                        .fold(builder, |builder, server| builder.server(*server)),
-                };
-                match builder.build().await {
-                    Ok(addr_index) => break addr_index,
-                    Err(error) => {
-                        debug!(%error, "public blob index unavailable");
-                        sleep(INDEX_RETRY).await;
-                    }
-                }
-            };
+            let addr_index = index.connect(dht.clone()).await;
             sender.send_replace(Some(Arc::new(Ready {
                 resolver: Resolver::new(dht.clone(), addr_index.clone()),
                 announcer: Announcer::new(secret, dht, addr_index),

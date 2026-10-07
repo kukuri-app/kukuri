@@ -120,9 +120,10 @@ def check_image(root, name, tag):
     run("docker", "run", "--rm", "--entrypoint", "sh", tag, "-ec",
         "test ! -e /tmp/release; test -x /usr/local/bin/app")
     if name == "iroh-relay":
-        # #1483: 同梱した STUN の binary が起動して待ち受ける（2 秒で timeout が止める）。
-        run("docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", tag, "-c",
-            "timeout 2 /usr/local/bin/cn-stun; test $? -eq 124")
+        # #1483・#1632: 同梱した STUN と補助 index の binary が起動して待ち受ける（2 秒で timeout が止める）。
+        for extra in ("cn-stun", "cn-addr-index"):
+            run("docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", tag, "-c",
+                f"timeout 2 /usr/local/bin/{extra}; test $? -eq 124")
     if name in ("cli", "indexer"):
         run("docker", "run", "--rm", "--entrypoint", "sh", tag, "-ec",
             "ffmpeg -version >/dev/null; ffprobe -version >/dev/null; test -s /usr/local/share/kukuri/decoder-build-id")

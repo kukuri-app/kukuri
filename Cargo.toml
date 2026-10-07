@@ -20,6 +20,7 @@ members = [
     "crates/cn-user-api",
     "crates/cn-iroh-relay",
     "crates/cn-stun",
+    "crates/cn-addr-index",
     "crates/cn-cli",
     "crates/cn-operator",
     "crates/cn-safety",

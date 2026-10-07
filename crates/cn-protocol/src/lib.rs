@@ -10,6 +10,7 @@
 
 pub mod advisory_lookup;
 pub mod auth;
+pub mod blob_providers;
 pub mod dome_hosting;
 pub mod error_codes;
 pub mod index;
@@ -26,6 +27,7 @@ pub mod trust_relation;
 
 pub use advisory_lookup::*;
 pub use auth::*;
+pub use blob_providers::*;
 pub use dome_hosting::*;
 pub use error_codes::*;
 pub use index::*;

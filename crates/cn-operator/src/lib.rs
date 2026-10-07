@@ -134,6 +134,7 @@ features:
   crash_report: false
   cloudflare_proxy: true
   dome_hosting: false
+  public_blob_search: false
 
 retention:
   connection_logs_days: 30
