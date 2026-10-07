@@ -97,8 +97,8 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
   これを iroh の fork（`KingYoSun/iroh`）へ載せた（上流の汎用 API であり、Web 固有の差分ではない。#1213 D-2）。W10 AC-1 で、fork の branch `kukuri/add-remote-addrs-v1.3.0` の rev `c47e860f`（上流 v1.3.0＋#4447＋#4565 の cherry-pick）へ更新した。
 - W9 AC-2 の試験は、custom のアドレスだけで接続する（relay を使わない）ので #4565 に依存しない。
 - 経路の削除は、session の close で行う。閉じた session の addr は `watch_local_addrs` から外れ、`is_valid_send_addr` が false になり、`poll_recv` もその addr の datagram を返さない。
-  iroh の fork は、custom transport が外した local addr を持つ custom path をすぐ閉じる（PATH_ABANDON を送る）。破棄の event で、既定の selector が relay 等の残りの path へ移る。
-  その path が接続の最後の path で閉じられないときは、別の path が確立した時点で閉じ直す。新しい接続は選ばれた custom path で始まり、relay の path は約 0.33 秒後（相手の connection ID を待つ再試行）に開くので、その間の喪失がこれに当たる。
+  iroh の fork は、custom transport が外した local addr を持つ custom path を、同じ接続に別の確立した path があればすぐ閉じる（PATH_ABANDON を送る）。破棄の event で、既定の selector が relay 等の残りの path へ移る。
+  別の確立した path が無いとき（その path が接続の最後の path のとき、または relay の path が開いたが検証が済んでいないとき）は閉じず、別の path が確立した時点で閉じる。新しい接続は選ばれた custom path で始まり、relay の path は約 0.33 秒後（相手の connection ID を待つ再試行）に開くので、その間とその後の検証までの喪失がこれに当たる。
   接続と stream は続く。公開の API は足さない。
   - #1482 で載せた（2026-10-04）。それまでは、閉じた custom path が iroh の path の idle 期限（15 秒）まで選ばれたまま残り、その間の送信（その相手への新しい接続の最初の送信も）は届かなかった。
     W10 AC-2 の実測（J3）では、relay で再開するまで 16〜18 秒かかった。
@@ -114,13 +114,17 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     - 外された custom path だけが残った接続は、3 秒で閉じる。その接続の利用者は、接続し直して relay で続ける。登録より前に local addr を外された接続も、登録の時点で同じ扱いにする。
     - custom transport の local addr の変化は、相手ごとの actor の run loop の分岐だけが受け取る。ほかの処理は watcher の写しで最新の値を読む。ほかの処理が先に受け取ると、その変化で外された path を閉じる処理が走らず、最後に受け取った値を読むと、新しい session の生きた custom path を外されたものと扱う（fork の単体試験 `reading_custom_addrs_sees_the_latest_and_leaves_the_update_to_the_watcher_branch`）。
     判定は `a_custom_path_lost_right_after_a_connection_starts_does_not_stall_the_peer`（失ってから 2 秒以内に新しい接続で通信でき、止まった接続は 4 秒以内に閉じる）。
+  - relay の path が開いた後、検証（PATH_RESPONSE）が済む前に失ったときは、#1482 の時点では custom path をすぐ閉じていた。noq は検証済みの別の path が無いと PATH_ABANDON を捨てる path 自体に送り、再送しない。
+    捨てた path で送信中の packet を失ったとみなすのは相手の PATH_ABANDON を受けてからなので、両端がこの窓で捨てると、custom で送りかけた data と flow control の更新が再送されず、relay の keepalive だけが続いて転送が止まり続けた（webrtc_route の J3 が CI で 60 分止まった）。
+    #1654 で、別の確立した path ができるまで閉じない条件に、この窓を含めた（2026-10-07 ユーザー判断）。検証が 3 秒以内に済まなければ、上の外された custom path だけが残った接続と同じく閉じる。
+    判定は `a_custom_path_lost_before_the_relay_path_is_validated_falls_back_to_the_relay`（relay から web への向きを止めて検証を済ませない間に両端で custom を失っても、web は PATH_ABANDON を出さず、止めるのをやめた後に同じ接続のまま relay で完走する）。
   - handshake の途中で失ったときは、相手の側の接続が失った path に結び付いたままになり、relay では handshake を終えられず、QUIC の idle 期限（30 秒）まで止まる。
     docs の読取りの接続は、blob の取得と同じ 5 秒の期限で打ち切る（2026-10-05 ユーザー判断、#1220 AC-3c2。`a_docs_read_whose_handshake_gets_no_answer_ends_at_the_connect_timeout`）。
     接続に 5 秒より長くかかる相手からの docs の読取りは失敗になり、ほかの提供元か次の契機で読み直す。本人の端末間の同期の取り直しは ADR 0061 §10。
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
-- fork の独自差分: 上の custom path を閉じる変更（#1482）と、外された custom path を選ばず、それだけが残った接続を閉じる変更（#1571）は、上流へ PR を出さず fork だけで持つ（2026-10-04・2026-10-05 ユーザー判断、#1213 D-2 の例外）。
-  branch `kukuri/connection-start-loss-v1.3.0` の rev `e0b0ad98`（`c47e860f` の上の 5 commit）。fork の rev を上げるときは、この 5 commit を載せ直し、上の 3 つの試験と fork の単体試験を通す。
+- fork の独自差分: 上の custom path を閉じる変更（#1482）と、外された custom path を選ばず、それだけが残った接続を閉じる変更（#1571）、別の path が確立してから閉じる変更（#1654）は、上流へ PR を出さず fork だけで持つ（2026-10-04・2026-10-05・2026-10-07 ユーザー判断、#1213 D-2 の例外）。
+  branch `kukuri/close-after-another-path-v1.3.0` の rev `eef6af69`（`c47e860f` の上の 6 commit）。fork の rev を上げるときは、この 6 commit を載せ直し、上の 4 つの試験と fork の単体試験を通す。
 
 ### 6. STUN
 
