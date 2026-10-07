@@ -320,7 +320,11 @@ pub(crate) fn effective_seed_peers(
 
 #[cfg_attr(
     target_family = "wasm",
-    expect(unused_variables, unused_mut, reason = "公開 blob の発見は native だけ")
+    expect(
+        unused_variables,
+        unused_mut,
+        reason = "公開 blob の発見は native だけ"
+    )
 )]
 pub(crate) fn effective_dht_options(
     dht_options: &DhtDiscoveryOptions,
