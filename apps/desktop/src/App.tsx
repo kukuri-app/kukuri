@@ -78,7 +78,8 @@ export function App(props: AppProps) {
       .catch(() => undefined);
   }, [startupGate.status]);
 
-  // Web だけ: 別の tab に runtime を引き継がれたら、起動の状態を読み直す（ADR 0059 §4）。
+  // Web だけ: 起動の状態が変わったと知らされたら（別の tab に runtime を引き継がれた、database の版の更新が始まった・
+  // 終わった）、起動の状態を読み直す（ADR 0059 §1・§4）。
   useEffect(() => {
     if (!IS_WEB_RUNTIME) return;
     return listenWebRuntimeEvents((event) => {
