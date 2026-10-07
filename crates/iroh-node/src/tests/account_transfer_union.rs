@@ -1,6 +1,6 @@
 //! #1650: 本人の端末どうしの和集合の同期。待ち受けた 2 端末は、押した順によらず 1 本の接続で、鍵を除く必須 bundle と
 //! 投稿の記録を送り合って取り込む（T1）。別のアカウントの端末・待ち受けていない端末とはつながらず、何も受けない（T2）。
-//! 待ち受けは期限で終わり、送り合う途中の取消は、取り消した端末で中止になる（T4）。
+//! 待ち受けは期限で終わり、送り合う途中の取消は、取り消した端末で中止、相手では中断になる（T4）。
 
 use kukuri_core::KukuriKeys;
 
@@ -167,7 +167,8 @@ async fn only_a_waiting_device_of_the_same_account_is_synced() -> Result<()> {
 }
 
 /// T4: 待ち受けは期限で終わり、その後の接続を受けない。送り合う途中で受ける側が取り消すと、取り消した端末は確定した
-/// page までで中止になり、相手は自分が受けた向きの結果で終わる。待ち受けの取消は状態を消す。
+/// page までで中止になる。相手は、自分が受け終えていても、送り終える前に止まったので中断を示す（独立監査 B-1）。
+/// 待ち受けの取消は状態を消す。
 #[tokio::test]
 async fn the_wait_expires_and_a_cancel_stops_the_sync() -> Result<()> {
     let keys = KukuriKeys::generate();
@@ -189,7 +190,7 @@ async fn the_wait_expires_and_a_cancel_stops_the_sync() -> Result<()> {
     a.transfer().cancel();
     assert_eq!(a.transfer().status(), Status::Idle);
 
-    // b の 2 page 目の本文を、a が 1 page 目を確定した後まで止めておき、その間に a が取り消す。
+    // b の 2 page 目の本文を止めておき、b が a の投稿をすべて受け、a が b の 1 page 目を確定した後に、a が取り消す。
     let gated = "e".repeat(64);
     let gate = Arc::new(Notify::new());
     let b = Device::new(HistorySource {
@@ -202,7 +203,7 @@ async fn the_wait_expires_and_a_cancel_stops_the_sync() -> Result<()> {
     timeout(WAIT, async {
         while {
             let log = a.sink.log.lock().unwrap();
-            (log.pages.len(), log.pending) != (1, 1)
+            (log.pages.len(), log.pending) != (1, 1) || b.sink.log.lock().unwrap().pages.len() != 2
         } {
             n0_future::time::sleep(Duration::from_millis(10)).await;
         }
@@ -214,7 +215,10 @@ async fn the_wait_expires_and_a_cancel_stops_the_sync() -> Result<()> {
         wait_for(a.transfer(), "a cancelled", is_completed).await?,
         synced(2, 0, Some(Failure::Cancelled))
     );
-    wait_for(b.transfer(), "b ended", is_completed).await?;
+    assert_eq!(
+        wait_for(b.transfer(), "b interrupted", is_completed).await?,
+        synced(4, 1, Some(Failure::Interrupted))
+    );
     assert_eq!(a.sink.log.lock().unwrap().pages, [(2, Vec::new())]);
     Ok(())
 }

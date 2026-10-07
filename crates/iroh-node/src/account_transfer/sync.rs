@@ -189,8 +189,11 @@ async fn run_sync(endpoint: &Endpoint, peer: EndpointAddr, session: &Session) {
 }
 
 /// 同期: 両端末が同じ接続で、自分の必須 bundle（鍵を除く）と投稿の記録すべてを送り、相手のものを受けて取り込む。結果は
-/// 受けた向きで示す（送る向きの失敗は、相手の端末が受けた向きの失敗として相手に示される）。取消で状態が終わったら、
-/// 途中でもやめる。
+/// 受けた向きの数で示し、どちらかの向きが止まったら止まった理由を示す。取消で状態が終わったら、途中でもやめる。
+///
+/// 閉じる側は、どの stream も最後の書込みの後に相手の受取りの確認（`stopped`）を待ってから閉じ、iroh の QUIC は閉じた
+/// 接続でも受け取り済みの data を読ませる。そのため送る向きの失敗は、相手が受け終える前に止まった（取消・切断）ときだけ
+/// 起きる。
 async fn sync_both(session: &Session, connection: &Connection) {
     let exchange = async {
         let source = session.source.as_deref().ok_or(Failure::Invalid)?;
@@ -199,13 +202,13 @@ async fn sync_both(session: &Session, connection: &Connection) {
             role: Role::Sync,
             items: 0,
         });
-        let (_, received) = futures_util::future::join(
+        let (sent, received) = futures_util::future::join(
             send_bundle(session, connection, source),
             receive_bundle(session, connection, sink),
         )
         .await;
         let account_id = received?;
-        let (_, history) = futures_util::future::join(
+        let (served, mut history) = futures_util::future::join(
             serve_history(session, connection, source),
             receive_history(
                 session,
@@ -216,6 +219,12 @@ async fn sync_both(session: &Session, connection: &Connection) {
             ),
         )
         .await;
+        // 相手が受け終える前に送る向きが止まったら、受けた向きが終わっていても中断として示す（相手に取り消されたとき）。
+        if history.stopped.is_none() {
+            history.stopped = sent
+                .err()
+                .or_else(|| served.map_or(Some(Failure::Interrupted), |served| served.stopped));
+        }
         Ok(history)
     };
     let mut status = session.status.subscribe();
