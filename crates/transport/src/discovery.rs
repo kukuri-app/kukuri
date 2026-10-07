@@ -52,7 +52,7 @@ mod tests {
             relay_config.parsed_relay_urls().expect("relay urls"),
         ));
 
-        let (endpoint, _discovery) = timeout(
+        let (endpoint, _discovery, _paths) = timeout(
             Duration::from_secs(3),
             bind_endpoint_with_options(
                 std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
@@ -86,7 +86,7 @@ mod tests {
         let relay_urls = Arc::new(StdRwLock::new(
             relay_config.parsed_relay_urls().expect("relay urls"),
         ));
-        let (endpoint, _discovery) = bind_endpoint_with_options(
+        let (endpoint, _discovery, _paths) = bind_endpoint_with_options(
             std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
                 std::net::Ipv4Addr::LOCALHOST,
                 0,

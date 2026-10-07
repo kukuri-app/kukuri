@@ -165,11 +165,13 @@ pub struct IrohGossipTransport {
     env_locked: Arc<Mutex<bool>>,
     /// 通信状態の変わった部分の印(#1221 R2-D)。
     status_changes: StatusChanges,
+    connection_paths: GossipConnectionPaths,
     /// 状態の読取りで見た topic・peer と `remote_info` の数(計測用。#1221 R2-D)。
     #[cfg(any(test, feature = "test-support"))]
     status_read_steps: Arc<AtomicU64>,
 }
 
+mod connection_paths;
 mod discovery;
 mod endpoint;
 mod offer;
@@ -181,6 +183,7 @@ mod tests;
 mod topic_rendezvous;
 mod topics;
 
+pub use connection_paths::GossipConnectionPaths;
 #[cfg(test)]
 pub(crate) use endpoint::bind_endpoint_with_options;
 pub use relay::{build_endpoint_builder, sync_endpoint_relay_config};

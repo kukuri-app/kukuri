@@ -196,6 +196,7 @@ fn unique_recovery_dir(root: &Path) -> Result<PathBuf> {
 
 pub struct IrohDocsNode {
     endpoint: Endpoint,
+    gossip_connection_paths: kukuri_transport::GossipConnectionPaths,
     gossip: Gossip,
     discovery: Arc<MemoryLookup>,
     relay_urls: Arc<StdRwLock<Vec<RelayUrl>>>,
@@ -442,12 +443,14 @@ impl IrohDocsNode {
         };
         let relay_config = relay_config.normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
+        let gossip_connection_paths = kukuri_transport::GossipConnectionPaths::default();
         let mut endpoint_builder = build_endpoint_builder(
             EndpointBuilder::new(presets::Minimal).relay_mode(relay_config.relay_mode()?),
             &discovery,
             Some(&dht_options),
             Arc::clone(&relay_urls),
         )?;
+        endpoint_builder = endpoint_builder.hooks(gossip_connection_paths.clone());
         #[cfg(test)]
         #[cfg(not(target_family = "wasm"))]
         {
@@ -567,6 +570,7 @@ impl IrohDocsNode {
 
         let node = Arc::new(Self {
             endpoint,
+            gossip_connection_paths,
             gossip,
             discovery,
             relay_urls,
@@ -617,6 +621,10 @@ impl IrohDocsNode {
 
     pub fn gossip(&self) -> &Gossip {
         &self.gossip
+    }
+
+    pub fn gossip_connection_paths(&self) -> kukuri_transport::GossipConnectionPaths {
+        self.gossip_connection_paths.clone()
     }
 
     pub fn discovery(&self) -> Arc<MemoryLookup> {

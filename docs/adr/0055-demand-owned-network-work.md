@@ -266,11 +266,17 @@ policyとconsentのGET、全nodeの合成と全topicへのjoin、30秒不健全�
   未確認（neighborが無い）・延期（CNの再試行中など）は、Live・DurableReady・Readyとして表示しない。
 - **peerの一覧はページ**: 設定済み・接続中・不足・docs/blobの補助・取り込んだticket・seedの一覧は、設定画面の詳細を
   開いたときだけ`list_connectivity_peers { kind, topic, cursor, limit }`で、idの順に1回64件まで読む。
-- **変化点での差分**: transport（topicの購読・neighborの成立と喪失・受信・受信taskの失敗・discoveryの設定）、
+- **変化点での差分**: transport（topicの購読・neighborの成立と喪失・接続の経路変化・受信・受信taskの失敗・discoveryの設定）、
   app-api（同期の時刻・docsの活動）、CNのsessionの書込みが、変わった所に印（`StatusChanges`）を付ける。
   observerは印が付くまで待ち、印の付いたtopicとnodeだけを作り直して差分のevent（件数、変わったtopic、抜けたtopic、
   変わったnode、外したnode）を送る。変化の無い間は仕事をしない。同じ種類の頻繁な変化（受信の時刻・`last_sync_ts`）は
   1秒に1回までにまとめる。印は読み手が待ち始めてから溜め、256件を超えたら全体の作り直しの印にまとめる。
+  経路変化（#1595、2026-10-07）は、endpointのhandshake hookが保持するgossip接続の弱参照から
+  `Connection::path_events`を購読し、既存のtopic受信taskで待つ。該当neighborを持つtopicだけに印を付け、
+  `remote_info`のActive経路から既存の`active_path` / `fallback_peer_count`を作り直す。
+  弱参照の窓は1024件、handshake通知は256件まで。閉じた接続の弱参照は次のhandshakeで除去し、
+  accountのtransport停止で窓を空にする。経路の購読は接続終了・NeighborDown・topicの終了で解放する。
+  追加のtask・probe・全peer/topicの周期読取りはなく、接続制御・wire・API形式は変更しない。
 - **後から購読した側**: hostは最新のeventを保持して再送しない。frontendは表示の開始時と60秒ごとに状態を読み直し
   （pushの取りこぼしの補い）、読む間に届いた差分を重ねる。
 - 撤去: 3秒ごとの全体のpullと全体の等値比較、hostの最新eventの再送、状態の表示を流用した読取り

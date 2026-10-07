@@ -66,7 +66,8 @@ impl TestIrohStack {
                 network_config,
                 relay_config.clone(),
             )
-            .expect("transport"),
+            .expect("transport")
+            .with_connection_paths(node.gossip_connection_paths()),
         );
         let docs_sync = Arc::new(IrohDocsSync::new(node.clone()));
         let blob_service = Arc::new(IrohBlobService::new(node.clone()));
