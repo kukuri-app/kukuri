@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { attach } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 
 test('要素の差し替え後に位置を取り直し、成功した押下位置を返す', async () => {
@@ -23,10 +26,25 @@ test('要素の差し替え後に位置を取り直し、成功した押下位�
   assert.equal(refreshes, 2);
 });
 
-test('stale以外のdriverの失敗を隠さない', async () => {
+test('stale以外のdriverの失敗を隠さない', async (context) => {
+  // WebDriver session の初期照会だけ応答し、実際の waitUntil を使う。
+  const server = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ value: 'unit-window' }));
+  }).listen(0, '127.0.0.1');
+  context.after(() => server.close());
+  await once(server, 'listening');
+  const browser = await attach({
+    sessionId: 'android-click-unit', isW3C: true, capabilities: { browserName: 'chrome' },
+    options: { hostname: '127.0.0.1', port: server.address().port, logLevel: 'silent', waitforInterval: 5 },
+  });
   const error = new Error('session disconnected');
   const element = { waitForExist: async () => {} };
-  const browser = { execute: async () => { throw error; }, waitUntil: (check) => check() };
+  let attempts = 0;
+  browser.overwriteCommand('execute', async () => {
+    if (++attempts === 1) throw error;
+    return { offset: { x: 0, y: 0 } };
+  });
   await assert.rejects(androidClick(browser, element, () => assert.fail('押下しない'), 1000), error);
 });
 
