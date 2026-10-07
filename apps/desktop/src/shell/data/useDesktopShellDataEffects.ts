@@ -233,31 +233,29 @@ export function useDesktopShellDataEffects({
     let disposed = false;
 
     const refresh = async () => {
-      if (
-        disposed ||
-        visibleRefreshInFlightRef.current ||
-        (typeof document !== 'undefined' && document.visibilityState === 'hidden')
-      ) {
+      if (disposed || visibleRefreshInFlightRef.current) {
         return;
       }
+      // window が非表示の間は、Flow モードの Timeline Column だけを取得する(#1647)。
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
       visibleRefreshInFlightRef.current = true;
       try {
-        await refreshVisibleShellData(activeTopic, selectedThread, 'buffer');
+        if (!hidden) await refreshVisibleShellData(activeTopic, selectedThread, 'buffer');
         // Issue #765: 表示中の背景 Timeline Column の scope も定期 refresh する。
-        // active scope(選択 channel と public)は上で取得済みなので除外し、
-        // 非表示 Column は取得しない(API 呼び出し数の上限 = 表示中 Column 数)。
+        // active scope(選択 channel と public)は上で取得済みなので除外し、非表示 Column は
+        // Flow モードのものだけ取得する(API 呼び出し数の上限 = 表示中と Flow モードの Column 数)。
         const currentState = storeApi.getState();
-        const visibleIds = new Set(visibleColumnIdsRef?.current ?? []);
+        const visibleIds = new Set(hidden ? [] : visibleColumnIdsRef?.current ?? []);
         const activeScope = activeWorkspaceScope(currentState.workspaceState);
         const activeSelectedChannelId =
           activeScope.topicId === activeTopic ? activeScope.channelId : null;
-        const seenScopeKeys = new Set<string>([
+        const seenScopeKeys = new Set<string>(hidden ? [] : [
           `${activeTopic}\u0000${activeSelectedChannelId ?? ''}`,
           `${activeTopic}\u0000`,
         ]);
         const backgroundScopes = currentState.workspaceState.columns.flatMap((column) => {
           if (column.kind !== 'timeline' || !column.scope) return [];
-          if (!visibleIds.has(column.id)) return [];
+          if (!column.timelineFlow && !visibleIds.has(column.id)) return [];
           const key = `${column.scope.topicId}\u0000${column.scope.channelId ?? ''}`;
           if (seenScopeKeys.has(key)) return [];
           seenScopeKeys.add(key);

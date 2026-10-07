@@ -1,4 +1,4 @@
-import { Bookmark, List } from 'lucide-react';
+import { Bookmark, List, LoaderPinwheel } from 'lucide-react';
 import { useRef, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,12 +10,17 @@ type TimelineViewIconTabsProps = {
   activeView: TimelineViewId;
   items: Array<{ id: TimelineViewId; label: string }>;
   onSelect: (view: TimelineViewId) => void;
+  // 新着を常に反映する Flow モード(#1647)。表示中のフィードを押したときだけ切り替える。
+  flow?: boolean;
+  onToggleFlow?: () => void;
 };
 
 export function TimelineViewIconTabs({
   activeView,
   items,
   onSelect,
+  flow = false,
+  onToggleFlow,
 }: TimelineViewIconTabsProps) {
   const { t } = useTranslation('shell');
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -46,6 +51,7 @@ export function TimelineViewIconTabs({
     >
       {items.map((item, index) => {
         const active = activeView === item.id;
+        const flowIcon = item.id === 'feed' && flow;
         return (
           <IconButton
             key={item.id}
@@ -53,16 +59,18 @@ export function TimelineViewIconTabs({
             className='shell-column-view-tab'
             role='tab'
             type='button'
-            label={item.label}
+            label={flowIcon ? t('workspace.feedFlow') : item.label}
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             ref={(node) => {
               tabRefs.current[index] = node;
             }}
-            onClick={() => onSelect(item.id)}
+            onClick={() => (active && item.id === 'feed' && onToggleFlow ? onToggleFlow() : onSelect(item.id))}
             onKeyDown={(event) => moveSelection(event, index)}
           >
-            {item.id === 'feed' ? (
+            {flowIcon ? (
+              <LoaderPinwheel className='size-4 icon-spinning' aria-hidden='true' />
+            ) : item.id === 'feed' ? (
               <List className='size-4' aria-hidden='true' />
             ) : (
               <Bookmark className='size-4' aria-hidden='true' />

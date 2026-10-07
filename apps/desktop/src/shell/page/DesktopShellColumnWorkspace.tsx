@@ -92,6 +92,7 @@ type DesktopShellColumnWorkspaceProps = {
   onSyncColumnRoute: (column: ColumnState) => void;
   onSelectTimelineTopic: (column: ColumnState, topicId: string) => void;
   onSelectTimelineView: (column: ColumnState, view: TimelineViewId) => void;
+  onToggleTimelineFlow: (column: ColumnState) => void;
   // Timeline Column header のプライベートチャンネル入口(Issue #966)。公開 scope では
   // 作成・参加 Dialog、channel scope ではそのチャンネルの設定・共有 Dialog を開く。
   onOpenChannelManager: (column: ColumnState) => void;
@@ -130,6 +131,7 @@ export function DesktopShellColumnWorkspace({
   onSyncColumnRoute,
   onSelectTimelineTopic,
   onSelectTimelineView,
+  onToggleTimelineFlow,
   onOpenChannelManager,
   onOpenChannelSettings,
   renderProfileSurface,
@@ -470,6 +472,8 @@ export function DesktopShellColumnWorkspace({
           activeView={column.timelineView ?? 'feed'}
           items={timelineViewItems}
           onSelect={(view) => onSelectTimelineView(column, view)}
+          flow={Boolean(column.timelineFlow)}
+          onToggleFlow={() => onToggleTimelineFlow(column)}
         />
       );
     }

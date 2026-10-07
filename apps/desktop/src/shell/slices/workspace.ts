@@ -33,6 +33,8 @@ export type ColumnState = {
   preferredDesktopSpan: ColumnSpan;
   // kind === 'timeline' の Column のみ意味を持つ。未設定は 'feed'。
   timelineView?: ColumnTimelineView;
+  // kind === 'timeline' の Column のみ意味を持つ。新着を保留せず常に反映する(Flow モード、#1647)。
+  timelineFlow?: boolean;
 };
 
 export type ColumnStateInput = Omit<ColumnState, 'preferredDesktopSpan'> & {
@@ -392,6 +394,17 @@ export function setColumnTimelineView(
     if ((column.timelineView ?? 'feed') === view) return column;
     changed = true;
     return { ...column, timelineView: view };
+  });
+  return changed ? { ...state, columns } : state;
+}
+
+export function toggleColumnTimelineFlow(state: WorkspaceState, columnId: string): WorkspaceState {
+  let changed = false;
+  const columns = state.columns.map((column) => {
+    if (column.id !== columnId || column.kind !== 'timeline') return column;
+    changed = true;
+    const { timelineFlow, ...rest } = column;
+    return timelineFlow ? rest : { ...rest, timelineFlow: true };
   });
   return changed ? { ...state, columns } : state;
 }

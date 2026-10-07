@@ -264,6 +264,7 @@
     "columnPages": "Column pages",
     "composeTarget": "Compose Target",
     "feed": "Feed",
+    "feedFlow": "Feed (Flow mode)",
     "noBookmarks": "No bookmarked posts yet.",
     "bookmarksLoading": "Loading bookmarks…",
     "bookmarksEmpty": {

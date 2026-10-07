@@ -82,6 +82,7 @@ function parseColumn(value: unknown): ColumnState | null {
   if (kind === 'timeline' && (value.timelineView === 'feed' || value.timelineView === 'bookmarks')) {
     column.timelineView = value.timelineView;
   }
+  if (kind === 'timeline' && value.timelineFlow === true) column.timelineFlow = true;
   return column;
 }
 
@@ -97,6 +98,7 @@ export function captureWorkspaceLayoutSnapshot(
       ...(column.entityId ? { entityId: column.entityId } : {}),
       ...(column.parentColumnId ? { parentColumnId: column.parentColumnId } : {}),
       ...(column.timelineView ? { timelineView: column.timelineView } : {}),
+      ...(column.timelineFlow ? { timelineFlow: true } : {}),
       pinned: column.pinned,
       preferredDesktopSpan: normalizeColumnSpan(column.kind, column.preferredDesktopSpan),
     })),
