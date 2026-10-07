@@ -138,6 +138,7 @@ import type {
   SetCommunityNodeConfigRequest,
   SetCommunityNodeInviteCodeRequest,
   SetDiscoverySeedsRequest,
+  SetPublicBlobDiscoveryRequest,
   SetTopicGossipEnabledRequest,
   StartOwnerDomeHostingRequest,
   SubmitDomeSessionInputRequest,
@@ -1060,6 +1061,8 @@ export const runtimeApi: DesktopApi = {
       } satisfies SetDiscoverySeedsRequest,
     });
   }),
+  setPublicBlobDiscovery: command('setPublicBlobDiscovery', async (enabled) =>
+    invokeDesktop<DiscoveryConfig>('set_public_blob_discovery', { request: { enabled } satisfies SetPublicBlobDiscoveryRequest })),
   unsubscribeTopic: command('unsubscribeTopic', async (topic) => {
     return invokeDesktop<void>('unsubscribe_topic', {
       request: {

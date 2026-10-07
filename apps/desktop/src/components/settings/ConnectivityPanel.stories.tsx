@@ -34,7 +34,7 @@ function DiagnosticStory({ state, width = 'wide', operationError = false }:
     peerTicket: ticket, discoverySeedInput: seed, locale: getResolvedLocale(i18n.resolvedLanguage), theme: 'dark', t });
   const actions = { onRefreshDiagnostics: () => setRefreshed(true), onOpenCommunityNode: () => undefined };
   return <SettingsStoryFrame width={width}><main className='max-w-3xl p-4'>{state === 'discovery'
-    ? <DiscoveryPanel view={view.discoveryPanelView} {...actions} saveDisabled resetDisabled onSeedPeersChange={setSeed} onSave={() => {}} onReset={() => {}} />
+    ? <DiscoveryPanel view={view.discoveryPanelView} {...actions} saveDisabled resetDisabled onSeedPeersChange={setSeed} onSave={() => {}} onReset={() => {}} onPublicBlobDiscoveryChange={async () => {}} />
     : <ConnectivityPanel view={view.connectivityPanelView} {...actions} onPeerTicketInputChange={setTicket} onImportPeer={() => {}} />}</main></SettingsStoryFrame>;
 }
 const meta = { title: 'Settings/ConnectivityPanel', component: DiagnosticStory,

@@ -22,6 +22,11 @@ test('setTopicGossipEnabled invokes the desktop command', async () => {
   });
 });
 
+test('setPublicBlobDiscovery invokes the desktop command', async () => {
+  await runtimeApi.setPublicBlobDiscovery(false);
+  expect(invokeMock).toHaveBeenCalledWith('set_public_blob_discovery', { request: { enabled: false } });
+});
+
 test('setChannelGossipEnabled invokes the desktop command', async () => {
   await runtimeApi.setChannelGossipEnabled('kukuri:topic:demo', 'channel-1', true);
   expect(invokeMock).toHaveBeenCalledWith('set_channel_gossip_enabled', {

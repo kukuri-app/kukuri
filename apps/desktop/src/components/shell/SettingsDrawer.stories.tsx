@@ -68,6 +68,7 @@ function SettingsDrawerStory({ initialSection = 'connectivity' }: { initialSecti
           onSeedPeersChange={setSeedPeersInput}
           onSave={() => undefined}
           onReset={() => setSeedPeersInput(discoveryPanelFixture.seedPeersInput)}
+          onPublicBlobDiscoveryChange={async () => undefined}
         />
       ),
     },

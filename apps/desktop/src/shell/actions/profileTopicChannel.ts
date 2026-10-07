@@ -659,6 +659,17 @@ export function createProfileTopicChannelActions({
     }
   }
 
+  // #1632: backend が DHT と endpoint を組み直すので数秒かかりうる。返った設定だけを反映し、
+  // 失敗は発見の error に出す（設定は元の値のまま）。完了まで待てるよう、失敗でも reject しない。
+  async function handleSetPublicBlobDiscovery(enabled: boolean) {
+    try {
+      setDiscoveryConfig(await api.setPublicBlobDiscovery(enabled));
+      setDiscoveryError(null);
+    } catch (error) {
+      setDiscoveryError(messageFromError(error, String(error)));
+    }
+  }
+
   async function handleSaveCommunityNodes() {
     try {
       const nextConfig = await api.setCommunityNodeConfig(
@@ -881,6 +892,7 @@ export function createProfileTopicChannelActions({
     handleJoinChannelAccess,
     handleImportChannelAccessToken,
     handleSaveDiscoverySeeds,
+    handleSetPublicBlobDiscovery,
     handleSaveCommunityNodes,
     handleSetCommunityNodeTrustPriority,
     handleClearCommunityNodes,

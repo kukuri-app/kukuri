@@ -343,6 +343,7 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
       connect_mode: 'direct_only',
       env_locked: false,
       seed_peers: [],
+      public_blob_discovery: true,
     },
     communityNodeConfig: {
       nodes: [

@@ -70,6 +70,7 @@ export const DEFAULT_DISCOVERY_CONFIG: DiscoveryConfig = {
   connect_mode: 'direct_only',
   env_locked: false,
   seed_peers: [],
+  public_blob_discovery: true,
 };
 
 export const DEFAULT_COMMUNITY_NODE_CONFIG: CommunityNodeConfig = {

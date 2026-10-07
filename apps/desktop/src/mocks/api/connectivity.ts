@@ -51,6 +51,7 @@ type ConnectivityMock = Pick<
   | 'submitCommunityNodeTesterFeedback'
   | 'importPeerTicket'
   | 'setDiscoverySeeds'
+  | 'setPublicBlobDiscovery'
   | 'unsubscribeTopic'
   | 'setTopicGossipEnabled'
   | 'setChannelGossipEnabled'
@@ -572,6 +573,10 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
         .map((peer) => peer.endpoint_id)
         .sort();
       syncStatus.discovery.configured_seed_peer_count = runtime.connectivityPeers.configured_seed.length;
+      return runtime.discoveryConfig;
+    },
+    async setPublicBlobDiscovery(enabled) {
+      runtime.discoveryConfig = { ...runtime.discoveryConfig, public_blob_discovery: enabled };
       return runtime.discoveryConfig;
     },
     async unsubscribeTopic(topic) {

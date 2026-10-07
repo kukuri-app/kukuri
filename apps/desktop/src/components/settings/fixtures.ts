@@ -117,6 +117,7 @@ export function createDiscoveryPanelFixture(): DiscoveryPanelView {
     seedPeersMessage: 'Editing stays enabled because discovery is not env-locked.',
     seedPeersMessageTone: 'default',
     envLocked: false,
+    publicBlobDiscovery: true,
   };
 }
 

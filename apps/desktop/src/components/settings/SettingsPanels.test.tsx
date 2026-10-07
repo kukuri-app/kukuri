@@ -157,6 +157,7 @@ test('discovery panel keeps env-locked seed editor read-only', () => {
       onSeedPeersChange={() => {}}
       onSave={() => {}}
       onReset={() => {}}
+      onPublicBlobDiscoveryChange={async () => {}}
     />
   );
 
@@ -461,6 +462,7 @@ test('settings panels avoid the legacy grid classname collision', () => {
         onSeedPeersChange={() => {}}
         onSave={() => {}}
         onReset={() => {}}
+        onPublicBlobDiscoveryChange={async () => {}}
       />
       <CommunityNodePanel
         view={communityNodePanelFixture}
@@ -728,6 +730,7 @@ test('discovery panel hides diagnostics but keeps seed editor when showDiagnosti
       onSeedPeersChange={() => {}}
       onSave={() => {}}
       onReset={() => {}}
+      onPublicBlobDiscoveryChange={async () => {}}
       showDiagnostics={false}
     />
   );

@@ -516,6 +516,11 @@
       "envLock": "環境固定",
       "mode": "モード"
     },
+    "publicBlobDiscovery": {
+      "description": "オンにすると、公開された投稿の本文・添付、プロフィール画像、公開トピックのカスタムリアクション画像のうち、この端末が保持しているものを P2P のネットワーク（Mainline DHT）と kukuri の補助インデックスに知らせます。手元や接続したことのある相手に無いものは、保持している端末を探して取得します。非公開のチャンネルや DM の内容は対象外です。",
+      "label": "公開コンテンツの発見",
+      "pending": "切り替え中…"
+    },
     "seedPeersHint": "接続先IDを1行に1つ入力します。接続先アドレスの補足は任意です。",
     "seedPeersLabel": "シードピア",
     "seedPeersPlaceholder": "node_id or node_id@host:port",
