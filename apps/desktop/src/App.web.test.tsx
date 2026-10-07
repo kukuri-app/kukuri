@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -157,30 +157,39 @@ test.each([
   expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
 }, 20000);
 
-// ADR 0059 §1: アカウントの切替の途中の版の更新でも移行の画面を出し、切替が終わるまでレイアウトに戻らない（失敗は戻った
-// レイアウトのアカウントのメニューで知らせる）。
-test('a storage upgrade during an account change keeps the startup screen until the change ends', async () => {
+// ADR 0059 §1: アカウントの切替の途中で版を更新する間はレイアウトを外し、切替が終わるまで戻さない。外していた間に失敗した
+// 切替は、戻ったレイアウトでアカウントのメニューを開いて知らせる（2026-10-08 のユーザー判断）。
+test('a switch that fails after a storage upgrade returns to the layout and says it failed', async () => {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { ...window.location, reload });
   webRuntime(runInThisTab, runInThisTab);
   render(<App />);
   expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
-  const changing = vi.spyOn(session, 'isChangingAccount').mockReturnValue(true);
-  const removed = vi.spyOn(session, 'noteAccountLayoutRemoved');
-  const api = window.__KUKURI_DESKTOP__;
   delete window.__KUKURI_DESKTOP__;
-  let status = { status: 'migrating' };
-  webRuntime(() => Promise.resolve(status), runInThisTab);
-  act(() => listeners.forEach((listener) => listener({ type: 'startup_status_changed' })));
-  expect(await screen.findByText('Migrating your data…')).toBeVisible();
+  const account = (id: string) => ({ id, pubkey: id.repeat(4), label: null, created_at: 0, last_used_at: 0 });
+  let status = { status: 'ready' };
+  let fail!: () => void;
+  invokeMock.mockImplementation((command: string) => {
+    if (command === 'get_desktop_startup_status') return Promise.resolve(status);
+    // 一覧の応答は画面の読み直し（100 ms ごと）より遅い。画面は切替の後始末が終わるまで待つ。
+    if (command === 'list_accounts') {
+      const snapshot = { active_account_id: 'a'.repeat(16), accounts: [account('a'.repeat(16)), account('b'.repeat(16))] };
+      return new Promise((resolve) => setTimeout(() => resolve(snapshot), 250));
+    }
+    if (command !== 'switch_account') return new Promise(() => {});
+    status = { status: 'initializing' };
+    return new Promise((_, reject) => { fail = () => { status = { status: 'ready' }; reject({ code: 'command_failed', message: 'failed' }); }; });
+  });
+  const switching = session.changeAccountSession('b'.repeat(16)).catch(() => 'failed');
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('switch_account', expect.anything()));
+  // 待ちの無い版の更新は、画面が状態を読む前に始まりと終わりの両方を知らせ終える。
+  act(() => [1, 2].forEach(() => listeners.forEach((listener) => listener({ type: 'startup_status_changed' }))));
+  expect(await screen.findByText('Checking startup status…')).toBeVisible();
   expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
-  expect(removed).toHaveBeenCalled();
-
-  // 版の更新が終わっても、切替が終わるまでは起動の状態を読み直すだけで、レイアウトを出さない。
-  status = { status: 'ready' };
-  const reads = () => invokeMock.mock.calls.filter(([command]) => command === 'get_desktop_startup_status').length;
-  const before = reads();
-  await waitFor(() => expect(reads()).toBeGreaterThan(before + 1));
-  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
-  window.__KUKURI_DESKTOP__ = api;
-  changing.mockReturnValue(false);
-  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+  fail();
+  expect(await switching).toBe('failed');
+  const menu = await screen.findByRole('menu', { name: 'Account menu' }, { timeout: 5000 });
+  expect(await within(menu).findByText('Could not complete the action. Please try again.', {}, { timeout: 5000 })).toBeVisible();
+  expect(reload).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
 }, 20000);

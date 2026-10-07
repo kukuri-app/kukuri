@@ -102,7 +102,8 @@ export function App(props: AppProps) {
             return;
           }
           // アカウントの切替の途中の版の更新では、切替が終わるまでレイアウトに戻らない（失敗はアカウントのメニューで知らせる）。
-          if (status.status === 'migrating') noteAccountLayoutRemoved();
+          // 待ちの無い更新は読む前に終わっているので、`ready` 以外を読んだら（レイアウトを外すので）記録する。
+          if (status.status !== 'ready') noteAccountLayoutRemoved();
           if (status.status === 'ready' && isChangingAccount()) {
             retryTimer = setTimeout(loadStartupStatus, 100);
             return;
