@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createServer } from 'node:http';
-import { once } from 'node:events';
-import { attach } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 
 test('要素の差し替え後に位置を取り直し、成功した押下位置を返す', async () => {
@@ -12,14 +9,7 @@ test('要素の差し替え後に位置を取り直し、成功した押下位�
   const browser = {
     execute: async () => {
       if (refreshes === 1) throw Object.assign(new Error('stale element reference'), { name: 'stale element reference' });
-      return { offset };
-    },
-    waitUntil: async (check) => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const result = await check();
-        if (result) return result;
-      }
-      throw new Error('timed out');
+      return offset;
     },
   };
   assert.deepEqual(await androidClick(browser, element, (value) => value, 1000), offset);
@@ -27,26 +17,15 @@ test('要素の差し替え後に位置を取り直し、成功した押下位�
 });
 
 for (const failureAt of ['waitForExist', 'execute']) {
-  test(`${failureAt}のstale以外のdriverの失敗を隠さない`, async (context) => {
-    // WebDriver session の初期照会だけ応答し、実際の waitUntil を使う。
-    const server = createServer((_request, response) => {
-      response.setHeader('content-type', 'application/json');
-      response.end(JSON.stringify({ value: 'unit-window' }));
-    }).listen(0, '127.0.0.1');
-    context.after(() => server.close());
-    await once(server, 'listening');
-    const browser = await attach({
-      sessionId: 'android-click-unit', isW3C: true, capabilities: { browserName: 'chrome' },
-      options: { hostname: '127.0.0.1', port: server.address().port, logLevel: 'silent', waitforInterval: 5 },
-    });
+  test(`${failureAt}のstale以外のdriverの失敗を隠さない`, async () => {
     const error = new Error('session disconnected');
     let attempts = 0;
     const failOnce = async () => {
       if (++attempts === 1) throw error;
-      return { offset: { x: 0, y: 0 } };
+      return { x: 0, y: 0 };
     };
     const element = { waitForExist: failureAt === 'waitForExist' ? failOnce : async () => {} };
-    browser.overwriteCommand('execute', failureAt === 'execute' ? failOnce : async () => ({ offset: { x: 0, y: 0 } }));
+    const browser = { execute: failureAt === 'execute' ? failOnce : async () => ({ x: 0, y: 0 }) };
     await assert.rejects(androidClick(browser, element, () => assert.fail('押下しない'), 1000), error);
   });
 }
@@ -54,6 +33,6 @@ for (const failureAt of ['waitForExist', 'execute']) {
 test('中心が見えている場合も測定した位置でpointer actionsを使う', async () => {
   const offset = { x: 0, y: 0 };
   const element = { waitForExist: async () => {} };
-  const browser = { execute: async () => ({ offset }), waitUntil: (check) => check() };
+  const browser = { execute: async () => offset };
   assert.deepEqual(await androidClick(browser, element, (options) => options, 1000), offset);
 });

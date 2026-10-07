@@ -21,6 +21,7 @@ import path from 'node:path';
 
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
+import { eventually } from './wait.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -84,16 +85,6 @@ async function fixture(route, body) {
 
 const native = (command, args = {}) => fixture('/fixture/invoke', { command, args });
 const relayedBytes = async () => (await fixture('/fixture/relay-bytes')).relayed_bytes;
-
-async function eventually(what, check, timeout = WAIT) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out: ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-}
 
 async function nativeTimeline(topic = TOPIC) {
   const page = await native('list_timeline', { request: { topic, scope: { kind: 'public' }, limit: 50 } });
