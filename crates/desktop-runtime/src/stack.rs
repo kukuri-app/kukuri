@@ -296,6 +296,9 @@ pub(crate) struct SharedIrohStack {
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
     receive_binding_keys: Mutex<Option<Arc<KukuriKeys>>>,
     dome_session_handler: Mutex<Option<kukuri_iroh_node::DomeSessionHandler>>,
+    /// 公開 blob の保持端末の候補の源（Web の Community Node の検索。#1632 AC-6）。作り直す node にも付け直す。
+    public_blob_providers:
+        Mutex<Option<Arc<dyn kukuri_iroh_node::remote_fetch::PublicBlobProviders>>>,
     /// `current` の stack が shutdown 済みか。作り直しが古い stack の shutdown の後で失敗すると、shutdown 済みの stack が残る。
     /// その stack の docs actor への要求は、返事が来ないまま時間切れになりうるので、健全性の確認をせず、作り直しが要るとみなす。
     current_shut_down: AtomicBool,
@@ -464,6 +467,7 @@ impl SharedIrohStack {
             docs_author_seed: Mutex::new(None),
             receive_binding_keys: Mutex::new(None),
             dome_session_handler: Mutex::new(None),
+            public_blob_providers: Mutex::new(None),
             current_shut_down: AtomicBool::new(false),
             #[cfg(test)]
             rebuild_before_shutdown_gate: Mutex::new(None),
@@ -500,6 +504,22 @@ impl SharedIrohStack {
             .install_receive_binding(keys.clone())
             .await?;
         *self.receive_binding_keys.lock().await = Some(keys);
+        Ok(())
+    }
+
+    /// 公開 blob の保持端末の候補の源を、今の node と作り直す node へ付ける（#1632 AC-6。Web だけ）。
+    #[cfg(target_family = "wasm")]
+    pub(crate) async fn use_public_blob_providers(
+        &self,
+        providers: Arc<dyn kukuri_iroh_node::remote_fetch::PublicBlobProviders>,
+    ) -> Result<()> {
+        let current = self.current.lock().await;
+        current
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .install_public_blob_providers(providers.clone());
+        *self.public_blob_providers.lock().await = Some(providers);
         Ok(())
     }
 
@@ -595,6 +615,9 @@ impl SharedIrohStack {
         }
         if let Some(handler) = self.dome_session_handler.lock().await.as_ref() {
             next.node.install_dome_session_handler(handler.clone());
+        }
+        if let Some(providers) = self.public_blob_providers.lock().await.as_ref() {
+            next.node.install_public_blob_providers(providers.clone());
         }
         self.transport.replace(next.transport.clone()).await;
         self.docs_sync.replace(next.docs_sync.clone()).await;

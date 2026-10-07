@@ -21,7 +21,8 @@ if (import.meta.env.DEV) {
   console.info('[kukuri.desktop] frontend boot');
 }
 
-// Web の build は、描画の前に WASM の runtime を始める。失敗しても描画し、起動の状態の画面で示す。
+// Web の build は、描画の前に WASM を読み込んで runtime の起動を始める（起動の終わりは待たず、起動の状態の画面で待つ）。
+// 失敗しても描画し、起動の状態の画面で示す。
 const webRuntimeReady = IS_WEB_RUNTIME ? startWebRuntime().catch(() => undefined) : Promise.resolve();
 
 void Promise.all([webRuntimeReady, initializeDesktopLocale()]).then(() => {

@@ -12,7 +12,9 @@ use kukuri_store::{
 };
 
 use crate::IndexedDbCache;
-use crate::content_cache::{POST_BOOKMARKS, REACTION_BOOKMARKS, REACTIONS, Tx};
+use crate::content_cache::{
+    OBJECTS, POST_BOOKMARKS, PUBLIC_REFS, REACTION_BOOKMARKS, REACTIONS, Tx,
+};
 use crate::idb::Mode;
 use crate::rows::{self, Txn, between, key, num, prefix, text};
 
@@ -56,8 +58,10 @@ impl IndexedDbCache {
 impl ReactionBookmarkStore for IndexedDbCache {
     async fn upsert_reaction_cache(&self, row: ReactionProjectionRow) -> Result<()> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[REACTIONS], Mode::Write)?;
+            let tx = Txn::begin(&db.idb, &[REACTIONS, OBJECTS, PUBLIC_REFS], Mode::Write)?;
             rows::put(&tx, REACTIONS, &row, &[])?;
+            // #1632: 公開 topic の有効な custom reaction の asset は公開参照。
+            super::public_refs::replace_reaction(&tx, &row).await?;
             tx.commit().await
         })
         .await

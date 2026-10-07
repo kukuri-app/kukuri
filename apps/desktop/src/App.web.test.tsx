@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -19,6 +19,7 @@ vi.mock('@/lib/webRuntime', () => ({
 }));
 
 import { App } from '@/App';
+import * as session from '@/lib/accountSession';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { columnIdentityId } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
@@ -32,6 +33,17 @@ function runInThisTab() {
 }
 
 const inUseElsewhere = () => Promise.resolve({ status: 'in_use_elsewhere' });
+
+// 規約の改定の後の再同意（年齢の申告は済み）。
+const renewedConsentRequired = {
+  status: 'consent_required',
+  documents: ['terms', 'privacy'].map((slug) => ({
+    slug, currentVersion: 9, effectiveDate: '2026-10-07', authoritativeLanguage: 'ja', materialChange: true,
+    controllerName: 'Preview Distributor', contact: 'privacy@example.test',
+    acceptedVersion: 8, acceptedAt: 1_700_000_000, acceptedLanguage: 'en', acceptedAppVersion: '0.4.0',
+  })),
+  age_attestation: { currentVersion: 1, attestedVersion: 1, attestedAt: 1_700_000_000 },
+};
 
 // web-runtime は起動の状態の読取りと引継ぎだけに答える。shell の command は返らない（mock の API が居る間は、そちらが受ける）。
 function webRuntime(status: () => Promise<unknown>, takeOver: () => Promise<unknown>) {
@@ -118,4 +130,66 @@ test('a tab whose runtime is taken over moves to the in-use screen and continues
   expect(shown.map((column) => column.getAttribute('data-column-id'))).toEqual(
     columns.map((kind) => columnIdentityId(kind, SCOPE))
   );
+}, 20000);
+
+// ADR 0059 §1: 同意・引継ぎの途中で保存先の版を更新する間も、その画面のままにせず、起動の画面で「データの移行中です」を
+// 出してからレイアウトを出す（web-runtime は版の更新の始まりと終わりに起動の状態の変化を知らせる）。
+test.each([
+  ['the renewed consent', renewedConsentRequired, 'accept_app_consents', 'Accept and continue'],
+  ['a take-over', { status: 'in_use_elsewhere' }, 'take_over_runtime', 'Use in this tab'],
+] as const)('a storage upgrade during %s shows the migration screen before the layout', async (_, initial, operation, button) => {
+  const user = userEvent.setup();
+  let status: unknown = initial;
+  let finish!: () => void;
+  invokeMock.mockImplementation((command: string) => {
+    if (command === 'get_desktop_startup_status') return Promise.resolve(status);
+    if (command !== operation) return new Promise(() => {});
+    status = { status: 'migrating' };
+    listeners.forEach((listener) => listener({ type: 'startup_status_changed' }));
+    return new Promise((resolve) => { finish = () => resolve(runInThisTab()); });
+  });
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: button }));
+  expect(await screen.findByText('Migrating your data…')).toBeVisible();
+  expect(screen.queryByRole('button', { name: button })).not.toBeInTheDocument();
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  finish();
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+}, 20000);
+
+// ADR 0059 §1: アカウントの切替の途中で版を更新する間はレイアウトを外し、切替が終わるまで戻さない。外していた間に失敗した
+// 切替は、戻ったレイアウトでアカウントのメニューを開いて知らせる（2026-10-08 のユーザー判断）。
+test('a switch that fails after a storage upgrade returns to the layout and says it failed', async () => {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { ...window.location, reload });
+  webRuntime(runInThisTab, runInThisTab);
+  render(<App />);
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+  delete window.__KUKURI_DESKTOP__;
+  const account = (id: string) => ({ id, pubkey: id.repeat(4), label: null, created_at: 0, last_used_at: 0 });
+  let status = { status: 'ready' };
+  let fail!: () => void;
+  invokeMock.mockImplementation((command: string) => {
+    if (command === 'get_desktop_startup_status') return Promise.resolve(status);
+    // 一覧の応答は画面の読み直し（100 ms ごと）より遅い。画面は切替の後始末が終わるまで待つ。
+    if (command === 'list_accounts') {
+      const snapshot = { active_account_id: 'a'.repeat(16), accounts: [account('a'.repeat(16)), account('b'.repeat(16))] };
+      return new Promise((resolve) => setTimeout(() => resolve(snapshot), 250));
+    }
+    if (command !== 'switch_account') return new Promise(() => {});
+    status = { status: 'initializing' };
+    return new Promise((_, reject) => { fail = () => { status = { status: 'ready' }; reject({ code: 'command_failed', message: 'failed' }); }; });
+  });
+  const switching = session.changeAccountSession('b'.repeat(16)).catch(() => 'failed');
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('switch_account', expect.anything()));
+  // 待ちの無い版の更新は、画面が状態を読む前に始まりと終わりの両方を知らせ終える。
+  act(() => [1, 2].forEach(() => listeners.forEach((listener) => listener({ type: 'startup_status_changed' }))));
+  expect(await screen.findByText('Checking startup status…')).toBeVisible();
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  fail();
+  expect(await switching).toBe('failed');
+  const menu = await screen.findByRole('menu', { name: 'Account menu' }, { timeout: 5000 });
+  expect(await within(menu).findByText('Could not complete the action. Please try again.', {}, { timeout: 5000 })).toBeVisible();
+  expect(reload).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
 }, 20000);

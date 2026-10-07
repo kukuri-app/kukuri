@@ -50,11 +50,15 @@ Web クライアントは、ページを閉じても回線が変わっても、�
 - 秘密の保護: vault の秘密は、device の database の non-extractable な `CryptoKey` で包む。これは profile の file を持ち出されたときの保護で、origin の中で動くコード（XSS・供給網）からは守れない（信頼境界）。常時のパスワード入力は加えない。
 - 起動時に vault を全件読まない。起動に要るもの（アカウント鍵、設定）を key で読む。
 - iroh の endpoint 秘密鍵は、native と同じく account ごとに持つ（同じブラウザの別の account と EndpointId を共有しない）。account の切替は runtime を作り直すので、その account の鍵で Endpoint を作る。
-- v1 には移行の対象が無い。schema の版を上げるときは、key と cursor で有界な単位に分けて進める（起動の条件にしない）。
+- schema の版を上げるとき（2026-10-08 のユーザー判断）
+  - 版の更新（object store・索引の追加）の間と、別の接続（更新前の tab）が閉じるまでの待ちの間は、起動の状態を `migrating`（Web だけ）にし、その始まりと終わりを画面へ知らせる（`startup_status_changed`）。起動・同意の適用・別の tab からの引継ぎ・アカウントの切替のどの途中でも、画面は起動の画面（native の「起動状態を確認しています」と同じ画面）で「データの移行中です」を出して待ち、終わるまでレイアウトを出さない。アカウントの切替の途中では、切替が終わるまでレイアウトに戻さない。レイアウトを外していた間に失敗した切替は、戻ったレイアウトでアカウントのメニューを開いて知らせる（2026-10-08 のユーザー判断）。別の接続が更新を止めていても失敗にせず、閉じるまで待つ。新しく作る database（版 0 から）は移行に数えない。
+  - 既存の行の書換え・索引の作成は、レイアウトを出した後に背景で、key と cursor の有界な単位に分けて進める（起動の条件にしない）。
+  - 更新した database を古い版の client で開くことは考えない（通常の操作では起きない）。
+  - 版 2（#1632 AC-6、ADR 0063 §8）で、`kukuri-cache-v1-<account>` に公開参照の索引 `public_refs` を足した。
 - 実装（W4 AC-2）: `crates/web-runtime` の `BrowserStorage`（`ClientStorage` の実装）。
   - 振り分け: path・keyring の account が `accounts/<account の ID>/` を含む値はその account の vault、それ以外（account の一覧、作成中の account の一時の値）は device の database。
   - keyring の値は `secrets`、file の値は `settings` に置く。どの値も device の `CryptoKey` で包み、`service` と `account` を AAD にする（別の key へ移した値は開けない）。
-  - 失敗の区別は `StorageFailure`（`Quota`・`Denied`・`Corrupt`・`Upgrade`・`Interrupted`）。包みを開けない値は `Corrupt` で、無い値と扱わない（identity・endpoint 秘密鍵を作り直さない）。
+  - 失敗の区別は `StorageFailure`（`Quota`・`Denied`・`Corrupt`・`Upgrade`（この版より新しい database）・`Interrupted`）。包みを開けない値は `Corrupt` で、無い値と扱わない（identity・endpoint 秘密鍵を作り直さない）。
   - endpoint 秘密鍵は desktop-runtime の `load_endpoint_secret`・`save_endpoint_secret`（vault の secret）。無ければ Endpoint を作った後にその鍵を置く。Web の Endpoint の組み立て（`NodeOptions.secret_key` へ渡す）は W1 AC-5。
 
 ### 2. projection

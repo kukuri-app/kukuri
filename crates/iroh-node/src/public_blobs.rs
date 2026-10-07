@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use iroh::{EndpointId, SecretKey};
+use iroh::{EndpointAddr, SecretKey};
 use iroh_mainline_endpoint_discovery::{Announcer, Resolver, infohash_from_blake3};
 use kukuri_store::ContentCacheStore;
 use kukuri_transport::PublicBlobIndex;
@@ -19,6 +19,7 @@ use tracing::{debug, warn};
 
 use crate::network_work::NetworkWorkRuntime;
 use crate::remote_fetch::current_time_ms;
+use crate::remote_fetch::{BACKFILL_PAUSE, BACKFILL_ROWS, PublicBlobProviders};
 
 /// 告知を更新する間隔と、hash ごとに時刻をずらす幅。
 const ANNOUNCE_INTERVAL_MS: i64 = 10 * 60 * 1000;
@@ -31,9 +32,6 @@ const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(30);
 const ANNOUNCE_IDLE: Duration = Duration::from_secs(5);
 /// 同時に行う告知の数。
 const ANNOUNCE_CONCURRENCY: usize = 2;
-/// 導入前の公開記録の取込みで、1 回に読む行数（種類ごと）と、次の取込みまでの間。
-const BACKFILL_ROWS: usize = 128;
-const BACKFILL_PAUSE: Duration = Duration::from_millis(100);
 
 struct Ready {
     resolver: Resolver,
@@ -67,18 +65,6 @@ impl PublicBlobDiscovery {
         }
     }
 
-    /// `hash` を告知した端末を、見つかった順に返す。補助 index がまだ無ければ `None`。stream を落とすと検索は止まる。
-    pub(crate) fn providers(
-        &self,
-        hash: iroh_blobs::Hash,
-    ) -> Option<n0_future::stream::Boxed<EndpointId>> {
-        let ready = self.ready.borrow().clone()?;
-        #[cfg(test)]
-        self.lookups
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Some(ready.resolver.resolve_stream(infohash(hash)))
-    }
-
     /// 補助 index の client が組み上がるまで待つ。
     #[cfg(test)]
     pub(crate) async fn ready(&self) {
@@ -108,6 +94,25 @@ impl PublicBlobDiscovery {
             .lock()
             .expect("public blob discovery tasks poisoned")
             .push(AbortOnDropHandle::new(task));
+    }
+}
+
+/// `hash` を告知した端末を、見つかった順に返す。補助 index がまだ無ければ `None`。stream を落とすと検索は止まる。
+/// 端末の住所は、node の endpoint の住所解決（同じ DHT）で引く。
+impl PublicBlobProviders for PublicBlobDiscovery {
+    fn providers(
+        &self,
+        hash: iroh_blobs::Hash,
+        _budget: Duration,
+    ) -> Option<n0_future::stream::Boxed<EndpointAddr>> {
+        let ready = self.ready.borrow().clone()?;
+        #[cfg(test)]
+        self.lookups
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(n0_future::StreamExt::boxed(n0_future::StreamExt::map(
+            ready.resolver.resolve_stream(infohash(hash)),
+            EndpointAddr::new,
+        )))
     }
 }
 

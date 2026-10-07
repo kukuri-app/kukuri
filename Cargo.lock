@@ -3652,6 +3652,7 @@ dependencies = [
  "futures-util",
  "image",
  "iroh",
+ "iroh-blobs",
  "iroh-docs",
  "iroh-mainline-address-lookup",
  "js-sys",
@@ -3721,6 +3722,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.23.1",
+ "blake3",
  "image",
  "kukuri-app-api",
  "kukuri-blob-service",
@@ -3736,12 +3738,14 @@ dependencies = [
  "kukuri-store",
  "kukuri-test-support",
  "kukuri-transport",
+ "n0-mainline",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
  "tokio",
  "tower-http 0.7.1",
+ "udp-addr-index",
 ]
 
 [[package]]

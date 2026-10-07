@@ -39,11 +39,14 @@ pub(crate) fn normalize_community_node_config(
     for node in config.nodes {
         let base_url = normalize_http_url(node.base_url.as_str())?;
         let incoming_resolved_urls = match node.resolved_urls {
-            Some(resolved) => Some(CommunityNodeResolvedUrls::new(
-                resolved.public_base_url,
-                resolved.connectivity_urls,
-                resolved.seed_peers,
-            )?),
+            Some(resolved) => Some(CommunityNodeResolvedUrls {
+                public_blob_search: resolved.public_blob_search,
+                ..CommunityNodeResolvedUrls::new(
+                    resolved.public_base_url,
+                    resolved.connectivity_urls,
+                    resolved.seed_peers,
+                )?
+            }),
             None => None,
         };
         let existing = deduped.get(&base_url);
@@ -98,11 +101,10 @@ pub(crate) fn merge_community_node_resolved_urls(
                 seed_peers_by_endpoint.insert(seed_peer.endpoint_id.clone(), seed_peer);
             }
             let seed_peers = seed_peers_by_endpoint.into_values().collect();
-            Ok(Some(CommunityNodeResolvedUrls::new(
-                public_base_url,
-                connectivity_urls,
-                seed_peers,
-            )?))
+            Ok(Some(CommunityNodeResolvedUrls {
+                public_blob_search: incoming.public_blob_search,
+                ..CommunityNodeResolvedUrls::new(public_base_url, connectivity_urls, seed_peers)?
+            }))
         }
     }
 }
@@ -118,7 +120,10 @@ pub(crate) fn refresh_community_node_resolved_urls(
         .into_iter()
         .chain(incoming.connectivity_urls)
         .collect();
-    CommunityNodeResolvedUrls::new(public_base_url, connectivity_urls, incoming.seed_peers)
+    Ok(CommunityNodeResolvedUrls {
+        public_blob_search: incoming.public_blob_search,
+        ..CommunityNodeResolvedUrls::new(public_base_url, connectivity_urls, incoming.seed_peers)?
+    })
 }
 
 pub(crate) fn seed_peer_from_community_node(seed_peer: &CommunityNodeSeedPeer) -> Option<SeedPeer> {

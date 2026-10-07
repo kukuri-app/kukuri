@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::prelude::*;
 
+use crate::idb;
 use crate::lifecycle::{Lifecycle, LifecycleListeners, listen_lifecycle};
 use crate::tab_lock::{self, RuntimeLock};
 use crate::{BrowserStorage, IndexedDbCache};
@@ -206,6 +207,11 @@ async fn lose_runtime(client: Rc<Client>) {
     if let Some(host) = host {
         host.shutdown().await;
     }
+    notify_startup_changed(&client);
+}
+
+/// 起動の状態が変わったことを `listen` の callback へ知らせる（画面は起動の状態を読み直す）。
+fn notify_startup_changed(client: &Client) {
     if let Ok(event) = to_js(&RuntimeEvent::StartupStatusChanged) {
         let listeners = client.listeners.borrow().clone();
         for listener in listeners {
@@ -370,6 +376,22 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         });
     })?;
     *client.lifecycle.borrow_mut() = Some(lifecycle);
+    // database の版の更新の間は起動の状態を移行中にして画面へ知らせ、起動・同意・引継ぎ・アカウントの切替のどの途中
+    // でも「データの移行中です」を出させる（終わるまでレイアウトを出さない。ADR 0059 §1）。
+    let weak = Rc::downgrade(&client);
+    idb::watch_migrations(Some(Rc::new(move |migrating| {
+        let Some(client) = weak.upgrade() else {
+            return;
+        };
+        let startup = &client.gate.startup;
+        let next = match (migrating, startup.status()) {
+            (true, ClientStartupStatus::Initializing) => ClientStartupStatus::Migrating,
+            (false, ClientStartupStatus::Migrating) => ClientStartupStatus::Initializing,
+            _ => return,
+        };
+        startup.set_status(next);
+        notify_startup_changed(&client);
+    })));
     CLIENT.set(Some(client.clone()));
     let status = {
         let _guard = client.gate.operation_lock.lock().await;
@@ -387,6 +409,7 @@ pub async fn shutdown() {
     };
     client.listeners.borrow_mut().clear();
     client.lifecycle.borrow_mut().take();
+    idb::watch_migrations(None);
     // lock は runtime を止めてから手放す（止める前に別の tab が始めないように）。
     let lock = client.runtime_lock.borrow_mut().take();
     let gate = client.gate.clone();

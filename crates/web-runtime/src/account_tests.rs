@@ -40,7 +40,7 @@ const KEYRING: &str = "org.kukuri.desktop";
 const TOPIC: &str = "kukuri:topic:web-account";
 
 /// 試験ごとに別の account の ID（公開鍵の hex の先頭 16 文字と同じ形）。
-fn account_id() -> String {
+pub(crate) fn account_id() -> String {
     let now = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .expect("clock")

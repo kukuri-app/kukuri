@@ -1750,6 +1750,56 @@ async function createShareLink(browser, channelId, label) {
 }
 
 /**
+ * `public-blob`（#1632 AC-6）: Web の知らない保持端末（Community Node を使わず、DHT と補助 index で告知する native）だけが
+ * 持つ画像を、Web が Community Node の検索で見つけ、relay・WebRTC の経路で取得する。投稿者の native（既知の相手）は、画像の
+ * 投稿が画面の外にある間（media は画面内の投稿だけ取得する）に止める。保持端末も止めた後は、読み込み直しても IndexedDB の
+ * 画像を表示する。
+ */
+async function publicBlob() {
+  const a = await openClient('web-a', { ice: true });
+  const png = await payloadPng();
+  const sha256 = createHash('sha256').update(png).digest('hex');
+  await fixture('/fixture/public-blob-holder', { data_base64: png.toString('base64') });
+  const topic = topicId('dev');
+  await nativeShows(topic);
+  const image = `public blob image ${RUN}`;
+  await native('create_post', { request: { topic, content: image, reply_to: null, attachments: [imageAttachment(png)] } });
+  const newest = `after the image ${RUN} 14`;
+  for (let index = 0; index < 15; index++) {
+    await native('create_post', { request: { topic, content: `after the image ${RUN} ${index}`, reply_to: null } });
+  }
+  await switchTopic(a, 'dev');
+  await sees(a, newest);
+  await eventually(`${a.label} has the card of "${image}" far below the fold`, () =>
+    a.execute((text) => {
+      const article = [...document.querySelectorAll('article')].find((node) => node.innerText.includes(text));
+      return Boolean(article) && article.getBoundingClientRect().top > window.innerHeight + 400 && !article.querySelector('img');
+    }, image)
+  );
+  await fixture('/fixture/shutdown', {});
+  const loads = async (what) => {
+    await eventually(`${a.label} loads ${what}`, () =>
+      a.execute((text) => {
+        const article = [...document.querySelectorAll('article')].find((node) => node.innerText.includes(text));
+        article?.scrollIntoView({ block: 'center', inline: 'center' });
+        const shown = article?.querySelector('img[src^="blob:"]');
+        return Boolean(shown?.complete && shown.naturalWidth > 0);
+      }, image)
+    );
+    assert.equal((await shownImage(a, image)).sha256, sha256, what);
+  };
+  const before = await relayedBytes();
+  await loads('the image from the holder found by the community node');
+  console.log('public blob from an unknown holder', { relayed: (await relayedBytes()) - before, size: png.length });
+  await fixture('/fixture/public-blob-holder/stop', {});
+  await a.refresh();
+  await eventually(`${a.label} reopens the timeline`, () => a.$('select[aria-label="Timeline topic"]').isExisting());
+  await switchTopic(a, 'dev');
+  await sees(a, newest);
+  await loads('the image kept in IndexedDB after the reload');
+}
+
+/**
  * `same-account`（#1220 AC-3c1・AC-3c2）: 同じアカウントの Web どうし。native → Web e の移行の後、e が作った招待制の channel C を、
  * e のリンクで同じアカウントを受けた Web g と使う。鍵の更新を担う端末（担当。C を作った e）が居ない間の保留と戻った後の処理、
  * 「この端末で行う」、移行の途中で WebRTC の経路だけを落とした間の移行と担当、経路だけを落とした間の担当でない端末の鍵の更新
@@ -1852,6 +1902,7 @@ const scenarios = {
   'site-data': siteData,
   transfer,
   'same-account': sameAccount,
+  'public-blob': publicBlob,
 };
 
 const [name, selected] = process.argv.slice(2);

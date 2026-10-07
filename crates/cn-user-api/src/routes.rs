@@ -386,7 +386,7 @@ fn spawn_retention_cleanup(state: UserApiState) {
 }
 
 pub(crate) fn init_tracing() {
-    // 公開 blob の保持端末の検索（#1632）で見つけた端末の endpoint ID・到達情報を log に残さない（開示は「応答まで」）。
+    // 公開 blob の保持端末の検索（#1632）で見つけた端末の endpoint ID・到達情報を log に残さない（開示どおり保存しない）。
     kukuri_cn_runtime_support::init_tracing(
         "info,kukuri_cn_user_api=debug,iroh_mainline_address_lookup=warn",
     );

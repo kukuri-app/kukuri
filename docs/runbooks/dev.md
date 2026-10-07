@@ -195,6 +195,17 @@ docker compose --env-file .env.community-node -f docker-compose.community-node.y
 - 上限は `CN_ADDR_INDEX_MAX_ENTRIES`（保持する record、既定 2,000,000）・`CN_ADDR_INDEX_MAX_ENTRIES_PER_IP`（送信元 IP ごとの record、16）・`CN_ADDR_INDEX_REQUESTS_PER_IP_PER_SEC`（送信元 IP ごとの毎秒の要求（登録と照会）、50）。空なら既定
 - 一覧の公開: 一覧の鍵（64 桁の 16 進）を持つ host で、fork の `iroh-index-list` を常駐させる（`cargo install --git https://github.com/KingYoSun/iroh-content-discovery --rev f6e2864a1d2228a19aa1cb88239ba87eb0068d2e iroh-mainline-endpoint-discovery --features cli --bin iroh-index-list --locked` で入れ、`IROH_INDEX_LIST_SECRET=<鍵> iroh-index-list --server <IP>:60125 [--server <IP>:60125]`）。10 分ごとに一覧を更新し、止めると一覧は DHT 上の期限で消える。server を変えるときは同じ鍵で新しい一覧を公開する
 - 一覧の公開鍵を `kukuri_transport::KUKURI_PUBLIC_BLOB_INDEX`（`PublicBlobIndex::ListKey`）へ入れた build で、client の発見と、operator config の `features.public_blob_search: true`（既定は無効。有効にすると生成文書に開示が載り、利用者はその node で再同意する）にした `cn-user-api` の検索（`POST /v1/blob-providers/search`）が働く。capability が無効な node は検索に 404 を返し、bootstrap の自 node の `resolved_urls.public_blob_search` は false。鍵の無い build で capability を有効にすると `cn-user-api` は起動しない。鍵の発行・server の配置・kukuri の node の有効化は本番反映の Issue で行う
+- `cn-user-api` の既定の log の絞り込みは `iroh_mainline_address_lookup=warn` を含む（住所の解決が info で出す、見つけた端末の endpoint ID・到達情報を log に残さない。開示どおり）。`RUST_LOG` で絞り込みを置き換えるときも、この指定を含める
+- Web は、検索を提供する利用中の node へ、既知の相手で取れない公開 blob の hash を送る（ADR 0063 §8）。実ブラウザの経路は `cargo xtask web-e2e public-blob`（fixture の Community Node は Testnet の DHT と同じ process の補助 index で検索を提供する）
+
+### 公開 blob の発見の preview での確認と観測（#1632、ADR 0063 §3・§8）
+- 前提: 一覧の鍵の入った build、補助 index の server と一覧の公開、検索を有効にした Community Node（bootstrap の自 node の `resolved_urls.public_blob_search` が true）。確かめる利用者は、その node の文書に同意している。本番での実施と記録は #1657 で行う
+- 組み立て: 公開投稿の画像を、取得する端末の既知の相手（同じ topic の参加者のほか、学習した相手・seed・import・最近の相手・hash ごとの取得元）が持たず、別の端末（保持端末）だけが持つ状態にする。保持端末は「公開コンテンツの発見」がオンのデスクトップ版にする（Web は告知しない）。保持端末は、その画像を表示して cache に持つか、同じ画像を自分の公開投稿に添え、告知と補助 index への登録の間隔（約 10 分・約 30 分）を待つ（告知を終えたことを示す log は無い。登録は `RUST_LOG` に `iroh_mainline_endpoint_discovery=debug` を足すと出る `published index record` で分かる）。投稿者など既知の相手は、画像を取得させる前に止める（実ブラウザの E2E の `public-blob` と同じ組み立て）。取得する側は、デスクトップ版（DHT で探す）とブラウザ版（Community Node の検索）
+- 観測（試した件数・条件とともに作業記録へ残す）
+  - 取得成功率と待ち時間: 投稿を画面に入れてから画像が出るまでの時間と、出なかった件数。1 要求は 30 秒まで、続きは既存の再試行（5・30・120 秒）
+  - 候補の消費数: デスクトップ版は開発者モードのアプリ内ログの取得の行（既定の絞り込みには出ないので、`RUST_LOG=warn,kukuri_desktop_tauri_lib=info,kukuri_app_api=info,kukuri_connectivity=info,kukuri_iroh_node=info` で起動する）。`fetch local miss, trying remote peers` の `selected_peer_count` が既知の候補の数。端末ごとの行は失敗と延期のときだけ出るので、消費数は、その行に出た端末の数に、取得できたなら 1 を足して数える。ブラウザ版は端末ごとの試行を出さないので、開発者ツールの network の `POST /v1/blob-providers/search` の応答の `candidates` の数（返した数）と `partial` を記録する
+  - 検索と告知の bytes: ブラウザ版は検索の要求・応答の大きさ（開発者ツール）。デスクトップ版の DHT・補助 index の UDP は、process ごとの量に iroh の QUIC・relay・Community Node の HTTP も含まれるので、OS の資源の監視で相手の address（DHT の参加者・補助 index の server）ごとの量を見る（表示は速度なので、おおよその量になる）
+  - 実際の転送経路: 取得の間の受信量を画像の大きさと比べる。ブラウザ版の経路は relay の WebSocket と WebRTC の DataChannel の 2 つだけなので、`chrome://webrtc-internals` の DataChannel の受信 bytes を見る（画像の大きさに届けば WebRTC、届かずに画像が出たなら relay。開発者ツールでは WebSocket の受信量の合計を読めない）。デスクトップ版は、OS の資源の監視で、relay の host との通信量と、保持端末の address との UDP の量を比べる。本番の relay は metrics を公開していない。診断の active path は topic の接続相手の経路で、blob の取得の接続を表さないので、参考にとどめる
 
 ## community-node env 標準形
 - `.env.community-node.example` をコピーして `.env.community-node` を作り、compose では `--env-file .env.community-node` を使う

@@ -43,6 +43,7 @@ use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, Priv
 #[cfg(not(target_family = "wasm"))]
 use crate::public_blobs::PublicBlobDiscovery;
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
+use crate::remote_fetch::PublicBlobProviders;
 
 #[cfg(test)]
 #[cfg(not(target_family = "wasm"))]
@@ -217,6 +218,11 @@ pub struct IrohDocsNode {
     /// 公開 blob の発見（#1632）。停止で外し、DHT と補助 index の client を止める。
     #[cfg(not(target_family = "wasm"))]
     public_blobs: std::sync::Mutex<Option<Arc<PublicBlobDiscovery>>>,
+    /// 差し込んだ保持端末の候補の源（Web の Community Node の検索。#1632 AC-6）。停止で外す。
+    installed_public_blob_providers: std::sync::Mutex<Option<Arc<dyn PublicBlobProviders>>>,
+    /// Web の導入前の公開記録の取込み（#1632 AC-6）。停止で止める。
+    #[cfg(target_family = "wasm")]
+    public_ref_backfill: std::sync::Mutex<Option<n0_future::task::AbortOnDropHandle<()>>>,
     shutdown_started: AtomicBool,
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
 }
@@ -617,6 +623,9 @@ impl IrohDocsNode {
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
             #[cfg(not(target_family = "wasm"))]
             public_blobs: std::sync::Mutex::new(public_blobs),
+            installed_public_blob_providers: std::sync::Mutex::new(None),
+            #[cfg(target_family = "wasm")]
+            public_ref_backfill: std::sync::Mutex::new(None),
             shutdown_started: AtomicBool::new(false),
             shutdown_result: tokio::sync::watch::channel(None).0,
         });
@@ -644,7 +653,38 @@ impl IrohDocsNode {
         if let Some(public_blobs) = self.public_blobs() {
             public_blobs.start_announcing(cache, self.network_work.clone());
         }
+        // Web は告知の task を持たないので、導入前の公開記録の取込みだけを進める（#1632 AC-6）。
+        #[cfg(target_family = "wasm")]
+        self.public_ref_backfill
+            .lock()
+            .expect("public ref backfill poisoned")
+            .replace(n0_future::task::AbortOnDropHandle::new(
+                n0_future::task::spawn(crate::remote_fetch::backfill_public_refs(cache)),
+            ));
         Ok(())
+    }
+
+    /// 公開 blob の保持端末の候補の源を差し込む（Web の Community Node の検索。#1632 AC-6）。
+    pub fn install_public_blob_providers(&self, providers: Arc<dyn PublicBlobProviders>) {
+        *self
+            .installed_public_blob_providers
+            .lock()
+            .expect("public blob providers poisoned") = Some(providers);
+    }
+
+    /// 取得で使う保持端末の候補の源。差し込んだものが無ければ、native は DHT の発見。
+    pub(crate) fn public_blob_providers(&self) -> Option<Arc<dyn PublicBlobProviders>> {
+        let installed = self
+            .installed_public_blob_providers
+            .lock()
+            .expect("public blob providers poisoned")
+            .clone();
+        #[cfg(not(target_family = "wasm"))]
+        let installed = installed.or_else(|| {
+            self.public_blobs()
+                .map(|discovery| discovery as Arc<dyn PublicBlobProviders>)
+        });
+        installed
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -801,6 +841,15 @@ impl IrohDocsNode {
         self.public_blobs
             .lock()
             .expect("public blob discovery poisoned")
+            .take();
+        self.installed_public_blob_providers
+            .lock()
+            .expect("public blob providers poisoned")
+            .take();
+        #[cfg(target_family = "wasm")]
+        self.public_ref_backfill
+            .lock()
+            .expect("public ref backfill poisoned")
             .take();
         self.account_transfer.cancel();
         self.receive_binding.clear().await;

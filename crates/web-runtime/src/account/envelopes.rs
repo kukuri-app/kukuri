@@ -17,7 +17,7 @@ use web_sys::IdbTransaction;
 use super::social::{PARTICIPANT_STORES, restale_participants};
 use super::{newest_first, next_cursor};
 use crate::IndexedDbCache;
-use crate::content_cache::{BLOCKS, ENVELOPES, FOLLOWS, PROFILES};
+use crate::content_cache::{BLOCKS, ENVELOPES, FOLLOWS, PROFILES, PUBLIC_REFS};
 use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, between, key, num, prefix, text, top};
 
@@ -67,7 +67,9 @@ async fn put_profile(tx: &IdbTransaction, profile: &Profile) -> Result<()> {
     {
         return Ok(());
     }
-    rows::put(tx, PROFILES, profile, &[])
+    rows::put(tx, PROFILES, profile, &[])?;
+    // #1632: profile の画像は公開参照（author replica は公開）。
+    super::public_refs::replace_profile(tx, profile)
 }
 
 /// subject（主 key の先頭）か target（索引）の edge を、新しい順・相手の昇順に並べる。
@@ -130,7 +132,7 @@ impl Store for IndexedDbCache {
         let follow = parse_follow_edge(&envelope)?;
         let block = parse_block_edge(&envelope)?;
         self.run(move |db| async move {
-            let mut stores = vec![ENVELOPES, PROFILES, BLOCKS];
+            let mut stores = vec![ENVELOPES, PROFILES, BLOCKS, PUBLIC_REFS];
             stores.extend(PARTICIPANT_STORES);
             let tx = Txn::begin(&db.idb, &stores, Mode::Write)?;
             let topic = envelope.topic_id();
@@ -261,7 +263,7 @@ impl Store for IndexedDbCache {
 
     async fn upsert_profile(&self, profile: Profile) -> Result<()> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[PROFILES], Mode::Write)?;
+            let tx = Txn::begin(&db.idb, &[PROFILES, PUBLIC_REFS], Mode::Write)?;
             put_profile(&tx, &profile).await?;
             tx.commit().await
         })

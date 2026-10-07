@@ -39,6 +39,8 @@ mod indexing_status_support;
 mod invite_storage_support;
 mod maintenance_tasks;
 mod manifest_support;
+#[cfg(any(target_family = "wasm", test))]
+mod public_blob_search_support;
 mod report_routing_support;
 mod requests_support;
 mod scheduler_support;

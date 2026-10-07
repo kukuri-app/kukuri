@@ -32,11 +32,17 @@ pub const REMOTE_FETCH_TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
 /// existing entry and retries later when this budget is exhausted.
 pub const REMOTE_FETCH_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// 1 要求で試す端末の上限（既知の候補と、発見した候補を合わせて。#1632 D1）。
-#[cfg(not(target_family = "wasm"))]
 const MAX_FETCH_PEERS: usize = 4;
 /// 1 要求で、発見の stream から読む件数の上限（同じ端末の重複を含む）。
-#[cfg(not(target_family = "wasm"))]
 const MAX_PROVIDER_ITEMS: usize = 16;
+
+mod providers;
+pub use providers::PublicBlobProviders;
+#[cfg(target_family = "wasm")]
+pub(crate) use providers::backfill_public_refs;
+use providers::public_blob_providers;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use providers::{BACKFILL_PAUSE, BACKFILL_ROWS};
 
 async fn within_remote_fetch_budget<T>(future: impl Future<Output = T>) -> Option<T> {
     timeout(REMOTE_FETCH_TOTAL_TIMEOUT, future).await.ok()
@@ -695,6 +701,7 @@ async fn fetch_bytes_from_remote(
     mode: FetchMode,
     file_path: Option<&std::path::Path>,
 ) -> Result<Option<Vec<u8>>> {
+    let started = Instant::now();
     let imported_peers = peers.ranked_peers_for(hash_text).await;
     let mut had_transport_failure = false;
     info!(
@@ -723,9 +730,9 @@ async fn fetch_bytes_from_remote(
             return Ok(Some(bytes));
         }
     }
-    // #1632 D1: 既知の候補で取れない公開 blob は、DHT で保持端末を探す。
-    #[cfg(not(target_family = "wasm"))]
-    if let Some(providers) = public_blob_providers(node, hash).await
+    // #1632 D1: 既知の候補で取れない公開 blob は、保持端末を探す（native は DHT、Web は Community Node）。
+    let budget = REMOTE_FETCH_TOTAL_TIMEOUT.saturating_sub(started.elapsed());
+    if let Some(providers) = public_blob_providers(node, hash, budget).await
         && let Some(bytes) = fetch
             .try_providers(providers, &mut tried, &mut had_transport_failure)
             .await?
@@ -738,23 +745,6 @@ async fn fetch_bytes_from_remote(
         info!(subject, hash = %hash_text, "fetch ended without content from the selected peer window");
     }
     Ok(None)
-}
-
-/// 公開 blob の発見が使えて、`hash` が検証済みの公開記録に参照されているときだけ、保持端末の検索を始める（#1632）。
-#[cfg(not(target_family = "wasm"))]
-async fn public_blob_providers(
-    node: &IrohDocsNode,
-    hash: iroh_blobs::Hash,
-) -> Option<n0_future::stream::Boxed<iroh::EndpointId>> {
-    let discovery = node.public_blobs()?;
-    match node.remote_cache()?.is_public_blob(&hash.to_string()).await {
-        Ok(true) => discovery.providers(hash),
-        Ok(false) => None,
-        Err(error) => {
-            warn!(hash = %hash, %error, "failed to check whether a blob is public");
-            None
-        }
-    }
 }
 
 /// 1 要求の取得の対象。端末ごとの試行（接続の候補を順に試す）を行う。
@@ -771,10 +761,9 @@ struct PeerFetch<'a> {
 impl PeerFetch<'_> {
     /// 発見した端末を hash 別の取得元として覚え（10 分。次の試行で先に使う）、端末の枠（既知と合わせて 4 件）が
     /// 残っていればこの要求で試す。stream から読むのは、重複を含めて `MAX_PROVIDER_ITEMS` 件まで。
-    #[cfg(not(target_family = "wasm"))]
     async fn try_providers(
         &self,
-        providers: impl futures_util::Stream<Item = iroh::EndpointId> + Unpin,
+        providers: impl futures_util::Stream<Item = EndpointAddr> + Unpin,
         tried: &mut Vec<iroh::EndpointId>,
         had_transport_failure: &mut bool,
     ) -> Result<Option<Vec<u8>>> {
@@ -783,19 +772,16 @@ impl PeerFetch<'_> {
         while found.len() < MAX_FETCH_PEERS
             && let Some(provider) = futures_util::StreamExt::next(&mut providers).await
         {
-            if provider == self.node.endpoint().id() || found.contains(&provider) {
+            if provider.id == self.node.endpoint().id() || found.contains(&provider.id) {
                 continue;
             }
-            found.push(provider);
+            found.push(provider.id);
             self.peers
-                .note_content_source(self.hash_text, provider)
+                .note_content_source(self.hash_text, provider.clone())
                 .await;
-            if tried.len() < MAX_FETCH_PEERS && !tried.contains(&provider) {
-                tried.push(provider);
-                if let Some(bytes) = self
-                    .try_peer(&EndpointAddr::new(provider), had_transport_failure)
-                    .await?
-                {
+            if tried.len() < MAX_FETCH_PEERS && !tried.contains(&provider.id) {
+                tried.push(provider.id);
+                if let Some(bytes) = self.try_peer(&provider, had_transport_failure).await? {
                     return Ok(Some(bytes));
                 }
             }

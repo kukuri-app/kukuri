@@ -10,7 +10,7 @@ import { changeDesktopLocale } from '@/i18n/changeLocale';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
 import { DesktopShellPage } from '@/shell/DesktopShellPage';
-import { reconcileAccountDrafts } from '@/lib/accountSession';
+import { isChangingAccount, noteAccountLayoutRemoved, reconcileAccountDrafts } from '@/lib/accountSession';
 import {
   type AppProps,
   type DesktopShellPageProps,
@@ -78,7 +78,8 @@ export function App(props: AppProps) {
       .catch(() => undefined);
   }, [startupGate.status]);
 
-  // Web だけ: 別の tab に runtime を引き継がれたら、起動の状態を読み直す（ADR 0059 §4）。
+  // Web だけ: 起動の状態が変わったと知らされたら（別の tab に runtime を引き継がれた、database の版の更新が始まった・
+  // 終わった）、起動の状態を読み直す（ADR 0059 §1・§4）。
   useEffect(() => {
     if (!IS_WEB_RUNTIME) return;
     return listenWebRuntimeEvents((event) => {
@@ -100,6 +101,13 @@ export function App(props: AppProps) {
           if (!active) {
             return;
           }
+          // アカウントの切替の途中の版の更新では、切替が終わるまでレイアウトに戻らない（失敗はアカウントのメニューで知らせる）。
+          // 待ちの無い更新は読む前に終わっているので、`ready` 以外を読んだら（レイアウトを外すので）記録する。
+          if (status.status !== 'ready') noteAccountLayoutRemoved();
+          if (status.status === 'ready' && isChangingAccount()) {
+            retryTimer = setTimeout(loadStartupStatus, 100);
+            return;
+          }
           if (status.status === 'ready') {
             if (await reconcileAccountDrafts()) { window.location.reload(); return; }
             const applied = await applyPendingDeviceRestoreFrontendState();
@@ -110,7 +118,7 @@ export function App(props: AppProps) {
             }
           }
           setStartupGate(status);
-          if (status.status === 'initializing') {
+          if (status.status === 'initializing' || status.status === 'migrating') {
             retryTimer = setTimeout(loadStartupStatus, 100);
           }
         })
@@ -144,10 +152,15 @@ export function App(props: AppProps) {
     };
   }, [props.api, startupCheck]);
 
-  if (startupGate.status === 'checking' || startupGate.status === 'initializing') {
+  // Web の保存先の版の更新の間は、レイアウトを出す前に「データの移行中です」で待つ（ADR 0059 §1）。
+  if (
+    startupGate.status === 'checking' ||
+    startupGate.status === 'initializing' ||
+    startupGate.status === 'migrating'
+  ) {
     return (
       <>
-        <StartupStatusScreen status='checking' />
+        <StartupStatusScreen status={startupGate.status === 'migrating' ? 'migrating' : 'checking'} />
         <WindowClosePrompt />
       </>
     );
@@ -315,7 +328,7 @@ function StartupStatusScreen({
   status,
   error,
 }: {
-  status: 'checking' | 'failed';
+  status: 'checking' | 'migrating' | 'failed';
   error?: DesktopStartupErrorView;
 }) {
   const { t } = useTranslation(['common']);
@@ -331,8 +344,8 @@ function StartupStatusScreen({
   return (
     <main className='startup-error-screen'>
       <section className='startup-error-panel' aria-live='polite'>
-        {status === 'checking' ? (
-          <Notice>{t('startup.checking')}</Notice>
+        {status !== 'failed' ? (
+          <Notice>{t(status === 'migrating' ? 'startup.migrating' : 'startup.checking')}</Notice>
         ) : (
           <>
             <Notice tone='destructive'>

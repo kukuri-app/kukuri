@@ -28,6 +28,7 @@ web-sys = { version = "0.3.106", features = [
   "CryptoKey",
   "Document",
   "DomException",
+  "DomStringList",
   "Event",
   "EventTarget",
   "IdbCursor",

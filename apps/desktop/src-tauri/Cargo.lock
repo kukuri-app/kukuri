@@ -3984,6 +3984,7 @@ dependencies = [
  "futures-util",
  "image",
  "iroh",
+ "iroh-blobs",
  "js-sys",
  "keyring",
  "kukuri-app-api",

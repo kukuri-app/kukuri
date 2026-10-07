@@ -4,7 +4,7 @@
 //! transaction はその間も有効なので、読んだ結果に続けて同じ transaction へ request を出せる。
 //! 失敗は `StorageFailure` で区別して返す（ADR 0059 §1）。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow};
@@ -13,7 +13,8 @@ use tokio::sync::oneshot;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::{Closure, JsValue};
 use web_sys::{
-    DomException, IdbCursorWithValue, IdbDatabase, IdbOpenDbRequest, IdbRequest, IdbTransaction,
+    DomException, IdbCursorWithValue, IdbDatabase, IdbFactory, IdbOpenDbRequest, IdbRequest,
+    IdbTransaction,
 };
 
 /// 保存の失敗の区別（ADR 0059 §1）。呼出元は `anyhow::Error::downcast_ref` で引く。どれも既存の値を作り直す理由にしない。
@@ -25,7 +26,7 @@ pub enum StorageFailure {
     Denied,
     /// 読んだ値を復号できない、形が合わない。
     Corrupt,
-    /// database の版が合わない（この版より新しい、更新が別の接続で止まっている）。
+    /// database の版が合わない（この版より新しい）。
     Upgrade,
     /// transaction が中断した（部分的な保存は何も残さない）。
     Interrupted,
@@ -160,8 +161,45 @@ pub(crate) fn transaction(db: &IdbDatabase, stores: &[&str], mode: Mode) -> Resu
         .unchecked_into())
 }
 
-/// database を開き、版が上がるときは `upgrade` で object store と索引を作る。IndexedDB が無い・開けないときは
-/// `Denied`、版が合わない・別の接続が更新を止めているときは `Upgrade` を返す。
+/// 版の更新の始まり（`true`）と終わり（`false`）を受け取る先。
+pub(crate) type MigrationHook = Rc<dyn Fn(bool)>;
+
+thread_local! {
+    /// 版の更新の始まり（`true`）と終わり（`false`）の知らせ先（Web の起動の画面の「データの移行中です」。ADR 0059 §1）。
+    static MIGRATIONS: RefCell<Option<MigrationHook>> = const { RefCell::new(None) };
+}
+
+/// database の版の更新（別の接続が閉じるまでの待ちを含む）の始まりと終わりを `hook` へ知らせる。`None` で外す。
+pub(crate) fn watch_migrations(hook: Option<MigrationHook>) {
+    MIGRATIONS.set(hook);
+}
+
+/// `name` の database の今の版（`indexedDB.databases()`。無い・調べられないときは `None`）。
+async fn current_version(factory: &IdbFactory, name: &str) -> Option<f64> {
+    let databases: Function = Reflect::get(factory, &"databases".into())
+        .ok()?
+        .dyn_into()
+        .ok()?;
+    let listed = databases
+        .call0(factory)
+        .ok()?
+        .dyn_into::<js_sys::Promise>()
+        .ok()?;
+    let listed = wasm_bindgen_futures::JsFuture::from(listed).await.ok()?;
+    Array::from(&listed)
+        .iter()
+        .find(|info| {
+            Reflect::get(info, &"name".into())
+                .ok()
+                .and_then(|value| value.as_string())
+                .is_some_and(|value| value == name)
+        })
+        .and_then(|info| Reflect::get(&info, &"version".into()).ok()?.as_f64())
+}
+
+/// database を開き、版が上がるときは `upgrade` で object store と索引を作る。別の接続が版の更新を止めていれば、
+/// 閉じるまで待つ。今ある database の版を上げる間（待ちを含む）は `watch_migrations` の先へ知らせる（新しく作る
+/// database は数えない）。IndexedDB が無い・開けないときは `Denied`、この版より新しい database は `Upgrade` を返す。
 pub(crate) async fn open(
     name: &str,
     version: u32,
@@ -173,7 +211,15 @@ pub(crate) async fn open(
         .indexed_db()
         .map_err(denied)?
         .ok_or_else(|| anyhow!(StorageFailure::Denied))?;
+    let migration = current_version(&factory, name)
+        .await
+        .is_some_and(|current| current < f64::from(version))
+        .then(|| MIGRATIONS.with_borrow(Clone::clone))
+        .flatten();
     let request: IdbOpenDbRequest = factory.open_with_u32(name, version).map_err(denied)?;
+    if let Some(hook) = &migration {
+        hook(true);
+    }
     let upgrading = request.clone();
     let on_upgrade = Closure::<dyn FnMut()>::new(move || {
         let created = upgrading
@@ -185,30 +231,11 @@ pub(crate) async fn open(
             let _ = transaction.abort();
         }
     });
-    let (blocked, on_blocked) = oneshot::channel::<()>();
-    let blocked = Cell::new(Some(blocked));
-    let on_block = Closure::<dyn FnMut()>::new(move || {
-        if let Some(blocked) = blocked.take() {
-            let _ = blocked.send(());
-        }
-    });
     request.set_onupgradeneeded(Some(on_upgrade.as_ref().unchecked_ref()));
-    request.set_onblocked(Some(on_block.as_ref().unchecked_ref()));
-    let db = n0_future::future::or(
-        async { Some(done_or(&request, StorageFailure::Denied).await) },
-        async {
-            let _ = on_blocked.await;
-            None
-        },
-    )
-    .await;
+    let db = done_or(&request, StorageFailure::Denied).await;
     request.set_onupgradeneeded(None);
-    request.set_onblocked(None);
-    match db {
-        Some(Ok(db)) => Ok(db.unchecked_into()),
-        Some(Err(error)) => Err(error),
-        None => Err(anyhow!(StorageFailure::Upgrade).context(format!(
-            "upgrading `{name}` is blocked by another connection"
-        ))),
+    if let Some(hook) = migration {
+        hook(false);
     }
+    Ok(db?.unchecked_into())
 }

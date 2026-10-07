@@ -301,7 +301,7 @@ async fn discovered_holders_use_a_fixed_window() -> Result<()> {
                 let (read, holders) = (read.clone(), holders.clone());
                 move |index: usize| {
                     read.fetch_add(1, Ordering::Relaxed);
-                    holders[if repeated { 0 } else { index % holders.len() }]
+                    EndpointAddr::new(holders[if repeated { 0 } else { index % holders.len() }])
                 }
             }));
             let mut tried = vec![SecretKey::generate().public(); known];
@@ -320,5 +320,91 @@ async fn discovered_holders_use_a_fixed_window() -> Result<()> {
         }
     }
     client.shutdown().await?;
+    Ok(())
+}
+
+/// #1632 AC-6: 差し込んだ候補の源（Web の Community Node の検索）が返す到達情報で、未知の保持端末から取得する。公開記録の
+/// 無い hash では候補の源を呼ばない。候補の源には取得に残る時間を渡す。既知の 4 端末で 1 要求の枠を使い切ると、見つけた
+/// 候補は到達情報ごと覚えるだけにし、次の試行でそれを先に試す（Web は endpoint ID だけでは接続できない）。
+#[tokio::test]
+async fn an_installed_provider_source_leads_to_an_unknown_holder() -> Result<()> {
+    struct Candidates {
+        calls: AtomicUsize,
+        budget: std::sync::Mutex<Option<Duration>>,
+        holder: EndpointAddr,
+    }
+    impl PublicBlobProviders for Candidates {
+        fn providers(
+            &self,
+            _hash: iroh_blobs::Hash,
+            budget: Duration,
+        ) -> Option<n0_future::stream::Boxed<EndpointAddr>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            *self.budget.lock().unwrap() = Some(budget);
+            Some(Box::pin(n0_future::stream::iter([self.holder.clone()])))
+        }
+    }
+
+    let client = IrohDocsNode::memory().await?;
+    let store = Arc::new(SqliteStore::connect_memory().await?);
+    client.install_remote_cache(store.clone())?;
+    let holder = IrohDocsNode::memory().await?;
+    let bytes = b"kukuri-1632-ac6-installed-provider".to_vec();
+    let hash = iroh_blobs::Hash::new(&bytes);
+    holder.blobs().blobs().add_bytes(bytes.clone()).await?;
+    let candidates = Arc::new(Candidates {
+        calls: AtomicUsize::new(0),
+        budget: std::sync::Mutex::new(None),
+        holder: holder.endpoint().addr(),
+    });
+    client.install_public_blob_providers(candidates.clone());
+    let peers = Arc::new(PeerAddrBook::new(
+        client.endpoint().clone(),
+        client.discovery(),
+    ));
+    let mut known = Vec::new();
+    for _ in 0..MAX_FETCH_PEERS {
+        let peer = IrohDocsNode::memory().await?;
+        peers
+            .insert_imported_peer_addr(peer.endpoint().addr())
+            .await?;
+        known.push(peer);
+    }
+
+    let private = iroh_blobs::Hash::new(b"kukuri-1632-ac6-not-public");
+    assert_eq!(
+        prepare_display_fetch(&client, &peers, private)
+            .await?
+            .await?,
+        None
+    );
+    assert_eq!(
+        candidates.calls.load(Ordering::Relaxed),
+        0,
+        "not a public blob"
+    );
+    publish(&store, hash).await?;
+    assert_eq!(
+        prepare_display_fetch(&client, &peers, hash).await?.await?,
+        None
+    );
+    assert_eq!(candidates.calls.load(Ordering::Relaxed), 1);
+    let budget = candidates.budget.lock().unwrap().expect("budget");
+    assert!(
+        budget > Duration::ZERO && budget < REMOTE_FETCH_TOTAL_TIMEOUT,
+        "the time left for the fetch: {budget:?}"
+    );
+    let fetched = prepare_display_fetch(&client, &peers, hash).await?.await?;
+    assert_eq!(fetched.as_deref(), Some(bytes.as_slice()));
+    assert_eq!(
+        candidates.calls.load(Ordering::Relaxed),
+        1,
+        "the remembered holder must be tried before searching again"
+    );
+    client.shutdown().await?;
+    holder.shutdown().await?;
+    for peer in known {
+        peer.shutdown().await?;
+    }
     Ok(())
 }

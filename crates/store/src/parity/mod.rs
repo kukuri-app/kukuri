@@ -45,6 +45,7 @@ use kukuri_core::{
 mod lists;
 mod live_game;
 mod pagination;
+pub mod public_refs;
 mod social_edges;
 mod trust_observations;
 

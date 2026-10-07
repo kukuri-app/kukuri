@@ -360,6 +360,37 @@ impl DesktopRuntime {
         .await
     }
 
+    /// 公開 blob の保持端末（harness の Web の E2E。#1632 AC-6）。Community Node を使わずに、公開コンテンツの発見の DHT と
+    /// 補助 index（`dht_options`）と relay（`relay_urls`）を指定して組み立てる。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn new_with_public_blob_discovery(
+        db_path: impl AsRef<Path>,
+        dht_options: DhtDiscoveryOptions,
+        relay_urls: Vec<String>,
+    ) -> Result<Self> {
+        let discovery_config = DiscoveryConfig::static_peer_default();
+        let runtime = Self::new_with_config_and_identity_and_discovery(
+            db_path,
+            TransportNetworkConfig::default(),
+            IdentityStorageMode::from_env(),
+            discovery_config.clone(),
+            dht_options,
+            None,
+        )
+        .await?;
+        runtime
+            .iroh_stack
+            .apply_runtime_connectivity(
+                &discovery_config,
+                &[],
+                TransportRelayConfig {
+                    iroh_relay_urls: relay_urls,
+                },
+            )
+            .await?;
+        Ok(runtime)
+    }
+
     #[cfg(test)]
     pub(crate) async fn new_with_config_and_identity(
         db_path: impl AsRef<Path>,

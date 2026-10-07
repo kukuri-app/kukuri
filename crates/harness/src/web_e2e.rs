@@ -6,6 +6,10 @@
 //! 判定する（ADR 0060 §4・§5）。`index.html` には、試験の page の script（`page-init.js`）を同じ origin の script として
 //! 足す（driver の機能に頼らず、どのブラウザでも page の script より先に動く。#1220 AC-5b）。
 //!
+//! Community Node は公開 blob の保持端末の検索を提供する（#1632 AC-6）。DHT は loopback の Testnet、補助 index は同じ
+//! process の server。Web の知らない保持端末（Community Node を使わない native）は、scenario が `/fixture/public-blob-holder`
+//! で作る。
+//!
 //! 環境変数:
 //! - `KUKURI_WEB_E2E_DIST`: 配信する `dist-web`（必須）
 //! - `KUKURI_WEB_E2E_WEB_ADDR`: 配信の listen（既定 `127.0.0.1:4180`）
@@ -26,6 +30,8 @@ use kukuri_desktop_runtime::{
     SetCommunityNodeConfigNode, dispatch_command,
 };
 use kukuri_store::AccountSyncStore;
+use kukuri_transport::{DhtDiscoveryOptions, PublicBlobIndex};
+use n0_mainline::{DhtBuilder, Testnet};
 use serde_json::{Value, json};
 use tower_http::services::ServeDir;
 
@@ -67,6 +73,52 @@ struct Fixture {
     stack: CommunityNodeStack,
     /// native の DB（同期の中身の検査で読む）。
     db: PathBuf,
+    public_blobs: PublicBlobNet,
+    /// Web の知らない公開 blob の保持端末（#1632 AC-6）。
+    holder: tokio::sync::Mutex<Option<DesktopRuntime>>,
+}
+
+/// 公開 blob の保持端末の検索の DHT（loopback の Testnet）と補助 index の server。値を落とすと止まる。
+struct PublicBlobNet {
+    testnet: Testnet,
+    index: std::net::SocketAddrV4,
+    _server: udp_addr_index::UdpHandle,
+}
+
+impl PublicBlobNet {
+    async fn start() -> Result<Self> {
+        let testnet = Testnet::new(3).await?;
+        let dht = testnet_dht(&testnet).build()?;
+        let index = std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::LOCALHOST,
+            dht.info().await?.local_addr().port(),
+        );
+        let server = udp_addr_index::Server::new(udp_addr_index::Limits::for_tests())
+            .attach_with_rendezvous(dht, None)
+            .await?;
+        Ok(Self {
+            testnet,
+            index,
+            _server: server,
+        })
+    }
+
+    fn dht(&self) -> DhtBuilder {
+        testnet_dht(&self.testnet)
+    }
+
+    fn index(&self) -> PublicBlobIndex {
+        PublicBlobIndex::Servers(vec![self.index])
+    }
+}
+
+fn testnet_dht(testnet: &Testnet) -> DhtBuilder {
+    let mut builder = DhtBuilder::default();
+    builder
+        .bootstrap(&testnet.bootstrap)
+        .port(0)
+        .public_ip(std::net::Ipv4Addr::LOCALHOST);
+    builder
 }
 
 type Shared = Arc<Fixture>;
@@ -92,9 +144,16 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     ));
     let index = move || std::future::ready(html.clone());
 
-    let stack =
-        CommunityNodeStack::spawn_with("web_e2e", &cn_addr, std::slice::from_ref(&web_origin))
-            .await?;
+    let public_blobs = PublicBlobNet::start().await?;
+    let search =
+        kukuri_cn_user_api::BlobProviderSearch::start(&public_blobs.dht(), public_blobs.index())?;
+    let stack = CommunityNodeStack::spawn_with(
+        "web_e2e",
+        &cn_addr,
+        std::slice::from_ref(&web_origin),
+        Some(Arc::new(search)),
+    )
+    .await?;
     // 本番と同じく relay の host の 3478 番で STUN に応答する（ADR 0060 §5）。応答が無いと、browser の offer は候補集めの
     // 上限（3 秒）まで待つ（#1590）。
     let stun = tokio::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, kukuri_cn_stun::PORT))
@@ -117,6 +176,8 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         },
         stack,
         db: db.clone(),
+        public_blobs,
+        holder: tokio::sync::Mutex::new(None),
     });
 
     let app = Router::new()
@@ -127,6 +188,11 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/link-preview", post(link_preview))
         .route("/fixture/shutdown", post(shutdown))
         .route("/fixture/account-sync-items", get(account_sync_items))
+        .route("/fixture/public-blob-holder", post(public_blob_holder))
+        .route(
+            "/fixture/public-blob-holder/stop",
+            post(stop_public_blob_holder),
+        )
         .route(
             "/fixture/page-init.js",
             get(|| async { ([("content-type", "text/javascript")], PAGE_INIT) }),
@@ -364,6 +430,83 @@ async fn link_preview(
 /// native を止める（#1220 AC-2g。投稿者の native が居ないときの中継を確かめる。以後は native を操作できない）。
 async fn shutdown(State(fixture): State<Shared>) -> Json<Value> {
     fixture.gate.host.shutdown().await;
+    Json(json!({}))
+}
+
+#[derive(Deserialize)]
+struct PublicBlobHolderBody {
+    data_base64: String,
+}
+
+/// Web の知らない保持端末（Community Node を使わず、DHT と補助 index と relay だけを使う native）が、画像を添えた公開投稿を
+/// 書き、その blob の告知を終えるまで待つ（#1632 AC-6）。返り値は blob の hash。
+async fn public_blob_holder(
+    State(fixture): State<Shared>,
+    Json(body): Json<PublicBlobHolderBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let png = BASE64_STANDARD.decode(&body.data_base64).map_err(failed)?;
+    let hash = blake3::hash(&png).to_hex().to_string();
+    let db = fixture.db.with_file_name("holder.db");
+    let relay = fixture.stack.iroh_relay.as_ref();
+    let runtime = DesktopRuntime::new_with_public_blob_discovery(
+        &db,
+        DhtDiscoveryOptions {
+            enabled: true,
+            dht_builder: Some(fixture.public_blobs.dht()),
+            public_blob_index: Some(fixture.public_blobs.index()),
+            ..DhtDiscoveryOptions::default()
+        },
+        relay
+            .map(|relay| format!("http://{}", relay.http_addr()))
+            .into_iter()
+            .collect(),
+    )
+    .await
+    .map_err(failed)?;
+    runtime
+        .create_post(CreatePostRequest {
+            topic: "kukuri:topic:public-blob-holder".to_string(),
+            content: "public blob holder".to_string(),
+            reply_to: None,
+            channel_ref: ChannelRef::Public,
+            attachments: vec![CreateAttachmentRequest {
+                file_name: Some("payload.png".to_string()),
+                mime: "image/png".to_string(),
+                byte_size: png.len() as u64,
+                data_base64: body.data_base64,
+                role: Some("image_original".to_string()),
+            }],
+            content_labels: Vec::new(),
+        })
+        .await
+        .map_err(failed)?;
+    *fixture.holder.lock().await = Some(runtime);
+    // 告知に成功すると、次の更新は 10 分後へ移る。
+    let store = SqliteStore::connect_file(&db).await.map_err(failed)?;
+    timeout(Duration::from_secs(120), async {
+        loop {
+            let soon = i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis(),
+            )? + 9 * 60 * 1000;
+            let (due, next_at) = store.due_public_blob_announcements(soon, 1).await?;
+            if due.is_empty() && next_at.is_some() {
+                return anyhow::Ok(());
+            }
+            sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)?;
+    Ok(Json(json!({ "hash": hash })))
+}
+
+async fn stop_public_blob_holder(State(fixture): State<Shared>) -> Json<Value> {
+    if let Some(runtime) = fixture.holder.lock().await.take() {
+        runtime.shutdown().await;
+    }
     Json(json!({}))
 }
 

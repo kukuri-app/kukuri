@@ -151,7 +151,7 @@ pub trait ContentCacheStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<(AccountHistoryCursor, Vec<u8>)>>;
     async fn reclaim_remote_cache_step(&self) -> Result<usize>;
-    /// 検証済みの公開記録が参照する blob か（#1632、ADR 0063）。公開 blob の告知・検索を持たない保存は `false`。
+    /// 検証済みの公開記録が参照する blob か（#1632、ADR 0063）。公開参照の索引を持たない保存は `false`。
     async fn is_public_blob(&self, _hash: &str) -> Result<bool> {
         Ok(false)
     }

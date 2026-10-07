@@ -445,6 +445,28 @@ test('desktop app renders a startup error when the local database cannot be open
   expect(screen.queryByRole('button', { name: 'Post' })).not.toBeInTheDocument();
 });
 
+test('the startup screen says the data is being migrated while the browser storage upgrades', async () => {
+  invokeMock.mockResolvedValueOnce({ status: 'migrating' });
+  invokeMock.mockResolvedValueOnce({ status: 'initializing' });
+  invokeMock.mockResolvedValueOnce({
+    status: 'failed',
+    error: {
+      kind: 'unknown',
+      message: 'kukuri could not finish desktop startup.',
+      detail: 'startup ended after the storage upgrade',
+      db_path: null,
+    },
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText('Migrating your data…')).toBeInTheDocument();
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  expect(await screen.findByText('Checking startup status…')).toBeInTheDocument();
+  expect(await screen.findByText('kukuri could not open the local database.')).toBeInTheDocument();
+  expect(invokeMock).toHaveBeenCalledTimes(3);
+});
+
 test('desktop app keeps the startup screen visible while the native runtime initializes', async () => {
   invokeMock.mockResolvedValueOnce({ status: 'initializing' });
   invokeMock.mockResolvedValueOnce({
