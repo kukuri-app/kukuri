@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Key, remote } from 'webdriverio';
+import { androidClick } from './android-click.mjs';
+import { eventually } from './wait.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -83,16 +85,6 @@ async function fixture(route, body) {
 
 const native = (command, args = {}) => fixture('/fixture/invoke', { command, args });
 const relayedBytes = async () => (await fixture('/fixture/relay-bytes')).relayed_bytes;
-
-async function eventually(what, check, timeout = WAIT) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out: ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-}
 
 async function nativeTimeline(topic = TOPIC) {
   const page = await native('list_timeline', { request: { topic, scope: { kind: 'public' }, limit: 50 } });
@@ -170,30 +162,10 @@ async function startClient(name, { ice }) {
     // 列の scroll-snap と固定の帯に負けるので、押す前に要素を列ごと画面の中央へ動かし、位置が止まるのを待つ。
     browser.overwriteCommand(
       'click',
-      async function (original, ...args) {
+      async function (original) {
         await closeKeyboard();
-        await this.waitForExist({ timeout: WAIT });
         // 中心が覆われていれば（列のページの表示が列の右下の操作に重なる。#1588）、利用者と同じく見えている部分を押す。
-        const offset = await browser.execute(async (element) => {
-          element.scrollIntoView({ block: 'center', inline: 'center' });
-          let last = '';
-          for (let i = 0; i < 40; i += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            const { left, top } = element.getBoundingClientRect();
-            if (`${left},${top}` === last) break;
-            last = `${left},${top}`;
-          }
-          const rect = element.getBoundingClientRect();
-          for (const fx of [0.5, 0.85, 0.15, 0.95, 0.05]) {
-            const x = rect.left + rect.width * fx;
-            const y = rect.top + rect.height / 2;
-            if (element.contains(document.elementFromPoint(x, y))) {
-              return { x: Math.round(x - (rect.left + rect.width / 2)), y: 0 };
-            }
-          }
-          return null;
-        }, this);
-        return offset && offset.x !== 0 ? original(offset) : original(...args);
+        return androidClick(browser, this, original, WAIT);
       },
       true
     );
@@ -329,8 +301,13 @@ async function reply(browser, target, content) {
 }
 
 async function react(browser, target, emoji) {
+  // 返信後も、操作するtimelineを選んでからpickerを開く（電話幅の列の切替）。
+  await publicColumn(browser).$('button[role="tab"][aria-selected="true"]').click();
   await (await card(browser, target)).$('button[aria-label="React"]').click();
-  await browser.$(`button[aria-label="${emoji}"]`).click();
+  // 電話の幅で grid の下にある項目も、利用者の検索欄で絞ってから押す。
+  const picker = browser.$('.post-reaction-popover[data-state="open"]');
+  await picker.$('.post-reaction-search input').setValue(emoji);
+  await picker.$(`button[aria-label="${emoji}"]`).click();
 }
 
 const EMOJI = { 'thumbs-up': '👍', heart: '❤️', fire: '🔥', clap: '👏', 'party-popper': '🎉', sparkles: '✨', 'raised-hands': '🙌' };
@@ -423,6 +400,7 @@ async function exchangeBetweenWeb(x, y, reactions) {
  * media があっても表示と操作が成り立つ）も返す。 */
 async function relayedWhileLoading(browser, content, publish) {
   const before = await relayedBytes();
+  const received = await browser.execute(() => window.__kukuriReceivedBytes);
   const size = await publish();
   let shownBeforeImage = false;
   await eventually(`${browser.label} loads the image of "${content}"`, async () => {
@@ -439,7 +417,7 @@ async function relayedWhileLoading(browser, content, publish) {
     shownBeforeImage ||= state === 'card';
     return state === 'loaded';
   });
-  return { relayed: (await relayedBytes()) - before, size, shownBeforeImage };
+  return { relayed: (await relayedBytes()) - before, received: (await browser.execute(() => window.__kukuriReceivedBytes)) - received, size, shownBeforeImage };
 }
 
 /** 直接経路なら relay の中継が画像より十分小さく、fallback なら画像の大半が relay を通っている。 */
@@ -1563,6 +1541,7 @@ async function dumpColumns(browser) {
     )
   );
   const sessions = await sessionStates(browser).catch(() => []);
+  console.log(`${browser.label} media events`, await browser.execute(() => window.__kukuriMediaEvents));
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
 
@@ -1583,6 +1562,16 @@ async function direct() {
   const aPubkey = withA.webPost.author_pubkey;
   await exchangeDirectMessagesWithNative(a, aPubkey, { pubkey: nativePubkey, post: withA.fromNative }, true);
 
+  // relay 全体の bytes を測る native↔Web の段は、他の Web の画像取得が重ならない間に行う。
+  const channelLabel = `channel-a-${RUN}`;
+  const channelToken = await createChannel(a, channelLabel);
+  const channelId = await nativeJoinsChannel(channelToken);
+  const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
+  const nativeChannelLabel = `channel-native-${RUN}`;
+  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
+  await joinChannel(a, nativeChannel.token, nativeChannelLabel);
+  await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
+
   // Web↔Web。
   const b = await openClient('web-b', { ice: true });
   await sees(b, withA.fromWeb);
@@ -1591,10 +1580,6 @@ async function direct() {
   assertRoute('web→web direct', await relayedWhileLoading(b, webImage, postWebImage(a, webImage)), true);
   await assertConnected(b, [nativeEndpoint, aEndpoint], nativeEndpoint);
   // AC-2b: Web が作った private channel に native と別の Web が参加し、投稿が行き来する。Web↔Web の DM。
-  const channelLabel = `channel-a-${RUN}`;
-  const channelToken = await createChannel(a, channelLabel);
-  const channelId = await nativeJoinsChannel(channelToken);
-  const fromAInChannel = await exchangeInChannelWithNative(a, channelId, 'direct', true);
   await joinChannel(b, channelToken, channelLabel);
   await seesInChannel(b, channelId, fromAInChannel);
   const fromBInChannel = `web-b in channel ${RUN}`;
@@ -1610,11 +1595,6 @@ async function direct() {
     { browser: a, pubkey: aPubkey, post: `hello from ${a.label} to ${b.label}` },
     true
   );
-  // native が作った channel に Web が参加する（作成と招待の向きの逆）。
-  const nativeChannelLabel = `channel-native-${RUN}`;
-  const nativeChannel = await nativeCreatesChannel(nativeChannelLabel);
-  await joinChannel(a, nativeChannel.token, nativeChannelLabel);
-  await exchangeInChannelWithNative(a, nativeChannel.channelId, 'native-owned', true);
 }
 
 /**
@@ -1872,8 +1852,9 @@ const scenarios = {
 
 const [name, selected] = process.argv.slice(2);
 if (name === '--list') {
-  assert.ok(!selected || Object.hasOwn(scenarios, selected), `unknown scenario "${selected}"`);
-  console.log(JSON.stringify(selected ? [selected] : Object.keys(scenarios)));
+  const requested = selected ? (selected.startsWith('[') ? JSON.parse(selected) : [selected]) : [];
+  assert.ok(Array.isArray(requested) && requested.every((item) => Object.hasOwn(scenarios, item)), `unknown scenario "${selected}"`);
+  console.log(JSON.stringify(requested.length ? requested : Object.keys(scenarios)));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
