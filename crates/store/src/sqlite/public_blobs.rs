@@ -247,17 +247,13 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// 告知を始め直すとき、予定のすべての時刻を `now` から `spread` ms の間へ散らす。前の告知の成功
-    /// （restart の前・backup の復元の前）は信頼しない。予定は上限の件数しか無い。
-    pub async fn restart_public_blob_announcements(&self, now: i64, spread: i64) -> Result<()> {
-        anyhow::ensure!(spread > 0, "the restart spread must be positive");
-        sqlx::query(
-            "UPDATE public_blob_announcements SET next_at = ?1 + (random() % ?2 + ?2) % ?2",
-        )
-        .bind(now)
-        .bind(spread)
-        .execute(&self.pool)
-        .await?;
+    /// 告知を始め直すとき、予定のすべての時刻を `now` にする。前の告知の成功（restart の前・backup の
+    /// 復元の前）は信頼しない。予定は上限の件数しか無く、告知する側が少しずつ進める。
+    pub async fn restart_public_blob_announcements(&self, now: i64) -> Result<()> {
+        sqlx::query("UPDATE public_blob_announcements SET next_at = ?1")
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

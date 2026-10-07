@@ -171,8 +171,8 @@ pub trait ContentCacheStore: Send + Sync {
     ) -> Result<()> {
         Ok(())
     }
-    /// 告知を始め直すとき、予定のすべての時刻を `now` から `spread` ms の間へ散らす。
-    async fn restart_public_blob_announcements(&self, _now: i64, _spread: i64) -> Result<()> {
+    /// 告知を始め直すとき、予定のすべての時刻を `now` にする（前の告知の成功を信頼しない）。
+    async fn restart_public_blob_announcements(&self, _now: i64) -> Result<()> {
         Ok(())
     }
     /// 導入前の公開記録を、種類ごとに `limit` 行まで索引へ取り込む。すべて取り込み終えていれば `true`。

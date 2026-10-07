@@ -165,8 +165,8 @@ impl crate::ContentCacheStore for SqliteStore {
         SqliteStore::reschedule_public_blob_announcement(self, hash, next_at).await
     }
 
-    async fn restart_public_blob_announcements(&self, now: i64, spread: i64) -> Result<()> {
-        SqliteStore::restart_public_blob_announcements(self, now, spread).await
+    async fn restart_public_blob_announcements(&self, now: i64) -> Result<()> {
+        SqliteStore::restart_public_blob_announcements(self, now).await
     }
 
     async fn backfill_public_blob_refs_step(&self, limit: usize) -> Result<bool> {

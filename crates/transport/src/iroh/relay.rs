@@ -76,7 +76,9 @@ pub fn build_endpoint_builder(
     #[cfg(not(target_family = "wasm"))]
     if let Some(dht_options) = dht_options.filter(|options| options.enabled) {
         let mut dht_builder = DhtAddressLookup::builder().addr_filter(AddrFilter::unfiltered());
-        if let Some(builder_override) = dht_options.resolved_dht_builder() {
+        if let Some(dht) = &dht_options.dht {
+            dht_builder = dht_builder.dht(dht.clone());
+        } else if let Some(builder_override) = dht_options.resolved_dht_builder() {
             dht_builder = dht_builder.dht_builder(builder_override);
         }
         builder = builder.address_lookup(dht_builder);

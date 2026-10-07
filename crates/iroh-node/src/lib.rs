@@ -20,6 +20,8 @@ mod legacy;
 mod network_work;
 mod node;
 mod page_read;
+#[cfg(not(target_family = "wasm"))]
+mod public_blobs;
 mod remote_blob;
 pub mod remote_fetch;
 

@@ -304,9 +304,9 @@ async fn the_schedule_keeps_own_and_recently_used_blobs_within_its_cap() {
     assert_eq!(schedule.len(), PUBLIC_BLOB_ANNOUNCEMENT_CAP as usize);
 }
 
-/// 時刻の来た予定を時刻の順に返し、来ていなければ次の時刻を返す。始め直しは予定を散らす。
+/// 時刻の来た予定を時刻の順に返し、来ていなければ次の時刻を返す。始め直すと、すべてがすぐ告知の対象になる。
 #[tokio::test]
-async fn due_announcements_come_in_order_and_restart_spreads_them() {
+async fn due_announcements_come_in_order_and_restart_makes_all_due() {
     let store = SqliteStore::connect_memory().await.unwrap();
     for seed in 1..=3 {
         hold(&store, &hash(seed)).await;
@@ -336,16 +336,15 @@ async fn due_announcements_come_in_order_and_restart_spreads_them() {
     assert_eq!(scheduled(&store).await, [hash(1), hash(3)]);
 
     store
-        .restart_public_blob_announcements(10_000, 60_000)
+        .restart_public_blob_announcements(10_000)
         .await
         .unwrap();
-    let times: Vec<i64> = sqlx::query_scalar("SELECT next_at FROM public_blob_announcements")
-        .fetch_all(store.pool())
-        .await
-        .unwrap();
-    assert!(
-        times.iter().all(|at| (10_000..70_000).contains(at)),
-        "{times:?}"
+    assert_eq!(
+        store
+            .due_public_blob_announcements(10_000, 128)
+            .await
+            .unwrap(),
+        (vec![hash(1), hash(3)], None)
     );
 }
 

@@ -136,6 +136,24 @@ impl NetworkWorkRuntime {
         .await
     }
 
+    /// 公開 blob の告知（#1632）。取得と同じ実行枠を、表示・操作の取得より後の lane で使う。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) async fn acquire_announce(
+        self: &Arc<Self>,
+        hash: [u8; 32],
+        deadline: Instant,
+    ) -> Result<DisplayWorkLease, NetworkAdmissionError> {
+        self.acquire_blob_work(
+            WorkProtocol::Blob,
+            hash,
+            0,
+            WorkMode::Send,
+            WorkLane::Background,
+            deadline,
+        )
+        .await
+    }
+
     async fn acquire_blob_work(
         self: &Arc<Self>,
         protocol: WorkProtocol,
