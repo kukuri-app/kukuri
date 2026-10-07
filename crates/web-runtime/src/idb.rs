@@ -216,10 +216,10 @@ pub(crate) async fn open(
         .is_some_and(|current| current < f64::from(version))
         .then(|| MIGRATIONS.with_borrow(Clone::clone))
         .flatten();
+    let request: IdbOpenDbRequest = factory.open_with_u32(name, version).map_err(denied)?;
     if let Some(hook) = &migration {
         hook(true);
     }
-    let request: IdbOpenDbRequest = factory.open_with_u32(name, version).map_err(denied)?;
     let upgrading = request.clone();
     let on_upgrade = Closure::<dyn FnMut()>::new(move || {
         let created = upgrading

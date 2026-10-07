@@ -207,6 +207,11 @@ async fn lose_runtime(client: Rc<Client>) {
     if let Some(host) = host {
         host.shutdown().await;
     }
+    notify_startup_changed(&client);
+}
+
+/// 起動の状態が変わったことを `listen` の callback へ知らせる（画面は起動の状態を読み直す）。
+fn notify_startup_changed(client: &Client) {
     if let Ok(event) = to_js(&RuntimeEvent::StartupStatusChanged) {
         let listeners = client.listeners.borrow().clone();
         for listener in listeners {
@@ -371,22 +376,21 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         });
     })?;
     *client.lifecycle.borrow_mut() = Some(lifecycle);
-    // 起動の途中の database の版の更新の間は、画面に「データの移行中です」を出す（ADR 0059 §1）。
+    // database の版の更新の間は起動の状態を移行中にして画面へ知らせ、起動・同意・引継ぎ・アカウントの切替のどの途中
+    // でも「データの移行中です」を出させる（終わるまでレイアウトを出さない。ADR 0059 §1）。
     let weak = Rc::downgrade(&client);
     idb::watch_migrations(Some(Rc::new(move |migrating| {
         let Some(client) = weak.upgrade() else {
             return;
         };
         let startup = &client.gate.startup;
-        match (migrating, startup.status()) {
-            (true, ClientStartupStatus::Initializing) => {
-                startup.set_status(ClientStartupStatus::Migrating)
-            }
-            (false, ClientStartupStatus::Migrating) => {
-                startup.set_status(ClientStartupStatus::Initializing)
-            }
-            _ => {}
-        }
+        let next = match (migrating, startup.status()) {
+            (true, ClientStartupStatus::Initializing) => ClientStartupStatus::Migrating,
+            (false, ClientStartupStatus::Migrating) => ClientStartupStatus::Initializing,
+            _ => return,
+        };
+        startup.set_status(next);
+        notify_startup_changed(&client);
     })));
     CLIENT.set(Some(client.clone()));
     let status = {

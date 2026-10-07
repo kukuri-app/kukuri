@@ -3,6 +3,8 @@
 //! 受ける。停止・切替の後に終わった旧世代の結果は返さず、停止の後の callback は呼ばない。再起動の後も IndexedDB に
 //! 保存した同意・アカウント・投稿・channel が読める。通報の送信は転送を失敗にし、転送先へ本文を送らない（#703）。
 //! 鍵の export・import は native と互換で、argon2id の導出の間に main thread の long task が出ない（#1220 AC-2c）。
+//! 旧版（database の版 1）で使ったアカウントへ切り替える間は、起動の状態を移行中にし、その始まりと終わりを知らせる
+//! （#1632 AC-6）。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -14,7 +16,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::client::{invoke, listen, shutdown, start};
-use crate::tab_lock;
+use crate::content_cache::{PUBLIC_REFS, create_stores};
+use crate::{idb, tab_lock};
 use kukuri_webrtc_transport::signaling_fixture::post as post_to_peer;
 
 #[wasm_bindgen(inline_js = r#"
@@ -104,6 +107,21 @@ async fn eventually(mut done: impl FnMut() -> bool) -> bool {
         n0_future::time::sleep(Duration::from_millis(50)).await;
     }
     false
+}
+
+/// 起動の状態を、`expected` になるまで（最長 5 秒）読み直して返す。
+async fn startup_status_until(expected: &str) -> Value {
+    let mut status = Value::Null;
+    for _ in 0..100 {
+        status = call("get_desktop_startup_status", Value::Null)
+            .await
+            .unwrap();
+        if status["status"] == expected {
+            break;
+        }
+        n0_future::time::sleep(Duration::from_millis(50)).await;
+    }
+    status
 }
 
 /// この origin で runtime の lock（`kukuri-runtime-v1`）を誰かが持っている（Web Locks の `query`）。
@@ -359,6 +377,53 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
     drop(thief);
     assert_eq!(timeline(topic).await.len(), 2);
 
+    // 旧版（database の版 1）の Web で使ったアカウントへ切り替える間は、起動の状態を移行中にし、その始まりと終わりを
+    // callback へ知らせる（画面は同意・引継ぎ・切替の途中でも「データの移行中です」を出す。ADR 0059 §1）。版 1 の
+    // 接続（更新前の tab）が残る間は待つ。取り込んだアカウントの database は、切り替えるまで作られない。
+    let legacy = imported["id"].as_str().unwrap().to_string();
+    let old = idb::open(&format!("kukuri-cache-v1-{legacy}"), 1, |db| {
+        create_stores(db)?;
+        db.delete_object_store(PUBLIC_REFS)
+    })
+    .await
+    .unwrap();
+    let status_changes = || {
+        restarted
+            .received
+            .borrow()
+            .iter()
+            .filter(|event| event["type"] == "startup_status_changed")
+            .count()
+    };
+    let before = status_changes();
+    let switched = Rc::new(RefCell::new(None));
+    wasm_bindgen_futures::spawn_local({
+        let switched = switched.clone();
+        async move {
+            let request = json!({ "request": { "account_id": legacy } });
+            *switched.borrow_mut() = Some(call("switch_account", request).await);
+        }
+    });
+    assert_eq!(
+        startup_status_until("migrating").await,
+        json!({ "status": "migrating" })
+    );
+    assert!(eventually(|| status_changes() == before + 1).await);
+    assert!(
+        switched.borrow().is_none(),
+        "waits for the version 1 connection"
+    );
+    old.close();
+    assert!(eventually(|| switched.borrow().is_some()).await);
+    switched.borrow_mut().take().unwrap().unwrap();
+    assert_eq!(status_changes(), before + 2);
+    assert_eq!(
+        call("get_desktop_startup_status", Value::Null)
+            .await
+            .unwrap(),
+        json!({ "status": "ready" })
+    );
+
     // 表に無い command は、この platform では使えない。
     let unsupported = call("open_external_url", json!({ "url": "https://example.com" }))
         .await
@@ -383,17 +448,10 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
         .unwrap()
         .expect("the other tab takes the lock during the start");
     starting.await.unwrap();
-    let mut status = Value::Null;
-    for _ in 0..100 {
-        status = call("get_desktop_startup_status", Value::Null)
-            .await
-            .unwrap();
-        if status["status"] == "in_use_elsewhere" {
-            break;
-        }
-        n0_future::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(status, json!({ "status": "in_use_elsewhere" }));
+    assert_eq!(
+        startup_status_until("in_use_elsewhere").await,
+        json!({ "status": "in_use_elsewhere" })
+    );
     assert!(call("list_accounts", Value::Null).await.is_err());
     drop(thief);
     shutdown().await;

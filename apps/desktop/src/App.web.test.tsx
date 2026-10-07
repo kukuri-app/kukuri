@@ -33,6 +33,17 @@ function runInThisTab() {
 
 const inUseElsewhere = () => Promise.resolve({ status: 'in_use_elsewhere' });
 
+// 規約の改定の後の再同意（年齢の申告は済み）。
+const renewedConsentRequired = {
+  status: 'consent_required',
+  documents: ['terms', 'privacy'].map((slug) => ({
+    slug, currentVersion: 9, effectiveDate: '2026-10-07', authoritativeLanguage: 'ja', materialChange: true,
+    controllerName: 'Preview Distributor', contact: 'privacy@example.test',
+    acceptedVersion: 8, acceptedAt: 1_700_000_000, acceptedLanguage: 'en', acceptedAppVersion: '0.4.0',
+  })),
+  age_attestation: { currentVersion: 1, attestedVersion: 1, attestedAt: 1_700_000_000 },
+};
+
 // web-runtime は起動の状態の読取りと引継ぎだけに答える。shell の command は返らない（mock の API が居る間は、そちらが受ける）。
 function webRuntime(status: () => Promise<unknown>, takeOver: () => Promise<unknown>) {
   invokeMock.mockImplementation((command: string) => {
@@ -118,4 +129,29 @@ test('a tab whose runtime is taken over moves to the in-use screen and continues
   expect(shown.map((column) => column.getAttribute('data-column-id'))).toEqual(
     columns.map((kind) => columnIdentityId(kind, SCOPE))
   );
+}, 20000);
+
+// ADR 0059 §1: 同意・引継ぎの途中で保存先の版を更新する間も、その画面のままにせず、起動の画面で「データの移行中です」を
+// 出してからレイアウトを出す（web-runtime は版の更新の始まりと終わりに起動の状態の変化を知らせる）。
+test.each([
+  ['the renewed consent', renewedConsentRequired, 'accept_app_consents', 'Accept and continue'],
+  ['a take-over', { status: 'in_use_elsewhere' }, 'take_over_runtime', 'Use in this tab'],
+] as const)('a storage upgrade during %s shows the migration screen before the layout', async (_, initial, operation, button) => {
+  const user = userEvent.setup();
+  let status: unknown = initial;
+  let finish!: () => void;
+  invokeMock.mockImplementation((command: string) => {
+    if (command === 'get_desktop_startup_status') return Promise.resolve(status);
+    if (command !== operation) return new Promise(() => {});
+    status = { status: 'migrating' };
+    listeners.forEach((listener) => listener({ type: 'startup_status_changed' }));
+    return new Promise((resolve) => { finish = () => resolve(runInThisTab()); });
+  });
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: button }));
+  expect(await screen.findByText('Migrating your data…')).toBeVisible();
+  expect(screen.queryByRole('button', { name: button })).not.toBeInTheDocument();
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  finish();
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
 }, 20000);
