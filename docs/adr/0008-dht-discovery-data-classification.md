@@ -26,6 +26,14 @@ Accepted
 - `DiscoveryMode::SeededDht` では `iroh` の `DhtAddressLookup` を shared endpoint に mount し、seed peer は `EndpointAddr::new(id)` で保持する。
 - manual `import_peer_ticket` は即時接続用の ephemeral hint として残し、discovery config には永続化しない。
 
+## 改訂（2026-10-07、#1632）
+- 本 ADR の DHT は `EndpointId -> EndpointAddr` の住所の解決を扱う。公開 blob の hash から保持端末を探す発見は
+  [ADR 0063](0063-public-blob-dht-discovery.md) が扱い、住所の解決と同じ node の DHT を共有する
+  （`DhtAddressLookup::builder().dht(..)`）。hash の発見を住所の解決の結果として扱わない。
+- 設定「公開コンテンツの発見」がオンで補助 index の一覧があれば、`static_peer` や Community Node の利用中でも DHT を
+  組み立てる。オフでは上の Decision のとおり。旧記述の「`SeededDht` でだけ `DhtAddressLookup` を mount する」は
+  この条件に置き換わる。
+
 ## Consequences
 - seed peer が 0 件のとき discovery は idle で、現状どおり local-first / static ticket fallback の振る舞いを維持する。
 - peer address の正本は DHT にあり、`docs / blobs / gossip / SQLite` は endpoint address の canonical store にならない。

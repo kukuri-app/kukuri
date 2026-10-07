@@ -101,6 +101,8 @@ fn app(
 struct Fixture {
     docs: Arc<ShadowingDocsSync>,
     writer: AppService,
+    writer_store: Arc<MemoryStore>,
+    viewer_store: Arc<MemoryStore>,
     /// 手元に replica を持たず、投稿者の docs を provider として読む閲覧者(Web)。
     viewer: AppService,
     viewer_blobs: Arc<ViewerBlobs>,
@@ -150,6 +152,8 @@ async fn fixture(name: &str) -> Fixture {
     Fixture {
         docs,
         writer,
+        writer_store,
+        viewer_store,
         viewer,
         viewer_blobs,
         author_keys,
@@ -225,6 +229,14 @@ async fn the_author_writes_the_record_once_and_web_reads_it_with_the_image() {
             BASE64_STANDARD.encode(png())
         ))
     );
+    // 画像は書いた側でも読んだ側でも、投稿の公開参照になる(#1632 D3)。
+    let image = blake3::hash(&png()).to_hex().to_string();
+    for store in [&fixture.writer_store, &fixture.viewer_store] {
+        assert_eq!(
+            store.link_preview_image(&fixture.post_id).await.as_deref(),
+            Some(image.as_str())
+        );
+    }
 
     // 取得し直しても書き換えない(取得のたびに画像の blob を増やさない)。
     fixture
