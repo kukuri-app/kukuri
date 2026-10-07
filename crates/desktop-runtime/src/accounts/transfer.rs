@@ -218,6 +218,7 @@ impl AccountBundleSink for TransferSink {
         &self,
         account_id: &str,
         history: AccountTransferHistory,
+        peer: &str,
     ) -> Result<AccountHistoryResume, Failure> {
         let host = self.host.upgrade().ok_or(Failure::Cancelled)?;
         let accounts = list_accounts(host.app_data_dir()).await.map_err(storage)?;
@@ -231,7 +232,9 @@ impl AccountBundleSink for TransferSink {
         let now = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_secs() as i64);
-        let (since, cursor, page) = history::begin(&db, history, now).await.map_err(storage)?;
+        let (since, cursor, page) = history::begin(&db, history, peer, now)
+            .await
+            .map_err(storage)?;
         // 使っているアカウントへの履歴は、page の保存の後に反映させる。
         let active = (host.runtime().local_author_pubkey() == account).then(|| self.host.clone());
         Ok(AccountHistoryResume {

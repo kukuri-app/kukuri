@@ -25,6 +25,7 @@
     {"tauri":"get_account_transfer_status","excluded":"gui_device_pairing","reason":"#1211: QR・リンクの表示と、両端末の確認コードの目視の比較をGUIのDialogで行う端末間の移行。CLI／daemonにはQR・確認コードの表示面がない。"},
     {"tauri":"decide_account_transfer","excluded":"gui_device_pairing","reason":"#1211: QR・リンクの表示と、両端末の確認コードの目視の比較をGUIのDialogで行う端末間の移行。CLI／daemonにはQR・確認コードの表示面がない。"},
     {"tauri":"cancel_account_transfer","excluded":"gui_device_pairing","reason":"#1211: QR・リンクの表示と、両端末の確認コードの目視の比較をGUIのDialogで行う端末間の移行。CLI／daemonにはQR・確認コードの表示面がない。"},
+    {"tauri":"start_account_union_sync","excluded":"gui_device_pairing","reason":"#1650: 両端末のアカウントメニューで始め、移行の状態・取消の command で進みを見る本人の端末どうしの同期。CLI／daemonには移行の command と、その表示面がない。"},
     {"tauri":"preview_account_key_import","cli":"preview_account_key_import","inventory":"INV-1"},
     {"tauri":"import_account_key","cli":"import_account_key","inventory":"INV-1"},
     {"tauri":"list_accounts","cli":"list_accounts","inventory":"INV-1"},

@@ -1,5 +1,5 @@
-//! #1211 AC-6: 自分のフォロー・ブロックの edge と、自分がフォローしている相手から自分への edge を、移行の必須 bundle と
-//! 本人の端末間の同期で運ぶ。
+//! #1211 AC-6: 自分のフォロー・ブロックの edge と、自分への follow の edge を、移行の必須 bundle と本人の端末間の同期で
+//! 運ぶ（#1650 から、自分への follow はフォロワー全員）。
 
 use super::fetch::memory_device;
 use super::transfer::{bundle, keys_of};
@@ -48,11 +48,11 @@ fn follow_at(
         .expect("edge")
 }
 
-/// 移行の bundle は、AC-6 より前からある自分のフォロー（64 件を超える）・ブロックと、相互フォローの相手から自分への
-/// edge を、64 件以下の page で channel の item より先に運ぶ。移行先では、一覧と相互フォローが移行元とそろい、相互
-/// フォローの相手へ DM を送れる。
+/// 移行の bundle は、AC-6 より前からある自分のフォロー（64 件を超える）・ブロックと、フォロワー全員（自分がフォロー
+/// していない相手を含み、64 件を超える。#1650）の edge を、64 件以下の page で channel の item より先に運ぶ。移行先では、
+/// フォロー・フォロワーの一覧と相互フォローが移行元とそろい、相互フォローの相手へ DM を送れる。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_bundle_carries_own_edges_and_the_follow_backs() {
+async fn the_bundle_carries_own_edges_and_every_follower() {
     let keys = generate_keys();
     let me = keys.public_key();
     let (source, _) = memory_device(&keys, "device-a").await;
@@ -76,11 +76,12 @@ async fn the_bundle_carries_own_edges_and_the_follow_backs() {
         .unfollow_author(peers[69].public_key().as_str())
         .await
         .expect("unfollow");
-    // 相互フォローの相手（相手の署名の edge を受けた）。
-    for peer in &peers[..3] {
+    // 相互フォローの相手と、自分がフォローしていないフォロワー（相手の署名の edge を受けた）。
+    let followers: Vec<KukuriKeys> = (0..66).map(|_| generate_keys()).collect();
+    for follower in peers[..3].iter().chain(&followers) {
         put(
             &source,
-            build_follow_edge_envelope(peer, &me, FollowEdgeStatus::Active).expect("follow back"),
+            build_follow_edge_envelope(follower, &me, FollowEdgeStatus::Active).expect("follower"),
         )
         .await;
     }
@@ -124,7 +125,7 @@ async fn the_bundle_carries_own_edges_and_the_follow_backs() {
             count("graph/followers/"),
             count("graph/blocks/")
         ),
-        (70, 3, 2)
+        (70, 69, 2)
     );
     let last_edge = keys_sent
         .iter()
@@ -155,6 +156,12 @@ async fn the_bundle_carries_own_edges_and_the_follow_backs() {
     assert_eq!(
         connections(&target, SocialConnectionKind::Following).await,
         following
+    );
+    let followed = connections(&source, SocialConnectionKind::Followed).await;
+    assert_eq!(followed.len(), 69);
+    assert_eq!(
+        connections(&target, SocialConnectionKind::Followed).await,
+        followed
     );
     assert_eq!(
         connections(&target, SocialConnectionKind::Blocking).await,

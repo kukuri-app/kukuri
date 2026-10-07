@@ -240,6 +240,14 @@ impl ClientHost {
         self.runtime().open_account_transfer(request, sink).await
     }
 
+    /// #1650: 本人の端末どうしの和集合の同期を始める。受けた必須 bundle の確定は、移行と同じく登録簿の操作と排他にする。
+    pub async fn start_account_union_sync(self: &Arc<Self>) -> anyhow::Result<()> {
+        let sink = Arc::new(crate::accounts::transfer::TransferSink {
+            host: Arc::downgrade(self),
+        });
+        self.runtime().start_account_union_sync(sink).await
+    }
+
     /// #1211: 移行の保存を確定したアカウントを登録簿へ足す。同じ公開鍵が登録済みなら、そのまま返す（二重に登録しない）。
     pub(crate) async fn register_transferred_account(
         &self,

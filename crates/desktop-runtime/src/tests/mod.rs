@@ -54,6 +54,7 @@ pub(crate) use support::*;
 mod account_transfer;
 mod account_transfer_history;
 mod account_transfer_sync;
+mod account_union_sync;
 mod accounts_migration;
 mod attachments;
 mod community_node;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
-import { Check } from 'lucide-react';
+import { Check, RefreshCw } from 'lucide-react';
 import { AuthorAvatar } from '@/components/core/AuthorAvatar';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
@@ -19,11 +19,11 @@ import { useDesktopShellStore } from '@/shell/store';
 import { resolveProfilePictureSrc } from '@/shell/presentation';
 
 const dialogTitle = {
-  import: 'accountMenu.add', logout: 'accountMenu.logoutTitle',
+  import: 'accountMenu.add', logout: 'accountMenu.logoutTitle', sync: 'settings:accountTransfer.sync.title',
   'transfer-source': 'settings:accountTransfer.source.title', 'transfer-target': 'settings:accountTransfer.target.title',
 } as const;
 const dialogDescription = {
-  import: 'accountMenu.importDescription', logout: 'accountMenu.logoutDescription',
+  import: 'accountMenu.importDescription', logout: 'accountMenu.logoutDescription', sync: 'settings:accountTransfer.sync.description',
   'transfer-source': 'settings:accountTransfer.source.description', 'transfer-target': 'settings:accountTransfer.target.description',
 } as const;
 
@@ -34,7 +34,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
 }) {
   const { t } = useTranslation('shell');
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<'import' | 'logout' | 'transfer-source' | 'transfer-target' | null>(null);
+  const [dialog, setDialog] = useState<'import' | 'logout' | 'sync' | 'transfer-source' | 'transfer-target' | null>(null);
   const [transferLink, setTransferLink] = useState('');
   const [snapshot, setSnapshot] = useState<AccountsSnapshot | null>(null);
   const [display, setDisplay] = useState<AccountDisplay[]>([]);
@@ -66,7 +66,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   // #1211: OS のリンク起動で受けた移行用のリンクは、移行先の入力欄へ入れるだけで接続はしない。
   useAccountTransferLink((link) => { setOpen(false); setError(null); setTransferLink(link); setDialog('transfer-target'); });
   useEffect(() => onAccountAddRequest((next) => { setOpen(false); setError(null); setDialog(next); void refresh(); }), [refresh]);
-  const openDialog = (next: 'import' | 'logout') => { moveFocus.current = true; setOpen(false); setError(null); setDialog(next); };
+  const openDialog = (next: 'import' | 'logout' | 'sync') => { moveFocus.current = true; setOpen(false); setError(null); setDialog(next); };
   const closeDialog = () => { if (!pending && !receivingHistory) { setDialog(null); setTransferLink(''); moveFocus.current = false; } };
   return <>
     <Popover open={open} onOpenChange={(next) => { if (next) onOpen(); moveFocus.current = false; setOpen(next); }}>
@@ -93,12 +93,18 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
           const profile = display.find((entry) => entry.id === account.id);
           const current = account.id === snapshot.active_account_id;
           const name = (current ? localProfile?.display_name || localProfile?.name : null) || profile?.display_name || profile?.name || t('accountMenu.unknown');
-          return <button key={account.id} type='button' role='menuitemradio' aria-checked={current} disabled={pending} className='flex w-full min-w-0 items-center gap-3 rounded-[var(--radius-input)] p-2 text-left hover:bg-[var(--surface-button-ghost-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ring)]'
-            onClick={() => { if (!current) void switchTo(account.id); }}>
-            <AuthorAvatar label={name} picture={current ? resolveProfilePictureSrc(localProfile, mediaObjectUrls) : profile?.picture} />
-            <span className='min-w-0 flex-1'><span className='block truncate'>{name}</span><span className='block truncate text-xs text-muted-foreground'>{profile?.unavailable ? t('accountMenu.unavailable') : (current ? localProfile?.name : profile?.name) ? `@${current ? localProfile?.name : profile?.name}` : t('accountMenu.noUsername')}</span></span>
-            {current ? <Check className='size-4' aria-label={t('accountMenu.current')} /> : null}
-          </button>;
+          // #1650: 同期できるのは起動中のアカウントだけなので、使用中の行にだけ同期のボタンを置く（チェックの右）。
+          return <div key={account.id} className='flex min-w-0 items-center gap-1'>
+            <button type='button' role='menuitemradio' aria-checked={current} disabled={pending} className='flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-input)] p-2 text-left hover:bg-[var(--surface-button-ghost-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ring)]'
+              onClick={() => { if (!current) void switchTo(account.id); }}>
+              <AuthorAvatar label={name} picture={current ? resolveProfilePictureSrc(localProfile, mediaObjectUrls) : profile?.picture} />
+              <span className='min-w-0 flex-1'><span className='block truncate'>{name}</span><span className='block truncate text-xs text-muted-foreground'>{profile?.unavailable ? t('accountMenu.unavailable') : (current ? localProfile?.name : profile?.name) ? `@${current ? localProfile?.name : profile?.name}` : t('accountMenu.noUsername')}</span></span>
+              {current ? <Check className='size-4' aria-label={t('accountMenu.current')} /> : null}
+            </button>
+            {active?.id === account.id ? <IconButton role='menuitem' variant='ghost' label={t('accountMenu.sync')} disabled={pending} onClick={() => openDialog('sync')}>
+              <RefreshCw className='size-4' aria-hidden='true' />
+            </IconButton> : null}
+          </div>;
         })}
         {error ? <Notice tone='destructive'>{error}<Button variant='ghost' onClick={() => void refresh()}>{t('accountMenu.retry')}</Button></Notice> : null}
         <div role='separator' className='border-t border-[var(--border-subtle)]' />
@@ -112,7 +118,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
         onOpenAutoFocus={(event) => { if (dialog === 'logout') { event.preventDefault(); document.querySelector<HTMLButtonElement>('[data-testid="logout-cancel"]')?.focus(); } }}>
         <DialogHeader><DialogTitle>{t(dialogTitle[dialog ?? 'import'])}</DialogTitle><DialogDescription>{t(dialogDescription[dialog ?? 'import'])}</DialogDescription></DialogHeader>
         <DialogBody>
-          {dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
+          {dialog === 'sync' ? <AccountTransferPanel role='sync' /> : dialog === 'transfer-source' || dialog === 'transfer-target' ? <>
             {/* #1211: 移行先は完了の画面の「このアカウントを使う」で、受け取ったアカウントへ切り替える（使っているアカウントなら
                 閉じるだけ）。
                 履歴を受けている間は閉じさせず、「戻る」も出さない（終えるのは「やめる」だけ。2026-10-04 ユーザー決定）。 */}

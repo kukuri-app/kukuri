@@ -88,6 +88,32 @@ fn each_purpose_uses_a_separate_value() {
     assert!(![replica, topic, namespace].contains(&author));
 }
 
+// 本人の端末どうしの和集合の同期の接続の証明（#1650、ADR 0062 §9）。同じ鍵を持つ端末だけが作れ、両端末の endpoint id と
+// 向きに束縛する（受けた証明を別の相手・逆の向きに使えない）。context・手順が変わると、版の違う端末とつながらなくなる。
+#[test]
+fn pairing_proofs_bind_the_account_key_both_endpoints_and_the_direction() {
+    let (a, b) = ([1_u8; 32], [2_u8; 32]);
+    let derived = keys(SECRET).derive_account_sync();
+    let proof = derived.pairing_proof(&a, &b, true);
+    assert_eq!(
+        hex::encode(proof),
+        "ac75c6f17efb8ce9b7ca8cb88033d564dbc78cfebb9ec3d73f149f56ae7ba8d7"
+    );
+    assert!(
+        keys(SECRET)
+            .derive_account_sync()
+            .verify_pairing(&a, &b, true, &proof)
+    );
+    assert!(
+        !keys(OTHER_SECRET)
+            .derive_account_sync()
+            .verify_pairing(&a, &b, true, &proof)
+    );
+    assert!(!derived.verify_pairing(&a, &b, false, &proof));
+    assert!(!derived.verify_pairing(&b, &a, true, &proof));
+    assert!(!derived.verify_pairing(&a, &[3; 32], true, &proof));
+}
+
 // 診断の一覧・Community Node の公開 topic の索引と対応 topic は、この判定で account 同期の hint を外す（ADR 0061 §6）。
 #[test]
 fn the_account_hint_topic_is_not_a_public_topic() {

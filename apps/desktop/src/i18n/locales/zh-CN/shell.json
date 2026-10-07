@@ -565,6 +565,7 @@
     "unknown": "未知用户",
     "noUsername": "未设置用户名",
     "current": "当前账号",
+    "sync": "在设备之间同步个人资料",
     "add": "添加账号",
     "manage": "管理账号",
     "logout": "退出登录",

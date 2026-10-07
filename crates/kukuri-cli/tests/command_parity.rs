@@ -152,7 +152,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         "gui_content_recovery" => tauri == "retry_post_elements",
         // #1221 R2-C: GUIの表示中の要素・列だけを対象にする照会と購読の需要。
         "gui_visible_membership" => matches!(tauri, "bookmarked_post_ids" | "set_scope_display"),
-        // #1211: QR・確認コードを両端末の画面で比べる移行の接続。
+        // #1211: QR・確認コードを両端末の画面で比べる移行の接続。#1650: 両端末の画面で始める本人の端末どうしの同期。
         "gui_device_pairing" => matches!(
             tauri,
             "create_account_transfer_invite"
@@ -160,6 +160,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "get_account_transfer_status"
                 | "decide_account_transfer"
                 | "cancel_account_transfer"
+                | "start_account_union_sync"
         ),
         _ => false,
     }
@@ -205,7 +206,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 182);
+    assert_eq!(manifest.entries.len(), 183);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

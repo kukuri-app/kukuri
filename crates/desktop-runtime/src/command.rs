@@ -342,6 +342,8 @@ dispatch_table! { gate_commands, dispatch_gate(gate: &dyn ClientGate, _ctx);
     // #1211: 受けた必須 bundle の保存の確定で登録簿へ足すので、host の操作と排他にする（接続と確認は待たない）。
     open_account_transfer(request: OpenAccountTransferRequest) =>
         ready_host(gate)?.open_account_transfer(request).await.map_err(map_error);
+    // #1650: 本人の端末どうしの同期も、受けた必須 bundle の確定で登録簿を読むので、移行と同じく host の操作と排他にする。
+    start_account_union_sync() => ready_host(gate)?.start_account_union_sync().await.map_err(map_error);
     list_accounts() => list_accounts(ready_host(gate)?.app_data_dir()).await.map_err(map_error);
 }
 

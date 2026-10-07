@@ -1,7 +1,8 @@
 //! 本人の端末間の account 同期（#1218、ADR 0061）。
 //!
 //! アカウントの秘密鍵から、用途ごとに別の値（replica の識別子・namespace の秘密・payload の暗号鍵・
-//! hint の topic）を導出する。公開鍵だけでは計算できず、同じ秘密鍵を持つ端末は同じ値になる。
+//! hint の topic・端末どうしの同期の接続の証明の鍵）を導出する。公開鍵だけでは計算できず、同じ秘密鍵を持つ端末は
+//! 同じ値になる。
 //! 同期する item は allowlist の種類だけで、暗号化と認証をして docs へ置く。
 
 use anyhow::{Context, Result, anyhow, ensure};
@@ -21,7 +22,9 @@ const ID_CONTEXT: &str = "kukuri.app 2026-10-01 account sync id v1";
 const NAMESPACE_CONTEXT: &str = "kukuri.app 2026-10-01 account sync namespace v1";
 const PAYLOAD_CONTEXT: &str = "kukuri.app 2026-10-01 account sync payload v1";
 const RENDEZVOUS_CONTEXT: &str = "kukuri.app 2026-10-01 account sync rendezvous v1";
+const PAIRING_CONTEXT: &str = "kukuri.app 2026-10-07 account sync pairing v1";
 const ITEM_AAD_DOMAIN: &[u8] = b"kukuri account sync item v1\0";
+const PAIRING_DOMAIN: &[u8] = b"kukuri account union sync hello v1\0";
 
 /// 1 item の平文の上限。
 pub const MAX_ACCOUNT_SYNC_ITEM_BYTES: usize = 16 * 1024;
@@ -37,6 +40,7 @@ pub struct AccountSyncKeys {
     hint_topic: TopicId,
     namespace_secret: [u8; 32],
     payload_key: [u8; 32],
+    pairing_key: [u8; 32],
 }
 
 impl std::fmt::Debug for AccountSyncKeys {
@@ -59,6 +63,7 @@ impl KukuriKeys {
             )),
             namespace_secret: blake3::derive_key(NAMESPACE_CONTEXT, &secret),
             payload_key: blake3::derive_key(PAYLOAD_CONTEXT, &secret),
+            pairing_key: blake3::derive_key(PAIRING_CONTEXT, &secret),
         }
     }
 }
@@ -147,6 +152,34 @@ impl AccountSyncKeys {
             "account sync item key does not match its docs key"
         );
         Ok(item)
+    }
+
+    /// 本人の端末どうしの和集合の同期（#1650、ADR 0062 §9）で、接続した相手が同じアカウント鍵を持つことの証明。
+    /// 接続を始めた端末・受けた端末の endpoint id と、どちらが送る証明か（`from_initiator`）に束縛する。
+    pub fn pairing_proof(
+        &self,
+        initiator: &[u8; 32],
+        responder: &[u8; 32],
+        from_initiator: bool,
+    ) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_keyed(&self.pairing_key);
+        hasher.update(PAIRING_DOMAIN);
+        hasher.update(&[u8::from(from_initiator)]);
+        hasher.update(initiator);
+        hasher.update(responder);
+        *hasher.finalize().as_bytes()
+    }
+
+    /// 証明が正しいか。比較は定数時間で行う。
+    pub fn verify_pairing(
+        &self,
+        initiator: &[u8; 32],
+        responder: &[u8; 32],
+        from_initiator: bool,
+        proof: &[u8; 32],
+    ) -> bool {
+        blake3::Hash::from_bytes(self.pairing_proof(initiator, responder, from_initiator))
+            == blake3::Hash::from_bytes(*proof)
     }
 
     fn cipher(&self) -> Result<XChaCha20Poly1305> {

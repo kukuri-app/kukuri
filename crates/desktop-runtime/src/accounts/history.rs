@@ -4,7 +4,8 @@
 //! も）を索引の順に 1 page ずつ読み、範囲の外（範囲より前の bucket・対象外の replica）は seek で飛ばして行を読まない。
 //! 投稿の envelope から本文・添付の blob の hash を集める。
 //! 移行先は、page ごとに受けたアカウントの DB の隣の置き場（page の file と blob の部分の file）へ保存し、journal
-//! （範囲・続きの位置・page 数・反映した数）を進める。反映はそのアカウントの runtime が page ごとに自分の record・
+//! （範囲・続きの位置とその送り元の端末・page 数・反映した数）を進める。本人の端末どうしの同期（#1650）の受ける向きも、
+//! 「すべて」の範囲で同じ置き場を使う。反映はそのアカウントの runtime が page ごとに自分の record・
 //! blob として保存し（既にある自分の record は上書きしない）、反映した page から消す。範囲の終わりまで反映したら
 //! journal も消す。
 
@@ -219,6 +220,10 @@ fn finish(
 #[derive(Default, Serialize, Deserialize)]
 struct Journal {
     history: Option<AccountTransferHistory>,
+    /// 続きの位置の送り元の端末（endpoint id）。位置は送り元の索引の位置なので、別の端末からは最初から受ける（#1650）。
+    /// この欄より前の journal は持たない（どの端末からでも続ける）。
+    #[serde(default)]
+    peer: Option<String>,
     since: Option<u64>,
     cursor: Option<AccountHistoryCursor>,
     /// 置き場へ保存した page の数と、反映した page の数。
@@ -284,16 +289,18 @@ async fn clear_page(db: &Path, page: u64) -> Result<()> {
     Ok(())
 }
 
-/// 移行先: 履歴の置き場を開く。同じ範囲の途中で止まっていれば、その位置から続ける（別の範囲・終わった範囲は最初から）。
-/// 範囲の最初の時間 bucket、続きの位置、次に保存する page の番号を返す。
+/// 移行先: 履歴の置き場を開く。同じ送り元の端末（`peer`）の同じ範囲の途中で止まっていれば、その位置から続ける（別の
+/// 端末・別の範囲・終わった範囲は最初から）。範囲の最初の時間 bucket、続きの位置、次に保存する page の番号を返す。
 pub(crate) async fn begin(
     db: &Path,
     history: AccountTransferHistory,
+    peer: &str,
     now_seconds: i64,
 ) -> Result<(Option<u64>, Option<AccountHistoryCursor>, u64)> {
     let (since, cursor, page) = update_journal(db, |journal| {
         let journal = journal.get_or_insert_default();
-        if journal.history != Some(history) || journal.finished {
+        let other_peer = journal.peer.as_deref().is_some_and(|known| known != peer);
+        if journal.history != Some(history) || journal.finished || other_peer {
             journal.history = Some(history);
             journal.since = history.days().map(|days| {
                 TimeBucket::from_unix_seconds((now_seconds - days * 86_400).max(0))
@@ -302,6 +309,7 @@ pub(crate) async fn begin(
             journal.cursor = None;
             journal.finished = false;
         }
+        journal.peer = Some(peer.to_string());
         (journal.since, journal.cursor.clone(), journal.pages)
     })
     .await?;

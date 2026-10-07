@@ -40,7 +40,7 @@ use super::migrations::materialize_sqlite_fixture;
 
 /// 全世代の up migration version(migrations/ ディレクトリのファイル名から
 /// 観測した生リテラル、昇順)。世代の追加・削除はここと golden の両方に現れる。
-const EXPECTED_VERSIONS: [i64; 52] = [
+const EXPECTED_VERSIONS: [i64; 53] = [
     20260310000000,
     20260312000000,
     20260315000000,
@@ -93,6 +93,7 @@ const EXPECTED_VERSIONS: [i64; 52] = [
     20261004000000,
     20261004010000,
     20261007000000,
+    20261007010000,
 ];
 
 /// 各世代 k について「全適用 → undo(V[k-1]) → 中間世代スキーマと一致 →

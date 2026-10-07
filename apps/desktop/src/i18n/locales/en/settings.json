@@ -95,12 +95,14 @@
     },
     "transferring": {
       "source": "Sending keys and settings ({{count}})…",
-      "target": "Receiving and saving keys and settings ({{count}})…"
+      "target": "Receiving and saving keys and settings ({{count}})…",
+      "sync": "Syncing ({{count}} items received)…"
     },
     "completed": {
       "source": "The other device has saved the account. You can keep using it on this device.",
       "target": "Everything was received.",
-      "use": "Use this account"
+      "use": "Use this account",
+      "sync": "The sync has finished."
     },
     "retry": "Try again",
     "failure": {
@@ -125,22 +127,44 @@
       "bundleDone": "Keys and settings have been moved.",
       "progress": {
         "source": "Sending post history ({{count}})…",
-        "target": "Receiving post history ({{count}})…"
+        "target": "Receiving post history ({{count}})…",
+        "sync": "Syncing posts ({{count}} received)…"
       },
       "stop": {
         "source": "Stop sending history",
-        "target": "Stop receiving history"
+        "target": "Stop receiving history",
+        "sync": "Stop syncing"
       },
       "done": {
         "source": "Sent post history ({{count}}).",
-        "target": "Received post history ({{count}})."
+        "target": "Received post history ({{count}}).",
+        "sync": "Received posts ({{count}})."
       },
       "stopped": {
         "source": "Sending post history stopped partway ({{count}}).",
-        "target": "Receiving post history stopped partway ({{count}})."
+        "target": "Receiving post history stopped partway ({{count}}).",
+        "sync": "Syncing posts stopped partway ({{count}})."
       },
       "unavailable": "Texts or attachments that weren't on the other device couldn't be moved ({{count}}).",
       "resume": "Connect again and choose the same range on the receiving device to continue where it stopped."
+    },
+    "sync": {
+      "title": "Sync profile across devices",
+      "description": "Combine your profile, follows, followers, posts and more with another device that uses the same account, so both devices have the same.",
+      "preparing": "Getting ready to sync…",
+      "instructions": "On the other device, also choose “Sync profile across devices” in the account menu. The sync starts when both devices connect.",
+      "scopeLabel": "Syncs:",
+      "scope": "your profile, follows and blocks, followers, the people you always show, the private channels you joined with their keys, and your posts (text, images, and videos). Anything on only one device is added to both; for the same person, the newer follow or block action is kept.",
+      "notSyncedLabel": "Doesn't sync:",
+      "unavailable": "Texts or attachments that weren't on the other device couldn't be received ({{count}}).",
+      "resume": "Choose it again on both devices to continue syncing posts where it stopped.",
+      "failure": {
+        "expired": "The other device didn't connect in time. Choose it on both devices within 5 minutes. If they still don't connect, check that both devices are online and have agreed to a Community Node.",
+        "cancelled": "The sync was stopped.",
+        "storage": "This device couldn't save the data. Check its free space and try again.",
+        "interrupted": "The connection was lost while syncing. Choose it again on both devices to continue syncing posts where it stopped.",
+        "prepareFailed": "Couldn't start the sync. Please try again."
+      }
     }
   },
   "deviceBackup": {

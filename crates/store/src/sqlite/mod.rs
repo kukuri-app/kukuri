@@ -218,4 +218,25 @@ impl Store for SqliteStore {
         .map(crate::row_mapping::row_to_block_edge)
         .collect()
     }
+
+    async fn list_follow_edges_by_target_after(
+        &self,
+        target_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        sqlx::query(
+            "SELECT subject_pubkey, target_pubkey, status, updated_at, source_envelope_id
+             FROM follow_edges WHERE target_pubkey = ?1 AND subject_pubkey > ?2
+             ORDER BY subject_pubkey LIMIT ?3",
+        )
+        .bind(target_pubkey)
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(crate::row_mapping::row_to_follow_edge)
+        .collect()
+    }
 }

@@ -21,7 +21,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 
 ### 1. 導出と namespace
 
-- アカウントの秘密鍵（32 byte）から、`blake3::derive_key` の context を用途ごとに分けて 4 つの値を導出する（`crates/core/src/account_sync.rs`）。context は変えない（変えると全アカウントの同期先が変わる）。
+- アカウントの秘密鍵（32 byte）から、`blake3::derive_key` の context を用途ごとに分けて 5 つの値を導出する（`crates/core/src/account_sync.rs`）。context は変えない（変えると全アカウントの同期先が変わる）。
 
 | 用途 | context | 使い方 |
 | --- | --- | --- |
@@ -29,8 +29,9 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | namespace の秘密 | `kukuri.app 2026-10-01 account sync namespace v1` | `register_private_replica_secret` で登録する |
 | payload の鍵 | `kukuri.app 2026-10-01 account sync payload v1` | item の暗号化・認証（§3） |
 | rendezvous | `kukuri.app 2026-10-01 account sync rendezvous v1` | gossip の hint の topic `kukuri:account:<hex>` |
+| 端末どうしの同期の接続の証明 | `kukuri.app 2026-10-07 account sync pairing v1` | 本人の端末どうしの和集合の同期（#1650、ADR 0062 §9）で、接続した相手が同じアカウント鍵を持つことを、両端末の endpoint id と向きに束縛した証明で確かめる |
 
-- 導出は一方向で、公開鍵だけからは計算できない。同じアカウント鍵を持つ端末は同じ値になり、初回の QR で組んだ 2 端末以外も同じ同期先へ届く。識別子・topic・namespace・payload の鍵は互いに別の値で、docs author（ADR 0053）とも別である。
+- 導出は一方向で、公開鍵だけからは計算できない。同じアカウント鍵を持つ端末は同じ値になり、初回の QR で組んだ 2 端末以外も同じ同期先へ届く。識別子・topic・namespace・payload の鍵・接続の証明の鍵は互いに別の値で、docs author（ADR 0053）とも別である。
 - `account::v1::` の replica は、replica id から namespace を導出しない（`public_replica_secret` で除外する）。namespace の秘密を登録していなければ開けず、公開へ fallback しない。
 - 同期のチャンネルは、通常の private channel の epoch から独立している。アカウント鍵だけで導出でき、epoch の更新（W6）に巻き込まない。
 - 値の prefix（`kukuri:account:`・`account::v1::`）は wire の定数として凍結する（`crates/core/src/wire.rs`）。
@@ -49,7 +50,7 @@ Accepted（Issue #1218 W5 AC-1。分類の接続・merge・鍵の保持・差分
 | private channel の参加者 | `channel/<channel id の hex>/participant/<参加者の公開鍵>` | owner の端末が受けた参加者の最新の参加・退会の record の世代と時刻（`ChannelParticipantV1`）。owner の端末の参加者の表を本人の端末で集める（#1219 AC-5、2026-10-04 ユーザー判断） |
 | 参加者との follow | `follow/<subject の公開鍵>/<target の公開鍵>` | 自分と自分の channel の参加者の間の follow の edge の状態。相互フォロー限定の資格の材料で、受け手はフォローの表・一覧に入れない（#1219 AC-5）。#1211 AC-6 から、自分の操作の edge は次の「自分のフォロー」が運び、この item は参加者が分かった時点の両方向の edge と、参加者から自分への edge だけに書く |
 | 自分のフォロー・ブロック | `graph/follows/<相手の公開鍵>`・`graph/blocks/<相手の公開鍵>` | 自分の署名済みの follow・block の edge の envelope（公開の正本と同じ ID。#1211 AC-6、2026-10-04 ユーザー判断）。受け手はフォロー・ブロックの表と、自分の author の replica・bucket に置く |
-| 自分がフォローしている相手から自分への follow | `graph/followers/<相手の公開鍵>` | 相手の署名済みの follow の edge の envelope（#1211 AC-6）。移行先が相互フォロー（DM の送受信の条件）を判定するためで、受け手はフォローの表にだけ置く（相手の edge は相手の replica にある） |
+| 自分への follow（フォロワー） | `graph/followers/<相手の公開鍵>` | 相手の署名済みの follow の edge の envelope（#1211 AC-6）。受け手はフォローの表にだけ置く（相手の edge は相手の replica にある）。#1211 AC-6 では、移行先が相互フォロー（DM の送受信の条件）を判定するため、自分がフォローしている相手からの edge だけを送った。#1650 から、移行と端末どうしの同期（ADR 0062 §5・§9）は、受けた端末のフォロワーの一覧を送った端末とそろえるため、フォロワー全員の edge を送る（2026-10-07 ユーザー判断） |
 | 変更の窓 | `changes/<端末 ID>/<slot>`・`changes/<端末 ID>/head` | 書いた端末の採用の順の手掛かり（§10）。merge の対象ではない |
 
 同期しないもの: アカウントの root の秘密鍵（初回の移行と既存の backup で扱う）、iroh の endpoint 秘密鍵・端末 ID、Community Node の token・設定・同意、アプリの同意・年齢の申告・成人向けの表示、OS の permission、window・通知・開発者の設定、discovery の seed、SDP・ICE・WebRTC の session（ADR 0057）。
@@ -70,7 +71,7 @@ allowlist の外の種類は封を開けても受け付けない（`AccountSyncI
 - 鍵更新の依頼・担当の移譲の依頼: `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。担当は採った依頼の元の世代が手元の現在の世代のときだけ処理する（ADR 0018 §8）。
 - 参加者: `updated_at` は record の時刻（退会なら退会、参加なら参加の時刻）、`op_id` は中身から決める（同じ record を受け直しても版が増えない）。新しいものを採り、参加者の表へは表と同じ規則（同じ (channel, epoch, 公開鍵) の行より新しいときだけ置き換え、退会は channel の全行に付く）で取り込む。古い参加の record で参加中に戻らない。
 - 参加者との follow: `updated_at` は edge の時刻、`op_id` は edge の envelope の ID の先頭 32 桁。新しいものを採る。相互フォローの判定は、向きごとに、手元の edge と採った記録の新しい方を使う（ADR 0018 §8）。
-- 自分のフォロー・ブロック、自分がフォローしている相手から自分への follow（#1211 AC-6）: `updated_at` は edge の時刻（envelope の `created_at`）、`op_id` は envelope の ID の先頭 32 桁。値の envelope から作り直した item（相手・向きを含む）と一致しなければ拒否し、台帳の行を採る前に署名を確かめる。新しいものを採る。手元の表の edge と比べ、手元が新しいか同じ envelope なら採らない（台帳に古い版を置くと、送り直しが古い版を本人の別の端末へ広げる。同じ edge を採り直すと、author の replica・bucket を書き直す）。
+- 自分のフォロー・ブロック、自分への follow（#1211 AC-6・#1650）: `updated_at` は edge の時刻（envelope の `created_at`）、`op_id` は envelope の ID の先頭 32 桁。値の envelope から作り直した item（相手・向きを含む）と一致しなければ拒否し、台帳の行を採る前に署名を確かめる。新しいものを採る。手元の表の edge と比べ、手元が新しいか同じ envelope なら採らない（台帳に古い版を置くと、送り直しが古い版を本人の別の端末へ広げる。同じ edge を採り直すと、author の replica・bucket を書き直す）。
 - 参加・退会・取消（`membership`）は `updated_at` が新しいものを採る。同じなら `op_id` の辞書順で大きいものを採る。退会・取消の tombstone は、それより古い `updated_at` の鍵の item では参加を戻さない。明示の再参加は、新しい `updated_at` の値のある版として扱う（§9）。
 - 採用した状態は item ごとに 1 行で持つ（操作の log を持たない）。同じ `op_id` と `updated_at` の再受信は何もしない（重複排除の台帳を別に持たない）。
 

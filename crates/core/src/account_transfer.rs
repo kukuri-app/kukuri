@@ -236,6 +236,8 @@ pub struct AccountTransferHistoryResult {
 pub enum AccountTransferRole {
     Source,
     Target,
+    /// 本人の端末どうしの和集合の同期（#1650）。両端末が送り、受ける。
+    Sync,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

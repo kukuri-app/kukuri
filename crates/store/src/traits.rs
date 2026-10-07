@@ -82,6 +82,14 @@ pub trait Store: Send + Sync {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<BlockEdge>>;
+    /// `target` への follow の edge（フォロワー）を、相手（subject）の公開鍵の順に `after` より後から `limit` 件
+    /// (#1650。端末間の同期と移行で、フォロワーを小分けに送る)。
+    async fn list_follow_edges_by_target_after(
+        &self,
+        target_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>>;
 }
 
 // ProjectionStore はドメイン別 sub-trait の supertrait 合成(WP-H1)。

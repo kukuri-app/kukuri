@@ -280,9 +280,26 @@ impl Store for MemoryStore {
             |edge| (edge.subject_pubkey.as_str(), edge.target_pubkey.as_str()),
         ))
     }
+
+    async fn list_follow_edges_by_target_after(
+        &self,
+        target_pubkey: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<FollowEdge>> {
+        let edges = self.follow_edges.read().await;
+        Ok(edges_after(
+            edges.values(),
+            target_pubkey,
+            after,
+            limit,
+            |edge| (edge.target_pubkey.as_str(), edge.subject_pubkey.as_str()),
+        ))
+    }
 }
 
-/// `subject` の edge を、相手の順に `after` より後から `limit` 件(試験用の store なので、全件から選ぶ)。
+/// `ends` の左が `subject` の edge を、右（相手）の順に `after` より後から `limit` 件(試験用の store なので、全件から
+/// 選ぶ)。
 fn edges_after<'a, T: Clone + 'a>(
     edges: impl Iterator<Item = &'a T>,
     subject: &str,

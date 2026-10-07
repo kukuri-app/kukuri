@@ -1,4 +1,4 @@
-//! #859: アカウント鍵の安全なエクスポート。#1211: QR・専用リンクの移行。
+//! #859: アカウント鍵の安全なエクスポート。#1211: QR・専用リンクの移行。#1650: 本人の端末どうしの和集合の同期。
 //!
 //! 平文秘密鍵は返さない。エクスポートは暗号化 envelope
 //! (`kukuri_core::encrypt_account_key_export`)のみを IPC へ出す。移行の鍵は、両端末で確認した接続でだけ送る。
@@ -10,6 +10,7 @@ use anyhow::Result;
 use kukuri_app_api::AppService;
 use kukuri_core::AccountTransferStatus;
 use kukuri_iroh_node::AccountBundleSink;
+use kukuri_transport::{HintTransport, SeedPeer};
 
 use crate::accounts::history::merge_staged_history;
 use crate::accounts::transfer::{RuntimeBundleSource, merge_staged};
@@ -68,6 +69,49 @@ impl DesktopRuntime {
             .account_transfer()
             .await?
             .open(&request.link, sink, request.history)
+    }
+
+    /// #1650: 本人の端末どうしの和集合の同期を待ち受け、本人の端末の候補（account の hint topic の購読の相手）へ
+    /// つなぐ。受けたものは移行と同じ保存（`sink`）で反映する。前の移行・同期は取り消す。状態の読み出しと取消は移行の
+    /// command を使う。
+    pub(crate) async fn start_account_union_sync(
+        &self,
+        sink: Arc<dyn AccountBundleSink>,
+    ) -> Result<()> {
+        let source = Arc::new(RuntimeBundleSource {
+            app: self.app_service.account_handle(),
+            keys: self.author_keys.clone(),
+            store: self.store.clone(),
+        });
+        let keys = self.author_keys.derive_account_sync();
+        let candidates = self
+            .iroh_stack
+            .transport
+            .topic_read_candidates(keys.hint_topic())
+            .await
+            .unwrap_or_default();
+        let peers = self.iroh_stack.account_sync_addrs(&candidates).await?;
+        self.iroh_stack
+            .account_transfer()
+            .await?
+            .sync(keys, source, sink, peers);
+        Ok(())
+    }
+
+    /// #1650: rendezvous の応答で account の hint topic の本人の端末を受けたら、同期を待ち受けている間はそこへもつなぐ
+    /// （起動・復帰の直後は、購読の相手がまだいない）。
+    pub(crate) async fn account_union_sync_peers(
+        &self,
+        topic: &str,
+        peers: &[SeedPeer],
+    ) -> Result<()> {
+        let keys = self.author_keys.derive_account_sync();
+        if topic != kukuri_core::wire::hint_topic_id(keys.hint_topic()).as_str() {
+            return Ok(());
+        }
+        let peers = self.iroh_stack.account_sync_addrs(peers).await?;
+        self.iroh_stack.account_transfer().await?.sync_peers(peers);
+        Ok(())
     }
 
     /// #1211 AC-2・AC-3: 移行で保存した必須 bundle と履歴を、背景で chunk・page ごとに反映する（起動時と、使っている

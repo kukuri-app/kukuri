@@ -761,7 +761,30 @@ impl SharedIrohStack {
         }
     }
 
-    /// QR・専用リンクの移行（#1211）。stack を作り直すと、進行中の移行は終わる。
+    /// 本人の端末どうしの同期の相手（rendezvous・購読の候補。#1650）を、この node の relay を足した接続先にする。
+    pub(crate) async fn account_sync_addrs(&self, peers: &[SeedPeer]) -> Result<Vec<EndpointAddr>> {
+        let relay_urls = self
+            .current
+            .lock()
+            .await
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .relay_urls()
+            .await
+            .into_iter()
+            .map(|url| url.to_string())
+            .collect::<Vec<_>>();
+        Ok(peers
+            .iter()
+            .filter_map(|peer| {
+                peer.to_endpoint_addr_with_relay_url_strings(&relay_urls)
+                    .ok()
+            })
+            .collect())
+    }
+
+    /// QR・専用リンクの移行（#1211）と本人の端末どうしの同期（#1650）。stack を作り直すと、進行中のものは終わる。
     pub(crate) async fn account_transfer(&self) -> Result<kukuri_iroh_node::AccountTransfer> {
         Ok(self
             .current
