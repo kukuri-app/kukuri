@@ -450,6 +450,32 @@ async fn backfill_takes_old_records_a_page_at_a_time() {
     );
 }
 
+/// 取込みは、空や読めない値を参照なしとして扱い、止まらない（行の読取りと同じく空文字列は無い扱い）。
+#[tokio::test]
+async fn backfill_treats_values_it_cannot_read_as_no_refs() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    store
+        .put_object_projection(post("p1", "public", &hash(1), &[&hash(2)]))
+        .await
+        .unwrap();
+    store
+        .upsert_reaction_cache(reaction("r1", "p1", &hash(3), ObjectStatus::Active))
+        .await
+        .unwrap();
+    for sql in [
+        "UPDATE object_index_cache SET attachments_json = '', repost_of_json = '{'",
+        "UPDATE reaction_cache SET custom_asset_snapshot_json = '{'",
+        "DELETE FROM public_blob_refs",
+    ] {
+        sqlx::query(sql).execute(store.pool()).await.unwrap();
+    }
+    while !store.backfill_public_blob_refs_step(2).await.unwrap() {}
+    assert_eq!(
+        public(&store, &[hash(1), hash(2), hash(3)]).await,
+        [true, false, false]
+    );
+}
+
 /// 1 回の取込みと、満杯の予定への出し入れの命令の数は、表の件数によらない。
 #[tokio::test]
 async fn backfill_and_schedule_work_does_not_grow_with_the_number_of_records() {
