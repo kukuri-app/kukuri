@@ -2,8 +2,8 @@
 export async function androidClick(browser, element, original, timeout) {
   const result = await browser.waitUntil(async () => {
     // execute は browser の command なので、要素の自動再取得の対象にならない。
-    await element.waitForExist({ timeout });
     try {
+      await element.waitForExist({ timeout });
       return await browser.execute(async (node) => {
         node.scrollIntoView({ block: 'center', inline: 'center' });
         let last = '';

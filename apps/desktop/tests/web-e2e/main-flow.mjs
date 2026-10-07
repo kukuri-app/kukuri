@@ -311,6 +311,8 @@ async function reply(browser, target, content) {
 
 async function react(browser, target, emoji) {
   await (await card(browser, target)).$('button[aria-label="React"]').click();
+  // 電話の幅で grid の下にある項目も、利用者の検索欄で絞ってから押す。
+  await browser.$('.post-reaction-search input').setValue(emoji);
   await browser.$(`button[aria-label="${emoji}"]`).click();
 }
 
