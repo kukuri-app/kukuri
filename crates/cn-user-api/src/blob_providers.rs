@@ -193,6 +193,7 @@ pub(crate) async fn search_blob_providers(
     headers: HeaderMap,
     Json(request): Json<BlobProviderSearchRequest>,
 ) -> ApiResult<Json<BlobProviderSearchResponse>> {
+    let received = Instant::now();
     let Some(search) = state.blob_provider_search.clone() else {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -212,8 +213,8 @@ pub(crate) async fn search_blob_providers(
                 "hash must be 64 hex digits and budget_ms must be positive",
             )
         })?;
-    let deadline = Instant::now()
-        + Duration::from_millis(request.budget_ms.min(BLOB_PROVIDER_SEARCH_MAX_BUDGET_MS));
+    let deadline =
+        received + Duration::from_millis(request.budget_ms.min(BLOB_PROVIDER_SEARCH_MAX_BUDGET_MS));
     let device = identity.endpoint_id.unwrap_or(identity.pubkey);
     search.search(device, hash, deadline).await.map(Json)
 }

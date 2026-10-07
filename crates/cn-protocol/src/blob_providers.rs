@@ -11,7 +11,7 @@ pub const BLOB_PROVIDER_SEARCH_MAX_CANDIDATES: usize = 4;
 /// 1 候補の relay URL と、直接の address の上限。
 pub const BLOB_PROVIDER_MAX_RELAY_URLS: usize = 4;
 pub const BLOB_PROVIDER_MAX_DIRECT_ADDRS: usize = 8;
-/// 検索の期限の上限（ms）。node は受け取ってから `min(budget_ms, これ)` で打ち切る。
+/// 検索の期限の上限（ms）。node は要求を受け取った時点から `min(budget_ms, これ)` で打ち切る。
 pub const BLOB_PROVIDER_SEARCH_MAX_BUDGET_MS: u64 = 10_000;
 
 /// 要求の形式が不正（hash が 64 桁の 16 進でない・budget が 0）なときの安定コード（400）。
@@ -30,7 +30,7 @@ pub struct BlobProviderSearchRequest {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobProviderSearchResponse {
     pub candidates: Vec<BlobProviderCandidate>,
-    /// 期限か処理の上限で、候補を集め終える前に打ち切った。
+    /// 期限で、候補を集め終える前に打ち切った（node が補助 index へつながる前の応答も含む）。
     pub partial: bool,
 }
 

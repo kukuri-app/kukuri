@@ -34,7 +34,10 @@ async fn main() -> Result<()> {
         .port(env("CN_ADDR_INDEX_PORT", DEFAULT_PORT)?)
         .build()
         .context("failed to bind the address index socket")?;
-    let mut udp = Server::new(limits).attach(dht).await?;
+    // kukuri の端末と node は署名つきの一覧で見つける（D6）ので、上流の共通の rendezvous には告知しない。
+    let mut udp = Server::new(limits)
+        .attach_with_rendezvous(dht, None)
+        .await?;
     tracing::info!(addr = %udp.local_addr(), "community-node address index listening");
     tokio::select! {
         result = tokio::signal::ctrl_c() => result.context("failed to wait for ctrl-c")?,
