@@ -204,3 +204,12 @@ test('the current account row syncs the profile across devices', async () => {
   await user.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
   await waitFor(() => expect(cancel).toHaveBeenCalled());
 });
+
+// ADR 0059 §1: 版の更新でレイアウトを外していた間に切替が失敗したら、戻ったレイアウトでメニューを開いて知らせる。
+test('a switch that failed while the layout was away opens the menu with the failure', async () => {
+  vi.spyOn(session, 'takeUnseenAccountFailure').mockReturnValueOnce(true);
+  await renderShell();
+  const menu = await screen.findByRole('menu', { name: 'Account menu' });
+  expect(await within(menu).findByText('Could not complete the action. Please try again.')).toBeVisible();
+  expect(within(menu).getByText('Second Account')).toBeVisible();
+});

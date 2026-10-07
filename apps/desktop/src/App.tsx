@@ -10,7 +10,7 @@ import { changeDesktopLocale } from '@/i18n/changeLocale';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
 import { DesktopShellPage } from '@/shell/DesktopShellPage';
-import { reconcileAccountDrafts } from '@/lib/accountSession';
+import { isChangingAccount, noteAccountLayoutRemoved, reconcileAccountDrafts } from '@/lib/accountSession';
 import {
   type AppProps,
   type DesktopShellPageProps,
@@ -99,6 +99,12 @@ export function App(props: AppProps) {
       getDesktopStartupStatus()
         .then(async (status: DesktopStartupStatus) => {
           if (!active) {
+            return;
+          }
+          // アカウントの切替の途中の版の更新では、切替が終わるまでレイアウトに戻らない（失敗はアカウントのメニューで知らせる）。
+          if (status.status === 'migrating') noteAccountLayoutRemoved();
+          if (status.status === 'ready' && isChangingAccount()) {
+            retryTimer = setTimeout(loadStartupStatus, 100);
             return;
           }
           if (status.status === 'ready') {

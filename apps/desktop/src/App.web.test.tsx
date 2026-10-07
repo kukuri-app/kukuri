@@ -19,6 +19,7 @@ vi.mock('@/lib/webRuntime', () => ({
 }));
 
 import { App } from '@/App';
+import * as session from '@/lib/accountSession';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { columnIdentityId } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
@@ -153,5 +154,33 @@ test.each([
   expect(screen.queryByRole('button', { name: button })).not.toBeInTheDocument();
   expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
   finish();
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+}, 20000);
+
+// ADR 0059 §1: アカウントの切替の途中の版の更新でも移行の画面を出し、切替が終わるまでレイアウトに戻らない（失敗は戻った
+// レイアウトのアカウントのメニューで知らせる）。
+test('a storage upgrade during an account change keeps the startup screen until the change ends', async () => {
+  webRuntime(runInThisTab, runInThisTab);
+  render(<App />);
+  expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
+  const changing = vi.spyOn(session, 'isChangingAccount').mockReturnValue(true);
+  const removed = vi.spyOn(session, 'noteAccountLayoutRemoved');
+  const api = window.__KUKURI_DESKTOP__;
+  delete window.__KUKURI_DESKTOP__;
+  let status = { status: 'migrating' };
+  webRuntime(() => Promise.resolve(status), runInThisTab);
+  act(() => listeners.forEach((listener) => listener({ type: 'startup_status_changed' })));
+  expect(await screen.findByText('Migrating your data…')).toBeVisible();
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  expect(removed).toHaveBeenCalled();
+
+  // 版の更新が終わっても、切替が終わるまでは起動の状態を読み直すだけで、レイアウトを出さない。
+  status = { status: 'ready' };
+  const reads = () => invokeMock.mock.calls.filter(([command]) => command === 'get_desktop_startup_status').length;
+  const before = reads();
+  await waitFor(() => expect(reads()).toBeGreaterThan(before + 1));
+  expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
+  window.__KUKURI_DESKTOP__ = api;
+  changing.mockReturnValue(false);
   expect(await screen.findByTestId('control-center-trigger')).toBeInTheDocument();
 }, 20000);

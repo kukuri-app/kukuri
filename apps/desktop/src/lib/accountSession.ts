@@ -5,6 +5,13 @@ const retainedDraftKey = (id: string) => `kukuri:account:${id}:retained-column-d
 const TRANSITION_KEY = 'kukuri:account-transition-drafts';
 const creationKey = (id: string) => `kukuri:account:${id}:pending-creation`;
 
+// 切替の途中で database の版を更新する間は、画面がレイアウトを外して待つ（ADR 0059 §1）。画面は切替が終わるまでレイアウトに
+// 戻さず、外していた間の失敗は、戻ったレイアウトのアカウントのメニューで知らせる。
+let changing = false, layoutRemoved = false, unseenFailure = false;
+export const isChangingAccount = () => changing;
+export function noteAccountLayoutRemoved() { if (changing) layoutRemoved = true; }
+export function takeUnseenAccountFailure() { const failed = unseenFailure; unseenFailure = false; return failed; }
+
 export function accountCreationOperationId(accountId: string): string {
   const existing = localStorage.getItem(creationKey(accountId));
   if (existing) return existing;
@@ -40,6 +47,7 @@ export async function changeAccountSession(accountId: string, logout = false, cr
   localStorage.setItem(TRANSITION_KEY, JSON.stringify({ sourceId: before.active_account_id, draft, createOperationId }));
   localStorage.removeItem(COLUMN_DRAFT_STORAGE_KEY);
   keepSuspended = true;
+  changing = true; layoutRemoved = false;
   try {
     await (createOperationId ? createAccount(accountId, createOperationId) : logout ? logoutAccount(accountId) : switchAccount(accountId));
   } catch (error) {
@@ -47,11 +55,11 @@ export async function changeAccountSession(accountId: string, logout = false, cr
       const actual = await listAccounts();
       await reconcileAccountDrafts();
       if (actual.active_account_id !== before.active_account_id) window.location.reload();
-      else keepSuspended = false;
+      else { keepSuspended = false; unseenFailure = layoutRemoved; }
     } catch { window.location.reload(); }
     throw error;
   }
   // On a storage failure the durable marker is reconciled before shell startup.
   try { await reconcileAccountDrafts(); } finally { window.location.reload(); }
-  } finally { if (!keepSuspended) resume(); }
+  } finally { changing = false; if (!keepSuspended) resume(); }
 }

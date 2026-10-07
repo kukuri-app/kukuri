@@ -14,7 +14,7 @@ import { useAccountTransferLink } from '@/shell/page/useAccountTransferLink';
 import { onAccountAddRequest } from '@/shell/page/accountAddRequest';
 import { getAccountDisplay, listAccounts } from '@/lib/api/identity';
 import type { AccountDisplay, AccountsSnapshot } from '@/lib/api/types.generated';
-import { accountCreationOperationId, changeAccountSession } from '@/lib/accountSession';
+import { accountCreationOperationId, changeAccountSession, takeUnseenAccountFailure } from '@/lib/accountSession';
 import { useDesktopShellStore } from '@/shell/store';
 import { resolveProfilePictureSrc } from '@/shell/presentation';
 
@@ -47,11 +47,15 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   const moveFocus = useRef(false);
   const { localProfile, mediaObjectUrls, pubkey } = useDesktopShellStore(useShallow((s) => ({ localProfile: s.localProfile, mediaObjectUrls: s.mediaObjectUrls, pubkey: s.syncStatus.local_author_pubkey })));
   const label = localProfile?.display_name || localProfile?.name || t('accountMenu.unknown');
+  // 版の更新でレイアウトを外していた間に切替が失敗したら、戻ったときにメニューを開いて知らせる（ADR 0059 §1）。
+  const unseenFailure = useRef(false);
+  useEffect(() => { if (takeUnseenAccountFailure()) { unseenFailure.current = true; setOpen(true); } }, []);
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const [accounts, profiles] = await Promise.all([listAccounts(), getAccountDisplay()]);
-      setSnapshot(accounts); setDisplay(profiles); setError(null);
+      setSnapshot(accounts); setDisplay(profiles); setError(unseenFailure.current ? t('accountMenu.actionFailed') : null);
+      unseenFailure.current = false;
     } catch { setError(t('accountMenu.loadFailed')); }
     finally { setLoading(false); }
   }, [t]);
