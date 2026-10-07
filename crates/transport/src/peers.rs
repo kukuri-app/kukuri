@@ -353,7 +353,8 @@ struct RecentPeer {
 
 struct ContentSource {
     hash: String,
-    peer: EndpointId,
+    /// 取得元。発見で得た到達情報（relay URL 等）があれば持つ（#1632）。
+    addr: EndpointAddr,
     expires_at: Instant,
     retry_after: Instant,
 }
@@ -468,9 +469,10 @@ impl PeerAddrBook {
         peers
     }
 
-    /// `hash` の内容の取得元を覚える。台帳の外の peer でもよい(`ranked_peers_for` で候補に入る)。
-    pub async fn note_content_source(&self, hash: &str, peer: EndpointId) {
-        self.update_content_source(hash, peer, None).await;
+    /// `hash` の内容の取得元を覚える。台帳の外の peer でもよい(`ranked_peers_for` で候補に入る)。到達情報があれば、
+    /// 次の選択でもそれで試す。
+    pub async fn note_content_source(&self, hash: &str, peer: impl Into<EndpointAddr>) {
+        self.update_content_source(hash, peer.into(), None).await;
     }
 
     pub async fn record_content_fetch_result(
@@ -482,13 +484,14 @@ impl PeerAddrBook {
         if result == Err(PeerFetchFailure::Cancelled) {
             return;
         }
-        self.update_content_source(hash, peer, Some(result)).await;
+        self.update_content_source(hash, EndpointAddr::new(peer), Some(result))
+            .await;
     }
 
     async fn update_content_source(
         &self,
         hash: &str,
-        peer: EndpointId,
+        addr: EndpointAddr,
         result: Option<Result<(), PeerFetchFailure>>,
     ) {
         let mut sources = self.content_sources.lock().await;
@@ -496,7 +499,7 @@ impl PeerAddrBook {
         sources.retain(|source| source.expires_at > now);
         let existing = sources
             .iter()
-            .position(|source| source.hash == hash && source.peer == peer);
+            .position(|source| source.hash == hash && source.addr.id == addr.id);
         // 同じtopic/見出しのhintを再登録しても、観測済みの欠損・一時失敗を取り消さない。
         if result.is_none() && existing.is_some_and(|index| sources[index].retry_after > now) {
             return;
@@ -505,10 +508,13 @@ impl PeerAddrBook {
             .and_then(|index| sources.remove(index))
             .unwrap_or_else(|| ContentSource {
                 hash: hash.to_string(),
-                peer,
+                addr: EndpointAddr::new(addr.id),
                 expires_at: now + PEER_FETCH_SUCCESS_TTL,
                 retry_after: now,
             });
+        if !addr.is_empty() {
+            source.addr = addr;
+        }
         match result {
             Some(Err(PeerFetchFailure::NotFound)) => source.retry_after = source.expires_at,
             Some(Err(_)) => source.retry_after = now + REMOTE_FETCH_RETRY_COOLDOWN,
@@ -529,19 +535,19 @@ impl PeerAddrBook {
         sources.retain(|source| source.expires_at > now);
         peers.retain(|peer| {
             !sources.iter().any(|source| {
-                source.hash == hash && source.peer == peer.id && source.retry_after > now
+                source.hash == hash && source.addr.id == peer.id && source.retry_after > now
             })
         });
         let preferred = sources
             .iter()
             .filter(|source| source.hash == hash && source.retry_after <= now)
-            .map(|source| source.peer)
+            .map(|source| source.addr.clone())
             .take(4)
             .collect::<Vec<_>>();
         for source in preferred.into_iter().rev() {
-            let addr = match peers.iter().position(|peer| peer.id == source) {
+            let addr = match peers.iter().position(|peer| peer.id == source.id) {
                 Some(position) => peers.remove(position),
-                None => EndpointAddr::new(source),
+                None => source,
             };
             peers.insert(0, addr);
         }

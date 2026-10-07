@@ -6,35 +6,12 @@
 
 use super::remote_cache::{REMOTE_CACHE_UNUSED_MS, now_ms};
 use super::*;
-use kukuri_core::{AssetRef, CustomReactionAssetSnapshotV1, ObjectStatus, RepostSourceSnapshotV1};
+use crate::models::PUBLIC_CHANNEL;
+use kukuri_core::{AssetRef, CustomReactionAssetSnapshotV1, RepostSourceSnapshotV1};
 use std::collections::BTreeSet;
 
 /// 告知を続ける hash の上限（1 端末）。
 pub const PUBLIC_BLOB_ANNOUNCEMENT_CAP: i64 = 512;
-/// 公開 channel の id（app-api の `PUBLIC_CHANNEL_ID`）。
-const PUBLIC_CHANNEL: &str = "public";
-
-/// 公開投稿の行が参照する blob（本文、添付、repost の添付）。公開でない行は空。
-pub(super) fn public_blob_hashes_for_row(row: &ObjectProjectionRow) -> Vec<String> {
-    if row.channel_id != PUBLIC_CHANNEL {
-        return Vec::new();
-    }
-    row.source_blob_hash
-        .iter()
-        .map(|hash| hash.as_str().to_string())
-        .chain(
-            row.attachments
-                .iter()
-                .map(|asset| asset.hash.as_str().to_string()),
-        )
-        .chain(
-            row.repost_of
-                .iter()
-                .flat_map(|repost| repost.attachments.iter())
-                .map(|asset| asset.hash.as_str().to_string()),
-        )
-        .collect()
-}
 
 /// 記録 1 件が参照する blob を置き換え、変わった hash の告知の予定を合わせる。
 pub(super) async fn replace_public_blob_refs(
@@ -396,21 +373,14 @@ pub(super) async fn sync_reaction_public_blob_refs(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     row: &ReactionProjectionRow,
 ) -> Result<()> {
-    let public = sqlx::query_scalar::<_, Option<String>>(
+    let channel = sqlx::query_scalar::<_, Option<String>>(
         "SELECT channel_id FROM object_index_cache WHERE object_id = ?1",
     )
     .bind(row.target_object_id.as_str())
     .fetch_optional(&mut **tx)
     .await?
-    .flatten()
-    .as_deref()
-        == Some(PUBLIC_CHANNEL);
-    let hashes = match (&row.status, &row.custom_asset_snapshot) {
-        (ObjectStatus::Active, Some(snapshot)) if public => {
-            vec![snapshot.blob_hash.as_str().to_string()]
-        }
-        _ => Vec::new(),
-    };
+    .flatten();
+    let hashes = crate::public_blob_hashes_for_reaction(row, channel.as_deref());
     replace_public_blob_refs(tx, "reaction", row.reaction_id.as_str(), hashes).await
 }
 

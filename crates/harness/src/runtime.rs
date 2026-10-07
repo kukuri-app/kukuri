@@ -84,14 +84,16 @@ pub(crate) struct CommunityNodeStack {
 
 impl CommunityNodeStack {
     pub(crate) async fn spawn(prefix: &str) -> Result<Self> {
-        Self::spawn_with(prefix, "127.0.0.1:0", &[]).await
+        Self::spawn_with(prefix, "127.0.0.1:0", &[], None).await
     }
 
     /// user-api を `user_api_bind` で起動し、`cors_origins` の Web クライアントに CORS で応答する（Web の試験。#1220）。
+    /// `blob_provider_search` を渡すと、公開 blob の保持端末の検索を提供する（#1632 AC-6）。
     pub(crate) async fn spawn_with(
         prefix: &str,
         user_api_bind: &str,
         cors_origins: &[String],
+        blob_provider_search: Option<Arc<kukuri_cn_user_api::BlobProviderSearch>>,
     ) -> Result<Self> {
         if let Some(base_url) = external_community_node_base_url() {
             let expected_connectivity_urls = external_community_node_connectivity_urls();
@@ -157,6 +159,10 @@ impl CommunityNodeStack {
         })
         .await
         .context("failed to build community-node user-api state")?;
+        let user_api_state = match blob_provider_search {
+            Some(search) => user_api_state.with_blob_provider_search(search),
+            None => user_api_state,
+        };
         let app = kukuri_cn_user_api::with_cors(user_api_app_router(user_api_state), cors_origins)?;
         let user_api_task = tokio::spawn(async move {
             axum::serve(

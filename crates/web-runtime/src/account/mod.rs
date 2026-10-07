@@ -29,6 +29,7 @@ mod live_game;
 mod notifications;
 mod peer_candidates;
 mod private_channels;
+mod public_refs;
 mod reactions;
 mod social;
 
@@ -138,6 +139,7 @@ pub(crate) async fn forget_remote_projection(tx: &Tx, object_id: &str) -> Result
     for entry in refs {
         release_adult_hash(tx, &entry.blob_hash).await?;
     }
+    public_refs::forget_post(tx, object_id)?;
     rows::delete(tx, OBJECTS, &text(object_id))
 }
 
@@ -176,6 +178,13 @@ impl IndexedDbCache {
                     );
                 }
                 rows::put(&tx, OBJECTS, &row, &object_extra(&row))?;
+                // #1632: 公開投稿の本文・添付は、行と同じ transaction で公開参照に置く。
+                public_refs::replace(
+                    &tx,
+                    "post",
+                    row.object_id.as_str(),
+                    kukuri_store::public_blob_hashes_for_row(&row),
+                )?;
                 let hashes = adult_media_hashes_for_row(&row)
                     .into_iter()
                     .map(str::to_owned)
@@ -380,6 +389,16 @@ impl ObjectProjectionStore for IndexedDbCache {
 
     async fn put_remote_object_projection(&self, row: ObjectProjectionRow) -> Result<()> {
         self.put_objects(vec![row], true).await
+    }
+
+    async fn note_link_preview_image(&self, object_id: &str, hash: &str) -> Result<()> {
+        let (object_id, hash) = (object_id.to_owned(), hash.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[crate::content_cache::PUBLIC_REFS], Mode::Write)?;
+            public_refs::replace(&tx, "link_preview", &object_id, vec![hash])?;
+            tx.commit().await
+        })
+        .await
     }
 
     async fn get_object_projection(

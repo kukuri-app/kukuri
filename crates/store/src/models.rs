@@ -446,6 +446,47 @@ impl From<&NotificationRow> for NotificationCursor {
     }
 }
 
+/// 公開 channel の id（app-api の `PUBLIC_CHANNEL_ID`）。
+pub(crate) const PUBLIC_CHANNEL: &str = "public";
+
+/// #1632: 公開投稿の行が参照する blob（本文、添付、repost の添付）。公開でない行は空。
+pub fn public_blob_hashes_for_row(row: &ObjectProjectionRow) -> Vec<String> {
+    if row.channel_id != PUBLIC_CHANNEL {
+        return Vec::new();
+    }
+    row.source_blob_hash
+        .iter()
+        .map(|hash| hash.as_str().to_string())
+        .chain(
+            row.attachments
+                .iter()
+                .map(|asset| asset.hash.as_str().to_string()),
+        )
+        .chain(
+            row.repost_of
+                .iter()
+                .flat_map(|repost| repost.attachments.iter())
+                .map(|asset| asset.hash.as_str().to_string()),
+        )
+        .collect()
+}
+
+/// #1632: 公開 topic の有効な custom reaction の asset。`target_channel` は対象の投稿の channel（手元に行が無ければ
+/// `None`）。
+pub fn public_blob_hashes_for_reaction(
+    row: &ReactionProjectionRow,
+    target_channel: Option<&str>,
+) -> Vec<String> {
+    match (&row.status, &row.custom_asset_snapshot) {
+        (kukuri_core::ObjectStatus::Active, Some(snapshot))
+            if target_channel == Some(PUBLIC_CHANNEL) =>
+        {
+            vec![snapshot.blob_hash.as_str().to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// #858: projection 行から、成人向けラベル付き投稿(引用 snapshot 含む)が参照する
 /// 添付 blob hash を列挙する。blob 取得ゲート(`is_adult_media_hash`)の記録元。
 pub fn adult_media_hashes_for_row(row: &ObjectProjectionRow) -> Vec<&str> {

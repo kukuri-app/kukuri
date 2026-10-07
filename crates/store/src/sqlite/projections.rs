@@ -311,7 +311,7 @@ impl SqliteStore {
                 &mut tx,
                 "post",
                 row.object_id.as_str(),
-                super::public_blobs::public_blob_hashes_for_row(&row),
+                crate::public_blob_hashes_for_row(&row),
             )
             .await?;
 

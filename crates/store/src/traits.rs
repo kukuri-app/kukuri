@@ -112,7 +112,7 @@ pub trait ObjectProjectionStore: Send + Sync {
         object_id: &EnvelopeId,
     ) -> Result<Option<ObjectProjectionRow>>;
     /// 投稿のリンクプレビューの画像を、その投稿の公開参照として記録する（#1632、ADR 0063）。
-    /// 公開 blob の告知・検索を持たない保存（Web・memory）は何もしない。
+    /// 公開参照の索引を持たない保存（memory）は何もしない。
     async fn note_link_preview_image(&self, _object_id: &str, _hash: &str) -> Result<()> {
         Ok(())
     }

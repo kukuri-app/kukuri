@@ -1,101 +1,8 @@
 use super::*;
-use kukuri_core::{
-    AssetRole, PayloadRef, PostWithdrawalReason, Pubkey, ReactionKeyKind, TopicId,
-    WithdrawalReasonVisibility,
-};
+use crate::parity::public_refs::{hash, post, profile, public, reaction, withdrawal};
+use kukuri_core::ObjectStatus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-fn hash(seed: u32) -> String {
-    format!("{seed:064x}")
-}
-
-fn asset(hash: &str) -> AssetRef {
-    AssetRef {
-        hash: BlobHash::new(hash),
-        mime: "image/png".into(),
-        bytes: 1,
-        role: AssetRole::ImageOriginal,
-    }
-}
-
-fn post(object_id: &str, channel: &str, body: &str, attachments: &[&str]) -> ObjectProjectionRow {
-    ObjectProjectionRow {
-        object_id: EnvelopeId::from(object_id),
-        topic_id: "topic".into(),
-        channel_id: channel.into(),
-        author_pubkey: "b".repeat(64),
-        created_at: 1,
-        object_kind: "post".into(),
-        root_object_id: None,
-        reply_to_object_id: None,
-        payload_ref: PayloadRef::BlobText {
-            hash: BlobHash::new(body),
-            mime: "text/plain".into(),
-            bytes: 1,
-        },
-        content: Some("body".into()),
-        attachments: attachments.iter().map(|hash| asset(hash)).collect(),
-        repost_of: None,
-        content_labels: Vec::new(),
-        source_replica_id: ReplicaId::new("bucket::v1::topic::746f706963::1"),
-        source_key: format!("objects/{object_id}/envelope"),
-        source_envelope_id: EnvelopeId::from(object_id),
-        source_blob_hash: Some(BlobHash::new(body)),
-        source_docs_author: None,
-        derived_at: 1,
-        projection_version: 3,
-    }
-}
-
-fn reaction(
-    reaction_id: &str,
-    target: &str,
-    asset_hash: &str,
-    status: ObjectStatus,
-) -> ReactionProjectionRow {
-    ReactionProjectionRow {
-        source_replica_id: ReplicaId::new("bucket::v1::topic::746f706963::1"),
-        target_object_id: EnvelopeId::from(target),
-        reaction_id: EnvelopeId::from(reaction_id),
-        author_pubkey: "c".repeat(64),
-        created_at: 1,
-        updated_at: 1,
-        reaction_key_kind: ReactionKeyKind::CustomAsset,
-        normalized_reaction_key: format!("custom:{reaction_id}"),
-        emoji: None,
-        custom_asset_id: Some(format!("asset-{reaction_id}")),
-        custom_asset_snapshot: Some(CustomReactionAssetSnapshotV1 {
-            asset_id: format!("asset-{reaction_id}"),
-            owner_pubkey: Pubkey::from("c".repeat(64)),
-            blob_hash: BlobHash::new(asset_hash),
-            search_key: String::new(),
-            mime: "image/png".into(),
-            bytes: 1,
-            width: 1,
-            height: 1,
-        }),
-        status,
-        source_key: format!("reactions/{reaction_id}"),
-        source_envelope_id: EnvelopeId::from(reaction_id),
-        derived_at: 1,
-        projection_version: 1,
-    }
-}
-
-fn withdrawal(object_id: &str) -> PostWithdrawalRow {
-    PostWithdrawalRow {
-        target_object_id: EnvelopeId::from(object_id),
-        target_author_pubkey: "b".repeat(64),
-        source_replica_id: ReplicaId::new("bucket::v1::topic::746f706963::1"),
-        withdrawal_envelope_id: EnvelopeId::from(format!("withdraw-{object_id}")),
-        withdrawn_at: 2,
-        generation: 1,
-        replacement_object_id: None,
-        reason_visibility: WithdrawalReasonVisibility::Private,
-        reason: Some(PostWithdrawalReason::Other),
-    }
-}
 
 async fn hold(store: &SqliteStore, hash: &str) {
     assert!(
@@ -113,40 +20,11 @@ async fn scheduled(store: &SqliteStore) -> Vec<String> {
         .unwrap()
 }
 
-async fn public(store: &SqliteStore, hashes: &[String]) -> Vec<bool> {
-    let mut found = Vec::new();
-    for hash in hashes {
-        found.push(store.is_public_blob(hash).await.unwrap());
-    }
-    found
-}
-
-/// 公開投稿の本文・添付・repost の添付は公開参照に載り、private channel の投稿のものは載らない。
+/// 投稿・リンクプレビュー・profile・reaction の公開参照は、Web（IndexedDB）と同じ操作列で確かめる。
 #[tokio::test]
-async fn only_public_posts_refer_to_public_blobs() {
+async fn public_refs_follow_the_shared_scenario() {
     let store = SqliteStore::connect_memory().await.unwrap();
-    let mut row = post("p1", "public", &hash(1), &[&hash(2)]);
-    row.repost_of = Some(RepostSourceSnapshotV1 {
-        source_object_id: EnvelopeId::from("source"),
-        source_topic_id: TopicId::new("topic"),
-        source_author_pubkey: Pubkey::from("d".repeat(64)),
-        source_object_kind: "post".into(),
-        content: String::new(),
-        attachments: vec![asset(&hash(3))],
-        reply_to_object_id: None,
-        root_id: None,
-        content_labels: Vec::new(),
-    });
-    store.put_object_projection(row).await.unwrap();
-    store
-        .put_object_projection(post("p2", "channel-x", &hash(4), &[&hash(5)]))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        public(&store, &[hash(1), hash(2), hash(3), hash(4), hash(5)]).await,
-        [true, true, true, false, false]
-    );
+    crate::parity::public_refs::check_public_blob_refs(&store).await;
 }
 
 /// 公開参照のある blob は、手元に保持がある間だけ告知の予定に載る。
@@ -194,7 +72,7 @@ async fn withdrawal_and_reclaim_forget_only_the_posts_refs() {
 
     store.put_post_withdrawal(withdrawal("p1")).await.unwrap();
     assert_eq!(
-        public(&store, &[hash(1), hash(2), hash(3), hash(4)]).await,
+        public(&store, &[1, 2, 3, 4]).await,
         [false, true, false, true]
     );
     assert_eq!(scheduled(&store).await, [hash(2), hash(4)]);
@@ -203,51 +81,8 @@ async fn withdrawal_and_reclaim_forget_only_the_posts_refs() {
         .remove_remote_content("projection", "p2")
         .await
         .unwrap();
-    assert_eq!(public(&store, &[hash(2), hash(4)]).await, [false, false]);
+    assert_eq!(public(&store, &[2, 4]).await, [false, false]);
     assert!(scheduled(&store).await.is_empty());
-}
-
-/// profile の画像と、公開 topic の有効な custom reaction の asset は公開参照に載る。
-#[tokio::test]
-async fn profiles_and_public_reactions_refer_to_their_assets() {
-    let store = SqliteStore::connect_memory().await.unwrap();
-    store
-        .upsert_profile(Profile {
-            pubkey: Pubkey::from("a".repeat(64)),
-            name: None,
-            display_name: None,
-            about: None,
-            picture_asset: Some(asset(&hash(6))),
-            updated_at: 1,
-        })
-        .await
-        .unwrap();
-    store
-        .put_object_projection(post("p1", "public", &hash(1), &[]))
-        .await
-        .unwrap();
-    store
-        .put_object_projection(post("p2", "channel-x", &hash(2), &[]))
-        .await
-        .unwrap();
-    store
-        .upsert_reaction_cache(reaction("r1", "p1", &hash(7), ObjectStatus::Active))
-        .await
-        .unwrap();
-    store
-        .upsert_reaction_cache(reaction("r2", "p2", &hash(8), ObjectStatus::Active))
-        .await
-        .unwrap();
-    assert_eq!(
-        public(&store, &[hash(6), hash(7), hash(8)]).await,
-        [true, true, false]
-    );
-
-    store
-        .upsert_reaction_cache(reaction("r1", "p1", &hash(7), ObjectStatus::Deleted))
-        .await
-        .unwrap();
-    assert_eq!(public(&store, &[hash(7)]).await, [false]);
 }
 
 /// 予定は上限まで。満杯なら本人の blob を先に残し、次に cache の利用が新しいものを残す。
@@ -358,7 +193,7 @@ async fn refs_and_schedule_roll_back_with_the_record() {
         .await
         .unwrap();
     drop(tx);
-    assert_eq!(public(&store, &[hash(1)]).await, [false]);
+    assert_eq!(public(&store, &[1]).await, [false]);
     assert!(scheduled(&store).await.is_empty());
 }
 
@@ -414,14 +249,7 @@ async fn backfill_takes_old_records_a_page_at_a_time() {
         .await
         .unwrap();
     store
-        .upsert_profile(Profile {
-            pubkey: Pubkey::from("a".repeat(64)),
-            name: None,
-            display_name: None,
-            about: None,
-            picture_asset: Some(asset(&hash(5))),
-            updated_at: 1,
-        })
+        .upsert_profile(profile(Some(&hash(5)), 1))
         .await
         .unwrap();
     store
@@ -436,16 +264,12 @@ async fn backfill_takes_old_records_a_page_at_a_time() {
 
     assert!(!store.backfill_public_blob_refs_step(2).await.unwrap());
     assert_eq!(
-        public(&store, &[hash(1), hash(2), hash(3), hash(5), hash(6)]).await,
+        public(&store, &[1, 2, 3, 5, 6]).await,
         [true, true, false, true, true]
     );
     while !store.backfill_public_blob_refs_step(2).await.unwrap() {}
     assert_eq!(
-        public(
-            &store,
-            &[hash(1), hash(2), hash(3), hash(4), hash(5), hash(6)]
-        )
-        .await,
+        public(&store, &[1, 2, 3, 4, 5, 6]).await,
         [true, true, true, false, true, true]
     );
 }
@@ -470,10 +294,7 @@ async fn backfill_treats_values_it_cannot_read_as_no_refs() {
         sqlx::query(sql).execute(store.pool()).await.unwrap();
     }
     while !store.backfill_public_blob_refs_step(2).await.unwrap() {}
-    assert_eq!(
-        public(&store, &[hash(1), hash(2), hash(3)]).await,
-        [true, false, false]
-    );
+    assert_eq!(public(&store, &[1, 2, 3]).await, [true, false, false]);
 }
 
 /// 1 回の取込みと、満杯の予定への出し入れの命令の数は、表の件数によらない。

@@ -25,7 +25,7 @@ ADR 0002 (`docs/adr/0002-feature-data-classification-template.md`) に基づく�
 - version 6 は、利用規約 第3条 4 項に成人向け表現の第 2 のラベル源（利用者が設定した Community Node の推定）を追加し、プライバシーポリシーと外部送信表示に推定の照会で送る識別子を追記する重要変更である(#1056、ADR 0046 §6.4)。
 - version 7 は、利用規約 第3条に信頼評価による折りたたみ（第 5 項）とブロック・ミュートの任意提供（第 6 項）を追加し、プライバシーポリシーと外部送信表示へ信頼評価の照会で送る項目・送らない情報を追記する重要変更である(#1061、ADR 0026 §8)。ブロック・ミュートの提供は、同意済みの Node capability の範囲内のため外部送信表示では version 6 補記として扱い、利用規約とプライバシーポリシーには version 7 で明記した。
 - version 8 は、公開投稿の先頭外部URLについてlink先とOGP画像配信先へ自動取得を行うこと、送信・観測され得る項目、送らない情報、private／非表示contentを対象外とすること、process-memory保持を利用規約・プライバシーポリシー・外部送信表示へ追加する重要変更である(#1174、ADR 0051)。
-- version 9 は、デスクトップアプリの設定「公開コンテンツの発見」（既定でオン）による Mainline DHT への参加（Community Node 利用中・`static_peer` を含む）、保持する公開 blob の hash から導いた infohash の告知・検索、kukuri が運用する補助 index への登録・照会、告知・検索しない内容、期限による消去をプライバシーポリシーと外部送信表示へ追加する重要変更である(#1632)。利用規約は条項を変えず、版・施行日だけを同期した。
+- version 9 は、デスクトップアプリの設定「公開コンテンツの発見」（既定でオン）による Mainline DHT への参加（Community Node 利用中・`static_peer` を含む）、保持する公開 blob の hash から導いた infohash の告知・検索、kukuri が運用する補助 index への登録・照会、告知・検索しない内容、期限による消去と、Web クライアントが検索を提供する Community Node へ公開 blob の hash を送って保持端末を探すことをプライバシーポリシーと外部送信表示へ追加する重要変更である(#1632)。Web の検索は配布前の version 9 の本文と変更履歴へ足し、版は上げていない。利用規約は条項を変えず、版・施行日だけを同期した。
 - 各記録には記録時の build の種別 `build_profile`（配布版 `release`、開発ビルド `development`）を残す(#1105)。同意判定には使わない。#1105 より前の記録には無い。開発ビルドは配布版と別の app data dir を使うため、配布版の consent ファイルへ書き込まない（`docs/runbooks/dev.md`）。
 - 同意するまで `DesktopRuntime` を構築せず、iroh endpoint の bind / discovery を開始しない（fail-closed = IP 取得前に同意）。
 

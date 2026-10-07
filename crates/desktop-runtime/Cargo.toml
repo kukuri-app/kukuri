@@ -14,6 +14,7 @@ blake3.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 iroh.workspace = true
+iroh-blobs.workspace = true
 image.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true

@@ -147,7 +147,13 @@ impl PostWithdrawalStore for IndexedDbCache {
     /// 世代、取り下げの時刻、envelope の ID の順で新しい取り下げだけを採る。
     async fn put_post_withdrawal(&self, row: PostWithdrawalRow) -> Result<bool> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[WITHDRAWALS], Mode::Write)?;
+            let tx = Txn::begin(
+                &db.idb,
+                &[WITHDRAWALS, crate::content_cache::PUBLIC_REFS],
+                Mode::Write,
+            )?;
+            // #1632: 取り下げた投稿の本文・添付・リンクプレビューの画像は、公開参照から外す。
+            super::public_refs::forget_post(&tx, row.target_object_id.as_str())?;
             let id = text(row.target_object_id.as_str());
             let newer = match rows::get::<PostWithdrawalRow>(&tx, WITHDRAWALS, &id).await? {
                 Some(current) => {

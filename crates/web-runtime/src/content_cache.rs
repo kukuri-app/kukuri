@@ -45,12 +45,13 @@ pub(crate) use tx::prefix_upper_bound;
 use tx::{RecordMeta, delete_step, make_room, put_content, record_key};
 pub(crate) use tx::{Tx, place};
 
-const VERSION: u32 = 1;
+/// 版 2（#1632 AC-6）で公開参照の索引を足した。既存の store は変えない。
+const VERSION: u32 = 2;
 /// 1 つの chunk の上限（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
 const CHUNK_BYTES: usize = 1024 * 1024;
 /// 内容の transaction が触る object store。remote の投稿の projection（`projection` の内容）を消すときは、その行と
-/// 成人向けの印の参照も同じ transaction で消す（native の `delete_cache_item`）。
-const STORES: [&str; 7] = [
+/// 成人向けの印・公開の参照も同じ transaction で消す（native の `delete_cache_item`）。
+const STORES: [&str; 8] = [
     "contents",
     "chunks",
     "refs",
@@ -58,6 +59,7 @@ const STORES: [&str; 7] = [
     OBJECTS,
     ADULT_HASHES,
     ADULT_REFS,
+    PUBLIC_REFS,
 ];
 const USAGE: &str = "usage";
 /// 表示設定 ON の間に置いた成人向けの blob の `scope`（native の `REMOTE_ADULT_BLOB_SCOPE`）。
@@ -225,7 +227,11 @@ async fn quota_capacity() -> Result<i64> {
         }))
 }
 
-fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
+pub(crate) fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
+    // 版 1 の database には、版 2 で足した store だけを足す。
+    if db.object_store_names().contains("contents") {
+        return schema::create_public_refs(db);
+    }
     let in_line = |path: &[&str]| {
         let parameters = IdbObjectStoreParameters::new();
         parameters.set_key_path(&strings(path));
@@ -647,6 +653,14 @@ impl ContentCacheStore for IndexedDbCache {
             Ok(records)
         })
         .await
+    }
+
+    async fn is_public_blob(&self, hash: &str) -> Result<bool> {
+        self.has_public_ref(hash).await
+    }
+
+    async fn backfill_public_blob_refs_step(&self, limit: usize) -> Result<bool> {
+        self.backfill_public_refs_step(limit).await
     }
 
     async fn reclaim_remote_cache_step(&self) -> Result<usize> {

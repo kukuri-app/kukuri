@@ -21,6 +21,8 @@ mod browser_tests;
 mod client_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod public_refs_tests;
 
 pub use content_cache::IndexedDbCache;
 pub use idb::StorageFailure;

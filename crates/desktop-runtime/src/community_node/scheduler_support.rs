@@ -77,6 +77,9 @@ impl DesktopRuntime {
     /// 起動しない)で、production では src-tauri の状態構築時に 1 回だけ呼ぶ。
     /// 停止は `DesktopRuntime::shutdown` が行う。
     pub async fn start_community_node_session_scheduler(self: &Arc<Self>) {
+        // Web は、既知の相手から取れない公開 blob の保持端末を Community Node で探す（#1632 AC-6。native は DHT）。
+        #[cfg(target_family = "wasm")]
+        self.use_community_node_public_blob_search().await;
         self.start_community_node_session_scheduler_with_interval(Duration::from_secs(
             COMMUNITY_NODE_SESSION_SCHEDULER_TICK_SECONDS,
         ))

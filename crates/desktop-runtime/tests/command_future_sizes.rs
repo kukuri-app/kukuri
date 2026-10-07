@@ -21,6 +21,7 @@ const NOT_COMMANDS: &[&str] = &[
     "from_env",                               // constructor
     "new",                                    // constructor
     "new_with_config",                        // constructor
+    "new_with_public_blob_discovery",         // constructor（harness）
     "open_in_memory_node",                    // constructor（Web）
     "start_community_node_session_scheduler", // background task
     "start_legacy_store_retirement",          // background task

@@ -48,7 +48,8 @@ pub use models::{
     NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, PrivateChannelParticipantRow,
     ReactionProjectionRow, TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION,
     VERIFIED_REACTION_PROJECTION_VERSION, VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow,
-    adult_media_hashes_for_row, bookmark_cache_refs,
+    adult_media_hashes_for_row, bookmark_cache_refs, public_blob_hashes_for_reaction,
+    public_blob_hashes_for_row,
 };
 pub use peer_candidates::{
     LEARNED_BUDGET_BYTES, LEARNED_PRUNE_STEP, LEARNED_RETENTION_MS, LEARNED_SOURCE, MAX_ADDR_BYTES,
