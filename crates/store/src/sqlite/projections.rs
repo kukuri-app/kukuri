@@ -306,6 +306,14 @@ impl SqliteStore {
             .bind(row.source_docs_author.as_deref())
             .execute(&mut *tx)
             .await?;
+            // #1632: 公開投稿の本文・添付は、行と同じ transaction で公開参照に置く。
+            super::public_blobs::replace_public_blob_refs(
+                &mut tx,
+                "post",
+                row.object_id.as_str(),
+                super::public_blobs::public_blob_hashes_for_row(&row),
+            )
+            .await?;
 
             if remote_row {
                 self.sync_remote_adult_hash_refs(&mut tx, &row, &mut label_evictions)
@@ -368,6 +376,10 @@ impl SqliteStore {
 
 #[async_trait]
 impl ObjectProjectionStore for SqliteStore {
+    async fn note_link_preview_image(&self, object_id: &str, hash: &str) -> Result<()> {
+        SqliteStore::note_link_preview_image(self, object_id, hash).await
+    }
+
     async fn put_object_projection(&self, row: ObjectProjectionRow) -> Result<()> {
         self.put_object_projections(vec![row]).await
     }

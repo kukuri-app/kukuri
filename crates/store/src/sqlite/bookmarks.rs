@@ -9,6 +9,7 @@ impl ReactionBookmarkStore for SqliteStore {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()?;
+        let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
         sqlx::query(
             r#"
             INSERT INTO reaction_cache (
@@ -50,8 +51,10 @@ impl ReactionBookmarkStore for SqliteStore {
         .bind(row.source_envelope_id.as_str())
         .bind(row.derived_at)
         .bind(row.projection_version)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        super::public_blobs::sync_reaction_public_blob_refs(&mut tx, &row).await?;
+        tx.commit().await?;
         Ok(())
     }
 

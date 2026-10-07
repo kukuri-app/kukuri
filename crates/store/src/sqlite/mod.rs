@@ -50,6 +50,7 @@ pub(crate) mod private_channel_keys;
 mod private_index_grants;
 pub(crate) mod projections;
 mod protected_migration;
+mod public_blobs;
 mod remote_cache;
 pub(crate) mod social;
 mod trust_observations;

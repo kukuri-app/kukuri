@@ -151,6 +151,34 @@ pub trait ContentCacheStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<(AccountHistoryCursor, Vec<u8>)>>;
     async fn reclaim_remote_cache_step(&self) -> Result<usize>;
+    /// 検証済みの公開記録が参照する blob か（#1632、ADR 0063）。公開 blob の告知・検索を持たない保存は `false`。
+    async fn is_public_blob(&self, _hash: &str) -> Result<bool> {
+        Ok(false)
+    }
+    /// 告知の時刻が来た hash を時刻の順に `limit` 件まで。無ければ、次に来る時刻。
+    async fn due_public_blob_announcements(
+        &self,
+        _now: i64,
+        _limit: usize,
+    ) -> Result<(Vec<String>, Option<i64>)> {
+        Ok((Vec::new(), None))
+    }
+    /// 告知の次の時刻を決める。`None` なら予定から外す。予定に無い hash は足さない。
+    async fn reschedule_public_blob_announcement(
+        &self,
+        _hash: &str,
+        _next_at: Option<i64>,
+    ) -> Result<()> {
+        Ok(())
+    }
+    /// 告知を始め直すとき、予定のすべての時刻を `now` から `spread` ms の間へ散らす。
+    async fn restart_public_blob_announcements(&self, _now: i64, _spread: i64) -> Result<()> {
+        Ok(())
+    }
+    /// 導入前の公開記録を、種類ごとに `limit` 行まで索引へ取り込む。すべて取り込み終えていれば `true`。
+    async fn backfill_public_blob_refs_step(&self, _limit: usize) -> Result<bool> {
+        Ok(true)
+    }
     async fn mark_remote_blob_adult(&self, hash: &str) -> Result<()>;
     async fn forget_adult_remote_blobs_step(&self) -> Result<usize>;
     /// file path を受け取る操作は native だけ（Web は file を使わない。ADR 0056 §5）。

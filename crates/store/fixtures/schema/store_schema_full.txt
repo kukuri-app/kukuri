@@ -339,6 +339,17 @@ table protected_migration
   column cid=0 name=kind type=TEXT notnull=0 default=None pk=1
   column cid=1 name=cursor type=TEXT notnull=1 default=None pk=0
   column cid=2 name=caught_up_at type=INTEGER notnull=0 default=None pk=0
+table public_blob_announcements
+  column cid=0 name=blob_hash type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=own type=INTEGER notnull=1 default=None pk=0
+  column cid=2 name=next_at type=INTEGER notnull=1 default=None pk=0
+table public_blob_ref_backfill
+  column cid=0 name=kind type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=cursor type=INTEGER notnull=1 default=None pk=0
+table public_blob_refs
+  column cid=0 name=source_kind type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=source_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=blob_hash type=TEXT notnull=1 default=None pk=3
 table reaction_cache
   column cid=0 name=source_replica_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_object_id type=TEXT notnull=1 default=None pk=2
@@ -662,6 +673,12 @@ index idx_private_channels_topic table=private_channels unique=0 origin=c partia
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=0 name=Some("channel_key")
   sql=Some("CREATE INDEX idx_private_channels_topic ON private_channels (topic_id, channel_key) WHERE joined = 1")
+index idx_public_blob_announcements_next table=public_blob_announcements unique=0 origin=c partial=0
+  key seqno=0 cid=2 name=Some("next_at")
+  sql=Some("CREATE INDEX idx_public_blob_announcements_next ON public_blob_announcements (next_at)")
+index idx_public_blob_refs_hash table=public_blob_refs unique=0 origin=c partial=0
+  key seqno=0 cid=2 name=Some("blob_hash")
+  sql=Some("CREATE INDEX idx_public_blob_refs_hash ON public_blob_refs (blob_hash)")
 index idx_reaction_cache_author_updated_at table=reaction_cache unique=0 origin=c partial=0
   key seqno=0 cid=3 name=Some("author_pubkey")
   key seqno=1 cid=5 name=Some("updated_at")
@@ -855,6 +872,17 @@ index sqlite_autoindex_profiles_1 table=profiles unique=1 origin=pk partial=0
   sql=None
 index sqlite_autoindex_protected_migration_1 table=protected_migration unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("kind")
+  sql=None
+index sqlite_autoindex_public_blob_announcements_1 table=public_blob_announcements unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("blob_hash")
+  sql=None
+index sqlite_autoindex_public_blob_ref_backfill_1 table=public_blob_ref_backfill unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("kind")
+  sql=None
+index sqlite_autoindex_public_blob_refs_1 table=public_blob_refs unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("source_kind")
+  key seqno=1 cid=1 name=Some("source_id")
+  key seqno=2 cid=2 name=Some("blob_hash")
   sql=None
 index sqlite_autoindex_reaction_cache_1 table=reaction_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_replica_id")

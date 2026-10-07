@@ -145,6 +145,34 @@ impl crate::ContentCacheStore for SqliteStore {
         SqliteStore::forget_adult_remote_blobs_step(self).await
     }
 
+    async fn is_public_blob(&self, hash: &str) -> Result<bool> {
+        SqliteStore::is_public_blob(self, hash).await
+    }
+
+    async fn due_public_blob_announcements(
+        &self,
+        now: i64,
+        limit: usize,
+    ) -> Result<(Vec<String>, Option<i64>)> {
+        SqliteStore::due_public_blob_announcements(self, now, limit).await
+    }
+
+    async fn reschedule_public_blob_announcement(
+        &self,
+        hash: &str,
+        next_at: Option<i64>,
+    ) -> Result<()> {
+        SqliteStore::reschedule_public_blob_announcement(self, hash, next_at).await
+    }
+
+    async fn restart_public_blob_announcements(&self, now: i64, spread: i64) -> Result<()> {
+        SqliteStore::restart_public_blob_announcements(self, now, spread).await
+    }
+
+    async fn backfill_public_blob_refs_step(&self, limit: usize) -> Result<bool> {
+        SqliteStore::backfill_public_blob_refs_step(self, limit).await
+    }
+
     async fn put_remote_blob_file(&self, hash: &str, path: &std::path::Path) -> Result<()> {
         SqliteStore::put_remote_blob_file(self, hash, path).await
     }

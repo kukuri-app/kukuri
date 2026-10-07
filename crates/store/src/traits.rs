@@ -103,6 +103,11 @@ pub trait ObjectProjectionStore: Send + Sync {
         &self,
         object_id: &EnvelopeId,
     ) -> Result<Option<ObjectProjectionRow>>;
+    /// 投稿のリンクプレビューの画像を、その投稿の公開参照として記録する（#1632、ADR 0063）。
+    /// 公開 blob の告知・検索を持たない保存（Web・memory）は何もしない。
+    async fn note_link_preview_image(&self, _object_id: &str, _hash: &str) -> Result<()> {
+        Ok(())
+    }
     /// #1239: `author_pubkey` が `topic_id` に書いた、`source_object_id` の repost を新しい順に最大 `limit` 件返す。
     /// 自分の既存の repost の検索に使う。docs の replica を走査せず、projection の索引だけで引く。
     async fn find_author_reposts_of(
