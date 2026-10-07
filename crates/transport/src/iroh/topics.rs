@@ -730,13 +730,13 @@ impl IrohGossipTransport {
                         joined_task_state.store(true, Ordering::SeqCst);
                         joined_task_notify.notify_waiters();
                         let mut guard = neighbors_task.write().await;
-                        let first_direct_peer = guard.is_empty();
+                        let first_neighbor = guard.is_empty();
                         guard.insert(peer_id.to_string());
-                        if first_direct_peer {
+                        if first_neighbor {
                             info!(
                                 topic = %topic_name,
                                 peer_id = %peer_id,
-                                "gossip topic established direct peer"
+                                "gossip topic established neighbor"
                             );
                         }
                         *last_error_task.lock().await = None;
