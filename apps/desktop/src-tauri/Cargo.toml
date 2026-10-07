@@ -68,3 +68,7 @@ iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc
 # Match the root workspace's Mainline forks (#1632).
 n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
 iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
+
+# root と同じく、開発用の build でも str0m の再帰が tokio の worker（2 MiB）を溢れないようにする（#1658）。
+[profile.dev.package.str0m]
+opt-level = 1

@@ -136,3 +136,8 @@ disallowed_methods = "allow"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# str0m の `Rtc::do_poll_output` は、SCTP の送信の packet ごとに自分を呼び直す。最適化しない build では 1 段が約 28 KB で、
+# 2 MiB の thread（手元の `cargo test`・開発用の desktop）を負荷下で溢れるので、str0m だけ最適化する（1 段約 1.8 KB。#1658）。
+[profile.dev.package.str0m]
+opt-level = 1
