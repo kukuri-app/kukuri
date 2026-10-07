@@ -306,7 +306,7 @@ export type FriendOnlyGrantPreview = { channel_id: ChannelId, topic_id: TopicId,
 
 export type FriendPlusSharePreview = { channel_id: ChannelId, topic_id: TopicId, channel_label: string, owner_pubkey: Pubkey, sponsor_pubkey: Pubkey, epoch_id: string, expires_at?: number | null, namespace_secret_hex: string, share_token_id: string, };
 
-export type DiscoveryConfig = { mode: DiscoveryMode, connect_mode: ConnectMode, env_locked: boolean, seed_peers: Array<SeedPeer>, };
+export type DiscoveryConfig = { mode: DiscoveryMode, connect_mode: ConnectMode, env_locked: boolean, seed_peers: Array<SeedPeer>, public_blob_discovery: boolean, };
 
 export type CommunityNodeSeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 
@@ -947,6 +947,8 @@ export type CommunityNodeTargetRequest = { base_url: string, };
 export type AcceptCommunityNodeConsentsRequest = { base_url: string, documents: Array<CommunityNodeConsentDocumentRef>, language: string, };
 
 export type SetDiscoverySeedsRequest = { seed_entries: Array<string>, };
+
+export type SetPublicBlobDiscoveryRequest = { enabled: boolean, };
 
 export type ExportAccountKeyRequest = { passphrase: string, };
 

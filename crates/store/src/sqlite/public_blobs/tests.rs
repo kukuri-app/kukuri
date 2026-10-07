@@ -348,6 +348,43 @@ async fn due_announcements_come_in_order_and_restart_makes_all_due() {
     );
 }
 
+/// 読み出しの期限（7 日の未使用）が回収より先に切れた保持は、告知の直前に予定から外す。利用時刻は変えない。
+#[tokio::test]
+async fn an_expired_hold_leaves_the_schedule_before_it_is_reclaimed() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    for seed in 1..=2 {
+        hold(&store, &hash(seed)).await;
+        store
+            .put_object_projection(post(&format!("p{seed}"), "public", &hash(seed), &[]))
+            .await
+            .unwrap();
+    }
+    let expired = now_ms().unwrap() - REMOTE_CACHE_UNUSED_MS - 1;
+    sqlx::query("UPDATE remote_content_cache SET last_used_at = ?1 WHERE cache_key = ?2")
+        .bind(expired)
+        .bind(hash(1))
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let now = now_ms().unwrap();
+    assert_eq!(
+        store.due_public_blob_announcements(now, 1).await.unwrap(),
+        (Vec::new(), Some(now))
+    );
+    assert_eq!(
+        store.due_public_blob_announcements(now, 1).await.unwrap(),
+        (vec![hash(2)], None)
+    );
+    assert_eq!(scheduled(&store).await, [hash(2)]);
+    let used: i64 =
+        sqlx::query_scalar("SELECT last_used_at FROM remote_content_cache WHERE cache_key = ?1")
+            .bind(hash(1))
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(used, expired);
+}
+
 /// 導入前の公開投稿・profile・reaction を、種類ごとに上限の行数ずつ取り込み、終えたら `true` を返す。
 #[tokio::test]
 async fn backfill_takes_old_records_a_page_at_a_time() {
@@ -502,8 +539,11 @@ async fn public_blob_queries_use_their_indexes() {
             "PRIMARY KEY",
         ),
         (
-            "SELECT blob_hash FROM public_blob_announcements WHERE next_at <= ?1 \
-             ORDER BY next_at, blob_hash LIMIT ?1",
+            "SELECT a.blob_hash, EXISTS(SELECT 1 FROM remote_content_cache c \
+             WHERE c.kind = 'blob' AND c.cache_key = a.blob_hash \
+             AND (c.is_protected = 1 OR c.last_used_at > ?1)) \
+             FROM public_blob_announcements a WHERE a.next_at <= ?1 \
+             ORDER BY a.next_at, a.blob_hash LIMIT ?1",
             "idx_public_blob_announcements_next",
         ),
     ] {

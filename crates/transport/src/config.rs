@@ -140,6 +140,11 @@ pub struct DhtDiscoveryOptions {
     pub public_blob_index: Option<PublicBlobIndex>,
 }
 
+/// kukuri が運用する補助 index（#1632 D6: kukuri の鍵で署名した最大 2 台の一覧）。全 native client と全 Community Node が
+/// 同じ一覧を使う。一覧の鍵は本番反映の Issue で発行して入れ、無い間は公開 blob の発見を使わない。
+#[cfg(not(target_family = "wasm"))]
+pub const KUKURI_PUBLIC_BLOB_INDEX: Option<PublicBlobIndex> = None;
+
 /// 公開 blob の発見の補助 index（UDP の送信元 address → 署名つき endpoint ID）の見つけ方（#1632、ADR 0063）。
 #[cfg(not(target_family = "wasm"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +160,10 @@ impl DhtDiscoveryOptions {
         Self::default()
     }
 
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(clippy::needless_update, reason = "wasm には DHT の欄が無い")
+    )]
     pub fn seeded_dht() -> Self {
         Self {
             enabled: true,

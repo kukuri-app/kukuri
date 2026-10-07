@@ -996,21 +996,6 @@ impl DesktopRuntime {
             .await
     }
 
-    pub async fn set_discovery_seeds(
-        &self,
-        request: SetDiscoverySeedsRequest,
-    ) -> Result<DiscoveryConfig> {
-        let mut next_config = self.discovery_config.lock().await.clone();
-        if next_config.env_locked {
-            bail!("discovery configuration is locked by environment variables");
-        }
-        next_config.seed_peers = parse_seed_entries(&request.seed_entries)?;
-        save_discovery_config(&self.db_path, &next_config.stored()).await?;
-        *self.discovery_config.lock().await = next_config.clone();
-        self.apply_community_node_connectivity(None).await?;
-        Ok(next_config)
-    }
-
     pub async fn unsubscribe_topic(&self, request: UnsubscribeTopicRequest) -> Result<()> {
         self.app_service
             .unsubscribe_topic(request.topic.as_str())

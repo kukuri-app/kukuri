@@ -17,6 +17,9 @@ pub struct DiscoveryConfig {
     pub connect_mode: ConnectMode,
     pub env_locked: bool,
     pub seed_peers: Vec<SeedPeer>,
+    // 公開コンテンツの発見（#1632 D2、ADR 0063）。既定でオン。オンの間は Community Node の利用中・`static_peer` でも
+    // DHT を組み立て、公開 blob の告知・検索を行う（native だけ）。
+    pub public_blob_discovery: bool,
 }
 
 impl DiscoveryConfig {
@@ -26,15 +29,14 @@ impl DiscoveryConfig {
             connect_mode: ConnectMode::DirectOnly,
             env_locked: false,
             seed_peers: Vec::new(),
+            public_blob_discovery: true,
         }
     }
 
     pub(crate) fn seeded_dht_default() -> Self {
         Self {
             mode: DiscoveryMode::SeededDht,
-            connect_mode: ConnectMode::DirectOnly,
-            env_locked: false,
-            seed_peers: Vec::new(),
+            ..Self::static_peer_default()
         }
     }
 
@@ -44,6 +46,7 @@ impl DiscoveryConfig {
             connect_mode: ConnectMode::DirectOnly,
             env_locked,
             seed_peers: normalize_seed_peers(stored.seed_peers),
+            public_blob_discovery: stored.public_blob_discovery,
         }
     }
 
@@ -51,8 +54,15 @@ impl DiscoveryConfig {
         StoredDiscoveryConfig {
             mode: self.mode.clone(),
             seed_peers: normalize_seed_peers(self.seed_peers.clone()),
+            public_blob_discovery: self.public_blob_discovery,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct SetPublicBlobDiscoveryRequest {
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +78,13 @@ pub(crate) struct StoredDiscoveryConfig {
     mode: DiscoveryMode,
     #[serde(default)]
     seed_peers: Vec<SeedPeer>,
+    /// 項目の無い既存の profile も、オンで始める（#1632 D2）。
+    #[serde(default = "enabled")]
+    public_blob_discovery: bool,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 pub(crate) async fn load_discovery_config_from_file(
@@ -110,9 +127,9 @@ pub(crate) async fn resolve_discovery_config_from_env(db_path: &Path) -> Result<
         let seed_peers = parse_seed_entries_from_csv(env_seeds.as_deref().unwrap_or(""))?;
         return Ok(DiscoveryConfig {
             mode,
-            connect_mode: ConnectMode::DirectOnly,
             env_locked: true,
             seed_peers,
+            ..DiscoveryConfig::static_peer_default()
         });
     }
 

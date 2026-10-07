@@ -434,6 +434,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     set_community_node_invite_code(request: SetCommunityNodeInviteCodeRequest) => runtime.set_community_node_invite_code(request).await.map_err(map_error);
     set_community_node_relation_optout(request: CommunityNodeTargetRequest) => runtime.set_community_node_relation_optout(request).await.map_err(CommandError::from);
     set_discovery_seeds(request: SetDiscoverySeedsRequest) => runtime.set_discovery_seeds(request).await.map_err(map_error);
+    set_public_blob_discovery(request: SetPublicBlobDiscoveryRequest) => runtime.set_public_blob_discovery(request).await.map_err(map_error);
     set_my_profile(request: SetMyProfileRequest) => runtime.set_my_profile(request).await.map_err(map_error);
     set_scope_display(request: crate::ScopeDisplayRequest) => runtime.set_scope_display(request).await.map_err(map_error);
     set_topic_gossip_enabled(request: SetTopicGossipEnabledRequest) => runtime.set_topic_gossip_enabled(request).await.map_err(map_error);

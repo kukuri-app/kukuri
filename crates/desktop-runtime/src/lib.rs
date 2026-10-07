@@ -81,7 +81,7 @@ pub use community_node::{
     SubmitCommunityNodeReportRequest, SubmitCommunityNodeReportResult,
     SubmitCommunityNodeReportStatus, SubmitIndexingRequestResponse, TrustUserReadResponse,
 };
-pub use discovery::{DiscoveryConfig, SetDiscoverySeedsRequest};
+pub use discovery::{DiscoveryConfig, SetDiscoverySeedsRequest, SetPublicBlobDiscoveryRequest};
 pub use host::{
     AGE_ATTESTATION_VERSION, APP_LEGAL_AUTHORITATIVE_LANGUAGE, APP_LEGAL_DOCUMENTS,
     APP_LEGAL_EFFECTIVE_DATE, AgeAttestationRecord, AgeAttestationStatus, AppConsentDocumentRecord,

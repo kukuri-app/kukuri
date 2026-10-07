@@ -70,10 +70,8 @@ pub(crate) async fn wait_for_runtime_endpoint_in_testnet(
 
 pub(crate) fn seeded_dht_config(seed_peers: Vec<SeedPeer>) -> DiscoveryConfig {
     DiscoveryConfig {
-        mode: DiscoveryMode::SeededDht,
-        connect_mode: ConnectMode::DirectOnly,
-        env_locked: false,
         seed_peers,
+        ..DiscoveryConfig::seeded_dht_default()
     }
 }
 pub(crate) async fn new_seeded_dht_runtime_with_config(

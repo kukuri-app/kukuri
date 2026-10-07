@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     ConnectivityPeersRequest, DesiredSubscription, DesiredSubscriptionScope,
     ImportPeerTicketRequest, SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest,
-    SetTopicGossipEnabledRequest, UnsubscribeTopicRequest,
+    SetPublicBlobDiscoveryRequest, SetTopicGossipEnabledRequest, UnsubscribeTopicRequest,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -49,6 +49,12 @@ impl CommandHandler for Handler {
             "set_discovery_seeds" => encode(
                 runtime
                     .set_discovery_seeds(decode::<SetDiscoverySeedsRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            "set_public_blob_discovery" => encode(
+                runtime
+                    .set_public_blob_discovery(decode::<SetPublicBlobDiscoveryRequest>(payload)?)
                     .await
                     .map_err(command_error)?,
             ),
@@ -116,6 +122,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
         ("get_local_peer_ticket", Read),
         ("import_peer_ticket", Write),
         ("set_discovery_seeds", Write),
+        ("set_public_blob_discovery", Write),
         ("unsubscribe_topic", Write),
         ("set_topic_gossip_enabled", Write),
         ("set_channel_gossip_enabled", Write),

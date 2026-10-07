@@ -205,7 +205,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 181);
+    assert_eq!(manifest.entries.len(), 182);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

@@ -197,21 +197,39 @@ impl SqliteStore {
     }
 
     /// 告知の時刻が来た hash を時刻の順に `limit` 件まで。無ければ、次に来る時刻。
+    ///
+    /// 告知の直前に、保持が読み出しの期限内か（保護か、7 日以内の利用か）を利用時刻を変えずに確かめる。期限の切れた
+    /// 保持（回収の前のもの）の予定は外し、続きをすぐ読めるよう次の時刻を `now` で返す。
     pub async fn due_public_blob_announcements(
         &self,
         now: i64,
         limit: usize,
     ) -> Result<(Vec<String>, Option<i64>)> {
-        let due = sqlx::query_scalar::<_, String>(
-            "SELECT blob_hash FROM public_blob_announcements WHERE next_at <= ?1 \
-             ORDER BY next_at, blob_hash LIMIT ?2",
+        let rows = sqlx::query_as::<_, (String, bool)>(
+            "SELECT a.blob_hash, EXISTS(SELECT 1 FROM remote_content_cache c \
+             WHERE c.kind = 'blob' AND c.cache_key = a.blob_hash \
+             AND (c.is_protected = 1 OR c.last_used_at > ?3)) \
+             FROM public_blob_announcements a WHERE a.next_at <= ?1 \
+             ORDER BY a.next_at, a.blob_hash LIMIT ?2",
         )
         .bind(now)
         .bind(i64::try_from(limit)?)
+        .bind(now - REMOTE_CACHE_UNUSED_MS)
         .fetch_all(&self.pool)
         .await?;
-        if !due.is_empty() {
-            return Ok((due, None));
+        let mut due = Vec::new();
+        let mut dropped = false;
+        for (hash, held) in rows {
+            if held {
+                due.push(hash);
+            } else {
+                self.reschedule_public_blob_announcement(&hash, None)
+                    .await?;
+                dropped = true;
+            }
+        }
+        if !due.is_empty() || dropped {
+            return Ok((due, dropped.then_some(now)));
         }
         let next = sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MIN(next_at) FROM public_blob_announcements",

@@ -66,6 +66,7 @@ mod media_blob_restore;
 mod memory_node_rebuild;
 mod private_channels;
 mod protected_migration;
+mod public_blob_discovery;
 mod receive_binding;
 mod reloadable_docs_sync;
 mod replication_heuristics;

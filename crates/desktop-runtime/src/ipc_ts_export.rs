@@ -79,14 +79,14 @@ fn export_ipc_types() {
         RuntimeEvent, SendDirectMessageRequest, SetAuthorTrustDisplayExceptionRequest,
         SetChannelGossipEnabledRequest, SetCommunityNodeConfigNode, SetCommunityNodeConfigRequest,
         SetCommunityNodeInviteCodeRequest, SetDiscoverySeedsRequest, SetMyProfileRequest,
-        SetPrivateChannelEntryDomeRequest, SetTopicGossipEnabledRequest,
-        StartOwnerDomeHostingRequest, SubmitCommunityNodeReportRequest,
-        SubmitCommunityNodeReportResult, SubmitCommunityNodeReportStatus,
-        SubmitDomeSessionInputRequest, SubmitIndexingRequestResponse, SwitchAccountRequest,
-        TakePrivateChannelControllerRequest, ToggleReactionRequest, TrustUserReadResponse,
-        UnsubscribeTopicRequest, UpdateGameRoomRequest, UpdateMetaverseRoomRequest,
-        WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
-        WithdrawalReasonVisibilityRequest,
+        SetPrivateChannelEntryDomeRequest, SetPublicBlobDiscoveryRequest,
+        SetTopicGossipEnabledRequest, StartOwnerDomeHostingRequest,
+        SubmitCommunityNodeReportRequest, SubmitCommunityNodeReportResult,
+        SubmitCommunityNodeReportStatus, SubmitDomeSessionInputRequest,
+        SubmitIndexingRequestResponse, SwitchAccountRequest, TakePrivateChannelControllerRequest,
+        ToggleReactionRequest, TrustUserReadResponse, UnsubscribeTopicRequest,
+        UpdateGameRoomRequest, UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest,
+        WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
     };
     use kukuri_app_api::*;
     use kukuri_cn_protocol::{
@@ -460,6 +460,7 @@ fn export_ipc_types() {
         CommunityNodeTargetRequest,
         AcceptCommunityNodeConsentsRequest,
         SetDiscoverySeedsRequest,
+        SetPublicBlobDiscoveryRequest,
         // #859: アカウント鍵の export / import と複数アカウント管理
         ExportAccountKeyRequest,
         PreviewAccountKeyImportRequest,
