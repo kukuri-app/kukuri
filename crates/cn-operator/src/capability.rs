@@ -65,11 +65,12 @@ pub enum Capability {
     RightsRequestEndpoint,
     TesterFeedback,
     DomeHosting,
+    PublicBlobSearch,
 }
 
 impl Capability {
     /// 決定論的な出力順序を与える全 capability。
-    pub const ALL: [Capability; 18] = [
+    pub const ALL: [Capability; 19] = [
         Capability::AuthConsent,
         Capability::BootstrapAssist,
         Capability::TopicRendezvous,
@@ -88,6 +89,7 @@ impl Capability {
         Capability::RightsRequestEndpoint,
         Capability::TesterFeedback,
         Capability::DomeHosting,
+        Capability::PublicBlobSearch,
     ];
 
     /// config / manifest の snake_case キー。
@@ -111,6 +113,7 @@ impl Capability {
             Capability::RightsRequestEndpoint => "rights_request_endpoint",
             Capability::TesterFeedback => "tester_feedback",
             Capability::DomeHosting => "dome_hosting",
+            Capability::PublicBlobSearch => "public_blob_search",
         }
     }
 
@@ -284,6 +287,16 @@ impl Capability {
                 privacy_note: "participant inputは処理後に破棄し、raw inputや認証tokenをlogへ出さない。",
                 terms_note: "Community NodeはDomeのcanonical ownerではなく、owner署名leaseの範囲だけをhostする。",
             },
+            Capability::PublicBlobSearch => CapabilityMeta {
+                capability: self,
+                display_name: "公開 blob の保持端末の検索 (public blob holder search)",
+                purpose: "client が手元・既知の相手から取れない公開投稿の添付等について、Mainline DHT と kukuri の\
+                    補助 index で保持端末を探し、relay URL を持つ候補の到達情報を返す",
+                telecom_note: "検索の metadata だけを扱い、blob を取得・保存・中継しない。",
+                privacy_note: "依頼された公開 blob の hash から導いた infohash を Mainline DHT の参加者へ、見つけた\
+                    端末の IP アドレス・port を kukuri の補助 index へ送る。受け取った hash は保存しない。",
+                terms_note: "検索結果は保持・権限の証明ではなく、取得は client が P2P で行う旨を記載する。",
+            },
         }
     }
 }
@@ -325,6 +338,8 @@ pub enum ExternalDestination {
     PushProvider,
     AnalyticsProvider,
     CrashReportProvider,
+    MainlineDht,
+    KukuriAddrIndex,
 }
 
 impl ExternalDestination {
@@ -338,6 +353,8 @@ impl ExternalDestination {
             ExternalDestination::PushProvider => "プッシュ通知プロバイダ",
             ExternalDestination::AnalyticsProvider => "アナリティクスプロバイダ",
             ExternalDestination::CrashReportProvider => "クラッシュレポートプロバイダ",
+            ExternalDestination::MainlineDht => "Mainline DHT（BitTorrent の公開 DHT）",
+            ExternalDestination::KukuriAddrIndex => "kukuri が運用する補助 index",
         }
     }
 
@@ -359,6 +376,12 @@ impl ExternalDestination {
             ExternalDestination::PushProvider => "デバイストークンと通知内容の送信先。",
             ExternalDestination::AnalyticsProvider => "利用状況データの送信先。",
             ExternalDestination::CrashReportProvider => "クラッシュ診断データの送信先。",
+            ExternalDestination::MainlineDht => {
+                "公開 blob の保持端末の検索で、依頼された hash から導いた infohash と本ノードの IP アドレスが届く。"
+            }
+            ExternalDestination::KukuriAddrIndex => {
+                "DHT で見つけた端末の IP アドレス・port を照会し、署名つきの endpoint ID を得る。"
+            }
         }
     }
 }

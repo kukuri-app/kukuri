@@ -16,10 +16,15 @@ anyhow.workspace = true
 blake3.workspace = true
 axum.workspace = true
 chrono.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
+iroh.workspace = true
+iroh-mainline-address-lookup.workspace = true
+iroh-mainline-endpoint-discovery.workspace = true
+n0-mainline.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 tower-http.workspace = true
@@ -46,6 +51,7 @@ hex.workspace = true
 reqwest.workspace = true
 redis.workspace = true
 tempfile.workspace = true
+udp-addr-index.workspace = true
 
 [lints]
 workspace = true

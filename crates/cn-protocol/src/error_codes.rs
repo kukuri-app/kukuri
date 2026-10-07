@@ -57,3 +57,9 @@ pub const TESTER_FEEDBACK_NOT_CONFIGURED_CODE: &str = "TESTER_FEEDBACK_NOT_CONFI
 
 /// テスターフィードバックの入力が不正(空欄・文字数超過。400。#802)。
 pub const INVALID_TESTER_FEEDBACK_CODE: &str = "INVALID_TESTER_FEEDBACK";
+
+/// このノードは公開 blob の保持端末の検索を提供しない(未構成。404。#1632)。
+pub const BLOB_PROVIDER_SEARCH_NOT_CONFIGURED_CODE: &str = "BLOB_PROVIDER_SEARCH_NOT_CONFIGURED";
+
+/// 公開 blob の保持端末の検索の受付が満杯、または同じ端末の進行中の検索が上限(429。`Retry-After` つき。#1632)。
+pub const BLOB_PROVIDER_SEARCH_BUSY_CODE: &str = "BLOB_PROVIDER_SEARCH_BUSY";

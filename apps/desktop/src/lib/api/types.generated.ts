@@ -310,7 +310,7 @@ export type DiscoveryConfig = { mode: DiscoveryMode, connect_mode: ConnectMode, 
 
 export type CommunityNodeSeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 
-export type CommunityNodeResolvedUrls = { public_base_url: string, connectivity_urls: Array<string>, seed_peers?: Array<CommunityNodeSeedPeer> | null, };
+export type CommunityNodeResolvedUrls = { public_base_url: string, connectivity_urls: Array<string>, seed_peers?: Array<CommunityNodeSeedPeer> | null, public_blob_search?: boolean | null, };
 
 export type CommunityNodeNodeConfig = { base_url: string, resolved_urls?: CommunityNodeResolvedUrls | null, 
 /**

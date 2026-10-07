@@ -15,6 +15,10 @@ pub struct CommunityNodeResolvedUrls {
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(as = "Option<Vec<CommunityNodeSeedPeer>>"))]
     pub seed_peers: Vec<CommunityNodeSeedPeer>,
+    // 公開 blob の保持端末の検索(`BLOB_PROVIDER_SEARCH_PATH`)を提供する(#1632)。旧 node の応答には無い。
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>"))]
+    pub public_blob_search: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +77,7 @@ impl CommunityNodeResolvedUrls {
             public_base_url,
             connectivity_urls,
             seed_peers,
+            public_blob_search: false,
         })
     }
 }

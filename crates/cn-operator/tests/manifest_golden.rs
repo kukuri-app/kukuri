@@ -74,7 +74,7 @@ fn manifest_wire_output_matches_golden() {
         )
         .replace(
             "\"rights_request_endpoint\":false}",
-            "\"rights_request_endpoint\":false,\"tester_feedback\":false,\"dome_hosting\":false}",
+            "\"rights_request_endpoint\":false,\"tester_feedback\":false,\"dome_hosting\":false,\"public_blob_search\":false}",
         );
     assert_eq!(
         serde_json::to_string(&manifest).expect("serialize"),

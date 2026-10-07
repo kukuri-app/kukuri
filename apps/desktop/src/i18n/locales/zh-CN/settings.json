@@ -796,7 +796,8 @@
         "report_endpoint": "举报受理",
         "rights_request_endpoint": "侵权申请受理",
         "tester_feedback": "测试者反馈",
-        "dome_hosting": "Dome 托管"
+        "dome_hosting": "Dome 托管",
+        "public_blob_search": "公开内容持有终端搜索"
       },
       "authority": {
         "this_node": "此节点",

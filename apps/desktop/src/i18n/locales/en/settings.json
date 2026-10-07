@@ -796,7 +796,8 @@
         "report_endpoint": "Report reception",
         "rights_request_endpoint": "Rights infringement requests",
         "tester_feedback": "Tester feedback",
-        "dome_hosting": "Dome hosting"
+        "dome_hosting": "Dome hosting",
+        "public_blob_search": "Public content holder search"
       },
       "authority": {
         "this_node": "This node",

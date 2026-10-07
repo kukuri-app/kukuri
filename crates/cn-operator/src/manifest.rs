@@ -117,6 +117,8 @@ pub struct Capabilities {
     pub tester_feedback: bool,
     #[serde(default)]
     pub dome_hosting: bool,
+    #[serde(default)]
+    pub public_blob_search: bool,
 }
 
 impl Capabilities {
@@ -140,6 +142,7 @@ impl Capabilities {
             rights_request_endpoint: config.enabled(Capability::RightsRequestEndpoint),
             tester_feedback: config.enabled(Capability::TesterFeedback),
             dome_hosting: config.enabled(Capability::DomeHosting),
+            public_blob_search: config.enabled(Capability::PublicBlobSearch),
         }
     }
 }

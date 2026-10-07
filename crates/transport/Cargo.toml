@@ -27,6 +27,7 @@ ts-rs = { workspace = true, optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 n0-mainline.workspace = true
 iroh-mainline-address-lookup.workspace = true
+iroh-mainline-endpoint-discovery.workspace = true
 
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効)。

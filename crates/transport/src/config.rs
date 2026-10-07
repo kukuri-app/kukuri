@@ -155,6 +155,30 @@ pub enum PublicBlobIndex {
     Servers(Vec<SocketAddrV4>),
 }
 
+#[cfg(not(target_family = "wasm"))]
+impl PublicBlobIndex {
+    /// `dht` の上に補助 index の client を組み立てる。一覧が引けなければ 30 秒ごとにやり直す（native の node と CN の検索）。
+    pub async fn connect(&self, dht: Dht) -> iroh_mainline_endpoint_discovery::AddrIndex {
+        loop {
+            let builder = iroh_mainline_endpoint_discovery::AddrIndex::builder(dht.clone())
+                .lookup_cache(std::time::Duration::from_secs(5 * 60));
+            let builder = match self {
+                Self::ListKey(key) => builder.list_key(*key),
+                Self::Servers(servers) => servers
+                    .iter()
+                    .fold(builder, |builder, server| builder.server(*server)),
+            };
+            match builder.build().await {
+                Ok(index) => return index,
+                Err(error) => {
+                    tracing::debug!(%error, "public blob index unavailable");
+                    n0_future::time::sleep(std::time::Duration::from_secs(30)).await;
+                }
+            }
+        }
+    }
+}
+
 impl DhtDiscoveryOptions {
     pub fn disabled() -> Self {
         Self::default()

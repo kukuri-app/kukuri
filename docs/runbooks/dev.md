@@ -185,9 +185,16 @@ docker compose --env-file .env.community-node -f docker-compose.community-node.y
 - host port の既定値は `18080` (`cn-user-api`), `13340` (`cn-iroh-relay`), `15432` (`cn-postgres`), `16379` (`cn-valkey`)。`cn-stun` の `3478/udp` は、クライアントが relay の host の 3478 番へ送るので変えない
 - host 側 bind の既定値は loopback (`127.0.0.1`) なので、LAN/WireGuard 越しに公開する場合は `CN_*_HOST_BIND_IP` を上書きする
 - `cn-stun`（STUN、binding だけ。ADR 0057 §6）は client の送信元の address を見て返すので、送信元を書き換えずに受ける IP で公開する。送信元を書き換えて UDP を転送する VPS edge 構成では起動しない（[VPS edge の手順](community-node-self-host-vps.md)）。応答は[本番反映の runbook](community-node-production-rollout.md) の「5.3 public surface」の確認 script を、公開した host へ実行して確かめる
-- compose 内の service 名は `cn-postgres`, `cn-migrate`, `cn-user-api`, `cn-iroh-relay`, `cn-stun`
+- compose 内の service 名は `cn-postgres`, `cn-migrate`, `cn-user-api`, `cn-iroh-relay`, `cn-stun`。公開 blob の発見の補助 index の `cn-addr-index` は profile `addr-index` を指定したときだけ起動する（下記）
 - public URL を変える場合は `CN_BASE_URL`, `CN_PUBLIC_BASE_URL`, `COMMUNITY_NODE_CONNECTIVITY_URLS` を上書きする
 - `cn-user-api` は `COMMUNITY_NODE_DATABASE_INIT_MODE=require_ready` で起動するので、`cn-migrate` または `cn-cli prepare` を先に流さないと fail-fast する
+
+### 公開 blob の発見の補助 index（cn-addr-index、#1632、ADR 0063 §7）
+- kukuri が運用する server（署名つきの一覧の最大 2 台）だけで動かす。起動は `docker compose --env-file .env.community-node -f docker-compose.community-node.yml --profile addr-index up -d cn-addr-index`、停止は同じ指定の `stop cn-addr-index`。record は memory だけに持ち、止めると消える（端末は約 30 分ごとに登録し直す）
+- `60125/udp`（DHT と共有）を `CN_ADDR_INDEX_HOST_BIND_IP` で公開する。record を送信元の address で引くので、cn-stun と同じく送信元を書き換えずに受ける IP で公開する（VPS edge 構成では提供しない）
+- 上限は `CN_ADDR_INDEX_MAX_ENTRIES`（保持する record、既定 2,000,000）・`CN_ADDR_INDEX_MAX_ENTRIES_PER_IP`（送信元 IP ごとの record、16）・`CN_ADDR_INDEX_REQUESTS_PER_IP_PER_SEC`（送信元 IP ごとの毎秒の照会、50）。空なら既定
+- 一覧の公開: 一覧の鍵（64 桁の 16 進）を持つ host で、fork の `iroh-index-list` を常駐させる（`cargo install --git https://github.com/KingYoSun/iroh-content-discovery --rev f6e2864a1d2228a19aa1cb88239ba87eb0068d2e iroh-mainline-endpoint-discovery --features cli --bin iroh-index-list --locked` で入れ、`IROH_INDEX_LIST_SECRET=<鍵> iroh-index-list --server <IP>:60125 [--server <IP>:60125]`）。10 分ごとに一覧を更新し、止めると一覧は DHT 上の期限で消える。server を変えるときは同じ鍵で新しい一覧を公開する
+- 一覧の公開鍵を `kukuri_transport::KUKURI_PUBLIC_BLOB_INDEX`（`PublicBlobIndex::ListKey`）へ入れた build で、client の発見と、operator config の `features.public_blob_search: true`（既定は無効。有効にすると生成文書に開示が載り、利用者はその node で再同意する）にした `cn-user-api` の検索（`POST /v1/blob-providers/search`）が働く。capability が無効な node は検索に 404 を返し、bootstrap の自 node の `resolved_urls.public_blob_search` は false。鍵の無い build で capability を有効にすると `cn-user-api` は起動しない。鍵の発行・server の配置・kukuri の node の有効化は本番反映の Issue で行う
 
 ## community-node env 標準形
 - `.env.community-node.example` をコピーして `.env.community-node` を作り、compose では `--env-file .env.community-node` を使う

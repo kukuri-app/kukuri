@@ -297,6 +297,21 @@ impl Capability {
                 small_scale_tips: "既定無効のまま始め、同時host数とlease期間を小さく制限して有効化する。",
                 how_to_reduce: "`features.dome_hosting: false`（既定）で無効化できる。",
             },
+            Capability::PublicBlobSearch => CapabilityRiskPractices {
+                user_expectation: "手元・既知の相手に無い公開 blob の保持端末を、Web 等の client が見つけられること。",
+                authority_scope: "認証・同意済みの client が依頼した公開 blob の hash の検索だけ。",
+                responsibility_boundary: "blob を取得・保存・中継しない。候補は保持・権限の証明ではなく、取得の成否を保証しない。",
+                risks: &[
+                    "依頼された hash から導いた infohash と本ノードの IP アドレスが DHT の参加者から観測され得る。",
+                    "DHT と補助 index への照会の負荷。",
+                ],
+                recommended_practices: &[
+                    "検索の同時数を全体 32 件・端末ごと 8 件、1 件を 10 秒までに制限する（実装の既定）。",
+                    "受け取った hash を保存しない。",
+                ],
+                small_scale_tips: "kukuri の補助 index の一覧の鍵が入った配布物で、必要になってから有効化する。",
+                how_to_reduce: "`features.public_blob_search: false`（既定）で無効化できる。",
+            },
         }
     }
 }

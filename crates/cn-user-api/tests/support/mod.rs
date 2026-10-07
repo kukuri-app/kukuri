@@ -9,7 +9,7 @@ use kukuri_cn_core::{JwtConfig, TestDatabase};
 use kukuri_cn_protocol::{
     AcceptConsentsRequest, CommunityNodePoliciesResponse, build_auth_envelope_json,
 };
-use kukuri_cn_user_api::{UserApiConfig, app_router, build_state};
+use kukuri_cn_user_api::{UserApiConfig, UserApiState, app_router, build_state};
 use kukuri_core::KukuriKeys;
 use redis::AsyncCommands;
 use reqwest::{Client, StatusCode};
@@ -40,6 +40,16 @@ impl TestServer {
         admin_database_url: &str,
         prefix: &str,
         operator_config: &str,
+    ) -> Result<Self> {
+        Self::spawn_with_state(admin_database_url, prefix, operator_config, |state| state).await
+    }
+
+    /// 組み立てた state を `customize` で差し替えてから起動する（機能の差し込み）。
+    pub async fn spawn_with_state(
+        admin_database_url: &str,
+        prefix: &str,
+        operator_config: &str,
+        customize: impl FnOnce(UserApiState) -> UserApiState,
     ) -> Result<Self> {
         let rendezvous_redis_url = integration_test_rendezvous_redis_url();
         let rendezvous_key_prefix = format!("cn:test:{prefix}");
@@ -72,7 +82,7 @@ impl TestServer {
             expected_issuer_node_id: None,
         })
         .await?;
-        let app = app_router(state);
+        let app = app_router(customize(state));
         let task = tokio::spawn(async move {
             axum::serve(
                 listener,

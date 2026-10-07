@@ -17,6 +17,7 @@ mod admin_appeal_render;
 mod admin_rights_requests;
 mod admin_shell;
 mod admin_tester_feedback;
+mod blob_providers;
 mod config;
 mod dome_hosting;
 mod errors;
@@ -25,6 +26,7 @@ mod rate_limit;
 mod routes;
 mod state;
 
+pub use blob_providers::BlobProviderSearch;
 pub use config::{RateLimitConfig, UserApiConfig};
 pub use rate_limit::apply_rate_limit;
 pub use routes::{app_router, manifest_routes, run_from_env, with_cors};
