@@ -65,6 +65,7 @@ type DesktopShellSettingsDrawerProps = {
   >;
   handleImportPeer: () => Promise<void>;
   handleSaveDiscoverySeeds: () => Promise<void>;
+  handleSetPublicBlobDiscovery: (enabled: boolean) => Promise<void>;
   handleSaveCommunityNodes: () => Promise<void>;
   handleSetCommunityNodeTrustPriority: (priority: string[]) => Promise<void>;
   handleClearCommunityNodes: () => Promise<void>;
@@ -100,6 +101,7 @@ export function DesktopShellSettingsDrawer({
   viewModels,
   handleImportPeer,
   handleSaveDiscoverySeeds,
+  handleSetPublicBlobDiscovery,
   handleSaveCommunityNodes,
   handleSetCommunityNodeTrustPriority,
   handleClearCommunityNodes,
@@ -299,6 +301,7 @@ export function DesktopShellSettingsDrawer({
             setDiscoveryEditorDirty(false);
             setDiscoveryError(null);
           }}
+          onPublicBlobDiscoveryChange={handleSetPublicBlobDiscovery}
         />
       ),
     },

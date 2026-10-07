@@ -978,6 +978,7 @@ export function DesktopShellPage({
         viewModels={viewModels}
         handleImportPeer={shellActions.handleImportPeer}
         handleSaveDiscoverySeeds={shellActions.handleSaveDiscoverySeeds}
+        handleSetPublicBlobDiscovery={shellActions.handleSetPublicBlobDiscovery}
         handleSaveCommunityNodes={shellActions.handleSaveCommunityNodes}
         handleSetCommunityNodeTrustPriority={shellActions.handleSetCommunityNodeTrustPriority}
         handleClearCommunityNodes={shellActions.handleClearCommunityNodes}

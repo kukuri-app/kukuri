@@ -20,6 +20,14 @@ fn thread_page(
 
 #[async_trait]
 impl ObjectProjectionStore for MemoryStore {
+    async fn note_link_preview_image(&self, object_id: &str, hash: &str) -> Result<()> {
+        self.link_preview_images
+            .write()
+            .await
+            .insert(object_id.to_string(), hash.to_string());
+        Ok(())
+    }
+
     async fn put_object_projection(&self, row: ObjectProjectionRow) -> Result<()> {
         self.put_object_projections(vec![row]).await
     }

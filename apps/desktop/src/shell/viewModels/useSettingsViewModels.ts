@@ -290,9 +290,11 @@ export function useSettingsViewModels({
           : t('settings:discovery.messages.saved'),
       seedPeersMessageTone: discoveryConfig.env_locked ? ('default' as const) : ('default' as const),
       envLocked: discoveryConfig.env_locked,
+      publicBlobDiscovery: discoveryConfig.public_blob_discovery,
     }),
     [
       discoveryConfig.env_locked,
+      discoveryConfig.public_blob_discovery,
       discoveryEditorDirty,
       discoveryError,
       discoverySeedInput,

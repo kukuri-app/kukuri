@@ -40,6 +40,8 @@ use tracing::warn;
 use crate::account_transfer::{ACCOUNT_SYNC_ALPN, ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 use crate::dome_session::{DOME_SESSION_ALPN, DomeSessionConnections, DomeSessionSlot};
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
+#[cfg(not(target_family = "wasm"))]
+use crate::public_blobs::PublicBlobDiscovery;
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
 
 #[cfg(test)]
@@ -212,6 +214,9 @@ pub struct IrohDocsNode {
     pub(crate) dome_session: DomeSessionSlot,
     pub(crate) dome_session_connections: DomeSessionConnections,
     pub(crate) network_work: Arc<crate::network_work::NetworkWorkRuntime>,
+    /// 公開 blob の発見（#1632）。停止で外し、DHT と補助 index の client を止める。
+    #[cfg(not(target_family = "wasm"))]
+    public_blobs: std::sync::Mutex<Option<Arc<PublicBlobDiscovery>>>,
     shutdown_started: AtomicBool,
     shutdown_result: tokio::sync::watch::Sender<Option<std::result::Result<(), String>>>,
 }
@@ -444,6 +449,21 @@ impl IrohDocsNode {
         let relay_config = relay_config.normalized();
         let relay_urls = Arc::new(StdRwLock::new(relay_config.parsed_relay_urls()?));
         let gossip_connection_paths = kukuri_transport::GossipConnectionPaths::default();
+        // 公開 blob の発見は、住所の公開・解決と同じ DHT を使う（#1632）。
+        #[cfg(not(target_family = "wasm"))]
+        let mut dht_options = dht_options;
+        #[cfg(not(target_family = "wasm"))]
+        let public_blob_dht = match (
+            dht_options.public_blob_index.clone(),
+            dht_options.resolved_dht_builder(),
+        ) {
+            (Some(index), Some(builder)) => {
+                let dht = builder.build().context("failed to start the DHT node")?;
+                dht_options.dht = Some(dht.clone());
+                Some((dht, index))
+            }
+            _ => None,
+        };
         let mut endpoint_builder = build_endpoint_builder(
             EndpointBuilder::new(presets::Minimal).relay_mode(relay_config.relay_mode()?),
             &discovery,
@@ -528,6 +548,14 @@ impl IrohDocsNode {
                 }
             }
         };
+        #[cfg(not(target_family = "wasm"))]
+        let public_blobs = public_blob_dht.map(|(dht, index)| {
+            Arc::new(PublicBlobDiscovery::start(
+                dht,
+                index,
+                endpoint.secret_key().clone(),
+            ))
+        });
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
         let account_transfer = AccountTransfer::new(endpoint.clone());
         let remote_cache = Arc::new(OnceLock::new());
@@ -587,6 +615,8 @@ impl IrohDocsNode {
             dome_session,
             dome_session_connections: DomeSessionConnections::default(),
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
+            #[cfg(not(target_family = "wasm"))]
+            public_blobs: std::sync::Mutex::new(public_blobs),
             shutdown_started: AtomicBool::new(false),
             shutdown_result: tokio::sync::watch::channel(None).0,
         });
@@ -607,8 +637,22 @@ impl IrohDocsNode {
 
     pub fn install_remote_cache(&self, cache: Arc<dyn ContentCacheStore>) -> Result<()> {
         self.remote_cache
-            .set(cache)
-            .map_err(|_| anyhow!("remote cache already installed"))
+            .set(cache.clone())
+            .map_err(|_| anyhow!("remote cache already installed"))?;
+        // 告知の予定は、この cache（account の store）が持つ（#1632）。
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(public_blobs) = self.public_blobs() {
+            public_blobs.start_announcing(cache, self.network_work.clone());
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn public_blobs(&self) -> Option<Arc<PublicBlobDiscovery>> {
+        self.public_blobs
+            .lock()
+            .expect("public blob discovery poisoned")
+            .clone()
     }
 
     /// 相手への private の応答で、要求の replica の secret を引く参照(docs-sync が入れる)。
@@ -752,6 +796,12 @@ impl IrohDocsNode {
 
     async fn shutdown_owned(&self) -> Result<()> {
         self.network_work.close();
+        // 公開 blob の発見を外して、共有の DHT を止める（住所の公開・解決は endpoint の終了で止まる。#1632）。
+        #[cfg(not(target_family = "wasm"))]
+        self.public_blobs
+            .lock()
+            .expect("public blob discovery poisoned")
+            .take();
         self.account_transfer.cancel();
         self.receive_binding.clear().await;
         self.dome_session.install(None);

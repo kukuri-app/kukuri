@@ -68,7 +68,7 @@ use crate::community_node::{
     save_community_node_config,
 };
 use crate::discovery::{
-    DiscoveryConfig, SetDiscoverySeedsRequest, parse_seed_entries,
+    DiscoveryConfig, SetDiscoverySeedsRequest, SetPublicBlobDiscoveryRequest, parse_seed_entries,
     resolve_discovery_config_from_env, save_discovery_config,
 };
 use crate::host::{DesiredSubscription, DesiredSubscriptionScope};
@@ -695,10 +695,11 @@ impl DesktopRuntime {
     ) -> Result<Self> {
         let db_path = db_path.as_ref().to_path_buf();
         let discovery_config = resolve_discovery_config_from_env(&db_path).await?;
-        let dht_options = match discovery_config.mode {
+        let mut dht_options = match discovery_config.mode {
             kukuri_transport::DiscoveryMode::SeededDht => DhtDiscoveryOptions::seeded_dht(),
             kukuri_transport::DiscoveryMode::StaticPeer => DhtDiscoveryOptions::disabled(),
         };
+        dht_options.public_blob_index = kukuri_transport::KUKURI_PUBLIC_BLOB_INDEX;
         Self::new_with_config_and_identity_and_discovery(
             &db_path,
             TransportNetworkConfig::from_env()?,

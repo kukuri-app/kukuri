@@ -54,6 +54,7 @@ pub(super) fn input(name: &str) -> Value {
         ),
         "import_peer_ticket" => object(json!({"ticket": string()}), &["ticket"]),
         "set_discovery_seeds" => object(json!({"seed_entries": strings()}), &["seed_entries"]),
+        "set_public_blob_discovery" => object(json!({"enabled": boolean()}), &["enabled"]),
         "unsubscribe_topic" => object(json!({"topic": string()}), &["topic"]),
         "set_topic_gossip_enabled" => object(
             json!({"topic": string(), "enabled": boolean()}),
@@ -73,10 +74,13 @@ pub(super) fn output(name: &str) -> Value {
         "list_connectivity_peers" => {
             view(json!({"peer_ids": strings(), "next_cursor": nullable(string())}))
         }
-        "get_discovery_config" | "set_discovery_seeds" => view(json!({
-            "mode": mode(), "connect_mode": connect_mode(), "env_locked": boolean(),
-            "seed_peers": array(view(json!({"endpoint_id": string(), "addr_hint": nullable(string())})))
-        })),
+        "get_discovery_config" | "set_discovery_seeds" | "set_public_blob_discovery" => {
+            view(json!({
+                "mode": mode(), "connect_mode": connect_mode(), "env_locked": boolean(),
+                "seed_peers": array(view(json!({"endpoint_id": string(), "addr_hint": nullable(string())}))),
+                "public_blob_discovery": boolean()
+            }))
+        }
         "get_local_peer_ticket" => nullable(string()),
         "import_peer_ticket"
         | "unsubscribe_topic"

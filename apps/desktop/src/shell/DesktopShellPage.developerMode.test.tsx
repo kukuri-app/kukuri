@@ -149,6 +149,7 @@ test('diagnostic shortcuts preserve unsaved input and show connection errors wit
   const mutations = [
     vi.spyOn(api, 'importPeerTicket'),
     vi.spyOn(api, 'setDiscoverySeeds'),
+    vi.spyOn(api, 'setPublicBlobDiscovery'),
     vi.spyOn(api, 'setCommunityNodeConfig'),
     vi.spyOn(api, 'authenticateCommunityNode'),
     vi.spyOn(api, 'clearCommunityNodeToken'),

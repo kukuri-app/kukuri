@@ -16,16 +16,22 @@ function DiscoveryPanelStory({
   width = 'wide',
 }: DiscoveryStoryProps) {
   const [seedPeersInput, setSeedPeersInput] = useState(args.view.seedPeersInput);
+  const [publicBlobDiscovery, setPublicBlobDiscovery] = useState(args.view.publicBlobDiscovery);
 
   return (
     <SettingsStoryFrame width={width}>
       <div>
         <DiscoveryPanel
           {...args}
-          view={{ ...args.view, seedPeersInput }}
+          view={{ ...args.view, seedPeersInput, publicBlobDiscovery }}
           onSeedPeersChange={setSeedPeersInput}
           onSave={() => {}}
           onReset={() => setSeedPeersInput(args.view.seedPeersInput)}
+          // 切替中の表示を確かめられるよう、backend の組み直しの代わりに 1 秒待つ。
+          onPublicBlobDiscoveryChange={async (enabled) => {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            setPublicBlobDiscovery(enabled);
+          }}
         />
       </div>
     </SettingsStoryFrame>
@@ -43,6 +49,7 @@ const meta = {
     onSeedPeersChange: () => {},
     onSave: () => {},
     onReset: () => {},
+    onPublicBlobDiscoveryChange: async () => {},
   },
 } satisfies Meta<typeof DiscoveryPanel>;
 
@@ -50,8 +57,16 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+// 公開コンテンツの発見はオン（既定）。
 export const Ready: Story = {};
 
+export const PublicBlobDiscoveryOff: Story = {
+  args: {
+    view: { ...discoveryPanelFixture, publicBlobDiscovery: false },
+  },
+};
+
+// 環境変数で発見の設定を固定した起動。シードと公開コンテンツの発見を変えられない。
 export const NarrowLocked: Story = {
   args: {
     view: {

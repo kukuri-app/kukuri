@@ -65,3 +65,6 @@ iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e88814
 iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
 iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881480d0f48a74a3148c8b896d79" }
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc76d51582b3678b3b743db72d51ce296d4" }
+# Match the root workspace's Mainline forks (#1632).
+n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
+iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }

@@ -67,6 +67,9 @@ iroh-docs = { version = "0.101.0", default-features = false }
 iroh-blobs = { version = "0.103.0", default-features = false }
 iroh-gossip = "0.101.0"
 iroh-mainline-address-lookup = "0.6.0"
+# #1632: 公開 blob の発見（fork。index 要求の取消・保留の上限と、1 回の告知 API。b4493ba 起点）。
+iroh-mainline-endpoint-discovery = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "f6e2864a1d2228a19aa1cb88239ba87eb0068d2e" }
+udp-addr-index = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "f6e2864a1d2228a19aa1cb88239ba87eb0068d2e" }
 iroh-relay = { version = "1.3.0", features = ["server"] }
 jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 keyring = { version = "4.2.0", default-features = false }
@@ -116,6 +119,11 @@ iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "e0b0ad9892e8881
 # The fork adds on top of #162: reopen shared topic streams on a superseding connection (#1376),
 # and answer a join while an earlier neighbor request to the peer is pending (#1549).
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc76d51582b3678b3b743db72d51ce296d4" }
+# #1632（fork だけの変更。上流へは PR を出さない）: 検索の受信先・保持する応答・応答待ちに上限を持たせ、
+# 受信先ごとに取り消せるようにする。v0.7.1 起点。
+n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
+# #1632: 既存の DHT を住所の公開・解決へ渡し、hash の発見と同じ socket を共有する。0.6.0 起点。
+iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

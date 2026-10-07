@@ -97,6 +97,8 @@ impl PostWithdrawalStore for SqliteStore {
     }
 
     async fn put_post_withdrawal(&self, row: PostWithdrawalRow) -> Result<bool> {
+        let object_id = row.target_object_id.clone();
+        let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
         let result = sqlx::query(
             r#"
             INSERT INTO post_withdrawals (
@@ -130,8 +132,11 @@ impl PostWithdrawalStore for SqliteStore {
         .bind(row.replacement_object_id.as_ref().map(EnvelopeId::as_str))
         .bind(visibility_name(row.reason_visibility))
         .bind(row.reason.map(reason_name))
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        // #1632: 取り下げた投稿の本文・添付・リンクプレビューの画像は、公開参照から外す。
+        super::public_blobs::forget_post_public_blob_refs(&mut tx, object_id.as_str()).await?;
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 

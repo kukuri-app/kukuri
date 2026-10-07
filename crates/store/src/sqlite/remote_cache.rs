@@ -78,6 +78,10 @@ pub(super) async fn delete_cache_item(
             .bind(key)
             .execute(&mut **tx)
             .await?;
+        super::public_blobs::forget_post_public_blob_refs(tx, key).await?;
+    }
+    if kind == "blob" {
+        super::public_blobs::forget_public_blob_announcement(tx, key).await?;
     }
     let deleted =
         sqlx::query("DELETE FROM remote_content_cache WHERE kind = ?1 AND cache_key = ?2")
@@ -539,6 +543,9 @@ impl SqliteStore {
             .bind(next_used)
             .execute(&mut **tx)
             .await?;
+        if kind == "blob" {
+            super::public_blobs::refresh_public_blob_announcement(tx, key, now).await?;
+        }
         Ok(true)
     }
 

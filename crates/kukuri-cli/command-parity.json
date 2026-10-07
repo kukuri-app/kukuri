@@ -136,6 +136,7 @@
     {"tauri":"import_metaverse_room_asset","cli":"import_metaverse_room_asset","inventory":"INV-6"},
     {"tauri":"import_peer_ticket","cli":"import_peer_ticket","inventory":"INV-7"},
     {"tauri":"set_discovery_seeds","cli":"set_discovery_seeds","inventory":"INV-7"},
+    {"tauri":"set_public_blob_discovery","cli":"set_public_blob_discovery","inventory":"INV-7"},
     {"tauri":"set_scope_display","excluded":"gui_visible_membership","reason":"#1221 R2-C: GUIの開いている列を購読の需要(lease)として登録・解除する。CLI／daemonは列を持たず、同じ上限の購読をdesired（set_topic_gossip_enabled・unsubscribe_topic）で扱う。"},
     {"tauri":"unsubscribe_topic","cli":"unsubscribe_topic","inventory":"INV-7"},
     {"tauri":"set_topic_gossip_enabled","cli":"set_topic_gossip_enabled","inventory":"INV-7"},

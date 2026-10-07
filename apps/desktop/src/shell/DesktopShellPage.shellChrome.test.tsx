@@ -306,6 +306,32 @@ test('desktop shell can update discovery seeds', async () => {
   expect(within(drawer).getAllByText('seed-peer-1').length).toBeGreaterThan(0);
 });
 
+// #1632: 切替の結果は返った設定で示し、失敗したら保存済みの値へ戻して発見の error に出す。
+test('desktop shell switches public content discovery and restores it when the switch fails', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const setPublicBlobDiscovery = vi.fn(api.setPublicBlobDiscovery);
+  api.setPublicBlobDiscovery = setPublicBlobDiscovery;
+
+  render(<App api={api} />);
+
+  const drawer = await openSettingsSection(user, 'discovery');
+  const toggle = within(drawer).getByRole('checkbox', { name: 'Public content discovery' });
+  expect(toggle).toBeChecked();
+  await user.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute('aria-busy', 'false'));
+  expect(setPublicBlobDiscovery).toHaveBeenCalledWith(false);
+  expect(toggle).not.toBeChecked();
+
+  setPublicBlobDiscovery.mockRejectedValueOnce(new Error('discovery configuration is locked by environment variables'));
+  await user.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute('aria-busy', 'false'));
+  expect(setPublicBlobDiscovery).toHaveBeenLastCalledWith(true);
+  expect(toggle).not.toBeChecked();
+  await user.click(within(drawer).getByText('Technical diagnostic details'));
+  expect(within(drawer).getByText(/discovery configuration is locked by environment variables/)).toBeInTheDocument();
+});
+
 test('desktop shell surfaces docs-assisted topic recovery in diagnostics', async () => {
   const user = userEvent.setup();
   render(<App api={createDesktopMockApi({ assistPeerIds: ['relay-peer'] })} />);

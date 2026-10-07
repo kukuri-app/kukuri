@@ -100,6 +100,44 @@ impl DesktopRuntime {
         Ok(self.discovery_config.lock().await.clone())
     }
 
+    pub async fn set_discovery_seeds(
+        &self,
+        request: SetDiscoverySeedsRequest,
+    ) -> Result<DiscoveryConfig> {
+        self.update_discovery_config(|config| {
+            config.seed_peers = parse_seed_entries(&request.seed_entries)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// 公開コンテンツの発見の切替（#1632 D2）。関連する要求を止めてから、DHT・補助 index・endpoint を組み直す。
+    pub async fn set_public_blob_discovery(
+        &self,
+        request: SetPublicBlobDiscoveryRequest,
+    ) -> Result<DiscoveryConfig> {
+        self.update_discovery_config(|config| {
+            config.public_blob_discovery = request.enabled;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn update_discovery_config(
+        &self,
+        update: impl FnOnce(&mut DiscoveryConfig) -> Result<()>,
+    ) -> Result<DiscoveryConfig> {
+        let mut next_config = self.discovery_config.lock().await.clone();
+        if next_config.env_locked {
+            bail!("discovery configuration is locked by environment variables");
+        }
+        update(&mut next_config)?;
+        save_discovery_config(&self.db_path, &next_config.stored()).await?;
+        *self.discovery_config.lock().await = next_config.clone();
+        self.apply_community_node_connectivity(None).await?;
+        Ok(next_config)
+    }
+
     pub async fn list_live_sessions(
         &self,
         request: ListLiveSessionsRequest,

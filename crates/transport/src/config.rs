@@ -5,7 +5,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use iroh::{RelayMap, RelayMode, RelayUrl};
 #[cfg(not(target_family = "wasm"))]
-use n0_mainline::DhtBuilder;
+use n0_mainline::{Dht, DhtBuilder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +132,27 @@ pub struct DhtDiscoveryOptions {
     pub enabled: bool,
     #[cfg(not(target_family = "wasm"))]
     pub dht_builder: Option<DhtBuilder>,
+    /// 組み立て済みの DHT node。渡すと住所の公開・解決はこれを使い、自分では作らない（#1632）。
+    #[cfg(not(target_family = "wasm"))]
+    pub dht: Option<Dht>,
+    /// 公開 blob の発見（#1632、ADR 0063）の補助 index。`Some` なら、同じ DHT で hash の告知・検索も行う。
+    #[cfg(not(target_family = "wasm"))]
+    pub public_blob_index: Option<PublicBlobIndex>,
+}
+
+/// kukuri が運用する補助 index（#1632 D6: kukuri の鍵で署名した最大 2 台の一覧）。全 native client と全 Community Node が
+/// 同じ一覧を使う。一覧の鍵は本番反映の Issue で発行して入れ、無い間は公開 blob の発見を使わない。
+#[cfg(not(target_family = "wasm"))]
+pub const KUKURI_PUBLIC_BLOB_INDEX: Option<PublicBlobIndex> = None;
+
+/// 公開 blob の発見の補助 index（UDP の送信元 address → 署名つき endpoint ID）の見つけ方（#1632、ADR 0063）。
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublicBlobIndex {
+    /// kukuri の鍵で署名した一覧（最大 2 台）を DHT から引く。
+    ListKey([u8; 32]),
+    /// 一覧を引かずに使う server（試験）。
+    Servers(Vec<SocketAddrV4>),
 }
 
 impl DhtDiscoveryOptions {
@@ -139,11 +160,14 @@ impl DhtDiscoveryOptions {
         Self::default()
     }
 
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(clippy::needless_update, reason = "wasm には DHT の欄が無い")
+    )]
     pub fn seeded_dht() -> Self {
         Self {
             enabled: true,
-            #[cfg(not(target_family = "wasm"))]
-            dht_builder: None,
+            ..Self::default()
         }
     }
 
@@ -154,11 +178,12 @@ impl DhtDiscoveryOptions {
         Self {
             enabled: true,
             dht_builder: Some(dht_builder),
+            ..Self::default()
         }
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn resolved_dht_builder(&self) -> Option<DhtBuilder> {
+    pub fn resolved_dht_builder(&self) -> Option<DhtBuilder> {
         if !self.enabled {
             return None;
         }

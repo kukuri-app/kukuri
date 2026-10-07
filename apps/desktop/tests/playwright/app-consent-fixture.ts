@@ -31,9 +31,9 @@ export async function seedAppConsent(page: Page, {
         if (command === 'get_desktop_startup_status') return {
           status: 'consent_required',
           documents: ['terms', 'privacy'].map((slug) => ({
-            slug, currentVersion: 8, acceptedVersion: attestedVersion === null ? null : 7,
+            slug, currentVersion: 9, acceptedVersion: attestedVersion === null ? null : 8,
             acceptedAt: null, acceptedLanguage: null, acceptedAppVersion: null,
-            effectiveDate: '2026-09-19', authoritativeLanguage: 'ja', materialChange: true,
+            effectiveDate: '2026-10-07', authoritativeLanguage: 'ja', materialChange: true,
             controllerName: 'Preview Distributor', contact: 'privacy@example.test',
           })),
           age_attestation: { currentVersion: 1, attestedVersion, attestedAt: null },

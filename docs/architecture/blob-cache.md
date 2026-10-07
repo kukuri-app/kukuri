@@ -19,6 +19,8 @@ desktop の通常remote blob取得は一時bytesを返し、それだけでは�
 
 旧領域の保護データの移行（R5-G）: desktop runtime の背景 task（満杯のページが続く間は100ms、追いついたら60秒ごと。shutdownで停止）と backup 作成前の drain が、kind ごとの索引を1回128件以内の cursor で歩く。本人投稿（`envelopes` の rowid 順で署名者が本人の行）、bookmark、custom reaction bookmark、DM 履歴の添付、未送信 outbox（作成時刻順。frame を送信者として開いて暗号化添付の hash を得る）、live/game（反映時刻順。state が指す envelope の署名者が本人のときだけ）、avatar、private 参加状態（現 epoch の metadata・policy・自分の参加 record・自分宛 grant）、自作 Dome の pin tag。旧 SDK の blob は BLAKE3、record は content hash で照合してから、保護参照（`own:`・`bookmark:`・`dm_outbox:` など）を付けた cache 行へ写す（1MiB 超は file）。共有 hash は1行だけ持ち、参照が1つでも残る間は保護される。保護行は3GiBの計数と回収の対象外。bookmark・custom reaction bookmark の解除、DM の ACK と手元の削除で参照を外す。private の record は capability を持つ間、旧領域が無くても key 指定の読み出しで読める。旧領域を削除できるのは、R5-H の writer 切替を永続化した後に全 kind の `caught_up_at` がその時刻より後になったとき（ADR 0048 §7）。
 
+公開blobの発見（#1632、[ADR 0063](../adr/0063-public-blob-dht-discovery.md)）: 検証済みの公開記録が参照するblobを `public_blob_refs` に記録ごとに置き、公開参照とこの台帳の返せる保持（保護か7日以内の利用）の両方があるhashだけを `public_blob_announcements` に512件まで載せてMainlineへ告知する（本人のblob、次に利用の新しいもの）。告知の確認は利用時刻を変えず、告知のための保護参照を足さない。3GiB・7日・128件の回収と保護の条件は変えない。既知の候補で取れない公開blobは、取得の中でDHTから保持端末を探し、hash別の取得元（上の256組）へ覚える。
+
 `blob_objects` の永続状態表は読取り先が無かったため撤去した。添付の表示状態は現在のBlobServiceのlocal状態から求める。欠損していても投稿と操作を続け、表示中の本文・返信先・sessionの再試行は #1221 R3-B の最大4試行・5/30/120秒・需要消失時停止に従う。ネイティブ添付表示ではbase64 IPCとWebView側の全bytes展開を使わず、動画の取得は表示需要がある間だけ行う。128MiBにはアプリ管理の添付bytes（ファイル表示では0）・取得中作業領域を含め、WebView decoder/OS cacheは含めない。旧SDK保存領域の保護移行と物理退役はR5-G/Iで確認する。
 
 本人の書込みの直接の保護（R5-I）: 本人の blob は書いたときに保護参照（既定は `own_blob:<hash>`、送信待ちは `dm_outbox:`、DM 履歴は `dm_message:`、pin は `dome_pin:`）を付けて保護所有先へ置き、本人の docs record は `own_docs` の参照で置く。保護移行の背景 task は旧領域の退役で止まり、以後は常駐しない。

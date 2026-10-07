@@ -101,6 +101,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - Web クライアントの entry・capability・配信条件と実ブラウザの検証環境: `docs/adr/0060-web-client-entry-capability-and-verification.md`（#1220。apps/desktop の Web の build mode、CSP と別 origin、174 command の分類、CI の Chromium・Firefox・実 Safari・Android emulator）
 - 本人の端末間の account 同期の専用チャンネル: `docs/adr/0061-account-sync-channel.md`（#1218。アカウント鍵から用途ごとに導出する replica・namespace・payload の鍵・hint の topic、item の allowlist、封、競合の規則、上限）
 - QR・専用リンクの移行の招待と両端末の確認、必須 bundle と任意の投稿の履歴の転送: `docs/adr/0062-account-transfer-pairing.md`（#1211。招待の wire・上限・期限、専用 ALPN の証明と 1 回限りの消費、確認コード、両端末の承認、bundle の frame・上限・保存の確定・反映、履歴の範囲・page・置き場・続きの位置、移行の後の同意を経た自動同期への接続と端末ごとに残すもの）
+- 公開 blob の保持端末の発見: `docs/adr/0063-public-blob-dht-discovery.md`（#1632。公開参照の索引と告知の資格・上限 512 件・優先順、既知の候補の後の DHT 検索と 1 要求 4 端末、DHT の共有と寿命、設定「公開コンテンツの発見」、依存の fork と上限）
 - Linux GUI配布とCLIのローカル制御経路: `docs/adr/0049-linux-gui-cli-control-plane.md`（#885。CLI専用profile、常駐プロセス／IPC、command登録簿、要求単位の実行、配布成果物のデータ分類）
 - moderation event / safety advisory の trust semantics + deterministic (CSAM / known-hash) critical safety: `docs/adr/0027-deterministic-moderation-critical-safety.md`（optional trust input であり network-wide command ではないことを固定。旧 `community-node-critical-safety.md` / `moderation-event-trust-semantics.md` を集約）
 - community node trust / relation foundation: `docs/adr/0026-community-node-trust-relation-foundation.md`

@@ -640,6 +640,8 @@ export interface DesktopApi {
   ): Promise<CommunityNodeTesterFeedbackResponse>;
   importPeerTicket(ticket: string): Promise<void>;
   setDiscoverySeeds(seedEntries: string[]): Promise<DiscoveryConfig>;
+  // #1632: 公開コンテンツの発見の切替。native だけ（Web の設定画面は切替を出さない）。
+  setPublicBlobDiscovery(enabled: boolean): Promise<DiscoveryConfig>;
   unsubscribeTopic(topic: string): Promise<void>;
   setTopicGossipEnabled(topic: string, enabled: boolean): Promise<void>;
   setChannelGossipEnabled(topic: string, channelId: string, enabled: boolean): Promise<void>;

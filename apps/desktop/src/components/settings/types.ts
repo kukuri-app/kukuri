@@ -63,6 +63,8 @@ export type DiscoveryPanelView = {
   seedPeersMessage?: string;
   seedPeersMessageTone?: 'default' | 'danger';
   envLocked: boolean;
+  // #1632: 保存済みの「公開コンテンツの発見」（DiscoveryConfig.public_blob_discovery）。
+  publicBlobDiscovery: boolean;
 };
 
 // public manifest (#356) 由来の依存度 / capability scope / authority scope 表示。

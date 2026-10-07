@@ -519,6 +519,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             "set_discovery_seeds",
             size1(DesktopRuntime::set_discovery_seeds),
         ),
+        (
+            "set_public_blob_discovery",
+            size1(DesktopRuntime::set_public_blob_discovery),
+        ),
         ("set_my_profile", size1(DesktopRuntime::set_my_profile)),
         (
             "set_private_channel_entry_dome",

@@ -122,6 +122,11 @@ impl AppService {
         }) {
             Some((bytes, mime)) => {
                 let stored = self.services.blob_service.put_blob(bytes, mime).await?;
+                // 公開投稿のリンクプレビュー画像は公開参照にし、DHT で告知・検索する(#1632 D3)。
+                self.services
+                    .projection_store
+                    .note_link_preview_image(object_id.as_str(), stored.hash.as_str())
+                    .await?;
                 Some(KukuriLinkPreviewImageV1 {
                     hash: stored.hash,
                     mime: mime.to_string(),
@@ -235,7 +240,18 @@ impl AppService {
             return Ok(None);
         };
         let image_data_url = match &content.image {
-            Some(image) => self.link_preview_image(image, provider.as_deref()).await,
+            Some(image) => {
+                // 検証した record の画像は、取得の前に公開参照にする(取得で DHT の保持端末を探せる。#1632 D3)。
+                if let Err(error) = self
+                    .services
+                    .projection_store
+                    .note_link_preview_image(object_id.as_str(), image.hash.as_str())
+                    .await
+                {
+                    warn!(%error, "failed to note a link preview image as public");
+                }
+                self.link_preview_image(image, provider.as_deref()).await
+            }
             None => None,
         };
         Ok(Some(LinkPreviewRecordView {

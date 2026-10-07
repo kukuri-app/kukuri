@@ -286,8 +286,9 @@ pub(crate) struct SharedIrohStack {
     pub(crate) source: NodeSource,
     pub(crate) network_config: TransportNetworkConfig,
     pub(crate) dht_options: DhtDiscoveryOptions,
-    /// 今の endpoint が DHT を使っているか(`effective_dht_options` の結果)。
+    /// 今の endpoint が DHT を使っているか、公開 blob の発見を使っているか(`effective_dht_options` の結果)。
     dht_enabled: AtomicBool,
+    public_blobs_enabled: AtomicBool,
     candidate_store: Arc<dyn StackStore>,
     remote_cache_reaper: n0_future::task::JoinHandle<()>,
     /// アカウントの署名鍵から導出した docs author の種(ADR 0053)。stack を作り直すたびに設定し直す。
@@ -317,22 +318,58 @@ pub(crate) fn effective_seed_peers(
     )
 }
 
+#[cfg_attr(
+    target_family = "wasm",
+    expect(
+        unused_variables,
+        unused_mut,
+        reason = "公開 blob の発見は native だけ"
+    )
+)]
 pub(crate) fn effective_dht_options(
     dht_options: &DhtDiscoveryOptions,
+    discovery_config: &DiscoveryConfig,
     bootstrap_seed_peers: &[SeedPeer],
     relay_config: &TransportRelayConfig,
 ) -> DhtDiscoveryOptions {
+    let mut options = dht_options.clone();
+    // 公開コンテンツの発見（#1632 D2）を使う間は、Community Node の利用中・static_peer でも DHT を組み立てる。
+    // 補助 index の一覧が無ければ（一覧の鍵の発行前）、発見を使わない。
+    #[cfg(not(target_family = "wasm"))]
+    if discovery_config.public_blob_discovery && options.public_blob_index.is_some() {
+        options.enabled = true;
+        return options;
+    } else {
+        options.public_blob_index = None;
+    }
     if relay_config.connect_mode() == ConnectMode::DirectOrRelay && !bootstrap_seed_peers.is_empty()
     {
         DhtDiscoveryOptions::disabled()
     } else {
-        dht_options.clone()
+        options
     }
+}
+
+/// 公開 blob の発見を使う DHT か（#1632）。
+#[cfg_attr(
+    target_family = "wasm",
+    expect(unused_variables, reason = "公開 blob の発見は native だけ")
+)]
+fn uses_public_blobs(options: &DhtDiscoveryOptions) -> bool {
+    #[cfg(not(target_family = "wasm"))]
+    return options.public_blob_index.is_some();
+    #[cfg(target_family = "wasm")]
+    return false;
 }
 
 impl SharedIrohStack {
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn public_blobs_enabled(&self) -> bool {
+        self.public_blobs_enabled.load(Ordering::SeqCst)
     }
 
     // 永続の node と SQLite の候補の台帳で組み立てる（無ければメモリの SQLite）。
@@ -372,7 +409,12 @@ impl SharedIrohStack {
         relay_config: TransportRelayConfig,
         candidate_store: Arc<dyn StackStore>,
     ) -> Result<Self> {
-        let dht_options = effective_dht_options(&dht_options, bootstrap_seed_peers, &relay_config);
+        let dht_options = effective_dht_options(
+            &dht_options,
+            discovery_config,
+            bootstrap_seed_peers,
+            &relay_config,
+        );
         let status_changes = StatusChanges::default();
         let current = BoundIrohStack::new(
             &source,
@@ -415,6 +457,7 @@ impl SharedIrohStack {
             source,
             network_config,
             dht_enabled: AtomicBool::new(dht_options.enabled),
+            public_blobs_enabled: AtomicBool::new(uses_public_blobs(&dht_options)),
             dht_options,
             candidate_store,
             remote_cache_reaper,
@@ -501,9 +544,14 @@ impl SharedIrohStack {
         relay_config: TransportRelayConfig,
     ) -> Result<()> {
         let relay_config = relay_config.normalized();
-        let dht_options =
-            effective_dht_options(&self.dht_options, bootstrap_seed_peers, &relay_config);
+        let dht_options = effective_dht_options(
+            &self.dht_options,
+            discovery_config,
+            bootstrap_seed_peers,
+            &relay_config,
+        );
         let dht_enabled = dht_options.enabled;
+        let public_blobs_enabled = uses_public_blobs(&dht_options);
         // Keep the last stack until replacement commits. Peer candidates remain
         // in the account store and are read through bounded windows by the new stack.
         // A failed/cancelled bind must not leave current=None forever. Holding
@@ -553,6 +601,8 @@ impl SharedIrohStack {
         self.blob_service.replace(next.blob_service.clone()).await;
         *current = Some(next);
         self.dht_enabled.store(dht_enabled, Ordering::SeqCst);
+        self.public_blobs_enabled
+            .store(public_blobs_enabled, Ordering::SeqCst);
         self.current_shut_down.store(false, Ordering::SeqCst);
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         info!(target: "kukuri_connectivity", generation, "iroh stack replacement committed");
@@ -614,11 +664,16 @@ impl SharedIrohStack {
                 .collect::<Vec<_>>()
         };
         // 既存の endpoint を使えないときだけ作り直す: 直接だけと relay つきの切替、DHT の有効・無効の切替、
-        // docs の probe の失敗(#1221 R2-B)。relay の集合の変化は、その場で足し引きする。
-        let dht_enabled =
-            effective_dht_options(&self.dht_options, bootstrap_seed_peers, &relay_config).enabled;
+        // 公開 blob の発見の切替(#1632)、docs の probe の失敗(#1221 R2-B)。relay の集合の変化は、その場で足し引きする。
+        let dht_options = effective_dht_options(
+            &self.dht_options,
+            discovery_config,
+            bootstrap_seed_peers,
+            &relay_config,
+        );
         if current_relay_urls.is_empty() != next_relay_urls.is_empty()
-            || dht_enabled != self.dht_enabled.load(Ordering::SeqCst)
+            || dht_options.enabled != self.dht_enabled.load(Ordering::SeqCst)
+            || uses_public_blobs(&dht_options) != self.public_blobs_enabled.load(Ordering::SeqCst)
             || !self.local_docs_available().await?
         {
             info!(

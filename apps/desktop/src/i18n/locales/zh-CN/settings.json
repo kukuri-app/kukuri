@@ -540,6 +540,11 @@
       "envLock": "环境锁定",
       "mode": "模式"
     },
+    "publicBlobDiscovery": {
+      "description": "开启后，本设备会把自己持有的公开帖子的正文与附件、头像以及公开话题的自定义回应图片告知 P2P 网络（Mainline DHT），并在 kukuri 的辅助索引中登记本设备的连接信息。本设备和曾连接过的设备上都没有的内容，会查找持有它的设备并获取。私密频道和私信的内容不在此范围内。",
+      "label": "公开内容发现",
+      "pending": "切换中…"
+    },
     "seedPeersHint": "每行输入一个连接端 ID，连接地址提示可选。",
     "seedPeersLabel": "种子 Peer",
     "seedPeersPlaceholder": "node_id or node_id@host:port",

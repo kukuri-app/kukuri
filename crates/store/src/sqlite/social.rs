@@ -57,6 +57,7 @@ impl SqliteStore {
             return Ok(());
         }
 
+        let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
         sqlx::query(
             r#"
             INSERT INTO profiles (
@@ -97,8 +98,21 @@ impl SqliteStore {
                 .map(|asset| asset.bytes as i64),
         )
         .bind(profile.updated_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        // #1632: profile の画像は公開参照（author replica は公開）。
+        super::public_blobs::replace_public_blob_refs(
+            &mut tx,
+            "profile",
+            profile.pubkey.as_str(),
+            profile
+                .picture_asset
+                .iter()
+                .map(|asset| asset.hash.as_str().to_string())
+                .collect(),
+        )
+        .await?;
+        tx.commit().await?;
 
         Ok(())
     }

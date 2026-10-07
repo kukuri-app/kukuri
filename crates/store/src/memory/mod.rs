@@ -109,12 +109,22 @@ pub struct MemoryStore {
     private_channel_keys: Arc<RwLock<MemoryPrivateChannelKeys>>,
     /// private channel の参加と鍵の行を読み書きした数(試験が、操作ごとに対象の行だけを触ることを確かめる)。
     private_channel_key_rows_touched: Arc<std::sync::atomic::AtomicUsize>,
+    /// 公開参照にしたリンクプレビュー画像（投稿の id → 画像の hash。試験が確かめる。#1632）。
+    link_preview_images: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl MemoryStore {
     pub fn private_channel_key_rows_touched(&self) -> usize {
         self.private_channel_key_rows_touched
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub async fn link_preview_image(&self, object_id: &str) -> Option<String> {
+        self.link_preview_images
+            .read()
+            .await
+            .get(object_id)
+            .cloned()
     }
 }
 
