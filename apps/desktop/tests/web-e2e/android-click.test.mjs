@@ -9,7 +9,7 @@ test('要素の差し替え後に位置を取り直し、成功した押下位�
   const browser = {
     execute: async () => {
       if (refreshes === 1) throw Object.assign(new Error('stale element reference'), { name: 'stale element reference' });
-      return offset;
+      return { offset };
     },
   };
   assert.deepEqual(await androidClick(browser, element, (value) => value, 1000), offset);
@@ -29,3 +29,16 @@ for (const failureAt of ['waitForExist', 'execute']) {
     await assert.rejects(androidClick(browser, element, () => assert.fail('押下しない'), 1000), error);
   });
 }
+
+test('可視点候補がなくても通常driverのクリック判定へ委譲する', async (context) => {
+  const previous = globalThis.document;
+  globalThis.document = { elementFromPoint: () => null };
+  context.after(() => { globalThis.document = previous; });
+  const element = {
+    isConnected: true, waitForExist: async () => {}, scrollIntoView: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 20 }),
+    contains: () => false,
+  };
+  const browser = { execute: (check, node) => check(node) };
+  assert.equal(await androidClick(browser, element, (...args) => args.length === 0 ? 'driver' : 'offset', 200), 'driver');
+});
