@@ -303,8 +303,9 @@ async function reply(browser, target, content) {
 async function react(browser, target, emoji) {
   await (await card(browser, target)).$('button[aria-label="React"]').click();
   // 電話の幅で grid の下にある項目も、利用者の検索欄で絞ってから押す。
-  await browser.$('.post-reaction-search input').setValue(emoji);
-  await browser.$(`button[aria-label="${emoji}"]`).click();
+  const picker = browser.$('.post-reaction-popover[data-state="open"]');
+  await picker.$('.post-reaction-search input').setValue(emoji);
+  await picker.$(`button[aria-label="${emoji}"]`).click();
 }
 
 const EMOJI = { 'thumbs-up': '👍', heart: '❤️', fire: '🔥', clap: '👏', 'party-popper': '🎉', sparkles: '✨', 'raised-hands': '🙌' };

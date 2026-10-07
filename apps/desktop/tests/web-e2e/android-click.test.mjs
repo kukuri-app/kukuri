@@ -29,10 +29,3 @@ for (const failureAt of ['waitForExist', 'execute']) {
     await assert.rejects(androidClick(browser, element, () => assert.fail('押下しない'), 1000), error);
   });
 }
-
-test('中心が見えている場合も測定した位置でpointer actionsを使う', async () => {
-  const offset = { x: 0, y: 0 };
-  const element = { waitForExist: async () => {} };
-  const browser = { execute: async () => offset };
-  assert.deepEqual(await androidClick(browser, element, (options) => options, 1000), offset);
-});

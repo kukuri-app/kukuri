@@ -31,6 +31,5 @@ export async function androidClick(browser, element, original, timeout) {
       return false;
     }
   }, timeout);
-  // offset が 0 でも渡す。引数なしの element click は driver が再 scroll する。
-  return original(offset);
+  return offset.x !== 0 ? original(offset) : original();
 }
