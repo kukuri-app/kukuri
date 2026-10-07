@@ -301,6 +301,8 @@ async function reply(browser, target, content) {
 }
 
 async function react(browser, target, emoji) {
+  // 返信後も、操作するtimelineを選んでからpickerを開く（電話幅の列の切替）。
+  await publicColumn(browser).$('button[role="tab"][aria-selected="true"]').click();
   await (await card(browser, target)).$('button[aria-label="React"]').click();
   // 電話の幅で grid の下にある項目も、利用者の検索欄で絞ってから押す。
   const picker = browser.$('.post-reaction-popover[data-state="open"]');
