@@ -336,12 +336,13 @@ async fn backfill_page(
         .await?
         .into_iter()
         .map(|(rowid, object_id, channel, body, attachments, repost)| {
+            // 空や読めない値は参照なしとして扱い、取込みを止めない。
             let mut hashes = Vec::new();
             if channel == PUBLIC_CHANNEL {
-                let attachments = serde_json::from_str::<Vec<AssetRef>>(&attachments)?;
+                let attachments =
+                    serde_json::from_str::<Vec<AssetRef>>(&attachments).unwrap_or_default();
                 let repost = repost
-                    .map(|repost| serde_json::from_str::<RepostSourceSnapshotV1>(&repost))
-                    .transpose()?;
+                    .and_then(|repost| serde_json::from_str::<RepostSourceSnapshotV1>(&repost).ok());
                 hashes.extend(body);
                 hashes.extend(
                     attachments
@@ -350,9 +351,9 @@ async fn backfill_page(
                         .map(|asset| asset.hash.as_str().to_string()),
                 );
             }
-            Ok((rowid, object_id, hashes))
+            (rowid, object_id, hashes)
         })
-        .collect::<Result<_>>()?,
+        .collect(),
         "profile" => sqlx::query_as::<_, (i64, String, Option<String>)>(
             "SELECT rowid, pubkey, picture_blob_hash FROM profiles \
              WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
@@ -377,14 +378,15 @@ async fn backfill_page(
         .map(|(rowid, reaction_id, status, snapshot, channel)| {
             let mut hashes = Vec::new();
             if status == "active" && channel.as_deref() == Some(PUBLIC_CHANNEL)
-                && let Some(snapshot) = snapshot
+                && let Some(snapshot) = snapshot.and_then(|snapshot| {
+                    serde_json::from_str::<CustomReactionAssetSnapshotV1>(&snapshot).ok()
+                })
             {
-                let snapshot = serde_json::from_str::<CustomReactionAssetSnapshotV1>(&snapshot)?;
                 hashes.push(snapshot.blob_hash.as_str().to_string());
             }
-            Ok((rowid, reaction_id, hashes))
+            (rowid, reaction_id, hashes)
         })
-        .collect::<Result<_>>()?,
+        .collect(),
         _ => anyhow::bail!("unknown public blob backfill kind {kind}"),
     })
 }

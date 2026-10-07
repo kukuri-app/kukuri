@@ -29,6 +29,7 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r2`）。依存の fork（AC
 
 - 対象は、公開 topic の検証済み投稿の本文・添付・repost の snapshot の添付・リンクプレビュー画像、検証済み profile の画像、公開 topic の有効な custom reaction の asset。live session・game room・Dome の資産は対象外とし、DHT の告知・検索をしない。
 - 公開参照の索引 `public_blob_refs(source_kind, source_id, blob_hash)` を、公開記録を書く transaction で記録ごとに置き換える（`post`・`link_preview`・`profile`・`reaction`）。投稿の取り下げと projection の回収は、その投稿の `post`・`link_preview` を外す。同じ hash を別の公開記録が参照している間は公開のまま。
+- custom reaction の公開参照は、reaction を書くときの対象の投稿の行で決める（対象の投稿が後から届いても見直さない）。
 - DM・private channel・pin/保護だけの保存物は公開の根拠にしない。`own_blob:` などの保護参照は、公開の判定にも告知の目印にも使わない（優先度だけに使う。§2）。
 - 導入前の行は、告知の task が種類ごとに rowid の位置から 1 回 128 行ずつ取り込む（`public_blob_ref_backfill`。投稿・profile・reaction。終えた種類の行は消す）。リンクプレビュー画像は手元に表の行が無いので取り込まず、record を書く・読み直すときに載る。導入後に書く行は書込みの transaction で載るので、位置を巻き戻さない。
 
@@ -45,12 +46,12 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r2`）。依存の fork（AC
 - 通常・表示・file の取得は、`fetch_bytes_from_remote` の 1 つの経路で行う。既知の候補（`ranked_peers_for`：hash 別の取得元と端末の台帳の最大 4 件）を先に試し、手元か既知の相手から取れれば DHT を検索しない。
 - 既知の候補で取れず、node が発見を持ち、hash が公開参照を持つときだけ、DHT で保持端末を検索する（`Resolver::resolve_stream`）。stream からは重複を含めて 16 件まで読み、自分と重複を除いた最大 4 端末を hash 別の取得元として覚える（10 分。次の試行で先に使う）。端末の枠（既知と合わせて 1 要求 4 端末）が残っていれば、見つかった順にこの要求で試す。
 - 既知だけで枠を使い切った要求では、残りの時間で見つけた候補を覚えるだけにし、既存の次の試行（5/30/120 秒）で先に使う。最後の試行の後に覚えた候補は、明示の再試行で使う。新しい再試行は作らない。
-- 待機・既知の試行・検索・住所の解決・転送は、受付で決めた 30 秒を共有し、延長しない。要求の取消（呼出し・表示の終了・期限・node の停止）は stream を落とし、DHT と補助 index への要求も取り消す。
+- 待機・既知の試行・検索・住所の解決・転送は、受付で決めた 30 秒を共有し、延長しない。表示の取得の取消（表示の終了）・期限・node の停止は stream を落とし、DHT と補助 index への要求も取り消す。通常の取得は ADR 0055 §1 のとおり待つ呼出しが消えても受付の期限まで続く（検索も同じ）。
 - 見つけた端末への接続は、endpoint の住所解決（同じ DHT の `DhtAddressLookup`）を使う。DHT の候補を保持・権限の証明に使わず、取得した bytes は既存の BLAKE3/Bao の検証と保存前の確認を通る。
 
 ### 4. DHT の共有・寿命・設定（D2・D6）
 
-- native は node の寿命に合わせて DHT を 1 つ組み立て、住所の公開・解決（`DhtAddressLookup::builder().dht(..)`）、補助 index の client、検索、告知で共有する。node の停止は、発見を外して task を止め、住所解決を外し、DHT の socket を手放す。
+- native は node の寿命に合わせて DHT を 1 つ組み立て、住所の公開・解決（`DhtAddressLookup::builder().dht(..)`）、補助 index の client、検索、告知で共有する。node の停止は、発見を外して task を止め、endpoint を閉じて（住所の公開・解決も止まる）DHT の socket を手放す。node を別に保持したままでも手放す。
 - 補助 index の client は、`PublicBlobIndex` で見つけ方を受ける。本番は kukuri の鍵で署名した最大 2 台の一覧（`ListKey`。`kukuri_transport::KUKURI_PUBLIC_BLOB_INDEX`）で、試験は server を直接渡す（`Servers`）。一覧が引けなければ 30 秒ごとにやり直し、それまでは検索も告知もしない。一覧の鍵の発行と server の配置は、本番反映をまとめる別 Issue で行う。鍵が無い間は、設定がオンでも発見を使わない。
 - 設定「公開コンテンツの発見」（`DiscoveryConfig::public_blob_discovery`）は既定でオン。項目の無い既存の profile もオンで始める。オンで補助 index の一覧があれば、Community Node の利用中・`static_peer` でも DHT を組み立てる。オフでは今までの discovery mode の挙動（ADR 0008）に戻る。環境変数で discovery を固定した起動では切り替えられない（seed と同じ）。
 - 切替（`set_public_blob_discovery`）は設定を保存してから接続の再適用へ進み、DHT の使用か発見の有無が変わるときは stack を作り直す（古い node の停止で関連する要求・告知を止めてから、DHT・補助 index・endpoint を組み直す）。

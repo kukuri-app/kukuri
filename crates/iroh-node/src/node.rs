@@ -795,15 +795,12 @@ impl IrohDocsNode {
 
     async fn shutdown_owned(&self) -> Result<()> {
         self.network_work.close();
-        // 公開 blob の発見と、住所の公開・解決を外して、共有の DHT を止める（#1632）。
+        // 公開 blob の発見を外して、共有の DHT を止める（住所の公開・解決は endpoint の終了で止まる。#1632）。
         #[cfg(not(target_family = "wasm"))]
         self.public_blobs
             .lock()
             .expect("public blob discovery poisoned")
             .take();
-        if let Ok(address_lookup) = self.endpoint.address_lookup() {
-            address_lookup.clear();
-        }
         self.account_transfer.cancel();
         self.receive_binding.clear().await;
         self.dome_session.install(None);

@@ -261,6 +261,8 @@ async fn dropping_a_fetch_and_stopping_the_node_leave_no_search_behind() -> Resu
     drop(fetch);
     assert_all_owner_slots_released(&client).await;
 
+    // 停止の後も node を別に保持する（作り直しの間は古い stack が残る）。
+    let held = client.clone();
     client.shutdown().await?;
     timeout(Duration::from_secs(5), async {
         while std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_err() {
@@ -269,7 +271,7 @@ async fn dropping_a_fetch_and_stopping_the_node_leave_no_search_behind() -> Resu
     })
     .await
     .context("the stopped node must release its DHT socket")?;
-    drop(holder);
+    drop((held, holder));
     Ok(())
 }
 

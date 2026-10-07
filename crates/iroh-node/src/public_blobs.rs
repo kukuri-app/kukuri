@@ -150,6 +150,7 @@ async fn announce_loop(
         warn!(%error, "failed to restart public blob announcements");
     }
     let mut backfilled = false;
+    let mut announce_at = Instant::now();
     loop {
         if !backfilled {
             match cache.backfill_public_blob_refs_step(BACKFILL_ROWS).await {
@@ -157,14 +158,24 @@ async fn announce_loop(
                 Err(error) => warn!(%error, "public blob reference backfill failed"),
             }
         }
-        let wait = match announce_due(ready, cache, work).await {
-            Ok(wait) => wait,
-            Err(error) => {
-                warn!(%error, "public blob announcement failed");
-                ANNOUNCE_IDLE
-            }
-        };
-        sleep(if backfilled { wait } else { BACKFILL_PAUSE }).await;
+        // 取込みは 100ms ごとに進め、告知は失敗の後や予定の待ちを守る。
+        if Instant::now() >= announce_at {
+            let wait = match announce_due(ready, cache, work).await {
+                Ok(wait) => wait,
+                Err(error) => {
+                    warn!(%error, "public blob announcement failed");
+                    ANNOUNCE_IDLE
+                }
+            };
+            announce_at = Instant::now() + wait;
+        }
+        let wait = announce_at.saturating_duration_since(Instant::now());
+        sleep(if backfilled {
+            wait
+        } else {
+            wait.min(BACKFILL_PAUSE)
+        })
+        .await;
     }
 }
 
