@@ -28,7 +28,8 @@ pub(super) fn content_advisory() -> Value {
 pub(super) fn resolved_urls() -> Value {
     view(
         json!({"public_base_url": string(), "connectivity_urls": strings(),
-        "seed_peers": array(object(json!({"endpoint_id": string(), "addr_hint": string()}), &["endpoint_id"]))}),
+        "seed_peers": array(object(json!({"endpoint_id": string(), "addr_hint": string()}), &["endpoint_id"])),
+        "public_blob_search": boolean()}),
         &[],
     )
 }
