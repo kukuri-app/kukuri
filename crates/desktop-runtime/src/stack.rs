@@ -320,7 +320,7 @@ pub(crate) fn effective_seed_peers(
 
 #[cfg_attr(
     target_family = "wasm",
-    expect(unused_variables, reason = "公開 blob の発見は native だけ")
+    expect(unused_variables, unused_mut, reason = "公開 blob の発見は native だけ")
 )]
 pub(crate) fn effective_dht_options(
     dht_options: &DhtDiscoveryOptions,
@@ -347,6 +347,10 @@ pub(crate) fn effective_dht_options(
 }
 
 /// 公開 blob の発見を使う DHT か（#1632）。
+#[cfg_attr(
+    target_family = "wasm",
+    expect(unused_variables, reason = "公開 blob の発見は native だけ")
+)]
 fn uses_public_blobs(options: &DhtDiscoveryOptions) -> bool {
     #[cfg(not(target_family = "wasm"))]
     return options.public_blob_index.is_some();
