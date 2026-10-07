@@ -200,12 +200,12 @@ docker compose --env-file .env.community-node -f docker-compose.community-node.y
 
 ### 公開 blob の発見の preview での確認と観測（#1632、ADR 0063 §3・§8）
 - 前提: 一覧の鍵の入った build、補助 index の server と一覧の公開、検索を有効にした Community Node（bootstrap の自 node の `resolved_urls.public_blob_search` が true）。確かめる利用者は、その node の文書に同意している。本番での実施と記録は #1657 で行う
-- 組み立て: 公開投稿の画像を、取得する端末の既知の相手（同じ topic の参加者）が持たず、別の端末（保持端末）だけが持つ状態にする。保持端末は、その画像を表示して cache に持つか、同じ画像を自分の公開投稿に添え、告知を終えるまで待つ（告知は約 10 分ごと、補助 index への登録は約 30 分ごと）。投稿者など既知の相手は、画像を取得させる前に止める（実ブラウザの E2E の `public-blob` と同じ組み立て）。取得する側は、デスクトップ版（DHT で探す）とブラウザ版（Community Node の検索）
+- 組み立て: 公開投稿の画像を、取得する端末の既知の相手（同じ topic の参加者のほか、学習した相手・seed・import・最近の相手・hash ごとの取得元）が持たず、別の端末（保持端末）だけが持つ状態にする。保持端末は「公開コンテンツの発見」がオンのデスクトップ版にする（Web は告知しない）。保持端末は、その画像を表示して cache に持つか、同じ画像を自分の公開投稿に添え、告知と補助 index への登録の間隔（約 10 分・約 30 分。終えたことを示す log は無い）を待つ。投稿者など既知の相手は、画像を取得させる前に止める（実ブラウザの E2E の `public-blob` と同じ組み立て）。取得する側は、デスクトップ版（DHT で探す）とブラウザ版（Community Node の検索）
 - 観測（試した件数・条件とともに作業記録へ残す）
   - 取得成功率と待ち時間: 投稿を画面に入れてから画像が出るまでの時間と、出なかった件数。1 要求は 30 秒まで、続きは既存の再試行（5・30・120 秒）
-  - 候補の消費数: デスクトップ版は開発者モードのアプリ内ログの取得の行（`fetch local miss, trying remote peers` の既知の候補の数と、端末ごとの試行の行）。既定の絞り込みには出ないので、`RUST_LOG=warn,kukuri_desktop_tauri_lib=info,kukuri_app_api=info,kukuri_connectivity=info,kukuri_iroh_node=info` で起動する。ブラウザ版は開発者ツールの network の `POST /v1/blob-providers/search` の応答の `candidates` の数と `partial`
-  - 検索と告知の bytes: ブラウザ版は検索の要求・応答の大きさ（開発者ツール）。デスクトップ版の DHT・補助 index の UDP の送受信量は、OS の資源の監視（process ごとの network の量）で見る
-  - 実際の転送経路: 取得の間に relay が送った bytes（`iroh-relay` の server の metrics の `bytes_sent`）を画像の大きさと比べる。診断の active path は同期全体の経路で、参考にとどめる
+  - 候補の消費数: デスクトップ版は開発者モードのアプリ内ログの取得の行（既定の絞り込みには出ないので、`RUST_LOG=warn,kukuri_desktop_tauri_lib=info,kukuri_app_api=info,kukuri_connectivity=info,kukuri_iroh_node=info` で起動する）。`fetch local miss, trying remote peers` の `selected_peer_count` が既知の候補の数。端末ごとの行は失敗と延期のときだけ出るので、消費数は、その行に出た端末の数に、取得できたなら 1 を足して数える。ブラウザ版は端末ごとの試行を出さないので、開発者ツールの network の `POST /v1/blob-providers/search` の応答の `candidates` の数（返した数）と `partial` を記録する
+  - 検索と告知の bytes: ブラウザ版は検索の要求・応答の大きさ（開発者ツール）。デスクトップ版の DHT・補助 index の UDP は、process ごとの量に iroh の QUIC・relay・Community Node の HTTP も含まれるので、取得と同期の無い間に、OS の資源の監視で相手の address（DHT の参加者・補助 index の server）ごとの量を見る
+  - 実際の転送経路: 取得の間の受信量を画像の大きさと比べる。ブラウザ版は、開発者ツールの network の relay の WebSocket の受信量と、`chrome://webrtc-internals` の DataChannel の受信 bytes を比べる（大半が WebSocket なら relay、DataChannel なら WebRTC）。デスクトップ版は、OS の資源の監視で、relay の host との通信量と、保持端末の address との UDP の量を比べる。本番の relay は metrics を公開していない。診断の active path は topic の接続相手の経路で、blob の取得の接続を表さないので、参考にとどめる
 
 ## community-node env 標準形
 - `.env.community-node.example` をコピーして `.env.community-node` を作り、compose では `--env-file .env.community-node` を使う

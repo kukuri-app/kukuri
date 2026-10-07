@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1632、Scope revision `2026-10-07-r3`）。依存の fork（AC-1〜AC-3）と native の公開参照・告知・取得（AC-4）を §1〜§6 に、Community Node の保持端末の検索と補助 index の process（AC-5）を §7 に、Web の取得（AC-6）を §8 に固定した。
+Accepted（Issue #1632、Scope revision `2026-10-08-r4`）。依存の fork（AC-1〜AC-3）と native の公開参照・告知・取得（AC-4）を §1〜§6 に、Community Node の保持端末の検索と補助 index の process（AC-5）を §7 に、Web の取得（AC-6）を §8 に固定した。
 
 ## Context
 
@@ -71,7 +71,7 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r3`）。依存の fork（AC
 
 ### 6. 法務
 
-外部送信表示・プライバシーポリシー・データの流れの一覧を、Mainline への告知・検索と補助 index への登録・照会に合わせて改訂し、Legal bundle version を 9 へ上げて再同意を求める（2026-10-07）。Web が検索を提供する Community Node へ公開 blob の hash を送る流れ（§8）は、配布前の version 9 の本文と変更履歴へ足した（版と再同意は version 9 の 1 回のまま。Scope revision r3 の法務-Web）。
+外部送信表示・プライバシーポリシー・データの流れの一覧を、Mainline への告知・検索と補助 index への登録・照会に合わせて改訂し、Legal bundle version を 9 へ上げて再同意を求める（2026-10-07）。Web が検索を提供する Community Node へ公開 blob の hash を送る流れ（§8）は、配布前の version 9 の本文と変更履歴へ足した（版と再同意は version 9 の 1 回のまま。Scope revision r3 の法務-Web）。あわせて、プライバシーポリシーの適用範囲に Web クライアントを明記した（r4）。
 
 ### 7. Community Node の保持端末の検索（D5・D6・D7）
 
