@@ -117,7 +117,8 @@ struct HistorySink {
 
 #[derive(Default, Debug, PartialEq)]
 struct HistoryLog {
-    opened: Vec<(String, History)>,
+    /// 開いたアカウント・範囲・送り元の端末。
+    opened: Vec<(String, History, String)>,
     /// 確定した page の record の数と、揃った blob（hash と長さ）。
     pages: Vec<(usize, Vec<(String, usize)>)>,
     /// 確定していない page で受けた record の数。
@@ -136,9 +137,11 @@ impl AccountBundleSink for HistorySink {
         &self,
         account_id: &str,
         history: History,
+        peer: &str,
     ) -> Result<AccountHistoryResume, Failure> {
         let mut log = self.log.lock().unwrap();
-        log.opened.push((account_id.to_string(), history));
+        log.opened
+            .push((account_id.to_string(), history, peer.to_string()));
         let (since, cursor) = match &self.resume {
             Some((since, cursor)) => (*since, Some(cursor.clone())),
             None => (None, None),
@@ -303,7 +306,8 @@ async fn the_history_follows_the_bundle_only_when_chosen() -> Result<()> {
         }
         assert_eq!(calls, [(None, None), (None, Some(page_cursor(1)))]);
         assert_eq!(source.most_reading.load(Ordering::SeqCst), 1);
-        assert_eq!(log.opened, [(ACCOUNT.to_string(), History::All)]);
+        let peer = source_node.endpoint().id().to_string();
+        assert_eq!(log.opened, [(ACCOUNT.to_string(), History::All, peer)]);
         let blobs = vec![(hash(&small), small.len()), (hash(&large), large.len())];
         assert_eq!(log.pages, [(3, blobs), (2, Vec::new())]);
         assert_eq!((log.pending, log.abandoned), (0, 0));
@@ -414,3 +418,6 @@ async fn the_history_starts_at_the_position_of_the_staging() -> Result<()> {
     assert_eq!(sink.log.lock().unwrap().pages, [(2, Vec::new())]);
     Ok(())
 }
+
+#[path = "account_transfer_union.rs"]
+mod union;

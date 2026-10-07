@@ -182,14 +182,17 @@ export async function switchAccount(accountId: string): Promise<AccountRecord> {
 // #1211: QR・専用リンクの移行。リンクは招待の秘密を含むので、log・URL の query へ出さない。
 // mock ビルドでは、接続と相手の承認を即座に済ませ、1.5 秒の転送中の後に完了にする（移行先は今のアカウントを受けた
 // ことにして、切り替えない）。履歴を選んだときは、完了の前に 2 秒の履歴の受信を挟む（AC-3）。
+// #1650: 本人の端末どうしの同期は、1.5 秒待ってからもう一方の端末とつながったことにして、同じ流れで投稿まで受ける。
 let mockTransfer: AccountTransferStatus = { state: 'idle' };
 let mockTransferDoneAt = 0;
+let mockSyncPeerAt = 0;
 let mockHistory: AccountTransferHistory | null = null;
 const MOCK_HISTORY_POSTS = 24;
 
 export async function createAccountTransferInvite(): Promise<AccountTransferLink> {
   if (isDesktopMockActive()) {
     const expires_at_ms = Date.now() + 5 * 60 * 1000;
+    mockSyncPeerAt = 0;
     mockTransfer = { state: 'waiting', expires_at_ms };
     return { link: 'kukuri://transfer#v1.bW9jay1hY2NvdW50LXRyYW5zZmVyLWludml0ZQ', expires_at_ms };
   }
@@ -207,9 +210,26 @@ export async function openAccountTransfer(link: string, history: AccountTransfer
   return invokeDesktop<void>('open_account_transfer', { request: { link, history } satisfies OpenAccountTransferRequest });
 }
 
+// #1650: 同じアカウントの別の端末との同期を待ち受ける。状態の読み出しと取消は移行と同じ command を使う。
+export async function startAccountUnionSync(): Promise<void> {
+  if (isDesktopMockActive()) {
+    const now = Date.now();
+    mockHistory = 'all';
+    mockSyncPeerAt = now + 1500;
+    mockTransfer = { state: 'waiting', expires_at_ms: now + 5 * 60 * 1000 };
+    return;
+  }
+  return invokeDesktop<void>('start_account_union_sync');
+}
+
 export async function getAccountTransferStatus(): Promise<AccountTransferStatus> {
   if (isDesktopMockActive()) {
     const now = Date.now();
+    if (mockTransfer.state === 'waiting' && mockSyncPeerAt > 0 && now >= mockSyncPeerAt) {
+      mockSyncPeerAt = 0;
+      mockTransferDoneAt = now + 1500;
+      mockTransfer = { state: 'transferring', role: 'sync', items: 12 };
+    }
     if (mockTransfer.state === 'transferring' && now >= mockTransferDoneAt) {
       const { role } = mockTransfer;
       const account_id = role === 'target' ? mockAccounts.active_account_id : null;

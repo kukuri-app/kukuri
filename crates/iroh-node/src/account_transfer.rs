@@ -8,7 +8,10 @@
 //! の blob・page の終わりを順に送る。移行先は page を保存するたびに ACK を返し、移行元は ACK を受けてから次の page を
 //! 送る（送っている page は常に 1 つ）。履歴の中止・失敗は必須の移行の完了を変えない。選んでいなければ、移行先は
 //! ACK の後に接続を閉じる。
+//!
+//! 本人の端末どうしの和集合の同期（#1650）は、同じ枠と送受信の関数を使う（`sync.rs`）。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -17,7 +20,7 @@ use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use kukuri_core::{
-    AccountHistoryCursor, AccountHistoryRecord, AccountTransferFailure as Failure,
+    AccountHistoryCursor, AccountHistoryRecord, AccountSyncKeys, AccountTransferFailure as Failure,
     AccountTransferFrame as Frame, AccountTransferHistory, AccountTransferHistoryResult,
     AccountTransferInvite, AccountTransferItem, AccountTransferRole as Role,
     AccountTransferStatus as Status, MAX_ACCOUNT_HISTORY_BLOB_PART_BYTES,
@@ -27,7 +30,11 @@ use n0_future::task::AbortOnDropHandle;
 use n0_future::time::timeout;
 use tokio::sync::{Semaphore, watch};
 
+mod sync;
+
 pub const ACCOUNT_TRANSFER_ALPN: &[u8] = b"/kukuri/account-transfer/1";
+/// 本人の端末どうしの和集合の同期（#1650）。
+pub const ACCOUNT_SYNC_ALPN: &[u8] = b"/kukuri/account-union/1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(120);
@@ -85,12 +92,13 @@ pub struct AccountHistoryPage {
 #[async_trait::async_trait]
 pub trait AccountBundleSink: Send + Sync {
     async fn begin(&self, secret_hex: &str) -> Result<Box<dyn AccountBundleStaging>, Failure>;
-    /// 受けたアカウントの履歴の置き場を開く。範囲の最初の時間 bucket（すべては `None`）と、続きの位置（同じ範囲の途中
-    /// で止まっていればその位置）を返す。
+    /// 受けたアカウントの履歴の置き場を開く。範囲の最初の時間 bucket（すべては `None`）と、続きの位置（同じ相手の端末
+    /// `peer` の同じ範囲の途中で止まっていればその位置）を返す。
     async fn history(
         &self,
         account_id: &str,
         history: AccountTransferHistory,
+        peer: &str,
     ) -> Result<AccountHistoryResume, Failure>;
 }
 
@@ -128,7 +136,7 @@ pub trait AccountBundleStaging: Send {
     async fn abort(&mut self);
 }
 
-/// 端末ごとに 1 つだけの移行（移行元・移行先のどちらか）。新しい移行は前の移行を取り消す。
+/// 端末ごとに 1 つだけの移行（移行元・移行先のどちらか）か同期。新しい移行・同期は前のものを取り消す。
 #[derive(Clone)]
 pub struct AccountTransfer {
     endpoint: Endpoint,
@@ -144,14 +152,27 @@ struct Slot {
 
 struct Session {
     role: Role,
-    invite: AccountTransferInvite,
+    pairing: Pairing,
+    /// 移行元は招待を、同期は待ち受けを、1 回だけ使う。
     consumed: StdMutex<bool>,
     status: watch::Sender<Status>,
     decision: watch::Sender<Option<bool>>,
-    /// 移行元が送る必須 bundle と履歴（移行先は `None`）。
+    /// 移行元・同期が送る必須 bundle と履歴（移行先は `None`）。
     source: Option<Arc<dyn AccountBundleSource>>,
+    /// 同期が受けたものの保存（移行先の保存は `run_target` へ渡す）。
+    sink: Option<Arc<dyn AccountBundleSink>>,
     /// 移行先が選んだ履歴の範囲（移さないとき・移行元は `None`）。
     history: Option<AccountTransferHistory>,
+    /// 同期で、本人の端末の候補へつなぐ試み（相手ごとに 1 つ。つながったら、その接続で送り合う）。
+    attempts: StdMutex<HashMap<EndpointId, AbortOnDropHandle<()>>>,
+}
+
+/// 接続した相手の確かめ方。
+enum Pairing {
+    /// 移行（#1211）: 招待の秘密による証明と、両端末の確認コード。
+    Invite(AccountTransferInvite),
+    /// 本人の端末どうしの同期（#1650）: アカウント鍵から導出した証明。
+    Account(AccountSyncKeys),
 }
 
 impl std::fmt::Debug for AccountTransfer {
@@ -184,7 +205,7 @@ impl AccountTransfer {
         self.replace(
             Some(Session::new(
                 Role::Source,
-                invite.clone(),
+                Pairing::Invite(invite.clone()),
                 status,
                 Some(source),
                 None,
@@ -204,7 +225,13 @@ impl AccountTransfer {
     ) -> Result<()> {
         let invite = AccountTransferInvite::parse_link(link, now_ms())?;
         let addr = issuer_addr(&invite)?;
-        let session = Session::new(Role::Target, invite, Status::Connecting, None, history);
+        let session = Session::new(
+            Role::Target,
+            Pairing::Invite(invite),
+            Status::Connecting,
+            None,
+            history,
+        );
         let task = n0_future::task::spawn({
             let endpoint = self.endpoint.clone();
             let session = session.clone();
@@ -233,7 +260,7 @@ impl AccountTransfer {
         };
         match session.status.borrow().clone() {
             Status::Waiting { expires_at_ms } if now_ms() >= expires_at_ms => Status::Failed {
-                role: Role::Source,
+                role: session.role,
                 reason: Failure::Expired,
             },
             status => status,
@@ -297,19 +324,21 @@ impl AccountTransfer {
 impl Session {
     fn new(
         role: Role,
-        invite: AccountTransferInvite,
+        pairing: Pairing,
         status: Status,
         source: Option<Arc<dyn AccountBundleSource>>,
         history: Option<AccountTransferHistory>,
     ) -> Arc<Self> {
         Arc::new(Self {
             role,
-            invite,
+            pairing,
             consumed: StdMutex::new(false),
             status: watch::channel(status).0,
             decision: watch::channel(None).0,
             source,
+            sink: None,
             history,
+            attempts: StdMutex::default(),
         })
     }
 
@@ -367,13 +396,23 @@ impl Session {
 
     /// 移行元: 期限内・未使用・証明が正しいときだけ、招待を 1 回だけ消費する。
     fn consume(&self, target: &[u8; 32], proof: &[u8; 32]) -> bool {
+        let Ok(invite) = self.invite() else {
+            return false;
+        };
         let mut consumed = self.consumed.lock().expect("account transfer poisoned");
         let valid = !*consumed
             && !self.status.borrow().is_terminal()
-            && now_ms() < self.invite.expires_at_ms
-            && self.invite.verify_hello(target, proof);
+            && now_ms() < invite.expires_at_ms
+            && invite.verify_hello(target, proof);
         *consumed |= valid;
         valid
+    }
+
+    fn invite(&self) -> Result<&AccountTransferInvite, Failure> {
+        match &self.pairing {
+            Pairing::Invite(invite) => Ok(invite),
+            Pairing::Account(_) => Err(Failure::Invalid),
+        }
     }
 }
 
@@ -382,6 +421,10 @@ impl ProtocolHandler for AccountTransfer {
         let Ok(_permit) = self.permits.try_acquire() else {
             return Ok(());
         };
+        if connection.alpn() == ACCOUNT_SYNC_ALPN {
+            self.serve_sync(&connection).await;
+            return Ok(());
+        }
         let Some(session) = self.source_session() else {
             return Ok(());
         };
@@ -459,7 +502,7 @@ async fn run_target(
         .open_bi()
         .await
         .map_err(|_| Failure::Interrupted)?;
-    send.write_all(&session.invite.hello_proof(&target))
+    send.write_all(&session.invite()?.hello_proof(&target))
         .await
         .map_err(|_| Failure::Interrupted)?;
     let mut verdict = [0];
@@ -491,7 +534,7 @@ async fn confirm(
     mut recv: RecvStream,
     target: &[u8; 32],
 ) -> Result<(), Failure> {
-    let code = session.invite.verification_code(target);
+    let code = session.invite()?.verification_code(target);
     let confirming = |local_accepted| Status::Confirming {
         role: session.role,
         code: code.clone(),
@@ -545,7 +588,7 @@ async fn confirm(
 }
 
 /// 移行元: 同じ接続の新しい stream で、鍵・item の chunk・総数を送り、移行先の保存の ACK を受けるまで待つ。
-/// 移行先が保存の失敗で閉じた接続は、送る途中でも保存の失敗として示す。
+/// 移行先が保存の失敗で閉じた接続は、送る途中でも保存の失敗として示す。同期は鍵を送らない（両端末が同じ鍵を持つ）。
 async fn send_bundle(
     session: &Session,
     connection: &Connection,
@@ -556,13 +599,15 @@ async fn send_bundle(
             .open_bi()
             .await
             .map_err(|_| Failure::Interrupted)?;
-        write_frame(
-            &mut send,
-            &Frame::Key {
-                secret: source.secret_hex(),
-            },
-        )
-        .await?;
+        if session.role == Role::Source {
+            write_frame(
+                &mut send,
+                &Frame::Key {
+                    secret: source.secret_hex(),
+                },
+            )
+            .await?;
+        }
         let (mut cursor, mut count) = (None, 0);
         loop {
             let (items, next) = source.page(cursor).await.map_err(|_| Failure::Storage)?;
@@ -571,10 +616,12 @@ async fn send_bundle(
                     count += items.len() as u64;
                 }
                 write_frame(&mut send, &frame).await?;
-                session.set(Status::Transferring {
-                    role: Role::Source,
-                    items: count,
-                });
+                if session.role == Role::Source {
+                    session.set(Status::Transferring {
+                        role: Role::Source,
+                        items: count,
+                    });
+                }
             }
             let Some(next) = next else { break };
             cursor = Some(next);
@@ -617,7 +664,13 @@ async fn serve_history(
         unavailable: 0,
         stopped: None,
     };
-    session.set_history(None, &result);
+    // 同期の状態は受ける向きの数で示す。
+    let progress = |result: &AccountTransferHistoryResult| {
+        if session.role == Role::Source {
+            session.set_history(None, result);
+        }
+    };
+    progress(&result);
     let sent = async {
         let Frame::History { since, mut cursor } = read_frame(&mut recv).await? else {
             return Err(Failure::Invalid);
@@ -653,7 +706,7 @@ async fn serve_history(
             }
             result.posts += page.posts;
             result.unavailable += unavailable;
-            session.set_history(None, &result);
+            progress(&result);
             let Some(next) = next else { break };
             cursor = Some(next);
         }
@@ -707,7 +760,7 @@ async fn send_blob(
 }
 
 /// 移行先: 鍵を受けて保存を始め、chunk ごとに保存し、総数が合えば確定して ACK を返す。確定しなければ保存を消す。
-/// 受けたアカウントの ID を返す。
+/// 受けたアカウントの ID を返す。同期は鍵の frame を受けず、自分の鍵で保存を始める。
 async fn receive_bundle(
     session: &Session,
     connection: &Connection,
@@ -717,8 +770,12 @@ async fn receive_bundle(
         .await
         .map_err(|_| Failure::Interrupted)?
         .map_err(|_| Failure::Interrupted)?;
-    let Frame::Key { secret } = read_frame(&mut recv).await? else {
-        return Err(Failure::Invalid);
+    let secret = match (&session.source, session.role) {
+        (Some(source), Role::Sync) => source.secret_hex(),
+        _ => match read_frame(&mut recv).await? {
+            Frame::Key { secret } => secret,
+            _ => return Err(Failure::Invalid),
+        },
     };
     let storage_failed = |reason| {
         if reason == Failure::Storage {
@@ -735,7 +792,7 @@ async fn receive_bundle(
                     count += items.len() as u64;
                     staging.stage(items).await?;
                     session.set(Status::Transferring {
-                        role: Role::Target,
+                        role: session.role,
                         items: count,
                     });
                 }
@@ -773,13 +830,15 @@ async fn receive_history(
         unavailable: 0,
         stopped: None,
     };
-    session.set_history(Some(account_id), &result);
+    let shown = (session.role == Role::Target).then_some(account_id);
+    session.set_history(shown, &result);
     let received = async {
+        let peer = connection.remote_id().to_string();
         let AccountHistoryResume {
             since,
             cursor,
             mut staging,
-        } = sink.history(account_id, history).await?;
+        } = sink.history(account_id, history, &peer).await?;
         let (mut send, mut recv) = connection
             .open_bi()
             .await
@@ -803,7 +862,7 @@ async fn receive_history(
                     staging.commit(next).await?;
                     result.posts += posts;
                     result.unavailable += unavailable;
-                    session.set_history(Some(account_id), &result);
+                    session.set_history(shown, &result);
                     send.write_all(&[ACCEPTED])
                         .await
                         .map_err(|_| Failure::Interrupted)?;

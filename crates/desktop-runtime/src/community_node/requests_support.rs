@@ -537,6 +537,10 @@ impl DesktopRuntime {
             self.app_service
                 .account_sync_peers_joined(base_url, topic, &peers)
                 .await;
+            // 本人の端末どうしの同期を待ち受けていれば、その端末へもつなぐ（#1650）。
+            if let Err(error) = self.account_union_sync_peers(topic, &peers).await {
+                tracing::debug!(%error, "account union sync peers were not tried");
+            }
             self.iroh_stack
                 .transport
                 .join_topic_peers(base_url, &TopicId::new(topic.clone()), peers)

@@ -37,7 +37,7 @@ use n0_future::time::timeout;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::account_transfer::{ACCOUNT_TRANSFER_ALPN, AccountTransfer};
+use crate::account_transfer::{ACCOUNT_SYNC_ALPN, ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 use crate::dome_session::{DOME_SESSION_ALPN, DomeSessionConnections, DomeSessionSlot};
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 use crate::remote_blob::{REMOTE_BLOB_ALPN, RemoteBlobProtocol};
@@ -562,6 +562,7 @@ impl IrohDocsNode {
             .accept(DOC_READ_ALPN, page_read)
             .accept(REMOTE_BLOB_ALPN, remote_blob)
             .accept(ACCOUNT_TRANSFER_ALPN, account_transfer.clone())
+            .accept(ACCOUNT_SYNC_ALPN, account_transfer.clone())
             .accept(DOME_SESSION_ALPN, dome_session.clone());
         if let Some(signaling) = &signaling {
             router = router.accept(SIGNALING_ALPN, signaling.clone());
@@ -635,7 +636,7 @@ impl IrohDocsNode {
         self.fetch_peer_health.clone()
     }
 
-    /// QR・専用リンクの移行（#1211）。招待と確認は endpoint ごとに 1 つ。
+    /// QR・専用リンクの移行（#1211）と本人の端末どうしの同期（#1650）。招待・待ち受けは endpoint ごとに 1 つ。
     pub fn account_transfer(&self) -> &AccountTransfer {
         &self.account_transfer
     }

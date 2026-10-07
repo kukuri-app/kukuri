@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 /// rendezvous の在席（topic の鍵ごとの端末と addr）。同じ鍵に居る他の端末を返す（cn-user-api の rendezvous と同じ）。
 #[derive(Default)]
-struct Presence(std::sync::Mutex<BTreeMap<String, BTreeMap<String, Option<String>>>>);
+pub(super) struct Presence(std::sync::Mutex<BTreeMap<String, BTreeMap<String, Option<String>>>>);
 
 async fn presence_heartbeat(
     State(presence): State<Arc<Presence>>,
@@ -54,7 +54,7 @@ async fn presence_heartbeat(
 }
 
 /// 端末ごとの Community Node（認証の token は端末ごと）。rendezvous の在席は共有する。
-async fn community_node(presence: Arc<Presence>) -> String {
+pub(super) async fn community_node(presence: Arc<Presence>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
     let state = Arc::new(MockManagedCommunityNodeState::new(
@@ -88,7 +88,7 @@ async fn community_node(presence: Arc<Presence>) -> String {
 }
 
 /// 同意のダイアログと同じ手順で、node の文書に同意して session を張る。
-async fn consent(runtime: &DesktopRuntime, base_url: &str) {
+pub(super) async fn consent(runtime: &DesktopRuntime, base_url: &str) {
     runtime
         .set_community_node_config(crate::SetCommunityNodeConfigRequest {
             trust_node_priority: None,
@@ -126,7 +126,11 @@ async fn consent(runtime: &DesktopRuntime, base_url: &str) {
 }
 
 /// 両端末の session の維持（rendezvous の更新）を回しながら、`done` を待つ。
-async fn converge(what: &str, runtimes: [&DesktopRuntime; 2], mut done: impl AsyncFnMut() -> bool) {
+pub(super) async fn converge(
+    what: &str,
+    runtimes: [&DesktopRuntime; 2],
+    mut done: impl AsyncFnMut() -> bool,
+) {
     timeout(Duration::from_secs(60), async {
         while !done().await {
             for runtime in runtimes {
@@ -192,7 +196,7 @@ async fn channel_view(runtime: &DesktopRuntime, topic: &str) -> Option<JoinedPri
         .pop()
 }
 
-async fn social(runtime: &DesktopRuntime, kind: SocialConnectionKind) -> Vec<String> {
+pub(super) async fn social(runtime: &DesktopRuntime, kind: SocialConnectionKind) -> Vec<String> {
     runtime
         .app_service
         .list_social_connections(kind)

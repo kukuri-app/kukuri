@@ -503,6 +503,10 @@ index idx_follow_edges_target table=follow_edges unique=0 origin=c partial=0
   key seqno=1 cid=3 name=Some("updated_at")
   key seqno=2 cid=0 name=Some("subject_pubkey")
   sql=Some("CREATE INDEX idx_follow_edges_target ON follow_edges(target_pubkey, updated_at DESC, subject_pubkey ASC)")
+index idx_follow_edges_target_subject table=follow_edges unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("target_pubkey")
+  key seqno=1 cid=0 name=Some("subject_pubkey")
+  sql=Some("CREATE INDEX idx_follow_edges_target_subject ON follow_edges (target_pubkey, subject_pubkey)")
 index idx_game_room_cache_derived table=game_room_cache unique=0 origin=c partial=0
   key seqno=0 cid=12 name=Some("derived_at")
   key seqno=1 cid=0 name=Some("room_id")
