@@ -18,6 +18,7 @@ on:
           - rust
           - vitest
           - playwright
+          - web-safari
       repeats:
         description: 'Iterations per shard (2 shards run in parallel)'
         required: false
@@ -33,6 +34,14 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
+  web-safari:
+    if: inputs.lane == 'web-safari'
+    uses: ./.github/workflows/kukuri-web-e2e.yml
+    with:
+      browser: safari
+      scenario: lifecycle
+      repeats: ${{ inputs.repeats }}
+
   rust:
     if: ${{ inputs.lane == 'all' || inputs.lane == 'rust' }}
     runs-on: ubuntu-24.04
