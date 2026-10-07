@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::prelude::*;
 
+use crate::idb;
 use crate::lifecycle::{Lifecycle, LifecycleListeners, listen_lifecycle};
 use crate::tab_lock::{self, RuntimeLock};
 use crate::{BrowserStorage, IndexedDbCache};
@@ -370,6 +371,23 @@ pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
         });
     })?;
     *client.lifecycle.borrow_mut() = Some(lifecycle);
+    // 起動の途中の database の版の更新の間は、画面に「データの移行中です」を出す（ADR 0059 §1）。
+    let weak = Rc::downgrade(&client);
+    idb::watch_migrations(Some(Rc::new(move |migrating| {
+        let Some(client) = weak.upgrade() else {
+            return;
+        };
+        let startup = &client.gate.startup;
+        match (migrating, startup.status()) {
+            (true, ClientStartupStatus::Initializing) => {
+                startup.set_status(ClientStartupStatus::Migrating)
+            }
+            (false, ClientStartupStatus::Migrating) => {
+                startup.set_status(ClientStartupStatus::Initializing)
+            }
+            _ => {}
+        }
+    })));
     CLIENT.set(Some(client.clone()));
     let status = {
         let _guard = client.gate.operation_lock.lock().await;
@@ -387,6 +405,7 @@ pub async fn shutdown() {
     };
     client.listeners.borrow_mut().clear();
     client.lifecycle.borrow_mut().take();
+    idb::watch_migrations(None);
     // lock は runtime を止めてから手放す（止める前に別の tab が始めないように）。
     let lock = client.runtime_lock.borrow_mut().take();
     let gate = client.gate.clone();

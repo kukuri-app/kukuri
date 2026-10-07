@@ -160,6 +160,7 @@
   },
   "startup": {
     "checking": "正在检查启动状态…",
+    "migrating": "正在迁移数据…",
     "title": "kukuri 无法打开本地数据库。",
     "description": "数据未被删除。请重试启动；如果问题持续，请附上下面的诊断信息。",
     "copyDetails": "复制详情",

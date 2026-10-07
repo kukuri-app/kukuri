@@ -88,7 +88,7 @@ Accepted（Issue #1632、Scope revision `2026-10-07-r3`）。依存の fork（AC
 - Web は Mainline DHT と補助 index を使わない（ブラウザは UDP を使えない）。手元と既知の相手（§3 と同じ、1 要求の最大 4 端末・30 秒）で取れない公開 blob は、同じ要求の中で、検索を提供する利用中の Community Node（bootstrap の `public_blob_search`）の最初の 1 つへ `POST /v1/blob-providers/search` を送る。送るのは session が成り立ち（同意が成立し）、token がある node だけ。`budget_ms` は取得に残る時間（上限 8 秒。node の期限 10 秒の中で、打ち切った分の応答が届くようにする）で、残りが無ければ送らない。
 - 候補は relay URL と直接の address を持つ到達情報にして、native の DHT の発見と同じ窓（読み 16・試す端末は既知と合わせて 4）と取得元の候補表（期限 10 分）へ入れる。Web は endpoint ID だけでは接続できないので、候補表は到達情報ごと覚え、次の試行でそれを先に試す。
 - 未提供・旧 node（欄が無い）・失敗（401/403/404/429・通信失敗）は候補なしとし、今までの取得を続ける。取得の取消（表示の最後の需要の消失）と期限で候補の stream を落とすと、検索の HTTP 要求も取り消す（ブラウザの HTTP は別の task で待ち、stream と一緒に止める）。
-- 公開の根拠（§1）は native と同じ意味で、Web の account の database（IndexedDB）の `public_refs`（key は `[kind, source_id, blob_hash]`、索引 `hash`）に、記録の書込み・取り下げ・回収と同じ transaction で置き換える。database の版 2 で足し、版 1 の database には store だけを足す（既存の store と行は変えない）。導入前の行は、`meta` の取込みの位置（種類と最後の主 key）から 1 回 128 行ずつ背景で取り込む（reload の後も続きから進む）。Web は告知をしないので、告知の予定は持たない。
+- 公開の根拠（§1）は native と同じ意味で、Web の account の database（IndexedDB）の `public_refs`（key は `[kind, source_id, blob_hash]`、索引 `hash`）に、記録の書込み・取り下げ・回収と同じ transaction で置き換える。database の版 2 で足し、版 1 の database には store だけを足す（既存の store と行は変えない。版の更新の間は、起動の画面に「データの移行中です」を出して待つ。ADR 0059 §1）。導入前の行は、`meta` の取込みの位置（種類と最後の主 key）から 1 回 128 行ずつ背景で取り込む（reload の後も続きから進む）。Web は告知をしないので、告知の予定は持たない。
 - 一般の native へ探索を依頼せず、Community Node も blob を取得しない。ブラウザは UDP の送受信も、Web の cache の Mainline への代行の告知もしない。取得した blob は既存の hash の検証と保存前の確認を経て IndexedDB に置く（reload の後も表示し、既存の再配信を続ける）。
 
 ## Consequences

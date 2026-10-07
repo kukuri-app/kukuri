@@ -205,6 +205,8 @@ pub enum ClientStartupStatus {
     },
     /// 同じ origin の別の tab が runtime を動かしている（Web だけ。ADR 0059 §4）。
     InUseElsewhere,
+    /// 保存先の database の版を更新している（Web だけ。画面は「データの移行中です」で待つ。ADR 0059 §1）。
+    Migrating,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

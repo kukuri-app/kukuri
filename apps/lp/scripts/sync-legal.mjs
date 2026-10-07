@@ -41,7 +41,7 @@ for (const [route, file, label] of [
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>クライアントの${label} | kukuri</title>
-  <meta name="description" content="kukuriデスクトップクライアントの${label}の全文。日本語正文。">
+  <meta name="description" content="kukuriの${label}の全文。日本語正文。">
   <link rel="canonical" href="https://kukuri.app/${route}/">
   <style>
     :root { color-scheme: light; }

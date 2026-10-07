@@ -160,6 +160,7 @@
   },
   "startup": {
     "checking": "Checking startup status…",
+    "migrating": "Migrating your data…",
     "title": "kukuri could not open the local database.",
     "description": "Your data was not deleted. Retry startup, and include the diagnostic details below if the issue continues.",
     "copyDetails": "Copy details",

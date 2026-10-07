@@ -110,7 +110,7 @@ export function App(props: AppProps) {
             }
           }
           setStartupGate(status);
-          if (status.status === 'initializing') {
+          if (status.status === 'initializing' || status.status === 'migrating') {
             retryTimer = setTimeout(loadStartupStatus, 100);
           }
         })
@@ -144,10 +144,15 @@ export function App(props: AppProps) {
     };
   }, [props.api, startupCheck]);
 
-  if (startupGate.status === 'checking' || startupGate.status === 'initializing') {
+  // Web の保存先の版の更新の間は、レイアウトを出す前に「データの移行中です」で待つ（ADR 0059 §1）。
+  if (
+    startupGate.status === 'checking' ||
+    startupGate.status === 'initializing' ||
+    startupGate.status === 'migrating'
+  ) {
     return (
       <>
-        <StartupStatusScreen status='checking' />
+        <StartupStatusScreen status={startupGate.status === 'migrating' ? 'migrating' : 'checking'} />
         <WindowClosePrompt />
       </>
     );
@@ -315,7 +320,7 @@ function StartupStatusScreen({
   status,
   error,
 }: {
-  status: 'checking' | 'failed';
+  status: 'checking' | 'migrating' | 'failed';
   error?: DesktopStartupErrorView;
 }) {
   const { t } = useTranslation(['common']);
@@ -331,8 +336,8 @@ function StartupStatusScreen({
   return (
     <main className='startup-error-screen'>
       <section className='startup-error-panel' aria-live='polite'>
-        {status === 'checking' ? (
-          <Notice>{t('startup.checking')}</Notice>
+        {status !== 'failed' ? (
+          <Notice>{t(status === 'migrating' ? 'startup.migrating' : 'startup.checking')}</Notice>
         ) : (
           <>
             <Notice tone='destructive'>

@@ -10,20 +10,25 @@ type WebRuntime = typeof import('@kukuri/web-runtime');
 let runtime: WebRuntime | null = null;
 const listeners = new Set<(event: RuntimeEvent) => void>();
 
-/// WASM を初期化し、runtime を始める。Community Node の初期設定は native の配布と同じもの（開発・試験は
+/// WASM を初期化し、runtime の起動を始める。起動（保存先の版の更新を含む）の終わりは待たない。画面は native と同じく
+/// 起動の状態を読みながら待つ（ADR 0059 §1）。Community Node の初期設定は native の配布と同じもの（開発・試験は
 /// `VITE_KUKURI_COMMUNITY_NODE_BASE_URL` で替える）。
 export async function startWebRuntime(): Promise<void> {
   const module = await import('@kukuri/web-runtime');
   await module.default();
   runtime = module;
   const baseUrl = import.meta.env.VITE_KUKURI_COMMUNITY_NODE_BASE_URL;
-  await module.start({
-    communityNodeConfig: baseUrl ? { nodes: [{ base_url: baseUrl }] } : distributionCommunityNodes,
-  });
-  // web-runtime の callback は外せないので、1 つだけ渡して購読者へ配る。
-  module.listen((event: RuntimeEvent) => {
-    for (const listener of listeners) listener(event);
-  });
+  void module
+    .start({
+      communityNodeConfig: baseUrl ? { nodes: [{ base_url: baseUrl }] } : distributionCommunityNodes,
+    })
+    .then(() => {
+      // web-runtime の callback は外せないので、1 つだけ渡して購読者へ配る。
+      module.listen((event: RuntimeEvent) => {
+        for (const listener of listeners) listener(event);
+      });
+    })
+    .catch(() => undefined);
 }
 
 export function invokeWebRuntime<T>(command: string, args?: Record<string, unknown>): Promise<T> {
