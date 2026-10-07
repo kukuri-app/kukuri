@@ -1,10 +1,10 @@
 # kukuri プライバシーポリシー
 
-最終更新日: 2026-09-19
+最終更新日: 2026-10-07
 
-施行日: 2026-09-19
+施行日: 2026-10-07
 
-Legal bundle version: 8
+Legal bundle version: 9
 正文言語: 日本語
 
 本ポリシーは kukuri デスクトップアプリ自体に適用されます。各 Community Node が個別に提示するプライバシーポリシーとは別のものです。日本語版を正文とし、アプリ内の英語版・簡体字中国語版は参考訳です。参考訳と日本語版に差異がある場合は日本語版を優先します。
@@ -42,9 +42,13 @@ kukuri は P2P を基盤とするアプリです。アカウントを識別す�
 
 ## 5. 接続時に扱われる情報
 
-公開鍵、endpoint ID、IP address、address hint、接続先・時刻・経路等の接続情報が、Mainline DHT、接続相手、選択した Community Node、iroh relay、通信経路事業者から観測される場合があります。
+公開鍵、endpoint ID、IP address、address hint、接続先・時刻・経路等の接続情報が、Mainline DHT、接続相手、選択した Community Node、iroh relay、kukuri が運用する補助 index、通信経路事業者から観測される場合があります。
 
 通信経路の優先度は `Direct P2P -> Relay Supported P2P -> Relay Fallback` です。Community Node や relay が接続補助に関与しても実データが必ず relay を通るわけではありません。Direct P2P と Relay Supported P2P が成立せず、Relay Fallback になった場合は、暗号化された実データ traffic が relay を経由します。
+
+Windows／Linux のデスクトップアプリは、設定「公開コンテンツの発見」がオンの間（既定でオン）、Community Node の利用中や `static_peer` の設定でも Mainline DHT（BitTorrent の公開 DHT）へ UDP で参加し、署名済み address record（endpoint ID と到達情報）の公開・解決もこの DHT で行います。DHT の参加者には、端末の通信元 IP address と UDP port が見えます。端末は、保持する blob のうち検証済みの公開記録が参照しているもの（公開投稿の本文・添付・再投稿の添付・リンクプレビュー画像、プロフィール画像、公開 topic のカスタムリアクションの画像）について、その BLAKE3 hash から導いた infohash を DHT へ告知します。告知は、その IP address と port がその内容を保持しているという情報で、内容の hash を知る人は、保持する端末の IP address と port を調べられます。告知は 1 端末 512 件まで約 10 分ごとに更新し、保持しなくなった内容や公開でなくなった内容は更新を止めます。DHT 上の告知は期限で消えます。
+
+公開コンテンツの発見では、kukuri が運用する補助 index へ、DHT の UDP の送信元 address（IP address と port）と endpoint ID を結び付けた署名つき record を約 30 分ごとに登録します。公開 blob が手元と既知の相手に無いときは、その hash から導いた infohash で DHT の保持端末を検索し（探している infohash が DHT の参加者から観測され得ます）、見つかった IP address と port を補助 index へ照会して endpoint ID を得てから、P2P で取得して hash を検証します。告知を見た端末が、公開 blob を取得するために接続してくることがあります。DM、private channel、非公開の内容の hash は告知・検索せず、blob の中身は DHT や補助 index へ送りません。設定画面でオフにすると、告知・検索と補助 index への登録・照会を行わず、Mainline DHT は接続先探索の設定（`seeded_dht`）に従って使います。Web クライアントは公開コンテンツの発見を行いません。
 
 ## 6. Community Node で扱われる情報
 
@@ -74,6 +78,7 @@ Direct／NSIS・Linux版のアプリは、同意後の起動時と30分ごと、
 
 - 端末内情報は、利用者が個別に削除するか app data を削除するまで保持されます。cache 等には実装上の容量上限や再構築による置換があります。
 - リンク preview の metadata／画像は process memory に success 最大10分、failure 最大60秒、合計128件かつ16 MiBまで保持し、process終了で消えます。リンク先・画像配信先・経路事業者の記録は各主体の方針に従います。
+- 公開コンテンツの発見の DHT 上の告知は更新を止めると期限で消え、補助 index へ登録した record は期限（既定 1 時間）で消えます。
 - P2P 相手、DHT、relay、GitHub、各 Community Node が扱う情報は各主体の方針に従い、kukuri アプリはその保持期間を一括して制御しません。
 - Community Node の一時 presence、index、report 等は機能ごとに異なります。実際の期間は当該 Node の retention 文書を確認してください。
 
@@ -91,6 +96,7 @@ local data の削除や投稿撤回は、対応する client／Node が認識す
 
 ## 13. 変更履歴
 
+- version 9（2026-10-07）: デスクトップアプリの設定「公開コンテンツの発見」（既定でオン）で、Community Node の利用中や `static_peer` の設定でも Mainline DHT へ参加すること、保持する公開 blob の hash から導いた infohash の告知・検索、kukuri が運用する補助 index への endpoint ID と UDP の送信元 address の登録・照会、告知・検索しない内容、期限による消去、オフにできることを追記しました。利用規約 version 9 と版・施行日を同期しました。
 - version 8（2026-09-19）: 公開投稿の先頭 URL の preview を表示するためにリンク先と OGP 画像配信先へ送る情報、送らない情報、private／非表示内容を自動取得しないこと、端末内の一時保持を追記しました。利用規約 version 8 と版・施行日を同期しました。#1190で、GitHub Releasesへの更新確認はDirect／NSIS・Linux版だけで、Microsoft Store版はStore／Windowsへ委譲してkukuri内から送信しない配布差を明記しました。この補記は外部送信を増やさないためbundle versionを変更しません。
 - version 7（2026-09-18）: 採用順位に選んだ Community Node へ、表示した投稿と引用元の作成者の公開鍵、および表示した live／game 一覧の主催者の公開鍵を信頼評価の照会として送る場合があること、任意の同意文書へ同意した Node へ自分のブロック・ミュートを提供できること、いずれも送らない情報、応答を期限で作り直すこと、取消で削除を要求することを追記しました。利用規約 version 7 と版・施行日を同期しました。
 - version 6（2026-09-16）: 設定した Community Node へ、表示した投稿の ID と添付ファイルの識別子を成人向け表現の推定の照会として送る場合があること、送らない情報、保存しないこと、Node ごとに採用を選べることを追記しました。利用規約 version 6 と版・施行日を同期しました。

@@ -106,8 +106,8 @@ test('settings drawer exposes the window close behavior under System', async () 
 function consentDocuments(acceptedVersion: number | null) {
   return ['terms', 'privacy'].map((slug) => ({
     slug,
-    currentVersion: 8,
-    effectiveDate: '2026-09-19',
+    currentVersion: 9,
+    effectiveDate: '2026-10-07',
     authoritativeLanguage: 'ja',
     materialChange: true,
     controllerName: 'Preview Distributor',
@@ -170,7 +170,7 @@ test('pending consent fixes the display language and retry sends the newly displ
   await user.selectOptions(language, 'en');
   expect(language).toHaveValue('ja');
   expect(invokeMock).toHaveBeenLastCalledWith('accept_app_consents', {
-    documents: [{slug:'terms',version:8},{slug:'privacy',version:8}], language:'ja', ageAttested:true,
+    documents: [{slug:'terms',version:9},{slug:'privacy',version:9}], language:'ja', ageAttested:true,
   });
   rejectSave(new Error('storage unavailable'));
   await screen.findByText('同意の保存に失敗しました。もう一度お試しください。');
@@ -179,7 +179,7 @@ test('pending consent fixes the display language and retry sends the newly displ
   expect(screen.getByRole('checkbox')).toBeChecked();
   await user.click(screen.getByRole('button', { name: 'Accept and continue' }));
   expect(invokeMock).toHaveBeenLastCalledWith('accept_app_consents', {
-    documents: [{slug:'terms',version:8},{slug:'privacy',version:8}], language:'en', ageAttested:true,
+    documents: [{slug:'terms',version:9},{slug:'privacy',version:9}], language:'en', ageAttested:true,
   });
   rejectSave(new Error('retry result'));
   await screen.findByText('Failed to save your consent. Please try again.');
@@ -329,7 +329,7 @@ test('desktop app blocks startup until app-level legal consent is accepted', asy
   expect(await screen.findByRole('heading', { name: 'Before you continue' })).toBeInTheDocument();
   expect(screen.getByText('Terms of Service')).toBeInTheDocument();
   expect(screen.getByText('Privacy Policy')).toBeInTheDocument();
-  expect(screen.getAllByText(/Effective date: 2026-09-19/)).toHaveLength(2);
+  expect(screen.getAllByText(/Effective date: 2026-10-07/)).toHaveLength(2);
   expect(
     screen.getAllByText(
       'This is a reference translation of the authoritative Japanese version. The Japanese version controls if there is any discrepancy.'
@@ -362,8 +362,8 @@ test('desktop app blocks startup until app-level legal consent is accepted', asy
   await waitFor(() => {
     expect(invokeMock).toHaveBeenCalledWith('accept_app_consents', {
       documents: [
-        { slug: 'terms', version: 8 },
-        { slug: 'privacy', version: 8 },
+        { slug: 'terms', version: 9 },
+        { slug: 'privacy', version: 9 },
       ],
       language: 'en',
       ageAttested: true,
@@ -373,11 +373,11 @@ test('desktop app blocks startup until app-level legal consent is accepted', asy
   expect(screen.getByDisplayValue(/runtime starts after consent/)).toBeInTheDocument();
 });
 
-test('desktop app requires renewed consent for legal bundle version 8 (#1174)', async () => {
+test('desktop app requires renewed consent for legal bundle version 9 (#1632)', async () => {
   const user = userEvent.setup();
   invokeMock.mockResolvedValueOnce({
     status: 'consent_required',
-    documents: consentDocuments(7),
+    documents: consentDocuments(8),
     age_attestation: ageAttestation(1),
   });
   invokeMock.mockResolvedValueOnce({
@@ -405,7 +405,7 @@ test('desktop app requires renewed consent for legal bundle version 8 (#1174)', 
       'This is a draft and is not legal advice. Final decisions should be made in consultation with appropriate experts or regulators.'
     )
   ).not.toBeInTheDocument();
-  expect(screen.getAllByText('v8')).toHaveLength(2);
+  expect(screen.getAllByText('v9')).toHaveLength(2);
   expect(screen.queryByTestId('control-center-trigger')).not.toBeInTheDocument();
 
   // #858: 現行版で申告済みならチェックボックスは再表示されず、ボタンは有効のまま。
@@ -416,8 +416,8 @@ test('desktop app requires renewed consent for legal bundle version 8 (#1174)', 
   await waitFor(() => {
     expect(invokeMock).toHaveBeenCalledWith('accept_app_consents', {
       documents: [
-        { slug: 'terms', version: 8 },
-        { slug: 'privacy', version: 8 },
+        { slug: 'terms', version: 9 },
+        { slug: 'privacy', version: 9 },
       ],
       language: 'en',
       ageAttested: false,

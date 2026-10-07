@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn app_consent_satisfied_requires_every_document_at_current_or_newer_version() {
-        assert_eq!(LEGAL_BUNDLE_VERSION, 8);
+        assert_eq!(LEGAL_BUNDLE_VERSION, 9);
         assert!(!app_consent_documents_satisfied(&AppConsentStore::default()));
 
         // terms だけ同意しても不十分。
@@ -377,6 +377,10 @@ mod tests {
             "OGP 画像",
             "URL の path／query",
             "process memory",
+            // #1632: 公開コンテンツの発見の DHT への告知・検索と補助 index への登録・照会。
+            "公開コンテンツの発見",
+            "infohash",
+            "kukuri が運用する補助 index",
         ] {
             assert!(
                 PRIVACY.contains(required_clause),
@@ -393,6 +397,10 @@ mod tests {
             // #1174: link先とOGP image hostへの自動送信。
             "OGP 画像配信先",
             "process-memory cache",
+            // #1632: Mainline DHT の告知・検索と補助 index の行。
+            "公開コンテンツの発見",
+            "infohash",
+            "kukuri が運用する補助 index",
         ] {
             assert!(
                 EXTERNAL_TRANSMISSION.contains(required_clause),
