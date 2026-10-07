@@ -26,6 +26,15 @@ on:
         type: choice
         options: [firefox, chrome, safari, android]
         default: firefox
+      scenario:
+        description: 'Scenario name or JSON array; empty runs all scenarios'
+        type: string
+        default: ''
+      attempts:
+        description: 'Android attempts, each with a fresh emulator'
+        type: choice
+        options: ['[1]', '[1,2]', '[1,2,3]']
+        default: '[1]'
   schedule:
     - cron: '30 18 * * *'
     # Safari。
@@ -98,6 +107,7 @@ jobs:
         env:
           SCENARIO: ${{ inputs.scenario }}
         run: |
+          node --test tests/web-e2e/*.test.mjs
           echo "list=$(node tests/web-e2e/main-flow.mjs --list "$SCENARIO")" >> "$GITHUB_OUTPUT"
           echo "browser=$KUKURI_WEB_E2E_BROWSER" >> "$GITHUB_OUTPUT"
 
@@ -275,6 +285,7 @@ jobs:
       fail-fast: false
       matrix:
         scenario: ${{ fromJSON(needs.linux-web-e2e-build.outputs.scenarios) }}
+        attempt: ${{ fromJSON(inputs.attempts || '[1]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
