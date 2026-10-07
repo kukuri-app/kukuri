@@ -191,9 +191,9 @@ async fn run_sync(endpoint: &Endpoint, peer: EndpointAddr, session: &Session) {
 /// 同期: 両端末が同じ接続で、自分の必須 bundle（鍵を除く）と投稿の記録すべてを送り、相手のものを受けて取り込む。結果は
 /// 受けた向きの数で示し、どちらかの向きが止まったら止まった理由を示す。取消で状態が終わったら、途中でもやめる。
 ///
-/// 閉じる側は、どの stream も最後の書込みの後に相手の受取りの確認（`stopped`）を待ってから閉じ、iroh の QUIC は閉じた
-/// 接続でも受け取り済みの data を読ませる。そのため送る向きの失敗は、相手が受け終える前に止まった（取消・切断）ときだけ
-/// 起きる。
+/// 閉じる側は、どの stream も最後の書込みの受取りを確かめてから閉じ（相手の ACK を読むか、`stopped` を待つ）、iroh の
+/// QUIC は閉じた接続でも受け取り済みの data を読ませる。そのため送る向きの失敗は、相手が受け終える前に止まった（取消・
+/// 切断）ときだけ起きる。
 async fn sync_both(session: &Session, connection: &Connection) {
     let exchange = async {
         let source = session.source.as_deref().ok_or(Failure::Invalid)?;
