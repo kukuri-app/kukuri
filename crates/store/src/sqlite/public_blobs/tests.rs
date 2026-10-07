@@ -348,6 +348,20 @@ async fn due_announcements_come_in_order_and_restart_makes_all_due() {
     );
 }
 
+/// 公開参照と告知の予定は記録と同じ transaction で書くので、記録の保存が確定しなければ残らない。
+#[tokio::test]
+async fn refs_and_schedule_roll_back_with_the_record() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    hold(&store, &hash(1)).await;
+    let mut tx = begin_public_blob_write(&store).await.unwrap();
+    replace_public_blob_refs(&mut tx, "post", "p1", vec![hash(1)])
+        .await
+        .unwrap();
+    drop(tx);
+    assert_eq!(public(&store, &[hash(1)]).await, [false]);
+    assert!(scheduled(&store).await.is_empty());
+}
+
 /// 読み出しの期限（7 日の未使用）が回収より先に切れた保持は、告知の直前に予定から外す。利用時刻は変えない。
 #[tokio::test]
 async fn an_expired_hold_leaves_the_schedule_before_it_is_reclaimed() {
