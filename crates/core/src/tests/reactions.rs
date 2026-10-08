@@ -93,3 +93,40 @@ fn custom_reaction_asset_roundtrip_and_reaction_id_stability() {
     assert_eq!(first, second);
     assert_ne!(first, different);
 }
+
+#[test]
+fn custom_reaction_id_depends_only_on_the_image_and_the_search_key() {
+    let party = custom_reaction_id("blob-1", "party");
+    // 他の client も同じ値を求められるよう、形式を固定する（#1232 D1）。
+    assert_eq!(
+        party,
+        "5fa064b060d8ea505dccd4ed0dc5596b63fcda6afccf1a7455bb25dc04a1e3ae"
+    );
+    assert_eq!(custom_reaction_id("blob-1", " party "), party);
+    assert_ne!(custom_reaction_id("blob-1", "Party"), party);
+    assert_ne!(custom_reaction_id("blob-2", "party"), party);
+
+    // 別の作者が別の時刻に作った asset は envelope の ID が違っても、同じ ID になる。
+    let ids = [" party ", "party"].map(|search_key| {
+        let envelope = build_custom_reaction_asset_envelope(
+            &generate_keys(),
+            BlobHash::new("blob-1"),
+            search_key.into(),
+            "image/png".into(),
+            128,
+            128,
+            128,
+        )
+        .expect("asset envelope");
+        let asset = parse_custom_reaction_asset(&envelope)
+            .expect("parse asset")
+            .expect("asset");
+        (
+            asset.asset_id,
+            custom_reaction_id(asset.blob_hash.as_str(), &asset.search_key),
+        )
+    });
+    assert_ne!(ids[0].0, ids[1].0);
+    assert_eq!(ids[0].1, party);
+    assert_eq!(ids[1].1, party);
+}

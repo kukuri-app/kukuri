@@ -193,6 +193,20 @@ impl KukuriEnvelope {
     }
 }
 
+/// カスタムリアクションの ID（#1232 D1）。画像の hash と検索名（前後の空白を除く）だけから決まり、作成者・作成時刻・
+/// 署名を含まない。同じ画像＋検索名は、誰が作っても・取り込んでも同じ ID になり、同じリアクションとして数えられる。
+/// 署名つき envelope の ID を使う旧い asset ID のリアクションは、そのままの key で別に数える（D2）。
+pub fn custom_reaction_id(blob_hash: &str, search_key: &str) -> String {
+    hex::encode(sha256_digest(
+        format!(
+            "kukuri:custom-reaction:v1:{}:{}",
+            blob_hash.trim(),
+            search_key.trim()
+        )
+        .as_bytes(),
+    ))
+}
+
 pub(crate) fn normalize_reaction_emoji(value: &str) -> Option<String> {
     let normalized = value.trim();
     (!normalized.is_empty()).then(|| normalized.to_string())
