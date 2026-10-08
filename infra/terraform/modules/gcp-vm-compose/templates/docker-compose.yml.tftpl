@@ -137,6 +137,24 @@ services:
     restart: unless-stopped
     ports:
       - "3478:3478/udp"
+%{ if public_blob_index_list_secret_id != "" ~}
+  # 送信元 address を保持するため host network の socket で直接受ける（#1657）。
+  cn-addr-index:
+    logging: *cn-logging
+    image: ${cn_iroh_relay_image}
+    entrypoint: ["/usr/local/bin/cn-addr-index"]
+    restart: unless-stopped
+    network_mode: host
+
+  cn-index-list:
+    logging: *cn-logging
+    image: ${cn_iroh_relay_image}
+    entrypoint: ["/usr/local/bin/iroh-index-list"]
+    command: ["--server", "${static_ip}:60125"]
+    restart: unless-stopped
+    environment:
+      IROH_INDEX_LIST_SECRET: $${IROH_INDEX_LIST_SECRET:?set IROH_INDEX_LIST_SECRET}
+%{ endif ~}
 %{ if deploy_indexer_stack ~}
 
   # index 投影 + relation graph（#615）。rebuildable projection（canonical store ではない）。

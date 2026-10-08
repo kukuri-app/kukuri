@@ -528,3 +528,8 @@ variable "moderation" {
     error_message = "Moderation limits must fit the initial Tier 1 budget."
   }
 }
+variable "public_blob_index_list_secret_id" {
+  description = "kukuri が運用する補助 index と一覧 publisher を配置する場合の Secret Manager の鍵 ID。空なら配置しない。"
+  type        = string
+  default     = ""
+}

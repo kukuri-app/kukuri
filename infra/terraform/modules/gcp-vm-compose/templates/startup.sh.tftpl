@@ -131,6 +131,9 @@ chmod +x "$INSTALL_DIR/backup.sh"
 # secret は Terraform state / VM metadata に焼かず、boot 時に Secret Manager から取得する。
 # DSN の password 部分は URL-encode し、特殊文字でも壊れないようにする。
 JWT_SECRET="$(fetch_secret "${jwt_secret_id}" "${jwt_secret_version}")"
+%{ if public_blob_index_list_secret_id != "" ~}
+INDEX_LIST_SECRET="$(fetch_secret "${public_blob_index_list_secret_id}" "latest")"
+%{ endif ~}
 %{ if legal_data_key_secret_id != "" ~}
 LEGAL_DATA_KEY="$(fetch_secret "${legal_data_key_secret_id}" "latest")"
 %{ endif ~}
@@ -169,6 +172,9 @@ VLM_API_KEY="$(fetch_secret "${vlm_api_key_secret_id}" "latest")"
 umask 077
 {
   echo "COMMUNITY_NODE_JWT_SECRET=$${JWT_SECRET}"
+%{ if public_blob_index_list_secret_id != "" ~}
+  echo "IROH_INDEX_LIST_SECRET=$${INDEX_LIST_SECRET}"
+%{ endif ~}
   echo "COMMUNITY_NODE_DATABASE_URL=$${DATABASE_URL}"
   echo "COMMUNITY_NODE_RENDEZVOUS_REDIS_URL=$${REDIS_URL}"
 %{ if legal_data_key_secret_id != "" ~}
@@ -210,6 +216,10 @@ else
 fi
 
 # --- start the stack ---
+%{ if public_blob_index_list_secret_id != "" ~}
+# COS は host network の inbound を既定で拒否する。VPC firewall と両方で直接 UDP を許可する。
+iptables -C INPUT -p udp --dport 60125 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 60125 -j ACCEPT
+%{ endif ~}
 cd "$INSTALL_DIR"
 # 前回bootの構成で作られたoptional timerを先に片付ける。現在も有効なunitはこの後で
 # 再生成・再enableする。serviceの実行中にflagを切り替える場合も次回bootで収束する。

@@ -96,6 +96,18 @@ resource "google_compute_firewall" "stun" {
   target_tags   = var.network_tags
 }
 
+resource "google_compute_firewall" "public_blob_index" {
+  count   = var.enable_public_blob_index ? 1 : 0
+  name    = "${var.name_prefix}-allow-public-blob-index"
+  network = local.network_name
+  allow {
+    protocol = "udp"
+    ports    = ["60125"]
+  }
+  source_ranges = var.extra_ingress_source_ranges
+  target_tags   = var.network_tags
+}
+
 resource "google_compute_firewall" "iap_ssh" {
   count   = var.enable_iap_ssh ? 1 : 0
   name    = "${var.name_prefix}-allow-iap-ssh"

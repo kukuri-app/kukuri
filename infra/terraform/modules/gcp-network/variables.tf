@@ -85,3 +85,8 @@ variable "private_services_prefix_length" {
   type        = number
   default     = 16
 }
+variable "enable_public_blob_index" {
+  description = "kukuri が運用する補助 index の 60125/udp を公開するか。"
+  type        = bool
+  default     = false
+}

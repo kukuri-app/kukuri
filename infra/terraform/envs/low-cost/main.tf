@@ -26,6 +26,7 @@ module "network" {
   name_prefix                 = var.name_prefix
   region                      = var.region
   extra_ingress_source_ranges = var.extra_ingress_source_ranges
+  enable_public_blob_index    = var.public_blob_index_list_secret_id != ""
 }
 
 module "vm" {
@@ -49,9 +50,10 @@ module "vm" {
 
   cors_allowed_origins = var.cors_allowed_origins
 
-  cn_user_api_image   = var.cn_user_api_image
-  cn_iroh_relay_image = var.cn_iroh_relay_image
-  cn_cli_image        = var.cn_cli_image
+  cn_user_api_image                = var.cn_user_api_image
+  cn_iroh_relay_image              = var.cn_iroh_relay_image
+  cn_cli_image                     = var.cn_cli_image
+  public_blob_index_list_secret_id = var.public_blob_index_list_secret_id
 
   # low-cost: local Postgres + Valkey containers
   deploy_local_postgres = true
@@ -63,7 +65,7 @@ module "vm" {
   jwt_secret_id               = var.jwt_secret_id
   postgres_password_secret_id = var.postgres_password_secret_id
   accessor_secret_ids = concat(
-    compact([var.jwt_secret_id, var.postgres_password_secret_id, var.legal_data_key_secret_id]),
+    compact([var.jwt_secret_id, var.postgres_password_secret_id, var.legal_data_key_secret_id, var.public_blob_index_list_secret_id]),
     # index / moderation stack の runtime secrets（#615）。stack 無効時は binding を作らない。
     var.deploy_indexer_stack ? compact([
       var.channel_secret_key_secret_id,
