@@ -237,33 +237,10 @@ h3 {
   opacity: 0.85;
 }
 
-/* スマートフォンでは PC へ引き継ぐ案内を出す（JS が有効な場合のみ） */
-.handoff {
+/* スマートフォンでは PC 向けのダウンロードを隠し、ブラウザ版へ案内する（JS が有効な場合のみ） */
+html[data-os="mobile"] [data-os-target="windows"],
+html[data-os="mobile"] [data-os-target="linux"] {
   display: none;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  margin-block: 20px;
-}
-
-.handoff p {
-  margin: 0 0 12px;
-}
-
-html.is-mobile .handoff {
-  display: block;
-}
-
-html.is-mobile .download-actions {
-  display: none;
-}
-
-.handoff-status {
-  margin-top: 8px;
-  font-size: 0.92rem;
-  color: var(--focus);
-  min-height: 1.5em;
 }
 
 /* Hero */
