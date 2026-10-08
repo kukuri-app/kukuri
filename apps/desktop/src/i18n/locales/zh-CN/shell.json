@@ -161,7 +161,8 @@
       "authorActivity": "用户动态",
       "directMessage": "私信",
       "topic": "主题：{{topic}}",
-      "topicChannel": "主题：{{topic}} / 频道：{{channel}}"
+      "topicChannel": "主题：{{topic}} / 频道：{{channel}}",
+      "topicPrivateChannel": "主题：{{topic}} / 私密频道"
     },
     "empty": "还没有通知。",
     "errors": {

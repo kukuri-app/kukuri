@@ -161,7 +161,8 @@
       "authorActivity": "ユーザーのアクティビティ",
       "directMessage": "ダイレクトメッセージ",
       "topic": "トピック: {{topic}}",
-      "topicChannel": "トピック: {{topic}} / チャンネル: {{channel}}"
+      "topicChannel": "トピック: {{topic}} / チャンネル: {{channel}}",
+      "topicPrivateChannel": "トピック: {{topic}} / プライベートチャンネル"
     },
     "empty": "通知はまだありません。",
     "errors": {

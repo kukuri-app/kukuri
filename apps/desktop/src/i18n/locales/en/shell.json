@@ -161,7 +161,8 @@
       "authorActivity": "User activity",
       "directMessage": "Direct message",
       "topic": "Topic: {{topic}}",
-      "topicChannel": "Topic: {{topic}} / Channel: {{channel}}"
+      "topicChannel": "Topic: {{topic}} / Channel: {{channel}}",
+      "topicPrivateChannel": "Topic: {{topic}} / Private channel"
     },
     "empty": "No notifications yet.",
     "errors": {
