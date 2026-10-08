@@ -610,8 +610,9 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
       return 'peer1@127.0.0.1:7777';
     },
     async getBlobMediaPayload(hash, mime): Promise<BlobMediaPayload | null> {
-      if (metaverseAssetPayloads[hash]) {
-        return metaverseAssetPayloads[hash];
+      const stored = metaverseAssetPayloads[hash] ?? runtime.options?.seedBlobPayloads?.[hash];
+      if (stored) {
+        return stored;
       }
       return {
         bytes_base64: mime.startsWith('video/') ? 'ZmFrZS12aWRlbw==' : 'ZmFrZS1pbWFnZQ==',

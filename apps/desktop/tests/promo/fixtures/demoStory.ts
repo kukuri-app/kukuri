@@ -138,6 +138,7 @@ export function replyFields(parent: SeedPostInput, topic: string): Partial<SeedP
         pubkey: parent.author_pubkey,
         name: parent.author_name ?? null,
         display_name: parent.author_display_name ?? null,
+        picture_asset: parent.author_picture_asset ?? null,
       },
       content: parent.content,
       content_status: parent.content_status,

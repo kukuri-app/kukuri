@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+import type { BlobMediaPayload, ProfileAssetView } from '../../../src/lib/api';
 import type { DesktopMockApiOptions } from '../../../src/mocks/desktopMockModel';
-import { FUTABA, MINATO, post, replyFields, type PromoLocale } from './demoStory';
+import { FUTABA, MINATO, post, replyFields, type Person, type PromoLocale } from './demoStory';
 
 /**
  * LP の画面 (#1668) の合成のデモ物語。話題「ベランダ菜園」で、ふたば（操作者）が質問し、
@@ -55,6 +59,18 @@ export const GARDEN_COPY = {
 export const GARDEN_QUESTION_ID = 'promo-garden-question';
 
 /**
+ * デモ参加者のプロフィール画像。撮影用に作った絵（ふたば: 双葉の芽、みなと: ミニトマト）で、
+ * 実在の人物や第三者の画像ではない。
+ */
+function avatar(file: string): { asset: ProfileAssetView; payload: BlobMediaPayload } {
+  const bytes = readFileSync(path.join(import.meta.dirname, 'avatars', file));
+  return {
+    asset: { hash: `promo-avatar-${file.replace(/\.png$/, '')}`, mime: 'image/png', bytes: bytes.length, role: 'profile_avatar' },
+    payload: { bytes_base64: bytes.toString('base64'), mime: 'image/png' },
+  };
+}
+
+/**
  * 撮影に使う mock の seed。開発者モードの面は seed にも画面にも現れない。
  *
  * - 公開の話題: ふたばの質問、みなとの答え（返信）、みなとの前日の投稿
@@ -67,6 +83,11 @@ export const GARDEN_QUESTION_ID = 'promo-garden-question';
 export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
   const copy = GARDEN_COPY[locale];
   const topic = gardenTopic(locale);
+  const futaba = avatar('futaba.png');
+  const minato = avatar('minato.png');
+  const pictureOf = (person: Person) => ({
+    author_picture_asset: person === FUTABA ? futaba.asset : minato.asset,
+  });
   const question = post({
     id: GARDEN_QUESTION_ID,
     person: FUTABA,
@@ -74,6 +95,7 @@ export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
     content: copy.question,
     createdAt: BASE_TIME,
     reactions: [{ emoji: '👍', count: 2 }],
+    extra: pictureOf(FUTABA),
   });
   const answer = post({
     id: 'promo-garden-answer',
@@ -81,7 +103,7 @@ export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
     locale,
     content: copy.answer,
     createdAt: BASE_TIME + 600,
-    extra: replyFields(question, topic),
+    extra: { ...replyFields(question, topic), ...pictureOf(MINATO) },
   });
   const firstRed = post({
     id: 'promo-garden-first-red',
@@ -90,19 +112,21 @@ export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
     content: copy.firstRed,
     createdAt: BASE_TIME - 86400,
     reactions: [{ emoji: '🍅', count: 4 }],
+    extra: pictureOf(MINATO),
   });
   // チャンネルの投稿は、タイムラインと同じく新しい順に並べる。
   const channel = [...copy.channel]
-    .map((content, index) =>
-      post({
+    .map((content, index) => {
+      const person = index === 1 ? FUTABA : MINATO;
+      return post({
         id: `promo-garden-channel-${index}`,
-        person: index === 1 ? FUTABA : MINATO,
+        person,
         locale,
         content,
         createdAt: BASE_TIME + 3600 + index * 300,
-        extra: { channel_id: CHANNEL_ID, audience_label: 'Private channel' },
-      })
-    )
+        extra: { channel_id: CHANNEL_ID, audience_label: 'Private channel', ...pictureOf(person) },
+      });
+    })
     .reverse();
 
   return {
@@ -111,6 +135,7 @@ export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
       name: FUTABA.name[locale],
       display_name: FUTABA.name[locale],
       about: locale === 'ja' ? 'kukuri を試しているデモ用アカウントです。' : 'A demo account trying kukuri.',
+      picture_asset: futaba.asset,
     },
     authorSocialViews: {
       [MINATO.pubkey]: {
@@ -120,7 +145,12 @@ export function createGardenSeed(locale: PromoLocale): DesktopMockApiOptions {
         following: true,
         followed_by: true,
         mutual: true,
+        picture_asset: minato.asset,
       },
+    },
+    seedBlobPayloads: {
+      [futaba.asset.hash]: futaba.payload,
+      [minato.asset.hash]: minato.payload,
     },
     seedPosts: { [topic]: [...channel, answer, question, firstRed] },
     // 招待を受け取ったときに参加するチャンネル。作ったのはみなと。
