@@ -50,12 +50,19 @@ export type ChannelAccessTokenMetadata = {
   epochId?: string | null;
 };
 
+/** #1232 AC-4: カスタムリアクションのセット（`kukuri:reaction-set:<セットの blob hash>`）。押すと取り込む。 */
+export type ReactionSetReference = {
+  kind: 'reaction_set';
+  setHash: string;
+};
+
 export type InternalSmartReference =
   | TopicLinkReference
   | PostLinkReference
   | LiveLinkReference
   | GameLinkReference
-  | ShareTokenReference;
+  | ShareTokenReference
+  | ReactionSetReference;
 
 export type MentionSegment = {
   kind: 'mention';
@@ -81,6 +88,8 @@ export type SmartTextSegment =
 const TOPIC_PATTERN = /kukuri:topic:[A-Za-z0-9:_-]+/;
 const ROUTE_PATTERN = /#\/(?:timeline|live|game)\?[^\s]+/;
 const CHANNEL_ACCESS_PREVIEW_PATTERN = /kukuri:\/\/access-preview\?[^\s]+/;
+// Rust の `custom_reaction_set_hashes_in_text` と同じ形（64 桁の小文字の 16 進で、英数字が続かない）。
+const REACTION_SET_PATTERN = /kukuri:reaction-set:([0-9a-f]{64})(?![0-9A-Za-z])/;
 const MAX_CHANNEL_ACCESS_PREVIEW_TOKEN_LENGTH = 16 * 1024;
 
 // Internal mention token format: `@[label](pubkey)` where pubkey is 64 hex chars.
@@ -365,6 +374,7 @@ function findNextReference(
   const routeMatch = ROUTE_PATTERN.exec(remaining);
   const accessPreviewMatch = CHANNEL_ACCESS_PREVIEW_PATTERN.exec(remaining);
   const topicMatch = TOPIC_PATTERN.exec(remaining);
+  const reactionSetMatch = REACTION_SET_PATTERN.exec(remaining);
   const mentionMatch = MENTION_PATTERN_SINGLE.exec(remaining);
   const externalUrl = findNextExternalUrl(value, offset);
   const candidates = [
@@ -399,6 +409,13 @@ function findNextReference(
           index: offset + topicMatch.index,
           text: topicMatch[0],
           segment: segmentFromReference(parseTopicReference(topicMatch[0])),
+        }
+      : null,
+    reactionSetMatch
+      ? {
+          index: offset + reactionSetMatch.index,
+          text: reactionSetMatch[0],
+          segment: segmentFromReference({ kind: 'reaction_set', setHash: reactionSetMatch[1] }),
         }
       : null,
     mentionMatch
@@ -442,6 +459,19 @@ function segmentFromReference(
   reference: InternalSmartReference | null
 ): SmartTextSegment | null {
   return reference ? { kind: 'reference', reference } : null;
+}
+
+/** #1232 AC-4: DM の本文を、リアクションのセットの共有用の文字列（`setHash` を持つ）とそれ以外の文字列に分ける。 */
+export function splitReactionSetLinks(text: string): Array<{ text: string; setHash: string | null }> {
+  const parts: Array<{ text: string; setHash: string | null }> = [];
+  let offset = 0;
+  for (const match of text.matchAll(new RegExp(REACTION_SET_PATTERN, 'g'))) {
+    parts.push({ text: text.slice(offset, match.index), setHash: null });
+    parts.push({ text: match[0], setHash: match[1] });
+    offset = match.index + match[0].length;
+  }
+  parts.push({ text: text.slice(offset), setHash: null });
+  return parts;
 }
 
 export function parseSmartText(value: string): SmartTextSegment[][] {

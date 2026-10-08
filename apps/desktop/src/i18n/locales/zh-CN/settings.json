@@ -571,7 +571,19 @@
     "noSavedAssets": "还没有已保存的回应。",
     "editCrop": "编辑裁剪",
     "cropTitle": "裁剪表情图片",
-    "cropDescription": "拖动以调整位置，并缩放以选择显示的正方形区域。"
+    "cropDescription": "拖动以调整位置，并缩放以选择显示的正方形区域。",
+    "sets": "回应集",
+    "setsHint": "从自己的或已保存的回应中选择（最多 {{max}} 个）并命名，制作成回应集。把分享文字贴到帖子或私信中，看到的人就能一次全部导入。",
+    "setName": "回应集名称",
+    "createSet": "用所选的 {{count}} 个创建回应集",
+    "setTooLarge": "一个回应集最多只能包含 {{max}} 个（已选择 {{count}} 个）。",
+    "setCreateFailed": "无法创建回应集。",
+    "setsLoadFailed": "无法加载已创建的回应集。",
+    "createdSets": "已创建的回应集（按从新到旧最多 {{max}} 个）",
+    "setItemCount": "{{count}} 个",
+    "copySetLink": "复制分享文字",
+    "copySetLinkOf": "复制“{{name}}”的分享文字",
+    "noSets": "还没有回应集。"
   },
   "release": {
     "title": "发布",

@@ -66,4 +66,17 @@ describe('internal link parsing', () => {
       expect(parseSmartText(value)).toEqual([[{ kind: 'text', text: value }]]);
     }
   });
+
+  // #1232 AC-4: 64 桁の小文字の 16 進のセットの hash だけを、取り込みの参照にする。
+  test('parses reaction set links only for a full lowercase blob hash', () => {
+    const hash = 'a'.repeat(64);
+    const rest = ` next kukuri:reaction-set:${'A'.repeat(64)} kukuri:reaction-set:${hash}x`;
+    expect(parseSmartText(`set kukuri:reaction-set:${hash}.${rest}`)).toEqual([
+      [
+        { kind: 'text', text: 'set ' },
+        { kind: 'reference', reference: { kind: 'reaction_set', setHash: hash } },
+        { kind: 'text', text: `.${rest}` },
+      ],
+    ]);
+  });
 });

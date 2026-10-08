@@ -53,6 +53,7 @@ type MessageReactionSocialParams = ActionsBaseParams &
     setDirectMessageError: Setter<'directMessageError'>;
     setReactionPanelState: Setter<'reactionPanelState'>;
     setReactionCreatePending: Setter<'reactionCreatePending'>;
+    setReactionSetNotice: Setter<'reactionSetNotice'>;
     setShellChromeState: Setter<'shellChromeState'>;
     setError: Setter<'error'>;
   };
@@ -92,6 +93,7 @@ export function createMessageReactionSocialActions({
   setDirectMessageError,
   setReactionPanelState,
   setReactionCreatePending,
+  setReactionSetNotice,
   setShellChromeState,
   setError,
 }: MessageReactionSocialParams) {
@@ -286,6 +288,32 @@ export function createMessageReactionSocialActions({
     }
   }
 
+  // #1232 AC-4: 投稿・DM のリアクションのセットを取り込み、保存済みへ加える。取得に時間がかかるので、始めと結果を知らせる。
+  async function handleImportCustomReactionSet(setHash: string) {
+    const notify = (tone: 'neutral' | 'accent' | 'destructive', message: string) =>
+      setReactionSetNotice({ id: Date.now(), tone, message });
+    notify('neutral', translate('common:reactions.importingSet'));
+    try {
+      const imported = await api.importCustomReactionSet(setHash);
+      const savedIds = new Set(imported.saved.map((asset) => asset.asset_id));
+      // 保存済みの一覧は app-api と同じ新しい順の 200 件の窓に収める。
+      setBookmarkedReactionAssets((current) =>
+        [...imported.saved, ...current.filter((asset) => !savedIds.has(asset.asset_id))].slice(0, 200)
+      );
+      notify(
+        'accent',
+        translate(
+          imported.skipped_own > 0
+            ? 'common:reactions.importedSetSkippingOwn'
+            : 'common:reactions.importedSet',
+          { name: imported.name, count: imported.saved.length, skipped: imported.skipped_own }
+        )
+      );
+    } catch {
+      notify('destructive', translate('common:reactions.importSetFailed'));
+    }
+  }
+
   async function handleRemoveBookmarkedCustomReaction(assetId: string) {
     try {
       await api.removeBookmarkedCustomReaction(assetId);
@@ -418,6 +446,7 @@ export function createMessageReactionSocialActions({
     handleToggleReaction,
     handleCreateCustomReactionAsset,
     handleBookmarkCustomReaction,
+    handleImportCustomReactionSet,
     handleRemoveBookmarkedCustomReaction,
     handleToggleBookmarkedPost,
     handleWithdrawPost,

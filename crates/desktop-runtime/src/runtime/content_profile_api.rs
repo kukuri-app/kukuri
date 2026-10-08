@@ -204,6 +204,28 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn create_custom_reaction_set(
+        &self,
+        request: CreateCustomReactionSetRequest,
+    ) -> Result<CustomReactionSetView> {
+        self.app_service
+            .create_custom_reaction_set(request.name.as_str(), request.items)
+            .await
+    }
+
+    pub async fn list_my_custom_reaction_sets(&self) -> Result<Vec<CustomReactionSetView>> {
+        self.app_service.list_my_custom_reaction_sets().await
+    }
+
+    pub async fn import_custom_reaction_set(
+        &self,
+        request: ImportCustomReactionSetRequest,
+    ) -> Result<ImportedCustomReactionSetView> {
+        self.app_service
+            .import_custom_reaction_set(request.set_hash.as_str())
+            .await
+    }
+
     pub async fn list_bookmarked_posts_page(
         &self,
         request: ListBookmarkedPostsRequest,

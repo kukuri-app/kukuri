@@ -24,6 +24,8 @@ export type ReactionsBookmarksSliceState = {
   recentReactions: RecentReactionView[];
   reactionPanelState: AsyncPanelState;
   reactionCreatePending: boolean;
+  /** #1232 AC-4: 投稿・DM のリアクションのセットの取り込みの通知（toast）。neutral は取り込み中で、結果が出るまで消さない。 */
+  reactionSetNotice: { id: number; tone: 'neutral' | 'accent' | 'destructive'; message: string } | null;
 };
 
 export function createInitialReactionsBookmarksSlice(): ReactionsBookmarksSliceState {
@@ -41,5 +43,6 @@ export function createInitialReactionsBookmarksSlice(): ReactionsBookmarksSliceS
     recentReactions: [],
     reactionPanelState: DEFAULT_ASYNC_PANEL_STATE,
     reactionCreatePending: false,
+    reactionSetNotice: null,
   };
 }

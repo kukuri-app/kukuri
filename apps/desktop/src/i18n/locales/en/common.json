@@ -247,7 +247,12 @@
     "searchPlaceholder": "Search reactions",
     "searchHint": "Search by emoji or custom reaction key.",
     "noResults": "No matching reactions.",
-    "saveToUse": "Save to use it myself"
+    "saveToUse": "Save to use it myself",
+    "importSet": "Import reaction set",
+    "importingSet": "Importing the reaction set…",
+    "importedSet": "Imported “{{name}}”: {{count}} saved.",
+    "importedSetSkippingOwn": "Imported “{{name}}”: {{count}} saved, {{skipped}} of your own skipped.",
+    "importSetFailed": "Could not import the reaction set. Please try again later."
   },
   "relationships": {
     "blockedFollowReason": "You can't follow a user you've blocked. Unblock them first.",

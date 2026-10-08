@@ -571,7 +571,19 @@
     "noSavedAssets": "保存済みリアクションはありません。",
     "editCrop": "切り抜きを編集",
     "cropTitle": "リアクション画像の切り抜き",
-    "cropDescription": "ドラッグして位置を動かし、拡大率を調整して表示する正方形の範囲を選択します。"
+    "cropDescription": "ドラッグして位置を動かし、拡大率を調整して表示する正方形の範囲を選択します。",
+    "sets": "リアクションのセット",
+    "setsHint": "自作・保存済みから選んだリアクション（最大 {{max}} 件）に名前を付けてセットにします。共有用の文字列を投稿や DM に貼ると、見た人がまとめて取り込めます。",
+    "setName": "セットの名前",
+    "createSet": "選んだ {{count}} 件でセットを作る",
+    "setTooLarge": "セットに入れられるのは {{max}} 件までです（{{count}} 件を選択中）。",
+    "setCreateFailed": "セットを作れませんでした。",
+    "setsLoadFailed": "作ったセットの一覧を読み込めませんでした。",
+    "createdSets": "作ったセット（新しい順に {{max}} 件まで）",
+    "setItemCount": "{{count}} 件",
+    "copySetLink": "共有用の文字列をコピー",
+    "copySetLinkOf": "「{{name}}」の共有用の文字列をコピー",
+    "noSets": "まだセットはありません。"
   },
   "release": {
     "title": "リリース",

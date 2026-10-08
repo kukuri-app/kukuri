@@ -61,6 +61,11 @@ pub(super) fn output(name: &str) -> Value {
         }
         "list_recent_reactions" => array(reaction(Some("updated_at"))),
         "create_custom_reaction_asset" | "bookmark_custom_reaction" => custom_asset(),
+        "create_custom_reaction_set" => custom_reaction_set(),
+        "list_my_custom_reaction_sets" => array(custom_reaction_set()),
+        "import_custom_reaction_set" => view(
+            json!({"set_hash": string(), "name": string(), "saved": array(custom_asset()), "skipped_own": integer()}),
+        ),
         "get_my_profile" | "set_my_profile" => profile(),
         "follow_author"
         | "unfollow_author"
@@ -87,6 +92,12 @@ fn provenance() -> Value {
 
 fn custom_asset() -> Value {
     view(content_schema::custom_reaction_fields())
+}
+
+fn custom_reaction_set() -> Value {
+    view(
+        json!({"set_hash": string(), "name": string(), "item_count": integer(), "created_at": integer()}),
+    )
 }
 
 fn reaction(extra: Option<&str>) -> Value {

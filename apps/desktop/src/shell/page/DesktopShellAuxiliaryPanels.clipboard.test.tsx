@@ -50,6 +50,7 @@ test('auxiliary Conversation composer forwards clipboard images and leaves text 
         handleDirectMessageAttachmentPaste={handleDirectMessageAttachmentPaste}
         handleRemoveDirectMessageDraftAttachment={vi.fn()}
         handleSendDirectMessage={vi.fn(async () => undefined)}
+        handleImportCustomReactionSet={vi.fn(async () => undefined)}
         surfaceKind='conversation'
         peerPubkey={peerPubkey}
       />

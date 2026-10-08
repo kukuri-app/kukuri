@@ -449,7 +449,8 @@ impl From<&NotificationRow> for NotificationCursor {
 /// 公開 channel の id（app-api の `PUBLIC_CHANNEL_ID`）。
 pub(crate) const PUBLIC_CHANNEL: &str = "public";
 
-/// #1632: 公開投稿の行が参照する blob（本文、添付、repost の添付）。公開でない行は空。
+/// #1632: 公開投稿の行が参照する blob（本文、添付、repost の添付、本文に貼られたカスタムリアクションのセット
+/// （#1232 AC-4））。公開でない行は空。
 pub fn public_blob_hashes_for_row(row: &ObjectProjectionRow) -> Vec<String> {
     if row.channel_id != PUBLIC_CHANNEL {
         return Vec::new();
@@ -467,6 +468,12 @@ pub fn public_blob_hashes_for_row(row: &ObjectProjectionRow) -> Vec<String> {
                 .iter()
                 .flat_map(|repost| repost.attachments.iter())
                 .map(|asset| asset.hash.as_str().to_string()),
+        )
+        .chain(
+            row.content
+                .as_deref()
+                .map(kukuri_core::custom_reaction_set_hashes_in_text)
+                .unwrap_or_default(),
         )
         .collect()
 }

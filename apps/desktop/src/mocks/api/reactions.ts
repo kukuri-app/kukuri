@@ -1,6 +1,7 @@
 import {
   type CustomReactionAssetView,
   type CustomReactionCropRect,
+  type CustomReactionSetView,
   type DesktopApi,
 } from '@/lib/api';
 
@@ -21,11 +22,16 @@ type ReactionsMock = Pick<
   | 'listBookmarkedCustomReactions'
   | 'bookmarkCustomReaction'
   | 'removeBookmarkedCustomReaction'
+  | 'createCustomReactionSet'
+  | 'listMyCustomReactionSets'
+  | 'importCustomReactionSet'
 >;
 
 export function createReactionsMock(runtime: MockRuntime): ReactionsMock {
   const { postsByTopic, syncStatus, ownedCustomReactionAssets, bookmarkedCustomReactionAssets } =
     runtime;
+  // #1232 AC-4: セットの blob の代わりに、作ったセットをこの runtime の中だけに持つ。
+  const reactionSets: Array<{ view: CustomReactionSetView; items: CustomReactionAssetView[] }> = [];
 
   return {
     async toggleReaction(targetTopicId, targetObjectId, reactionKey) {
@@ -134,6 +140,47 @@ export function createReactionsMock(runtime: MockRuntime): ReactionsMock {
       if (index >= 0) {
         bookmarkedCustomReactionAssets.splice(index, 1);
       }
+    },
+    async createCustomReactionSet(name, assets) {
+      if (!name.trim() || assets.length === 0 || assets.length > 100) {
+        throw new Error('invalid custom reaction set');
+      }
+      runtime.sequence += 1;
+      const view: CustomReactionSetView = {
+        set_hash: runtime.sequence.toString(16).padStart(64, '0'),
+        name: name.trim(),
+        item_count: assets.length,
+        created_at: Date.now(),
+      };
+      reactionSets.unshift({ view, items: assets.map((asset) => ({ ...asset })) });
+      return { ...view };
+    },
+    async listMyCustomReactionSets() {
+      return reactionSets.slice(0, 100).map(({ view }) => ({ ...view }));
+    },
+    async importCustomReactionSet(setHash) {
+      const set = reactionSets.find(({ view }) => view.set_hash === setHash);
+      if (!set) {
+        throw new Error('the custom reaction set could not be fetched');
+      }
+      const saved = set.items.filter(
+        (item) => item.owner_pubkey !== syncStatus.local_author_pubkey
+      );
+      for (const item of [...saved].reverse()) {
+        const index = bookmarkedCustomReactionAssets.findIndex(
+          (asset) => asset.asset_id === item.asset_id
+        );
+        if (index >= 0) {
+          bookmarkedCustomReactionAssets.splice(index, 1);
+        }
+        bookmarkedCustomReactionAssets.unshift({ ...item });
+      }
+      return {
+        set_hash: setHash,
+        name: set.view.name,
+        saved: saved.map((item) => ({ ...item })),
+        skipped_own: set.items.length - saved.length,
+      };
     },
   };
 }

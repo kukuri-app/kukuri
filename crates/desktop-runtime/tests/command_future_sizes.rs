@@ -123,6 +123,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::create_custom_reaction_asset),
         ),
         (
+            "create_custom_reaction_set",
+            size1(DesktopRuntime::create_custom_reaction_set),
+        ),
+        (
             "create_dome_connection_proposal",
             size1(DesktopRuntime::create_dome_connection_proposal),
         ),
@@ -264,6 +268,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::import_channel_access_token),
         ),
         (
+            "import_custom_reaction_set",
+            size1(DesktopRuntime::import_custom_reaction_set),
+        ),
+        (
             "import_friend_only_grant",
             size1(DesktopRuntime::import_friend_only_grant),
         ),
@@ -343,6 +351,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "list_my_custom_reaction_assets",
             size0(DesktopRuntime::list_my_custom_reaction_assets),
+        ),
+        (
+            "list_my_custom_reaction_sets",
+            size0(DesktopRuntime::list_my_custom_reaction_sets),
         ),
         (
             "list_notification_dispatch_after",
