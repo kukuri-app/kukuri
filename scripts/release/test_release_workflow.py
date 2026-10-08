@@ -96,7 +96,7 @@ class WorkflowTests(unittest.TestCase):
         # PR でも動く file なので、secrets を参照せず、pull_request_target 等の trigger も持たない。
         source = (ROOT / ".github/workflows/kukuri-release-verify.yml").read_text(encoding="utf-8")
         self.assertNotIn("secrets", source)
-        self.assertEqual(set(workflow("kukuri-release-verify.yml")["on"]), {"pull_request", "workflow_call"})
+        self.assertEqual(set(workflow("kukuri-release-verify.yml")["on"]), {"pull_request", "workflow_call", "workflow_dispatch"})
 
     def test_linux_pr_does_not_receive_distribution_secrets(self):
         steps = workflow("kukuri-linux-package.yml")["jobs"]["linux-appimage"]["steps"]

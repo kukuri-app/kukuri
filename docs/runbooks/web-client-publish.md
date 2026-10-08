@@ -79,5 +79,5 @@ curl -sI https://<置いた先>/assets/<WASM の file 名> | grep -i content-typ
 
 ## 外部送信とデータの説明
 
-- Web の外部送信（配信元からの取得、STUN、relay の WebSocket）と保存（IndexedDB の鍵の保存など）は、`docs/legal/external-transmission-notice.md` と `docs/legal/app-data-flow-inventory.md` に書いてある。legal bundle の版は 8 のまま（#1220 AC-6、2026-10-04 ユーザー判断）。
+- Web の外部送信（配信元からの取得、STUN、relay の WebSocket、Community Node による公開blobの保持端末の検索）と保存（IndexedDB の鍵の保存など）は、`docs/legal/external-transmission-notice.md` と `docs/legal/app-data-flow-inventory.md` に書いてある。legal bundle はversion 9（#1632 AC-6、#1657）。2026-10-04のversion 8はWeb初回配信時の記録である。
 - 配信の host を決めたり変えたりしたら、外部送信表示の「Web の配信元」の行が実際の host と合っているか確かめる。

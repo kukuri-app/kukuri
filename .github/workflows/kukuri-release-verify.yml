@@ -3,6 +3,16 @@ name: Kukuri Release Verify
 # #1180: release の linux-verify を切り出した reusable workflow。release の環境（Ubuntu 22.04、
 # cache なし）の差は tag を切るまで表に出ないため、この file を変えた PR でも同じ検証を流す。
 on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Immutable source SHA of the existing release candidate'
+        type: string
+        required: true
+      release_tag:
+        description: 'Existing release tag; packages are not rebuilt'
+        type: string
+        required: true
   pull_request:
     paths:
       - '.github/workflows/kukuri-release-verify.yml'
@@ -27,6 +37,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   PNPM_VERSION: 10.16.1
 
 jobs:
