@@ -66,6 +66,7 @@ python scripts/release/test_verify_public_preview.py
 
 - すべてのjobはGitHub-hostedの標準runner（4 CPU）で動く（#1413）。build／verifyと署名するjob（`validate-release-inputs`、`linux-verify`、`windows-package`、Linux GUI package、CLI package）は、Linuxが`ubuntu-22.04`で配布物のglibcの下限をUbuntu 22.04に保ち、Windowsは`windows-2022`。
 - `linux-verify`の中身は`kukuri-release-verify.yml`（reusable workflow）に置き、そのfileを変えたPRでも同じrunnerで流す。releaseの環境差をtag前に確かめるため。
+- 検証のdev profileは`CARGO_PROFILE_DEV_DEBUG=line-tables-only`でline tableを残し、同じsourceをcheck/testで重複compileするときのrunner容量不足を抑える（#1657）。配布物のrelease profileと署名は変えない。
 - 配布用の署名鍵はPRのrunには渡さない。Windowsでは鍵を`Build Windows package` stepのenvにだけ渡す。
 - releaseの経路ではbuild cache（sccache、rust-cache、pnpm cache）を使わない。tagのrunは既定branchのcacheを読めるため、cacheのstepを置かないことで、PRのrunが書いた成果物を署名付きの配布物へ持ち込まない。Linux packageのdistributionのrunもcacheのstepを飛ばす。
 - `ubuntu-22.04`のlabelは2027-04-17に廃止される（2027-03以降にbrownoutあり、actions/runner-images#14254）。それまでにUbuntu 22.04基盤を保つ別の形へ移す。
@@ -120,7 +121,11 @@ python scripts/release/publish_preview.py --input <same-run-assets> --tag v0.1.8
 
 公開承認後に同じcommandの`--draft false`で公開する。`GH_TOKEN`は環境変数で供給し、引数や記録へ値を書かない。公開前に同一候補の実署名検証成功が必要。build／smoke／署名／完全性の失敗を手動公開で迂回しない。
 
+WindowsでPythonを使うときは`python -X utf8`で起動する。GitHub APIのJSONや日本語のRelease notesをOS既定のCP932でdecodeせず、Linuxのworkflowと同じUTF-8で扱う。
+
 全platform buildが成功し資材が揃っていても、集約前の呼出しwrapperで停止した場合は原因を切り分ける。wrapperだけの終了値誤判定と独立確認できた場合、未変更smokeを独立した`pwsh -NoProfile -File <script>`で再実行し、全assertionと終了値0を要求する。その後、未実行工程を固定sourceの未変更scriptと同一runの全platform／changelog／verifier資材だけで完遂する。verifierのsource一致、3entryの実署名・改変拒否、完全性・upload digest・公開後検証は省略しない。元CIのFAILは保持し、ローカル再実行の結果を工程別に記録する。実buildや検証assertionの失敗にはこの扱いを適用しない。
+
+検証runnerの容量不足で停止した場合は、上記wrapperの例外として成功扱いにしない。ユーザーが同一候補の別CI検証を選んだ場合、修正済みの`Kukuri Release Verify`を手動実行し、`source_ref`に候補のfull SHA、`release_tag`に既存tagを指定する。checkout SHA guardとversion gateを含む全検証の成功を要求し、元runの失敗履歴は保持する。全platformのpackage生成が成功済みなら、その同一runの資材だけを集約し、未実行工程を固定sourceの未変更scriptで完遂する。別CIのrun、元package run、集約・実署名・公開・公開後検証を個別に記録する。tagや既存assetの上書き、テストの省略、別buildの混在はしない（#1657、2026-10-08のユーザー判断）。
 
 ```powershell
 ./scripts/release/test-published-updater-signature.ps1 -Tag v0.1.8-preview.2 -Platforms windows-x86_64,linux-x86_64,linux-x86_64-deb -InputDir <same-run-assets> -PublicKeyFile <same-run-assets>/windows-x86_64-updater-key.pub

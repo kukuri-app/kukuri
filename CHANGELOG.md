@@ -18,6 +18,38 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.2-preview.1] - 2026-10-08
+
+### Features
+
+- kukuri の補助 index と署名一覧を GCP VM に配置する（#1657 AC-2）
+- 公開 blob 発見の一覧鍵を組み込み 0.4.2 の配布候補を準備する（#1657 AC-1）
+- Web が Community Node の検索で公開 blob の保持端末を見つけて取得する（#1632 AC-6） ([#1656](https://github.com/kukuri-app/kukuri/pull/1656))
+- Community Node の公開 blob の保持端末の検索と補助 index の process（#1632 AC-5） ([#1653](https://github.com/kukuri-app/kukuri/pull/1653))
+- 公開 blob の DHT 発見を native の取得・告知へ接続する（#1632 AC-4） ([#1651](https://github.com/kukuri-app/kukuri/pull/1651))
+- 本人の端末どうしでプロフィールを和集合に同期する ([#1650](https://github.com/kukuri-app/kukuri/pull/1650), [#1652](https://github.com/kukuri-app/kukuri/pull/1652))
+- 新着を常に反映する Flow モードを追加 ([#1647](https://github.com/kukuri-app/kukuri/pull/1647), [#1649](https://github.com/kukuri-app/kukuri/pull/1649))
+
+### Fixes
+
+- COS host firewall で補助 index の直接 UDP を許可する
+- 最適化しない build でも str0m の再帰が 2 MiB の thread を溢れないようにする（#1658） ([#1659](https://github.com/kukuri-app/kukuri/pull/1659))
+- relay の path の検証前に WebRTC の経路を失っても転送を止めない（#1654） ([#1655](https://github.com/kukuri-app/kukuri/pull/1655))
+- v0.4.0 より前の profile を移行・同期に載せる ([#1646](https://github.com/kukuri-app/kukuri/pull/1646), [#1648](https://github.com/kukuri-app/kukuri/pull/1648))
+- 経路のみの切替を差分診断へ反映 ([#1644](https://github.com/kukuri-app/kukuri/pull/1644))
+- avoid claiming a direct path on NeighborUp ([#1643](https://github.com/kukuri-app/kukuri/pull/1643))
+- avoid long waits for missing author profiles ([#1639](https://github.com/kukuri-app/kukuri/pull/1639))
+
+### Other
+
+- 一覧鍵を含む build で検索 capability の起動を確認する（#1657 AC-1）
+- 実ブラウザの E2E の自分の表示名の変更を、欄を押して全選択から打つ形にし、今の名前に打った名前がつながらないようにする (#1660 AC-1) ([#1661](https://github.com/kukuri-app/kukuri/pull/1661))
+- Android Web E2E の不安定な判定と押下を修正 ([#1641](https://github.com/kukuri-app/kukuri/pull/1641))
+- セッションの後片付けを skill 化する ([#1645](https://github.com/kukuri-app/kukuri/pull/1645))
+- wait for account reload and node consent before settings ([#1610](https://github.com/kukuri-app/kukuri/pull/1610), [#1642](https://github.com/kukuri-app/kukuri/pull/1642))
+- Safari lifecycle の表示待ちと確認先の列を修正 ([#1640](https://github.com/kukuri-app/kukuri/pull/1640))
+- 0.4.1 の CHANGELOG・LP・公開記録を同期 ([#1636](https://github.com/kukuri-app/kukuri/pull/1636))
+
 ## [v0.4.1-preview.2] - 2026-10-06
 
 ### Features
