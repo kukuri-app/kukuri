@@ -214,6 +214,7 @@ export type ProfileInput = {
   about?: string | null;
   picture_upload?: CreateAttachmentInput | null;
   clear_picture?: boolean;
+  nip05?: string | null;
 };
 
 export type CreateAttachmentInput = {

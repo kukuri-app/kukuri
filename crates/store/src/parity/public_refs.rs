@@ -119,6 +119,7 @@ pub fn profile(picture: Option<&str>, updated_at: i64) -> Profile {
         about: None,
         picture_asset: picture.map(asset),
         updated_at,
+        nip05: None,
     }
 }
 

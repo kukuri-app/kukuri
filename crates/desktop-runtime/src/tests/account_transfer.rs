@@ -171,6 +171,7 @@ async fn a_transferred_account_is_registered_once_and_merged_when_it_starts() {
             about: None,
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .unwrap();

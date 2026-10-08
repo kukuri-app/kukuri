@@ -325,6 +325,7 @@ impl DesktopRuntime {
                     .map(pending_attachment_from_request)
                     .transpose()?,
                 clear_picture: request.clear_picture,
+                nip05: request.nip05,
             })
             .await
     }

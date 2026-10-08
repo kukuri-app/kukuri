@@ -222,8 +222,8 @@ pub use profile::{
     build_block_edge_envelope, build_block_edge_envelope_with_docs_author,
     build_follow_edge_envelope, build_follow_edge_envelope_with_docs_author,
     build_profile_envelope, build_profile_envelope_with_docs_author, build_profile_post_envelope,
-    build_profile_repost_envelope, parse_block_edge, parse_follow_edge, parse_profile,
-    parse_profile_post, parse_profile_repost,
+    build_profile_repost_envelope, normalize_profile_nip05, parse_block_edge, parse_follow_edge,
+    parse_profile, parse_profile_post, parse_profile_repost,
 };
 pub use reactions::{
     CustomReactionAssetDocV1, CustomReactionAssetSnapshotV1,

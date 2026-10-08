@@ -191,6 +191,7 @@ async fn desktop_runtime_restores_profile_avatar_blob_after_restart() {
                 &avatar_bytes,
             )),
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("set profile");

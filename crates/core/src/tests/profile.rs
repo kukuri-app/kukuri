@@ -14,6 +14,7 @@ fn profile_envelope_roundtrip() {
             bytes: 42,
             role: AssetRole::ProfileAvatar,
         }),
+        nip05: Some("alice@example.com".into()),
     };
     for docs_author in [None, Some("a".repeat(64))] {
         let envelope =
@@ -33,6 +34,7 @@ fn profile_envelope_roundtrip() {
         assert_eq!(profile.pubkey, keys.public_key());
         assert_eq!(profile.display_name.as_deref(), Some("Alice"));
         assert_eq!(profile.about.as_deref(), Some("hello"));
+        assert_eq!(profile.nip05.as_deref(), Some("alice@example.com"));
         assert_eq!(
             profile
                 .picture_asset
@@ -40,6 +42,86 @@ fn profile_envelope_roundtrip() {
                 .map(|asset| asset.role.clone()),
             Some(AssetRole::ProfileAvatar)
         );
+    }
+}
+
+// #1670 INVAR-1: nip05 の無い profile の content は key を持たず、欄を足す前の client が作った envelope の ID を
+// 表示用の行から同じく求められる。
+#[test]
+fn profile_without_nip05_keeps_the_previous_content_and_id() {
+    let keys = generate_keys();
+    // 欄を足す前の client が書いた content(struct の宣言の順)。
+    let previous_content = format!(
+        r#"{{"author_pubkey":"{}","name":"alice","display_name":"Alice","about":null,"picture_asset":null}}"#,
+        keys.public_key_hex()
+    );
+    let envelope = crate::sign_envelope_at(
+        &keys,
+        "identity-profile",
+        vec![
+            vec!["author".into(), keys.public_key_hex()],
+            vec!["object".into(), "identity-profile".into()],
+        ],
+        previous_content,
+        42,
+    )
+    .expect("previous profile envelope");
+
+    let profile = parse_profile(&envelope)
+        .expect("parse profile")
+        .expect("profile");
+    assert_eq!(profile.nip05, None);
+    assert_eq!(
+        profile.envelope_id_hint(None).expect("ID hint"),
+        envelope.id
+    );
+    let rebuilt = build_profile_envelope(
+        &keys,
+        &KukuriProfileEnvelopeContentV1 {
+            author_pubkey: keys.public_key(),
+            name: Some("alice".into()),
+            ..Default::default()
+        },
+    )
+    .expect("profile envelope");
+    assert!(
+        !rebuilt.content.contains("nip05"),
+        "content: {}",
+        rebuilt.content
+    );
+}
+
+// #1670 AC-1.1・1.2: 識別子は前後の空白を除いて小文字にし、名前とドメインの形に合わないものを断る。
+#[test]
+fn profile_nip05_is_normalized_and_rejects_invalid_identifiers() {
+    assert_eq!(
+        normalize_profile_nip05("  Alice_1.x-y@Sub.Example.COM ").expect("valid"),
+        "alice_1.x-y@sub.example.com"
+    );
+    assert_eq!(
+        normalize_profile_nip05("_@xn--wgv71a119e.jp").expect("punycode domain"),
+        "_@xn--wgv71a119e.jp"
+    );
+    let long_name = format!("{}@example.com", "a".repeat(65));
+    let long_domain = format!("a@{}.com", vec!["a".repeat(63); 4].join("."));
+    for invalid in [
+        "",
+        "alice",
+        "@example.com",
+        "alice@",
+        "alice@localhost",
+        "a b@example.com",
+        "alice+tag@example.com",
+        "alice@192.0.2.1",
+        "alice@example.com.",
+        "alice@-example.com",
+        "alice@exa_mple.com",
+        "alice@例え.jp",
+        "alice@bob@example.com",
+        long_name.as_str(),
+        long_domain.as_str(),
+    ] {
+        assert!(normalize_profile_nip05(invalid).is_err(), "{invalid}");
     }
 }
 

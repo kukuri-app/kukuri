@@ -11,6 +11,7 @@ export type ProfileEditorFields = {
   displayName: string;
   name: string;
   about: string;
+  nip05?: string;
 };
 
 export type PrivateChannelPendingAction =

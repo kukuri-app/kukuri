@@ -192,6 +192,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
                 &png_source_bytes(),
             )),
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("avatar");

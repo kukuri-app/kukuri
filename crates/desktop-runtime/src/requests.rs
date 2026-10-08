@@ -356,6 +356,8 @@ pub struct SetMyProfileRequest {
     pub picture_upload: Option<CreateAttachmentRequest>,
     #[serde(default)]
     pub clear_picture: bool,
+    // NIP-05 の識別子 `name@domain`(ADR 0064)。空なら欄の無い profile にする。
+    pub nip05: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

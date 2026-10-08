@@ -33,6 +33,7 @@ async fn put_profile(docs_sync: &dyn DocsSync, keys: &KukuriKeys) {
             display_name: None,
             about: None,
             picture_asset: None,
+            nip05: None,
         },
         None,
     )
