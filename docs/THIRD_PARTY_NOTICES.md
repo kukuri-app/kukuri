@@ -52,7 +52,7 @@ None.
 
 ## Rust crates
 
-Total packages: 937
+Total packages: 936
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -477,7 +477,6 @@ Total packages: 937
 | n0-error | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/n0-error |
 | n0-error-macros | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/n0-error-macros |
 | n0-future | 0.3.2 | MIT OR Apache-2.0 | https://crates.io/crates/n0-future |
-| n0-mainline | 0.7.0 | MIT OR Apache-2.0 | https://crates.io/crates/n0-mainline |
 | n0-mainline | 0.7.1 | MIT OR Apache-2.0 | https://crates.io/crates/n0-mainline |
 | n0-watcher | 1.0.0 | MIT OR Apache-2.0 | https://crates.io/crates/n0-watcher |
 | nalgebra | 0.35.0 | Apache-2.0 | https://crates.io/crates/nalgebra |

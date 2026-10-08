@@ -141,9 +141,12 @@ pub struct DhtDiscoveryOptions {
 }
 
 /// kukuri が運用する補助 index（#1632 D6: kukuri の鍵で署名した最大 2 台の一覧）。全 native client と全 Community Node が
-/// 同じ一覧を使う。一覧の鍵は本番反映の Issue で発行して入れ、無い間は公開 blob の発見を使わない。
+/// 同じ一覧を使う。#1657 で発行した一覧の公開鍵。秘密鍵は運営者の Secret Manager に保管する。
 #[cfg(not(target_family = "wasm"))]
-pub const KUKURI_PUBLIC_BLOB_INDEX: Option<PublicBlobIndex> = None;
+pub const KUKURI_PUBLIC_BLOB_INDEX: Option<PublicBlobIndex> = Some(PublicBlobIndex::ListKey([
+    0xbf, 0x18, 0x6f, 0xfa, 0xea, 0x53, 0x3f, 0x82, 0xed, 0x6e, 0x4f, 0x24, 0xa7, 0xa0, 0xfd, 0x88,
+    0x68, 0xb5, 0x62, 0x23, 0xfc, 0xe3, 0x73, 0xda, 0xfc, 0xbe, 0xe5, 0x24, 0xec, 0xbb, 0x58, 0xca,
+]));
 
 /// 公開 blob の発見の補助 index（UDP の送信元 address → 署名つき endpoint ID）の見つけ方（#1632、ADR 0063）。
 #[cfg(not(target_family = "wasm"))]
