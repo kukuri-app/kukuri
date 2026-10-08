@@ -173,9 +173,9 @@ v8（#1667）から LP は次の 4 つの役割群で構成する。section を�
 | --- | --- | --- |
 | 見出し | はじめる | Get started |
 | CTA | Hero と同じ | Hero と同じ |
-| アプリ版の詳細（閉じた状態） | アプリ版のダウンロード（Windows / Linux）: Microsoft Store、AppImage、deb、Linux CLI と各手順、リリースページ（チェックサム） | Download the app (Windows / Linux) |
+| アプリ版の詳細（閉じた状態） | アプリ版のダウンロード（Windows / Linux）: Microsoft Store、AppImage、deb、Linux CLI と各手順、リリースページ（チェックサム）、アプリ版のはじめ方（quickstart） | Download the app (Windows / Linux)、app guide (Japanese) |
 | FAQ | 「LP の FAQ」の LQ-1〜LQ-3 | 同左 |
-| 詳細リンク | はじめ方の詳しい手順（quickstart）・うまく動かないとき（troubleshooting） | Detailed getting-started guide · Troubleshooting |
+| 詳細リンク | うまく動かないとき（troubleshooting） | Troubleshooting |
 
 規約・プライバシー・Community Node の文書（外部送信・通報方針・データ保持）・不具合の報告・質問と提案・変更履歴は footer に置く。footer にはデモの表記も置く。
 
@@ -279,23 +279,24 @@ LPを置く `kukuri.app` のapexは現在なにも配信していないため、
 
 | 用途 | URL | 状態 |
 | --- | --- | --- |
-| ダウンロード（全体） | `https://github.com/kukuri-app/kukuri/releases/latest` | 稼働中 |
-| Windows | 上記releaseの `kukuri_0.2.8_x64-setup.exe` | 稼働中 |
-| Linux AppImage / deb | 上記releaseの `kukuri_0.2.8_amd64.AppImage` / `kukuri_0.2.8_amd64.deb` | 稼働中 |
-| Linux CLI | 上記releaseの `kukuri-cli_0.2.8_*.tar.gz` | 稼働中 |
-| quickstart | `https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-user-quickstart.md` | 稼働中 |
+| ブラウザ版 | `https://app.kukuri.app/` | 稼働中（v0.4.0-preview.1 から） |
+| ダウンロード（全体） | `apps/lp/release.json` の版の GitHub Release ページ | 稼働中 |
+| Windows | Microsoft Store `https://apps.microsoft.com/detail/9NQ18HML4GS3` | 稼働中 |
+| Linux AppImage / deb | 上記releaseの `kukuri_<version>_amd64.AppImage` / `kukuri_<version>_amd64.deb` | 稼働中 |
+| Linux CLI | 上記releaseの `kukuri-cli_<version>_*.tar.gz` | 稼働中 |
+| アプリ版のはじめ方（quickstart） | `https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-user-quickstart.md` | 稼働中 |
 | troubleshooting | `https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-troubleshooting.md` | 稼働中 |
 | 変更履歴 | `https://github.com/kukuri-app/kukuri/blob/main/CHANGELOG.md` | 稼働中 |
 | feedback（不具合） | `https://github.com/kukuri-app/kukuri/issues` | 稼働中 |
 | feedback（提案・質問） | `https://github.com/kukuri-app/kukuri/discussions` | 稼働中 |
-| 利用規約 | `https://api.kukuri.app/terms` | HTTP 200 |
-| プライバシー | `https://api.kukuri.app/privacy` | HTTP 200 |
+| クライアント利用規約 | `https://kukuri.app/terms/`（日本語正文） | HTTP 200 |
+| クライアントのプライバシーポリシー | `https://kukuri.app/privacy/`（日本語正文） | HTTP 200 |
 | 外部送信 | `https://api.kukuri.app/external-transmission` | HTTP 200 |
 | 通報方針 | `https://api.kukuri.app/abuse-policy` | HTTP 200 |
 | データ保持 | `https://api.kukuri.app/data-retention` | HTTP 200 |
 | 責務境界の説明 | `https://github.com/kukuri-app/kukuri/blob/main/docs/architecture/p2p-first-community-node-responsibility-boundary.md` | 稼働中 |
 
-mobileからの閲覧では、ダウンロードの代わりに「PCで開くためのリンクを控える」導線を出す（実装は#1043）。
+主ボタンは、Windows では Microsoft Store、Linux では Linux 版、Mac・スマートフォン・OS を判定できない環境（JavaScript 無効を含む）ではブラウザ版にする（#1665・#1669。2026-10-08 のユーザー判断）。スマートフォンでは Windows・Linux のボタンを出さない。
 
 ### 計測の計画（導入はしない）
 

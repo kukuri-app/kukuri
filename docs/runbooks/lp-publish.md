@@ -59,7 +59,7 @@ npx wrangler pages project create kukuri-lp --production-branch main
 npx wrangler pages deploy apps/lp/public --project-name kukuri-lp --branch preview
 ```
 
-表示された preview URL で、日本語・英語、ダウンロードのリンク、スマートフォン表示を確認してから本番へ出す。
+表示された preview URL で、日本語・英語、OS ごとの主ボタン、ダウンロードのリンク、スマートフォン表示を確認してから本番へ出す。
 
 ```bash
 npx wrangler pages deploy apps/lp/public --project-name kukuri-lp --branch main
@@ -76,6 +76,7 @@ Pages プロジェクトの Custom domains で `kukuri.app` を追加する。`k
 公開後に次を確認する。
 
 - `https://kukuri.app/` と `https://kukuri.app/en/` が開く
+- 主ボタンが OS に合っている（Windows は Microsoft Store、Linux は Linux 版、Mac・スマートフォンはブラウザ版）
 - ダウンロードのリンクが GitHub Release の配布物を指している
 - `https://kukuri.app/terms/` と `https://kukuri.app/privacy/` がクライアント用全文を表示する。Community Node専用のリンクと混同しない
 - OGP（`https://kukuri.app/assets/screens/ogp-ja.png`）が取得できる
