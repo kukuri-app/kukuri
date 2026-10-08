@@ -621,6 +621,9 @@ impl DesktopRuntime {
         app_service
             .reconcile_blocked_dome_connections_at_start()
             .await?;
+        if let Err(error) = app_service.restore_own_profile_nip05().await {
+            tracing::warn!(%error, "own profile nip05 was not restored from the local envelope");
+        }
         if let Err(error) = app_service.start_account_receive_offers().await {
             tracing::warn!(%error, "account receive route could not start; legacy receivers remain active");
         }

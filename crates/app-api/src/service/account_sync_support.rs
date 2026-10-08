@@ -75,6 +75,18 @@ impl AppService {
         Ok(())
     }
 
+    /// 欄を知らない版で受け取った自分の profile の行は、版を上げても `nip05` が空のまま残る。手元の author の replica の
+    /// 最も新しい envelope にあれば、行を作り直す(#1670 AC-1.4、ADR 0064 §2)。他人の行は、その profile を読み直すと戻る。
+    pub async fn restore_own_profile_nip05(&self) -> Result<()> {
+        if self.get_my_profile().await?.nip05.is_none()
+            && let Some(envelope) = own_profile_envelope(&self.services).await?
+            && parse_profile(&envelope)?.is_some_and(|profile| profile.nip05.is_some())
+        {
+            self.services.store.put_envelope(envelope).await?;
+        }
+        Ok(())
+    }
+
     /// item を点読する。account の docs author の組の 1 件を読み、無い・開けないときだけ key の旧候補（上限 8 件）から
     /// 最大の版を採る。
     #[cfg(test)]

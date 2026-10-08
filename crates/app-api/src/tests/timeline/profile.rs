@@ -566,6 +566,31 @@ async fn set_my_profile_signs_the_normalized_nip05_for_readers() {
     assert_eq!(cleared.nip05, None);
 }
 
+// #1670 AC-1.4: 欄を知らない版で受け取った自分の profile の行(同じ版で nip05 が空)を、手元の envelope から戻す。
+#[tokio::test]
+async fn restore_own_profile_nip05_rebuilds_the_row_from_the_local_envelope() {
+    let (app, store, _docs_sync, _blob_service) = local_app_with_memory_services();
+    let profile = app
+        .set_my_profile(ProfileInput {
+            name: Some("alice".into()),
+            nip05: Some("alice@example.com".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("set profile");
+    store
+        .upsert_profile(Profile {
+            nip05: None,
+            ..profile.clone()
+        })
+        .await
+        .expect("row written by a version without the field");
+    assert_eq!(app.get_my_profile().await.expect("old row").nip05, None);
+
+    app.restore_own_profile_nip05().await.expect("restore");
+    assert_eq!(app.get_my_profile().await.expect("restored row"), profile);
+}
+
 // #1670 AC-1.2: 形に合わない識別子は保存せず、署名・store・docs への書込みを行わない。
 #[tokio::test]
 async fn set_my_profile_rejects_an_invalid_nip05_without_writing() {

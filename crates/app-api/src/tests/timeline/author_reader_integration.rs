@@ -125,6 +125,7 @@ async fn real_iroh_author_profile_is_read_from_the_author_device_without_sync() 
             display_name: None,
             about: None,
             picture_asset: None,
+            nip05: None,
         },
         None,
     )?;

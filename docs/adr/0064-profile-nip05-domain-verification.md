@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（Issue #1670、Scope revision r1、2026-10-09 ユーザー判断）。識別子の形・入力・互換（AC-1）を §1・§2 に、照会・保持・表示・開示（AC-2）を §3〜§6 に固定した。
+Accepted（Issue #1670、Scope revision r2、2026-10-09 ユーザー判断）。識別子の形・入力・互換（AC-1）を §1・§2 に、照会・保持・表示・開示（AC-2）を §3〜§6 に固定した。
 
 ## Context
 
@@ -24,6 +24,7 @@ Accepted（Issue #1670、Scope revision r1、2026-10-09 ユーザー判断）。
 
 - content の `nip05` は値が無ければ key を書かない。欄の無いプロフィールの content と envelope ID は欄を足す前と同じで、表示用の行から ID を求める `envelope_id_hint` も変わらない。
 - 旧版のアプリは知らない key を無視して読む。`@domain` は出ない。旧版の端末でプロフィールを編集すると、旧版は自分の知る欄だけで content を作り直すので `nip05` は消える。
+- 旧版のときに受け取ったプロフィールの行は、版を上げても `nip05` が空のまま残る。自分のプロフィールは、起動時に手元の author の replica の最も新しい envelope に `nip05` があり行に無ければ、行を作り直す（`restore_own_profile_nip05`。自分の 1 件だけ。2026-10-09 ユーザー判断）。戻さずに編集すると欄の無いプロフィールが署名されるためである。他人の行は、その人のプロフィールを読み直したとき（`put_envelope` が行を作り直す）に戻り、それまでは `@domain` が出ない。
 - 旧版の端末の SQL の行だけから profile を提供する経路（#1619）は、欄のある profile の ID を行から作り直せないので、その profile を提供しない。docs の replica の経路は変わらない。
 - 保存は SQLite の `profiles.nip05`（migration `20261009120000_profile_nip05`）と、IndexedDB の profile の行（serde の JSON。欠けた値は空として読むので版を上げない）。書くだけの `profile_cache` と、`profile/latest` の `AuthorProfileDocV1`（読む側は `envelope_id` で envelope を読む）には持たない。
 
