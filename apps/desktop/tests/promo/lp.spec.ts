@@ -33,6 +33,7 @@ const COPY = {
     inviteToken: 'プライベートチャンネルの招待・参加権限・共有トークンを貼り付け',
     join: '参加',
     closeDialog: 'ダイアログを閉じる',
+    privateNamed: (channel: string) => `プライベート: ${channel}`,
   },
   en: {
     openControlCenter: /Open Control Center/,
@@ -48,6 +49,7 @@ const COPY = {
     inviteToken: 'Paste a private channel invite, mutual grant, or mutuals+ share',
     join: 'Join',
     closeDialog: 'Close dialog',
+    privateNamed: (channel: string) => `Private: ${channel}`,
   },
 } as const;
 
@@ -173,6 +175,11 @@ for (const locale of ['ja', 'en'] as const) {
           for (const message of story.channel) {
             await expect(card(lastColumn(p), message)).toBeVisible();
           }
+          // 招待した人だけの会話だと画面の文字から分かるよう、いちばん上の投稿の公開範囲の説明
+          // （プライベート: チャンネル名）を出して撮る。チャンネル名は列の見出しでは省略されることがある。
+          const audience = copy.privateNamed(story.channelLabel);
+          await card(lastColumn(p), story.channel[story.channel.length - 1]).getByRole('img', { name: audience }).hover();
+          await expect(p.getByRole('tooltip')).toHaveText(audience);
         },
         caption: null,
       });

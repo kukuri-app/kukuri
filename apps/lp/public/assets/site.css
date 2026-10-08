@@ -31,6 +31,7 @@ html {
 
 body {
   margin: 0;
+  word-break: auto-phrase;
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', sans-serif;
@@ -138,13 +139,6 @@ a:hover {
 /* 共通 */
 section {
   padding-block: clamp(40px, 6vw, 72px);
-}
-
-h1,
-h2,
-h3,
-.lead {
-  word-break: auto-phrase;
 }
 
 h1,

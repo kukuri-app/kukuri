@@ -125,13 +125,13 @@
       "capture": "l0-hero/c1",
       "crop": {
         "x": 0,
-        "y": 0,
+        "y": 36,
         "width": 430,
         "height": 329
       },
       "file": "apps/lp/public/assets/screens/ogp-ja.png",
       "headline": "話題でつながる。\n運営は選べる。",
-      "subhead": "検索やおすすめを任せる相手を自分で選べる分散型SNS。全体BANは無し。",
+      "subhead": "検索やおすすめを任せる相手を自分で選べる分散型SNS。\n全体BANは無し。",
       "footer": "Builder Preview · ブラウザ / Windows / Linux",
       "alt": "kukuri のデモ画面。話題「ベランダ菜園」のタイムラインで、ミニトマトの育て方の質問に返信が付いている。",
       "description": "LP 日本語版の OGP"
@@ -153,8 +153,8 @@
         "height": 329
       },
       "file": "apps/lp/public/assets/screens/ogp-en.png",
-      "headline": "Connect through topics.\nChoose your operators.",
-      "subhead": "A decentralized social app where you choose who handles search and recommendations. No network-wide bans.",
+      "headline": "Connect through topics. Choose your operators.",
+      "subhead": "A decentralized social app where you choose who handles search and recommendations.\nNo network-wide bans.",
       "footer": "Builder Preview · Browser / Windows / Linux",
       "alt": "A kukuri demo screen. In the timeline for the topic gardening, a question about growing cherry tomatoes has a reply.",
       "description": "LP English OGP"
