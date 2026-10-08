@@ -804,7 +804,7 @@ test('post card opens a custom reaction context menu and keeps the reaction popo
   expect(onToggleReaction).toHaveBeenCalledTimes(1);
 
   fireEvent.contextMenu(customReactionChip);
-  await user.click(screen.getByRole('menuitem', { name: 'Save' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Save to use it myself' }));
   expect(onBookmarkCustomReaction).toHaveBeenCalledWith(customAsset);
 
   await user.click(screen.getByRole('button', { name: 'React' }));

@@ -246,7 +246,8 @@
     "customResults": "検索結果",
     "searchPlaceholder": "リアクションを検索",
     "searchHint": "絵文字かカスタムリアクションの識別名で検索します。",
-    "noResults": "一致するリアクションがありません。"
+    "noResults": "一致するリアクションがありません。",
+    "saveToUse": "保存して自分も使う"
   },
   "relationships": {
     "blockedFollowReason": "ブロック中はフォローできません。先にブロックを解除してください。",
