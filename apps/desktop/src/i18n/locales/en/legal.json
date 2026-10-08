@@ -183,7 +183,7 @@
         {
           "heading": "Information shared over P2P",
           "paragraphs": [
-            "Public profiles, public follows, public posts, replies, reposts, reactions, and attachments are replicated to peers that obtain the relevant user's profile replica or topic. Your own custom reactions and the list of custom reaction sets you create (name, number of reactions, hash, and creation time) are also part of your profile replica. Anyone who knows a set’s share text can fetch its contents (each reaction’s image hash, search name, and the public key of the person who first created it). Your saved reactions list is not replicated.",
+            "Public profiles, public follows, public posts, replies, reposts, reactions, and attachments are replicated to peers that obtain the relevant user's profile replica or topic. Your own custom reactions and the list of custom reaction sets you create (name, number of reactions, hash, and creation time) are also part of your profile replica. Anyone who knows a set’s share text can fetch its contents (the set name and each reaction’s image hash, search name, and the public key of the person who first created it). Your saved reactions list is not replicated.",
             "Private channels are limited to participants holding the capability, and DMs are limited to the designated peer. You cannot completely erase a copy already obtained by another participant from your device alone."
           ]
         },
