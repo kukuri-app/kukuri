@@ -59,7 +59,7 @@ export type CustomReactionSetView = { set_hash: string, name: string, item_count
 
 export type ImportedCustomReactionSetView = { set_hash: string, name: string, saved: Array<CustomReactionAssetView>, skipped_own: number, };
 
-export type RepostSourceView = { source_object_id: string, source_topic_id: string, source_author_pubkey: string, source_author_name?: string | null, source_author_display_name?: string | null, source_author_picture_asset?: ProfileAssetView | null, source_object_kind: string, content: string, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, reply_to?: string | null, root_id?: string | null, };
+export type RepostSourceView = { source_object_id: string, source_topic_id: string, source_author_pubkey: string, source_author_name?: string | null, source_author_display_name?: string | null, source_author_picture_asset?: ProfileAssetView | null, source_author_nip05?: string | null, source_object_kind: string, content: string, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, reply_to?: string | null, root_id?: string | null, };
 
 export type ContentObservationView = { node_base_url: string, capability: string, observed_at: number, };
 
@@ -67,13 +67,13 @@ export type ContentProvenanceView = { canonical_source: string, observed_via: Ar
 
 export type PostWithdrawalView = { withdrawn_at: number, replacement_object_id?: string | null, reason_visibility: string, reason?: string | null, };
 
-export type PostView = { object_id: string, envelope_id: string, author_pubkey: string, author_name?: string | null, author_display_name?: string | null, author_picture_asset?: ProfileAssetView | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, provenance?: ContentProvenanceView | null, withdrawal?: PostWithdrawalView | null, content: string, content_status: BlobViewStatus, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, created_at: number, reply_to?: string | null, reply_preview?: ReplyPreviewView | null, root_id?: string | null, object_kind: string, published_topic_id?: string | null, origin_topic_id?: string | null, repost_of?: RepostSourceView | null, repost_commentary?: string | null, is_threadable: boolean, channel_id?: string | null, audience_label: string, reaction_summary?: Array<ReactionSummaryView> | null, my_reactions?: Array<ReactionKeyView> | null, };
+export type PostView = { object_id: string, envelope_id: string, author_pubkey: string, author_name?: string | null, author_display_name?: string | null, author_picture_asset?: ProfileAssetView | null, author_nip05?: string | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, provenance?: ContentProvenanceView | null, withdrawal?: PostWithdrawalView | null, content: string, content_status: BlobViewStatus, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, created_at: number, reply_to?: string | null, reply_preview?: ReplyPreviewView | null, root_id?: string | null, object_kind: string, published_topic_id?: string | null, origin_topic_id?: string | null, repost_of?: RepostSourceView | null, repost_commentary?: string | null, is_threadable: boolean, channel_id?: string | null, audience_label: string, reaction_summary?: Array<ReactionSummaryView> | null, my_reactions?: Array<ReactionKeyView> | null, };
 
 export type BookmarkedPostView = { bookmarked_at: number, post: PostView, };
 
 export type BookmarkedPostPageView = { items: Array<BookmarkedPostView>, newer_cursor: BookmarkCursor | null, older_cursor: BookmarkCursor | null, };
 
-export type AuthorSocialView = { author_pubkey: string, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at?: number | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, friend_of_friend_via_pubkeys: Array<string>, provenance?: ContentProvenanceView | null, muted: boolean, blocking: boolean, blocked_by: boolean, };
+export type AuthorSocialView = { author_pubkey: string, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at?: number | null, nip05?: string | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, friend_of_friend_via_pubkeys: Array<string>, provenance?: ContentProvenanceView | null, muted: boolean, blocking: boolean, blocked_by: boolean, };
 
 export type DirectMessageStatusView = { peer_pubkey: string, dm_id: string, mutual: boolean, send_enabled: boolean, pending_outbox_count: number, pending_outbox_has_more: boolean, };
 

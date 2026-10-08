@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import type { LinkPreview, LinkPreviewFetcher } from '@/lib/api';
 
+import { useOnScreen } from './useOnScreen';
+
 type LinkPreviewState =
   | { status: 'idle' | 'loading' | 'unavailable'; preview: null }
   | { status: 'available'; preview: LinkPreview };
@@ -19,41 +21,13 @@ export function useLinkPreview({
   targetRef: RefObject<HTMLElement | null>;
   url: string | null;
 }): LinkPreviewState {
-  const [intersecting, setIntersecting] = useState(
-    () => typeof IntersectionObserver === 'undefined'
-  );
-  const [documentVisible, setDocumentVisible] = useState(
-    () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
-  );
+  const onScreen = useOnScreen(targetRef, url);
   const [state, setState] = useState<LinkPreviewState>({ status: 'idle', preview: null });
   const generation = useRef(0);
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') {
-      setIntersecting(true);
-      return;
-    }
-    const slot = targetRef.current;
-    if (!slot) return;
-    const target = slot.closest('article') ?? slot;
-    const observer = new IntersectionObserver(
-      (entries) => setIntersecting(entries.some((entry) => entry.isIntersecting)),
-      { rootMargin: '0px' }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [targetRef, url]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const update = () => setDocumentVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
-
-  useEffect(() => {
     const request = ++generation.current;
-    if (!enabled || !fetcher || !url || !intersecting || !documentVisible) {
+    if (!enabled || !fetcher || !url || !onScreen) {
       setState({ status: 'idle', preview: null });
       return;
     }
@@ -75,7 +49,7 @@ export function useLinkPreview({
     return () => {
       generation.current += 1;
     };
-  }, [documentVisible, enabled, fetcher, intersecting, objectId, url]);
+  }, [enabled, fetcher, objectId, onScreen, url]);
 
   return state;
 }

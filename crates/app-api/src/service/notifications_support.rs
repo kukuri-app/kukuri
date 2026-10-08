@@ -206,6 +206,7 @@ pub(crate) fn author_social_view_from_parts(
             profile.and_then(|profile| profile.picture_asset.as_ref()),
         ),
         updated_at: profile.map(|profile| profile.updated_at),
+        nip05: profile.and_then(|profile| profile.nip05.clone()),
         following: relationship.is_some_and(|relationship| relationship.following),
         followed_by: relationship.is_some_and(|relationship| relationship.followed_by),
         mutual: relationship.is_some_and(|relationship| relationship.mutual),

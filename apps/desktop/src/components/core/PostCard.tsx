@@ -591,6 +591,8 @@ export function PostCard({
         <AuthorIdentityButton
           label={primaryAuthor.label}
           picture={primaryAuthor.picture ?? null}
+          pubkey={primaryAuthor.pubkey}
+          nip05={showRepostAsPrimary ? repostSource?.source_author_nip05 : post.author_nip05}
           avatarTestId={`${post.object_id}-author-avatar`}
           onClick={() => onOpenAuthor(primaryAuthor.pubkey)}
         />

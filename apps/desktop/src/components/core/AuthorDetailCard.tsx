@@ -34,6 +34,7 @@ import { BlockedActionTooltip } from './BlockedActionTooltip';
 import { RelationshipBadge } from './RelationshipBadge';
 import { ReportRoutingDialog, type ReportSubmitInput } from './ReportRoutingDialog';
 import { useReportManifests } from './useReportManifests';
+import { VerifiedAuthorName } from './VerifiedAuthorName';
 import { type AuthorDetailView } from './types';
 
 type AuthorDetailCardProps = {
@@ -179,7 +180,17 @@ export function AuthorDetailCard({
                 />
                 <div className='author-detail-identity'>
                   <div className='author-detail-heading'>
-                    <strong className='author-detail-name author-detail-break'>{view.displayLabel}</strong>
+                    <strong className='author-detail-name author-detail-break'>
+                      {author.nip05 ? (
+                        <VerifiedAuthorName
+                          label={view.displayLabel}
+                          pubkey={author.author_pubkey}
+                          nip05={author.nip05}
+                        />
+                      ) : (
+                        view.displayLabel
+                      )}
+                    </strong>
                     {relationshipLabel ? (
                       <RelationshipBadge
                         label={relationshipLabel}

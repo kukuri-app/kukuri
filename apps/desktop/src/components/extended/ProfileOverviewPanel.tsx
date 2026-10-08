@@ -1,11 +1,14 @@
 import { useTranslation } from 'react-i18next';
 
+import { VerifiedAuthorName } from '@/components/core/VerifiedAuthorName';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Notice } from '@/components/ui/notice';
 
 type ProfileOverviewPanelProps = {
   authorLabel: string;
+  pubkey?: string;
+  nip05?: string | null;
   username: string | null;
   about: string | null;
   picture: string | null;
@@ -25,6 +28,8 @@ type ProfileOverviewPanelProps = {
 
 export function ProfileOverviewPanel({
   authorLabel,
+  pubkey,
+  nip05,
   username,
   about,
   picture,
@@ -59,7 +64,13 @@ export function ProfileOverviewPanel({
             )}
           </div>
           <div className='profile-overview-names'>
-            <h3>{authorLabel}</h3>
+            <h3>
+              {pubkey && nip05 ? (
+                <VerifiedAuthorName label={authorLabel} pubkey={pubkey} nip05={nip05} />
+              ) : (
+                authorLabel
+              )}
+            </h3>
             <small>{username?.trim() || t('overview.noUsername')}</small>
           </div>
         </div>

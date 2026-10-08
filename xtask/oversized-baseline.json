@@ -41,7 +41,7 @@
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
-      "lines": 1052,
+      "lines": 1051,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
@@ -71,6 +71,10 @@
     {
       "lines": 1008,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
+    },
+    {
+      "lines": 1002,
+      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1000,

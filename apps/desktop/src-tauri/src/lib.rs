@@ -356,6 +356,7 @@ pub fn run() {
             app_update::install_app_update,
             commands::external_url::open_external_url,
             commands::link_preview::fetch_link_preview,
+            commands::link_preview::verify_profile_domain,
             commands::app_consent::get_app_consent_status,
             commands::app_consent::accept_app_consents,
             commands::identity::get_account_display,

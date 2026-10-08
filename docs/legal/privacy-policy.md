@@ -65,9 +65,11 @@ Windows／Linux のデスクトップアプリは、設定「公開コンテン�
 
 Community Node 運営者と kukuri 運営者が同一とは限りません。Node ごとの処理、外部送信、保持期間、問い合わせ先は、その Node の manifest から開けるプライバシーポリシー、外部送信表示、保持文書を確認してください。現行配布物の `https://api.kukuri.app` は初期候補であり、固定接続先ではありません。
 
-## 7. リンクプレビュー、自動更新確認と外部送信
+## 7. リンクプレビュー、ドメインでの確認、自動更新確認と外部送信
 
 同意後、公開投稿の本文が表示可能な状態で画面内に入ると、先頭の絶対 HTTP(S) URL 1件について概要を表示するため、リンク先と、そのページが OGP 画像として指定した配信先へアクセスする場合があります。相手方と通信経路事業者から、IP address、HTTP／TLS request metadata、URL の path／query、固定 User-Agent、preview 閲覧の発生が観測され得ます。cookie、Authorization、Referer、公開鍵、account／topic／channel／post ID、他の投稿本文は送りません。private channel／DM、成人向け表示または信頼評価で折りたたまれた内容、未確定投稿は自動取得しません。取得結果は端末の process memory にだけ上限付きで一時保持し、再起動後へ残しません。
+
+プロフィールに `name@domain` の識別子（NIP-05）を持つユーザーを、プロフィールまたは投稿カードで表示すると、名前の後ろに `@domain` を表示するため、端末（デスクトップアプリと Web クライアント）がそのユーザーのドメインの `/.well-known/nostr.json` へ照会します。照会先と通信経路事業者から、IP address、HTTP／TLS request metadata、照会した名前、照会の発生が観測され得ます（Web クライアントでは要求元の origin も含みます）。cookie、Authorization、Referer、閲覧者の公開鍵、account／topic／channel／post ID、投稿本文は送りません。照会の結果は端末の memory にだけ上限付きで一時保持し、再起動後へ残しません。自分のプロフィールに設定した識別子は、公開プロフィールの一部として複製されます。
 
 Direct／NSIS・Linux版のアプリは、同意後の起動時と30分ごと、および利用者の手動操作時にGitHub Releasesへ自動更新確認を行います。更新確認ではIP addressとHTTP／TLS request metadataがGitHubや経路事業者から観測されます。Microsoft Store版の更新はMicrosoft Store／Windowsへ委譲し、kukuri内からGitHub Releasesや別のStore update APIへ更新確認を送りません。送信先、目的、項目、保持主体の一覧は`docs/legal/external-transmission-notice.md`に記載します。
 
@@ -81,6 +83,7 @@ Direct／NSIS・Linux版のアプリは、同意後の起動時と30分ごと、
 
 - 端末内情報は、利用者が個別に削除するか app data を削除するまで保持されます。cache 等には実装上の容量上限や再構築による置換があります。
 - リンク preview の metadata／画像は process memory に success 最大10分、failure 最大60秒、合計128件かつ16 MiBまで保持し、process終了で消えます。リンク先・画像配信先・経路事業者の記録は各主体の方針に従います。
+- プロフィールのドメインの照会の結果は memory に、確認できたものは最大10分、それ以外は最大60秒、合計128件まで保持し、process終了・画面の再読込で消えます。照会先と経路事業者の記録は各主体の方針に従います。
 - 公開コンテンツの発見の DHT 上の告知は更新を止めると期限で消え、補助 index へ登録した record は期限（既定 1 時間）で消えます。
 - P2P 相手、DHT、relay、GitHub、各 Community Node が扱う情報は各主体の方針に従い、kukuri アプリはその保持期間を一括して制御しません。
 - Community Node の一時 presence、index、report 等は機能ごとに異なります。実際の期間は当該 Node の retention 文書を確認してください。
@@ -99,7 +102,7 @@ local data の削除や投稿撤回は、対応する client／Node が認識す
 
 ## 13. 変更履歴
 
-- version 10（2026-10-09）: 自作のカスタムリアクションと、作ったカスタムリアクションのセットの一覧が公開 author replica に複製されること、セットの中身が共有用の文字列を知る人が取得できる公開 blob であることを追記しました。公開コンテンツの発見で告知・検索する公開 blob（Web クライアントが Community Node に頼む保持端末の検索を含む）に、自作と保存済みのカスタムリアクションの画像（セットから取り込んだものを含む）と、公開投稿の本文に貼られたカスタムリアクションのセットを加えました（#1232）。利用規約 version 10 と版・施行日を同期しました。
+- version 10（2026-10-09）: 自作のカスタムリアクションと、作ったカスタムリアクションのセットの一覧が公開 author replica に複製されること、セットの中身が共有用の文字列を知る人が取得できる公開 blob であることを追記しました。公開コンテンツの発見で告知・検索する公開 blob（Web クライアントが Community Node に頼む保持端末の検索を含む）に、自作と保存済みのカスタムリアクションの画像（セットから取り込んだものを含む）と、公開投稿の本文に貼られたカスタムリアクションのセットを加えました（#1232）。表示したユーザーのプロフィールのドメインへ NIP-05 の識別子を照会するときの契機、送る情報と送らない情報、一時保持を追記しました（#1670）。利用規約 version 10 と版・施行日を同期しました。
 - version 9（2026-10-07）: デスクトップアプリの設定「公開コンテンツの発見」（既定でオン）で、Community Node の利用中や `static_peer` の設定でも Mainline DHT へ参加すること、保持する公開 blob の hash から導いた infohash の告知・検索、kukuri が運用する補助 index への endpoint ID と UDP の送信元 address の登録・照会、告知・検索しない内容、期限による消去、オフにできることを追記しました。Web クライアントが、検索を提供する Community Node へ公開 blob の hash を送って保持端末を探すことを追記し、適用範囲に Web クライアントを明記しました。利用規約 version 9 と版・施行日を同期しました。
 - version 8（2026-09-19）: 公開投稿の先頭 URL の preview を表示するためにリンク先と OGP 画像配信先へ送る情報、送らない情報、private／非表示内容を自動取得しないこと、端末内の一時保持を追記しました。利用規約 version 8 と版・施行日を同期しました。#1190で、GitHub Releasesへの更新確認はDirect／NSIS・Linux版だけで、Microsoft Store版はStore／Windowsへ委譲してkukuri内から送信しない配布差を明記しました。この補記は外部送信を増やさないためbundle versionを変更しません。
 - version 7（2026-09-18）: 採用順位に選んだ Community Node へ、表示した投稿と引用元の作成者の公開鍵、および表示した live／game 一覧の主催者の公開鍵を信頼評価の照会として送る場合があること、任意の同意文書へ同意した Node へ自分のブロック・ミュートを提供できること、いずれも送らない情報、応答を期限で作り直すこと、取消で削除を要求することを追記しました。利用規約 version 7 と版・施行日を同期しました。

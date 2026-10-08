@@ -38,7 +38,7 @@ const inUseElsewhere = () => Promise.resolve({ status: 'in_use_elsewhere' });
 const renewedConsentRequired = {
   status: 'consent_required',
   documents: ['terms', 'privacy'].map((slug) => ({
-    slug, currentVersion: 9, effectiveDate: '2026-10-07', authoritativeLanguage: 'ja', materialChange: true,
+    slug, currentVersion: 10, effectiveDate: '2026-10-09', authoritativeLanguage: 'ja', materialChange: true,
     controllerName: 'Preview Distributor', contact: 'privacy@example.test',
     acceptedVersion: 8, acceptedAt: 1_700_000_000, acceptedLanguage: 'en', acceptedAppVersion: '0.4.0',
   })),

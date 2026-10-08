@@ -140,10 +140,11 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
             "commands::developer_logs::set_developer_mode_enabled"
                 | "commands::developer_logs::read_desktop_logs"
         ),
-        // GUI表示中だけに所有する一時content previewとそのlease。
+        // GUI表示中だけに所有する一時content previewとそのlease。#1670: 表示中の著者のNIP-05の照会。
         "gui_content_preview" => matches!(
             tauri,
             "commands::link_preview::fetch_link_preview"
+                | "commands::link_preview::verify_profile_domain"
                 | "read_link_preview_record"
                 | "commands::posts::get_blob_media_file"
                 | "commands::posts::release_blob_media_file"
@@ -206,7 +207,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 186);
+    assert_eq!(manifest.entries.len(), 187);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

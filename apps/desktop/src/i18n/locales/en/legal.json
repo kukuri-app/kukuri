@@ -33,7 +33,7 @@
   "documents": {
     "terms": {
       "title": "Terms of Service",
-      "changeSummary": "Version 10 synchronizes the version and effective date with the Privacy Policy update for public custom reactions and reaction sets and the wider scope of public content discovery. There are no substantive changes to the terms.",
+      "changeSummary": "Version 10 synchronizes the version and effective date with the Privacy Policy update for public custom reactions and reaction sets the wider scope of public content discovery, and profile domain verification. There are no substantive changes to the terms.",
       "sections": [
         {
           "heading": "What kukuri is",
@@ -171,7 +171,7 @@
     },
     "privacy": {
       "title": "Privacy Policy",
-      "changeSummary": "Version 10 adds that your own custom reactions and the list of reaction sets you create are public, that anyone who knows a set’s share text can fetch its contents, and that public content discovery now also covers your own and saved custom reaction images and reaction sets pasted in public posts.",
+      "changeSummary": "Version 10 adds that your own custom reactions and the list of reaction sets you create are public, that anyone who knows a set’s share text can fetch its contents, and that public content discovery now also covers your own and saved custom reaction images and reaction sets pasted in public posts, and what is sent, and what is not sent, to the domain in a displayed user's profile to check their NIP-05 identifier.",
       "sections": [
         {
           "heading": "Controller and basic approach",
@@ -196,9 +196,10 @@
           ]
         },
         {
-          "heading": "Link previews, automatic update checks, and diagnostic reports",
+          "heading": "Link previews, domain verification, automatic update checks, and diagnostic reports",
           "paragraphs": [
             "After consent, when an eligible settled public post enters the viewport, the app may contact the destination of its first URL and an OGP image host to show a preview. They can observe your IP address, HTTP/TLS request metadata, and the URL path and query. Cookies, authorization, Referer, account/topic/post identifiers, and other post text are not sent. Private channels, DMs, and collapsed content are not fetched automatically, and preview data does not survive an app restart.",
+            "When a user whose profile has a name@domain identifier (NIP-05) appears in a profile or a post card, the desktop app and the web version query /.well-known/nostr.json on that user's domain to show @domain after the name. Your IP address, HTTP/TLS request metadata, and the queried name (and the requesting origin on the web version) can be observed. Cookies, authorization, Referer, your public key, account/topic/post identifiers, and post text are not sent. Query results do not survive an app restart.",
             "After consent, Direct/NSIS and Linux builds check GitHub Releases automatically at startup, every 30 minutes, and when you request a check. GitHub and network providers can observe your IP address and HTTP/TLS request metadata. Microsoft Store builds delegate updates to the Store and Windows and do not send update checks from kukuri to GitHub or a separate Store update API.",
             "A diagnostic report can include app version, platform/user agent, connectivity state, peer and topic counts, and Node URL/session/error information. Copying or exporting does not send it automatically. Secret keys, auth tokens, private capabilities, invitations, DM bodies, and local database paths are excluded by default."
           ]
@@ -213,7 +214,7 @@
         {
           "heading": "Consent and change history",
           "paragraphs": [
-            "The app asks you to accept the terms and this policy before starting network connections. A material update increments the document version and requires renewed consent before networking resumes. Version 10 describes public custom reactions and reaction sets and the wider scope of public content discovery."
+            "The app asks you to accept the terms and this policy before starting network connections. A material update increments the document version and requires renewed consent before networking resumes. Version 10 describes public custom reactions and reaction sets, the wider scope of public content discovery, and what is sent for profile domain verification."
           ]
         }
       ]

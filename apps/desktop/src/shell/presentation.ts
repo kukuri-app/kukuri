@@ -167,6 +167,7 @@ export function mergeAuthorView(
     about: incoming.about ?? current?.about ?? null,
     picture_asset: incoming.picture_asset ?? current?.picture_asset ?? null,
     updated_at: incoming.updated_at ?? current?.updated_at ?? null,
+    nip05: incoming.nip05 ?? current?.nip05 ?? null,
     following: incoming.following ?? current?.following ?? false,
     followed_by: incoming.followed_by ?? current?.followed_by ?? false,
     mutual: incoming.mutual ?? current?.mutual ?? false,

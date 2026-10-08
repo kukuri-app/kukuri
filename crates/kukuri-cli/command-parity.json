@@ -16,6 +16,7 @@
     {"tauri":"app_update::install_app_update","excluded":"os","reason":"明示操作によるGUI更新のOS適用。CLIはpackageの自動更新対象外。"},
     {"tauri":"commands::external_url::open_external_url","excluded":"os","reason":"GUIの明示的な外部リンクをOSの既定ブラウザーへ渡す。CLI／daemonからのOS起動は対象外。"},
     {"tauri":"commands::link_preview::fetch_link_preview","excluded":"gui_content_preview","reason":"#1174: GUIで表示中の公開投稿に対する一時的な外部URL preview。CLI／daemonは投稿cardを描画せず、自動preview通信を追加しない。"},
+    {"tauri":"commands::link_preview::verify_profile_domain","excluded":"gui_content_preview","reason":"#1670: GUIで表示中の著者のプロフィールのNIP-05の識別子を、そのドメインのnostr.jsonへ照会する。CLI／daemonは著者の名前を描画せず、自動の照会を追加しない。"},
     {"tauri":"read_link_preview_record","excluded":"gui_content_preview","reason":"#1220 AC-2d・AC-2f: GUIで表示中の公開投稿の、投稿者が書いたリンクプレビューのrecordを読む（Webの表示と、Web・nativeの中継）。CLI／daemonは投稿cardを描画しない。"},
     {"tauri":"commands::app_consent::get_app_consent_status","cli":"get_app_consent_status","inventory":"INV-1"},
     {"tauri":"commands::app_consent::accept_app_consents","cli":"accept_app_consents","inventory":"INV-1"},

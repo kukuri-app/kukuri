@@ -50,14 +50,19 @@ impl PreviewTransport for FakeTransport {
         url: &Url,
         _resolved: &[SocketAddr],
         _accept: &'static str,
-        _max_bytes: usize,
+        max_bytes: usize,
     ) -> Result<TransportResponse, TransportFailure> {
         self.hits.lock().await.push(url.as_str().to_string());
-        self.responses
+        let response = self
+            .responses
             .lock()
             .await
             .pop_front()
-            .ok_or(TransportFailure::Network)
+            .ok_or(TransportFailure::Network)?;
+        if response.body.len() > max_bytes {
+            return Err(TransportFailure::TooLarge);
+        }
+        Ok(response)
     }
 }
 
@@ -311,4 +316,64 @@ fn cache_is_bounded_and_expires_negative_entries() {
     }
     assert_eq!(cache.entries.len(), MAX_CACHE_ENTRIES);
     assert!(cache.bytes <= MAX_CACHE_BYTES);
+}
+
+const NIP05_PUBKEY: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
+fn nip05_document(status: u16, body: String) -> TransportResponse {
+    TransportResponse {
+        content_type: Some("application/json".into()),
+        ..FakeTransport::html(status, &body, [93, 184, 216, 34])
+    }
+}
+
+// #1670 AC-2.1・2.3: その名前の値が公開鍵と一致するときだけ確認でき、転送・非 2xx・JSON でない・上限を超える応答は確認できない。
+#[tokio::test]
+async fn nip05_matches_only_the_named_public_key() {
+    let names =
+        |value: &str| format!(r#"{{"names":{{"alice":"{value}","bob":"{NIP05_PUBKEY}"}}}}"#);
+    let mut redirect = nip05_document(302, String::new());
+    redirect.location = Some("https://other.example/.well-known/nostr.json?name=alice".into());
+    for (response, expected) in [
+        (nip05_document(200, names(NIP05_PUBKEY)), true),
+        (nip05_document(200, names(&"0".repeat(64))), false),
+        (nip05_document(200, r#"{"names":{}}"#.into()), false),
+        (nip05_document(404, names(NIP05_PUBKEY)), false),
+        (nip05_document(200, "<html>".into()), false),
+        (redirect, false),
+        (
+            nip05_document(
+                200,
+                format!("{} {}", names(NIP05_PUBKEY), " ".repeat(512 * 1024)),
+            ),
+            false,
+        ),
+    ] {
+        let transport = FakeTransport::new(vec![response]);
+        transport.add_host("example.com", [93, 184, 216, 34]).await;
+        assert_eq!(
+            verify_nip05(&transport, NIP05_PUBKEY, "alice@example.com").await,
+            expected
+        );
+        assert_eq!(
+            *transport.hits.lock().await,
+            ["https://example.com/.well-known/nostr.json?name=alice"]
+        );
+    }
+}
+
+// #1670 AC-2.3: 形に合わない識別子と、非公開のアドレス・名前へは送らない。
+#[tokio::test]
+async fn nip05_does_not_request_invalid_or_private_targets() {
+    let transport = FakeTransport::new(Vec::new());
+    transport.add_host("intranet.example", [10, 0, 0, 1]).await;
+    for identifier in [
+        "Alice@example.com",
+        "alice@192.0.2.1",
+        "alice@printer.local",
+        "alice@intranet.example",
+    ] {
+        assert!(!verify_nip05(&transport, NIP05_PUBKEY, identifier).await);
+    }
+    assert!(transport.hits.lock().await.is_empty());
 }
