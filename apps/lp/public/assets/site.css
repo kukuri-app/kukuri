@@ -237,8 +237,10 @@ html[data-os="mobile"] [data-os-target="linux"] {
   gap: 40px;
 }
 
+/* 画面はスマートフォンの幅（430px）で撮った 1 列の表示。縮小しすぎて本文が読めなくならないよう、撮った幅より大きくも小さくもしすぎない。 */
 .shot {
   margin: 0;
+  max-width: 430px;
   background: #121212;
   border-radius: var(--radius);
   overflow: hidden;
@@ -246,24 +248,6 @@ html[data-os="mobile"] [data-os-target="linux"] {
 
 .shot img {
   width: 100%;
-}
-
-/* 3 場面は該当するカラムが読める大きさになるよう、縦長に切り抜く。 */
-.shot-crop {
-  aspect-ratio: 4 / 5;
-}
-
-.shot-crop img {
-  height: 100%;
-  object-fit: cover;
-}
-
-.shot-crop.focus-left img {
-  object-position: 0% 0%;
-}
-
-.shot-crop.focus-center img {
-  object-position: 45% 0%;
 }
 
 /* 利用場面 */
@@ -359,7 +343,7 @@ td a {
 
 @media (min-width: 900px) {
   .hero-grid {
-    grid-template-columns: 5fr 6fr;
+    grid-template-columns: minmax(0, 1fr) 430px;
     align-items: center;
   }
 

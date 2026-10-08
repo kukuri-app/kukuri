@@ -1,5 +1,5 @@
 {
-  "$comment": "媒体別の静止画の固定出力一覧 (#1041)。寸法は制作時の preset で、投稿の直前に各媒体の現行要件を確かめる。capture は promo-artifacts/captures/<capture>/<locale>-dark の原素材。crop は原素材 (1600x1000) の座標。Dome の原素材 (s9-dome-teaser) を使ってよいのは lp-dome-teaser だけで、render-stills.mjs が検査する。",
+  "$comment": "媒体別の静止画の固定出力一覧 (#1041)。寸法は制作時の preset で、投稿の直前に各媒体の現行要件を確かめる。capture は promo-artifacts/captures/<capture>/<locale>-dark の原素材。crop は原素材の viewport（CSS px）の座標。LP の画面と OGP (#1668) は L0〜L3（430×760、2 倍で撮影）を使い、Product Hunt・note・X は S0〜S3（1600×1000）を使う。開発者モードで撮った原素材はどの出力にも使えない（render-stills.mjs が検査する）。",
   "outputs": [
     {
       "id": "lp-hero-ja",
@@ -7,13 +7,13 @@
       "order": 1,
       "locale": "ja",
       "composition": "SceneStill",
-      "capture": "s0-hero/c1",
+      "capture": "l0-hero/c1",
       "file": "apps/lp/public/assets/screens/hero-ja.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "kukuri のデモ画面。左から、話題「dev」のタイムライン、プロフィール、コミュニティインデックスの検索のカラムが並ぶ。タイムラインには、デモ参加者の会話が並んでいる。",
-      "description": "LP ① Hero の画面"
+      "alt": "kukuri のデモ画面。話題「ベランダ菜園」のタイムラインに、ミニトマトの脇芽についてのふたばの質問と、それに返信したみなとの投稿が並んでいる。",
+      "description": "LP ① Hero の画面（話題のタイムライン。狭い幅と広い幅で共用）"
     },
     {
       "id": "lp-hero-en",
@@ -21,13 +21,13 @@
       "order": 1,
       "locale": "en",
       "composition": "SceneStill",
-      "capture": "s0-hero/c1",
+      "capture": "l0-hero/c1",
       "file": "apps/lp/public/assets/screens/hero-en.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "A kukuri demo screen. From the left: the Timeline column for the topic dev, a Profile column, and Community Index search. The timeline shows a conversation between demo participants.",
-      "description": "LP 1. Hero screen"
+      "alt": "A kukuri demo screen. The timeline for the topic gardening shows Futaba's question about pinching cherry tomato side shoots and Minato's reply to it.",
+      "description": "LP 1. Hero screen (topic timeline, shared by narrow and wide layouts)"
     },
     {
       "id": "lp-scene1-ja",
@@ -35,13 +35,13 @@
       "order": 2,
       "locale": "ja",
       "composition": "SceneStill",
-      "capture": "s1-topic/c1",
+      "capture": "l1-find/c1",
       "file": "apps/lp/public/assets/screens/scene1-ja.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "話題「general」のタイムラインのデモ画面。カラム上部で話題を切り替えられる。",
-      "description": "LP ② 場面 1「話題を選ぶ」"
+      "alt": "見つけるのカラムで「ミニトマト」を検索したデモ画面。話題の投稿が 2 件見つかっている。",
+      "description": "LP ② 場面 1「話題を見つける」"
     },
     {
       "id": "lp-scene1-en",
@@ -49,13 +49,13 @@
       "order": 2,
       "locale": "en",
       "composition": "SceneStill",
-      "capture": "s1-topic/c1",
+      "capture": "l1-find/c1",
       "file": "apps/lp/public/assets/screens/scene1-en.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "A demo timeline for the topic general. The topic can be switched at the top of the column.",
-      "description": "LP 2. Scene 1, Pick a topic"
+      "alt": "A demo of searching for tomato in the Explore column. Two posts from the topic are found.",
+      "description": "LP 2. Scene 1, Find a topic"
     },
     {
       "id": "lp-scene2-ja",
@@ -63,13 +63,13 @@
       "order": 3,
       "locale": "ja",
       "composition": "SceneStill",
-      "capture": "s2-conversation/c2",
+      "capture": "l2-talk/c1",
       "file": "apps/lp/public/assets/screens/scene2-ja.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "話題「dev」で、デモ参加者のみなととふたばが会話しているタイムラインのデモ画面。最初の投稿にリアクションが付いている。",
-      "description": "LP ② 場面 2「公開で会話する」"
+      "alt": "話題「ベランダ菜園」のスレッドのデモ画面。ふたばの質問にみなとが答え、ふたばがお礼の返信をしている。",
+      "description": "LP ② 場面 2「会話に加わる」"
     },
     {
       "id": "lp-scene2-en",
@@ -77,13 +77,13 @@
       "order": 3,
       "locale": "en",
       "composition": "SceneStill",
-      "capture": "s2-conversation/c2",
+      "capture": "l2-talk/c1",
       "file": "apps/lp/public/assets/screens/scene2-en.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "A demo timeline for the topic dev, where the demo participants Minato and Futaba are talking. The first post has reactions.",
-      "description": "LP 2. Scene 2, Talk in the open"
+      "alt": "A demo thread in the topic gardening. Minato answers Futaba's question, and Futaba replies with thanks.",
+      "description": "LP 2. Scene 2, Join the conversation"
     },
     {
       "id": "lp-scene3-ja",
@@ -91,13 +91,13 @@
       "order": 4,
       "locale": "ja",
       "composition": "SceneStill",
-      "capture": "s3-private-channel/c2",
+      "capture": "l3-circle/c1",
       "file": "apps/lp/public/assets/screens/scene3-ja.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "プライベートチャンネルを作る画面のデモ。チャンネル名「カラム配置の相談（デモ）」を入力し、公開範囲に「招待限定」を選んでいる。",
-      "description": "LP ② 場面 3「同じ話題の中で、小さな輪へ」"
+      "alt": "招待限定のプライベートチャンネル「苗の交換会（デモ）」のデモ画面。みなととふたばが、苗を持ち寄る相談をしている。",
+      "description": "LP ② 場面 3「小さな輪で続ける」"
     },
     {
       "id": "lp-scene3-en",
@@ -105,27 +105,13 @@
       "order": 4,
       "locale": "en",
       "composition": "SceneStill",
-      "capture": "s3-private-channel/c2",
+      "capture": "l3-circle/c1",
       "file": "apps/lp/public/assets/screens/scene3-en.png",
       "variants": [
-        800
+        430
       ],
-      "alt": "A demo of creating a private channel named Column layout chat (demo) with the Invite only audience.",
-      "description": "LP 2. Scene 3, Move into a smaller circle"
-    },
-    {
-      "id": "lp-dome-teaser",
-      "media": "lp",
-      "order": 5,
-      "locale": "ja",
-      "composition": "SceneStill",
-      "capture": "s9-dome-teaser/c1",
-      "file": "apps/lp/public/assets/screens/dome-teaser.png",
-      "variants": [
-        960
-      ],
-      "alt": "配布版の実機画面。左にタイムラインのカラム、右に Metaverse のカラムが同じ並びで表示され、Dome の中に白いアバターが立っている。",
-      "description": "LP ⑥ 開発中の実験機能の予告。必須の表記は画像内の帯と LP 本文、画面の説明は画像の外（LP 本文）"
+      "alt": "A demo of the invite-only private channel Seedling swap (demo), where Minato and Futaba plan to bring seedlings.",
+      "description": "LP 2. Scene 3, Continue in a small circle"
     },
     {
       "id": "ogp-ja",
@@ -136,18 +122,18 @@
       "width": 1200,
       "height": 630,
       "layout": "header",
-      "capture": "s0-hero/c1",
+      "capture": "l0-hero/c1",
       "crop": {
         "x": 0,
         "y": 0,
-        "width": 1180,
-        "height": 1000
+        "width": 430,
+        "height": 329
       },
       "file": "apps/lp/public/assets/screens/ogp-ja.png",
-      "headline": "話題からつながる、\nあなたの端末が\n起点のSNS",
-      "subhead": "話題を選び、公開で語り、同じ話題の中で小さな輪へ。",
-      "footer": "Builder Preview · Windows / Linux",
-      "alt": "kukuri のデモ画面。話題ごとのカラムに会話が並ぶ。",
+      "headline": "話題でつながる。\n運営は選べる。",
+      "subhead": "検索やおすすめを任せる相手を自分で選べる分散型SNS。全体BANは無し。",
+      "footer": "Builder Preview · ブラウザ / Windows / Linux",
+      "alt": "kukuri のデモ画面。話題「ベランダ菜園」のタイムラインで、ミニトマトの育て方の質問に返信が付いている。",
       "description": "LP 日本語版の OGP"
     },
     {
@@ -159,18 +145,18 @@
       "width": 1200,
       "height": 630,
       "layout": "header",
-      "capture": "s0-hero/c1",
+      "capture": "l0-hero/c1",
       "crop": {
         "x": 0,
         "y": 0,
-        "width": 1180,
-        "height": 1000
+        "width": 430,
+        "height": 329
       },
       "file": "apps/lp/public/assets/screens/ogp-en.png",
-      "headline": "A topic-first social app that starts on your device",
-      "subhead": "Pick a topic, talk in the open, move into a smaller circle.",
-      "footer": "Builder Preview · Windows / Linux",
-      "alt": "A kukuri demo screen with a conversation in a topic column.",
+      "headline": "Connect through topics.\nChoose your operators.",
+      "subhead": "A decentralized social app where you choose who handles search and recommendations. No network-wide bans.",
+      "footer": "Builder Preview · Browser / Windows / Linux",
+      "alt": "A kukuri demo screen. In the timeline for the topic gardening, a question about growing cherry tomatoes has a reply.",
       "description": "LP English OGP"
     },
     {

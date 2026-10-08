@@ -33,7 +33,7 @@ const FUTABA_PUBKEY = 'f'.repeat(64);
  */
 const BASE_TIME = 1789466400;
 
-type Person = { pubkey: string; name: Record<PromoLocale, string> };
+export type Person = { pubkey: string; name: Record<PromoLocale, string> };
 
 export const MINATO: Person = {
   pubkey: MINATO_PUBKEY,
@@ -77,7 +77,7 @@ const OTHER_TOPIC_POSTS: Record<PromoLocale, { general: string; test: string }> 
   },
 };
 
-function post(input: {
+export function post(input: {
   id: string;
   person: Person;
   locale: PromoLocale;
@@ -86,8 +86,10 @@ function post(input: {
   replyTo?: string;
   rootId?: string;
   reactions?: { emoji: string; count: number }[];
+  /** 返信先・私的チャンネルなど、上の引数で表せない項目を上書きする。 */
+  extra?: Partial<SeedPostInput>;
 }): SeedPostInput {
-  const { id, person, locale, content, createdAt, replyTo, rootId, reactions } = input;
+  const { id, person, locale, content, createdAt, replyTo, rootId, reactions, extra } = input;
   return {
     object_id: id,
     envelope_id: `${id}-envelope`,
@@ -116,6 +118,33 @@ function post(input: {
       count: reaction.count,
     })),
     my_reactions: [],
+    ...extra,
+  };
+}
+
+/**
+ * 返信の項目。実アプリの runtime と同じく、返信先の投稿者と本文を reply_preview に載せる。
+ * 載せないと、タイムラインで返信が返信先の無い投稿のように見える。
+ */
+export function replyFields(parent: SeedPostInput, topic: string): Partial<SeedPostInput> {
+  return {
+    object_kind: 'comment',
+    reply_to: parent.object_id,
+    root_id: parent.root_id ?? parent.object_id,
+    reply_preview: {
+      object_id: parent.object_id,
+      topic,
+      author: {
+        pubkey: parent.author_pubkey,
+        name: parent.author_name ?? null,
+        display_name: parent.author_display_name ?? null,
+      },
+      content: parent.content,
+      content_status: parent.content_status,
+      attachments: [],
+      root_id: parent.root_id ?? null,
+      reply_to: parent.reply_to ?? null,
+    },
   };
 }
 
@@ -213,7 +242,11 @@ export type SeedOptions = {
  * 開発者モードは必ず `false` を書き込む。既定値に任せず明示することで、
  * 実験機能が写り込んだ素材を作らない (INVAR-3)。
  */
-export async function seedDemoStory(page: Page, { locale, theme }: SeedOptions) {
+export async function seedDemoStory(
+  page: Page,
+  { locale, theme }: SeedOptions,
+  seed: DesktopMockApiOptions = createDemoSeed(locale)
+) {
   await page.addInitScript(
     ({ seed, locale, theme, themeKey, developerKey }) => {
       window.localStorage.setItem('kukuri.desktop.locale', locale);
@@ -222,7 +255,7 @@ export async function seedDemoStory(page: Page, { locale, theme }: SeedOptions) 
       (window as { __KUKURI_PROMO_MOCK_SEED__?: unknown }).__KUKURI_PROMO_MOCK_SEED__ = seed;
     },
     {
-      seed: createDemoSeed(locale) as unknown as Record<string, unknown>,
+      seed: seed as unknown as Record<string, unknown>,
       locale,
       theme,
       themeKey: DESKTOP_THEME_STORAGE_KEY,
