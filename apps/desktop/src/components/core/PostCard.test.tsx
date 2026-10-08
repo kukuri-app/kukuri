@@ -316,7 +316,7 @@ test('post card renders repost source context for quote reposts', () => {
           repost_commentary: 'adding context',
           repost_of: {
             source_object_id: 'source-1',
-            source_topic_id: 'kukuri:topic:source',
+            source_topic_id: 'kukuri:topic:ベランダ菜園',
             source_author_pubkey: 'b'.repeat(64),
             source_author_display_name: 'Source Author',
             source_author_name: null,
@@ -337,6 +337,9 @@ test('post card renders repost source context for quote reposts', () => {
   expect(screen.getByText('Repost with comment')).toBeInTheDocument();
   expect(screen.getByText('Source Author')).toBeInTheDocument();
   expect(screen.getByText('original body')).toBeInTheDocument();
+  // #1673: 英数字以外を含む話題名も、prefix を見せずに名前のチップで出す。
+  expect(screen.getByRole('button', { name: 'ベランダ菜園' })).toBeInTheDocument();
+  expect(screen.queryByText(/kukuri:topic:/)).not.toBeInTheDocument();
 });
 
 function createReplyView(overrides?: Partial<PostCardView>): PostCardView {
@@ -906,16 +909,17 @@ test('post card keeps an unresolved custom reaction identifiable without showing
   });
 });
 
-test('read-only post card hides reaction affordances and keeps the original topic action', async () => {
+test('read-only post card hides reaction affordances and keeps the original topic chip and action', async () => {
   const user = userEvent.setup();
   const onOpenOriginalTopic = vi.fn();
+  const onActivateReference = vi.fn();
 
   render(
     <PostCard
       view={createView({
         post: {
           ...createView().post,
-          published_topic_id: 'kukuri:topic:source',
+          published_topic_id: 'kukuri:topic:ベランダ菜園',
           reaction_summary: [
             {
               reaction_key_kind: 'emoji',
@@ -932,14 +936,22 @@ test('read-only post card hides reaction affordances and keeps the original topi
       onOpenThread={() => undefined}
       onReply={() => undefined}
       onOpenOriginalTopic={onOpenOriginalTopic}
+      onActivateReference={onActivateReference}
     />
   );
 
   expect(screen.queryByRole('button', { name: 'React' })).not.toBeInTheDocument();
   expect(screen.queryByText('3')).not.toBeInTheDocument();
 
+  // #1673: 英数字以外を含む話題名も、prefix を見せずに名前のチップで出す。
+  expect(screen.queryByText(/kukuri:topic:/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'ベランダ菜園' }));
+  expect(onActivateReference).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'topic', topic: 'kukuri:topic:ベランダ菜園' })
+  );
+
   await user.click(screen.getByRole('button', { name: 'Open original topic' }));
-  expect(onOpenOriginalTopic).toHaveBeenCalledWith('kukuri:topic:source');
+  expect(onOpenOriginalTopic).toHaveBeenCalledWith('kukuri:topic:ベランダ菜園');
 });
 
 test('post card renders bookmark as an icon-only action with an accessible label', async () => {

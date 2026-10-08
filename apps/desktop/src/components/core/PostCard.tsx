@@ -24,6 +24,7 @@ import { useReportManifests } from './useReportManifests';
 import { copyTextToClipboard } from '@/lib/utils';
 import {
   buildPostLink,
+  buildTopicLink,
   type InternalSmartReference,
 } from '@/lib/internalLinks';
 
@@ -411,7 +412,8 @@ export function PostCard({
           <span className='repost-source-topic'>
             <span>{t('labels.sourceTopic')}</span>
             <SmartReferenceText
-              text={source.topic}
+              // #1673: 話題 ID を経路で渡し、英数字以外を含む名前も名前のチップにする。
+              text={buildTopicLink(source.topic)}
               className='shell-topic-link-label'
               onActivateReference={onActivateReference}
             />
@@ -546,7 +548,8 @@ export function PostCard({
         <div className='topic-diagnostic topic-diagnostic-secondary'>
           <span>{t('feed.originTopic', { ns: 'profile' })}</span>
           <SmartReferenceText
-            text={publishedTopicId}
+            // #1673: 話題 ID を経路で渡し、英数字以外を含む名前も名前のチップにする。
+            text={buildTopicLink(publishedTopicId)}
             className='shell-topic-link-label'
             onActivateReference={onActivateReference}
           />
