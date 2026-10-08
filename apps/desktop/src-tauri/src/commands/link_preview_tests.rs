@@ -362,6 +362,15 @@ async fn nip05_matches_only_the_named_public_key() {
     }
 }
 
+// #1670 AC-2.1・2.3: 取得できない(時間切れ・通信の失敗)ときは確認できない。
+#[tokio::test]
+async fn nip05_is_unverified_when_the_request_fails() {
+    let transport = FakeTransport::new(Vec::new());
+    transport.add_host("example.com", [93, 184, 216, 34]).await;
+    assert!(!verify_nip05(&transport, NIP05_PUBKEY, "alice@example.com").await);
+    assert_eq!(transport.hits.lock().await.len(), 1);
+}
+
 // #1670 AC-2.3: 形に合わない識別子と、非公開のアドレス・名前へは送らない。
 #[tokio::test]
 async fn nip05_does_not_request_invalid_or_private_targets() {

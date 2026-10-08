@@ -89,6 +89,7 @@ async function fetchVerified(pubkey: string, claim: ProfileNip05): Promise<boole
   const response = await fetch(
     `https://${claim.domain}/.well-known/nostr.json?name=${claim.name}`,
     {
+      cache: 'no-store',
       credentials: 'omit',
       redirect: 'error',
       referrerPolicy: 'no-referrer',

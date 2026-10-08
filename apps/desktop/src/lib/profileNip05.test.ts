@@ -61,7 +61,13 @@ test('verifies with a cookie-less fetch and keeps a match for 10 minutes', async
   expect(await verifyProfileNip05(PUBKEY, ' Alice@Example.com ')).toBe('example.com');
   expect(fetch).toHaveBeenCalledWith(
     'https://example.com/.well-known/nostr.json?name=alice',
-    expect.objectContaining({ credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' })
+    expect.objectContaining({
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal: expect.any(AbortSignal),
+    })
   );
   vi.advanceTimersByTime(10 * 60 * 1000 - 1);
   expect(await verifyProfileNip05(PUBKEY, 'alice@example.com')).toBe('example.com');
@@ -100,6 +106,23 @@ test('does not ask for an identifier that is not name@domain', async () => {
     expect(await verifyProfileNip05(PUBKEY, value)).toBeNull();
   }
   expect(fetch).not.toHaveBeenCalled();
+});
+
+// #1670 AC-2.2: 保持は 128 件まで。超えたら古いものから捨て、捨てたものは照会し直す。
+test('keeps at most 128 results and asks again for an evicted one', async () => {
+  const fetch = vi.fn(async (url: string) =>
+    document({ [new URL(url).searchParams.get('name')!]: PUBKEY })
+  );
+  vi.stubGlobal('fetch', fetch);
+  const { verifyProfileNip05 } = await load();
+
+  for (let index = 0; index <= 128; index += 1) {
+    await verifyProfileNip05(PUBKEY, `user${index}@example.com`);
+  }
+  await verifyProfileNip05(PUBKEY, 'user128@example.com');
+  expect(fetch).toHaveBeenCalledTimes(129);
+  await verifyProfileNip05(PUBKEY, 'user0@example.com');
+  expect(fetch).toHaveBeenCalledTimes(130);
 });
 
 // #1670 AC-2.2: 同時 4 件・待ち 32 件まで。超えた分は照会せず結果も持たないので、次の表示で照会する。
