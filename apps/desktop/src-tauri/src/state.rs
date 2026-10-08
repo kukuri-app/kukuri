@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn app_consent_satisfied_requires_every_document_at_current_or_newer_version() {
-        assert_eq!(LEGAL_BUNDLE_VERSION, 9);
+        assert_eq!(LEGAL_BUNDLE_VERSION, 10);
         assert!(!app_consent_documents_satisfied(&AppConsentStore::default()));
 
         // terms だけ同意しても不十分。
@@ -381,6 +381,9 @@ mod tests {
             "公開コンテンツの発見",
             "infohash",
             "kukuri が運用する補助 index",
+            // #1232: カスタムリアクションとそのセットの公開と、公開コンテンツの発見の対象。
+            "作ったカスタムリアクションのセットの一覧",
+            "自作と保存済みのカスタムリアクションの画像",
         ] {
             assert!(
                 PRIVACY.contains(required_clause),
@@ -401,6 +404,9 @@ mod tests {
             "公開コンテンツの発見",
             "infohash",
             "kukuri が運用する補助 index",
+            // #1232: P2P 接続相手と Mainline DHT の行のカスタムリアクションとそのセット。
+            "作ったカスタムリアクションのセットの一覧",
+            "自作と保存済みのカスタムリアクションの画像",
         ] {
             assert!(
                 EXTERNAL_TRANSMISSION.contains(required_clause),

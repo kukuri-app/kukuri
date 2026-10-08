@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const LEGAL_BUNDLE_VERSION: i32 = 9;
-pub const APP_LEGAL_EFFECTIVE_DATE: &str = "2026-10-07";
+pub const LEGAL_BUNDLE_VERSION: i32 = 10;
+pub const APP_LEGAL_EFFECTIVE_DATE: &str = "2026-10-09";
 pub const APP_LEGAL_AUTHORITATIVE_LANGUAGE: &str = "ja";
 pub const AGE_ATTESTATION_VERSION: i32 = 1;
 pub const APP_LEGAL_DOCUMENTS: &[(&str, i32)] = &[
