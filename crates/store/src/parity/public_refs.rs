@@ -9,8 +9,8 @@ use kukuri_core::{
 };
 
 use crate::{
-    ContentCacheStore, ObjectProjectionRow, PostWithdrawalRow, ProjectionStore,
-    ReactionProjectionRow, Store,
+    BookmarkedCustomReactionRow, ContentCacheStore, ObjectProjectionRow, PostWithdrawalRow,
+    ProjectionStore, ReactionProjectionRow, Store,
 };
 
 const REPLICA: &str = "bucket::v1::topic::746f706963::1";
@@ -132,8 +132,8 @@ pub async fn public(store: &dyn ContentCacheStore, seeds: &[u32]) -> Vec<bool> {
 }
 
 /// 公開 topic の投稿の本文・添付・repost の添付・リンクプレビューの画像、profile の画像、公開 topic の有効な custom
-/// reaction の asset だけが公開参照になる。取り下げ・reaction の削除・profile の更新で外れ、同じ hash を別の公開記録が
-/// 参照している間は公開のまま。
+/// reaction の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像だけが公開参照になる。
+/// 取り下げ・reaction の削除・profile の更新・保存の解除で外れ、同じ hash を別の公開記録が参照している間は公開のまま。
 pub async fn check_public_blob_refs<S: Store + ProjectionStore + ContentCacheStore>(store: &S) {
     let mut reposting = post("p1", "public", &hash(1), &[&hash(2)]);
     reposting.repost_of = Some(RepostSourceSnapshotV1 {
@@ -191,4 +191,41 @@ pub async fn check_public_blob_refs<S: Store + ProjectionStore + ContentCacheSto
         public(store, &[1, 2, 3, 7, 8, 9]).await,
         [false, true, false, false, false, false]
     );
+
+    // #1232 AC-3: 自作の custom reaction の asset の画像と保存済みの画像も公開参照。保存を外すと外れる。
+    let own_asset = kukuri_core::build_custom_reaction_asset_envelope(
+        &kukuri_core::generate_keys(),
+        BlobHash::new(hash(11)),
+        "own".into(),
+        "image/png".into(),
+        1,
+        1,
+        1,
+    )
+    .expect("own asset envelope");
+    store.put_envelope(own_asset).await.expect("own asset");
+    store
+        .put_bookmarked_custom_reaction(bookmark(&hash(12)))
+        .await
+        .expect("bookmark");
+    assert_eq!(public(store, &[11, 12]).await, [true, true]);
+    store
+        .remove_bookmarked_custom_reaction("saved")
+        .await
+        .expect("remove bookmark");
+    assert_eq!(public(store, &[11, 12]).await, [true, false]);
+}
+
+pub fn bookmark(blob_hash: &str) -> BookmarkedCustomReactionRow {
+    BookmarkedCustomReactionRow {
+        asset_id: "saved".into(),
+        owner_pubkey: "e".repeat(64),
+        blob_hash: BlobHash::new(blob_hash),
+        search_key: "saved".into(),
+        mime: "image/png".into(),
+        bytes: 1,
+        width: 1,
+        height: 1,
+        bookmarked_at: 1,
+    }
 }
