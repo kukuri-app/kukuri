@@ -230,7 +230,7 @@ pub use reactions::{
     KukuriCustomReactionAssetEnvelopeContentV1, KukuriReactionEnvelopeContentV1, ReactionDocV1,
     ReactionKeyKind, ReactionKeyV1, build_custom_reaction_asset_envelope,
     build_custom_reaction_asset_envelope_with_docs_author, build_reaction_envelope,
-    deterministic_reaction_id, parse_custom_reaction_asset, parse_reaction,
+    custom_reaction_id, deterministic_reaction_id, parse_custom_reaction_asset, parse_reaction,
 };
 pub use receive_endpoint_binding::{
     RECEIVE_ENDPOINT_BINDING_MAX_BYTES, RECEIVE_ENDPOINT_BINDING_MAX_LIFETIME_MS,

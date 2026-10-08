@@ -727,10 +727,17 @@ pub(crate) fn custom_reaction_asset_view_from_snapshot(
     }
 }
 
+/// 自作・保存済み・最近使ったものの view は、ID を画像の hash と検索名から求める（#1232 D1）。picker から付ける
+/// リアクションの key はこの ID になる。投稿の summary の chip は、付いたときの key のまま（旧い ID を含む。D2）。
+fn content_addressed(mut view: CustomReactionAssetView) -> CustomReactionAssetView {
+    view.asset_id = kukuri_core::custom_reaction_id(&view.blob_hash, &view.search_key);
+    view
+}
+
 pub(crate) fn custom_reaction_asset_view_from_doc(
     asset: &CustomReactionAssetDocV1,
 ) -> CustomReactionAssetView {
-    CustomReactionAssetView {
+    content_addressed(CustomReactionAssetView {
         asset_id: asset.asset_id.clone(),
         owner_pubkey: asset.author_pubkey.as_str().to_string(),
         blob_hash: asset.blob_hash.as_str().to_string(),
@@ -739,14 +746,14 @@ pub(crate) fn custom_reaction_asset_view_from_doc(
         bytes: asset.bytes,
         width: asset.width,
         height: asset.height,
-    }
+    })
 }
 
 pub(crate) fn bookmarked_custom_reaction_view_from_row(
     row: BookmarkedCustomReactionRow,
 ) -> BookmarkedCustomReactionView {
     let asset_id = row.asset_id;
-    BookmarkedCustomReactionView {
+    content_addressed(BookmarkedCustomReactionView {
         asset_id: asset_id.clone(),
         owner_pubkey: row.owner_pubkey,
         blob_hash: row.blob_hash.as_str().to_string(),
@@ -755,20 +762,25 @@ pub(crate) fn bookmarked_custom_reaction_view_from_row(
         bytes: row.bytes,
         width: row.width,
         height: row.height,
-    }
+    })
 }
 
 pub(crate) fn recent_reaction_view_from_projection(
     row: &ReactionProjectionRow,
 ) -> RecentReactionView {
+    let custom_asset = row
+        .custom_asset_snapshot
+        .as_ref()
+        .map(|snapshot| content_addressed(custom_reaction_asset_view_from_snapshot(snapshot)));
     RecentReactionView {
         reaction_key_kind: reaction_key_kind_label(&row.reaction_key_kind).to_string(),
-        normalized_reaction_key: row.normalized_reaction_key.clone(),
+        // 次に付けるときの key（`ReactionKeyV1::normalized_key` と同じ形）。
+        normalized_reaction_key: custom_asset.as_ref().map_or_else(
+            || row.normalized_reaction_key.clone(),
+            |asset| format!("custom_asset:{}", asset.asset_id),
+        ),
         emoji: row.emoji.clone(),
-        custom_asset: row
-            .custom_asset_snapshot
-            .as_ref()
-            .map(custom_reaction_asset_view_from_snapshot),
+        custom_asset,
         updated_at: row.updated_at,
     }
 }

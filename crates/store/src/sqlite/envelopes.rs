@@ -4,7 +4,7 @@ impl SqliteStore {
     pub(super) async fn store_put_envelope_impl(&self, envelope: KukuriEnvelope) -> Result<()> {
         let tags_json = serde_json::to_string(&envelope.tags)?;
 
-        sqlx::query(
+        let insert = sqlx::query(
             r#"
             INSERT INTO envelopes (envelope_id, pubkey, created_at, kind, content, tags_json, sig)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -23,9 +23,26 @@ impl SqliteStore {
         .bind(envelope.kind.as_str())
         .bind(envelope.content.as_str())
         .bind(tags_json)
-        .bind(envelope.sig.as_str())
-        .execute(&self.pool)
-        .await?;
+        .bind(envelope.sig.as_str());
+        // #1232 AC-3: 自作の custom reaction の asset は、envelope の行と画像の公開参照（ADR 0063 §1）を 1 つの
+        // transaction で書く。
+        match kukuri_core::parse_custom_reaction_asset(&envelope)? {
+            Some(asset) => {
+                let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
+                insert.execute(&mut *tx).await?;
+                super::public_blobs::replace_public_blob_refs(
+                    &mut tx,
+                    "reaction_asset",
+                    envelope.id.as_str(),
+                    vec![asset.blob_hash.as_str().to_string()],
+                )
+                .await?;
+                tx.commit().await?;
+            }
+            None => {
+                insert.execute(&self.pool).await?;
+            }
+        }
 
         if let Some(topic_id) = envelope.topic_id() {
             sqlx::query(

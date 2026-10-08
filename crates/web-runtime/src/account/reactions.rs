@@ -35,17 +35,18 @@ async fn reactions_for_target(
 }
 
 impl IndexedDbCache {
-    /// bookmark の行の変更と、その保護参照の置き換えを 1 つの transaction で行う。
+    /// bookmark の行の変更と、その保護参照の置き換えを 1 つの transaction で行う。`stores` は行の store（と、custom
+    /// reaction の bookmark では公開参照の store）。
     async fn bookmark_update(
         &self,
-        store: &'static str,
+        stores: &'static [&'static str],
         reference: String,
         refs: Vec<(String, String)>,
         change: impl FnOnce(&Tx) -> Result<()> + Send + 'static,
     ) -> Result<()> {
         let budget = self.budget();
         self.run(move |db| async move {
-            let tx = Tx::begin_with(&db, &[store])?;
+            let tx = Tx::begin_with(&db, stores)?;
             change(&tx)?;
             tx.replace_refs(&reference, &refs, budget).await?;
             tx.commit().await
@@ -141,8 +142,15 @@ impl ReactionBookmarkStore for IndexedDbCache {
 
     async fn put_bookmarked_custom_reaction(&self, row: BookmarkedCustomReactionRow) -> Result<()> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[REACTION_BOOKMARKS], Mode::Write)?;
+            let tx = Txn::begin(&db.idb, &[REACTION_BOOKMARKS, PUBLIC_REFS], Mode::Write)?;
             rows::put(&tx, REACTION_BOOKMARKS, &row, &[])?;
+            // #1232 AC-3: 保存済みの custom reaction の画像は公開参照（ADR 0063 §1）。
+            super::public_refs::replace(
+                &tx,
+                "reaction_bookmark",
+                &row.asset_id,
+                vec![row.blob_hash.as_str().to_string()],
+            )?;
             tx.commit().await
         })
         .await
@@ -172,10 +180,13 @@ impl ReactionBookmarkStore for IndexedDbCache {
     async fn remove_bookmarked_custom_reaction(&self, asset_id: &str) -> Result<()> {
         let id = asset_id.to_owned();
         self.bookmark_update(
-            REACTION_BOOKMARKS,
+            &[REACTION_BOOKMARKS, PUBLIC_REFS],
             format!("reaction_bookmark:{asset_id}"),
             Vec::new(),
-            move |tx| rows::delete(tx, REACTION_BOOKMARKS, &text(&id)),
+            move |tx| {
+                rows::delete(tx, REACTION_BOOKMARKS, &text(&id))?;
+                super::public_refs::replace(tx, "reaction_bookmark", &id, Vec::new())
+            },
         )
         .await
     }
@@ -183,7 +194,7 @@ impl ReactionBookmarkStore for IndexedDbCache {
     async fn put_bookmarked_post(&self, row: BookmarkedPostRow) -> Result<()> {
         let reference = format!("bookmark:{}", row.source_object_id.as_str());
         let refs = bookmark_cache_refs(&row);
-        self.bookmark_update(POST_BOOKMARKS, reference, refs, move |tx| {
+        self.bookmark_update(&[POST_BOOKMARKS], reference, refs, move |tx| {
             rows::put(tx, POST_BOOKMARKS, &row, &[])
         })
         .await
@@ -256,7 +267,7 @@ impl ReactionBookmarkStore for IndexedDbCache {
     async fn remove_bookmarked_post(&self, source_object_id: &EnvelopeId) -> Result<()> {
         let id = source_object_id.as_str().to_owned();
         self.bookmark_update(
-            POST_BOOKMARKS,
+            &[POST_BOOKMARKS],
             format!("bookmark:{}", source_object_id.as_str()),
             Vec::new(),
             move |tx| rows::delete(tx, POST_BOOKMARKS, &text(&id)),

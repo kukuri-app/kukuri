@@ -334,7 +334,7 @@ export function PostCard({
     return [
       {
         id: 'save',
-        label: t('actions.save'),
+        label: t('reactions.saveToUse'),
         disabled: !canSaveReaction,
         onSelect: async () => {
           if (canSaveReaction && onBookmarkCustomReaction) {
