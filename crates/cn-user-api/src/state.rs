@@ -565,8 +565,7 @@ mod tests {
         assert!(super::ensure_manifest_node_id_matches_issuer("node-a", "node-b").is_err());
     }
 
-    /// #1632 D7: 検索は capability を有効にした node だけが提供する。一覧の鍵の無い今の build では、有効にした
-    /// config で起動しない。
+    /// #1632 D7・#1657: 一覧の鍵を含む build でも、検索は capability を有効にした node だけが提供する。
     #[tokio::test]
     async fn public_blob_search_follows_the_capability() -> Result<()> {
         let manifest = |enabled: bool| -> Result<_> {
@@ -580,10 +579,7 @@ mod tests {
         };
         assert!(blob_provider_search(None)?.is_none());
         assert!(blob_provider_search(Some(&manifest(false)?))?.is_none());
-        let error = blob_provider_search(Some(&manifest(true)?))
-            .err()
-            .expect("an enabled search needs the index list");
-        assert!(error.to_string().contains("public_blob_search requires"));
+        assert!(blob_provider_search(Some(&manifest(true)?))?.is_some());
         Ok(())
     }
 
