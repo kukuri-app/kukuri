@@ -119,6 +119,7 @@ pub fn profile(picture: Option<&str>, updated_at: i64) -> Profile {
         about: None,
         picture_asset: picture.map(asset),
         updated_at,
+        nip05: None,
     }
 }
 
@@ -132,7 +133,8 @@ pub async fn public(store: &dyn ContentCacheStore, seeds: &[u32]) -> Vec<bool> {
 }
 
 /// 公開 topic の投稿の本文・添付・repost の添付・リンクプレビューの画像、profile の画像、公開 topic の有効な custom
-/// reaction の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像だけが公開参照になる。
+/// reaction の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像、公開投稿の本文に貼られた
+/// custom reaction のセットだけが公開参照になる。
 /// 取り下げ・reaction の削除・profile の更新・保存の解除で外れ、同じ hash を別の公開記録が参照している間は公開のまま。
 pub async fn check_public_blob_refs<S: Store + ProjectionStore + ContentCacheStore>(store: &S) {
     let mut reposting = post("p1", "public", &hash(1), &[&hash(2)]);
@@ -214,6 +216,14 @@ pub async fn check_public_blob_refs<S: Store + ProjectionStore + ContentCacheSto
         .await
         .expect("remove bookmark");
     assert_eq!(public(store, &[11, 12]).await, [true, false]);
+
+    // #1232 AC-4: 公開投稿の本文に貼られたセットの hash は公開参照。private channel の投稿のものは公開にしない。
+    for (object_id, channel, seed) in [("p4", "public", 13), ("p5", "channel-x", 14)] {
+        let mut row = post(object_id, channel, &hash(seed + 10), &[]);
+        row.content = Some(format!("set kukuri:reaction-set:{}", hash(seed)));
+        store.put_object_projection(row).await.expect("set post");
+    }
+    assert_eq!(public(store, &[13, 14]).await, [true, false]);
 }
 
 pub fn bookmark(blob_hash: &str) -> BookmarkedCustomReactionRow {

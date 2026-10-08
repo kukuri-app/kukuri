@@ -177,6 +177,7 @@ fn profile(name: &str) -> SetMyProfileRequest {
         about: None,
         picture_upload: None,
         clear_picture: false,
+        nip05: None,
     }
 }
 

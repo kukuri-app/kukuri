@@ -105,6 +105,10 @@
     "displayName": "显示名称",
     "loading": "正在加载资料…",
     "name": "用户名",
+    "nip05": "域名验证",
+    "nip05Copy": "复制内容",
+    "nip05Help": "当 {{domain}} 的 /.well-known/nostr.json 返回以下内容时，你的名字后会显示 @{{domain}}。请在响应中附带 Access-Control-Allow-Origin: *，以便网页版也能验证。",
+    "nip05Invalid": "请按 name@example.com 的格式输入。名字可使用小写字母、数字以及“-”“_”“.”。",
     "picture": "头像",
     "picturePreviewAlt": "{{name}}的头像预览",
     "placeholders": {

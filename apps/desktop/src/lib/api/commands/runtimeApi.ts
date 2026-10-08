@@ -27,6 +27,7 @@ import type {
   CommunityNodeTesterFeedbackSubmission,
   CommunityNodeUserAdvisoryRequest,
   CustomReactionAssetView,
+  CustomReactionSetView,
   DesktopApi,
   DirectMessageConversationView,
   DirectMessageStatusView,
@@ -44,6 +45,7 @@ import type {
   FriendOnlyGrantPreview,
   FriendPlusSharePreview,
   GameRoomView,
+  ImportedCustomReactionSetView,
   JoinedPrivateChannelView,
   IndexQueryResponse,
   IndexingStatusResponse,
@@ -83,6 +85,7 @@ import type {
   FetchCommunityNodePoliciesRequest,
   CloseDomeHostingRequest,
   CreateCustomReactionAssetRequest,
+  CreateCustomReactionSetRequest,
   CreateDomeConnectionProposalRequest,
   CreateGameRoomRequest,
   CreateLiveSessionRequest,
@@ -104,6 +107,7 @@ import type {
   GetBlobPreviewRequest,
   GetDomeHostingRequest,
   ImportChannelAccessTokenRequest,
+  ImportCustomReactionSetRequest,
   ImportFriendOnlyGrantRequest,
   ImportFriendPlusShareRequest,
   ImportMetaverseRoomAssetRequest,
@@ -265,6 +269,19 @@ export const runtimeApi: DesktopApi = {
       request: {
         asset_id: assetId,
       } satisfies RemoveBookmarkedCustomReactionRequest,
+    });
+  }),
+  createCustomReactionSet: command('createCustomReactionSet', async (name, assets) => {
+    return invokeDesktop<CustomReactionSetView>('create_custom_reaction_set', {
+      request: { name, items: assets } satisfies CreateCustomReactionSetRequest,
+    });
+  }),
+  listMyCustomReactionSets: command('listMyCustomReactionSets', async () => {
+    return invokeDesktop<CustomReactionSetView[]>('list_my_custom_reaction_sets');
+  }),
+  importCustomReactionSet: command('importCustomReactionSet', async (setHash) => {
+    return invokeDesktop<ImportedCustomReactionSetView>('import_custom_reaction_set', {
+      request: { set_hash: setHash } satisfies ImportCustomReactionSetRequest,
     });
   }),
   listBookmarkedPostsPage: command('listBookmarkedPostsPage', async (cursor?: BookmarkCursor | null, before = false) => {

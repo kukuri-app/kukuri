@@ -62,9 +62,9 @@ impl SqliteStore {
             r#"
             INSERT INTO profiles (
               pubkey, name, display_name, about,
-              picture_blob_hash, picture_mime, picture_bytes, updated_at
+              picture_blob_hash, picture_mime, picture_bytes, updated_at, nip05
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(pubkey) DO UPDATE SET
               name = excluded.name,
               display_name = excluded.display_name,
@@ -72,7 +72,8 @@ impl SqliteStore {
               picture_blob_hash = excluded.picture_blob_hash,
               picture_mime = excluded.picture_mime,
               picture_bytes = excluded.picture_bytes,
-              updated_at = excluded.updated_at
+              updated_at = excluded.updated_at,
+              nip05 = excluded.nip05
             "#,
         )
         .bind(profile.pubkey.as_str())
@@ -98,6 +99,7 @@ impl SqliteStore {
                 .map(|asset| asset.bytes as i64),
         )
         .bind(profile.updated_at)
+        .bind(profile.nip05.clone())
         .execute(&mut *tx)
         .await?;
         // #1632: profile の画像は公開参照（author replica は公開）。
@@ -126,7 +128,7 @@ impl SqliteStore {
             r#"
             SELECT
               pubkey, name, display_name, about,
-              picture_blob_hash, picture_mime, picture_bytes, updated_at
+              picture_blob_hash, picture_mime, picture_bytes, updated_at, nip05
             FROM profiles
             WHERE pubkey = ?1
             "#,
@@ -150,7 +152,7 @@ impl SqliteStore {
             r#"
             SELECT
               pubkey, name, display_name, about,
-              picture_blob_hash, picture_mime, picture_bytes, updated_at
+              picture_blob_hash, picture_mime, picture_bytes, updated_at, nip05
             FROM profiles
             WHERE pubkey IN (
             "#,
@@ -385,6 +387,7 @@ fn profile_from_row(row: sqlx::sqlite::SqliteRow, keep_nulls: bool) -> Profile {
             role: kukuri_core::AssetRole::ProfileAvatar,
         }),
         updated_at: row.get("updated_at"),
+        nip05: row.get("nip05"),
     }
 }
 

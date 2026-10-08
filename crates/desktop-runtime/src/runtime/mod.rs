@@ -14,13 +14,14 @@ use kukuri_app_api::{
     CommitDomeLayoutInput, CommitDomeTransitionInput, CommunityIndexPostResolveResponse,
     CreateCustomReactionAssetInput, CreateDomeConnectionProposalInput, CreateGameRoomInput,
     CreateLiveSessionInput, CreateMetaverseRoomInput, CustomReactionAssetView,
-    DirectMessageConversationView, DirectMessageStatusView, DirectMessageTimelineView,
-    DomeHostingView, DomeLayoutCommitView, GameRoomView, ImportMetaverseRoomAssetInput,
-    JoinedPrivateChannelPage, JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView,
-    MetaverseRoomEventView, MoveDomeInput, NotificationPageView, NotificationStatusView,
-    NotificationView, PostView, PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput,
-    PrivateChannelCapability, ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView,
-    RecentReactionView, ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
+    CustomReactionSetView, DirectMessageConversationView, DirectMessageStatusView,
+    DirectMessageTimelineView, DomeHostingView, DomeLayoutCommitView, GameRoomView,
+    ImportMetaverseRoomAssetInput, ImportedCustomReactionSetView, JoinedPrivateChannelPage,
+    JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView,
+    MoveDomeInput, NotificationPageView, NotificationStatusView, NotificationView, PostView,
+    PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, PrivateChannelCapability,
+    ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView, RecentReactionView,
+    ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
     StartOwnerDomeHostingInput, SubmitDomeSessionInput, SyncStatus, TimelineView,
     UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
@@ -621,6 +622,9 @@ impl DesktopRuntime {
         app_service
             .reconcile_blocked_dome_connections_at_start()
             .await?;
+        if let Err(error) = app_service.restore_own_profile_nip05().await {
+            tracing::warn!(%error, "own profile nip05 was not restored from the local envelope");
+        }
         if let Err(error) = app_service.start_account_receive_offers().await {
             tracing::warn!(%error, "account receive route could not start; legacy receivers remain active");
         }

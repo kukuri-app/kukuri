@@ -14,6 +14,8 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+const LOCAL_PUBKEY = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
+
 const STORY_ARGS = {
   authorLabel: 'Local Author',
   status: 'ready',
@@ -24,7 +26,9 @@ const STORY_ARGS = {
     displayName: 'Local Author',
     name: 'local-author',
     about: 'Maintains shell UI migration work.',
+    nip05: 'local-author@example.com',
   },
+  localPubkey: LOCAL_PUBKEY,
   picturePreviewSrc: 'data:image/png;base64,AA==',
   hasPicture: true,
   pictureInputKey: 0,
@@ -38,14 +42,17 @@ const STORY_ARGS = {
 function ProfileStory({
   status = 'ready',
   error = null,
+  nip05 = 'local-author@example.com',
 }: {
   status?: 'loading' | 'ready' | 'error';
   error?: string | null;
+  nip05?: string;
 }) {
   const [fields, setFields] = useState<ProfileEditorFields>({
     displayName: 'Local Author',
     name: 'local-author',
     about: 'Maintains shell UI migration work.',
+    nip05,
   });
 
   return (
@@ -56,6 +63,7 @@ function ProfileStory({
       dirty={false}
       error={error}
       fields={fields}
+      localPubkey={LOCAL_PUBKEY}
       picturePreviewSrc='data:image/png;base64,AA=='
       hasPicture={true}
       pictureInputKey={0}
@@ -80,4 +88,10 @@ export const ErrorState: Story = {
     error: 'profile sync failed',
   },
   render: (args) => <ProfileStory status={args.status} error={args.error} />,
+};
+
+// #1670: 形に合わない NIP-05 の識別子は理由を示し、保存できない。
+export const InvalidNip05: Story = {
+  args: { ...STORY_ARGS, dirty: true },
+  render: () => <ProfileStory nip05='Local Author@localhost' />,
 };

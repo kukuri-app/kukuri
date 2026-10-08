@@ -1,10 +1,11 @@
 import { Fragment, type MouseEvent, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DoorOpen } from 'lucide-react';
+import { DoorOpen, SmilePlus } from 'lucide-react';
 
 import {
   parseSmartText,
   shortenReferenceId,
+  splitReactionSetLinks,
   type InternalSmartReference,
 } from '@/lib/internalLinks';
 import { topicDisplayName } from '@/lib/topicId';
@@ -72,6 +73,9 @@ function referenceLabel(
   }
   if (reference.kind === 'game') {
     return `${t('shell:primarySections.game')} ${shortenReferenceId(reference.roomId)}`;
+  }
+  if (reference.kind === 'reaction_set') {
+    return t('common:reactions.importSet');
   }
   const channelLabel =
     reference.metadata.channelLabel?.trim() || reference.metadata.channelId?.trim();
@@ -185,7 +189,7 @@ export function SmartReferenceText({
                   'smart-reference-chip',
                   segment.reference.kind === 'share_token' && 'smart-reference-chip-access-preview'
                 )}
-                title={segment.reference.kind === 'share_token' ? undefined : segment.reference.route}
+                title={'route' in segment.reference ? segment.reference.route : undefined}
                 onClick={(event) =>
                   handleReferenceAction(event, segment.reference, onActivateReference)
                 }
@@ -198,6 +202,9 @@ export function SmartReferenceText({
                 <span>{label}</span>
                 {segment.reference.kind === 'share_token' ? (
                   <DoorOpen className='size-3.5' aria-hidden='true' />
+                ) : null}
+                {segment.reference.kind === 'reaction_set' ? (
+                  <SmilePlus className='size-3.5' aria-hidden='true' />
                 ) : null}
               </button>
             );
@@ -217,5 +224,26 @@ export function SmartReferenceText({
         </Fragment>
       ))}
     </span>
+  );
+}
+
+/** #1232 AC-4: DM の本文。リアクションのセットの共有用の文字列だけを「取り込む」ボタンにし、他は文字のまま示す。 */
+export function ReactionSetText({
+  text,
+  onImport,
+}: {
+  text: string;
+  onImport: (setHash: string) => Promise<void>;
+}) {
+  const { t } = useTranslation('common');
+  return splitReactionSetLinks(text).map(({ text: part, setHash }, index) =>
+    setHash ? (
+      <button key={index} type='button' className='smart-reference-chip' onClick={() => void onImport(setHash)}>
+        <span>{t('common:reactions.importSet')}</span>
+        <SmilePlus className='size-3.5' aria-hidden='true' />
+      </button>
+    ) : (
+      <Fragment key={index}>{part}</Fragment>
+    )
   );
 }

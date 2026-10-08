@@ -247,7 +247,12 @@
     "searchPlaceholder": "リアクションを検索",
     "searchHint": "絵文字かカスタムリアクションの識別名で検索します。",
     "noResults": "一致するリアクションがありません。",
-    "saveToUse": "保存して自分も使う"
+    "saveToUse": "保存して自分も使う",
+    "importSet": "リアクションのセットを取り込む",
+    "importingSet": "リアクションのセットを取り込んでいます…",
+    "importedSet": "「{{name}}」から {{count}} 件を保存済みに加えました。",
+    "importedSetSkippingOwn": "「{{name}}」から {{count}} 件を保存済みに加えました（自分で作った {{skipped}} 件は除きました）。",
+    "importSetFailed": "リアクションのセットを取り込めませんでした。時間をおいてもう一度お試しください。"
   },
   "relationships": {
     "blockedFollowReason": "ブロック中はフォローできません。先にブロックを解除してください。",

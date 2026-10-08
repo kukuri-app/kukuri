@@ -360,6 +360,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     clear_direct_message(request: DirectMessageRequest) => runtime.clear_direct_message(request).await.map_err(map_error);
     create_account_transfer_invite() => runtime.create_account_transfer_invite().await.map_err(map_error);
     create_custom_reaction_asset(request: CreateCustomReactionAssetRequest) => runtime.create_custom_reaction_asset(request).await.map_err(map_error);
+    create_custom_reaction_set(request: CreateCustomReactionSetRequest) => runtime.create_custom_reaction_set(request).await.map_err(map_error);
     create_post(request: CreatePostRequest) => runtime.create_post(request).await.map_err(map_error);
     create_private_channel(request: CreatePrivateChannelRequest) => runtime.create_private_channel(request).await.map_err(map_error);
     create_repost(request: CreateRepostRequest) => runtime.create_repost(request).await.map_err(map_error);
@@ -391,6 +392,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     get_notification_status() => runtime.get_notification_status().await.map_err(map_error);
     get_sync_status() => runtime.get_sync_status().await.map_err(map_error);
     import_channel_access_token(request: ImportChannelAccessTokenRequest) => runtime.import_channel_access_token(request).await.map_err(map_error);
+    import_custom_reaction_set(request: ImportCustomReactionSetRequest) => runtime.import_custom_reaction_set(request).await.map_err(map_error);
     import_friend_only_grant(request: ImportFriendOnlyGrantRequest) => runtime.import_friend_only_grant(request).await.map_err(map_error);
     import_friend_plus_share(request: ImportFriendPlusShareRequest) => runtime.import_friend_plus_share(request).await.map_err(map_error);
     import_peer_ticket(request: ImportPeerTicketRequest) => runtime.import_peer_ticket(request).await.map_err(map_error);
@@ -405,6 +407,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     list_direct_messages() => runtime.list_direct_messages().await.map_err(map_error);
     list_joined_private_channels(request: ListJoinedPrivateChannelsRequest) => runtime.list_joined_private_channels(request).await.map_err(map_error);
     list_my_custom_reaction_assets() => runtime.list_my_custom_reaction_assets().await.map_err(map_error);
+    list_my_custom_reaction_sets() => runtime.list_my_custom_reaction_sets().await.map_err(map_error);
     list_notifications_page(request: ListNotificationsPageRequest) => runtime.list_notifications_page(request).await.map_err(map_error);
     list_profile_timeline(request: ListProfileTimelineRequest) => runtime.list_profile_timeline(request).await.map_err(map_error);
     list_recent_reactions(request: ListRecentReactionsRequest) => runtime.list_recent_reactions(request).await.map_err(map_error);

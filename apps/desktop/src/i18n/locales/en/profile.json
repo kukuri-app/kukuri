@@ -105,6 +105,10 @@
     "displayName": "Display Name",
     "loading": "Loading profile…",
     "name": "Username",
+    "nip05": "Domain verification",
+    "nip05Copy": "Copy content",
+    "nip05Help": "When /.well-known/nostr.json on {{domain}} returns the following, @{{domain}} appears after your name. Serve it with Access-Control-Allow-Origin: * so the web version can check it too.",
+    "nip05Invalid": "Enter it as name@example.com. The name can use lowercase letters, digits, \"-\", \"_\", and \".\".",
     "picture": "Picture",
     "picturePreviewAlt": "{{name}}'s profile picture preview",
     "placeholders": {

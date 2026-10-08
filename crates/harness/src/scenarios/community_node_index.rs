@@ -270,6 +270,7 @@ pub(crate) async fn run_community_node_index_query_client(
                 about: Some("observed profile".to_string()),
                 picture_upload: None,
                 clear_picture: false,
+                nip05: None,
             })
             .await?;
     }

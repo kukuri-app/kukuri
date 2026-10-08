@@ -350,17 +350,40 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
     author_pubkey: &str,
     docs_author: Option<&str>,
 ) -> Result<Vec<CustomReactionAssetDocV1>> {
-    // #1239: replica は走査しない。asset 1 件につき `state` と `envelope` の 2 key があるので、
-    // `AUTHOR_REACTION_ASSETS` 件の asset ぶんの key を一覧し、`state` の key だけを読む。上限を超える asset は
-    // 返さない(best effort)。
+    // asset 1 件につき `state` と `envelope` の 2 key があるので、`AUTHOR_REACTION_ASSETS` 件の asset ぶんの key を
+    // 一覧し、`state` の key だけを読む。上限を超える asset は返さない(best effort)。
+    load_author_records(
+        docs_sync,
+        author_pubkey,
+        docs_author,
+        DocKeyQuery {
+            prefix: stable_key("reactions/assets", ""),
+            order: DocKeyOrder::Ascending,
+            limit: AUTHOR_REACTION_ASSETS.saturating_mul(2),
+        },
+        |key| key.ends_with("/state"),
+        |value| {
+            serde_json::from_slice::<CustomReactionAssetDocV1>(value)
+                .ok()
+                .filter(|doc| doc.author_pubkey.as_str() == author_pubkey)
+        },
+    )
+    .await
+}
+
+/// author replica の `query` の key の窓(上限つき)から、`wanted` が選ぶ key の record を読み、`parse` が返す値を窓の
+/// 順に返す。#1239: replica は走査しない。
+pub(crate) async fn load_author_records<T>(
+    docs_sync: &dyn DocsSync,
+    author_pubkey: &str,
+    docs_author: Option<&str>,
+    query: DocKeyQuery,
+    wanted: impl Fn(&str) -> bool,
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> Result<Vec<T>> {
     let replica = author_replica_id(author_pubkey);
-    // 自分の docs author が分かれば、自分の名義の key だけを一覧し、組で 1 件読む(他の名義の key で窓を埋められず、
+    // docs author が分かれば、その名義の key だけを一覧し、組で 1 件読む(他の名義の key で窓を埋められず、
     // 他の名義の record で隠されない。ADR 0053 §6)。
-    let query = DocKeyQuery {
-        prefix: stable_key("reactions/assets", ""),
-        order: DocKeyOrder::Ascending,
-        limit: AUTHOR_REACTION_ASSETS.saturating_mul(2),
-    };
     let page = match docs_author {
         Some(docs_author) => {
             docs_sync
@@ -372,10 +395,7 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
     let mut items = Vec::new();
     let mut seen = BTreeSet::new();
     for entry in page.entries {
-        if !entry.key.ends_with("/state") {
-            continue;
-        }
-        if !seen.insert(entry.key.clone()) {
+        if !wanted(entry.key.as_str()) || !seen.insert(entry.key.clone()) {
             continue;
         }
         if let Some(docs_author) = docs_author {
@@ -387,11 +407,9 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
                     DocFetchPolicy::LocalOnly,
                 )
                 .await?
-                && let Ok(doc) =
-                    serde_json::from_slice::<CustomReactionAssetDocV1>(record.value.as_slice())
-                && doc.author_pubkey.as_str() == author_pubkey
+                && let Some(item) = parse(record.value.as_slice())
             {
-                items.push(doc);
+                items.push(item);
             }
             continue;
         }
@@ -406,11 +424,8 @@ pub(crate) async fn load_custom_reaction_assets_from_author_replica(
             )
             .await?
         {
-            if let Ok(doc) =
-                serde_json::from_slice::<CustomReactionAssetDocV1>(record.value.as_slice())
-                && doc.author_pubkey.as_str() == author_pubkey
-            {
-                items.push(doc);
+            if let Some(item) = parse(record.value.as_slice()) {
+                items.push(item);
                 break;
             }
         }

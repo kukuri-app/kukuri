@@ -247,7 +247,12 @@
     "searchPlaceholder": "搜索回应",
     "searchHint": "按表情或自定义反应标识搜索。",
     "noResults": "没有匹配的回应。",
-    "saveToUse": "保存并自己使用"
+    "saveToUse": "保存并自己使用",
+    "importSet": "导入回应集",
+    "importingSet": "正在导入回应集…",
+    "importedSet": "已从“{{name}}”添加 {{count}} 个到已保存。",
+    "importedSetSkippingOwn": "已从“{{name}}”添加 {{count}} 个到已保存（跳过了你自己创建的 {{skipped}} 个）。",
+    "importSetFailed": "无法导入回应集。请稍后再试。"
   },
   "relationships": {
     "blockedFollowReason": "已屏蔽的用户无法关注。请先取消屏蔽。",

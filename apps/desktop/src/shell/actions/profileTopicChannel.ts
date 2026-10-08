@@ -187,7 +187,7 @@ export function createProfileTopicChannelActions({
     });
     return response;
   }
-  function handleProfileFieldChange(field: 'displayName' | 'name' | 'about', value: string) {
+  function handleProfileFieldChange(field: 'displayName' | 'name' | 'about' | 'nip05', value: string) {
     const nextField: keyof ProfileInput = field === 'displayName' ? 'display_name' : field;
     setProfileDraft(setRecordEntry(nextField, value));
     setProfileDirty(true);

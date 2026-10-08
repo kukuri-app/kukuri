@@ -55,6 +55,10 @@ export type RecentReactionView = { reaction_key_kind: string, normalized_reactio
 
 export type CustomReactionAssetView = { asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 
+export type CustomReactionSetView = { set_hash: string, name: string, item_count: number, created_at: number, };
+
+export type ImportedCustomReactionSetView = { set_hash: string, name: string, saved: Array<CustomReactionAssetView>, skipped_own: number, };
+
 export type RepostSourceView = { source_object_id: string, source_topic_id: string, source_author_pubkey: string, source_author_name?: string | null, source_author_display_name?: string | null, source_author_picture_asset?: ProfileAssetView | null, source_object_kind: string, content: string, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, reply_to?: string | null, root_id?: string | null, };
 
 export type ContentObservationView = { node_base_url: string, capability: string, observed_at: number, };
@@ -298,7 +302,7 @@ export type TimelineScope = { "kind": "public" } | { "kind": "channel", channel_
 
 export type SeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 
-export type Profile = { pubkey: Pubkey, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at: number, };
+export type Profile = { pubkey: Pubkey, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at: number, nip05?: string | null, };
 
 export type PrivateChannelInvitePreview = { channel_id: ChannelId, topic_id: TopicId, channel_label: string, inviter_pubkey: Pubkey, owner_pubkey: Pubkey, epoch_id: string, expires_at?: number | null, namespace_secret_hex: string, };
 
@@ -770,6 +774,10 @@ export type BookmarkCustomReactionRequest = { asset_id: string, owner_pubkey: st
 
 export type RemoveBookmarkedCustomReactionRequest = { asset_id: string, };
 
+export type CreateCustomReactionSetRequest = { name: string, items: Array<CustomReactionAssetView>, };
+
+export type ImportCustomReactionSetRequest = { set_hash: string, };
+
 export type BookmarkPostRequest = { topic: string, object_id: string, channel_ref: ChannelRef, };
 
 export type BookmarkedPostIdsRequest = { object_ids: Array<string>, };
@@ -818,7 +826,7 @@ export type SendDirectMessageRequest = { pubkey: string, text?: string | null, r
 
 export type DeleteDirectMessageMessageRequest = { pubkey: string, message_id: string, };
 
-export type SetMyProfileRequest = { name?: string | null, display_name?: string | null, about?: string | null, picture_upload?: CreateAttachmentRequest | null, clear_picture: boolean, };
+export type SetMyProfileRequest = { name?: string | null, display_name?: string | null, about?: string | null, picture_upload?: CreateAttachmentRequest | null, clear_picture: boolean, nip05?: string | null, };
 
 export type InitialProfileRequest = { account_id: string, profile: SetMyProfileRequest, };
 

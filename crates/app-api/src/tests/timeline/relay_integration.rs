@@ -171,6 +171,7 @@ impl Author {
                 display_name: Some(display_name.into()),
                 about: None,
                 picture_asset: Some(avatar),
+                nip05: None,
             },
             Some(&self.docs_author),
         )?;
@@ -446,6 +447,7 @@ async fn later_reader_gets_a_stored_legacy_profile_without_author_docs() -> Resu
             display_name: Some("Relayed Author".into()),
             about: None,
             picture_asset: None,
+            nip05: None,
         },
     )?;
     let relay = Relay::new(Arc::new(NoopHintTransport)).await?;

@@ -146,6 +146,23 @@ pub struct RemoveBookmarkedCustomReactionRequest {
     pub asset_id: String,
 }
 
+/// 自作・保存済みから選んだリアクション（最大 100 件）と名前でセットを作る（#1232 AC-4）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct CreateCustomReactionSetRequest {
+    pub name: String,
+    pub items: Vec<kukuri_app_api::CustomReactionAssetView>,
+}
+
+/// 共有の文字列（`kukuri:reaction-set:<set_hash>`）のセットを取り込む（#1232 AC-4）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct ImportCustomReactionSetRequest {
+    pub set_hash: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
@@ -356,6 +373,8 @@ pub struct SetMyProfileRequest {
     pub picture_upload: Option<CreateAttachmentRequest>,
     #[serde(default)]
     pub clear_picture: bool,
+    // NIP-05 の識別子 `name@domain`(ADR 0064)。空なら欄の無い profile にする。
+    pub nip05: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -571,7 +571,19 @@
     "noSavedAssets": "No saved reactions yet.",
     "editCrop": "Edit crop",
     "cropTitle": "Crop reaction image",
-    "cropDescription": "Drag to reposition and use zoom to choose the visible square."
+    "cropDescription": "Drag to reposition and use zoom to choose the visible square.",
+    "sets": "Reaction sets",
+    "setsHint": "Name up to {{max}} of your own or saved reactions to make a set. Paste its share text into a post or DM so others can import them all at once.",
+    "setName": "Set name",
+    "createSet": "Create a set from {{count}} selected",
+    "setTooLarge": "A set can hold up to {{max}} reactions ({{count}} selected).",
+    "setCreateFailed": "Could not create the set.",
+    "setsLoadFailed": "Could not load your sets.",
+    "createdSets": "Your sets (newest {{max}})",
+    "setItemCount": "Reactions: {{count}}",
+    "copySetLink": "Copy share text",
+    "copySetLinkOf": "Copy the share text of “{{name}}”",
+    "noSets": "No sets yet."
   },
   "release": {
     "title": "Release",

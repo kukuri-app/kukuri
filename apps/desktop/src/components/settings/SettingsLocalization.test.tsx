@@ -46,6 +46,8 @@ test('reaction selection owns localized visible copy and cancellation never regi
       creating={false}
       onCreateAsset={create}
       onRemoveBookmark={vi.fn()}
+      onListSets={async () => []}
+      onCreateSet={vi.fn()}
     />
   </I18nextProvider>);
   const button = screen.getByRole('button', { name: 'ファイルを選択' });

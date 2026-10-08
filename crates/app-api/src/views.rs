@@ -301,6 +301,7 @@ pub struct ProfileInput {
     pub picture_upload: Option<PendingAttachment>,
     #[serde(default)]
     pub clear_picture: bool,
+    pub nip05: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -551,6 +551,8 @@ test('reactions panel renders icon-only saved assets and supports single or bulk
       }}
       onCreateAsset={() => {}}
       onRemoveBookmark={onRemoveBookmark}
+      onListSets={async () => []}
+      onCreateSet={vi.fn()}
     />
   );
 
@@ -628,6 +630,8 @@ test('reactions panel crops an uploaded image before creating a custom asset', a
       creating={false}
       onCreateAsset={onCreateAsset}
       onRemoveBookmark={async () => {}}
+      onListSets={async () => []}
+      onCreateSet={vi.fn()}
     />
   );
 
@@ -666,6 +670,7 @@ test('reaction file selection and crop cancellation preserve the accepted draft 
   const props = {
     view: { status: 'ready' as const, summaryLabel: '', ownedAssets: [], bookmarkedAssets: [] },
     creating: false, onCreateAsset: create, onRemoveBookmark: async () => {},
+    onListSets: async () => [], onCreateSet: vi.fn(),
   };
   const view = render(<ReactionsPanel {...props} />);
   const file = new File(['image'], '選択した画像.png', { type: 'image/png' });

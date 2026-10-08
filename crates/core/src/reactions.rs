@@ -207,6 +207,117 @@ pub fn custom_reaction_id(blob_hash: &str, search_key: &str) -> String {
     ))
 }
 
+/// セットに入れられる件数の上限（#1232 D3）。
+const CUSTOM_REACTION_SET_MAX_ITEMS: usize = 100;
+/// セットの名前の文字数の上限。
+const CUSTOM_REACTION_SET_MAX_NAME_CHARS: usize = 64;
+/// セットの blob の大きさの上限（取得もこの大きさで打ち切る）。
+pub const CUSTOM_REACTION_SET_MAX_BYTES: u64 = 64 * 1024;
+pub const CUSTOM_REACTION_SET_MIME: &str = "application/json";
+/// 投稿・DM の本文でセットを指す文字列の頭（`kukuri:reaction-set:<セットの blob hash>`）。
+const CUSTOM_REACTION_SET_LINK_PREFIX: &str = "kukuri:reaction-set:";
+
+/// セットの 1 件（#1232 D3）。リアクションの識別は `custom_reaction_id(blob_hash, search_key)`。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomReactionSetItemV1 {
+    /// 最初に作った人（識別には使わない）。
+    pub owner_pubkey: Pubkey,
+    pub blob_hash: BlobHash,
+    pub search_key: String,
+    pub mime: String,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// カスタムリアクションのセット（#1232 D3）。署名のない公開 blob（JSON）で、その blob の hash がセットの識別になる。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomReactionSetV1 {
+    pub name: String,
+    pub items: Vec<CustomReactionSetItemV1>,
+}
+
+impl CustomReactionSetV1 {
+    /// 名前（前後の空白を除いて 1〜64 文字）、1〜100 件、同じリアクションの重複が無いこと、各件の欄を確かめる。
+    pub fn validate(&self) -> Result<()> {
+        let name = self.name.trim();
+        if name.is_empty() || name.chars().count() > CUSTOM_REACTION_SET_MAX_NAME_CHARS {
+            bail!("custom reaction set name must have 1 to 64 characters");
+        }
+        if self.items.is_empty() || self.items.len() > CUSTOM_REACTION_SET_MAX_ITEMS {
+            bail!("custom reaction set must have 1 to 100 reactions");
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for item in &self.items {
+            validate_pubkey(item.owner_pubkey.as_str())
+                .context("invalid custom reaction set owner pubkey")?;
+            let hash = item.blob_hash.as_str();
+            if !is_blob_hash(hash) {
+                bail!("custom reaction set blob hash must be 64 lowercase hex characters");
+            }
+            if item.search_key.trim().is_empty()
+                || !item.mime.starts_with("image/")
+                || item.bytes == 0
+                || item.width == 0
+                || item.height == 0
+            {
+                bail!("custom reaction set item is incomplete");
+            }
+            if !seen.insert(custom_reaction_id(hash, &item.search_key)) {
+                bail!("custom reaction set must not repeat a reaction");
+            }
+        }
+        Ok(())
+    }
+
+    /// 確かめてから blob の bytes にする。
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let bytes = serde_json::to_vec(self)?;
+        if bytes.len() as u64 > CUSTOM_REACTION_SET_MAX_BYTES {
+            bail!("custom reaction set is too large");
+        }
+        Ok(bytes)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() as u64 > CUSTOM_REACTION_SET_MAX_BYTES {
+            bail!("custom reaction set is too large");
+        }
+        let set: Self =
+            serde_json::from_slice(bytes).context("failed to parse custom reaction set")?;
+        set.validate()?;
+        Ok(set)
+    }
+}
+
+/// 本文の中の `kukuri:reaction-set:<64 桁の 16 進>` が指すセットの hash（出てきた順、重複なし）。
+pub fn custom_reaction_set_hashes_in_text(text: &str) -> Vec<String> {
+    let mut hashes = Vec::new();
+    for (index, _) in text.match_indices(CUSTOM_REACTION_SET_LINK_PREFIX) {
+        let rest = &text[index + CUSTOM_REACTION_SET_LINK_PREFIX.len()..];
+        let Some(hash) = rest.get(..64) else {
+            continue;
+        };
+        let ends = !rest[64..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_ascii_alphanumeric());
+        if is_blob_hash(hash) && ends && !hashes.iter().any(|known| known == hash) {
+            hashes.push(hash.to_string());
+        }
+    }
+    hashes
+}
+
+/// blob の hash の表記（BLAKE3 の 64 桁の小文字の 16 進）。
+fn is_blob_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 pub(crate) fn normalize_reaction_emoji(value: &str) -> Option<String> {
     let normalized = value.trim();
     (!normalized.is_empty()).then(|| normalized.to_string())

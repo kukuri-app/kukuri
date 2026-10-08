@@ -68,6 +68,9 @@ impl AppService {
             about.as_deref(),
             MAX_PROFILE_ABOUT_CHARS,
         )?;
+        let nip05 = normalize_optional_text(input.nip05)
+            .map(|value| normalize_profile_nip05(&value))
+            .transpose()?;
         let current_profile = self.get_my_profile().await?;
         let picture_asset = if input.clear_picture {
             None
@@ -96,6 +99,7 @@ impl AppService {
                 display_name,
                 about,
                 picture_asset,
+                nip05,
             },
             docs_author.as_deref(),
         )

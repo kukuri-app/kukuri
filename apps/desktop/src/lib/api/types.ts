@@ -35,6 +35,7 @@ import type {
   CommunityNodeTesterFeedbackSubmission,
   CommunityNodeUserAdvisoryRequest,
   CustomReactionAssetView,
+  CustomReactionSetView,
   DirectMessageConversationView,
   DirectMessageStatusView,
   DirectMessageTimelineView,
@@ -55,6 +56,7 @@ import type {
   FriendOnlyGrantPreview,
   FriendPlusSharePreview,
   GameRoomStatus,
+  ImportedCustomReactionSetView,
   GameRoomView,
   GameScoreView,
   JoinedPrivateChannelPage,
@@ -214,6 +216,7 @@ export type ProfileInput = {
   about?: string | null;
   picture_upload?: CreateAttachmentInput | null;
   clear_picture?: boolean;
+  nip05?: string | null;
 };
 
 export type CreateAttachmentInput = {
@@ -307,6 +310,9 @@ export interface DesktopApi {
   listBookmarkedCustomReactions(): Promise<BookmarkedCustomReactionView[]>;
   bookmarkCustomReaction(asset: CustomReactionAssetView): Promise<BookmarkedCustomReactionView>;
   removeBookmarkedCustomReaction(assetId: string): Promise<void>;
+  createCustomReactionSet(name: string, assets: CustomReactionAssetView[]): Promise<CustomReactionSetView>;
+  listMyCustomReactionSets(): Promise<CustomReactionSetView[]>;
+  importCustomReactionSet(setHash: string): Promise<ImportedCustomReactionSetView>;
   listBookmarkedPostsPage(cursor?: BookmarkCursor | null, before?: boolean): Promise<BookmarkedPostPageView>;
   bookmarkedPostIds(objectIds: string[]): Promise<string[]>;
   bookmarkPost(

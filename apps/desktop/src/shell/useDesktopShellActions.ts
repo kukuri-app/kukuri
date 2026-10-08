@@ -263,6 +263,7 @@ export function useDesktopShellActions({
   const setGameCreatePending = useDesktopShellFieldSetter('gameCreatePending');
   const setReactionPanelState = useDesktopShellFieldSetter('reactionPanelState');
   const setReactionCreatePending = useDesktopShellFieldSetter('reactionCreatePending');
+  const setReactionSetNotice = useDesktopShellFieldSetter('reactionSetNotice');
   const setShellChromeState = useDesktopShellFieldSetter('shellChromeState');
   const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
   const setError = useDesktopShellFieldSetter('error');
@@ -436,6 +437,7 @@ export function useDesktopShellActions({
     handleToggleReaction,
     handleCreateCustomReactionAsset,
     handleBookmarkCustomReaction,
+    handleImportCustomReactionSet,
     handleRemoveBookmarkedCustomReaction,
     handleToggleBookmarkedPost,
     handleWithdrawPost,
@@ -477,6 +479,7 @@ export function useDesktopShellActions({
     setDirectMessageError,
     setReactionPanelState,
     setReactionCreatePending,
+    setReactionSetNotice,
     setShellChromeState,
     setError,
   });
@@ -941,6 +944,7 @@ export function useDesktopShellActions({
     handleToggleReaction,
     handleCreateCustomReactionAsset,
     handleBookmarkCustomReaction,
+    handleImportCustomReactionSet,
     handleRemoveBookmarkedCustomReaction,
     handleToggleBookmarkedPost,
     handleWithdrawPost,

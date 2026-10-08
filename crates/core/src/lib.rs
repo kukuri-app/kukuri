@@ -222,15 +222,17 @@ pub use profile::{
     build_block_edge_envelope, build_block_edge_envelope_with_docs_author,
     build_follow_edge_envelope, build_follow_edge_envelope_with_docs_author,
     build_profile_envelope, build_profile_envelope_with_docs_author, build_profile_post_envelope,
-    build_profile_repost_envelope, parse_block_edge, parse_follow_edge, parse_profile,
-    parse_profile_post, parse_profile_repost,
+    build_profile_repost_envelope, normalize_profile_nip05, parse_block_edge, parse_follow_edge,
+    parse_profile, parse_profile_post, parse_profile_repost,
 };
 pub use reactions::{
-    CustomReactionAssetDocV1, CustomReactionAssetSnapshotV1,
+    CUSTOM_REACTION_SET_MAX_BYTES, CUSTOM_REACTION_SET_MIME, CustomReactionAssetDocV1,
+    CustomReactionAssetSnapshotV1, CustomReactionSetItemV1, CustomReactionSetV1,
     KukuriCustomReactionAssetEnvelopeContentV1, KukuriReactionEnvelopeContentV1, ReactionDocV1,
     ReactionKeyKind, ReactionKeyV1, build_custom_reaction_asset_envelope,
     build_custom_reaction_asset_envelope_with_docs_author, build_reaction_envelope,
-    custom_reaction_id, deterministic_reaction_id, parse_custom_reaction_asset, parse_reaction,
+    custom_reaction_id, custom_reaction_set_hashes_in_text, deterministic_reaction_id,
+    parse_custom_reaction_asset, parse_reaction,
 };
 pub use receive_endpoint_binding::{
     RECEIVE_ENDPOINT_BINDING_MAX_BYTES, RECEIVE_ENDPOINT_BINDING_MAX_LIFETIME_MS,

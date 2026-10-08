@@ -68,6 +68,7 @@ export function profileInputFromProfile(profile: Profile): ProfileInput {
     about: profile.about ?? '',
     picture_upload: null,
     clear_picture: false,
+    nip05: profile.nip05 ?? '',
   };
 }
 
