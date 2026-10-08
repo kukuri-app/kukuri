@@ -43,7 +43,7 @@ function imageSize(buffer) {
 
 const specPath = process.argv[2];
 if (!specPath) {
-  fail('spec ファイルを渡す (例: node scripts/import-still.mjs device-captures/s9-dome-teaser.ja-dark.json)');
+  fail('spec ファイルを渡す (例: node scripts/import-still.mjs device-captures/<sceneId>.<locale>-<theme>.json)');
 }
 const spec = JSON.parse(readFileSync(specPath, 'utf8'));
 

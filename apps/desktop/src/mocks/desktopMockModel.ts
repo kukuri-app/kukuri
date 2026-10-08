@@ -1,5 +1,6 @@
 import {
   type AuthorSocialView,
+  type BlobMediaPayload,
   type BookmarkedPostView,
   type ChannelAccessTokenPreview,
   type GameRoomView,
@@ -52,6 +53,11 @@ export type DesktopMockApiOptions = {
    * 撮影中に作った投稿を seed の投稿と同じ日時帯に並べるために使う。
    */
   clockBase?: number;
+  /**
+   * hash ごとの blob の中身。getBlobMediaPayload が返す。告知素材の撮影 (#1668) が、
+   * デモ参加者のプロフィール画像を表示するために使う。
+   */
+  seedBlobPayloads?: Record<string, BlobMediaPayload>;
 };
 
 export function parseMockChannelAccessTokenPreview(

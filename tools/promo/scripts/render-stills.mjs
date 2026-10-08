@@ -10,9 +10,10 @@ import process from 'node:process';
  * - LP の画面・OGP (apps/lp/public/assets/screens/) と、Product Hunt・note・X の画像
  *   (promo-artifacts/stills/) をまとめて出す
  * - 原素材は promo-artifacts/captures/ の撮影結果と、実機の静止画の取り込み結果を使う
- * - Dome の原素材を lp-dome-teaser 以外に使う preset があれば、何も出さずに失敗する
+ * - 開発者モードで撮った原素材（実験機能の画面）は、どの出力にも使わずに失敗する
+ * - LP の画面 (SceneStill) は、原素材を撮った解像度のまま出す（2 倍で撮った素材は 2 倍の寸法）
  * - 出力一覧 promo-artifacts/stills/index.json と outputs.md に、寸法・形式・locale・掲載順・
- *   alt・説明・checksum・原素材・Dome を含むかを書く
+ *   alt・説明・checksum・原素材を書く
  *
  *   node scripts/render-stills.mjs              # 全部
  *   node scripts/render-stills.mjs ph- note-    # id の先頭一致で絞る
@@ -23,8 +24,6 @@ const REPO = path.resolve(PROMO, '../..');
 const ARTIFACTS = path.join(REPO, 'promo-artifacts');
 const STILLS = path.join(ARTIFACTS, 'stills');
 const REMOTION = path.join(PROMO, 'node_modules/@remotion/cli/remotion-cli.js');
-const DOME_CAPTURE = 's9-dome-teaser/c1';
-const DOME_OUTPUT = 'lp-dome-teaser';
 const DEMO_LABEL = { ja: 'デモ画面', en: 'Demo screen' };
 
 function fail(message) {
@@ -44,11 +43,6 @@ function sha256(file) {
 
 const presets = JSON.parse(readFileSync(path.join(PROMO, 'presets/stills.json'), 'utf8')).outputs;
 
-// Dome の原素材は LP ⑥ の予告 1 枚にだけ使う (INVAR-3)。何かを出す前に確かめる。
-const misplaced = presets.filter((p) => p.capture === DOME_CAPTURE && p.id !== DOME_OUTPUT);
-if (misplaced.length > 0) {
-  fail(`Dome の原素材を ${DOME_OUTPUT} 以外で使っている: ${misplaced.map((p) => p.id).join(', ')}`);
-}
 const ids = new Set();
 for (const preset of presets) {
   if (ids.has(preset.id)) fail(`id が重複している: ${preset.id}`);
@@ -64,7 +58,10 @@ function captureProps(preset) {
   if (!existsSync(file)) {
     fail(`${preset.id}: 原素材が無い (${path.relative(REPO, file)})。先に撮影または取り込みを行う`);
   }
-  return JSON.parse(readFileSync(file, 'utf8'));
+  const props = JSON.parse(readFileSync(file, 'utf8'));
+  // 開発者モード限定の実験機能を、既定の機能として素材に載せない (brief の INVAR-3)。
+  if (props.manifest.developerMode) fail(`${preset.id}: 開発者モードで撮った原素材は使わない`);
+  return props;
 }
 
 function propsFor(preset) {
@@ -122,15 +119,22 @@ const indexPath = path.join(STILLS, 'index.json');
 const previous = existsSync(indexPath) ? JSON.parse(readFileSync(indexPath, 'utf8')).outputs : [];
 const results = new Map(previous.map((entry) => [entry.id, entry]));
 
+/** SceneStill は viewport の寸法の composition なので、2 倍で撮った原素材は 2 倍で出す。 */
+function renderScale(preset, props) {
+  if (preset.composition !== 'SceneStill') return 1;
+  return pngSize(path.join(ARTIFACTS, props.manifest.files.still)).width / props.manifest.viewport.width;
+}
+
 for (const preset of selected) {
   const props = propsFor(preset);
   const output = path.join(REPO, preset.file);
-  render(preset.composition, props, output, 1);
+  const scale = renderScale(preset, props);
+  render(preset.composition, props, output, scale);
   const size = pngSize(output);
   const variants = [];
   for (const width of preset.variants ?? []) {
     const variantFile = output.replace(/\.png$/, `-${width}.png`);
-    render(preset.composition, props, variantFile, width / size.width);
+    render(preset.composition, props, variantFile, (width / size.width) * scale);
     const variantSize = pngSize(variantFile);
     variants.push({ file: path.relative(REPO, variantFile).split(path.sep).join('/'), ...variantSize, sha256: sha256(variantFile) });
   }
@@ -147,7 +151,6 @@ for (const preset of selected) {
     variants,
     alt: preset.alt,
     description: preset.description,
-    containsDome: preset.capture === DOME_CAPTURE,
     source: source
       ? {
           capture: preset.capture,
@@ -164,10 +167,6 @@ for (const preset of selected) {
 rmSync(tmp, { recursive: true, force: true });
 
 const outputs = presets.map((p) => results.get(p.id)).filter(Boolean);
-const domeOutputs = outputs.filter((o) => o.containsDome).map((o) => o.id);
-if (domeOutputs.some((id) => id !== DOME_OUTPUT)) {
-  fail(`Dome を含む出力が ${DOME_OUTPUT} 以外にある: ${domeOutputs.join(', ')}`);
-}
 
 mkdirSync(STILLS, { recursive: true });
 writeFileSync(
@@ -185,14 +184,12 @@ const lines = [
   '',
   `生成: ${new Date().toISOString()}（tools/promo/scripts/render-stills.mjs）`,
   '',
-  '| 媒体 | 順 | id | locale | 寸法 | 幅違いの版 | Dome | sha256 (先頭 12) | 原素材 |',
-  '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+  '| 媒体 | 順 | id | locale | 寸法 | 幅違いの版 | sha256 (先頭 12) | 原素材 |',
+  '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ...rows.map(
     (o) =>
-      `| ${o.media} | ${o.order} | \`${o.id}\` | ${o.locale} | ${o.width}×${o.height} | ${o.variants.map((v) => `${v.width}×${v.height}`).join(', ') || '—'} | ${o.containsDome ? 'あり' : '—'} | \`${o.sha256.slice(0, 12)}\` | ${o.source.capture ?? o.source.asset} |`
+      `| ${o.media} | ${o.order} | \`${o.id}\` | ${o.locale} | ${o.width}×${o.height} | ${o.variants.map((v) => `${v.width}×${v.height}`).join(', ') || '—'} | \`${o.sha256.slice(0, 12)}\` | ${o.source.capture ?? o.source.asset} |`
   ),
-  '',
-  `Dome を含む出力: ${domeOutputs.join(', ') || 'なし'}`,
   '',
 ];
 writeFileSync(path.join(STILLS, 'outputs.md'), lines.join('\n'), 'utf8');

@@ -39,7 +39,7 @@ promo-artifacts/
       manifest.json                           原素材の由来（version 1）
       props.json                              Remotion へ渡す props
   stills/                                     媒体別の静止画（Product Hunt・note・X）と出力一覧
-    index.json / outputs.md                   寸法・形式・locale・掲載順・alt・説明・checksum・原素材・Dome の有無
+    index.json / outputs.md                   寸法・形式・locale・掲載順・alt・説明・checksum・原素材
     review.html                               縮小表示で確かめるためのページ（任意）
   brand/                                      静止画に使うアプリのアイコンの写し
   renders/                                    Remotion の出力（PNG / MP4）
@@ -95,7 +95,8 @@ cd apps/desktop && KUKURI_PROMO_SOURCE_RELEASE=v0.2.5-preview.3 npx pnpm@10.16.1
 
 | spec | 内容 |
 | --- | --- |
-| `scenes.spec.ts` | brief の 3 場面（S0 Hero 候補、S1 話題を選ぶ、S2 公開で会話する、S3 私的チャンネルへ移る）を JA / EN で撮る。計 9 カット × 2 言語 |
+| `lp.spec.ts` | LP の画面（L0 Hero、L1 話題を見つける、L2 会話に加わる、L3 小さな輪で続ける）を JA / EN で撮る。スマートフォンの幅（430×760）を 2 倍の解像度で撮る。計 4 カット × 2 言語（#1668） |
+| `scenes.spec.ts` | Product Hunt・note・X 用の 3 場面（S0 Hero 候補、S1 話題を選ぶ、S2 公開で会話する、S3 私的チャンネルへ移る）を JA / EN で撮る。計 9 カット × 2 言語 |
 | `guards.spec.ts` | 撮影の guard が、不完全な画面を素材として採用しないことを確かめる。撮影の出力には書かない |
 | `smoke.spec.ts` | 制作環境が通ることを確かめる最小経路（#1038）。素材ではない |
 
@@ -110,7 +111,7 @@ cd apps/desktop && npx pnpm@10.16.1 exec playwright test --config=playwright.pro
 - `tests/promo/fixtures/demoStory.ts`: 合成のデモ物語（話題 `kukuri:topic:dev`、デモ参加者 2 名、会話、時刻）。実在の利用者のデータは使わない
 - `tests/promo/fixtures/captureScene.ts`: 1 カットの撮影手順と guard
 
-撮影は開発者モードを無効のまま行う。Dome などの実験機能の場面、および 2 台の実機間の実同期は browser mock では撮らない（#1040 が実機で撮る）。どの shot を撮っていないかは `captures/index.json` の `notCapturedByMock` に理由付きで残る。
+撮影は開発者モードを無効のまま行い、実験機能（Dome など）の場面は撮らない。2 台の実機間の実同期は browser mock では撮らない（#1040 が実機で撮る）。どの shot を撮っていないかは `captures/index.json` の `notCapturedByMock` に理由付きで残る。
 
 ### 不完全な画面を採用しない
 
@@ -135,12 +136,12 @@ cd apps/desktop && npx pnpm@10.16.1 exec playwright test --config=playwright.pro
 3. 取り込む。
 
 ```bash
-cd tools/promo && node scripts/import-still.mjs device-captures/s9-dome-teaser.ja-dark.json
+cd tools/promo && node scripts/import-still.mjs device-captures/<sceneId>.<locale>-<theme>.json
 ```
 
 スクリプトは画像の寸法と SHA-256 を読み、Playwright の撮影と同じ形の `manifest.json` と `props.json` を書く。spec に `sha256` があれば照合し、違う画像なら失敗する。取り込めるのは `sourceMode` が `device` の素材だけ。
 
-開発者モードを有効にした素材は、Dome 予告の場面（`s9-dome-teaser`）の実機素材だけを認める。ほかの場面に紛れていると、撮影後の索引（`captures/index.json`）の作成が失敗する。
+開発者モードを有効にした素材（実験機能の画面）は、どの出力にも使わない。紛れていると、撮影後の索引（`captures/index.json`）の作成と `render-stills.mjs` が失敗する。
 
 ### 撮影が途中で失敗したとき
 
@@ -172,7 +173,7 @@ id の先頭一致で絞れる（例: `node scripts/render-stills.mjs ph- note-`
 
 | composition | 用途 |
 | --- | --- |
-| `SceneStill` | LP の画面。原素材に「デモ画面」「実機」の表記と、実験機能なら必須の表記を重ねる。字幕は焼き込まない。`variants` の幅で縮小版も作る |
+| `SceneStill` | LP の画面。原素材に「デモ画面」「実機」の表記を重ねる。字幕は焼き込まない。2 倍で撮った原素材は 2 倍の寸法で出し、`variants` の幅で縮小版も作る |
 | `PromoStill` | OGP・Product Hunt・note・X。`layout` は `split`（文字と画面を左右に並べる）、`header`（見出し中心）、`icon`（アイコンだけ）。画面は原素材を `crop` の範囲で切り抜いて拡大するだけで、UI を作り直さない |
 
 preset の主な項目は、寸法（`width`・`height`）、原素材（`capture`）、切り抜き（`crop`、原素材 1600×1000 の座標）、文言（`eyebrow`・`headline`・`subhead`・`footer`）、掲載順（`order`）、`alt`、説明（`description`）。日本語の見出しは文節で折り返し、区切りたい位置があれば文言に `\n` を入れる。
@@ -183,7 +184,7 @@ preset の主な項目は、寸法（`width`・`height`）、原素材（`captur
 | --- | --- |
 | 文字が枠からあふれる | `promo still: 文字が枠からあふれている (...)`。文言を短くするか寸法を見直す |
 | 原素材が無い | `render-stills: <id>: 原素材が無い (...)`。先に撮影または取り込みを行う |
-| Dome の原素材を `lp-dome-teaser` 以外に使う | `render-stills: Dome の原素材を lp-dome-teaser 以外で使っている: <id>`。何も出力しない |
+| 開発者モードで撮った原素材を使う | `render-stills: <id>: 開発者モードで撮った原素材は使わない` |
 
 出力一覧は `promo-artifacts/stills/index.json` と `outputs.md` に書かれる。寸法は制作時の preset なので、投稿の直前に各媒体の現行の要件を確かめる。
 
