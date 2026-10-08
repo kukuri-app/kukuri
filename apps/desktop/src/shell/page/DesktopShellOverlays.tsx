@@ -31,12 +31,14 @@ import type { useShellDialogs } from '@/shell/page/useShellDialogs';
 import type { useSharePreview } from '@/shell/page/useSharePreview';
 import type { useDesktopShellActions } from '@/shell/useDesktopShellActions';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { topicDisplayName } from '@/lib/topicId';
 import type { CommunityIndexingTarget } from '@/components/core/CommunityIndexingRequestDialog';
 
 type ViewModels = ReturnType<typeof useDesktopShellViewModels>;
+// 取り込みの結果（成功・失敗）の toast を出しておく時間。取り込み中の toast は結果が出るまで消さない。
+const REACTION_SET_NOTICE_TIMEOUT_MS = 6000;
 type OverlayActions = Pick<
   ReturnType<typeof useDesktopShellActions>,
   | 'handleCreateGameRoom'
@@ -227,6 +229,7 @@ export function DesktopShellOverlays({
     liveDescription,
     liveError,
     liveTitle,
+    reactionSetNotice,
     syncStatus,
   } = useDesktopShellStore(
     useShallow((s) => ({
@@ -251,6 +254,7 @@ export function DesktopShellOverlays({
       liveDescription: s.liveDescription,
       liveError: s.liveError,
       liveTitle: s.liveTitle,
+      reactionSetNotice: s.reactionSetNotice,
       syncStatus: s.syncStatus,
     }))
   );
@@ -264,6 +268,12 @@ export function DesktopShellOverlays({
   const setGameTitle = useDesktopShellFieldSetter('gameTitle');
   const setGameDescription = useDesktopShellFieldSetter('gameDescription');
   const setGameParticipantsInput = useDesktopShellFieldSetter('gameParticipantsInput');
+  const setReactionSetNotice = useDesktopShellFieldSetter('reactionSetNotice');
+  useEffect(() => {
+    if (!reactionSetNotice || reactionSetNotice.tone === 'neutral') return;
+    const timeout = window.setTimeout(() => setReactionSetNotice(null), REACTION_SET_NOTICE_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [reactionSetNotice, setReactionSetNotice]);
   const previewOwnerProfile =
     sharePreviewData?.owner_pubkey === syncStatus.local_author_pubkey
       ? localProfile
@@ -571,8 +581,20 @@ export function DesktopShellOverlays({
         </DialogContent>
       </Dialog>
 
-      {clipboardToastId > 0 ? (
-        <div className='pointer-events-none fixed right-4 bottom-4 z-[90] w-[calc(100vw-2rem)] max-w-xs'>
+      <div className='pointer-events-none fixed right-4 bottom-4 z-[90] grid w-[calc(100vw-2rem)] max-w-xs gap-2'>
+        {reactionSetNotice ? (
+          <Notice
+            key={reactionSetNotice.id}
+            role='status'
+            aria-live='polite'
+            aria-atomic='true'
+            tone={reactionSetNotice.tone}
+            className='pointer-events-auto'
+          >
+            {reactionSetNotice.message}
+          </Notice>
+        ) : null}
+        {clipboardToastId > 0 ? (
           <Notice
             key={clipboardToastId}
             role='status'
@@ -583,8 +605,8 @@ export function DesktopShellOverlays({
           >
             {t('common:feedback.copiedToClipboard')}
           </Notice>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </>
   );
 }

@@ -3,9 +3,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     AuthorRequest, BookmarkCustomReactionRequest, BookmarkPostRequest,
-    CreateCustomReactionAssetRequest, CreatePostRequest, CreateRepostRequest,
-    ListBookmarkedPostsRequest, ListProfileTimelineRequest, ListRecentReactionsRequest,
-    ListSocialConnectionsRequest, ListThreadRequest, ListTimelineRequest, NotificationIdRequest,
+    CreateCustomReactionAssetRequest, CreateCustomReactionSetRequest, CreatePostRequest,
+    CreateRepostRequest, ImportCustomReactionSetRequest, ListBookmarkedPostsRequest,
+    ListProfileTimelineRequest, ListRecentReactionsRequest, ListSocialConnectionsRequest,
+    ListThreadRequest, ListTimelineRequest, NotificationIdRequest,
     RemoveBookmarkedCustomReactionRequest, RemoveBookmarkedPostRequest,
     ResolveCommunityIndexPostsRequest, SetMyProfileRequest, ToggleReactionRequest,
     WithdrawPostRequest,
@@ -45,6 +46,9 @@ enum Operation {
     ListBookmarkedCustomReactions,
     BookmarkCustomReaction,
     RemoveBookmarkedCustomReaction,
+    CreateCustomReactionSet,
+    ListMyCustomReactionSets,
+    ImportCustomReactionSet,
     GetMyProfile,
     SetMyProfile,
     FollowAuthor,
@@ -187,6 +191,21 @@ impl CommandHandler for Handler {
                 RemoveBookmarkedCustomReactionRequest,
                 remove_bookmarked_custom_reaction
             ),
+            Operation::CreateCustomReactionSet => async_call!(
+                runtime,
+                payload,
+                CreateCustomReactionSetRequest,
+                create_custom_reaction_set
+            ),
+            Operation::ListMyCustomReactionSets => {
+                async_call0!(runtime, list_my_custom_reaction_sets)
+            }
+            Operation::ImportCustomReactionSet => async_call!(
+                runtime,
+                payload,
+                ImportCustomReactionSetRequest,
+                import_custom_reaction_set
+            ),
             Operation::GetMyProfile => async_call0!(runtime, get_my_profile),
             Operation::SetMyProfile => encode(
                 runtime
@@ -291,6 +310,13 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             Destructive,
             RemoveBookmarkedCustomReaction,
         ),
+        entry("create_custom_reaction_set", Write, CreateCustomReactionSet),
+        entry(
+            "list_my_custom_reaction_sets",
+            Read,
+            ListMyCustomReactionSets,
+        ),
+        entry("import_custom_reaction_set", Write, ImportCustomReactionSet),
         entry("get_my_profile", Read, GetMyProfile),
         entry("set_my_profile", Write, SetMyProfile),
         entry("follow_author", Write, FollowAuthor),

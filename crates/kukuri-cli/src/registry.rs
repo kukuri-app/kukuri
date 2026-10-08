@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn builtin_registry_is_sorted_unique_and_introspectable() {
         let registry = CommandRegistry::builtin();
-        assert_eq!(registry.len(), 154);
+        assert_eq!(registry.len(), 157);
         let mut items = Vec::new();
         let mut cursor = None;
         loop {

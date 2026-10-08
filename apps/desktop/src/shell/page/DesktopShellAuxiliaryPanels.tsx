@@ -6,6 +6,7 @@ import { AuthorDetailCard } from '@/components/core/AuthorDetailCard';
 import { MediaFetchFailure } from '@/components/core/MediaFetchFailure';
 import { MediaDemandObserver } from '@/components/core/MediaDemandObserver';
 import { PagedList } from '@/components/core/PagedList';
+import { ReactionSetText } from '@/components/core/SmartReferenceText';
 import { AuthorTrustDisplayExceptionField } from '@/components/core/AuthorTrustDisplayExceptionField';
 import { CommunityNodeAdvisoryPanel } from '@/components/core/CommunityNodeAdvisoryPanel';
 import { AuthorIdentityButton } from '@/components/core/AuthorIdentityButton';
@@ -93,6 +94,7 @@ export type DesktopShellMessagesSurfaceProps = {
   handleDirectMessageAttachmentPaste?: (files: File[]) => Promise<void>;
   handleRemoveDirectMessageDraftAttachment: (itemId: string) => void;
   handleSendDirectMessage: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  handleImportCustomReactionSet: (setHash: string) => Promise<void>;
   surfaceKind?: 'messages' | 'conversation';
   peerPubkey?: string;
   showComposer?: boolean;
@@ -110,6 +112,7 @@ export function DesktopShellMessagesSurface({
   handleDirectMessageAttachmentPaste,
   handleRemoveDirectMessageDraftAttachment,
   handleSendDirectMessage,
+  handleImportCustomReactionSet,
   surfaceKind,
   peerPubkey,
   showComposer = true,
@@ -311,7 +314,9 @@ export function DesktopShellMessagesSurface({
                         </div>
                         {message.text ? (
                           <div className='post-body'>
-                            <strong className='post-title'>{message.text}</strong>
+                            <strong className='post-title'>
+                              <ReactionSetText text={message.text} onImport={handleImportCustomReactionSet} />
+                            </strong>
                           </div>
                         ) : null}
                         {image ? (

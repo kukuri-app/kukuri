@@ -20,7 +20,7 @@ import { DesktopShellDeveloperLogs } from '@/shell/page/DesktopShellDeveloperLog
 import type { PrimarySection, ProfileConnectionsView, SettingsSection } from '@/components/shell/types';
 
 import type { SupportedLocale } from '@/i18n';
-import type { CustomReactionCropRect, DesktopApi } from '@/lib/api';
+import type { CustomReactionAssetView, CustomReactionCropRect, DesktopApi } from '@/lib/api';
 import type { FetchCommunityNodePolicyView, AcceptCommunityNodePolicyView } from '@/shell/actions/useCommunityNodePolicyDialog';
 import {
   eligibleCommunityIndexNodes,
@@ -126,6 +126,11 @@ export function DesktopShellSettingsDrawer({
   const loadConnectivityPeers = useCallback<LoadConnectivityPeers>(
     ({ kind, topic }, cursor) =>
       api.listConnectivityPeers({ kind, topic: topic ?? null, cursor, limit: null }),
+    [api]
+  );
+  const listCustomReactionSets = useCallback(() => api.listMyCustomReactionSets(), [api]);
+  const createCustomReactionSet = useCallback(
+    (name: string, assets: CustomReactionAssetView[]) => api.createCustomReactionSet(name, assets),
     [api]
   );
   const {
@@ -404,6 +409,8 @@ export function DesktopShellSettingsDrawer({
             void handleCreateCustomReactionAsset(file, cropRect, searchKey)
           }
           onRemoveBookmark={handleRemoveBookmarkedCustomReaction}
+          onListSets={listCustomReactionSets}
+          onCreateSet={createCustomReactionSet}
         />
       ),
     },

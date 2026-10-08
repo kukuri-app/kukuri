@@ -257,7 +257,7 @@ pub(crate) use post_withdrawal_hydration::{
     hydrate_post_withdrawal_for_object_with_hints,
 };
 pub(crate) use profile_docs_support::{
-    fetch_author_envelope, fetch_author_envelope_by_id,
+    fetch_author_envelope, fetch_author_envelope_by_id, load_author_records,
     load_custom_reaction_assets_from_author_replica, merge_seed_peers, persist_block_edge_doc,
     persist_custom_reaction_asset_doc, persist_follow_edge_doc, persist_profile_doc,
     persist_profile_post_doc, persist_profile_repost_doc, persist_reaction_doc,

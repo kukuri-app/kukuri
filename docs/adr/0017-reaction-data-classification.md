@@ -179,6 +179,17 @@ bookmark 済み custom reaction library は local-only durable state とする�
 - current scope で new private author-sync primitive を増やさない
 - `Settings > Reactions` を local preference manager として扱える
 
+### 2.6 セット（#1232 D3、2026-10-09）
+
+custom reaction のセットは、複数のリアクションをまとめて共有するための、署名のない公開 blob とする。
+
+- 中身は名前（1〜64 文字）と 1〜100 件の項目（画像の blob hash・検索名・形式・大きさ・最初に作った人の `owner_pubkey`）の JSON（`kukuri_core::CustomReactionSetV1`、`application/json`、64 KiB 以下）。§2.4.1 の識別が同じ項目を 2 件含めない。
+- 作成: `Settings > Reactions` で、自作・保存済みから選んだ最大 100 件と名前から作り、blob を自分の blob として置く。作ったセットは自分の author replica の `reactions/sets/<作成時刻>-<セットの hash>` に記録し、一覧は新しい順に 100 件を示す。それより古いセットの共有用の文字列も、そのまま使える。この record（名前・件数・hash・作成時刻）は asset と同じ公開の author-owned object（§2.4）で、自分の別の端末と、その author replica を読む人に複製される。
+- 共有: 共有用の文字列 `kukuri:reaction-set:<セットの hash>` を投稿・DM の本文に貼る。本文のこの文字列は「取り込む」ボタンとして示す。
+- 取り込み: セットの blob を手元・既知の相手・公開 blob の発見（ADR 0063。公開投稿に貼られたセットだけ）から取り、形式を検証して cache に置き、各項目を §2.4.1 の識別のまま保存済み（§2.5）へ置く。自分が最初に作った項目は置かない。取れない・形式が違うときは何も置かずに失敗を示す。1 回の取り込みが読むのはセットの blob 1 件で、保存済み・投稿の件数によらない。
+- 署名は付けない。同じ画像＋検索名は、誰のセットから取り込んでも同じリアクションになる（§2.4.1）。`owner_pubkey` は最初に作った人の表示に使い、本人性の証明にはしない。
+- 公開投稿の本文に貼られたセットの hash は、公開 blob の発見の公開の根拠にする（ADR 0063 §1、#1232 D4）。private channel の投稿・DM に貼られたものは根拠にしない。
+
 ## 3. Data Model
 
 ### 3.1 Reaction object
@@ -266,7 +277,7 @@ local SQLite の bookmark record は少なくとも次を持つ。
 
 bookmark は source asset への pointer と display snapshot を持つが、新しい blob ownership は作らない。
 
-新しく置く行の `asset_id` は §2.4.1 の識別とする（投稿のリアクションの snapshot が旧い ID でも、画像の hash と検索名から求めて置く）。旧い ID で置いた行は書き換えず、一覧では §2.4.1 の識別で示して同じ値を 1 件にまとめる。解除は、一覧と同じ新しい順の窓（`BOOKMARKED_CUSTOM_REACTION_LIMIT` 件）から同じ識別の行を選び、旧い ID の行も一緒に外す。
+新しく置く行の `asset_id` は §2.4.1 の識別とする（投稿のリアクションの snapshot が旧い ID でも、画像の hash と検索名から求めて置く）。旧い ID で置いた行は書き換えず、一覧では §2.4.1 の識別で示して同じ値を 1 件にまとめる。解除は、一覧と同じ新しい順の窓（`BOOKMARKED_CUSTOM_REACTION_LIMIT` 件）から同じ識別の行を選び、旧い ID の行も一緒に外す。窓の外（それより古い）に同じ識別の旧い行があると、その行は外れずに残り、新しい行が減って窓に入ると一覧に再び出る。解除で保存済みの全件を走査しないための帰結として受け入れる。
 
 ## 4. Publish And Read Contract
 
@@ -376,7 +387,7 @@ v1 では次を扱わない。
 - reaction notification
 - bookmark の端末間同期
 - custom asset の edit/delete lifecycle
-- pack/search/discovery
+- search/discovery（pack は §2.6 のセットとして扱う）
 - moderation/reporting
 
 ## 7. Validation

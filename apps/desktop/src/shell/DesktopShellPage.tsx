@@ -298,7 +298,7 @@ export function DesktopShellPage({
   } = viewModels;
   useOsNotificationBridge();
   useDeveloperModeBridge(developerModeEnabled);
-  const { handleOpenNotification } = shellActions;
+  const { handleImportCustomReactionSet, handleOpenNotification } = shellActions;
   const handleActivateOsNotification = useCallback(
     async (notification: Parameters<typeof handleOpenNotification>[0]) => {
       setSettingsOpen(false);
@@ -348,6 +348,7 @@ export function DesktopShellPage({
   const handleOpenSharePreview = sharePreview.openPreview;
   const handleActivateReference = useCallback(
     async (reference: InternalSmartReference) => {
+      if (reference.kind === 'reaction_set') return handleImportCustomReactionSet(reference.setHash);
       if (reference.kind === 'share_token') {
         await handleOpenSharePreview(reference.token);
         return;
@@ -458,6 +459,7 @@ export function DesktopShellPage({
     },
     [
       developerModeEnabled,
+      handleImportCustomReactionSet,
       handleOpenSharePreview,
       openThread,
       setSelectedGameRoomId,
@@ -545,6 +547,7 @@ export function DesktopShellPage({
       handleDirectMessageAttachmentSelection={shellActions.handleDirectMessageAttachmentSelection}
       handleRemoveDirectMessageDraftAttachment={shellActions.handleRemoveDirectMessageDraftAttachment}
       handleSendDirectMessage={shellActions.handleSendDirectMessage}
+      handleImportCustomReactionSet={handleImportCustomReactionSet}
       surfaceKind={surfaceKind}
       peerPubkey={peerPubkey}
       showComposer={false}

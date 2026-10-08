@@ -91,6 +91,16 @@ pub(super) fn input(name: &str) -> Value {
         "remove_bookmarked_custom_reaction" => {
             object(json!({"asset_id": {"type": "string"}}), &["asset_id"])
         }
+        "create_custom_reaction_set" => object(
+            json!({"name": {"type": "string"}, "items": array(object(
+                custom_reaction_fields(),
+                &["asset_id", "owner_pubkey", "blob_hash", "search_key", "mime", "bytes", "width", "height"],
+            ))}),
+            &["name", "items"],
+        ),
+        "import_custom_reaction_set" => {
+            object(json!({"set_hash": {"type": "string"}}), &["set_hash"])
+        }
         "set_my_profile" => object(
             json!({"name": {"type": "string"}, "display_name": {"type": "string"},
             "about": {"type": "string"}, "picture_upload": media::input_schema(), "clear_picture": {"type": "boolean", "default": false}}),
@@ -114,6 +124,7 @@ pub(super) fn input(name: &str) -> Value {
         "get_content_display_settings"
         | "list_my_custom_reaction_assets"
         | "list_bookmarked_custom_reactions"
+        | "list_my_custom_reaction_sets"
         | "get_my_profile"
         | "list_notifications"
         | "mark_all_notifications_read"

@@ -27,8 +27,8 @@ Accepted（Issue #1632、Scope revision `2026-10-08-r4`）。依存の fork（AC
 
 ### 1. 公開の根拠（D3）
 
-- 対象は、公開 topic の検証済み投稿の本文・添付・repost の snapshot の添付・リンクプレビュー画像、検証済み profile の画像、公開 topic の有効な custom reaction の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像（#1232 AC-3）。live session・game room・Dome の資産は対象外とし、DHT の告知・検索をしない。
-- 公開参照の索引 `public_blob_refs(source_kind, source_id, blob_hash)` を、公開記録を書く transaction で記録ごとに置き換える（`post`・`link_preview`・`profile`・`reaction`・`reaction_asset`・`reaction_bookmark`）。投稿の取り下げと projection の回収は、その投稿の `post`・`link_preview` を外す。同じ hash を別の公開記録が参照している間は公開のまま。
+- 対象は、公開 topic の検証済み投稿の本文・添付・repost の snapshot の添付・リンクプレビュー画像・本文に貼られた custom reaction のセット（`kukuri:reaction-set:<hash>`、#1232 AC-4）、検証済み profile の画像、公開 topic の有効な custom reaction の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像（#1232 AC-3）。live session・game room・Dome の資産は対象外とし、DHT の告知・検索をしない。
+- 公開参照の索引 `public_blob_refs(source_kind, source_id, blob_hash)` を、公開記録を書く transaction で記録ごとに置き換える（`post`・`link_preview`・`profile`・`reaction`・`reaction_asset`・`reaction_bookmark`。`post` は本文に貼られたセットの hash も含む）。投稿の取り下げと projection の回収は、その投稿の `post`・`link_preview` を外す。同じ hash を別の公開記録が参照している間は公開のまま。
 - custom reaction の asset は public reusable な object（ADR 0017 §2.4）なので、使われた topic によらず、自作の asset（envelope の行を書くとき。`reaction_asset`、source は envelope の ID）と保存済みの行（保存・解除と同じ transaction。`reaction_bookmark`、source は保存の行の ID）を公開の根拠にする。セットから取り込んだ保存（#1232 AC-4）も同じ行になる。
 - custom reaction の公開参照は、reaction を書くときの対象の投稿の行で決める（対象の投稿が後から届いても見直さない）。
 - DM・private channel・pin/保護だけの保存物は公開の根拠にしない。`own_blob:` などの保護参照は、公開の判定にも告知の目印にも使わない（優先度だけに使う。§2）。

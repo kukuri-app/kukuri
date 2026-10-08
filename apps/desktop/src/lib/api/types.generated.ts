@@ -55,6 +55,10 @@ export type RecentReactionView = { reaction_key_kind: string, normalized_reactio
 
 export type CustomReactionAssetView = { asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 
+export type CustomReactionSetView = { set_hash: string, name: string, item_count: number, created_at: number, };
+
+export type ImportedCustomReactionSetView = { set_hash: string, name: string, saved: Array<CustomReactionAssetView>, skipped_own: number, };
+
 export type RepostSourceView = { source_object_id: string, source_topic_id: string, source_author_pubkey: string, source_author_name?: string | null, source_author_display_name?: string | null, source_author_picture_asset?: ProfileAssetView | null, source_object_kind: string, content: string, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, reply_to?: string | null, root_id?: string | null, };
 
 export type ContentObservationView = { node_base_url: string, capability: string, observed_at: number, };
@@ -769,6 +773,10 @@ export type CreateCustomReactionAssetRequest = { upload: CreateAttachmentRequest
 export type BookmarkCustomReactionRequest = { asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 
 export type RemoveBookmarkedCustomReactionRequest = { asset_id: string, };
+
+export type CreateCustomReactionSetRequest = { name: string, items: Array<CustomReactionAssetView>, };
+
+export type ImportCustomReactionSetRequest = { set_hash: string, };
 
 export type BookmarkPostRequest = { topic: string, object_id: string, channel_ref: ChannelRef, };
 

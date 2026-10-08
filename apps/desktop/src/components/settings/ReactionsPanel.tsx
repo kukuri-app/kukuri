@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useId, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,11 @@ import { ImageCropDialog } from '@/components/ui/ImageCropDialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Notice } from '@/components/ui/notice';
-import { type CustomReactionCropRect } from '@/lib/api';
+import {
+  type CustomReactionAssetView,
+  type CustomReactionCropRect,
+  type CustomReactionSetView,
+} from '@/lib/api';
 import { copyTextToClipboard } from '@/lib/utils';
 
 import { type ReactionsPanelView } from './types';
@@ -23,7 +27,12 @@ type ReactionsPanelProps = {
   mediaObjectUrls?: Record<string, string | null>;
   onCreateAsset: (file: File, cropRect: CustomReactionCropRect, searchKey: string) => void;
   onRemoveBookmark: (assetId: string) => Promise<void>;
+  onListSets: () => Promise<CustomReactionSetView[]>;
+  onCreateSet: (name: string, assets: CustomReactionAssetView[]) => Promise<CustomReactionSetView>;
 };
+
+// #1232 AC-4: 1 つのセットに入れられるリアクションの数と、作ったセットの一覧の件数（core・app-api と同じ）。
+const REACTION_SET_MAX_ITEMS = 100;
 
 export function ReactionsPanel({
   view,
@@ -31,6 +40,8 @@ export function ReactionsPanel({
   mediaObjectUrls = {},
   onCreateAsset,
   onRemoveBookmark,
+  onListSets,
+  onCreateSet,
 }: ReactionsPanelProps) {
   const { t } = useTranslation(['settings', 'common']);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -49,6 +60,10 @@ export function ReactionsPanel({
     null
   );
   const [savedMenuAssetId, setSavedMenuAssetId] = useState<string | null>(null);
+  const [reactionSets, setReactionSets] = useState<CustomReactionSetView[]>([]);
+  const [reactionSetName, setReactionSetName] = useState('');
+  const [reactionSetPending, setReactionSetPending] = useState(false);
+  const [reactionSetError, setReactionSetError] = useState<string | null>(null);
 
   useEffect(() => {
     const input = fileInputRef.current;
@@ -66,7 +81,13 @@ export function ReactionsPanel({
   }, [draftPreviewUrl]);
 
   useEffect(() => {
-    const validAssetIds = new Set(view.bookmarkedAssets.map((asset) => asset.asset_id));
+    onListSets().then(setReactionSets, () => setReactionSetError(t('reactions.setsLoadFailed')));
+  }, [onListSets, t]);
+
+  useEffect(() => {
+    const validAssetIds = new Set(
+      [...view.ownedAssets, ...view.bookmarkedAssets].map((asset) => asset.asset_id)
+    );
     setSelectedAssetIds((current) => {
       const next = new Set([...current].filter((assetId) => validAssetIds.has(assetId)));
       return next.size === current.size ? current : next;
@@ -75,7 +96,7 @@ export function ReactionsPanel({
       setSavedMenuAssetId(null);
       setSavedMenuPosition(null);
     }
-  }, [savedMenuAssetId, view.bookmarkedAssets]);
+  }, [savedMenuAssetId, view.bookmarkedAssets, view.ownedAssets]);
 
   const handleDraftFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -90,23 +111,50 @@ export function ReactionsPanel({
     setDraftError(null);
   };
 
-  const selectedSavedCount = selectedAssetIds.size;
+  const selectedSavedIds = view.bookmarkedAssets
+    .map((asset) => asset.asset_id)
+    .filter((assetId) => selectedAssetIds.has(assetId));
   const allSavedSelected =
-    view.bookmarkedAssets.length > 0 &&
-    view.bookmarkedAssets.every((asset) => selectedAssetIds.has(asset.asset_id));
+    view.bookmarkedAssets.length > 0 && selectedSavedIds.length === view.bookmarkedAssets.length;
   const savedMenuAsset =
     view.bookmarkedAssets.find((asset) => asset.asset_id === savedMenuAssetId) ?? null;
+  // 自作と保存済みで同じ ID（同じ画像＋検索名）は 1 件として数える。
+  const selectedAssets = [
+    ...new Map(
+      [...view.ownedAssets, ...view.bookmarkedAssets]
+        .filter((asset) => selectedAssetIds.has(asset.asset_id))
+        .map((asset) => [asset.asset_id, asset])
+    ).values(),
+  ];
 
-  const handleToggleSavedAsset = (assetId: string, checked: boolean) => {
+  const handleToggleAssets = (assetIds: string[], checked: boolean) => {
     setSelectedAssetIds((current) => {
       const next = new Set(current);
-      if (checked) {
-        next.add(assetId);
-      } else {
-        next.delete(assetId);
+      for (const assetId of assetIds) {
+        if (checked) {
+          next.add(assetId);
+        } else {
+          next.delete(assetId);
+        }
       }
       return next;
     });
+  };
+
+  const handleCreateSet = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setReactionSetPending(true);
+    setReactionSetError(null);
+    try {
+      const created = await onCreateSet(reactionSetName.trim(), selectedAssets);
+      setReactionSets((current) => [created, ...current].slice(0, REACTION_SET_MAX_ITEMS));
+      setReactionSetName('');
+      setSelectedAssetIds(new Set());
+    } catch {
+      setReactionSetError(t('reactions.setCreateFailed'));
+    } finally {
+      setReactionSetPending(false);
+    }
   };
 
   const handleRemoveSavedAssets = async (assetIds: string[]) => {
@@ -252,7 +300,15 @@ export function ReactionsPanel({
         ) : null}
         <div className='reactions-asset-grid'>
           {view.ownedAssets.map((asset) => (
-            <div key={asset.asset_id} className='reactions-asset-card'>
+            <div key={asset.asset_id} className='reactions-asset-card relative'>
+              <label className='reactions-saved-checkbox'>
+                <input
+                  type='checkbox'
+                  aria-label={t('reactions.selectReaction', { key: asset.search_key })}
+                  checked={selectedAssetIds.has(asset.asset_id)}
+                  onChange={(event) => handleToggleAssets([asset.asset_id], event.target.checked)}
+                />
+              </label>
               {typeof mediaObjectUrls[asset.blob_hash] === 'string' ? (
                 <img
                   className='reactions-asset-thumb'
@@ -285,23 +341,20 @@ export function ReactionsPanel({
                 <input
                   type='checkbox'
                   checked={allSavedSelected}
-                  onChange={(event) => {
-                    if (event.target.checked) {
-                      setSelectedAssetIds(
-                        new Set(view.bookmarkedAssets.map((asset) => asset.asset_id))
-                      );
-                    } else {
-                      setSelectedAssetIds(new Set());
-                    }
-                  }}
+                  onChange={(event) =>
+                    handleToggleAssets(
+                      view.bookmarkedAssets.map((asset) => asset.asset_id),
+                      event.target.checked
+                    )
+                  }
                 />
                 <span>{t('reactions.selectAll')}</span>
               </label>
               <Button
                 variant='secondary'
                 type='button'
-                disabled={selectedSavedCount === 0 || removingBookmarks}
-                onClick={() => void handleRemoveSavedAssets([...selectedAssetIds])}
+                disabled={selectedSavedIds.length === 0 || removingBookmarks}
+                onClick={() => void handleRemoveSavedAssets(selectedSavedIds)}
               >
                 {t('reactions.clearSelected')}
               </Button>
@@ -338,9 +391,7 @@ export function ReactionsPanel({
                     type='checkbox'
                     aria-label={t('reactions.selectReaction', { key: asset.search_key })}
                     checked={isSelected}
-                    onChange={(event) =>
-                      handleToggleSavedAsset(asset.asset_id, event.target.checked)
-                    }
+                    onChange={(event) => handleToggleAssets([asset.asset_id], event.target.checked)}
                   />
                 </label>
                 {previewUrl ? (
@@ -357,6 +408,63 @@ export function ReactionsPanel({
             <p className='empty-state'>{t('reactions.noSavedAssets')}</p>
           ) : null}
         </div>
+      </section>
+
+      <section className='shell-main-stack'>
+        <div>
+          <h4>{t('reactions.sets')}</h4>
+          <small>{t('reactions.setsHint', { max: REACTION_SET_MAX_ITEMS })}</small>
+        </div>
+        <form
+          className='flex min-w-0 flex-wrap items-end gap-2'
+          onSubmit={(event) => void handleCreateSet(event)}
+        >
+          <Label className='min-w-[12rem] flex-1'>
+            <span>{t('reactions.setName')}</span>
+            <Input
+              value={reactionSetName}
+              maxLength={64}
+              onChange={(event) => setReactionSetName(event.target.value)}
+            />
+          </Label>
+          <Button
+            type='submit'
+            disabled={
+              reactionSetPending ||
+              !reactionSetName.trim() ||
+              selectedAssets.length === 0 ||
+              selectedAssets.length > REACTION_SET_MAX_ITEMS
+            }
+          >
+            {t('reactions.createSet', { count: selectedAssets.length })}
+          </Button>
+        </form>
+        {selectedAssets.length > REACTION_SET_MAX_ITEMS ? (
+          <Notice tone='warning'>
+            {t('reactions.setTooLarge', { max: REACTION_SET_MAX_ITEMS, count: selectedAssets.length })}
+          </Notice>
+        ) : null}
+        {reactionSetError ? <Notice tone='destructive'>{reactionSetError}</Notice> : null}
+        <h5>{t('reactions.createdSets', { max: REACTION_SET_MAX_ITEMS })}</h5>
+        <ul className='grid gap-2'>
+          {reactionSets.map((set) => (
+            <li key={set.set_hash} className='reactions-saved-header'>
+              <div className='min-w-0'>
+                <strong className='block break-all'>{set.name}</strong>
+                <small>{t('reactions.setItemCount', { count: set.item_count })}</small>
+              </div>
+              <Button
+                variant='secondary'
+                type='button'
+                aria-label={t('reactions.copySetLinkOf', { name: set.name })}
+                onClick={() => void copyTextToClipboard(`kukuri:reaction-set:${set.set_hash}`)}
+              >
+                {t('reactions.copySetLink')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+        {reactionSets.length === 0 ? <p className='empty-state'>{t('reactions.noSets')}</p> : null}
       </section>
 
       {view.panelError ? <Notice tone='destructive'>{view.panelError}</Notice> : null}

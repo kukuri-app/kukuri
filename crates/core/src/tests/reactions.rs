@@ -130,3 +130,86 @@ fn custom_reaction_id_depends_only_on_the_image_and_the_search_key() {
     assert_eq!(ids[0].1, party);
     assert_eq!(ids[1].1, party);
 }
+
+fn set_item(seed: u8, search_key: &str) -> CustomReactionSetItemV1 {
+    CustomReactionSetItemV1 {
+        owner_pubkey: generate_keys().public_key(),
+        blob_hash: BlobHash::new(format!("{seed:02x}").repeat(32)),
+        search_key: search_key.into(),
+        mime: "image/png".into(),
+        bytes: 128,
+        width: 128,
+        height: 128,
+    }
+}
+
+#[test]
+fn custom_reaction_set_roundtrips_and_rejects_invalid_contents() {
+    let set = CustomReactionSetV1 {
+        name: "ねこ".into(),
+        items: vec![set_item(1, "cat"), set_item(2, "dog")],
+    };
+    let bytes = set.to_bytes().expect("set bytes");
+    assert_eq!(CustomReactionSetV1::from_bytes(&bytes).expect("parse"), set);
+
+    // 上限の 100 件は 64 KiB に収まり、101 件は作れない。
+    let full = CustomReactionSetV1 {
+        name: "full".into(),
+        items: (0..100).map(|seed| set_item(seed, "same")).collect(),
+    };
+    assert!(full.to_bytes().is_ok());
+    let over = CustomReactionSetV1 {
+        items: (0..101).map(|seed| set_item(seed, "same")).collect(),
+        ..full
+    };
+    assert!(over.to_bytes().is_err());
+
+    for invalid in [
+        CustomReactionSetV1 {
+            name: " ".into(),
+            ..set.clone()
+        },
+        CustomReactionSetV1 {
+            name: "a".repeat(65),
+            ..set.clone()
+        },
+        CustomReactionSetV1 {
+            items: Vec::new(),
+            ..set.clone()
+        },
+        // 前後の空白だけが違う検索名は同じリアクション。
+        CustomReactionSetV1 {
+            items: vec![set_item(1, "cat"), set_item(1, " cat ")],
+            ..set.clone()
+        },
+        CustomReactionSetV1 {
+            items: vec![CustomReactionSetItemV1 {
+                blob_hash: BlobHash::new("A".repeat(64)),
+                ..set_item(1, "cat")
+            }],
+            ..set.clone()
+        },
+        CustomReactionSetV1 {
+            items: vec![CustomReactionSetItemV1 {
+                mime: "text/plain".into(),
+                ..set_item(1, "cat")
+            }],
+            ..set.clone()
+        },
+    ] {
+        assert!(invalid.to_bytes().is_err(), "{invalid:?}");
+    }
+    assert!(CustomReactionSetV1::from_bytes(b"{}").is_err());
+}
+
+#[test]
+fn custom_reaction_set_links_are_found_in_text() {
+    let first = "a".repeat(64);
+    let second = "b".repeat(64);
+    let text = format!(
+        "セット kukuri:reaction-set:{first} と\nkukuri:reaction-set:{second}。\
+         kukuri:reaction-set:{first} kukuri:reaction-set:{}x kukuri:reaction-set:short",
+        "c".repeat(64)
+    );
+    assert_eq!(custom_reaction_set_hashes_in_text(&text), [first, second]);
+}

@@ -262,3 +262,42 @@ test('visible custom reactions auto-fetch media before save, and saved reactions
   expect(await within(drawer).findByRole('img', { name: remoteReactionAsset.search_key })).toBeInTheDocument();
 }, 15_000); // 複数回の設定開閉と保存を含む実行枠。個々の待機・副作用の検証は維持する。
 
+
+// #1232 AC-4: 投稿に貼られたセットを取り込むと保存済みへ加わり、取れないセットは何も保存せずに失敗を示す。
+test('a reaction set pasted in a post imports its reactions into saved reactions', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const shared = {
+    asset_id: 'asset-set-cat',
+    owner_pubkey: 'd'.repeat(64),
+    blob_hash: 'blob-set-cat',
+    search_key: 'set-cat',
+    mime: 'image/png',
+    bytes: 128,
+    width: 128,
+    height: 128,
+  };
+  const set = await api.createCustomReactionSet('cats', [shared]);
+  const bookmarkedBefore = await api.listBookmarkedCustomReactions();
+
+  render(<App api={api} />);
+  await publishPost(
+    user,
+    `kukuri:reaction-set:${set.set_hash} kukuri:reaction-set:${'e'.repeat(64)}`,
+    { input: 'paste' }
+  );
+  const [importable, missing] = await within(getActiveColumn('Timeline')).findAllByRole('button', {
+    name: 'Import reaction set',
+  });
+
+  await user.click(missing);
+  expect(
+    await screen.findByText('Could not import the reaction set. Please try again later.')
+  ).toBeInTheDocument();
+  expect(await api.listBookmarkedCustomReactions()).toEqual(bookmarkedBefore);
+
+  await user.click(importable);
+  expect(await screen.findByText('Imported “cats”: 1 saved.')).toBeInTheDocument();
+  const drawer = await openSettingsSection(user, 'reactions');
+  expect(within(drawer).getByRole('article', { name: 'set-cat' })).toBeInTheDocument();
+});

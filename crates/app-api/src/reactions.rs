@@ -271,8 +271,17 @@ impl AppService {
         if asset.owner_pubkey.as_str() == self.current_author_pubkey() {
             anyhow::bail!("bookmarking your own custom reaction is not supported");
         }
+        self.put_custom_reaction_bookmark(asset, Utc::now().timestamp_millis())
+            .await
+    }
+
+    /// 保存の行を置く。投稿のリアクションの写しが旧い ID でも、画像＋検索名の ID で置く（#1232 D1）。
+    pub(crate) async fn put_custom_reaction_bookmark(
+        &self,
+        asset: CustomReactionAssetSnapshotV1,
+        bookmarked_at: i64,
+    ) -> Result<BookmarkedCustomReactionView> {
         let search_key = search_key_or_asset_id(asset.search_key.as_str(), asset.asset_id.as_str());
-        // 投稿のリアクションの写しが旧い ID でも、保存は画像＋検索名の ID で置く（#1232 D1）。
         let row = BookmarkedCustomReactionRow {
             asset_id: kukuri_core::custom_reaction_id(asset.blob_hash.as_str(), &search_key),
             owner_pubkey: asset.owner_pubkey.as_str().to_string(),
@@ -282,7 +291,7 @@ impl AppService {
             bytes: asset.bytes,
             width: asset.width,
             height: asset.height,
-            bookmarked_at: Utc::now().timestamp_millis(),
+            bookmarked_at,
         };
         self.services
             .projection_store

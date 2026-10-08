@@ -17,6 +17,10 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
+      "lines": 1146,
+      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
+    },
+    {
       "lines": 1139,
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
@@ -27,10 +31,6 @@
     {
       "lines": 1131,
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
-    },
-    {
-      "lines": 1129,
-      "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
       "lines": 1117,
@@ -61,7 +61,7 @@
       "path": "crates/app-api/src/service/replica_window.rs"
     },
     {
-      "lines": 1026,
+      "lines": 1031,
       "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
@@ -69,8 +69,12 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1000,
+      "lines": 1008,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
+    },
+    {
+      "lines": 1000,
+      "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
       "lines": 1000,
