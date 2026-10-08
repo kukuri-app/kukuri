@@ -56,7 +56,7 @@ target "iroh-relay" {
   inherits = ["_common"]
   # #1483: STUN（cn-stun）を同じ image に入れ、relay とは別の container で起動する。
   # #1632: 公開 blob の発見の補助 index（cn-addr-index）も同じ形で入れる。
-  args     = { TARGET_BIN = "cn-iroh-relay", EXTRA_BIN = "cn-stun cn-addr-index" }
+  args     = { TARGET_BIN = "cn-iroh-relay", EXTRA_BIN = "cn-stun cn-addr-index iroh-index-list" }
   labels   = image_labels("kukuri-cn-iroh-relay")
   attest   = ["type=provenance,mode=max"]
   output   = ["type=oci,dest=${OUT_DIR}/kukuri-cn-iroh-relay,tar=false"]

@@ -124,6 +124,8 @@ def check_image(root, name, tag):
         for extra in ("cn-stun", "cn-addr-index"):
             run("docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", tag, "-c",
                 f"timeout 2 /usr/local/bin/{extra}; test $? -eq 124")
+        run("docker", "run", "--rm", "--network", "none",
+            "--entrypoint", "/usr/local/bin/iroh-index-list", tag, "--help")
     if name in ("cli", "indexer"):
         run("docker", "run", "--rm", "--entrypoint", "sh", tag, "-ec",
             "ffmpeg -version >/dev/null; ffprobe -version >/dev/null; test -s /usr/local/share/kukuri/decoder-build-id")

@@ -32,6 +32,14 @@ COPY xtask ./xtask
 COPY crates ./crates
 RUN set -eu; for package in $TARGET_PACKAGES; do cargo build --release -p "$package"; done
 
+# #1657: kukuri が運用する署名つき一覧の publisher。fork の同じ固定 revision を使う。
+RUN case " $TARGET_PACKAGES " in *" kukuri-cn-addr-index "*) \
+    cargo install --git https://github.com/KingYoSun/iroh-content-discovery \
+      --rev f6e2864a1d2228a19aa1cb88239ba87eb0068d2e --locked \
+      --root /tmp/index-list --target-dir /workspace/target/index-list \
+      --features cli --bin iroh-index-list iroh-mainline-endpoint-discovery \
+    && cp /tmp/index-list/bin/iroh-index-list /workspace/target/release/ ;; esac
+
 FROM debian:bookworm-slim AS runtime
 
 ARG TARGET_BIN
