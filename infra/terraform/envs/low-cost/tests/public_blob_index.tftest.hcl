@@ -49,4 +49,8 @@ run "kukuri_index_uses_direct_udp_and_the_signed_list" {
     condition     = strcontains(nonsensitive(module.vm.startup_script), "INDEX_LIST_SECRET=\"$(fetch_secret \"test-index-list-key\" \"latest\")\"")
     error_message = "The signing secret must be fetched at startup, not stored in Terraform metadata."
   }
+  assert {
+    condition     = strcontains(nonsensitive(module.vm.startup_script), "iptables -I INPUT -p udp --dport 60125 -j ACCEPT")
+    error_message = "COS must admit direct UDP to the host-network index."
+  }
 }
