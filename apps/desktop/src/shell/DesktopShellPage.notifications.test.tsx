@@ -274,6 +274,47 @@ test('notifications route surfaces auto-read errors and keeps unread state visib
   });
 });
 
+test('notification context shows topic and channel names instead of their ids', async () => {
+  const api = createDesktopMockApi();
+  const channel = await api.createPrivateChannel('kukuri:topic:general', 'core contributors');
+  api.listNotificationsPage = async () => ({
+    items: [
+      buildNotification({ notification_id: 'context-topic', preview_text: 'topic context' }),
+      buildNotification({
+        notification_id: 'context-channel', channel_id: channel.channel_id, preview_text: 'channel context',
+      }),
+      buildNotification({
+        notification_id: 'context-other-channel', channel_id: 'channel-not-joined', preview_text: 'other channel context',
+      }),
+      buildNotification({
+        notification_id: 'context-dm', kind: 'direct_message', topic_id: null, preview_text: 'dm context',
+      }),
+      buildNotification({
+        notification_id: 'context-follow', kind: 'followed', topic_id: null, preview_text: 'follow context',
+      }),
+    ],
+    newer_cursor: null,
+    older_cursor: null,
+  });
+
+  renderAtHash('#/notifications?topic=kukuri%3Atopic%3Ageneral', api);
+
+  await waitFor(() => {
+    expect(
+      ['topic context', 'channel context', 'other channel context', 'dm context', 'follow context'].map(
+        (preview) => screen.getByText(preview).closest('.notification-item')
+          ?.querySelector('.notification-item-context')?.textContent
+      )
+    ).toEqual([
+      'Topic: general',
+      'Topic: general / Channel: core contributors',
+      'Topic: general / Private channel',
+      'Direct message',
+      'User activity',
+    ]);
+  });
+});
+
 test('reply notification click-through opens the source thread in timeline', async () => {
   const user = userEvent.setup();
   renderAtHash(

@@ -31,6 +31,7 @@ import { formatLocalizedTime } from '@/i18n/format';
 import type { SupportedLocale } from '@/i18n';
 import { clipboardImageFiles } from '@/lib/attachments';
 import { type InternalSmartReference } from '@/lib/internalLinks';
+import { topicDisplayName } from '@/lib/topicId';
 import { eligibleTrustRelationNodes } from '@/lib/api/communityIndex';
 import { copyTextToClipboard } from '@/lib/utils';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
@@ -485,6 +486,7 @@ export function DesktopShellNotificationsSurface({
   onOpenNotificationSettings,
 }: DesktopShellNotificationsSurfaceProps) {
   const {
+    joinedChannelsByTopic,
     knownAuthorsByPubkey,
     mediaObjectUrls,
     notifications,
@@ -497,6 +499,7 @@ export function DesktopShellNotificationsSurface({
     timelineContentAdvisories,
   } = useDesktopShellStore(
     useShallow((s) => ({
+      joinedChannelsByTopic: s.joinedChannelsByTopic,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       mediaObjectUrls: s.mediaObjectUrls,
       notifications: s.notifications,
@@ -523,19 +526,23 @@ export function DesktopShellNotificationsSurface({
           : notification.actor_picture_asset
             ? mediaObjectUrls[notification.actor_picture_asset.hash] ?? null
             : null;
+        // #1676: ID ではなく名前で出す。チャンネル名は読み込み済みの参加中の一覧から引き、無ければ「プライベートチャンネル」。
+        const topic = notification.topic_id ? topicDisplayName(notification.topic_id) : null;
+        const channel = notification.topic_id && notification.channel_id
+          ? joinedChannelsByTopic[notification.topic_id]?.find(
+              (candidate) => candidate.channel_id === notification.channel_id
+            )?.label
+          : undefined;
         const contextLabel =
           notification.kind === 'direct_message'
             ? t('shell:notifications.context.directMessage')
-            : notification.topic_id && notification.channel_id
-              ? t('shell:notifications.context.topicChannel', {
-                  channel: notification.channel_id,
-                  topic: notification.topic_id,
-                })
-              : notification.topic_id
-                ? t('shell:notifications.context.topic', {
-                    topic: notification.topic_id,
-                  })
-                : t('shell:notifications.context.authorActivity');
+            : !topic
+              ? t('shell:notifications.context.authorActivity')
+              : channel
+                ? t('shell:notifications.context.topicChannel', { channel, topic })
+                : notification.channel_id
+                  ? t('shell:notifications.context.topicPrivateChannel', { topic })
+                  : t('shell:notifications.context.topic', { topic });
         // #1056: 採用 node の content advisory が対象投稿に付いていれば、自己申告と同じく伏せる。
         const advisoryGated =
           Boolean(notification.object_id) &&
@@ -573,6 +580,7 @@ export function DesktopShellNotificationsSurface({
       }),
     [
       adultContentEnabled,
+      joinedChannelsByTopic,
       knownAuthorsByPubkey,
       locale,
       mediaObjectUrls,

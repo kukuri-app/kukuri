@@ -17,7 +17,7 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
-      "lines": 1140,
+      "lines": 1139,
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
@@ -62,11 +62,11 @@
     },
     {
       "lines": 1026,
-      "path": "crates/store/src/parity/lists.rs"
+      "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
     },
     {
-      "lines": 1018,
-      "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx"
+      "lines": 1026,
+      "path": "crates/store/src/parity/lists.rs"
     },
     {
       "lines": 1000,
