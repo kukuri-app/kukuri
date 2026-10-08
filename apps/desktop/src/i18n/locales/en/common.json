@@ -246,7 +246,8 @@
     "customResults": "Search results",
     "searchPlaceholder": "Search reactions",
     "searchHint": "Search by emoji or custom reaction key.",
-    "noResults": "No matching reactions."
+    "noResults": "No matching reactions.",
+    "saveToUse": "Save to use it myself"
   },
   "relationships": {
     "blockedFollowReason": "You can't follow a user you've blocked. Unblock them first.",

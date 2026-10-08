@@ -255,7 +255,7 @@ test('visible custom reactions auto-fetch media before save, and saved reactions
   });
 
   fireEvent.contextMenu(remoteReactionChip);
-  await user.click(screen.getByRole('menuitem', { name: 'Save' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Save to use it myself' }));
   expect(bookmarkCustomReaction).toHaveBeenCalledWith(remoteReactionAsset);
 
   drawer = await openSettingsSection(user, 'reactions');

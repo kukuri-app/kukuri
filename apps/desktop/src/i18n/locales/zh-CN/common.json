@@ -246,7 +246,8 @@
     "customResults": "搜索结果",
     "searchPlaceholder": "搜索回应",
     "searchHint": "按表情或自定义反应标识搜索。",
-    "noResults": "没有匹配的回应。"
+    "noResults": "没有匹配的回应。",
+    "saveToUse": "保存并自己使用"
   },
   "relationships": {
     "blockedFollowReason": "已屏蔽的用户无法关注。请先取消屏蔽。",
