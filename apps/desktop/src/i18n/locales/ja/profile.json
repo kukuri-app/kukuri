@@ -105,6 +105,10 @@
     "displayName": "表示名",
     "loading": "プロフィールを読み込み中…",
     "name": "ユーザー名",
+    "nip05": "ドメインでの確認",
+    "nip05Copy": "内容をコピー",
+    "nip05Help": "{{domain}} の /.well-known/nostr.json が次の内容を返すと、名前の後ろに @{{domain}} が表示されます。Web 版でも確認されるよう、応答に Access-Control-Allow-Origin: * を付けてください。",
+    "nip05Invalid": "name@example.com の形で入力してください。名前には半角の英小文字・数字・「-」「_」「.」を使えます。",
     "picture": "プロフィール画像",
     "picturePreviewAlt": "{{name}}のプロフィール画像プレビュー",
     "placeholders": {

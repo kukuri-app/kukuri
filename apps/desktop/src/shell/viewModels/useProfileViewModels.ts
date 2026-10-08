@@ -38,6 +38,7 @@ export function useProfileViewModels({
       displayName: profileDraft.display_name ?? '',
       name: profileDraft.name ?? '',
       about: profileDraft.about ?? '',
+      nip05: profileDraft.nip05 ?? '',
     }),
     [profileDraft]
   );

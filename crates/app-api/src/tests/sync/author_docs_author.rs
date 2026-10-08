@@ -34,6 +34,7 @@ async fn put_profile(docs_sync: &dyn DocsSync, keys: &KukuriKeys, docs_author: O
             display_name: None,
             about: None,
             picture_asset: None,
+            nip05: None,
         },
         docs_author,
     )
@@ -59,6 +60,7 @@ fn author_envelopes_declare_the_docs_author() {
             display_name: None,
             about: None,
             picture_asset: None,
+            nip05: None,
         },
         Some(ACCOUNT_DOCS_AUTHOR),
     )

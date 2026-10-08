@@ -54,7 +54,7 @@ pub(crate) use kukuri_core::{
     deterministic_reaction_id, direct_message_id_for_participants,
     encrypt_direct_message_attachment, encrypt_direct_message_frame,
     encrypt_private_channel_epoch_handoff_grant, generate_keys, metaverse_room_event_is_live,
-    parse_block_edge, parse_custom_reaction_asset, parse_follow_edge,
+    normalize_profile_nip05, parse_block_edge, parse_custom_reaction_asset, parse_follow_edge,
     parse_friend_only_grant_token, parse_friend_plus_share_token,
     parse_private_channel_epoch_handoff_grant, parse_private_channel_invite_token,
     parse_private_channel_participant, parse_private_channel_policy, parse_profile,

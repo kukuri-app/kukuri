@@ -29,6 +29,7 @@ fn profile_max() -> Profile {
             role: AssetRole::ProfileAvatar,
         }),
         updated_at: 1_700_000_004_000,
+        nip05: Some("name-max@example.com".into()),
     }
 }
 
@@ -41,6 +42,7 @@ fn profile_min() -> Profile {
         about: None,
         picture_asset: None,
         updated_at: 5,
+        nip05: None,
     }
 }
 
@@ -72,6 +74,7 @@ async fn profile_roundtrip_preserves_all_columns_via_get_profile_and_get_profile
             role: AssetRole::ProfileAvatar,
         }),
         updated_at: 5,
+        nip05: None,
     };
 
     // get_profile(sqlite/social.rs:74-97 のインライン写像)

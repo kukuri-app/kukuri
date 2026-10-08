@@ -129,6 +129,7 @@ async fn the_switched_writer_puts_each_record_in_its_bucket_and_not_in_the_legac
             about: None,
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("profile");

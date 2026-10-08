@@ -93,7 +93,8 @@ pub(super) fn input(name: &str) -> Value {
         }
         "set_my_profile" => object(
             json!({"name": {"type": "string"}, "display_name": {"type": "string"},
-            "about": {"type": "string"}, "picture_upload": media::input_schema(), "clear_picture": {"type": "boolean", "default": false}}),
+            "about": {"type": "string"}, "picture_upload": media::input_schema(), "clear_picture": {"type": "boolean", "default": false},
+            "nip05": {"type": "string"}}),
             &[],
         ),
         "follow_author"

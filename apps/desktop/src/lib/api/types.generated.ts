@@ -298,7 +298,7 @@ export type TimelineScope = { "kind": "public" } | { "kind": "channel", channel_
 
 export type SeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 
-export type Profile = { pubkey: Pubkey, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at: number, };
+export type Profile = { pubkey: Pubkey, name?: string | null, display_name?: string | null, about?: string | null, picture_asset?: ProfileAssetView | null, updated_at: number, nip05?: string | null, };
 
 export type PrivateChannelInvitePreview = { channel_id: ChannelId, topic_id: TopicId, channel_label: string, inviter_pubkey: Pubkey, owner_pubkey: Pubkey, epoch_id: string, expires_at?: number | null, namespace_secret_hex: string, };
 
@@ -818,7 +818,7 @@ export type SendDirectMessageRequest = { pubkey: string, text?: string | null, r
 
 export type DeleteDirectMessageMessageRequest = { pubkey: string, message_id: string, };
 
-export type SetMyProfileRequest = { name?: string | null, display_name?: string | null, about?: string | null, picture_upload?: CreateAttachmentRequest | null, clear_picture: boolean, };
+export type SetMyProfileRequest = { name?: string | null, display_name?: string | null, about?: string | null, picture_upload?: CreateAttachmentRequest | null, clear_picture: boolean, nip05?: string | null, };
 
 export type InitialProfileRequest = { account_id: string, profile: SetMyProfileRequest, };
 

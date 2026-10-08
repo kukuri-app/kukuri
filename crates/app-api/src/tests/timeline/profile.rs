@@ -63,6 +63,7 @@ async fn expired_content_observations_do_not_reach_post_profile_or_attachment_vi
             about: None,
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("set profile");
@@ -261,6 +262,7 @@ async fn set_my_profile_with_avatar_upload_persists_blob_backed_profile_and_auth
                 role: AssetRole::ProfileAvatar,
             }),
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("set profile");
@@ -328,6 +330,7 @@ async fn set_my_profile_preserves_blob_avatar_when_only_text_changes() {
                 role: AssetRole::ProfileAvatar,
             }),
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("set initial profile");
@@ -340,6 +343,7 @@ async fn set_my_profile_preserves_blob_avatar_when_only_text_changes() {
             about: Some("updated text".into()),
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("set profile");
@@ -477,6 +481,7 @@ async fn set_my_profile_rejects_text_fields_over_limit() {
             about: None,
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect_err("profile name over the limit should be rejected");
@@ -492,12 +497,105 @@ async fn set_my_profile_rejects_text_fields_over_limit() {
             about: Some("a".repeat(crate::service::MAX_PROFILE_ABOUT_CHARS + 1)),
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect_err("profile about over the limit should be rejected");
     assert!(
         error.to_string().contains("profile about"),
         "unexpected error: {error}"
+    );
+}
+
+// #1670 AC-1.1: NIP-05 の識別子は前後の空白を除いて小文字にして署名し、自分の行と、プロフィールを読んだ
+// 他の端末の行に同じ値が入る。空にすると欄の無い profile になる。
+#[tokio::test]
+async fn set_my_profile_signs_the_normalized_nip05_for_readers() {
+    let (app, _store, docs_sync, _blob_service) = local_app_with_memory_services();
+    let author = app.current_author_pubkey();
+    let profile = app
+        .set_my_profile(ProfileInput {
+            name: Some("alice".into()),
+            nip05: Some(" Alice@Example.COM ".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("set profile");
+    assert_eq!(profile.nip05.as_deref(), Some("alice@example.com"));
+    assert_eq!(
+        app.get_my_profile().await.expect("my profile").nip05,
+        profile.nip05
+    );
+
+    let reader_store = Arc::new(MemoryStore::default());
+    let reader = app_service_from_dependencies(
+        reader_store.clone(),
+        reader_store.clone(),
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        docs_sync,
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    crate::service::author_state_support::hydrate_author_state(
+        &reader.services,
+        reader.current_author_pubkey().as_str(),
+        author.as_str(),
+        DocFetchPolicy::LocalOnly,
+    )
+    .await
+    .expect("hydrate author");
+    assert_eq!(
+        reader_store
+            .get_profile(author.as_str())
+            .await
+            .expect("reader profile")
+            .and_then(|profile| profile.nip05)
+            .as_deref(),
+        Some("alice@example.com")
+    );
+
+    let cleared = app
+        .set_my_profile(ProfileInput {
+            name: Some("alice".into()),
+            nip05: Some("  ".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("clear nip05");
+    assert_eq!(cleared.nip05, None);
+}
+
+// #1670 AC-1.2: 形に合わない識別子は保存せず、署名・store・docs への書込みを行わない。
+#[tokio::test]
+async fn set_my_profile_rejects_an_invalid_nip05_without_writing() {
+    let (app, store, docs_sync, _blob_service) = local_app_with_memory_services();
+    let author = app.current_author_pubkey();
+    let long_name = format!("{}@example.com", "a".repeat(65));
+    for invalid in [
+        "alice@localhost",
+        "a b@example.com",
+        "alice@192.0.2.1",
+        long_name.as_str(),
+    ] {
+        let error = app
+            .set_my_profile(ProfileInput {
+                name: Some("alice".into()),
+                nip05: Some(invalid.into()),
+                ..Default::default()
+            })
+            .await
+            .expect_err(invalid);
+        assert!(error.to_string().contains("nip05"), "{invalid}: {error}");
+    }
+    assert_eq!(
+        store.get_profile(author.as_str()).await.expect("profile"),
+        None
+    );
+    assert!(
+        author_profile_doc(docs_sync.as_ref(), author.as_str())
+            .await
+            .is_none()
     );
 }
 

@@ -101,7 +101,8 @@ fn reaction(extra: Option<&str>) -> Value {
 fn profile() -> Value {
     view(
         json!({"pubkey": string(), "name": optional_string(), "display_name": optional_string(),
-        "about": optional_string(), "picture_asset": nullable(schema::profile_asset()), "updated_at": integer()}),
+        "about": optional_string(), "picture_asset": nullable(schema::profile_asset()), "updated_at": integer(),
+        "nip05": optional_string()}),
     )
 }
 

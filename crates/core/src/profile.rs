@@ -25,6 +25,8 @@ pub struct Profile {
     #[cfg_attr(feature = "ts", ts(optional, type = "ProfileAssetView | null"))]
     pub picture_asset: Option<AssetRef>,
     pub updated_at: i64,
+    // NIP-05 の識別子 `name@domain`(ADR 0064)。署名者の申告のままで、照会で確かめるまで表示しない。
+    pub nip05: Option<String>,
 }
 
 impl Profile {
@@ -37,6 +39,7 @@ impl Profile {
             display_name: self.display_name.clone(),
             about: self.about.clone(),
             picture_asset: self.picture_asset.clone(),
+            nip05: self.nip05.clone(),
         };
         let (encoded, tags) = profile_envelope_parts(&content, docs_author)?;
         let canonical = crate::envelope::canonical_envelope_payload(
@@ -64,6 +67,47 @@ pub struct KukuriProfileEnvelopeContentV1 {
         deserialize_with = "deserialize_profile_asset_ref"
     )]
     pub picture_asset: Option<AssetRef>,
+    /// 無ければ key を書かない。欄の無い profile の content と ID は、欄を足す前と同じ(ADR 0064 §2)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nip05: Option<String>,
+}
+
+/// NIP-05 の識別子の名前とドメインの文字数の上限(ADR 0064 §1)。
+const PROFILE_NIP05_MAX_NAME_CHARS: usize = 64;
+const PROFILE_NIP05_MAX_DOMAIN_CHARS: usize = 253;
+
+/// 入力された NIP-05 の識別子の前後の空白を除いて小文字にし、形を確かめる(ADR 0064 §1)。
+pub fn normalize_profile_nip05(value: &str) -> Result<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if profile_nip05_parts(&normalized).is_none() {
+        bail!("profile nip05 must be a name@domain identifier");
+    }
+    Ok(normalized)
+}
+
+/// 正規化済みの識別子を名前とドメインに分ける。名前は `a-z0-9-_.` の 1〜64 文字、ドメインは `a-z0-9-` の label を
+/// 点でつないだ 253 文字以下のホスト名で、最後の label に英字を含む(IP アドレスを除く)。形に合わなければ `None`。
+fn profile_nip05_parts(value: &str) -> Option<(&str, &str)> {
+    let (name, domain) = value.split_once('@')?;
+    let name_valid = (1..=PROFILE_NIP05_MAX_NAME_CHARS).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.'));
+    let labels = domain.split('.').collect::<Vec<_>>();
+    let domain_valid = domain.len() <= PROFILE_NIP05_MAX_DOMAIN_CHARS
+        && labels.len() >= 2
+        && labels.iter().all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+        })
+        && labels
+            .last()
+            .is_some_and(|label| label.bytes().any(|byte| byte.is_ascii_lowercase()));
+    (name_valid && domain_valid).then_some((name, domain))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -488,6 +532,7 @@ pub fn parse_profile(envelope: &KukuriEnvelope) -> Result<Option<Profile>> {
         about: metadata.about,
         picture_asset: metadata.picture_asset,
         updated_at: envelope.created_at,
+        nip05: metadata.nip05,
     }))
 }
 

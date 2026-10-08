@@ -146,7 +146,7 @@ export type DesktopShellPrimarySurfaceProps = {
   openProfileOverview: () => void;
   openProfileEditor: () => void;
   openProfileConnections: (view: ProfileConnectionsView) => void;
-  handleProfileFieldChange: (field: 'displayName' | 'name' | 'about', value: string) => void;
+  handleProfileFieldChange: (field: 'displayName' | 'name' | 'about' | 'nip05', value: string) => void;
   onProfilePictureSelect: (file: File) => void;
   handleClearProfileAvatar: () => void;
   handleSaveProfile: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -884,6 +884,7 @@ export function DesktopShellPrimarySurface({
                 dirty={profileDirty}
                 error={profileError ?? profilePanelState.error}
                 fields={viewModels.profileEditorFields}
+                localPubkey={syncStatus.local_author_pubkey}
                 picturePreviewSrc={viewModels.profileEditorPictureSrc}
                 hasPicture={viewModels.profileEditorHasPicture}
                 pictureInputKey={profileAvatarInputKey}

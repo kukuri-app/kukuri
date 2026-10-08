@@ -75,6 +75,7 @@ async fn store_profile_upsert_latest_wins() {
             about: None,
             picture_asset: None,
             updated_at: 10,
+            nip05: None,
         })
         .await
         .expect("insert older");
@@ -91,6 +92,7 @@ async fn store_profile_upsert_latest_wins() {
                 role: kukuri_core::AssetRole::ProfileAvatar,
             }),
             updated_at: 20,
+            nip05: None,
         })
         .await
         .expect("insert newer");

@@ -181,6 +181,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
             about: None,
             picture_upload: None,
             clear_picture: false,
+            nip05: None,
         })
         .await
         .expect("profile");
