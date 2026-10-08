@@ -77,21 +77,21 @@ const EXPECTED_TERMS_HEADINGS: Array<{
 ];
 
 describe.each(EXPECTED_TERMS_HEADINGS)('legal document in $locale', ({ locale, headings }) => {
-  test('shows bundle version 9, effective date, and every required terms clause', async () => {
+  test('shows bundle version 10, effective date, and every required terms clause', async () => {
     await i18n.changeLanguage(locale);
     render(
       <LegalDocumentView
-        documentVersions={{ terms: 9, privacy: 9 }}
+        documentVersions={{ terms: 10, privacy: 10 }}
         documentMetadata={{
           terms: {
-            effectiveDate: '2026-10-07',
+            effectiveDate: '2026-10-09',
             authoritativeLanguage: 'ja',
             materialChange: true,
             controllerName: 'Preview Distributor',
             contact: 'privacy@example.test',
           },
           privacy: {
-            effectiveDate: '2026-10-07',
+            effectiveDate: '2026-10-09',
             authoritativeLanguage: 'ja',
             materialChange: true,
             controllerName: 'Preview Distributor',
@@ -101,8 +101,8 @@ describe.each(EXPECTED_TERMS_HEADINGS)('legal document in $locale', ({ locale, h
       />
     );
 
-    expect(screen.getAllByText('v9')).toHaveLength(2);
-    expect(screen.getAllByText(/2026-10-07/u)).toHaveLength(2);
+    expect(screen.getAllByText('v10')).toHaveLength(2);
+    expect(screen.getAllByText(/2026-10-09/u)).toHaveLength(2);
     expect(screen.getAllByText(/Preview Distributor/u)).toHaveLength(2);
     expect(screen.getAllByText(/privacy@example\.test/u)).toHaveLength(2);
     if (locale === 'ja') {
@@ -126,7 +126,7 @@ describe.each(EXPECTED_TERMS_HEADINGS)('legal document in $locale', ({ locale, h
   test('uses concrete account terms and preserves the third-party disclosure boundary', async () => {
     const expected = EXPECTED_TERMS_HEADINGS.find((item) => item.locale === locale)!;
     await i18n.changeLanguage(locale);
-    render(<LegalDocumentView documentVersions={{ terms: 9, privacy: 9 }} />);
+    render(<LegalDocumentView documentVersions={{ terms: 10, privacy: 10 }} />);
 
     expect(screen.getByText(expected.accountBoundary)).toBeInTheDocument();
     expect(screen.getByText(expected.accountKey)).toBeInTheDocument();
@@ -135,7 +135,7 @@ describe.each(EXPECTED_TERMS_HEADINGS)('legal document in $locale', ({ locale, h
 
   test('does not render a draft notice', async () => {
     await i18n.changeLanguage(locale);
-    render(<LegalDocumentView documentVersions={{ terms: 9, privacy: 9 }} />);
+    render(<LegalDocumentView documentVersions={{ terms: 10, privacy: 10 }} />);
 
     expect(screen.queryByText(/draft|ドラフト|草案/i)).not.toBeInTheDocument();
   });
