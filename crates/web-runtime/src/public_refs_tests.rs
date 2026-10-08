@@ -88,7 +88,8 @@ async fn old_rows_are_taken_in_bounded_steps_and_resume_after_a_reload() {
         while !cache.backfill_public_blob_refs_step(128).await.unwrap() {
             steps += 1;
         }
-        assert_eq!(steps, total / 128 + 3, "{total} rows");
+        // 投稿の分の回数に、空の種類（profile・reaction・自作の asset・保存済み）が 1 回ずつ。
+        assert_eq!(steps, total / 128 + 5, "{total} rows");
         let last = total - 1;
         assert_eq!(
             public(&cache, &[0, 1, last * 2, last * 2 + 1]).await,

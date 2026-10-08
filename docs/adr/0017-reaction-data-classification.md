@@ -161,6 +161,8 @@ bookmark 済み custom reaction library は local-only durable state とする�
 - bookmark は explicit action でのみ追加する
 - 閲覧だけでは自動保存しない
 
+一覧そのものは複製しない。ただし、保存した custom reaction の画像と自作の asset の画像は、公開 blob の発見の公開の根拠にする（ADR 0063 §1、#1232 D4）。保持している間は、その画像の hash から導いた infohash を端末が DHT へ告知しうる。
+
 理由:
 
 - bookmark collection は user preference であり、public に出したくない

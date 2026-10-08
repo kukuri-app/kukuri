@@ -7,7 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use kukuri_core::{
     BlockEdge, EnvelopeId, FollowEdge, KukuriEnvelope, Profile, ThreadRef, parse_block_edge,
-    parse_follow_edge, parse_profile,
+    parse_custom_reaction_asset, parse_follow_edge, parse_profile,
 };
 use kukuri_store::{Page, Store, TimelineCursor};
 use serde::Serialize;
@@ -131,6 +131,7 @@ impl Store for IndexedDbCache {
         let profile = parse_profile(&envelope)?;
         let follow = parse_follow_edge(&envelope)?;
         let block = parse_block_edge(&envelope)?;
+        let reaction_asset = parse_custom_reaction_asset(&envelope)?;
         self.run(move |db| async move {
             let mut stores = vec![ENVELOPES, PROFILES, BLOCKS, PUBLIC_REFS];
             stores.extend(PARTICIPANT_STORES);
@@ -164,6 +165,15 @@ impl Store for IndexedDbCache {
                     edge.updated_at,
                 );
                 put_edge(&tx, BLOCKS, id, &edge, |edge: &BlockEdge| edge.updated_at).await?;
+            }
+            // #1232 AC-3: 自作の custom reaction の asset の画像は公開参照（ADR 0063 §1）。
+            if let Some(asset) = reaction_asset {
+                super::public_refs::replace(
+                    &tx,
+                    "reaction_asset",
+                    asset.asset_id.as_str(),
+                    vec![asset.blob_hash.as_str().to_string()],
+                )?;
             }
             tx.commit().await
         })

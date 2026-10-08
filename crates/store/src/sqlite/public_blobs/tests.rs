@@ -1,5 +1,5 @@
 use super::*;
-use crate::parity::public_refs::{hash, post, profile, public, reaction, withdrawal};
+use crate::parity::public_refs::{bookmark, hash, post, profile, public, reaction, withdrawal};
 use kukuri_core::ObjectStatus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,7 +20,8 @@ async fn scheduled(store: &SqliteStore) -> Vec<String> {
         .unwrap()
 }
 
-/// 投稿・リンクプレビュー・profile・reaction の公開参照は、Web（IndexedDB）と同じ操作列で確かめる。
+/// 投稿・リンクプレビュー・profile・reaction・自作と保存済みの custom reaction の公開参照は、Web（IndexedDB）と同じ
+/// 操作列で確かめる。
 #[tokio::test]
 async fn public_refs_follow_the_shared_scenario() {
     let store = SqliteStore::connect_memory().await.unwrap();
@@ -272,6 +273,48 @@ async fn backfill_takes_old_records_a_page_at_a_time() {
         public(&store, &[1, 2, 3, 4, 5, 6]).await,
         [true, true, true, false, true, true]
     );
+}
+
+/// #1232 AC-3: 導入前の自作の custom reaction の asset（envelope の行）と保存済みの行も、rowid の窓ごとに取り込む。
+/// asset でない envelope の行は、窓を進めるだけで参照にしない。
+#[tokio::test]
+async fn backfill_takes_own_reaction_assets_and_saved_reactions() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    let keys = kukuri_core::generate_keys();
+    let follow = kukuri_core::build_follow_edge_envelope(
+        &keys,
+        &kukuri_core::generate_keys().public_key(),
+        kukuri_core::FollowEdgeStatus::Active,
+    )
+    .unwrap();
+    store.put_envelope(follow).await.unwrap();
+    for seed in [1, 2] {
+        let asset = kukuri_core::build_custom_reaction_asset_envelope(
+            &keys,
+            kukuri_core::BlobHash::new(hash(seed)),
+            format!("asset-{seed}"),
+            "image/png".into(),
+            1,
+            1,
+            1,
+        )
+        .unwrap();
+        store.put_envelope(asset).await.unwrap();
+    }
+    store
+        .put_bookmarked_custom_reaction(bookmark(&hash(3)))
+        .await
+        .unwrap();
+    // 導入前の行と同じく、索引に無い状態にする。
+    sqlx::query("DELETE FROM public_blob_refs")
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    assert!(!store.backfill_public_blob_refs_step(2).await.unwrap());
+    assert_eq!(public(&store, &[1, 2, 3]).await, [true, false, true]);
+    while !store.backfill_public_blob_refs_step(2).await.unwrap() {}
+    assert_eq!(public(&store, &[1, 2, 3]).await, [true, true, true]);
 }
 
 /// 取込みは、空や読めない値を参照なしとして扱い、止まらない（行の読取りと同じく空文字列は無い扱い）。

@@ -76,6 +76,18 @@ impl SqliteStore {
         if let Some(edge) = parse_block_edge(&envelope)? {
             self.upsert_block_edge(edge).await?;
         }
+        // #1232 AC-3: 自作の custom reaction の asset の画像は公開参照（ADR 0063 §1）。
+        if let Some(asset) = kukuri_core::parse_custom_reaction_asset(&envelope)? {
+            let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
+            super::public_blobs::replace_public_blob_refs(
+                &mut tx,
+                "reaction_asset",
+                envelope.id.as_str(),
+                vec![asset.blob_hash.as_str().to_string()],
+            )
+            .await?;
+            tx.commit().await?;
+        }
 
         Ok(())
     }

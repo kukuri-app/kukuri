@@ -7,7 +7,10 @@
 use super::remote_cache::{REMOTE_CACHE_UNUSED_MS, now_ms};
 use super::*;
 use crate::models::PUBLIC_CHANNEL;
-use kukuri_core::{AssetRef, CustomReactionAssetSnapshotV1, RepostSourceSnapshotV1};
+use kukuri_core::{
+    AssetRef, CustomReactionAssetSnapshotV1, KukuriCustomReactionAssetEnvelopeContentV1,
+    RepostSourceSnapshotV1,
+};
 use std::collections::BTreeSet;
 
 /// 告知を続ける hash の上限（1 端末）。
@@ -363,6 +366,40 @@ async fn backfill_page(
             }
             (rowid, reaction_id, hashes)
         })
+        .collect(),
+        // #1232 AC-3: envelope の行は種類で絞らずに rowid の窓で読み（種類の索引が無いので、絞ると 1 回の読取りが
+        // 行数に比例する）、自作の custom reaction の asset の画像だけを参照にする。
+        "reaction_asset" => sqlx::query_as::<_, (i64, String, String, String)>(
+            "SELECT rowid, envelope_id, kind, content FROM envelopes \
+             WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
+        )
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(&mut **tx)
+        .await?
+        .into_iter()
+        .map(|(rowid, envelope_id, kind, content)| {
+            let hashes = (kind == "custom-reaction-asset")
+                .then(|| {
+                    serde_json::from_str::<KukuriCustomReactionAssetEnvelopeContentV1>(&content)
+                        .ok()
+                })
+                .flatten()
+                .map(|asset| vec![asset.blob_hash.as_str().to_string()])
+                .unwrap_or_default();
+            (rowid, envelope_id, hashes)
+        })
+        .collect(),
+        "reaction_bookmark" => sqlx::query_as::<_, (i64, String, String)>(
+            "SELECT rowid, asset_id, blob_hash FROM bookmarked_custom_reactions \
+             WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
+        )
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(&mut **tx)
+        .await?
+        .into_iter()
+        .map(|(rowid, asset_id, hash)| (rowid, asset_id, vec![hash]))
         .collect(),
         _ => anyhow::bail!("unknown public blob backfill kind {kind}"),
     })

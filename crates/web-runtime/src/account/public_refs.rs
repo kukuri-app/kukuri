@@ -1,29 +1,38 @@
 //! 公開参照の索引（#1632 AC-6、ADR 0063 §8）。native の `public_blob_refs` と同じ意味で、検証済みの公開記録
 //! （公開 topic の投稿の本文・添付・repost の添付・リンクプレビューの画像、profile の画像、公開 topic の custom reaction
-//! の asset）が参照する blob を、記録ごとに書込みと同じ transaction で置き換える。Community Node へ保持端末の検索を
-//! 頼むのは、ここに参照のある hash だけ。導入前の行は、取込みの位置（`meta`）から小分けに取り込む。
+//! の asset、自作の custom reaction の asset の画像、保存済みの custom reaction の画像）が参照する blob を、記録ごとに
+//! 書込みと同じ transaction で置き換える。Community Node へ保持端末の検索を頼むのは、ここに参照のある hash だけ。
+//! 導入前の行は、取込みの位置（`meta`）から小分けに取り込む。
 
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use kukuri_core::Profile;
+use kukuri_core::{KukuriEnvelope, Profile, parse_custom_reaction_asset};
 use kukuri_store::{
-    ObjectProjectionRow, ReactionProjectionRow, public_blob_hashes_for_reaction,
-    public_blob_hashes_for_row,
+    BookmarkedCustomReactionRow, ObjectProjectionRow, ReactionProjectionRow,
+    public_blob_hashes_for_reaction, public_blob_hashes_for_row,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 use web_sys::{IdbKeyRange, IdbTransaction};
 
 use crate::IndexedDbCache;
-use crate::content_cache::{META, OBJECTS, PROFILES, PUBLIC_REFS, REACTIONS};
+use crate::content_cache::{
+    ENVELOPES, META, OBJECTS, PROFILES, PUBLIC_REFS, REACTION_BOOKMARKS, REACTIONS,
+};
 use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, key, only, prefix, text};
 
 /// 取込みの位置の `meta` の key。値が無ければ最初から取り込む（導入前の database）。
 const BACKFILL: &str = "public_refs_backfill";
-/// 取り込む記録の種類の順。
-const KINDS: [&str; 3] = ["post", "profile", "reaction"];
+/// 取り込む記録の種類の順。取り込み終えた database は、後から足した種類（末尾）から続ける。
+const KINDS: [&str; 5] = [
+    "post",
+    "profile",
+    "reaction",
+    "reaction_asset",
+    "reaction_bookmark",
+];
 
 #[derive(Serialize, Deserialize)]
 struct PublicRef {
@@ -118,7 +127,15 @@ impl IndexedDbCache {
         self.run(move |db| async move {
             let tx = Txn::begin(
                 &db.idb,
-                &[META, OBJECTS, PROFILES, REACTIONS, PUBLIC_REFS],
+                &[
+                    META,
+                    OBJECTS,
+                    PROFILES,
+                    REACTIONS,
+                    ENVELOPES,
+                    REACTION_BOOKMARKS,
+                    PUBLIC_REFS,
+                ],
                 Mode::Write,
             )?;
             let meta = rows::store(&tx, META)?;
@@ -161,6 +178,45 @@ impl IndexedDbCache {
                         replace_profile(&tx, row)?;
                     }
                     state.after = rows.last().map(|row| vec![row.pubkey.as_str().to_owned()]);
+                    rows.len()
+                }
+                // #1232 AC-3: envelope の行は種類で絞らずに読み、自作の custom reaction の asset の画像だけを参照にする。
+                "reaction_asset" => {
+                    let rows =
+                        rows::scan::<KukuriEnvelope>(&tx, ENVELOPES, None, &range, false, limit)
+                            .await?;
+                    for row in &rows {
+                        if let Ok(Some(asset)) = parse_custom_reaction_asset(row) {
+                            replace(
+                                &tx,
+                                kind,
+                                asset.asset_id.as_str(),
+                                vec![asset.blob_hash.as_str().to_string()],
+                            )?;
+                        }
+                    }
+                    state.after = rows.last().map(|row| vec![row.id.as_str().to_owned()]);
+                    rows.len()
+                }
+                "reaction_bookmark" => {
+                    let rows = rows::scan::<BookmarkedCustomReactionRow>(
+                        &tx,
+                        REACTION_BOOKMARKS,
+                        None,
+                        &range,
+                        false,
+                        limit,
+                    )
+                    .await?;
+                    for row in &rows {
+                        replace(
+                            &tx,
+                            kind,
+                            &row.asset_id,
+                            vec![row.blob_hash.as_str().to_string()],
+                        )?;
+                    }
+                    state.after = rows.last().map(|row| vec![row.asset_id.clone()]);
                     rows.len()
                 }
                 _ => {

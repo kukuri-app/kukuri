@@ -167,6 +167,7 @@ impl ReactionBookmarkStore for SqliteStore {
     }
 
     async fn put_bookmarked_custom_reaction(&self, row: BookmarkedCustomReactionRow) -> Result<()> {
+        let mut tx = super::public_blobs::begin_public_blob_write(self).await?;
         sqlx::query(
             r#"
             INSERT INTO bookmarked_custom_reactions (
@@ -193,8 +194,17 @@ impl ReactionBookmarkStore for SqliteStore {
         .bind(i64::from(row.width))
         .bind(i64::from(row.height))
         .bind(row.bookmarked_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        // #1232 AC-3: 保存済みの custom reaction の画像は公開参照（ADR 0063 §1）。
+        super::public_blobs::replace_public_blob_refs(
+            &mut tx,
+            "reaction_bookmark",
+            &row.asset_id,
+            vec![row.blob_hash.as_str().to_string()],
+        )
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -224,6 +234,13 @@ impl ReactionBookmarkStore for SqliteStore {
         // #1221 R5-G: 移行で付けた asset の保護を、bookmark を外すときに外す。
         self.set_refs_in(&mut update, &format!("reaction_bookmark:{asset_id}"), &[])
             .await?;
+        super::public_blobs::replace_public_blob_refs(
+            &mut update.tx,
+            "reaction_bookmark",
+            asset_id,
+            Vec::new(),
+        )
+        .await?;
         self.commit_protected_ref_update(update).await
     }
 
