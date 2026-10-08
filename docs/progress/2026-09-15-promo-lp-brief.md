@@ -3,7 +3,7 @@
 ## この文書の位置づけ
 
 - 所有Issue: #1037（統括 #1036）。本書は後続 #1039 / #1040 / #1041 / #1042 / #1043 / #1044 が参照する共通briefの正本。
-- Scope revision: 2026-09-19-promo-lp-brief-v7（v6からの変更: 配布候補を v0.2.8-preview.2 へ更新した。2026-09-19 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v6（v5からの変更: 配布候補を v0.2.7-preview.1 へ更新した。2026-09-18 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v5（v4からの変更: X の画像を #1041 の固定出力に合わせて 1600×900 の 1 枚から 1920×1080 の 2 枚へ変えた。各出力の設定の正本は `tools/promo/presets/stills.json`）。直前: 2026-09-18-promo-lp-brief-v4（v3からの変更: 配布候補を v0.2.6-preview.1 へ更新した。2026-09-18 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v3（v2からの変更: Dome予告を操作者が提供した実機の静止画1枚に限定し、動画から外した。S9の画面に限り、操作者本人とテスト用アカウントの名前の写り込みを許可した。いずれも 2026-09-18 の操作者の判断）
+- Scope revision: 2026-10-08-promo-lp-brief-v8（v7からの変更: LP の構成と原稿を #1667 の 4 つの役割群へ改めた。LP の正本は「LP の原稿（4 つの役割群）」と「LP の FAQ」で、旧 7 セクションの原稿・FAQ 8 項目は失効した。Dome の予告・設定表・通信 3 経路の説明・6 段階の手順は LP に載せない。Dome 予告の画像・preset と AC-3 の出力一覧は #1668 が改める。Product Hunt・note・X の固定出力は変えない）。直前: 2026-09-19-promo-lp-brief-v7（v6からの変更: 配布候補を v0.2.8-preview.2 へ更新した。2026-09-19 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v6（v5からの変更: 配布候補を v0.2.7-preview.1 へ更新した。2026-09-18 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v5（v4からの変更: X の画像を #1041 の固定出力に合わせて 1600×900 の 1 枚から 1920×1080 の 2 枚へ変えた。各出力の設定の正本は `tools/promo/presets/stills.json`）。直前: 2026-09-18-promo-lp-brief-v4（v3からの変更: 配布候補を v0.2.6-preview.1 へ更新した。2026-09-18 の公開に合わせた操作者の依頼）。直前: 2026-09-18-promo-lp-brief-v3（v2からの変更: Dome予告を操作者が提供した実機の静止画1枚に限定し、動画から外した。S9の画面に限り、操作者本人とテスト用アカウントの名前の写り込みを許可した。いずれも 2026-09-18 の操作者の判断）
 - 作業日: 2026-09-18
 - 作業時の main: `d455bdd8e03541de9734f06a8e050a72bdb01bfd`
 - 配布候補release: `v0.2.8-preview.2`（2026-09-19公開）。Issue起票時点の `v0.2.3-preview.2` から `v0.2.5-preview.3`、`v0.2.6-preview.1`、`v0.2.7-preview.1` を経て更新した（2026-09-19、公開に合わせて操作者が依頼）。`v0.2.8-preview.1` は release workflow の失敗で公開されていない。LP が案内する release の正本は `apps/lp/release.json`。
@@ -34,7 +34,7 @@
 | 更新 | `latest-preview.json`、`windows-x86_64-updater-key.pub`、`linux-x86_64-updater-key.pub` | 更新manifestは署名あり |
 | 検証・表示 | `SHA256SUMS.txt`、`THIRD_PARTY_NOTICES.md`、`release-provenance.json`、`kukuri_0.2.8_linux-native-compliance.json` | |
 
-macOS packageとaarch64 GUI packageは存在しない。素材でmacOS・Android・Web版を示唆しない。
+macOS packageとaarch64 GUI packageは存在しない。素材でmacOS・iOS・Androidのアプリを示唆しない。Web版（`https://app.kukuri.app/`）は v0.4.0-preview.1 から公開され、LP はブラウザ版を案内する（v8）。
 
 ### 素材で使える主張と、その根拠
 
@@ -86,18 +86,15 @@ macOS packageとaarch64 GUI packageは存在しない。素材でmacOS・Android
 | ②公開で会話する | タイムラインカラムの投稿作成、返信、スレッド、リアクション | `README.md`「Available Today」、`docs/runbooks/mvp-user-quickstart.md` 手順5 |
 | ③私的チャンネルへ移る | タイムラインカラム上部の「プライベートチャンネル」ボタン（`workspace.privateChannelEntry`）、またはコントロールセンター → 場所 → チャンネル作成・参加。参加後の共有は「設定と共有」 | `apps/desktop/src/i18n/locales/ja/shell.json:277-278`、`apps/desktop/src/components/extended/PrivateChannelPanel.tsx`、`docs/runbooks/mvp-user-quickstart.md` 手順6 |
 
-### FAQで扱う事実
+### LP の FAQ
 
-| ID | 問い | 事実 |
-| --- | --- | --- |
-| Q-1 | macOS版はありますか | 現時点でpackageを提供していない。Windows 10/11とLinux（x86_64 GUI、x86_64/aarch64 CLI）のみ。 |
-| Q-2 | アカウントを失ったら復旧できますか | 中央での再発行・復旧はない。アカウントを識別する鍵を暗号化してエクスポートするか、端末バックアップを自分で保管する。 |
-| Q-3 | Community Nodeは必須ですか | 各Nodeの文書へ同意するまで利用しない。「あとで」を選んでも、見つける／設定から後で同意へ戻れる。Nodeは投稿の保管先ではない。 |
-| Q-4 | 検索できないのはなぜですか | 接続の手助けと検索（Community Index）の提供は別。検索を提供しないNodeでは、別の検索提供Nodeを選ぶ。 |
-| Q-5 | インストール時に警告が出ます | preview installerにOSコード署名がないため。release notesを確認してから実行する。アプリ内更新のmanifestは署名を検証する。 |
-| Q-6 | 更新するとデータは残りますか | 鍵、プロフィール、フォロー、自分の投稿、端末内DB、Irohデータ、Community Node設定、プライベートチャンネルの閲覧権限、通知一覧が保持される想定。アンインストール・リセット前にバックアップを取る。 |
-| Q-7 | 開発中の機能はありますか | Live、Game、Stream、Metaverse Domeは既定で非表示。`設定 → 開発者` で開発者モードを有効にしたときだけ現れる実験機能で、データ形式の後方互換・移行は保証しない。 |
-| Q-8 | 不具合はどこへ報告しますか | アプリ下部バーの「フィードバックを送る」、またはGitHub Issues / Discussions。接続・更新・復旧の問題には、開発者モードで取得した診断レポートを添える。 |
+LP の FAQ は最大 3 項目とし、参加を判断する内容に絞る（#1667。v7 までの Q-1〜Q-8 は失効）。回答は閉じた状態で置く。
+
+| ID | 問い（JA / EN） | 事実 | 根拠 |
+| --- | --- | --- | --- |
+| LQ-1 | どの環境で使えますか / Where can I use it? | ブラウザ版はインストール不要で、パソコンの Chrome・Firefox・Safari と Android の Chrome で動作を確かめている。アプリ版は Windows 10 / 11 と Linux（x86_64）向けで、macOS・iOS・Android のアプリは無い。端末全体のバックアップなど、アプリ版だけの機能がある。 | ADR 0060 §3・§4、`apps/lp/release.json` |
+| LQ-2 | はじめるときに必要なことは / What do I need to get started? | 最初に18歳以上であることの申告とアプリ規約への同意が要り、同意するまでネットワークへ接続しない。コミュニティノードは、その文書を読んで同意したものだけを使う。 | F-8、F-9 |
+| LQ-3 | アカウントはどこに保存されますか / Where is my account stored? | アカウントを識別する鍵は、使っている端末（ブラウザ版はそのブラウザ）にだけ保存される。中央での復旧は無いので、設定から暗号化して書き出して保管する。 | F-2、F-12、ADR 0060 §3 |
 
 ## AC-2: LP原稿（JA/EN）と撮影台本
 
@@ -112,80 +109,61 @@ macOS packageとaarch64 GUI packageは存在しない。素材でmacOS・Android
 
 すべての画面素材に「デモ画面 / Demo screen」の表記を入れる（表記の置き方はAC-3の共通ルールに従う）。
 
-### LP 7セクションの原稿
+### LP の原稿（4 つの役割群）
+
+v8（#1667）から LP は次の 4 つの役割群で構成する。section を増やして要素を並べない。旧 7 セクション（選べること・分散型である理由・Preview の手順・Dome 予告・再 CTA）の原稿は失効した。
+
+文量の予算（#1667 の AC-1）:
+
+- Hero: 見出しは JA 20 字・EN 12 語以内、補足は JA 45 字・EN 24 語以内。
+- 場面のキャプション: JA 40 字・EN 18 語以内。
+- main の本文: JA 900 字・EN 200 語以内。FAQ の回答とアプリ版のダウンロードの詳細は閉じた状態で、`main.innerText` を数える（JA は空白を除いた字数、EN は空白区切りの語数）。CTA・注記は含め、header・footer・alt・画像の中の文字は数えない。
 
 #### ① Hero
 
 | 項目 | 日本語 | English |
 | --- | --- | --- |
-| 見出し | 話題からつながる、あなたの端末が起点のSNS | A topic-first social app that starts on your device |
-| 副見出し | 気になる話題を選び、公開で語り、同じ話題の中で小さな輪へ移る。アカウントを識別する鍵は、あなたの端末にだけ置かれます。 | Pick a topic you care about, talk in the open, then move into a smaller circle inside the same topic. The key that identifies your account stays only on your device. |
-| CTA（主） | Windows版をダウンロード / Linux版をダウンロード | Download for Windows / Download for Linux |
-| CTA（副） | 3分で試す手順を見る | See the 3-minute quickstart |
-| 注記 | テスター向けのBuilder Preview（v0.2.8-preview.2）です。一般向けの安定版ではありません。 | This is a Builder Preview for testers (v0.2.8-preview.2), not a stable general release. |
+| 見出し | 話題でつながる。運営は選べる。 | Connect through topics. Choose your operators. |
+| 補足 | 検索やおすすめを任せる相手を自分で選べる分散型SNS。全体BANは無し。 | A decentralized social app where you choose who handles search and recommendations. No network-wide bans. |
+| CTA | OS ごとの主ボタン 1 つと副ボタン（Microsoft Store で入手 / Linux版をダウンロード / ブラウザで開く） | Get it from Microsoft Store / Download for Linux / Open in your browser |
+| 注記 | テスター向けの Builder Preview（版）で、18歳以上の方が対象です。 | A Builder Preview for testers (version), for ages 18 and up. |
+| 画面 | 話題・投稿・返信が読める実画面（#1668） | 同左 |
 
-#### ② 3場面
+見出しと補足は 2026-10-08 にユーザーが確定した。「全体BANは無し」は「全体」に限る。ノードごとの BAN（そのノードの手助けだけが止まる。`crates/cn-core/src/admission.rs`、利用規約 第13条 2・3）は実在するので、「BANされない」とは書かない。
 
-| 場面 | 日本語見出し／説明 | English heading / body |
-| --- | --- | --- |
-| ①話題を選ぶ | **話題を選ぶ** ／ 最初から用意された話題を開くか、Community Indexで話題と投稿を検索します。検索を提供するのは、あなたが同意したコミュニティノードです。 | **Pick a topic** / Open one of the starter topics, or search topics and posts through the Community Index. Search comes from a Community Node you have consented to. |
-| ②公開で会話する | **公開で会話する** ／ 投稿し、返信し、スレッドで続けます。リアクション、リポスト、引用、ブックマークも同じ画面で行えます。 | **Talk in the open** / Post, reply, and keep the thread going. React, repost, quote, and bookmark from the same column. |
-| ③私的チャンネルへ移る | **同じ話題の中で、小さな輪へ** ／ タイムライン上部の「プライベートチャンネル」から作成・参加します。話題を離れずに、招待限定・相互フォロー限定・相互フォロー+のいずれかの範囲で話せます。 | **Move into a smaller circle, same topic** / Create or join from "Private channel" at the top of the Timeline column. Stay in the topic and talk within an Invite only, Mutuals, or Mutuals+ audience. |
-
-#### ③ 選べること
-
-| 選べるもの | 初期値 | 変えるとどうなるか（JA） | What changes (EN) |
-| --- | --- | --- | --- |
-| コミュニティノード | 配布時の候補が1件（同意前は未使用） | 同意したノードだけが接続支援・検索・moderationを提供する。同意しなければ使わない。 | Only a node you consented to assists with connectivity, search, and moderation. Without consent it is not used. |
-| プライベートチャンネルの公開範囲 | 招待限定 | 相互フォロー限定、相互フォロー+に変えると、参加できる相手の条件が変わる。 | Switching to Mutuals or Mutuals+ changes who can join. |
-| テーマ | dark | lightに変えると、明るい配色に切り替わる。 | Light theme switches the app to the light palette. |
-| 表示言語 | OSのUI言語（未保存時） | 日本語 / English / 简体中文を選べる。保存した言語は次回起動でも優先される。 | Choose Japanese, English, or Simplified Chinese. A saved language is kept on the next launch. |
-| 成人向け表示 | 非表示 | `設定 → 安全` で許可すると、成人向けラベル付きの投稿が表示される。 | Allowing it in `Settings -> Safety` reveals adult-labeled posts. |
-| 開発者モード | 無効 | `設定 → 開発者` で有効にすると、実験中の機能と診断レポートが現れる。 | Enabling it in `Settings -> Developer` reveals experimental surfaces and the diagnostic report. |
-
-#### ④ 分散型である理由
+#### ② 利用場面
 
 | 項目 | 日本語 | English |
 | --- | --- | --- |
-| 本文1 | アカウントを識別する鍵は端末内にだけ保存されます。コミュニティノードはあなたのアカウントの持ち主でも、ホームサーバーでもありません。 | The key that identifies your account is stored locally. A Community Node is not your account owner or home server. |
-| 本文2 | 接続はDirect P2Pを優先し、次にRelay Supported P2P、実データがrelayを経由するRelay Fallbackは他の経路が成立しないときだけ使います。 | Connectivity prefers direct P2P, then relay-supported P2P, and uses relay fallback only when the earlier paths cannot carry the data. |
-| 本文3 | moderationの判定は、それを出したノードからの任意の入力であり、ネットワーク全体への命令ではありません。受け取り方は各クライアントが決めます。 | A moderation event is optional trust input from its issuing node, not a command applied to the whole network. Each client decides how to use it. |
-| リンク | 責務境界の詳細（P2P-first Community Node responsibilities） | Read the responsibility boundary |
+| 見出し | 話題から、会話へ | From topic to conversation |
+| デモの表記 | 画面と会話はデモです。 | Screens and conversations are demos. |
+| 場面 1 | **話題を見つける** ／ 検索やおすすめから、気になる話題と投稿を見つけます。 | **Find a topic** / Use search and recommendations to find topics and posts you care about. |
+| 場面 2 | **会話に加わる** ／ 投稿に返信して、同じ話題が好きな人と話します。 | **Join the conversation** / Reply to posts and talk with people who like the same topic. |
+| 場面 3 | **小さな輪で続ける** ／ 招待した人だけのチャンネルで、話の続きを楽しめます。 | **Continue in a small circle** / Keep talking in a channel open only to people you invite. |
 
-#### ⑤ Previewの機能・OS・版・手順
+各場面に画面を 1 枚ずつ置き、設定方法や機能の一覧を添えない。
 
-| 項目 | 日本語 | English |
-| --- | --- | --- |
-| 見出し | いま試せること | What you can try today |
-| 対応OS | Windows 10 / 11（NSIS）、Linux x86_64（AppImage / deb）、Linux CLI x86_64・aarch64。macOS版はありません。 | Windows 10/11 (NSIS), Linux x86_64 (AppImage / deb), Linux CLI x86_64 and aarch64. There is no macOS package. |
-| 版 | v0.2.8-preview.2 | v0.2.8-preview.2 |
-| 手順 | 1. 自分の環境向けのインストーラーを取得して起動する 2. 言語を選び、18歳以上であることを申告し、アプリ規約に同意する 3. コミュニティノードの文書を確認して同意する 4. プロフィールを設定する 5. 話題を開いて投稿・返信する 6. 同じ話題の中でプライベートチャンネルを作る・参加する | 1. Download and run the installer for your platform 2. Pick a language, confirm you are 18 or older, and accept the app terms 3. Review and accept the Community Node documents 4. Set up your profile 5. Open a topic, post, and reply 6. Create or join a private channel inside the same topic |
-| 注記 | 同意するまでネットワーク接続は始まりません。preview installerにOSのコード署名はなく、Windowsでは警告が出ることがあります。 | No network connection starts until you accept. Preview installers are unsigned, so Windows may show a warning. |
-
-#### ⑥ FAQ・開発状況・feedback・運営／規約
-
-AC-1のQ-1〜Q-8をFAQ項目として使う。並び順はQ-1、Q-2、Q-3、Q-4、Q-5、Q-6、Q-8、Q-7（開発中の機能=Dome予告を最後に置く）。
-
-開発中の実験機能（Dome）の予告文。掲出はこの1件に限る。
+#### ③ 運営を選ぶ
 
 | 項目 | 日本語 | English |
 | --- | --- | --- |
-| 見出し | 開発中の実験機能（開発者モードで有効化） | Experimental, in development (enable developer mode) |
-| 本文 | 3D空間で話題に集まるMetaverse Domeを試作しています。`設定 → 開発者` で開発者モードを有効にしたときだけ現れます。 | We are prototyping Metaverse Domes, a 3D space tied to a topic. It appears only after you enable developer mode in `Settings -> Developer`. |
-| 必須の表記 | 実験中の機能です。開発者モードでのみ利用でき、データ形式の後方互換や移行は保証しません。 | Experimental. Available only in developer mode, with no backward-compatible decoding or migration guarantee for its data formats. |
-| 画面の説明 | 1台の端末で Dome を開き、タイムラインと同じカラムに並べた画面です。Dome 機能は開発中です。 | One device opening a Dome in the same column deck as the timeline. The Dome feature is still in development. |
+| 見出し | 運営を選ぶ | Choose your operators |
+| 本文（1 文） | 検索やおすすめ、投稿の評価は、あなたが同意したコミュニティノードだけが担い、ノードにBANされても止まるのはそのノードの手助けだけです。 | Search, recommendations, and post ratings come only from Community Nodes you agree to, and a ban from a node only stops that node's help. |
+| リンク | 仕組みを詳しく読む（責務境界の文書） | Read how it works |
 
-「画面の説明」は、画面内の状態表示「外部ピアに接続中」が、複数の端末で同じ Dome に入れる状態だと読まれないよう、1 台の端末で開いた画面であることと、機能が開発中であることを添える（2026-09-18 の確認で、2 台で同じ Dome に入れなかった。#1140）。文言は 2026-09-18 に操作者が確定した。
+説明は 1 文に限る（2026-10-08 のユーザー判断）。接続の優先順位・moderation の扱い・鍵の保存などの技術の説明は、リンク先の文書と FAQ に任せ、LP に別のカードで繰り返さない。
 
-feedbackと運営・規約のリンクはAC-4の表に従う。
-
-#### ⑦ 再CTA
+#### ④ はじめる
 
 | 項目 | 日本語 | English |
 | --- | --- | --- |
-| 見出し | 話題から始めてみる | Start from a topic |
-| 本文 | Builder Previewはテスター向けです。うまくいかない点は、アプリ内のフィードバックかGitHubへ送ってください。 | The Builder Preview is for testers. Tell us what breaks through in-app feedback or GitHub. |
-| CTA | Windows版をダウンロード / Linux版をダウンロード / GitHubで報告する | Download for Windows / Download for Linux / Report on GitHub |
+| 見出し | はじめる | Get started |
+| CTA | Hero と同じ | Hero と同じ |
+| アプリ版の詳細（閉じた状態） | アプリ版のダウンロード（Windows / Linux）: Microsoft Store、AppImage、deb、Linux CLI と各手順、リリースページ（チェックサム） | Download the app (Windows / Linux) |
+| FAQ | 「LP の FAQ」の LQ-1〜LQ-3 | 同左 |
+| 詳細リンク | はじめ方の詳しい手順（quickstart）・うまく動かないとき（troubleshooting） | Detailed getting-started guide · Troubleshooting |
+
+規約・プライバシー・Community Node の文書（外部送信・通報方針・データ保持）・不具合の報告・質問と提案・変更履歴は footer に置く。footer にはデモの表記も置く。
 
 ### 撮影台本（shot list）
 

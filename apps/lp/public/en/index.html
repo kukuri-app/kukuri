@@ -22,7 +22,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
   <link rel="apple-touch-icon" href="/assets/icon-256.png">
-  <link rel="stylesheet" href="/assets/site.css?v=589a4eb8e0">
+  <link rel="stylesheet" href="/assets/site.css?v=65aa59d919">
   <script src="/assets/site.js?v=b1b62d5dcd" defer></script>
 </head>
 <body>
@@ -33,8 +33,8 @@
       <a class="brand" href="/en/"><img src="/assets/icon-256.png" alt="" width="32" height="32">kukuri</a>
       <nav class="header-nav" aria-label="On this page">
         <a class="nav-section" href="#scenes">What you can do</a>
-        <a class="nav-section" href="#preview">Try it</a>
-        <a class="nav-section" href="#faq">FAQ</a>
+        <a class="nav-section" href="#operators">Choose operators</a>
+        <a class="nav-section" href="#start">Get started</a>
         <a class="lang-switch" href="/" hreflang="ja" lang="ja">日本語</a>
       </nav>
     </div>
@@ -45,17 +45,14 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="wrap hero-grid">
         <div>
-          <span class="eyebrow">Builder Preview</span>
-          <h1 id="hero-title">A topic-first social app that starts on your device</h1>
-          <p class="lead">Pick a topic you care about, talk in the open, then move into a smaller circle inside the same topic. The key that identifies your account stays only on your device.</p>
-
-          <div class="cta-row download-actions" data-download-group>
+          <h1 id="hero-title">Connect through topics.<br> Choose your operators.</h1>
+          <p class="lead">A decentralized social app where you choose who handles search and recommendations. No network-wide bans.</p>
+          <div class="cta-row" data-download-group>
             <a class="button button-primary" data-os-target="windows" href="https://apps.microsoft.com/detail/9NQ18HML4GS3">Get it from Microsoft Store</a>
-            <a class="button button-secondary" data-os-target="linux" href="#preview">Download for Linux</a>
+            <a class="button button-secondary" data-os-target="linux" href="#download">Download for Linux</a>
             <a class="button button-secondary" data-os-target="mobile" href="https://app.kukuri.app/">Open in your browser</a>
           </div>
-          <p><a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-user-quickstart.md">See the 3-minute quickstart</a></p>
-          <p class="note">This is a Builder Preview for testers (v0.4.2-preview.1), not a stable general release.</p>
+          <p class="note">A Builder Preview for testers (v0.4.2-preview.1), for ages 18 and up.</p>
           <p class="note" data-mac-note hidden>There is no macOS app. Please try the <a href="https://app.kukuri.app/">browser version</a> (no install), or Windows 10 / 11 or Linux (x86_64).</p>
         </div>
         <figure class="shot">
@@ -64,208 +61,106 @@
       </div>
     </section>
 
-    <!-- 2. Three scenes -->
+    <!-- 2. Scenes -->
     <section id="scenes" aria-labelledby="scenes-title">
       <div class="wrap">
-        <h2 id="scenes-title">Start from a topic, keep talking, move into a smaller circle</h2>
-        <p class="lead">All three scenes use features that are on by default. The people and conversations shown are demos.</p>
-        <div class="scenes">
-          <article class="scene">
-            <span class="step">1</span>
+        <h2 id="scenes-title">From topic to conversation</h2>
+        <p class="note">Screens and conversations are demos.</p>
+        <ol class="scenes">
+          <li>
             <figure class="shot shot-crop focus-left">
               <img src="/assets/screens/scene1-en.png" srcset="/assets/screens/scene1-en-800.png 800w, /assets/screens/scene1-en.png 1600w" sizes="(min-width: 900px) 30vw, 100vw" width="1600" height="1000" loading="lazy" alt="A demo timeline for the topic general. The topic can be switched at the top of the column.">
             </figure>
-            <h3>Pick a topic</h3>
-            <p>Open one of the starter topics, or search topics and posts through the Community Index. Search comes from a Community Node you have consented to.</p>
-          </article>
-          <article class="scene">
-            <span class="step">2</span>
+            <h3>Find a topic</h3>
+            <p>Use search and recommendations to find topics and posts you care about.</p>
+          </li>
+          <li>
             <figure class="shot shot-crop focus-left">
               <img src="/assets/screens/scene2-en.png" srcset="/assets/screens/scene2-en-800.png 800w, /assets/screens/scene2-en.png 1600w" sizes="(min-width: 900px) 30vw, 100vw" width="1600" height="1000" loading="lazy" alt="A demo timeline for the topic dev, where the demo participants Minato and Futaba are talking. The first post has reactions.">
             </figure>
-            <h3>Talk in the open</h3>
-            <p>Post, reply, and keep the thread going. React, repost, quote, and bookmark from the same column.</p>
-          </article>
-          <article class="scene">
-            <span class="step">3</span>
+            <h3>Join the conversation</h3>
+            <p>Reply to posts and talk with people who like the same topic.</p>
+          </li>
+          <li>
             <figure class="shot shot-crop focus-center">
               <img src="/assets/screens/scene3-en.png" srcset="/assets/screens/scene3-en-800.png 800w, /assets/screens/scene3-en.png 1600w" sizes="(min-width: 900px) 30vw, 100vw" width="1600" height="1000" loading="lazy" alt="A demo of creating a private channel named Column layout chat (demo) with the Invite only audience.">
             </figure>
-            <h3>Move into a smaller circle, same topic</h3>
-            <p>Create or join from "Private channel" at the top of the Timeline column. Stay in the topic and talk within an Invite only, Mutuals, or Mutuals+ audience.</p>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- 3. What you can choose -->
-    <section aria-labelledby="choices-title">
-      <div class="wrap">
-        <h2 id="choices-title">What you can choose</h2>
-        <p class="lead">Start with the defaults and change only what you need.</p>
-        <div class="table-scroll" role="region" aria-labelledby="choices-title" tabindex="0">
-          <table>
-            <thead>
-              <tr><th scope="col">Setting</th><th scope="col">Default</th><th scope="col">What changes</th></tr>
-            </thead>
-            <tbody>
-              <tr><th scope="row">Community Node</th><td>One candidate at install (unused until you consent)</td><td>Only a node you consented to assists with connectivity, search, and moderation. Without consent it is not used.</td></tr>
-              <tr><th scope="row">Private channel audience</th><td>Invite only</td><td>Switching to Mutuals or Mutuals+ changes who can join.</td></tr>
-              <tr><th scope="row">Theme</th><td>Dark</td><td>Light theme switches the app to the light palette.</td></tr>
-              <tr><th scope="row">Language</th><td>Your OS language (until saved)</td><td>Choose Japanese, English, or Simplified Chinese. A saved language is kept on the next launch.</td></tr>
-              <tr><th scope="row">Adult content</th><td>Hidden</td><td>Allowing it in <code>Settings -&gt; Safety</code> reveals adult-labeled posts.</td></tr>
-              <tr><th scope="row">Developer mode</th><td>Off</td><td>Enabling it in <code>Settings -&gt; Developer</code> reveals experimental surfaces and the diagnostic report.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- 4. Why it starts on your device -->
-    <section aria-labelledby="why-title">
-      <div class="wrap">
-        <h2 id="why-title">Why it starts on your device</h2>
-        <div class="points">
-          <div class="point"><p>The key that identifies your account is stored locally. A Community Node is not your account owner or home server.</p></div>
-          <div class="point"><p>Connectivity prefers direct P2P, then relay-supported P2P, and uses relay fallback only when the earlier paths cannot carry the data.</p></div>
-          <div class="point"><p>A moderation event is optional trust input from its issuing node, not a command applied to the whole network. Each client decides how to use it.</p></div>
-        </div>
-        <p style="margin-top:24px"><a href="https://github.com/kukuri-app/kukuri/blob/main/docs/architecture/p2p-first-community-node-responsibility-boundary.md">Read the responsibility boundary</a></p>
-      </div>
-    </section>
-
-    <!-- 5. Preview -->
-    <section id="preview" aria-labelledby="preview-title">
-      <div class="wrap">
-        <h2 id="preview-title">What you can try today</h2>
-        <p class="lead">Windows 10/11 (Microsoft Store), Linux x86_64 (AppImage / deb), Linux CLI x86_64 and aarch64, and the browser version with no install (desktop Chrome, Firefox and Safari). There is no macOS app. Version v0.4.2-preview.1.</p>
-
-        <div class="table-scroll" role="region" aria-label="Downloads" tabindex="0">
-          <table>
-            <thead><tr><th scope="col">Platform</th><th scope="col">Download</th></tr></thead>
-            <tbody>
-              <tr><th scope="row">Browser (no install)</th><td><a href="https://app.kukuri.app/">app.kukuri.app</a></td></tr>
-              <tr><th scope="row">Windows 10 / 11 (x64)</th><td><a href="https://apps.microsoft.com/detail/9NQ18HML4GS3">Get it from Microsoft Store</a></td></tr>
-              <tr><th scope="row">Linux (x86_64) AppImage</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri_0.4.2_amd64.AppImage">kukuri_0.4.2_amd64.AppImage</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-appimage-smoke.md">guide</a>)</td></tr>
-              <tr><th scope="row">Linux (x86_64) deb</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri_0.4.2_amd64.deb">kukuri_0.4.2_amd64.deb</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-deb.md">guide</a>)</td></tr>
-              <tr><th scope="row">Linux CLI</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri-cli_0.4.2_x86_64-unknown-linux-gnu.tar.gz">x86_64</a> / <a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri-cli_0.4.2_aarch64-unknown-linux-gnu.tar.gz">aarch64</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-cli.md">guide</a>)</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="note">All assets and checksums (SHA256SUMS.txt) are on the <a href="https://github.com/kukuri-app/kukuri/releases/tag/v0.4.2-preview.1">release page</a>.</p>
-
-        <h3 style="margin-top:40px">Getting started</h3>
-        <ol class="steps">
-          <li>Download and run the installer for your platform</li>
-          <li>Pick a language, confirm you are 18 or older, and accept the app terms</li>
-          <li>Review and accept the Community Node documents</li>
-          <li>Set up your profile</li>
-          <li>Open a topic, post, and reply</li>
-          <li>Create or join a private channel inside the same topic</li>
+            <h3>Continue in a small circle</h3>
+            <p>Keep talking in a channel open only to people you invite.</p>
+          </li>
         </ol>
-        <p class="note" style="margin-top:16px">No network connection starts until you accept. NSIS installers distributed on GitHub are not OS code-signed, so Windows may show a warning.</p>
       </div>
     </section>
 
-    <!-- 6. FAQ, status, feedback, terms -->
-    <section id="faq" aria-labelledby="faq-title">
+    <!-- 3. Choose your operators -->
+    <section id="operators" aria-labelledby="operators-title">
       <div class="wrap">
-        <h2 id="faq-title">FAQ</h2>
+        <h2 id="operators-title">Choose your operators</h2>
+        <p class="lead">Search, recommendations, and post ratings come only from Community Nodes you agree to, and a ban from a node only stops that node's help.</p>
+        <p><a href="https://github.com/kukuri-app/kukuri/blob/main/docs/architecture/p2p-first-community-node-responsibility-boundary.md">Read how it works</a></p>
+      </div>
+    </section>
+
+    <!-- 4. Get started -->
+    <section id="start" aria-labelledby="start-title">
+      <div class="wrap">
+        <h2 id="start-title">Get started</h2>
+        <div class="cta-row" data-download-group>
+          <a class="button button-primary" data-os-target="windows" href="https://apps.microsoft.com/detail/9NQ18HML4GS3">Get it from Microsoft Store</a>
+          <a class="button button-secondary" data-os-target="linux" href="#download">Download for Linux</a>
+          <a class="button button-secondary" data-os-target="mobile" href="https://app.kukuri.app/">Open in your browser</a>
+        </div>
+
+        <details class="downloads" id="download">
+          <summary>Download the app (Windows / Linux)</summary>
+          <div class="table-scroll" role="region" aria-label="Downloads" tabindex="0">
+            <table>
+              <tbody>
+                <tr><th scope="row">Windows 10 / 11 (x64)</th><td><a href="https://apps.microsoft.com/detail/9NQ18HML4GS3">Get it from Microsoft Store</a></td></tr>
+                <tr><th scope="row">Linux (x86_64) AppImage</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri_0.4.2_amd64.AppImage">kukuri_0.4.2_amd64.AppImage</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-appimage-smoke.md">guide</a>)</td></tr>
+                <tr><th scope="row">Linux (x86_64) deb</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri_0.4.2_amd64.deb">kukuri_0.4.2_amd64.deb</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-deb.md">guide</a>)</td></tr>
+                <tr><th scope="row">Linux CLI</th><td><a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri-cli_0.4.2_x86_64-unknown-linux-gnu.tar.gz">x86_64</a> / <a href="https://github.com/kukuri-app/kukuri/releases/download/v0.4.2-preview.1/kukuri-cli_0.4.2_aarch64-unknown-linux-gnu.tar.gz">aarch64</a> (<a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/linux-cli.md">guide</a>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">All assets and checksums (SHA256SUMS.txt) are on the <a href="https://github.com/kukuri-app/kukuri/releases/tag/v0.4.2-preview.1">release page</a>.</p>
+        </details>
+
+        <h3 id="faq">FAQ</h3>
         <div class="faq">
           <details>
-            <summary>Is there a macOS version?</summary>
-            <p>No package is provided at this time. Only Windows 10/11 and Linux (x86_64 GUI, x86_64/aarch64 CLI).</p>
+            <summary>Where can I use it?</summary>
+            <p>The browser version needs no install. We have checked it on desktop Chrome, Firefox, and Safari, and on Chrome for Android. The apps are for Windows 10 / 11 and Linux (x86_64); there are no macOS, iOS, or Android apps. Some features, such as full device backup, are app-only.</p>
           </details>
           <details>
-            <summary>Can I recover a lost account?</summary>
-            <p>There is no central reissue or recovery. Export the key that identifies your account as an encrypted string, or keep a device backup yourself.</p>
+            <summary>What do I need to get started?</summary>
+            <p>First, confirm that you are 18 or older and accept the app terms. No network connection starts until you accept. Community Nodes are used only after you read and accept their documents.</p>
           </details>
           <details>
-            <summary>Is a Community Node required?</summary>
-            <p>A node is not used until you accept its documents. If you choose "Later", you can return to consent from Explore or Settings. A node is not where your posts are stored.</p>
-          </details>
-          <details>
-            <summary>Why can't I search?</summary>
-            <p>Connectivity assistance and search (Community Index) are separate. If a node does not provide search, choose another node that does.</p>
-          </details>
-          <details>
-            <summary>The NSIS installer from GitHub shows a warning</summary>
-            <p>NSIS installers distributed on GitHub are not code-signed for the OS. Check the release notes before running the installer. In-app updates verify the signed manifest.</p>
-          </details>
-          <details>
-            <summary>Is my data kept after an update?</summary>
-            <p>Updates are expected to keep your key, profile, follows, posts, local database, Iroh data, Community Node settings, private-channel access, and notification inbox. Take a backup before uninstalling or resetting.</p>
-          </details>
-          <details>
-            <summary>Where do I report problems?</summary>
-            <p>Use "Send feedback" in the app's bottom bar, or <a href="https://github.com/kukuri-app/kukuri/issues">GitHub Issues</a> / <a href="https://github.com/kukuri-app/kukuri/discussions">Discussions</a>. For connectivity, update, and recovery problems, attach a diagnostic report from developer mode.</p>
-          </details>
-          <details>
-            <summary>Are there features in development?</summary>
-            <p>Live, Game, Stream, and Metaverse Domes are hidden by default. They are experimental and appear only after enabling developer mode in <code>Settings -&gt; Developer</code>, with no backward-compatible decoding or migration guarantee for their data formats.</p>
+            <summary>Where is my account stored?</summary>
+            <p>The key that identifies your account is stored only on your device (in the browser, for the browser version). There is no central recovery, so export the key, encrypted, from Settings and keep it safe.</p>
           </details>
         </div>
-
-        <div class="experimental" aria-labelledby="experimental-title">
-          <span class="experimental-badge">In development</span>
-          <h3 id="experimental-title">Experimental, in development (enable developer mode)</h3>
-          <p>We are prototyping Metaverse Domes, a 3D space tied to a topic. It appears only after you enable developer mode in <code>Settings -&gt; Developer</code>.</p>
-          <p class="required-notice">Experimental. Available only in developer mode, with no backward-compatible decoding or migration guarantee for its data formats.</p>
-          <figure class="shot">
-            <img src="/assets/screens/dome-teaser.png" srcset="/assets/screens/dome-teaser-960.png 960w, /assets/screens/dome-teaser.png 1906w" sizes="(min-width: 1120px) 1080px, 100vw" width="1906" height="1243" loading="lazy" alt="A real screen from the released app, shown in Japanese. A timeline column on the left and a Metaverse column on the right sit in the same column deck, with a white avatar standing inside a Dome.">
-          </figure>
-          <p class="note">One device opening a Dome in the same column deck as the timeline. The Dome feature is still in development. This screen is from the Japanese UI.</p>
-        </div>
-
-        <div class="links-grid">
-          <div>
-            <h3>Status</h3>
-            <ul>
-              <li><a href="https://github.com/kukuri-app/kukuri/releases">Releases</a></li>
-              <li><a href="https://github.com/kukuri-app/kukuri/blob/main/CHANGELOG.md">Changelog</a></li>
-              <li><a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-troubleshooting.md">Troubleshooting</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Feedback</h3>
-            <ul>
-              <li><a href="https://github.com/kukuri-app/kukuri/issues">Report a bug (GitHub Issues)</a></li>
-              <li><a href="https://github.com/kukuri-app/kukuri/discussions">Questions and ideas (GitHub Discussions)</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Terms and operator</h3>
-            <ul>
-              <li><a href="/terms/" hreflang="ja">Client Terms of Service (Japanese)</a></li>
-              <li><a href="/privacy/" hreflang="ja">Client Privacy Policy (Japanese)</a></li>
-              <li><a href="https://api.kukuri.app/external-transmission">Community Node external transmission</a></li>
-              <li><a href="https://api.kukuri.app/abuse-policy">Community Node abuse policy</a></li>
-              <li><a href="https://api.kukuri.app/data-retention">Community Node data retention</a></li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 7. Closing CTA -->
-    <section class="closing" aria-labelledby="closing-title">
-      <div class="wrap">
-        <h2 id="closing-title">Start from a topic</h2>
-        <p class="lead">The Builder Preview is for testers. Tell us what breaks through in-app feedback or GitHub.</p>
-        <div class="cta-row download-actions" data-download-group>
-          <a class="button button-primary" data-os-target="windows" href="https://apps.microsoft.com/detail/9NQ18HML4GS3">Get it from Microsoft Store</a>
-          <a class="button button-secondary" data-os-target="linux" href="#preview">Download for Linux</a>
-          <a class="button button-secondary" data-os-target="mobile" href="https://app.kukuri.app/">Open in your browser</a>
-          <a class="button button-secondary" href="https://github.com/kukuri-app/kukuri/issues">Report on GitHub</a>
-        </div>
+        <p class="note"><a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-user-quickstart.md">Detailed getting-started guide</a> · <a href="https://github.com/kukuri-app/kukuri/blob/main/docs/runbooks/mvp-troubleshooting.md">Troubleshooting</a></p>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="wrap">
-      <span>kukuri Builder Preview · <a href="https://github.com/kukuri-app/kukuri">GitHub</a> · <a href="https://github.com/kukuri-app/kukuri/blob/main/LICENSE">License</a></span>
-      <span>Screens are demos. People and conversations were created for the demo (except the experimental feature screen).</span>
+      <ul class="footer-links">
+        <li><a href="/terms/" hreflang="ja">Client Terms of Service (Japanese)</a></li>
+        <li><a href="/privacy/" hreflang="ja">Client Privacy Policy (Japanese)</a></li>
+        <li><a href="https://api.kukuri.app/external-transmission">Community Node external transmission</a></li>
+        <li><a href="https://api.kukuri.app/abuse-policy">Community Node abuse policy</a></li>
+        <li><a href="https://api.kukuri.app/data-retention">Community Node data retention</a></li>
+        <li><a href="https://github.com/kukuri-app/kukuri/issues">Report a bug</a></li>
+        <li><a href="https://github.com/kukuri-app/kukuri/discussions">Questions and ideas</a></li>
+        <li><a href="https://github.com/kukuri-app/kukuri/blob/main/CHANGELOG.md">Changelog</a></li>
+        <li><a href="https://github.com/kukuri-app/kukuri">GitHub</a></li>
+        <li><a href="https://github.com/kukuri-app/kukuri/blob/main/LICENSE">License</a></li>
+      </ul>
+      <p>kukuri Builder Preview. Screens are demos; the people and conversations were created for the demo.</p>
     </div>
   </footer>
 </body>
