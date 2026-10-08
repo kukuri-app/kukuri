@@ -171,7 +171,7 @@ impl Store for IndexedDbCache {
                 super::public_refs::replace(
                     &tx,
                     "reaction_asset",
-                    asset.asset_id.as_str(),
+                    asset.envelope_id.as_str(),
                     vec![asset.blob_hash.as_str().to_string()],
                 )?;
             }

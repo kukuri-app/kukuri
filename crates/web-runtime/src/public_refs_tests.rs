@@ -9,8 +9,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use kukuri_core::EnvelopeId;
-use kukuri_store::parity::public_refs::{check_public_blob_refs, hash, post, public};
-use kukuri_store::{ContentCacheStore, ObjectProjectionRow, ObjectProjectionStore};
+use kukuri_store::parity::public_refs::{bookmark, check_public_blob_refs, hash, post, public};
+use kukuri_store::{
+    ContentCacheStore, ObjectProjectionRow, ObjectProjectionStore, ReactionBookmarkStore, Store,
+};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::IndexedDbCache;
@@ -156,6 +158,50 @@ async fn a_version_1_database_gains_the_index_and_keeps_its_rows() {
         .expect("read");
     assert!(kept.is_some(), "the version 1 row is kept");
     assert_eq!(public(&cache, &[1, 2]).await, [false, false]);
+    while !cache.backfill_public_blob_refs_step(128).await.unwrap() {}
+    assert_eq!(public(&cache, &[1, 2]).await, [true, true]);
+}
+
+/// #1232 AC-3: 導入前の自作の custom reaction の asset（envelope の行）と保存済みの行も、取込みで公開参照になる。asset で
+/// ない envelope の行は参照にしない。
+#[wasm_bindgen_test]
+async fn old_own_reaction_assets_and_saved_reactions_are_taken_by_the_backfill() {
+    let cache = IndexedDbCache::open(&account_id()).await.expect("cache");
+    let keys = kukuri_core::generate_keys();
+    let follow = kukuri_core::build_follow_edge_envelope(
+        &keys,
+        &kukuri_core::generate_keys().public_key(),
+        kukuri_core::FollowEdgeStatus::Active,
+    )
+    .expect("follow");
+    cache.put_envelope(follow).await.expect("follow row");
+    let asset = kukuri_core::build_custom_reaction_asset_envelope(
+        &keys,
+        kukuri_core::BlobHash::new(hash(1)),
+        "asset".into(),
+        "image/png".into(),
+        1,
+        1,
+        1,
+    )
+    .expect("asset");
+    cache.put_envelope(asset).await.expect("asset row");
+    cache
+        .put_bookmarked_custom_reaction(bookmark(&hash(2)))
+        .await
+        .expect("bookmark row");
+    // 導入前の database と同じく、索引も取込みの位置も無い状態にする。
+    cache
+        .run(|db| async move {
+            let tx = Txn::begin(&db.idb, &[PUBLIC_REFS, META], Mode::Write)?;
+            rows::store(&tx, PUBLIC_REFS)?.clear().map_err(js_error)?;
+            rows::delete(&tx, META, &text("public_refs_backfill"))?;
+            tx.commit().await
+        })
+        .await
+        .expect("forget the index");
+    assert_eq!(public(&cache, &[1, 2]).await, [false, false]);
+
     while !cache.backfill_public_blob_refs_step(128).await.unwrap() {}
     assert_eq!(public(&cache, &[1, 2]).await, [true, true]);
 }

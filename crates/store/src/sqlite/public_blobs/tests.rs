@@ -198,6 +198,46 @@ async fn refs_and_schedule_roll_back_with_the_record() {
     assert!(scheduled(&store).await.is_empty());
 }
 
+/// #1232 AC-3: 自作の asset の envelope の行と保存の行は、公開参照と 1 つの transaction で書く。公開参照を書けなければ、
+/// 行も残らない。
+#[tokio::test]
+async fn own_assets_and_saved_reactions_are_written_with_their_public_refs() {
+    let store = SqliteStore::connect_memory().await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_public_refs BEFORE INSERT ON public_blob_refs \
+         BEGIN SELECT RAISE(ABORT, 'public refs fail'); END",
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let asset = kukuri_core::build_custom_reaction_asset_envelope(
+        &kukuri_core::generate_keys(),
+        kukuri_core::BlobHash::new(hash(1)),
+        "asset".into(),
+        "image/png".into(),
+        1,
+        1,
+        1,
+    )
+    .unwrap();
+    let asset_id = asset.id.clone();
+
+    assert!(store.put_envelope(asset).await.is_err());
+    assert!(store.get_envelope(&asset_id).await.unwrap().is_none());
+    assert!(
+        store
+            .put_bookmarked_custom_reaction(bookmark(&hash(2)))
+            .await
+            .is_err()
+    );
+    assert!(
+        ReactionBookmarkStore::list_bookmarked_custom_reactions(&store)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
 /// 読み出しの期限（7 日の未使用）が回収より先に切れた保持は、告知の直前に予定から外す。利用時刻は変えない。
 #[tokio::test]
 async fn an_expired_hold_leaves_the_schedule_before_it_is_reclaimed() {

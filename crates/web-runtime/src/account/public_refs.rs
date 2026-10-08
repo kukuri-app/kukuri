@@ -190,7 +190,7 @@ impl IndexedDbCache {
                             replace(
                                 &tx,
                                 kind,
-                                asset.asset_id.as_str(),
+                                asset.envelope_id.as_str(),
                                 vec![asset.blob_hash.as_str().to_string()],
                             )?;
                         }
