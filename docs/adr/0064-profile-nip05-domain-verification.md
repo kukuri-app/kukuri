@@ -34,7 +34,7 @@ Accepted（Issue #1670、Scope revision r2、2026-10-09 ユーザー判断）。
 - 照会先は `https://<domain>/.well-known/nostr.json?name=<name>`（GET）。応答の JSON の `names` の `<name>` の値が著者の公開鍵（小文字の hex）と一致したときだけ確認できたとする。
 - 契機は §5 の表示が画面内にあり、画面（document）が表示中のとき。
 - デスクトップは Rust で取得し、ADR 0051 §2・§3 の境界（cookie・Authorization・Referer・system proxy を使わない、リンクプレビューと同じ固定の User-Agent、非公開の名前とアドレスの拒否、検証したアドレスへの接続の固定、接続 3 秒・全体 6 秒）を使う。転送（3xx）には従わず、確認できなかったとする（NIP-05 の要件）。応答は 512 KiB まで。
-- Web はブラウザの fetch で取得する（`credentials: 'omit'`、`redirect: 'error'`、`referrerPolicy: 'no-referrer'`、6 秒、応答は 512 KiB まで）。ドメインが CORS（`Access-Control-Allow-Origin: *`）を許可していなければ読めず、確認できなかったとする。ブラウザは要求に `Origin` を付ける。
+- Web はブラウザの fetch で取得する（`credentials: 'omit'`、`redirect: 'error'`、`referrerPolicy: 'no-referrer'`、`cache: 'no-store'`（ブラウザの HTTP cache に残さない。§4）、6 秒、応答は 512 KiB まで）。ドメインが CORS（`Access-Control-Allow-Origin: *`）を許可していなければ読めず、確認できなかったとする。ブラウザは要求に `Origin` を付ける。
 - 同意の前（起動の状態が Ready の前）は照会しない。
 
 ### 4. 保持と上限（AC-2）

@@ -362,7 +362,7 @@ async fn nip05_matches_only_the_named_public_key() {
     }
 }
 
-// #1670 AC-2.1・2.3: 取得できない(時間切れ・通信の失敗)ときは確認できない。
+// #1670 AC-2.1・2.3: 取得できない(通信の失敗。時間切れも同じ Err の扱い)ときは確認できない。
 #[tokio::test]
 async fn nip05_is_unverified_when_the_request_fails() {
     let transport = FakeTransport::new(Vec::new());
