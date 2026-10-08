@@ -152,6 +152,16 @@ custom reaction asset は public author-owned object とする。
 - asset 自体は public reusable とし、public/private どちらの Reaction からも参照できる
 - v1 では immutable asset とし、edit/delete lifecycle は later scope に送る
 
+#### 2.4.1 識別（#1232 D1、2026-10-09 改訂）
+
+custom reaction の識別（`asset_id`）は、画像の hash と検索名だけから求める。
+
+- `asset_id = hex(sha256("kukuri:custom-reaction:v1:<画像の blob hash>:<検索名>"))`（`kukuri_core::custom_reaction_id`）。検索名は前後の空白だけを除いた完全一致で、大文字・小文字を区別する。
+- 作成者・作成時刻・署名は識別に含めない。同じ画像＋検索名は、誰が作っても・保存しても同じ `asset_id` になり、§2.2 の key（`custom_asset:<asset_id>`）が同じなので同じリアクションとして数える。
+- 署名は、リアクションを付けた行為（`reaction` object）にだけ付く。asset の envelope の署名と `owner_pubkey` は、最初に作った人の情報として残し、識別には使わない。
+- 自作の一覧・保存済みの一覧・最近使ったものは、この `asset_id` で示し、同じ値の項目は 1 件にまとめる。author replica の key（`reactions/assets/<envelope id>/...`）と保存の行の旧い key は変えずに読み、示すときに求める。
+- 旧案（`asset_id` ＝ asset の envelope の ID）で付いたリアクションと、旧版の client が付けるリアクションは、その key のまま別に数え、今どおり表示・付け外しする（D2）。旧い key を新しい key と束ねる移行はしない。
+
 ### 2.5 Bookmark library
 
 bookmark 済み custom reaction library は local-only durable state とする。
@@ -221,7 +231,7 @@ signed envelope kind は `custom-reaction-asset` とする。
 - animated GIF input は GIF のまま保存する
 - asset creation path は persisted blob がすでに normalized であることを保証する
 
-author replica の key family は `reactions/assets/<asset_id>/...` に固定する。
+author replica の key family は `reactions/assets/<asset_id>/...` に固定する。この key の `asset_id` は envelope の ID のまま読み書きし、リアクション・一覧で使う識別は §2.4.1 で求める。
 
 ### 3.3 Custom asset snapshot
 
@@ -237,6 +247,8 @@ custom asset を参照する reaction record と bookmark record には、次の
 
 viewer はこの snapshot だけで picker/timeline/thread の描画を開始できなければならない。author asset replica の hydration は追加情報取得 path であり、初回描画の前提にしない。
 
+picker から付けるリアクションの snapshot の `asset_id` は §2.4.1 の識別とする。summary の chip は、付いたときの snapshot の `asset_id`（旧い ID を含む）のまま示し、押すとその key で付け外しする。
+
 ### 3.4 Local bookmark record
 
 local SQLite の bookmark record は少なくとも次を持つ。
@@ -251,6 +263,8 @@ local SQLite の bookmark record は少なくとも次を持つ。
 - `bookmarked_at`
 
 bookmark は source asset への pointer と display snapshot を持つが、新しい blob ownership は作らない。
+
+新しく置く行の `asset_id` は §2.4.1 の識別とする（投稿のリアクションの snapshot が旧い ID でも、画像の hash と検索名から求めて置く）。旧い ID で置いた行は書き換えず、一覧では §2.4.1 の識別で示して同じ値を 1 件にまとめる。解除は、一覧と同じ新しい順の窓（`BOOKMARKED_CUSTOM_REACTION_LIMIT` 件）から同じ識別の行を選び、旧い ID の行も一緒に外す。
 
 ## 4. Publish And Read Contract
 

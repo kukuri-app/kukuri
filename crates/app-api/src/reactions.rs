@@ -213,9 +213,12 @@ impl AppService {
                 .cmp(&left.created_at)
                 .then_with(|| right.asset_id.cmp(&left.asset_id))
         });
+        // 同じ画像＋検索名を作り直した asset は、同じ ID の 1 件にまとめる（#1232 D1）。
+        let mut seen = BTreeSet::new();
         Ok(items
             .into_iter()
             .map(|asset| custom_reaction_asset_view_from_doc(&asset))
+            .filter(|asset| seen.insert(asset.asset_id.clone()))
             .collect())
     }
 
@@ -233,10 +236,11 @@ impl AppService {
             .list_recent_reaction_cache_by_author(author_pubkey.as_str())
             .await?
         {
-            if !seen.insert(row.normalized_reaction_key.clone()) {
+            let item = recent_reaction_view_from_projection(&row);
+            if !seen.insert(item.normalized_reaction_key.clone()) {
                 continue;
             }
-            items.push(recent_reaction_view_from_projection(&row));
+            items.push(item);
             if items.len() >= limit {
                 break;
             }
@@ -247,6 +251,8 @@ impl AppService {
     pub async fn list_bookmarked_custom_reactions(
         &self,
     ) -> Result<Vec<BookmarkedCustomReactionView>> {
+        // 旧い ID で置いた同じ内容の行は、新しい方の 1 件にまとめる（#1232 D1）。
+        let mut seen = BTreeSet::new();
         Ok(self
             .services
             .projection_store
@@ -254,6 +260,7 @@ impl AppService {
             .await?
             .into_iter()
             .map(bookmarked_custom_reaction_view_from_row)
+            .filter(|asset| seen.insert(asset.asset_id.clone()))
             .collect())
     }
 
@@ -264,11 +271,13 @@ impl AppService {
         if asset.owner_pubkey.as_str() == self.current_author_pubkey() {
             anyhow::bail!("bookmarking your own custom reaction is not supported");
         }
+        let search_key = search_key_or_asset_id(asset.search_key.as_str(), asset.asset_id.as_str());
+        // 投稿のリアクションの写しが旧い ID でも、保存は画像＋検索名の ID で置く（#1232 D1）。
         let row = BookmarkedCustomReactionRow {
-            asset_id: asset.asset_id.clone(),
+            asset_id: kukuri_core::custom_reaction_id(asset.blob_hash.as_str(), &search_key),
             owner_pubkey: asset.owner_pubkey.as_str().to_string(),
             blob_hash: asset.blob_hash,
-            search_key: search_key_or_asset_id(asset.search_key.as_str(), asset.asset_id.as_str()),
+            search_key,
             mime: asset.mime,
             bytes: asset.bytes,
             width: asset.width,
@@ -283,9 +292,24 @@ impl AppService {
     }
 
     pub async fn remove_bookmarked_custom_reaction(&self, asset_id: &str) -> Result<()> {
-        self.services
+        // 一覧は旧い ID で置いた同じ内容の行も同じ ID で示すので、その行も外す。読むのは一覧と同じ新しい順の窓だけ。
+        let mut keys = BTreeSet::from([asset_id.to_string()]);
+        for row in self
+            .services
             .projection_store
-            .remove_bookmarked_custom_reaction(asset_id)
-            .await
+            .list_bookmarked_custom_reactions()
+            .await?
+        {
+            if bookmarked_custom_reaction_view_from_row(row.clone()).asset_id == asset_id {
+                keys.insert(row.asset_id);
+            }
+        }
+        for key in keys {
+            self.services
+                .projection_store
+                .remove_bookmarked_custom_reaction(&key)
+                .await?;
+        }
+        Ok(())
     }
 }

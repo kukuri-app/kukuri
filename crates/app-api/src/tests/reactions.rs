@@ -378,7 +378,10 @@ async fn local_bookmarks_restore_saved_custom_reactions_after_restart() {
         .expect("list bookmarks after restart");
 
     assert_eq!(bookmarks.len(), 1);
-    assert_eq!(bookmarks[0].asset_id, "asset-bookmarked");
+    assert_eq!(
+        bookmarks[0].asset_id,
+        kukuri_core::custom_reaction_id("blob-bookmarked", "bookmark")
+    );
     assert_eq!(bookmarks[0].owner_pubkey, foreign_pubkey);
     assert_eq!(bookmarks[0].search_key, "bookmark");
 }
@@ -509,4 +512,185 @@ async fn private_channel_reaction_stays_epoch_scoped_after_rotate() {
     assert_eq!(old_rows[0].status, ObjectStatus::Active);
     assert_eq!(new_rows[0].status, ObjectStatus::Active);
     assert_ne!(old_rows[0].source_replica_id, new_rows[0].source_replica_id);
+}
+
+fn reaction_asset_input(search_key: &str) -> CreateCustomReactionAssetInput {
+    CreateCustomReactionAssetInput {
+        search_key: search_key.into(),
+        mime: "image/png".into(),
+        bytes: tiny_png_bytes(),
+        width: 128,
+        height: 128,
+    }
+}
+
+fn custom_reaction_key(asset: &CustomReactionAssetView) -> ReactionKeyV1 {
+    ReactionKeyV1::CustomAsset {
+        asset_id: asset.asset_id.clone(),
+        snapshot: reaction_snapshot_from_view(asset),
+    }
+}
+
+/// #1232 AC-1: 同じ画像＋検索名を別々に作った 2 人のリアクションは、1 つにまとまって数えられる。
+#[tokio::test]
+async fn the_same_image_and_search_key_from_two_creators_count_as_one_reaction() {
+    let (local, _, remote, _, _, _, _) = shared_apps_with_memory_services();
+    let topic = "kukuri:topic:reaction-content-id";
+    let object_id = local
+        .create_post(topic, "shared custom reaction", None)
+        .await
+        .expect("create post");
+    let mine = local
+        .create_custom_reaction_asset(reaction_asset_input("party"))
+        .await
+        .expect("local asset");
+    let theirs = remote
+        .create_custom_reaction_asset(reaction_asset_input(" party "))
+        .await
+        .expect("remote asset");
+    let renamed = remote
+        .create_custom_reaction_asset(reaction_asset_input("parrot"))
+        .await
+        .expect("renamed asset");
+
+    assert_ne!(mine.owner_pubkey, theirs.owner_pubkey);
+    assert_eq!(mine.asset_id, theirs.asset_id);
+    assert_eq!(
+        mine.asset_id,
+        kukuri_core::custom_reaction_id(&mine.blob_hash, "party")
+    );
+    assert_ne!(renamed.asset_id, mine.asset_id);
+
+    local
+        .toggle_reaction(topic, &object_id, custom_reaction_key(&mine), None)
+        .await
+        .expect("local reaction");
+    remote
+        .toggle_reaction(topic, &object_id, custom_reaction_key(&theirs), None)
+        .await
+        .expect("remote reaction");
+    let state = remote
+        .toggle_reaction(topic, &object_id, custom_reaction_key(&renamed), None)
+        .await
+        .expect("renamed reaction");
+
+    assert_eq!(state.reaction_summary.len(), 2);
+    assert!(state.reaction_summary.iter().any(|entry| {
+        entry.normalized_reaction_key == format!("custom_asset:{}", mine.asset_id)
+            && entry.count == 2
+    }));
+    assert!(state.reaction_summary.iter().any(|entry| {
+        entry.normalized_reaction_key == format!("custom_asset:{}", renamed.asset_id)
+            && entry.count == 1
+    }));
+}
+
+/// #1232 D2: 旧い ID（envelope の ID）で付いたリアクションは、同じ画像＋検索名の新しい ID とは別に数え、今どおり
+/// その chip から外せる。
+#[tokio::test]
+async fn reactions_with_a_legacy_asset_id_stay_separate_and_toggle_off() {
+    let (app, _, _, _) = local_app_with_memory_services();
+    let topic = "kukuri:topic:reaction-legacy-id";
+    let object_id = app
+        .create_post(topic, "legacy custom reaction", None)
+        .await
+        .expect("create post");
+    let asset = app
+        .create_custom_reaction_asset(reaction_asset_input("party"))
+        .await
+        .expect("asset");
+    let legacy = CustomReactionAssetView {
+        asset_id: "legacy-envelope-id".into(),
+        ..asset.clone()
+    };
+
+    app.toggle_reaction(topic, &object_id, custom_reaction_key(&legacy), None)
+        .await
+        .expect("legacy reaction");
+    let both = app
+        .toggle_reaction(topic, &object_id, custom_reaction_key(&asset), None)
+        .await
+        .expect("content id reaction");
+    let legacy_chip = both
+        .reaction_summary
+        .iter()
+        .filter_map(|entry| entry.custom_asset.clone())
+        .find(|chip| chip.asset_id == "legacy-envelope-id")
+        .expect("legacy chip");
+    let after = app
+        .toggle_reaction(topic, &object_id, custom_reaction_key(&legacy_chip), None)
+        .await
+        .expect("legacy reaction off");
+
+    assert_eq!(both.reaction_summary.len(), 2);
+    assert!(both.reaction_summary.iter().all(|entry| entry.count == 1));
+    assert_eq!(after.reaction_summary.len(), 1);
+    assert_eq!(
+        after.reaction_summary[0]
+            .custom_asset
+            .as_ref()
+            .map(|chip| chip.asset_id.as_str()),
+        Some(asset.asset_id.as_str())
+    );
+}
+
+/// #1232 AC-1: 保存は画像＋検索名の ID で置く。同じ内容を旧い ID で置いた行は一覧で 1 件にまとまり、外すと一緒に外れる。
+#[tokio::test]
+async fn saved_custom_reactions_use_the_content_id_and_absorb_legacy_rows() {
+    let (app, store, _, _) = local_app_with_memory_services();
+    let owner = generate_keys().public_key_hex();
+    let blob_hash = kukuri_core::BlobHash::new("b".repeat(64));
+    let content_id = kukuri_core::custom_reaction_id(blob_hash.as_str(), "party");
+    store
+        .put_bookmarked_custom_reaction(BookmarkedCustomReactionRow {
+            asset_id: "legacy-envelope-id".into(),
+            owner_pubkey: owner.clone(),
+            blob_hash: blob_hash.clone(),
+            search_key: "party".into(),
+            mime: "image/png".into(),
+            bytes: 128,
+            width: 128,
+            height: 128,
+            bookmarked_at: 1,
+        })
+        .await
+        .expect("legacy bookmark row");
+
+    let saved = app
+        .bookmark_custom_reaction(CustomReactionAssetSnapshotV1 {
+            asset_id: "another-legacy-id".into(),
+            owner_pubkey: Pubkey::from(owner.as_str()),
+            blob_hash: blob_hash.clone(),
+            search_key: " party ".into(),
+            mime: "image/png".into(),
+            bytes: 128,
+            width: 128,
+            height: 128,
+        })
+        .await
+        .expect("bookmark");
+    let listed = app
+        .list_bookmarked_custom_reactions()
+        .await
+        .expect("list bookmarks");
+
+    assert_eq!(saved.asset_id, content_id);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|asset| asset.asset_id.as_str())
+            .collect::<Vec<_>>(),
+        [content_id.as_str()]
+    );
+
+    app.remove_bookmarked_custom_reaction(&content_id)
+        .await
+        .expect("remove bookmark");
+    assert!(
+        store
+            .list_bookmarked_custom_reactions()
+            .await
+            .expect("bookmark rows")
+            .is_empty()
+    );
 }
