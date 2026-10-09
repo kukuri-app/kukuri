@@ -561,6 +561,8 @@ fn validate_subject_author(target: RiskSignalTarget, author: &str) -> Result<()>
 /// 対応は、内容の risk signal の行が 1 行も無くなると削除の trigger が消す（#1699）。trigger とは
 /// advisory lock（ここは共有、trigger は排他）で直列化してから risk signal の行を確かめるので、
 /// 同時に進む期限削除と重なっても、参照先のある対応を消させず、参照先の無い対応を残さない。
+/// 内容の risk signal の行を書く trigger（信頼値の集計、#1702）も同じ lock を排他で取るので、
+/// 同じ内容への書込みと重なっても、対応の trigger は確定した行から著者の集計の行を作る。
 async fn insert_subject_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &str,

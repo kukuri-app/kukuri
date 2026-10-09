@@ -7,6 +7,8 @@
 //! - `expired_signal_is_excluded_from_trust_inputs` / `invalid_expires_at_signal_is_ignored_and_read_succeeds`
 //! - `sweep_removes_expired_rows_in_bounded_batches` / `half_life_change_is_rebuilt_in_bounded_batches`（AC-1 (c)）
 //! - `trust_reads_do_not_scale_with_row_counts`（AC-1 (b)）
+//! - `content_writes_and_attributions_wait_for_each_other`: 同じ内容の risk signal の書込みと著者の関連付けが
+//!   重なっても、集計が全行から求めた参照と一致する。
 
 use std::collections::HashMap;
 
@@ -29,6 +31,10 @@ use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
 };
 use kukuri_cn_trust::{PullAudience, TrustComponentKind, TrustRiskInput, signal_contribution};
+
+#[path = "support/lock_wait.rs"]
+mod lock_wait;
+use lock_wait::blocked_on_lock;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const ISSUER: &str = "issuer-node";
@@ -501,6 +507,88 @@ async fn aggregates_follow_random_writes_like_full_recomputation() -> Result<()>
         .await?;
     }
     Ok(())
+}
+
+#[tokio::test]
+async fn content_writes_and_attributions_wait_for_each_other() -> Result<()> {
+    with_database("cn_1702_trust_content_race", |pool| async move {
+        let signal = SafetyRiskSignal {
+            target: RiskSignalTarget::PostId,
+            target_id: "post-1".to_string(),
+            category: SafetyCategory::Spam,
+            severity: Severity::High,
+            basis: Basis::ProviderVerdict,
+            confidence: Some(90),
+            visibility: Visibility::Public,
+            expires_at: None,
+            appeal_status: Some(AppealStatus::None),
+        };
+        let stored =
+            persist_risk_signal_with_author(&pool, ISSUER, &signal, Some(AUTHORS[0])).await?;
+
+        // 審査で cleared にする取引の途中に、2 人目の著者を関連付ける。
+        let mut review = pool.begin().await?;
+        sqlx::query("UPDATE cn_safety.risk_signals SET appeal_status = 'cleared' WHERE id = $1")
+            .bind(&stored.id)
+            .execute(&mut *review)
+            .await?;
+        let attribution = tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                attribute_risk_signal_subject_author(
+                    &pool,
+                    RiskSignalTarget::PostId,
+                    "post-1",
+                    AUTHORS[1],
+                )
+                .await
+            }
+        });
+        assert!(
+            blocked_on_lock(&pool, &attribution).await?,
+            "the attribution waits for the review"
+        );
+        review.commit().await?;
+        attribution.await??;
+        let now = Utc::now().trunc_subsecs(6);
+        assert_matches_full_recomputation(&pool, now, 30.0, "cleared while attributing").await?;
+
+        // 3 人目の著者を関連付ける取引（`insert_subject_author` と同じ lock）の途中に、同じ内容へ
+        // 新しい行を保存する。
+        let mut attributing = pool.begin().await?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock_shared(
+                hashtextextended('cn_safety.risk_signal_subject_authors', 0))",
+        )
+        .execute(&mut *attributing)
+        .await?;
+        sqlx::query(
+            "INSERT INTO cn_safety.risk_signal_subject_authors (target, target_id, author_pubkey)
+             VALUES ('post_id', 'post-1', $1)",
+        )
+        .bind(AUTHORS[2])
+        .execute(&mut *attributing)
+        .await?;
+        let persisting = tokio::spawn({
+            let pool = pool.clone();
+            let signal = SafetyRiskSignal {
+                category: SafetyCategory::Phishing,
+                ..signal
+            };
+            async move {
+                persist_risk_signal_with_author(&pool, ISSUER, &signal, Some(AUTHORS[0])).await
+            }
+        });
+        assert!(
+            blocked_on_lock(&pool, &persisting).await?,
+            "the new risk signal waits for the attribution"
+        );
+        attributing.commit().await?;
+        persisting.await??;
+        let now = Utc::now().trunc_subsecs(6);
+        assert_matches_full_recomputation(&pool, now, 30.0, "persisted while attributing").await
+    })
+    .await
 }
 
 #[tokio::test]

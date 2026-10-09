@@ -9,9 +9,7 @@
 //!   消さず、参照先の無い対応を残さない。
 //! - migration が、参照先の無い既存の対応を 1 回消す。
 
-use std::time::Duration;
-
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chrono::Utc;
 use kukuri_cn_core::{
     TestDatabase, attribute_risk_signal_subject_author, cleanup_expired, connect_postgres,
@@ -22,7 +20,10 @@ use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
 };
 use sqlx::PgPool;
-use tokio::task::JoinHandle;
+
+#[path = "support/lock_wait.rs"]
+mod lock_wait;
+use lock_wait::blocked_on_lock;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const ISSUER: &str = "issuer-node";
@@ -100,28 +101,6 @@ async fn relative_signal_ids(pool: &PgPool, author: &str) -> Result<Vec<String>>
         .filter(|input| input.component == kukuri_cn_trust::TrustComponentKind::Relative)
         .map(|input| input.signal_id)
         .collect())
-}
-
-/// 別の接続の取引が行の lock を待つまで、または `task` が終わるまで待つ。lock を待ったら true。
-async fn blocked_on_lock<T>(pool: &PgPool, task: &JoinHandle<T>) -> Result<bool> {
-    for _ in 0..500 {
-        if task.is_finished() {
-            return Ok(false);
-        }
-        let waiting: bool = sqlx::query_scalar(
-            "SELECT EXISTS (
-                SELECT 1 FROM pg_stat_activity
-                WHERE datname = current_database() AND wait_event_type = 'Lock'
-             )",
-        )
-        .fetch_one(pool)
-        .await?;
-        if waiting {
-            return Ok(true);
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    bail!("the concurrent transaction neither finished nor waited on a lock")
 }
 
 #[tokio::test]

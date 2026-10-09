@@ -390,27 +390,22 @@ fn spawn_retention_cleanup(state: UserApiState) {
 }
 
 /// 信頼値の集計の保守（ADR 0026 §10）。1 分ごとに、期限を過ぎた行を 1 回 1,000 行ずつ外し、運営者が
-/// 変えた半減期で作っていない集計を 1 回 100 対象ずつ作り直す。止まっても次の回に残りから続く。
+/// 変えた半減期で作っていない集計を 1 回 100 対象ずつ作り直す。作り直しが長く続いても期限の掃除を
+/// 止めないよう、1 回ずつ交互に進める。止まっても次の回に残りから続く。
 fn spawn_trust_totals_maintenance(state: UserApiState) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
             let result = async {
-                let now = chrono::Utc::now();
-                let mut swept = 0;
+                let (mut swept, mut rebuilt) = (0, 0);
                 loop {
+                    let now = chrono::Utc::now();
                     let removed = sweep_expired_trust_signals(&state.pool, now).await?;
+                    let count = rebuild_trust_totals(&state.pool, now).await?;
                     swept += removed;
-                    if removed < TRUST_SWEEP_BATCH as u64 {
-                        break;
-                    }
-                }
-                let mut rebuilt = 0;
-                loop {
-                    let count = rebuild_trust_totals(&state.pool, chrono::Utc::now()).await?;
                     rebuilt += count;
-                    if count < TRUST_REBUILD_BATCH as u64 {
+                    if removed < TRUST_SWEEP_BATCH as u64 && count < TRUST_REBUILD_BATCH as u64 {
                         break;
                     }
                 }

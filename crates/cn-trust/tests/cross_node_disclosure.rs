@@ -1,7 +1,8 @@
 //! cross-node pull 開示の組み立て（ADR 0026 §6.3 / §10, Issue #415 / #1702）の contract テスト。DB 不要。
 //!
 //! 開示できる signal の判定（confirmed の絶対成分で `Local` でなく cleared でない）は集計の trigger が
-//! 行ごとに持ち、`cn-core` の結合試験（`trust_totals.rs`）が同じ contract 名で固定する。ここでは
+//! 行ごとに持つ。`cn-core` の結合試験（`trust_totals.rs`）が全行からの参照と比べ、`cn-user-api` の
+//! `cross_node_pull_discloses_only_confirmed_absolute_component` が pull の応答で固定する。ここでは
 //! 開示分の集計と 1 ページから応答を組み立てる部分を固定する。
 
 use chrono::{DateTime, Duration, Utc};

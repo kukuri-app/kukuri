@@ -135,16 +135,17 @@ $$;
 CREATE FUNCTION cn_safety.trust_risk_signal_changed() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+    -- 内容の行は、集計の行を消して作り直す前に、著者の対応の追加（`insert_subject_author`、共有）と
+    -- 削除（#1699 の回収の trigger、排他）と同じ advisory lock を排他で取る。同じ内容への関連付けや
+    -- 期限削除と重なっても、後の側が先の側の確定した行を読んで作り直す。lock は取引ごとに 1 つ。
+    -- 内容の行の削除は、名前の順で先に動く回収の trigger が同じ lock を排他で取っている。
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.target IN ('post_id', 'blob_cid') THEN
+        PERFORM pg_advisory_xact_lock(hashtextextended('cn_safety.risk_signal_subject_authors', 0));
+    END IF;
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
         DELETE FROM cn_safety.trust_target_signals WHERE signal_id = OLD.id;
     END IF;
     IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        -- 内容の著者の対応を読む前に、対応の追加・削除（#1699 の回収の trigger）と同じ advisory lock を
-        -- 共有で取る。期限削除が同じ内容の最後の行を消す取引と重なっても、対応の有無を確定した順に読む。
-        IF NEW.target IN ('post_id', 'blob_cid') THEN
-            PERFORM pg_advisory_xact_lock_shared(
-                hashtextextended('cn_safety.risk_signal_subject_authors', 0));
-        END IF;
         INSERT INTO cn_safety.trust_target_signals
         SELECT * FROM cn_safety.trust_signal_entries(NEW);
     END IF;
