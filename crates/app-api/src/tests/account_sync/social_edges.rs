@@ -273,6 +273,67 @@ async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
     assert!(b.merge_account_sync_item(forged).await.is_err());
 }
 
+/// #1707: 台帳へ採った後、edge を反映する前に止まった merge（反映の task は item の途中でも止めて作り直す）の item は、
+/// 同じ item の再受信で反映し直す（手元に無いフォロー、手元の古いフォローを解除する版、フォロワー）。反映した item の
+/// 再受信は何もしない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edge_adopted_by_a_stopped_merge_is_applied_when_received_again() {
+    let keys = generate_keys();
+    let me = keys.public_key();
+    let (device, _) = memory_device(&keys, "device-a").await;
+    let (followed, unfollowed, follower) = (
+        generate_keys().public_key(),
+        generate_keys().public_key(),
+        generate_keys(),
+    );
+    put(
+        &device,
+        follow_at(&keys, &unfollowed, FollowEdgeStatus::Active, 1_000),
+    )
+    .await;
+    let items = [
+        follow_at(&keys, &followed, FollowEdgeStatus::Active, 1_000),
+        follow_at(&keys, &unfollowed, FollowEdgeStatus::Revoked, 2_000),
+        build_follow_edge_envelope(&follower, &me, FollowEdgeStatus::Active).expect("follower"),
+    ]
+    .map(|envelope| AccountSyncItem::edge(&me, &envelope).expect("item"));
+    for item in &items {
+        let row = kukuri_store::AccountSyncRow {
+            key: item.key.docs_key(),
+            op_id: item.op_id.clone(),
+            updated_at: item.updated_at,
+            value: item.value.as_ref().map(ToString::to_string),
+        };
+        assert!(
+            device
+                .services
+                .projection_store
+                .adopt_account_sync_row(&row)
+                .await
+                .expect("adopt")
+        );
+    }
+    for item in &items {
+        assert!(
+            device
+                .merge_account_sync_item(item.clone())
+                .await
+                .expect("merge")
+        );
+    }
+    assert_eq!(
+        connections(&device, SocialConnectionKind::Following).await,
+        BTreeSet::from([followed.as_str().to_string()])
+    );
+    assert_eq!(
+        connections(&device, SocialConnectionKind::Followed).await,
+        BTreeSet::from([follower.public_key().as_str().to_string()])
+    );
+    for item in items {
+        assert!(!device.merge_account_sync_item(item).await.expect("merge"));
+    }
+}
+
 /// 自分のフォローを 10 倍にしても、新しい 1 件の取得の読取りの回数と bytes は増えない（変更の窓の seq の桁がそろう
 /// 規模で比べる。seq は 10 と 91）。周回の 1 照会の読取りは page の上限を超えない（全件を 1 照会で読むと、200 件で
 /// 上限を超える）。

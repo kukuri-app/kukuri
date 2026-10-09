@@ -240,13 +240,18 @@ impl AppService {
                     ),
                     _ => anyhow::bail!("not an edge item"),
                 };
+                // 台帳が既に同じ版なのに手元の edge が古いか無いのは、台帳へ採った後、edge を書く前に止まった merge（移行・
+                // 同期の反映の task は item の途中でも止めて作り直す）。同じ item の再受信で反映をやり直す（#1707）。
+                let projection = &self.services.projection_store;
                 if local.is_some_and(|(updated_at, envelope_id)| {
                     updated_at > item.updated_at || envelope_id == envelope.id
-                }) || !self
-                    .services
-                    .projection_store
-                    .adopt_account_sync_row(&row_of(&item)?)
-                    .await?
+                }) || !projection.adopt_account_sync_row(&row_of(&item)?).await?
+                    && !projection
+                        .get_account_sync_row(&item.key.docs_key())
+                        .await?
+                        .is_some_and(|row| {
+                            row.updated_at == item.updated_at && row.op_id == item.op_id
+                        })
                 {
                     return Ok(false);
                 }
