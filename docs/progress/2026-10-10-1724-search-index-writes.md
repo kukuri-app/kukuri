@@ -37,6 +37,6 @@ ArcadeDB の旧検索と全文索引の撤去は、それぞれ予定済みの A
 生成された表の追加分に合わせて oversized baseline の該当行数だけを更新する。
 Docker の cook / build は共通の辞書 cache を使う。Fast / Nightly では辞書の組立ての出力
 （5.3.0、format 2、OS 別）を各 job が再利用する。既存の job の必須条件・timeout は変更しない。
-手元の cache 無しの最初の test build は約4分、以後の変更した test の再ビルドは約14秒だった。
+手元で辞書を含む最初の build は成功し、以後の変更した test の再ビルドは約14秒だった。
 実 runner の cache の取得、全体の CN 試験と E2E は PR CI、Linux の image の build と容量は
 専用の手元の Docker build で確認する。これらは本記録の局所成功へ加算しない。
