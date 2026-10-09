@@ -150,8 +150,17 @@ mod native {
                     Err(error) => Err(error).with_context(|| format!("failed to read `{account}`")),
                 };
             }
-            match entry(service, account)?.get_password() {
+            let keyring_entry = entry(service, account)?;
+            match keyring_entry.get_password() {
                 Ok(secret) => Ok(Some(secret.into_bytes())),
+                // Android の保存先は base64 として読めない値も `NoEntry` で返す。項目が残っていれば破損として返す（#1195）。
+                #[cfg(target_os = "android")]
+                Err(KeyringError::NoEntry)
+                    if !matches!(keyring_entry.get_credential(), Err(KeyringError::NoEntry)) =>
+                {
+                    Err(anyhow!("the stored secret is unreadable"))
+                        .context("failed to read secret from keyring")
+                }
                 Err(KeyringError::NoEntry) => Ok(None),
                 Err(error) => Err(anyhow!(error)).context("failed to read secret from keyring"),
             }
