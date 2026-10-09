@@ -192,7 +192,7 @@ export function PostCard({
   const [reportAppeal, setReportAppeal] = useState<ReportAppealContext | null>(null);
   const advisoryDetails = usePostAdvisoryDetails();
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
-  const [mediaViewerIndex, setMediaViewerIndex] = useState(view.media.currentImageIndex ?? 0);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
   const [reactionMenuPosition, setReactionMenuPosition] = useState<ContextActionMenuPosition | null>(
     null
   );

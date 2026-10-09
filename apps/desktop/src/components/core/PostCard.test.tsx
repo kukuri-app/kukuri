@@ -591,7 +591,7 @@ test('post card context menu exposes only identifiers supplied by a read-only re
   expect(clipboardWriteText).toHaveBeenLastCalledWith('indexed-object-1');
 });
 
-test('post card opens a media dialog and navigates multi-image attachments', async () => {
+test('post card lays out multi-image attachments and opens the viewer at the chosen image', async () => {
   const user = userEvent.setup();
 
   render(
@@ -600,7 +600,6 @@ test('post card opens a media dialog and navigates multi-image attachments', asy
         media: {
           ...createView().media,
           kind: 'image',
-          imagePreviewSrc: 'https://example.com/one.png',
           imageGalleryItems: [
             {
               hash: 'image-1',
@@ -613,7 +612,6 @@ test('post card opens a media dialog and navigates multi-image attachments', asy
               mime: 'image/png',
             },
           ],
-          currentImageIndex: 0,
         },
       })}
       onOpenAuthor={() => undefined}
@@ -622,21 +620,22 @@ test('post card opens a media dialog and navigates multi-image attachments', asy
     />
   );
 
-  await user.click(screen.getByRole('button', { name: 'image attachment' }));
+  expect(document.querySelector('.media-grid')).toHaveAttribute('data-count', '2');
+  await user.click(screen.getByRole('button', { name: 'image attachment 2 / 2' }));
 
   const dialog = screen.getByRole('dialog');
   expect(dialog).toHaveClass('media-viewer-dialog');
   expect(dialog.querySelector('.media-viewer-counter')).toBeNull();
   expect(within(dialog).getByRole('img', { name: 'image attachment' })).toHaveAttribute(
     'src',
-    'https://example.com/one.png'
+    'https://example.com/two.png'
   );
 
   await user.click(within(dialog).getByRole('button', { name: 'Next image' }));
 
   expect(within(dialog).getByRole('img', { name: 'image attachment' })).toHaveAttribute(
     'src',
-    'https://example.com/two.png'
+    'https://example.com/one.png'
   );
 });
 

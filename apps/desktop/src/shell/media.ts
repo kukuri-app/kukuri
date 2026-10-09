@@ -62,8 +62,14 @@ export function primaryContentAdvisory(
   );
 }
 
-export function selectPrimaryImage(post: { attachments: AttachmentView[] }): AttachmentView | null {
-  return selectPrimaryImageAttachment(post.attachments);
+/// #1690: 投稿カードに並べる画像の数。5 枚目以降は拡大表示で示す。
+export const POST_CARD_IMAGE_LIMIT = 4;
+
+/// 投稿の画像(動画の poster を除く)。カードは先頭 `POST_CARD_IMAGE_LIMIT` 枚を並べ、拡大表示はすべてを順に示す。
+export function selectPostImages(post: { attachments: AttachmentView[] }): AttachmentView[] {
+  return post.attachments.filter(
+    (attachment) => attachment.mime.startsWith('image/') && attachment.role !== 'video_poster'
+  );
 }
 
 export function selectVideoPoster(post: { attachments: AttachmentView[] }): AttachmentView | null {

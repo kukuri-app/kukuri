@@ -51,7 +51,7 @@ describe('buildPostMediaView', () => {
     });
   });
 
-  test('builds an image gallery with the primary image first and counts the rest', () => {
+  test('builds an image gallery in attachment order and shows every image up to four', () => {
     const media = build(
       [attachment({ hash: IMAGE_HASH }), attachment({ hash: SECOND_IMAGE_HASH, bytes: 4096 })],
       {
@@ -62,26 +62,43 @@ describe('buildPostMediaView', () => {
     expect(media).toMatchObject({
       kind: 'image',
       state: 'ready',
-      extraAttachmentCount: 1,
-      imagePreviewSrc: 'blob:first',
+      extraAttachmentCount: 0,
       metaMime: 'image/png',
-      currentImageIndex: 0,
     });
-    expect(media.imageGalleryItems?.map((item) => item.hash)).toEqual([
-      IMAGE_HASH,
-      SECOND_IMAGE_HASH,
-    ]);
+    expect(media.imageGalleryItems?.map((item) => item.src)).toEqual(['blob:first', 'blob:second']);
+  });
+
+  // #1690: カードは先頭 4 枚を並べ、5 枚目以降を「+N」に数える。
+  test('counts images after the first four as extra attachments', () => {
+    const hashes = ['1', '2', '3', '4', '5'].map((digit) => digit.repeat(64));
+    const media = build(hashes.map((hash) => attachment({ hash })));
+
+    expect(media).toMatchObject({ kind: 'image', state: 'loading', extraAttachmentCount: 1 });
+    expect(media.imageGalleryItems?.map((item) => item.hash)).toEqual(hashes);
   });
 
   test('stays loading until the object url settles and reports unavailable when it settles empty', () => {
     expect(build([attachment({ hash: IMAGE_HASH })])).toMatchObject({
       kind: 'image',
       state: 'loading',
-      imagePreviewSrc: null,
     });
     expect(
       build([attachment({ hash: IMAGE_HASH })], { mediaObjectUrls: { [IMAGE_HASH]: null } })
-    ).toMatchObject({ kind: 'image', state: 'unavailable' });
+    ).toMatchObject({ kind: 'image', state: 'unavailable', retryHashes: [IMAGE_HASH] });
+  });
+
+  // #1690: 並べた画像の一部の失敗は、その画像だけを失敗表示にし、枠ごとは置き換えない。
+  test('replaces the whole frame only when every shown image is unavailable', () => {
+    const images = [attachment({ hash: IMAGE_HASH }), attachment({ hash: SECOND_IMAGE_HASH })];
+    const partial = build(images, {
+      mediaObjectUrls: { [IMAGE_HASH]: null, [SECOND_IMAGE_HASH]: 'blob:second' },
+    });
+
+    expect(partial.state).toBe('ready');
+    expect(partial.imageGalleryItems?.map((item) => item.failed)).toEqual([true, false]);
+    expect(
+      build(images, { mediaObjectUrls: { [IMAGE_HASH]: null, [SECOND_IMAGE_HASH]: null } })
+    ).toMatchObject({ state: 'unavailable', retryHashes: [IMAGE_HASH, SECOND_IMAGE_HASH] });
   });
 
   test('gates every preview source while adult display is off', () => {
@@ -90,7 +107,7 @@ describe('buildPostMediaView', () => {
       mediaObjectUrls: { [IMAGE_HASH]: 'blob:first' },
     });
 
-    expect(media).toMatchObject({ kind: 'image', state: 'gated', imagePreviewSrc: null });
+    expect(media).toMatchObject({ kind: 'image', state: 'gated' });
     expect(media.imageGalleryItems).toEqual([]);
   });
 
@@ -136,7 +153,7 @@ describe('buildPostMediaView', () => {
       mediaObjectUrls: { [IMAGE_HASH]: 'blob:first' },
       advisoryPending: true,
     });
-    expect(media).toMatchObject({ kind: 'image', state: 'pending', imagePreviewSrc: null });
+    expect(media).toMatchObject({ kind: 'image', state: 'pending' });
     expect(media.imageGalleryItems).toEqual([]);
     expect(
       build([attachment({ hash: IMAGE_HASH })], { advisoryPending: true, adultContentGated: true })
