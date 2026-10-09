@@ -138,6 +138,7 @@ pub(crate) async fn run_device_backup_restore(
             passphrase: "harness backup passphrase".to_string(),
             frontend_state: frontend_state.clone(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )?;
@@ -158,6 +159,7 @@ pub(crate) async fn run_device_backup_restore(
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     );
@@ -175,6 +177,7 @@ pub(crate) async fn run_device_backup_restore(
             path: backup_path.display().to_string(),
             passphrase: "harness backup passphrase".to_string(),
         },
+        None,
     )?;
     anyhow::ensure!(preview.existing_account_id.is_none());
     let prepared = prepare_device_restore(
@@ -185,6 +188,7 @@ pub(crate) async fn run_device_backup_restore(
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )?;

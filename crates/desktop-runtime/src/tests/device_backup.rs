@@ -216,6 +216,7 @@ fn create_restore_fixture(
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -235,6 +236,7 @@ fn prepare_restore_fixture(
             replace_existing,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -339,6 +341,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: frontend_state.clone(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -354,6 +357,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             path: archive_path.display().to_string(),
             passphrase: PASSPHRASE.to_string(),
         },
+        None,
     )
     .expect("preview device backup");
     assert_eq!(preview.public_key, source_keys.public_key_hex());
@@ -373,6 +377,7 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -474,6 +479,83 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
     }
 }
 
+/// #1197: Android の保存・選択の画面が返す Content URI は path として開けない。呼出元が開いた file を渡すと、
+/// path の検査を経ずにその file へ書き、その file から確認・復元の準備ができる。中身のある file
+/// （既存の file を選んで上書きを確かめた場合）には、desktop と同じく書かない。
+#[tokio::test]
+async fn device_backup_round_trips_through_opened_files() {
+    let _resource = lock_test_resource(TestResource::IdentityStorage).await;
+    let (source, source_db) = initialized_app_data().await;
+    let archive_dir = tempdir().expect("archive tempdir");
+    let archive_path = archive_dir.path().join("chosen.kukuri-backup");
+    let uri = "content://com.android.providers.downloads.documents/document/1".to_string();
+    let request = CreateDeviceBackupRequest {
+        path: uri.clone(),
+        passphrase: PASSPHRASE.to_string(),
+        frontend_state: BTreeMap::new(),
+    };
+    let summary = create_device_backup(
+        source.path(),
+        &source_db,
+        &request,
+        Some(fs::File::create(&archive_path).expect("open chosen destination")),
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect("create device backup into the opened file");
+    assert_eq!(summary.path, uri);
+    assert_eq!(
+        summary.bytes,
+        fs::metadata(&archive_path).expect("chosen file").len()
+    );
+    let leftovers = fs::read_dir(archive_dir.path()).expect("list").count();
+    assert_eq!(leftovers, 1, "no temporary file next to the opened file");
+
+    let existing_path = archive_dir.path().join("existing.kukuri-backup");
+    fs::write(&existing_path, b"keep").expect("existing file");
+    let existing = fs::OpenOptions::new()
+        .write(true)
+        .open(&existing_path)
+        .expect("open existing destination");
+    let error = create_device_backup(
+        source.path(),
+        &source_db,
+        &request,
+        Some(existing),
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect_err("a chosen file with content is not overwritten");
+    assert!(error.to_string().contains("already exists"), "{error:#}");
+    assert_eq!(fs::read(&existing_path).expect("existing file"), b"keep");
+
+    let (target, _target_db) = initialized_app_data().await;
+    let open_chosen = || Some(fs::File::open(&archive_path).expect("open chosen source"));
+    let preview = preview_device_backup(
+        target.path(),
+        &PreviewDeviceBackupRequest {
+            path: uri.clone(),
+            passphrase: PASSPHRASE.to_string(),
+        },
+        open_chosen(),
+    )
+    .expect("preview from the opened file");
+    assert_eq!(preview.public_key, summary.public_key);
+    prepare_device_restore(
+        target.path(),
+        &RestoreDeviceBackupRequest {
+            path: uri,
+            passphrase: PASSPHRASE.to_string(),
+            replace_existing: false,
+            apply_frontend_state: false,
+        },
+        open_chosen(),
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect("prepare restore from the opened file");
+}
+
 #[tokio::test]
 async fn restore_failures_preserve_the_existing_account_registry() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
@@ -488,6 +570,7 @@ async fn restore_failures_preserve_the_existing_account_registry() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -505,6 +588,7 @@ async fn restore_failures_preserve_the_existing_account_registry() {
             replace_existing: true,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     );
@@ -538,6 +622,7 @@ async fn restore_failures_preserve_the_existing_account_registry() {
                 replace_existing: true,
                 apply_frontend_state: false,
             },
+            None,
             &DeviceBackupCancellation::default(),
             |_| {},
         );
@@ -562,6 +647,7 @@ async fn restore_failures_preserve_the_existing_account_registry() {
             replace_existing: false,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     );
@@ -593,6 +679,7 @@ async fn canceled_backup_removes_partial_output_and_preserves_source_state() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &cancellation,
         |progress| {
             if progress.phase == crate::backup::DeviceBackupPhase::Encrypting {
@@ -633,6 +720,7 @@ async fn backup_is_refused_until_the_protected_migration_finishes() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -657,6 +745,7 @@ async fn existing_backup_destination_is_never_overwritten() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     );
@@ -687,6 +776,7 @@ async fn storage_exhaustion_during_backup_removes_partial_output() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -713,6 +803,7 @@ async fn storage_exhaustion_during_restore_preserves_existing_state() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -729,6 +820,7 @@ async fn storage_exhaustion_during_restore_preserves_existing_state() {
             replace_existing: false,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     ) {
@@ -765,6 +857,7 @@ async fn interrupted_replacement_is_rolled_back_on_recovery() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -777,6 +870,7 @@ async fn interrupted_replacement_is_rolled_back_on_recovery() {
             replace_existing: true,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )

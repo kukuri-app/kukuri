@@ -47,7 +47,7 @@ impl ClientSession {
         let backup_db = db.clone();
         let cancellation = self.operation.device_backup_cancellation();
         let result = tokio::task::spawn_blocking(move || {
-            create_device_backup(&dir, &backup_db, &request, &cancellation, |_| {})
+            create_device_backup(&dir, &backup_db, &request, None, &cancellation, |_| {})
         })
         .await;
         // 書込み失敗や取消でも、停止したruntimeを再構築してから応答する。
@@ -106,7 +106,7 @@ impl ClientSession {
         let cancellation = self.operation.device_backup_cancellation();
         let before_commit = async {
             let prepared = tokio::task::spawn_blocking(move || {
-                prepare_device_restore(&dir, &request, &cancellation, |_| {})
+                prepare_device_restore(&dir, &request, None, &cancellation, |_| {})
             })
             .await
             .map_err(|_| failed())?

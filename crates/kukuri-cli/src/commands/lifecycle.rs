@@ -197,6 +197,7 @@ impl CommandHandler for Handler {
                                         path: request.path,
                                         passphrase,
                                     },
+                                    None,
                                 )
                             })
                             .await

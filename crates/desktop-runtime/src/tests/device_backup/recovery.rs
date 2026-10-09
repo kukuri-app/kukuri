@@ -61,6 +61,7 @@ async fn committed_restore_remains_pending_until_consent_and_activation() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -75,6 +76,7 @@ async fn committed_restore_remains_pending_until_consent_and_activation() {
             replace_existing: false,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -267,6 +269,7 @@ async fn new_account_install_stop_rolls_back_without_changing_existing_state() {
             passphrase: PASSPHRASE.to_string(),
             frontend_state: BTreeMap::from([("kukuri:draft".to_string(), "draft".to_string())]),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -282,6 +285,7 @@ async fn new_account_install_stop_rolls_back_without_changing_existing_state() {
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -384,6 +388,7 @@ async fn activated_frontend_state_survives_finalize_restart_until_acknowledged()
             passphrase: PASSPHRASE.to_string(),
             frontend_state: frontend_state.clone(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -398,6 +403,7 @@ async fn activated_frontend_state_survives_finalize_restart_until_acknowledged()
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -452,6 +458,7 @@ async fn activated_frontend_state_survives_finalize_restart_until_acknowledged()
             replace_existing: false,
             apply_frontend_state: true,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )

@@ -72,6 +72,7 @@ pub(super) async fn backup_and_restore(
             passphrase: "protected migration passphrase".into(),
             frontend_state: BTreeMap::new(),
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
@@ -98,6 +99,7 @@ pub(super) async fn backup_and_restore(
             replace_existing: false,
             apply_frontend_state: false,
         },
+        None,
         &DeviceBackupCancellation::default(),
         |_| {},
     )
