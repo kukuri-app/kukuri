@@ -18,6 +18,33 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.3-preview.1] - 2026-10-09
+
+### Features
+
+- 閲覧した端末が NIP-05 の識別子を照会し、名前の後ろに @domain を出す（#1670 AC-2） ([#1684](https://github.com/kukuri-app/kukuri/pull/1684))
+- カスタムリアクションのセットを作り、投稿・DM から取り込めるようにする（#1232 AC-4） ([#1682](https://github.com/kukuri-app/kukuri/pull/1682))
+- プロフィールに NIP-05 の識別子を設定し、署名つきプロフィールで配る（#1670 AC-1） ([#1679](https://github.com/kukuri-app/kukuri/pull/1679))
+- 自作・保存済みのカスタムリアクションの画像を公開 blob の発見の対象にする（#1232 AC-3） ([#1681](https://github.com/kukuri-app/kukuri/pull/1681))
+- カスタムリアクションの ID を画像の hash と検索名から求める（#1232 AC-1） ([#1680](https://github.com/kukuri-app/kukuri/pull/1680))
+- 主ボタンを OS に合わせ（Mac・スマートフォン・OS 不明はブラウザ版）、metadata を Web 公開に揃える（#1669） ([#1675](https://github.com/kukuri-app/kukuri/pull/1675))
+- LP の画面と OGP を、ベランダ菜園の会話が読めるスマートフォン幅の画面へ替える（#1668） ([#1672](https://github.com/kukuri-app/kukuri/pull/1672))
+- LP を 4 つの役割群へ絞り、Hero を「話題でつながる。運営は選べる。」にする（#1667） ([#1671](https://github.com/kukuri-app/kukuri/pull/1671))
+- スマートフォンの導線をブラウザ版へ切り替え、Web 版の名前を kukuri web にする ([#1665](https://github.com/kukuri-app/kukuri/pull/1665))
+
+### Fixes
+
+- カスタム絵文字の保存メニューを「保存して自分も使う」にする（#1232 AC-2） ([#1678](https://github.com/kukuri-app/kukuri/pull/1678))
+- 通知の列の文脈の行で、話題とチャンネルを ID ではなく名前で出す（#1676） ([#1677](https://github.com/kukuri-app/kukuri/pull/1677))
+- 投稿カードの元のトピック・元トピックを英数字以外の話題名でも名前のチップにする（#1673） ([#1674](https://github.com/kukuri-app/kukuri/pull/1674))
+
+### Other
+
+- リリースの版を 0.4.3 にする ([#1685](https://github.com/kukuri-app/kukuri/pull/1685))
+- カスタムリアクションとそのセットの公開を法務文書へ反映し、Legal bundle を版 10 にする（#1232 AC-5） ([#1683](https://github.com/kukuri-app/kukuri/pull/1683))
+- 0.4.2 preview の公開と LP・運用記録を完了する（#1657 AC-4） ([#1664](https://github.com/kukuri-app/kukuri/pull/1664))
+- 一覧鍵を含む build で検索 capability の起動を確認する（#1657 AC-1）
+
 ## [v0.4.2-preview.1] - 2026-10-08
 
 ### Features
