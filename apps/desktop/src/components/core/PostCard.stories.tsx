@@ -73,7 +73,6 @@ function createView(overrides?: Partial<PostCardView>): PostCardView {
       state: 'ready',
       metaMime: null,
       metaBytesLabel: null,
-      imagePreviewSrc: null,
       videoPosterPreviewSrc: null,
       videoPlaybackSrc: null,
       videoUnsupportedOnClient: false,
@@ -120,7 +119,6 @@ export const ImagePending: Story = {
         state: 'loading',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -139,8 +137,6 @@ export const ImageReady: Story = {
         state: 'ready',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc:
-          'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="%2300b3a4"/><circle cx="180" cy="120" r="42" fill="%23ffd36e"/><path d="M0 280l120-100 80 70 110-130 130 160H0z" fill="%230f2231"/></svg>',
         imageGalleryItems: [
           {
             hash: 'image-1',
@@ -153,7 +149,6 @@ export const ImageReady: Story = {
             mime: 'image/png',
           },
         ],
-        currentImageIndex: 0,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -300,7 +295,6 @@ function advisoryGatedView(kind: 'image' | 'video' | null): PostCardView {
       gatedBy: kind ? 'advisory' : undefined,
       metaMime: kind === 'video' ? 'video/mp4' : kind ? 'image/png' : null,
       metaBytesLabel: kind ? '2.0 KB' : null,
-      imagePreviewSrc: null,
       imageGalleryItems: [],
       videoPosterPreviewSrc: null,
       videoPlaybackSrc: null,
@@ -347,7 +341,6 @@ export const UnavailableContentAndMedia: Story = {
         state: 'unavailable',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -372,7 +365,6 @@ export const DeveloperUnavailableDiagnostics: Story = {
         state: 'unavailable',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -400,7 +392,6 @@ export const MediaFetchFailed: Story = {
         state: 'unavailable',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -431,7 +422,6 @@ export const MediaFetchRetrying: Story = {
         state: 'unavailable',
         metaMime: 'image/png',
         metaBytesLabel: '2.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc: null,
         videoPlaybackSrc: null,
         videoUnsupportedOnClient: false,
@@ -491,7 +481,6 @@ export const VideoPosterOnly: Story = {
         state: 'ready',
         metaMime: 'video/mp4',
         metaBytesLabel: '8.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc:
           'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="%23101923"/><rect x="110" y="70" width="420" height="220" rx="24" fill="%23f59d62"/><polygon points="285,145 285,215 355,180" fill="%23101923"/></svg>',
         videoPlaybackSrc: null,
@@ -512,7 +501,6 @@ export const VideoPlayable: Story = {
         state: 'ready',
         metaMime: 'video/mp4',
         metaBytesLabel: '8.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc:
           'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="%23101923"/><rect x="110" y="70" width="420" height="220" rx="24" fill="%2300b3a4"/></svg>',
         videoPlaybackSrc:
@@ -533,7 +521,6 @@ export const UnsupportedVideo: Story = {
         state: 'ready',
         metaMime: 'video/mp4',
         metaBytesLabel: '8.0 KB',
-        imagePreviewSrc: null,
         videoPosterPreviewSrc:
           'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="%23101923"/><text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" fill="%23f6f1e8" font-size="40">unsupported</text></svg>',
         videoPlaybackSrc: null,

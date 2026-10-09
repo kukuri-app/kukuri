@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { IconButton } from '@/components/ui/icon-button';
 
+import { MediaDemandObserver } from './MediaDemandObserver';
 import { MediaFetchFailure } from './MediaFetchFailure';
 
 type MediaViewerDialogProps = {
@@ -129,6 +130,8 @@ export function MediaViewerDialog({
               moveBy(deltaX > 0 ? -1 : 1);
             }}
           >
+            {/* #1690: 表示中の画像を取得する。カードに並ばない 5 枚目以降はここでだけ取得する。 */}
+            <MediaDemandObserver hash={currentItem?.hash ?? null} />
             {currentItem?.src ? (
               <img
                 className='media-viewer-image'
