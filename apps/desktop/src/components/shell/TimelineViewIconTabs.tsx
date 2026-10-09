@@ -1,4 +1,4 @@
-import { Bookmark, Check, Funnel, List, LoaderPinwheel, UserRoundArrowLeft, Users } from 'lucide-react';
+import { Bookmark, Check, Funnel, List, LoaderPinwheel, UserRoundArrowLeft, UsersRound } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,7 +10,8 @@ import type { ColumnTimelineFilter } from '@/shell/slices/workspace';
 export type TimelineViewId = 'feed' | 'bookmarks';
 
 const FILTERS = [undefined, 'mutual', 'following'] as const;
-const FILTER_ICONS = { none: Funnel, mutual: Users, following: UserRoundArrowLeft };
+// 関係のアイコンは投稿カードの関係の表示(PostMetaIcons)と同じものを使う。
+const FILTER_ICONS = { none: Funnel, mutual: UsersRound, following: UserRoundArrowLeft };
 
 type TimelineViewIconTabsProps = {
   activeView: TimelineViewId;

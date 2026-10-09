@@ -109,7 +109,7 @@ test('the filter menu narrows the feed to mutuals or follows, keeps own posts an
   await waitFor(() => expect(shownPosts()).toEqual(['mutual', 'own']));
   const mutual = within(header()).getByRole('button', { name: 'Filter (Mutuals only)' });
   expect(mutual).toHaveAttribute('data-active', 'true');
-  expect(mutual.querySelector('svg')).toHaveClass('lucide-users');
+  expect(mutual.querySelector('svg')).toHaveClass('lucide-users-round');
   await waitFor(() => expect(storedFilter()).toBe('mutual'));
 
   await selectFilter(user, 'Filter (Mutuals only)', 'Following only');
