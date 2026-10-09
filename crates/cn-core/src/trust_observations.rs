@@ -17,6 +17,8 @@ use kukuri_cn_protocol::normalize::normalize_pubkey;
 use kukuri_cn_trust::{RelationObservation, RelationObservationKind};
 use kukuri_core::{TrustObservation, TrustObservationKind};
 
+use crate::retention::{RETENTION_CLEANUP_BATCH, cleanup_batches};
+
 /// revoked 観測を保持する日数（ADR 0026 §8.3）。
 pub const REVOKED_TRUST_OBSERVATION_RETENTION_DAYS: i64 = 30;
 /// active 観測を評価に使い、保持する日数。
@@ -277,16 +279,40 @@ pub async fn latest_successful_relation_snapshot_id(pool: &PgPool) -> Result<Opt
     .await?)
 }
 
-/// 保持期間を過ぎた観測を削除する。削除した行数を返す。
+/// `$1` は解除の受信期限、`$2` は有効な観測の期限、`$3` は 1 取引全体の削除上限。
+/// 状態ごとの部分索引から候補を選び、行の位置で消す。両方に残件があっても合計は上限以内。
+pub const EXPIRED_TRUST_OBSERVATIONS: &str = "DELETE FROM cn_trust.observations
+    WHERE ctid = ANY(ARRAY(
+        (SELECT ctid FROM cn_trust.observations
+         WHERE NOT active AND received_at <= $1 ORDER BY received_at LIMIT $3)
+        UNION ALL
+        (SELECT ctid FROM cn_trust.observations
+         WHERE active AND observed_at <= $2 ORDER BY observed_at LIMIT $3)
+        LIMIT $3))";
+
+/// 保持期間を過ぎた観測を 1 取引で合計 `limit` 件まで消す。削除した行数を返す。
+pub async fn delete_expired_trust_observations_batch(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+    limit: i64,
+) -> Result<u64> {
+    Ok(sqlx::query(EXPIRED_TRUST_OBSERVATIONS)
+        .bind(now - Duration::days(REVOKED_TRUST_OBSERVATION_RETENTION_DAYS))
+        .bind(now - Duration::days(ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS))
+        .bind(limit)
+        .execute(pool)
+        .await?
+        .rows_affected())
+}
+
+/// 上限まで消せた間だけ、1 取引に合計 128 件ずつ次の削除を回す。削除した合計を返す。
 pub async fn cleanup_trust_observations(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
-    Ok(sqlx::query(
-        "DELETE FROM cn_trust.observations
-         WHERE (active = FALSE AND received_at <= $1)
-            OR (active = TRUE AND observed_at <= $2)",
-    )
-    .bind(now - Duration::days(REVOKED_TRUST_OBSERVATION_RETENTION_DAYS))
-    .bind(now - Duration::days(ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS))
-    .execute(pool)
-    .await?
-    .rows_affected())
+    let mut count = 0;
+    cleanup_batches!({
+        let deleted =
+            delete_expired_trust_observations_batch(pool, now, RETENTION_CLEANUP_BATCH).await?;
+        count += deleted;
+        deleted == RETENTION_CLEANUP_BATCH as u64
+    });
+    Ok(count)
 }

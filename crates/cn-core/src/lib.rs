@@ -204,10 +204,11 @@ pub use trust_inputs::{
     rebuild_trust_totals, sweep_expired_trust_signals, sync_trust_half_life, trust_risk_input,
 };
 pub use trust_observations::{
-    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, RELATION_OBSERVATIONS_PER_TARGET_LIMIT,
-    REVOKED_TRUST_OBSERVATION_RETENTION_DAYS, StoreTrustObservationsOutcome,
-    TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS, TrustObservationSharingStatus,
-    cleanup_trust_observations, latest_successful_relation_snapshot_id,
+    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, EXPIRED_TRUST_OBSERVATIONS,
+    RELATION_OBSERVATIONS_PER_TARGET_LIMIT, REVOKED_TRUST_OBSERVATION_RETENTION_DAYS,
+    StoreTrustObservationsOutcome, TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS,
+    TrustObservationSharingStatus, cleanup_trust_observations,
+    delete_expired_trust_observations_batch, latest_successful_relation_snapshot_id,
     list_active_relation_observations, revoke_trust_observation_sharing, store_trust_observations,
     trust_observation_sharing_status,
 };

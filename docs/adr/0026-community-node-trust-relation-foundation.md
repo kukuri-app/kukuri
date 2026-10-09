@@ -374,7 +374,10 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 - 取消 `DELETE /v1/trust/observations` は、その observer の観測を全削除し、同じ取引でその observer の任意文書への
   同意の記録（全版）を消す（#1699。旧案の取消時刻の記録は廃止）。取消後の受付は再同意まで拒否する。
   任意同意の版が変わった observer の観測は、再同意まで評価に使わない。
-- 保持: revoked は 30 日、active は観測時刻から 180 日で評価対象から外し、定期 cleanup で削除する。
+- 保持: revoked は受信時刻から 30 日、active は観測時刻から 180 日で評価対象から外し、cleanup で削除する。
+  cleanup は起動直後と以後 1 時間ごとに背景で実行し、1 取引全体で最大 128 件を消す。
+  解除と有効の期限切れはそれぞれ `(received_at) WHERE NOT active`・`(observed_at) WHERE active` の
+  部分索引から上限つきで選び、合計の上限まで消せた間だけ次の取引を回す（#1704 AC-3）。
   revoked の行を削除した後は、それより古い active envelope の再送を古いと判定できない。client の送信待ちは
   対象・種別ごとに最新 1 件へ集約して送るため、通常の再送では起きない。
 - 観測時刻が受信時刻より 5 分以上未来の envelope は拒否する（後の解除を古いと誤判定させないため）。
