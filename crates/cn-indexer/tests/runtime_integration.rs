@@ -570,3 +570,112 @@ async fn arcadedb_recent_listing_reads_only_returned_entries() -> Result<()> {
     );
     Ok(())
 }
+
+/// 一意索引 `(scope_kind, scope_id, object_id)` の bucket の索引と file の id（圧縮で置き換わると変わる）。
+async fn unique_index_files(config: &ArcadeDbConfig) -> Result<Vec<(String, u64)>> {
+    let indexes = arcadedb_command(config, "sql", "SELECT FROM schema:indexes").await?;
+    let mut files: Vec<_> = indexes["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|index| {
+            index["properties"] == serde_json::json!([["scope_kind", "scope_id", "object_id"]])
+                && !index["associatedBucketId"].is_null()
+        })
+        .map(|index| {
+            (
+                index["name"].as_str().unwrap_or_default().to_string(),
+                index["fileId"].as_u64().unwrap_or_default(),
+            )
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// 実 ArcadeDB: 一意索引が自動の圧縮を受けた後も、scope の回収はその scope の文書をすべて消し、
+/// 数え上げも全件を数える（#1726）。
+///
+/// ArcadeDB 26.8.1 は、圧縮済みの系列を一意索引の先頭 2 列で引くと、範囲の始まりを含む直前の葉を
+/// 飛ばした（ArcadeData/arcadedb#8806）。索引の並びで対象の前に別の scope の文書を置き、圧縮を待って確かめる。
+#[tokio::test]
+async fn arcadedb_scope_removal_reaches_entries_after_compaction() -> Result<()> {
+    if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_ARCADEDB_TESTS") {
+        eprintln!("skipping ArcadeDB projection test; set KUKURI_CN_RUN_ARCADEDB_TESTS=1");
+        return Ok(());
+    }
+    let config = ArcadeDbConfig::from_env();
+    let projection = ArcadeDbProjection::new(config.clone())?;
+    projection.ensure_schema().await?;
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    // 対象の scope の前に、自動の圧縮（可変の頁 10 頁）を起こす数の文書を持つ scope が並ぶ。
+    let (target, preceding) = (format!("cnprefix-{run}-m"), format!("cnprefix-{run}-a"));
+    let files = unique_index_files(&config).await?;
+    for (scope, count) in [(&target, 2_000u64), (&preceding, 50_000)] {
+        for start in (0..count).step_by(1_000) {
+            let documents: Vec<_> = (start..start + 1_000)
+                .map(|i| {
+                    serde_json::json!({
+                        "scope_kind": "public_topic",
+                        "scope_id": scope,
+                        // 投稿 id と同じ長さで、並びが入れる順に揃わない値。
+                        "object_id": format!("{:064x}", i.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                        "author_pubkey": "author",
+                        "text": "prefix",
+                        "created_at": 6_000_000_000 + i as i64,
+                        "source_replica_id": format!("topic::{scope}"),
+                    })
+                })
+                .collect();
+            arcadedb_command(
+                &config,
+                "sqlscript",
+                &format!(
+                    "INSERT INTO IndexedEntry CONTENT {}; RETURN 1;",
+                    serde_json::Value::Array(documents)
+                ),
+            )
+            .await?;
+        }
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while unique_index_files(&config).await? == files {
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "the unique index was not compacted"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let counted = projection
+        .count_scope(IndexScopeKind::PublicTopic, &target)
+        .await?;
+    let mut removed = 0;
+    loop {
+        let page = projection
+            .remove_scope_page(IndexScopeKind::PublicTopic, &target, 128)
+            .await?;
+        if page == 0 {
+            break;
+        }
+        removed += page;
+    }
+    // scope_id だけの条件は複合索引の先頭にならないので、残りは全件の走査で数える。
+    let left = arcadedb_command(
+        &config,
+        "sql",
+        &format!("SELECT count(*) AS total FROM IndexedEntry WHERE scope_id = '{target}'"),
+    )
+    .await?;
+    assert_eq!(
+        (counted, removed, left["result"][0]["total"].as_u64()),
+        (2_000, 2_000, Some(0))
+    );
+    while projection
+        .remove_scope_page(IndexScopeKind::PublicTopic, &preceding, 10_000)
+        .await?
+        > 0
+    {}
+    Ok(())
+}
