@@ -25,6 +25,7 @@ use kukuri_cn_safety::{
 };
 use kukuri_cn_trust::{
     EdgeFeatures, FEATURE_SHARED_TOPICS, MemoryRelationStore, RelationStore, TrustParams,
+    TrustReadView, compose_trust,
 };
 use kukuri_cn_user_api::{
     RelationVisibilityState, TrustReadState, UserApiConfig, app_router, build_state,
@@ -728,12 +729,17 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
 
     let (before_a, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
     let (before_c, _) = read_trust(&client, base_url, token_c.as_str(), &target_hex).await?;
-    let t_value = before_a.view.trust;
+    // T は応答ごとの内訳から求める（相対成分は照会の時刻まで減衰するので、別の照会とは比べない。
+    // JSON の数値の読み取りは最後の桁がずれうる）。
+    let t_of = |view: &TrustReadView| {
+        compose_trust(&TrustParams::default(), view.absolute, view.relative).trust
+    };
+    let is_t = |view: &TrustReadView| (view.trust - t_of(view)).abs() < 1e-12;
+    let t_value = t_of(&before_a.view);
     assert!(t_value < 0.0);
-    assert_eq!(
-        before_c.view.trust, t_value,
-        "観測が無ければ閲覧者によらず S = T"
-    );
+    for before in [&before_a, &before_c] {
+        assert!(is_t(&before.view), "観測が無ければ閲覧者によらず S = T");
+    }
     let before_eval = before_a.view.evaluation.clone().expect("evaluation");
     assert_eq!(
         before_eval.reasons,
@@ -756,12 +762,12 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     let (after_c, body_c) = read_trust(&client, base_url, token_c.as_str(), &target_hex).await?;
     // 同じ観測でも、U との relation が高い A の方が大きく下がる。
     assert!(after_a.view.trust < after_c.view.trust);
-    assert!(after_c.view.trust < t_value);
-    assert!((after_a.view.trust - (t_value - 0.9).max(-1.0)).abs() < 1e-9);
-    // T の内訳は閲覧者・観測で変わらない。
+    assert!(after_c.view.trust < t_of(&after_c.view));
+    assert!((after_a.view.trust - (t_of(&after_a.view) - 0.9).max(-1.0)).abs() < 1e-9);
+    // T の内訳は閲覧者・観測で変わらない（照会の時刻の差の減衰だけが残る）。
     for after in [&after_a, &after_c] {
         assert_eq!(after.view.absolute, before_a.view.absolute);
-        assert_eq!(after.view.relative, before_a.view.relative);
+        assert!((after.view.relative - before_a.view.relative).abs() < 1e-6);
         assert_eq!(after.view.basis.len(), before_a.view.basis.len());
         let eval = after.view.evaluation.as_ref().expect("evaluation");
         assert_eq!(eval.trust_version, before_eval.trust_version);
@@ -796,7 +802,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     let batch: TrustEvaluationsResponse = serde_json::from_str(&batch_body)?;
     assert_eq!(batch.viewer_pubkey, viewer_a.public_key_hex());
     assert_eq!(batch.evaluations.len(), 1, "重複 target は 1 件にまとめる");
-    assert_eq!(batch.evaluations[0].trust, after_a.view.trust);
+    assert!((batch.evaluations[0].trust - after_a.view.trust).abs() < 1e-6);
     assert!(batch.evaluations[0].evaluation.hide_recommended);
     for invalid in [serde_json::json!([]), serde_json::json!(["not-a-pubkey"])] {
         let response = client
@@ -840,7 +846,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     .await?
     .error_for_status()?;
     let (restored, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
-    assert_eq!(restored.view.trust, t_value);
+    assert!(is_t(&restored.view));
     let restored_eval = restored.view.evaluation.unwrap();
     assert_eq!(
         restored_eval.reasons,
@@ -870,7 +876,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     .execute(&server.pool)
     .await?;
     let (withdrawn, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
-    assert_eq!(withdrawn.view.trust, t_value);
+    assert!(is_t(&withdrawn.view));
     let withdrawn_version = withdrawn.view.evaluation.unwrap().relation_version;
     assert_ne!(
         withdrawn_version,

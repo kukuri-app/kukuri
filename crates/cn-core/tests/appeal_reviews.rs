@@ -6,7 +6,8 @@ use kukuri_cn_core::{
     RiskSignalCorrection, RiskSignalMetadataEdit, TestDatabase, apply_appeal_review_action,
     connect_postgres, get_appeal_review, get_community_node_report, get_risk_signal,
     initialize_database, insert_community_node_appeal, list_appeal_reviews, list_operator_actions,
-    list_trust_risk_inputs, persist_risk_signal, persist_risk_signal_deduplicated,
+    list_trust_basis_page, persist_risk_signal, persist_risk_signal_deduplicated,
+    sweep_expired_trust_signals,
 };
 use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
@@ -14,7 +15,12 @@ use kukuri_cn_safety::{
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const ISSUER: &str = "issuer-node-1";
-const NOW: &str = "2026-08-15T00:00:00Z";
+
+/// 利用者の trust read の basis（審査の結果を確かめる）。期限を過ぎた行は掃除の後に外れる。
+async fn basis(pool: &sqlx::PgPool, target: &str) -> Result<Vec<kukuri_cn_trust::TrustRiskInput>> {
+    sweep_expired_trust_signals(pool, chrono::Utc::now()).await?;
+    Ok(list_trust_basis_page(pool, target, None).await?.inputs)
+}
 
 fn integration_test_admin_database_url() -> Option<String> {
     kukuri_test_support::gated_env_url(
@@ -202,11 +208,13 @@ async fn operator_review_revalidates_and_commits_state_reports_and_audit_togethe
                 .status,
             "actioned"
         );
-        let trust =
-            list_trust_risk_inputs(&pool, RiskSignalTarget::UserPubkey, "alice", NOW).await?;
-        assert!(trust.absolute.is_empty());
-        assert_eq!(trust.relative.len(), 1);
-        assert_eq!(trust.relative[0].appeal_status, AppealStatus::Cleared);
+        let trust = basis(&pool, "alice").await?;
+        assert_eq!(trust.len(), 1);
+        assert_eq!(
+            trust[0].component,
+            kukuri_cn_trust::TrustComponentKind::Relative
+        );
+        assert_eq!(trust[0].appeal_status, AppealStatus::Cleared);
 
         let rejected =
             persist_risk_signal(&pool, ISSUER, &signal("bob", AppealStatus::None)).await?;
@@ -240,8 +248,7 @@ async fn operator_review_revalidates_and_commits_state_reports_and_audit_togethe
                 .status,
             "dismissed"
         );
-        let trust = list_trust_risk_inputs(&pool, RiskSignalTarget::UserPubkey, "bob", NOW).await?;
-        assert_eq!(trust.relative.len(), 1);
+        assert_eq!(basis(&pool, "bob").await?.len(), 1);
 
         let edited =
             persist_risk_signal(&pool, ISSUER, &signal("carol", AppealStatus::None)).await?;
@@ -320,20 +327,15 @@ async fn operator_review_revalidates_and_commits_state_reports_and_audit_togethe
             "関連通報は訂正版発行という対応を取った処理済みになる"
         );
         // 再取得(trust 入力): 旧判定が cleared(寄与 0)で残り、訂正版の新判定が現れる。
-        let trust =
-            list_trust_risk_inputs(&pool, RiskSignalTarget::UserPubkey, "carol", NOW).await?;
-        assert_eq!(trust.relative.len(), 2);
+        let trust = basis(&pool, "carol").await?;
+        assert_eq!(trust.len(), 2);
         assert!(
-            trust
-                .relative
-                .iter()
-                .any(|input| input.signal_id == edited.id
-                    && input.appeal_status == AppealStatus::Cleared),
+            trust.iter().any(|input| input.signal_id == edited.id
+                && input.appeal_status == AppealStatus::Cleared),
             "旧判定は cleared として根拠一覧に残る"
         );
         assert!(
             trust
-                .relative
                 .iter()
                 .any(|input| input.signal_id != edited.id
                     && input.appeal_status == AppealStatus::None),

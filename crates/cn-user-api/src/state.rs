@@ -9,7 +9,7 @@ use kukuri_cn_core::{
     RetentionPolicy, TopicRendezvousStore, apply_retention_policy, cleanup_expired,
     connect_postgres, initialize_database, initialize_database_for_runtime,
     latest_readiness_activation, readiness_context_fingerprint, sync_policies,
-    verify_legal_data_key,
+    sync_trust_half_life, verify_legal_data_key,
 };
 use kukuri_cn_indexer::{
     ArcadeDbConfig, ArcadeDbProjection, ArcadeDbRelationGraph, FailClosedIndexQuery, IndexQuery,
@@ -324,6 +324,10 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
     // 検証つきで読み、relation graph(ArcadeDB。`cn-cli relation analyze` が構築する)へ接続する。
     let trust_read: Option<Arc<TrustReadState>> = if config.trust_read_enabled {
         let params = TrustParams::from_env().context("invalid COMMUNITY_NODE_TRUST_* params")?;
+        // 集計の半減期を設定と揃える。違う半減期で作った集計は背景で作り直す（ADR 0026 §10）。
+        sync_trust_half_life(&pool, params.relative_half_life_days)
+            .await
+            .context("failed to sync the trust half-life")?;
         let relation = relation_visibility
             .as_ref()
             .context("relation visibility must be configured for trust reads")?

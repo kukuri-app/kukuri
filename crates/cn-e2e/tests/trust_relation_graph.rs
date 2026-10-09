@@ -349,9 +349,9 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
 
     dispute_risk_signal(&stack.pool, relative_signal.id.as_str()).await?;
     let disputed = read_trust().await?;
-    assert_eq!(
-        disputed["relative"].as_f64().unwrap(),
-        initial_relative,
+    // 相対成分は照会の時刻まで減衰するので、減衰の差だけを許す（ADR 0026 §10）。
+    assert!(
+        (disputed["relative"].as_f64().unwrap() - initial_relative).abs() < 1e-6,
         "disputed contribution must stay in place until resolution: {disputed}"
     );
 

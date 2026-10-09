@@ -1,22 +1,20 @@
-//! trust / relation reads への risk signal 供給契約の contract テスト（#406 → #415）。DB 不要。
+//! trust / relation reads への risk signal 供給契約の contract テスト（#406 → #415 → #1702）。DB 不要。
 //!
-//! ADR 0026 §2.7（category による絶対 / 相対振り分け）・§6.2（appeal 反映）を純関数
-//! `trust_risk_inputs_from` に対して固定する。
+//! ADR 0026 §2.7（category による絶対 / 相対振り分け）・§6.2（appeal 状態の同伴）を、永続化された
+//! risk signal 1 行を trust 入力にする純関数 `trust_risk_input` に対して固定する。失効した行・読めない
+//! 失効時刻の行を集計と basis から外す規則は、集計の trigger が持つ（`trust_totals.rs` の結合試験）。
 
 use chrono::Utc;
 
-use kukuri_cn_core::{StoredRiskSignal, trust_risk_inputs_from};
+use kukuri_cn_core::{StoredRiskSignal, trust_risk_input};
 use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
 };
-use kukuri_cn_trust::{TrustComponentKind, trust_component_for};
-
-const NOW: &str = "2026-07-02T09:00:00Z";
+use kukuri_cn_trust::{TrustComponentKind, TrustRiskInput, trust_component_for};
 
 fn stored_signal(
     id: &str,
     category: SafetyCategory,
-    expires_at: Option<&str>,
     appeal_status: Option<AppealStatus>,
 ) -> StoredRiskSignal {
     StoredRiskSignal {
@@ -30,7 +28,7 @@ fn stored_signal(
             basis: Basis::KnownHashMatch,
             confidence: Some(97),
             visibility: Visibility::Local,
-            expires_at: expires_at.map(str::to_string),
+            expires_at: None,
             appeal_status,
         },
         persisted_at: Utc::now(),
@@ -39,17 +37,21 @@ fn stored_signal(
     }
 }
 
+fn inputs(signals: &[StoredRiskSignal]) -> Vec<TrustRiskInput> {
+    signals.iter().map(trust_risk_input).collect()
+}
+
 /// #1058 AC-3: operator が値を確定した signal の印は trust 入力へそのまま運ばれる。
 #[test]
 fn operator_adjustment_is_carried_to_trust_inputs() {
     let adjusted_at = Utc::now();
-    let mut adjusted = stored_signal("sig-adjusted", SafetyCategory::Spam, None, None);
+    let mut adjusted = stored_signal("sig-adjusted", SafetyCategory::Spam, None);
     adjusted.operator_adjusted_at = Some(adjusted_at);
     adjusted.operator_origin_category = Some(SafetyCategory::Nsfw);
-    let plain = stored_signal("sig-plain", SafetyCategory::Spam, None, None);
-    let inputs = trust_risk_inputs_from(&[adjusted, plain], NOW).unwrap();
-    assert_eq!(inputs.relative[0].operator_adjusted_at, Some(adjusted_at));
-    assert_eq!(inputs.relative[1].operator_adjusted_at, None);
+    let plain = stored_signal("sig-plain", SafetyCategory::Spam, None);
+    let inputs = inputs(&[adjusted, plain]);
+    assert_eq!(inputs[0].operator_adjusted_at, Some(adjusted_at));
+    assert_eq!(inputs[1].operator_adjusted_at, None);
 }
 
 // --- 絶対 / 相対振り分け（ADR 0026 §2.7） ---
@@ -64,17 +66,13 @@ fn csam_risk_signal_feeds_absolute_component() {
     ] {
         assert_eq!(trust_component_for(category), TrustComponentKind::Absolute);
     }
-
-    let signals = vec![stored_signal("sig-1", SafetyCategory::Csam, None, None)];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.absolute.len(), 1);
-    assert!(inputs.relative.is_empty());
-    assert_eq!(inputs.absolute[0].component, TrustComponentKind::Absolute);
+    let input = trust_risk_input(&stored_signal("sig-1", SafetyCategory::Csam, None));
+    assert_eq!(input.component, TrustComponentKind::Absolute);
 }
 
 #[test]
 fn general_moderation_signal_feeds_relative_component() {
-    // nsfw / spam 等の文化圏依存の指標は相対成分（relation で重み付け）。
+    // nsfw / spam 等の文化圏依存の指標は相対成分。
     for category in [
         SafetyCategory::Nsfw,
         SafetyCategory::Spam,
@@ -83,23 +81,19 @@ fn general_moderation_signal_feeds_relative_component() {
     ] {
         assert_eq!(trust_component_for(category), TrustComponentKind::Relative);
     }
-
-    let signals = vec![
-        stored_signal("sig-1", SafetyCategory::Nsfw, None, None),
-        stored_signal("sig-2", SafetyCategory::Csam, None, None),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.absolute.len(), 1);
-    assert_eq!(inputs.relative.len(), 1);
-    assert_eq!(inputs.relative[0].signal_id, "sig-1");
-    assert_eq!(inputs.absolute[0].signal_id, "sig-2");
+    let inputs = inputs(&[
+        stored_signal("sig-1", SafetyCategory::Nsfw, None),
+        stored_signal("sig-2", SafetyCategory::Csam, None),
+    ]);
+    assert_eq!(inputs[0].component, TrustComponentKind::Relative);
+    assert_eq!(inputs[1].component, TrustComponentKind::Absolute);
 }
 
 // --- ADR 0028 contract: 非決定論的（VLM）suspected の trust 振り分け（#420） ---
 
 /// VLM scan 由来の suspected signal（basis = ClassifierScore）を模す。
 fn classifier_signal(id: &str, category: SafetyCategory) -> StoredRiskSignal {
-    let mut stored = stored_signal(id, category, None, None);
+    let mut stored = stored_signal(id, category, None);
     stored.signal.basis = Basis::ClassifierScore;
     stored.signal.severity = if category.is_critical_safety() {
         Severity::Critical
@@ -113,15 +107,11 @@ fn classifier_signal(id: &str, category: SafetyCategory) -> StoredRiskSignal {
 fn critical_suspected_feeds_trust_absolute_component() {
     // ADR 0028 §2.5 / ADR 0026 §2.3: critical（CSAM / CSE / grooming）の suspected
     // （厳格非決定論）は relation で薄まらない絶対成分に入る。
-    let signals = vec![
+    for input in inputs(&[
         classifier_signal("sig-csam", SafetyCategory::Csam),
         classifier_signal("sig-cse", SafetyCategory::Cse),
         classifier_signal("sig-grooming", SafetyCategory::Grooming),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.absolute.len(), 3);
-    assert!(inputs.relative.is_empty());
-    for input in &inputs.absolute {
+    ]) {
         assert_eq!(input.component, TrustComponentKind::Absolute);
         // 断定ラベルではなく suspected（ClassifierScore）の根拠を同伴する。
         assert_eq!(input.basis, Basis::ClassifierScore);
@@ -130,131 +120,47 @@ fn critical_suspected_feeds_trust_absolute_component() {
 
 #[test]
 fn spam_malware_phishing_feed_trust_relative_component() {
-    // ADR 0028 §2.5 / ADR 0026 §2.3 / §7.1: spam / malware / phishing の suspected は
-    // relation で重み付けされる相対成分に入る（旧 `general_moderation_feeds_trust_relative_component`
-    // は nsfw を含んでいたが、nsfw / objectionable は ADR 0026 §7 で advisory-only = 寄与 0）。
-    let signals = vec![
+    // ADR 0028 §2.5 / ADR 0026 §2.3 / §7.1: spam / malware / phishing の suspected は相対成分に入る
+    // （nsfw / objectionable は ADR 0026 §7 で advisory-only = 寄与 0）。
+    for input in inputs(&[
         classifier_signal("sig-malware", SafetyCategory::Malware),
         classifier_signal("sig-spam", SafetyCategory::Spam),
         classifier_signal("sig-phishing", SafetyCategory::Phishing),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.relative.len(), 3);
-    assert!(inputs.absolute.is_empty());
-    for input in &inputs.relative {
+    ]) {
         assert_eq!(input.component, TrustComponentKind::Relative);
         assert_eq!(input.basis, Basis::ClassifierScore);
     }
 }
 
-// --- expiry（失効 signal は寄与しない） ---
+// --- appeal 状態の同伴（ADR 0026 §6.2。Disputed = pending / Cleared = accepted） ---
 
 #[test]
-fn expired_signal_is_excluded_from_trust_inputs() {
-    let signals = vec![
-        // NOW より過去に失効 → 除外。
-        stored_signal(
-            "sig-expired",
-            SafetyCategory::Csam,
-            Some("2026-07-01T00:00:00Z"),
-            None,
-        ),
-        // 失効前 → 含む。
-        stored_signal(
-            "sig-live",
-            SafetyCategory::Csam,
-            Some("2026-08-01T00:00:00Z"),
-            None,
-        ),
-        // expires_at なし → 無期限で含む。
-        stored_signal("sig-forever", SafetyCategory::Csam, None, None),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    let ids: Vec<&str> = inputs
-        .absolute
-        .iter()
-        .map(|input| input.signal_id.as_str())
-        .collect();
-    assert_eq!(ids, vec!["sig-live", "sig-forever"]);
-}
-
-#[test]
-fn invalid_expires_at_signal_is_ignored_and_read_succeeds() {
-    // #700: 保存済みの不正な expires_at は移行せず「無視」する決定。該当判定だけを
-    // 寄与から除外して読み取りは成功させ、他の判定には影響させない
-    // （不正値 1 件で trust read 全体が 500 にならない）。
-    let signals = vec![
-        stored_signal(
-            "sig-broken",
-            SafetyCategory::Csam,
-            Some("not-a-timestamp"),
-            None,
-        ),
-        stored_signal("sig-valid", SafetyCategory::Csam, None, None),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    let ids: Vec<&str> = inputs
-        .absolute
-        .iter()
-        .map(|input| input.signal_id.as_str())
-        .collect();
-    assert_eq!(ids, vec!["sig-valid"]);
-    assert!(inputs.relative.is_empty());
-}
-
-#[test]
-fn invalid_now_timestamp_is_still_an_error() {
-    // now はサーバ生成値なので、不正なら従来どおり Err にする（設定・呼び出し側の欠陥検出）。
-    let signals = vec![stored_signal("sig-1", SafetyCategory::Csam, None, None)];
-    let error = trust_risk_inputs_from(&signals, "not-a-timestamp").unwrap_err();
-    assert!(
-        error.to_string().contains("invalid now timestamp"),
-        "{error}"
-    );
-}
-
-// --- appeal 反映（ADR 0026 §6.2。Disputed = pending / Cleared = accepted） ---
-
-#[test]
-fn cleared_appeal_excludes_contribution() {
-    let signals = vec![
+fn appeal_status_is_carried_for_explanation() {
+    // Cleared は寄与 0 の説明用 basis として、Disputed は寄与据え置きのまま、状態を同伴する。
+    let inputs = inputs(&[
         stored_signal(
             "sig-cleared",
             SafetyCategory::Csam,
-            None,
             Some(AppealStatus::Cleared),
         ),
-        stored_signal("sig-kept", SafetyCategory::Csam, None, None),
-    ];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.absolute.len(), 2);
-    assert_eq!(inputs.absolute[0].signal_id, "sig-cleared");
-    assert_eq!(inputs.absolute[0].appeal_status, AppealStatus::Cleared);
-    assert_eq!(inputs.absolute[1].signal_id, "sig-kept");
-}
-
-#[test]
-fn disputed_appeal_holds_contribution() {
-    // 申し立て中（pending）は寄与据え置き: 含まれたまま、状態を同伴して返る。
-    let signals = vec![stored_signal(
-        "sig-disputed",
-        SafetyCategory::Nsfw,
-        None,
-        Some(AppealStatus::Disputed),
-    )];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    assert_eq!(inputs.relative.len(), 1);
-    assert_eq!(inputs.relative[0].appeal_status, AppealStatus::Disputed);
+        stored_signal(
+            "sig-disputed",
+            SafetyCategory::Nsfw,
+            Some(AppealStatus::Disputed),
+        ),
+        stored_signal("sig-kept", SafetyCategory::Csam, None),
+    ]);
+    assert_eq!(inputs[0].appeal_status, AppealStatus::Cleared);
+    assert_eq!(inputs[1].appeal_status, AppealStatus::Disputed);
+    assert_eq!(inputs[2].appeal_status, AppealStatus::None);
 }
 
 // --- 根拠つき advisory（断定ラベル化しない） ---
 
 #[test]
 fn trust_inputs_carry_basis_confidence_visibility() {
-    let signals = vec![stored_signal("sig-1", SafetyCategory::Csam, None, None)];
-    let inputs = trust_risk_inputs_from(&signals, NOW).unwrap();
-    let input = &inputs.absolute[0];
-    // 消費側（#415）が issuer / 根拠 / 有効期限を説明できるよう、根拠フィールドを欠落なく同伴する。
+    let input = trust_risk_input(&stored_signal("sig-1", SafetyCategory::Csam, None));
+    // 消費側が issuer / 根拠 / 有効期限を説明できるよう、根拠フィールドを欠落なく同伴する。
     assert_eq!(input.issuer_node_id, "issuer-node");
     assert_eq!(input.category, SafetyCategory::Csam);
     assert_eq!(input.severity, Severity::High);
@@ -267,40 +173,18 @@ fn trust_inputs_carry_basis_confidence_visibility() {
 
 #[test]
 fn general_advisory_contributes_zero_to_trust() {
-    // ADR 0026 §7: nsfw / objectionable は供給層では `Relative` の入力として basis / confidence /
-    // appeal を同伴したまま残り（利用者向け read で状態を説明できる）、評価計算への寄与は
-    // scoring 層（`signal_contribution`）が常に 0 にする。供給層で落とさない。
+    // ADR 0026 §7: nsfw / objectionable は `Relative` の入力として basis / confidence / appeal を
+    // 同伴したまま残り（利用者向け read で状態を説明できる）、寄与は常に 0（集計にも 0 で入る）。
     let mut nsfw = classifier_signal("sig-nsfw", SafetyCategory::Nsfw);
     nsfw.signal.severity = Severity::Low;
     let mut objectionable = classifier_signal("sig-objectionable", SafetyCategory::Objectionable);
     objectionable.signal.severity = Severity::Low;
-    let inputs = trust_risk_inputs_from(&[nsfw, objectionable], NOW).unwrap();
-    assert!(inputs.absolute.is_empty());
-    assert_eq!(inputs.relative.len(), 2);
-    for input in &inputs.relative {
+    for input in inputs(&[nsfw, objectionable]) {
         assert_eq!(input.component, TrustComponentKind::Relative);
-        assert_eq!(
-            trust_component_for(input.category),
-            TrustComponentKind::Relative
-        );
         assert!(input.category.is_advisory_only());
         assert_eq!(input.basis, Basis::ClassifierScore);
         assert_eq!(input.severity, Severity::Low);
         assert_eq!(input.appeal_status, AppealStatus::None);
-        assert_eq!(kukuri_cn_trust::signal_contribution(input), 0.0);
+        assert_eq!(kukuri_cn_trust::signal_contribution(&input), 0.0);
     }
-    // 評価値は 0 のまま。
-    let view = kukuri_cn_trust::build_trust_read(
-        "pubkey-1",
-        &inputs,
-        chrono::DateTime::parse_from_rfc3339(NOW)
-            .unwrap()
-            .with_timezone(&Utc),
-        &kukuri_cn_trust::TrustParams::default(),
-        &kukuri_cn_trust::UniformRelationWeight::default(),
-    );
-    assert_eq!(view.relative, 0.0);
-    assert_eq!(view.trust, 0.0);
-    assert_eq!(view.basis.len(), 2);
-    assert!(view.basis.iter().all(|entry| entry.contribution == 0.0));
 }

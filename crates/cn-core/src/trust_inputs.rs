@@ -1,116 +1,321 @@
-//! trust / relation reads への risk signal 供給（#406 → #415）。
+//! 信頼値の照会の読取り（ADR 0026 §10、#1702）。
 //!
-//! 永続化された risk signal（`cn_safety.risk_signals`、#405）を、trust / relation の read が
-//! 消費できる **根拠つき入力** として返す。ADR 0026 §2.7 に従い、signal の category で
-//! trust の **絶対成分**（CSAM 等 critical safety。relation 非依存・report-bomb 不動）と
-//! **相対成分**（nsfw / spam 等。relation 重み付け・viewer 相対）へ振り分ける。
+//! T は対象ごとの集計（`cn_safety.trust_target_totals`）から求め、basis は対象の生きている risk signal
+//! （`cn_safety.trust_target_signals`）から 1 ページずつ読む。どちらも risk signal と著者の対応の変更を
+//! migration の trigger が差分で反映する。照会は対象の行数にも総件数にもよらず、集計の 1 行と 1 ページ
+//! （[`TRUST_BASIS_PAGE_SIZE`] + 1 行）だけを読む。期限を過ぎた行は [`sweep_expired_trust_signals`] が、
+//! 運営者が変えた半減期は [`rebuild_trust_totals`] が背景で反映する。
 //!
-//! ここは供給契約のみを担う。trust の合成式（ADR 0026 §6.2）・relation の cluster proximity・
-//! read surface（`CommunityLocalTrust`）本体は #415 が実装し、本モジュールの
-//! [`list_trust_risk_inputs`] を入力として消費する。
-//!
-//! 断定ラベルにしない（ADR 0026 §2.5 / trust-semantics）: 入力は必ず basis / confidence /
-//! visibility / expiry / appeal を同伴し、read surface が説明可能性を落とせない形にする。
-//! cross-node 開示（confirmed 絶対成分のみ、§6.3）は本 API の責務外（node-local read）で、
-//! visibility を同伴して返すことで #415 側が開示判定できる。
-//!
-//! appeal の反映（ADR 0026 §6.2。code の `AppealStatus` は ADR の語彙と次の対応）:
-//! - `Disputed`（= ADR の `pending`）: 寄与を**据え置き**。入力に含めたまま返す
-//!   （申し立て中に勝手に緩めない）。
-//! - `Cleared`（= ADR の `accepted`）: 評価への寄与を**除外**し、端末向け説明用に状態を同伴する。
-//! - `None`: 確定寄与（ADR の `rejected` 相当を含む、異議が立っていない状態）。
+//! 断定ラベルにしない（ADR 0026 §2.5 / trust-semantics）: basis は必ず basis / confidence /
+//! visibility / expiry / appeal を同伴する。`Cleared` は寄与 0 の説明用 basis として残す（§6.2）。
 
-use anyhow::{Context, Result};
-use chrono::DateTime;
-use sqlx::PgPool;
+use std::collections::HashMap;
 
-use kukuri_cn_safety::RiskSignalTarget;
-// 型（TrustComponentKind / TrustRiskInput / TrustRiskInputs / trust_component_for）は
-// pure domain の cn-trust（#415）へ移した。本 module は永続化 risk signal からの
-// 組み立て（供給契約）のみを担う。
-use kukuri_cn_trust::{TrustComponentKind, TrustRiskInput, TrustRiskInputs, trust_component_for};
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use sqlx::{PgPool, Row};
 
-use crate::safety_events::{
-    StoredRiskSignal, list_risk_signals_for_target, list_risk_signals_for_user,
-};
+use kukuri_cn_trust::{PullAudience, TrustRiskInput, TrustTotals, trust_component_for};
 
-/// 永続化済み risk signal 列から trust 入力を組み立てる純関数。
-///
-/// - `expires_at` が `now_rfc3339` 時点で失効した signal は除外する（`expires_at` が無い signal は
-///   無期限で残る。相対成分の半減期 decay 本体は #415）。
-/// - `AppealStatus::Cleared`（= accepted）は状態を保持し、評価層で寄与ゼロにする。
-///   `Disputed`（= pending）は寄与据え置きで含む。
-/// - category は [`trust_component_for`] で絶対 / 相対へ振り分ける。
-///
-/// 不正な RFC3339 の扱い（#700）: `now_rfc3339` はサーバ生成値なので不正なら Err。
-/// signal 側の `expires_at` は保存前検証で新規流入を防いだうえで、既存の不正値は
-/// 警告ログを残して該当 signal だけを除外する（不正値 1 件で read 全体を失敗させない）。
-pub fn trust_risk_inputs_from(
-    signals: &[StoredRiskSignal],
-    now_rfc3339: &str,
-) -> Result<TrustRiskInputs> {
-    let now = DateTime::parse_from_rfc3339(now_rfc3339)
-        .with_context(|| format!("invalid now timestamp `{now_rfc3339}` (expected RFC3339)"))?;
+use crate::safety_events::{StoredRiskSignal, risk_signal_from_row};
 
-    let mut inputs = TrustRiskInputs::default();
-    for stored in signals {
-        let signal = &stored.signal;
+/// basis の 1 ページの件数（ADR 0026 §10）。
+pub const TRUST_BASIS_PAGE_SIZE: usize = 50;
+/// 掃除が 1 回に消す行の上限。
+pub const TRUST_SWEEP_BATCH: i64 = 1_000;
+/// 半減期の作り直しが 1 回に扱う対象の上限。
+pub const TRUST_REBUILD_BATCH: i64 = 100;
 
-        if let Some(expires_at) = signal.expires_at.as_deref() {
-            let Ok(expires) = DateTime::parse_from_rfc3339(expires_at) else {
-                tracing::warn!(
-                    signal_id = %stored.id,
-                    expires_at,
-                    "risk signal の expires_at が RFC3339 として解析できないため trust 入力から除外します"
-                );
-                continue;
-            };
-            if expires <= now {
-                continue;
-            }
-        }
+/// 対象ごとの集計を読む SQL（`$1` = 対象の pubkey の配列）。行の無い対象は成分 0 を返す。
+pub const TRUST_TOTALS_SQL: &str = "SELECT k.target_pubkey,
+        COALESCE(t.absolute_units, 0) AS absolute_units,
+        COALESCE(t.relative_units, 0) AS relative_units,
+        COALESCE(t.relative_at, now()) AS relative_at,
+        COALESCE(t.half_life_days, s.relative_half_life_days) AS half_life_days,
+        COALESCE(t.disclosed_public_units, 0) AS disclosed_public_units,
+        COALESCE(t.disclosed_subscribed_units, 0) AS disclosed_subscribed_units,
+        COALESCE(t.digest, 0) AS digest
+    FROM unnest($1::text[]) AS k (target_pubkey)
+    CROSS JOIN cn_safety.trust_settings s
+    LEFT JOIN cn_safety.trust_target_totals t ON t.target_pubkey = k.target_pubkey";
 
-        let appeal_status = signal.appeal_status.unwrap_or_default();
-        let component = trust_component_for(signal.category);
-        let input = TrustRiskInput {
-            signal_id: stored.id.clone(),
-            issuer_node_id: stored.issuer_node_id.clone(),
-            target: signal.target,
-            target_id: signal.target_id.clone(),
-            component,
-            category: signal.category,
-            severity: signal.severity,
-            basis: signal.basis,
-            confidence: signal.confidence,
-            visibility: signal.visibility,
-            appeal_status,
-            expires_at: signal.expires_at.clone(),
-            persisted_at: stored.persisted_at,
-            operator_adjusted_at: stored.operator_adjusted_at,
-        };
-        match component {
-            TrustComponentKind::Absolute => inputs.absolute.push(input),
-            TrustComponentKind::Relative => inputs.relative.push(input),
-        }
-    }
-    Ok(inputs)
+/// basis の 1 ページを読む SQL（絶対成分が先、各成分は新しい順）。`$2`〜`$4` は前のページの最後の行。
+pub const TRUST_BASIS_PAGE_SQL: &str = "SELECT s.*
+    FROM cn_safety.trust_target_signals e
+    JOIN cn_safety.risk_signals s ON s.id = e.signal_id
+    WHERE e.target_pubkey = $1
+      AND (e.absolute, e.persisted_at, e.signal_id) < ($2, $3, $4)
+    ORDER BY e.absolute DESC, e.persisted_at DESC, e.signal_id DESC
+    LIMIT $5";
+
+const DISCLOSED_PUBLIC_PAGE_SQL: &str = "SELECT s.*
+    FROM cn_safety.trust_target_signals e
+    JOIN cn_safety.risk_signals s ON s.id = e.signal_id
+    WHERE e.target_pubkey = $1 AND e.disclosure = 'public'
+      AND (e.persisted_at, e.signal_id) < ($2, $3)
+    ORDER BY e.persisted_at DESC, e.signal_id DESC
+    LIMIT $4";
+
+const DISCLOSED_SUBSCRIBED_PAGE_SQL: &str = "SELECT s.*
+    FROM cn_safety.trust_target_signals e
+    JOIN cn_safety.risk_signals s ON s.id = e.signal_id
+    WHERE e.target_pubkey = $1 AND e.disclosure IS NOT NULL
+      AND (e.persisted_at, e.signal_id) < ($2, $3)
+    ORDER BY e.persisted_at DESC, e.signal_id DESC
+    LIMIT $4";
+
+/// basis のページの位置（前のページの最後の行）。wire では不透明な文字列として渡す。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustBasisCursor {
+    absolute: bool,
+    persisted_at: DateTime<Utc>,
+    signal_id: String,
 }
 
-/// 対象ごとの trust 入力 read（node-local）。
-///
-/// `list_risk_signals_for_target`（visibility を問わない node-local 参照）と
-/// [`trust_risk_inputs_from`] の合成。#415 の trust 絶対成分 / relation 相対重み付けが
-/// これを消費する。
-pub async fn list_trust_risk_inputs(
+impl TrustBasisCursor {
+    /// 最初のページの前（どの行よりも後ろの位置）。
+    fn start() -> Self {
+        Self {
+            absolute: true,
+            persisted_at: DateTime::<Utc>::MAX_UTC,
+            signal_id: String::new(),
+        }
+    }
+
+    fn after(input: &TrustRiskInput) -> Self {
+        Self {
+            absolute: input.component == kukuri_cn_trust::TrustComponentKind::Absolute,
+            persisted_at: input.persisted_at,
+            signal_id: input.signal_id.clone(),
+        }
+    }
+
+    /// `basis_next_cursor` の文字列を読む。読めなければ `None`。
+    pub fn parse(raw: &str) -> Option<Self> {
+        let mut parts = raw.splitn(3, '.');
+        let absolute = match parts.next()? {
+            "1" => true,
+            "0" => false,
+            _ => return None,
+        };
+        let persisted_at = DateTime::from_timestamp_micros(parts.next()?.parse().ok()?)?;
+        let signal_id = parts.next()?.to_string();
+        (!signal_id.is_empty()).then_some(Self {
+            absolute,
+            persisted_at,
+            signal_id,
+        })
+    }
+
+    fn encode(&self) -> String {
+        format!(
+            "{}.{}.{}",
+            u8::from(self.absolute),
+            self.persisted_at.timestamp_micros(),
+            self.signal_id
+        )
+    }
+}
+
+/// basis の 1 ページ。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustBasisPage {
+    pub inputs: Vec<TrustRiskInput>,
+    /// 続きがあれば次のページの cursor。
+    pub next_cursor: Option<String>,
+}
+
+/// 永続化された risk signal 1 行を trust 入力にする（category で絶対 / 相対へ振り分ける）。
+pub fn trust_risk_input(stored: &StoredRiskSignal) -> TrustRiskInput {
+    let signal = &stored.signal;
+    TrustRiskInput {
+        signal_id: stored.id.clone(),
+        issuer_node_id: stored.issuer_node_id.clone(),
+        target: signal.target,
+        target_id: signal.target_id.clone(),
+        component: trust_component_for(signal.category),
+        category: signal.category,
+        severity: signal.severity,
+        basis: signal.basis,
+        confidence: signal.confidence,
+        visibility: signal.visibility,
+        appeal_status: signal.appeal_status.unwrap_or_default(),
+        expires_at: signal.expires_at.clone(),
+        persisted_at: stored.persisted_at,
+        operator_adjusted_at: stored.operator_adjusted_at,
+    }
+}
+
+/// 対象ごとの集計を読む。要求した対象はすべて返す（行の無い対象は成分 0）。
+pub async fn load_trust_totals(
     pool: &PgPool,
-    target: RiskSignalTarget,
-    target_id: &str,
-    now_rfc3339: &str,
-) -> Result<TrustRiskInputs> {
-    let signals = if target == RiskSignalTarget::UserPubkey {
-        list_risk_signals_for_user(pool, target_id).await?
-    } else {
-        list_risk_signals_for_target(pool, target, target_id).await?
+    targets: &[String],
+) -> Result<HashMap<String, TrustTotals>> {
+    let rows = sqlx::query(TRUST_TOTALS_SQL)
+        .bind(targets)
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get("target_pubkey")?,
+                TrustTotals {
+                    absolute_units: row.try_get("absolute_units")?,
+                    relative_units: row.try_get("relative_units")?,
+                    relative_at: row.try_get("relative_at")?,
+                    half_life_days: row.try_get("half_life_days")?,
+                    disclosed_public_units: row.try_get("disclosed_public_units")?,
+                    disclosed_subscribed_units: row.try_get("disclosed_subscribed_units")?,
+                    digest: row.try_get("digest")?,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// 対象の basis の 1 ページ（`cursor` が無ければ最初のページ）。
+pub async fn list_trust_basis_page(
+    pool: &PgPool,
+    target_pubkey: &str,
+    cursor: Option<&TrustBasisCursor>,
+) -> Result<TrustBasisPage> {
+    let start = TrustBasisCursor::start();
+    let cursor = cursor.unwrap_or(&start);
+    let rows = sqlx::query(TRUST_BASIS_PAGE_SQL)
+        .bind(target_pubkey)
+        .bind(cursor.absolute)
+        .bind(cursor.persisted_at)
+        .bind(cursor.signal_id.as_str())
+        .bind(TRUST_BASIS_PAGE_SIZE as i64 + 1)
+        .fetch_all(pool)
+        .await?;
+    page_from_rows(&rows)
+}
+
+/// pull で `audience` へ開示できる basis の 1 ページ（新しい順）。
+pub async fn list_disclosed_trust_basis_page(
+    pool: &PgPool,
+    target_pubkey: &str,
+    audience: PullAudience,
+    cursor: Option<&TrustBasisCursor>,
+) -> Result<TrustBasisPage> {
+    let start = TrustBasisCursor::start();
+    let cursor = cursor.unwrap_or(&start);
+    let sql = match audience {
+        PullAudience::Public => DISCLOSED_PUBLIC_PAGE_SQL,
+        PullAudience::SubscribedNodes => DISCLOSED_SUBSCRIBED_PAGE_SQL,
     };
-    trust_risk_inputs_from(&signals, now_rfc3339)
+    let rows = sqlx::query(sql)
+        .bind(target_pubkey)
+        .bind(cursor.persisted_at)
+        .bind(cursor.signal_id.as_str())
+        .bind(TRUST_BASIS_PAGE_SIZE as i64 + 1)
+        .fetch_all(pool)
+        .await?;
+    page_from_rows(&rows)
+}
+
+fn page_from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<TrustBasisPage> {
+    let mut inputs = rows
+        .iter()
+        .map(|row| risk_signal_from_row(row).map(|stored| trust_risk_input(&stored)))
+        .collect::<Result<Vec<_>>>()?;
+    let next_cursor = (inputs.len() > TRUST_BASIS_PAGE_SIZE).then(|| {
+        inputs.truncate(TRUST_BASIS_PAGE_SIZE);
+        inputs
+            .last()
+            .map(TrustBasisCursor::after)
+            .unwrap_or_else(TrustBasisCursor::start)
+            .encode()
+    });
+    Ok(TrustBasisPage {
+        inputs,
+        next_cursor,
+    })
+}
+
+/// 期限（保持期間・失効時刻）が `now` までに来た行を、1 回 [`TRUST_SWEEP_BATCH`] 行まで集計から外す。
+/// 消した行数を返す。他の取引が削除中の行は飛ばす（次の回に残る）。
+pub async fn sweep_expired_trust_signals(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
+    let result = sqlx::query(
+        "WITH expired AS (
+             SELECT target_pubkey, signal_id FROM cn_safety.trust_target_signals
+             WHERE removal_at <= $1
+             ORDER BY removal_at
+             LIMIT $2
+             FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM cn_safety.trust_target_signals e
+         USING expired x
+         WHERE e.target_pubkey = x.target_pubkey AND e.signal_id = x.signal_id",
+    )
+    .bind(now)
+    .bind(TRUST_SWEEP_BATCH)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// 集計に使う半減期を運営者の設定と揃える。違う半減期で作った集計は [`rebuild_trust_totals`] が作り直す。
+pub async fn sync_trust_half_life(pool: &PgPool, half_life_days: f64) -> Result<()> {
+    sqlx::query(
+        "UPDATE cn_safety.trust_settings SET relative_half_life_days = $1
+         WHERE relative_half_life_days <> $1",
+    )
+    .bind(half_life_days)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 設定と違う半減期で作った集計を、1 回 [`TRUST_REBUILD_BATCH`] 対象まで作り直す。作り直した対象の数を返す。
+///
+/// 先に集計の行を lock してから、別の文（新しい snapshot）で対象の行を読み直す。lock の後に確定した行は
+/// 読み直しに入り、lock の間に書かれた行はその取引の trigger が作り直した後の集計へ足す。
+pub async fn rebuild_trust_totals(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
+    let mut tx = pool.begin().await?;
+    let targets: Vec<String> = sqlx::query_scalar(
+        "SELECT t.target_pubkey FROM cn_safety.trust_target_totals t
+         WHERE t.target_pubkey IN (
+             (SELECT target_pubkey FROM cn_safety.trust_target_totals, cn_safety.trust_settings
+              WHERE half_life_days < relative_half_life_days
+              ORDER BY half_life_days LIMIT $1)
+             UNION ALL
+             (SELECT target_pubkey FROM cn_safety.trust_target_totals, cn_safety.trust_settings
+              WHERE half_life_days > relative_half_life_days
+              ORDER BY half_life_days DESC LIMIT $1))
+         ORDER BY t.target_pubkey
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED",
+    )
+    .bind(TRUST_REBUILD_BATCH)
+    .fetch_all(&mut *tx)
+    .await?;
+    if targets.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query(
+        "UPDATE cn_safety.trust_target_totals t
+         SET (relative_units, relative_terms, relative_at, half_life_days) = (
+             SELECT COALESCE(sum(e.units * power(0.5::float8,
+                        extract(epoch FROM r.at - e.persisted_at)::float8
+                            / 86400 / s.relative_half_life_days)), 0),
+                    count(e.signal_id), r.at, s.relative_half_life_days
+             FROM cn_safety.trust_settings s
+             CROSS JOIN LATERAL (
+                 SELECT GREATEST($2, max(persisted_at)) AS at
+                 FROM cn_safety.trust_target_signals
+                 WHERE target_pubkey = t.target_pubkey AND NOT absolute AND units > 0
+             ) AS r
+             LEFT JOIN cn_safety.trust_target_signals e
+               ON e.target_pubkey = t.target_pubkey AND NOT e.absolute AND e.units > 0
+             GROUP BY r.at, s.relative_half_life_days)
+         WHERE t.target_pubkey = ANY($1)",
+    )
+    .bind(&targets)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(targets.len() as u64)
 }
