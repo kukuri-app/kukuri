@@ -1,5 +1,5 @@
 //! #1706 AC-2: legal hold を解除で消す migration
-//! （`202610090005_legal_hold_release_deletes_row.sql`）の Postgres integration テスト。
+//! （`202610090008_legal_hold_release_deletes_row.sql`）の Postgres integration テスト。
 //!
 //! `KUKURI_CN_RUN_INTEGRATION_TESTS=1` のときだけ実 DB に接続して実行する。直前の schema まで
 //! 適用した DB に有効な hold と解除済みの hold を置き、残りの migration の後に有効な行だけが同じ値で
@@ -9,7 +9,7 @@ use anyhow::Result;
 use kukuri_cn_core::{TestDatabase, connect_postgres, migrate_postgres, migrate_postgres_up_to};
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
-const BEFORE_RELEASE_DELETION_VERSION: i64 = 202610090004;
+const RELEASE_DELETION_VERSION: i64 = 202610090008;
 
 fn integration_test_admin_database_url() -> Option<String> {
     kukuri_test_support::gated_env_url(
@@ -28,7 +28,7 @@ async fn migration_deletes_released_holds_and_keeps_active_ones() -> Result<()> 
     let database = TestDatabase::create(admin_url.as_str(), "cn_legal_hold_migration").await?;
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
-        migrate_postgres_up_to(&pool, BEFORE_RELEASE_DELETION_VERSION).await?;
+        migrate_postgres_up_to(&pool, RELEASE_DELETION_VERSION - 1).await?;
         // rr-1 は解除の後に hold を開始し直した形（同じ対象に解除済みと有効な行がある）。
         sqlx::query(
             "INSERT INTO cn_legal.legal_holds

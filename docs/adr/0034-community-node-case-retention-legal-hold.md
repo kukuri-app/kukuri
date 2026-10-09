@@ -49,7 +49,7 @@ Community Node は通報、権利侵害申出、moderation artifact、operator a
 
 ### 2. 通常期限と legal hold を分離する
 
-legal hold は `report` または `rights_request` の既存 ID と、列挙済みデータ区分を対象にする。開始根拠、開始時刻、終了条件、actor を持ち、全 DB または wildcard 対象を許さない。解除で hold の行を消し、解除の時刻と actor は operator audit に残す（#1706）。
+legal hold は `report` または `rights_request` の既存 ID と、列挙済みデータ区分を対象にする。開始根拠、開始時刻、終了条件、actor を持ち、全 DB または wildcard 対象を許さない。解除で hold の行を消し、解除の時刻・actor・区分は operator audit の解除の記録に残す（#1706）。
 
 active hold は対象行の物理削除だけを止める。期限切れデータは hold 中でも公開状態照会、通常 API、通常 admin 一覧へ返さず、権限付き export のみが参照できる。解除時点で期限切れなら次回 cleanup で削除する。
 

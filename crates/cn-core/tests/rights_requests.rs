@@ -248,10 +248,10 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
         let audit = list_operator_actions(&pool, 20, 0).await?;
         for action in ["legal_hold.start", "legal_hold.release"] {
             assert!(
-                audit
-                    .iter()
-                    .any(|row| row.action == action && row.target_id == created.record.id),
-                "operator audit must keep {action}"
+                audit.iter().any(|row| row.action == action
+                    && row.target_id == created.record.id
+                    && row.after["data_categories"] == serde_json::json!(categories)),
+                "operator audit must keep {action} with the hold's categories"
             );
         }
         assert!(

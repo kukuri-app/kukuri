@@ -110,7 +110,7 @@ pub async fn release_legal_hold(
 ) -> Result<LegalHold> {
     validate_text("hold id", hold_id, 128)?;
     validate_text("actor", actor, 320)?;
-    // 解除で行を消す。解除の時刻・actor は operator audit に残す（#1706）。
+    // 解除で行を消す。解除の時刻・actor・区分は operator audit に残す（#1706）。
     let mut tx = pool.begin().await?;
     let row = sqlx::query("DELETE FROM cn_legal.legal_holds WHERE id = $1 RETURNING *")
         .bind(hold_id.trim())
@@ -125,7 +125,7 @@ pub async fn release_legal_hold(
         &hold.target_id,
         actor,
         json!({"hold_id": hold.id, "active": true}),
-        json!({"hold_id": hold.id, "active": false}),
+        json!({"hold_id": hold.id, "active": false, "data_categories": hold.data_categories}),
         now,
         retention.expiry(now, retention.operator_audit_days),
     )
