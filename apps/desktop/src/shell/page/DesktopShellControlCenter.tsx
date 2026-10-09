@@ -63,8 +63,7 @@ import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts'
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
-import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { EXTENDED_FEATURES_AVAILABLE, UNAVAILABLE_SETTINGS } from '@/lib/platform';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
 
@@ -648,7 +647,7 @@ export function DesktopShellControlCenter({
                   {t('shell:settingsSections.keyboard.label')}
                 </Button>
                 {/* #967: 端末移行・故障への備えの入口。設定の backup section を開くだけで、backup は開始しない。 */}
-                {IS_WEB_RUNTIME ? null : (
+                {UNAVAILABLE_SETTINGS.has('backup') ? null : (
                   <Button variant='ghost' type='button' onClick={() => openSettings('backup')}>
                     <DatabaseBackup className='size-4' aria-hidden='true' />
                     {t('shell:settingsSections.backup.label')}

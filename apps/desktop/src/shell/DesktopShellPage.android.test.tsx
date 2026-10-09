@@ -2,8 +2,11 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
-// Android の Tauri の build（#1198 AC-1、#1193 D1）: live・game・metaverse・Dome とウィンドウ・タスクトレイの設定を出さない。
-vi.mock('@/lib/platform', () => ({ IS_ANDROID: true, EXTENDED_FEATURES_AVAILABLE: false }));
+// Android の Tauri の build（#1198 AC-1、#1193 D1）: Tauri CLI が渡す platform を android にして、live・game・metaverse・Dome と
+// ウィンドウ・タスクトレイの設定を出さないことを確かめる。
+vi.hoisted(() => {
+  vi.stubEnv('TAURI_ENV_PLATFORM', 'android');
+});
 
 import { App } from '@/App';
 import { DEVELOPER_MODE_STORAGE_KEY } from '@/lib/developerMode';
