@@ -7,6 +7,8 @@
 //! - `expired_signal_is_excluded_from_trust_inputs` / `invalid_expires_at_signal_is_ignored_and_read_succeeds`
 //! - `sweep_removes_expired_rows_in_bounded_batches` / `half_life_change_is_rebuilt_in_bounded_batches`（AC-1 (c)）
 //! - `trust_reads_do_not_scale_with_row_counts`（AC-1 (b)）
+//! - `sweep_reads_do_not_scale_with_row_counts`（#1732 AC-1 (a)）: 満杯の掃除 1 回が読む行と共有バッファの
+//!   参照が、期限内の行を増やしても変わらない。
 //! - `content_writes_and_attributions_wait_for_each_other`: 同じ内容の risk signal の書込みと著者の関連付けが
 //!   重なっても、集計が全行から求めた参照と一致する。
 
@@ -20,12 +22,13 @@ use sqlx::{PgPool, Row};
 use kukuri_cn_core::{
     RetentionPolicy, RiskSignalCorrection, RiskSignalMetadataEdit, StoredRiskSignal,
     TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
-    TRUST_TOTALS_SQL, TestDatabase, TrustBasisCursor, attribute_risk_signal_subject_author,
-    cleanup_expired, configure_case_retention, connect_postgres, dispute_risk_signal,
-    edit_risk_signal_detection_metadata, initialize_database, list_disclosed_trust_basis_page,
-    list_trust_basis_page, load_trust_totals, persist_risk_signal_with_author,
-    rebuild_trust_totals, reissue_corrected_risk_signal, sweep_expired_trust_signals,
-    sync_trust_half_life, trust_risk_input, update_risk_signal_appeal_status,
+    TRUST_SWEEP_SQL, TRUST_TOTALS_SQL, TestDatabase, TrustBasisCursor,
+    attribute_risk_signal_subject_author, cleanup_expired, configure_case_retention,
+    connect_postgres, dispute_risk_signal, edit_risk_signal_detection_metadata,
+    initialize_database, list_disclosed_trust_basis_page, list_trust_basis_page, load_trust_totals,
+    persist_risk_signal_with_author, rebuild_trust_totals, reissue_corrected_risk_signal,
+    sweep_expired_trust_signals, sync_trust_half_life, trust_risk_input,
+    update_risk_signal_appeal_status,
 };
 use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
@@ -817,15 +820,16 @@ async fn half_life_change_is_rebuilt_in_bounded_batches() -> Result<()> {
 }
 
 fn explain(sql: &str) -> sqlx::AssertSqlSafe<String> {
-    sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}"))
+    sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"))
 }
 
-/// 実行計画（EXPLAIN ANALYZE）で、表から読んだ行（返した行と filter で捨てた行）の数を数える。
-async fn rows_read(
-    pool: &PgPool,
+/// 実行計画（EXPLAIN ANALYZE）で、表から読んだ行（返した行と filter で捨てた行）の数と、文全体の共有
+/// バッファの参照（同じページを何度読んでも数える）を数える。
+async fn rows_read<'c>(
+    executor: impl sqlx::PgExecutor<'c>,
     query: sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments>,
-) -> Result<HashMap<String, f64>> {
-    let plan: serde_json::Value = query.fetch_one(pool).await?.try_get(0)?;
+) -> Result<(HashMap<String, f64>, f64)> {
+    let plan: serde_json::Value = query.fetch_one(executor).await?.try_get(0)?;
     let mut counts = HashMap::new();
     fn walk(node: &serde_json::Value, counts: &mut HashMap<String, f64>) {
         if let Some(relation) = node.get("Relation Name").and_then(|value| value.as_str()) {
@@ -846,7 +850,11 @@ async fn rows_read(
         }
     }
     walk(&plan[0]["Plan"], &mut counts);
-    Ok(counts)
+    let buffers = ["Shared Hit Blocks", "Shared Read Blocks"]
+        .iter()
+        .filter_map(|key| plan[0]["Plan"][key].as_f64())
+        .sum();
+    Ok((counts, buffers))
 }
 
 async fn seed_rows(pool: &PgPool, from: i32, to: i32) -> Result<()> {
@@ -888,7 +896,9 @@ async fn seed_rows(pool: &PgPool, from: i32, to: i32) -> Result<()> {
 
 async fn read_counts(pool: &PgPool) -> Result<(HashMap<String, f64>, HashMap<String, f64>)> {
     let targets = vec!["x".to_string()];
-    let totals = rows_read(pool, sqlx::query(explain(TRUST_TOTALS_SQL)).bind(targets)).await?;
+    let totals = rows_read(pool, sqlx::query(explain(TRUST_TOTALS_SQL)).bind(targets))
+        .await?
+        .0;
     let page = rows_read(
         pool,
         sqlx::query(explain(TRUST_BASIS_PAGE_SQL))
@@ -898,7 +908,8 @@ async fn read_counts(pool: &PgPool) -> Result<(HashMap<String, f64>, HashMap<Str
             .bind("")
             .bind(TRUST_BASIS_PAGE_SIZE as i64 + 1),
     )
-    .await?;
+    .await?
+    .0;
     Ok((totals, page))
 }
 
@@ -917,6 +928,63 @@ async fn trust_reads_do_not_scale_with_row_counts() -> Result<()> {
             large.1.get("trust_target_signals"),
             Some(&(TRUST_BASIS_PAGE_SIZE as f64 + 1.0))
         );
+        Ok(())
+    })
+    .await
+}
+
+/// 利用者が対象の行を、保存時刻を `days_ago` 日前から 1 分ずつ新しくして古い順に入れる。
+async fn insert_aged_signals(pool: &PgPool, prefix: &str, count: i32, days_ago: i32) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO cn_safety.risk_signals
+            (id, issuer_node_id, target, target_id, category, severity, basis, visibility,
+             confidence, appeal_status, persisted_at)
+         SELECT $1 || g, 'issuer', 'user_pubkey', $1 || g, 'spam', 'low',
+                'classifier_score', 'local', 50, 'none',
+                NOW() - make_interval(days => $3) + make_interval(mins => g)
+         FROM generate_series(1, $2) g",
+    )
+    .bind(prefix)
+    .bind(count)
+    .bind(days_ago)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 掃除の文を 1 回実行して取引ごと取り消し、集計の行から読んだ行と文全体の共有バッファの参照を返す。
+/// `VACUUM` の直後の 1 回にそろえる（その後の最初の lock と削除は、全行可視の印を外す分だけ多く参照する）。
+async fn sweep_reads(pool: &PgPool, now: DateTime<Utc>) -> Result<(f64, f64)> {
+    sqlx::raw_sql("VACUUM ANALYZE cn_safety.trust_target_signals")
+        .execute(pool)
+        .await?;
+    let mut tx = pool.begin().await?;
+    let sweep = sqlx::query(explain(TRUST_SWEEP_SQL))
+        .bind(now)
+        .bind(TRUST_SWEEP_BATCH);
+    let (rows, buffers) = rows_read(&mut *tx, sweep).await?;
+    tx.rollback().await?;
+    Ok((rows["trust_target_signals"], buffers))
+}
+
+#[tokio::test]
+async fn sweep_reads_do_not_scale_with_row_counts() -> Result<()> {
+    with_database("cn_1732_trust_sweep_scale", |pool| async move {
+        // 保持期間（180 日）が切れる 1,500 行の後に、期限内の行を古い順に入れる。物理的な並びと保存時刻が
+        // 揃わないと、選ぶ側が期限切れの全行を読む Bitmap Heap Scan に変わる（#1732）。
+        insert_aged_signals(&pool, "expired-", 1_500, 180).await?;
+        insert_aged_signals(&pool, "live-a-", 2_000, 170).await?;
+        let later = Utc::now() + Duration::days(2);
+        let small = sweep_reads(&pool, later).await?;
+        // 期限内の行を 20,000 行にする。
+        insert_aged_signals(&pool, "live-b-", 18_000, 160).await?;
+        let large = sweep_reads(&pool, later).await?;
+        assert_eq!(
+            small, large,
+            "a full sweep must not read more as live rows grow"
+        );
+        // 選んだ 1,000 行と、消す 1,000 行だけを読む。
+        assert_eq!(small.0, 2.0 * TRUST_SWEEP_BATCH as f64);
         Ok(())
     })
     .await
