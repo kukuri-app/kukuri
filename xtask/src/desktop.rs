@@ -15,6 +15,42 @@ pub(crate) fn tauri_check() -> Result<()> {
     )
 }
 
+/// `apps/desktop/src-tauri` を Android の配布 ABI（arm64-v8a、minSdk 29。#1193 D7）向けに compile する。
+/// C を含む依存の build script は NDK の clang と llvm-ar を使う。
+pub(crate) fn android_check() -> Result<()> {
+    let ndk = ["ANDROID_NDK_HOME", "NDK_HOME", "ANDROID_NDK_LATEST_HOME"]
+        .into_iter()
+        .find_map(std::env::var_os)
+        .context("Android NDK が見つかりません。ANDROID_NDK_HOME か NDK_HOME に NDK の directory を設定してください")?;
+    let (host, script, exe) = if cfg!(windows) {
+        ("windows-x86_64", ".cmd", ".exe")
+    } else {
+        ("linux-x86_64", "", "")
+    };
+    let bin = std::path::Path::new(&ndk)
+        .join("toolchains/llvm/prebuilt")
+        .join(host)
+        .join("bin");
+    let clang = bin.join(format!("aarch64-linux-android29-clang{script}"));
+    let ar = bin.join(format!("llvm-ar{exe}"));
+    run_with_env(
+        "cargo",
+        [
+            "check",
+            "--manifest-path",
+            "apps/desktop/src-tauri/Cargo.toml",
+            "--lib",
+            "--target",
+            "aarch64-linux-android",
+        ],
+        &root_dir(),
+        &[
+            ("CC_aarch64_linux_android", &clang.display().to_string()),
+            ("AR_aarch64_linux_android", &ar.display().to_string()),
+        ],
+    )
+}
+
 pub(crate) fn desktop_lint() -> Result<()> {
     run_pnpm(["lint"], &desktop_dir())?;
     run_pnpm(["typecheck"], &desktop_dir())

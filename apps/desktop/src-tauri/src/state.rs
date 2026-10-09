@@ -54,6 +54,10 @@ pub(crate) fn base_app_data_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf
         .path()
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data dir: {error}"))?;
+    // AndroidはOSがappごとの領域を分け、その外の兄弟dirは作れない。開発版と配布版は署名が違い同じ端末に並ばない。
+    if cfg!(target_os = "android") {
+        return Ok(platform_app_data_dir);
+    }
     Ok(default_app_data_dir(
         &platform_app_data_dir,
         AppBuildProfile::current(),

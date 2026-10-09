@@ -1,5 +1,5 @@
-# Tauri
-apps/desktop/src-tauri/gen/
+# Tauri（gen/android は Android project の正本として追跡する。build の生成物は gen/android の .gitignore）
+apps/desktop/src-tauri/gen/schemas/
 
 # Node
 node_modules/

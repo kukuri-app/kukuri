@@ -15,8 +15,9 @@ use ::tracing::{error, info};
 use kukuri_desktop_runtime::{
     DeviceRestorePhase, ProfileLease, gui_profile, pending_device_restore_phase,
 };
+use tauri::{AppHandle, Manager, WindowEvent};
+#[cfg(desktop)]
 use tauri::{
-    AppHandle, Manager, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -141,6 +142,7 @@ pub(crate) fn spawn_desktop_initialization(
 }
 
 /// Bring the main window back from the tray.
+#[cfg(desktop)]
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -154,6 +156,7 @@ fn shutdown_and_exit(app: &AppHandle) {
 }
 
 /// トレイの登録を試みる。close時は表示先の利用可能性を別途確認する。
+#[cfg(desktop)]
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, "open", "Open kukuri", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -189,22 +192,22 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     init_tracing();
 
-    let mut builder = tauri::Builder::default();
+    let builder = tauri::Builder::default();
 
+    // Androidは配布をGoogle Playが管理するため、自己更新とdesktopの多重起動制御を登録しない。
     #[cfg(desktop)]
-    {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             info!("received kukuri desktop single-instance activation");
             // The app may be resident in the tray with its window hidden
             // (issue #304); a re-launch should bring it back to the front.
             show_main_window(app);
-        }));
-    }
+        }))
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             // 利用可能なトレイがある場合だけ隠す。それ以外は停止処理へ進む。
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -222,7 +225,7 @@ pub fn run() {
             ));
             // runtimeが無い同意待ちでもrestore activation/account switchと同じlockを使う。
             app.manage(DesktopOperationState::default());
-            #[cfg(unix)]
+            #[cfg(all(unix, desktop))]
             desktop_lifecycle::watch_signals(app.handle().clone())?;
 
             // Restore journal recoveryは、同意fileの読取やruntime構築より必ず先に行う。
@@ -318,6 +321,7 @@ pub fn run() {
             // #978: 開発者向けログ閲覧。buffer は init_tracing が組んだ process 全体の1つ。
             app.manage(DeveloperLogState::new(desktop_log_buffer()));
             app.manage(commands::link_preview::LinkPreviewState::default());
+            #[cfg(desktop)]
             if let Err(error) = build_tray(app.handle()) {
                 error!(%error, "failed to build system tray");
             } else {
@@ -377,7 +381,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build kukuri desktop tauri app")
         .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event
+            // Androidのprocess終了はOSに任せ、desktopの終了処理を挟まない（lifecycleは #1196）。
+            if cfg!(desktop)
+                && let tauri::RunEvent::ExitRequested { api, .. } = event
                 && !app.state::<desktop_lifecycle::DesktopLifecycle>().completed()
             {
                 api.prevent_exit();
