@@ -185,9 +185,16 @@ pub(crate) async fn apply_transmission_prevention_in_tx(
     let decision = from_row(&row)?;
     let mut removed_index_scopes = Vec::new();
     if input.subject_kind == "post" && controls_index_surfaces(&input.capabilities) {
+        // ArcadeDB の写しは消し待ちに入れ、indexer の巡回が消す（#1698）。
         for row in sqlx::query(
-            "DELETE FROM cn_index.index_entries WHERE object_id = $1
-             RETURNING scope_kind, scope_id",
+            "WITH removed AS (
+                 DELETE FROM cn_index.index_entries WHERE object_id = $1
+                 RETURNING scope_kind, scope_id, object_id
+             ), queued AS (
+                 INSERT INTO cn_index.projection_evictions (scope_kind, scope_id, object_id)
+                 SELECT scope_kind, scope_id, object_id FROM removed ON CONFLICT DO NOTHING
+             )
+             SELECT scope_kind, scope_id FROM removed",
         )
         .bind(input.subject_id.trim())
         .fetch_all(&mut **tx)

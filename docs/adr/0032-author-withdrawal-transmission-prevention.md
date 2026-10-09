@@ -83,7 +83,7 @@ Postgres の decision record（`cn_legal.transmission_preventions`）は対象�
 
 ただし許可条件は全ゲートの論理積であり、どれか一つでも有効な抑止なら表示・索引しない。法的判断を解除しても著者撤回や safety verdict は変化しない。解除後の再取込は、有効な抑止が無いことと新しい scan の `allow` を必須にする。
 
-indexer は本文・blob の取得前と Postgres upsert 直前に合成判定を行う。適用時は Postgres の索引真実源を先に非許可化し、query gate を即時に閉じてから ArcadeDB と cache を冪等削除する。これにより派生投影削除が一時的に失敗しても surfacing しない。
+indexer は本文・blob の取得前と Postgres upsert 直前に合成判定を行う。適用時は Postgres の索引真実源を先に非許可化し、query gate を即時に閉じてから ArcadeDB と cache を冪等削除する。これにより派生投影削除が一時的に失敗しても surfacing しない。ArcadeDB の写しは、適用の transaction で索引真実源から外した scope と対象を消し待ち（`cn_index.projection_evictions`）に入れ、indexer の全体の巡回が 1 回 128 件以内で消す。消せなかった行は次の巡回で消し直す。解除・失効した対象の行は、解除の後の新しい取込で戻った写しを消さないよう、投影に触れずに外す。
 
 ### 5. capability ごとの境界
 
