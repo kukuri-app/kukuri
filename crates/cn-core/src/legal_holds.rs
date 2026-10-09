@@ -32,8 +32,6 @@ pub struct LegalHold {
     pub release_condition: String,
     pub started_by: String,
     pub started_at: DateTime<Utc>,
-    pub released_by: Option<String>,
-    pub released_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -112,38 +110,26 @@ pub async fn release_legal_hold(
 ) -> Result<LegalHold> {
     validate_text("hold id", hold_id, 128)?;
     validate_text("actor", actor, 320)?;
+    // 解除で行を消す。解除の時刻・actor は operator audit に残す（#1706）。
     let mut tx = pool.begin().await?;
-    let current = sqlx::query("SELECT * FROM cn_legal.legal_holds WHERE id = $1 FOR UPDATE")
+    let row = sqlx::query("DELETE FROM cn_legal.legal_holds WHERE id = $1 RETURNING *")
         .bind(hold_id.trim())
         .fetch_optional(&mut *tx)
         .await?
         .context("legal hold was not found")?;
-    let current = hold_from_row(&current)?;
-    if current.released_at.is_some() {
-        bail!("legal hold is already released");
-    }
-    let row = sqlx::query(
-        "UPDATE cn_legal.legal_holds SET released_by = $2, released_at = $3
-         WHERE id = $1 RETURNING *",
-    )
-    .bind(hold_id.trim())
-    .bind(actor.trim())
-    .bind(now)
-    .fetch_one(&mut *tx)
-    .await?;
+    let hold = hold_from_row(&row)?;
     append_hold_audit(
         &mut tx,
         "legal_hold.release",
-        &current.target_kind,
-        &current.target_id,
+        &hold.target_kind,
+        &hold.target_id,
         actor,
-        json!({"hold_id": current.id, "active": true}),
-        json!({"hold_id": current.id, "active": false}),
+        json!({"hold_id": hold.id, "active": true}),
+        json!({"hold_id": hold.id, "active": false}),
         now,
         retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
-    let hold = hold_from_row(&row)?;
     tx.commit().await?;
     Ok(hold)
 }
@@ -163,9 +149,6 @@ pub async fn export_legal_hold(
         .await?
         .context("legal hold was not found")?;
     let hold = hold_from_row(&row)?;
-    if hold.released_at.is_some() {
-        bail!("released legal hold cannot be exported");
-    }
     let mut data = Map::new();
     for category in &hold.data_categories {
         if let Some(value) = export_category(pool, cipher, &hold, category).await? {
@@ -463,7 +446,5 @@ fn hold_from_row(row: &PgRow) -> Result<LegalHold> {
         release_condition: row.try_get("release_condition")?,
         started_by: row.try_get("started_by")?,
         started_at: row.try_get("started_at")?,
-        released_by: row.try_get("released_by")?,
-        released_at: row.try_get("released_at")?,
     })
 }

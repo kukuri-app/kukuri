@@ -239,11 +239,39 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
         }
 
         release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now).await?;
+        let holds = "SELECT COUNT(*) FROM cn_legal.legal_holds WHERE id = $1";
+        assert_eq!(
+            count(&pool, holds, &hold.id).await?,
+            0,
+            "release deletes the hold"
+        );
+        let audit = list_operator_actions(&pool, 20, 0).await?;
+        for action in ["legal_hold.start", "legal_hold.release"] {
+            assert!(
+                audit
+                    .iter()
+                    .any(|row| row.action == action && row.target_id == created.record.id),
+                "operator audit must keep {action}"
+            );
+        }
         assert!(
             release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now,)
                 .await
                 .is_err(),
             "double release must fail"
+        );
+        assert!(
+            export_legal_hold(
+                &pool,
+                &cipher,
+                &hold.id,
+                "reviewer@node.example",
+                &retention,
+                now
+            )
+            .await
+            .is_err(),
+            "released hold cannot be exported"
         );
         cleanup_expired(&pool, now).await?;
         let physical_count: i64 =
