@@ -83,6 +83,9 @@ function parseColumn(value: unknown): ColumnState | null {
     column.timelineView = value.timelineView;
   }
   if (kind === 'timeline' && value.timelineFlow === true) column.timelineFlow = true;
+  if (kind === 'timeline' && (value.timelineFilter === 'mutual' || value.timelineFilter === 'following')) {
+    column.timelineFilter = value.timelineFilter;
+  }
   return column;
 }
 
@@ -99,6 +102,7 @@ export function captureWorkspaceLayoutSnapshot(
       ...(column.parentColumnId ? { parentColumnId: column.parentColumnId } : {}),
       ...(column.timelineView ? { timelineView: column.timelineView } : {}),
       ...(column.timelineFlow ? { timelineFlow: true } : {}),
+      ...(column.timelineFilter ? { timelineFilter: column.timelineFilter } : {}),
       pinned: column.pinned,
       preferredDesktopSpan: normalizeColumnSpan(column.kind, column.preferredDesktopSpan),
     })),
