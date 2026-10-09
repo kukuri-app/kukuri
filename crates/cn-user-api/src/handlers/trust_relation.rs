@@ -9,7 +9,7 @@ use kukuri_cn_core::{
     ApiError, ApiResult, clear_relation_optout, filter_relation_visible, get_relation_optout,
     latest_successful_relation_snapshot_id, list_active_relation_observations,
     list_trust_risk_inputs, relation_pair_is_suppressed, require_bearer_identity, require_consents,
-    set_relation_optout, trust_observation_revisions,
+    set_relation_optout,
 };
 use kukuri_cn_protocol::{
     RELATION_NOT_FOUND_CODE, RELATION_VISIBILITY_NOT_ACTIVATED_CODE,
@@ -20,8 +20,8 @@ use kukuri_cn_protocol::{
 };
 use kukuri_cn_safety::RiskSignalTarget;
 use kukuri_cn_trust::{
-    PullAudience, RelationAdjustment, UniformRelationWeight, apply_viewer_relation,
-    build_trust_read, compose_relation_adjustment, cross_node_trust_disclosure, relation_version,
+    PullAudience, UniformRelationWeight, apply_viewer_relation, build_trust_read,
+    compose_relation_adjustment, cross_node_trust_disclosure, relation_version,
 };
 use serde::Deserialize;
 
@@ -137,9 +137,6 @@ async fn evaluate_viewer_trust(
     let observations = list_active_relation_observations(&state.pool, targets, now)
         .await
         .map_err(observation_error)?;
-    let revisions = trust_observation_revisions(&state.pool, targets)
-        .await
-        .map_err(observation_error)?;
     let snapshot_id = latest_successful_relation_snapshot_id(&state.pool)
         .await
         .map_err(observation_error)?;
@@ -172,22 +169,18 @@ async fn evaluate_viewer_trust(
         .cloned()
         .zip(trust_views)
         .map(|(target, trust_view)| {
-            let adjustment = observations
+            let items = observations
                 .get(target.as_str())
-                .map(|items| {
-                    compose_relation_adjustment(
-                        viewer_pubkey,
-                        items.as_slice(),
-                        &proximities,
-                        now,
-                        &trust_read.params,
-                    )
-                })
-                .unwrap_or(RelationAdjustment::NONE);
-            let version = relation_version(
-                snapshot_id,
-                revisions.get(target.as_str()).copied().unwrap_or(0),
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let adjustment = compose_relation_adjustment(
+                viewer_pubkey,
+                items,
+                &proximities,
+                now,
+                &trust_read.params,
             );
+            let version = relation_version(snapshot_id, items);
             let view =
                 apply_viewer_relation(trust_view, adjustment, version, now, &trust_read.params);
             (target, view)

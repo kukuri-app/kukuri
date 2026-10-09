@@ -15,9 +15,10 @@ use kukuri_cn_core::{
     list_active_relation_observations, persist_risk_signal, store_trust_observations,
 };
 use kukuri_cn_protocol::{
-    AcceptConsentsRequest, CommunityNodePoliciesResponse, TRUST_OBSERVATION_SHARING_POLICY_SLUG,
-    TrustEvaluationReason, TrustEvaluationsResponse, TrustObservationsRevokeResponse,
-    TrustObservationsSubmitResponse, TrustUserReadResponse, build_auth_envelope_json,
+    AcceptConsentsRequest, CommunityNodeConsentStatus, CommunityNodePoliciesResponse,
+    TRUST_OBSERVATION_SHARING_POLICY_SLUG, TrustEvaluationReason, TrustEvaluationsResponse,
+    TrustObservationsRevokeResponse, TrustObservationsSubmitResponse, TrustUserReadResponse,
+    build_auth_envelope_json,
 };
 use kukuri_cn_safety::{
     Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
@@ -128,6 +129,17 @@ impl TestServer {
                 .fetch_one(&self.pool)
                 .await?,
         )
+    }
+
+    async fn sharing_consent_rows(&self, subscriber: &KukuriKeys) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM cn_user.policy_consents
+             WHERE subscriber_pubkey = $1 AND policy_slug = $2",
+        )
+        .bind(subscriber.public_key_hex())
+        .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
+        .fetch_one(&self.pool)
+        .await?)
     }
 }
 
@@ -491,6 +503,23 @@ async fn observation_revocation_deletes_rows_and_blocks_intake() -> Result<()> {
         .await?;
     assert_eq!(revoked.deleted, 2);
     assert_eq!(server.observation_rows().await?, 1);
+    // 取消は本人の観測提供の同意の行も消し、他の利用者の同意は残す。同意状態でも未同意になる。
+    assert_eq!(server.sharing_consent_rows(&observer).await?, 0);
+    assert_eq!(server.sharing_consent_rows(&bystander).await?, 1);
+    let status = client
+        .get(format!("{base_url}/v1/consents/status"))
+        .bearer_auth(token.as_str())
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CommunityNodeConsentStatus>()
+        .await?;
+    let sharing = status
+        .items
+        .iter()
+        .find(|item| item.policy_slug == TRUST_OBSERVATION_SHARING_POLICY_SLUG)
+        .context("sharing document is in the consent status")?;
+    assert!(sharing.accepted_at.is_none());
 
     // 取消後は再同意まで受け付けない。
     next_millisecond().await;
@@ -510,7 +539,6 @@ async fn observation_revocation_deletes_rows_and_blocks_intake() -> Result<()> {
     assert_eq!(server.observation_rows().await?, 1);
 
     // 再同意すれば受け付ける。
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     accept_sharing_consent(&client, base_url, token.as_str()).await?;
     submit(
         &client,
@@ -823,7 +851,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
         after_a.view.evaluation.unwrap().relation_version
     );
 
-    // 提供同意を取り消した observer の観測は、行が残っていても評価に使わない。
+    // 提供同意が無くなった observer の観測は、行が残っていても評価に使わず、版も変わる。
     next_millisecond().await;
     submit(
         &client,
@@ -833,14 +861,22 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     )
     .await?
     .error_for_status()?;
+    let (reblocked, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
     sqlx::query(
-        "INSERT INTO cn_trust.observation_sharing_revocations (observer_pubkey, revoked_at)
-         VALUES ($1, NOW())",
+        "DELETE FROM cn_user.policy_consents WHERE subscriber_pubkey = $1 AND policy_slug = $2",
     )
     .bind(observer_hex.as_str())
+    .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
     .execute(&server.pool)
     .await?;
     let (withdrawn, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
     assert_eq!(withdrawn.view.trust, t_value);
+    let withdrawn_version = withdrawn.view.evaluation.unwrap().relation_version;
+    assert_ne!(
+        withdrawn_version,
+        reblocked.view.evaluation.unwrap().relation_version
+    );
+    // 評価に使う観測が同じ（無い）なら同じ版になる。
+    assert_eq!(withdrawn_version, restored_eval.relation_version);
     server.shutdown().await
 }
