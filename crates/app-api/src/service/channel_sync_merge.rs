@@ -96,12 +96,7 @@ impl AppService {
             .transpose()?;
         let store = &self.services.projection_store;
         let adopted = store.adopt_account_sync_row(&row_of(item)?).await?;
-        let current = adopted
-            || store
-                .get_account_sync_row(&item.key.docs_key())
-                .await?
-                .is_some_and(|row| row.updated_at == item.updated_at && row.op_id == item.op_id);
-        if !current {
+        if !adopted && !self.holds_account_sync_item(item).await? {
             return Ok(false);
         }
         let row = store.get_private_channel_by_id(channel_id.as_str()).await?;
@@ -420,11 +415,7 @@ impl AppService {
         )?;
         let store = &self.services.projection_store;
         let adopted = store.adopt_account_sync_row(&row_of(item)?).await?;
-        let current = adopted
-            || store
-                .get_account_sync_row(&item.key.docs_key())
-                .await?
-                .is_some_and(|row| row.updated_at == item.updated_at && row.op_id == item.op_id);
+        let current = adopted || self.holds_account_sync_item(item).await?;
         let Some(row) = store
             .get_private_channel_by_id(channel_id.as_str())
             .await?
