@@ -6,8 +6,8 @@
 //! - メディア保持者への不達（実体の無い blob 参照）→ 保留
 //! - 大きさ超過（取得上限より大きい blob）→ 保留
 //!
-//! いずれも真実源の `provider_failure_allowed = 0`（失敗が許可へ落ちていない）と
-//! 「索引 0 件」を突合する。
+//! いずれも真実源の「索引 0 件」を突合する（失敗の理由の許可は `cn_safety.scan_verdicts` の
+//! CHECK 制約が保存しない。#1714）。
 
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ const TINY_PNG: &[u8] = &[
 ];
 const HOLD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 保留（索引 0 件・許可落ち 0 件）を突合する共通の後段検証。
+/// 保留（索引 0 件）を突合する共通の後段検証。
 async fn assert_held(stack: &E2eStack, object_id: &str) -> Result<()> {
     assert!(
         !stack
@@ -38,7 +38,6 @@ async fn assert_held(stack: &E2eStack, object_id: &str) -> Result<()> {
     );
     let findings = inspect_index_integrity(&stack.pool).await?;
     assert_eq!(findings.index_entries_total, 0, "{findings:?}");
-    assert_eq!(findings.provider_failure_allowed, 0, "{findings:?}");
     Ok(())
 }
 
