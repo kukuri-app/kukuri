@@ -6,17 +6,23 @@
 //! - 解除した scope は検索から即座に外れ、索引は 1 回 128 件以内で回収される。撤回 marker は受入下限まで残る。
 //! - 回収は途中で止めても、永続化した受入下限から同じ条件で続き、1 回の回収は常に 128 件以内。
 //! - 巡回は索引済みの scope を永続 cursor で 32 件ずつ照合し、support を失った scope だけを回収する（#1221 R5-H）。
+//! - 送信防止を適用した投稿の写しは、巡回が上限つきで消し、失敗は次の巡回で消し直す。解除の後の新しい取込で
+//!   戻った写しは消さない（#1698）。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use sqlx::PgPool;
 
 use kukuri_cn_core::{
-    ChannelSecretCipher, IndexEntryStore, IndexScopeKind, NewIndexEntry, PgIndexEntryStore,
-    PgSafetyArtifactStore, RetentionSettings, TestDatabase, add_supported_topic,
-    advance_retention_floor, configure_retention, connect_postgres, filter_surfaceable_objects,
-    initialize_database, reclaim_expired, remove_supported_topic, upsert_index_entry,
+    ChannelSecretCipher, IndexEntryStore, IndexScopeKind, NewIndexEntry, NewTransmissionPrevention,
+    PgIndexEntryStore, PgSafetyArtifactStore, RetentionSettings, TestDatabase,
+    TransmissionPreventionBasis, TransmissionPreventionCapability, add_supported_topic,
+    advance_retention_floor, apply_transmission_prevention, configure_retention, connect_postgres,
+    filter_surfaceable_objects, initialize_database, reclaim_expired,
+    release_transmission_prevention, remove_supported_topic, upsert_index_entry,
     upsert_scan_verdict,
 };
 use kukuri_cn_indexer::ingest::IngestPipeline;
@@ -93,7 +99,7 @@ fn pipeline(
     ))
 }
 
-fn maintenance(pool: &PgPool, projection: Arc<MemoryIndexProjection>) -> Result<IndexMaintenance> {
+fn maintenance(pool: &PgPool, projection: Arc<dyn IndexProjection>) -> Result<IndexMaintenance> {
     Ok(IndexMaintenance::new(
         pool.clone(),
         Arc::new(PgIndexEntryStore::new(pool.clone())),
@@ -548,5 +554,157 @@ async fn pass_retires_unsupported_scopes_by_a_persisted_cursor() -> Result<()> {
             Ok(())
         },
     )
+    .await
+}
+
+/// 最初の削除だけを失敗させる投影（ArcadeDB の一時的な失敗の代わり）。
+#[derive(Default)]
+struct FailOnceProjection {
+    inner: MemoryIndexProjection,
+    failed: AtomicBool,
+}
+
+#[async_trait]
+impl IndexProjection for FailOnceProjection {
+    async fn upsert_entry(&self, entry: &IndexedEntry) -> Result<()> {
+        self.inner.upsert_entry(entry).await
+    }
+
+    async fn contains_object(&self, kind: IndexScopeKind, scope: &str, id: &str) -> Result<bool> {
+        self.inner.contains_object(kind, scope, id).await
+    }
+
+    async fn count_scope(&self, kind: IndexScopeKind, scope: &str) -> Result<usize> {
+        self.inner.count_scope(kind, scope).await
+    }
+
+    async fn remove_scope_page(
+        &self,
+        kind: IndexScopeKind,
+        scope: &str,
+        n: usize,
+    ) -> Result<usize> {
+        self.inner.remove_scope_page(kind, scope, n).await
+    }
+
+    async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize> {
+        self.inner.remove_older_than(floor, limit).await
+    }
+
+    async fn remove_object(&self, kind: IndexScopeKind, scope: &str, id: &str) -> Result<()> {
+        anyhow::ensure!(
+            self.failed.swap(true, Ordering::SeqCst),
+            "arcadedb is unavailable"
+        );
+        self.inner.remove_object(kind, scope, id).await
+    }
+}
+
+fn prevention(object: &str) -> NewTransmissionPrevention {
+    NewTransmissionPrevention {
+        subject_kind: "post".into(),
+        subject_id: object.into(),
+        basis: TransmissionPreventionBasis::Privacy,
+        capabilities: vec![TransmissionPreventionCapability::Search],
+        expires_at: None,
+        related_report_id: None,
+    }
+}
+
+#[tokio::test]
+async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
+    with_database("cn_retention_prevention", |_, pool| async move {
+        let now = chrono::Utc::now().timestamp();
+        configure_retention(
+            &pool,
+            RetentionSettings {
+                capacity_rows: 1_000_000,
+                retention_secs: RETENTION_SECS,
+            },
+        )
+        .await?;
+        let projection = Arc::new(FailOnceProjection::default());
+        for scope in ["first", "second"] {
+            index_row(&pool, scope, "prevented", now).await?;
+            projection
+                .upsert_entry(&projected(scope, "prevented", now))
+                .await?;
+        }
+        apply_transmission_prevention(&pool, "legal@node.example", &prevention("prevented"))
+            .await?;
+        let candidates = vec![("first".to_string(), "prevented".to_string())];
+        assert!(
+            filter_surfaceable_objects(&pool, IndexScopeKind::PublicTopic, &candidates)
+                .await?
+                .is_empty(),
+            "the copy leaves search at once"
+        );
+        let maintenance = maintenance(&pool, projection.clone())?;
+        let state = IndexerRuntimeState::default();
+        // ArcadeDB が失敗した巡回では、消し待ちを残す。
+        maintenance.run_pass(now, &state).await;
+        assert_eq!(count(&pool, "cn_index.projection_evictions").await?, 2);
+        // 1 回に消すのは上限まで。残りは次の巡回で消す。
+        assert_eq!(maintenance.evict_prevented_projections(1).await?, 1);
+        assert_eq!(count(&pool, "cn_index.projection_evictions").await?, 1);
+        maintenance.run_pass(now, &state).await;
+        assert_eq!(count(&pool, "cn_index.projection_evictions").await?, 0);
+        assert_eq!(count(&pool, "cn_index.index_entries").await?, 0);
+        for scope in ["first", "second"] {
+            assert!(
+                !projection
+                    .contains_object(IndexScopeKind::PublicTopic, scope, "prevented")
+                    .await?
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn released_prevention_keeps_the_freshly_ingested_copy() -> Result<()> {
+    with_database("cn_retention_prevention_release", |_, pool| async move {
+        let now = chrono::Utc::now().timestamp();
+        configure_retention(
+            &pool,
+            RetentionSettings {
+                capacity_rows: 1_000_000,
+                retention_secs: RETENTION_SECS,
+            },
+        )
+        .await?;
+        add_supported_topic(&pool, IndexScopeKind::PublicTopic, TOPIC).await?;
+        let projection = Arc::new(MemoryIndexProjection::new());
+        index_row(&pool, TOPIC, "released", now).await?;
+        projection
+            .upsert_entry(&projected(TOPIC, "released", now))
+            .await?;
+        apply_transmission_prevention(&pool, "legal@node.example", &prevention("released")).await?;
+        release_transmission_prevention(
+            &pool,
+            "legal@node.example",
+            "post",
+            "released",
+            "claim resolved",
+        )
+        .await?;
+        // 巡回の前に、解除の後の新しい取込で真実源と写しが戻る。
+        index_row(&pool, TOPIC, "released", now).await?;
+        projection
+            .upsert_entry(&projected(TOPIC, "released", now))
+            .await?;
+        maintenance(&pool, projection.clone())?
+            .run_pass(now, &IndexerRuntimeState::default())
+            .await;
+        assert!(
+            projection
+                .contains_object(IndexScopeKind::PublicTopic, TOPIC, "released")
+                .await?,
+            "an earlier eviction must not remove the copy that came back"
+        );
+        assert_eq!(count(&pool, "cn_index.projection_evictions").await?, 0);
+        Ok(())
+    })
     .await
 }
