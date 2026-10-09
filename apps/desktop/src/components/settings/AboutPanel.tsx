@@ -6,6 +6,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { Notice } from '@/components/ui/notice';
 import { getAppConsentStatus, type AppConsentStatus } from '@/lib/api';
 import { getResolvedLocale } from '@/i18n/format';
+import { IS_ANDROID } from '@/lib/platform';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 import { useAppUpdateStore } from '@/shell/useAppUpdateStore';
 
@@ -97,6 +98,7 @@ export function AboutPanel() {
       </CardHeader>
       {error ? <Notice tone='destructive'>{error}</Notice> : null}
       {IS_WEB_RUNTIME ? <Notice>{t('legal:about.webUnavailable')}</Notice> : null}
+      {IS_ANDROID ? <Notice>{t('legal:about.androidUnavailable')}</Notice> : null}
       <SettingsDiagnosticList items={diagnostics} columns={2} />
       <section className='min-w-0 space-y-4'>
         <h4 className='text-base font-semibold text-foreground'>

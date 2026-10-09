@@ -82,7 +82,7 @@ import {
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
 import { PostRecoveryProviders } from '@/components/core/PostRecoveryProviders';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { EXTENDED_FEATURES_AVAILABLE, UNAVAILABLE_SETTINGS } from '@/lib/platform';
 
 const CLIPBOARD_TOAST_TIMEOUT_MS = 2200;
 export function DesktopShellPage({
@@ -382,7 +382,7 @@ export function DesktopShellPage({
         });
         return;
       }
-      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || IS_WEB_RUNTIME)) {
+      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || !EXTENDED_FEATURES_AVAILABLE)) {
         // WIP機能が隠れている間は live/game リンクを topic timeline へ落とす。
         await syncTopicContext(reference.topic, reference.channelId);
         setSelectedLiveSessionId(null);
@@ -560,7 +560,7 @@ export function DesktopShellPage({
       handleOpenNotification={(notification) =>
         shellActions.handleOpenNotification(notification, column.id)
       }
-      onOpenNotificationSettings={IS_WEB_RUNTIME ? undefined : () => handleOpenSettingsSection('notifications')}
+      onOpenNotificationSettings={UNAVAILABLE_SETTINGS.has('notifications') ? undefined : () => handleOpenSettingsSection('notifications')}
       onNavigatePage={navigateNotificationPage}
     />
   );
