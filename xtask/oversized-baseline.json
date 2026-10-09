@@ -45,6 +45,10 @@
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
+      "lines": 1045,
+      "path": "crates/cn-user-api/tests/trust_relation.rs"
+    },
+    {
       "lines": 1044,
       "path": "crates/app-api/src/dome_hosting.rs"
     },
@@ -69,7 +73,7 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1008,
+      "lines": 1016,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {

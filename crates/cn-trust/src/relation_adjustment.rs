@@ -122,34 +122,9 @@ pub fn compose_viewer_trust(trust_absolute: f64, relation: f64) -> f64 {
     clamp_unit(clamp_unit(trust_absolute) + relation.clamp(-1.0, 0.0))
 }
 
-/// 入力の並びによらない digest（blake3 の先頭 16 文字）。
-fn input_digest(mut parts: Vec<String>) -> String {
-    parts.sort();
-    let digest = blake3::hash(parts.join("\n").as_bytes()).to_hex();
-    digest.as_str()[..16].to_string()
-}
-
-/// T の入力の digest（`trust_version`）。寄与する signal の識別と状態だけから決まり、
-/// 時間減衰による値の変化では変わらない。
-pub fn trust_version(view: &TrustReadView) -> String {
-    let parts = view
-        .basis
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}|{:?}|{}|{}",
-                entry.signal_id,
-                entry.appeal_status,
-                entry.operator_adjusted_at.as_deref().unwrap_or(""),
-                entry.expires_at.as_deref().unwrap_or(""),
-            )
-        })
-        .collect();
-    format!("t-{}", input_digest(parts))
-}
-
 /// relation 側の版（`relation_version`）。直近で成功した relation 解析の id と、評価に使った観測の
-/// digest の組（観測が無ければ `0`）。観測の集合が同じなら同じ版で、時間減衰では変わらない（#1699）。
+/// digest（並びによらない blake3 の先頭 16 文字。観測が無ければ `0`）の組。観測の集合が同じなら
+/// 同じ版で、時間減衰では変わらない（#1699）。
 pub fn relation_version(
     relation_snapshot_id: Option<i64>,
     observations: &[RelationObservation],
@@ -157,19 +132,20 @@ pub fn relation_version(
     let observations = if observations.is_empty() {
         "0".to_string()
     } else {
-        input_digest(
-            observations
-                .iter()
-                .map(|observation| {
-                    format!(
-                        "{}|{:?}|{}",
-                        observation.observer_pubkey,
-                        observation.kind,
-                        observation.observed_at.timestamp_millis()
-                    )
-                })
-                .collect(),
-        )
+        let mut parts: Vec<String> = observations
+            .iter()
+            .map(|observation| {
+                format!(
+                    "{}|{:?}|{}",
+                    observation.observer_pubkey,
+                    observation.kind,
+                    observation.observed_at.timestamp_millis()
+                )
+            })
+            .collect();
+        parts.sort();
+        let digest = blake3::hash(parts.join("\n").as_bytes()).to_hex();
+        digest.as_str()[..16].to_string()
     };
     match relation_snapshot_id {
         Some(snapshot) => format!("r-{snapshot}-{observations}"),
@@ -179,16 +155,25 @@ pub fn relation_version(
 
 /// T の read view に R を合算し、S と評価 metadata を付けた利用者向け view を作る。
 ///
-/// `trust_view` は [`crate::build_trust_read`] の出力（`trust` = T）。戻り値の `trust` は S で、
-/// `absolute` / `relative` / `basis` は T の内訳のまま変えない。
+/// `trust_view` は [`crate::build_trust_read`] の出力（`trust` = T）、`trust_version` は同じ対象の集計の
+/// 版（[`crate::TrustTotals::version`]）。戻り値の `trust` は S で、`absolute` / `relative` / `basis` は
+/// T の内訳のまま変えない。
 pub fn apply_viewer_relation(
     mut trust_view: TrustReadView,
+    trust_version: String,
     adjustment: RelationAdjustment,
     relation_version: String,
     now: DateTime<Utc>,
     params: &TrustParams,
 ) -> TrustReadView {
-    let evaluation = evaluate(&trust_view, adjustment, relation_version, now, params);
+    let evaluation = evaluate(
+        &trust_view,
+        trust_version,
+        adjustment,
+        relation_version,
+        now,
+        params,
+    );
     trust_view.trust = compose_viewer_trust(trust_view.trust, adjustment.value);
     trust_view.evaluation = Some(evaluation);
     trust_view
@@ -196,6 +181,7 @@ pub fn apply_viewer_relation(
 
 fn evaluate(
     trust_view: &TrustReadView,
+    trust_version: String,
     adjustment: RelationAdjustment,
     relation_version: String,
     now: DateTime<Utc>,
@@ -212,7 +198,7 @@ fn evaluate(
     let expires_at = now + Duration::seconds(i64::from(params.evaluation_ttl_seconds));
     TrustEvaluation {
         policy_version: params.policy_version(),
-        trust_version: trust_version(trust_view),
+        trust_version,
         relation_version,
         computed_at: now.to_rfc3339_opts(SecondsFormat::Secs, true),
         expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),

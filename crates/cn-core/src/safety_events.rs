@@ -562,6 +562,8 @@ fn validate_subject_author(target: RiskSignalTarget, author: &str) -> Result<()>
 /// 対応は、内容の risk signal の行が 1 行も無くなると削除の trigger が消す（#1699）。trigger とは
 /// advisory lock（ここは共有、trigger は排他）で直列化してから risk signal の行を確かめるので、
 /// 同時に進む期限削除と重なっても、参照先のある対応を消させず、参照先の無い対応を残さない。
+/// 内容の risk signal の行を書く trigger（信頼値の集計、#1702）も同じ lock を排他で取るので、
+/// 同じ内容への書込みと重なっても、対応の trigger は確定した行から著者の集計の行を作る。
 async fn insert_subject_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &str,
@@ -639,32 +641,6 @@ pub async fn list_risk_signals_for_target(
     )))
     .bind(to_db_enum(&target)?)
     .bind(target_id)
-    .fetch_all(pool)
-    .await?;
-    rows.iter().map(risk_signal_from_row).collect()
-}
-
-/// Return both user-scoped signals and content-scoped signals attributed to
-/// the user. The original content signal row is returned so expiry and appeal
-/// state remain connected to the moderation artifact that produced it.
-pub async fn list_risk_signals_for_user(
-    pool: &PgPool,
-    user_pubkey: &str,
-) -> Result<Vec<StoredRiskSignal>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT rs.id, rs.issuer_node_id, rs.target, rs.target_id, rs.category,
-                rs.severity, rs.basis, rs.visibility, rs.confidence, rs.expires_at,
-                rs.appeal_status, rs.persisted_at, rs.operator_adjusted_at,
-                rs.operator_origin_category
-         FROM cn_safety.risk_signals rs
-         LEFT JOIN cn_safety.risk_signal_subject_authors rsa
-           ON rsa.target = rs.target AND rsa.target_id = rs.target_id
-         WHERE ((rs.target = 'user_pubkey' AND rs.target_id = $1)
-            OR rsa.author_pubkey = $1)
-           AND rs.persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
-         ORDER BY rs.persisted_at DESC",
-    )
-    .bind(user_pubkey)
     .fetch_all(pool)
     .await?;
     rows.iter().map(risk_signal_from_row).collect()

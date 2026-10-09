@@ -1,7 +1,8 @@
 //! trust scoring の純関数群（ADR 0026 §6.2）。
 //!
 //! - 絶対成分: relation 非依存・**減衰しない**・viewer 非依存（`trust_absolute_component_does_not_decay`）。
-//! - 相対成分: relation 重み付け + 半減期減衰（`trust_relative_component_decays_over_time`）。
+//! - 相対成分: 一様な重みの半減期減衰（`trust_relative_component_decays_over_time`）。閲覧者別の
+//!   relation は T に入れず、§8 の R として合算する。
 //! - 合成: `w_abs = w_abs_negative if absolute < 0 else w_abs_positive`、
 //!   `trust = clamp(-1, 1, (w_abs * absolute + relative) / 2)`（`trust_is_clamped_to_unit_interval`）。
 //!
@@ -62,32 +63,6 @@ pub fn decay_factor(persisted_at: DateTime<Utc>, now: DateTime<Utc>, half_life_d
     0.5_f64.powf(age_days / half_life_days)
 }
 
-/// 相対成分入力への relation 重み付け（ADR 0026 §2.3 / §2.7 の seam）。
-///
-/// 重みは `[0, 1]` に丸めて使う。foundation では相対成分入力は本 node の scan 由来
-/// （observer なし）のみなので production は [`UniformRelationWeight`]（= 1.0）だが、
-/// observer-attributed 観測（`ObservedSignal`）の producer が実装され次第、observer の
-/// cluster 近接度から重みを導出する実装に差し替える（report-bombing 耐性の効き先）。
-pub trait RelationWeighting {
-    fn weight_for(&self, input: &TrustRiskInput) -> f64;
-}
-
-/// 一様な relation 重み。
-#[derive(Clone, Copy, Debug)]
-pub struct UniformRelationWeight(pub f64);
-
-impl Default for UniformRelationWeight {
-    fn default() -> Self {
-        Self(1.0)
-    }
-}
-
-impl RelationWeighting for UniformRelationWeight {
-    fn weight_for(&self, _input: &TrustRiskInput) -> f64 {
-        self.0
-    }
-}
-
 /// 合成結果（適用された `w_abs` を説明のため同伴する）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComposedTrust {
@@ -118,9 +93,8 @@ pub fn compose_trust(params: &TrustParams, absolute: f64, relative: f64) -> Comp
 
 /// scoring 層での appeal 防御（ADR 0026 §6.2）。
 ///
-/// `Cleared`（= accepted）は供給層（`trust_risk_inputs_from`）で既に除外されるが、
-/// 万一 scoring まで届いても寄与させない（defense in depth）。`Disputed`（= pending）は
-/// 寄与据え置きなので含める。
+/// `Cleared`（= accepted）は寄与 0 の説明用 basis として残す（集計でも 0 として数える）。
+/// `Disputed`（= pending）は寄与据え置きなので含める。
 pub(crate) fn contributes(input: &TrustRiskInput) -> bool {
     input.appeal_status != AppealStatus::Cleared
 }

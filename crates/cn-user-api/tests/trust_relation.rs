@@ -148,6 +148,13 @@ async fn authenticate_and_consent(
     Ok(access_token)
 }
 
+#[allow(clippy::unwrap_used)] // test fixture helper
+/// 別の照会どうしの値を比べる。相対成分は照会の時刻まで減衰するので、その差だけを許す（ADR 0026 §10）。
+fn assert_close(left: &serde_json::Value, right: &serde_json::Value) {
+    let (left, right) = (left.as_f64().unwrap(), right.as_f64().unwrap());
+    assert!((left - right).abs() < 1e-6, "{left} vs {right}");
+}
+
 fn memory_trust_state() -> (Arc<TrustReadState>, Arc<MemoryRelationStore>) {
     let relation = Arc::new(MemoryRelationStore::new());
     let state = Arc::new(TrustReadState {
@@ -382,8 +389,8 @@ async fn trust_read_returns_components_with_basis_and_ignores_reports() -> Resul
     }
     let after = read_trust(token.clone()).await?;
     assert_eq!(after["absolute"], body["absolute"]);
-    assert_eq!(after["relative"], body["relative"]);
-    assert_eq!(after["trust"], body["trust"]);
+    assert_close(&after["relative"], &body["relative"]);
+    assert_close(&after["trust"], &body["trust"]);
 
     server.shutdown().await
 }
@@ -910,7 +917,7 @@ async fn trust_read_lists_advisory_only_basis_with_zero_contribution() -> Result
         .error_for_status()?
         .json::<serde_json::Value>()
         .await?;
-    assert_eq!(disputed["relative"], with_spam["relative"]);
+    assert_close(&disputed["relative"], &with_spam["relative"]);
     update_risk_signal_appeal_status(&pool, nsfw.id.as_str(), AppealStatus::Cleared).await?;
     let cleared = client
         .get(read_url.as_str())
@@ -920,7 +927,7 @@ async fn trust_read_lists_advisory_only_basis_with_zero_contribution() -> Result
         .error_for_status()?
         .json::<serde_json::Value>()
         .await?;
-    assert_eq!(cleared["relative"], with_spam["relative"]);
+    assert_close(&cleared["relative"], &with_spam["relative"]);
     let nsfw_entry = cleared["basis"]
         .as_array()
         .unwrap()
@@ -941,5 +948,99 @@ async fn trust_read_lists_advisory_only_basis_with_zero_contribution() -> Result
     assert!(pulled["basis"].as_array().unwrap().is_empty());
     assert_eq!(pulled["absolute"].as_f64(), Some(0.0));
 
+    server.shutdown().await
+}
+
+/// 単体照会と pull の basis を cursor で辿る（ADR 0026 §10、#1702 AC-1 (d)）。
+#[allow(clippy::unwrap_used)] // test fixture helper
+async fn basis_pages(
+    client: &Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<(Vec<String>, Vec<usize>)> {
+    let (mut ids, mut sizes, mut cursor) = (Vec::new(), Vec::new(), None::<String>);
+    loop {
+        let mut request = client.get(url);
+        if let Some(cursor) = &cursor {
+            request = request.query(&[("cursor", cursor.as_str())]);
+        }
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        let body: serde_json::Value = request.send().await?.error_for_status()?.json().await?;
+        let page = body["basis"].as_array().context("basis")?;
+        sizes.push(page.len());
+        ids.extend(
+            page.iter()
+                .map(|entry| entry["signal_id"].as_str().unwrap().to_string()),
+        );
+        match body["basis_next_cursor"].as_str() {
+            Some(next) => cursor = Some(next.to_string()),
+            None => return Ok((ids, sizes)),
+        }
+    }
+}
+
+#[tokio::test]
+async fn trust_read_and_pull_page_basis_with_cursor() -> Result<()> {
+    let Some(admin_database_url) = integration_test_admin_database_url() else {
+        eprintln!("skipping cn-user-api trust read test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
+        return Ok(());
+    };
+    let (trust, _relation) = memory_trust_state();
+    let server =
+        TestServer::spawn(admin_database_url.as_str(), "cn_trust_pages", Some(trust)).await?;
+    let pool = connect_postgres(server.database.database_url.as_str()).await?;
+    let client = Client::new();
+    let token =
+        authenticate_and_consent(&client, server.base_url.as_str(), &generate_keys()).await?;
+    let target = generate_keys().public_key_hex();
+
+    // 対象が著者の内容に、開示できる絶対成分（csam・known-hash・public）60 件と相対成分（spam）60 件。
+    sqlx::query(
+        "INSERT INTO cn_safety.risk_signal_subject_authors (target, target_id, author_pubkey)
+         SELECT 'post_id', 'post-' || g, $1 FROM generate_series(1, 120) g",
+    )
+    .bind(target.as_str())
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO cn_safety.risk_signals
+            (id, issuer_node_id, target, target_id, category, severity, basis, visibility,
+             confidence, appeal_status, persisted_at)
+         SELECT 'sig-' || lpad(g::text, 3, '0'), 'issuer-node', 'post_id', 'post-' || g,
+                CASE WHEN g <= 60 THEN 'csam' ELSE 'spam' END, 'low',
+                CASE WHEN g <= 60 THEN 'known_hash_match' ELSE 'classifier_score' END,
+                CASE WHEN g <= 60 THEN 'public' ELSE 'local' END, 1, 'none',
+                NOW() - make_interval(secs => g)
+         FROM generate_series(1, 120) g",
+    )
+    .execute(&pool)
+    .await?;
+    // 絶対成分が先、各成分は新しい順（persisted_at は g が小さいほど新しい）。
+    let expected: Vec<String> = (1..=120).map(|g| format!("sig-{g:03}")).collect();
+
+    let read_url = format!("{}/v1/trust/users/{target}", server.base_url);
+    let (ids, sizes) = basis_pages(&client, read_url.as_str(), Some(token.as_str())).await?;
+    assert_eq!(sizes, vec![50, 50, 20]);
+    assert_eq!(ids, expected);
+
+    let pull_url = format!("{}/v1/trust/pull/{target}", server.base_url);
+    let (ids, sizes) = basis_pages(&client, pull_url.as_str(), None).await?;
+    assert_eq!(sizes, vec![50, 10]);
+    assert_eq!(ids, expected[..60]);
+
+    // 読めない cursor は 400。
+    let invalid = client
+        .get(read_url.as_str())
+        .query(&[("cursor", "not-a-cursor")])
+        .bearer_auth(token.as_str())
+        .send()
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid.json::<serde_json::Value>().await?["code"],
+        "INVALID_TRUST_QUERY"
+    );
     server.shutdown().await
 }
