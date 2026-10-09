@@ -13,6 +13,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
+      - '.github/actions/cn-test-images/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -30,6 +31,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
+      - '.github/actions/cn-test-images/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -399,6 +401,10 @@ jobs:
       - name: Community-node checks
         run: cargo xtask-lite cn-check
 
+      - name: Prepare community-node test images
+        # #1742: fixture の参照名・版を保ち、Docker Hub の取得制限に依存せず同じテストを実行する。
+        uses: ./.github/actions/cn-test-images
+
       - name: Community-node integration tests
         run: cargo xtask-lite cn-test
 
@@ -440,6 +446,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Prepare community-node test images
+        uses: ./.github/actions/cn-test-images
 
       - name: Community-node connectivity scenario
         env:
