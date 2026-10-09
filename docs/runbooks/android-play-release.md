@@ -130,10 +130,10 @@ Play へ出す AAB の versionCode は、その候補の release tag（`vX.Y.Z-p
 | 生成 | `cargo xtask release-check <tag>` が版と tag を照合した後に計算し、`android_version_code=` に出す（`xtask/src/release.rs`）。major 21 以上、minor・patch 1000 以上、preview 番号 0・99 以上・0 始まりの tag は、別の候補と同じ値や逆の順になるので拒否する |
 | build への渡し方 | `tauri android build` に `--config '{"bundle":{"android":{"versionCode":<値>}}}'` を付ける。Tauri はこれを `gen/android/app/tauri.properties` に書き、Gradle が読む。付けない build は Tauri の既定（0.4.3 なら 4003。同じ版の候補どうしが同じ値）になるので Play へ出さない |
 
-- 同じ版で別の候補を出すとき（失敗した release のやり直し、作り直し、統合 branch の新しい候補）は、次の preview 番号の tag を切る。同じ tag の再 build は同じ値で、upload 済みの値の別の build は Play が拒否する。
-- 使った値は release tag そのもので、別に記録しない。tag は git と GitHub が重複を拒否し、版は上がる一方なので、tag を切った順に値が増える。
+- 同じ版で別の候補を出すとき（失敗した release のやり直し、作り直し、統合 branch の新しい候補）は、次の preview 番号（その版の既存の tag の最大＋1）の tag を切る。同じ tag の再 build は同じ値で、upload 済みの値の別の build は Play が拒否する。
+- 使った値は release tag そのもので、別に記録しない。tag は git と GitHub が重複を拒否する。版を下げず、同じ版では次の preview 番号を使うので、Play へ出す候補の値は出した順に増える（Play へ出さない desktop だけの tag との大小は問わない）。
 - track ごとに別の値を作らない。同じ AAB を internal → closed → production へ昇格し、新しい build は新しい tag にする。
-- 統合 branch（`integration/android-1193`）の開発中の候補も、その commit の版で未使用の preview 番号の tag から作る。tag の push では desktop の `Kukuri Release` も動いて draft ができるが、統合 branch の draft は公開しない。署名と CI の lane は #1199 AC-1。
+- 統合 branch（`integration/android-1193`）の開発中の候補も、その commit の版の次の preview 番号の tag から作る。tag の push では desktop の `Kukuri Release` も動いて draft ができるが、統合 branch の draft は公開しない。署名と CI の lane は #1199 AC-1。
 - 同じ版の preview 番号が 98 に達したら版を上げる（これまでの最大は 4）。
 
 ## closed test から production access まで
