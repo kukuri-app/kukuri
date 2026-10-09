@@ -623,6 +623,7 @@ async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
             },
         )
         .await?;
+        add_supported_topic(&pool, IndexScopeKind::PublicTopic, "first").await?;
         let projection = Arc::new(FailOnceProjection::default());
         for scope in ["first", "second"] {
             index_row(&pool, scope, "prevented", now).await?;
@@ -630,9 +631,15 @@ async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
                 .upsert_entry(&projected(scope, "prevented", now))
                 .await?;
         }
+        let candidates = vec![("first".to_string(), "prevented".to_string())];
+        assert_eq!(
+            filter_surfaceable_objects(&pool, IndexScopeKind::PublicTopic, &candidates)
+                .await?
+                .len(),
+            1
+        );
         apply_transmission_prevention(&pool, "legal@node.example", &prevention("prevented"))
             .await?;
-        let candidates = vec![("first".to_string(), "prevented".to_string())];
         assert!(
             filter_surfaceable_objects(&pool, IndexScopeKind::PublicTopic, &candidates)
                 .await?
