@@ -328,14 +328,9 @@ export function PostCard({
     if (!reactionMenuAsset) {
       return [];
     }
-    // 自作は同じアカウントの別の端末に届いていないことがあるので、自分のリアクションもこの端末の自作に無ければ保存できる。
-    const canSaveReaction =
-      Boolean(onBookmarkCustomReaction) &&
-      !ownedReactionAssets.some(
-        (asset) =>
-          asset.blob_hash === reactionMenuAsset.blob_hash &&
-          asset.search_key === reactionMenuAsset.search_key
-      );
+    const { blob_hash, search_key } = reactionMenuAsset; // 別の端末で作った自分のものも保存できる
+    const canSaveReaction = Boolean(onBookmarkCustomReaction) &&
+      !ownedReactionAssets.some((own) => own.blob_hash === blob_hash && own.search_key === search_key);
     return [
       {
         id: 'save',
