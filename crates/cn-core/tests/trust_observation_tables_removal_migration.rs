@@ -23,18 +23,26 @@ fn integration_test_admin_database_url() -> Option<String> {
     )
 }
 
-async fn seed_sharing_consent(pool: &PgPool, subscriber: &str, accepted_at: &str) -> Result<()> {
-    sqlx::query("INSERT INTO cn_user.subscriber_accounts (subscriber_pubkey) VALUES ($1)")
-        .bind(subscriber)
-        .execute(pool)
-        .await?;
+async fn seed_consent(
+    pool: &PgPool,
+    subscriber: &str,
+    policy_slug: &str,
+    accepted_at: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO cn_user.subscriber_accounts (subscriber_pubkey) VALUES ($1)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(subscriber)
+    .execute(pool)
+    .await?;
     sqlx::query(
         "INSERT INTO cn_user.policy_consents
             (subscriber_pubkey, policy_slug, policy_version, policy_snapshot_revision, accepted_at)
          VALUES ($1, $2, 1, $3, $4::timestamptz)",
     )
     .bind(subscriber)
-    .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
+    .bind(policy_slug)
     .bind(SNAPSHOT)
     .bind(accepted_at)
     .execute(pool)
@@ -67,27 +75,35 @@ async fn migration_drops_revocations_and_the_consents_they_voided() -> Result<()
     let pool = connect_postgres(database.database_url.as_str()).await?;
     let result = async {
         migrate_postgres_up_to(&pool, PREVIOUS_MIGRATION_VERSION).await?;
-        sqlx::query(
-            "INSERT INTO cn_admin.policies
-                (policy_slug, policy_version, title, body_markdown, required, effective_date,
-                 language, is_current, policy_snapshot_revision, material_change,
-                 requires_reconsent)
-             VALUES ($1, 1, 'ブロック・ミュート観測の提供', '本文', FALSE, '2026-09-18', 'ja',
-                     TRUE, $2, FALSE, FALSE)",
-        )
-        .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
-        .bind(SNAPSHOT)
-        .execute(&pool)
-        .await?;
-        // a は同意の後に取り消した。b は取り消した後に同意し直した。c は取り消していない。
+        for (policy_slug, required) in [
+            (TRUST_OBSERVATION_SHARING_POLICY_SLUG, false),
+            ("terms_of_service", true),
+        ] {
+            sqlx::query(
+                "INSERT INTO cn_admin.policies
+                    (policy_slug, policy_version, title, body_markdown, required, effective_date,
+                     language, is_current, policy_snapshot_revision, material_change,
+                     requires_reconsent)
+                 VALUES ($1, 1, '文書', '本文', $2, '2026-09-18', 'ja', TRUE, $3, FALSE, FALSE)",
+            )
+            .bind(policy_slug)
+            .bind(required)
+            .bind(SNAPSHOT)
+            .execute(&pool)
+            .await?;
+        }
+        // a は同意の後に取り消した（利用規約の同意もある）。b は取り消した後に同意し直した。
+        // c は取り消していない。
         let revoked = "a".repeat(64);
         let reconsented = "b".repeat(64);
         let never_revoked = "c".repeat(64);
-        seed_sharing_consent(&pool, &revoked, "2026-09-20T00:00:00Z").await?;
+        let sharing = TRUST_OBSERVATION_SHARING_POLICY_SLUG;
+        seed_consent(&pool, &revoked, sharing, "2026-09-20T00:00:00Z").await?;
+        seed_consent(&pool, &revoked, "terms_of_service", "2026-09-20T00:00:00Z").await?;
         seed_revocation(&pool, &revoked, "2026-09-21T00:00:00Z").await?;
-        seed_sharing_consent(&pool, &reconsented, "2026-09-22T00:00:00Z").await?;
+        seed_consent(&pool, &reconsented, sharing, "2026-09-22T00:00:00Z").await?;
         seed_revocation(&pool, &reconsented, "2026-09-21T00:00:00Z").await?;
-        seed_sharing_consent(&pool, &never_revoked, "2026-09-20T00:00:00Z").await?;
+        seed_consent(&pool, &never_revoked, sharing, "2026-09-20T00:00:00Z").await?;
         sqlx::query(
             "INSERT INTO cn_trust.observation_target_revisions (target_pubkey, revision)
              VALUES ($1, nextval('cn_trust.observation_revision_seq'))",
@@ -107,6 +123,15 @@ async fn migration_drops_revocations_and_the_consents_they_voided() -> Result<()
         .fetch_all(&pool)
         .await?;
         assert_eq!(consents, vec![reconsented, never_revoked]);
+        // 取り消した利用者の、ほかの文書への同意は消さない。
+        let other_documents: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM cn_user.policy_consents
+             WHERE subscriber_pubkey = $1 AND policy_slug = 'terms_of_service'",
+        )
+        .bind(&revoked)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(other_documents, 1);
         let remaining: Vec<Option<String>> = sqlx::query_scalar(
             "SELECT to_regclass(name)::text FROM unnest(ARRAY[
                 'cn_trust.observation_sharing_revocations',
