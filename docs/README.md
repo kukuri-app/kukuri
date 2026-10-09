@@ -74,6 +74,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 
 ## Ops
 - Windows x64 MSIXのbuild、identity、local署名、WACK、Microsoft Store提出: `docs/runbooks/windows-microsoft-store.md`
+- Android の Google Play 配布（個人の開発者登録、配布 identity、公開設定と配布地域、開発者確認、署名証明書の受け渡し、closed test から production access まで）: `docs/runbooks/android-play-release.md`
 - Dome Hosting の有効化・割当・終了・split-brain復旧: `docs/runbooks/dome-hosting.md`
 - Dome prop、layout commit、manifest/asset保持: `docs/adr/0040-dome-prop-layout-retention.md`
 - Metaverse resource budget: `docs/adr/0041-metaverse-resource-budget.md`
