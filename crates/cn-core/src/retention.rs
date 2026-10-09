@@ -109,8 +109,7 @@ const EXPIRED_SENSITIVE_ITEMS: &str = "DELETE FROM cn_legal.sensitive_items item
        AND item.created_at <= $1 - cn_admin.retention_interval($2)
        AND NOT EXISTS (
          SELECT 1 FROM cn_legal.legal_holds hold
-         WHERE hold.released_at IS NULL
-           AND hold.target_kind = item.owner_kind
+         WHERE hold.target_kind = item.owner_kind
            AND hold.target_id = item.owner_id
            AND item.data_category = ANY(hold.data_categories)
        )";
@@ -120,8 +119,7 @@ const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests requ
        AND request.updated_at <= $1 - cn_admin.retention_interval($2)
        AND NOT EXISTS (
          SELECT 1 FROM cn_legal.legal_holds hold
-         WHERE hold.released_at IS NULL
-           AND hold.target_kind = 'rights_request'
+         WHERE hold.target_kind = 'rights_request'
            AND hold.target_id = request.id
        )";
 
@@ -143,8 +141,7 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
          WHERE event.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'rights_request'
+             WHERE hold.target_kind = 'rights_request'
                AND hold.target_id = event.request_id
                AND 'rights_request_history' = ANY(hold.data_categories)
            )",
@@ -155,8 +152,7 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
          WHERE report.created_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'report'
+             WHERE hold.target_kind = 'report'
                AND hold.target_id = report.id
                AND 'report' = ANY(hold.data_categories)
            )",
@@ -180,8 +176,7 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
          WHERE action.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = action.target_kind
+             WHERE hold.target_kind = action.target_kind
                AND hold.target_id = action.target_id
                AND 'operator_audit' = ANY(hold.data_categories)
            )",
