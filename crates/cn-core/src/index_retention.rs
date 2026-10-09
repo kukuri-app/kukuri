@@ -97,30 +97,35 @@ pub async fn advance_retention_floor(pool: &PgPool, now: i64, budget: usize) -> 
     .await?)
 }
 
+/// 回収の実行計画を結合試験で検証するため、実行する SQL を公開する。
+/// 主キーの IN は満杯の回に結合と表の全走査になり得るため、同じ文で選んだ ctid の配列で消す
+/// （scope の回収も同じ）。選択後に別取引が更新した行は残し、期限切れなら次の回に消す。
+/// scan verdict の OFFSET 0 は参照確認を Anti Join に変えず、候補ごとの索引照会に保つ。
+pub const RECLAIM_EXPIRED_SQL: [&str; 5] = [
+    "DELETE FROM cn_index.relation_actions WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM cn_index.relation_actions
+         WHERE created_at < $1 ORDER BY created_at LIMIT $2))",
+    "DELETE FROM cn_index.known_post_withdrawals WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM cn_index.known_post_withdrawals
+         WHERE created_at < $1 ORDER BY created_at LIMIT $2))",
+    "DELETE FROM cn_index.index_entries WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM cn_index.index_entries
+         WHERE created_at < $1 ORDER BY created_at LIMIT $2))",
+    "DELETE FROM cn_safety.scan_verdicts WHERE ctid = ANY (ARRAY(
+         SELECT v.ctid FROM cn_safety.scan_verdicts v
+         WHERE v.updated_at < TO_TIMESTAMP($1)
+           AND NOT EXISTS (SELECT 1 FROM cn_index.index_entries e WHERE e.verdict_id = v.id OFFSET 0)
+         ORDER BY v.updated_at LIMIT $2))",
+    "DELETE FROM cn_safety.content_scan_cache WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM cn_safety.content_scan_cache
+         WHERE completed_at < TO_TIMESTAMP($1) ORDER BY completed_at LIMIT $2))",
+];
+
 /// W 未満の保存物を古い順に最大 `budget` 件消し、消した件数を返す。関係のアクションと撤回 marker を先に消し、
 /// 索引行の削除 trigger が連鎖で消す行を少なくする。scan verdict は索引行が参照していないものだけを消す。
 pub async fn reclaim_expired(pool: &PgPool, floor: i64, budget: usize) -> Result<usize> {
     let mut removed = 0usize;
-    for statement in [
-        "DELETE FROM cn_index.relation_actions WHERE (kind, source_id) IN (
-             SELECT kind, source_id FROM cn_index.relation_actions
-             WHERE created_at < $1 ORDER BY created_at LIMIT $2)",
-        "DELETE FROM cn_index.known_post_withdrawals
-         WHERE (scope_kind, scope_id, object_id) IN (
-             SELECT scope_kind, scope_id, object_id FROM cn_index.known_post_withdrawals
-             WHERE created_at < $1 ORDER BY created_at LIMIT $2)",
-        "DELETE FROM cn_index.index_entries WHERE (scope_kind, scope_id, object_id) IN (
-             SELECT scope_kind, scope_id, object_id FROM cn_index.index_entries
-             WHERE created_at < $1 ORDER BY created_at LIMIT $2)",
-        "DELETE FROM cn_safety.scan_verdicts WHERE id IN (
-             SELECT v.id FROM cn_safety.scan_verdicts v
-             WHERE v.updated_at < TO_TIMESTAMP($1)
-               AND NOT EXISTS (SELECT 1 FROM cn_index.index_entries e WHERE e.verdict_id = v.id)
-             ORDER BY v.updated_at LIMIT $2)",
-        "DELETE FROM cn_safety.content_scan_cache WHERE cache_key IN (
-             SELECT cache_key FROM cn_safety.content_scan_cache
-             WHERE completed_at < TO_TIMESTAMP($1) ORDER BY completed_at LIMIT $2)",
-    ] {
+    for statement in RECLAIM_EXPIRED_SQL {
         let left = budget.saturating_sub(removed);
         if left == 0 {
             break;

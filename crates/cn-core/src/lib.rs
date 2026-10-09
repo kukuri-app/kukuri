@@ -102,13 +102,13 @@ pub use dome_hosting::{
 pub use env::{parse_bool_env, parse_csv_env, parse_u32_env, parse_u64_env};
 pub use errors::{ApiError, ApiResult, auth_required_error, consent_required_error};
 pub use index_entries::{
-    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore, StoredIndexEntry,
-    SurfaceableEntry, filter_surfaceable_objects, get_index_entry, remove_index_entry,
-    remove_index_scope_page, upsert_index_entry,
+    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore,
+    REMOVE_INDEX_SCOPE_PAGE_SQL, StoredIndexEntry, SurfaceableEntry, filter_surfaceable_objects,
+    get_index_entry, remove_index_entry, remove_index_scope_page, upsert_index_entry,
 };
 pub use index_retention::{
-    MIN_RETENTION_SECS, RetentionSettings, advance_retention_floor, configure_retention,
-    reclaim_expired,
+    MIN_RETENTION_SECS, RECLAIM_EXPIRED_SQL, RetentionSettings, advance_retention_floor,
+    configure_retention, reclaim_expired,
 };
 pub use index_scope::{
     ChannelSecret, ChannelSecretCipher, ChannelSecretConflict, IndexScopeKind, IndexingRequest,

@@ -156,6 +156,13 @@ pub async fn remove_index_entry(
     Ok(())
 }
 
+/// scope 回収の実行計画を結合試験で検証するため、実行する SQL を公開する。
+/// ctid の配列で消す理由は RECLAIM_EXPIRED_SQL と同じ。ORDER BY は選ぶ側を主キーの索引の順に読むため。
+pub const REMOVE_INDEX_SCOPE_PAGE_SQL: &str =
+    "DELETE FROM cn_index.index_entries WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM cn_index.index_entries
+         WHERE scope_kind = $1 AND scope_id = $2 ORDER BY object_id LIMIT $3))";
+
 /// 解除した scope の真実源の行を最大 `limit` 件消し、消した件数を返す（#1221 R5-F。1 回の回収は有界）。
 pub async fn remove_index_scope_page(
     pool: &PgPool,
@@ -163,16 +170,12 @@ pub async fn remove_index_scope_page(
     scope_id: &str,
     limit: usize,
 ) -> Result<usize> {
-    let result = sqlx::query(
-        "DELETE FROM cn_index.index_entries WHERE (scope_kind, scope_id, object_id) IN (
-             SELECT scope_kind, scope_id, object_id FROM cn_index.index_entries
-             WHERE scope_kind = $1 AND scope_id = $2 LIMIT $3)",
-    )
-    .bind(scope_kind.as_str())
-    .bind(scope_id)
-    .bind(i64::try_from(limit)?)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query(REMOVE_INDEX_SCOPE_PAGE_SQL)
+        .bind(scope_kind.as_str())
+        .bind(scope_id)
+        .bind(i64::try_from(limit)?)
+        .execute(pool)
+        .await?;
     Ok(usize::try_from(result.rows_affected())?)
 }
 
