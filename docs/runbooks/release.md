@@ -54,7 +54,7 @@ python scripts/release/test_verify_public_preview.py
 
 1. 承認したsourceに新しいtagを作成・pushする。tag pushは既定でdraftまで。
 2. 手動実行なら`Kukuri Release`のworkflow refにも同じtagを選び、入力`tag`を一致させる。`draft`の既定値は`true`。別refのworkflowで過去tagをbuildする入力は拒否する。
-3. `validate-release-inputs`がevent／tag／versionを検証し、tagとworkflowのsourceを照合してcommit SHAを一度固定する。後続checkoutはそのSHAを使う。
+3. `validate-release-inputs`がevent／tag／versionを検証し、tagとworkflowのsourceを照合してcommit SHAを一度固定する。後続checkoutはそのSHAを使う。version gate（`cargo xtask release-check`）は同じtagからAndroidのversionCodeも計算し、範囲外のtagを拒否する（[Google Play配布](android-play-release.md#versioncode)）。
 4. `linux-verify`が既存製品CIを実行。Windows／Linux GUI package、CLI 2archのjobで本体を生成し、source／target／version／SHA-256を`release-package.json`へ記録する。package jobは`linux-verify`を待たずに並行して始まり、公開は`linux-verify`を含む全jobの成功を条件とする（#1180）。
 5. CLIはarchiveから展開した実binaryでschema、専用profileのdaemon起動・status・終了を確認する。aarch64はQEMUで実行し、cross-compileだけを成功条件にしない。HOME／XDGとprofileは一時領域で、GUIのidentityを共有しない。
 6. `changelog`が固定sourceからRelease notesを生成し（起点は公開済み（draftでない）Releaseのtagのうち最も近い祖先。Releaseの無いtag、つまり失敗したreleaseのtagは起点にしない。#1186）、`release-assets`が4targetの資材を集約する。必須job失敗・欠落・異なるsource／version／鍵・test署名・hash不一致は公開前に拒否する。
