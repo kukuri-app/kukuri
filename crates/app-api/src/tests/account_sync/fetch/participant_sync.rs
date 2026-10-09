@@ -161,6 +161,30 @@ async fn a_join_received_on_another_device_is_distributed() {
     assert_eq!(grants(&o.a_store, &p).await, 1);
 }
 
+/// #1707: A が P の参加の item を台帳へ採った後、表へ入れる前に止まっていても、同じ item の再受信で表へ入れ、鍵更新で
+/// P へ grant を出す。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_join_adopted_by_a_stopped_merge_is_distributed() {
+    let o = owners(ChannelAudienceKind::InviteOnly).await;
+    let (p, e1) = (
+        generate_keys().public_key_hex(),
+        current_epoch(&o.a, &o.channel).await,
+    );
+    receive(&o.b, &o.channel, &p, joined(&e1)).await;
+    let item = AccountSyncItem::channel_participant(
+        &ChannelId::new(o.channel.clone()),
+        &Pubkey::from(p.clone()),
+        &joined(&e1),
+    )
+    .expect("item");
+    adopt_only(&o.a, &item).await;
+    o.a.fetch_account_sync_from("device-b")
+        .await
+        .expect("fetch");
+    rotate(&o.a, &o.channel).await;
+    assert_eq!(grants(&o.a_store, &p).await, 1);
+}
+
 /// 相互フォロー限定の資格は、どちらの端末で観測した edge でも判断する。参加より前に B だけが観測した P → owner の
 /// follow で、A は資格のある P へ grant を出す。owner が B で P のフォローを解除すると、A の次の鍵更新で P へ出さない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -122,11 +122,34 @@ pub fn compose_viewer_trust(trust_absolute: f64, relation: f64) -> f64 {
     clamp_unit(clamp_unit(trust_absolute) + relation.clamp(-1.0, 0.0))
 }
 
-/// relation 側の版（`relation_version`）。
-pub fn relation_version(relation_snapshot_id: Option<i64>, observation_revision: i64) -> String {
+/// relation 側の版（`relation_version`）。直近で成功した relation 解析の id と、評価に使った観測の
+/// digest（並びによらない blake3 の先頭 16 文字。観測が無ければ `0`）の組。観測の集合が同じなら
+/// 同じ版で、時間減衰では変わらない（#1699）。
+pub fn relation_version(
+    relation_snapshot_id: Option<i64>,
+    observations: &[RelationObservation],
+) -> String {
+    let observations = if observations.is_empty() {
+        "0".to_string()
+    } else {
+        let mut parts: Vec<String> = observations
+            .iter()
+            .map(|observation| {
+                format!(
+                    "{}|{:?}|{}",
+                    observation.observer_pubkey,
+                    observation.kind,
+                    observation.observed_at.timestamp_millis()
+                )
+            })
+            .collect();
+        parts.sort();
+        let digest = blake3::hash(parts.join("\n").as_bytes()).to_hex();
+        digest.as_str()[..16].to_string()
+    };
     match relation_snapshot_id {
-        Some(snapshot) => format!("r-{snapshot}-{observation_revision}"),
-        None => format!("r-none-{observation_revision}"),
+        Some(snapshot) => format!("r-{snapshot}-{observations}"),
+        None => format!("r-none-{observations}"),
     }
 }
 

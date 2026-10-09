@@ -595,7 +595,7 @@ policy_version: string,
  */
 trust_version: string, 
 /**
- * relation snapshot と対象への観測 revision の組。
+ * relation snapshot と、評価に使った対象への観測の digest の組（観測が無ければ `0`）。
  */
 relation_version: string, computed_at: string, 
 /**

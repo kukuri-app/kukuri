@@ -285,7 +285,7 @@ fn trust_component_is_unchanged_by_observations() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 3),
+        relation_version(Some(7), &observations),
         now(),
         &params,
     );
@@ -299,7 +299,7 @@ fn trust_component_is_unchanged_by_observations() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 3),
+        relation_version(Some(7), &observations),
         now(),
         &params,
     );
@@ -328,7 +328,7 @@ fn relation_update_does_not_touch_trust_component() {
         empty.clone(),
         empty_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(Some(7), 0),
+        relation_version(Some(7), &[]),
         now(),
         &params,
     );
@@ -342,7 +342,10 @@ fn relation_update_does_not_touch_trust_component() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 1),
+        relation_version(
+            Some(7),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &params,
     );
@@ -359,7 +362,7 @@ fn relation_update_does_not_touch_trust_component() {
         with_signal.clone(),
         with_signal_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(Some(7), 0),
+        relation_version(Some(7), &[]),
         now(),
         &params,
     );
@@ -367,6 +370,46 @@ fn relation_update_does_not_touch_trust_component() {
     assert_ne!(t_eval.trust_version, no_eval.trust_version);
     assert_eq!(t_eval.relation_version, no_eval.relation_version);
     assert_eq!(t_updated.trust, with_signal.trust);
+}
+
+#[test]
+fn relation_version_digests_the_observations_used_for_the_evaluation() {
+    // 観測が無ければ 0。版は解析の id と観測の集合だけで決まり、並びによらない（#1699）。
+    assert_eq!(relation_version(Some(7), &[]), "r-7-0");
+    assert_eq!(relation_version(None, &[]), "r-none-0");
+    let u1 = observation(OBSERVER_U1, RelationObservationKind::Block);
+    let u2 = observation(OBSERVER_U2, RelationObservationKind::Mute);
+    let base = relation_version(Some(7), &[u1.clone(), u2.clone()]);
+    assert_eq!(base, relation_version(Some(7), &[u2.clone(), u1.clone()]));
+    assert_ne!(base, relation_version(Some(8), &[u1.clone(), u2.clone()]));
+    // 観測の追加・評価からの外れ（解除・同意の無効化）・種別や観測時刻の更新で版が変わる。
+    let changed = [
+        vec![
+            u1.clone(),
+            u2.clone(),
+            observation(VIEWER_C, RelationObservationKind::Block),
+        ],
+        vec![u1.clone()],
+        vec![
+            u1.clone(),
+            RelationObservation {
+                kind: RelationObservationKind::Block,
+                ..u2.clone()
+            },
+        ],
+        vec![
+            u1.clone(),
+            RelationObservation {
+                observed_at: now() + Duration::seconds(1),
+                ..u2.clone()
+            },
+        ],
+    ];
+    for observations in changed {
+        assert_ne!(base, relation_version(Some(7), &observations));
+    }
+    // 元の集合に戻れば元の版に戻る。
+    assert_eq!(base, relation_version(Some(7), &[u1, u2]));
 }
 
 #[test]
@@ -379,7 +422,7 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
         empty.clone(),
         empty_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(None, 0),
+        relation_version(None, &[]),
         now(),
         &params,
     );
@@ -397,7 +440,10 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
             now(),
             &params,
         ),
-        relation_version(Some(1), 1),
+        relation_version(
+            Some(1),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &params,
     );
@@ -426,7 +472,10 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
             now(),
             &lenient,
         ),
-        relation_version(Some(1), 1),
+        relation_version(
+            Some(1),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &lenient,
     );

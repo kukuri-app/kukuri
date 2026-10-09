@@ -18,6 +18,10 @@ relation 値 R（関係の深いユーザー群のブロック / ミュート観
 1 ページ（50 件）だけを読む。期限を過ぎた行は 1 分以内の掃除で外し、半減期の変更は背景で作り直す。詳細は「§10 改訂
 追補」を正本とする。
 
+**2026-10-09 改訂**（#1699）: §8.3 の観測提供の取消は、取消時刻を記録せず、その observer の任意文書への同意の記録を
+消す形にする。§8.4 の `relation_version` は、対象ごとの観測の revision ではなく、評価に使った観測の digest で表す。
+R・S の値と観測の受付・保持は変更しない。
+
 ## Date
 2026-06-30
 
@@ -364,11 +368,12 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
     docs sync・gossip・author replica には書かない（ADR 0022 の local mute canonical は変えない）。
 - 受付 `POST /v1/trust/observations` は次をすべて満たす場合だけ保存する。満たさない場合は保存せず拒否する。
   - bearer identity の pubkey と envelope の署名者（subject）が一致する。
-  - 必須同意が成立し、かつ任意文書 `trust_observation_sharing`（§8.5）の現行版に同意済みで、その同意後に取消していない。
+  - 必須同意が成立し、かつ任意文書 `trust_observation_sharing`（§8.5）の現行版に同意済みである（取消で同意の記録が消えるので、取消後は再同意まで満たさない）。
 - 保存は `cn_trust.observations` に `(observer, target, kind)` 単位で upsert する。`(created_at, envelope_id)` が保存済みより
   新しい場合だけ置き換え、再送・複数端末・順序逆転で増幅せず、古い active で復活しない。
-- 取消 `DELETE /v1/trust/observations` は、その observer の観測を全削除し、任意同意の取消時刻を記録する。取消後の受付は
-  再同意まで拒否する。任意同意の版が変わった observer の観測は、再同意まで評価に使わない。
+- 取消 `DELETE /v1/trust/observations` は、その observer の観測を全削除し、同じ取引でその observer の任意文書への
+  同意の記録（全版）を消す（#1699。旧案の取消時刻の記録は廃止）。取消後の受付は再同意まで拒否する。
+  任意同意の版が変わった observer の観測は、再同意まで評価に使わない。
 - 保持: revoked は 30 日、active は観測時刻から 180 日で評価対象から外し、定期 cleanup で削除する。
   revoked の行を削除した後は、それより古い active envelope の再送を古いと判定できない。client の送信待ちは
   対象・種別ごとに最新 1 件へ集約して送るため、通常の再送では起きない。
@@ -383,7 +388,9 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
   - `policy_version`: 合算・表示 policy の parameter から決まる識別子。
   - `trust_version`: T に寄与する入力（signal id・appeal 状態・operator 調整・失効）の digest。2026-10-09（#1702、§10.3）
     から、対象ごとの集計が持つ signal ごとの hash の XOR（`t-<16 桁の 16 進>`）。
-  - `relation_version`: 直近で成功した relation 解析の id と、B に対する観測の最新 revision の組。
+  - `relation_version`: 直近で成功した relation 解析の id と、B の評価に使った観測（observer・種別・観測時刻）の
+    digest の組。観測が無ければ `0`。評価に使う観測の集合が同じなら同じ版で、時間減衰では変わらない
+    （#1699。旧案の対象ごとの revision は廃止）。
   - `computed_at` / `expires_at`: 評価時刻と、クライアントが結果を再利用してよい期限（既定 600 秒）。
   - `hide_recommended`: `S <= hide_threshold`（既定 -0.5）。
   - `reasons`: `risk_signals`（T が負）/ `related_users_block_or_mute`（R が負）。数値・observer は含めない。
