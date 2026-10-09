@@ -119,10 +119,6 @@ const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests requ
      WHERE cn_legal.rights_request_retention(request.status) = $2
        AND request.updated_at <= $1 - cn_admin.retention_interval($2)
        AND NOT EXISTS (
-         SELECT 1 FROM cn_legal.rights_request_events event
-         WHERE event.request_id = request.id
-       )
-       AND NOT EXISTS (
          SELECT 1 FROM cn_legal.legal_holds hold
          WHERE hold.released_at IS NULL
            AND hold.target_kind = 'rights_request'

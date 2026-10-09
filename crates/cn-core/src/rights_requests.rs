@@ -64,6 +64,10 @@ pub struct RightsRequestActionResult {
     pub prevention: TransmissionPreventionMutation,
 }
 
+/// 索引の真実源にその投稿の行があるか。読む行が他の投稿の数によらないことを試験と共有する（#1708）。
+pub const INDEXED_POST_EXISTS_SQL: &str =
+    "SELECT EXISTS (SELECT 1 FROM cn_index.index_entries WHERE object_id = $1)";
+
 pub async fn resolve_rights_request_scope(
     pool: &PgPool,
     subject_kind: &str,
@@ -107,12 +111,10 @@ pub async fn resolve_rights_request_scope(
     });
     let index_verified = !needs_index
         || (subject_kind == "post"
-            && sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (SELECT 1 FROM cn_index.index_entries WHERE object_id = $1)",
-            )
-            .bind(subject_id)
-            .fetch_one(pool)
-            .await?);
+            && sqlx::query_scalar::<_, bool>(INDEXED_POST_EXISTS_SQL)
+                .bind(subject_id)
+                .fetch_one(pool)
+                .await?);
 
     let needs_moderation = requested_capabilities
         .iter()

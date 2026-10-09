@@ -252,3 +252,70 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
     database.cleanup().await?;
     result
 }
+
+async fn count(pool: &sqlx::PgPool, sql: &'static str, id: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(sql).bind(id).fetch_one(pool).await?)
+}
+
+/// 却下等の本体は区分の期限（終了から 180 日）で消え、履歴は記録から 365 日まで残る（#1706）。
+#[tokio::test]
+async fn declined_request_body_is_deleted_before_its_history_expires() -> Result<()> {
+    let Some(admin_url) = integration_test_admin_database_url() else {
+        eprintln!("skipping rights-request retention integration test");
+        return Ok(());
+    };
+    let database = TestDatabase::create(admin_url.as_str(), "cn_rights_retention").await?;
+    let pool = connect_postgres(database.database_url.as_str()).await?;
+    let result = async {
+        initialize_database(&pool).await?;
+        let cipher =
+            LegalDataCipher::from_key_material("unit-test-legal-data-key-0123456789abcdef")?;
+        let now = chrono::Utc::now();
+        let declined_at = now - chrono::Duration::days(200);
+        let created = insert_rights_request(
+            &pool,
+            &request(),
+            RightsRequestScopeStatus::VerifiedScope,
+            &cipher,
+            declined_at - chrono::Duration::days(10),
+        )
+        .await?;
+        transition_rights_request(
+            &pool,
+            &created.record.id,
+            created.record.version,
+            "legal@node.example",
+            RightsRequestStatus::Declined,
+            Some("対象外のため却下しました"),
+            "status_surface",
+            declined_at,
+        )
+        .await?;
+        let id = created.record.id.as_str();
+        let bodies = "SELECT COUNT(*) FROM cn_legal.rights_requests WHERE id = $1";
+        let history = "SELECT COUNT(*) FROM cn_legal.rights_request_events WHERE request_id = $1";
+
+        cleanup_expired(&pool, now).await?;
+        assert_eq!(
+            count(&pool, bodies, id).await?,
+            0,
+            "expired body must be deleted"
+        );
+        assert_eq!(
+            count(&pool, history, id).await?,
+            2,
+            "history keeps its retention"
+        );
+
+        cleanup_expired(&pool, declined_at + chrono::Duration::days(365)).await?;
+        assert_eq!(
+            count(&pool, history, id).await?,
+            0,
+            "history expires on its own"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    database.cleanup().await?;
+    result
+}
