@@ -1,6 +1,6 @@
-# #1194 AC-1 Android の build 基盤（2026-10-09）
+# #1194 Android の build 基盤と実機での起動（2026-10-09）
 
-#1194 の AC-1（PR-A1-1）の記録。Scope revision `2026-10-09-r5`、基準 commit `41fdb34f3`（`integration/android-1193` の作成基点）。前提の判断は #1193 の D1・D3・D5・D7（2026-10-09 確定）。
+#1194 の AC-1（PR-A1-1）と AC-2（PR-A1-2、末尾の節）の記録。AC-1 は Scope revision `2026-10-09-r5`、基準 commit `41fdb34f3`（`integration/android-1193` の作成基点）。前提の判断は #1193 の D1・D3・D5・D7（2026-10-09 確定）。
 
 ## 採用した toolchain・SDK・ABI
 
@@ -54,4 +54,27 @@ Linux の compile・配布の contract（`tauri-test --package-build`）と MSIX
 
 参考（AC-2 の証跡ではない）: 上の APK を emulator（AVD の Medium Phone、API 36.1、x86_64、page size 4 KiB）へ入れて起動すると、共有の React 画面が Tauri の IPC で起動状態を受け取り、同意画面（利用規約 v10・18 歳以上の確認）を表示した。log は `app-level legal consent required; deferring runtime startup` で、app data dir には profile の lock（`.kukuri-profile.json`・`.kukuri-profile.lock`）だけがあり DB は作られていない。修正前は開発版の兄弟 dir `/data/user/0/app.kukuri.android.dev` を作れず（Permission denied）、起動失敗の画面になっていた。画面の上端が status bar と重なる（edge-to-edge の insets）のは #1198 AC-3 で扱う。
 
-未実施（担当）: 実機での起動・再起動と同意前の禁止 I/O の観測、release の AAB、#1195 の保存の接続（#1194 AC-2）、16KB ページ（#1194 AC-3）、署名・versionCode・配布（#1199）。
+未実施（担当）: 16KB ページ（#1194 AC-3）、署名・versionCode・配布（#1199）。
+
+## AC-2: release の成果物と実機での起動
+
+基準 commit `0fe3a7a26`（#1195 AC-1 の merge 後の `integration/android-1193`）。toolchain と lockfile は上の表のとおり。
+
+| 成果物 | command | 結果 |
+| --- | --- | --- |
+| release の AAB と APK（arm64-v8a、R8 有効、未署名） | `tauri android build --apk --aab --target aarch64` | 成功（約 16.5 分）。AAB 50,911,543 bytes（SHA-256 `bd7aab46725206f8…`）、APK 132,910,455 bytes（`068058286e3a3dc5…`） |
+| debug の APK（arm64-v8a） | `tauri android build --debug --apk --target aarch64`（`CARGO_PROFILE_DEV_DEBUG=line-tables-only`） | 成功。485,236,830 bytes |
+
+- APK の native library は `libkukuri_desktop_tauri_lib.so` の 1 つで、依存は OS の library（libandroid・libdl・liblog・libm・libc）だけ。ELF の LOAD segment は 4 つとも 16 KiB 境界（`p_align` 0x4000）で、`zipalign -c -P 16 -v 4` も通る（16 KiB の端末での起動は AC-3）。
+- 実機で release を動かすときは、APK に手元の Android SDK の debug 鍵で `apksigner` の署名をした（配布には使わない。upload 鍵での署名は #1199）。
+
+実機（Pixel 8 Pro、Android 17、arm64-v8a）での結果:
+
+- uninstall の後に release を入れた cold start（213 ms）で、同意画面（利用規約 v10・18 歳以上の確認）を表示した。log は `app-level legal consent required; deferring runtime startup` だけで、強制終了の後の起動（167 ms）も同じ。
+- 同意と復元の関門は desktop と同じ起動の経路（`lib.rs` の `restore_startup_action`）を通る（復元そのものの確認は #1195 AC-2）。
+- 同意前の app data dir（debug を上書きで入れ `run-as` で確認）には、profile の lock と WebView・ProfileInstaller の設定だけがあり、DB・鍵の保存先・account は無い。desktop の command は起動の関門で止まる（`check_app_update` は `requires Ready startup state; current state is ConsentRequired`）。
+- 同意前の通信: app の uid の socket（`/proc/net/{tcp,tcp6,udp,udp6}` を端末の中で約 0.1〜0.2 秒ごと）と、uid ごとの通信量の累計（`dumpsys netstats` の `mAppUidStatsMap`、interface・tag 別の履歴）を見た。cold start、強制終了の後の起動、3 分の待機、同意画面の操作（規約のスクロール、言語の選択、18 歳以上のチェック、文字の長押し）、debug と release の上書き install を挟む 7 回の起動のどれでも、app の socket と通信量は 0 だった。
+- 対照: 「同意して続行」の約 1.3 秒後に runtime が起動し（`initialized kukuri desktop runtime`）、UDP の bind（iroh）・DNS・443 への TCP・80 への TCP（証明書の失効の確認）が現れ、60 秒で受信 238 KB・送信 154 KB になった。上の観測の方法は runtime の通信を即座に捉える。
+- 未特定の観測: 上とは別の 2 回で、同意前に app の uid へ少量の通信が計上された（Wi-Fi で受信 10,061 B・送信 5,194 B、受信 7,745 B・送信 6,225 B）。2 回目は全量が TrafficStats の tag `0x4001804` で、この tag は runtime の通信（tag なし、DNS は `0xffffff82`）にも WebView の画面からの fetch にも付かず、app の code（dex）は tag を設定しない。どちらの時間帯にも app の uid の socket は観測されていない（1 回目は 1 秒ごとの観測。2 回目は観測の外）。他の process（WebView・Google Play 開発者サービス等）が app の代わりに行った通信の計上と見ているが、相手は特定できていない。runtime は起動しておらず、runtime・P2P・CN の通信ではない。同意画面の「同意いただくまで、kukuri はネットワーク接続（IP アドレスを伴う通信）を開始しません」との関係は #1203 AC-1（Android のデータの流れの突合）へ引き継ぐ。
+- 同意の後（release、R8 有効）: runtime が起動して community node の案内を表示した。Rust の panic と Java の class の欠落は無く、証明書の検証（rustls-platform-verifier の Kotlin の部品）と Keystore への保存が R8 の後も動く。community node の案内から CN（`https://api.kukuri.app`）の規約 6 件を HTTPS で取得して表示した（同意はしていない）。依存の jni の警告 `Dropping a GlobalRef in a detached thread` が runtime の起動ごとに 1 回出る（失敗ではない）。
+- desktop だけの処理: updater の plugin は登録せず、多重起動の制御は依存ごと外している（AC-1）。同意後の debug では、起動状態が `ready` で、`check_app_update` は `update_managed_by_google_play` を返した。終了の横取りは無く、強制終了の後の起動も通常どおり。
