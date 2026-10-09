@@ -303,14 +303,6 @@ pub(crate) async fn load_optional_secret_with_storage(
     key: &str,
     storage: &dyn ClientStorage,
 ) -> Result<Option<String>> {
-    if !mode.allows_file()
-        && let Some(secret) =
-            read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await?
-    {
-        // 復元・rollback が置いた file を優先する。activation 前に移した keyring の値で元の設定を隠さない（#1195 AC-2）。
-        persist_optional_secret_with_storage(db_path, mode, purpose, key, &secret, storage).await?;
-        return Ok(Some(secret));
-    }
     if mode.uses_keyring() {
         for account in optional_secret_account_candidates(db_path, purpose, key) {
             match keyring_get(storage, account.as_str()).await {
@@ -326,11 +318,14 @@ pub(crate) async fn load_optional_secret_with_storage(
             }
         }
     }
-    if mode.allows_file() {
-        read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await
-    } else {
-        Ok(None)
+    let secret = read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await?;
+    if let Some(secret) = &secret
+        && !mode.allows_file()
+    {
+        // 端末の backup の復元・rollback が平文の file で置いた値は、最初の読取りで keyring へ移す（#1195 AC-2）。
+        persist_optional_secret_with_storage(db_path, mode, purpose, key, secret, storage).await?;
     }
+    Ok(secret)
 }
 
 fn is_missing_default_keyring(error: &anyhow::Error) -> bool {

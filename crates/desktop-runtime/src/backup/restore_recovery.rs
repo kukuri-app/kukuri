@@ -387,6 +387,13 @@ pub fn mark_device_restore_activated(app_data_dir: &Path) -> Result<()> {
 
 /// process再起動側から、未完了の復元を旧accountへ戻す。
 pub fn rollback_pending_device_restore(app_data_dir: &Path) -> Result<()> {
+    rollback_pending_device_restore_with_storage(app_data_dir, platform_storage())
+}
+
+pub(crate) fn rollback_pending_device_restore_with_storage(
+    app_data_dir: &Path,
+    storage: &dyn ClientStorage,
+) -> Result<()> {
     let Some(journal) = load_restore_journal(app_data_dir)? else {
         cleanup_orphan_restore_staging_dirs(app_data_dir, None)?;
         return Ok(());
@@ -395,7 +402,7 @@ pub fn rollback_pending_device_restore(app_data_dir: &Path) -> Result<()> {
     if journal.phase == DeviceRestorePhase::Activated {
         bail!("activated device restore cannot be rolled back");
     }
-    rollback_from_journal(app_data_dir, &journal)?;
+    rollback_from_journal(app_data_dir, &journal, storage)?;
     cleanup_orphan_restore_staging_dirs(app_data_dir, None)
 }
 
@@ -425,7 +432,7 @@ fn recover_interrupted_restore_inner(
         validate_journal_paths(app_data_dir, journal)?;
         match journal.phase {
             DeviceRestorePhase::Installing | DeviceRestorePhase::Installed => {
-                rollback_from_journal(app_data_dir, journal)?;
+                rollback_from_journal(app_data_dir, journal, platform_storage())?;
             }
             DeviceRestorePhase::Committed | DeviceRestorePhase::AwaitingConsent => {
                 // app-level同意のresetまたは明示的な再同意を待つ。通常recoveryは
@@ -441,8 +448,21 @@ fn recover_interrupted_restore_inner(
     cleanup_orphan_restore_staging_dirs(app_data_dir, preserved)
 }
 
-fn rollback_from_journal(app_data_dir: &Path, journal: &RestoreJournal) -> Result<()> {
+fn rollback_from_journal(
+    app_data_dir: &Path,
+    journal: &RestoreJournal,
+    storage: &dyn ClientStorage,
+) -> Result<()> {
     validate_journal_paths(app_data_dir, journal)?;
+    // activation 前に復元した値が keyring へ移っていても、元の file と「未保存」が正本になるよう片付ける（#1195 AC-2）。
+    let final_db = journal.final_dir.join(DB_FILE_NAME);
+    let mut locators = known_optional_secret_locators(&final_db)?;
+    if let Some(rollback_dir) = &journal.rollback_dir {
+        locators.extend(known_optional_secret_locators(
+            &rollback_dir.join(DB_FILE_NAME),
+        )?);
+    }
+    scrub_keyring_optional_secrets(&final_db, &locators, storage)?;
     match &journal.rollback_dir {
         Some(rollback_dir) if rollback_dir.exists() => {
             if journal.final_dir.exists() {
@@ -590,7 +610,7 @@ fn error_with_restore_rollback(
     operation_error: anyhow::Error,
     context: &str,
 ) -> anyhow::Error {
-    match rollback_from_journal(app_data_dir, journal) {
+    match rollback_from_journal(app_data_dir, journal, platform_storage()) {
         Ok(()) => operation_error.context(context.to_string()),
         Err(rollback_error) => {
             anyhow!("{context}: {operation_error:#}; rollback failed: {rollback_error:#}")

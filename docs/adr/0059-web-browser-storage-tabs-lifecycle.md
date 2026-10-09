@@ -40,7 +40,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   device backup・restore と CLI の同意は native だけの同期の処理なので、trait の future を `block_on` で待つ。native の実装は I/O を待たずに終わるため、待ちは増えない。
 - Android（#1195 AC-1、2026-10-09）: native の実装の keyring は、`keyring-core` の既定の保存先に `android-native-keyring-store` を入れたもの（SharedPreferences の値を Android Keystore の export できない AES-GCM の鍵で暗号化する）。`keyring` の v1 は Android の既定を持たないため、Android だけ `keyring-core` を直接使う。
   identity の保存の mode は `KeyringOnly` で、アカウント鍵と optional secret（Community Node の token・同意・invite 等）を keyring だけに置く。読めない・書けないときは失敗を返し、平文の file・新しい鍵の生成で補わない（読めない鍵を新しい鍵で上書きしない）。
-  端末の backup の復元・rollback（ADR 0048 §5）は、transaction の回復のため鍵と optional secret を平文の file で置く。`KeyringOnly` は最初の読取りでそれを keyring へ移して file を消し、keyring へ書けなければ失敗を返す。optional secret は file を優先し、activation 前に移した keyring の値が rollback で戻した元の設定を隠さない（#1195 AC-2、2026-10-10）。
+  端末の backup の復元・rollback（ADR 0048 §5）は、transaction の回復のため鍵と optional secret を平文の file で置く。`KeyringOnly` は最初の読取りでそれを keyring へ移して file を消し、keyring へ書けなければ失敗を返す。rollback は元の directory を戻す前に、復元側と元の側の optional secret の keyring の値を消し、復元前の値と「未保存」を保つ（#1195 AC-2、2026-10-10）。
   OS の自動 backup・端末間の転送・再 install 時の自動復元には kukuri のデータを載せない（`allowBackup="false"` と `dataExtractionRules` で全 domain を除外。#1195 AC-2、2026-10-10 ユーザー判断）。Keystore の鍵は端末から出せず、移した暗号文は移った先で復号できないため。別の端末へは端末の backup か移行 QR（ADR 0062）で移す。
 - IndexedDB の database は 3 種類に分ける。
 
