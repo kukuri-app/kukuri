@@ -298,10 +298,9 @@ async fn an_edge_adopted_by_a_stopped_merge_is_applied_when_received_again() {
     .map(|envelope| AccountSyncItem::edge(&me, &envelope).expect("item"));
     for item in &items {
         adopt_only(&device, item).await;
-    }
-    for item in &items {
+        // やり直しは採ったとはしない（自分の replica へは送り直しが書く）。
         assert!(
-            device
+            !device
                 .merge_account_sync_item(item.clone())
                 .await
                 .expect("merge")
@@ -315,9 +314,14 @@ async fn an_edge_adopted_by_a_stopped_merge_is_applied_when_received_again() {
         connections(&device, SocialConnectionKind::Followed).await,
         BTreeSet::from([follower.public_key().as_str().to_string()])
     );
+    let mut changes = device.subscribe_author_relationship_changes();
     for item in items {
-        assert!(!device.merge_account_sync_item(item).await.expect("merge"));
+        device.merge_account_sync_item(item).await.expect("merge");
     }
+    assert!(
+        changes.try_recv().is_err(),
+        "反映した item は反映し直さない"
+    );
 }
 
 /// 自分のフォローを 10 倍にしても、新しい 1 件の取得の読取りの回数と bytes は増えない（変更の窓の seq の桁がそろう

@@ -224,12 +224,18 @@ async fn a_profile_adopted_by_a_stopped_merge_is_applied_when_received_again() {
     let app = device(&keys, Arc::new(MemoryDocsSync::default()));
     let item = AccountSyncItem::profile(&profile_at(&keys, "from the other device", 100)).unwrap();
     adopt_only(&app, &item).await;
-    assert!(app.merge_account_sync_item(item.clone()).await.unwrap());
+    // やり直しは採ったとはしない（自分の replica へは送り直しが書く）。
+    assert!(!app.merge_account_sync_item(item.clone()).await.unwrap());
     assert_eq!(
         app.get_my_profile().await.unwrap().name.as_deref(),
         Some("from the other device")
     );
+    let mut changes = app.subscribe_author_relationship_changes();
     assert!(!app.merge_account_sync_item(item).await.unwrap());
+    assert!(
+        changes.try_recv().is_err(),
+        "反映した item は反映し直さない"
+    );
 }
 
 // 一方の端末の編集を、もう一方の端末が account の replica から点読して反映する。

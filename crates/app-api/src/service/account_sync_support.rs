@@ -148,6 +148,7 @@ impl AppService {
 
     /// 採用の台帳の行が既に `item` の版か。採れなかった item でも同じ版なら、呼出元は採用の後の処理をやり直す（台帳へ
     /// 採った後、反映の前に止まった merge の再受信。移行・同期の反映の task は item の途中でも止めて作り直す。#1707）。
+    /// やり直しは採ったとはしない（自分の replica へ書かず、窓にも足さない。行の未書込みは送り直しが書く。ADR 0061 §10）。
     pub(super) async fn holds_account_sync_item(&self, item: &AccountSyncItem) -> Result<bool> {
         Ok(self
             .services
@@ -158,8 +159,7 @@ impl AppService {
     }
 
     /// 本人の別の端末の item を、`(updated_at, op_id)` の勝者の規則で採用して反映する。採った（行を置き換えた・鍵の
-    /// 行を足した）ら true。同じ操作の再受信・古い版（restore した古い端末の版を含む）は false。ただし台帳へ採った後、
-    /// 反映の前に止まった item は、同じ版の再受信で反映をやり直す（profile・edge はやり直したら true）。
+    /// 行を足した）ら true。同じ操作の再受信・古い版（restore した古い端末の版を含む）は false。
     pub(crate) async fn merge_account_sync_item(&self, item: AccountSyncItem) -> Result<bool> {
         match &item.key {
             AccountSyncItemKey::Profile => {
@@ -185,11 +185,12 @@ impl AppService {
                     return Ok(false);
                 }
                 // 同じ版の再受信は、手元の profile が古いとき（反映の前に止まった merge）だけやり直す。
-                if !self
+                let adopted = self
                     .services
                     .projection_store
                     .adopt_account_sync_row(&row_of(&item)?)
-                    .await?
+                    .await?;
+                if !adopted
                     && !(self.holds_account_sync_item(&item).await?
                         && self.get_my_profile().await?.updated_at < item.updated_at)
                 {
@@ -201,7 +202,7 @@ impl AppService {
                     .services
                     .author_relationship_changes
                     .send(self.current_author_pubkey().to_string());
-                Ok(true)
+                Ok(adopted)
             }
             AccountSyncItemKey::TrustAlwaysVisible { .. } => {
                 anyhow::ensure!(
@@ -255,16 +256,18 @@ impl AppService {
                     ),
                     _ => anyhow::bail!("not an edge item"),
                 };
-                // 台帳が同じ版でも手元の edge が古いか無ければ、反映の前に止まった merge なので反映をやり直す。
                 if local.is_some_and(|(updated_at, envelope_id)| {
                     updated_at > item.updated_at || envelope_id == envelope.id
-                }) || !self
+                }) {
+                    return Ok(false);
+                }
+                // 台帳が同じ版でも手元の edge が古いか無ければ、反映の前に止まった merge なので反映をやり直す。
+                let adopted = self
                     .services
                     .projection_store
                     .adopt_account_sync_row(&row_of(&item)?)
-                    .await?
-                    && !self.holds_account_sync_item(&item).await?
-                {
+                    .await?;
+                if !adopted && !self.holds_account_sync_item(&item).await? {
                     return Ok(false);
                 }
                 let committed = match &item.key {
@@ -289,7 +292,7 @@ impl AppService {
                             .send(pubkey.to_string());
                     }
                 }
-                Ok(committed)
+                Ok(adopted && committed)
             }
             // 参加者との follow の edge（#1219 AC-5。相互フォロー限定の資格の材料）。採用の台帳に持つだけで、フォローの表に
             // 入れない。
