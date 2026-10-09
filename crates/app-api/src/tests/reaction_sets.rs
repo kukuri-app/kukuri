@@ -37,10 +37,10 @@ fn foreign_asset(owner_pubkey: &str, seed: char, search_key: &str) -> CustomReac
     }
 }
 
-/// 自分で作ったセットを同じアカウントの別の端末で取り込むと、その端末の自作に無い自分のリアクションも保存済みへ
-/// 置かれる。作った端末で取り込むと、自作にあるものは保存しない。
+/// 自分で作ったセット・投稿の自分のリアクションは、同じアカウントの別の端末ではその端末の自作に無いので保存済みへ
+/// 置ける。作った端末では、自作にあるものは保存しない。
 #[tokio::test]
-async fn an_own_reaction_set_is_saved_on_another_device_of_the_same_account() {
+async fn own_reactions_are_saved_on_another_device_of_the_same_account() {
     let blobs = Arc::new(MemoryBlobService::default());
     let keys = generate_keys();
     let (made_on, _) = app_on(
@@ -73,7 +73,10 @@ async fn an_own_reaction_set_is_saved_on_another_device_of_the_same_account() {
         .await
         .expect("import on the same device");
 
-    assert_eq!((imported.saved, imported.skipped_own), (vec![own], 0));
+    assert_eq!(
+        (imported.saved, imported.skipped_own),
+        (vec![own.clone()], 0)
+    );
     assert_eq!(
         other_device
             .list_bookmarked_custom_reactions()
@@ -83,6 +86,14 @@ async fn an_own_reaction_set_is_saved_on_another_device_of_the_same_account() {
         1
     );
     assert_eq!((same_device.saved.len(), same_device.skipped_own), (0, 1));
+    let from_post = reaction_snapshot_from_view(&own);
+    assert!(
+        other_device
+            .bookmark_custom_reaction(from_post.clone())
+            .await
+            .is_ok()
+    );
+    assert!(made_on.bookmark_custom_reaction(from_post).await.is_err());
 }
 
 /// セットを作った人の自作・保存済みのリアクションを、別のアカウントが同じ ID・最初の作者のまま、セットの並びで

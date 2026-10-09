@@ -152,19 +152,15 @@ impl AppService {
                 .put_remote_blob(bytes, CUSTOM_REACTION_SET_MIME)
                 .await?;
         }
-        // 自作は端末間で同期しないので、除くのはこの端末の自作にあるものだけ。同じアカウントの別の端末で作ったものは
+        // 自作は同じアカウントの別の端末に届いていないことがあるので、除くのはこの端末の自作にあるものだけ。同じアカウントの別の端末で作ったものは
         // 保存済みへ置く。自分の作ったものを含むセットのときだけ、自作の上限つきの窓を読む。
         let me = self.current_author_pubkey();
-        let own: BTreeSet<String> = if set
+        let own = if set
             .items
             .iter()
             .any(|item| item.owner_pubkey.as_str() == me)
         {
-            self.list_my_custom_reaction_assets()
-                .await?
-                .into_iter()
-                .map(|asset| asset.asset_id)
-                .collect()
+            self.own_custom_reaction_ids().await?
         } else {
             BTreeSet::new()
         };
