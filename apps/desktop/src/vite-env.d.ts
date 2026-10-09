@@ -3,12 +3,12 @@
 interface ImportMetaEnv {
   readonly VITE_KUKURI_DESKTOP_MOCK?: string;
   readonly VITE_KUKURI_DISTRIBUTION?: string;
+  /** Tauri CLI が渡す build の対象の platform（`windows`・`linux`・`android` など）。Tauri の外の build には無い。 */
+  readonly TAURI_ENV_PLATFORM?: string;
   /** `web` なら Web の build（ADR 0060 §1）。 */
   readonly VITE_KUKURI_TARGET?: string;
   /** Web の build の Community Node の初期設定を、配布の設定から替える（開発・試験）。 */
   readonly VITE_KUKURI_COMMUNITY_NODE_BASE_URL?: string;
-  /** Tauri CLI が build・dev の対象の platform を渡す（`android`・`windows` など。Web の build では無い）。 */
-  readonly TAURI_ENV_PLATFORM?: string;
 }
 
 interface ImportMeta {

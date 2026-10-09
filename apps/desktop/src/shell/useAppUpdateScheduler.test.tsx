@@ -8,11 +8,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test('Microsoft Store builds never schedule or invoke the self-managed updater', async () => {
+test.each(['microsoft-store', 'google-play'] as const)('%s builds never schedule or invoke the self-managed updater', async (distribution) => {
   vi.useFakeTimers();
   Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} });
   const check = vi.fn(async () => undefined);
-  const view = renderHook(() => useAppUpdateScheduler(check, 'microsoft-store'));
+  const view = renderHook(() => useAppUpdateScheduler(check, distribution));
   await act(async () => { await vi.advanceTimersByTimeAsync(60 * 60 * 1000); });
   expect(check).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);

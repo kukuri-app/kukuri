@@ -15,6 +15,7 @@ Console での登録・支払い・本人確認・設定は登録者の外部作
 | 項目 | 値 | 根拠・設定の正本 |
 | --- | --- | --- |
 | 配布 | Google Play のみ。AAB を提出し、直接配布の APK と別の package は作らない | #1193 D3 |
+| アプリ内の更新 | 行わない。更新は Google Play が配り、設定の「リリース」は Google Play が管理する旨だけを出す（確認・インストールのボタンと GitHub への更新確認は無い） | D3、#1199 AC-3。配布方式は Tauri CLI が渡す `TAURI_ENV_PLATFORM=android` で決まる（`apps/desktop/src/lib/distribution.ts`）。backend は updater を登録せず、更新の command を `update_managed_by_google_play` で断る |
 | 開発者アカウント | 個人（Personal）として新規登録 | D4 |
 | package 名（applicationId） | `app.kukuri.android`。最初の成果物の upload で固定され、変更・削除・再利用できない | D5。Android の設定は #1194 AC-1 が置く。desktop の identifier `app.kukuri.desktop` は変えない |
 | アプリ名 | kukuri（英語・日本語とも） | D5 |

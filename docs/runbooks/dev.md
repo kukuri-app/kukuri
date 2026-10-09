@@ -417,8 +417,8 @@ iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流�
 - 前提は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#android>。JDK 17 以上（Android Studio 付属の JBR 21 で確認）、Android SDK の platform 36、NDK r29（`NDK_HOME` か `ANDROID_NDK_HOME`）、Rust の target `aarch64-linux-android`（配布）と `x86_64-linux-android`（emulator）を入れる。
 - 対象は #1193 の D5・D7 に従う。applicationId は `app.kukuri.android`（`apps/desktop/src-tauri/tauri.android.conf.json`。desktop の identifier と保存先は変えない）、minSdk 29、compileSdk・targetSdk 36、配布の ABI は arm64-v8a だけで、x86_64 は emulator での検証に使う。
 - Android project は `apps/desktop/src-tauri/gen/android` に置き、git で追跡する。Tauri CLI 2.12.0 の `tauri android init` の出力から、CLI の呼び方（PATH の node で `apps/desktop/scripts/tauri-cli.mjs` を呼ぶ）、SDK の版（雛形は 37）、Android TV の宣言を直し、未使用の雛形（layout・色・night の theme）と既定のアイコンを除いた。ランチャーアイコンは `src-tauri/icons/android`（`docs/ASSET_MANIFEST.json` で管理）を Gradle の res として直接読む。`gen/android` の build の生成物は同 directory の `.gitignore` が除く。
-- desktop だけの処理（tray、終了の横取りと signal、多重起動の制御、updater）は `cfg(desktop)` で Android の build から外す。Android の OS 通知は #1197 AC-4 まで `unavailable` を返し、更新は Google Play が管理する（`update_managed_by_google_play`）。
-- 画面は、Tauri CLI が Android の build・dev で Vite に渡す `TAURI_ENV_PLATFORM=android` を `apps/desktop/src/lib/platform.ts` の `IS_ANDROID` で判定する（`vite.config.ts` の `envPrefix`）。Android では live・game・metaverse・Dome の入口を開発者モードでも出さず（#1193 D1）、設定の「システム」（ウィンドウ・タスクトレイ）を出さず、About に使えない機能を示す（#1198 AC-1）。
+- desktop だけの処理（tray、終了の横取りと signal、多重起動の制御、updater）は `cfg(desktop)` で Android の build から外す。Android の OS 通知は #1197 AC-4 まで `unavailable` を返し、更新は Google Play が管理する（`update_managed_by_google_play`）。frontend は Tauri CLI が build に渡す `TAURI_ENV_PLATFORM=android` で配布方式を `google-play` にし（`vite.config.ts` の `envPrefix`、`src/lib/distribution.ts`）、更新の確認を予約せず、設定の「リリース」に Google Play が管理する旨を出す（#1199 AC-3）。
+- 画面は、同じ `TAURI_ENV_PLATFORM=android` を `apps/desktop/src/lib/platform.ts` の `IS_ANDROID` で判定する。Android では live・game・metaverse・Dome の入口を開発者モードでも出さず（#1193 D1）、設定の「システム」（ウィンドウ・タスクトレイ）を出さず、About に使えない機能を示す（#1198 AC-1）。
 
 ```bash
 cargo xtask android-check
