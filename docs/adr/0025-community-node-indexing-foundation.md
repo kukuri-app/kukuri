@@ -50,7 +50,7 @@ community node の `indexing`（`index` / `search` / `discovery` / `recommendati
 - Gossip Hint 必要有無: peer discovery 補助として使用（Model C, §6）。基本データ経路は docs replica sync
 - Blob 必要有無: No（**no permanent blob storage** を維持。raw media blob は index しない。index は VLM 由来の派生タグのみ。moderation server の一時 fetch のみ）
 - SQLite projection 必要有無: No（server は SQLite を使わない）
-- index 投影ストア: **ArcadeDB**（Lucene 全文検索付き multi-model DB。canonical ではない derived な写像）。#413 で決定・改訂（当初は「Postgres projection」としていたが、ADR 0026 §6.1 で relation graph 用に採用する ArcadeDB に index 投影も相乗りさせ、全文検索 + co-participation graph を単一エンジンに統合する）。**全文検索のみ**を今回のスコープとし、ベクトル検索は延期する（§4 の画像類似検索除外と整合）。scope 管理 state（supported set / user request / private channel capability）は node-local な制御情報として **Postgres（`cn_index` schema）** に置く（index 投影本体とは別）
+- index 投影ストア: 新着列挙と relation graph は **ArcadeDB**、全文検索は **Tantivy**（どちらも canonical ではない derived な写像。#1724、§10）。#413 で全文検索も ArcadeDB に置いた旧判断は検索の保存先・検索語の意味について失効し、既存投影から背景で写す。scope 管理 state（supported set / user request / private channel capability）と真実源は **Postgres（`cn_index` schema）** に置く。ベクトル検索は延期する。
 - 必須 contract:
   - `index_scope_limited_to_operator_supported_topics`
   - `index_rejects_topic_outside_supported_set`
@@ -160,6 +160,8 @@ content が index に入る条件は次の AND とする:
 - どちらの検索面も §2.2 の supported-topic scope と §2.5 の safety ゲートに従う（横断検索でも supported 外 topic / 非 `allow` content は出ない）。
 - **横断検索の対象は supported set のうち公開 scope（public topic）全体**（#711 で明確化）。非公開チャンネルの索引は §6.3 の閲覧境界（チャンネル参加者に閉じる）に従い、横断検索・発見・推薦には項目も識別子も出さない。非公開チャンネルの読み口は所属証明つきの範囲指定読みだけである。「supported set 全体」と「参加者に閉じる」は矛盾しない: 横断面は公開 scope の集合、非公開 scope は範囲指定面、と読み口を分ける。
 
+- 検索語は空白で分け、すべての語を含む投稿を BM25 の関連度順に返す。日本語の区切りと長い語の扱いは §10。
+
 ### 2.8 索引状況の read 面 — 自分の申請状態と対象の supported 判定（#975）
 
 利用者は申請（§2.2）の結果を申請時応答でしか知れず、対象が supported set に入っているかも
@@ -224,7 +226,7 @@ content が index に入る条件は次の AND とする:
 
 - trust / relation reads への risk signal 反映経路（#406 / trust-relation ADR #409）。
 - 決定論的 / 非決定論的 moderation の verdict 生成詳細（#410 / #411）。
-- ranking / recommendation アルゴリズム、関連度スコアリングの具体。
+- discovery / recommendation の ranking アルゴリズム。全文検索の BM25 は §10。
 - 画像類似検索 / raw blob 内容検索（タグ経由の検索は本 ADR で扱う）。
 - tag 語彙（tag vocabulary）の標準化と VLM タグ生成の詳細（#411）。
 - public manifest での index capability の表現詳細（capability メタデータ更新）。
@@ -284,7 +286,7 @@ index する content（post 本文・media タグ・room メタデータ）を c
 - Replicated?: index 自体は node-local。CN は supported topic / 許可 channel の **docs sync peer として参加**する。
 - Rebuildable From: sync した replica（topic / channel）+ safety scan。docs+blob で backfill / restart 復元。
 - Gossip Hint: peer discovery 補助として使用。基本データ経路は docs replica sync。
-- index 投影ストア: ArcadeDB（全文のみ、ベクトル延期）。scope 管理 state は Postgres（`cn_index`）。
+- index 投影ストア: ArcadeDB（新着・関係）と Tantivy（全文検索、§10）。scope 管理 state は Postgres（`cn_index`）。ベクトル検索は延期。
 
 ### 6.6 実装（#413）
 
@@ -314,7 +316,7 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
   ただし `COMMUNITY_NODE_INDEX_QUERY_ENABLED` は既定 false で、真にしても現在の profile、
   operator config、配布版、判定項目、有効期限に一致する準備完了記録が無ければ検索・発見・
   おすすめの読み取り面を公開しない。条件不成立時は 404 へ倒す。
-- **スコープ外のまま**: ranking / 関連度スコアリングの具体（§4）。discovery / recommendation は
+- **スコープ外のまま**: discovery / recommendation の ranking（§4）。全文検索の BM25 は §10。discovery / recommendation は
   created_at 降順の新着列挙を最小 surface とする。
 
 ## Appendix A: 代替・補助 ingestion モデル（B / A, optional）
@@ -517,3 +519,35 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
 - 利用体験: T より古い投稿と容量で押し出された投稿は、CN の検索・discovery に出なくなる（ユーザー決定で受け入れ済み）。
 - 対象外: CN の旧同期の iroh store（topic/channel replica の entry と内容 blob）は全 blob GC なしに回収できないため、R5-H で同期を
   止めた後の R5-I の回収対象とする（2026-09-26 ユーザー決定）。
+
+## 10. CN の全文検索を Tantivy に移す（#1724、2026-10-10）
+
+- 検索は Tantivy 0.26、形態素解析は lindera 5 / IPADIC-NEologd。本文と検索語を NFKC と小文字に
+  揃えてから区切り、位置つきで索引する。本文を含む元の投影を保存する。辞書は
+  `mecab-ipadic-neologd-0.0.7-20200820` で、固有名詞・作品名が1語になる。一部の語
+  （「東京」で「東京タワー」）や途中の1文字では見つからない。辞書のサイズ・build 時間と、
+  2020-08-20 から更新されない点はユーザーが受け入れた。配布表示は `docs/licenses/` に保存する。
+- 空白で分けた各語を形態素解析し、複数 token になった語はその並び（phrase）で探す。
+  各語は AND で結び、BM25 の関連度順に `limit`（従来どおり1〜100）件返す。
+  Lucene の AND / OR / 引用 / wildcard の構文は解釈しない。表記の揺れ・誤字の許容・追加辞書は対象外。
+- scope 指定では当該 scope のみ、横断では公開 topic のみを索引の段で絞る。
+  応答の形、所属証明、認証・同意・rate limit、需要の記録、最新の真実源との fail-closed の
+  突合は維持する。新着列挙と readiness の突合は ArcadeDB に残す。
+- **件数非依存原則の限定された例外（ユーザー決定）**: ありふれた検索語は、一致する文書の数に
+  比例して索引の走査に時間がかかることを受け入れる。点数を付ける候補に上限を置かず、
+  新しい一定件数だけに検索を限らない。保存した文書を読むのは返す件数だけで、検索時の
+  ArcadeDB の文書の読取りは0。小さい scope と一致数の少ない語はこの索引の走査で絞る。
+- indexer の data dir の `search` を cn-indexer が書き、cn-user-api は別 reader で開く。
+  reader も metadata lock のため書込み権限を要し、同じ volume / disk を書込み可能で mount する。
+  公開・非公開の本文を持つ node-local な derived state であり、canonical として replicate しない。
+- 取込・撤回・de-index・送信防止・scope 解除・保持期間/容量回収を同じ `SearchProjection` で
+  反映する。変更がある時だけ1秒間隔で commit し、未確定台帳512件の容量でも commit する。
+  scope / 保持期間の回収は各索引で1回128件以内。台帳は commit 後に消える。
+- 既存の投影は、作成時刻の新しい順に1回128件以内で背景で写す。時刻が同じ場合の
+  scope / object の位置と完了を Tantivy の commit payload で投稿と一緒に確定し、通常の
+  commit も維持する。停止・再起動で続け、完了後は投影を読まない。live の変更と写しを直列にする。
+  `(created_at, scope_kind, scope_id, object_id)` の複合索引の初回作成中の待ちはユーザー決定8で受け入れた。
+- 旧 `SEARCH_INDEX`、ArcadeDB の全文索引 `IndexedEntry[text]` と in-memory の検索の近似は廃止。
+  RAM の試験にも同じ Tantivy の検索を使う。旧版へ戻す場合、旧 indexer の schema 初期化が
+  全文索引を作り直す間は件数に比例する待ちがあり、Tantivy のディレクトリは残って使われない。
+  本番配備と投影の作り直しの手順の変更は #1724 の対象外。

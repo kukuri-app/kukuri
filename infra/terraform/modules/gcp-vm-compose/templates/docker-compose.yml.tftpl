@@ -93,9 +93,18 @@ services:
       # operator-config.yaml を読み込み public manifest endpoint / report_endpoint gating を有効化する。
       COMMUNITY_NODE_OPERATOR_CONFIG: ${operator_config_path}
 %{ endif ~}
-%{ if operator_config_enabled ~}
+%{ if operator_config_enabled || deploy_indexer_stack ~}
     volumes:
+%{ if operator_config_enabled ~}
       - ./operator-config.yaml:${operator_config_path}:ro
+%{ endif ~}
+%{ if deploy_indexer_stack ~}
+%{ if use_indexer_disk ~}
+      - ${indexer_data_path}:${indexer_data_path}:rw
+%{ else ~}
+      - cn-indexer-data:${indexer_data_path}:rw
+%{ endif ~}
+%{ endif ~}
 %{ endif ~}
     depends_on:
       cn-migrate:

@@ -36,6 +36,7 @@ pub struct UserApiConfig {
     /// `/v1/index/*` を公開しない。
     /// 有効化すると ArcadeDB(`COMMUNITY_NODE_ARCADEDB_*`)へ接続する。
     pub index_query_enabled: bool,
+    pub indexer_data_dir: PathBuf,
     /// trust / relation read surface を公開するか(#415)。
     /// 既定 false。capability は Available だが、readiness activation 完了までは
     /// `/v1/trust/*` / `/v1/relation/*` は 404。有効化すると relation graph の
@@ -77,6 +78,7 @@ impl std::fmt::Debug for UserApiConfig {
                 &self.legal_data_key.as_ref().map(|_| "<redacted>"),
             )
             .field("index_query_enabled", &self.index_query_enabled)
+            .field("indexer_data_dir", &self.indexer_data_dir)
             .field("trust_read_enabled", &self.trust_read_enabled)
             .field(
                 "relation_distance_optout_min_proximity",
@@ -167,6 +169,11 @@ impl UserApiConfig {
             channel_secret_key,
             legal_data_key,
             index_query_enabled,
+            indexer_data_dir: std::env::var("COMMUNITY_NODE_INDEXER_DATA_DIR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "./data/cn-indexer".into())
+                .into(),
             trust_read_enabled,
             relation_distance_optout_min_proximity,
             deployment_revision,

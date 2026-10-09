@@ -368,7 +368,11 @@ async fn registered_private_epoch_reads_only_the_disclosing_provider() -> Result
             .source_replica_id,
         replica.as_str(),
     );
-    let query = FailClosedIndexQuery::new(projection.clone(), entries.clone());
+    let query = FailClosedIndexQuery::new(
+        projection.clone(),
+        entries.clone(),
+        projection.search_reader(),
+    );
     let hits = query
         .search_scope(
             IndexScopeKind::PrivateChannel,
