@@ -292,7 +292,8 @@ async fn index_only_allow_verdict_content_enforced_by_db_constraints() -> Result
             ReasonCode::ProviderUnavailable,
             ReasonCode::Unscanned,
         ] {
-            for subject in ["post-failure", "post-allow"] {
+            let failure = format!("post-failure-{reason:?}");
+            for subject in [failure.as_str(), "post-allow"] {
                 let error = upsert_scan_verdict(
                     &pool,
                     SubjectKind::Post,
@@ -310,7 +311,7 @@ async fn index_only_allow_verdict_content_enforced_by_db_constraints() -> Result
             upsert_scan_verdict(
                 &pool,
                 SubjectKind::Post,
-                "post-failure",
+                &failure,
                 &verdict(SafetyAction::Hold, false, reason),
                 &VerdictPersistMeta::default(),
             )

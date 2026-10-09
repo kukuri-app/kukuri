@@ -5,8 +5,9 @@
 -- 拒否する（検索の読み口はこの判定を通すため。判定の作成は失敗を許可にしない）。
 --
 -- 計数の初期値を実行中の書込みと食い違わせないよう、最初に索引への書込みを止める（startup は旧版のコンテナが
--- 動いたまま migration を回すことがある）。lock は索引 → 判定 → retention_state の順に取り、旧版の書込み
--- （索引 → 判定（FK の確認）→ retention_state（trigger））と循環させない。
+-- 動いたまま migration を回すことがある）。lock は索引 → 判定 → retention_state の順に取る。索引に書く取引は、
+-- 索引の lock より前に判定・retention_state の lock を持たず、判定に書く取引は判定 → retention_state の順なので、
+-- 循環しない。
 LOCK TABLE cn_index.index_entries IN SHARE ROW EXCLUSIVE MODE;
 
 ALTER TABLE cn_safety.scan_verdicts

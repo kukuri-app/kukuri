@@ -23,7 +23,7 @@ const TINY_PNG: &[u8] = &[
 ];
 const HOLD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 保留（索引 0 件・許可落ち 0 件）を突合する共通の後段検証。
+/// 保留（索引 0 件）を突合する共通の後段検証。
 async fn assert_held(stack: &E2eStack, object_id: &str) -> Result<()> {
     assert!(
         !stack
