@@ -1,6 +1,6 @@
 # #1194 Android の build 基盤と実機での起動（2026-10-09）
 
-#1194 の AC-1（PR-A1-1）・AC-2（PR-A1-2）・AC-3（PR-A1-3）の記録（AC-2・AC-3 は末尾の節）。AC-1 は Scope revision `2026-10-09-r5`、基準 commit `41fdb34f3`（`integration/android-1193` の作成基点）。前提の判断は #1193 の D1・D3・D5・D7（2026-10-09 確定）。
+#1194 の AC-1（PR-A1-1）・AC-2（PR-A1-2）・AC-3（PR-A1-3）の記録（AC-2・AC-3 は末尾の節）。#1199（versionCode・更新の経路）の記録もその後に置く。AC-1 は Scope revision `2026-10-09-r5`、基準 commit `41fdb34f3`（`integration/android-1193` の作成基点）。前提の判断は #1193 の D1・D3・D5・D7（2026-10-09 確定）。
 
 ## 採用した toolchain・SDK・ABI
 
@@ -98,3 +98,12 @@ Linux の compile・配布の contract（`tauri-test --package-build`）と MSIX
 16 KiB に揃っていない native library は 0 件。境界は NDK r29 の linker の既定（Rust の link も NDK の clang を通る）による。
 
 emulator での起動: x86_64 の release（133,860,172 bytes、SHA-256 `e1d4eddb079ecf44…`）に手元の debug 鍵で署名して入れると、cold start で同意画面（利用規約 v10・18 歳以上の確認）を表示した。log は `app-level legal consent required; deferring runtime startup`（Rust の library が読み込まれて動いた）で、`dlopen`・境界・16 KB の互換に関する log の警告や失敗は 0 件で、互換の dialog も出ない（`dumpsys package` の `pageSizeCompat` は 0）。
+
+## #1199 AC-2: versionCode
+
+Scope revision `2026-10-09-r5`、基準 commit `205d31478`（#1194 AC-3 の merge 後の `integration/android-1193`）。規則は [Play の runbook の versionCode](../runbooks/android-play-release.md#versioncode)。
+
+- 変更前: versionCode は Tauri の既定（major×1,000,000＋minor×1,000＋patch）だった。#1194 の build の `gen/android/app/tauri.properties` は、0.4.3 から `tauri.android.versionCode=4003` になっている。`v0.4.3-preview.1` と `-preview.2` のような同じ版の候補どうしや、同じ版の正式版が同じ値になる。
+- 変更後: `cargo xtask release-check v0.4.3-preview.1` は `android_version_code=400301`、`v0.4.3-preview.2` は 400302 を出す。`v0.4.3-preview.01`（`-preview.1` と同じ番号）と `v0.4.3-preview.99`（正式版の段階）は拒否する。版の違う tag（`v0.4.2-preview.1`）は従来どおり拒否する。
+- build への渡し方: `--config` で `{"bundle":{"android":{"versionCode":400302}}}` を渡した `tauri android build --aab --target aarch64` は、frontend の build（beforeBuildCommand）の前に `tauri.properties` へ `tauri.android.versionCode=400302`（versionName は 0.4.3）を書いた。beforeBuildCommand を失敗させる probe で、Gradle の前に止めて確かめた。
+- 検証: `cargo test -p xtask --no-default-features release::`（5 passed。版の遷移の生成と拒否は `android_version_code_increases_through_previews_stable_and_next_versions`・`android_version_code_rejects_values_that_collide_or_go_backwards`）。
