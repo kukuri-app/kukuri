@@ -527,7 +527,8 @@ pub async fn expire_superseded_advisory_signals(
     Ok(result.rows_affected())
 }
 
-/// content target の risk signal を著者へ関連付ける（既にあれば何もしない）。
+/// content target の risk signal を著者へ関連付ける（既にあれば何もしない。risk signal の行が
+/// 無い内容には関連付けない）。
 ///
 /// 保存済み verdict を再利用したとき（#1050）に、共有 blob の 2 人目の著者が trust 入力から
 /// 漏れないようにするための入口。
@@ -557,6 +558,9 @@ fn validate_subject_author(target: RiskSignalTarget, author: &str) -> Result<()>
     Ok(())
 }
 
+/// 対応は、内容の risk signal の行が 1 行も無くなると削除の trigger が消す（#1699）。trigger とは
+/// advisory lock（ここは共有、trigger は排他）で直列化してから risk signal の行を確かめるので、
+/// 同時に進む期限削除と重なっても、参照先のある対応を消させず、参照先の無い対応を残さない。
 async fn insert_subject_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &str,
@@ -564,9 +568,18 @@ async fn insert_subject_author(
     author: &str,
 ) -> Result<()> {
     sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(
+            hashtextextended('cn_safety.risk_signal_subject_authors', 0))",
+    )
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
         "INSERT INTO cn_safety.risk_signal_subject_authors
             (target, target_id, author_pubkey)
-         VALUES ($1, $2, $3)
+         SELECT $1, $2, $3
+         WHERE EXISTS (
+             SELECT 1 FROM cn_safety.risk_signals WHERE target = $1 AND target_id = $2
+         )
          ON CONFLICT (target, target_id, author_pubkey) DO NOTHING",
     )
     .bind(target)
