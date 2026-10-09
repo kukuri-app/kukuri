@@ -21,3 +21,7 @@
 #-renamesourcefileattribute SourceFile
 # rustls-platform-verifier の Kotlin 部品は JNI からだけ呼ばれるため、最適化で消さない（#1195）。
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+# 戻るの橋渡し（MainActivity.BackBridge）は WebView から method 名で呼ぶため、最適化で消さず名前も変えない（#1198）。
+-keepclassmembers class app.kukuri.android.MainActivity$BackBridge {
+  @android.webkit.JavascriptInterface <methods>;
+}
