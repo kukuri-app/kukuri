@@ -12,7 +12,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use kukuri_cn_core::{
     JwtConfig, TestDatabase, cleanup_trust_observations, connect_postgres,
-    list_active_relation_observations, persist_risk_signal, store_trust_observations,
+    delete_expired_trust_observations_batch, list_active_relation_observations,
+    persist_risk_signal, store_trust_observations,
 };
 use kukuri_cn_protocol::{
     AcceptConsentsRequest, CommunityNodeConsentStatus, CommunityNodePoliciesResponse,
@@ -639,10 +640,30 @@ async fn observation_retention_purges_expired() -> Result<()> {
         now - chrono::Duration::days(31),
     )
     .await?;
-    assert_eq!(server.observation_rows().await?, 3);
-    let deleted = cleanup_trust_observations(&server.pool, now).await?;
-    assert_eq!(deleted, 2);
-    assert_eq!(server.observation_rows().await?, 1);
+    let extra_targets = [
+        generate_keys().public_key(),
+        generate_keys().public_key(),
+        generate_keys().public_key(),
+    ];
+    store_trust_observations(
+        &server.pool,
+        observer.public_key_hex().as_str(),
+        &extra_targets
+            .iter()
+            .map(|target| observation(target, true, now - chrono::Duration::days(181)))
+            .collect::<Vec<_>>(),
+        now,
+    )
+    .await?;
+    assert_eq!(server.observation_rows().await?, 6);
+    for (deleted, remaining) in [(2, 4), (2, 2), (1, 1), (0, 1)] {
+        assert_eq!(
+            delete_expired_trust_observations_batch(&server.pool, now, 2).await?,
+            deleted
+        );
+        assert_eq!(server.observation_rows().await?, remaining);
+    }
+    assert_eq!(cleanup_trust_observations(&server.pool, now).await?, 0);
     server.shutdown().await
 }
 

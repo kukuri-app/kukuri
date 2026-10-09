@@ -13,6 +13,14 @@ use sqlx::postgres::PgPool;
 /// 期限削除が 1 取引で保持区分ごとに消す行の上限。
 pub const RETENTION_CLEANUP_BATCH: i64 = 128;
 
+/// 上限まで消せた間だけ次の取引へ進む（案件と観測の保持処理で共用）。
+macro_rules! cleanup_batches {
+    ($batch:expr) => {
+        while $batch {}
+    };
+}
+pub(crate) use cleanup_batches;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetentionPolicy {
     pub report_days: u32,
@@ -260,6 +268,6 @@ pub async fn delete_expired_batch(
 /// [`RETENTION_CLEANUP_BATCH`] 件ずつ消す。消した件数の合計を返す。
 pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<CleanupCounts> {
     let mut counts = CleanupCounts::default();
-    while delete_expired_batch(pool, now, RETENTION_CLEANUP_BATCH, &mut counts).await? {}
+    cleanup_batches!(delete_expired_batch(pool, now, RETENTION_CLEANUP_BATCH, &mut counts).await?);
     Ok(counts)
 }
