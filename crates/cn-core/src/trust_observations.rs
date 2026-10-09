@@ -88,10 +88,7 @@ where
                    p.policy_snapshot_revision IS NULL
                    OR c.policy_snapshot_revision = p.policy_snapshot_revision
                  )
-                LEFT JOIN cn_trust.observation_sharing_revocations r
-                  ON r.observer_pubkey = $1
                 WHERE p.policy_slug = $2 AND p.is_current = TRUE
-                  AND (r.revoked_at IS NULL OR c.accepted_at > r.revoked_at)
             ) AS active",
     )
     .bind(observer)
@@ -114,19 +111,6 @@ pub async fn trust_observation_sharing_status(
 ) -> Result<TrustObservationSharingStatus> {
     let observer = normalize_pubkey(observer)?;
     sharing_status_in(pool, observer.as_str()).await
-}
-
-async fn bump_target_revision(tx: &mut Transaction<'_, Postgres>, target: &str) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO cn_trust.observation_target_revisions (target_pubkey, revision)
-         VALUES ($1, nextval('cn_trust.observation_revision_seq'))
-         ON CONFLICT (target_pubkey)
-         DO UPDATE SET revision = nextval('cn_trust.observation_revision_seq')",
-    )
-    .bind(target)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
 }
 
 /// observer 本人の検証済み観測を保存する。
@@ -198,45 +182,32 @@ pub async fn store_trust_observations(
             ignored += 1;
         } else {
             stored += 1;
-            bump_target_revision(&mut tx, target.as_str()).await?;
         }
     }
     tx.commit().await?;
     Ok(StoreTrustObservationsOutcome::Stored { stored, ignored })
 }
 
-/// observer の観測をすべて削除し、観測提供の同意を取り消す（`DELETE /v1/trust/observations`）。
-pub async fn revoke_trust_observation_sharing(
-    pool: &PgPool,
-    observer: &str,
-    now: DateTime<Utc>,
-) -> Result<u64> {
+/// observer の観測をすべて削除し、観測提供の任意文書への同意の行（全版）を消す
+/// （`DELETE /v1/trust/observations`）。再び同意するまで、受付も評価もその observer の観測を使わない。
+pub async fn revoke_trust_observation_sharing(pool: &PgPool, observer: &str) -> Result<u64> {
     let observer = normalize_pubkey(observer)?;
     let mut tx = pool.begin().await?;
     lock_observer(&mut tx, observer.as_str()).await?;
-    let targets: Vec<String> = sqlx::query_scalar(
-        "DELETE FROM cn_trust.observations WHERE observer_pubkey = $1 RETURNING target_pubkey",
-    )
-    .bind(observer.as_str())
-    .fetch_all(&mut *tx)
-    .await?;
-    let mut unique = targets.clone();
-    unique.sort();
-    unique.dedup();
-    for target in &unique {
-        bump_target_revision(&mut tx, target).await?;
-    }
+    let deleted = sqlx::query("DELETE FROM cn_trust.observations WHERE observer_pubkey = $1")
+        .bind(observer.as_str())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     sqlx::query(
-        "INSERT INTO cn_trust.observation_sharing_revocations (observer_pubkey, revoked_at)
-         VALUES ($1, $2)
-         ON CONFLICT (observer_pubkey) DO UPDATE SET revoked_at = EXCLUDED.revoked_at",
+        "DELETE FROM cn_user.policy_consents WHERE subscriber_pubkey = $1 AND policy_slug = $2",
     )
     .bind(observer.as_str())
-    .bind(now)
+    .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(targets.len() as u64)
+    Ok(deleted)
 }
 
 /// 対象ごとの active 観測（提供同意が有効な observer のもの、保持期間内、新しい順に上限まで）。
@@ -269,12 +240,9 @@ pub async fn list_active_relation_observations(
                p.policy_snapshot_revision IS NULL
                OR c.policy_snapshot_revision = p.policy_snapshot_revision
              )
-            LEFT JOIN cn_trust.observation_sharing_revocations r
-              ON r.observer_pubkey = o.observer_pubkey
             WHERE o.target_pubkey = ANY($1)
               AND o.active = TRUE
               AND o.observed_at > $2
-              AND (r.revoked_at IS NULL OR c.accepted_at > r.revoked_at)
          ) ranked
          WHERE rank <= $4
          ORDER BY target_pubkey, observed_at DESC, observer_pubkey, kind",
@@ -297,21 +265,6 @@ pub async fn list_active_relation_observations(
     Ok(result)
 }
 
-/// 対象ごとの観測 revision（観測が一度も無い対象は 0）。
-pub async fn trust_observation_revisions(
-    pool: &PgPool,
-    targets: &[String],
-) -> Result<BTreeMap<String, i64>> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT target_pubkey, revision FROM cn_trust.observation_target_revisions
-         WHERE target_pubkey = ANY($1)",
-    )
-    .bind(targets)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows.into_iter().collect())
-}
-
 /// 直近で成功した relation 解析の id（relation snapshot の版。未実行なら None）。
 pub async fn latest_successful_relation_snapshot_id(pool: &PgPool) -> Result<Option<i64>> {
     Ok(sqlx::query_scalar(
@@ -326,23 +279,14 @@ pub async fn latest_successful_relation_snapshot_id(pool: &PgPool) -> Result<Opt
 
 /// 保持期間を過ぎた観測を削除する。削除した行数を返す。
 pub async fn cleanup_trust_observations(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
-    let mut tx = pool.begin().await?;
-    let targets: Vec<String> = sqlx::query_scalar(
+    Ok(sqlx::query(
         "DELETE FROM cn_trust.observations
          WHERE (active = FALSE AND received_at <= $1)
-            OR (active = TRUE AND observed_at <= $2)
-         RETURNING target_pubkey",
+            OR (active = TRUE AND observed_at <= $2)",
     )
     .bind(now - Duration::days(REVOKED_TRUST_OBSERVATION_RETENTION_DAYS))
     .bind(now - Duration::days(ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS))
-    .fetch_all(&mut *tx)
-    .await?;
-    let mut unique = targets.clone();
-    unique.sort();
-    unique.dedup();
-    for target in &unique {
-        bump_target_revision(&mut tx, target).await?;
-    }
-    tx.commit().await?;
-    Ok(targets.len() as u64)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }

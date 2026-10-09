@@ -81,7 +81,7 @@ pub struct TrustEvaluation {
     pub policy_version: String,
     /// T に寄与する入力の digest。
     pub trust_version: String,
-    /// relation snapshot と対象への観測 revision の組。
+    /// relation snapshot と、評価に使った対象への観測の digest の組（観測が無ければ `0`）。
     pub relation_version: String,
     pub computed_at: String,
     /// クライアントが結果を再利用してよい期限（RFC3339）。

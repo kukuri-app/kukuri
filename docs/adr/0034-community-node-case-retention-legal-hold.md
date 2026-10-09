@@ -4,6 +4,8 @@
 - Date: 2026-08-25
 - Issue: #763
 
+**2026-10-09 改訂**（#1705）: §3 の起動時の処理を、件数に依存しない形へ改めた。当初は既存行を API listen 前に sealing し、実装は起動のたびに全暗号文を認証していたため、起動の処理量と待ちが暗号文と通報・申出の行数に比例していた。起動時は暗号文 1 行で鍵を照合し、改ざんは読むときに検出し、旧平文の確認は migration の 1 回だけにする。起動時の sealing と全件の認証は失効した。旧平文が残る DB は migration で止まり、#776 以後・#1705 より前の版で一度起動して sealing してから更新する。
+
 ## Context
 
 Community Node は通報、権利侵害申出、moderation artifact、operator audit を Postgres に保持するが、従来は接続ログ30日・モデレーションログ180日という生成文書上の集約値しかなく、案件データの期限切れ非表示、物理削除、復元後整理、案件限定の legal hold が無かった。発信者情報開示へ備えるために新しい常時ログを集めるのではなく、実際に取得した情報だけを通常保持と法的保全に分けて扱う必要がある。
@@ -61,11 +63,15 @@ hold の開始・解除・export は append-only operator audit に、対象 ID�
 
 通報者連絡先、申出者の氏名・組織・住所・email・電話・代表される権利者、代理権根拠、証拠参照は、用途分離した `COMMUNITY_NODE_LEGAL_DATA_KEY` による XChaCha20-Poly1305 で暗号化する。AAD に owner kind、owner ID、data category を束縛する。private channel secret の鍵は再利用しない。
 
-受付 capability が有効なのに鍵が無い・弱い場合、暗号文が改ざんされている場合、既存行の sealing が完了しない場合は fail-closed とし、平文 fallback を行わない。既存 `reporter_contact` と権利申出 JSON の機微フィールドは API listen 前に原子的に sealing し、旧平文を消去する。
+受付 capability が有効なのに鍵が無い・弱い場合、暗号文が改ざんされている場合、旧平文が残っている場合は fail-closed とし、平文 fallback を行わない。
+
+- 起動時は API listen 前に暗号文を 1 行だけ復号して、設定した鍵を照合する。誤鍵なら起動しない。暗号文が無ければ照合しない。鍵が無く暗号文があれば起動しない。暗号文を書くのは照合を通った鍵だけなので、全行が同じ鍵で書かれている。
+- 改ざんは各行を読むとき（運営者の管理画面・cn-cli・hold export）に AEAD の認証で検出し、その読取りをエラーにする。
+- #776 より前に平文で保存された `reporter_contact` と権利申出 JSON の機微フィールドは、#776 以後の版の起動時に sealing 済みとする。旧平文の確認は migration（`202610090006_legacy_plaintext_guard.sql`）が 1 回だけ行い、残っていれば適用を止める。`cn_admin.reports.reporter_contact` 列は削除した。
 
 ### 4. 期限切れを読取と定期処理の両方で強制する
 
-全通常読取は「起算点 > 基準時刻 − 保持期間（`cn_admin.retention_interval(区分)`）」を条件にし、期限切れを返さない。起動時は listen 前に sealing と cleanup を実行し、その後は固定間隔で cleanup する。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、子行から親行の順で削除する。
+全通常読取は「起算点 > 基準時刻 − 保持期間（`cn_admin.retention_interval(区分)`）」を条件にし、期限切れを返さない。起動時は listen 前に cleanup を実行し、その後は固定間隔で cleanup する。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、子行から親行の順で削除する。
 
 backup は database 全体を含み得るため、backup object 自体の lifecycle と、復元 DB の論理保持を区別する。復元後は API 公開前の cleanup を必須とし、期限切れ非 hold 行を再表示しない。
 

@@ -43,23 +43,32 @@ impl SensitiveDataCategory {
     }
 }
 
-/// 起動時に全暗号文を認証し、誤鍵・改ざん・不明区分を通常API公開前に検出する。
-pub async fn verify_sensitive_items(pool: &PgPool, cipher: &LegalDataCipher) -> Result<u64> {
-    let rows = sqlx::query(
-        "SELECT owner_kind, owner_id, data_category, nonce, ciphertext
-         FROM cn_legal.sensitive_items ORDER BY id",
-    )
-    .fetch_all(pool)
-    .await?;
-    for row in &rows {
-        let owner_kind: String = row.try_get("owner_kind")?;
-        let owner_id: String = row.try_get("owner_id")?;
-        let category_name: String = row.try_get("data_category")?;
-        let category = SensitiveDataCategory::parse(&category_name)?;
-        decrypt_row::<serde_json::Value>(cipher, &owner_kind, &owner_id, category, row)
-            .with_context(|| format!("failed to verify encrypted legal data for {owner_kind}/{owner_id}/{category_name}"))?;
-    }
-    Ok(rows.len() as u64)
+/// 起動時の鍵の照合が読む 1 行（#1705）。暗号文を書くのは照合を通った鍵だけなので、全行が同じ鍵で
+/// 書かれている。改ざんは各行を読むときの AEAD の認証で検出する。
+pub const LEGAL_DATA_KEY_CHECK_SQL: &str =
+    "SELECT owner_kind, owner_id, data_category, nonce, ciphertext
+     FROM cn_legal.sensitive_items ORDER BY id LIMIT 1";
+
+/// 設定した鍵で暗号文を 1 行復号し、誤鍵を通常API公開前に検出する。暗号文が無ければ照合しない。
+pub async fn verify_legal_data_key(pool: &PgPool, cipher: &LegalDataCipher) -> Result<()> {
+    let Some(row) = sqlx::query(LEGAL_DATA_KEY_CHECK_SQL)
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(());
+    };
+    let owner_kind: String = row.try_get("owner_kind")?;
+    let owner_id: String = row.try_get("owner_id")?;
+    let category_name: String = row.try_get("data_category")?;
+    let category = SensitiveDataCategory::parse(&category_name)?;
+    decrypt_row::<serde_json::Value>(cipher, &owner_kind, &owner_id, category, &row).with_context(
+        || {
+            format!(
+                "failed to verify encrypted legal data for {owner_kind}/{owner_id}/{category_name}"
+            )
+        },
+    )?;
+    Ok(())
 }
 
 #[derive(Clone)]
