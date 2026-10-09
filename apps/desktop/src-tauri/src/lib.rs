@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "android", test))]
+mod android_lifecycle;
 mod app_update;
 mod commands;
 #[cfg(target_os = "linux")]
@@ -223,12 +225,25 @@ pub fn run() {
 
     // Android の保存・選択の画面が返す Content URI を開く（#1197）。
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(tauri_plugin_fs::init());
+    let builder = builder
+        .plugin(tauri_plugin_fs::init())
+        .manage(android_lifecycle::AndroidLifecycle::default());
 
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
+            #[cfg(target_os = "android")]
+            {
+                let paused = match event {
+                    WindowEvent::Suspended => Some(true),
+                    WindowEvent::Resumed => Some(false),
+                    _ => None,
+                };
+                if let Some(paused) = paused {
+                    window.app_handle().state::<android_lifecycle::AndroidLifecycle>().set_paused(paused);
+                }
+            }
             // 利用可能なトレイがある場合だけ隠す。それ以外は停止処理へ進む。
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -337,6 +352,8 @@ pub fn run() {
             let startup_state = DesktopStartupState::initializing();
             startup_state.set_status(initial_status);
             app.manage(startup_state);
+            #[cfg(target_os = "android")]
+            android_lifecycle::start(app.handle().clone());
             app.manage(OsNotificationBackground::new(app.handle()));
             // #978: 開発者向けログ閲覧。buffer は init_tracing が組んだ process 全体の1つ。
             app.manage(DeveloperLogState::new(desktop_log_buffer()));
@@ -402,7 +419,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build kukuri desktop tauri app")
         .run(|app, event| {
-            // Androidのprocess終了はOSに任せ、desktopの終了処理を挟まない（lifecycleは #1196）。
+            #[cfg(target_os = "android")]
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<android_lifecycle::AndroidLifecycle>().stop();
+            }
+            // Androidの停止・復帰は上のworkerが扱い、process終了はOSに任せる。
             if cfg!(desktop)
                 && let tauri::RunEvent::ExitRequested { api, .. } = event
                 && !app.state::<desktop_lifecycle::DesktopLifecycle>().completed()
