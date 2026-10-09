@@ -631,6 +631,14 @@ async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
         .await?;
         add_supported_topic(&pool, IndexScopeKind::PublicTopic, "first").await?;
         let projection = Arc::new(FailOnceProjection::default());
+        let search_dir = tempfile::tempdir()?;
+        let search = Arc::new(kukuri_cn_indexer::search::SearchIndex::open(
+            search_dir.path(),
+        )?);
+        let projection = Arc::new(kukuri_cn_indexer::search::SearchProjection::new(
+            projection,
+            search.clone(),
+        ));
         for scope in ["first", "second"] {
             index_row(&pool, scope, "prevented", now).await?;
             projection
@@ -653,6 +661,9 @@ async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
             "the copy leaves search at once"
         );
         let maintenance = maintenance(&pool, projection.clone())?;
+        search.commit()?;
+        let before = kukuri_cn_indexer::search::SearchReader::open(search_dir.path())?;
+        assert_eq!(before.search(None, "text", 100)?.len(), 2);
         let state = IndexerRuntimeState::default();
         // ArcadeDB が失敗した巡回では、消し待ちを残す。
         maintenance.run_pass(now, &state).await;
@@ -663,6 +674,18 @@ async fn prevention_evicts_projected_copies_in_bounded_passes() -> Result<()> {
         maintenance.run_pass(now, &state).await;
         assert_eq!(count(&pool, "cn_index.projection_evictions").await?, 0);
         assert_eq!(count(&pool, "cn_index.index_entries").await?, 0);
+        search.commit()?;
+        let reader = kukuri_cn_indexer::search::SearchReader::open(search_dir.path())?;
+        assert!(
+            reader
+                .search(Some((IndexScopeKind::PublicTopic, "first")), "text", 100)?
+                .is_empty()
+        );
+        assert!(
+            reader
+                .search(Some((IndexScopeKind::PublicTopic, "second")), "text", 100)?
+                .is_empty()
+        );
         for scope in ["first", "second"] {
             assert!(
                 !projection

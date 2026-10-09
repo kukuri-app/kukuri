@@ -362,6 +362,9 @@ Add-AssetSection -Lines $lines -Title "Bundled third-party assets" -Items $bundl
 Add-AssetSection -Lines $lines -Title "Bundled generated or generation-assisted assets" -Items $bundledGenerated
 Add-AssetSection -Lines $lines -Title "Source-only non-code assets" -Items $sourceOnly
 
+$lines.AddRange([string[]](Get-Content -LiteralPath (Join-Path $repoRoot "docs/licenses/cn-search.md") -Encoding UTF8))
+$lines.Add("") | Out-Null
+
 Add-InventorySection -Lines $lines -Title "Rust crates" -Items $rustInventory
 Add-InventorySection -Lines $lines -Title "Desktop npm packages" -Items $npmInventory
 
