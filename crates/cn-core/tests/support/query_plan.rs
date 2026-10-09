@@ -28,4 +28,3 @@ pub fn add_reads(plan: &Value, totals: &mut BTreeMap<String, (f64, f64)>) {
         add_reads(child, totals);
     }
 }
-

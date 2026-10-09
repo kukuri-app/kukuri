@@ -94,4 +94,3 @@ BEGIN
     ORDER BY g;
 END;
 $$;
-
