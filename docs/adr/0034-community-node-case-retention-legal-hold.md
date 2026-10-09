@@ -40,7 +40,7 @@ Community Node は通報、権利侵害申出、moderation artifact、operator a
 | 判断・通知履歴 | 365日 | 記録時刻 | `cn_legal.rights_request_events` |
 | operator audit | 365日 | 操作時刻 | `cn_admin.operator_actions`。機微本文を複製しない |
 | signed moderation event | 180日 | 永続化時刻 | `cn_safety.signed_moderation_events` |
-| risk signal | 180日 | 永続化時刻 | `cn_safety.risk_signals`。より早い `expires_at` を優先。著者の対応（`cn_safety.risk_signal_subject_authors`）は、その内容の risk signal の行が無くなった時点で同じ取引で消す（#1699） |
+| risk signal | 180日 | 永続化時刻 | `cn_safety.risk_signals`。より早い `expires_at` を優先。著者の対応（`cn_safety.risk_signal_subject_authors`）は、その内容の risk signal の行が無くなった時点で同じ取引で消し、risk signal の行が無い内容には作らない（#1699） |
 
 保持日数は `RetentionConfig` で正の有限日数として変更できる。既存の `moderation_logs_days` は後方互換の集約表示として残すが、削除判定は event、signal、audit の個別値を正とする。
 
