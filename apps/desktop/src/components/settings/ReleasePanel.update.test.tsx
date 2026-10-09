@@ -60,17 +60,28 @@ function renderPanel(showDiagnostics = false, distribution?: DesktopDistribution
   );
 }
 
-test.each(['en', 'ja', 'zh-CN'])('Store builds delegate updates without invoking the GitHub updater in %s', async (locale) => {
+// 更新を Store が管理する build（Microsoft Store 版、#1199 AC-3 の Google Play 版）。文言は Store ごと。
+const STORE_BUILDS = [
+  { distribution: 'microsoft-store', copy: 'store', otherStore: 'Google Play' },
+  { distribution: 'google-play', copy: 'play', otherStore: 'Microsoft Store' },
+] as const;
+
+test.each(
+  STORE_BUILDS.flatMap((build) => ['en', 'ja', 'zh-CN'].map((locale) => ({ ...build, locale })))
+)('$distribution builds delegate updates without invoking the GitHub updater in $locale', async ({ distribution, copy, otherStore, locale }) => {
   await i18n.changeLanguage(locale);
-  renderPanel(true, 'microsoft-store');
+  renderPanel(true, distribution);
+  expect(screen.getByText(i18n.t(`settings:release.${copy}Summary`))).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent(
-    i18n.t('settings:release.update.storeManaged')
+    i18n.t(`settings:release.update.${copy}Managed`)
   );
-  expect(screen.getByText(i18n.t('settings:release.update.storeManagedStatus'))).toBeInTheDocument();
+  expect(screen.getByText(i18n.t(`settings:release.update.${copy}ManagedStatus`))).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(otherStore);
   expect(screen.queryByRole('button', { name: i18n.t('settings:release.update.check') })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: i18n.t('settings:release.update.install') })).not.toBeInTheDocument();
   expect(screen.queryByText(i18n.t('settings:release.externalTransmission.updateDestination'))).not.toBeInTheDocument();
   expect(check).not.toHaveBeenCalled();
+  expect(download).not.toHaveBeenCalled();
   expect(updaterCheck).not.toHaveBeenCalled();
 });
 
