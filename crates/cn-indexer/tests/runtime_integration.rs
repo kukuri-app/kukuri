@@ -460,3 +460,113 @@ async fn arcadedb_projection_reclaims_in_bounded_pages() -> Result<()> {
     );
     Ok(())
 }
+
+/// 試験から実 ArcadeDB へ command を送る（文書の一括投入と統計の読取り。本体には置かない）。
+async fn arcadedb_command(
+    config: &ArcadeDbConfig,
+    language: &str,
+    command: &str,
+) -> Result<serde_json::Value> {
+    Ok(reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/command/{}",
+            config.base_url.trim_end_matches('/'),
+            config.database
+        ))
+        .basic_auth(&config.username, Some(&config.password))
+        .json(&serde_json::json!({ "language": language, "command": command }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+/// データベースが読んだ文書の累計（`schema:stats` の `readRecord`）。
+async fn arcadedb_read_records(config: &ArcadeDbConfig) -> Result<u64> {
+    let stats = arcadedb_command(config, "sql", "SELECT readRecord FROM schema:stats").await?;
+    stats["result"][0]["readRecord"]
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("readRecord is missing: {stats}"))
+}
+
+/// 実 ArcadeDB: 新着の列挙が読む文書の数は、scope の文書の数によらず返した件数と同じ（#1719）。
+///
+/// 読んだ文書の数はデータベースごとの統計の前後の差で数えるので、同じ ArcadeDB を使う
+/// 他の試験と並行させない（`-- --test-threads=1`）。
+#[tokio::test]
+async fn arcadedb_recent_listing_reads_only_returned_entries() -> Result<()> {
+    if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_ARCADEDB_TESTS") {
+        eprintln!("skipping ArcadeDB projection test; set KUKURI_CN_RUN_ARCADEDB_TESTS=1");
+        return Ok(());
+    }
+    let config = ArcadeDbConfig::from_env();
+    let projection = ArcadeDbProjection::new(config.clone())?;
+    projection.ensure_schema().await?;
+    let scope = format!(
+        "cnrecent-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    // 作成時刻は他の test の行より新しく重複しない値にし、入れる順とは並びを変える。
+    let created_at = |i: usize| 5_000_000_000 + ((i * 7_919) % 20_000) as i64;
+    let mut inserted = 0;
+    for total in [2_000, 20_000] {
+        // 1 取引 1,000 件ずつ入れる（`upsert_entry` を 1 件ずつ呼ぶと遅い）。
+        while inserted < total {
+            let documents: Vec<_> = (inserted..inserted + 1_000)
+                .map(|i| {
+                    serde_json::json!({
+                        "scope_kind": "public_topic",
+                        "scope_id": scope,
+                        "object_id": format!("recent-{i}"),
+                        "author_pubkey": "author",
+                        "text": "recent",
+                        "created_at": created_at(i),
+                        "source_replica_id": format!("topic::{scope}"),
+                    })
+                })
+                .collect();
+            arcadedb_command(
+                &config,
+                "sqlscript",
+                &format!(
+                    "INSERT INTO IndexedEntry CONTENT {}; RETURN 1;",
+                    serde_json::Value::Array(documents)
+                ),
+            )
+            .await?;
+            inserted += 1_000;
+        }
+        let mut expected: Vec<_> = (0..total)
+            .map(|i| (format!("recent-{i}"), created_at(i)))
+            .collect();
+        expected.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.1));
+        expected.truncate(100);
+        for filter in [Some((IndexScopeKind::PublicTopic, scope.as_str())), None] {
+            let before = arcadedb_read_records(&config).await?;
+            let entries = projection.list_recent(filter, 100).await?;
+            let read = arcadedb_read_records(&config).await? - before;
+            assert_eq!(
+                read,
+                entries.len() as u64,
+                "{total} entries, scope {filter:?}"
+            );
+            if filter.is_some() {
+                let listed: Vec<_> = entries
+                    .into_iter()
+                    .map(|entry| (entry.object_id, entry.created_at))
+                    .collect();
+                assert_eq!(listed, expected, "{total} entries");
+            }
+        }
+    }
+    assert_eq!(
+        projection
+            .remove_scope_page(IndexScopeKind::PublicTopic, &scope, inserted)
+            .await?,
+        inserted
+    );
+    Ok(())
+}
