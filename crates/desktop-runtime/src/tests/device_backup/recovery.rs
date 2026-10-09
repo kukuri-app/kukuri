@@ -806,13 +806,26 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
     assert_eq!(
         load_fake_keyring_secret(
             &restored_db,
-            IdentityStorageMode::Auto,
+            IdentityStorageMode::KeyringOnly,
             GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
             GOSSIP_SUBSCRIPTION_STATE_KEY,
             &keyring,
         )
         .await,
         Some("restored-gossip-state".to_string())
+    );
+    // Android で activation 前に値を keyring へ移した後でも、rollback は元の設定を戻す。
+    crate::backup::rollback_pending_device_restore(app_data.path()).expect("rollback activation");
+    assert_eq!(
+        load_fake_keyring_secret(
+            &db_path,
+            IdentityStorageMode::KeyringOnly,
+            GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
+            GOSSIP_SUBSCRIPTION_STATE_KEY,
+            &keyring,
+        )
+        .await,
+        Some("existing-gossip-state".to_string())
     );
 }
 
