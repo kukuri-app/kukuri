@@ -10,12 +10,20 @@ const PLAY_MANAGED_UPDATE: &str = "update_managed_by_google_play";
 
 /// AndroidはGoogle Playだけで配る（#1193 D3）。updater pluginを登録しないため、その状態へ触れる前に拒否する。
 fn require_self_managed_updates() -> Result<(), String> {
-    if cfg!(target_os = "android") {
-        Err(PLAY_MANAGED_UPDATE.into())
-    } else if cfg!(feature = "microsoft-store") {
-        Err(STORE_MANAGED_UPDATE.into())
+    match managed_update(cfg!(target_os = "android"), cfg!(feature = "microsoft-store")) {
+        Some(reason) => Err(reason.into()),
+        None => Ok(()),
+    }
+}
+
+/// 更新を管理する配布元（Google Play・Microsoft Store）の拒否の理由。host の test でも Android の分岐を確かめる。
+fn managed_update(android: bool, microsoft_store: bool) -> Option<&'static str> {
+    if android {
+        Some(PLAY_MANAGED_UPDATE)
+    } else if microsoft_store {
+        Some(STORE_MANAGED_UPDATE)
     } else {
-        Ok(())
+        None
     }
 }
 
@@ -222,6 +230,11 @@ mod tests {
 
     #[test]
     fn distribution_feature_owns_the_update_boundary() {
+        // Android（Google Play）の分岐は host の build を通らないので、判定そのものも確かめる（#1199 AC-3）。
+        assert_eq!(managed_update(true, false), Some(PLAY_MANAGED_UPDATE));
+        assert_eq!(managed_update(true, true), Some(PLAY_MANAGED_UPDATE));
+        assert_eq!(managed_update(false, true), Some(STORE_MANAGED_UPDATE));
+        assert_eq!(managed_update(false, false), None);
         let result = require_self_managed_updates();
         if cfg!(target_os = "android") {
             assert_eq!(result.unwrap_err(), PLAY_MANAGED_UPDATE);

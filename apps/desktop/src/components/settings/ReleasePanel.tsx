@@ -65,6 +65,8 @@ export function ReleasePanel({
   const [diagnosticMessage, setDiagnosticMessage] = useState<string | null>(null);
   const [restartPromptDismissed, setRestartPromptDismissed] = useState(false);
   const selfManagedUpdater = usesSelfManagedUpdater(distribution);
+  // 更新を管理する Store の文言（Microsoft Store 版は `store*`、Google Play 版は `play*` の key）。
+  const storeCopy = distribution === 'google-play' ? 'play' : 'store';
   // #962: 受信設定の編集は通知 section へ移した。ここでは診断レポート用に現在値だけ読む。
   const [osNotificationSettings] = useOsNotificationSettings();
   const { permission: osNotificationPermission } = useOsNotificationPermission();
@@ -144,7 +146,7 @@ export function ReleasePanel({
       label: t('settings:release.update.channel'),
       value: selfManagedUpdater
         ? RELEASE_CHANNEL
-        : t('settings:release.update.storeChannel'),
+        : t(`settings:release.update.${storeCopy}Channel`),
     },
     ...(selfManagedUpdater
       ? [{
@@ -157,7 +159,7 @@ export function ReleasePanel({
       label: t('settings:release.update.status'),
       value: selfManagedUpdater
         ? formatUpdateStatus(updateState.status, t)
-        : t('settings:release.update.storeManagedStatus'),
+        : t(`settings:release.update.${storeCopy}ManagedStatus`),
       tone: selfManagedUpdater && updateState.status === 'failed'
         ? ('danger' as const)
         : ('default' as const),
@@ -188,7 +190,7 @@ export function ReleasePanel({
         <small>
           {t(IS_WEB_RUNTIME
             ? 'settings:release.webSummary'
-            : selfManagedUpdater ? 'settings:release.summary' : 'settings:release.storeSummary')}
+            : selfManagedUpdater ? 'settings:release.summary' : `settings:release.${storeCopy}Summary`)}
         </small>
       </CardHeader>
 
@@ -202,7 +204,7 @@ export function ReleasePanel({
         </h4>
         {showDiagnostics ? <SettingsDiagnosticList items={updateDiagnostics} columns={2} /> : null}
         {!selfManagedUpdater ? (
-          <Notice role='status'>{t('settings:release.update.storeManaged')}</Notice>
+          <Notice role='status'>{t(`settings:release.update.${storeCopy}Managed`)}</Notice>
         ) : null}
         {selfManagedUpdater ? <>
         <div role='status' aria-live='polite' aria-atomic='true'>
