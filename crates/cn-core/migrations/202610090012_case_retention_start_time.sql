@@ -2,7 +2,8 @@
 -- 日数は cn-user-api の起動時と `cn-cli retention sweep` が operator config から書く。日数を変えると
 -- 既存の行にもすぐ効き、行は書き直さない。下の既定値は operator config の既定と同じ。
 -- 旧平文の確認（202610090006）より後に適用する。確認で止まった DB は #1705 より前の版を一度起動して sealing
--- してから適用し直すので、その版が書く期限の列を、確認を通るまで消さない。
+-- してから適用し直すので、その版が書く期限の列を、確認を通るまで消さない。信頼値の集計（202610090011）が
+-- 期限の列を使う関数と trigger も、ここで起算点と日数の判定に置き換える。
 
 CREATE TABLE cn_admin.retention_days (
     category TEXT PRIMARY KEY,
@@ -39,6 +40,45 @@ LANGUAGE sql IMMUTABLE AS $$
     END
 $$;
 
+-- 信頼値の集計（#1702）の行の removal_at は、運営者が付けた失効時刻だけにする。保持期間は保存時刻と日数で
+-- 判定し（書込みの時点はこの関数、後からは cn-user-api の掃除）、日数を変えても集計の行は書き直さない。
+CREATE OR REPLACE FUNCTION cn_safety.trust_target_entry(signal cn_safety.risk_signals, target_pubkey TEXT)
+RETURNS SETOF cn_safety.trust_target_signals LANGUAGE sql STABLE AS $$
+    SELECT entry.*
+    FROM (
+        SELECT
+            target_pubkey,
+            signal.id,
+            signal.category IN ('csam', 'cse', 'grooming') AS absolute,
+            signal.persisted_at,
+            cn_safety.trust_expires_at(signal.expires_at) AS removal_at,
+            cn_safety.trust_signal_units(
+                signal.category, signal.severity, signal.confidence, signal.appeal_status),
+            CASE WHEN signal.category IN ('csam', 'cse', 'grooming')
+                      AND signal.basis IN ('known_hash_match', 'provider_verdict')
+                      AND signal.visibility IN ('public', 'subscribed_nodes')
+                      AND signal.appeal_status IS DISTINCT FROM 'cleared'
+                 THEN signal.visibility END,
+            cn_safety.trust_signal_digest(
+                signal.id, signal.appeal_status, signal.operator_adjusted_at, signal.expires_at)
+    ) AS entry (target_pubkey, signal_id, absolute, persisted_at, removal_at, units, disclosure, digest)
+    WHERE entry.removal_at > now()
+      AND entry.persisted_at > now() - cn_admin.retention_interval('risk_signal')
+$$;
+
+UPDATE cn_safety.trust_target_signals entry
+SET removal_at = cn_safety.trust_expires_at(signal.expires_at)
+FROM cn_safety.risk_signals signal
+WHERE signal.id = entry.signal_id;
+
+CREATE INDEX trust_target_signals_persisted ON cn_safety.trust_target_signals (persisted_at);
+
+-- 掃除が集計に反映した risk signal の保持日数（上の既定と同じ値から始める）。日数を延ばしたときに、
+-- 期限切れとして外していた行を集計へ戻す範囲を決める。
+ALTER TABLE cn_safety.trust_settings ADD COLUMN risk_signal_days INTEGER NOT NULL DEFAULT 180;
+
+DROP TRIGGER trust_risk_signal_updated ON cn_safety.risk_signals;
+
 -- 期限の列と、その索引を消す。
 ALTER TABLE cn_admin.reports DROP COLUMN expires_at;
 ALTER TABLE cn_admin.tester_feedback DROP COLUMN expires_at;
@@ -48,6 +88,21 @@ ALTER TABLE cn_legal.rights_request_events DROP COLUMN expires_at;
 ALTER TABLE cn_admin.operator_actions DROP COLUMN expires_at;
 ALTER TABLE cn_safety.signed_moderation_events DROP COLUMN retention_expires_at;
 ALTER TABLE cn_safety.risk_signals DROP COLUMN retention_expires_at;
+
+-- 値が変わった行だけが集計の行を作り直す。
+CREATE TRIGGER trust_risk_signal_updated
+    AFTER UPDATE OF target, target_id, category, severity, basis, visibility, confidence,
+        expires_at, appeal_status, persisted_at, operator_adjusted_at
+    ON cn_safety.risk_signals
+    FOR EACH ROW WHEN (
+        (OLD.target, OLD.target_id, OLD.category, OLD.severity, OLD.basis, OLD.visibility,
+         OLD.confidence, OLD.expires_at, OLD.appeal_status, OLD.persisted_at,
+         OLD.operator_adjusted_at)
+        IS DISTINCT FROM
+        (NEW.target, NEW.target_id, NEW.category, NEW.severity, NEW.basis, NEW.visibility,
+         NEW.confidence, NEW.expires_at, NEW.appeal_status, NEW.persisted_at,
+         NEW.operator_adjusted_at))
+    EXECUTE FUNCTION cn_safety.trust_risk_signal_changed();
 
 -- 期限削除が起算点の索引の範囲だけを読むための索引。reports・tester_feedback の created_at と
 -- operator_actions の occurred_at には既存の索引がある。

@@ -20,8 +20,8 @@ use sqlx::{PgPool, Row};
 use kukuri_cn_core::{
     RetentionPolicy, RiskSignalCorrection, RiskSignalMetadataEdit, StoredRiskSignal,
     TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
-    TRUST_TOTALS_SQL, TestDatabase, TrustBasisCursor, apply_retention_policy,
-    attribute_risk_signal_subject_author, cleanup_expired, connect_postgres, dispute_risk_signal,
+    TRUST_TOTALS_SQL, TestDatabase, TrustBasisCursor, attribute_risk_signal_subject_author,
+    cleanup_expired, configure_case_retention, connect_postgres, dispute_risk_signal,
     edit_risk_signal_detection_metadata, initialize_database, list_disclosed_trust_basis_page,
     list_trust_basis_page, load_trust_totals, persist_risk_signal_with_author,
     rebuild_trust_totals, reissue_corrected_risk_signal, sweep_expired_trust_signals,
@@ -150,7 +150,8 @@ async fn live_inputs(
     now: DateTime<Utc>,
 ) -> Result<Vec<TrustRiskInput>> {
     let rows = sqlx::query(
-        "SELECT s.* FROM cn_safety.risk_signals s
+        "SELECT s.*, s.persisted_at + cn_admin.retention_interval('risk_signal') AS retention_expires_at
+         FROM cn_safety.risk_signals s
          WHERE (s.target = 'user_pubkey' AND s.target_id = $1)
             OR EXISTS (SELECT 1 FROM cn_safety.risk_signal_subject_authors a
                        WHERE a.author_pubkey = $1 AND a.target = s.target
@@ -435,7 +436,7 @@ async fn random_step(
                 risk_signal_days: [180, 30, 1][rng.below(3)],
                 ..RetentionPolicy::default()
             };
-            apply_retention_policy(pool, &policy).await?;
+            configure_case_retention(pool, &policy).await?;
             cleanup_expired(pool, *now).await?;
         }
         9 => {
@@ -641,7 +642,7 @@ async fn sql_units_match_signal_contribution() -> Result<()> {
     .await
 }
 
-/// 利用者が対象の行を、期限と保持期間を指定して直接入れる（検証を通らない値も入れるため）。
+/// 利用者が対象の行を、失効時刻と保存時刻を指定して直接入れる（検証を通らない値も入れるため）。
 async fn insert_user_signal(
     pool: &PgPool,
     id: &str,
@@ -653,9 +654,9 @@ async fn insert_user_signal(
     sqlx::query(
         "INSERT INTO cn_safety.risk_signals
             (id, issuer_node_id, target, target_id, category, severity, basis, visibility,
-             confidence, expires_at, appeal_status, persisted_at, retention_expires_at)
+             confidence, expires_at, appeal_status, persisted_at)
          VALUES ($1, $2, 'user_pubkey', $3, $4, 'high', 'classifier_score', 'local', 100, $5,
-                 'none', $6, $6 + INTERVAL '180 days')",
+                 'none', $6)",
     )
     .bind(id)
     .bind(ISSUER)
@@ -726,7 +727,7 @@ async fn invalid_expires_at_signal_is_ignored_and_read_succeeds() -> Result<()> 
 #[tokio::test]
 async fn sweep_removes_expired_rows_in_bounded_batches() -> Result<()> {
     with_database("cn_1702_trust_sweep", |pool| async move {
-        // 1,500 件の内容の行を著者 x に付け、保持期間を 1 時間後にする。
+        // 1,500 件の内容の行を著者 x に付け、保持期間（180 日）が 1 時間後に終わる時刻に保存する。
         sqlx::query(
             "INSERT INTO cn_safety.risk_signal_subject_authors (target, target_id, author_pubkey)
              SELECT 'post_id', 'post-' || g, 'x' FROM generate_series(1, 1500) g",
@@ -736,9 +737,9 @@ async fn sweep_removes_expired_rows_in_bounded_batches() -> Result<()> {
         sqlx::query(
             "INSERT INTO cn_safety.risk_signals
                 (id, issuer_node_id, target, target_id, category, severity, basis, visibility,
-                 confidence, appeal_status, retention_expires_at)
+                 confidence, appeal_status, persisted_at)
              SELECT 'sig-' || g, 'issuer', 'post_id', 'post-' || g, 'csam', 'low', 'known_hash_match',
-                    'local', 1, 'none', NOW() + INTERVAL '1 hour'
+                    'local', 1, 'none', NOW() - INTERVAL '180 days' + INTERVAL '1 hour'
              FROM generate_series(1, 1500) g",
         )
         .execute(&pool)
