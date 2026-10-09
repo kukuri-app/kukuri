@@ -131,11 +131,12 @@ cacheの回収から除外し、旧保存分の整理はR5-Iで行う。
   metaverse・Dome は入口を出さないため対象外とする。
 - #1193 D6 により、成人向け表示は opt-in（18 歳以上の自己申告、表示設定の既定 OFF）を維持する。D8 により英国と
   EU 加盟国は配布の対象外とし、その地域固有の年齢確認は扱わない。
-- 照合した Play の要件（2026-10-09 取得）: User Generated Content（Play Console ヘルプ answer 9876937）とその
-  解説（12923286）、対象年齢と neutral age screen（9867159）、Age-Restricted Content and Functionality
+- 照合した Play の要件（2026-10-09 取得。番号は Play Console ヘルプの記事）: User Generated Content（9876937）と
+  その解説（12923286）、対象年齢と neutral age screen（9867159）、Age-Restricted Content and Functionality
   （16302250）、Child Safety Standards（14747720・14585136）、Content Ratings（9898843）。
 - 判定は Play の文面と、基準 commit `41fdb34f3` の symbol・画面・文書の照合である。Android 実機と Play Console
-  の確認は含まない（実機は #1204、Console の申告は #1203 OP-1 と #1201 AC-5（OP-1）。担当の境界は `docs/runbooks/android-play-release.md`）。
+  の確認は含まない。実機は #1204、Console の申告は #1203 OP-1 と #1201 AC-5（OP-1）が行う（担当の境界は
+  `docs/runbooks/android-play-release.md`）。
 
 ### 7.2 要件と現行の対応
 | ID | Play の要件 | 現行の実装・文書 | 判定 | 差分の担当 |
@@ -146,7 +147,7 @@ cacheの回収から除外し、旧保存分の整理はR5-Iで行う。
 | R4 | 1 対 1 の機能（DM）の相手を block できる | 署名つきの block（`block_author`）は表示を隠すが、DM の可否は相互フォローだけで決まり（`direct_message_send_enabled`）、block の後も DM の受信・表示・通知・送信が続く（ADR 0022 の #961・#992） | 不足 | §7.3 の 3、#1201 AC-2b |
 | R5 | 通報された内容とユーザーに対応する | 受付は Community Node の `cn_admin.reports`、確認は `cn-cli reports`、対応は自 node の送信防止と索引からの除外 | 満たす（R3 が前提） | — |
 | R6 | アプリ内の課金が不適切な行為を促さない | 課金も広告も無い（#1193 D8） | 該当なし | — |
-| R7 | 性的表現を既定で filter の後ろに隠す | 表示設定の既定 OFF。投稿者の申告と採用した Community Node の推定が付いた投稿・添付は代替表示にし、bytes を取得しない（§4〜§6、`adult_labeled_media_payload_is_blocked_until_display_enabled`、`advisory_labeled_media_respects_adult_display_gate`）。ラベルの無いもの、推定の照会の失敗、Community Node の未設定、DM の添付、avatar、カスタムリアクションの画像は通常表示 | ラベル付きは満たす | §7.3 の 5 |
+| R7 | 性的表現を既定で filter の後ろに隠す | 表示設定の既定 OFF。投稿者の申告と採用した Community Node の推定が付いた投稿・添付は代替表示にし、バイト列を取得しない（§4〜§6、`adult_labeled_media_payload_is_blocked_until_display_enabled`、`advisory_labeled_media_respects_adult_display_gate`）。ラベルの無いもの、推定の照会の失敗、Community Node の未設定、DM の添付、avatar、カスタムリアクションの画像は通常表示 | ラベル付きは満たす | §7.3 の 5 |
 | R8 | filter の完全な解除に 2 操作以上を要する | 設定を開く → 「セーフティ」 → checkbox の 3 操作（Play の解説の例と同じ数え方）。代替表示からは解除できない | 満たす | — |
 | R9 | 性的表現を勧めない・目立たせない | 「見つける」の「おすすめ」「発見」は Community Node の新着の一覧（`index_recommendations`）で、推定の付いた投稿も含む。表示を ON にした利用者には成人向けの投稿が並ぶ | 不足 | §7.3 の 4、#1201 AC-3b |
 | R10 | 主として性的でない内容を扱う | 一般の SNS | 満たす | — |
@@ -181,8 +182,9 @@ cacheの回収から除外し、旧保存分の整理はR5-Iで行う。
 6. 規約の禁止事項（R2）: 利用規約 第5条に、憎悪・暴力の扇動、成人向け表現を成人向けの申告なしで共有すること、
    性的な画像を写っている本人の同意なく共有することを加える。CSAE の公開基準（R14）と同じ改訂で #1201 AC-4 が
    行う。
-- 法務文書への反映（利用規約 第3条・第5条・第13条、プライバシーポリシー）は #1201 AC-4 が 1 回の legal bundle の
-  版上げにまとめる。外部送信表示は、同意した Node への通報を既に含むため、2 の判断では変えない。
+- 法務文書への反映（利用規約 第3条・第5条・第13条、プライバシーポリシー）は #1201 AC-4 が行い、legal bundle の
+  版上げは 1 回にまとめる。同じ統合 branch で法務文書を改訂する #1203 AC-2 とは、配布の前なら同じ版にする。外部送信
+  表示は、同意した Node への通報を既に含むため、2 の判断では変えない。
 - rating の質問票（R13）は #1203 OP-1 が採用した機能に基づいて回答する。本 ADR から渡す事実: 利用者どうしが
   テキスト・画像・動画を公開・非公開の範囲で共有し、DM で 1 対 1 でやり取りできる。性的表現は既定 OFF の filter の
   後ろにある opt-in の表示だけで、18 歳以上だけを対象にする。課金と広告は無い。
