@@ -162,6 +162,9 @@ jobs:
         with:
           name: web-e2e-build
 
+      - name: Prepare community-node test images
+        uses: ./.github/actions/cn-test-images
+
       # driver は runner の image のもの。
       - name: Web E2E
         env:
