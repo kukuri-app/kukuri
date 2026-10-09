@@ -24,8 +24,8 @@ futures-util.workspace = true
 hex.workspace = true
 tantivy = "0.26.2"
 lindera = { version = "5.3", features = ["embed-ipadic-neologd"] }
-lindera-analysis = "5.3"
 lindera-tantivy = { version = "5.0.1", features = ["embed-ipadic-neologd"] }
+unicode-normalization = "0.1"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

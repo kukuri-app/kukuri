@@ -10,10 +10,6 @@ use std::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use lindera::{dictionary::load_dictionary, mode::Mode, segmenter::Segmenter};
-use lindera_analysis::{
-    character_filter::unicode_normalize::{UnicodeNormalizeCharacterFilter, UnicodeNormalizeKind},
-    token_filter::lowercase::LowercaseTokenFilter,
-};
 use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::{
     DocAddress, DocSet, Index, IndexReader, IndexWriter, ReloadPolicy, TERMINATED, TantivyDocument,
@@ -26,6 +22,7 @@ use tantivy::{
     },
     tokenizer::TokenStream,
 };
+use unicode_normalization::UnicodeNormalization;
 
 use crate::{IndexProjection, IndexedEntry};
 use kukuri_cn_core::IndexScopeKind;
@@ -73,15 +70,11 @@ fn object_key(kind: IndexScopeKind, scope: &str, id: &str) -> String {
 }
 
 fn configure(index: &Index) -> Result<()> {
-    let mut tokenizer = LinderaTokenizer::from_segmenter(Segmenter::new(
+    let tokenizer = LinderaTokenizer::from_segmenter(Segmenter::new(
         Mode::Normal,
         load_dictionary("embedded://ipadic-neologd")?,
         None,
     ));
-    tokenizer.append_character_filter(
-        UnicodeNormalizeCharacterFilter::new(UnicodeNormalizeKind::NFKC).into(),
-    );
-    tokenizer.append_token_filter(LowercaseTokenFilter::new().into());
     index.tokenizers().register("neologd", tokenizer);
     Ok(())
 }
@@ -133,7 +126,8 @@ impl SearchReader {
         )];
         let mut analyzer = self.index.tokenizer_for_field(self.fields.text)?;
         for word in text.split_whitespace() {
-            let mut stream = analyzer.token_stream(word);
+            let normalized = normalize(word);
+            let mut stream = analyzer.token_stream(&normalized);
             let mut terms = vec![];
             while stream.advance() {
                 terms.push((
@@ -173,6 +167,10 @@ impl SearchReader {
 
 fn term_query(term: Term) -> Box<dyn Query> {
     Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
+}
+
+fn normalize(text: &str) -> String {
+    text.nfkc().flat_map(char::to_lowercase).collect()
 }
 
 struct Writer {
@@ -239,7 +237,7 @@ impl SearchIndex {
         doc.add_text(fields.key, &key);
         doc.add_text(fields.scope, scope_key(entry.scope_kind, &entry.scope_id));
         doc.add_text(fields.kind, entry.scope_kind.as_str());
-        doc.add_text(fields.text, &entry.text);
+        doc.add_text(fields.text, normalize(&entry.text));
         doc.add_i64(fields.created, entry.created_at);
         doc.add_text(fields.entry, serde_json::to_string(entry)?);
         writer

@@ -3676,7 +3676,6 @@ dependencies = [
  "kukuri-test-support",
  "kukuri-transport",
  "lindera",
- "lindera-analysis",
  "lindera-tantivy",
  "reqwest",
  "serde",
@@ -3686,6 +3685,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

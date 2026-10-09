@@ -30,6 +30,14 @@ ArcadeDB の旧検索と全文索引の撤去は、それぞれ予定済みの A
 - `cargo test -p kukuri-cn-indexer --test query_contracts`: 7件成功（既存の gate、limit、非公開 scope）。
 - 対象 lib と上記の変更した2つの test の `clippy -D warnings`、対象の rustfmt、
   `actionlint`（Fast / Nightly）、notice generator の既存の smoke / 別 workspace / 拒否試験が成功。
+- `KUKURI_CN_RUN_INTEGRATION_TESTS=1` と `KUKURI_CN_RUN_ARCADEDB_TESTS=1` を設定し、
+  専用 Postgres 17 と ArcadeDB **26.10.1** で `runtime_integration -- --test-threads=1`:
+  6件成功。新着の列挙は2,000件でも20,000件でも返す100件だけを読む。実投影への取込、
+  scope の回収、圧縮の後の回収、2つの実 iroh node での取得も既存試験のまま成功した。
+  起票時の26.8.1でも先に実行したが、#1726で既知の圧縮後の取りこぼしを再現した
+  （2,000件中1,896件の回収、104件が残存）。現行版は比較元の時点で PR #1729 により
+  26.10.1 へ更新済みであり、本作業で版やSQLは変えていない。
+  正規化は形態素解析より前に本文と検索語の両方へ適用し、修正後も反映試験と clippy が成功。
 
 ## 辞書・配布と検証先
 
