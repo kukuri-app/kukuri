@@ -280,7 +280,13 @@ async fn load_keys_with_backend(
             let secret = load_secret_from_file(storage, db_path)
                 .await?
                 .ok_or_else(|| anyhow!("persisted identity file is unavailable"))?;
-            parse_keys(secret.as_str())
+            let keys = parse_keys(secret.as_str())?;
+            // 端末の backup の復元・rollback は鍵を平文の file で置く。keyring だけに置く mode では、最初の読取りで
+            // keyring へ移して file を消す（#1195 AC-2）。
+            if !mode.allows_file() {
+                persist_keys_with_storage(db_path, mode, &keys, storage).await?;
+            }
+            Ok(keys)
         }
         other => Err(anyhow!("unknown identity backend `{other}`")),
     }
@@ -312,11 +318,14 @@ pub(crate) async fn load_optional_secret_with_storage(
             }
         }
     }
-    if !mode.allows_file() {
-        return Ok(None);
+    let secret = read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await?;
+    if let Some(secret) = &secret
+        && !mode.allows_file()
+    {
+        // 端末の backup の復元・rollback が平文の file で置いた値は、最初の読取りで keyring へ移す（#1195 AC-2）。
+        persist_optional_secret_with_storage(db_path, mode, purpose, key, secret, storage).await?;
     }
-
-    read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await
+    Ok(secret)
 }
 
 fn is_missing_default_keyring(error: &anyhow::Error) -> bool {

@@ -576,6 +576,72 @@ async fn keyring_only_mode_reports_keyring_failures_without_plaintext_or_new_ide
     }
 }
 
+/// #1195 AC-2: 端末の backup の復元・rollback が平文の file で置いた鍵と optional secret は、keyring だけに置く mode の
+/// 最初の読取りで keyring へ移り、file は消える。keyring へ書けなければ失敗を返し、file はそのまま残る。
+#[tokio::test]
+async fn keyring_only_mode_moves_restored_file_secrets_into_keyring() {
+    for fail_set in [false, true] {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("kukuri.db");
+        let keyring = FakeKeyringStore::default();
+        let restored = KukuriKeys::generate();
+        let file_only = IdentityStorageMode::FileOnly;
+        persist_keys_with_storage(&db_path, file_only, &restored, &keyring)
+            .await
+            .expect("restored identity file");
+        persist_optional_secret_with_storage(
+            &db_path,
+            file_only,
+            "test-purpose",
+            "state",
+            "v1",
+            &keyring,
+        )
+        .await
+        .expect("restored optional secret file");
+        *keyring.fail_set.lock().expect("keyring lock") = fail_set;
+        let mode = IdentityStorageMode::KeyringOnly;
+
+        let identity = load_existing_keys_with_storage(&db_path, mode, &keyring).await;
+        let optional =
+            load_optional_secret_with_storage(&db_path, mode, "test-purpose", "state", &keyring)
+                .await;
+        if fail_set {
+            assert!(identity.is_err() && optional.is_err());
+            assert!(key_file_path(&db_path).exists());
+            assert!(optional_secret_file_path(&db_path, "test-purpose", "state").exists());
+            continue;
+        }
+        assert_eq!(
+            identity.expect("load").expect("identity").public_key(),
+            restored.public_key()
+        );
+        assert_eq!(optional.expect("load optional"), Some("v1".to_string()));
+        assert!(!key_file_path(&db_path).exists());
+        assert!(!optional_secret_file_path(&db_path, "test-purpose", "state").exists());
+        assert_eq!(
+            load_backend_marker(&keyring, &db_path)
+                .await
+                .expect("marker"),
+            Some(BACKEND_KEYRING.to_string())
+        );
+        assert_eq!(
+            load_existing_keys_with_storage(&db_path, mode, &keyring)
+                .await
+                .expect("reload")
+                .expect("identity")
+                .public_key(),
+            restored.public_key()
+        );
+        assert_eq!(
+            load_optional_secret_with_storage(&db_path, mode, "test-purpose", "state", &keyring)
+                .await
+                .expect("reload optional"),
+            Some("v1".to_string())
+        );
+    }
+}
+
 #[tokio::test]
 async fn file_only_optional_secret_ignores_keyring_shadow_and_failure() {
     clear_identity_env();
