@@ -274,11 +274,19 @@
       "showTimeline": "查看时间线"
     },
     "noPosts": "该主题下还没有帖子。",
+    "noFilteredPosts": "没有符合筛选条件的帖子。",
     "noPublicPosts": "你在该主题下还没有公开帖子。",
     "refresh": "刷新",
     "savedCount": "已保存 {{count}} 条",
     "tabs": "工作区",
     "timelineViews": "时间线视图",
+    "timelineFilter": {
+      "label": "筛选",
+      "active": "筛选（{{filter}}）",
+      "none": "不筛选",
+      "mutual": "仅互相关注",
+      "following": "仅已关注"
+    },
     "timelineTopicSwitch": "时间线主题",
     "primaryLabel": "主工作区",
     "skipToWorkspace": "跳转到工作区",

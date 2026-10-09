@@ -46,6 +46,7 @@ import {
   moveColumn,
   setColumnPinned,
   setColumnSpan,
+  setColumnTimelineFilter,
   type ColumnKind,
   type ColumnState,
 } from '@/shell/slices/workspace';
@@ -474,6 +475,10 @@ export function DesktopShellColumnWorkspace({
           onSelect={(view) => onSelectTimelineView(column, view)}
           flow={Boolean(column.timelineFlow)}
           onToggleFlow={() => onToggleTimelineFlow(column)}
+          filter={column.timelineFilter}
+          onSelectFilter={(filter) =>
+            setWorkspaceState((current) => setColumnTimelineFilter(current, column.id, filter))
+          }
         />
       );
     }
