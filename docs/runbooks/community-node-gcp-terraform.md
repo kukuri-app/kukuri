@@ -474,7 +474,10 @@ COMPOSE=/var/lib/toolbox/kukuri/bin/docker-compose
 sudo "$COMPOSE" stop cn-user-api
 cat cn-postgres.dump | sudo "$COMPOSE" exec -T cn-postgres \
   sh -lc 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-# 起動時にoperator-configの保持日数をDBへ書き、期限切れ（非hold）をlisten前に削除する。
+# cn-user-api の起動は期限削除を待たないので、起動の前に operator-config の保持日数を DB へ書き、
+# 期限切れ（非hold）を最後まで削除する。
+sudo "$COMPOSE" run --rm -v "$PWD/operator-config.yaml:/etc/kukuri/operator-config.yaml:ro" \
+  -e COMMUNITY_NODE_OPERATOR_CONFIG=/etc/kukuri/operator-config.yaml cn-migrate retention sweep
 sudo "$COMPOSE" start cn-user-api
 ```
 

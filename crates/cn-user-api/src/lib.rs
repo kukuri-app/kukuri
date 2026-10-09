@@ -29,5 +29,5 @@ mod state;
 pub use blob_providers::BlobProviderSearch;
 pub use config::{RateLimitConfig, UserApiConfig};
 pub use rate_limit::apply_rate_limit;
-pub use routes::{app_router, manifest_routes, run_from_env, with_cors};
+pub use routes::{app_router, manifest_routes, run_from_env, spawn_retention_cleanup, with_cors};
 pub use state::{RelationVisibilityState, TrustReadState, UserApiState, build_state};

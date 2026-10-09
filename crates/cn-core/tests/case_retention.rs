@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use chrono::{DateTime, Duration, SubsecRound, Utc};
 use kukuri_cn_core::{
-    CleanupCounts, EXPIRED_DELETES, LegalDataCipher, RetentionPolicy, TestDatabase,
-    cleanup_expired, configure_case_retention, connect_postgres, export_legal_hold,
-    get_community_node_report, get_rights_request, get_risk_signal, get_signed_moderation_event,
-    get_tester_feedback, initialize_database, list_operator_actions, migrate_postgres_up_to,
-    start_legal_hold,
+    CleanupCounts, EXPIRED_DELETES, LegalDataCipher, RETENTION_CLEANUP_BATCH, RetentionPolicy,
+    TestDatabase, cleanup_expired, configure_case_retention, connect_postgres,
+    delete_expired_batch, export_legal_hold, get_community_node_report, get_rights_request,
+    get_risk_signal, get_signed_moderation_event, get_tester_feedback, initialize_database,
+    list_operator_actions, migrate_postgres_up_to, start_legal_hold,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -174,7 +174,8 @@ async fn visible(pool: &PgPool, tag: &str) -> Result<Vec<bool>> {
 }
 
 /// 実行計画（`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`）の走査の節点で、表ごとに読んだ行の数と
-/// 触ったページの数を足す。
+/// 触ったページの数を足す。選んだ行を位置で消す Tid Scan は、その行だけを読む（行の数に出る）。ページの
+/// 数は、選ぶ段（InitPlan）で触った他の表の分を含んで計画の形で変わるので足さない。
 fn add_reads(plan: &Value, totals: &mut BTreeMap<String, (f64, f64)>) {
     if let Some(relation) = plan["Relation Name"].as_str() {
         let rows: f64 = [
@@ -187,6 +188,7 @@ fn add_reads(plan: &Value, totals: &mut BTreeMap<String, (f64, f64)>) {
         .sum();
         let pages: f64 = ["Shared Hit Blocks", "Shared Read Blocks"]
             .iter()
+            .filter(|_| plan["Node Type"] != "Tid Scan")
             .filter_map(|key| plan[*key].as_f64())
             .sum();
         let total = totals.entry(relation.to_string()).or_default();
@@ -218,6 +220,7 @@ async fn reads_by_expired_deletes(
             )))
             .bind(now)
             .bind(category)
+            .bind(RETENTION_CLEANUP_BATCH)
             .fetch_one(&mut *tx)
             .await?;
             tx.rollback().await?;
@@ -365,6 +368,88 @@ async fn expired_deletes_read_the_same_rows_however_many_live_rows() -> Result<(
         let large = reads_by_expired_deletes(&pool, now).await?;
         // 期限内の行が 2,000 行でも 20,000 行でも、どの区分の期限削除も読む行と触るページは同じ。
         assert_eq!(small, large);
+        anyhow::Ok(())
+    }
+    .await;
+    database.cleanup().await?;
+    result
+}
+
+#[tokio::test]
+async fn expired_deletes_run_in_bounded_transactions() -> Result<()> {
+    let Some(admin_url) = integration_test_admin_database_url() else {
+        eprintln!("skipping case retention test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
+        return Ok(());
+    };
+    let database = TestDatabase::create(admin_url.as_str(), "cn_case_retention_batches").await?;
+    let pool = connect_postgres(database.database_url.as_str()).await?;
+    let result = async {
+        initialize_database(&pool).await?;
+        let now = Utc::now();
+        seed(&pool, "expired", now - Duration::days(1_000), 5).await?;
+        // hold 中の通報と、その通報が異議で参照する risk signal は、期限切れでも消さない。
+        start_legal_hold(
+            &pool,
+            "report",
+            "report-expired-1",
+            &["report".to_string()],
+            "court preservation order",
+            "final disposition",
+            "legal@node.example",
+            Utc::now(),
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE cn_admin.reports SET appeal_risk_signal_id = 'signal-expired-1'
+             WHERE id = 'report-expired-1'",
+        )
+        .execute(&pool)
+        .await?;
+
+        // 1 取引目は、保持区分ごとに上限の 2 件だけ消える。
+        let mut counts = CleanupCounts::default();
+        assert!(delete_expired_batch(&pool, now, 2, &mut counts).await?);
+        assert_eq!(
+            counts,
+            CleanupCounts {
+                sensitive_items: 4 * 2,
+                rights_request_events: 2,
+                reports: 2,
+                tester_feedback: 2,
+                rights_requests: 3 * 2,
+                operator_actions: 2,
+                moderation_events: 2,
+                risk_signals: 2,
+            }
+        );
+        // 上限まで消せた区分がある間は次の取引を繰り返し、hold と異議の参照の外はすべて消える。
+        while delete_expired_batch(&pool, now, 2, &mut counts).await? {}
+        assert_eq!(
+            counts,
+            CleanupCounts {
+                sensitive_items: 4 * 5,
+                rights_request_events: 3 * 5,
+                reports: 5 - 1,
+                tester_feedback: 5,
+                rights_requests: 3 * 5,
+                operator_actions: 5,
+                moderation_events: 5,
+                risk_signals: 5 - 1,
+            }
+        );
+        let left: (String, String) = sqlx::query_as(
+            "SELECT (SELECT string_agg(id, ',') FROM cn_admin.reports),
+                    (SELECT string_agg(id, ',') FROM cn_safety.risk_signals)",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            left,
+            (
+                "report-expired-1".to_string(),
+                "signal-expired-1".to_string()
+            )
+        );
         anyhow::Ok(())
     }
     .await;

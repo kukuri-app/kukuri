@@ -3,13 +3,15 @@
 //! 期限は行に持たず、起算点の列と保持区分ごとの日数（`cn_admin.retention_days`）で判定する
 //! （ADR 0034 §1）。読取りは「起算点 > 基準時刻 − `cn_admin.retention_interval(区分)`」で期限切れを
 //! 除く。日数は起動時と `cn-cli retention sweep` が書くだけなので、変えると既存の行にもすぐ効き、
-//! 行は書き直さない。
+//! 行は書き直さない。期限削除は 1 取引に保持区分ごと [`RETENTION_CLEANUP_BATCH`] 件までの小分けで進める。
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use sqlx::postgres::PgPool;
+
+/// 期限削除が 1 取引で保持区分ごとに消す行の上限。
+pub const RETENTION_CLEANUP_BATCH: i64 = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetentionPolicy {
@@ -104,7 +106,8 @@ pub async fn configure_case_retention(pool: &PgPool, policy: &RetentionPolicy) -
     Ok(())
 }
 
-const EXPIRED_SENSITIVE_ITEMS: &str = "DELETE FROM cn_legal.sensitive_items item
+const EXPIRED_SENSITIVE_ITEMS: &str = "DELETE FROM cn_legal.sensitive_items WHERE ctid = ANY(ARRAY(
+     SELECT item.ctid FROM cn_legal.sensitive_items item
      WHERE item.data_category = $2
        AND item.created_at <= $1 - cn_admin.retention_interval($2)
        AND NOT EXISTS (
@@ -112,19 +115,23 @@ const EXPIRED_SENSITIVE_ITEMS: &str = "DELETE FROM cn_legal.sensitive_items item
          WHERE hold.target_kind = item.owner_kind
            AND hold.target_id = item.owner_id
            AND item.data_category = ANY(hold.data_categories)
-       )";
+       )
+     ORDER BY item.created_at LIMIT $3))";
 
-const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests request
+const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests WHERE ctid = ANY(ARRAY(
+     SELECT request.ctid FROM cn_legal.rights_requests request
      WHERE cn_legal.rights_request_retention(request.status) = $2
        AND request.updated_at <= $1 - cn_admin.retention_interval($2)
        AND NOT EXISTS (
          SELECT 1 FROM cn_legal.legal_holds hold
          WHERE hold.target_kind = 'rights_request'
            AND hold.target_id = request.id
-       )";
+       )
+     ORDER BY request.updated_at LIMIT $3))";
 
-/// 表ごとの期限削除の文と、その表の保持区分（子から親の順）。`$1` は基準時刻、`$2` は保持区分で、
-/// どの文も起算点の索引の範囲から期限切れの行だけを読む。
+/// 表ごとの期限削除の文と、その表の保持区分（子から親の順）。`$1` は基準時刻、`$2` は保持区分、`$3` は
+/// 消す行の上限で、どの文も起算点の索引の範囲から期限切れの行を古い順に上限まで選び、その行の位置
+/// （`ctid`）で消す（主キーの索引を引かない）。
 pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
     (
         &[
@@ -137,30 +144,36 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
     ),
     (
         &["rights_request_history"],
-        "DELETE FROM cn_legal.rights_request_events event
+        "DELETE FROM cn_legal.rights_request_events WHERE ctid = ANY(ARRAY(
+         SELECT event.ctid FROM cn_legal.rights_request_events event
          WHERE event.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.target_kind = 'rights_request'
                AND hold.target_id = event.request_id
                AND 'rights_request_history' = ANY(hold.data_categories)
-           )",
+           )
+         ORDER BY event.occurred_at LIMIT $3))",
     ),
     (
         &["report"],
-        "DELETE FROM cn_admin.reports report
+        "DELETE FROM cn_admin.reports WHERE ctid = ANY(ARRAY(
+         SELECT report.ctid FROM cn_admin.reports report
          WHERE report.created_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.target_kind = 'report'
                AND hold.target_id = report.id
                AND 'report' = ANY(hold.data_categories)
-           )",
+           )
+         ORDER BY report.created_at LIMIT $3))",
     ),
     (
         &["tester_feedback"],
-        "DELETE FROM cn_admin.tester_feedback
-         WHERE created_at <= $1 - cn_admin.retention_interval($2)",
+        "DELETE FROM cn_admin.tester_feedback WHERE ctid = ANY(ARRAY(
+         SELECT ctid FROM cn_admin.tester_feedback
+         WHERE created_at <= $1 - cn_admin.retention_interval($2)
+         ORDER BY created_at LIMIT $3))",
     ),
     (
         &[
@@ -172,92 +185,81 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
     ),
     (
         &["operator_audit"],
-        "DELETE FROM cn_admin.operator_actions action
+        "DELETE FROM cn_admin.operator_actions WHERE ctid = ANY(ARRAY(
+         SELECT action.ctid FROM cn_admin.operator_actions action
          WHERE action.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.target_kind = action.target_kind
                AND hold.target_id = action.target_id
                AND 'operator_audit' = ANY(hold.data_categories)
-           )",
+           )
+         ORDER BY action.occurred_at LIMIT $3))",
     ),
     (
         &["moderation_event"],
-        "DELETE FROM cn_safety.signed_moderation_events
-         WHERE persisted_at <= $1 - cn_admin.retention_interval($2)",
+        "DELETE FROM cn_safety.signed_moderation_events WHERE ctid = ANY(ARRAY(
+         SELECT ctid FROM cn_safety.signed_moderation_events
+         WHERE persisted_at <= $1 - cn_admin.retention_interval($2)
+         ORDER BY persisted_at LIMIT $3))",
     ),
     (
         &["risk_signal"],
-        "DELETE FROM cn_safety.risk_signals signal
+        "DELETE FROM cn_safety.risk_signals WHERE ctid = ANY(ARRAY(
+         SELECT signal.ctid FROM cn_safety.risk_signals signal
          WHERE signal.persisted_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_admin.reports report
              WHERE report.appeal_risk_signal_id = signal.id
-           )",
+           )
+         ORDER BY signal.persisted_at LIMIT $3))",
     ),
 ];
 
-pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<CleanupCounts> {
+/// 期限切れ（hold の外）を、1 取引で保持区分ごとに `limit` 件まで子から親の順に消し、`counts` に足す。
+/// 上限まで消せた区分があれば（残りがあるかもしれないので）`true` を返す。
+pub async fn delete_expired_batch(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+    limit: i64,
+    counts: &mut CleanupCounts,
+) -> Result<bool> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('kukuri.retention_cleanup', 'on', true)")
         .execute(&mut *tx)
         .await?;
-    let mut counts = [0; 8];
-    for (count, (categories, sql)) in counts.iter_mut().zip(EXPIRED_DELETES) {
+    let tables = [
+        &mut counts.sensitive_items,
+        &mut counts.rights_request_events,
+        &mut counts.reports,
+        &mut counts.tester_feedback,
+        &mut counts.rights_requests,
+        &mut counts.operator_actions,
+        &mut counts.moderation_events,
+        &mut counts.risk_signals,
+    ];
+    let mut more = false;
+    for (count, (categories, sql)) in tables.into_iter().zip(EXPIRED_DELETES) {
         for category in categories {
-            *count += sqlx::query(sql)
+            let deleted = sqlx::query(sql)
                 .bind(now)
                 .bind(category)
+                .bind(limit)
                 .execute(&mut *tx)
                 .await?
                 .rows_affected();
+            more |= deleted == limit as u64;
+            *count += deleted;
         }
     }
     tx.commit().await?;
-    let [
-        sensitive_items,
-        rights_request_events,
-        reports,
-        tester_feedback,
-        rights_requests,
-        operator_actions,
-        moderation_events,
-        risk_signals,
-    ] = counts;
-    Ok(CleanupCounts {
-        sensitive_items,
-        rights_request_events,
-        reports,
-        tester_feedback,
-        rights_requests,
-        operator_actions,
-        moderation_events,
-        risk_signals,
-    })
+    Ok(more)
 }
 
-pub async fn retention_counts(pool: &PgPool) -> Result<CleanupCounts> {
-    let row = sqlx::query(
-        "SELECT
-           (SELECT COUNT(*) FROM cn_legal.sensitive_items) AS sensitive_items,
-           (SELECT COUNT(*) FROM cn_legal.rights_request_events) AS rights_request_events,
-           (SELECT COUNT(*) FROM cn_admin.reports) AS reports,
-           (SELECT COUNT(*) FROM cn_admin.tester_feedback) AS tester_feedback,
-           (SELECT COUNT(*) FROM cn_legal.rights_requests) AS rights_requests,
-           (SELECT COUNT(*) FROM cn_admin.operator_actions) AS operator_actions,
-           (SELECT COUNT(*) FROM cn_safety.signed_moderation_events) AS moderation_events,
-           (SELECT COUNT(*) FROM cn_safety.risk_signals) AS risk_signals",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(CleanupCounts {
-        sensitive_items: row.try_get::<i64, _>("sensitive_items")? as u64,
-        rights_request_events: row.try_get::<i64, _>("rights_request_events")? as u64,
-        reports: row.try_get::<i64, _>("reports")? as u64,
-        tester_feedback: row.try_get::<i64, _>("tester_feedback")? as u64,
-        rights_requests: row.try_get::<i64, _>("rights_requests")? as u64,
-        operator_actions: row.try_get::<i64, _>("operator_actions")? as u64,
-        moderation_events: row.try_get::<i64, _>("moderation_events")? as u64,
-        risk_signals: row.try_get::<i64, _>("risk_signals")? as u64,
-    })
+/// 期限切れ（hold の外）を、上限まで消せた区分がある間、1 取引に保持区分ごと
+/// [`RETENTION_CLEANUP_BATCH`] 件ずつ消す。消した件数の合計を返す。
+pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<CleanupCounts> {
+    let mut counts = CleanupCounts::default();
+    while delete_expired_batch(pool, now, RETENTION_CLEANUP_BATCH, &mut counts).await? {}
+    Ok(counts)
 }
