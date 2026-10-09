@@ -26,8 +26,8 @@ use tokio::task::JoinHandle;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const ISSUER: &str = "issuer-node";
-/// 回収の migration の直前の版（`202609260003_drop_legacy_scope_cursor.sql`）。
-const PREVIOUS_MIGRATION_VERSION: i64 = 202609260003;
+/// 回収の migration の直前の版（`202610090001_projection_evictions.sql`）。
+const PREVIOUS_MIGRATION_VERSION: i64 = 202610090001;
 
 fn integration_test_admin_database_url() -> Option<String> {
     kukuri_test_support::gated_env_url(
