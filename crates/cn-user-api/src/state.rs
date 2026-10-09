@@ -8,8 +8,8 @@ use kukuri_cn_core::{
     ChannelSecretCipher, DatabaseInitMode, JwtConfig, LegalDataCipher, PgIndexEntryStore,
     RetentionPolicy, TopicRendezvousStore, apply_retention_policy, cleanup_expired,
     connect_postgres, initialize_database, initialize_database_for_runtime,
-    latest_readiness_activation, readiness_context_fingerprint, seal_legacy_report_contacts,
-    seal_legacy_rights_request_data, sync_policies, verify_sensitive_items,
+    latest_readiness_activation, readiness_context_fingerprint, sync_policies,
+    verify_legal_data_key,
 };
 use kukuri_cn_indexer::{
     ArcadeDbConfig, ArcadeDbProjection, ArcadeDbRelationGraph, FailClosedIndexQuery, IndexQuery,
@@ -222,31 +222,18 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
             "COMMUNITY_NODE_LEGAL_DATA_KEY is required when report or rights-request intake is enabled"
         );
     }
+    // 鍵の照合も鍵なしの検査も暗号文の 1 行だけを見る（#1705）。旧平文の検査は migration が 1 回だけ行う。
     if let Some(cipher) = legal_data_cipher.as_deref() {
-        verify_sensitive_items(&pool, cipher)
+        verify_legal_data_key(&pool, cipher)
             .await
             .context("failed to verify stored legal data with configured key")?;
-        seal_legacy_report_contacts(&pool, cipher, &retention)
-            .await
-            .context("failed to seal legacy report contacts")?;
-        seal_legacy_rights_request_data(&pool, cipher, &retention)
-            .await
-            .context("failed to seal legacy rights-request data")?;
     } else {
-        let sensitive_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM cn_legal.sensitive_items)
-                 OR EXISTS (SELECT 1 FROM cn_admin.reports WHERE reporter_contact IS NOT NULL)
-                 OR EXISTS (
-                    SELECT 1 FROM cn_legal.rights_requests
-                    WHERE COALESCE(request_data->>'email', '') <> ''
-                 )",
-        )
-        .fetch_one(&pool)
-        .await?;
+        let sensitive_exists =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM cn_legal.sensitive_items)")
+                .fetch_one(&pool)
+                .await?;
         if sensitive_exists {
-            anyhow::bail!(
-                "COMMUNITY_NODE_LEGAL_DATA_KEY is required to read or migrate stored legal data"
-            );
+            anyhow::bail!("COMMUNITY_NODE_LEGAL_DATA_KEY is required to read stored legal data");
         }
     }
     apply_retention_policy(&pool, &retention)

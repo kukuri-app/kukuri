@@ -120,8 +120,8 @@ pub use index_scope::{
     revoke_indexing_request, rotate_channel_secret_epoch, upsert_channel_secret,
 };
 pub use legal_data::{
-    LegalDataCipher, SensitiveDataCategory, load_sensitive_json, upsert_sensitive_json_in_tx,
-    verify_sensitive_items,
+    LEGAL_DATA_KEY_CHECK_SQL, LegalDataCipher, SensitiveDataCategory, load_sensitive_json,
+    upsert_sensitive_json_in_tx, verify_legal_data_key,
 };
 pub use legal_holds::{
     LegalHold, LegalHoldExport, export_legal_hold, release_legal_hold, start_legal_hold,
@@ -156,12 +156,11 @@ pub use reports::{
     get_community_node_report, get_community_node_report_with_contact,
     insert_community_node_appeal, insert_community_node_appeal_with_retention,
     insert_community_node_report, insert_community_node_report_with_retention,
-    list_community_node_reports, seal_legacy_report_contacts,
+    list_community_node_reports,
 };
 pub use retention::{
     CleanupCounts, RetentionPolicy, apply_retention_policy, cleanup_expired, retention_counts,
 };
-pub use rights_request_sensitive::seal_legacy_rights_request_data;
 pub use rights_requests::{
     CreatedRightsRequest, RightsRequestActionResult, RightsRequestEvent, RightsRequestRecord,
     action_rights_request, get_public_rights_request_status, get_rights_request,

@@ -593,6 +593,19 @@ R5-I を含む `cn-indexer` の初回起動は、`COMMUNITY_NODE_INDEXER_DATA_DI
 CN は更新前の投稿の再提供元ではなくなる（2026-09-27 ユーザー決定）。safety provider を構成しない fail-closed の
 起動では node と保守の巡回を作らないため、`legacy.retiring/` は provider を構成した起動まで残る。
 
+### 5.9 旧平文の確認 migration（#1705）
+
+[`202610090003_legacy_plaintext_guard.sql`](../../crates/cn-core/migrations/202610090003_legacy_plaintext_guard.sql) は、
+#776 より前に暗号化せずに保存された通報者連絡先（`cn_admin.reports.reporter_contact`）と申出者情報
+（`cn_legal.rights_requests.request_data` の email など）が残っていないことを確かめ、`reporter_contact` 列を消す。
+以後の cn-user-api の起動は旧平文を探さず、暗号文を 1 行だけ復号して鍵を照合する（ADR 0034 §3）。
+
+1. `cn-migrate` が `legacy plaintext legal data remains` で止まった場合、DB は変わっていない。#776 以後・#1705 より前の版の
+   cn-user-api を同じ `COMMUNITY_NODE_LEGAL_DATA_KEY` で一度起動して sealing させ、止めてから、この版の `cn-migrate` を
+   実行し直す。平文の行や列を手動で消さない。
+2. 適用後は、前の版のコンテナイメージの cn-user-api が起動しない（起動時に列を読む）。前の版へ戻すときは §8 に従い、
+   更新の直前のバックアップを復元する。
+
 ## 6. 実クライアントのbenign media確認
 
 実在の違法mediaや疑わしいmediaを検証に使わない。権利上問題のない小さな画像をpublic topicへ投稿し、
