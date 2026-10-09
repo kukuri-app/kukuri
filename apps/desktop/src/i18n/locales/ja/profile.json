@@ -87,7 +87,9 @@
       "absolute": "リスク判定（絶対）",
       "relative": "リスク判定（相対）",
       "weight": "絶対成分の重み",
-      "noBasis": "この信頼評価情報には根拠項目がありません。"
+      "noBasis": "この信頼評価情報には根拠項目がありません。",
+      "showMore": "さらに表示",
+      "loadingMore": "読み込み中…"
     },
     "relation": {
       "title": "関係の近さ",

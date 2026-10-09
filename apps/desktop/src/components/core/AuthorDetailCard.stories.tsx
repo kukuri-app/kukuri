@@ -20,8 +20,8 @@ const advisoryApi = {
       ? { status: 'ok' as const, manifest }
       : { status: 'absent' as const, manifest: null };
   },
-  async readCommunityNodeTrustUser(request: { target_pubkey: string }) {
-    return {
+  async readCommunityNodeTrustUser(request: { target_pubkey: string; cursor?: string | null }) {
+    const view = {
       viewer_pubkey: 'story-viewer',
       target_id: request.target_pubkey,
       absolute: 0.35,
@@ -68,6 +68,23 @@ const advisoryApi = {
           contribution: -0.3,
         },
       ],
+      // basis は 1 ページずつ届き、続きは「さらに表示」で読む(#1702)。
+      basis_next_cursor: 'story-basis-page-2',
+    };
+    if (!request.cursor) return view;
+    return {
+      ...view,
+      basis: [
+        {
+          ...view.basis[0],
+          signal_id: 'story-older-signal',
+          category: 'phishing' as const,
+          severity: 'medium' as const,
+          decay_factor: 0.4,
+          contribution: 0.08,
+        },
+      ],
+      basis_next_cursor: null,
     };
   },
   async listCommunityNodeRelationNeighbors() {
@@ -101,6 +118,7 @@ const clearedPostAdvisoryApi = {
           contribution: 0,
         },
       ],
+      basis_next_cursor: null,
     };
   },
 };

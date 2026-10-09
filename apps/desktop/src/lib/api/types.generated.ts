@@ -530,7 +530,11 @@ requests: Array<IndexingRequestView>,
  */
 target?: IndexingTargetStatus | null, };
 
-export type CommunityNodeUserAdvisoryRequest = { base_url: string, target_pubkey: string, };
+export type CommunityNodeUserAdvisoryRequest = { base_url: string, target_pubkey: string, 
+/**
+ * trust の basis の続き（前の応答の `basis_next_cursor`、#1702）。relation の照会は使わない。
+ */
+cursor?: string | null, };
 
 export type CommunityNodeRelationNeighborsRequest = { base_url: string, limit?: number | null, };
 

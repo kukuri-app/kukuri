@@ -87,7 +87,9 @@
       "absolute": "风险判定（绝对）",
       "relative": "风险判定（相对）",
       "weight": "绝对权重",
-      "noBasis": "该提示不含依据条目。"
+      "noBasis": "该提示不含依据条目。",
+      "showMore": "显示更多",
+      "loadingMore": "加载中…"
     },
     "relation": {
       "title": "关系接近度",

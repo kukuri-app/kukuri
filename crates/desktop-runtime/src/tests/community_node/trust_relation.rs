@@ -48,15 +48,12 @@ impl MockTrustRelationState {
 async fn mock_trust_user(
     State(state): State<MockTrustRelationState>,
     AxumPath(target): AxumPath<String>,
+    Query(params): Query<HashMap<String, String>>,
     uri: Uri,
     method: Method,
     headers: HeaderMap,
 ) -> Response {
-    state
-        .requests
-        .lock()
-        .await
-        .push((method, uri.path().to_string()));
+    state.requests.lock().await.push((method, uri.to_string()));
     if let Some(error) = state.authorize_or_error(&headers).await {
         return error;
     }
@@ -71,7 +68,8 @@ async fn mock_trust_user(
             w_abs_applied: 0.5,
             computed_at: "2026-08-13T00:00:00Z".to_string(),
             basis: Vec::new(),
-            basis_next_cursor: None,
+            // #1702: 受け取った cursor の続きを示す cursor を返す（受け渡しの確認用）。
+            basis_next_cursor: params.get("cursor").map(|cursor| format!("{cursor}-next")),
             evaluation: Some(TrustEvaluation {
                 policy_version: "v1-policy".to_string(),
                 trust_version: "t-version".to_string(),
@@ -272,20 +270,36 @@ async fn community_node_trust_relation_client_preserves_wire_contract_and_method
         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
             base_url: base_url.clone(),
             target_pubkey: target.clone(),
+            cursor: None,
         })
         .await
         .expect("trust read");
     assert_eq!(trust.view.target_id, target);
     assert_eq!(trust.view.trust, -0.3);
+    assert_eq!(trust.view.basis_next_cursor, None);
     // #1061: CN が合算した評価の版・期限・表示 policy をそのまま運ぶ。
     let evaluation = trust.view.evaluation.as_ref().expect("evaluation");
     assert_eq!(evaluation.relation_version, "r-1-2");
     assert!(!evaluation.hide_recommended);
+    // #1702: basis の続きは cursor を CN の `?cursor=` へ渡して読み、CN の次の cursor を返す。
+    let next = runtime
+        .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
+            base_url: base_url.clone(),
+            target_pubkey: target.clone(),
+            cursor: Some("1.1760000000000000.signal-50".to_string()),
+        })
+        .await
+        .expect("trust basis page");
+    assert_eq!(
+        next.view.basis_next_cursor.as_deref(),
+        Some("1.1760000000000000.signal-50-next")
+    );
 
     let relation = runtime
         .read_community_node_relation_user(CommunityNodeUserAdvisoryRequest {
             base_url: base_url.clone(),
             target_pubkey: "a".repeat(64),
+            cursor: None,
         })
         .await
         .expect("relation read");
@@ -326,6 +340,10 @@ async fn community_node_trust_relation_client_preserves_wire_contract_and_method
 
     let requests = state.requests.lock().await.clone();
     assert!(requests.contains(&(Method::GET, format!("/v1/trust/users/{}", "a".repeat(64)))));
+    assert!(requests.contains(&(
+        Method::GET,
+        format!("/v1/trust/users/{target}?cursor=1.1760000000000000.signal-50")
+    )));
     assert!(requests.contains(&(Method::GET, "/v1/relation/neighbors?limit=12".to_string())));
     assert!(requests.contains(&(Method::PUT, "/v1/relation/optout".to_string())));
     assert!(requests.contains(&(Method::DELETE, "/v1/relation/optout".to_string())));
@@ -348,6 +366,7 @@ async fn community_node_trust_relation_client_preserves_stable_unavailable_codes
         .read_community_node_relation_user(CommunityNodeUserAdvisoryRequest {
             base_url,
             target_pubkey: "a".repeat(64),
+            cursor: None,
         })
         .await
         .expect_err("stable unavailable error");
@@ -373,6 +392,7 @@ async fn community_node_trust_relation_client_stops_before_http_when_consent_is_
         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
             base_url: base_url.clone(),
             target_pubkey: "a".repeat(64),
+            cursor: None,
         })
         .await
         .expect_err("pending consent must stop the trust read");
@@ -409,6 +429,7 @@ async fn retrying_session_stops_trust_relation_request_before_http() {
         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
             base_url,
             target_pubkey: "a".repeat(64),
+            cursor: None,
         })
         .await
         .expect_err("retrying session must defer the trust request");
@@ -431,6 +452,7 @@ async fn community_node_trust_relation_client_rejects_responses_for_another_targ
         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
             base_url: base_url.clone(),
             target_pubkey: "A".repeat(64),
+            cursor: None,
         })
         .await
         .expect_err("trust response for another target must be rejected");
@@ -440,6 +462,7 @@ async fn community_node_trust_relation_client_rejects_responses_for_another_targ
         .read_community_node_relation_user(CommunityNodeUserAdvisoryRequest {
             base_url: base_url.clone(),
             target_pubkey: "a".repeat(64),
+            cursor: None,
         })
         .await
         .expect_err("relation response for another target must be rejected");
@@ -451,6 +474,7 @@ async fn community_node_trust_relation_client_rejects_responses_for_another_targ
         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
             base_url,
             target_pubkey: "A".repeat(64),
+            cursor: None,
         })
         .await
         .expect("normalized target matches");
