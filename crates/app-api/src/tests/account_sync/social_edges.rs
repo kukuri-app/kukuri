@@ -273,9 +273,8 @@ async fn own_edges_reach_the_other_device_and_keep_newer_local_edges() {
     assert!(b.merge_account_sync_item(forged).await.is_err());
 }
 
-/// #1707: 台帳へ採った後、edge を反映する前に止まった merge（反映の task は item の途中でも止めて作り直す）の item は、
-/// 同じ item の再受信で反映し直す（手元に無いフォロー、手元の古いフォローを解除する版、フォロワー）。反映した item の
-/// 再受信は何もしない。
+/// #1707: 台帳へ採った後、edge を書く前に止まった merge の item（手元に無いフォロー、手元の古いフォローを解除する版、
+/// フォロワー）は、同じ item の再受信で反映し直す。反映した item の再受信は何もしない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_edge_adopted_by_a_stopped_merge_is_applied_when_received_again() {
     let keys = generate_keys();
@@ -298,20 +297,7 @@ async fn an_edge_adopted_by_a_stopped_merge_is_applied_when_received_again() {
     ]
     .map(|envelope| AccountSyncItem::edge(&me, &envelope).expect("item"));
     for item in &items {
-        let row = kukuri_store::AccountSyncRow {
-            key: item.key.docs_key(),
-            op_id: item.op_id.clone(),
-            updated_at: item.updated_at,
-            value: item.value.as_ref().map(ToString::to_string),
-        };
-        assert!(
-            device
-                .services
-                .projection_store
-                .adopt_account_sync_row(&row)
-                .await
-                .expect("adopt")
-        );
+        adopt_only(&device, item).await;
     }
     for item in &items {
         assert!(

@@ -146,8 +146,20 @@ impl AppService {
             .max_by(|a, b| (a.updated_at, &a.op_id).cmp(&(b.updated_at, &b.op_id))))
     }
 
+    /// 採用の台帳の行が既に `item` の版か。採れなかった item でも同じ版なら、呼出元は採用の後の処理をやり直す（台帳へ
+    /// 採った後、反映の前に止まった merge の再受信。移行・同期の反映の task は item の途中でも止めて作り直す。#1707）。
+    pub(super) async fn holds_account_sync_item(&self, item: &AccountSyncItem) -> Result<bool> {
+        Ok(self
+            .services
+            .projection_store
+            .get_account_sync_row(&item.key.docs_key())
+            .await?
+            .is_some_and(|row| row.updated_at == item.updated_at && row.op_id == item.op_id))
+    }
+
     /// 本人の別の端末の item を、`(updated_at, op_id)` の勝者の規則で採用して反映する。採った（行を置き換えた・鍵の
-    /// 行を足した）ら true。同じ操作の再受信・古い版（restore した古い端末の版を含む）は false。
+    /// 行を足した）ら true。同じ操作の再受信・古い版（restore した古い端末の版を含む）は false。ただし台帳へ採った後、
+    /// 反映の前に止まった item は、同じ版の再受信で反映をやり直す（profile・edge はやり直したら true）。
     pub(crate) async fn merge_account_sync_item(&self, item: AccountSyncItem) -> Result<bool> {
         match &item.key {
             AccountSyncItemKey::Profile => {
@@ -172,11 +184,14 @@ impl AppService {
                 if row.is_none() && self.get_my_profile().await?.updated_at > item.updated_at {
                     return Ok(false);
                 }
+                // 同じ版の再受信は、手元の profile が古いとき（反映の前に止まった merge）だけやり直す。
                 if !self
                     .services
                     .projection_store
                     .adopt_account_sync_row(&row_of(&item)?)
                     .await?
+                    && !(self.holds_account_sync_item(&item).await?
+                        && self.get_my_profile().await?.updated_at < item.updated_at)
                 {
                     return Ok(false);
                 }
@@ -240,18 +255,15 @@ impl AppService {
                     ),
                     _ => anyhow::bail!("not an edge item"),
                 };
-                // 台帳が既に同じ版なのに手元の edge が古いか無いのは、台帳へ採った後、edge を書く前に止まった merge（移行・
-                // 同期の反映の task は item の途中でも止めて作り直す）。同じ item の再受信で反映をやり直す（#1707）。
-                let projection = &self.services.projection_store;
+                // 台帳が同じ版でも手元の edge が古いか無ければ、反映の前に止まった merge なので反映をやり直す。
                 if local.is_some_and(|(updated_at, envelope_id)| {
                     updated_at > item.updated_at || envelope_id == envelope.id
-                }) || !projection.adopt_account_sync_row(&row_of(&item)?).await?
-                    && !projection
-                        .get_account_sync_row(&item.key.docs_key())
-                        .await?
-                        .is_some_and(|row| {
-                            row.updated_at == item.updated_at && row.op_id == item.op_id
-                        })
+                }) || !self
+                    .services
+                    .projection_store
+                    .adopt_account_sync_row(&row_of(&item)?)
+                    .await?
+                    && !self.holds_account_sync_item(&item).await?
                 {
                     return Ok(false);
                 }

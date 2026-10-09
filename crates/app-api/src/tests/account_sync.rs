@@ -105,6 +105,18 @@ fn profile_at(keys: &KukuriKeys, name: &str, created_at: i64) -> KukuriEnvelope 
         .expect("profile envelope")
 }
 
+/// 台帳へ採った後、反映の前に止まった merge（#1707）: item の行だけを採用の台帳に置く。
+async fn adopt_only(app: &AppService, item: &AccountSyncItem) {
+    let row = crate::service::account_sync_support::row_of(item).expect("row");
+    assert!(
+        app.services
+            .projection_store
+            .adopt_account_sync_row(&row)
+            .await
+            .expect("adopt")
+    );
+}
+
 /// AC-3 より前の版の profile の確定（#1646）。envelope と自分の author の replica の `profile/latest` だけを置き、
 /// account 同期の item の行は作らない。
 async fn legacy_profile(app: &AppService, name: &str) {
@@ -202,6 +214,22 @@ async fn edits_from_two_devices_converge_on_the_same_winner() {
     // 別の account の profile は採らない。
     let other = AccountSyncItem::profile(&profile_at(&generate_keys(), "other", 300)).unwrap();
     assert!(app.merge_account_sync_item(other).await.is_err());
+}
+
+/// #1707: 台帳へ採った後、profile を書く前に止まった merge の item は、同じ item の再受信で反映し直す。反映した item の
+/// 再受信は何もしない。
+#[tokio::test]
+async fn a_profile_adopted_by_a_stopped_merge_is_applied_when_received_again() {
+    let keys = generate_keys();
+    let app = device(&keys, Arc::new(MemoryDocsSync::default()));
+    let item = AccountSyncItem::profile(&profile_at(&keys, "from the other device", 100)).unwrap();
+    adopt_only(&app, &item).await;
+    assert!(app.merge_account_sync_item(item.clone()).await.unwrap());
+    assert_eq!(
+        app.get_my_profile().await.unwrap().name.as_deref(),
+        Some("from the other device")
+    );
+    assert!(!app.merge_account_sync_item(item).await.unwrap());
 }
 
 // 一方の端末の編集を、もう一方の端末が account の replica から点読して反映する。
