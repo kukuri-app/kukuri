@@ -1,5 +1,5 @@
 //! #1705: 旧平文の確認と `cn_admin.reports.reporter_contact` の削除の migration
-//! （`202610090005_legacy_plaintext_guard.sql`）の Postgres integration テスト。
+//! （`202610090006_legacy_plaintext_guard.sql`）の Postgres integration テスト。
 //!
 //! `KUKURI_CN_RUN_INTEGRATION_TESTS=1` のときだけ実 DB に接続して実行する。直前の版まで適用した DB に
 //! 旧平文を置くと適用が止まって DB が変わらず、旧平文が無ければ列が消えて、連絡先は機微区分からだけ読む。
@@ -13,7 +13,7 @@ use kukuri_cn_core::{
 use sqlx::PgPool;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
-const GUARD_MIGRATION_VERSION: i64 = 202610090005;
+const GUARD_MIGRATION_VERSION: i64 = 202610090006;
 
 fn integration_test_admin_database_url() -> Option<String> {
     kukuri_test_support::gated_env_url(

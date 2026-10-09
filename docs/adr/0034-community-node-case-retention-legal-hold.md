@@ -64,7 +64,7 @@ hold の開始・解除・export は append-only operator audit に、対象 ID�
 
 - 起動時は API listen 前に暗号文を 1 行だけ復号して、設定した鍵を照合する。誤鍵なら起動しない。暗号文が無ければ照合しない。鍵が無く暗号文があれば起動しない。暗号文を書くのは照合を通った鍵だけなので、全行が同じ鍵で書かれている。
 - 改ざんは各行を読むとき（運営者の管理画面・cn-cli・hold export）に AEAD の認証で検出し、その読取りをエラーにする。
-- #776 より前に平文で保存された `reporter_contact` と権利申出 JSON の機微フィールドは、#776 以後の版の起動時に sealing 済みとする。旧平文の確認は migration（`202610090005_legacy_plaintext_guard.sql`）が 1 回だけ行い、残っていれば適用を止める。`cn_admin.reports.reporter_contact` 列は削除した。
+- #776 より前に平文で保存された `reporter_contact` と権利申出 JSON の機微フィールドは、#776 以後の版の起動時に sealing 済みとする。旧平文の確認は migration（`202610090006_legacy_plaintext_guard.sql`）が 1 回だけ行い、残っていれば適用を止める。`cn_admin.reports.reporter_contact` 列は削除した。
 
 ### 4. 期限切れを読取と定期処理の両方で強制する
 

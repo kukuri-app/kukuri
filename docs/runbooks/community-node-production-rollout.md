@@ -595,7 +595,7 @@ CN は更新前の投稿の再提供元ではなくなる（2026-09-27 ユーザ
 
 ### 5.9 旧平文の確認 migration（#1705）
 
-[`202610090005_legacy_plaintext_guard.sql`](../../crates/cn-core/migrations/202610090005_legacy_plaintext_guard.sql) は、
+[`202610090006_legacy_plaintext_guard.sql`](../../crates/cn-core/migrations/202610090006_legacy_plaintext_guard.sql) は、
 #776 より前に暗号化せずに保存された通報者連絡先（`cn_admin.reports.reporter_contact`）と申出者情報
 （`cn_legal.rights_requests.request_data` の email など）が残っていないことを確かめ、`reporter_contact` 列を消す。
 以後の cn-user-api の起動は旧平文を探さず、暗号文を 1 行だけ復号して鍵を照合する（ADR 0034 §3）。
