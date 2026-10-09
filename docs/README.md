@@ -115,7 +115,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - app-level 外部送信表示と実装突合表: `docs/legal/external-transmission-notice.md` / `docs/legal/app-data-flow-inventory.md`
 - feature data classification: `docs/legal/app-consent-data-classification.md`
 - Community Node 法務文書と per-node 同意: `docs/legal/community-node-legal-documents-data-classification.md`（運用手順は `docs/runbooks/community-node-operator-docs.md`）
-- 18歳以上の自己申告と成人向け表現の既定非表示(#858): 仕様は `docs/adr/0046-age-attestation-adult-content-gating.md`、分類は `docs/legal/age-attestation-data-classification.md` / `docs/legal/adult-content-display-data-classification.md`
+- 18歳以上の自己申告と成人向け表現の既定非表示(#858): 仕様は `docs/adr/0046-age-attestation-adult-content-gating.md`、分類は `docs/legal/age-attestation-data-classification.md` / `docs/legal/adult-content-display-data-classification.md`。Google Play 版の UGC・成人向け表現・Child Safety の要件との対応と採用した判断は同 ADR §7（#1201）
 - 端末バックアップ / 復元(#855): 仕様・脅威モデルは `docs/adr/0048-device-backup-restore.md`、移行対象分類は `docs/legal/device-backup-data-classification.md`
 - アカウントと関連データの削除(#1202): Google Play の要件の適用、アプリ内と Web の受付、本人確認、端末・運営 CN・委託先・第三者の複製・例外保持の範囲、期限と手動の運用は `docs/adr/0065-account-data-deletion.md`
 - 開発者向けアプリ内ログの閲覧・書き出し(#978): 分類は `docs/legal/developer-log-viewer-data-classification.md`、外部送信一覧の行は `docs/legal/app-data-flow-inventory.md`
