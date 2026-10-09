@@ -52,6 +52,11 @@ keyring = { workspace = true, features = ["v1"] }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
+# Android の秘密の保存先。Keystore の鍵で暗号化して置く（#1195。keyring の v1 は Android に既定を持たない）。
+[target.'cfg(target_os = "android")'.dependencies]
+android-native-keyring-store = "1.0.0"
+keyring-core = "1.0.0"
+
 # 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）と、passphrase の鍵の導出の Worker（src/kdf.rs）。
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys = "0.3.106"

@@ -37,6 +37,12 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
 
+# Android の証明書の検証へ JVM と Context を渡す（#1195。reqwest と iroh の TLS が使う rustls-platform-verifier）。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
+ndk-context = "0.1.1"
+rustls-platform-verifier = "0.7.1"
+
 [target.'cfg(windows)'.dependencies]
 open = { version = "5.4.4", features = ["shellexecute-on-windows"] }
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Globalization", "Win32_Storage_FileSystem"] }

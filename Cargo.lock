@@ -80,6 +80,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "android-native-keyring-store"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c6349ddff23194f8fdce2ea8849380f5a4868c1648965b70e801e104cba9b3"
+dependencies = [
+ "base64 0.22.1",
+ "jni 0.21.1",
+ "keyring-core",
+ "log",
+ "ndk-context",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1220,7 +1238,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3643,6 +3661,7 @@ dependencies = [
 name = "kukuri-desktop-runtime"
 version = "0.4.3"
 dependencies = [
+ "android-native-keyring-store",
  "anyhow",
  "async-trait",
  "axum",
@@ -3657,6 +3676,7 @@ dependencies = [
  "iroh-mainline-address-lookup",
  "js-sys",
  "keyring",
+ "keyring-core",
  "kukuri-app-api",
  "kukuri-blob-service",
  "kukuri-cn-iroh-relay",

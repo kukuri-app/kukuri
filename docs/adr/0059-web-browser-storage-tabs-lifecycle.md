@@ -38,6 +38,8 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   既定の保存先は `platform_storage()` で引く（Web は起動前に `install_platform_storage` で入れる）。
   native の file の書き込みは、どの設定・状態も権限 0600・fsync・rename の原子的な置換 1 つに揃えた（同意の file だけの書き込み経路は廃止）。
   device backup・restore と CLI の同意は native だけの同期の処理なので、trait の future を `block_on` で待つ。native の実装は I/O を待たずに終わるため、待ちは増えない。
+- Android（#1195 AC-1、2026-10-09）: native の実装の keyring は、`keyring-core` の既定の保存先に `android-native-keyring-store` を入れたもの（SharedPreferences の値を Android Keystore の export できない AES-GCM の鍵で暗号化する）。`keyring` の v1 は Android の既定を持たないため、Android だけ `keyring-core` を直接使う。
+  identity の保存の mode は `KeyringOnly` で、アカウント鍵と optional secret（Community Node の token・同意・invite 等）を keyring だけに置く。読めない・書けないときは失敗を返し、平文の file・新しい鍵の生成で補わない（読めない鍵を新しい鍵で上書きしない）。OS の自動 backup の対象と端末の移し替えは #1195 AC-2 で決める。
 - IndexedDB の database は 3 種類に分ける。
 
 | database | 中身 | durability | 回収 |

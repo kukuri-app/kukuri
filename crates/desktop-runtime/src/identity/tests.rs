@@ -439,6 +439,144 @@ async fn optional_secret_keyring_delete_treats_missing_default_store_as_absent()
 }
 
 #[tokio::test]
+async fn keyring_only_mode_keeps_identity_and_optional_secrets_out_of_files() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("kukuri.db");
+    let keyring = FakeKeyringStore::default();
+    let mode = IdentityStorageMode::KeyringOnly;
+
+    let created = load_or_create_keys_with_storage(&db_path, mode, &keyring)
+        .await
+        .expect("create keyring identity");
+    let restarted = load_existing_keys_with_storage(&db_path, mode, &keyring)
+        .await
+        .expect("reload keyring identity")
+        .expect("identity exists");
+    persist_optional_secret_with_storage(&db_path, mode, "test-purpose", "token", "v1", &keyring)
+        .await
+        .expect("persist optional secret");
+
+    assert_eq!(restarted.public_key(), created.public_key());
+    assert_eq!(
+        load_backend_marker(&keyring, &db_path)
+            .await
+            .expect("marker"),
+        Some(BACKEND_KEYRING.to_string())
+    );
+    assert_eq!(
+        load_optional_secret_with_storage(&db_path, mode, "test-purpose", "token", &keyring)
+            .await
+            .expect("load optional secret"),
+        Some("v1".to_string())
+    );
+    assert!(!key_file_path(&db_path).exists());
+    assert!(!optional_secret_file_path(&db_path, "test-purpose", "token").exists());
+}
+
+#[tokio::test]
+async fn keyring_only_mode_keeps_accounts_and_nodes_apart() {
+    let dir = tempdir().expect("tempdir");
+    let keyring = FakeKeyringStore::default();
+    let mode = IdentityStorageMode::KeyringOnly;
+    let accounts = [
+        dir.path().join("a").join("kukuri.db"),
+        dir.path().join("b").join("kukuri.db"),
+    ];
+    let nodes = ["https://one.example", "https://two.example"];
+    for (account, db_path) in accounts.iter().enumerate() {
+        for node in nodes {
+            persist_optional_secret_with_storage(
+                db_path,
+                mode,
+                "community-node-token",
+                node,
+                &format!("{account}:{node}"),
+                &keyring,
+            )
+            .await
+            .expect("persist token");
+        }
+    }
+
+    delete_optional_secret_keyring_entry_with_storage(
+        &accounts[0],
+        "community-node-token",
+        nodes[0],
+        &keyring,
+    )
+    .await
+    .expect("delete one token");
+
+    for (account, db_path) in accounts.iter().enumerate() {
+        for node in nodes {
+            let loaded = load_optional_secret_with_storage(
+                db_path,
+                mode,
+                "community-node-token",
+                node,
+                &keyring,
+            )
+            .await
+            .expect("load token");
+            let expected = (account, node) != (0, nodes[0]);
+            assert_eq!(loaded, expected.then(|| format!("{account}:{node}")));
+        }
+    }
+}
+
+#[tokio::test]
+async fn keyring_only_mode_reports_keyring_failures_without_plaintext_or_new_identity() {
+    for failure in ["set_failure", "get_failure", "no_default_store"] {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("kukuri.db");
+        let keyring = FakeKeyringStore::default();
+        let mode = IdentityStorageMode::KeyringOnly;
+        match failure {
+            "set_failure" => *keyring.fail_set.lock().expect("keyring lock") = true,
+            "get_failure" => *keyring.fail_get.lock().expect("keyring lock") = true,
+            "no_default_store" => *keyring.no_default_store.lock().expect("keyring lock") = true,
+            _ => unreachable!(),
+        }
+
+        assert!(
+            load_or_create_keys_with_storage(&db_path, mode, &keyring)
+                .await
+                .is_err(),
+            "{failure} must not create an identity"
+        );
+        let optional = if failure == "set_failure" {
+            persist_optional_secret_with_storage(
+                &db_path,
+                mode,
+                "test-purpose",
+                "token",
+                "v1",
+                &keyring,
+            )
+            .await
+            .map(|()| None)
+        } else {
+            load_optional_secret_with_storage(&db_path, mode, "test-purpose", "token", &keyring)
+                .await
+        };
+        assert!(
+            optional.is_err(),
+            "{failure} must not go around the keyring"
+        );
+        assert!(
+            keyring.entries.lock().expect("keyring lock").is_empty(),
+            "{failure}"
+        );
+        assert!(!backend_marker_path(&db_path).exists(), "{failure}");
+        assert!(!key_file_path(&db_path).exists(), "{failure}");
+        assert!(
+            !optional_secret_file_path(&db_path, "test-purpose", "token").exists(),
+            "{failure}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn file_only_optional_secret_ignores_keyring_shadow_and_failure() {
     clear_identity_env();
     let dir = tempdir().expect("tempdir");
