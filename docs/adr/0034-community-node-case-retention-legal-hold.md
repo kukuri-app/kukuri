@@ -71,9 +71,9 @@ hold の開始・解除・export は append-only operator audit に、対象 ID�
 
 ### 4. 期限切れを読取と定期処理の両方で強制する
 
-全通常読取は「起算点 > 基準時刻 − 保持期間（`cn_admin.retention_interval(区分)`）」を条件にし、期限切れを返さない。起動時は listen 前に cleanup を実行し、その後は固定間隔で cleanup する。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、子行から親行の順で削除する。
+全通常読取は「起算点 > 基準時刻 − 保持期間（`cn_admin.retention_interval(区分)`）」を条件にし、期限切れを返さない。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、1 取引で保持区分ごとに最大 128 件を子行から親行の順で削除し、上限まで消せた区分がある間だけ取引を繰り返す。cn-user-api の起動は cleanup を待たず、背景の処理が起動直後と以後 1 時間ごとに cleanup する（期限切れは、読取りの条件で起動直後から返さない。#1704）。
 
-backup は database 全体を含み得るため、backup object 自体の lifecycle と、復元 DB の論理保持を区別する。復元後は API 公開前の cleanup を必須とし、期限切れ非 hold 行を再表示しない。
+backup は database 全体を含み得るため、backup object 自体の lifecycle と、復元 DB の論理保持を区別する。復元後は cn-user-api を起動する前に `cn-cli retention sweep`（保持日数の書込みと、最後までの cleanup）を実行し、期限切れ非 hold 行を API の公開前に削除する。
 
 ### 5. export は allowlist に限定する
 

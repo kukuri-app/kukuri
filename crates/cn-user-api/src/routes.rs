@@ -363,10 +363,10 @@ pub fn with_cors(router: Router, allowed_origins: &[String]) -> Result<Router> {
     ))
 }
 
-fn spawn_retention_cleanup(state: UserApiState) {
+/// 期限削除（ADR 0034 §4）を、起動直後と以後 1 時間ごとに背景で回す。起動（listen）はこれを待たない。
+pub fn spawn_retention_cleanup(state: UserApiState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
-        interval.tick().await;
         loop {
             interval.tick().await;
             let result = async {
@@ -385,7 +385,7 @@ fn spawn_retention_cleanup(state: UserApiState) {
                 Err(error) => tracing::error!(%error, "community-node retention cleanup failed"),
             }
         }
-    });
+    })
 }
 
 /// 信頼値の集計の保守（ADR 0026 §10）。1 分ごとに、期限を過ぎた行を 1 回 1,000 行ずつ外し、運営者が

@@ -157,8 +157,8 @@ pub use reports::{
     insert_community_node_appeal, insert_community_node_report, list_community_node_reports,
 };
 pub use retention::{
-    CleanupCounts, EXPIRED_DELETES, RetentionPolicy, cleanup_expired, configure_case_retention,
-    retention_counts,
+    CleanupCounts, EXPIRED_DELETES, RETENTION_CLEANUP_BATCH, RetentionPolicy, cleanup_expired,
+    configure_case_retention, delete_expired_batch,
 };
 pub use rights_requests::{
     CreatedRightsRequest, INDEXED_POST_EXISTS_SQL, RightsRequestActionResult, RightsRequestEvent,
