@@ -223,10 +223,6 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
         "DELETE FROM cn_legal.rights_requests request
          WHERE request.expires_at <= $1
            AND NOT EXISTS (
-             SELECT 1 FROM cn_legal.rights_request_events event
-             WHERE event.request_id = request.id
-           )
-           AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.released_at IS NULL
                AND hold.target_kind = 'rights_request'
