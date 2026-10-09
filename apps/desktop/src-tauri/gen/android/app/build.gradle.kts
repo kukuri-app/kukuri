@@ -14,6 +14,17 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// HTTPS と relay の証明書の検証（rustls-platform-verifier）の Kotlin 部品。Rust の rustls-platform-verifier-android と
+// 同じ版でないと実行時に落ちるため、src-tauri の Cargo.lock から版を読む（#1195）。
+val rustlsPlatformVerifierVersion = providers.fileContents(layout.projectDirectory.file("../../../Cargo.lock"))
+    .asText.get().lines()
+    .dropWhile { it.trim() != "name = \"rustls-platform-verifier-android\"" }
+    .drop(1).first().substringAfter('"').substringBefore('"')
+
+repositories {
+    maven { url = uri("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/") }
+}
+
 android {
     // #1193 D7: target は Google Play の要件の API 36、minSdk は 29（tauri.android.conf.json）。
     compileSdk = 36
@@ -78,6 +89,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    implementation("org.rustls:rustls-platform-verifier:$rustlsPlatformVerifierVersion")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

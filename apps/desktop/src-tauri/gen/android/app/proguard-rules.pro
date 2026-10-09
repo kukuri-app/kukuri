@@ -19,3 +19,5 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# rustls-platform-verifier の Kotlin 部品は JNI からだけ呼ばれるため、最適化で消さない（#1195）。
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

@@ -188,9 +188,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Android の証明書の検証（rustls-platform-verifier）へ JVM と Context を渡す。HTTPS と relay の TLS より前に 1 回呼ぶ。
+#[cfg(target_os = "android")]
+fn init_android_certificate_verifier() -> Result<(), jni::errors::Error> {
+    let context = ndk_context::android_context();
+    // SAFETY: tao が Activity の作成時に ndk-context へ渡した、process の間有効な JavaVM と Application の Context。
+    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        let application = unsafe { jni::objects::JObject::from_raw(env, context.context().cast()) };
+        rustls_platform_verifier::android::init_with_env(env, application)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
+    #[cfg(target_os = "android")]
+    if let Err(error) = init_android_certificate_verifier() {
+        error!(%error, "failed to initialize the Android certificate verifier");
+    }
 
     let builder = tauri::Builder::default();
 

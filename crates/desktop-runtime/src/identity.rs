@@ -13,16 +13,29 @@ const BACKEND_KEYRING: &str = "keyring";
 pub(crate) enum IdentityStorageMode {
     Auto,
     FileOnly,
+    /// keyring だけに置く。読めない・書けないときは失敗を返し、平文の file や新しい鍵で補わない（Android。#1195）。
+    KeyringOnly,
 }
 
 impl IdentityStorageMode {
     pub(crate) fn from_env() -> Self {
+        if cfg!(target_os = "android") {
+            return Self::KeyringOnly;
+        }
         match std::env::var("KUKURI_DISABLE_KEYRING") {
             Ok(value) if matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES") => {
                 Self::FileOnly
             }
             _ => Self::Auto,
         }
+    }
+
+    fn uses_keyring(self) -> bool {
+        self != Self::FileOnly
+    }
+
+    fn allows_file(self) -> bool {
+        self != Self::KeyringOnly
     }
 }
 
@@ -57,7 +70,7 @@ pub(crate) async fn persist_keys(
 /// すべて削除する(accounts 移行完了後の旧 flat レイアウト掃除用)。
 pub(crate) async fn delete_identity(db_path: &Path, mode: IdentityStorageMode) -> Result<()> {
     let storage = platform_storage();
-    if mode == IdentityStorageMode::Auto {
+    if mode.uses_keyring() {
         for account in keyring_account_candidates(db_path) {
             storage.delete(KEYRING_SERVICE, account.as_str()).await?;
         }
@@ -94,7 +107,7 @@ pub(crate) async fn delete_optional_secret(
     key: &str,
 ) -> Result<()> {
     let storage = platform_storage();
-    if mode == IdentityStorageMode::Auto {
+    if mode.uses_keyring() {
         delete_optional_secret_keyring_entry_with_storage(db_path, purpose, key, storage).await?;
     }
     delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await
@@ -159,33 +172,39 @@ pub(crate) async fn load_or_create_keys_with_storage(
         return load_keys_with_backend(db_path, backend.as_str(), mode, storage).await;
     }
 
-    if mode == IdentityStorageMode::Auto
-        && let Ok(Some(secret)) = load_secret_from_keyring(db_path, storage).await
-    {
+    if let Some(secret) = load_unmarked_keyring_secret(db_path, mode, storage).await? {
         write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
         return parse_keys(secret.as_str());
     }
 
-    if let Some(secret) = load_secret_from_file(storage, db_path).await? {
+    if mode.allows_file()
+        && let Some(secret) = load_secret_from_file(storage, db_path).await?
+    {
         write_backend_marker(storage, db_path, BACKEND_FILE).await?;
         return parse_keys(secret.as_str());
     }
 
     let keys = KukuriKeys::generate();
-    let encoded = keys.export_secret_hex();
-
-    if mode == IdentityStorageMode::Auto
-        && persist_secret_to_keyring(db_path, encoded.as_str(), storage)
-            .await
-            .is_ok()
-    {
-        write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
-    } else {
-        persist_secret_to_file(storage, db_path, encoded.as_str()).await?;
-        write_backend_marker(storage, db_path, BACKEND_FILE).await?;
-    }
-
+    persist_keys_with_storage(db_path, mode, &keys, storage).await?;
     Ok(keys)
+}
+
+/// marker の無い identity を keyring から探す。Auto は読めない keyring を「無い」として file で補い、
+/// KeyringOnly は失敗を返す（読めないことを新しい鍵の生成で隠さない）。
+async fn load_unmarked_keyring_secret(
+    db_path: &Path,
+    mode: IdentityStorageMode,
+    storage: &dyn ClientStorage,
+) -> Result<Option<String>> {
+    if !mode.uses_keyring() {
+        return Ok(None);
+    }
+    let found = load_secret_from_keyring(db_path, storage).await;
+    if mode.allows_file() {
+        Ok(found.ok().flatten())
+    } else {
+        found
+    }
 }
 
 pub(crate) async fn load_existing_keys_with_storage(
@@ -198,12 +217,12 @@ pub(crate) async fn load_existing_keys_with_storage(
             .await
             .map(Some);
     }
-    if mode == IdentityStorageMode::Auto
-        && let Ok(Some(secret)) = load_secret_from_keyring(db_path, storage).await
-    {
+    if let Some(secret) = load_unmarked_keyring_secret(db_path, mode, storage).await? {
         return parse_keys(secret.as_str()).map(Some);
     }
-    if let Some(secret) = load_secret_from_file(storage, db_path).await? {
+    if mode.allows_file()
+        && let Some(secret) = load_secret_from_file(storage, db_path).await?
+    {
         return parse_keys(secret.as_str()).map(Some);
     }
     Ok(None)
@@ -216,20 +235,22 @@ pub(crate) async fn persist_keys_with_storage(
     storage: &dyn ClientStorage,
 ) -> Result<()> {
     let encoded = keys.export_secret_hex();
-    if mode == IdentityStorageMode::Auto
-        && persist_secret_to_keyring(db_path, encoded.as_str(), storage)
-            .await
-            .is_ok()
-    {
-        write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
-        // 旧 file 実体が残ると marker=keyring と実体が食い違うため掃除する。
-        let _ = delete_file(storage, &key_file_path(db_path)).await;
-        let _ = delete_file(storage, &legacy_key_file_path(db_path)).await;
-        return Ok(());
+    if mode.uses_keyring() {
+        match persist_secret_to_keyring(db_path, encoded.as_str(), storage).await {
+            Ok(()) => {
+                write_backend_marker(storage, db_path, BACKEND_KEYRING).await?;
+                // 旧 file 実体が残ると marker=keyring と実体が食い違うため掃除する。
+                let _ = delete_file(storage, &key_file_path(db_path)).await;
+                let _ = delete_file(storage, &legacy_key_file_path(db_path)).await;
+                return Ok(());
+            }
+            Err(error) if !mode.allows_file() => return Err(error),
+            Err(_) => {}
+        }
     }
     persist_secret_to_file(storage, db_path, encoded.as_str()).await?;
     write_backend_marker(storage, db_path, BACKEND_FILE).await?;
-    if mode == IdentityStorageMode::Auto {
+    if mode.uses_keyring() {
         for account in keyring_account_candidates(db_path) {
             let _ = storage.delete(KEYRING_SERVICE, account.as_str()).await;
         }
@@ -276,7 +297,7 @@ pub(crate) async fn load_optional_secret_with_storage(
     key: &str,
     storage: &dyn ClientStorage,
 ) -> Result<Option<String>> {
-    if mode == IdentityStorageMode::Auto {
+    if mode.uses_keyring() {
         for account in optional_secret_account_candidates(db_path, purpose, key) {
             match keyring_get(storage, account.as_str()).await {
                 Ok(Some(secret)) => return Ok(Some(secret)),
@@ -284,12 +305,15 @@ pub(crate) async fn load_optional_secret_with_storage(
                 // Headless Linux environments can have no default keyring provider at all.
                 // Such environments could only have persisted this optional value through
                 // the file fallback, so continue there without weakening other keyring errors.
-                Err(error) if is_missing_default_keyring(&error) => break,
+                Err(error) if mode.allows_file() && is_missing_default_keyring(&error) => break,
                 Err(error) => {
                     return Err(error).context("failed to read optional secret from keyring");
                 }
             }
         }
+    }
+    if !mode.allows_file() {
+        return Ok(None);
     }
 
     read_text(storage, &optional_secret_file_path(db_path, purpose, key)).await
@@ -310,14 +334,20 @@ pub(crate) async fn persist_optional_secret_with_storage(
     storage: &dyn ClientStorage,
 ) -> Result<()> {
     let account = optional_secret_account(db_path, purpose, key);
-    if mode == IdentityStorageMode::Auto {
-        if storage
+    if mode.uses_keyring() {
+        match storage
             .set(KEYRING_SERVICE, account.as_str(), secret.as_bytes())
             .await
-            .is_ok()
         {
-            let _ = delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await;
-            return Ok(());
+            Ok(()) => {
+                let _ =
+                    delete_file(storage, &optional_secret_file_path(db_path, purpose, key)).await;
+                return Ok(());
+            }
+            Err(error) if !mode.allows_file() => {
+                return Err(error).context("failed to persist optional secret into keyring");
+            }
+            Err(_) => {}
         }
         // set 失敗時に旧 entry を残すと、load が keyring を優先するため file へ書いた
         // 新しい値が恒久的にシャドウされる(例: Windows Credential Manager の blob 上限

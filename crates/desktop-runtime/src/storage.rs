@@ -92,7 +92,10 @@ mod native {
 
     use anyhow::{Context, Result, anyhow};
     use async_trait::async_trait;
+    #[cfg(not(target_os = "android"))]
     use keyring::{Entry, Error as KeyringError};
+    #[cfg(target_os = "android")]
+    use keyring_core::{Entry, Error as KeyringError};
 
     use super::{ClientStorage, FILE_SERVICE, KeyringUnavailable};
 
@@ -100,9 +103,28 @@ mod native {
 
     // 既定の provider が無いことは `Entry::new` の失敗（`NoDefaultStore`）として返る。
     fn entry(service: &str, account: &str) -> Result<Entry> {
+        #[cfg(target_os = "android")]
+        install_android_store()?;
         Entry::new(service, account)
             .map_err(entry_error)
             .context("failed to initialize keyring entry")
+    }
+
+    /// Android では、SharedPreferences の値を Android Keystore の鍵で暗号化する保存先を keyring の既定にする（#1195）。
+    /// `keyring` の v1 は Android の既定を持たないため、`keyring-core` を直接使う。
+    #[cfg(target_os = "android")]
+    fn install_android_store() -> Result<()> {
+        static INSTALLED: std::sync::OnceLock<std::result::Result<(), String>> =
+            std::sync::OnceLock::new();
+        INSTALLED
+            .get_or_init(|| {
+                let store =
+                    android_native_keyring_store::Store::new().map_err(|e| e.to_string())?;
+                keyring_core::set_default_store(store);
+                Ok(())
+            })
+            .clone()
+            .map_err(|error| anyhow!("failed to open the Android keystore: {error}"))
     }
 
     fn entry_error(error: KeyringError) -> anyhow::Error {
