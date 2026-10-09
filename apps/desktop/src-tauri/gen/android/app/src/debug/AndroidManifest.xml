@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- rustls-platform-verifier の部品が足す network security config は usesCleartextTraffic より優先され、平文を
+         CRL の配布元に限る。debug は `tauri android dev` の Vite の HMR（ws://）に繋ぐため外す（#1195）。 -->
+    <application tools:remove="android:networkSecurityConfig" />
+</manifest>
