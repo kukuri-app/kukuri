@@ -209,7 +209,7 @@ async fn run(config: IndexerConfig) -> Result<()> {
                 issuer_node_id = %service.issuer_node_id(),
                 "safety scan service constructed"
             );
-            let (docs_sync, bucket_reader, maintenance, search) = compose_ingest_stack(
+            let (docs_sync, bucket_reader, maintenance, search, committer) = compose_ingest_stack(
                 &config,
                 pool,
                 cipher,
@@ -219,7 +219,6 @@ async fn run(config: IndexerConfig) -> Result<()> {
                 Arc::clone(&state),
             )
             .await?;
-            let committer = search.spawn_committer();
             state.set_ingest_enabled(true);
 
             // 常駐 ingest loop（#613 T2 / #1221 R5-H）。bucket reader の巡回で取り込み続ける。
@@ -316,6 +315,7 @@ async fn compose_ingest_stack(
     BucketReader,
     IndexMaintenance,
     Arc<SearchIndex>,
+    tokio::task::JoinHandle<()>,
 )> {
     let docs_sync = Arc::new(IrohDocsSync::new(node));
 
@@ -332,7 +332,8 @@ async fn compose_ingest_stack(
     let search_path = config.data_dir.join(SEARCH_DIRECTORY);
     let search =
         Arc::new(tokio::task::spawn_blocking(move || SearchIndex::open(&search_path)).await??);
-    let projection = Arc::new(SearchProjection::new(Arc::new(projection), search.clone()));
+    let source = Arc::new(projection);
+    let projection = Arc::new(SearchProjection::new(source.clone(), search.clone()));
 
     let post_scheduler = Arc::new(PostFetchScheduler::new(config.max_concurrent_posts));
     state.set_post_scheduler(Arc::clone(&post_scheduler));
@@ -354,9 +355,10 @@ async fn compose_ingest_stack(
         cipher.clone(),
     )
     .with_blob_seeds(blob_service, config.seed_peers.clone());
-    let maintenance = IndexMaintenance::new(pool, entries, projection, cipher)
+    let maintenance = IndexMaintenance::new(pool, entries, projection.clone(), cipher)
         .with_legacy_store(config.data_dir.join("legacy.retiring"));
-    Ok((docs_sync, bucket_reader, maintenance, search))
+    let committer = projection.spawn_committer(source);
+    Ok((docs_sync, bucket_reader, maintenance, search, committer))
 }
 
 fn init_tracing() {

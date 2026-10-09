@@ -24,7 +24,8 @@ use tantivy::{
 };
 use unicode_normalization::UnicodeNormalization;
 
-use crate::{IndexProjection, IndexedEntry};
+use crate::backfill::{BackfillCursor, BackfillPage};
+use crate::{ArcadeDbProjection, IndexProjection, IndexedEntry};
 use kukuri_cn_core::IndexScopeKind;
 
 pub const SEARCH_DIRECTORY: &str = "search";
@@ -177,6 +178,8 @@ struct Writer {
     writer: IndexWriter,
     // commit 前の upsert と削除を含めて、有界な回収の次のページを選ぶ。
     pending: BTreeMap<String, Option<IndexedEntry>>,
+    cursor: BackfillCursor,
+    cursor_dirty: bool,
 }
 
 pub struct SearchIndex {
@@ -191,11 +194,19 @@ impl SearchIndex {
         let index = Index::open_or_create(tantivy::directory::MmapDirectory::open(path)?, schema)?;
         configure(&index)?;
         let writer = index.writer_with_num_threads(1, 50_000_000)?;
+        let cursor = index
+            .load_metas()?
+            .payload
+            .map(|payload| serde_json::from_str(&payload))
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             reader: SearchReader::from_index(index)?,
             writer: Mutex::new(Writer {
                 writer,
                 pending: BTreeMap::new(),
+                cursor,
+                cursor_dirty: false,
             }),
         })
     }
@@ -207,11 +218,14 @@ impl SearchIndex {
     }
 
     fn commit_locked(&self, writer: &mut Writer) -> Result<bool> {
-        if writer.pending.is_empty() {
+        if writer.pending.is_empty() && !writer.cursor_dirty {
             return Ok(false);
         }
-        writer.writer.commit()?;
+        let mut commit = writer.writer.prepare_commit()?;
+        commit.set_payload(&serde_json::to_string(&writer.cursor)?);
+        commit.commit()?;
         writer.pending.clear();
+        writer.cursor_dirty = false;
         self.reader.reload()?;
         Ok(true)
     }
@@ -360,21 +374,20 @@ impl SearchIndex {
         Ok(count)
     }
 
-    pub fn spawn_committer(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
-        let search = Arc::downgrade(self);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                let Some(search) = search.upgrade() else {
-                    break;
-                };
-                match tokio::task::spawn_blocking(move || search.commit()).await {
-                    Ok(Ok(_)) => {}
-                    error => tracing::warn!(?error, "failed to commit search index"),
-                }
-            }
-        })
+    pub fn backfill_cursor(&self) -> Result<BackfillCursor> {
+        Ok(self.lock()?.cursor.clone())
+    }
+
+    fn apply_backfill(&self, page: BackfillPage) -> Result<usize> {
+        let count = page.entries.len();
+        for entry in page.entries {
+            self.upsert(&entry)?;
+        }
+        let mut writer = self.lock()?;
+        writer.cursor = page.cursor;
+        writer.cursor_dirty = true;
+        self.commit_locked(&mut writer)?;
+        Ok(count)
     }
 }
 
@@ -392,6 +405,43 @@ impl SearchProjection {
             search,
             mutation: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// live の書込み・削除と直列に写し、古い読み取りで削除を戻さない。
+    pub async fn backfill_page(&self, source: &ArcadeDbProjection) -> Result<usize> {
+        let _mutation = self.mutation.lock().await;
+        let cursor = self.search.backfill_cursor()?;
+        if cursor == BackfillCursor::Complete {
+            return Ok(0);
+        }
+        let page = source.read_backfill_page(&cursor).await?;
+        let search = self.search.clone();
+        tokio::task::spawn_blocking(move || search.apply_backfill(page)).await?
+    }
+
+    pub fn spawn_committer(
+        self: &Arc<Self>,
+        source: Arc<ArcadeDbProjection>,
+    ) -> tokio::task::JoinHandle<()> {
+        let projection = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let Some(projection) = projection.upgrade() else {
+                    break;
+                };
+                if let Err(error) = projection.backfill_page(&source).await {
+                    tracing::warn!(%error, "failed to copy a search index page; will resume");
+                }
+                let search = projection.search.clone();
+                match tokio::task::spawn_blocking(move || search.commit()).await {
+                    Ok(Ok(_)) => {}
+                    error => tracing::warn!(?error, "failed to commit search index"),
+                }
+            }
+        })
     }
 }
 
@@ -448,5 +498,36 @@ impl IndexProjection for SearchProjection {
             tokio::task::spawn_blocking(move || search.remove_page(None, Some(floor), limit))
                 .await??;
         Ok(projected.max(removed))
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn completed_cursor_survives_live_commit_and_skips_an_unreachable_source() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        {
+            let search = SearchIndex::open(dir.path())?;
+            search.apply_backfill(BackfillPage {
+                entries: vec![],
+                cursor: BackfillCursor::Complete,
+            })?;
+            search.remove_object(IndexScopeKind::PublicTopic, "topic", "post")?;
+            search.commit()?;
+        }
+        let search = Arc::new(SearchIndex::open(dir.path())?);
+        assert_eq!(search.backfill_cursor()?, BackfillCursor::Complete);
+        let source = ArcadeDbProjection::new(crate::ArcadeDbConfig {
+            base_url: "http://127.0.0.1:9".into(),
+            database: "unused".into(),
+            username: "unused".into(),
+            password: "unused".into(),
+        })?;
+        let projection =
+            SearchProjection::new(Arc::new(crate::MemoryIndexProjection::new()), search);
+        assert_eq!(projection.backfill_page(&source).await?, 0);
+        Ok(())
     }
 }
