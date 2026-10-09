@@ -16,6 +16,14 @@ allprojects {
     }
 }
 
+// Tauri の Android library と plugin の project は cargo の registry の中にある。その build の出力は、
+// tauri-plugin の build script が directory ごと写す対象に入り、Gradle の書込みと競合するため、この project の下へ出す。
+subprojects {
+    if (name != "app") {
+        layout.buildDirectory.set(rootProject.layout.buildDirectory.dir(name))
+    }
+}
+
 tasks.register("clean").configure {
     delete("build")
 }

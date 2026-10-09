@@ -18,6 +18,8 @@
 
 `tauri android init` の出力から直したもの: CLI の呼び方（init を実行した端末の node の絶対 path を埋め込んでいたため、PATH の node で `apps/desktop/scripts/tauri-cli.mjs` を呼ぶ）、compileSdk・targetSdk（雛形の 37 を 36 へ）、Android TV の宣言（D7 の対象外）、未使用の雛形（layout・色・night の theme）と既定のアイコン。ランチャーアイコンは `src-tauri/icons/android` を Gradle の res として直接読み、権利は既存の `docs/ASSET_MANIFEST.json` のまま管理する。
 
+Tauri の Android library と plugin の Gradle project（`:tauri-android` など）は cargo の registry の中にある。雛形のままではその build の出力も registry の中に書かれ、tauri-plugin の build script（`tauri-plugin` 2.7.0 の `copy_folder`。Android では `build/` を除かずに directory を丸ごと写し、全 file を再実行の条件にする）が Gradle の書込み中に写して、clean な状態からの build が `failed to copy tauri-api to the plugin project` で落ちた。root の `build.gradle.kts` で app 以外の project の出力を `gen/android/build/<project>` へ移した。deep-link の plugin が build のたびに manifest へ入れる目印（`DEEP LINK PLUGIN. AUTO-GENERATED`）は、生成と同じ内容で追跡する（内容が同じなら書き換えない）。
+
 ## Android 向けの依存の解決
 
 - main `41fdb34f3` の `apps/desktop/src-tauri` の lib を `cargo check --target aarch64-linux-android`（NDK r29 の clang、API 29）にかけると、依存 crate（iroh・iroh-docs・iroh-blobs・iroh-gossip の fork、str0m、sqlx の SQLite、`kukuri-desktop-runtime` など）はすべて通った。C を含む依存（ring、libsqlite3-sys、secp256k1-sys、blake3 など）は NDK の clang で build される。
