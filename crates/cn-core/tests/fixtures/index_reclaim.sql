@@ -1,5 +1,5 @@
 -- #1736 の再現データ。index_retention.rs の専用 TestDatabase にだけ作る。
--- trigger と FK を止めて読み方を計測する。回収の意味と trigger は既存 retention_contracts で検証する。
+-- fixture の投入時だけ trigger と FK を止める。回収時には通常どおり動かす。
 
 -- 受入下限 floor = 1790000000（unix 秒）。期限切れの行は floor より古く（floor - 1000000 + g）、
 -- 期限内の行は floor 以降（floor + 10 × g）。どの表も作成時刻の古い順に入れる（trigger と FK を止める）。

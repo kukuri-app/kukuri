@@ -27,9 +27,6 @@ async fn measure(pool: &PgPool, sql: &str, table: &str, scope: bool) -> Result<(
     let mut measured = (0.0, 0.0, 0);
     for _ in 0..2 {
         let mut tx = pool.begin().await?;
-        sqlx::query("SET LOCAL session_replication_role = replica")
-            .execute(&mut *tx)
-            .await?;
         let blocks_sql = "SELECT pg_stat_get_xact_blocks_fetched($1::regclass)";
         let before: i64 = sqlx::query_scalar(blocks_sql)
             .bind(table)
