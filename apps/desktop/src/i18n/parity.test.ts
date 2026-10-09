@@ -26,6 +26,7 @@ const INTENTIONALLY_SHARED_ENGLISH = new Set([
   'settings:connectivity.peerTicketPlaceholder',
   'settings:discovery.seedPeersPlaceholder',
   'settings:reactions.searchKeyPlaceholder',
+  'settings:release.update.playChannel',
   'settings:release.update.storeChannel',
   'shell:navigation.placeholder',
 ]);

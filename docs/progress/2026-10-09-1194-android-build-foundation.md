@@ -31,7 +31,7 @@ Tauri の Android library と plugin の Gradle project（`:tauri-android` な�
 | --- | --- | --- |
 | tray・menu、tray からのウィンドウの復元 | build から外す | `lib.rs` の `cfg(desktop)` |
 | 多重起動の制御 | 依存ごと外す | `Cargo.toml` の `cfg(not(target_os = "android"))` 節 |
-| updater | plugin を登録しない。更新の command は plugin に触れる前に `update_managed_by_google_play` で断る | `lib.rs`、`app_update.rs`（D3。Play での表示と配布判定の一元化は #1199 AC-3） |
+| updater | plugin を登録しない。更新の command は plugin に触れる前に `update_managed_by_google_play` で断る | `lib.rs`、`app_update.rs`（D3。frontend の配布判定と表示は末尾の #1199 AC-3 の節） |
 | 終了の横取りと signal による終了 | 使わない（process の終了は OS に任せる。lifecycle は #1196） | `lib.rs` の `RunEvent` の処理、`desktop_lifecycle.rs` |
 | OS 通知 | 表示は `os_notification_unavailable`、権限は `unavailable`（許可済みと表示しない） | `commands/os_notification.rs`。#1197 AC-4 で置き換える |
 | 開発版の兄弟 dir（`<identifier>.dev`、#1105） | 使わず、OS の app data dir（`/data/user/0/app.kukuri.android`）をそのまま使う。sandbox の外へは書けず、開発版と配布版は署名が違うため同じ端末に並ばない | `state.rs` の `base_app_data_dir` |
@@ -107,3 +107,28 @@ Scope revision `2026-10-09-r5`、基準 commit `205d31478`（#1194 AC-3 の merg
 - 変更後: `cargo xtask release-check v0.4.3-preview.1` は `android_version_code=400301`、`v0.4.3-preview.2` は 400302 を出す。`v0.4.3-preview.01`（`-preview.1` と同じ番号）と `v0.4.3-preview.99`（正式版の段階）は拒否する。版の違う tag（`v0.4.2-preview.1`）は従来どおり拒否する。
 - build への渡し方: `--config` で `{"bundle":{"android":{"versionCode":400302}}}` を渡した `tauri android build --aab --target aarch64` は、frontend の build（beforeBuildCommand）の前に `tauri.properties` へ `tauri.android.versionCode=400302`（versionName は 0.4.3）を書いた。beforeBuildCommand を失敗させる probe で、Gradle の前に止めて確かめた。
 - 検証: `cargo test -p xtask --no-default-features release::`（5 passed。版の遷移の生成と拒否は `android_version_code_increases_through_previews_stable_and_next_versions`・`android_version_code_rejects_values_that_collide_or_go_backwards`）。
+
+## #1199 AC-3: Play 版の更新の経路
+
+Scope revision `2026-10-09-r5`、基準 commit `ae45857c4`（#1199 AC-2 の merge 後の `integration/android-1193`）。backend は #1194 AC-1 のまま（Android では updater の plugin を登録せず、更新の command は plugin に触れる前に `update_managed_by_google_play` で断る）で、frontend の配布判定と表示を Android（Google Play 版）へ合わせた。
+
+- 変更前: frontend の配布方式は build の env `VITE_KUKURI_DISTRIBUTION` だけで決まり、Android の build では `direct` だった。起動時と 30 分ごとに `check_app_update` を呼び（backend が断るので HTTP は無い）、設定の「リリース」に GitHub の更新の確認・インストールのボタンと、GitHub への更新確認の送信先を出していた。
+- 変更後: Tauri CLI が Android の frontend の build に渡す `TAURI_ENV_PLATFORM=android` で配布方式を `google-play` にする（`vite.config.ts` の `envPrefix`、`src/lib/distribution.ts`）。更新の確認を予約せず、設定の「リリース」は Microsoft Store 版と同じ経路で Google Play が管理する旨だけを出す。backend の拒否も同じ build の対象（`target_os`）で決まり、配布方式の設定値を別に持たない。
+- build での確認: `tauri android build` の beforeBuildCommand は `TAURI_ENV_PLATFORM=android`（`TAURI_ENV_TARGET_TRIPLE=aarch64-linux-android`）を受け取った（beforeBuildCommand を失敗させる probe）。`TAURI_ENV_PLATFORM=android` の `vite build` では配布方式の初期化が `cv(void 0,"android")`（`google-play`）、`windows` では `cv(void 0,"windows")`（`direct`）として bundle に埋め込まれる。
+
+| 経路 | caller | Google Play 版での結果 | 検証 |
+| --- | --- | --- | --- |
+| 起動時・30 分ごと | `DesktopShellPage` → `useAppUpdateScheduler` → `checkForUpdate` | 予約しない（timer 0） | `useAppUpdateScheduler.test.tsx` |
+| 設定・再試行 | `ReleasePanel` の確認・インストール・再起動のボタン（インストールは pending が無いとき `checkForUpdate` をやり直す） | ボタンを出さない | `ReleasePanel.update.test.tsx`（en・ja・zh-CN） |
+| IPC | `appUpdater.check` → `check_app_update`・`download_app_update`・`install_app_update` | 呼ばない | 同上（`check`・`download`・updater の `check` が 0 回） |
+| backend | `check_app_update`・`download_app_update`・`install_app_update`・`require_installed`（`restart_after_update`） | 最初の `require_self_managed_updates` が `update_managed_by_google_play` を返す | 判定は `managed_update` の host の test、caller が先に判定を通ることは Microsoft Store 版の test（同じ判定）、実機は AC-2 の節 |
+| plugin の command | `plugin:updater\|*` | Android では plugin を登録しない | `lib.rs` の `cfg(desktop)` |
+
+設定の「リリース」（ブラウザの mock、412 px、light。変更前は基準の frontend を `TAURI_ENV_PLATFORM=android` で起動）:
+
+| | 日本語 | English |
+| --- | --- | --- |
+| 変更前 | ![](assets/issue-1199-ac3/release-before-ja-412.png) | ![](assets/issue-1199-ac3/release-before-en-412.png) |
+| 変更後 | ![](assets/issue-1199-ac3/release-after-ja-412.png) | ![](assets/issue-1199-ac3/release-after-en-412.png) |
+
+実機（Pixel 8 Pro）と emulator は別の作業が使っていたため、Android の画面での表示は見ていない。

@@ -1,11 +1,9 @@
 import { DESKTOP_DISTRIBUTION } from './distribution';
 
-export const RELEASE_CHANNEL =
-  DESKTOP_DISTRIBUTION === 'microsoft-store' ? 'microsoft-store' : 'preview';
-export const RELEASE_MANIFEST_NAME =
-  DESKTOP_DISTRIBUTION === 'microsoft-store'
-    ? 'managed-by-microsoft-store'
-    : 'latest-preview.json';
+// Store が更新を管理する build（Microsoft Store・Google Play）は、channel に配布の名前を出す。
+export const RELEASE_CHANNEL = DESKTOP_DISTRIBUTION === 'direct' ? 'preview' : DESKTOP_DISTRIBUTION;
+// manifest は自分で更新する build（direct）だけが表示する。
+export const RELEASE_MANIFEST_NAME = 'latest-preview.json';
 export const RELEASE_FEEDBACK_URL =
   'https://github.com/kukuri-app/kukuri/issues/new?template=preview-feedback.md';
 export const RELEASE_LATEST_URL = 'https://github.com/kukuri-app/kukuri/releases/latest';
