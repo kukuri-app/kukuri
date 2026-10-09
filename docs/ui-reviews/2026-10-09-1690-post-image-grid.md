@@ -1,0 +1,25 @@
+# 2026-10-09 post image grid
+
+- Status: current
+- Supersedes: None
+- Superseded by: None
+- PR: Issue #1690 AC-1 の実装PR
+- Preview: [修正前・3 枚・ja・dark・1280px](./issue-1690-before-three-ja-dark.png) / [3 枚・ja・dark・1280px](./issue-1690-three-ja-dark.png) / [5 枚（先頭 4 枚と「+1」）・ja・dark・1280px](./issue-1690-five-ja-dark.png) / [4 枚・en・light・390px](./issue-1690-four-en-light-phone.png) / [3 枚のうち 1 枚の取得の失敗・ja・dark・1280px](./issue-1690-partial-failure-ja-dark.png) / [拡大表示の 5 枚目・ja・dark・1280px](./issue-1690-viewer-fifth-ja-dark.png)
+- Surface / user / purpose: タイムライン系の投稿カード（タイムライン・スレッド・プロフィール・著者・ブックマーク・「見つける」）の画像と、画像の拡大表示。複数枚の画像を付けた投稿を見る人が、カードで先頭 4 枚を見て、5 枚目以降も拡大表示で見られるようにする。表示した端末が画像を取得・保持するので、2 枚目以降も他の端末へ届く（#1690）。
+- Summary:
+  - 先頭 4 枚を今の 16:9 の枠に並べる。1 枚は枠いっぱい（変更なし）、2 枚は左右、3 枚は左の 1 枚と右の 2 段、4 枚は 2×2。間は 2px。各画像は `object-fit: cover` で切り抜く。
+  - 各画像は `button` で、押すとその画像から拡大表示を開く。accessible name は 2 枚以上のとき「画像添付 2 / 5」（拡大表示の説明と同じ形）、1 枚のときは今の「画像添付」。
+  - 5 枚目以降と他の添付は右上の「+N」（既存の badge）で数える。5 枚目以降は拡大表示で表示したときに取得して表示する。
+  - 取得の失敗は、失敗した画像の位置だけを「取得に失敗しました」と再取得の icon button に置き換える。全てが失敗したときは、今の 1 枚と同じく枠ごと置き換える。
+- Conditions:
+  - Platform: Windows の Chromium（Playwright）で、ブラウザ mock の開発サーバー（`VITE_KUKURI_DESKTOP_MOCK=1`）。修正前は基準 commit `41fdb34f3` で同じ seed を使った。
+  - Viewport: 1280×900、390×860
+  - Theme: dark / light
+  - Locale: ja / en
+  - State: 1〜5 枚の投稿の表示、拡大表示の 2 枚目・5 枚目、3 枚のうち 1 枚の自動取得の上限到達（時計を進めて再現）
+- Accessibility / interaction: 並べた画像は DOM の順（左上→右上→左下→右下。3 枚は左→右上→右下）に tab で移り、Enter・Space で拡大表示を開く。拡大表示の左右の操作・矢印キー・swipe は変えない。再取得の icon button（accessible name は「再取得」）は、失敗した画像の位置ごとに置く。
+- Performance: 表示のための取得は、表示範囲内のカードに並べた画像（1 件あたり最大 4 枚）と、拡大表示で表示中の 1 枚だけ。5 枚目以降は拡大表示で表示するまで要求しない（Vitest で確認）。同時数・メモリ・保持の上限（`docs/architecture/blob-cache.md`）は変えない。
+- Validation: Vitest（`DesktopShellPage.mediaRendering.test.tsx` の 5 枚の投稿の表示と拡大表示での取得（修正前に失敗）、`postMediaView.test.ts`、`usePreviewableMediaAttachments.test.ts`、`PostCard.test.tsx`、`communityIndexPostCardView.test.ts`）、Storybook の `Core/PostMedia` `ImageGridThree`・`ImageGridWithMore`、eslint、tsc。画像 1 枚の投稿のカードは、修正前後で PNG の SHA-256 が一致した（ja・dark・1280px、en・light・390px）。
+- Not verified: Tauri の実機（Windows・Linux の desktop）と実ブラウザの Web での 2 端末間の取得。取得の経路・gate・保存は 1 枚目と同じ既存の経路で、変えていない。
+- Review result: 対象条件の採用判定は PASS。
+- Exceptions: なし。

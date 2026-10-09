@@ -138,7 +138,6 @@ test('attachment report resolves the selected blob provenance instead of the pos
         media: {
           ...createView().media,
           kind: 'image',
-          imagePreviewSrc: 'blob:attachment-preview',
           imageGalleryItems: [
             {
               hash: 'attachment-hash',
@@ -153,7 +152,6 @@ test('attachment report resolves the selected blob provenance instead of the pos
               },
             },
           ],
-          currentImageIndex: 0,
         },
       })}
       onOpenAuthor={() => undefined}

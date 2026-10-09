@@ -300,8 +300,7 @@ describe('communityIndexPostCardView', () => {
       objectId: entry.object_id,
       kind: 'image',
       state: 'ready',
-      extraAttachmentCount: 1,
-      imagePreviewSrc: 'blob:primary-image',
+      extraAttachmentCount: 0,
       metaMime: 'image/png',
     });
     expect(view.media.metaBytesLabel).toBeTruthy();
@@ -313,21 +312,22 @@ describe('communityIndexPostCardView', () => {
       'blob:primary-image',
       'blob:second-image',
     ]);
-    expect(view.media.currentImageIndex).toBe(0);
   });
 
   test('keeps resolved media loading until its object url settles', () => {
     const view = imageCardView({ mediaObjectUrls: {} });
 
     expect(view.media).toMatchObject({ kind: 'image', state: 'loading' });
-    expect(view.media.imagePreviewSrc).toBeNull();
+    expect(view.media.imageGalleryItems?.[0]?.src).toBeNull();
   });
 
-  test('marks resolved media unavailable once its object url settles empty', () => {
-    const view = imageCardView({ mediaObjectUrls: { [PRIMARY_IMAGE_HASH]: null } });
+  test('marks resolved media unavailable once its object urls settle empty', () => {
+    const view = imageCardView({
+      mediaObjectUrls: { [PRIMARY_IMAGE_HASH]: null, [SECOND_IMAGE_HASH]: null },
+    });
 
     expect(view.media).toMatchObject({ kind: 'image', state: 'unavailable' });
-    expect(view.media.imagePreviewSrc).toBeNull();
+    expect(view.media.imageGalleryItems?.[0]?.src).toBeNull();
   });
 
   test('gates resolved adult-labeled media without exposing a preview source', () => {
@@ -342,7 +342,6 @@ describe('communityIndexPostCardView', () => {
 
     expect(view.adultContentGated).toBe(true);
     expect(view.media).toMatchObject({ kind: 'image', state: 'gated' });
-    expect(view.media.imagePreviewSrc).toBeNull();
     expect(view.media.imageGalleryItems).toEqual([]);
   });
 
@@ -354,11 +353,8 @@ describe('communityIndexPostCardView', () => {
     });
 
     expect(view.adultContentGated).toBe(false);
-    expect(view.media).toMatchObject({
-      kind: 'image',
-      state: 'ready',
-      imagePreviewSrc: 'blob:primary-image',
-    });
+    expect(view.media).toMatchObject({ kind: 'image', state: 'ready' });
+    expect(view.media.imageGalleryItems?.[0]?.src).toBe('blob:primary-image');
   });
 
   test.each([
@@ -457,7 +453,6 @@ describe('communityIndexPostCardView', () => {
 
     expect(view.adultContentGated).toBe(true);
     expect(view.media.state).toBe('gated');
-    expect(view.media.imagePreviewSrc).toBeNull();
     expect(view.media.imageGalleryItems).toEqual([]);
     expect(view.contentAdvisory).toEqual({
       issuerNodeId: ISSUER_NODE_ID,
@@ -533,7 +528,7 @@ describe('communityIndexPostCardView', () => {
 
     expect(view.adultContentGated).toBe(false);
     expect(view.media.state).toBe('ready');
-    expect(view.media.imagePreviewSrc).toBe('blob:primary');
+    expect(view.media.imageGalleryItems?.[0]?.src).toBe('blob:primary');
     expect(view.contentAdvisory).toBeNull();
   });
 
@@ -557,7 +552,7 @@ describe('communityIndexPostCardView', () => {
 
     expect(view.adultContentGated).toBe(false);
     expect(view.contentAdvisory).toBeNull();
-    expect(view.media.imagePreviewSrc).toBe('blob:primary');
+    expect(view.media.imageGalleryItems?.[0]?.src).toBe('blob:primary');
   });
 
   // #1055: 説明に出す advisory は添付そのものへの判定(`blob_cid`)を優先する。
@@ -642,7 +637,6 @@ describe('communityIndexPostCardView', () => {
     expect(view.contentAdvisory).toBeNull();
     expect(view.media.state).toBe('gated');
     expect(view.media.gatedBy).toBe('shared_media');
-    expect(view.media.imagePreviewSrc).toBeNull();
     expect(view.media.imageGalleryItems).toEqual([]);
   });
 });

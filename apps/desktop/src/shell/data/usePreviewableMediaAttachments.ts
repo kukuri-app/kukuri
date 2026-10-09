@@ -13,7 +13,7 @@ import type {
 import {
   isAdultLabeledPost,
   logMediaDebug,
-  selectPrimaryImage,
+  selectPostImages,
   selectPrimaryImageAttachment,
   selectVideoManifest,
   selectVideoManifestAttachment,
@@ -151,8 +151,9 @@ export function usePreviewableMediaAttachments({
       const advisoryBlocked =
         advisoryState.pending || (advisoryState.advisory !== null && !adultContentEnabled);
       if (!advisoryBlocked && (adultContentEnabled || !isAdultLabeledPost(post))) {
+        // #1690: 画像は、カードに並べた先頭 4 枚と拡大表示で表示中の 1 枚が需要を出す。
         for (const attachment of [
-          selectPrimaryImage(post),
+          ...selectPostImages(post),
           selectVideoPoster(post),
           selectVideoManifest(post),
         ]) {

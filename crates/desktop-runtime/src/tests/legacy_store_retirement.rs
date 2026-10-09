@@ -119,6 +119,7 @@ async fn node_blob(runtime: &DesktopRuntime, hash: &str) -> Option<Vec<u8>> {
 
 /// AC-2: 本人の書込みは、書いたときに保護参照つきで保護所有先へ入る(保護移行の手順を使わない)。
 /// 他人の author の領域へ置いた行は入れない。送信待ちの frame は ACK で保護が外れる。
+/// #1690: 複数枚の画像と動画も、投稿したときにすべて入る(閲覧者が取得しない 5 枚目以降も投稿者の端末に残る)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn own_writes_go_to_the_protected_owner_when_written() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
@@ -127,18 +128,22 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
         .await
         .expect("account");
     let runtime = open_runtime(&db).await;
-    let attachment = vec![7u8; 1024 * 1024 + 5];
+    let large = vec![7u8; 1024 * 1024 + 5];
+    let mut attachments = vec![image_attachment_request("large.png", "image/png", &large)];
+    attachments.extend((1..5u8).map(|n| image_attachment_request("small.png", "image/png", &[n])));
+    for (mime, role) in [
+        ("video/mp4", "video_manifest"),
+        ("image/jpeg", "video_poster"),
+    ] {
+        attachments.push(video_attachment_request(role, mime, role.as_bytes(), role));
+    }
     let post_id = runtime
         .create_post(CreatePostRequest {
             topic: TOPIC.into(),
             content: "written straight to the protected owner".into(),
             reply_to: None,
             channel_ref: ChannelRef::Public,
-            attachments: vec![image_attachment_request(
-                "large.png",
-                "image/png",
-                &attachment,
-            )],
+            attachments,
             content_labels: Vec::new(),
         })
         .await
@@ -153,8 +158,10 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
         kukuri_core::PayloadRef::BlobText { hash, .. } => hash.as_str().to_string(),
         other => panic!("unexpected payload {other:?}"),
     };
+    assert_eq!(projection.attachments.len(), 7);
     let attached = projection.attachments[0].hash.as_str().to_string();
-    for hash in [&body, &attached] {
+    let attachment_hashes = projection.attachments.iter().map(|a| a.hash.as_str());
+    for hash in std::iter::once(body.as_str()).chain(attachment_hashes) {
         assert!(
             protected(&runtime.sqlite, "blob", None, hash).await,
             "{hash}"

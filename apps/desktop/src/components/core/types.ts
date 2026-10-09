@@ -69,7 +69,7 @@ export type PostMediaView = {
   gatedBy?: 'self_label' | 'advisory' | 'shared_media';
   metaMime?: string | null;
   metaBytesLabel?: string | null;
-  imagePreviewSrc?: string | null;
+  // 投稿の画像のすべて(拡大表示の順)。カードには先頭 4 枚を並べる(#1690)。
   imageGalleryItems?: Array<{
     hash: string;
     src: string | null;
@@ -79,7 +79,6 @@ export type PostMediaView = {
     mime: string;
     provenance?: ContentProvenance;
   }>;
-  currentImageIndex?: number;
   videoPosterPreviewSrc?: string | null;
   videoPosterHash?: string | null;
   videoPlaybackSrc?: string | null;
