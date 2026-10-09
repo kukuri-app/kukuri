@@ -18,6 +18,7 @@
 //! - `docs/adr/0025-community-node-indexing-foundation.md`（§2.2 scope / §2.5 fail-closed / §2.7 検索 UX / §6 Model C）
 
 pub mod arcadedb;
+pub mod backfill;
 pub mod bucket_reader;
 pub mod config;
 pub mod ingest;
