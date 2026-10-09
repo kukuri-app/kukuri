@@ -13,10 +13,10 @@ const backButtonEscapes = new WeakSet<Event>();
 /// 閉じず、履歴を戻って閉じる（Escape の replace で閉じると、戻る先に同じ画面の履歴が残る）。
 export const isBackButtonEscape = (event: Event) => backButtonEscapes.has(event);
 
-function dispatchEscape(fromBackButton: boolean) {
+function dispatchEscape(target: Element, fromBackButton: boolean) {
   const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
   if (fromBackButton) backButtonEscapes.add(event);
-  (document.activeElement ?? document.body).dispatchEvent(event);
+  target.dispatchEvent(event);
   return event.defaultPrevented;
 }
 
@@ -24,10 +24,13 @@ function dispatchEscape(fromBackButton: boolean) {
 /// 閉じ、無ければ画面の履歴を戻る。履歴が無ければ、起動時に復元した設定・スレッド・著者を閉じ、それも無ければ
 /// アプリを終了せず背景へ移す。
 export function handleBackButton(canGoBack: boolean) {
-  if (dispatchEscape(true)) return;
+  const target = document.activeElement ?? document.body;
+  // 投稿欄は focus が他へ移っていても（起動時に開いたまま復元した場合など）、表示中の列で開いていれば閉じる。
+  const composer = document.querySelector('[aria-current="true"] .shell-column-composer');
+  if (dispatchEscape(target, true) || (composer !== null && dispatchEscape(composer, true))) return;
   if (canGoBack) {
     window.history.back();
-  } else if (!dispatchEscape(false)) {
+  } else if (!dispatchEscape(target, false)) {
     window.kukuriAndroid?.moveTaskToBack();
   }
 }
