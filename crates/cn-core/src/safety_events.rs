@@ -141,7 +141,8 @@ pub async fn get_signed_moderation_event(
         "SELECT id, issuer_node_id, target_type, target_id, action, reason_code, severity, basis,
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
-         WHERE id = $1 AND retention_expires_at > NOW()",
+         WHERE id = $1
+           AND persisted_at > NOW() - cn_admin.retention_interval('moderation_event')",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -159,7 +160,7 @@ pub async fn list_signed_moderation_events(
         "SELECT id, issuer_node_id, target_type, target_id, action, reason_code, severity, basis,
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
-         WHERE retention_expires_at > NOW()
+         WHERE persisted_at > NOW() - cn_admin.retention_interval('moderation_event')
          ORDER BY persisted_at DESC
          LIMIT $1 OFFSET $2",
     )
@@ -185,7 +186,7 @@ pub async fn list_distributable_moderation_events(
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
          WHERE visibility = ANY($1)
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('moderation_event')
          ORDER BY persisted_at DESC
          LIMIT $2 OFFSET $3",
     )
@@ -601,7 +602,7 @@ pub async fn list_risk_signals(
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
-         WHERE retention_expires_at > NOW()
+         WHERE persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC
          LIMIT $1 OFFSET $2"
     )))
@@ -617,7 +618,7 @@ pub async fn get_risk_signal(pool: &PgPool, id: &str) -> Result<Option<StoredRis
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
-         WHERE id = $1 AND retention_expires_at > NOW()"
+         WHERE id = $1 AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')"
     )))
     .bind(id)
     .fetch_optional(pool)
@@ -635,7 +636,7 @@ pub async fn list_risk_signals_for_target(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
          WHERE target = $1 AND target_id = $2
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC"
     )))
     .bind(to_db_enum(&target)?)
@@ -661,7 +662,7 @@ pub async fn list_distributable_risk_signals(
          FROM cn_safety.risk_signals
          WHERE visibility = ANY($1)
            AND (expires_at IS NULL OR expires_at::timestamptz > $2::timestamptz)
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC
          LIMIT $3 OFFSET $4"
     )))

@@ -58,7 +58,6 @@ pub(crate) async fn withdraw_rights_request_handler(
         &state.pool,
         access.reference_id.trim(),
         access.tracking_secret.trim(),
-        &state.retention,
         chrono::Utc::now(),
     )
     .await
@@ -126,7 +125,6 @@ pub(crate) async fn withdraw_rights_request_form_submit(
         &state.pool,
         access.reference_id.trim(),
         access.tracking_secret.trim(),
-        &state.retention,
         chrono::Utc::now(),
     )
     .await
@@ -249,7 +247,6 @@ async fn create(
         &request,
         scope_status,
         cipher,
-        &state.retention,
         chrono::Utc::now(),
     )
     .await

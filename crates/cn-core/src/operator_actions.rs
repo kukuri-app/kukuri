@@ -155,7 +155,8 @@ pub async fn apply_operator_action(
             }
             let current = sqlx::query_scalar::<_, String>(
                 "SELECT status FROM cn_admin.reports
-                 WHERE id = $1 AND expires_at > NOW() FOR UPDATE",
+                 WHERE id = $1 AND created_at > NOW() - cn_admin.retention_interval('report')
+                 FOR UPDATE",
             )
             .bind(report_id)
             .fetch_optional(&mut *tx)
@@ -225,7 +226,7 @@ pub async fn list_operator_actions(
     let rows = sqlx::query(
         "SELECT id, occurred_at, actor, action, target_kind, target_id, before_json, after_json
          FROM cn_admin.operator_actions
-         WHERE expires_at > NOW()
+         WHERE occurred_at > NOW() - cn_admin.retention_interval('operator_audit')
          ORDER BY occurred_at DESC, id DESC
          LIMIT $1 OFFSET $2",
     )

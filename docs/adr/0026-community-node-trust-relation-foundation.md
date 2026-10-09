@@ -461,15 +461,16 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 ### 10.1 集計
 - `cn_safety.trust_target_signals` に、対象（利用者の pubkey）ごとの生きている risk signal（利用者が対象の行と、著者の
   対応（`risk_signal_subject_authors`）を通した内容の行）を 1 行ずつ置く。行は寄与の大きさ（1/1000 単位の整数。
-  `cleared` と nsfw / objectionable は 0）、絶対成分か、pull で開示できる範囲、期限（保持期間と失効時刻の早い方）、
-  `trust_version` の元になる hash を持つ。
+  `cleared` と nsfw / objectionable は 0）、絶対成分か、pull で開示できる範囲、運営者が付けた失効時刻、
+  `trust_version` の元になる hash を持つ。保持期間は行の保存時刻と保持日数（ADR 0034 §1 の `cn_admin.retention_days`）
+  で判定し、行には持たない（#1704）。
 - `cn_safety.trust_target_totals` は対象ごとの集計（絶対成分の寄与の和、相対成分の寄与を基準時刻まで半減期で減衰させた
   和、pull の開示範囲ごとの和、hash の XOR）。行が 0 になった対象の集計の行は消す。
 - `risk_signals` と `risk_signal_subject_authors` の変更は DB の trigger が `trust_target_signals` へ写し、その追加・削除を
   集計へ差分で足し引きする。内容の行の書込みは、集計の行を作り直す前に、著者の対応の追加（共有）と回収（ADR 0034 §1、
   #1699、排他）と同じ advisory lock を排他で取る。同じ内容への書込みと関連付け・期限削除が重なっても、後の側が先の側の
   確定した行から作り直す（lock は取引ごとに 1 つ）。集計の行の lock は取引の最後に取る。書込みの経路（scan、異議の審査、
-  通報の dispute、運営者の編集・再発行、再 scan の失効、期限削除、保持期間の書き直し、著者の対応の追加・削除）を問わず
+  通報の dispute、運営者の編集・再発行、再 scan の失効、期限削除、著者の対応の追加・削除）を問わず
   追従する。
 - 照会: 一括評価は対象の集計の行だけ、単体照会は集計の行と basis の 1 ページ、pull は開示分の集計と開示分の 1 ページを
   読む。照会 1 回の読取りは、対象の行数にも総件数にもよらない。
@@ -481,7 +482,9 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 ### 10.2 期限と半減期
 - 書込みの時点で期限を過ぎた行は集計に入れない。読めない失効時刻の行も入れない（#700 の「無視」と同じ）。
 - 後から期限（保持期間・運営者が付けた失効時刻）を過ぎた行は、cn-user-api の掃除（1 分ごと、1 回 1,000 行、止まっても
-  次の回に残りから）が集計から外す。外れるまでの最大 1 分、その行は T と basis に残る。
+  次の回に残りから）が集計から外す。外れるまでの最大 1 分、その行は T と basis に残る。保持日数を縮めたときも、同じ
+  掃除が新しい日数で外す。延ばしたときは、延ばした分の期間に保存された未削除の行（前の日数で外していた行）を、次の
+  掃除が集計へ戻す（#1704）。
 - 半減期（`COMMUNITY_NODE_TRUST_RELATIVE_HALF_LIFE_DAYS`）は operator が変えられる（§6.2）。cn-user-api は起動時に
   集計の半減期の設定（`cn_safety.trust_settings`）を揃え、違う半減期で作った集計を背景で 1 回 100 対象ずつ作り直す。
   作り直すまでの対象は、前の半減期で求めた値を返す。

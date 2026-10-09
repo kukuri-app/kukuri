@@ -235,15 +235,25 @@ fn page_from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<TrustBasisPage> {
 }
 
 /// 期限（保持期間・失効時刻）が `now` までに来た行を、1 回 [`TRUST_SWEEP_BATCH`] 行まで集計から外す。
-/// 消した行数を返す。他の取引が削除中の行は飛ばす（次の回に残る）。
+/// 消した行数を返す。他の取引が削除中の行は飛ばす（次の回に残る）。保持期間は保存時刻と保持日数
+/// （`cn_admin.retention_days`）で判定するので、日数を縮めた分の行もここで外れる。
 pub async fn sweep_expired_trust_signals(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
+    restore_retained_trust_signals(pool, now).await?;
     let result = sqlx::query(
-        "WITH expired AS (
+        "WITH lapsed AS (
              SELECT target_pubkey, signal_id FROM cn_safety.trust_target_signals
              WHERE removal_at <= $1
              ORDER BY removal_at
              LIMIT $2
              FOR UPDATE SKIP LOCKED
+         ), retired AS (
+             SELECT target_pubkey, signal_id FROM cn_safety.trust_target_signals
+             WHERE persisted_at <= $1 - cn_admin.retention_interval('risk_signal')
+             ORDER BY persisted_at
+             LIMIT $2
+             FOR UPDATE SKIP LOCKED
+         ), expired AS (
+             SELECT * FROM lapsed UNION SELECT * FROM retired LIMIT $2
          )
          DELETE FROM cn_safety.trust_target_signals e
          USING expired x
@@ -254,6 +264,46 @@ pub async fn sweep_expired_trust_signals(pool: &PgPool, now: DateTime<Utc>) -> R
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// risk signal の保持日数を延ばした分の期間に保存された未削除の行を、集計へ戻す（前の日数で期限切れとして
+/// 外していた）。集計に反映した日数（`trust_settings.risk_signal_days`）を今の日数に揃える。
+async fn restore_retained_trust_signals(pool: &PgPool, now: DateTime<Utc>) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let changed: Option<(i32, i32)> = sqlx::query_as(
+        "UPDATE cn_safety.trust_settings s SET risk_signal_days = d.days
+         FROM cn_admin.retention_days d,
+              (SELECT risk_signal_days FROM cn_safety.trust_settings) previous
+         WHERE d.category = 'risk_signal' AND s.risk_signal_days <> d.days
+         RETURNING previous.risk_signal_days, d.days",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((previous, days)) = changed.filter(|(previous, days)| days > previous) {
+        // 内容の行の集計を作り直す trigger と同じ lock（#1699）を排他で取り、著者の対応の変更と重ねない。
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(
+                hashtextextended('cn_safety.risk_signal_subject_authors', 0))",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO cn_safety.trust_target_signals
+             SELECT entry.*
+             FROM cn_safety.risk_signals signal
+             CROSS JOIN LATERAL cn_safety.trust_signal_entries(signal) AS entry
+             WHERE signal.persisted_at > $1 - make_interval(days => $3)
+               AND signal.persisted_at <= $1 - make_interval(days => $2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(now)
+        .bind(previous)
+        .bind(days)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// 集計に使う半減期を運営者の設定と揃える。違う半減期で作った集計は [`rebuild_trust_totals`] が作り直す。

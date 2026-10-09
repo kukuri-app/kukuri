@@ -1,11 +1,11 @@
 use anyhow::Result;
 use kukuri_cn_core::{
     LEGAL_DATA_KEY_CHECK_SQL, LegalDataCipher, RetentionPolicy, TestDatabase,
-    TransmissionPreventionCapability, action_rights_request, apply_retention_policy,
-    cleanup_expired, connect_postgres, export_legal_hold, get_active_transmission_prevention,
-    get_public_rights_request_status, get_rights_request, get_rights_request_with_sensitive,
-    initialize_database, insert_rights_request, list_operator_actions, release_legal_hold,
-    start_legal_hold, transition_rights_request, verify_legal_data_key,
+    TransmissionPreventionCapability, action_rights_request, cleanup_expired, connect_postgres,
+    export_legal_hold, get_active_transmission_prevention, get_public_rights_request_status,
+    get_rights_request, get_rights_request_with_sensitive, initialize_database,
+    insert_rights_request, list_operator_actions, release_legal_hold, start_legal_hold,
+    transition_rights_request, verify_legal_data_key,
 };
 use kukuri_cn_protocol::{
     RightsCategory, RightsRequestCreateRequest, RightsRequestScopeStatus, RightsRequestStatus,
@@ -62,13 +62,11 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
         initialize_database(&pool).await?;
         let cipher =
             LegalDataCipher::from_key_material("unit-test-legal-data-key-0123456789abcdef")?;
-        let retention = RetentionPolicy::default();
         let created = insert_rights_request(
             &pool,
             &request(),
             RightsRequestScopeStatus::UnverifiedScope,
             &cipher,
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -99,7 +97,6 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
             RightsRequestStatus::Reviewing,
             Some("審査を開始しました"),
             "status_surface",
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -110,7 +107,6 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
             "legal@node.example",
             vec![TransmissionPreventionCapability::Moderation],
             "このノードの moderation 対象から除外しました",
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -177,7 +173,6 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             &request(),
             RightsRequestScopeStatus::UnverifiedScope,
             &cipher,
-            &retention,
             now - chrono::Duration::days(800),
         )
         .await?;
@@ -197,12 +192,10 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             "court preservation order",
             "final disposition",
             "legal@node.example",
-            &retention,
             now,
         )
         .await?;
 
-        apply_retention_policy(&pool, &retention).await?;
         cleanup_expired(&pool, now).await?;
         assert!(
             get_rights_request(&pool, &created.record.id)
@@ -216,15 +209,16 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
                 .await?;
         assert_eq!(physical_count, 1, "hold must prevent physical deletion");
 
-        let export = export_legal_hold(
-            &pool,
-            &cipher,
-            &hold.id,
-            "reviewer@node.example",
-            &retention,
-            now,
-        )
-        .await?;
+        let export =
+            export_legal_hold(&pool, &cipher, &hold.id, "reviewer@node.example", now).await?;
+        // export の期限は、最終の状態遷移の時刻に状態の区分（未解決）の日数を足した値。
+        assert_eq!(
+            serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+                export.data["rights_request"]["expires_at"].clone()
+            )?,
+            created.record.updated_at
+                + chrono::Duration::days(i64::from(retention.rights_request_active_days))
+        );
         let exported = serde_json::to_string(&export)?;
         assert!(exported.contains("rights@example.com"));
         for forbidden in [
@@ -236,7 +230,7 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             assert!(!exported.contains(forbidden), "export leaked {forbidden}");
         }
 
-        release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now).await?;
+        release_legal_hold(&pool, &hold.id, "legal@node.example", now).await?;
         let holds = "SELECT COUNT(*) FROM cn_legal.legal_holds WHERE id = $1";
         assert_eq!(
             count(&pool, holds, &hold.id).await?,
@@ -253,22 +247,15 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             );
         }
         assert!(
-            release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now,)
+            release_legal_hold(&pool, &hold.id, "legal@node.example", now)
                 .await
                 .is_err(),
             "double release must fail"
         );
         assert!(
-            export_legal_hold(
-                &pool,
-                &cipher,
-                &hold.id,
-                "reviewer@node.example",
-                &retention,
-                now
-            )
-            .await
-            .is_err(),
+            export_legal_hold(&pool, &cipher, &hold.id, "reviewer@node.example", now)
+                .await
+                .is_err(),
             "released hold cannot be exported"
         );
         cleanup_expired(&pool, now).await?;
@@ -302,7 +289,6 @@ async fn declined_request_body_is_deleted_before_its_history_expires() -> Result
         initialize_database(&pool).await?;
         let cipher =
             LegalDataCipher::from_key_material("unit-test-legal-data-key-0123456789abcdef")?;
-        let retention = RetentionPolicy::default();
         let now = chrono::Utc::now();
         let declined_at = now - chrono::Duration::days(200);
         let created = insert_rights_request(
@@ -310,7 +296,6 @@ async fn declined_request_body_is_deleted_before_its_history_expires() -> Result
             &request(),
             RightsRequestScopeStatus::VerifiedScope,
             &cipher,
-            &retention,
             declined_at - chrono::Duration::days(10),
         )
         .await?;
@@ -322,7 +307,6 @@ async fn declined_request_body_is_deleted_before_its_history_expires() -> Result
             RightsRequestStatus::Declined,
             Some("対象外のため却下しました"),
             "status_surface",
-            &retention,
             declined_at,
         )
         .await?;
@@ -379,7 +363,6 @@ async fn legal_data_key_check_reads_one_row_and_tampering_fails_on_read() -> Res
                 &request(),
                 RightsRequestScopeStatus::UnverifiedScope,
                 &cipher,
-                &RetentionPolicy::default(),
                 now,
             )
             .await?;
@@ -422,10 +405,9 @@ async fn legal_data_key_check_reads_one_row_and_tampering_fails_on_read() -> Res
 async fn key_check_rows_read(pool: &PgPool, total: i64) -> Result<f64> {
     sqlx::query(
         "INSERT INTO cn_legal.sensitive_items
-            (id, owner_kind, owner_id, data_category, nonce, ciphertext, expires_at)
+            (id, owner_kind, owner_id, data_category, nonce, ciphertext)
          SELECT 'seed-' || lpad(n::text, 6, '0'), 'report', 'seed-' || n, 'report_contact',
-                decode(repeat('00', 24), 'hex'), decode(repeat('ab', 32), 'hex'),
-                NOW() + INTERVAL '90 days'
+                decode(repeat('00', 24), 'hex'), decode(repeat('ab', 32), 'hex')
          FROM generate_series((SELECT COUNT(*) FROM cn_legal.sensitive_items) + 1, $1) AS n",
     )
     .bind(total)

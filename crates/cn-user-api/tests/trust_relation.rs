@@ -379,10 +379,9 @@ async fn trust_read_returns_components_with_basis_and_ignores_reports() -> Resul
                 subject_id: target.clone(),
                 capability: "community_index".to_string(),
                 reason: format!("mass-report-{i}"),
-                details: None,
-                reporter_contact: None,
-                appeal_risk_signal_id: None,
+                ..Default::default()
             },
+            None,
         )
         .await?;
     }

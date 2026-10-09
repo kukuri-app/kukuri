@@ -47,6 +47,8 @@ Community Node は通報、権利侵害申出、moderation artifact、operator a
 
 保持日数は `RetentionConfig` で正の有限日数として変更できる。既存の `moderation_logs_days` は後方互換の集約表示として残すが、削除判定は event、signal、audit の個別値を正とする。
 
+通報から risk signal までの区分は、期限を行に持たず、上表の起算点の列と、保持区分ごとの日数（`cn_admin.retention_days`）で判定する（#1704。接続ログと legal hold の記録は対象外）。権利侵害申出は、状態の区分（未解決・措置済み・却下等）と最終の状態遷移の時刻で判定する。日数は cn-user-api の起動時と `cn-cli retention sweep` が operator config から書くだけなので、日数を変えると既存の行にもすぐ効き（短縮すれば期限切れ、延長すれば未削除の行が再び読める）、行は書き直さない。以前の、行ごとの期限の列を起動時と毎時に全行で書き直す方式は、処理量が全行数に比例するので廃止した。
+
 未解決案件は補正・調査・発信者照会が継続し得るため730日、措置済み案件は判断説明と送達履歴の確認のため365日、却下・範囲外・取下げはデータ最小化を優先して180日とする。未解決案件を無期限にはしない。継続保全が必要なら案件限定 hold を開始する。
 
 ### 2. 通常期限と legal hold を分離する
@@ -69,7 +71,7 @@ hold の開始・解除・export は append-only operator audit に、対象 ID�
 
 ### 4. 期限切れを読取と定期処理の両方で強制する
 
-全通常読取は `expires_at > now` を条件にし、期限切れを返さない。起動時は listen 前に cleanup を実行し、その後は固定間隔で cleanup する。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、子行から親行の順で削除する。
+全通常読取は「起算点 > 基準時刻 − 保持期間（`cn_admin.retention_interval(区分)`）」を条件にし、期限切れを返さない。起動時は listen 前に cleanup を実行し、その後は固定間隔で cleanup する。cleanup は明示的な基準時刻を受ける純粋な契約境界を持ち、子行から親行の順で削除する。
 
 backup は database 全体を含み得るため、backup object 自体の lifecycle と、復元 DB の論理保持を区別する。復元後は API 公開前の cleanup を必須とし、期限切れ非 hold 行を再表示しない。
 

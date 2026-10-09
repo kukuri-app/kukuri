@@ -154,12 +154,11 @@ pub use rendezvous::TopicRendezvousStore;
 pub use reports::{
     COMMUNITY_NODE_REPORT_STATUS_RECEIVED, CommunityNodeReport, NewCommunityNodeReport,
     get_community_node_report, get_community_node_report_with_contact,
-    insert_community_node_appeal, insert_community_node_appeal_with_retention,
-    insert_community_node_report, insert_community_node_report_with_retention,
-    list_community_node_reports,
+    insert_community_node_appeal, insert_community_node_report, list_community_node_reports,
 };
 pub use retention::{
-    CleanupCounts, RetentionPolicy, apply_retention_policy, cleanup_expired, retention_counts,
+    CleanupCounts, EXPIRED_DELETES, RetentionPolicy, cleanup_expired, configure_case_retention,
+    retention_counts,
 };
 pub use rights_requests::{
     CreatedRightsRequest, INDEXED_POST_EXISTS_SQL, RightsRequestActionResult, RightsRequestEvent,
@@ -189,7 +188,7 @@ pub use scan_verdicts::{
     StoredScanVerdict, get_scan_verdict, update_scan_verdict_advisories, upsert_scan_verdict,
 };
 pub use tester_feedback::{
-    NewTesterFeedback, TesterFeedback, get_tester_feedback, insert_tester_feedback_with_retention,
+    NewTesterFeedback, TesterFeedback, get_tester_feedback, insert_tester_feedback,
     list_tester_feedback,
 };
 pub use transmission_preventions::{

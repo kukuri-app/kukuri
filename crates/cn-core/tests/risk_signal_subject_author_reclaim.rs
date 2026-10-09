@@ -80,11 +80,11 @@ async fn authors_of(pool: &PgPool, target_id: &str) -> Result<Vec<String>> {
     .await?)
 }
 
-/// risk signal の行の保持期限を過去にして、期限削除の対象にする。
+/// risk signal の行の保持期限を過去にして、期限削除の対象にする（起算点を保持期間より前へ動かす）。
 async fn expire(pool: &PgPool, signal_id: &str) -> Result<()> {
     sqlx::query(
         "UPDATE cn_safety.risk_signals
-         SET retention_expires_at = NOW() - INTERVAL '1 day'
+         SET persisted_at = NOW() - cn_admin.retention_interval('risk_signal') - INTERVAL '1 day'
          WHERE id = $1",
     )
     .bind(signal_id)

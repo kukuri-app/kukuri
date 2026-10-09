@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::legal_data::decrypt_row;
-use crate::{LegalDataCipher, RetentionPolicy, SensitiveDataCategory};
+use crate::{LegalDataCipher, SensitiveDataCategory};
 
 const REPORT_CATEGORIES: &[&str] = &["report", "report_contact", "operator_audit"];
 const RIGHTS_REQUEST_CATEGORIES: &[&str] = &[
@@ -53,7 +53,6 @@ pub async fn start_legal_hold(
     basis: &str,
     release_condition: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHold> {
     validate_hold_input(
@@ -93,7 +92,6 @@ pub async fn start_legal_hold(
         json!({}),
         json!({"hold_id": id, "data_categories": data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
     let hold = hold_from_row(&row)?;
@@ -105,7 +103,6 @@ pub async fn release_legal_hold(
     pool: &PgPool,
     hold_id: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHold> {
     validate_text("hold id", hold_id, 128)?;
@@ -127,7 +124,6 @@ pub async fn release_legal_hold(
         json!({"hold_id": hold.id, "active": true}),
         json!({"hold_id": hold.id, "active": false, "data_categories": hold.data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
     tx.commit().await?;
@@ -139,7 +135,6 @@ pub async fn export_legal_hold(
     cipher: &LegalDataCipher,
     hold_id: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHoldExport> {
     validate_text("actor", actor, 320)?;
@@ -165,7 +160,6 @@ pub async fn export_legal_hold(
         json!({}),
         json!({"hold_id": hold.id, "data_categories": hold.data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
     tx.commit().await?;
@@ -188,7 +182,8 @@ async fn export_category(
     match category {
         "report" => Ok(sqlx::query(
             "SELECT id, subject_kind, subject_id, capability, reason, details, status,
-                    appeal_risk_signal_id, created_at, expires_at
+                    appeal_risk_signal_id, created_at,
+                    created_at + cn_admin.retention_interval('report') AS expires_at
              FROM cn_admin.reports WHERE id = $1",
         )
         .bind(&hold.target_id)
@@ -211,7 +206,9 @@ async fn export_category(
         "rights_request" => Ok(sqlx::query(
             "SELECT id, scope_revision, scope_status, status, subject_kind, subject_id,
                     requested_capabilities, request_data, version, public_message,
-                    created_at, updated_at, expires_at
+                    created_at, updated_at,
+                    updated_at + cn_admin.retention_interval(
+                        cn_legal.rights_request_retention(status)) AS expires_at
              FROM cn_legal.rights_requests WHERE id = $1",
         )
         .bind(&hold.target_id)
@@ -414,13 +411,11 @@ async fn append_hold_audit(
     before: Value,
     after: Value,
     occurred_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json,
-             occurred_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            (id, actor, action, target_kind, target_id, before_json, after_json, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(actor.trim())
@@ -430,7 +425,6 @@ async fn append_hold_audit(
     .bind(before)
     .bind(after)
     .bind(occurred_at)
-    .bind(expires_at)
     .execute(&mut **tx)
     .await?;
     Ok(())

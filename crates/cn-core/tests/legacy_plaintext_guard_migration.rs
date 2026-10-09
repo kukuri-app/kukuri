@@ -6,9 +6,9 @@
 
 use anyhow::Result;
 use kukuri_cn_core::{
-    LegalDataCipher, NewCommunityNodeReport, RetentionPolicy, TestDatabase, connect_postgres,
+    LegalDataCipher, NewCommunityNodeReport, TestDatabase, connect_postgres,
     get_community_node_report, get_community_node_report_with_contact, initialize_database,
-    insert_community_node_report_with_retention, migrate_postgres, migrate_postgres_up_to,
+    insert_community_node_report, migrate_postgres, migrate_postgres_up_to,
 };
 use sqlx::PgPool;
 
@@ -70,7 +70,17 @@ async fn legacy_plaintext_stops_migration_and_sealed_database_drops_column() -> 
         .await?;
         assert_eq!(contact.as_deref(), Some("legacy@example.com"));
 
+        // 止まった DB で、#776 以後・#1705 より前の版の sealing と同じ書込み（期限の列を含む）ができる。
         // 通報を sealing 済みの形にしても、旧平文の申出が残っていれば止まる。
+        sqlx::query(
+            "INSERT INTO cn_legal.sensitive_items
+                (id, owner_kind, owner_id, data_category, nonce, ciphertext, expires_at)
+             VALUES ('sealed-report', 'report', 'legacy-report', 'report_contact',
+                     decode(repeat('00', 24), 'hex'), decode(repeat('ab', 32), 'hex'),
+                     NOW() + INTERVAL '90 days')",
+        )
+        .execute(&pool)
+        .await?;
         sqlx::query("UPDATE cn_admin.reports SET reporter_contact = NULL")
             .execute(&pool)
             .await?;
@@ -103,7 +113,7 @@ async fn legacy_plaintext_stops_migration_and_sealed_database_drops_column() -> 
         let cipher =
             LegalDataCipher::from_key_material("unit-test-legal-data-key-0123456789abcdef")?;
         let now = chrono::Utc::now();
-        let stored = insert_community_node_report_with_retention(
+        let stored = insert_community_node_report(
             &pool,
             &NewCommunityNodeReport {
                 subject_kind: "post".to_string(),
@@ -114,8 +124,6 @@ async fn legacy_plaintext_stops_migration_and_sealed_database_drops_column() -> 
                 ..Default::default()
             },
             Some(&cipher),
-            &RetentionPolicy::default(),
-            now,
         )
         .await?;
         let plain = get_community_node_report(&pool, &stored.id)

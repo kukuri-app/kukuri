@@ -69,8 +69,8 @@ use crate::handlers::trust_relation::{
 use crate::rate_limit::apply_rate_limit;
 use crate::state::{ManifestState, UserApiState, build_runtime_state};
 use kukuri_cn_core::{
-    TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH, apply_retention_policy, cleanup_expired,
-    cleanup_trust_observations, rebuild_trust_totals, sweep_expired_trust_signals,
+    TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH, cleanup_expired, cleanup_trust_observations,
+    rebuild_trust_totals, sweep_expired_trust_signals,
 };
 
 pub fn app_router(state: UserApiState) -> Router {
@@ -370,7 +370,6 @@ fn spawn_retention_cleanup(state: UserApiState) {
         loop {
             interval.tick().await;
             let result = async {
-                apply_retention_policy(&state.pool, &state.retention).await?;
                 let now = chrono::Utc::now();
                 let counts = cleanup_expired(&state.pool, now).await?;
                 let trust_observations = cleanup_trust_observations(&state.pool, now).await?;
