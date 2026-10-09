@@ -82,6 +82,7 @@ import {
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
 import { PostRecoveryProviders } from '@/components/core/PostRecoveryProviders';
+import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 const CLIPBOARD_TOAST_TIMEOUT_MS = 2200;
@@ -382,7 +383,7 @@ export function DesktopShellPage({
         });
         return;
       }
-      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || IS_WEB_RUNTIME)) {
+      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || !EXTENDED_FEATURES_AVAILABLE)) {
         // WIP機能が隠れている間は live/game リンクを topic timeline へ落とす。
         await syncTopicContext(reference.topic, reference.channelId);
         setSelectedLiveSessionId(null);

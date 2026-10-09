@@ -27,6 +27,8 @@ const webRuntimePkg = env?.KUKURI_WEB_RUNTIME_PKG ?? path.resolve(import.meta.di
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Tauri CLI が build・dev の前の command に渡す対象の platform（`android` など）を画面へ渡す（#1198）。
+  envPrefix: ['VITE_', 'TAURI_ENV_PLATFORM'],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

@@ -45,7 +45,7 @@ import {
   resolveProfilePictureSrc,
 } from '@/shell/presentation';
 import { selectShellViewModelsSlice } from '@/shell/storeSelectors';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
 
 type UseDesktopShellViewModelsArgs = {
   t: (key: string, options?: Record<string, unknown>) => string;
@@ -346,7 +346,7 @@ export function useDesktopShellViewModels({
     () =>
       PRIMARY_SECTION_ITEMS.filter(
         (item) =>
-          (state.developerModeEnabled && !IS_WEB_RUNTIME) ||
+          (state.developerModeEnabled && EXTENDED_FEATURES_AVAILABLE) ||
           (item.id !== 'live' && item.id !== 'game')
       ).map((item) => ({
         ...item,

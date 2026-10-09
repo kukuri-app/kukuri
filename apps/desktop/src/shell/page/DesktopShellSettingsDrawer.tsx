@@ -37,10 +37,14 @@ import {
 import type { SyncRoute } from '@/shell/actions/shared';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
 import { useShallow } from 'zustand/react/shallow';
+import { IS_ANDROID } from '@/lib/platform';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
-// ウィンドウ・OS 通知・端末の backup は Web では使えない（ADR 0060 §3）ので、その section を出さない。
-const WEB_UNAVAILABLE_SETTINGS = new Set<SettingsSection>(['system', 'notifications', 'backup']);
+// 使えない設定の section は出さない。Web はウィンドウ・OS 通知・端末の backup（ADR 0060 §3）、Android はウィンドウ・
+// タスクトレイ（#1198）。
+const UNAVAILABLE_SETTINGS = new Set<SettingsSection>(
+  IS_WEB_RUNTIME ? ['system', 'notifications', 'backup'] : IS_ANDROID ? ['system'] : []
+);
 
 type ViewModels = ReturnType<typeof useDesktopShellViewModels>;
 
@@ -436,7 +440,7 @@ export function DesktopShellSettingsDrawer({
         />
       ),
     },
-  ].filter((section) => !IS_WEB_RUNTIME || !WEB_UNAVAILABLE_SETTINGS.has(section.id));
+  ].filter((section) => !UNAVAILABLE_SETTINGS.has(section.id));
 
   return (
     <SettingsDrawer

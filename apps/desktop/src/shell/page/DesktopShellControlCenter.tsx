@@ -63,6 +63,7 @@ import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts'
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
+import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
@@ -181,8 +182,8 @@ export function DesktopShellControlCenter({
       : 'shell:controlCenter.openWithStatus',
     { status: statusLabel }
   );
-  // live・game・metaverse は Web では使えない（ADR 0060 §3）。
-  const addableColumnKinds = developerModeEnabled && !IS_WEB_RUNTIME
+  // live・game・metaverse は開発者モードの desktop だけで出す（Web と Android では使えない）。
+  const addableColumnKinds = developerModeEnabled && EXTENDED_FEATURES_AVAILABLE
     ? ADDABLE_COLUMN_KINDS
     : ADDABLE_COLUMN_KINDS.filter(
         (kind) => kind !== 'stream' && kind !== 'metaverse'

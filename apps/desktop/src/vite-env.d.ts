@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_KUKURI_TARGET?: string;
   /** Web の build の Community Node の初期設定を、配布の設定から替える（開発・試験）。 */
   readonly VITE_KUKURI_COMMUNITY_NODE_BASE_URL?: string;
+  /** Tauri CLI が build・dev の対象の platform を渡す（`android`・`windows` など。Web の build では無い）。 */
+  readonly TAURI_ENV_PLATFORM?: string;
 }
 
 interface ImportMeta {
